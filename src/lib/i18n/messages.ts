@@ -7800,6 +7800,15 @@ export const MESSAGES = {
     en: 'View the invoice',
     tr: 'Faturayı görüntüle',
   },
+  // Het paneel toont een handvol regels en zegt eerlijk hoeveel er nog meer zijn. Een lijst van
+  // driehonderd amberkleurige regels wordt niet gelezen maar weggescrold, en dan heeft de melding
+  // precies het tegenovergestelde gedaan van wat ze moest doen.
+  'kas.dubbel.meer': {
+    nl: '+ nog {aantal} andere kasregels met dezelfde vraag.',
+    ar: '+ {aantal} سطر صندوق آخر عليها نفس السؤال.',
+    en: '+ {aantal} more cash lines with the same question.',
+    tr: '+ aynı soruyu taşıyan {aantal} kasa satırı daha.',
+  },
   'kas.dubbel.nietGecontroleerd': {
     nl: 'We konden niet nakijken of er kosten dubbel in je boeken staan. Probeer het later opnieuw.',
     ar: 'تعذّر التحقق مما إذا كانت هناك تكاليف مكرَّرة في دفاترك. حاول لاحقاً.',

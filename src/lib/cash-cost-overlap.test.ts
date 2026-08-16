@@ -96,6 +96,37 @@ console.log("\n— the owner typed the ex-BTW figure —");
   check("…and the doubled cost is still € 100", near(hits[0]?.doubleCountedCost ?? 0, 100));
 }
 
+console.log("\n— a 0% / verlegde-BTW purchase, where ex and inc are the same number —");
+{
+  // Such an invoice sits in BOTH amount indexes under the same key, so it is reachable twice. The
+  // reported basis must be the figure the owner actually handed over, deterministically.
+  const nul = bill({ total_ex_btw: 121, total_inc_btw: 121 });
+  const hits = find([entry()], [nul]);
+  check("it is one pair, not two", hits.length === 1);
+  check("…reported on the gross", hits[0]?.basis === "gross");
+  check("…and the doubled cost is the ex-BTW figure", near(hits[0]?.doubleCountedCost ?? 0, 121));
+}
+
+console.log("\n— float noise on either side is the same money —");
+{
+  // round2 collapses this on both sides before the amounts are ever compared. Asserted rather than
+  // assumed: the index keys on the result, so a change that skipped round2 would silently stop
+  // pairing amounts that a human reads as identical.
+  check("0.1 + 0.2 in the drawer still matches € 0,30 on the invoice",
+    find([entry({ amount: 0.1 + 0.2, entry_date: "2026-05-12" })],
+         [bill({ total_ex_btw: 0.3, total_inc_btw: 0.3 })]).length === 1);
+  check("60.50000000000001 matches 60.50",
+    find([entry({ amount: 60.50000000000001 })],
+         [bill({ total_ex_btw: 50, total_inc_btw: 60.5 })]).length === 1);
+
+  // The one shape where the app's round2 and a bare cents conversion part company: a half cent.
+  // Math.round(1.005 * 100) is 100, because 1.005 is really 1.00499999999999989 — round2 carries
+  // the epsilon that makes it 101, and the invoice total was stored already rounded to 1.01. Without
+  // round2 on BOTH sides the two key differently and a real pair goes unreported.
+  check("a half cent in the drawer still matches the rounded invoice total",
+    find([entry({ amount: 1.005 })], [bill({ total_ex_btw: 1.01, total_inc_btw: 1.01 })]).length === 1);
+}
+
 console.log("\n— a bon + a rate claims voorbelasting a second time —");
 {
   const hits = find([entry({ document_id: "d1", btw_rate: 21 })], [bill()]);

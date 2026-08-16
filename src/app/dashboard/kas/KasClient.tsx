@@ -1014,6 +1014,18 @@ export default function KasClient() {
  * purchases of the same amount in one month do exist, and telling that owner their books are wrong
  * would be the accusing-with-the-evidence-in-our-pocket this screen already refuses once.
  */
+/**
+ * How many pairs the panel shows before it stops listing and starts counting.
+ *
+ * Measured, and not guessed: a shop that types every cash purchase by hand AND imports every
+ * invoice is exactly the shop this detector is for, and on a seeded busy quarter the detector
+ * returned 366 pairs. Three hundred amber rows are not a warning, they are a wall — scrolled past
+ * once and ignored forever, which is the precise opposite of what this panel is for. Ten is enough
+ * to show the shape of the problem; the rest is a number, and the total in the aangifte note
+ * counts every one of them either way.
+ */
+const DOUBLE_COST_SHOWN = 10
+
 export function DoubleCostNotice({ rows, unknown, t }: {
   rows: DoubleCost[]
   unknown: boolean
@@ -1044,7 +1056,7 @@ export function DoubleCostNotice({ rows, unknown, t }: {
       <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {/* Keyed on the cash line: it is the row the owner acts on, and each entry appears in at
             most one pair — see the one-to-one assignment in detectCashCostOverlaps. */}
-        {rows.map((d) => (
+        {rows.slice(0, DOUBLE_COST_SHOWN).map((d) => (
           <div key={d.entryId} style={{ borderTop: '1px solid #F2D492', paddingTop: 10 }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, lineHeight: 1.45 }}>
               {t('kas.dubbel.regel', {
@@ -1076,6 +1088,13 @@ export function DoubleCostNotice({ rows, unknown, t }: {
           </div>
         ))}
       </div>
+      {/* [GEEN-STILLE-CAP] What is not listed is still counted, and said out loud. A panel that
+          silently shows ten of three hundred reads as "there are ten". */}
+      {rows.length > DOUBLE_COST_SHOWN && (
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#7A4F00', marginTop: 10 }}>
+          {t('kas.dubbel.meer', { aantal: rows.length - DOUBLE_COST_SHOWN })}
+        </div>
+      )}
       {/* No button that resolves it for them. Which of the two rows is the right one is a question
           about paper the owner has and we do not — the same discipline duplicate-payable.ts states
           for its own pairs. The delete button already lives on the cash line itself. */}

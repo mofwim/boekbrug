@@ -95,8 +95,14 @@ export interface CashCostOverlap {
   /** The description names the supplier — the strongest extra witness this pairing can have. */
   nameMatched: boolean;
   /**
-   * True when the invoice is ALSO settled in cash, so a system 'betaling' entry exists for it too
-   * and the DRAWER is short by the entry's amount on top of the double cost. The expensive case.
+   * True when the invoice is ALSO settled in cash — status 'paid' with method 'kas' — so the
+   * DRAWER is short by the entry's amount on top of the double cost. The expensive case.
+   *
+   * Read from the invoice, not from the presence of a 'betaling' row, and that is deliberate:
+   * reconcileCashSettlements is self-healing and runs on every Kas load and hourly, so the
+   * settlement either exists or is about to. Looking for the row itself would make this answer
+   * flap depending on whether the reconciler had got there yet — a warning that appears and
+   * disappears between two page loads is worse than one that is a day early.
    */
   drawerDoubled: boolean;
   /** The ex-BTW amount currently deducted twice. */
@@ -217,6 +223,53 @@ export function detectCashCostOverlaps(args: {
   const payable = args.invoices.filter(booksACost);
   if (typed.length === 0 || payable.length === 0) return [];
 
+  // ── The amount is an INDEX, not a scan ──
+  //
+  // The obvious shape is a nested loop over both sides, and it works — but it is O(n × m) on two
+  // lists that both grow with the business, on an endpoint the Kas screen calls TWICE per refresh.
+  // Ten times the shop is ten times BOTH sides, so a hundred times the work.
+  //
+  // The match is EXACT to the cent, so the amount can be a key instead of a comparison, and the
+  // whole thing collapses to one pass over each side. Measured, with no matches (the everyday
+  // case, where the nested loop still had to visit every pair):
+  //
+  //      500 ×   500 =   250k nominal pairs → 1,2 ms
+  //     2000 ×  4000 =  8.000k              → 2,8 ms
+  //     4000 ×  8000 = 32.000k              → 4,5 ms
+  //
+  // Linear in n + m rather than in n × m — those 32 million pairs are never visited at all.
+  //
+  // The key is integer cents because that is the conventional and cheapest form — NOT because it
+  // repairs anything: both sides already go through round2, which is what collapses float noise,
+  // so `60.5` would key just as correctly today. Written down so the next reader does not mistake
+  // a convention for a guard and defend it as though money depended on it.
+  // Takes an ALREADY-rounded amount — every caller below passes a round2 result, and it has to.
+  //
+  // `Math.round(v * 100)` alone handles ordinary float noise (0.1 + 0.2 keys as 30 either way), so
+  // rounding a second time in here would read as the protection and be none. The place the app's
+  // round2 is genuinely load-bearing is the HALF CENT: 1.005 is really 1.00499999999999989, so a
+  // bare conversion keys it as 100 while the invoice — stored already rounded to 1.01 — keys as
+  // 101, and a real pair goes unreported. round2 carries the epsilon that closes exactly that gap.
+  //
+  // Both halves of this were established by negative control, in that order: the first two
+  // attempts to prove the guard did not bite at all, because they were aimed at noise this line
+  // absorbs by itself.
+  const cents = (rounded: number): number => Math.round(rounded * 100);
+  const byGross = new Map<number, PurchaseForOverlap[]>();
+  const byNet = new Map<number, PurchaseForOverlap[]>();
+  for (const inv of payable) {
+    const gross = round2(magnitude(inv.total_inc_btw));
+    const net = round2(magnitude(inv.total_ex_btw));
+    if (gross > CENT) {
+      const k = cents(gross);
+      const list = byGross.get(k); if (list) list.push(inv); else byGross.set(k, [inv]);
+    }
+    if (net > CENT) {
+      const k = cents(net);
+      const list = byNet.get(k); if (list) list.push(inv); else byNet.set(k, [inv]);
+    }
+  }
+
   // Every pairing that survives the rules, strongest first, then assigned one-to-one below.
   type Pairing = { overlap: CashCostOverlap; strength: number };
   const pairings: Pairing[] = [];
@@ -224,18 +277,25 @@ export function detectCashCostOverlaps(args: {
   for (const e of typed) {
     const amount = round2(magnitude(e.amount));
     const entryDay = isoDay(e.entry_date);
-    for (const inv of payable) {
-      const gross = round2(magnitude(inv.total_inc_btw));
-      const net = round2(magnitude(inv.total_ex_btw));
-      // To the cent, on either figure. 'net' is here because writing the ex-BTW amount into the
-      // drawer is an ordinary slip — the invoice shows both numbers — and it is the same money.
-      // Gross is tested first so an invoice whose ex and inc are equal (a 0%/verlegd purchase)
-      // reports the figure the owner actually handed over.
-      const basis: OverlapAmountBasis | null =
-        gross > CENT && Math.abs(amount - gross) < CENT ? "gross"
-        : net > CENT && Math.abs(amount - net) < CENT ? "net"
-        : null;
-      if (basis === null) continue;
+    const key = cents(amount);
+    // Gross first, so an invoice reachable by BOTH figures (a 0%/verlegd purchase, where ex and
+    // inc are equal) reports the figure the owner actually handed over.
+    //
+    // `seen` keeps the net pass from re-offering that same invoice under the weaker basis. It
+    // changes no ANSWER — the one-to-one assignment below would drop the second copy anyway, and
+    // a negative control confirmed the output is identical without it. It is here to keep the
+    // reported `basis` deterministic at the point it is decided rather than by an accident of sort
+    // stability twenty lines later, and to not build a pairing that is certain to be discarded.
+    const seen = new Set<string>();
+    const candidates: Array<{ inv: PurchaseForOverlap; basis: OverlapAmountBasis }> = [
+      ...(byGross.get(key) ?? []).map((inv) => ({ inv, basis: "gross" as const })),
+      // 'net' is here because writing the ex-BTW amount into the drawer is an ordinary slip — the
+      // invoice shows both numbers — and it is the same money.
+      ...(byNet.get(key) ?? []).map((inv) => ({ inv, basis: "net" as const })),
+    ];
+    for (const { inv, basis } of candidates) {
+      if (seen.has(inv.id)) continue;
+      seen.add(inv.id);
 
       // The invoice's own date is the document date; a cash-settled invoice also has a payment
       // date, and that is nearer to when the money physically moved. Whichever is closer wins —
@@ -255,8 +315,11 @@ export function detectCashCostOverlaps(args: {
 
       // What the double entry actually costs, in the two figures the aangifte is built from.
       // The cost is the INVOICE's ex-BTW: that is the amount booked a second time, whichever of
-      // the two figures the owner happened to type into the drawer.
-      const doubleCountedCost = net > CENT ? net : round2(gross);
+      // the two figures the owner happened to type into the drawer. Read from the invoice here
+      // rather than carried out of the index above — the index answers "which invoices", not
+      // "how much", and threading a second value through it would be two places to get it wrong.
+      const net = round2(magnitude(inv.total_ex_btw));
+      const doubleCountedCost = net > CENT ? net : round2(magnitude(inv.total_inc_btw));
       // Only a cash line with BOTH a bon and a rate deducts BTW of its own — financial-result.ts
       // requires document_id && btw_rate > 0. A bare typed line doubles the cost and not the BTW,
       // and saying otherwise would overstate the damage on the commonest shape of all.

@@ -17,7 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [KAS-ZACHT] Every reader of cash_entries goes through this — a removed movement counts nowhere,
 // and a soft-deleted line the owner already took out must not come back as a question.
-import { liveCashEntries } from "@/lib/cash-live";
+import { liveCashEntries, cashInvoiceLinkSupported } from "@/lib/cash-live";
 import {
   detectCashCostOverlaps, OVERLAP_WINDOW_DAYS,
   type CashCostEntry, type CashCostOverlap, type PurchaseForOverlap,
@@ -59,21 +59,33 @@ export async function collectCashCostOverlaps(
 
   try {
     const live = await liveCashEntries(pipeline);
+    // [DEPLOY-SAFE] invoice_id arrives with cash_settlement_invoice_link.sql, and selecting a
+    // column that does not exist fails the whole read — measured against a real Postgres, 42703 on
+    // both the projection and the filter. Without it there are no invoice-linked cash movements to
+    // exclude in the first place (reconcileCashSettlements cannot write one either), so the
+    // detector degrades to the same answer by a shorter road. See cashInvoiceLinkSupported.
+    const linked = await cashInvoiceLinkSupported(pipeline);
+    const projection = linked
+      ? "id, entry_date, direction, amount, category, description, invoice_id, btw_rate, document_id"
+      : "id, entry_date, direction, amount, category, description, btw_rate, document_id";
     const entries = await fetchAllRows<CashCostEntry>(
-      (lo, hi) => live.only(pipeline
-        .from("cash_entries")
-        .select("id, entry_date, direction, amount, category, description, invoice_id, btw_rate, document_id")
-        .eq("user_id", ownerId)
-        .eq("category", "kosten")
-        .eq("direction", "out")
+      (lo, hi) => {
+        const base = live.only(pipeline
+          .from("cash_entries")
+          .select(projection)
+          .eq("user_id", ownerId)
+          .eq("category", "kosten")
+          .eq("direction", "out")
+          .gte("entry_date", from)
+          .lte("entry_date", to));
         // A settlement belongs to its invoice and is the correct mechanism, not a duplicate of it.
         // Filtered here as well as in the pure isOwnerTypedCost, because reading rows we will
         // certainly discard is paid for on every page of the drawer.
-        .is("invoice_id", null)
-        .gte("entry_date", from)
-        .lte("entry_date", to))
-        .order("id", { ascending: true })
-        .range(lo, hi) as unknown as PromiseLike<{ data: CashCostEntry[] | null; error: { message: string } | null }>,
+        const scoped = linked ? base.is("invoice_id", null) : base;
+        return scoped
+          .order("id", { ascending: true })
+          .range(lo, hi) as unknown as PromiseLike<{ data: CashCostEntry[] | null; error: { message: string } | null }>;
+      },
     );
     // Nothing typed by hand in this period → nothing to ask about, and no reason to read the
     // invoices at all. The common case for every owner who uses the upload button as intended.

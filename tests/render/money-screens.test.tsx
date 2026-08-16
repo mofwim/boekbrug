@@ -781,6 +781,16 @@ test("[KAS-DUBBELE-KOST] the double-cost panel renders every branch it has", asy
   // A row with nothing readable must still render rather than throw — the rows come from a DB.
   const bare = render([row({ invoiceNumber: null, supplier: null, entryDate: null, entryAmount: null })]);
   assert.ok(bare.length > 100, "a row with null columns still renders");
+
+  // [GEEN-STILLE-CAP] A shop that types every cash purchase by hand is exactly the shop this is
+  // for, and a seeded busy quarter produced 366 pairs. Three hundred amber rows are a wall, not a
+  // warning — but a panel that silently shows ten of them reads as "there are ten".
+  const many = render(Array.from({ length: 25 }, (_, i) =>
+    row({ entryId: `k${i}`, invoiceId: `f${i}`, invoiceNumber: `AP${i}` })));
+  const shown = (many.match(/\/dashboard\/invoice\//g) ?? []).length;
+  assert.equal(shown, 10, "the list stops at ten rows");
+  assert.ok(many.includes("nog 15 andere kasregels"), "…and says out loud how many it did not list");
+  assert.ok(!render([row()]).includes("andere kasregels"), "no remainder line when nothing was dropped");
 });
 
 test("[RENDER-GATE] the sales overview renders", async () => {

@@ -9337,10 +9337,19 @@ test("[KAS-DUBBELE-KOST] the detector reads, reports, and never books", () => {
     "a system settlement IS the invoice's own cash movement, never a duplicate of it");
   assert.match(mod, /if \(gap == null \|\| gap > window\) continue;/,
     "an undateable pair is not evidence — silence beats a question nobody can check");
-  // Tot op de cent. Een marge hier maakt van een sterk signaal een ruispaneel, en een paneel dat
-  // ruist wordt weggeklikt — precies de uitkomst die dit hele bestand probeert te voorkomen.
-  assert.match(mod, /Math\.abs\(amount - gross\) < CENT/);
+  // Tot op de cent, en het bedrag is een SLEUTEL en geen vergelijking: de opzoeking in de index is
+  // exact of hij bestaat niet. Een marge hier maakt van een sterk signaal een ruispaneel, en een
+  // paneel dat ruist wordt weggeklikt — precies de uitkomst die dit hele bestand voorkomt.
+  assert.match(mod, /const cents = \(rounded: number\): number => Math\.round\(rounded \* 100\);/,
+    "the amount is keyed in integer cents, so a hit is exact by construction");
+  assert.match(mod, /byGross\.get\(key\)/);
+  assert.match(mod, /byNet\.get\(key\)/);
   assert.doesNotMatch(mod, /nearAmount|BIJNA/, "no near-amount tier: this pairing is exact or it is nothing");
+  // …en de sleutel krijgt een AFGEROND bedrag. Zonder round2 sleutelt een halve cent (1,005 is in
+  // werkelijkheid 1,00499999999999989) op 100 terwijl de factuur al op 1,01 staat opgeslagen, en
+  // een echt paar wordt niet gemeld. Aangetoond met een negative control.
+  assert.match(mod, /const amount = round2\(magnitude\(e\.amount\)\);/,
+    "the key must be built from a rounded amount — see the half-cent case");
 
   // [KAS-ZACHT] Een verwijderde kasregel telt nergens, ook niet als vraag.
   assert.match(collect, /liveCashEntries/,
