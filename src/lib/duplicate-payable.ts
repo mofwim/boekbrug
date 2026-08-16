@@ -58,7 +58,7 @@ const CENT = 0.005
  * Legal-suffix-insensitive supplier key. "Enka Horeca B.V." and "Enka Horeca bv" are one supplier;
  * folding them is what makes the pairing work across two imports that read the name differently.
  */
-function supplierKey(name: string | null | undefined): string {
+export function supplierKey(name: string | null | undefined): string {
   return normalizeVendor(name)
     .replace(/\./g, '')
     .replace(/[^a-z0-9\s]/g, ' ')

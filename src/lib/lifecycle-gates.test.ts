@@ -9315,6 +9315,77 @@ test("[DEEL-CREDIT] every caller that HOLDS the creditnota rows hands them over"
   assert.match(client, /outstandingAmount\(f, creditMap\.get\(f\.id\) \?\? 0\)/);
 });
 
+// ─── [KAS-DUBBELE-KOST] Dezelfde aankoop, twee keer in de boeken ─────────────
+//
+// De app stuurde hier al op aan en controleerde nooit. De [KAS-UPLOAD]-knop zegt met zoveel
+// woorden dat een contant betaalde bon door de intake hoort en "deliberately NOT a manual cash
+// 'kosten' entry (that would drop the voorbelasting and double-count once the same receipt is
+// booked as an invoice)" — maar 'kosten' staat open in het toevoegformulier, en niets vergeleek die
+// regel ooit met de factuur die de volgende ochtend binnenkomt. Dan telt dezelfde aankoop twee keer
+// als kosten, en met een bon + tarief wordt ook de btw twee keer teruggevraagd.
+
+test("[KAS-DUBBELE-KOST] the detector reads, reports, and never books", () => {
+  const mod = code("src/lib/cash-cost-overlap.ts");
+  const collect = code("src/lib/cash-cost-overlap-collect.ts");
+  // Alles hieraan is READ-ONLY. Een detector die zelf iets rechtzet, zet het recht op een vermoeden.
+  for (const [naam, bron] of [["cash-cost-overlap", mod], ["cash-cost-overlap-collect", collect]] as const) {
+    assert.doesNotMatch(bron, /\.(insert|update|upsert|delete|rpc)\(/,
+      `${naam} must never write — which of the two rows is right is a question about paper`);
+  }
+  // De twee regels die het stil houden waar het stil moet zijn.
+  assert.match(mod, /if \(e\.invoice_id != null\) return false;/,
+    "a system settlement IS the invoice's own cash movement, never a duplicate of it");
+  assert.match(mod, /if \(gap == null \|\| gap > window\) continue;/,
+    "an undateable pair is not evidence — silence beats a question nobody can check");
+  // Tot op de cent. Een marge hier maakt van een sterk signaal een ruispaneel, en een paneel dat
+  // ruist wordt weggeklikt — precies de uitkomst die dit hele bestand probeert te voorkomen.
+  assert.match(mod, /Math\.abs\(amount - gross\) < CENT/);
+  assert.doesNotMatch(mod, /nearAmount|BIJNA/, "no near-amount tier: this pairing is exact or it is nothing");
+
+  // [KAS-ZACHT] Een verwijderde kasregel telt nergens, ook niet als vraag.
+  assert.match(collect, /liveCashEntries/,
+    "every reader of cash_entries goes through the soft-delete rule");
+  // [NO-SILENT-EMPTY] "We konden niet kijken" is niet "er is niets".
+  assert.match(collect, /readFailed: true/,
+    "a failed read must be reportable as unknown, never as a clean quarter");
+});
+
+test("[KAS-DUBBELE-KOST] it reaches BOTH the owner and the aangifte", () => {
+  // De Kas-pagina is waar de ondernemer het kan oplossen; de aangifte is waar de dubbele kost
+  // terechtkomt. Alleen het eerste doen laat de boekhouder — vaak de enige die beide kanten ziet —
+  // met een schone pagina achter.
+  const kasboek = code("src/app/api/kasboek/route.ts");
+  assert.match(kasboek, /const doubleCosts = await collectCashCostOverlaps\(supabase, user\.id, \{ from: dupStart, to: dupEnd \}\)/,
+    "the Kas page's own endpoint computes it");
+  assert.match(kasboek, /doubleCostsUnknown: doubleCosts\.readFailed/,
+    "…and reports a failed read as such");
+
+  const aangifte = code("src/app/api/aangifte/route.ts");
+  assert.match(aangifte, /const dcNote = doubleCostNote\(doubleCosts\.overlaps\);/);
+  assert.match(aangifte, /if \(dcNote\) regimeNotes\.push\(dcNote\);/,
+    "the accountant reading the aangifte must be told");
+  // Een NOTITIE, geen blokkade. Een negatieve kas is rekenkunde; dit is een koppeling met sterk
+  // bewijs en geen bewijs. Iemand tegenhouden bij zijn wettelijke plicht op een vermoeden is erger
+  // dan het vermoeden.
+  assert.doesNotMatch(aangifte, /doubleCost[^\n]*blokk|blocked.*doubleCost/i,
+    "a probable duplicate must never block a filing");
+
+  // Het paneel neemt zijn rijen als PROPS. Een blok dat zijn rijen uit een fetch krijgt rendert in
+  // geen enkele gate, dus zou de regel die geld opmaakt voor het eerst op het scherm van een
+  // ondernemer draaien — de klasse die tests/render/ bestaat om te vangen.
+  const kas = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(kas, /export function DoubleCostNotice\(\{ rows, unknown, t \}/,
+    "the panel must be renderable without a session");
+  assert.match(kas, /<DoubleCostNotice/, "…and actually used by the screen");
+  // De verdicts moeten kunnen OPKLAREN. Een 'unknown' die alleen maar ge-OR-d wordt blijft staan
+  // over een kwartaal dat sindsdien tien keer schoon is gelezen.
+  assert.match(kas, /unknown: !blocking\.ok \|\| !open\.ok/,
+    "the unknown verdict is recomputed each refresh, never accumulated");
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /the double-cost panel renders every branch it has/,
+    "and it is on the render line with rows that exercise it");
+});
+
 test("[DEEL-CREDIT] the facturenlijst tells withdrawn apart from partly credited", () => {
   // Deze lijst laadde de creditnota's als een VERZAMELING IDS — een ja/nee — en dat werd de
   // verkeerde vraag zodra een creditnota één betwiste regel kon dekken. Drie dingen zeiden daarna

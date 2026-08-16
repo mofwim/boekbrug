@@ -31,6 +31,8 @@ import { liveCashEntries } from "@/lib/cash-live";
 // heard about. The bank half is recognised by the classifier's own patterns, never a copy of them.
 import { findUnrecordedCashWithdrawals } from "@/lib/cash-transfer-match";
 import { isCashTransferDescription } from "@/lib/bank-identity";
+// [KAS-DUBBELE-KOST] The same purchase written down twice — see cash-cost-overlap.ts.
+import { collectCashCostOverlaps } from "@/lib/cash-cost-overlap-collect";
 
 export const dynamic = "force-dynamic";
 
@@ -255,10 +257,45 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── [KAS-DUBBELE-KOST] The same purchase, written down twice ─────────────────────────────────
+  //
+  // Unlike [KAS-BRUG] above, this is NOT conditional on a negative drawer, and the difference is
+  // the point. An unrecorded opname is a tidiness matter until the drawer goes below zero; a cash
+  // 'kosten' line that duplicates a purchase invoice is wrong the moment it exists — the cost is
+  // deducted twice and the aangifte is built on it, in a drawer that looks perfectly healthy.
+  // There is no symptom to wait for.
+  //
+  // Bounded to the quarter on screen and skipped entirely when nothing was typed by hand, so the
+  // owner who uses the [KAS-UPLOAD] button as intended pays for one small indexed read.
+  //
+  // A failed read must not fail the kasboek: this is a question offered alongside a cash book, and
+  // losing the question costs a hint while refusing the book costs the administration. It comes
+  // back as readFailed so the panel can say "we could not check" instead of "niets gevonden".
+  const { start: dupStart, end: dupEnd } = quarterRange(year, quarter as Quarter);
+  const doubleCosts = await collectCashCostOverlaps(supabase, user.id, { from: dupStart, to: dupEnd });
+
   return NextResponse.json({
     ok: true,
     kasboek: kb,
     lowestPoint: dip,
+    // [KAS-DUBBELE-KOST] Cash costs typed by hand that appear to be an invoice already in the
+    // books. `unknown` is the honest half — a read that failed is not a clean quarter.
+    doubleCosts: doubleCosts.overlaps.map((o) => ({
+      entryId: o.entry.id,
+      entryDate: o.entry.entry_date,
+      entryAmount: o.entry.amount,
+      entryDescription: o.entry.description,
+      invoiceId: o.invoice.id,
+      invoiceNumber: o.invoice.invoice_number,
+      supplier: o.invoice.client_name,
+      basis: o.basis,
+      daysApart: o.daysApart,
+      nameMatched: o.nameMatched,
+      drawerDoubled: o.drawerDoubled,
+      doubleCountedCost: o.doubleCountedCost,
+      doubleCountedBtw: o.doubleCountedBtw,
+    })),
+    doubleCostsUnknown: doubleCosts.readFailed,
     // [KAS-BRUG] Cash withdrawals from the bank that no opname in this quarter accounts for. Empty
     // unless the drawer went negative — the question is only asked when it has to be answered.
     unrecordedWithdrawals,

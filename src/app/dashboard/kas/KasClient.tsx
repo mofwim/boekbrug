@@ -33,7 +33,7 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useLocale } from '@/lib/i18n/use-locale'
-import { translator } from '@/lib/i18n/t'
+import { translator, type Translator } from '@/lib/i18n/t'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -86,6 +86,18 @@ interface RemovedEntry {
 // [KAS-BRUG] Cash that left the BANK and never arrived in the cash book as an opname. Computed by
 // /api/kasboek only when the drawer went below zero — see cash-transfer-match.ts.
 interface UnrecordedWithdrawal { date: string; amount: number; description: string | null }
+
+// [KAS-DUBBELE-KOST] One purchase written down twice: a hand-typed cash 'kosten' line and the
+// purchase invoice that is already in the books. Computed by /api/kasboek for every quarter it
+// serves — unlike the bridge above it is NOT conditional on a negative drawer, because this is
+// wrong the moment it exists: the cost is deducted twice, and the drawer that carries it can look
+// perfectly healthy. See cash-cost-overlap.ts.
+export interface DoubleCost {
+  entryId: string; entryDate: string | null; entryAmount: number | null; entryDescription: string | null
+  invoiceId: string; invoiceNumber: string | null; supplier: string | null
+  basis: 'gross' | 'net'; daysApart: number; nameMatched: boolean; drawerDoubled: boolean
+  doubleCountedCost: number; doubleCountedBtw: number
+}
 
 // Previous quarter for the ◀ selector (Q1 → Q4 of the prior year).
 function prevQuarter(y: number, q: number): { year: number; quarter: number } {
@@ -212,6 +224,18 @@ export default function KasClient() {
   // there is an accusation for it to explain. Kept per quarter, like the dip it belongs to.
   const [bridgeGaps, setBridgeGaps] = useState<{ blocking: UnrecordedWithdrawal[]; open: UnrecordedWithdrawal[] }>({ blocking: [], open: [] })
 
+  // [KAS-DUBBELE-KOST] Kept per quarter, exactly like bridgeGaps above and for the same reason:
+  // refreshDrawerAlert asks about two different periods, each answer owns its own, and a merged
+  // list would leave a resolved pair standing because the other quarter's answer never mentioned
+  // it. Two quarters can each hold one, so both are rendered.
+  //
+  // `unknown` is not the same as an empty list, and is carried separately. On this screen an absent
+  // warning is the ONLY signal that nothing is wrong — the same reason the saldo shows '—' rather
+  // than € 0,00 when its load fails.
+  const [doubleCosts, setDoubleCosts] = useState<{
+    blocking: DoubleCost[]; open: DoubleCost[]; unknown: boolean
+  }>({ blocking: [], open: [], unknown: false })
+
   async function loadKasboek(period: { year: number; quarter: number } | null) {
     setKbLoading(true)
     try {
@@ -309,8 +333,24 @@ export default function KasClient() {
         // already exactly right for both, and two of them would only be noise.
         setLowestPointUnknown(true)
       }
+      // [KAS-DUBBELE-KOST] Set ONCE, from both answers of THIS refresh, and never OR-ed with what
+      // was on screen before. A verdict that only ever accumulates cannot clear: one failed read
+      // would leave "we could not check" standing over a quarter that has been read cleanly ten
+      // times since. A screen that keeps a money verdict from before the money moved is the thing
+      // this whole refresh exists to prevent.
+      setDoubleCosts({
+        blocking: blocking.ok ? ((blocking.json.doubleCosts ?? []) as DoubleCost[]) : [],
+        open: open.ok ? ((open.json.doubleCosts ?? []) as DoubleCost[]) : [],
+        // Unknown when either half could not answer — a list that is missing one of its two
+        // quarters is not a clean answer about the books.
+        unknown: !blocking.ok || !open.ok
+          || !!blocking.json?.doubleCostsUnknown || !!open.json?.doubleCostsUnknown,
+      })
     } catch {
-      if (!isCancelled()) setLowestPointUnknown(true)
+      if (!isCancelled()) {
+        setLowestPointUnknown(true)
+        setDoubleCosts({ blocking: [], open: [], unknown: true })
+      }
     }
   }
 
@@ -628,6 +668,16 @@ export default function KasClient() {
             bridge={{ title: t('kas.brug.titel'), explanation: t('kas.brug.uitleg'), rows: bridgeGaps.open }}
           />
         )}
+
+        {/* [KAS-DUBBELE-KOST] The same purchase, written down twice. Directly under the drawer
+            warnings and ABOVE the upload card on purpose: the upload card is the ANSWER to this
+            question ("next time, put the bon through here"), and an answer placed before its
+            question is not read. Every branch lives in the component — see DoubleCostNotice. */}
+        <DoubleCostNotice
+          rows={[...doubleCosts.blocking, ...doubleCosts.open]}
+          unknown={doubleCosts.unknown}
+          t={t}
+        />
 
         {/* [KAS-UPLOAD] Add a cash-paid invoice/receipt (photo or PDF). It goes to the verify queue
             pre-marked "contant betaald"; the human confirms and the payment lands in the kasboek
@@ -951,6 +1001,97 @@ export default function KasClient() {
  * copy for both is handed in — [TAAL] this component holds no language of its own, so it cannot be
  * the place a Dutch sentence survives a translation pass.
  */
+/**
+ * [KAS-DUBBELE-KOST] The panel that asks whether one purchase was written down twice.
+ *
+ * Its own component, next to DrawerDipNotice and for the same reason that one is: a block whose
+ * rows arrive from a fetch never renders in a server test, so the branch that formats money would
+ * be reached for the first time on an owner's screen. As props it is rendered by
+ * tests/render/money-screens.tsx with rows that exercise every line of it.
+ *
+ * Amber, never red, and phrased as a question. Unlike the dip above it, this is a PAIRING —
+ * cent-exact and inside a month, which is strong evidence and not proof. Two genuinely separate
+ * purchases of the same amount in one month do exist, and telling that owner their books are wrong
+ * would be the accusing-with-the-evidence-in-our-pocket this screen already refuses once.
+ */
+export function DoubleCostNotice({ rows, unknown, t }: {
+  rows: DoubleCost[]
+  unknown: boolean
+  // [TAAL] The real Translator, not a widened stand-in: the narrow key union is what makes a typo
+  // in a message key a build error instead of a raw key printed on an owner's screen.
+  t: Translator
+}) {
+  // [NO-SILENT-EMPTY] "We could not look" is not "there is nothing", and on this screen an absent
+  // warning is the ONLY signal that the books are clean. Shown only when there is no list to show
+  // instead — a partial answer with rows in it says more than the caveat would.
+  if (rows.length === 0) {
+    if (!unknown) return null
+    return (
+      <div style={{ margin: '0 0 20px', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 14, padding: '12px 16px' }}>
+        <div style={{ fontSize: 12.5, color: M3.onSurface, lineHeight: 1.5 }}>
+          {t('kas.dubbel.nietGecontroleerd')}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ margin: '0 0 20px', background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: 14, padding: '14px 16px' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>{t('kas.dubbel.titel')}</div>
+      <div style={{ fontSize: 12.5, color: M3.onSurface, marginTop: 6, lineHeight: 1.5 }}>
+        {t('kas.dubbel.uitleg')}
+      </div>
+      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Keyed on the cash line: it is the row the owner acts on, and each entry appears in at
+            most one pair — see the one-to-one assignment in detectCashCostOverlaps. */}
+        {rows.map((d) => (
+          <div key={d.entryId} style={{ borderTop: '1px solid #F2D492', paddingTop: 10 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.onSurface, lineHeight: 1.45 }}>
+              {t('kas.dubbel.regel', {
+                datum: formatDate(d.entryDate),
+                bedrag: eur.format(Math.abs(Number(d.entryAmount) || 0)),
+                nummer: d.invoiceNumber ?? '—',
+                leverancier: d.supplier ?? '—',
+              })}
+            </div>
+            <div style={{ fontSize: 12, color: '#7A4F00', marginTop: 3, lineHeight: 1.45 }}>
+              {t('kas.dubbel.kosten', { bedrag: eur.format(d.doubleCountedCost) })}
+              {/* Only a cash line with a bon AND a rate claims BTW of its own, so this half is
+                  absent on the commonest shape rather than shown as € 0,00. */}
+              {d.doubleCountedBtw > 0 ? ` ${t('kas.dubbel.btw', { bedrag: eur.format(d.doubleCountedBtw) })}` : ''}
+            </div>
+            {/* The drawer half is a different fact with a different remedy, so it gets its own
+                sentence instead of being folded into the cost figure above. */}
+            {d.drawerDoubled && (
+              <div style={{ fontSize: 12, color: '#7A4F00', marginTop: 3, lineHeight: 1.45 }}>
+                {t('kas.dubbel.kasDubbel', { bedrag: eur.format(Math.abs(Number(d.entryAmount) || 0)) })}
+              </div>
+            )}
+            <a
+              href={`/dashboard/invoice/${d.invoiceId}`}
+              style={{ display: 'inline-block', marginTop: 6, fontSize: 12, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}
+            >
+              {t('kas.dubbel.naarFactuur')} &rarr;
+            </a>
+          </div>
+        ))}
+      </div>
+      {/* No button that resolves it for them. Which of the two rows is the right one is a question
+          about paper the owner has and we do not — the same discipline duplicate-payable.ts states
+          for its own pairs. The delete button already lives on the cash line itself. */}
+      <div style={{ fontSize: 12.5, color: M3.onSurface, marginTop: 12, lineHeight: 1.5 }}>
+        {t('kas.dubbel.watNu')}
+      </div>
+      {/* A partial answer still says so, under the rows rather than instead of them. */}
+      {unknown && (
+        <div style={{ fontSize: 12, color: '#7A4F00', marginTop: 8, lineHeight: 1.45 }}>
+          {t('kas.dubbel.nietGecontroleerd')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing, bridge }: {
   tone: 'blocking' | 'open'
   heading: string

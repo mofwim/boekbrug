@@ -729,6 +729,60 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
   );
 });
 
+test("[KAS-DUBBELE-KOST] the double-cost panel renders every branch it has", async () => {
+  // A panel whose rows arrive from a fetch renders EMPTY in every gate that exists — tsc, eslint
+  // and next build never call a component, and the Kas screen needs a session the smoke test never
+  // has. So the branch that formats money would be reached for the first time on an owner's
+  // screen. Handed real rows here, exactly as [RENDER-GATE] in AGENTS.md asks.
+  const { DoubleCostNotice } = await import("../../src/app/dashboard/kas/KasClient");
+  const { translator } = await import("../../src/lib/i18n/t");
+  const t = translator("nl");
+
+  const row = (over: Record<string, unknown> = {}) => ({
+    entryId: "k1", entryDate: "2026-05-12", entryAmount: 121, entryDescription: "Enka Horeca contant",
+    invoiceId: "f1", invoiceNumber: "26701681", supplier: "Enka Horeca B.V.",
+    basis: "gross" as const, daysApart: 0, nameMatched: true, drawerDoubled: false,
+    doubleCountedCost: 100, doubleCountedBtw: 0, ...over,
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const render = (rows: any[], unknown = false) =>
+    renderToStaticMarkup(React.createElement(DoubleCostNotice as any, { rows, unknown, t }));
+
+  // Nothing found and nothing failed: the panel must be ABSENT, not an empty amber box.
+  assert.equal(render([]), "", "a clean quarter shows no panel at all");
+
+  // [NO-SILENT-EMPTY] Could not look ≠ nothing there. On this screen an absent warning is the only
+  // signal the books are clean, so a failed check has to say so.
+  const cannot = render([], true).replace(/[\u00a0\u202f]/g, " ");
+  assert.ok(cannot.includes("konden niet nakijken"), "a failed check says so instead of nothing");
+
+  // The ordinary pair: a hand-typed line and the invoice it duplicates.
+  const one = render([row()]).replace(/[\u00a0\u202f]/g, " ");
+  assert.ok(one.includes("26701681") && one.includes("Enka Horeca B.V."), "it names the invoice and the supplier");
+  assert.ok(one.includes("€ 121,00"), "…the amount that left the till");
+  assert.ok(one.includes("€ 100,00"), "…and the ex-BTW cost that is deducted twice");
+  assert.ok(one.includes("/dashboard/invoice/f1"), "…with a way to look at the invoice");
+  // A bare typed line claims no BTW of its own, so that half must be absent — not "€ 0,00".
+  assert.ok(!one.includes("btw dubbel"), "no btw sentence when no btw was doubled");
+  assert.ok(!one.includes("kassaldo"), "no drawer sentence when the drawer moved once");
+
+  // The expensive shape: a bon + a rate (btw claimed twice) AND the invoice settled in cash too
+  // (the drawer down twice). Both extra sentences must appear, with their own amounts.
+  const worst = render([row({ doubleCountedBtw: 21, drawerDoubled: true })]).replace(/[\u00a0\u202f]/g, " ");
+  assert.ok(worst.includes("€ 21,00"), "the doubled btw is named");
+  assert.ok(worst.includes("kassaldo") && worst.includes("€ 121,00"), "…and the drawer that stands too low");
+
+  // Two pairs render as two rows, and a partial answer still says it was partial.
+  const two = render([row(), row({ entryId: "k2", invoiceId: "f2", invoiceNumber: "26701999" })], true);
+  assert.ok(two.includes("26701681") && two.includes("26701999"), "both pairs are shown");
+  assert.ok(two.includes("konden niet nakijken"), "…and the caveat rides UNDER them, not instead of them");
+
+  // A row with nothing readable must still render rather than throw — the rows come from a DB.
+  const bare = render([row({ invoiceNumber: null, supplier: null, entryDate: null, entryAmount: null })]);
+  assert.ok(bare.length > 100, "a row with null columns still renders");
+});
+
 test("[RENDER-GATE] the sales overview renders", async () => {
   const { default: VerkoopClient } = await import("../../src/app/dashboard/verkoop/VerkoopClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
