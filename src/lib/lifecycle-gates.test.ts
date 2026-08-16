@@ -9344,6 +9344,32 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[MANDAAT-SOORT] an invoicing mandate is read as one, and only one", () => {
+  // getActingForClient read EVERY unrevoked mandate row and never asked which kind it was — it did
+  // not even select the column, so mandateKindOf saw `kind: undefined` and returned its default
+  // 'facturen'. A client who granted only "bevestigen" therefore handed over invoicing and dunning:
+  // the accountant could mint numbers in that client's own series (art. 35) and mail their
+  // customers. The mirror is on the same line: granting BOTH kinds gives two rows, maybeSingle()
+  // answers null on more than one, and the accountant met a 403 with both switches ON.
+  const mod = code("src/lib/acting-for-server.ts");
+  const fn = mod.slice(mod.indexOf("export async function getActingForClient"),
+                       mod.indexOf("export async function canConfirmForClientServer"));
+  assert.match(fn, /\.select\("zzper_id, accountant_id, kind, revoked_at"\)/,
+    "the kind has to be selected before anything can judge it");
+  assert.match(fn, /\.eq\("kind", "facturen"\)/,
+    "…and filtered, exactly as the confirm sibling filters on 'bevestigen'");
+
+  // [DEPLOY-SAFE] `kind` arrives with a migration. Selecting a column that is not there yet fails
+  // the whole read, which would take an accountant's EXISTING invoicing access away — so that one
+  // error, and only that one, falls back to the pre-kind query, where every mandate really was an
+  // invoicing mandate.
+  assert.match(fn, /isMissingColumn\(mandateErr\.message/);
+  assert.match(fn, /\.select\("zzper_id, accountant_id, revoked_at"\)/,
+    "the fallback is the query this function used before");
+  // Any OTHER read failure must stay null: "we could not read the mandate" is not "no mandate".
+  assert.match(fn, /let mandateRow = \(mandate as MandateRow \| null\) \?\? null;/);
+});
+
 test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is attributed first", () => {
   // The rule this module's own header states: a ROW check says "you may see this record", never
   // "and the record points at your bytes". file_url and pdf_url are ordinary text on rows the owner

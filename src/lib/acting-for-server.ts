@@ -16,6 +16,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveActingFor, type ActingFor, type MemberLink } from "@/lib/acting-for";
 import { resolveAccountantActing, canConfirmForClient, type MandateRow } from "@/lib/accountant-mandate";
+// [DEPLOY-SAFE] Distinguishing "that column is not there yet" from any other read failure.
+import { isMissingColumn } from "@/lib/pg-missing";
 
 /**
  * Who is acting here, on whose behalf? Returns `null` when nobody is logged in.
@@ -92,7 +94,7 @@ export async function getActingForClient(
 
   // Read with the SESSION client, not service_role. RLS on both tables already limits an
   // accountant to their own rows, so a wrong answer here needs two independent failures.
-  const [{ data: profile }, { data: link }, { data: mandate }] = await Promise.all([
+  const [{ data: profile }, { data: link }, { data: mandate, error: mandateErr }] = await Promise.all([
     supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
     supabase
       .from("accountant_clients")
@@ -100,16 +102,45 @@ export async function getActingForClient(
       .eq("accountant_id", user.id)
       .eq("zzper_id", clientId)
       .maybeSingle(),
-    // [DEPLOY-SAFE] The table only exists after accountant_invoice_mandate.sql. Until then every
-    // accountant simply has no mandate — the feature is off, and nothing else breaks.
+    // ── [MANDAAT-SOORT] This mandate must be an INVOICING mandate ──
+    //
+    // It read every unrevoked row and never asked which KIND it was. mandateKindOf then saw
+    // `kind: undefined` — the column was not even selected — and returned its default 'facturen'.
+    // So a client who granted ONLY "bevestigen" handed over invoicing and dunning as well: the
+    // accountant could mint numbers in that client's series and mail their customers.
+    //
+    // And the mirror, on the same line: a client who granted BOTH kinds has two rows, maybeSingle()
+    // answers null on more than one, and the accountant got a 403 while both switches read ON.
+    //
+    // The sibling forty lines down (canConfirmForClientServer) has always done this correctly.
+    // Same shape, same query, one word different.
     supabase
+      .from("accountant_invoice_mandates")
+      .select("zzper_id, accountant_id, kind, revoked_at")
+      .eq("accountant_id", user.id)
+      .eq("zzper_id", clientId)
+      .eq("kind", "facturen")
+      .is("revoked_at", null)
+      .maybeSingle(),
+  ]);
+
+  // [DEPLOY-SAFE] `kind` arrives with accountant_confirm_mandate.sql, and selecting a column that
+  // does not exist fails the whole read — which here would take an accountant's INVOICING access
+  // away on any deployment where that migration is still open. Before that column existed every
+  // mandate WAS an invoicing mandate, so the pre-kind query is exactly the right answer for a
+  // database that has not seen it yet. Only that one error falls back; everything else stays null,
+  // because "we could not read the mandate" must never become "acting for nobody, quietly".
+  let mandateRow = (mandate as MandateRow | null) ?? null;
+  if (mandateErr && isMissingColumn(mandateErr.message, (mandateErr as { code?: string }).code)) {
+    const { data: legacy } = await supabase
       .from("accountant_invoice_mandates")
       .select("zzper_id, accountant_id, revoked_at")
       .eq("accountant_id", user.id)
       .eq("zzper_id", clientId)
       .is("revoked_at", null)
-      .maybeSingle(),
-  ]);
+      .maybeSingle();
+    mandateRow = (legacy as MandateRow | null) ?? null;
+  }
 
   return resolveAccountantActing(
     user.id,
@@ -117,7 +148,7 @@ export async function getActingForClient(
     {
       callerRole: (profile as { role?: string } | null)?.role ?? null,
       linked: Boolean(link),
-      mandate: (mandate as MandateRow | null) ?? null,
+      mandate: mandateRow,
     },
     Date.now(),
   );
