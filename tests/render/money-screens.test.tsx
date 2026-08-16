@@ -85,6 +85,7 @@ const manageRow = (over: Record<string, unknown> = {}) => ({
 test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it can show", async () => {
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
 
   const rows = [
     // A credit note the supplier numbers CR…, booked positive — the credit-note signal.
@@ -148,7 +149,7 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   ];
 
   const html = renderToStaticMarkup(
-    React.createElement(ToastProvider, null,
+    React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
       // The component's prop type is not exported; the rows above match what page.tsx selects.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(IncomingManageClient as any, {
@@ -157,7 +158,7 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
         totalCount: rows.length,
         readFailed: [],
         filedQuarters: ["2026-Q1"],
-      })),
+      }))),
   );
 
   // Not just "it did not throw": a component that renders null also does not throw, and would pass
@@ -237,6 +238,7 @@ test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost mon
   // Rendered against the LIST, not an opened card, because that is where both of them stood.
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
   const { supplierNameKey } = await import("../../src/lib/supplier-registry");
 
   const rows = [
@@ -251,12 +253,12 @@ test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost mon
   ];
 
   const render = (keys: string[] | null) => renderToStaticMarkup(
-    React.createElement(ToastProvider, null,
+    React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(IncomingManageClient as any, {
         profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
         readFailed: [], filedQuarters: [], incassoKeys: keys,
-      })),
+      }))),
   );
 
   const on = render([supplierNameKey("WonenBreburg")]);
@@ -326,15 +328,16 @@ test("[VRIJGESTELD] the cost-attribution control renders each of its three state
 test("[VRIJGESTELD] the pay screen is unchanged for an owner without exempt turnover", async () => {
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
 
   const rows = [manageRow({ id: "energie", client_name: "Energie", invoice_number: "E-9" })];
   const render = (profile: Record<string, unknown>) =>
     renderToStaticMarkup(
-      React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         React.createElement(IncomingManageClient as any, {
           profile, initialInvoices: rows, totalCount: rows.length, readFailed: [], filedQuarters: [],
-        })),
+        }))),
     );
 
   // The 99%: the screen still renders with the new branch compiled into it, and nothing about the
@@ -352,6 +355,7 @@ test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out 
   // loud rather than quietly dropped from a worklist that cannot reach it.
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
   const { scanInvoices } = await import("../../src/lib/invoice-scan");
 
   // One broken invoice IS on the screen; two more exist only in the server scan.
@@ -364,12 +368,12 @@ test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out 
   assert.equal(bookScan.total, 3, "the fixture really does hold three findings");
 
   const html = renderToStaticMarkup(
-    React.createElement(ToastProvider, null,
+    React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(IncomingManageClient as any, {
         profile: { id: "u1" }, initialInvoices: [onScreen], totalCount: 1,
         readFailed: [], filedQuarters: [], bookScan,
-      })),
+      }))),
   );
 
   assert.match(html, /3 geboekte facturen kloppen niet/, "the count is the whole book's, not the list's");
@@ -380,6 +384,7 @@ test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out 
 test("[RENDER-GATE] the pay screen renders when the read failed, and says so", async () => {
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
 
   // [NO-SILENT-EMPTY] The path that matters most on this screen: no rows AND a failed read. It must
   // never render as "you owe nobody anything". Rendering it here also proves the empty-list branches
@@ -390,7 +395,7 @@ test("[RENDER-GATE] the pay screen renders when the read failed, and says so", a
   // cb, so an empty list walks straight past a crash that every real list hits. A render gate is
   // only as good as the rows it is handed.
   const html = renderToStaticMarkup(
-    React.createElement(ToastProvider, null,
+    React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(IncomingManageClient as any, {
         profile: { id: "u1" },
@@ -398,7 +403,7 @@ test("[RENDER-GATE] the pay screen renders when the read failed, and says so", a
         totalCount: null,
         readFailed: ["openstaande facturen"],
         filedQuarters: null,
-      })),
+      }))),
   );
 
   assert.ok(html.length > 500, "the screen still renders when the read failed");
@@ -986,8 +991,13 @@ test("[FULL-CORRECTION] the shared correction editor renders, and shows the supp
   // both screens it lives behind a click, and a static render never clicks — the same reason
   // InvoiceCard is exported. What matters is that every field the accountant reads is on it.
   const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+  // [SUPPLETIE] The provider stack src/app/layout.tsx mounts around every screen. This editor now
+  // reaches for useDialog() — a correction that moves an already-filed quarter is acknowledged, not
+  // faded — and a render test without the provider is rendering a tree the app never renders.
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
 
   const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     React.createElement(InvoiceCorrectionModal as any, {
       invoice: {
@@ -997,7 +1007,7 @@ test("[FULL-CORRECTION] the shared correction editor renders, and shows the supp
       },
       readingHint: "Bij deze leverancier heb je 3 eerdere facturen zelf gecorrigeerd — meestal het btw-bedrag. Controleer dat hier extra.",
       onClose() {}, onSaved() {}, onMessage() {},
-    }),
+    })),
   );
 
   // The money fields, and the ones that carry no money and still decide where the invoice lands.
@@ -1021,7 +1031,9 @@ test("[FULL-CORRECTION] a credit note is not offered the creditnota tick again",
   // The declaration is one-way ('factuur' → 'creditnota'). Offering it on a row that already IS one
   // would suggest a reverse that must never exist: it would quietly turn a credit into a debt.
   const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
   const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     React.createElement(InvoiceCorrectionModal as any, {
       invoice: {
@@ -1029,7 +1041,7 @@ test("[FULL-CORRECTION] a credit note is not offered the creditnota tick again",
         invoice_type: "creditnota", total_ex_btw: -100, btw_amount: -9, total_inc_btw: -109,
       },
       onClose() {}, onSaved() {}, onMessage() {},
-    }),
+    })),
   );
   assert.doesNotMatch(html, /Dit is een creditnota/);
   assert.match(html, /-109/, "and it still opens on the stored negative amounts");
@@ -1061,13 +1073,14 @@ const sweetsRows = (creditNumber: string) => [
 const renderManage = async (rows: unknown[]) => {
   const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
   return renderToStaticMarkup(
-    React.createElement(ToastProvider, null,
+    React.createElement(DialogProvider, null, React.createElement(ToastProvider, null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(IncomingManageClient as any, {
         profile: { id: "u1" }, initialInvoices: rows, totalCount: rows.length,
         readFailed: [], filedQuarters: [],
-      })),
+      }))),
   );
 };
 

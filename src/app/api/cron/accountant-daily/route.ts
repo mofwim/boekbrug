@@ -30,6 +30,8 @@ import { planAccountantDay } from "@/lib/accountant-daily";
 import { getAangifteDeadline } from "@/modules/accountant/accountant.service";
 import { lastCompletedQuarter } from "@/lib/quarter";
 import { amsterdamToday } from "@/lib/format-nl";
+// [DEPLOY-SAFE] The divergence stamps arrive by a hand-applied migration — see the block below.
+import { isMissingColumn, isMissingRelation } from "@/lib/pg-missing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -143,7 +145,48 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      const message = planAccountantDay({ newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled });
+      // [SUPPLETIE] Filed quarters at this accountant's clients whose figures have MOVED since the
+      // aangifte went out. art. 10a AWR makes that a reporting duty with a clock on it, and the
+      // accountant is the person who discharges it — so it belongs in the one message they read.
+      //
+      // Cheap by construction: btw_filings carries the stamp (first_divergence_at, written once at
+      // the moment a correction lands in a filed quarter) and the partial index covers exactly the
+      // stamped rows. No figure is recomputed here — the divergence was already established where
+      // it happened.
+      //
+      // Degrades to ZERO on any failure, deliberately, and for the same reason the deadline half
+      // above does: this signal ADDS urgency, so an unreadable answer must make the morning quieter
+      // rather than invent a suppletie that may not exist. Logged, never silent to the operator.
+      let newlyDivergedQuarters = 0;
+      let divergedQuarters = 0;
+      try {
+        const diverged = await fetchAllRows<{ first_divergence_at: string | null }>((from, to) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (pipeline as any).from("btw_filings").select("user_id, year, quarter, first_divergence_at")
+            .in("user_id", clientIds)
+            .not("first_divergence_at", "is", null)
+            .order("user_id", { ascending: true }).range(from, to),
+        );
+        divergedQuarters = diverged.length;
+        newlyDivergedQuarters = diverged.filter((d) => (d.first_divergence_at ?? "") >= since).length;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // [DEPLOY-SAFE] btw_filings_divergence.sql is applied by hand. Until it lands there is no
+        // stamp to read, and that is a complete answer (nothing has been recorded as moved) rather
+        // than a failure worth an error line every morning.
+        if (isMissingColumn(message) || isMissingRelation(message)) {
+          console.log("[CRON-DAGSTART] divergence stamps not migrated yet — the suppletie signal stays quiet");
+        } else {
+          console.warn("[CRON-DAGSTART] btw_filings divergence unreadable — the suppletie signal stays quiet this run", {
+            accountantId, error: message,
+          });
+        }
+      }
+
+      const message = planAccountantDay({
+        newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled,
+        newlyDivergedQuarters, divergedQuarters,
+      });
       if (!message) { quiet++; continue; }
 
       const melding = await createNotification({

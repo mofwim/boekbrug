@@ -25,6 +25,8 @@ const day = (o: Partial<AccountantDaySignals> = {}): AccountantDaySignals => ({
   totalToConfirm: 0,
   daysToDeadline: null,
   clientsNotFiled: 0,
+  newlyDivergedQuarters: 0,
+  divergedQuarters: 0,
   ...o,
 })
 
@@ -124,4 +126,67 @@ test('[DAGSTART] the deadline outranks the stack, and the link follows the first
 test('[DAGSTART] a negative or absurd count never produces a sentence about it', () => {
   assert.equal(planAccountantDay(day({ newToConfirm: -3 })), null)
   assert.equal(planAccountantDay(day({ daysToDeadline: 7, clientsNotFiled: -1 })), null)
+})
+
+// ── [SUPPLETIE] A filing that moved after it was sent ────────────────────────
+//
+// art. 10a AWR turns a filed aangifte that has become wrong into a reporting duty, and the
+// accountant is the person who discharges it. The signal therefore had to reach the one message
+// they read — without becoming the daily nag the rest of this module exists to refuse.
+
+test('[SUPPLETIE] a newly moved filing is worth a morning on its own', () => {
+  const m = planAccountantDay(day({ newlyDivergedQuarters: 1, divergedQuarters: 1 }))
+  assert.ok(m, 'this speaks even when nothing else does')
+  assert.match(m!.title, /ingediend kwartaal is gewijzigd/)
+  assert.match(m!.body, /suppletie/, 'and names what has to be checked')
+  assert.equal(m!.link, '/dashboard/accountant/agenda',
+    'the per-client board — the stack of unconfirmed invoices cannot answer a question about a past quarter')
+})
+
+test('[SUPPLETIE] a STANDING one never sends a message by itself', () => {
+  // The nag test. A suppletie that nobody has acted on is still true tomorrow, and the morning after
+  // that, and forever — which is exactly the shape this module deletes everywhere else.
+  assert.equal(planAccountantDay(day({ divergedQuarters: 3 })), null)
+  assert.equal(planAccountantDay(day({ divergedQuarters: 3, newlyDivergedQuarters: 0 })), null)
+})
+
+test('[SUPPLETIE] …but it rides along on a morning that was already speaking', () => {
+  // The reminder that costs nothing: the message was going out anyway, so the standing duty is
+  // named in it. This is how a missed first message stops being a permanently missed one.
+  const m = planAccountantDay(day({ newToConfirm: 2, totalToConfirm: 9, divergedQuarters: 2 }))
+  assert.ok(m)
+  assert.match(m!.body, /2 gewijzigde ingediende kwartalen/)
+  assert.match(m!.body, /2 nieuwe stukken/, 'and still says what it came to say')
+  assert.match(m!.title, /nieuwe stukken/, 'the trigger keeps the title — nothing new happened on the filings')
+})
+
+test('[SUPPLETIE] the deadline still outranks it, and new work does not', () => {
+  // Order of urgency: a deadline about to become a fine, then a duty already incurred, then a stack
+  // that waits without cost.
+  const both = planAccountantDay(day({
+    daysToDeadline: 3, clientsNotFiled: 2, newlyDivergedQuarters: 1, divergedQuarters: 1, newToConfirm: 5, totalToConfirm: 5,
+  }))
+  assert.ok(both)
+  assert.match(both!.title, /Nog 3 dagen/, 'the deadline keeps the title')
+  assert.ok(both!.body.indexOf('aangiftedatum') < both!.body.indexOf('gewijzigd'),
+    'and the deadline sentence comes first')
+  assert.ok(both!.body.indexOf('gewijzigd') < both!.body.indexOf('nieuwe stukken'),
+    'a duty already incurred is named before a stack that waits')
+
+  const overNew = planAccountantDay(day({ newlyDivergedQuarters: 1, divergedQuarters: 1, newToConfirm: 5, totalToConfirm: 5 }))
+  assert.match(overNew!.title, /ingediend kwartaal is gewijzigd/, 'it does outrank new work')
+})
+
+test('[SUPPLETIE] the total only appears when it says something the trigger did not', () => {
+  // One moved, one standing: repeating "in totaal 1" after "een kwartaal is gewijzigd" is noise.
+  const same = planAccountantDay(day({ newlyDivergedQuarters: 1, divergedQuarters: 1 }))
+  assert.doesNotMatch(same!.body, /In totaal/)
+  const more = planAccountantDay(day({ newlyDivergedQuarters: 1, divergedQuarters: 4 }))
+  assert.match(more!.body, /In totaal staan er 4/)
+})
+
+test('[SUPPLETIE] a negative count cannot manufacture a message', () => {
+  // Counts come from a database read; a clamp here is cheaper than trusting every future caller.
+  assert.equal(planAccountantDay(day({ newlyDivergedQuarters: -3 })), null)
+  assert.equal(planAccountantDay(day({ divergedQuarters: -1, newToConfirm: 0 })), null)
 })

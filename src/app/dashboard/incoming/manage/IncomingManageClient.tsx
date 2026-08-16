@@ -87,6 +87,7 @@ import { incassoDisplayState, incassoLabel } from '@/lib/auto-incasso'
 import { supplierNameKey } from '@/lib/supplier-registry'
 import { rowMatchesQuery } from '@/lib/search'
 import { useToast } from '@/components/ui/Toast'
+import { useDialog } from '@/components/ui/Dialog'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
@@ -482,6 +483,8 @@ export default function IncomingManageClient({
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
+  // [SUPPLETIE] A duty with a legal clock is acknowledged, not faded — see bookAsCreditnota.
+  const dialog = useDialog()
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -1191,6 +1194,22 @@ export default function IncomingManageClient({
       })
       setCreditAsk(null)
       showToast(t('inkoop.geboektCredit'))
+      // [SUPPLETIE] The SECOND door into the same route — the correction modal is the first. Booking
+      // a debt as a credit note flips the sign of both the cost and the voorbelasting, so it is the
+      // single largest swing this screen can make; if that quarter is already at the Belastingdienst
+      // the owner has just acquired a reporting duty. The route composes the sentence; a screen that
+      // dropped it would leave that duty known only to the server.
+      const suppletie: string[] = Array.isArray(data.suppletie)
+        ? data.suppletie.filter((x: unknown): x is string => typeof x === 'string' && x.trim() !== '')
+        : []
+      if (suppletie.length > 0) {
+        // [TAAL-DB] Dutch, like the aangifte it is about.
+        await dialog.alert({
+          title: 'Let op: dit kwartaal is al ingediend',
+          message: suppletie.join('\n\n'),
+          tone: 'danger',
+        })
+      }
     } catch {
       showToast(t('inkoop.fout.offlineNiets'))
     } finally {

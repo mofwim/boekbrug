@@ -22,6 +22,8 @@
 
 import { useState } from 'react'
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+// [SUPPLETIE] A duty with a legal clock on it is not a toast — see the block at the save below.
+import { useDialog } from '@/components/ui/Dialog'
 import { M3, R } from '@/lib/design/tokens'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
@@ -45,6 +47,16 @@ export interface CorrectableInvoice {
 
 /** What the server confirms it stored. The caller updates its own row from THIS, never optimistically. */
 export interface CorrectionResult {
+  /**
+   * [SUPPLETIE] One Dutch sentence per already-filed quarter this correction moved, composed by the
+   * server (describeFiledQuarterImpact) so the sentence and its amount cannot disagree. Absent or
+   * empty on the ordinary correction, which is nearly all of them.
+   *
+   * [TAAL] Not translated, and that is the same rule the invoice PDF follows: this sentence is about
+   * a document sent to the Belastingdienst, and the words the owner has to recognise on that form —
+   * suppletie, aangifte, kwartaal — are the Dutch ones.
+   */
+  suppletie?: string[]
   total_ex_btw: number
   btw_amount: number
   total_inc_btw: number
@@ -70,6 +82,7 @@ export default function InvoiceCorrectionModal({
   onMessage: (text: string) => void
 }) {
   const t = translator(useLocale())
+  const dialog = useDialog()
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
   useCloseOnBack(true, onClose)
   const [amounts, setAmounts] = useState({
@@ -127,6 +140,28 @@ export default function InvoiceCorrectionModal({
       // amount the server may have refused, on a screen the owner pays from.
       onSaved(data as CorrectionResult)
       onClose()
+
+      // [SUPPLETIE] Handled HERE, and not left to each caller, because this modal is the one place
+      // every correction of a booked purchase invoice passes through. A caller that forgets is not
+      // a missing toast: it is an owner who never learns they owe the Belastingdienst a correction.
+      //
+      // A dialog rather than a toast, deliberately. The others on this screen report what the owner
+      // just did; this one reports a duty they acquired by doing it, with a legal clock attached
+      // (art. 10a AWR). Three seconds and a fade is the wrong shape for that — it has to be
+      // acknowledged. The bell keeps a copy either way; the server writes a notification too, so
+      // this sentence surviving the modal does not depend on the owner reading it now.
+      const suppletie = Array.isArray((data as { suppletie?: unknown }).suppletie)
+        ? ((data as { suppletie: unknown[] }).suppletie.filter((x): x is string => typeof x === 'string' && x.trim() !== ''))
+        : []
+      if (suppletie.length > 0) {
+        // [TAAL-DB] Dutch, like the aangifte it is about — see CorrectionResult.suppletie.
+        await dialog.alert({
+          title: 'Let op: dit kwartaal is al ingediend',
+          message: suppletie.join('\n\n'),
+          // 'danger' rather than 'error': nothing failed. Something became DUE.
+          tone: 'danger',
+        })
+      }
       // [SUPPLIER-ALIAS] When the server LEARNED something from this correction, say that instead
       // — it is the more useful of the two sentences. "Factuur gecorrigeerd" tells the owner what
       // they already know; naming the memory tells them they will not be typing this again next

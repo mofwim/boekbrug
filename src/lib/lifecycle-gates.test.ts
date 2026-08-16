@@ -1087,11 +1087,22 @@ test("[DAGSTART] the morning message stays silent unless something moved", () =>
   // that it speaks about work that is NEW and about a deadline that has MOVED, and otherwise says
   // nothing at all.
   const mod = code("src/lib/accountant-daily.ts");
-  assert.match(
-    mod, /if \(newWork === 0 && !deadline\) return null/,
-    "nothing new and no deadline band → NO message. Losing this line turns the whole thing into " +
-      "a daily nag, which is strictly worse than the silence it replaced",
-  );
+  // Read as a SHAPE rather than as one exact string. A third trigger was added later ([SUPPLETIE]:
+  // a filed quarter that has moved) and pinning the literal condition made a legitimate signal look
+  // like a regression — while a gate that only ever matches today's text stops describing the rule
+  // it is protecting. The rule is: every term in the early return is a thing that MOVED, and no
+  // term is a standing total. That is what turns this into a nag, and that is what is checked.
+  const guard = /if \(([^)]*?)\) return null/.exec(mod);
+  assert.ok(guard, "the early return that produces silence still exists");
+  assert.match(guard![1], /newWork === 0/, "no new work is part of being silent");
+  assert.match(guard![1], /!deadline/, "and no deadline band");
+  for (const standing of ["totalToConfirm", "divergedStanding", "clientsNotFiled"]) {
+    assert.ok(
+      !guard![1].includes(standing),
+      `${standing} is a STANDING total and may never trigger a message — that is the daily nag ` +
+        "this module exists to refuse, and it is strictly worse than the silence it replaced",
+    );
+  }
   assert.match(
     mod, /DEADLINE_BANDS as readonly number\[\]\)\.includes\(days\)/,
     "the deadline speaks on its bands, not every day — otherwise it repeats itself for a month",
@@ -10522,4 +10533,150 @@ test("[WACHTRIJ-VERS] a refreshed queue actually refreshes, and a bulk confirm e
   const unit = readFileSync("src/lib/queue-sync.test.ts", "utf8");
   assert.match(unit, /cannot resurrect an optimistically removed invoice/,
     "the membership half of the invariant is held by a test, not by a comment");
+});
+
+// ── [SUPPLETIE] A quarter that is already at the Belastingdienst ─────────────────────────────────
+//
+// art. 10a AWR jo. art. 15 Uitvoeringsbesluit OB 1968: once an entrepreneur becomes AWARE that a
+// filed BTW-aangifte was wrong, they must report it. Over €1.000 that is a formal suppletie; below,
+// it may be carried into the next regular return. The obligation is time-bound, and the app is the
+// only thing that knows the moment of awareness — it is the instant a change lands in a quarter
+// that has already been filed.
+//
+// The snapshot (btw_filings) and the divergence rule (btw-filing.ts) were already here and already
+// correct. What was missing is that nothing ASKED at the moment the books moved: the answer sat on
+// two screens, waiting for an owner who happened to open them, which for a duty with a clock on it
+// is the same as not knowing.
+
+test("[SUPPLETIE] the correction route asks whether it just moved a filed quarter — and tells the owner", () => {
+  // /api/invoice/[id]/amounts is THE door for correcting a booked purchase invoice: amounts, kind
+  // (a creditnota tick flips the sign of both the cost and the voorbelasting) and invoice_date. It
+  // carried six fail-closed guards and the filed quarter was not one of them.
+  //
+  // Not a seventh refusal, deliberately. The owner cannot issue a creditnota against their own
+  // supplier, and the figure being corrected is a reading of someone else's paper — refusing would
+  // leave the books permanently wrong AND the Belastingdienst uninformed, which is worse in both
+  // directions. Allow, compute, say the number.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /const filedImpact = await filedQuarterImpacts\(\{/, "the question is asked");
+
+  // BOTH dates. A corrected invoice_date moves the invoice out of one quarter and into another:
+  // the first loses the amount, the second gains it, and naming one describes half a correction.
+  assert.match(route, /dates: \[invoice\.invoice_date, patch\.invoice_date \?\? invoice\.invoice_date\]/,
+    "the quarter it left and the quarter it landed in");
+
+  // AFTER the write. An obligation announced for a correction that did not save is a suppletie
+  // filed over nothing.
+  const writeAt = route.indexOf('.update(patch)');
+  const askAt = route.indexOf("await filedQuarterImpacts({");
+  assert.ok(writeAt > 0 && askAt > writeAt, "asked after the row was actually stored");
+
+  // Three destinations, because the modal closes and a legal clock does not: the response (the
+  // dialog), the bell (survives the session), and the stamp (survives everything).
+  assert.match(route, /suppletie,/, "the sentence reaches the screen");
+  assert.match(route, /await createNotification\(\{[\s\S]{0,400}?Ingediend kwartaal \$\{impact\.label\} is gewijzigd/,
+    "…and the bell");
+  assert.match(route, /await stampDivergence\(\{/, "…and the moment is recorded");
+
+  // [NO-SILENT-EMPTY] A failed check is not a clean bill of health. This is the one place where
+  // silence would let a reporting duty pass unnoticed.
+  assert.match(route, /if \(filedImpact\.unknown\) \{/);
+  assert.match(route, /We konden niet nakijken of dit kwartaal al is ingediend/);
+});
+
+test("[SUPPLETIE] the sentence reaches a human on BOTH doors into that route", () => {
+  // The correction modal is one door; "Ja, dit is een creditnota" on the pay screen is the other,
+  // and it makes the single largest swing either screen can produce — the cost and the
+  // voorbelasting both change sign. A door that drops the sentence leaves the duty known only to
+  // the server.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /await dialog\.alert\(\{/, "a dialog, not a toast");
+  assert.match(modal, /Let op: dit kwartaal is al ingediend/);
+  // A toast reports what the owner just did; this reports a duty they acquired by doing it. Three
+  // seconds and a fade is the wrong shape, so it has to be acknowledged.
+  const suppletieAt = modal.indexOf("const suppletie = Array.isArray");
+  assert.ok(suppletieAt > 0, "the modal reads the field");
+  assert.doesNotMatch(modal.slice(suppletieAt), /onMessage\(suppletie/, "never delivered as a toast");
+
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const creditAt = manage.indexOf("async function bookAsCreditnota");
+  assert.ok(creditAt > 0, "the creditnota door still exists");
+  const creditBody = manage.slice(creditAt, manage.indexOf("\n  }", manage.indexOf("setCreditBusy(false)", creditAt)));
+  assert.match(creditBody, /data\.suppletie/, "and it reads the same field");
+  assert.match(creditBody, /dialog\.alert\(\{/, "with the same acknowledgement");
+});
+
+test("[SUPPLETIE] the moment of awareness is written once and never moved", () => {
+  // art. 10a runs its clock from the FIRST knowledge, not the latest edit. A second correction three
+  // weeks later must not restart it. Proven on a real Postgres 16 with these two statements: after
+  // a 10:00 stamp and a later 14:00 one, first_divergence_at held at the first and
+  // last_divergence_at moved to the second.
+  const lib = code("src/lib/filed-quarter.ts");
+  const stampAt = lib.indexOf("export async function stampDivergence");
+  assert.ok(stampAt > 0);
+  const stamp = lib.slice(stampAt);
+  assert.match(stamp, /\.is\("first_divergence_at", null\)/,
+    "the first stamp is guarded by the column still being empty — that is what makes it permanent");
+  // The second write is what keeps last_ current, and it must be unconditional.
+  const lastAt = stamp.indexOf('update({ last_divergence_at: args.nowIso })');
+  assert.ok(lastAt > 0, "the follow-up write exists");
+  assert.doesNotMatch(stamp.slice(lastAt, lastAt + 400), /\.is\("first_divergence_at", null\)/,
+    "…and is not guarded, or a quarter would freeze at its first movement");
+
+  // [DEPLOY-SAFE] The columns arrive by a hand-applied migration, and losing a timestamp may never
+  // undo or hold up the correction that was already stored.
+  assert.match(stamp, /isMissingColumn\(error\.message/);
+  assert.match(stamp, /reason: "missing_column"/);
+
+  const sql = readFileSync("supabase/migrations/btw_filings_divergence.sql", "utf8");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS first_divergence_at timestamptz/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS last_divergence_at timestamptz/);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS btw_filings_diverged_idx/,
+    "the accountant's morning run reads this every day");
+});
+
+test("[SUPPLETIE] the accountant hears about it, and is not nagged about it", () => {
+  // The accountant is the person who actually files a suppletie, and this app sends them almost
+  // nothing. But a standing obligation repeated every morning is the message you stop reading —
+  // the shape accountant-daily.ts deletes everywhere else. So: NEW speaks, STANDING rides along.
+  const plan = code("src/lib/accountant-daily.ts");
+  assert.match(plan, /newlyDivergedQuarters: number/);
+  assert.match(plan, /divergedQuarters: number/);
+  assert.match(plan, /if \(newWork === 0 && !deadline && diverged === 0\) return null/,
+    "a newly moved filing is worth a morning on its own");
+  // …and the standing count is NOT in that condition, or it would send every day forever.
+  const trigger = /if \(newWork === 0 && !deadline && diverged === 0\) return null/.exec(plan);
+  assert.ok(trigger && !/divergedStanding/.test(trigger[0]),
+    "the standing total may never be a reason to send");
+
+  const cron = code("src/app/api/cron/accountant-daily/route.ts");
+  assert.match(cron, /\.not\("first_divergence_at", "is", null\)/, "read from the stamp, not recomputed");
+  assert.match(cron, /newlyDivergedQuarters, divergedQuarters,/, "and handed to the pure planner");
+  // Degrades to zero, like the deadline half above it: an unreadable answer makes the morning
+  // quieter rather than inventing a suppletie that may not exist.
+  assert.match(cron, /let newlyDivergedQuarters = 0;/);
+  assert.match(cron, /isMissingColumn\(message\) \|\| isMissingRelation\(message\)/);
+});
+
+test("[SUPPLETIE] one definition of a filed quarter, not two", () => {
+  // quarterBounds / FILING_COLS / figuresOf / readFiling were private to the filing route. The
+  // correction routes ask the same question, and two copies of THIS rule drifting means one screen
+  // announcing a suppletie while another stays quiet about the same quarter.
+  const lib = code("src/lib/filed-quarter.ts");
+  for (const name of ["quarterBounds", "quarterOf", "figuresOf", "readFiling", "filedQuarterImpacts"]) {
+    assert.match(lib, new RegExp(`export (async )?function ${name}`), `${name} lives in the shared module`);
+  }
+  const route = code("src/app/api/btw/file/route.ts");
+  assert.match(route, /from "@\/lib\/filed-quarter"/, "the filing route imports them");
+  assert.doesNotMatch(route, /function readFiling\(/, "and keeps no copy of its own");
+  assert.doesNotMatch(route, /function quarterBounds\(/);
+
+  // The divergence itself is computed by the SAME engine the aangifte and /api/result use, so the
+  // delta announced at the moment of the correction is the delta those surfaces will show.
+  assert.match(lib, /computeResultForRange\(\{ pipeline: args\.pipeline/);
+  assert.match(lib, /computeFilingDivergence\(figuresOf\(row\)/);
+
+  const unit = readFileSync("src/lib/filed-quarter.test.ts", "utf8");
+  assert.match(unit, /a filing read that FAILED is unknown, never 'nothing moved'/,
+    "the fail-closed half is held by a test");
 });
