@@ -80,8 +80,11 @@ function amount(fragment: string, tag: string): number {
 /** Every InvoiceLine's own net amount, in document order. */
 function lineAmounts(xml: string): number[] {
   return [
+// [CREDITNOTA-DOCUMENT] Reads BOTH document shapes. A creditnota is a CreditNote with
+// CreditNoteLine/CreditedQuantity, and a helper that knew only the invoice spelling would find
+// ZERO lines on one — and then assert nothing at all, vacuously, forever.
     ...xml.matchAll(
-      /<cac:InvoiceLine>[\s\S]*?<cbc:LineExtensionAmount[^>]*>(-?[\d.]+)<\/cbc:LineExtensionAmount>/g,
+      /<cac:(?:Invoice|CreditNote)Line>[\s\S]*?<cbc:LineExtensionAmount[^>]*>(-?[\d.]+)<\/cbc:LineExtensionAmount>/g,
     ),
   ].map((m) => Number(m[1]));
 }
@@ -153,9 +156,9 @@ function assertConformant(xml: string, what: string) {
   // itself. The file said 150 x 0,83 next to a line amount of 123,85 — sixty-five cents apart, in
   // the document a validator multiplies out. cbc:BaseQuantity is UBL's answer: the number of units
   // the price applies to.
-  const linesXml = [...xml.matchAll(/<cac:InvoiceLine>([\s\S]*?)<\/cac:InvoiceLine>/g)].map((m) => m[1]);
+  const linesXml = [...xml.matchAll(/<cac:(?:Invoice|CreditNote)Line>([\s\S]*?)<\/cac:(?:Invoice|CreditNote)Line>/g)].map((m) => m[1]);
   linesXml.forEach((ln, i) => {
-    const qty = Number((ln.match(/<cbc:InvoicedQuantity[^>]*>(-?[\d.]+)</) ?? [, "NaN"])[1]);
+    const qty = Number((ln.match(/<cbc:(?:Invoiced|Credited)Quantity[^>]*>(-?[\d.]+)</) ?? [, "NaN"])[1]);
     const price = amount(ln, "PriceAmount");
     const base = amount(ln, "BaseQuantity");
     const net = amount(ln, "LineExtensionAmount");

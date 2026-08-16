@@ -65,7 +65,11 @@ test("[UBL-CREDIT] a creditnota is type 381 and carries POSITIVE amounts", () =>
     [line({ quantity: -2, unit_price: -50, line_total: -100 })],
     supplier,
   );
-  assert.match(xml, /<cbc:InvoiceTypeCode>381<\/cbc:InvoiceTypeCode>/, "a creditnota must be UNCL 1001 code 381");
+  // [CREDITNOTA-DOCUMENT] The code did not change meaning; the element it lives in follows the
+  // document type, because UBL 2.1 has two of them and 381 is not in the Invoice code list.
+  assert.match(xml, /<cbc:CreditNoteTypeCode>381<\/cbc:CreditNoteTypeCode>/, "a creditnota must be UNCL 1001 code 381");
+  assert.match(xml, /^<\?xml[^>]*\?>\s*<CreditNote/, "…in a CreditNote document, not an Invoice with a code on it");
+  assert.match(xml, /xsd:CreditNote-2/, "…in the CreditNote namespace");
   const nums = amounts(xml);
   assert.ok(nums.length > 0, "no amounts found — the extraction broke, not the export");
   assert.ok(
@@ -206,7 +210,7 @@ test("[MIN-REGEL] a minus typed into the price is moved to the quantity", () => 
     `a stored negative price must not reach the file: ${priceAmounts(xml).join(", ")}`,
   );
   assert.match(xml, /<cbc:PriceAmount[^>]*>3\.86<\/cbc:PriceAmount>/, "the magnitude is kept");
-  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>-1<\/cbc:InvoicedQuantity>/, "and the minus moved to the quantity");
+  assert.match(xml, /<cbc:(?:Invoiced|Credited)Quantity[^>]*>-1<\/cbc:(?:Invoiced|Credited)Quantity>/, "and the minus moved to the quantity");
   assert.match(
     xml, /<cbc:LineExtensionAmount[^>]*>-3\.86<\/cbc:LineExtensionAmount>/,
     "R120 checks quantity × price against this — −1 × 3,86 must still be −3,86",
@@ -429,7 +433,7 @@ test("[UBL-CREDIT] a creditnota line with no quantity still multiplies out", () 
     [line({ description: "Factuurbedrag", quantity: null as unknown as number, unit_price: 100, line_total: -100 })],
     supplier,
   );
-  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>1</, "one of it, not minus one of it");
+  assert.match(xml, /<cbc:CreditedQuantity[^>]*>1</, "one of it, not minus one of it");
   assert.match(xml, /<cbc:LineExtensionAmount[^>]*>100\.00</, "and the amount is the credited one");
   assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</, "1 x 100 = 100 — the arithmetic R120 checks");
   assert.doesNotMatch(xml, /<cbc:BaseQuantity/, "…so no per-line price form is needed");
@@ -445,12 +449,12 @@ test("[UBL-CREDIT] a creditnota with no lines is exportable, like the factuur it
     [],
     supplier,
   );
-  assert.equal((xml.match(/<cac:InvoiceLine>/g) ?? []).length, 1, "BR-16: a document needs at least one line");
-  assert.match(xml, /<cbc:InvoiceTypeCode>381<\/cbc:InvoiceTypeCode>/);
+  assert.equal((xml.match(/<cac:CreditNoteLine>/g) ?? []).length, 1, "BR-16: a document needs at least one line");
+  assert.match(xml, /<cbc:CreditNoteTypeCode>381<\/cbc:CreditNoteTypeCode>/);
   // The synthesized line follows the STORED convention (-1 x 100), so the flip produces the form
   // UBL wants. A synthesized `quantity: 1` would come out of the flip as -1 against +100, and
   // PEPPOL-EN16931-R120 recomputes exactly that product.
-  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>1</, "one of it, positive, after the flip");
+  assert.match(xml, /<cbc:CreditedQuantity[^>]*>1</, "one of it, positive, after the flip");
   assert.match(xml, /<cbc:PriceAmount[^>]*>100\.00</);
   assert.match(xml, /<cbc:LineExtensionAmount[^>]*>100\.00</);
   assert.match(xml, /<cbc:TaxInclusiveAmount[^>]*>121\.00</, "and the customer is credited 121,00");
@@ -480,13 +484,16 @@ test("[UBL-CREDIT] a factuur without lines is synthesized exactly as it always w
 //
 // Fail either and the file is refused — the invoice looks perfect on paper and never lands.
 
-/** Every InvoiceLine's numbers, pulled back out of the XML the way a validator reads them. */
+/** Every line's numbers, pulled back out of the XML the way a validator reads them.
+ *  [CREDITNOTA-DOCUMENT] Reads BOTH document shapes: a creditnota carries CreditNoteLine and
+ *  CreditedQuantity, and a reader that knew only the invoice spelling would find zero lines on one
+ *  and silently assert nothing. */
 function readLines(xml: string) {
-  return [...xml.matchAll(/<cac:InvoiceLine>([\s\S]*?)<\/cac:InvoiceLine>/g)].map((m) => {
+  return [...xml.matchAll(/<cac:(?:Invoice|CreditNote)Line>([\s\S]*?)<\/cac:(?:Invoice|CreditNote)Line>/g)].map((m) => {
     const body = m[1];
     const num = (re: RegExp) => { const hit = body.match(re); return hit ? Number(hit[1]) : null; };
     return {
-      quantity: num(/<cbc:InvoicedQuantity[^>]*>([-\d.]+)</),
+      quantity: num(/<cbc:(?:Invoiced|Credited)Quantity[^>]*>([-\d.]+)</),
       lineAmount: num(/<cbc:LineExtensionAmount[^>]*>([-\d.]+)</),
       price: num(/<cbc:PriceAmount[^>]*>([-\d.]+)</),
       baseQuantity: num(/<cbc:BaseQuantity[^>]*>([-\d.]+)</),
@@ -685,4 +692,65 @@ test("[KOPER-LAND] the country follows exactly the evidence the reverse charge f
     [line({ btw_rate: 0, line_total: 100 })], supplier).xml;
   assert.doesNotMatch(verdacht, /<cbc:ID>AE<\/cbc:ID>/, "no reverse charge on a suspect number…");
   assert.equal(buyerCountryOf(verdacht), "NL", "…and therefore no country derived from it either");
+});
+
+// ─── [CREDITNOTA-DOCUMENT] The round trip this app failed on its own file ────
+//
+// UBL 2.1 has TWO document types. A credit note is a CreditNote in its own namespace, with
+// CreditNoteTypeCode and CreditNoteLine/CreditedQuantity; EN 16931 and Peppol route 381 through it,
+// and 381 is not in the Invoice transaction's code list at all. Many importers dispatch on the root
+// element before they read any code.
+//
+// Including this one, which is what makes this provable rather than arguable: e-invoice.ts decides
+// `isCreditNote: /<(?:\w+:)?CreditNote[\s>]/` — the ROOT ELEMENT, never the type code. So a
+// creditnota exported here and re-imported here came back as a positive purchase invoice with
+// positive voorbelasting. The app contradicted itself in one round trip; a stranger's bookkeeping
+// does the same thing with the owner's correction.
+
+test("[CREDITNOTA-DOCUMENT] this app reads its own creditnota back as a credit", async () => {
+  const { parseEInvoice } = await import("./e-invoice");
+  const { xml } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-2026-004",
+             total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ description: "Terugname", quantity: -1, unit_price: 100, line_total: -100 })],
+    supplier,
+  );
+  const gelezen = parseEInvoice(xml);
+  assert.equal(gelezen?.isCreditNote, true, "the reader must recognise it — it dispatches on the root element");
+  assert.equal(gelezen?.totalIncBtw, 121, "…and still read the amounts out of it");
+});
+
+test("[CREDITNOTA-DOCUMENT] every element that names the document type follows it", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-1", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ quantity: -1, unit_price: 100, line_total: -100 })], supplier,
+  );
+  assert.match(xml, /^<\?xml[^>]*\?>\s*<CreditNote/, "root");
+  assert.match(xml, /xsd:CreditNote-2/, "namespace");
+  assert.match(xml, /<cbc:CreditNoteTypeCode>381</, "type code element");
+  assert.match(xml, /<cac:CreditNoteLine>/, "line element");
+  assert.match(xml, /<cbc:CreditedQuantity/, "quantity element");
+  // A half-converted document is worse than the original: an importer that DID read the code would
+  // then meet 381 inside an Invoice, and one that reads the root would meet InvoiceLine inside a
+  // CreditNote. Neither spelling of the invoice form may survive anywhere in the file.
+  assert.doesNotMatch(xml, /InvoiceTypeCode|<cac:InvoiceLine>|<cbc:InvoicedQuantity/,
+    "no invoice-shaped element may remain in a CreditNote");
+});
+
+test("[CREDITNOTA-DOCUMENT] a factuur is untouched, element for element", () => {
+  const { xml } = buildInvoiceUbl(header(), [line()], supplier);
+  assert.match(xml, /^<\?xml[^>]*\?>\s*<Invoice/);
+  assert.match(xml, /xsd:Invoice-2/);
+  assert.match(xml, /<cbc:InvoiceTypeCode>380</);
+  assert.match(xml, /<cac:InvoiceLine>/);
+  assert.match(xml, /<cbc:InvoicedQuantity/);
+  assert.doesNotMatch(xml, /CreditNote/, "not one credit-note element on an ordinary invoice");
+});
+
+test("[CREDITNOTA-DOCUMENT] a pro forma is still an Invoice — only a creditnota is the other document", () => {
+  // invoiceTypeCode() knows three codes; only 381 has its own UBL document. A pro forma (325) is an
+  // Invoice that says what it is in its code, and moving it too would be a second defect.
+  const { xml } = buildInvoiceUbl(header({ invoice_type: "pro_forma" }), [line()], supplier);
+  assert.match(xml, /^<\?xml[^>]*\?>\s*<Invoice/);
+  assert.match(xml, /<cbc:InvoiceTypeCode>325</);
 });

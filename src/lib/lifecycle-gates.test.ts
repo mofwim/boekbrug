@@ -9344,6 +9344,30 @@ test("[DEEL-CREDIT-CUMULATIEF] the same line cannot be credited twice", () => {
   assert.match(route, /earlier creditnota lines unreadable — refusing to credit/);
 });
 
+test("[CREDITNOTA-DOCUMENT] a creditnota is a CreditNote, not an Invoice with a code on it", () => {
+  const mod = code("src/lib/ubl-export.ts");
+  assert.match(mod, /cn: "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"/);
+  assert.match(mod, /const isCreditNote = \(header\.invoice_type \?\? "factuur"\) === "creditnota";/);
+  // Elk element dat het documenttype noemt volgt het. Een half omgezet document is erger dan het
+  // origineel: een importeur die de CODE leest treft dan 381 in een Invoice, en een die de WORTEL
+  // leest treft InvoiceLine in een CreditNote.
+  assert.match(mod, /isCreditNote \? NS\.cn : NS\.inv/, "namespace");
+  assert.match(mod, /const docName = isCreditNote \? "CreditNote" : "Invoice";/, "root element");
+  assert.match(mod, /isCreditNote \? "CreditNoteTypeCode" : "InvoiceTypeCode"/, "type code element");
+  assert.match(mod, /isCreditNote \? "CreditNoteLine" : "InvoiceLine"/, "line element");
+  assert.match(mod, /isCreditNote \? "CreditedQuantity" : "InvoicedQuantity"/, "quantity element");
+
+  // Het bewijs dat dit geen smaakkwestie is, staat in dit huis: de eigen lezer beslist op de
+  // WORTEL en nooit op de code, dus een creditnota die hier uitging kwam hier terug als een
+  // positieve inkoopfactuur met positieve voorbelasting.
+  const reader = code("src/lib/e-invoice.ts");
+  assert.match(reader, /isCreditNote: \/<\(\?:\\w\+:\)\?CreditNote\[\\s>\]\//,
+    "the reader dispatches on the root element — that is what makes the export's shape load-bearing");
+  const spec = readFileSync("src/lib/ubl-export.test.ts", "utf8");
+  assert.match(spec, /this app reads its own creditnota back as a credit/,
+    "…and the round trip is asserted, not merely argued");
+});
+
 test("[KOPER-LAND] the e-factuur states the buyer's real country", () => {
   const mod = code("src/lib/ubl-export.ts");
   assert.doesNotMatch(mod, /cusAddr\.ele\(NS\.cac, "Country"\)\.ele\(NS\.cbc, "IdentificationCode"\)\.txt\("NL"\)/,

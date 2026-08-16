@@ -303,6 +303,9 @@ export function lineVatKind(line: UblInvoiceLine, documentIsReverseCharged = fal
 
 const NS = {
   inv: "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+  // [CREDITNOTA-DOCUMENT] UBL 2.1 has TWO document types, not one document with a code on it. A
+  // credit note is a CreditNote in its own namespace — see the block above buildInvoiceUbl.
+  cn: "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2",
   cbc: "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
   cac: "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
 };
@@ -561,7 +564,21 @@ export function buildInvoiceUbl(
 
   const sName = supplierName(supplier)!;
 
-  const root = create({ version: "1.0", encoding: "UTF-8" }).ele(NS.inv, "Invoice", {
+  // ── [CREDITNOTA-DOCUMENT] A credit note is a DIFFERENT UBL document ──
+  //
+  // This wrote <Invoice> for everything and carried the direction in InvoiceTypeCode 381. UBL 2.1
+  // has two document types, and EN 16931 / Peppol route 381 through CreditNote-2 with
+  // CreditNoteTypeCode and CreditNoteLine — 381 is not even in the Invoice transaction's code list.
+  // Many importers dispatch on the root element before reading any code.
+  //
+  // Including this one. Proven by round trip, in this repo: e-invoice.ts:293 decides
+  // `isCreditNote: /<(?:\w+:)?CreditNote[\s>]/.test(...)` — the ROOT ELEMENT, never the type code
+  // — so a creditnota exported here and re-imported here came back isCreditNote:false and booked
+  // as a positive purchase invoice with positive voorbelasting. The app contradicted itself in one
+  // round trip; a stranger's bookkeeping does the same thing with the owner's correction.
+  const isCreditNote = (header.invoice_type ?? "factuur") === "creditnota";
+  const docName = isCreditNote ? "CreditNote" : "Invoice";
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele(isCreditNote ? NS.cn : NS.inv, docName, {
     "xmlns:cbc": NS.cbc,
     "xmlns:cac": NS.cac,
   });
@@ -571,7 +588,8 @@ export function buildInvoiceUbl(
   root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
   root.ele(NS.cbc, "IssueDate").txt(issueDate);
   if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
-  root.ele(NS.cbc, "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
+  // The code keeps its meaning; only the element it lives in follows the document type.
+  root.ele(NS.cbc, isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
   root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
 
   // ── AccountingSupplierParty (the ZZP'er) ──
@@ -695,7 +713,7 @@ export function buildInvoiceUbl(
   effLines.forEach((l, i) => {
     const rate = Number(l.btw_rate ?? 0);
     const ex = round2(Number(l.line_total ?? 0));
-    const line = root.ele(NS.cac, "InvoiceLine");
+    const line = root.ele(NS.cac, isCreditNote ? "CreditNoteLine" : "InvoiceLine");
     line.ele(NS.cbc, "ID").txt(String(i + 1));
     // [UNIT] Hier stond `unitCode: "C62"` HARDGECODEERD op elke regel. C62 betekent
     // "one / stuk" — juist voor een product, en fout voor alles wat je per uur, per m² of per
@@ -733,7 +751,7 @@ export function buildInvoiceUbl(
     const priceCarriedTheMinus = storedPrice < 0;
     const aantal = priceCarriedTheMinus ? -storedQuantity : storedQuantity;
     const stuksprijs = Math.abs(storedPrice);
-    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
+    line.ele(NS.cbc, isCreditNote ? "CreditedQuantity" : "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
 
     // [REGEL-KORTING] Wat de regel kostte VOORDAT haar eigen korting eraf ging.

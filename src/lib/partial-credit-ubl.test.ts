@@ -142,8 +142,11 @@ function creditnotaUbl(g: Geval): { xml: string; totalExBtw: number } {
 }
 
 /** Elk cbc-getal binnen ÉÉN regelblok, zodat een lezing nooit naar een buurregel afdwaalt. */
+// [CREDITNOTA-DOCUMENT] Reads BOTH document shapes. A creditnota is a CreditNote with
+// CreditNoteLine/CreditedQuantity, and a helper that knew only the invoice spelling would find
+// ZERO lines on one — and then assert nothing at all, vacuously, forever.
 function lineBlocks(xml: string): string[] {
-  return [...xml.matchAll(/<cac:InvoiceLine>([\s\S]*?)<\/cac:InvoiceLine>/g)].map((m) => m[1]);
+  return [...xml.matchAll(/<cac:(?:Invoice|CreditNote)Line>([\s\S]*?)<\/cac:(?:Invoice|CreditNote)Line>/g)].map((m) => m[1]);
 }
 function num(block: string, re: RegExp): number | null {
   const m = block.match(re);
@@ -164,7 +167,7 @@ for (const g of CASES) {
     let sum = 0;
     for (const b of blocks) {
       const lea = num(b, /<cbc:LineExtensionAmount[^>]*>([-\d.]+)</);
-      const aantal = num(b, /<cbc:InvoicedQuantity[^>]*>([-\d.]+)</);
+      const aantal = num(b, /<cbc:(?:Invoiced|Credited)Quantity[^>]*>([-\d.]+)</);
       const prijs = num(b, /<cbc:PriceAmount[^>]*>([-\d.]+)</);
       const baseQuantity = num(b, /<cbc:BaseQuantity[^>]*>([-\d.]+)</) ?? 1;
       const aftrek = num(b, /<cac:AllowanceCharge>[\s\S]*?<cbc:Amount[^>]*>([-\d.]+)</) ?? 0;
