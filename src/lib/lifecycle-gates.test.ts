@@ -10680,3 +10680,176 @@ test("[SUPPLETIE] one definition of a filed quarter, not two", () => {
   assert.match(unit, /a filing read that FAILED is unknown, never 'nothing moved'/,
     "the fail-closed half is held by a test");
 });
+
+test("[DODE-TEST] no test file has live code after its own process.exit()", () => {
+  // 224 test files in this repo end with `console.log(summary); process.exit(...)`. Append a new
+  // section to one of them — the natural way to add a case — and not one line of it runs. The file
+  // still prints its old count and still exits 0, so `npm run gates` goes green over a section that
+  // was never executed.
+  //
+  // Measured, not theorised: a block of eighteen assertions was appended to btw-filing.test.ts and
+  // the run reported "36 passed" — the count from before it existed. It was noticed only because
+  // the new test NAMES were missing from the output, which is not something a gate run checks.
+  //
+  // Dead assertions are worse than no assertions: they read as coverage. This is the same defect
+  // class this whole file is built around — a rule that was written, argued for, and never reached.
+  const files: string[] = [];
+  (function walk(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      const p = `${dir}/${entry}`;
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.test\.tsx?$/.test(p)) files.push(p);
+    }
+  })("src");
+  for (const dir of ["tests"]) if (existsSync(dir)) (function walk(d: string) {
+    for (const entry of readdirSync(d)) {
+      const p = `${d}/${entry}`;
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.test\.tsx?$/.test(p)) files.push(p);
+    }
+  })(dir);
+
+  let checked = 0;
+  const offenders: string[] = [];
+  for (const file of files) {
+    // LINE-based, and that is not a detail. Matching the substring "process.exit(" finds this
+    // gate's own assertion text and every other file that merely mentions it, so the detector's
+    // first version reported itself. A top-level exit is a STATEMENT at the start of a line.
+    const lines = code(file).split("\n");
+    let at = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/^process\.exit\(/.test(lines[i])) { at = i; break; }
+    }
+    if (at < 0) continue;
+    checked++;
+    // Everything on later LINES. Slicing by character index breaks when the exit is the final line
+    // with no trailing newline: indexOf("\n") is -1, slice(0) returns the whole file, and every
+    // such file reports itself. That is how the first version flagged three clean ones.
+    const after = lines.slice(at + 1).join("\n");
+    // Only ASSERTIONS count as an offence, not scaffolding. accountant-access.test.ts wraps its
+    // whole body in `async function main()` and calls it at the end, so `}` and `main();` sit after
+    // an exit that is genuinely the last statement of that function — flagging those would be a
+    // false alarm, and a gate that cries wolf gets switched off. What is never harmless is a
+    // `check(` or an `assert` down there: that is a test claiming coverage it does not have.
+    if (/\b(check|assert|test|it)\s*[.(]/.test(after)) {
+      offenders.push(`${file}: ${after.trim().split("\n")[0].slice(0, 70)}`);
+    }
+  }
+  // 283 test files; 63 end with the top-level `console.log(summary); process.exit(...)` shape this
+  // gate is about. The floor is that count, and the direction is deliberate: a new file using the
+  // pattern pushes it UP and still passes, while a detector that stopped matching pushes it DOWN
+  // and fails. An INDENTED exit is excluded on purpose — inside a conditional block the code after
+  // it is reachable, and flagging those would be a false alarm that gets the gate switched off.
+  assert.ok(checked >= 60, `the scan must be looking at the real test corpus, saw ${checked}`);
+  assert.deepEqual(offenders, [],
+    "code after process.exit() never runs — move it above the summary, or the file reports a count " +
+    "that predates it");
+});
+
+test("[SUPPLETIE-VERREKEND] the app now produces the number it has been telling owners to carry", () => {
+  // Two screens have said "onder €1.000 mag je dit verwerken in je volgende aangifte" for a while.
+  // Nothing carried anything: the aangifte query is date-ranged to its own quarter, so the owner was
+  // told to move a figure forward and left to work out which, from where, and how much.
+  const route = code("src/app/api/aangifte/route.ts");
+  assert.match(route, /const corrections = await outstandingCorrections\(\{ pipeline, ownerId, year, quarter \}\)/);
+  assert.match(route, /corrections: corrections\.corrections\.map/, "and they reach the screen");
+  // [NO-SILENT-EMPTY] An empty list says "nothing to carry"; this says "we could not look". On the
+  // screen a tax return is filled in from, those two may never render the same.
+  assert.match(route, /correctionsUnknown: corrections\.unknown/);
+
+  // BESIDE the rubrieken, exactly like the ICP-opgaaf. A correction from a previous quarter
+  // reconciles with no invoice of this one, and a total that traces back to no document is the
+  // shape of figure nobody trusts.
+  const lib = code("src/lib/filed-quarter.ts");
+  assert.match(lib, /if \(route === "carry"\) \{/,
+    "only a carry is offered — a suppletie needs its own form");
+  assert.doesNotMatch(lib, /route === "suppletie"[^\n]*corrections\.push/,
+    "a correction over €1.000 is never presented as a line to carry");
+
+  const client = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  // The KEY, not the sentence. [TAAL] moved this copy into the catalogue — a component holds no
+  // language of its own — and the two [TAAL] gates already prove the key exists and is rendered, so
+  // matching the Dutch here would only re-pin a string that has moved once and can move again.
+  assert.match(client, /t\('aang\.correcties'\)/);
+  assert.match(client, /t\('aang\.correcties\.uitleg'\)/, "…including what the owner is told to do with it");
+  assert.match(client, /correctionsUnknown && \(/, "and the screen can say it could not look");
+  assert.match(client, /t\('aang\.correcties\.onbekend'\)/);
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  assert.match(messages, /'aang\.correcties': \{\s*nl: 'Correcties uit eerdere kwartalen'/,
+    "and Dutch is the source language of the key, per AGENTS.md");
+});
+
+test("[SUPPLETIE-VERREKEND] a carried correction cannot be declared twice, or closed by a guess", () => {
+  // The moment the aangifte names a correction, it owes the owner an answer to "and now it is
+  // done" — or it offers the same one next quarter and the figure is declared twice.
+  //
+  // What is recorded is an AMOUNT, not a flag, and the reason is the second movement: a quarter
+  // corrected to −160 (carried) and then moved to −210 still owes −50. A boolean would make that
+  // invisible, which is the more expensive of the two mistakes.
+  const filing = code("src/lib/btw-filing.ts");
+  assert.match(filing, /export function outstandingCorrection\(btwSaldoDelta: number, carriedSaldo/);
+  assert.match(filing, /return round2\(delta - \(Number\.isFinite\(carried\) \? carried : 0\)\)/);
+  assert.match(filing, /export function correctionRoute\(outstanding: number\)/,
+    "the route is judged on what REMAINS, not on the whole movement");
+
+  const carry = code("src/app/api/btw/carry/route.ts");
+  // NEVER inferred from a filing. Marking a correction carried because a later quarter was filed
+  // assumes the owner included it — and when they did not, the app has silently discharged a duty
+  // at the Belastingdienst that still stands.
+  assert.match(carry, /export async function POST/);
+  assert.doesNotMatch(carry, /btw\.filed/, "this is not a side effect of filing a quarter");
+  // The amount is recomputed server-side, never taken from the request: a screen left open while
+  // the books moved would otherwise record a carry that no longer matches them.
+  assert.match(carry, /outstanding = outstandingCorrection\(divergence\.btwSaldoDelta, alreadyCarried\)/);
+  assert.doesNotMatch(carry, /body\?\.(amount|outstanding|saldo)/, "no amount is accepted from the client");
+  // ADDED, not replaced — asserted on the WRITE below, not on the file: the audit trail records
+  // the same expression, so a whole-file match stayed green while the update was changed to
+  // overwrite. Measured; the negative control passed until this moved.
+  // The threshold is re-checked here, because it decides which FORM the Belastingdienst expects.
+  assert.match(carry, /if \(route === "suppletie"\) \{/);
+  assert.match(carry, /code: "suppletie_required"/);
+  // Forward only. A correction recorded against the very return it came from is not a shape that
+  // exists.
+  assert.match(carry, /if \(!isBefore\(from, into\)\) \{/);
+  // [DEPLOY-SAFE] A write that recorded nothing must not answer ok — the owner would believe the
+  // correction is closed and it would be offered again next quarter.
+  assert.match(carry, /code: "not_migrated"/);
+  assert.match(carry, /status: 503/);
+
+  // The snapshot is NOT rewritten. Re-freezing the earlier quarter would make the arithmetic come
+  // out and destroy the only record of what was actually sent.
+  //
+  // Sliced to the UPDATE payload. A whole-file search for those field names matches the READ that
+  // recomputes the divergence — `omzet: result.omzet` and its siblings are how the current figures
+  // are handed to computeFilingDivergence — so it would fail on correct code, which is the kind of
+  // gate that gets deleted rather than fixed.
+  const updateAt = carry.indexOf('.update({');
+  assert.ok(updateAt > 0, "the carry still writes something");
+  const payload = carry.slice(updateAt, carry.indexOf("})", updateAt));
+  for (const frozen of ["omzet", "kosten", "btw_verschuldigd", "btw_voorbelasting", "btw_saldo", "filed_at"]) {
+    assert.ok(!new RegExp(`\\b${frozen}:`).test(payload),
+      `[FILING-NO-OVERWRITE] a carry may not write ${frozen} — the frozen figures are the only ` +
+      "record of what was actually sent to the Belastingdienst");
+  }
+  assert.match(payload, /carried_saldo: alreadyCarried \+ outstanding/,
+    "the amount is ADDED to what was carried before: a quarter can be corrected in two steps, and " +
+    "each step is declared in the return that was open at the time");
+
+  const sql = readFileSync("supabase/migrations/btw_filings_carried.sql", "utf8");
+  for (const col of ["carried_saldo", "carried_into_year", "carried_into_quarter", "carried_at"]) {
+    assert.match(sql, new RegExp(`ADD COLUMN IF NOT EXISTS ${col}`), col);
+  }
+  assert.match(sql, /carried_into_quarter BETWEEN 1 AND 4/, "\"verwerkt in 2026-Q7\" never reaches an accountant");
+
+  // And the tick belongs to the owner, on the row, with the amount beside it.
+  const client = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  assert.match(client, /async function markCarried\(c: Correction\)/);
+  assert.match(client, /body: JSON\.stringify\(\{\s*from: \{[^}]*\},\s*into: \{ year, quarter \},/,
+    "the screen posts which quarter goes into which — and no amount");
+  // The row leaves only on the server's ok: removing it optimistically hides a correction that is
+  // still owed, on the screen a tax return is filled in from.
+  const handler = client.slice(client.indexOf("async function markCarried"));
+  const okAt = handler.indexOf("setCorrections((prev) => prev.filter");
+  const guardAt = handler.indexOf("if (!res.ok || !json.ok)");
+  assert.ok(guardAt > 0 && okAt > guardAt, "the row is removed after the server agreed, not before");
+});

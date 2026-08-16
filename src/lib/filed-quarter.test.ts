@@ -184,3 +184,73 @@ test("[SUPPLETIE] a date change asks about BOTH quarters, and asks each one once
   await filedQuarterImpacts({ pipeline: spy, ownerId: "u1", dates: ["2026-02-10", "2026-04-02", "2026-02-28"] });
   assert.deepEqual(asked.sort(), ["2026-Q1", "2026-Q2"], "both quarters, and Q1 only once");
 });
+
+// ── [SUPPLETIE-VERREKEND] Which earlier quarters still owe something ─────────
+
+test("[SUPPLETIE-VERREKEND] the lookback walks backwards across the year boundary", async () => {
+  const { previousQuarter, CARRY_LOOKBACK_QUARTERS } = await import("./filed-quarter");
+  assert.deepEqual(previousQuarter(2026, 2), { year: 2026, quarter: 1 });
+  assert.deepEqual(previousQuarter(2026, 1), { year: 2025, quarter: 4 }, "January is the year before");
+  // Four back from 2026-Q1 reaches 2025-Q1 — a full year, and no further. A correction older than
+  // that is a suppletie conversation, not a carry-forward one.
+  let c = { year: 2026, quarter: 1 };
+  for (let i = 0; i < CARRY_LOOKBACK_QUARTERS; i++) c = previousQuarter(c.year, c.quarter);
+  assert.deepEqual(c, { year: 2025, quarter: 1 });
+});
+
+/** A client that answers with one filing for a named quarter and nothing for the others. */
+const quarterClient = (filed: Record<string, unknown | null>, onSelect?: (cols: string) => void) => ({
+  from: () => ({
+    select: (cols: string) => {
+      onSelect?.(cols);
+      return {
+        eq: () => ({
+          eq: (_c: string, year: number) => ({
+            eq: (_c2: string, quarter: number) => ({
+              maybeSingle: async () => ({ data: filed[`${year}-Q${quarter}`] ?? null, error: null }),
+            }),
+          }),
+        }),
+      };
+    },
+  }),
+});
+
+test("[SUPPLETIE-VERREKEND] an unfiled history offers nothing, and recomputes nothing", async () => {
+  const { outstandingCorrections } = await import("./filed-quarter");
+  const r = await outstandingCorrections({ pipeline: quarterClient({}), ownerId: "u1", year: 2026, quarter: 2 });
+  assert.deepEqual(r.corrections, []);
+  assert.equal(r.unknown, false);
+});
+
+test("[SUPPLETIE-VERREKEND] the carried amount is asked for, and its absence is survivable", async () => {
+  // [DEPLOY-SAFE] btw_filings_carried.sql is hand-applied. The read asks for carried_saldo, and a
+  // database that does not have it yet must still answer — with the correction offered as if
+  // nothing had been carried, which where nothing CAN have been carried is exactly right.
+  const { outstandingCorrections } = await import("./filed-quarter");
+  const asked: string[] = [];
+  await outstandingCorrections({
+    pipeline: quarterClient({}, (cols) => asked.push(cols)),
+    ownerId: "u1", year: 2026, quarter: 2,
+  });
+  assert.ok(asked.length > 0, "the history was read");
+  assert.ok(asked.every((c) => c.includes("carried_saldo")), "and every read asks what was carried");
+});
+
+test("[SUPPLETIE-VERREKEND] a read that failed is unknown, never 'nothing to carry'", async () => {
+  const { outstandingCorrections } = await import("./filed-quarter");
+  const broken = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: "statement timeout" } }) }),
+          }),
+        }),
+      }),
+    }),
+  };
+  const r = await outstandingCorrections({ pipeline: broken, ownerId: "u1", year: 2026, quarter: 2 });
+  assert.deepEqual(r.corrections, []);
+  assert.equal(r.unknown, true, "the aangifte screen must be able to say it could not look");
+});

@@ -131,6 +131,11 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('btw_filings.sql', 'index', 'btw_filings_user_period_idx', null, 'public'),
   ('btw_filings.sql', 'policy', 'btw_filings own rows', 'btw_filings', 'public'),
   ('btw_filings.sql', 'table', 'btw_filings', null, 'public'),
+  ('btw_filings_carried.sql', 'column', 'carried_at', 'btw_filings', 'public'),
+  ('btw_filings_carried.sql', 'column', 'carried_into_quarter', 'btw_filings', 'public'),
+  ('btw_filings_carried.sql', 'column', 'carried_into_year', 'btw_filings', 'public'),
+  ('btw_filings_carried.sql', 'column', 'carried_saldo', 'btw_filings', 'public'),
+  ('btw_filings_carried.sql', 'constraint', 'btw_filings_carried_quarter_check', null, 'public'),
   ('btw_filings_divergence.sql', 'column', 'first_divergence_at', 'btw_filings', 'public'),
   ('btw_filings_divergence.sql', 'column', 'last_divergence_at', 'btw_filings', 'public'),
   ('btw_filings_divergence.sql', 'index', 'btw_filings_diverged_idx', null, 'public'),
@@ -383,7 +388,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 105 migraties
+-- NIET VAST TE STELLEN — 9 van de 106 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

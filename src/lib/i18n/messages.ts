@@ -9671,6 +9671,56 @@ export const MESSAGES = {
   // ── [TAAL-BLIND] The 472 strings the first scanner could not see — multi-line text
   // nodes and strings inside JSX expressions. Translated in one sweep; the extended gate
   // patterns above the SCREENS list are what keeps this from regrowing.
+  'aang.correcties': {
+    nl: 'Correcties uit eerdere kwartalen',
+    ar: 'تصحيحات من أرباع سابقة',
+    en: 'Corrections from earlier quarters',
+  },
+  'aang.correcties.uitleg': {
+    nl: 'Deze kwartalen zijn al ingediend en daarna gewijzigd. Omdat het verschil per kwartaal €1.000 of minder is, mag je het in deze aangifte verwerken — tel het bij de betreffende rubriek op. Wij vullen niets voor je in.',
+    ar: 'هذه الأرباع قُدِّمت بالفعل ثم تغيّرت. وبما أن الفرق في كل ربع €1.000 أو أقل، يجوز لك معالجته في هذا الـaangifte — أضِفه إلى البند المعني. نحن لا نملأ شيئاً نيابةً عنك.',
+    en: 'These quarters have been filed and have changed since. Because the difference per quarter is €1,000 or less, you may process it in this return — add it to the relevant rubriek. We fill in nothing for you.',
+  },
+  'aang.correcties.meer': {
+    nl: 'meer te betalen',
+    ar: 'مبلغ إضافي مستحق',
+    en: 'more to pay',
+  },
+  'aang.correcties.minder': {
+    nl: 'minder te betalen',
+    ar: 'مبلغ أقل مستحق',
+    en: 'less to pay',
+  },
+  'aang.correcties.eerderVerwerkt': {
+    nl: 'eerder al {amount} verwerkt',
+    ar: 'سبق معالجة {amount}',
+    en: '{amount} already processed earlier',
+  },
+  'aang.correcties.verwerkt': {
+    nl: 'Verwerkt',
+    ar: 'تمت المعالجة',
+    en: 'Processed',
+  },
+  'aang.correcties.bezig': {
+    nl: 'Bezig…',
+    ar: 'جارٍ…',
+    en: 'Working…',
+  },
+  'aang.correcties.onbekend': {
+    nl: 'We konden niet van alle eerdere kwartalen nagaan of er nog iets te verrekenen is. Kijk op de Waarheid-pagina voordat je deze aangifte indient.',
+    ar: 'تعذّر علينا التحقّق من كل الأرباع السابقة إن كان لا يزال هناك ما يُسوّى. راجع صفحة Waarheid قبل تقديم هذا الـaangifte.',
+    en: 'We could not check every earlier quarter for anything still to settle. Look at the Waarheid page before you file this return.',
+  },
+  'aang.correcties.mislukt': {
+    nl: 'Vastleggen mislukt — er is niets gewijzigd. Probeer het zo meteen opnieuw.',
+    ar: 'فشل التسجيل — لم يتغيّر شيء. حاول مرة أخرى بعد قليل.',
+    en: 'Could not record it — nothing was changed. Try again in a moment.',
+  },
+  'aang.correcties.geenVerbinding': {
+    nl: 'Geen verbinding — er is niets gewijzigd.',
+    ar: 'لا يوجد اتصال — لم يتغيّر شيء.',
+    en: 'No connection — nothing was changed.',
+  },
   'aang.geenVerbinding': {
     nl: 'Geen verbinding — probeer het zo meteen opnieuw.',
     ar: 'لا يوجد اتصال — حاول مرة أخرى بعد قليل.',

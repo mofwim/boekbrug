@@ -28,7 +28,14 @@
 // So: allow, compute, and say the number.
 
 import { computeResultForRange } from "./compute-result-range";
-import { computeFilingDivergence, SUPPLETIE_THRESHOLD, type FilingDivergence } from "./btw-filing";
+import {
+  computeFilingDivergence,
+  correctionRoute,
+  outstandingCorrection,
+  SUPPLETIE_THRESHOLD,
+  type CorrectionRoute,
+  type FilingDivergence,
+} from "./btw-filing";
 import { isMissingColumn, isMissingRelation } from "./pg-missing";
 
 function pad(n: number): string {
@@ -315,4 +322,139 @@ export async function stampDivergence(args: {
     });
     return { stamped: false, reason: "write_failed" };
   }
+}
+
+/** The quarter that comes before this one. */
+export function previousQuarter(year: number, quarter: number): { year: number; quarter: number } {
+  return quarter === 1 ? { year: year - 1, quarter: 4 } : { year, quarter: quarter - 1 };
+}
+
+/**
+ * [SUPPLETIE-VERREKEND] How far back the aangifte looks for a correction to carry.
+ *
+ * Four quarters. Not the five-year naheffingstermijn, and the difference is the point: a correction
+ * from three years ago is not a carry-forward conversation, it is a suppletie conversation, and it
+ * belongs on the Waarheid page where every filed quarter is compared. What this window is for is
+ * the realistic case — a late invoice or a corrected reading landing in a quarter the owner filed
+ * recently — and four keeps the recomputation bounded to something a page load can afford.
+ */
+export const CARRY_LOOKBACK_QUARTERS = 4;
+
+/** A correction from an earlier filed quarter that has not been declared anywhere yet. */
+export interface OutstandingCorrection {
+  year: number;
+  quarter: number;
+  label: string;
+  filedAt: string;
+  /** The full movement since filing. */
+  btwSaldoDelta: number;
+  /** What of it has already been declared in a later aangifte. */
+  carriedSaldo: number;
+  /** What is still owed — delta minus carried. Positive = more BTW to pay than was filed. */
+  outstanding: number;
+  route: CorrectionRoute;
+}
+
+/**
+ * The corrections from earlier quarters that are still owed, for the aangifte being prepared.
+ *
+ * BESIDE the figures, never inside them — the same rule the ICP-opgaaf follows in /api/aangifte. A
+ * correction from a previous quarter is not a rubriek, and folding it into one would put a number
+ * on the screen the owner cannot reconcile with any invoice of this quarter. It is named, dated to
+ * its source quarter, and left for the owner or the accountant to place on the form.
+ *
+ * Every earlier quarter in the window is recomputed rather than read from a cached delta, because a
+ * stale delta is the one thing worse than no delta here: the owner would carry a figure that is no
+ * longer true. Bounded to CARRY_LOOKBACK_QUARTERS, and unfiled quarters cost nothing (one small
+ * read each, no recomputation).
+ *
+ * `unknown` on any failed read or failed recomputation — never an empty list, for the same reason
+ * as everywhere else in this file: the caller must be able to say "we could not look".
+ */
+export async function outstandingCorrections(args: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: any;
+  ownerId: string;
+  /** The quarter the owner is preparing. Only quarters BEFORE this one are considered. */
+  year: number;
+  quarter: number;
+}): Promise<{ corrections: OutstandingCorrection[]; unknown: boolean }> {
+  const corrections: OutstandingCorrection[] = [];
+  let unknown = false;
+  let cursor = { year: args.year, quarter: args.quarter };
+
+  for (let i = 0; i < CARRY_LOOKBACK_QUARTERS; i++) {
+    cursor = previousQuarter(cursor.year, cursor.quarter);
+    const { row, failed } = await readFilingWithCarry(args.pipeline, args.ownerId, cursor.year, cursor.quarter);
+    if (failed) { unknown = true; continue; }
+    if (!row) continue;
+
+    const { start, end } = quarterBounds(cursor.year, cursor.quarter);
+    let current;
+    try {
+      const { result } = await computeResultForRange({ pipeline: args.pipeline, ownerId: args.ownerId, start, end });
+      current = result;
+    } catch (e) {
+      console.error("[SUPPLETIE-VERREKEND] could not recompute an earlier quarter", {
+        ownerId: args.ownerId, year: cursor.year, quarter: cursor.quarter,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      unknown = true;
+      continue;
+    }
+
+    const divergence = computeFilingDivergence(figuresOf(row), {
+      omzet: current.omzet, kosten: current.kosten,
+      btwVerschuldigd: current.btwVerschuldigd, btwVoorbelasting: current.btwVoorbelasting,
+      btwSaldo: current.btwSaldo,
+    });
+    const carriedSaldo = Number(row.carried_saldo) || 0;
+    const outstanding = outstandingCorrection(divergence.btwSaldoDelta, carriedSaldo);
+    const route = correctionRoute(outstanding);
+    // "none" is the ordinary answer: the quarter never moved, or every cent has been declared.
+    // A suppletie is NOT offered here — it needs its own form, and presenting it as a line to carry
+    // is how a €4.000 correction gets processed as if it were a €40 one.
+    if (route === "carry") {
+      corrections.push({
+        year: cursor.year, quarter: cursor.quarter, label: quarterLabel(cursor.year, cursor.quarter),
+        filedAt: row.filed_at, btwSaldoDelta: divergence.btwSaldoDelta, carriedSaldo, outstanding, route,
+      });
+    }
+  }
+
+  return { corrections, unknown };
+}
+
+/** A filing row plus what has already been carried out of it. */
+interface FilingRowWithCarry extends FilingRow {
+  carried_saldo: number | null;
+}
+
+/**
+ * readFiling, plus the carried amount.
+ *
+ * [DEPLOY-SAFE] btw_filings_carried.sql is applied by hand, so `carried_saldo` may not exist yet.
+ * A missing COLUMN falls back to the bare read — the correction is then offered as if nothing had
+ * been carried, which in an environment where nothing CAN have been carried is exactly right.
+ */
+async function readFilingWithCarry(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  userId: string,
+  year: number,
+  quarter: number,
+): Promise<{ row: FilingRowWithCarry | null; failed: boolean }> {
+  const { data, error } = await db
+    .from("btw_filings")
+    .select(`${FILING_COLS}, carried_saldo`)
+    .eq("user_id", userId).eq("year", year).eq("quarter", quarter)
+    .maybeSingle();
+  if (!error) return { row: (data as FilingRowWithCarry | null) ?? null, failed: false };
+  if (isMissingRelation(error.message)) return { row: null, failed: false };
+  if (isMissingColumn(error.message, (error as { code?: string }).code)) {
+    const bare = await readFiling(db, userId, year, quarter);
+    return { row: bare.row ? { ...bare.row, carried_saldo: null } : null, failed: bare.failed };
+  }
+  console.error("[SUPPLETIE-VERREKEND] btw_filings read failed", { userId, year, quarter, error: error.message });
+  return { row: null, failed: true };
 }

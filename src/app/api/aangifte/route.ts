@@ -32,6 +32,8 @@ import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 // [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
+// [SUPPLETIE-VERREKEND] Corrections from earlier filed quarters — see the block at the return.
+import { outstandingCorrections } from "@/lib/filed-quarter";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 // EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be intra-EU
@@ -465,6 +467,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // [SUPPLETIE-VERREKEND] What earlier filed quarters still owe. Computed here rather than on the
+  // screen because it is the same recompute the filing snapshot and /api/result use — a second
+  // definition of "what has this quarter become" is the one thing that must not exist.
+  const corrections = await outstandingCorrections({ pipeline, ownerId, year, quarter });
+
   return NextResponse.json({
     ok: true, year, quarter, aangifte, scheme: sr.scheme, undatedPaidCount: sr.undatedPaidCount,
     filed, filedUnknown,
@@ -477,5 +484,25 @@ export async function GET(req: NextRequest) {
     // think it was filed with the rest.
     icp: { lines: icp.lines, totalExBtw: Math.round(icp.totalExBtw), problems: icp.problems },
     euPurchases: { count: euPurchases.purchases.length, totalExBtw: Math.round(euPurchases.totalExBtw) },
+    // [SUPPLETIE-VERREKEND] Corrections from earlier FILED quarters that are €1.000 or less and have
+    // not been declared anywhere yet. The Belastingdienst allows those to be processed in the next
+    // regular aangifte, and this app has been saying so on two screens without ever producing the
+    // number — the owner was told to carry something forward and left to work out what.
+    //
+    // BESIDE the rubrieken, exactly like the ICP-opgaaf above and for the same reason: a correction
+    // from a previous quarter is not a rubriek of this one, and folding it into a total would put a
+    // figure on the screen that reconciles with no invoice in this period. Named, dated to its
+    // source quarter, and placed on the form by the owner or their accountant.
+    //
+    // A correction OVER €1.000 is deliberately not here. It needs its own suppletie form, and
+    // offering it as a line to carry is how a €4.000 correction gets processed as if it were €40.
+    corrections: corrections.corrections.map((c) => ({
+      quarter: c.label, filedAt: c.filedAt,
+      btwSaldoDelta: c.btwSaldoDelta, carriedSaldo: c.carriedSaldo, outstanding: c.outstanding,
+    })),
+    // [NO-SILENT-EMPTY] An empty list means "there is nothing to carry". This says when it means
+    // "we could not look" instead — on the screen from which a tax return is filled in, those two
+    // may never render the same.
+    correctionsUnknown: corrections.unknown,
   });
 }
