@@ -1151,6 +1151,63 @@ test("[INTAKE-QUEUE] the idle button invites a capture and claims no work in pro
   assert.doesNotMatch(html, /wordt gelezen/, "an idle button must not claim something is processing");
 });
 
+test("[BLAD-EEN-SCROLLER] the two ways out of the sheet are not behind the document", async () => {
+  // Reported from a phone. The sheet body scrolls; the document frame inside it is 58vh of embedded
+  // PDF viewer, and an embedded viewer eats the scroll gesture the moment the finger is over it. So
+  // the owner scrolled past our reading and past the checks, reached the paper — and stopped, with
+  // "Klopt niet — corrigeren" and "Open in nieuw tabblad" below a wall they could not scroll past.
+  //
+  // The two ways out of a sheet are chrome. Their reachability may not depend on how tall the
+  // document happens to be, so they now sit OUTSIDE the scrolling body.
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d9", client_name: "BALKIP B.V.", invoice_number: "264091", invoice_date: "2026-08-13",
+        invoice_type: "factuur", total_ex_btw: 1123.62, btw_amount: 101.13, total_inc_btw: 1224.75,
+        vendor_iban: "NL48INGB0000810658", field_confidence: null, vendorNumbers: [],
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+
+  // The scrolling body is the flex child that can actually shrink. Without min-height:0 a flex item
+  // refuses to go below its content, `overflow-y:auto` never engages, and the panel grows past its
+  // own maxHeight instead of scrolling — the bug underneath the bug.
+  assert.match(html, /flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain/,
+    "exactly one scroller, and it is sized to scroll");
+  // …and the panel itself no longer scrolls, or two nested `auto` scrollers compete for one gesture.
+  assert.match(html, /max-height:92dvh;overflow-y:hidden/);
+
+  // The actions come AFTER the scrolling body CLOSES — matched on the real tag, not on an index
+  // comparison. The first version compared offsets and passed with the actions still inside the
+  // scroller, because a closing </div> sits before them either way. Walk the tree instead.
+  const bodyStart = html.indexOf("<div", html.indexOf("flex:1;min-height:0;overflow-y:auto") - 200);
+  assert.ok(bodyStart >= 0, "the scrolling body is in the markup");
+  let depth = 0;
+  let i = bodyStart;
+  let bodyEnd = -1;
+  for (; i < html.length; i++) {
+    if (html.startsWith("<div", i)) depth++;
+    else if (html.startsWith("</div>", i)) {
+      depth--;
+      if (depth === 0) { bodyEnd = i; break; }
+    }
+  }
+  assert.ok(bodyEnd > bodyStart, "the scrolling body is a balanced element");
+  const scroller = html.slice(bodyStart, bodyEnd);
+  assert.doesNotMatch(scroller, /Klopt niet/,
+    "the actions may not live inside the scroller — that is the whole defect");
+  assert.doesNotMatch(scroller, /nieuw tabblad/i);
+  // …and they ARE on screen, after it. A fix that simply deleted them would satisfy the line above.
+  assert.match(html.slice(bodyEnd), /Klopt niet/, "…and they are still rendered, after it");
+  // The document frame stays inside the scroller, where it belongs.
+  if (html.includes("<iframe")) {
+    assert.match(scroller, /<iframe/, "the paper still scrolls with the rest of the body");
+  }
+});
+
 test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was checked", async () => {
   // The sheet exists to make verifying cheap. All three parts have to be on screen at once — the
   // document alone is what the old window.open already gave, and it is not what made checking

@@ -10874,3 +10874,54 @@ test("[SUPPLETIE-VERREKEND] a carried correction cannot be declared twice, or cl
   const guardAt = handler.indexOf("if (!res.ok || !json.ok)");
   assert.ok(guardAt > 0 && okAt > guardAt, "the row is removed after the server agreed, not before");
 });
+
+test("[CONTROLE-EERLIJK] the checklist says only things that are true of this invoice", () => {
+  // Reported from the screen, on BALKIP B.V. 264091 — read CORRECTLY at 1.123,62 + 101,13 =
+  // 1.224,75, which is exact to the cent and 9,0%. Three of the app's own checks then said things
+  // that were not true of it:
+  //
+  //   · "er staat wél € 50,00 + € 30,00 btw = € 80,00"   — the quantity column, offered as a total
+  //   · "excl. + btw komt niet uit op het totaal"        — over a sum that comes out exactly
+  //   · "Btw-bedrag nagerekend — 21%"  (green tick)      — on a row where 21% of the base is 235,96
+  //
+  // A check that is caught lying once is a check nobody reads again, including on the invoice where
+  // it is right. That is what makes these worse than a missing check.
+  const candidates = code("src/lib/amount-candidates.ts");
+  // A triple must imply a rate the Netherlands has. `b > a` alone let 30-on-50 through at 60%.
+  assert.match(candidates, /if \(b \/ a > MAX_NL_BTW_RATE \+ RATE_SLACK\) continue/);
+  assert.match(candidates, /const MAX_NL_BTW_RATE = 0\.21/);
+  // …and it must be the same size as what was read. 20% is not impossible, so the rate filter
+  // cannot reject € 12 as the total of a € 1.224,75 invoice; scale can.
+  assert.match(candidates, /const floor = known === null \? 0 : known \/ 10/);
+  assert.match(candidates, /totalsCandidates\(amounts\)\.filter\(\(c\) => c\.inc >= floor\)/);
+
+  const split = code("src/lib/btw-split.ts");
+  // Each row is asked about ITSELF before the block is asked about our totals. The column sums are
+  // a weak test: any misread preserving the two totals passes them, and taking the rate from one
+  // printed row and the amounts from another is exactly such a misread.
+  assert.match(split, /const offenders = rows\.filter\(\(r\) => \{/);
+  assert.match(split, /if \(offenders\.length > 0\) return \{ kind: 'row-inconsistent'/);
+  const rowsAt = split.indexOf("const offenders = rows.filter");
+  const sumAt = split.indexOf("const rowsBase = round2(");
+  assert.ok(rowsAt > 0 && sumAt > rowsAt, "asked BEFORE the column sums are trusted");
+  // …and it may never count as corroboration, whatever its columns add up to.
+  assert.match(split, /return v\.kind === 'single-rate' \|\| v\.kind === 'blend-verified'/,
+    "btwSplitCorroborated is an allowlist, so a new verdict cannot become a tick by default");
+
+  const checks = code("src/lib/invoice-checks.ts");
+  // The arithmetic row is judged on the arithmetic. flags.arithmetic carries two findings because
+  // both mean "do not book this unseen"; printing one row about both is what produced the false
+  // sentence. The other finding has its own row.
+  assert.match(checks, /health\.flags\.arithmetic && !health\.flags\.notOnDocument\s*\n?\s*\?\s*'flagged'/);
+  assert.match(checks, /id: 'total-on-document'/);
+  // The detail must use the SAME condition as the outcome — keying them differently put a green
+  // tick over the sentence "excl. + btw komt niet uit op het totaal", a row contradicting itself.
+  const detailAt = checks.indexOf("detail: health.flags.arithmetic");
+  assert.ok(detailAt > 0, "the arithmetic row still has a detail");
+  assert.match(checks.slice(detailAt, detailAt + 120), /&& !health\.flags\.notOnDocument/,
+    "outcome and detail are decided by one condition, or the row disagrees with itself");
+
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /flags\.notOnDocument = true/, "the finding is distinguishable at the source");
+  assert.match(health, /notOnDocument: false,/, "…and defaults to false like every other flag");
+});

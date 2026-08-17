@@ -133,6 +133,10 @@ export default function InvoiceDocumentSheet({
           background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),
           borderRadius: `${R.lg}px ${R.lg}px 0 0`, boxShadow: EL2, fontFamily: FONT,
           display: 'flex', flexDirection: 'column', maxHeight: '92dvh',
+          // [BLAD-EEN-SCROLLER] The .sheet-scroll class makes the PANEL scroll. This one is a flex
+          // column with its own scrolling body, so two nested `auto` scrollers were competing for
+          // the same gesture. Exactly one may scroll, and it is the body below.
+          overflowY: 'hidden',
           // [SHEET-BOTTOM] On the PANEL, not on the scroll area inside it. The panel is what the
           // bottom navigation overlaps, and putting the clearance one level in leaves the last
           // control tappable only while the content happens to scroll.
@@ -157,7 +161,11 @@ export default function InvoiceDocumentSheet({
           </button>
         </div>
 
-        <div style={{ overflowY: 'auto', padding: '0 16px' }}>
+        {/* [BLAD-EEN-SCROLLER] flex:1 + minHeight:0 is what actually makes this scroll. A flex item
+            defaults to min-height:auto and therefore refuses to shrink below its content, so
+            `overflowY: auto` alone never engages and the panel silently grows past its own
+            maxHeight. overscrollBehavior keeps the gesture from chaining to the page behind. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px' }}>
           {/* ── What we read ── the half that makes looking at the paper WORTH something ── */}
           <div style={{ background: M3.surfaceVariant, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
             <p style={{ fontSize: 11.5, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 4px', letterSpacing: 0.3, textTransform: 'uppercase' }}>
@@ -225,8 +233,19 @@ export default function InvoiceDocumentSheet({
             )}
           </div>
 
-          {/* ── The two ways out ── */}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        </div>
+
+        {/* ── The two ways out ──
+            OUTSIDE the scroller, pinned to the sheet.
+
+            They used to sit under the document frame, at the bottom of the scrolling body. On a
+            phone that made them unreachable: the frame is 58vh of embedded PDF viewer, and an
+            embedded viewer consumes the scroll gesture the moment the finger is over it. So the
+            owner scrolled through what we read, through the checks, arrived at the paper — and
+            stopped there, with "Klopt niet" and "Nieuw tabblad" below a wall they could not scroll
+            past. The two ways out of a sheet are chrome, not content; their reachability may not
+            depend on how tall the document happens to be. */}
+        <div style={{ display: 'flex', gap: 8, padding: '10px 16px 0', borderTop: `1px solid ${M3.outlineVariant}` }}>
             {onCorrect && (
               <button
                 onClick={() => { onClose(); onCorrect() }}
@@ -246,7 +265,6 @@ export default function InvoiceDocumentSheet({
                 {t('dsh.nieuwTabblad')}
               </a>
             )}
-          </div>
         </div>
       </div>
     </div>
