@@ -333,3 +333,25 @@ console.log("\n— [BANK-SPLIT] resolveAllocation —");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
+
+// ─── [DEEL-CREDIT] openstaand may be told what came back ─────────────────────────────
+check("een deelcreditnota gaat van het openstaande bedrag af",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 0 }, 50) === 450);
+check("credit én deelbetaling tellen allebei",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }, 50) === 250);
+check("een credit die de factuur dekt laat niets open",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 0 }, 500) === 0);
+check("meer gecrediteerd dan de factuur waard is wordt nooit negatief",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 0 }, 900) === 0);
+check("een creditnota wordt als magnitude gelezen, niet als teken",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 0 }, -50) === 450);
+check("zonder credit is het antwoord exact wat het was",
+  openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === 300);
+check("het teken van de factuur blijft staan bij een credit",
+  openAmountSigned({ status: "received", total_inc_btw: -500, amount_paid: 0 }, 50) === -450);
+check("een factuur waarvan de rest na creditering is voldaan is niet 'deels betaald'",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 450 }, 50) === false);
+check("…maar hij is dat wél zolang er echt iets openstaat",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 200 }, 50) === true);
+check("zonder credit blijft het oordeel exact hetzelfde",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 450 }) === true);

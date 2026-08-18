@@ -10302,6 +10302,93 @@ export const MESSAGES = {
     en: 'Not everything was included: {facturen} invoices and {transacties} bank transactions fell outside this check.',
   },
 
+  // ─── [BTW-RESERVERING] The money in the account that is already the tax office's ────────────
+  //
+  // Every sentence here is about money the owner believes they have. They are deliberately short
+  // and without an exclamation mark: the figures do the work, and an alarmed tone on a screen you
+  // open every morning is one you learn to ignore inside a week.
+  //
+  // [TAAL] Where a sentence points at a screen or a button, it names the Dutch word that is
+  // actually there — otherwise the reader goes looking for something that is nowhere in the app.
+
+  'btwres.heading': { nl: 'Voor de Belastingdienst', ar: 'لمصلحة الضرائب', en: 'For the tax office' },
+  'btwres.reserved': { nl: 'Al van de Belastingdienst', ar: 'مستحق لمصلحة الضرائب', en: 'Already the tax office’s' },
+  'btwres.free': { nl: 'Blijft voor jou over', ar: 'يبقى لك', en: 'Left for you' },
+  'btwres.short': { nl: 'Je komt tekort', ar: 'لديك عجز', en: 'You are short' },
+  'btwres.refundExpected': {
+    nl: 'Daarnaast verwacht je € {amount} terug. Dat staat er nog niet op.',
+    ar: 'كما تتوقع استرداد € {amount}. لم يصل بعد.',
+    en: 'You also expect € {amount} back. It is not in your account yet.',
+  },
+  'btwres.deadline': {
+    nl: '{quarter} moet binnen zijn op {date}',
+    ar: '{quarter} يجب تقديمه قبل {date}',
+    en: '{quarter} is due on {date}',
+  },
+  'btwres.deadlineDays': {
+    nl: '{quarter} — nog {days} dagen',
+    ar: '{quarter} — بقي {days} يوماً',
+    en: '{quarter} — {days} days left',
+  },
+  'btwres.deadlineToday': {
+    nl: '{quarter} moet vandaag binnen zijn',
+    ar: '{quarter} يجب تقديمه اليوم',
+    en: '{quarter} is due today',
+  },
+  'btwres.deadlinePassed': {
+    nl: '{quarter} — de datum is voorbij',
+    ar: '{quarter} — انقضى الموعد',
+    en: '{quarter} — the date has passed',
+  },
+  'btwres.toReturn': { nl: 'Naar de aangifte', ar: 'إلى الإقرار', en: 'Go to the VAT return' },
+
+  // The caveats. One per note code in btw-reservation.ts — the Record type makes a missing one a
+  // build error, and the gate catches a code quietly dropped while its sentence stays behind.
+  'btwres.note.balanceUnknown': {
+    nl: 'We kennen je banksaldo niet, dus we kunnen niet zeggen wat er overblijft. Wat je moet betalen weten we wel.',
+    ar: 'لا نعرف رصيد حسابك، لذلك لا يمكننا قول ما سيتبقى. أما ما عليك دفعه فنعرفه.',
+    en: 'We do not know your bank balance, so we cannot say what is left. What you owe, we do know.',
+  },
+  'btwres.note.balanceIncomplete': {
+    nl: 'Van minstens één rekening kennen we het saldo niet, dus het bedrag hierboven is aan de lage kant.',
+    ar: 'لا نعرف رصيد حساب واحد على الأقل، لذا فالمبلغ أعلاه أقل من الحقيقي.',
+    en: 'We do not know the balance of at least one account, so the figure above is on the low side.',
+  },
+  'btwres.note.balanceStale': {
+    nl: 'Je saldo komt van je laatste afschrift ({date}) — niet van vandaag.',
+    ar: 'رصيدك مأخوذ من آخر كشف حساب ({date}) — وليس من اليوم.',
+    en: 'Your balance comes from your latest statement ({date}), not from today.',
+  },
+  'btwres.note.quarterRunning': {
+    nl: 'Dit kwartaal loopt nog. Het bedrag verandert met elke factuur die je stuurt of ontvangt.',
+    ar: 'هذا الربع ما زال جارياً. يتغيّر المبلغ مع كل فاتورة ترسلها أو تستلمها.',
+    en: 'This quarter is still running. The amount changes with every invoice you send or receive.',
+  },
+  'btwres.note.purchasesUnverified': {
+    nl: 'Er staan nog inkoopfacturen in de wachtrij. Hun btw is nog niet afgetrokken, dus we houden te veel apart.',
+    ar: 'ما زالت هناك فواتير شراء في قائمة الانتظار. لم تُخصم ضريبتها بعد، لذا نحجز أكثر من اللازم.',
+    en: 'Purchase invoices are still in the queue. Their VAT is not deducted yet, so we set aside too much.',
+  },
+  'btwres.note.refundSeparate': {
+    nl: 'Een teruggaaf tellen we niet mee als geld dat je kunt uitgeven — die is nog niet gestort.',
+    ar: 'لا نحتسب الاسترداد كمال يمكنك إنفاقه — فهو لم يُحوَّل بعد.',
+    en: 'We do not count a refund as money you can spend — it has not been paid out yet.',
+  },
+  'btwres.note.returnOverdue': {
+    nl: 'Van een kwartaal is de datum voorbij zonder aangifte. Dat bedrag staat dus zeker nog open.',
+    ar: 'انقضى موعد أحد الأرباع دون تقديم إقرار. لذا فذلك المبلغ ما زال مستحقاً بالتأكيد.',
+    en: 'One quarter’s date has passed without a return. That amount is certainly still outstanding.',
+  },
+  'btwres.note.uncomputed': {
+    nl: 'Van {quarters} konden we het bedrag niet uitrekenen. Dat zit dus niet in het totaal.',
+    ar: 'لم نتمكن من حساب مبلغ {quarters}. لذا فهو غير مدرج في المجموع.',
+    en: 'We could not calculate the amount for {quarters}. It is not in the total.',
+  },
+  'btwres.period': {
+    nl: 'Gerekend vanaf {quarter}.',
+    ar: 'محسوب اعتباراً من {quarter}.',
+    en: 'Counted from {quarter}.',
+  },
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

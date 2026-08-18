@@ -9699,8 +9699,13 @@ test("[DEEL-CREDIT] the facturenlijst tells withdrawn apart from partly credited
     "the 'Gecrediteerd' chip is for a withdrawn invoice only");
   assert.match(client, /\{!isVolledigGecrediteerd\(inv\) && gecrediteerdOp\(inv\.id\) > 0 && \(/,
     "a partly credited invoice gets its own chip rather than silence");
-  assert.match(client, /\{isPartiallyPaid\(inv\) && !isVolledigGecrediteerd\(inv\) && \(/,
-    "the deelbetaling chip — and the tap target under it — must survive a partial credit");
+  // The chip must survive a partial credit — that is what this line has always guarded. It now
+  // also has to be RIGHT about the amount: measured against the gross total, an invoice whose
+  // remaining € 450 has been paid still counts as "partly paid", and the chip announces € 0,00
+  // open on an invoice that is finished. So the predicate is told what came back, and the
+  // suppression stays limited to a WITHDRAWN invoice, exactly as before.
+  assert.match(client, /\{isPartiallyPaid\(inv, gecrediteerdOp\(inv\.id\)\) && !isVolledigGecrediteerd\(inv\) && \(/,
+    "the deelbetaling chip — and the tap target under it — must survive a partial credit, and must measure against what is owed");
 
   // [TDZ] De helper staat vóór zijn gebruiker. De buurscherm-bug die tests/render/ bestaat om te
   // vangen was precies dit: een const die zeventig regels boven zijn declaratie werd gelezen.
@@ -11459,4 +11464,141 @@ test("[WATERVAL] no server page asks the auth server a second time behind the la
   assert.deepEqual(overtreders, [],
     "these server components ask the auth server themselves; use getSessionUser() from session-user.ts:\n  " +
     overtreders.join("\n  "));
+});
+
+
+// ─── [BTW-RESERVERING] The money in the account that is already the tax office's ───
+//
+// A zzp'er invoices € 1.210 and € 1.210 arrives. € 210 of it was never theirs. Every screen in
+// this app showed the full amount, and a quarter later the aangifte asks for money already spent
+// on stock and rent. The sum was always there — it was simply never said out loud.
+//
+// The rule lives in btw-reservation.ts and is tested there, on DIRECTION and not merely on
+// outcome. What those tests cannot see is below: that the answer reaches a screen, that the route
+// invents no balance, and that the panel holds no language of its own.
+
+test("[BTW-RESERVERING] the route never invents a balance it could not read", () => {
+  // bankBalanceOf answers null when no statement declared a balance, and the rule turns that into
+  // 'unknown' with no `free` figure at all. One `?? 0` anywhere on that path would turn "we do not
+  // know what you have" into "you have nothing" — and then into a `free` of exactly minus the tax bill,
+  // shown in red, on a screen the owner opens every morning. It is the same false-zero this
+  // codebase refuses on the Kas page and the Brug, at the one place it would frighten someone.
+  const route = code("src/app/api/btw-reservation/route.ts");
+  assert.match(route, /balance: balance\.balance,/,
+    "the balance goes through as it came out — null included");
+  assert.doesNotMatch(route, /balance\.balance \?\? 0/, "a null balance is not zero euros");
+  assert.doesNotMatch(route, /balance: Number\(balance/, "and it is not coerced on the way either");
+
+  // The filings read is the other half. A missing btw_filings row reads as "not filed", which
+  // makes a settled quarter look outstanding AND announces a late aangifte to someone who filed on
+  // time — wrong in the alarming direction, about the tax office. So that read refuses rather than
+  // degrades, unlike the balance read beside it.
+  assert.match(route, /filingRows == null/, "a failed filings read must stop the answer");
+  assert.match(route, /status: 503/, "…with no answer, rather than a frightening one");
+});
+
+test("[BTW-RESERVERING] the answer reaches a screen", () => {
+  // A figure computed by a route nobody calls is not a feature, it is a cost. This one exists to
+  // be read on the screen the owner opens most, before the money is spent — anywhere else and it
+  // arrives after the decision it was meant to inform.
+  const vandaag = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+  assert.match(vandaag, /<BtwReservationPanel \/>/, "the panel is mounted on Vandaag");
+  assert.match(vandaag, /import BtwReservationPanel from/);
+
+  const panel = code("src/components/btw/BtwReservationPanel.tsx");
+  assert.match(panel, /fetch\("\/api\/btw-reservation"\)/, "and it is the route's own answer");
+  // Off the critical path: computeResultForRange walks a quarter of invoices, bank lines and daily
+  // turnover, and doing that in the server component would put the heaviest read in the app in
+  // front of the screen the [WATERVAL] work was done for.
+  assert.match(panel, /useEffect\(/, "fetched after paint, never in the server render");
+  assert.match(panel, /if \(!panel\) return null;/,
+    "nothing is drawn until there is something true to draw — no skeleton on a money tile");
+});
+
+test("[BTW-RESERVERING] the panel holds no language of its own", () => {
+  // Same rule as InvoiceSentModal: one hard-coded Dutch sentence and the translation stays
+  // permanently half-finished, because the screen keeps looking right in Dutch and nothing points
+  // at the gap. Every word here comes off the object btw-reservation-copy.ts builds.
+  const panel = code("src/components/btw/BtwReservationPanel.tsx");
+  for (const dutch of [
+    "Belastingdienst",
+    "Blijft voor jou",
+    "tekort",
+    "Naar de aangifte",
+    "banksaldo",
+  ]) {
+    assert.ok(
+      !new RegExp(`["'>][^"'<]*${dutch}`).test(panel),
+      `a Dutch string is baked into the panel: "${dutch}"`,
+    );
+  }
+  // The direction travels on the same object as the words, so the two cannot render out of step.
+  assert.match(panel, /dir=\{panel\.dir\}/);
+
+  // And every note code has a sentence. The Record<ReservationNote, MessageKey> makes a MISSING
+  // one a build error; this catches the other end — a code quietly dropped from the union while
+  // its sentence stays in the catalogue, where the orphan half of the [TAAL] gate would then be
+  // the only thing standing between it and a dead translation.
+  const rule = code("src/lib/btw-reservation.ts");
+  const copy = code("src/lib/btw-reservation-copy.ts");
+  // Scoped to the ReservationNote union alone. Reading every `| "..."` in the file would also
+  // sweep up ReservationState's members, and a gate that fails on the wrong union teaches the
+  // next person to weaken it rather than to look.
+  const unionText = rule.slice(rule.indexOf("export type ReservationNote ="));
+  const codes = [...unionText.slice(0, unionText.indexOf(";")).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(codes.length >= 7, `expected the note codes, found ${codes.length}`);
+  for (const c of codes) {
+    assert.ok(copy.includes(`"${c}"`), `note code with no sentence: ${c}`);
+  }
+});
+
+test("[DEEL-CREDIT] the home tile subtracts the credit it already went and read", () => {
+  // Three surfaces, one invoice, two answers. /api/daily-truth read the creditnota rows to decide
+  // WHICH invoices leave the list, and then summed the ones that stayed at their FULL open amount.
+  // The creditnota itself is gone by then — isOpenReceivable refuses one by design — so the € 50
+  // the customer got back was subtracted nowhere, and "Te ontvangen" on the home screen stood € 50
+  // above the facturenlijst and the accountant's debiteurenlijst, which both had it right.
+  //
+  // The rule is stated in full at outstandingAmount() in sales-overview.ts: on a surface that
+  // drops the creditnota, the credit comes off the invoice or it comes off nothing.
+  const route = code("src/app/api/daily-truth/route.ts");
+  assert.match(route, /creditedTotalsFrom\(creditRows \?\? \[\]\)/,
+    "the rows are already in hand — the same read that filters the list must also reduce it");
+  assert.match(route, /total: recv\.reduce\(\(s, r\) => s \+ openstaandOf\(r, creditedOn\(r\.id\)\), 0\)/,
+    "the receivable total is net of what was credited");
+  assert.match(route, /credited_inc_btw: creditedOn\(r\.id\)/,
+    "and so is the payment-difference detector, or it names a creditnota as a bank charge");
+
+  // The INCOMING side deliberately passes nothing. There an invoice and its creditnota are two
+  // open items a payment settles together by pairing ([BATCH-SIGN]); subtracting there as well
+  // would count the credit twice. Two models, each correct where it lives.
+  const pay = route.slice(route.indexOf("const toPay"), route.indexOf("const recvAll"));
+  assert.doesNotMatch(pay, /creditedOn/, "the pairing side must keep pairing");
+});
+
+test("[DEEL-CREDIT] the invoice list never states an open amount the credit beside it contradicts", () => {
+  // The facturenlijst prints a chip that names the credited amount — "Deels gecrediteerd € 50" —
+  // and printed, two lines below it, an open amount that ignored that very number. It also fed the
+  // gross figure to three other places, and one of them is not a display at all:
+  //
+  //   · the bundle preview, where the SERVER already subtracts the credit (betaalverzoek.ts), so
+  //     the owner read a total higher than the amount the customer's QR would ask for — the exact
+  //     sentence the comment beside that line already warned about, one level down;
+  //   · the "Betaald?" dialog, where openAmount is the field's CAP. Gross, it let the owner record
+  //     a € 500 payment on an invoice they had put in writing was only € 450 for.
+  //
+  // The data was already loaded on this screen (creditedAmounts / gecrediteerdOp) to draw the chip.
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const gross = [...list.matchAll(/openAmount\(inv\)/g)];
+  assert.deepEqual(gross.map(() => "openAmount(inv)"), [],
+    "every open-amount on this screen must be told what was credited — openAmount(inv, gecrediteerdOp(inv.id))");
+  assert.match(list, /isPartiallyPaid\(inv, gecrediteerdOp\(inv\.id\)\)/,
+    "…including the predicate that decides whether the chip appears at all, or a settled invoice keeps one saying € 0,00 open");
+
+  // The INCOMING screen passes nothing, deliberately: there an invoice and its creditnota are two
+  // open items a payment settles together by pairing ([BATCH-SIGN]). Subtracting there too would
+  // count the credit twice. Two models, each correct where it lives.
+  const incoming = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(incoming, /openAmount\w*\([^)]*gecrediteerd/,
+    "the pairing side must keep pairing");
 });

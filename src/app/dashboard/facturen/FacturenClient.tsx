@@ -351,7 +351,13 @@ export default function FacturenClient({
         // [PARTIAL-PAY] The OPEN amount, not the full total — this is what the bundle's
         // QR asks the customer (buildBundelBetaalverzoek sums the open amounts). Showing
         // the full total here made the owner read one number and the customer pay another.
-        amount: openAmount(inv),
+        //
+        // [DEEL-CREDIT] …and the credit comes off here for exactly that reason, one level down.
+        // The SERVER already subtracts it (betaalverzoek.ts openAmount, fed credited_inc_btw by
+        // the bundle route), so without this line the same sentence came true again: the owner
+        // selected three invoices and read a total that was higher than the amount the QR would
+        // ask for, by whatever had been credited back.
+        amount: openAmount(inv, gecrediteerdOp(inv.id)),
       }
       return next
     })
@@ -1410,7 +1416,7 @@ export default function FacturenClient({
                           one is exactly where this line is needed most, and it was the one place
                           it was hidden — together with the tap target that records the next
                           instalment. */}
-                      {isPartiallyPaid(inv) && !isVolledigGecrediteerd(inv) && (
+                      {isPartiallyPaid(inv, gecrediteerdOp(inv.id)) && !isVolledigGecrediteerd(inv) && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
@@ -1418,7 +1424,9 @@ export default function FacturenClient({
                             // The chip IS the way back in: tapping it reopens the same dialog,
                             // now offering the REMAINING balance. Recording the next instalment
                             // (or finishing the invoice) is one tap from where the owner reads it.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
+                            // [DEEL-CREDIT] Net of the credit — the chip printed two lines above
+                            // this one names that exact amount, and these two may not disagree.
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv, gecrediteerdOp(inv.id)), clientKey: newPayKey() })
                           }}
                           title={t('lijst.deelbetaling.uitleg', { paid: fmtEur(inv.amount_paid ?? 0), total: fmtEur(Math.abs(inv.total_inc_btw ?? 0)) })}
                           style={{
@@ -1427,7 +1435,7 @@ export default function FacturenClient({
                             cursor: 'pointer', fontFamily: FONT,
                           }}
                         >
-                          {t('lijst.deelsBetaald', { open: fmtEur(openAmount(inv)) })}
+                          {t('lijst.deelsBetaald', { open: fmtEur(openAmount(inv, gecrediteerdOp(inv.id))) })}
                         </button>
                       )}
 
@@ -1517,7 +1525,11 @@ export default function FacturenClient({
                             // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the total on a
                             // fully open invoice, the remainder on a partly paid one) — the field's
                             // hint and its cap.
-                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv), clientKey: newPayKey() })
+                            // [DEEL-CREDIT] Minus what was credited, and here that is not only a
+                            // display: this figure is the CAP on the amount field. Left gross, the
+                            // owner could record a € 500 payment on an invoice they had already put
+                            // in writing was only € 450 — on the screen where they do it by hand.
+                            setPayCtx({ id: inv.id, number: inv.invoice_number ?? '', newStatus: 'paid', invoiceType: 'factuur', openAmount: openAmount(inv, gecrediteerdOp(inv.id)), clientKey: newPayKey() })
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
