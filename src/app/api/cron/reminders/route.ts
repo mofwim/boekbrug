@@ -44,11 +44,13 @@ import { creditedTotalsFrom, openAfterCredit } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
 // [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
-import { buildWikNotice, debtorTypeOf, isFinalTier } from "@/lib/incasso";
+import { buildWikNotice, debtorTypeOf, isFinalTier, aggregateWikClaims } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled"
+// [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
+import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path"
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -178,6 +180,8 @@ export async function GET(req: NextRequest) {
   // 414 that supabase-js reports as an ordinary error — so fetchAllRows would throw and this cron
   // would simply stop sending, every night, with nobody looking. Chunking removes the cliff instead
   // of waiting for it. Same rows, same order, one bounded request per chunk.
+  // [CRON-STIL] Set by the catch below; null means the read really did answer.
+  let invoiceReadFailed: string | null = null;
   const invoices = await fetchAllRowsForIds<CandidateInvoice, string>(ownerIds, (chunk, from, to) =>
     pipeline
       .from("invoices")
@@ -194,11 +198,27 @@ export async function GET(req: NextRequest) {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch((e) => {
-    console.error("[CRON-REMINDERS] candidate invoice fetch failed", {
-      error: e instanceof Error ? e.message : String(e),
-    });
+    // [CRON-STIL] Caught so one bad chunk does not kill the run — and REMEMBERED, because an empty
+    // list from here is indistinguishable from "nothing is overdue tonight". Without the flag this
+    // route answered ok:true, sent:0 on a failed read, so dunning could be dead every night while
+    // the heartbeat reported the cron ran as intended and no owner was ever told.
+    invoiceReadFailed = e instanceof Error ? e.message : String(e);
+    console.error("[CRON-REMINDERS] candidate invoice fetch failed", { error: invoiceReadFailed });
     return [] as CandidateInvoice[];
   });
+
+  if (invoiceReadFailed !== null) {
+    // [ALARM] Not a quiet night: the question could not be asked. Through the reporter rather than
+    // stdout, for the reason this file already gives about a cron writing to a log nobody opens —
+    // and the run closes as FAILED, so the heartbeat says so too.
+    reportHandledFailure({
+      tag: "CRON-REMINDERS",
+      message: "candidate invoice read failed — nobody was dunned tonight, and not because nothing was due",
+      severity: "gate-unavailable",
+      context: { enabledOwners: owners.length, error: invoiceReadFailed },
+    });
+    return klaar({ ok: false, enabledOwners: owners.length, sent: 0, note: "invoice_lookup_failed" }, false);
+  }
 
   if (invoices.length === 0) {
     return klaar({ ok: true, enabledOwners: owners.length, sent: 0 });
@@ -304,6 +324,37 @@ export async function GET(req: NextRequest) {
     const zzperName = owner.company_name?.trim() || owner.full_name?.trim() || "BoekBrug";
     const ownerInvoices = invoicesByOwner.get(ownerId) ?? [];
 
+    // ── [WIK-EEN-AANMANING] One aanmaning per DEBTOR, not per invoice ──
+    //
+    // Art. 6:96 lid 7 BW: where a debtor can be aanmaand for several claims, that happens in ONE
+    // aanmaning with the hoofdsommen added together — and the staffel of lid 6, with its EUR 40
+    // minimum, is then applied once. This loop sent a letter per invoice, each naming its own fee:
+    // three EUR 100 invoices demanded 3 x EUR 40 instead of EUR 40. For a consumer lid 5 makes
+    // that dwingend recht, and an over-stated fee is the classic ground on which the whole
+    // incassokosten claim is struck — so the owner does not lose the difference, they lose the lot.
+    //
+    // Keyed on the e-mail address, because that is who actually receives the letter; the name is
+    // the fallback for a debtor without one. Two customers sharing one mailbox genuinely receive
+    // one demand, which is what art. 6:96 lid 7 asks for.
+    const debiteurSleutel = (i: { client_email?: string | null; client_name?: string | null }) =>
+      (i.client_email?.trim().toLowerCase() || i.client_name?.trim().toLowerCase() || "");
+    const openstaandVan = (i: { total_inc_btw?: number | null; amount_paid?: number | null; id: string }) =>
+      openAfterCredit(i.total_inc_btw, i.amount_paid, creditedByInvoice.get(i.id) ?? 0);
+    const claimsPerDebiteur = new Map<string, Array<{ invoiceNumber: string | null; open: number }>>();
+    for (const i of ownerInvoices) {
+      const open = openstaandVan(i);
+      if (open <= 0) continue;
+      const k = debiteurSleutel(i);
+      if (k === "") continue;
+      const list = claimsPerDebiteur.get(k);
+      if (list) list.push({ invoiceNumber: i.invoice_number, open });
+      else claimsPerDebiteur.set(k, [{ invoiceNumber: i.invoice_number, open }]);
+    }
+    // Which debtors already received THE letter in this run. The second final-tier invoice of the
+    // same debtor still gets its ordinary reminder and its trail row — it simply does not carry a
+    // second statutory demand, because the first one already covered it by name.
+    const aangemaand = new Set<string>();
+
     for (const inv of ownerInvoices) {
       // Pure decision: which tier (or none) is due right now?
       const tier = reminderTierDue({
@@ -369,9 +420,15 @@ export async function GET(req: NextRequest) {
       // Best-effort PDF re-attach from the stored invoice PDF. Any failure →
       // send without attachment (the template renders fine without it).
       let pdfBuffer: Buffer | undefined;
-      if (inv.pdf_url) {
+      // [SEC-STORAGE-PATH] The invoice row is this owner's, which says nothing about where its
+      // pdf_url POINTS: that column is ordinary text on a row the owner may update, and `pipeline`
+      // is service_role, which bypasses the bucket policy that would otherwise catch a key from
+      // another tenant's folder. This attachment is then mailed to an address the same row carries.
+      // See the header of storage-path.ts — written for this shape, already applied at four doors.
+      const pdfPath = toStoragePath(inv.pdf_url);
+      if (inv.pdf_url && pathBelongsToOwner(pdfPath, ownerId)) {
         try {
-          const { data: blob } = await pipeline.storage.from(PDF_BUCKET).download(inv.pdf_url);
+          const { data: blob } = await pipeline.storage.from(PDF_BUCKET).download(pdfPath);
           if (blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
         } catch {
           /* non-blocking — reminder goes out without the PDF */
@@ -385,13 +442,22 @@ export async function GET(req: NextRequest) {
         // before was helpful and legally worth nothing once the customer kept ignoring it. The
         // debtor type comes from the invoice itself (a BTW number means a business), defaulting
         // to consumer, which is the only mistake of the two that stays recoverable.
-        const wik = finalTier
+        // [WIK-EEN-AANMANING] The hoofdsom is this DEBTOR's total, not this invoice's, and the
+        // letter names the invoices it adds up. A debtor who already had their one demand in this
+        // run gets a plain reminder instead of a second one — see the grouping above.
+        const debiteur = debiteurSleutel(inv);
+        const samen = aggregateWikClaims(claimsPerDebiteur.get(debiteur) ?? []);
+        const wik = finalTier && debiteur !== "" && !aangemaand.has(debiteur)
           ? buildWikNotice({
-              openstaand,
+              // Falls back to this invoice alone when the grouping found nothing — a debtor with
+              // no e-mail and no name cannot be grouped, and one claim is still a claim.
+              openstaand: samen.principal > 0 ? samen.principal : openstaand,
               sentIso: amsterdamToday(),
               debtorType: debtorTypeOf({ client_btw_number: inv.client_btw_number }),
+              covers: samen.numbers.length > 1 ? samen.numbers : [],
             })
           : null;
+        if (wik) aangemaand.add(debiteur);
         const delivery = await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",

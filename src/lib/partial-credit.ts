@@ -41,6 +41,9 @@
 
 import { round2 } from "./invoice-totals";
 import { applyDiscount, parseDiscount, lineGrossEx, lineNetEx, type Discount } from "./invoice-discount";
+// [DEEL-CREDIT-CUMULATIEF] Het voorvoegsel waarmee een creditnotaregel zijn origineel noemt — de
+// enige verwijzing die er is, want een kolom die terugwijst bestaat niet. Zie creditnota-lines.ts.
+import { CREDIT_PREFIX } from "./creditnota-lines";
 
 /** Een regel van de ORIGINELE factuur, zoals dit bestand hem leest. */
 export interface CreditableLine {
@@ -107,22 +110,139 @@ function qtyOf(l: CreditableLine): number {
   return Number.isFinite(q) ? q : 0;
 }
 
+// ── [DEEL-CREDIT-CUMULATIEF] Wat er van ELKE REGEL al is teruggenomen ────────────────────────
+//
+// De controle hieronder vergeleek een gevraagd aantal met de ORIGINELE regel, en met niets anders.
+// Dat was juist zolang een factuur één keer gecrediteerd kon worden. Sinds er DEELcreditnota's
+// bestaan kan dezelfde regel een tweede keer worden aangeboden, en dan klopt elke afzonderlijke
+// controle nog steeds terwijl de som er dwars doorheen loopt.
+//
+// Het plafond dat dat moest opvangen (fitsWithinOriginal) telt het BRUTO bedrag van de hele
+// factuur, en is dus blind voor het tarief. Bij gemengde tarieven laat het de fout er zo doorheen —
+// gemeten, met precies deze factuur:
+//
+//     1 x € 1.000 @ 21%  +  1 x € 1.000 @ 9%      bruto € 2.300
+//     crediteer de 9%-regel, twee keer:  2 x € 1.090 = € 2.180  <=  € 2.300   → beide keren OK
+//
+// Er is dan € 180 btw teruggevraagd op een regel waarover ooit € 90 is afgedragen. Dat is geen
+// administratieve slordigheid maar btw terugvragen die nooit is betaald (art. 29 Wet OB), op een
+// genummerd document dat de klant in handen heeft.
+//
+// ── WAAROM DE HERKENNING OP INHOUD GAAT, EN NIET OP EEN VERWIJZING ──
+//
+// Een creditnotaregel draagt geen kolom die terugwijst naar de regel die hij terugneemt; die kolom
+// bestaat niet in invoice_lines. Wat hij WEL draagt (creditnota-lines.ts) is de prijs, het tarief,
+// de eenheid en de omschrijving van het origineel, met '[Creditnota] ' ervoor en eventueel ' — een
+// reden' erachter. Dat is genoeg om hem toe te wijzen.
+//
+// En waar twee regels van één factuur diezelfde inhoud delen, is toewijzen aan "de een" of "de
+// ander" geen keuze die iets betekent: twee identieke regels één keer crediteren en één identieke
+// regel twee keer crediteren zijn dezelfde daad. Ze horen dus in één emmer, en dat is precies wat
+// deze sleutel doet. Toewijzing op inhoud is hier dus exact, niet bij benadering.
+
+/** De inhoudelijke identiteit van een regel: prijs, tarief, eenheid, omschrijving. */
+function lineKey(description: string, unitPrice: unknown, btwRate: unknown, unit: unknown): string {
+  const n = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? String(round2(x)) : "";
+  };
+  return [description.trim().toLowerCase(), n(unitPrice), n(btwRate), String(unit ?? "").trim().toLowerCase()].join("|");
+}
+
+/** De omschrijving van het origineel, uit die van een creditnotaregel. */
+function strippedCreditDescription(description: string | null | undefined, originals: readonly string[]): string | null {
+  const raw = (description ?? "").trim();
+  if (!raw.startsWith(CREDIT_PREFIX)) return null;
+  const rest = raw.slice(CREDIT_PREFIX.length);
+  // De reden staat er met ' — ' achter geplakt, dus de omschrijving van het origineel is een
+  // BEGIN van wat hier staat. De langste treffer wint, zodat "Werk" een regel "Werkdag" niet
+  // inpikt wanneer beide op de factuur staan.
+  let best: string | null = null;
+  for (const o of originals) {
+    const t = o.trim();
+    if (t !== "" && rest.startsWith(t) && (best === null || t.length > best.length)) best = t;
+  }
+  return best;
+}
+
+/**
+ * Hoeveel er per originele regel al is teruggenomen, als magnitude.
+ *
+ * `creditLines` zijn de regels van de creditnota's die al tegen deze factuur staan. Een regel die
+ * aan geen enkel origineel is toe te wijzen telt niet mee in deze kaart — die wordt opgevangen
+ * door het tariefplafond hieronder, dat geen toewijzing nodig heeft.
+ */
+export function creditedQuantitiesByLine(
+  originalLines: readonly CreditableLine[],
+  creditLines: readonly CreditableLine[],
+): Map<string, number> {
+  const namen = originalLines.map((l) => (l.description ?? "").trim()).filter((s) => s !== "");
+  const keyToIds = new Map<string, string[]>();
+  for (const l of originalLines) {
+    if (!l.id) continue;
+    const k = lineKey(l.description ?? "", l.unit_price, l.btw_rate, l.unit);
+    const list = keyToIds.get(k);
+    if (list) list.push(String(l.id));
+    else keyToIds.set(k, [String(l.id)]);
+  }
+
+  const perKey = new Map<string, number>();
+  for (const c of creditLines) {
+    const bron = strippedCreditDescription(c.description, namen);
+    if (bron === null) continue; // niet toe te wijzen — het tariefplafond vangt hem op
+    const k = lineKey(bron, c.unit_price, c.btw_rate, c.unit);
+    if (!keyToIds.has(k)) continue;
+    perKey.set(k, (perKey.get(k) ?? 0) + Math.abs(qtyOf(c)));
+  }
+
+  // Terug naar regel-id's. Regels die één sleutel delen delen ook hun emmer — zie de kop.
+  const perId = new Map<string, number>();
+  for (const [k, ids] of keyToIds) for (const id of ids) perId.set(id, perKey.get(k) ?? 0);
+  return perId;
+}
+
+/**
+ * Het aantal dat een emmer nog toelaat: alles wat de regels met dezelfde inhoud samen hebben
+ * geleverd, min wat er al van is teruggenomen.
+ */
+function remainingForKey(
+  originalLines: readonly CreditableLine[],
+  bron: CreditableLine,
+  alCredited: number,
+): number {
+  const k = lineKey(bron.description ?? "", bron.unit_price, bron.btw_rate, bron.unit);
+  let geleverd = 0;
+  for (const l of originalLines) {
+    if (lineKey(l.description ?? "", l.unit_price, l.btw_rate, l.unit) === k) geleverd += Math.abs(qtyOf(l));
+  }
+  return geleverd - alCredited;
+}
+
 /**
  * Controleer een selectie tegen de regels waar hij bij hoort.
  *
  * Streng, want dit is de kant die niet in de hand wordt gehouden: een client die een aantal
  * stuurt dat hoger is dan de regel zou meer crediteren dan er ooit is geleverd, en op een
  * genummerd document is dat niet terug te draaien.
+ *
+ * [DEEL-CREDIT-CUMULATIEF] `alreadyCredited` is wat er per originele regel-id al is teruggenomen
+ * (creditedQuantitiesByLine). Weggelaten = niets eerder gecrediteerd, en dan is dit exact de
+ * controle die het altijd was — zodat een aanroeper die de eerdere creditnota's niet kan lezen
+ * niet stilletjes soepeler wordt, maar hetzelfde antwoord krijgt als voorheen.
  */
 export function checkCreditSelection(
   lines: readonly CreditableLine[],
   selection: readonly LineSelection[] | null | undefined,
+  alreadyCredited?: ReadonlyMap<string, number>,
 ): CreditSelectionFault | null {
   if (!lines.length) return "no_lines";
   if (!selection || selection.length === 0) return null; // geen selectie = de hele factuur
 
   const byId = new Map(lines.filter((l) => l.id).map((l) => [String(l.id), l]));
   let anything = false;
+  // Twee keer dezelfde regel BINNEN één selectie telt ook op — anders is het plafond te omzeilen
+  // door de regel twee keer in dezelfde creditnota te zetten in plaats van in twee creditnota's.
+  const inDezeSelectie = new Map<string, number>();
   for (const s of selection) {
     const bron = byId.get(String(s.id));
     if (!bron) return "unknown_line";
@@ -136,7 +256,14 @@ export function checkCreditSelection(
     const origineel = qtyOf(bron);
     if (origineel === 0) return "quantity_exceeds_line";
     if (gevraagd !== 0 && Math.sign(gevraagd) !== Math.sign(origineel)) return "quantity_negative";
-    if (Math.abs(gevraagd) > Math.abs(origineel) + 1e-9) return "quantity_exceeds_line";
+
+    // [DEEL-CREDIT-CUMULATIEF] Het plafond is wat er NOG over is van deze regel, niet wat er ooit
+    // op stond. Zonder eerdere creditnota's zijn die twee hetzelfde getal.
+    const eerder = alreadyCredited?.get(String(s.id)) ?? 0;
+    const alGevraagd = inDezeSelectie.get(String(s.id)) ?? 0;
+    const overGebleven = remainingForKey(lines, bron, eerder + alGevraagd);
+    if (Math.abs(gevraagd) > overGebleven + 1e-9) return "quantity_exceeds_line";
+    inDezeSelectie.set(String(s.id), alGevraagd + Math.abs(gevraagd));
     if (Math.abs(gevraagd) > 0) anything = true;
   }
   return anything ? null : "nothing_selected";

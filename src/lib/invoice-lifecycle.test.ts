@@ -194,7 +194,7 @@ test("[LEVENSLOOP] the e-factuur states the same figures as the PDF", () => {
   const prices = [...xml.matchAll(/<cbc:PriceAmount[^>]*>(-?[\d.]+)</g)].map((m) => Number(m[1]));
   assert.equal(prices.length, 4, "one price per line");
   assert.ok(prices.every((p) => p >= 0), `BR-27 refuses this file: ${prices.join(", ")}`);
-  assert.match(xml, /<cbc:InvoicedQuantity[^>]*>-3</, "the return keeps its minus in the quantity");
+  assert.match(xml, /<cbc:(?:Invoiced|Credited)Quantity[^>]*>-3</, "the return keeps its minus in the quantity");
 
   // Both rates are present as their own TaxSubtotal, with the rounded amounts.
   assert.match(xml, /<cbc:TaxAmount[^>]*>26\.83</, "the 9% group");
@@ -253,7 +253,7 @@ test("[LEVENSLOOP] the creditnota's e-factuur is type 381 with POSITIVE amounts"
     CREDIT_LINES as unknown as UblInvoiceLine[],
     SUPPLIER,
   );
-  assert.match(xml, /<cbc:InvoiceTypeCode>381<\/cbc:InvoiceTypeCode>/);
+  assert.match(xml, /<cbc:CreditNoteTypeCode>381<\/cbc:CreditNoteTypeCode>/);
   const nums = amounts(xml);
   assert.ok(nums.length > 0, "no amounts found — the extraction broke, not the export");
 
@@ -342,5 +342,8 @@ test("[LEVENSLOOP] invoice and creditnota cancel to zero at every station", () =
   const credit = computeInvoiceTotals(CREDIT_LINES);
   assert.equal(round2(factuur.total_ex_btw + credit.total_ex_btw), 0);
   assert.equal(round2(factuur.btw_amount + credit.btw_amount), 0);
+// [CREDITNOTA-DOCUMENT] Reads BOTH document shapes. A creditnota is a CreditNote with
+// CreditNoteLine/CreditedQuantity, and a helper that knew only the invoice spelling would find
+// ZERO lines on one — and then assert nothing at all, vacuously, forever.
   assert.equal(round2(factuur.total_inc_btw + credit.total_inc_btw), 0);
 });

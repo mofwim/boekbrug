@@ -22,6 +22,9 @@ import { regimeFlagNote } from "@/lib/regime-flags";
 import { resolveSchemeSettlements, mergeSchemeOpts } from "@/lib/kas-payment-events-fetch";
 import { collectBadDebt, collectVatClawback } from "@/lib/bad-debt-collect";
 import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
+// [KAS-DUBBELE-KOST] The same purchase, written down twice — see cash-cost-overlap.ts.
+import { collectCashCostOverlaps } from "@/lib/cash-cost-overlap-collect";
+import { doubleCostNote } from "@/lib/cash-cost-overlap";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, read from the customers' EU VAT numbers.
 import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
@@ -352,6 +355,29 @@ export async function GET(req: NextRequest) {
       "inkoopfacturen die al meer dan een jaar openstaan (art. 29 lid 7 Wet OB). Dat is niet " +
       "hetzelfde als 'er is niets' — ververs deze pagina voordat je indient, want deze post wordt " +
       "een naheffing als hij wordt overgeslagen.",
+    );
+  }
+
+  // [KAS-DUBBELE-KOST] One purchase written down twice — a hand-typed cash 'kosten' line beside
+  // the invoice it duplicates. The cost is then deducted twice and, when the cash line carries a
+  // bon and a rate, the BTW is reclaimed twice. It lands in THIS declaration, which is why it is
+  // named here and not only on the Kas screen where the owner can act on it.
+  //
+  // A note, never a block and never a correction. The drawer gate refuses a filing because a
+  // negative till is arithmetic; this is a PAIRING — cent-exact within a month is strong evidence,
+  // not proof — and stopping an owner from filing on a probable duplicate would be worse than the
+  // duplicate. It goes after the art. 29 pair: those are money that must move, this is a question.
+  const dupRange = { from: start, to: end };
+  const doubleCosts = await collectCashCostOverlaps(pipeline, ownerId, dupRange);
+  const dcNote = doubleCostNote(doubleCosts.overlaps);
+  if (dcNote) regimeNotes.push(dcNote);
+  // [NO-SILENT-EMPTY] A read that failed is not a clean quarter, and on this page the ABSENCE of a
+  // note is the only thing that says so.
+  if (doubleCosts.readFailed) {
+    regimeNotes.push(
+      "We konden niet controleren of er kosten dubbel in je boeken staan — een kasregel die " +
+      "dezelfde aankoop is als een inkoopfactuur. Dat is niet hetzelfde als 'er is niets'; ververs " +
+      "deze pagina voordat je indient.",
     );
   }
 

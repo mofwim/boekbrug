@@ -319,6 +319,28 @@ export async function POST(
   // Twee hekken blijven: GUARD 1 hierboven heeft al vastgesteld dat de factuur nog in de
   // controlewachtrij staat ('processing'), en hasSettledMoney weigert alles waarop al geld is
   // afgeboekt. Geen van beide zou hier mogen voorkomen, maar geld verdwijnt niet op een aanname.
+  // [HERLEZING-STIL] "Het is geen factuur" en "ik heb hem niet gelezen" zijn niet hetzelfde, en
+  // alleen het eerste rechtvaardigt archiveren.
+  //
+  // classifyAttachment geeft bij een opgevangen storing — een gesprongen AI-budgetzekering, een
+  // model dat niets teruggaf — een TERUGVALANTWOORD terug: isInvoice false met confidence 0. Dat
+  // is geen oordeel over het document maar de afwezigheid van een oordeel, en het kwam hier binnen
+  // als "geen factuur". Eén gesprongen zekering plus de knop "herlees alles" archiveert dan de hele
+  // controlewachtrij — echte facturen, met echte bedragen, om een lezing die nooit gebeurd is.
+  //
+  // De e-mailkant maakt dit onderscheid al (email-integration.ts: `!isInvoice && !(confidence > 0)`
+  // bewaart het bestand als 'could_not_read' in plaats van het weg te zetten). Deze route, die
+  // bestaat om een MISLEZING te herstellen, maakte hem niet.
+  if (!c.isInvoice && !((c.confidence ?? 0) > 0)) {
+    return NextResponse.json({
+      ok: false,
+      notInvoice: false,
+      archived: false,
+      reason: c.reason ?? null,
+      detail: "We konden dit document nu niet lezen. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
+    }, { status: 503 });
+  }
+
   if (!c.isInvoice) {
     if (hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid })) {
       return NextResponse.json({

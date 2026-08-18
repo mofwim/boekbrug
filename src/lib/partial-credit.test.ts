@@ -13,9 +13,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { round2 } from "./invoice-totals";
 
+import { creditLinesFor } from "./creditnota-lines";
 import {
   buildCreditSelection,
   checkCreditSelection,
+  creditedQuantitiesByLine,
   creditableRemaining,
   fitsWithinOriginal,
   overCreditReason,
@@ -272,4 +274,116 @@ test("[DEEL-KORTING] a line with no discount at all is untouched", () => {
   const out = buildCreditSelection({ lines: [kaal], selection: [{ id: "k1", quantity: 3 }] });
   assert.equal(out.lines[0].line_total, 150);
   assert.equal("discount_type" in out.lines[0], false, "a column the row never had stays absent");
+});
+
+// ─── [DEEL-CREDIT-CUMULATIEF] The same line, credited twice ───────────────────
+//
+// checkCreditSelection compared a requested quantity to the ORIGINAL line and to nothing else,
+// which was right while an invoice could be credited once. The ceiling that was supposed to catch
+// the repeat (fitsWithinOriginal) sums the GROSS of the whole invoice and is blind to the rate, so
+// with mixed rates the double credit fitted straight through it. Measured, on this exact invoice:
+//
+//     1 x EUR 1.000 @ 21%  +  1 x EUR 1.000 @ 9%     gross EUR 2.300
+//     credit the 9% line twice: 2 x 1.090 = 2.180 <= 2.300  -> both passes accepted
+//
+// EUR 180 of BTW reclaimed on a line that ever carried EUR 90. Art. 29 Wet OB.
+
+const MIXED = [
+  { id: "A", description: "21% werk", quantity: 1, unit_price: 1000, btw_rate: 21, line_total: 1000, unit: "stuks" },
+  { id: "B", description: "9% werk", quantity: 1, unit_price: 1000, btw_rate: 9, line_total: 1000, unit: "stuks" },
+];
+
+test("[DEEL-CREDIT-CUMULATIEF] a line already credited in full cannot be credited again", () => {
+  const eersteKeer = creditLinesFor(
+    [MIXED[1]] as never, "cn-1", "verkeerd geleverd",
+  ) as unknown as Parameters<typeof creditedQuantitiesByLine>[1];
+
+  const al = creditedQuantitiesByLine(MIXED, eersteKeer);
+  assert.equal(al.get("B"), 1, "the credit line is attributed back to the line it took away");
+  assert.equal(al.get("A"), 0, "…and to that line only");
+
+  assert.equal(checkCreditSelection(MIXED, [{ id: "B", quantity: 1 }], new Map()), null,
+    "the first credit of a line is fine");
+  assert.equal(checkCreditSelection(MIXED, [{ id: "B", quantity: 1 }], al), "quantity_exceeds_line",
+    "the second is not — this is the EUR 180-against-EUR 90 case");
+
+  // The untouched line must stay creditable, or the fix would cost more than the defect.
+  assert.equal(checkCreditSelection(MIXED, [{ id: "A", quantity: 1 }], al), null);
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] the same line twice inside ONE selection also stops", () => {
+  // Otherwise the cap is avoided by putting the line in one creditnota twice rather than in two.
+  assert.equal(
+    checkCreditSelection(MIXED, [{ id: "B", quantity: 1 }, { id: "B", quantity: 1 }], new Map()),
+    "quantity_exceeds_line",
+  );
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] a partial credit leaves the remainder creditable", () => {
+  const tien = [{ id: "T", description: "Uren", quantity: 10, unit_price: 50, btw_rate: 21, line_total: 500, unit: "uur" }];
+  const drieGecrediteerd = creditLinesFor(
+    [{ ...tien[0], quantity: 3, line_total: 150 }] as never, "cn-1", null,
+  ) as unknown as Parameters<typeof creditedQuantitiesByLine>[1];
+  const al = creditedQuantitiesByLine(tien, drieGecrediteerd);
+  assert.equal(al.get("T"), 3);
+  assert.equal(checkCreditSelection(tien, [{ id: "T", quantity: 7 }], al), null, "the other seven are still owed back");
+  assert.equal(checkCreditSelection(tien, [{ id: "T", quantity: 8 }], al), "quantity_exceeds_line", "an eighth is not");
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] two identical lines share one bucket, which is the honest answer", () => {
+  // Crediting "one of two identical lines" twice and crediting both once are the same act. Keying
+  // on content therefore loses nothing — and it is what makes the attribution exact rather than a
+  // guess, since a creditnota line carries no reference to the line it takes back.
+  const twee = [
+    { id: "x1", description: "Doos", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100, unit: "stuks" },
+    { id: "x2", description: "Doos", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100, unit: "stuks" },
+  ];
+  const een = creditLinesFor([twee[0]] as never, "cn-1", null) as unknown as Parameters<typeof creditedQuantitiesByLine>[1];
+  const al = creditedQuantitiesByLine(twee, een);
+  assert.equal(checkCreditSelection(twee, [{ id: "x2", quantity: 1 }], al), null, "the second box may still go back");
+  assert.equal(checkCreditSelection(twee, [{ id: "x1", quantity: 2 }], al), "quantity_exceeds_line", "a third may not");
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] with no map supplied the answer is exactly what it always was", () => {
+  // A caller that cannot read the earlier creditnotas must not silently become more permissive —
+  // it gets the old behaviour, and the route fails closed rather than passing an empty map.
+  assert.equal(checkCreditSelection(LINES, [{ id: "a", quantity: 1 }]), null);
+  assert.equal(checkCreditSelection(LINES, [{ id: "a", quantity: 2 }]), "quantity_exceeds_line");
+  assert.equal(
+    checkCreditSelection(LINES, [{ id: "a", quantity: 1 }]),
+    checkCreditSelection(LINES, [{ id: "a", quantity: 1 }], new Map()),
+  );
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] only a line that NAMES its original counts as credit", () => {
+  // The prefix is the whole reference — a creditnota line carries no column pointing back. A line
+  // that merely repeats the original's description, with the same price and rate but WITHOUT the
+  // prefix, is some other document's line and says nothing about what was taken back. Counting it
+  // would refuse a legitimate credit; the gross ceiling in the route still bounds the total.
+  const zonderVoorvoegsel = [
+    { id: "z", description: "9% werk", quantity: -1, unit_price: 1000, btw_rate: 9, line_total: -1000, unit: "stuks" },
+  ];
+  assert.equal(creditedQuantitiesByLine(MIXED, zonderVoorvoegsel).get("B"), 0,
+    "no prefix, no attribution");
+
+  // …and WITH the prefix the very same line does count, so the test above is about the prefix and
+  // not about some other field failing to match.
+  const metVoorvoegsel = [{ ...zonderVoorvoegsel[0], description: "[Creditnota] 9% werk" }];
+  assert.equal(creditedQuantitiesByLine(MIXED, metVoorvoegsel).get("B"), 1);
+});
+
+test("[DEEL-CREDIT-CUMULATIEF] the LONGEST matching description wins", () => {
+  // Two lines whose descriptions share a beginning, at the same price and rate so nothing else can
+  // tell them apart. "[Creditnota] Werkdag" must land on "Werkdag" — taking the shorter match would
+  // credit "Werk" instead and leave the line that was really returned still fully creditable.
+  const lijkend = [
+    { id: "w1", description: "Werk", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100, unit: "stuks" },
+    { id: "w2", description: "Werkdag", quantity: 1, unit_price: 100, btw_rate: 21, line_total: 100, unit: "stuks" },
+  ];
+  const credit = [{ id: "c", description: "[Creditnota] Werkdag", quantity: -1, unit_price: 100, btw_rate: 21, line_total: -100, unit: "stuks" }];
+  const al = creditedQuantitiesByLine(lijkend, credit);
+  assert.equal(al.get("w2"), 1, "the returned line is the one that was credited");
+  assert.equal(al.get("w1"), 0, "…and the other one is untouched");
+  assert.equal(checkCreditSelection(lijkend, [{ id: "w2", quantity: 1 }], al), "quantity_exceeds_line");
+  assert.equal(checkCreditSelection(lijkend, [{ id: "w1", quantity: 1 }], al), null);
 });

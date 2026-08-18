@@ -87,8 +87,11 @@ test("[REGEL-NETTO] the e-factuur reproduces the net amount from price minus all
     } as never,
     [regel] as never,
     SUPPLIER as never,
+// [CREDITNOTA-DOCUMENT] Reads BOTH document shapes. A creditnota is a CreditNote with
+// CreditNoteLine/CreditedQuantity, and a helper that knew only the invoice spelling would find
+// ZERO lines on one — and then assert nothing at all, vacuously, forever.
   );
-  const blok = xml.match(/<cac:InvoiceLine>([\s\S]*?)<\/cac:InvoiceLine>/)?.[1] ?? "";
+  const blok = xml.match(/<cac:(?:Invoice|CreditNote)Line>([\s\S]*?)<\/cac:(?:Invoice|CreditNote)Line>/)?.[1] ?? "";
   const bedrag = Number(blok.match(/<cbc:LineExtensionAmount[^>]*>([-\d.]+)</)?.[1]);
   const aftrek = Number(blok.match(/<cac:AllowanceCharge>[\s\S]*?<cbc:Amount[^>]*>([-\d.]+)</)?.[1] ?? 0);
   assert.equal(bedrag, NETTO, "the line amount the customer's system books");

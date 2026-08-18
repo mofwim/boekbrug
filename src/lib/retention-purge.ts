@@ -48,6 +48,18 @@ export type DeletionRequestRow = {
   data_eligible_for_deletion_at: string | null;
   /** When the files were erased. Non-null = already done, never redo it. */
   purged_at?: string | null;
+  /**
+   * [WAARSCHUWING] Wanneer de 30-dagenbrief van §5.7.5 is verstuurd, of null.
+   *
+   * Optioneel in het TYPE en verplicht in de PRAKTIJK, en dat verschil heeft geld noch data
+   * gekost maar wel bijna een wettelijke plicht: decidePurge weigert een rij zonder dit stempel
+   * met `no_warning_sent` — ook wanneer het veld helemaal ONTBREEKT, wat het juiste antwoord is
+   * voor een rij die niets bewijst. Zolang deze regel er niet stond, kon een aanroeper hem uit
+   * zijn SELECT laten zonder dat tsc iets zei, en dan weigerde de purge élke rij, voor altijd.
+   * Precies dat gebeurde in de cron. Wie deze kolom niet meestuurt, wist niets — en de droge run
+   * zegt dan "niets te doen" in plaats van "ik kon het niet zien".
+   */
+  purge_warning_sent_at?: string | null;
 };
 
 export type PurgeVerdict =

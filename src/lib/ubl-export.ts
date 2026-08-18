@@ -26,7 +26,7 @@ import { create } from "xmlbuilder2";
 import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
-import { isReverseChargedInvoice } from "./icp";
+import { isReverseChargedInvoice, classifyVatNumber } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 import { round2 } from "./invoice-totals";
 // [KLANT-EXTRA] Dezelfde drie vrije klantregels als op de PDF — één leesdefinitie voor beide
@@ -160,6 +160,35 @@ function money(n: number): string {
   return round2(n).toFixed(2);
 }
 
+/**
+ * [KOPER-LAND] The buyer's country code for BT-55, from the only evidence the row carries.
+ *
+ * A VAT number states its country in its first two letters, and classifyVatNumber already parses
+ * exactly that — including the two prefixes that are not the ISO code of their member state (EL for
+ * Greece, and the UK/XI question it deliberately leaves as "none"). Anything it cannot place —
+ * absent, malformed, or a prefix outside the EU table — falls back to NL, which is what this line
+ * always said and is right for the overwhelming majority of these invoices.
+ *
+ * ── IT FOLLOWS THE SAME EVIDENCE AS THE REVERSE CHARGE, ON PURPOSE ──
+ *
+ * `kind === "eu"` is the exact test isReverseChargedInvoice makes (icp.ts), and this reads it
+ * rather than a stricter or looser one of its own. That is the whole point: the defect being fixed
+ * is a document that reverse-charges to a German VAT number while calling the buyer Dutch, and a
+ * country derived from a DIFFERENT rule than the treatment would simply move the contradiction
+ * somewhere else. Where the app charges no BTW because it read an EU number, the country is that
+ * number's country; everywhere else it is NL, exactly as before.
+ *
+ * `eu_suspect` therefore does NOT count — the reverse charge does not fire on it either.
+ */
+export function buyerCountryCode(clientVatNumber: string | null | undefined): string {
+  const shape = classifyVatNumber(clientVatNumber);
+  if (shape.kind !== "eu") return "NL";
+  // Greece files its VAT numbers under EL and is ISO 3166-1 GR. BT-55 is a COUNTRY code, so it
+  // takes GR — the one member state where the VAT prefix and the country code differ, and the one
+  // place classifyVatNumber's answer (which is about VAT numbers) must be translated before use.
+  return shape.country === "EL" ? "GR" : shape.country;
+}
+
 /** Format a quantity: up to a few decimals, dot decimal, no trailing-zero noise. */
 function qty(n: number): string {
   // UBL accepts decimals; keep it simple and stable.
@@ -274,6 +303,9 @@ export function lineVatKind(line: UblInvoiceLine, documentIsReverseCharged = fal
 
 const NS = {
   inv: "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+  // [CREDITNOTA-DOCUMENT] UBL 2.1 has TWO document types, not one document with a code on it. A
+  // credit note is a CreditNote in its own namespace — see the block above buildInvoiceUbl.
+  cn: "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2",
   cbc: "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
   cac: "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
 };
@@ -532,7 +564,21 @@ export function buildInvoiceUbl(
 
   const sName = supplierName(supplier)!;
 
-  const root = create({ version: "1.0", encoding: "UTF-8" }).ele(NS.inv, "Invoice", {
+  // ── [CREDITNOTA-DOCUMENT] A credit note is a DIFFERENT UBL document ──
+  //
+  // This wrote <Invoice> for everything and carried the direction in InvoiceTypeCode 381. UBL 2.1
+  // has two document types, and EN 16931 / Peppol route 381 through CreditNote-2 with
+  // CreditNoteTypeCode and CreditNoteLine — 381 is not even in the Invoice transaction's code list.
+  // Many importers dispatch on the root element before reading any code.
+  //
+  // Including this one. Proven by round trip, in this repo: e-invoice.ts:293 decides
+  // `isCreditNote: /<(?:\w+:)?CreditNote[\s>]/.test(...)` — the ROOT ELEMENT, never the type code
+  // — so a creditnota exported here and re-imported here came back isCreditNote:false and booked
+  // as a positive purchase invoice with positive voorbelasting. The app contradicted itself in one
+  // round trip; a stranger's bookkeeping does the same thing with the owner's correction.
+  const isCreditNote = (header.invoice_type ?? "factuur") === "creditnota";
+  const docName = isCreditNote ? "CreditNote" : "Invoice";
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele(isCreditNote ? NS.cn : NS.inv, docName, {
     "xmlns:cbc": NS.cbc,
     "xmlns:cac": NS.cac,
   });
@@ -542,7 +588,8 @@ export function buildInvoiceUbl(
   root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
   root.ele(NS.cbc, "IssueDate").txt(issueDate);
   if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
-  root.ele(NS.cbc, "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
+  // The code keeps its meaning; only the element it lives in follows the document type.
+  root.ele(NS.cbc, isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
   root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
 
   // ── AccountingSupplierParty (the ZZP'er) ──
@@ -587,7 +634,19 @@ export function buildInvoiceUbl(
   if (extraRegels.length > 1) {
     cusAddr.ele(NS.cac, "AddressLine").ele(NS.cbc, "Line").txt(extraRegels.slice(1).join(", "));
   }
-  cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt("NL");
+  // [KOPER-LAND] BT-55 is the buyer's country, and it was the literal "NL" on every export.
+  //
+  // That is not a harmless default here, because THIS SAME CALL decides the reverse charge on the
+  // buyer being somewhere else: documentIsReverseCharged is true only for a non-NL EU VAT number.
+  // So the file stated, in one breath, buyer VAT DE123456789 · buyer country NL · category AE —
+  // a document that contradicts itself about the one fact the tax treatment rests on (art. 35a
+  // lid 1 sub e). The app already knew better one module away: the ICP-opgaaf derives DE from this
+  // very field.
+  //
+  // The VAT number is the only country evidence on the row — there is no country column on
+  // clients or invoices — so it is what this reads, and NL remains the fallback for a customer
+  // without one. That keeps every domestic invoice byte-identical to what it was.
+  cusAddr.ele(NS.cac, "Country").ele(NS.cbc, "IdentificationCode").txt(buyerCountryCode(header.client_btw_number));
   if (header.client_btw_number?.trim()) {
     const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");
     cusTax.ele(NS.cbc, "CompanyID").txt(header.client_btw_number.trim());
@@ -654,7 +713,7 @@ export function buildInvoiceUbl(
   effLines.forEach((l, i) => {
     const rate = Number(l.btw_rate ?? 0);
     const ex = round2(Number(l.line_total ?? 0));
-    const line = root.ele(NS.cac, "InvoiceLine");
+    const line = root.ele(NS.cac, isCreditNote ? "CreditNoteLine" : "InvoiceLine");
     line.ele(NS.cbc, "ID").txt(String(i + 1));
     // [UNIT] Hier stond `unitCode: "C62"` HARDGECODEERD op elke regel. C62 betekent
     // "one / stuk" — juist voor een product, en fout voor alles wat je per uur, per m² of per
@@ -692,7 +751,7 @@ export function buildInvoiceUbl(
     const priceCarriedTheMinus = storedPrice < 0;
     const aantal = priceCarriedTheMinus ? -storedQuantity : storedQuantity;
     const stuksprijs = Math.abs(storedPrice);
-    line.ele(NS.cbc, "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
+    line.ele(NS.cbc, isCreditNote ? "CreditedQuantity" : "InvoicedQuantity", { unitCode: toUnitCode(l.unit) }).txt(qty(aantal));
     line.ele(NS.cbc, "LineExtensionAmount", { currencyID: EUR }).txt(money(ex));
 
     // [REGEL-KORTING] Wat de regel kostte VOORDAT haar eigen korting eraf ging.

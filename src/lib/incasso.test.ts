@@ -1,5 +1,6 @@
 // [WIK] Pure node test — run: npx tsx src/lib/incasso.test.ts
 import {
+  aggregateWikClaims,
   incassokosten,
   debtorTypeOf,
   wikDeadline,
@@ -103,6 +104,57 @@ console.log("\n— only the FINAL reminder carries it —");
   check("a single-tier schedule is its own final", isFinalTier(7, [7]) === true);
   check("an empty schedule has no final tier", isFinalTier(7, []) === false);
   check("junk offsets are ignored", isFinalTier(30, [7, 30, -1, 0, 2.5]) === true);
+}
+
+console.log("\n— [WIK-EEN-AANMANING] one aanmaning per debtor, not per invoice —");
+{
+  // Art. 6:96 lid 7 BW: where a debtor can be aanmaand for several claims — from one agreement or
+  // from more than one — that happens in ONE aanmaning, with the hoofdsommen added together, and
+  // the staffel of lid 6 (EUR 40 minimum) applied once. A letter per invoice does not merely
+  // repeat itself, it CHARGES more, and for a consumer lid 5 makes that dwingend recht.
+  const drieHonderd = aggregateWikClaims([
+    { invoiceNumber: "2026-001", open: 100 },
+    { invoiceNumber: "2026-002", open: 100 },
+    { invoiceNumber: "2026-003", open: 100 },
+  ]);
+  check("three claims become one hoofdsom", drieHonderd.principal === 300);
+  check("…and the fee is charged once: EUR 45, not 3 x EUR 40", incassokosten(drieHonderd.principal) === 45);
+  check("the old per-invoice answer really was EUR 120", 3 * incassokosten(100) === 120);
+
+  // The degressive half of the staffel, where the difference runs the other way.
+  const drieDuizend = aggregateWikClaims([
+    { invoiceNumber: "A", open: 1000 }, { invoiceNumber: "B", open: 1000 }, { invoiceNumber: "C", open: 1000 },
+  ]);
+  check("EUR 3.000 together is EUR 425", incassokosten(drieDuizend.principal) === 425);
+  check("…where per invoice it was EUR 450", 3 * incassokosten(1000) === 450);
+
+  // The letter has to NAME the claims it adds up: a demand for a total the reader cannot
+  // reconcile with any invoice they hold is the demand they take to a judge.
+  const brief = buildWikNotice({ openstaand: drieHonderd.principal, sentIso: "2026-08-16",
+    debtorType: "consumer", covers: drieHonderd.numbers })!;
+  check("the letter names the total", /€\s*300,00/.test(brief.sentence));
+  check("…the single fee", /€\s*45,00/.test(brief.sentence));
+  check("…and every invoice it covers", /2026-001, 2026-002, 2026-003/.test(brief.sentence));
+  check("the fourteen-day term is untouched", /veertien dagen/.test(brief.sentence));
+
+  // ONE claim must read exactly as it always did — no sentence about other invoices.
+  const een = buildWikNotice({ openstaand: 100, sentIso: "2026-08-16", debtorType: "consumer" })!;
+  check("a single claim says nothing about other invoices", !/betreft de facturen/.test(een.sentence));
+  check("…and still carries its own EUR 40", een.costs === 40);
+  check("passing an empty covers changes nothing",
+    buildWikNotice({ openstaand: 100, sentIso: "2026-08-16", debtorType: "consumer", covers: [] })!.sentence === een.sentence);
+
+  // Only what is really owed counts — a paid-off or credited invoice is not a claim.
+  const metNul = aggregateWikClaims([
+    { invoiceNumber: "X", open: 250 }, { invoiceNumber: "Y", open: 0 }, { invoiceNumber: "Z", open: -10 },
+  ]);
+  check("a settled invoice is not a claim", metNul.principal === 250 && metNul.numbers.length === 1);
+  check("nothing owed is no hoofdsom at all", aggregateWikClaims([]).principal === 0);
+
+  // [HANDELSRENTE] Art. 6:119a lid 1 BW runs from the day AFTER the last day of payment.
+  const zakelijk = buildWikNotice({ openstaand: 1000, sentIso: "2026-08-16", debtorType: "business" })!;
+  check("handelsrente starts the day after the vervaldatum", /dag na de vervaldatum/.test(zakelijk.sentence));
+  check("…and the consumer letter still names no start date", !/vervaldatum/.test(een.sentence));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

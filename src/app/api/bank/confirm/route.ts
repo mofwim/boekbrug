@@ -133,13 +133,25 @@ export async function POST(req: NextRequest) {
   // invoice / a debit with an outgoing one. Legitimate confirmations always pass this.
   const eligible = isEligible(
     {
-      date: "",
+      // [CREDIT-NETTING-BEVESTIG] The reference and the description are REAL here, and they have
+      // to be. isEligible's own escape for a netted credit note asks referenceMatches(tx, …),
+      // which reads exactly these two fields — so blanking them meant the rule could never fire
+      // and every netted creditnota was refused with `not_eligible`, on a "Bevestig" button the
+      // matcher had just rendered. Measured on the Dutch Sweets case that rule was written for:
+      // isEligible(real tx, creditnota) = true, isEligible(this synthetic tx, creditnota) = false.
+      //
+      // This is the SAME defect the note directly below records for total_inc_btw, one field over:
+      // a guard built to re-check the matcher's own invariants, handed less than the matcher had.
+      // The route already SELECTs both columns (line 91) and uses them for the guard further down.
+      date: tx.date ?? "",
       amount: tx.amount ?? 0,
       currency: "EUR",
-      description: "",
+      description: tx.description ?? "",
+      // Not selected by this route, and left null deliberately rather than guessed: isEligible
+      // reads the counterparty for nothing, and a wrong name here would be a new claim.
       counterpartName: null,
       counterpartIban: null,
-      reference: null,
+      reference: tx.reference ?? null,
       transactionId: tx.id,
       rawLine: "",
     },
@@ -214,6 +226,10 @@ export async function POST(req: NextRequest) {
   // Read BEFORE any write so a retry can never count our own link twice.
   let appliedElsewhere = 0;
   let appliedElsewhereKnown = true;
+  // [DECLARED-INVOICE-EIGEN-CLAIM] The numbers of the invoices this bank line ALREADY settled —
+  // the other half of "which invoices do we hold" for the guard further down. Empty when the link
+  // read fails or the numbers cannot be resolved, which makes that guard stricter, never looser.
+  const linkedInvoiceNumbers: string[] = [];
   {
     const { data: linkRows, error: linkReadErr } = await pipeline
       .from("bank_tx_invoices")
@@ -237,9 +253,16 @@ export async function POST(req: NextRequest) {
         // under its lock, which is the point of it living in one file.
         const { data: linkedInvoices } = await pipeline
           .from("invoices")
-          .select("id, direction, invoice_type, total_inc_btw")
+          // [DECLARED-INVOICE-EIGEN-CLAIM] invoice_number rides along for the guard below.
+          .select("id, direction, invoice_type, total_inc_btw, invoice_number")
           .in("id", priced.map((r) => r.invoice_id))
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+        // [DECLARED-INVOICE-EIGEN-CLAIM] An invoice this line already settled IS held, so the
+        // guard below must not report it as missing on the next booking against the same line.
+        for (const r of (linkedInvoices ?? []) as Array<{ invoice_number?: string | null }>) {
+          const n = (r.invoice_number ?? "").trim();
+          if (n !== "") linkedInvoiceNumbers.push(n);
+        }
         const sum = allocatedOnLine(priced, linkedInvoices ?? [], Number(tx.amount) || 0);
         // A sibling link whose invoice this user cannot read is the same situation as a missing
         // amount: the total is not measurable, so we say so rather than under-count it.
@@ -268,9 +291,29 @@ export async function POST(req: NextRequest) {
   // is reversible and a wrong booking is not. An owner who knows better passes `force`. Skipped
   // entirely when an explicit amount was stated — stating one IS the owner allocating deliberately.
   if (requestedAmount == null && !force && !moneyLeftOver) {
+    // ── [DECLARED-INVOICE-EIGEN-CLAIM] The guard was fed the payment's OWN claim ──
+    //
+    // `knownInvoiceNumbers` means "the numbers we HOLD". It was passed `[...refNumbers, …]`, and
+    // refNumbers is parseReferenceNumbers(tx.reference) — the numbers this very payment NAMES.
+    // undeclaredMissingInvoices computes declaredInvoiceNumbers(tx) minus that set, reading the
+    // same reference+description text, so the claim was subtracted from itself and the set was
+    // always empty. Measured on the ATAPACK remittance this guard's own header describes:
+    //
+    //     "Tweede deel factuur 26302050 , factuur 26302362"
+    //     route's call    → []              (no 409, the whole € 2.265,41 books onto 26302050)
+    //     correct call    → ["26302362"]    (the invoice that is then paid a second time)
+    //
+    // The file already says so twenty lines up — "(refNumbers survives below only as the legacy
+    // coverage fallback.)" — and the sibling door attach-invoice:255 passes only the number it
+    // holds, under a comment claiming the two doors cannot disagree. They did.
+    //
+    // Held = this invoice, plus every invoice ALREADY linked to this bank line: a payment booked
+    // across two invoices one after the other must not have the first one reported as missing on
+    // the second booking. When those numbers cannot be read the set is smaller, which makes the
+    // guard fire more readily — a refusal is reversible and a double payment is not.
     const missing = undeclaredMissingInvoices(
       { reference: tx.reference, description: tx.description },
-      [...refNumbers, inv.invoice_number],
+      [inv.invoice_number, ...linkedInvoiceNumbers],
     );
     if (missing.length > 0) {
       return NextResponse.json(

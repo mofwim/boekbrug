@@ -7747,6 +7747,74 @@ export const MESSAGES = {
   // dat er niets meer openstaat en dat er niet meer wordt aangemaand, en hier is allebei onwaar.
   // Het bedrag staat in de chip zelf: de ondernemer moet kunnen zien waarom het totaal boven de
   // regel niet meer is wat iemand hem schuldig is.
+  // [KAS-DUBBELE-KOST] Dezelfde aankoop twee keer in de boeken: een met de hand getypte kasuitgave
+  // naast de inkoopfactuur die er al staat. De zin noemt het BEDRAG en niet alleen het feit — de
+  // ondernemer moet kunnen beslissen zonder eerst zelf te rekenen.
+  'kas.dubbel.titel': {
+    nl: 'Deze uitgave staat mogelijk twee keer in je boeken',
+    ar: 'قد تكون هذه المصروفات مسجَّلة مرتين في دفاترك',
+    en: 'This expense may be in your books twice',
+    tr: 'Bu gider defterlerinizde iki kez yer alıyor olabilir',
+  },
+  'kas.dubbel.uitleg': {
+    nl: 'Je hebt deze kosten met de hand in het kasboek gezet én er staat een inkoopfactuur met hetzelfde bedrag. Dan wordt dezelfde aankoop twee keer als kosten afgetrokken.',
+    ar: 'أدخلتَ هذه التكلفة يدوياً في دفتر الصندوق، وتوجد أيضاً فاتورة شراء بنفس المبلغ. عندها تُخصَم نفس المشتريات كتكلفة مرتين.',
+    en: 'You typed this cost into the cash book by hand, and there is a purchase invoice for the same amount. The same purchase is then deducted as a cost twice.',
+    tr: 'Bu gideri kasa defterine elle girdiniz ve aynı tutarda bir alış faturası da var. Aynı alım o zaman iki kez gider olarak düşülüyor.',
+  },
+  'kas.dubbel.regel': {
+    nl: '{datum} · {bedrag} contant · factuur {nummer} van {leverancier}',
+    ar: '{datum} · {bedrag} نقداً · الفاتورة {nummer} من {leverancier}',
+    en: '{datum} · {bedrag} cash · invoice {nummer} from {leverancier}',
+    tr: '{datum} · {bedrag} nakit · {leverancier} firmasından {nummer} numaralı fatura',
+  },
+  'kas.dubbel.kosten': {
+    nl: '{bedrag} dubbel als kosten',
+    ar: '{bedrag} مكرَّرة كتكلفة',
+    en: '{bedrag} deducted twice',
+    tr: '{bedrag} iki kez gider yazıldı',
+  },
+  'kas.dubbel.btw': {
+    nl: '+ {bedrag} btw dubbel teruggevraagd',
+    ar: '+ {bedrag} ضريبة مسترَدّة مرتين',
+    en: '+ {bedrag} btw reclaimed twice',
+    tr: '+ {bedrag} KDV iki kez geri istendi',
+  },
+  'kas.dubbel.kasDubbel': {
+    nl: 'De factuur is óók op contant gezet, dus je kassaldo staat {bedrag} te laag.',
+    ar: 'الفاتورة مُعلَّمة أيضاً كمدفوعة نقداً، فرصيد الصندوق أقل بمقدار {bedrag}.',
+    en: 'The invoice is marked paid in cash as well, so your drawer balance is {bedrag} too low.',
+    tr: 'Fatura da nakit ödendi olarak işaretli, bu yüzden kasa bakiyeniz {bedrag} düşük görünüyor.',
+  },
+  // Wat de ondernemer eraan doet. Bewust GEEN knop die het zelf oplost: welke van de twee regels
+  // de juiste is, is een vraag over papier dat hij heeft en wij niet.
+  'kas.dubbel.watNu': {
+    nl: 'Klopt het dat dit dezelfde aankoop is? Verwijder dan de kasregel — de factuur blijft staan en houdt de btw aftrekbaar. Zijn het echt twee aankopen, dan hoef je niets te doen.',
+    ar: 'هل هذه فعلاً نفس المشتريات؟ إذاً احذف سطر الصندوق — تبقى الفاتورة وتحفظ حق خصم الضريبة. أما إن كانتا عمليتَي شراء مختلفتين فلا حاجة لأي إجراء.',
+    en: 'Is this really the same purchase? Then remove the cash line — the invoice stays and keeps the BTW deductible. If they are genuinely two purchases, nothing needs doing.',
+    tr: 'Bu gerçekten aynı alım mı? Öyleyse kasa satırını silin — fatura kalır ve KDV indirilebilir olmayı sürdürür. Gerçekten iki ayrı alımsa bir şey yapmanıza gerek yok.',
+  },
+  'kas.dubbel.naarFactuur': {
+    nl: 'Bekijk de factuur',
+    ar: 'عرض الفاتورة',
+    en: 'View the invoice',
+    tr: 'Faturayı görüntüle',
+  },
+  // Het paneel toont een handvol regels en zegt eerlijk hoeveel er nog meer zijn. Een lijst van
+  // driehonderd amberkleurige regels wordt niet gelezen maar weggescrold, en dan heeft de melding
+  // precies het tegenovergestelde gedaan van wat ze moest doen.
+  'kas.dubbel.meer': {
+    nl: '+ nog {aantal} andere kasregels met dezelfde vraag.',
+    ar: '+ {aantal} سطر صندوق آخر عليها نفس السؤال.',
+    en: '+ {aantal} more cash lines with the same question.',
+    tr: '+ aynı soruyu taşıyan {aantal} kasa satırı daha.',
+  },
+  'kas.dubbel.nietGecontroleerd': {
+    nl: 'We konden niet nakijken of er kosten dubbel in je boeken staan. Probeer het later opnieuw.',
+    ar: 'تعذّر التحقق مما إذا كانت هناك تكاليف مكرَّرة في دفاترك. حاول لاحقاً.',
+    en: 'We could not check whether any costs are in your books twice. Try again later.',
+    tr: 'Defterlerinizde giderlerin iki kez yer alıp almadığını kontrol edemedik. Daha sonra tekrar deneyin.',
+  },
   'lijst.deelsGecrediteerd': {
     nl: 'Deels gecrediteerd · {bedrag} terug',
     ar: 'إشعار دائن جزئي · {bedrag} مُعادة',
