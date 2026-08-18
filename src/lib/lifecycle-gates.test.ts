@@ -11375,3 +11375,22 @@ test("[BEVEILIGING] there is one place to switch the lock, not two", () => {
   assert.deepEqual(users, ["src/app/dashboard/beveiliging/BeveiligingClient.tsx"],
     "the two-step panel is rendered on more than one screen:\n  " + users.join("\n  "));
 });
+
+test("[BEVEILIGING] the home-screen hint says nothing unless it is certain the lock is off", () => {
+  // Three states, and only ONE of them puts a line on the screen. "Zet twee stappen aan" shown to
+  // someone who switched it on last week is the app being wrong about his own account on the screen
+  // he trusts most for numbers — and it teaches him that these messages are noise, which costs
+  // every other message on that screen its credibility. `on !== false` is what keeps the unknown
+  // case silent; `on === false` alone would render on `null` too.
+  const hint = code("src/components/beveiliging/TweestapsHint.tsx");
+  assert.match(hint, /on !== false/, "the hint renders on an unreadable state — it must stay silent there");
+  assert.match(hint, /mfaIsOn/, "the hint decides for itself what 'on' means instead of asking mfa.ts");
+  // No dismissal machinery: the line IS the state, so there is nothing to remember and no way for
+  // it to outlive the fact it states.
+  assert.doesNotMatch(hint, /localStorage|dismiss|verberg/i,
+    "the hint has grown a dismiss button — then it either nags or goes quiet forever after one tap");
+
+  // And it has to be on the screen an owner actually opens, or the whole point is lost.
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /<TweestapsHint \/>/,
+    "the hint is not rendered on Vandaag — an owner who never opens the tile never learns the lock exists");
+});

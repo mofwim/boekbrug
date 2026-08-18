@@ -10207,6 +10207,11 @@ export const MESSAGES = {
   'bev.naamOnbekend': { nl: 'Naam niet gelezen', en: 'Name not read', ar: 'تعذّرت قراءة الاسم' },
   'bev.sinds': { nl: 'Sinds {datum}', en: 'Since {datum}', ar: 'منذ {datum}' },
   'bev.beheren': { nl: 'Toegang beheren', en: 'Manage access', ar: 'إدارة الوصول' },
+  'bev.hint.titel': {
+    nl: 'Je administratie hangt aan één wachtwoord',
+    en: 'Your administration hangs on one password',
+    ar: 'إدارتك معلَّقة على كلمة مرور واحدة',
+  },
   'bev.log.titel': { nl: 'Wat er is vastgelegd', en: 'What has been recorded', ar: 'ما الذي سُجِّل' },
   'bev.log.uitleg': {
     nl: 'Elke handeling in deze administratie wordt vastgelegd — ook die van je boekhouder, en ook die van ons. Je kunt het zelf teruglezen.',
