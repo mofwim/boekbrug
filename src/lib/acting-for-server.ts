@@ -294,7 +294,7 @@ export interface CompanyMemberRow {
  */
 export async function loadCompanyMembers(
   ownerId: string,
-): Promise<{ available: boolean; members: CompanyMemberRow[] }> {
+): Promise<{ available: boolean; unreadable: boolean; members: CompanyMemberRow[] }> {
   try {
     const pipeline = createPipelineClient();
     const { data, error } = await pipeline
@@ -305,11 +305,19 @@ export async function loadCompanyMembers(
     // 42P01 = the table does not exist yet. PGRST205 is the same state via the schema cache.
     if (error) {
       const code = String((error as { code?: string }).code ?? "");
-      if (code === "42P01" || code === "PGRST205") return { available: false, members: [] };
-      return { available: true, members: [] };
+      if (code === "42P01" || code === "PGRST205") return { available: false, unreadable: false, members: [] };
+      // [NO-SILENT-EMPTY] A read that FAILED, reported as a team with nobody in it. Every caller
+      // then says "je hebt geen medewerkers" about an administration that may have three — and on
+      // /dashboard/beveiliging, where the question is who can open your books, that empty list is
+      // not a degraded answer but the opposite of the true one.
+      //
+      // The shape stays backwards-compatible on purpose: `members` is still the empty list, so a
+      // caller that does not care reads exactly what it read before. The flag is for the ones that
+      // must not guess.
+      return { available: true, unreadable: true, members: [] };
     }
-    return { available: true, members: data ?? [] };
+    return { available: true, unreadable: false, members: data ?? [] };
   } catch {
-    return { available: false, members: [] };
+    return { available: false, unreadable: true, members: [] };
   }
 }

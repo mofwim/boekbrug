@@ -10172,6 +10172,58 @@ export const MESSAGES = {
   // withdrawn. And the lockout sentence is not fine print: losing the phone means losing the way
   // into records the Belastingdienst can ask for, so it is said BEFORE the switch, not after.
 
+  // ── [BEVEILIGING] Wie kan bij deze administratie ───────────────────────────────────
+  //
+  // Dit scherm beantwoordt de enige vraag die een zzp'er niet zelf kan controleren als hij zijn
+  // boeken aan een app geeft: leest er iemand anders mee. Elke zin hieronder is dus een uitspraak
+  // over ZIJN gegevens en niet over ons — en waar we het niet zeker weten, staat dat er.
+  'bev.titel': { nl: 'Beveiliging & toegang', en: 'Security & access', ar: 'الأمان والوصول' },
+  'bev.uitleg': {
+    nl: 'Wat er op dit moment waar is over deze administratie: wie erbij kan, hoe hij op slot zit, en wat er van elke handeling is vastgelegd.',
+    en: 'What is true about this administration right now: who can open it, how it is locked, and what has been recorded of every action.',
+    ar: 'ما هو صحيح الآن عن هذه الإدارة: من يستطيع فتحها، وكيف هي مُقفلة، وما الذي سُجِّل من كل إجراء.',
+  },
+  'bev.wie.titel': { nl: 'Wie kan bij deze administratie', en: 'Who can open this administration', ar: 'من يستطيع الوصول إلى هذه الإدارة' },
+  'bev.wie.alleenJij': {
+    nl: 'Alleen jij. Er is verder niemand aan deze administratie gekoppeld.',
+    en: 'Only you. Nobody else is linked to this administration.',
+    ar: 'أنت فقط. لا أحد آخر مرتبط بهذه الإدارة.',
+  },
+  'bev.wie.aantal': {
+    nl: '{aantal} mensen kunnen bij deze administratie.',
+    en: '{aantal} people can open this administration.',
+    ar: '{aantal} أشخاص يمكنهم الوصول إلى هذه الإدارة.',
+  },
+  // De hele reden dat dit scherm bestaat, staat in deze zin: liever "we weten het niet zeker" dan
+  // een geruststelling die we niet kunnen waarmaken.
+  'bev.wie.onvolledig': {
+    nl: 'We konden niet alles uitlezen, dus deze lijst is misschien niet compleet. Wat er staat klopt; wat er niet staat weten we nu niet zeker.',
+    en: 'We could not read everything, so this list may be incomplete. What is here is correct; what is missing we cannot be sure about right now.',
+    ar: 'تعذّر علينا قراءة كل شيء، لذا قد تكون هذه القائمة ناقصة. ما هو مذكور صحيح؛ وما هو غائب لا نستطيع تأكيده الآن.',
+  },
+  'bev.rol.eigenaar': { nl: 'Jij — eigenaar', en: 'You — owner', ar: 'أنت — المالك' },
+  'bev.rol.boekhouder': { nl: 'Boekhouder', en: 'Bookkeeper', ar: 'المحاسب' },
+  'bev.rol.medewerker': { nl: 'Medewerker', en: 'Employee', ar: 'موظف' },
+  'bev.naamOnbekend': { nl: 'Naam niet gelezen', en: 'Name not read', ar: 'تعذّرت قراءة الاسم' },
+  'bev.sinds': { nl: 'Sinds {datum}', en: 'Since {datum}', ar: 'منذ {datum}' },
+  'bev.beheren': { nl: 'Toegang beheren', en: 'Manage access', ar: 'إدارة الوصول' },
+  'bev.log.titel': { nl: 'Wat er is vastgelegd', en: 'What has been recorded', ar: 'ما الذي سُجِّل' },
+  'bev.log.uitleg': {
+    nl: 'Elke handeling in deze administratie wordt vastgelegd — ook die van je boekhouder, en ook die van ons. Je kunt het zelf teruglezen.',
+    en: 'Every action in this administration is recorded — your bookkeeper\'s too, and ours. You can read it back yourself.',
+    ar: 'كل إجراء في هذه الإدارة يُسجَّل — بما في ذلك إجراءات محاسبك وإجراءاتنا. ويمكنك مراجعته بنفسك.',
+  },
+  'bev.log.aantal': {
+    nl: '{aantal} handelingen vastgelegd',
+    en: '{aantal} actions recorded',
+    ar: '{aantal} إجراءً مُسجَّلاً',
+  },
+  'bev.log.onbekend': {
+    nl: 'We konden het aantal nu niet lezen. Het logboek zelf staat er wel.',
+    en: 'We could not read the number just now. The logbook itself is still there.',
+    ar: 'تعذّرت قراءة العدد الآن. أما السجل نفسه فموجود.',
+  },
+  'bev.log.bekijken': { nl: 'Logboek openen', en: 'Open the logbook', ar: 'فتح السجل' },
   'mfa.titel': { nl: 'Verificatie in twee stappen', en: 'Two-step verification', ar: 'التحقق بخطوتين' },
   'mfa.staatAan': { nl: 'Staat aan', en: 'Switched on', ar: 'مُفعَّل' },
   'mfa.staatUit': { nl: 'Staat uit', en: 'Switched off', ar: 'غير مُفعَّل' },

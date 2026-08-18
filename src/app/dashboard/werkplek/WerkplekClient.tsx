@@ -35,6 +35,12 @@ const ITEMS = [
   // `history` is in the icon_names subset in layout.tsx; a name outside it renders as raw ligature
   // text (see material-icons.test.ts).
   { icon: 'history',      labelKey: 'log.titel',    subKey: 'log.uitleg',       href: '/dashboard/logboek',  bg: '#5F6368',    color: '#fff' },
+  // [BEVEILIGING] Wie er bij deze administratie kan, hoe hij op slot zit, en wat er is vastgelegd.
+  // Op deze hub en niet weggestopt in Instellingen: het is geen instelling die je één keer zet en
+  // vergeet maar een antwoord dat je komt HALEN — en een antwoord dat drie schermen diep ligt, is
+  // er geen. 'lock' is daarvoor aan de icon_names-subset in layout.tsx toegevoegd; een naam
+  // daarbuiten valt terug op de kale tekst (zie material-icons.test.ts).
+  { icon: 'lock',         labelKey: 'bev.titel',    subKey: 'bev.uitleg',       href: '/dashboard/beveiliging', bg: '#0B57D0', color: '#fff' },
 ] as const
 
 export default function WerkplekClient() {

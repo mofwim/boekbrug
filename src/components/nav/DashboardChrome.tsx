@@ -44,6 +44,9 @@ const STATIC_TITLES = new Map<string, string>([
   // Without an entry here at all the bar renders NOTHING — a real screen with no back button and
   // no heading, the failure already documented for settings/facturering below.
   ["/dashboard/logboek", "Logboek"],
+  // [BEVEILIGING] Same reasoning as the log entry above: without a line here the sub-page bar
+  // renders nothing — a real screen with no name and no way back.
+  ["/dashboard/beveiliging", "Beveiliging"],
   // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.
   ["/dashboard/vragen", "Vragen van je boekhouder"],
   ["/dashboard/klaar", "Ben ik klaar?"],
