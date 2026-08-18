@@ -304,7 +304,7 @@ test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, 
     checkedInvoices: 12, checkedTransactions: 340, hits: [],
     bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
   });
-  assert.match(clean, /12 openstaande facturen/);
+  assert.match(clean, /12 openstaande inkoopfacturen/);
   assert.match(clean, /340 banktransacties/);
   assert.match(clean, /t\/m 15 augustus 2026/, "the horizon — where the app stops knowing");
   assert.match(clean, /Geen betaling gevonden/);
@@ -324,7 +324,7 @@ test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, 
   assert.match(hit, /€\s?1\.224,75 open/, "what we call open");
   assert.match(hit, /20 augustus 2026/, "…and when the money left");
   assert.match(hit, /Klopt het dat deze factuur nog openstaat\?/, "a question, not a verdict");
-  assert.match(hit, /12 openstaande facturen vergeleken/, "the scope survives a finding");
+  assert.match(hit, /12 openstaande inkoopfacturen vergeleken/, "the scope survives a finding");
 
   // [NO-SILENT-EMPTY] A proof that could not run may never read as one that found nothing. Over
   // this list that is the most convincing lie the app could tell.
@@ -346,6 +346,78 @@ test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, 
 
   // …and an older render that sends nothing shows no panel rather than an empty claim.
   assert.doesNotMatch(render(null), /vergeleken met/);
+});
+
+test("[OPENSTAAND-BEWIJS] the sales list proves the other direction, in its own words", async () => {
+  // The mirror, and the side that carries the larger risk. A purchase invoice wrongly called open
+  // costs a second payment, which can be clawed back. A SALES invoice wrongly called open is
+  // CHASED — a reminder, a firmer one, and on the last tier a statutory aanmaning naming
+  // incassokosten — at a customer who already paid. No arithmetic on that screen can see it
+  // coming, because the app's own books say the invoice is open.
+  const { default: FacturenClient } = await import("../../src/app/dashboard/facturen/FacturenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const render = (openProof: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(FacturenClient as any, { profile: { id: "u1" }, openProof }))),
+  );
+
+  // The everyday answer: nothing found, said with the numbers that make it checkable.
+  const clean = render({
+    direction: "outgoing", checkedInvoices: 7, checkedTransactions: 210, hits: [],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.match(clean, /7 openstaande verkoopfacturen/, "named by KIND — this is not the pay screen");
+  assert.doesNotMatch(clean, /inkoopfactu/, "…and never as purchase invoices");
+  assert.match(clean, /210 banktransacties/);
+  assert.match(clean, /t\/m 15 augustus 2026/, "the horizon — where the app stops knowing");
+  assert.match(clean, /Geen betaling gevonden/);
+
+  // The exception this side exists for: an invoice we are about to chase, with the customer's
+  // payment already sitting in the bank.
+  const hit = render({
+    direction: "outgoing", checkedInvoices: 7, checkedTransactions: 210,
+    hits: [{
+      invoiceId: "s1", invoiceNumber: "2026-014", clientName: "Kiwi Food Market", openAmount: 2420,
+      transaction: { date: "2026-08-11", amount: 2420, description: "FACTUUR 2026-014", counterpartName: "Kiwi Food Market" },
+      confidence: 0.9, reason: "bedrag en tegenpartij komen overeen",
+    }],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.match(hit, /2026-014/);
+  assert.match(hit, /Kiwi Food Market/);
+  assert.match(hit, /€\s?2\.420,00 open/, "what we still call open");
+  // The preposition follows the direction of the money. "aan Kiwi Food Market" under a SALES
+  // invoice describes the owner paying their own customer, and one wrong word on the screen that
+  // has to be trusted most is a sentence read twice and believed half.
+  assert.match(hit, /van Kiwi Food Market/);
+  assert.doesNotMatch(hit, /aan Kiwi Food Market/);
+  // A question about the CUSTOMER, not about the document — this is the sentence that stops a
+  // reminder going out. Never a verdict, and never applied.
+  assert.match(hit, /Klopt het dat deze klant nog niet betaald heeft\?/);
+  assert.match(hit, /7 openstaande verkoopfacturen vergeleken/, "the scope survives a finding");
+
+  // [NO-SILENT-EMPTY] A proof that could not run may never read as one that found nothing.
+  const broken = render({
+    direction: "outgoing", checkedInvoices: 0, checkedTransactions: 0, hits: [],
+    bankThrough: null, readFailed: true, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.doesNotMatch(broken, /Geen betaling gevonden/);
+  assert.match(broken, /niet met je bank vergelijken/);
+
+  // A bounded check says it was bounded.
+  const capped = render({
+    direction: "outgoing", checkedInvoices: 200, checkedTransactions: 2000, hits: [],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 3, transactions: 40 },
+  });
+  assert.match(capped, /Niet alles is meegenomen/);
+  assert.match(capped, /3 facturen en 40 banktransacties/);
+
+  // …and a screen the server sent no proof to shows no panel rather than an empty claim.
+  assert.doesNotMatch(render(null), /vergeleken met|Geen betaling gevonden/);
 });
 
 test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost money", async () => {
@@ -519,7 +591,7 @@ test("[RENDER-GATE] the pay screen renders when the read failed, and says so", a
         profile: { id: "u1" },
         initialInvoices: [],
         totalCount: null,
-        readFailed: ["openstaande facturen"],
+        readFailed: ["openstaande inkoopfacturen"],
         filedQuarters: null,
       }))),
   );
@@ -1845,7 +1917,7 @@ test("[BETAALPLAN] het verdeelscherm opent met echte facturen en noemt het bedra
   assert.match(html, /200,00/);
 });
 
-test("[BETAALPLAN] zonder openstaande facturen wijst het scherm de weg in plaats van leeg te zijn", async () => {
+test("[BETAALPLAN] zonder openstaande inkoopfacturen wijst het scherm de weg in plaats van leeg te zijn", async () => {
   const { default: VerdeelClient } = await import("../../src/app/dashboard/bank/verdelen/[txId]/VerdeelClient");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const html = renderToStaticMarkup(React.createElement(VerdeelClient as any, {

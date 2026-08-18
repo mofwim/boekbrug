@@ -10970,11 +10970,46 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   //    proves nothing unless the search is stated. Every number in the sentence is checkable
   //    against the owner's own bank in seconds.
   const text = code("src/lib/open-invoice-proof-text.ts");
-  assert.match(text, /vergeleken met \$\{proof\.checkedTransactions\}/, "how many bank lines");
-  assert.match(text, /t\/m \$\{tot\}/, "…and the horizon: where the app stops knowing");
-  // The two answers that must never look like a clean check.
-  assert.match(text, /nog niet vergeleken met je bank/, "no bank data is not a clean bill of health");
-  assert.match(text, /geen inkoopfacturen open om na te kijken/);
+  assert.match(text, /t\('bewijs\.scope\.meer', \{ facturen, tx: proof\.checkedTransactions, tot \}\)/,
+    "how many bank lines");
+  assert.match(text, /t\('bewijs\.scope\.tot', \{ datum: dag \}\)/,
+    "…and the horizon: where the app stops knowing");
+  // The two answers that must never look like a clean check, and the two that must never collapse
+  // into one another. Both sides of the books name their own kind of document.
+  assert.match(text, /t\('bewijs\.geenBank', \{ facturen \}\)/,
+    "no bank data is not a clean bill of health");
+  assert.match(text, /t\('bewijs\.geenOpen\.inkoop'\)/);
+  assert.match(text, /t\('bewijs\.geenOpen\.verkoop'\)/);
+
+  // [TAAL] The words themselves live in the catalogue, in Dutch, and are asserted THERE — one
+  // place, so a rewording cannot leave the gate green while the screen changes its promise.
+  const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const sentence of [
+    "vergeleken met {tx} banktransacties{tot}",
+    " t/m {datum}",
+    "nog niet vergeleken met je bank",
+    "Er staan geen inkoopfacturen open om na te kijken.",
+    "Er staan geen verkoopfacturen open om na te kijken.",
+    "Geen betaling gevonden die bij een van deze facturen past.",
+    "niet met je bank vergelijken",
+    "Niet alles is meegenomen",
+  ]) {
+    assert.ok(cat.includes(sentence), `the catalogue lost: "${sentence}"`);
+  }
+  // The two questions are DIFFERENT questions. On a purchase invoice the owner is asked about the
+  // document; on a sales invoice about the CUSTOMER, because that is the person a reminder — and
+  // on the last tier a statutory aanmaning — is about to be sent to.
+  assert.ok(cat.includes("Klopt het dat deze factuur nog openstaat?"));
+  assert.ok(cat.includes("Klopt het dat deze klant nog niet betaald heeft?"));
+
+  // [NO-SILENT-EMPTY] A read that failed is its own answer, with no rows under it. Collapsing it
+  // into "geen betaling gevonden" is the most convincing lie this feature could tell.
+  assert.match(text, /if \(proof\.readFailed\) \{[\s\S]*?failed: true, lead: t\('bewijs\.leesFout'\), rows: \[\]/);
+  // A bounded check says it was bounded, in all three shapes — a check cut short and presented as
+  // a complete one is the exact false reassurance this panel exists to remove.
+  assert.match(text, /t\('bewijs\.beperkt\.beide'/);
+  assert.match(text, /t\('bewijs\.beperkt\.facturen'/);
+  assert.match(text, /t\('bewijs\.beperkt\.transacties'/);
 
   // 3. Evidence under every "Betaald" — the screen read amount_paid and never bank_tx_invoices.
   const ev = code("src/lib/payment-evidence.ts");
@@ -10985,28 +11020,171 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.match(ev, /export function isBankProven/,
     "a bank-proven payment and the owner's own tick are different claims");
 
-  // …and all of it actually reaches the screen. A proof computed and not rendered is the defect
+  // …and all of it actually reaches BOTH screens. A proof computed and not rendered is the defect
   // class this whole file exists for.
   const page = code("src/app/dashboard/incoming/manage/page.tsx");
   assert.match(page, /await collectOpenInvoiceProof\(\{ pipeline: supabase, ownerId: user\.id \}\)/);
   assert.match(page, /await collectPaymentEvidence\(\{/);
   assert.match(page, /openProof=\{openProof\}/);
   assert.match(page, /paymentEvidence=\{paymentEvidence\}/);
-  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
-  assert.match(client, /\{describeProof\(openProof, openProof\.bankThrough\)\}/);
-  assert.match(client, /\{describePayment\(paymentEvidence\[inv\.id\]\)\}/);
-  // [NO-SILENT-EMPTY] on both: a check that could not run may never render as one that found
-  // nothing — over this list that is the most convincing lie the app could tell.
-  assert.match(client, /openProof\.readFailed \?/);
-  assert.match(client, /Niet alles is meegenomen/, "and a bounded check says it was bounded");
 
-  // The screen imports the TEXT module, not the engine. open-invoice-proof.ts reaches
-  // matchTransactions and therefore the whole matching engine; importing it for two sentences
-  // would drag that engine into the browser bundle.
-  assert.match(client, /from '@\/lib\/open-invoice-proof-text'/);
-  assert.doesNotMatch(client, /from '@\/lib\/open-invoice-proof'/);
+  // ── The sales side, which carries the larger risk ───────────────────────────────────────────
+  //
+  // A purchase invoice wrongly called open costs a second payment, and the owner can claw it back.
+  // A SALES invoice wrongly called open is CHASED: a reminder, a firmer one, and on the last tier
+  // a statutory aanmaning naming incassokosten — at a customer who paid three weeks ago. Nothing
+  // on that screen can see it coming, because the app's own books say the invoice is open.
+  const salesPage = code("src/app/dashboard/facturen/page.tsx");
+  assert.match(salesPage, /collectOpenInvoiceProof\(\{[\s\S]{0,160}?direction: 'outgoing'/,
+    "the sales list asks the question of its OWN direction — the default is the pay screen's");
+  assert.match(salesPage, /openProof=\{openProof\}/);
+
+  // ONE component paints both. Two copies of a promise about the owner's books drift apart, and
+  // this repo has the receipts: eleven copies of a status chip disagreed about four statuses.
+  for (const screen of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+  ]) {
+    const client = code(screen);
+    assert.match(client, /<OpenInvoiceProofPanel panel=\{buildProofPanel\(openProof, taal\)\} \/>/,
+      `${screen} must render the shared panel, in the owner's language`);
+    // The screen imports the TEXT module, never the engine. open-invoice-proof.ts reaches
+    // matchTransactions and would drag the whole matching engine into the browser bundle.
+    assert.match(client, /from '@\/lib\/open-invoice-proof-text'/);
+    assert.doesNotMatch(client, /from '@\/lib\/open-invoice-proof'/);
+    // [TAAL] …and neither screen keeps a sentence of its own. The first version of this panel left
+    // the failure line, the per-hit question and the bounded note hard-coded in the component —
+    // the half-finished translation AGENTS.md warns about, which hides itself because the screen
+    // still looks right in Dutch.
+    for (const dutch of ["Niet alles is meegenomen", "In je bank staat", "niet met je bank vergelijken"]) {
+      assert.ok(!client.includes(dutch), `${screen} still holds copy of its own: "${dutch}"`);
+    }
+  }
+  // The component itself holds none either — it paints what the panel object hands it, direction
+  // included, so the words and the layout can never render out of step.
+  const panel = code("src/components/invoice/OpenInvoiceProofPanel.tsx");
+  assert.match(panel, /dir=\{panel\.dir\}/, "the direction travels with the words");
+  assert.match(panel, /\{panel\.lead\}/);
+  assert.match(panel, /\{row\.question\}/);
+  assert.match(panel, /\{panel\.bounded\}/);
+  assert.doesNotMatch(panel, /textAlign: 'right'/, "use textAlign: 'end'");
+  assert.doesNotMatch(panel, /paddingLeft:/, "use paddingInlineStart");
 
   const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
   assert.match(render, /the pay screen states what was checked, against what, and until when/);
   assert.match(render, /carries the bank line that says so/);
+  assert.match(render, /the sales list proves the other direction, in its own words/);
+});
+
+test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already in the bank", () => {
+  // The panel on the sales list makes this visible. This is the half that makes it MATTER.
+  //
+  // Every guard on the reminder paths asks the BOOKS whether an invoice is open — the status, the
+  // amount_paid, the creditnota's — and all three answer "open" for the case that costs the most:
+  // the customer paid, the bank line arrived, and nobody attached it to the invoice yet. No
+  // arithmetic on either path can see that, so the letter went out to somebody who owes nothing.
+  //
+  // On the cron's final tier the letter is not a nudge. It is the statutory aanmaning that makes
+  // incassokosten claimable at all (art. 6:96 BW), sent with no human in the loop.
+
+  // ── The button the owner presses ────────────────────────────────────────────────────────────
+  const manual = code("src/app/api/invoice/[id]/reminder/route.ts");
+  assert.match(manual, /collectOpenInvoiceProof\(\{[\s\S]{0,120}?direction: 'outgoing', invoiceIds: \[id\]/,
+    "the same engine the bank screen runs, scoped to this invoice");
+  assert.match(manual, /code: 'bank_payment_found'/);
+  assert.match(manual, /describeChaseBlock\(bewijs\.hits\[0\]/, "…answered with the bank line in it");
+  // The order is the whole safety property: a refusal may not consume a reminder tier, or the
+  // invoice ages toward the next one having never been chased.
+  const guardAt = manual.indexOf("collectOpenInvoiceProof({");
+  // The CLAIM, not the import of the offset helper — the first version of this gate pinned
+  // `nextManualOffset`, which also appears in the import block at the top of the file and so
+  // compared the guard against line 30. That is the mention-versus-wiring mistake this file keeps
+  // catching in other people's code.
+  const claimAt = manual.indexOf(".insert({");
+  assert.ok(guardAt > 0 && claimAt > guardAt,
+    "the bank check runs BEFORE the tier is claimed — a refusal must leave the trail untouched");
+  // A block with no way out is its own defect: the app compared two readings, it did not settle a
+  // debt, and an owner who knows the line is for something else must still be able to chase.
+  assert.match(manual, /body\?\.confirmDespiteBankMatch !== true/);
+  // [NO-SILENT-EMPTY] A check that could not RUN does not block a deliberate press — but the
+  // answer may not pretend it looked.
+  assert.match(manual, /bankCheckFailed = true/);
+  assert.match(manual, /warning: \(await serverTranslator\(\)\)\('bewijs\.herinner\.nietGecontroleerd'\)/);
+
+  // …and the screen actually offers both. A 409 the owner cannot answer is a dead end.
+  const verkoop = code("src/app/dashboard/verkoop/VerkoopClient.tsx");
+  assert.match(verkoop, /json\?\.code === 'bank_payment_found'/);
+  assert.match(verkoop, /herinner\(ondanksBank, true\)/);
+  assert.match(verkoop, /confirmDespiteBankMatch: true/);
+  assert.match(verkoop, /json\?\.warning \|\| vert\('vk\.herinneringVerstuurd'\)/,
+    "an unchecked send says so instead of reporting a clean one");
+
+  // ── The cron, where nobody is watching ──────────────────────────────────────────────────────
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /collectOpenInvoiceProof\(\{[\s\S]{0,140}?direction: "outgoing", invoiceIds: \[\.\.\.tierByInvoice\.keys\(\)\]/,
+    "one read per owner, over exactly the invoices about to be sent");
+  // ONE tier decision, read in both places. Two calls to the same pure function is one too many to
+  // keep honest: the day an argument is added to one, the guard and the send disagree about which
+  // invoices are in play — and the guard is the one that goes quiet.
+  assert.equal((cron.match(/reminderTierDue\(\{/g) ?? []).length, 1,
+    "the tier is decided once and read from the map");
+  assert.match(cron, /const tier = tierByInvoice\.get\(inv\.id\);/);
+  // The hold happens BEFORE the claim, for the same reason as on the manual path.
+  const bankGuardAt = cron.indexOf("const bankRegel = bankHitById.get(inv.id);");
+  const upsertAt = cron.indexOf('.upsert(');
+  assert.ok(bankGuardAt > 0 && upsertAt > bankGuardAt,
+    "a held reminder must not burn its tier — the invoice would age toward the next one unchased");
+  // FAIL CLOSED when the bank cannot be read: a held reminder costs a day (daily schedule,
+  // idempotent tier claims), a wrong aanmaning costs a customer.
+  assert.match(cron, /if \(!bewijs \|\| bewijs\.readFailed\) \{/);
+  const outageAt = cron.indexOf("if (!bewijs || bewijs.readFailed) {");
+  // Bounded by the SEND LOOP, not by a character count. The first version sliced 1800 characters
+  // and asserted /continue;/ inside them — which reached past the branch into the loop below,
+  // where several `continue`s live. Deleting the one that matters left the gate green: the
+  // assertion had matched a MENTION instead of the WIRING, which is the defect class this file
+  // exists to catch in other people's code and had just produced in its own.
+  const sendLoopAt = cron.indexOf("for (const inv of ownerInvoices)", outageAt);
+  assert.ok(sendLoopAt > outageAt, "the send loop still follows the bank check");
+  const outageBlock = cron.slice(outageAt, sendLoopAt);
+  assert.match(outageBlock, /continue;/, "…and that owner sends nothing this run");
+  // Neither hold is silent. A cron that quietly stops chasing money is indistinguishable from one
+  // that is broken, and the owner is the only person who can act on either.
+  assert.match(outageBlock, /createNotification\(/);
+  assert.match(cron, /title: "Herinnering niet verstuurd — betaling lijkt al binnen"/);
+  assert.match(cron, /\$\{bankRegel\}/, "the notification names the bank line, or it cannot be acted on");
+  // …but ONCE, on the day the reminder would have gone out. The tier is never claimed, so it stays
+  // due every morning; a message every morning about the app's own uncertainty is one nobody reads
+  // by week two. The standing state lives on the sales-list panel instead. The OUTAGE branch is
+  // deliberately not wrapped in this — there the reminders have stopped and no screen says so.
+  assert.match(cron, /if \(dueDay != null && dueDay \+ tier === today\) \{/);
+  const heldAt = cron.indexOf("const bankRegel = bankHitById.get(inv.id);");
+  const heldBlock = cron.slice(heldAt, cron.indexOf("continue;", heldAt));
+  assert.ok(
+    heldBlock.indexOf("dueDay + tier === today") < heldBlock.indexOf("createNotification("),
+    "the once-a-day rule wraps the notification, not the other way round",
+  );
+  // …and a held invoice is out of the STATUTORY sum too. Art. 6:96 lid 7 adds one debtor's
+  // hoofdsommen into a single aanmaning and lid 6 applies the staffel once over that total, so an
+  // amount that may already be in the bank overstates the hoofdsom — and an over-stated fee is the
+  // classic ground on which the whole incassokosten claim is struck. This is the second-order
+  // mistake the guard itself could have caused: invoice A held, its amount riding into the demand
+  // for invoice B of the same debtor.
+  assert.match(cron, /for \(const i of ownerInvoices\) \{\s*if \(bankHitById\.has\(i\.id\)\) continue;/);
+  const bankMapAt = cron.indexOf("bankHitById.set(h.invoiceId");
+  const claimsAt = cron.indexOf("const claimsPerDebiteur");
+  assert.ok(bankMapAt > 0 && claimsAt > bankMapAt,
+    "the claims map is built AFTER the bank check — before it, there is nothing to leave out");
+
+  // Two different holds, counted apart — collapsing them hides a broken read inside a number that
+  // looks like the guard working.
+  assert.match(cron, /bankHeld \+= 1;/);
+  assert.match(cron, /bankCheckHeld \+= tierByInvoice\.size;/);
+  for (const field of ["bankHeld,", "bankCheckHeld,"]) {
+    assert.equal((cron.match(new RegExp(field.replace(",", ",\\s"), "g")) ?? []).length, 2,
+      `${field} reaches BOTH the cron run record and the response`);
+  }
+
+  const unit = readFileSync("src/lib/open-invoice-proof.test.ts", "utf8");
+  assert.match(unit, /the sentence that stops a reminder names the bank line and what to do/);
+  assert.match(unit, /narrowing to one invoice narrows the ANSWER, never the search/);
 });

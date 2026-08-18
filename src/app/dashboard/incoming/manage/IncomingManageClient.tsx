@@ -103,8 +103,10 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
-// [OPENSTAAND-BEWIJS] The sentences live in the pure module; this component renders what it is handed.
-import { describeProof, describeHit } from '@/lib/open-invoice-proof-text'
+// [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by a shared component;
+// this screen holds no language of its own — see the header of open-invoice-proof-text.ts.
+import { buildProofPanel } from '@/lib/open-invoice-proof-text'
+import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 import { describePayment, isBankProven, type PaymentEvidence } from '@/lib/payment-evidence'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  // type-only: erased, no server code in the bundle
 
@@ -2169,64 +2171,7 @@ export default function IncomingManageClient({
             Deliberately calm when it finds nothing, which is nearly always. A green badge shouting
             "ALLES GECONTROLEERD" is decoration; a grey sentence with three real numbers in it is
             evidence, and it is the second one people come to rely on. */}
-        {openProof && (
-          <div
-            role="status"
-            style={{
-              display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10,
-              padding: '11px 13px', borderRadius: R.md, fontFamily: FONT,
-              border: `1px solid ${openProof.hits.length > 0 ? '#F7DFA5' : M3.outlineVariant}`,
-              background: openProof.hits.length > 0 ? M3.warningContainer : M3.surface,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: 18, flexShrink: 0, marginTop: 1, color: openProof.hits.length > 0 ? '#7C5800' : M3.neutral }}
-            >
-              {openProof.hits.length > 0 ? 'price_check' : 'fact_check'}
-            </span>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              {/* [NO-SILENT-EMPTY] A proof that could not run may never read as one that found
-                  nothing — over this list, that is the most convincing lie the app could tell. */}
-              {openProof.readFailed ? (
-                <p style={{ fontSize: 12.5, color: M3.error, margin: 0, lineHeight: 1.5 }}>
-                  We konden je openstaande facturen nu niet met je bank vergelijken. Deze lijst
-                  klopt met wat er in de app staat, maar is niet tegen je bankafschriften gehouden.
-                </p>
-              ) : (
-                <p style={{ fontSize: 12.5, color: openProof.hits.length > 0 ? '#7C5800' : M3.neutral, margin: 0, lineHeight: 1.5 }}>
-                  {describeProof(openProof, openProof.bankThrough)}
-                </p>
-              )}
-
-              {/* Each hit names BOTH numbers — what we call open, and the payment that looks like
-                  it. Never applied: both come from a reading, and picking a winner is the
-                  overconfidence that produces the wrong number in the first place. */}
-              {openProof.hits.map((h) => (
-                <div key={h.invoiceId} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${M3.outlineVariant}` }}>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: 0, lineHeight: 1.4 }}>
-                    {h.invoiceNumber ?? 'Factuur'}{h.clientName ? ` · ${h.clientName}` : ''} — {fmtEur(h.openAmount)} open
-                  </p>
-                  <p style={{ fontSize: 12.5, color: '#7C5800', margin: '2px 0 0', lineHeight: 1.45 }}>
-                    In je bank staat {describeHit(h)}. Klopt het dat deze factuur nog openstaat?
-                  </p>
-                </div>
-              ))}
-
-              {/* [NO-SILENT-EMPTY] A bounded check presented as a complete one is exactly the
-                  false reassurance this panel exists to remove. */}
-              {(openProof.capped.invoices > 0 || openProof.capped.transactions > 0) && (
-                <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 0 0', lineHeight: 1.45 }}>
-                  Niet alles is meegenomen:{' '}
-                  {openProof.capped.invoices > 0 ? `${openProof.capped.invoices} facturen` : ''}
-                  {openProof.capped.invoices > 0 && openProof.capped.transactions > 0 ? ' en ' : ''}
-                  {openProof.capped.transactions > 0 ? `${openProof.capped.transactions} banktransacties` : ''}
-                  {' '}vielen buiten deze controle.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
+        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal)} />
 
         {loadIncomplete && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>

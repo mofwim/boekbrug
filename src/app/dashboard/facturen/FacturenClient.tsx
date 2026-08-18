@@ -51,6 +51,11 @@ import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
 import { payToggleAnswer, isVerwerktConflict } from '@/lib/pay-toggle-reason'
 import type { MessageKey } from '@/lib/i18n/messages'
+// [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by the same component the
+// pay screen uses. Never open-invoice-proof.ts itself — that reaches the whole matching engine.
+import { buildProofPanel } from '@/lib/open-invoice-proof-text'
+import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
+import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-types'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -171,9 +176,14 @@ export default function FacturenClient({
   // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
   // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
   makers = {},
+  // [OPENSTAAND-BEWIJS] What the server checked before this list was drawn: every invoice we are
+  // chasing, held against every unattached credit in the bank, with the scope of that search.
+  // Null when it could not run — and then the panel says that rather than nothing.
+  openProof = null,
 }: {
   profile: { id: string }
   makers?: Record<string, string>
+  openProof?: OpenInvoiceProofResult | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -1090,6 +1100,23 @@ export default function FacturenClient({
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* ── [OPENSTAAND-BEWIJS] What we checked, and against what ────────────────────────────
+            The mirror of the panel on the pay screen, and on this side it carries more weight. A
+            purchase invoice wrongly called open costs the owner a second payment, which they can
+            claw back. A SALES invoice wrongly called open is chased: a reminder, a firmer one, and
+            on the last tier a statutory aanmaning naming incassokosten — sent to a customer who
+            paid three weeks ago. That is the most expensive thing this product can do, and no
+            arithmetic on this screen can see it coming, because the app's own books say the
+            invoice is open.
+
+            So the list states the SEARCH before it states any conclusion: how many invoices were
+            held against how many bank lines, and up to which day the bank data reaches. Above the
+            filters' results and above the list, because it qualifies both.
+
+            Never blocking, and never hidden while searching: a proof that could not run says so
+            rather than leaving a silence that reads as "everything is fine". */}
+        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal)} />
+
         {/* [HERHAAL] Everything that repeats, in one place at the top.
             The per-row button can only be found by finding the invoice, and the invoice that
             started a monthly series is a year older every twelve concepts. This panel is the

@@ -17,7 +17,8 @@
 // days off. Everything is bounded and every bound is reported — see `capped` below.
 
 import { fetchAllRows } from './supabase-paginate'
-import { proveOpenInvoices, type OpenInvoiceProof } from './open-invoice-proof'
+import { proveOpenInvoices, type ProofDirection } from './open-invoice-proof'
+import type { OpenInvoiceProofResult } from './open-invoice-proof-types'
 import type { InvoiceForMatching } from './bank-matching'
 import type { BankTransaction } from './bank-parser'
 
@@ -34,18 +35,10 @@ const LOOKBACK_DAYS = 31
 const MAX_INVOICES = 200
 const MAX_TRANSACTIONS = 2000
 
-export interface OpenInvoiceProofResult extends OpenInvoiceProof {
-  /** The most recent bank line this owner has, whatever its status. Null when there are none. */
-  bankThrough: string | null
-  /**
-   * [NO-SILENT-EMPTY] A read did not answer. The screen must then say it could not look, never
-   * "geen betaling gevonden" — an absence over a failed read is the most convincing lie this
-   * feature could tell.
-   */
-  readFailed: boolean
-  /** What the ceilings dropped, so the screen can say the check was bounded. */
-  capped: { invoices: number; transactions: number }
-}
+// The shape this returns is declared with the other shapes, not here: the sentences are built
+// from it, and the text module may not import a file that talks to the database. Re-exported so
+// every caller keeps the import it already had.
+export type { OpenInvoiceProofResult } from './open-invoice-proof-types'
 
 function daysBefore(iso: string, days: number): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
@@ -60,9 +53,32 @@ export async function collectOpenInvoiceProof(args: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pipeline: any
   ownerId: string
+  /**
+   * Which side of the books. 'incoming' — the bills the owner PAYS, and the money is a debit.
+   * 'outgoing' — the invoices the owner ISSUED, and the money arrives as a credit.
+   *
+   * The engine already reads the sign, so this changes only the two things it cannot know: which
+   * column identifies the owner (receiver_id or sender_id), and which statuses mean "issued and
+   * not yet settled".
+   */
+  direction?: ProofDirection
+  /**
+   * [HERINNER-BEWIJS] Narrow the question to specific invoices, without narrowing the SEARCH.
+   *
+   * The reminder path asks about one invoice at a time ("is this customer's payment already in the
+   * bank, before I chase them?"). It could not simply run its own query: the filtering has to
+   * happen AFTER the pairing, because a bank line only becomes evidence when the engine has seen
+   * it beside every open invoice — a payment that fits this invoice AND fits three others is
+   * exactly the pairing a per-invoice query would have called certain.
+   *
+   * Undefined = every open invoice, which is what both screens ask for.
+   */
+  invoiceIds?: readonly string[]
 }): Promise<OpenInvoiceProofResult> {
+  const direction: ProofDirection = args.direction ?? 'incoming'
+  const wanted = args.invoiceIds ? new Set(args.invoiceIds) : null
   const empty: OpenInvoiceProofResult = {
-    checkedInvoices: 0, checkedTransactions: 0, hits: [],
+    direction, checkedInvoices: 0, checkedTransactions: 0, hits: [],
     bankThrough: null, readFailed: false, capped: { invoices: 0, transactions: 0 },
   }
 
@@ -72,9 +88,12 @@ export async function collectOpenInvoiceProof(args: {
     invoiceRows = await fetchAllRows((from, to) => args.pipeline
       .from('invoices')
       .select('id, invoice_number, client_name, total_inc_btw, amount_paid, invoice_date, due_date, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, invoice_type')
-      .eq('receiver_id', args.ownerId)
-      .eq('direction', 'incoming')
-      .eq('status', 'received')
+      // The owner is the RECEIVER of a purchase invoice and the SENDER of a sales one.
+      .eq(direction === 'outgoing' ? 'sender_id' : 'receiver_id', args.ownerId)
+      .eq('direction', direction)
+      // 'received' = a purchase invoice a human confirmed and has not paid. On the sales side the
+      // same state is 'sent' or 'overdue' — 'draft' was never issued, so nobody can have paid it.
+      .in('status', direction === 'outgoing' ? ['sent', 'overdue'] : ['received'])
       .order('invoice_date', { ascending: true })
       .order('id', { ascending: true })
       .range(from, to))
@@ -100,7 +119,7 @@ export async function collectOpenInvoiceProof(args: {
     invoice_date: (r.invoice_date as string | null) ?? null,
     due_date: (r.due_date as string | null) ?? null,
     client_name: (r.client_name as string | null) ?? null,
-    direction: 'incoming',
+    direction,
     status: (r.status as string | null) ?? null,
     accountant_status: (r.accountant_status as string | null) ?? null,
     vendor_iban: (r.vendor_iban as string | null) ?? null,
@@ -167,8 +186,13 @@ export async function collectOpenInvoiceProof(args: {
     rawLine: '',
   }))
 
+  const proof = proveOpenInvoices(invoices, transactions, direction)
+  // The counts stay whole on purpose. `checkedInvoices` is the SCOPE of the search, and the search
+  // really did hold this payment against all of them — reporting the caller's shortlist instead
+  // would turn the one honest number on the panel into a smaller, flattering one.
   return {
-    ...proveOpenInvoices(invoices, transactions),
+    ...proof,
+    hits: wanted ? proof.hits.filter((h) => wanted.has(h.invoiceId)) : proof.hits,
     bankThrough,
     readFailed: false,
     capped: { invoices: cappedInvoices, transactions: cappedTransactions },

@@ -36,9 +36,9 @@
 import { matchTransactions, type InvoiceForMatching, type MatchCandidate, type MatchSignal } from './bank-matching'
 import type { BankTransaction } from './bank-parser'
 import { round2 } from './invoice-totals'
-import type { OpenInvoiceHit, OpenInvoiceProof } from './open-invoice-proof-types'
+import type { OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
 
-export type { OpenInvoiceHit, OpenInvoiceProof } from './open-invoice-proof-types'
+export type { OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
 
 /**
  * What a payment must prove before it is put in front of the owner as "this bill may already be
@@ -98,11 +98,12 @@ export function isProvingCandidate(signals: readonly MatchSignal[]): boolean {
 export function proveOpenInvoices(
   openInvoices: readonly InvoiceForMatching[],
   transactions: readonly BankTransaction[],
+  direction: ProofDirection = 'incoming',
 ): OpenInvoiceProof {
   const checkedInvoices = openInvoices.length
   const checkedTransactions = transactions.length
   if (checkedInvoices === 0 || checkedTransactions === 0) {
-    return { checkedInvoices, checkedTransactions, hits: [] }
+    return { direction, checkedInvoices, checkedTransactions, hits: [] }
   }
 
   const result = matchTransactions([...transactions], [...openInvoices])
@@ -146,7 +147,7 @@ export function proveOpenInvoices(
   }
   hits.sort((a, b) => b.confidence - a.confidence)
 
-  return { checkedInvoices, checkedTransactions, hits }
+  return { direction, checkedInvoices, checkedTransactions, hits }
 }
 
 // [OPENSTAAND-BEWIJS] The sentences live in open-invoice-proof-text.ts and are re-exported here,

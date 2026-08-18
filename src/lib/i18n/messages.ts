@@ -9997,6 +9997,165 @@ export const MESSAGES = {
     ar: 'ابحث عن فواتير أو مبالغ أو ملفات…',
     en: 'Search invoices, amounts, files…',
   },
+
+  // ─── [OPENSTAAND-BEWIJS] The panel that states the SEARCH, not the conclusion ───────────────
+  //
+  // Rule 1 of this file, applied literally: the noun is never a parameter. "inkoopfactuur" and
+  // "verkoopfactuur" get their own keys per sentence, because Arabic agreement and Turkish suffix
+  // harmony both hang off the noun — and because the two panels are read by the same person in the
+  // same session, so they may never collapse into one sentence about two different piles of money.
+  //
+  // The counted phrases ARE parameters, and that is the exception the rule allows: each is a
+  // complete noun phrase built from its own key, carrying its own number and its own agreement, so
+  // the frame around it never has to inflect.
+
+  'bewijs.geenOpen.inkoop': {
+    nl: 'Er staan geen inkoopfacturen open om na te kijken.',
+    ar: 'لا توجد فواتير شراء مفتوحة للمراجعة.',
+    en: 'There are no open purchase invoices to check.',
+  },
+  'bewijs.geenOpen.verkoop': {
+    nl: 'Er staan geen verkoopfacturen open om na te kijken.',
+    ar: 'لا توجد فواتير مبيعات مفتوحة للمراجعة.',
+    en: 'There are no open sales invoices to check.',
+  },
+
+  'bewijs.aantal.inkoop.een': {
+    nl: '1 openstaande inkoopfactuur',
+    ar: 'فاتورة شراء مفتوحة واحدة',
+    en: '1 open purchase invoice',
+  },
+  'bewijs.aantal.inkoop.meer': {
+    nl: '{count} openstaande inkoopfacturen',
+    ar: '{count} فاتورة شراء مفتوحة',
+    en: '{count} open purchase invoices',
+  },
+  'bewijs.aantal.verkoop.een': {
+    nl: '1 openstaande verkoopfactuur',
+    ar: 'فاتورة مبيعات مفتوحة واحدة',
+    en: '1 open sales invoice',
+  },
+  'bewijs.aantal.verkoop.meer': {
+    nl: '{count} openstaande verkoopfacturen',
+    ar: '{count} فاتورة مبيعات مفتوحة',
+    en: '{count} open sales invoices',
+  },
+
+  // No bank data is NOT a clean bill of health, and this sentence may never be shortened into one.
+  'bewijs.geenBank': {
+    nl: '{facturen} — nog niet vergeleken met je bank. Er staan geen banktransacties klaar om tegen te houden; importeer je bankafschrift.',
+    ar: '{facturen} — لم تُقارَن بعد بحسابك البنكي. لا توجد حركات بنكية جاهزة للمقارنة؛ استورد كشف حسابك.',
+    en: '{facturen} — not yet compared with your bank. There are no bank transactions to hold them against; import your bank statement.',
+  },
+
+  'bewijs.scope.een': {
+    nl: '{facturen} vergeleken met 1 banktransactie{tot}.',
+    ar: '{facturen} قُورنت بحركة بنكية واحدة{tot}.',
+    en: '{facturen} compared with 1 bank transaction{tot}.',
+  },
+  'bewijs.scope.meer': {
+    nl: '{facturen} vergeleken met {tx} banktransacties{tot}.',
+    ar: '{facturen} قُورنت بـ{tx} حركة بنكية{tot}.',
+    en: '{facturen} compared with {tx} bank transactions{tot}.',
+  },
+  // The horizon — where the app stops knowing. The single most trust-building clause on the panel
+  // and the cheapest, so it is its own key and never silently dropped by a translation.
+  'bewijs.scope.tot': { nl: ' t/m {datum}', ar: ' حتى {datum}', en: ' through {datum}' },
+
+  'bewijs.niets': {
+    nl: '{scope} Geen betaling gevonden die bij een van deze facturen past.',
+    ar: '{scope} لم نجد أي دفعة تطابق واحدة من هذه الفواتير.',
+    en: '{scope} No payment found that matches any of these invoices.',
+  },
+  'bewijs.raak.een': {
+    nl: '{scope} Bij 1 factuur vonden we tóch een betaling die erbij lijkt te passen.',
+    ar: '{scope} ومع ذلك وجدنا لدى فاتورة واحدة دفعة يبدو أنها تخصّها.',
+    en: '{scope} For 1 invoice we did find a payment that appears to match it.',
+  },
+  'bewijs.raak.meer': {
+    nl: '{scope} Bij {count} facturen vonden we tóch een betaling die erbij lijkt te passen.',
+    ar: '{scope} ومع ذلك وجدنا لدى {count} فواتير دفعات يبدو أنها تخصّها.',
+    en: '{scope} For {count} invoices we did find a payment that appears to match them.',
+  },
+
+  // On a purchase invoice the owner looks for money that LEFT; on a sales invoice for money that
+  // ARRIVED. One wrong preposition here is a sentence read twice and believed half.
+  'bewijs.hit.inkoop': {
+    nl: '{bedrag} op {datum} aan {naam}',
+    ar: '{bedrag} في {datum} إلى {naam}',
+    en: '{bedrag} on {datum} to {naam}',
+  },
+  'bewijs.hit.verkoop': {
+    nl: '{bedrag} op {datum} van {naam}',
+    ar: '{bedrag} في {datum} من {naam}',
+    en: '{bedrag} on {datum} from {naam}',
+  },
+  'bewijs.hit.zonderNaam': { nl: '{bedrag} op {datum}', ar: '{bedrag} في {datum}', en: '{bedrag} on {datum}' },
+  // The bank's own text, quoted verbatim: it is the string the owner recognises, and a tidied
+  // version of it is a string they have never seen.
+  'bewijs.hit.omschrijving': { nl: '{regel} — “{tekst}”', ar: '{regel} — «{tekst}»', en: '{regel} — “{tekst}”' },
+
+  'bewijs.regel.open': { nl: '{bedrag} open', ar: '{bedrag} مستحقة', en: '{bedrag} outstanding' },
+  'bewijs.regel.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },
+  // A question, never a verdict: both numbers come from a reading, and picking a winner is the
+  // overconfidence that produces the wrong number in the first place.
+  'bewijs.vraag.inkoop': {
+    nl: 'In je bank staat {bewijs}. Klopt het dat deze factuur nog openstaat?',
+    ar: 'في حسابك البنكي: {bewijs}. هل صحيح أن هذه الفاتورة ما زالت غير مدفوعة؟',
+    en: 'Your bank shows {bewijs}. Is it correct that this invoice is still outstanding?',
+  },
+  'bewijs.vraag.verkoop': {
+    nl: 'In je bank staat {bewijs}. Klopt het dat deze klant nog niet betaald heeft?',
+    ar: 'في حسابك البنكي: {bewijs}. هل صحيح أن هذا العميل لم يدفع بعد؟',
+    en: 'Your bank shows {bewijs}. Is it correct that this customer has not paid yet?',
+  },
+
+  // [NO-SILENT-EMPTY] A proof that could not run may never read as one that found nothing.
+  'bewijs.leesFout': {
+    nl: 'We konden je openstaande facturen nu niet met je bank vergelijken. Deze lijst klopt met wat er in de app staat, maar is niet tegen je bankafschriften gehouden.',
+    ar: 'تعذّرت مقارنة فواتيرك المفتوحة بحسابك البنكي الآن. هذه القائمة مطابقة لما في التطبيق، لكنها لم تُقارَن بكشوف حسابك.',
+    en: 'We could not compare your open invoices with your bank just now. This list matches what is in the app, but has not been held against your bank statements.',
+  },
+
+  // A bounded check presented as a complete one is exactly the false reassurance this panel
+  // exists to remove. Three whole sentences, never a fragment glued to a conjunction.
+  'bewijs.beperkt.facturen': {
+    nl: 'Niet alles is meegenomen: {count} facturen vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {count} فاتورة خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {count} invoices fell outside this check.',
+  },
+  'bewijs.beperkt.transacties': {
+    nl: 'Niet alles is meegenomen: {count} banktransacties vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {count} حركة بنكية خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {count} bank transactions fell outside this check.',
+  },
+  // [HERINNER-BEWIJS] The most expensive mistake this product can make, stated to the owner
+  // before it is made. A reminder — and on the last tier a statutory aanmaning naming
+  // incassokosten — sent to a customer who already paid is not a wrong number on a screen; it is
+  // the owner's relationship with the person who pays them. Never a verdict: the app says what it
+  // saw and leaves the decision where it belongs.
+  // The way past the block. Named as the action it is, not as a dismissal — the owner is not
+  // waving a warning away, they are telling the app something it could not know.
+  'vk.herinnerToch': { nl: 'Toch herinneren', ar: 'أرسل التذكير على أي حال', en: 'Remind anyway' },
+  'bewijs.herinner.geblokkeerd': {
+    nl: 'Nog niet verstuurd: in je bank staat {bewijs}. Koppel die betaling bij Bank, of verstuur de herinnering toch als het om iets anders gaat.',
+    ar: 'لم تُرسل بعد: في حسابك البنكي {bewijs}. اربط هذه الدفعة في صفحة Bank، أو أرسل التذكير على أي حال إن كانت تخصّ شيئاً آخر.',
+    en: 'Not sent yet: your bank shows {bewijs}. Link that payment under Bank, or send the reminder anyway if it is about something else.',
+  },
+  // [NO-SILENT-EMPTY] The check itself did not run. The reminder still goes out — the owner
+  // pressed the button and the app has no ground to refuse — but it may not pretend it looked.
+  'bewijs.herinner.nietGecontroleerd': {
+    nl: 'Verstuurd. We konden deze factuur niet met je bank vergelijken, dus is niet gecontroleerd of er al betaald is.',
+    ar: 'أُرسل. تعذّرت مقارنة هذه الفاتورة بحسابك البنكي، لذلك لم يُتحقق ممّا إذا كانت مدفوعة.',
+    en: 'Sent. We could not compare this invoice with your bank, so whether it was already paid has not been checked.',
+  },
+
+  'bewijs.beperkt.beide': {
+    nl: 'Niet alles is meegenomen: {facturen} facturen en {transacties} banktransacties vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {facturen} فاتورة و{transacties} حركة بنكية خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {facturen} invoices and {transacties} bank transactions fell outside this check.',
+  },
+
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

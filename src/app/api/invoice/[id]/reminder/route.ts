@@ -32,6 +32,11 @@ import { canRemind, nextManualOffset } from '@/lib/sales-overview'
 // [DEEL-CREDIT] Bedragen in plaats van ja/nee — zie de creditnota-controle verderop.
 import { creditedTotalsFrom, openAfterCredit } from '@/lib/credited-invoices'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+// [HERINNER-BEWIJS] Is the money already in the bank? Same engine, same rule, same sentence as the
+// panel on the sales list — see the block just before the claim below.
+import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
+import { describeChaseBlock } from '@/lib/open-invoice-proof-text'
+import { getServerLocale, serverTranslator } from '@/lib/i18n/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -181,6 +186,47 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       )
     }
 
+    // ── [HERINNER-BEWIJS] Is the money already sitting in the bank? ─────────
+    //
+    // Everything above this line asks the BOOKS whether the invoice is open — the status, the
+    // amount_paid, the creditnota's. All three say "open" for the case that costs the most: the
+    // customer paid, the bank line came in, and nobody has attached it to the invoice yet. The
+    // books cannot see it, so no arithmetic here can, and the mail goes out to somebody who paid.
+    //
+    // What that costs is not a wrong number on a screen. It is the owner's relationship with the
+    // person who pays them — and on the cron's last tier it is a statutory aanmaning naming
+    // incassokosten, sent to a customer who owes nothing.
+    //
+    // So the same engine the bank screen runs is asked the reverse question, scoped to this one
+    // invoice. Not a verdict: the answer comes back as a sentence with the bank line in it, and
+    // the owner decides. `confirmDespiteBankMatch` is that decision, arriving on a second,
+    // deliberate press — an owner who knows the payment is for something else must not be stuck.
+    //
+    // [NO-SILENT-EMPTY] A check that could not RUN does not block: the owner pressed the button
+    // and the app has no ground to refuse them. But it may not pretend it looked either, so the
+    // answer carries a warning and the screen says the comparison did not happen.
+    let bankCheckFailed = false
+    if (body?.confirmDespiteBankMatch !== true) {
+      const bewijs = await collectOpenInvoiceProof({
+        pipeline, ownerId, direction: 'outgoing', invoiceIds: [id],
+      }).catch((e) => {
+        console.error('[HERINNER-BEWIJS] bankcontrole mislukt — er is niets geblokkeerd', {
+          id, error: e instanceof Error ? e.message : String(e),
+        })
+        return null
+      })
+      if (!bewijs || bewijs.readFailed) {
+        bankCheckFailed = true
+      } else if (bewijs.hits.length > 0) {
+        // A refusal may not consume a reminder tier — the claim is written below this block on
+        // purpose, so nothing about this invoice's trail has changed when we answer.
+        return NextResponse.json(
+          { error: describeChaseBlock(bewijs.hits[0], await getServerLocale()), code: 'bank_payment_found' },
+          { status: 409 },
+        )
+      }
+    }
+
     // ── Claim vóór de mail ──────────────────────────────────────────────────
     // Zelfde volgorde als bij SnelStart: het onomkeerbare (een mail bij een klant) gebeurt pas
     // nadat het spoor vaststaat. Andersom kan een dubbele tik twee mails opleveren waarvan er
@@ -298,11 +344,25 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       action: 'invoice.reminder_sent',
       entityType: 'invoice',
       entityId: id,
-      newValue: { to: inv.client_email, offset, namens: isActingForOther(acting) ? ownerId : null },
+      newValue: {
+        to: inv.client_email, offset, namens: isActingForOther(acting) ? ownerId : null,
+        // [HERINNER-BEWIJS] Two facts an accountant would want months later, and neither is
+        // reconstructable from the invoice: that the owner overrode a found bank payment, and that
+        // the comparison could not be made at all. Both are ordinary, defensible choices — which
+        // is exactly why they belong in the trail rather than in nobody's memory.
+        ...(body?.confirmDespiteBankMatch === true ? { despiteBankMatch: true } : {}),
+        ...(bankCheckFailed ? { bankCheckFailed: true } : {}),
+      },
       ipAddress: getClientIP(request),
     }).catch(() => {})
 
-    return NextResponse.json({ ok: true, verstuurd: geslaagd.length + 1 })
+    // [NO-SILENT-EMPTY] The reminder went out; whether it SHOULD have was not fully checked.
+    // Saying so is the difference between a product that is careful and one that looks careful.
+    return NextResponse.json({
+      ok: true,
+      verstuurd: geslaagd.length + 1,
+      ...(bankCheckFailed ? { warning: (await serverTranslator())('bewijs.herinner.nietGecontroleerd') } : {}),
+    })
   } catch (e) {
     console.error('[ACTING-FOR] /api/invoice/[id]/reminder', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
