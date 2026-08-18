@@ -44,6 +44,8 @@ import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from "@/lib/format-nl";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -277,10 +279,13 @@ export async function POST(req: NextRequest) {
   // Money side: the BANK is the source of truth for the paid amount/date.
   const bankAmount = Math.abs(tx.amount ?? 0);
   // [DATE-ISO-SAFE / I6] Tolerant + never-throw for either source (a DD-MM-YYYY threw a 500).
+  // [TZ] The last resort is the owner's day, not the server's. This value is written to
+  // invoices.invoice_date, which is what puts the purchase in a BTW-quarter — so on the night a
+  // quarter turns, a UTC fallback books it in the quarter that just closed.
   const invoiceDate =
     normalizeToIso(tx.date) ??
     normalizeToIso(verification.invoice_date) ??
-    new Date().toISOString().split("T")[0];
+    amsterdamToday();
 
   // Prefer the AI total when it agrees with the bank; otherwise trust the bank
   // amount (what actually moved) and flag a warning for the owner to verify.

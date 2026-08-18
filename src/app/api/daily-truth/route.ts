@@ -24,6 +24,8 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { needsDocument } from "@/lib/bank-identity";
 // [BANK-SALDO] Het getal dat het scherm nooit toonde terwijl het al in de database stond.
 import { bankBalanceOf } from "@/lib/bank-balance";
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from "@/lib/format-nl";
 import { computeDrawerBalance } from "@/lib/cash";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
@@ -73,7 +75,11 @@ export async function GET() {
   }
 
   const pipeline = createPipelineClient();
-  const todayIso = new Date().toISOString().split("T")[0];
+  // [TZ] Amsterdam, like /dashboard/vandaag — the two are meant to show the same to-do, and for
+  // the hour after midnight (two in summer) UTC is still yesterday. That hour decided whether an
+  // invoice due today counted as OVERDUE here while the page beside it said it was not, and it set
+  // the quiet-period clock for the payment-difference detector a day back.
+  const todayIso = amsterdamToday();
   const todayNum = dayNumberFromIso(todayIso);
 
   // [BETALINGSVERSCHIL] payment_date rides along: it is the date of the money STILL on the

@@ -13,6 +13,8 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { assessSupplierCadence, cadenceReason, type CadenceVerdict } from "@/lib/supplier-cadence";
 import { supplierNameKey } from "@/lib/supplier-registry";
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +60,9 @@ export async function GET() {
     else groups.set(key, { name: naam, dates: [row.invoice_date] });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // [TZ] The owner's day: this date decides whether a supplier's monthly invoice is judged LATE,
+  // and for the hour after midnight UTC still says yesterday.
+  const today = amsterdamToday();
   const missing: MissingInvoice[] = [];
   for (const g of groups.values()) {
     const verdict = assessSupplierCadence(g.dates, today);

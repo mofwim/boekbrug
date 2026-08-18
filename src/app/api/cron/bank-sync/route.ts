@@ -27,6 +27,8 @@ import { isEnableBankingConfigured } from "@/lib/enablebanking-client";
 import { listBankConnections } from "@/lib/enablebanking-connection";
 import { syncBankConnection } from "@/lib/enablebanking-sync";
 import { createNotification } from "@/lib/notifications";
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -166,6 +168,8 @@ function daysUntil(date: string | null): number | null {
   if (!date) return null;
   const target = Date.parse(`${date}T00:00:00Z`);
   if (!Number.isFinite(target)) return null;
-  const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+  // [TZ] Counted from the owner's day. The crons already work in Amsterdam time for this reason;
+  // this one line still asked the server's.
+  const today = Date.parse(`${amsterdamToday()}T00:00:00Z`);
   return Math.round((target - today) / 86_400_000);
 }

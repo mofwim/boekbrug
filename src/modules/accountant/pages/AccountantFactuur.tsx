@@ -19,6 +19,8 @@
 // Een knop die dit weglaat verkoopt de boekhouder een bevoegdheid die hij niet heeft.
 
 import { useMemo, useState } from 'react'
+// [TZ] One clock for every door — see the note at amsterdamToday().
+import { amsterdamToday } from '@/lib/format-nl'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { UNITS, DEFAULT_UNIT_CODE, unitLabel } from '@/lib/units'
@@ -74,7 +76,13 @@ export default function AccountantFactuur({ klanten, gekoppeld = [] }: Props) {
   const [postcode, setPostcode] = useState('')
   const [plaats, setPlaats] = useState('')
   const [btwNummer, setBtwNummer] = useState('')
-  const [factuurdatum, setFactuurdatum] = useState(() => new Date().toISOString().slice(0, 10))
+  // [TZ] Amsterdam, not UTC — and this is the exact failure format-nl.ts names first: "an invoice
+  // created just after midnight on 1 January gets dated 31 December — the previous FISCAL YEAR and
+  // the previous BTW-quarter, on a document that already carries a number from the doorlopende
+  // reeks." The owner's own invoice screen has always used amsterdamToday(); this door, the one
+  // where a BOOKKEEPER invoices on a client's behalf, was still on the browser's UTC date. Same
+  // feature, two doors, two clocks.
+  const [factuurdatum, setFactuurdatum] = useState(() => amsterdamToday())
   const [regels, setRegels] = useState<Regel[]>([legeRegel()])
   const [bezig, setBezig] = useState(false)
   const [fout, setFout] = useState<string | null>(null)

@@ -11711,3 +11711,66 @@ test("[DEEL-CREDIT] all three readers of the creditnota set page past the same s
       `${what} must page on a unique key, or a row is served twice or skipped (${path})`);
   }
 });
+
+// ─── [TZ] One clock, for every door ────────────────────────────────────────────────
+//
+// format-nl.ts states the rule and names the damage in full: `new Date().toISOString()` is UTC,
+// the Netherlands is UTC+1/+2, so for the hour after midnight (two in summer) it answers
+// YESTERDAY. On an invoice date that is the previous fiscal year and the previous BTW-quarter, on
+// a document already carrying a number from the doorlopende reeks.
+//
+// The rule was written; it was not enforced. Seven places still asked the server's day, and one of
+// them was the screen where a BOOKKEEPER invoices on a client's behalf — the owner's own invoice
+// screen had used amsterdamToday() all along. Same feature, two doors, two clocks.
+
+test("[TZ] no business date is taken from the server's UTC day", () => {
+  // A date used as a FILENAME is not a business date, and forcing it through the same door would
+  // be a gate teaching people to weaken it. Both exceptions are named, with the reason, so the
+  // list cannot quietly grow into "wherever it was inconvenient".
+  const GEEN_ZAKELIJKE_DATUM = new Map<string, string>([
+    ["src/app/api/account/export/route.ts", "a filename stamp on a download, read by nobody's books"],
+    ["src/app/dashboard/settings/page.tsx", "the same stamp, on the client side of that download"],
+  ]);
+
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/lib/format-nl.ts") continue; // the file that DEFINES the right answer
+      const src = code(p);
+      // `new Date().toISOString()` sliced to a day. Not any toISOString(): a timestamp written to
+      // a timestamptz column is correct as UTC and must stay that way.
+      if (!/new Date\(\)\.toISOString\(\)\s*\.\s*(slice\(0, ?10\)|split\(["'`]T["'`]\)\[0\])/.test(src)) continue;
+      if (GEEN_ZAKELIJKE_DATUM.has(p)) continue;
+      offenders.push(p);
+    }
+  };
+  scan("src");
+
+  assert.deepEqual(offenders, [],
+    "these take the day from UTC; a Dutch business day comes from amsterdamToday():\n  " +
+    offenders.join("\n  "));
+
+  // And the exceptions must still be real — a path that no longer contains the pattern is a stale
+  // excuse, and a stale excuse is how an exception list stops meaning anything.
+  for (const [path, why] of GEEN_ZAKELIJKE_DATUM) {
+    assert.ok(existsSync(path), `exempted file is gone: ${path} (${why})`);
+    assert.match(code(path), /new Date\(\)\.toISOString\(\)/,
+      `${path} no longer needs its exemption (${why}) — remove it from the list`);
+  }
+});
+
+test("[TZ] the two doors onto an invoice date use the SAME clock", () => {
+  // The owner makes an invoice on /dashboard/invoice/new; a bookkeeper with an invoicing mandate
+  // makes one on the accountant screen. Same series, same numbering, same BTW-quarter — and for
+  // one hour a night they disagreed about what day it was.
+  const owner = code("src/app/dashboard/invoice/new/page.tsx");
+  const accountant = code("src/modules/accountant/pages/AccountantFactuur.tsx");
+  for (const [src, who] of [[owner, "the owner's invoice screen"], [accountant, "the accountant's"]] as const) {
+    assert.match(src, /amsterdamToday\(\)/, `${who} must date an invoice on the owner's day`);
+  }
+  assert.doesNotMatch(accountant, /new Date\(\)\.toISOString\(\)/,
+    "the accountant screen may not fall back to the browser's UTC date for a legal document date");
+});
