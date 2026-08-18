@@ -10212,6 +10212,24 @@ export const MESSAGES = {
     en: 'Your administration hangs on one password',
     ar: 'إدارتك معلَّقة على كلمة مرور واحدة',
   },
+  'bev.apparaten.titel': { nl: 'Andere apparaten', en: 'Other devices', ar: 'الأجهزة الأخرى' },
+  // De eerlijke helft staat in de zin zelf: wat we NIET kunnen tonen, staat er vóór wat we wel kunnen.
+  'bev.apparaten.uitleg': {
+    nl: 'We kunnen je niet laten zien op welke apparaten je bent ingelogd — die lijst geeft de inlogdienst niet vrij, en een lijst die we zelf zouden verzinnen klopt juist niet in het geval waarvoor je hem nodig hebt. Wat we wél kunnen: alle andere sessies in één keer uitloggen. Vermoed je dat iemand je wachtwoord heeft, doe dan dit én zet verificatie in twee stappen aan.',
+    en: 'We cannot show you which devices you are signed in on — the auth service does not hand that list out, and a list we made up ourselves would be wrong in exactly the case you need it for. What we can do: sign every other session out at once. If you suspect someone has your password, do this and switch on two-step verification.',
+    ar: 'لا نستطيع أن نُريك على أي الأجهزة أنت مسجَّل الدخول — خدمة الدخول لا تُتيح تلك القائمة، وقائمة نختلقها نحن ستكون خاطئة تحديداً في الحالة التي تحتاجها من أجلها. ما نستطيعه: إنهاء كل الجلسات الأخرى دفعة واحدة. إن كنت تشك أن أحداً يملك كلمة مرورك، فافعل هذا وفعِّل التحقق بخطوتين.',
+  },
+  'bev.apparaten.knop': { nl: 'Log alle andere apparaten uit', en: 'Sign out every other device', ar: 'إنهاء الجلسات على كل الأجهزة الأخرى' },
+  'bev.apparaten.gelukt': {
+    nl: 'Alle andere sessies zijn uitgelogd. Dit apparaat blijft ingelogd.',
+    en: 'Every other session has been signed out. This device stays signed in.',
+    ar: 'أُنهيت كل الجلسات الأخرى. هذا الجهاز يبقى مسجَّلاً.',
+  },
+  'bev.apparaten.mislukt': {
+    nl: 'Het is niet gelukt, en we weten niet of er iets is uitgelogd. Probeer het zo meteen opnieuw.',
+    en: 'It did not work, and we do not know whether anything was signed out. Try again in a moment.',
+    ar: 'لم تنجح العملية، ولا نعرف إن أُنهيت أي جلسة. أعد المحاولة بعد قليل.',
+  },
   'bev.log.titel': { nl: 'Wat er is vastgelegd', en: 'What has been recorded', ar: 'ما الذي سُجِّل' },
   'bev.log.uitleg': {
     nl: 'Elke handeling in deze administratie wordt vastgelegd — ook die van je boekhouder, en ook die van ons. Je kunt het zelf teruglezen.',

@@ -11269,6 +11269,19 @@ test("[2FA] no screen holds a Dutch 2FA sentence of its own", () => {
       // The catalogue is where these sentences live; it is not a screen.
       if (p.startsWith("src/lib/i18n/")) continue;
       const src = withoutTabTitle(code(p));
+      // A PUBLIC page is not a screen either, and the difference is not a technicality.
+      //
+      // The rule this gate enforces is "the app holds no language of its own" — the app being the
+      // part that renders in whatever language the OWNER chose. A public page has no owner and no
+      // language setting: /bewaarplicht, /prijzen and /beveiliging are read by a visitor with no
+      // account, they are argued in Dutch on purpose (AGENTS.md: Dutch is the source language),
+      // and the translated versions of them are separate routes rather than a t() call. Sweeping
+      // them here would mean a public page could never use the words "verificatie in twee stappen"
+      // — the exact phrase it needs in order to sell the feature.
+      //
+      // Detected structurally rather than by a hand-list, so it cannot rot: a page is public when
+      // it renders the public chrome. Stop rendering it and the exemption goes with it.
+      if (/PublicFooter|PublicHeader/.test(src)) continue;
       for (const [key, value] of sentences) {
         if (src.includes(value)) offenders.push(`${p} :: ${key}`);
       }
@@ -11393,4 +11406,19 @@ test("[BEVEILIGING] the home-screen hint says nothing unless it is certain the l
   // And it has to be on the screen an owner actually opens, or the whole point is lost.
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /<TweestapsHint \/>/,
     "the hint is not rendered on Vandaag — an owner who never opens the tile never learns the lock exists");
+});
+
+test("[BEVEILIGING] signing other devices out never takes this one with it", () => {
+  // scope 'global' would sign THIS session out too: the owner presses a button on his own security
+  // screen and lands on the login. He reads that as the app breaking, not as the thing he asked
+  // for — and the one press he most needs to trust becomes the one he never presses again.
+  const panel = code("src/components/beveiliging/ApparatenPaneel.tsx");
+  assert.match(panel, /signOut\(\{ scope: "others" \}\)/, "the panel no longer scopes the sign-out to other sessions");
+  assert.doesNotMatch(panel, /scope: "global"/, "'global' signs this device out as well");
+
+  // And a call we did not see finish is never reported as a success. "Alle andere apparaten zijn
+  // uitgelogd" is a claim, and this is the screen where a wrong one costs most: the owner stops
+  // worrying about a session that is still open.
+  assert.match(panel, /catch \{[\s\S]*?setOutcome\("failed"\)/,
+    "a thrown error does not land on the failure state — a dropped connection would read as success");
 });

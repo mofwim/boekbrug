@@ -31,6 +31,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${SITE_URL}/ar/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.4 },
     { url: `${SITE_URL}/tr/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.4 },
     { url: `${SITE_URL}/bewaarplicht`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
+    { url: `${SITE_URL}/beveiliging`, lastModified, changeFrequency: 'monthly', priority: 0.7 },
     { url: `${SITE_URL}/eerlijk-gebruik`, lastModified, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${SITE_URL}/privacy`, lastModified, changeFrequency: 'yearly', priority: 0.2 },
     { url: `${SITE_URL}/voorwaarden`, lastModified, changeFrequency: 'yearly', priority: 0.2 },
