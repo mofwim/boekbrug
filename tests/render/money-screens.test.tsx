@@ -1368,7 +1368,16 @@ test("[BLAD-EEN-SCROLLER] the two ways out of the sheet are not behind the docum
   assert.match(html, /flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain/,
     "exactly one scroller, and it is sized to scroll");
   // …and the panel itself no longer scrolls, or two nested `auto` scrollers compete for one gesture.
-  assert.match(html, /max-height:92dvh;overflow-y:hidden/);
+  //
+  // Asserted on the CLASS, not on an inline style. This branch fixed it inline (92dvh + hidden) and
+  // main fixed it in `.sheet-frame` in the same hour; the class is the right half, because an
+  // inline limit silently outranks the MEASURED 88dvh the class carries. So the property to hold
+  // here is "this panel wears the frame and sets no limit of its own" — the frame's own rules are
+  // held in globals.css by the [BLAD-SCROLL] gate.
+  assert.match(html, /class="sheet-frame"/, "the panel HOLDS a scroller, it is not one");
+  const paneel = html.slice(html.indexOf('class="sheet-frame"'), html.indexOf('class="sheet-frame"') + 600);
+  assert.doesNotMatch(paneel.slice(0, paneel.indexOf('">') + 2), /max-height/,
+    "no inline limit beside the class — inline wins, and the measured number would lose");
 
   // The actions come AFTER the scrolling body CLOSES — matched on the real tag, not on an index
   // comparison. The first version compared offsets and passed with the actions still inside the
