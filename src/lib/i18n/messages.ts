@@ -10539,6 +10539,14 @@ export const MESSAGES = {
   'log.btw.filed': { nl: 'BTW-aangifte als ingediend gemarkeerd', en: 'VAT return marked as filed', ar: 'وُسم الإقرار الضريبي كمُقدَّم' },
   'log.btw.filed_despite_warnings': { nl: 'BTW-aangifte ingediend ondanks waarschuwingen', en: 'VAT return filed despite warnings', ar: 'قُدّم الإقرار رغم التحذيرات' },
   'log.btw.filing_unlocked': { nl: 'Een ingediend kwartaal weer opengezet', en: 'A filed quarter re-opened', ar: 'أُعيد فتح ربع مُقدَّم' },
+  // [SUPPLETIE-VERREKEND] Added by another session in the same week as the logboek itself, which
+  // is exactly the collision AGENTS.md describes: both branches merged cleanly and the COMBINATION
+  // was broken — an action with no sentence reaches the logboek as a bare identifier.
+  'log.btw.correction_carried': {
+    nl: 'Een correctie in een latere aangifte verwerkt',
+    en: 'A correction processed in a later VAT return',
+    ar: 'عولج تصحيح ضمن إقرار لاحق',
+  },
   'log.accountant.client_invited': { nl: 'Klant uitgenodigd', en: 'Client invited', ar: 'دُعي عميل' },
   'log.accountant.client_linked': { nl: 'Koppeling met een boekhouder tot stand gekomen', en: 'Link with a bookkeeper established', ar: 'تمّ ربط مع محاسب' },
   'log.accountant.client_unlinked': { nl: 'Koppeling met een boekhouder verbroken', en: 'Link with a bookkeeper ended', ar: 'أُنهي الربط مع محاسب' },
