@@ -10925,3 +10925,88 @@ test("[CONTROLE-EERLIJK] the checklist says only things that are true of this in
   assert.match(health, /flags\.notOnDocument = true/, "the finding is distinguishable at the source");
   assert.match(health, /notOnDocument: false,/, "…and defaults to false like every other flag");
 });
+
+test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of asserting it", () => {
+  // The owner knows the app reads their invoices correctly and still does not quite believe the
+  // list of what they owe. That is not irrational: every screen shows a CONCLUSION and none shows
+  // its working. "Openstaand: € 8.914" can only be checked by redoing the work the app exists to
+  // do — so the doubt has nowhere to go.
+  //
+  // Three things were missing, and all three are about evidence rather than accuracy.
+
+  // 1. The reverse question, which nothing had ever asked. The engine answers "which invoice does
+  //    this payment belong to?" at import time; nobody asked "is this bill I am about to pay
+  //    perhaps already paid?"
+  const proof = code("src/lib/open-invoice-proof.ts");
+  assert.match(proof, /matchTransactions\(\[\.\.\.transactions\], \[\.\.\.openInvoices\]\)/,
+    "it REUSES the bank screen's engine — a second private notion of a match would drift, and then " +
+    "two screens would disagree about the same euro");
+  // The gate is the SIGNALS, not the score, and that is measured rather than preferred: against the
+  // real engine a € 1.224,75 payment to a DIFFERENT supplier scores 0.711 (amount + date) while a
+  // payment quoting "FACTUUR 264091" scores 0.600 (reference + amount). Any confidence bar that
+  // admits the evidence admits the coincidence.
+  assert.match(proof, /export function isProvingCandidate/);
+  assert.match(proof, /signals\.some\(\(s\) => IDENTITY_SIGNALS\.has\(s\)\) && signals\.some\(\(s\) => AMOUNT_SIGNALS\.has\(s\)\)/);
+  // Sliced to the filter itself and matched on the SHAPE of a score comparison, not on one spelling
+  // of it. The first version pinned the literal `c.confidence < PROOF_CONFIDENCE` and stayed green
+  // when the gate was replaced by `c.confidence < 0.7` — the same defect it was written to prevent.
+  const filterAt = proof.indexOf("for (const c of m.candidates)");
+  assert.ok(filterAt > 0, "the candidate loop still exists");
+  // The SKIP line, not any comparison in the loop. Confidence is still allowed to break a tie
+  // between two candidates for the same invoice — what it may not do is decide whether a candidate
+  // is shown at all. Matching every `c.confidence` in the block would have rejected that tiebreaker,
+  // which is correct code, and a gate that fails on correct code is one that gets deleted.
+  const skip = proof.slice(filterAt).split("\n").find((l) => l.includes("continue"));
+  assert.ok(skip, "the loop still skips candidates it does not believe");
+  assert.match(skip!, /isProvingCandidate\(c\.signals\)/, "…on the signals");
+  assert.doesNotMatch(skip!, /confidence/,
+    "no score threshold decides this — confidence is a tiebreaker, never the gate");
+  // 'date' may never appear in either set — a nearby day is the coincidence generator itself.
+  const idSet = /const IDENTITY_SIGNALS = new Set<MatchSignal>\(\[([\s\S]*?)\]\)/.exec(proof);
+  assert.ok(idSet, "the identity set is declared");
+  assert.doesNotMatch(idSet![1], /'date'/, "a date proves nothing about identity");
+
+  // 2. The SCOPE, which is the actual product. "We found no payment" is an absence, and an absence
+  //    proves nothing unless the search is stated. Every number in the sentence is checkable
+  //    against the owner's own bank in seconds.
+  const text = code("src/lib/open-invoice-proof-text.ts");
+  assert.match(text, /vergeleken met \$\{proof\.checkedTransactions\}/, "how many bank lines");
+  assert.match(text, /t\/m \$\{tot\}/, "…and the horizon: where the app stops knowing");
+  // The two answers that must never look like a clean check.
+  assert.match(text, /nog niet vergeleken met je bank/, "no bank data is not a clean bill of health");
+  assert.match(text, /geen inkoopfacturen open om na te kijken/);
+
+  // 3. Evidence under every "Betaald" — the screen read amount_paid and never bank_tx_invoices.
+  const ev = code("src/lib/payment-evidence.ts");
+  assert.match(ev, /case 'unknown':/, "a failed read is its own answer…");
+  assert.match(ev, /case 'none':/, "…and so is 'marked paid with nothing recording how'");
+  assert.match(ev, /if \(links === null\) return \{ kind: 'unknown' \}/,
+    "collapsing those two makes a busy database assert an invoice has no payment evidence");
+  assert.match(ev, /export function isBankProven/,
+    "a bank-proven payment and the owner's own tick are different claims");
+
+  // …and all of it actually reaches the screen. A proof computed and not rendered is the defect
+  // class this whole file exists for.
+  const page = code("src/app/dashboard/incoming/manage/page.tsx");
+  assert.match(page, /await collectOpenInvoiceProof\(\{ pipeline: supabase, ownerId: user\.id \}\)/);
+  assert.match(page, /await collectPaymentEvidence\(\{/);
+  assert.match(page, /openProof=\{openProof\}/);
+  assert.match(page, /paymentEvidence=\{paymentEvidence\}/);
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(client, /\{describeProof\(openProof, openProof\.bankThrough\)\}/);
+  assert.match(client, /\{describePayment\(paymentEvidence\[inv\.id\]\)\}/);
+  // [NO-SILENT-EMPTY] on both: a check that could not run may never render as one that found
+  // nothing — over this list that is the most convincing lie the app could tell.
+  assert.match(client, /openProof\.readFailed \?/);
+  assert.match(client, /Niet alles is meegenomen/, "and a bounded check says it was bounded");
+
+  // The screen imports the TEXT module, not the engine. open-invoice-proof.ts reaches
+  // matchTransactions and therefore the whole matching engine; importing it for two sentences
+  // would drag that engine into the browser bundle.
+  assert.match(client, /from '@\/lib\/open-invoice-proof-text'/);
+  assert.doesNotMatch(client, /from '@\/lib\/open-invoice-proof'/);
+
+  const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
+  assert.match(render, /the pay screen states what was checked, against what, and until when/);
+  assert.match(render, /carries the bank line that says so/);
+});

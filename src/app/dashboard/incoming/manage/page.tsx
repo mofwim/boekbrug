@@ -22,6 +22,10 @@ import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan
 import { readingHintFor, vendorKey } from '@/lib/reading-memory'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import type { ComponentProps } from 'react'
+// [OPENSTAAND-BEWIJS] Is anything on the pay list already settled in the bank? See the block below.
+import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
+// [BETAALBEWIJS] The bank line under every "Betaald" — see the block below.
+import { collectPaymentEvidence } from '@/lib/payment-evidence-collect'
 
 // Row shape the client expects — derived from its props (the type itself is not exported).
 type IncomingRow = ComponentProps<typeof IncomingManageClient>['initialInvoices'][number]
@@ -271,9 +275,51 @@ export default async function Page({
     if (focused) rows.unshift(focused as unknown as IncomingRow)
   }
 
+  // [BETAALBEWIJS] Under every "Betaald" on this screen, the bank line that says so.
+  //
+  // The list has always shown the word and never read bank_tx_invoices, so it carried no evidence:
+  // to check it the owner had to open their bank in another tab — the work this app exists to
+  // remove, handed back at the moment trust is being asked for. And a payment PROVEN by a bank line
+  // and one the owner ticked by hand rendered identically, which lends a third party's authority to
+  // a memory.
+  //
+  // Two reads for the whole screen, not two per row. Never blocking: a failure leaves every row
+  // 'unknown', which the screen states rather than dressing up as "no evidence".
+  const paymentEvidence = await collectPaymentEvidence({
+    pipeline: supabase,
+    ownerId: user.id,
+    invoiceIds: rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'),
+  }).catch((e) => {
+    console.error('[BETAALBEWIJS] evidence failed — the list still renders', {
+      userId: user.id, error: e instanceof Error ? e.message : String(e),
+    })
+    return {}
+  })
+
+  // [OPENSTAAND-BEWIJS] The other direction, and the one nobody ever asked: is anything on this
+  // list — the list the owner PAYS from — already settled in their bank?
+  //
+  // Everything else on this screen is a conclusion. "Openstaand: € 8.914" is an assertion the owner
+  // can only check by redoing the work the app exists to do, and that is where the doubt lives. So
+  // the screen now reports the SEARCH: how many bills were held against how many bank lines, and up
+  // to which day the bank data reaches. Empty is the normal answer and the reassuring one — but only
+  // because the two counts are beside it.
+  //
+  // Never blocking, and never a reason to withhold the list: a proof that could not run leaves the
+  // page exactly as it was, and says so.
+  const openProof = await collectOpenInvoiceProof({ pipeline: supabase, ownerId: user.id })
+    .catch((e) => {
+      console.error('[OPENSTAAND-BEWIJS] proof failed — the list still renders', {
+        userId: user.id, error: e instanceof Error ? e.message : String(e),
+      })
+      return null
+    })
+
   return (
     <IncomingManageClient
       profile={profile}
+      openProof={openProof}
+      paymentEvidence={paymentEvidence}
       initialInvoices={rows}
       totalCount={totalCount ?? null}
       readFailed={readFailed}

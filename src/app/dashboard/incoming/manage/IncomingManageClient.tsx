@@ -103,6 +103,10 @@ import { decideRemoval, type RemovalDecision, type RemovalInvoice } from '@/lib/
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
+// [OPENSTAAND-BEWIJS] The sentences live in the pure module; this component renders what it is handed.
+import { describeProof, describeHit } from '@/lib/open-invoice-proof-text'
+import { describePayment, isBankProven, type PaymentEvidence } from '@/lib/payment-evidence'
+import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  // type-only: erased, no server code in the bundle
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -440,6 +444,7 @@ export default function IncomingManageClient({
   initialInvoices,
   totalCount = null,
   readFailed = [], filedQuarters, bookScan = null, readingHints = {}, incassoKeys = [],
+  openProof = null, paymentEvidence = {},
 }: {
   // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
   // Optional, because the server reads the profile with select('*') and the column is simply not
@@ -459,6 +464,23 @@ export default function IncomingManageClient({
   // [INVOICE-SCAN] Quarters the owner has already filed. null = we could not look — the banner then
   // omits the filed warning rather than implying every quarter is still open.
   filedQuarters?: string[] | null
+  /**
+   * [OPENSTAAND-BEWIJS] The other direction, computed on the server: every open bill on this list
+   * held against every unattached bank line, with the scope of that search.
+   *
+   * The scope is the product, not the hits. "Openstaand: € 8.914" is an assertion the owner can
+   * only check by redoing the app's work; "12 facturen vergeleken met 340 banktransacties t/m 15
+   * augustus, niets gevonden" is a claim they can verify against their own bank in four seconds.
+   *
+   * Null when the proof could not run — and then the panel says that, rather than nothing.
+   */
+  openProof?: OpenInvoiceProofResult | null
+  /**
+   * [BETAALBEWIJS] Per invoice id, what kind of claim "Betaald" is on it: a bank line, the owner's
+   * own tick, both, nothing recorded, or a read that failed. Absent id = an older render that sent
+   * none, and then the row looks exactly as it did before this existed.
+   */
+  paymentEvidence?: Record<string, PaymentEvidence>
   // [SCAN-WHOLE-BOOK] The scan over the owner's ENTIRE confirmed history, computed server-side.
   // null = that read failed, and the banner then counts only what is on this screen and says so.
   bookScan?: InvoiceScan | null
@@ -2137,6 +2159,75 @@ export default function IncomingManageClient({
             suppliers from, that sentence means "je bent niemand iets schuldig". The list still
             renders whatever DID load (a stale list beats a blank screen); it just no longer
             claims to be the whole of it. */}
+        {/* ── [OPENSTAAND-BEWIJS] What we checked, and against what ────────────────────────────
+            The quiet line that does the actual work. Everything else on this screen is a
+            conclusion; this is the only thing that states the SEARCH — how many bills were held
+            against how many bank lines, and up to which day the bank data reaches. Every number in
+            it is checkable against the owner's own bank in seconds, which is the whole difference
+            between an assertion and a proof.
+
+            Deliberately calm when it finds nothing, which is nearly always. A green badge shouting
+            "ALLES GECONTROLEERD" is decoration; a grey sentence with three real numbers in it is
+            evidence, and it is the second one people come to rely on. */}
+        {openProof && (
+          <div
+            role="status"
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10,
+              padding: '11px 13px', borderRadius: R.md, fontFamily: FONT,
+              border: `1px solid ${openProof.hits.length > 0 ? '#F7DFA5' : M3.outlineVariant}`,
+              background: openProof.hits.length > 0 ? M3.warningContainer : M3.surface,
+            }}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: 18, flexShrink: 0, marginTop: 1, color: openProof.hits.length > 0 ? '#7C5800' : M3.neutral }}
+            >
+              {openProof.hits.length > 0 ? 'price_check' : 'fact_check'}
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {/* [NO-SILENT-EMPTY] A proof that could not run may never read as one that found
+                  nothing — over this list, that is the most convincing lie the app could tell. */}
+              {openProof.readFailed ? (
+                <p style={{ fontSize: 12.5, color: M3.error, margin: 0, lineHeight: 1.5 }}>
+                  We konden je openstaande facturen nu niet met je bank vergelijken. Deze lijst
+                  klopt met wat er in de app staat, maar is niet tegen je bankafschriften gehouden.
+                </p>
+              ) : (
+                <p style={{ fontSize: 12.5, color: openProof.hits.length > 0 ? '#7C5800' : M3.neutral, margin: 0, lineHeight: 1.5 }}>
+                  {describeProof(openProof, openProof.bankThrough)}
+                </p>
+              )}
+
+              {/* Each hit names BOTH numbers — what we call open, and the payment that looks like
+                  it. Never applied: both come from a reading, and picking a winner is the
+                  overconfidence that produces the wrong number in the first place. */}
+              {openProof.hits.map((h) => (
+                <div key={h.invoiceId} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${M3.outlineVariant}` }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: 0, lineHeight: 1.4 }}>
+                    {h.invoiceNumber ?? 'Factuur'}{h.clientName ? ` · ${h.clientName}` : ''} — {fmtEur(h.openAmount)} open
+                  </p>
+                  <p style={{ fontSize: 12.5, color: '#7C5800', margin: '2px 0 0', lineHeight: 1.45 }}>
+                    In je bank staat {describeHit(h)}. Klopt het dat deze factuur nog openstaat?
+                  </p>
+                </div>
+              ))}
+
+              {/* [NO-SILENT-EMPTY] A bounded check presented as a complete one is exactly the
+                  false reassurance this panel exists to remove. */}
+              {(openProof.capped.invoices > 0 || openProof.capped.transactions > 0) && (
+                <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 0 0', lineHeight: 1.45 }}>
+                  Niet alles is meegenomen:{' '}
+                  {openProof.capped.invoices > 0 ? `${openProof.capped.invoices} facturen` : ''}
+                  {openProof.capped.invoices > 0 && openProof.capped.transactions > 0 ? ' en ' : ''}
+                  {openProof.capped.transactions > 0 ? `${openProof.capped.transactions} banktransacties` : ''}
+                  {' '}vielen buiten deze controle.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {loadIncomplete && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
@@ -2732,6 +2823,40 @@ export default function IncomingManageClient({
                             style={{ whiteSpace: 'nowrap', color: '#0B8043' }}
                           >
                             · {t('ink.betaaldOp', { date: fmtDateSmart(inv.payment_date, thisYear) })}
+                          </span>
+                        )}
+                        {/* ── [BETAALBEWIJS] the bank line under the word "Betaald" ──────────
+                            The screen has always shown the conclusion and never the evidence: it
+                            read amount_paid and payment_date and never once bank_tx_invoices. So
+                            checking it meant opening the bank in another tab — the work this app
+                            exists to remove, handed back at the moment trust is being asked for.
+
+                            The bank text is quoted verbatim. The owner is not asked to verify
+                            anything, only to RECOGNISE their own statement line, and a tidied
+                            version of it is a string they have never seen.
+
+                            A payment proven by a bank line and one the owner ticked by hand are
+                            different facts, and until now they rendered as the same word. Naming
+                            which one it is costs a sentence and is the whole difference between
+                            "the app says" and "your bank says". */}
+                        {isPaid && paymentEvidence[inv.id] && paymentEvidence[inv.id].kind !== 'none' && (
+                          <span
+                            style={{
+                              display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4,
+                              fontSize: 11.5,
+                              color: isBankProven(paymentEvidence[inv.id]) ? '#0B8043'
+                                : paymentEvidence[inv.id].kind === 'unknown' ? M3.error : M3.neutral,
+                            }}
+                          >
+                            {describePayment(paymentEvidence[inv.id])}
+                          </span>
+                        )}
+                        {/* The one case worth interrupting for: marked paid, with nothing anywhere
+                            recording how. Rare, real, and the state that keeps the other two worth
+                            believing — so it is amber and not grey. */}
+                        {isPaid && paymentEvidence[inv.id]?.kind === 'none' && (
+                          <span style={{ display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4, fontSize: 11.5, color: '#7C5800' }}>
+                            {describePayment(paymentEvidence[inv.id])}
                           </span>
                         )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge

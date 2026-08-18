@@ -230,6 +230,124 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
 });
 
+test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", async () => {
+  // The pay screen showed the conclusion and never the evidence: it read amount_paid and
+  // payment_date, and never once bank_tx_invoices. Checking it meant opening the bank in another
+  // tab — the work the app exists to remove, handed back at the moment trust is asked for.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const paid = {
+    id: "p1", invoice_number: "264091", client_name: "BALKIP B.V.", status: "paid",
+    direction: "incoming", invoice_type: "factuur", total_inc_btw: 1224.75, amount_paid: 1224.75,
+    total_ex_btw: 1123.62, btw_amount: 101.13, invoice_date: "2026-08-13", due_date: "2026-08-13",
+    payment_date: "2026-08-20", payment_method: "bank", accountant_status: null,
+    created_at: "2026-08-13T10:00:00Z", document_id: null, pdf_url: null, vendor_iban: null,
+    payment_reference: null, payment_prepared_at: null, field_confidence: null,
+  };
+  const render = (paymentEvidence: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingManageClient as any, {
+          profile: { id: "u1" }, initialInvoices: [paid], totalCount: 1,
+          readFailed: [], filedQuarters: [], paymentEvidence,
+        }))),
+  );
+
+  // Proven by the bank: the statement text, verbatim — recognition is the whole mechanism.
+  const bank = render({ p1: { kind: "bank", total: 1224.75, links: [{
+    transactionId: "tx-1", amountApplied: 1224.75, paidOn: "2026-08-20", method: "bank",
+    transaction: { date: "2026-08-20", amount: -1224.75, description: "FACTUUR 264091 BALKIP",
+      counterpartName: "BALKIP B.V.", counterpartIban: null },
+  }] } });
+  assert.match(bank, /afgeschreven/);
+  assert.match(bank, /&quot;FACTUUR 264091 BALKIP&quot;|"FACTUUR 264091 BALKIP"/, "the owner's own statement line");
+
+  // The owner's own tick reads differently — it may not borrow the bank's authority.
+  const hand = render({ p1: { kind: "manual", total: 1224.75, links: [{
+    transactionId: null, amountApplied: 1224.75, paidOn: "2026-08-20", method: "bank", transaction: null,
+  }] } });
+  assert.match(hand, /Door jou/);
+  assert.doesNotMatch(hand, /afgeschreven/, "nothing was demonstrably debited");
+
+  // Marked paid with nothing recording how — the state that keeps the other two worth believing.
+  assert.match(render({ p1: { kind: "none" } }), /geen betaling aan gekoppeld/);
+  // …and a failed read says that, instead of asserting there is no evidence.
+  assert.match(render({ p1: { kind: "unknown" } }), /konden niet nakijken/);
+  // An older render that sends nothing leaves the row exactly as it was.
+  assert.doesNotMatch(render({}), /afgeschreven|Door jou|geen betaling aan gekoppeld/);
+});
+
+test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, and until when", async () => {
+  // The owner knows the app read their invoices right and still does not quite believe the list of
+  // what they owe. Every screen shows a conclusion; none shows its working. This panel is the only
+  // thing on the pay screen that states the SEARCH — and the scope is the product, not the hits.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const render = (openProof: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingManageClient as any, {
+          profile: { id: "u1" }, initialInvoices: [], totalCount: null,
+          readFailed: [], filedQuarters: [], openProof,
+        }))),
+  );
+
+  // The everyday answer, and the one that has to be worth reading: nothing found, said with the
+  // three numbers that make it checkable against the owner's own bank in seconds.
+  const clean = render({
+    checkedInvoices: 12, checkedTransactions: 340, hits: [],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.match(clean, /12 openstaande facturen/);
+  assert.match(clean, /340 banktransacties/);
+  assert.match(clean, /t\/m 15 augustus 2026/, "the horizon — where the app stops knowing");
+  assert.match(clean, /Geen betaling gevonden/);
+
+  // The exception: a bill we call open, with a payment sitting in the bank. Both numbers, and a
+  // question — never an assertion, and never applied.
+  const hit = render({
+    checkedInvoices: 12, checkedTransactions: 340,
+    hits: [{
+      invoiceId: "a", invoiceNumber: "264091", clientName: "BALKIP B.V.", openAmount: 1224.75,
+      transaction: { date: "2026-08-20", amount: -1224.75, description: "FACTUUR 264091 BALKIP", counterpartName: "BALKIP B.V." },
+      confidence: 0.9, reason: "bedrag en tegenpartij komen overeen",
+    }],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.match(hit, /264091/);
+  assert.match(hit, /€\s?1\.224,75 open/, "what we call open");
+  assert.match(hit, /20 augustus 2026/, "…and when the money left");
+  assert.match(hit, /Klopt het dat deze factuur nog openstaat\?/, "a question, not a verdict");
+  assert.match(hit, /12 openstaande facturen vergeleken/, "the scope survives a finding");
+
+  // [NO-SILENT-EMPTY] A proof that could not run may never read as one that found nothing. Over
+  // this list that is the most convincing lie the app could tell.
+  const broken = render({
+    checkedInvoices: 0, checkedTransactions: 0, hits: [],
+    bankThrough: null, readFailed: true, capped: { invoices: 0, transactions: 0 },
+  });
+  assert.doesNotMatch(broken, /Geen betaling gevonden/);
+  assert.match(broken, /niet met je bank vergelijken/);
+
+  // A bounded check presented as a complete one is the false reassurance this panel removes.
+  const capped = render({
+    checkedInvoices: 200, checkedTransactions: 2000, hits: [],
+    bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 14, transactions: 300 },
+  });
+  assert.match(capped, /Niet alles is meegenomen/);
+  assert.match(capped, /14 facturen/);
+  assert.match(capped, /300 banktransacties/);
+
+  // …and an older render that sends nothing shows no panel rather than an empty claim.
+  assert.doesNotMatch(render(null), /vergeleken met/);
+});
+
 test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost money", async () => {
   // The screen this feature was reported from. Two WonenBreburg rent invoices, both past their
   // vervaldatum, both wearing "2 dagen te laat" and offering a Betalen button — for money the bank
