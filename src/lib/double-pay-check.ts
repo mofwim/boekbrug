@@ -259,3 +259,88 @@ export function buildDoublePayNotice(
 
   return { tone: result.outcome === "twin" ? "alarm" : "clear", lead, detail, dir };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// [DUBBEL-BUNDEL] The same three answers, asked of a whole set at once.
+//
+// executeBundlePay marks N supplier invoices paid — one Bank/Contant answer, then N writes through
+// /api/invoice/pay-toggle. It never called the duplicate check at all. So the path that pays the
+// MOST invoices in a single tap, and the one where the owner is weighing five documents instead of
+// one, was the path with no check on it, and nothing on the dialog said so.
+//
+// Running the check per row is cheap: /api/incoming/check-paid is read-only, writes no audit row
+// and holds no rate limiter. What it is not is unbounded — a selection has no ceiling — so the
+// fan-out has one, and the count that was NOT attempted is reported rather than absorbed.
+
+/** One row of the bundle, with whatever the check managed to say about it. */
+export interface BundleDoublePayFinding {
+  /** The invoice's own number, for naming it back to the owner. Null when the document has none. */
+  invoiceNumber: string | null;
+  result: DoublePayResult;
+}
+
+/**
+ * What the bundle dialog says about the set it is about to pay.
+ *
+ * Precedence is deliberate and is the whole point: a real twin outranks an unchecked row, but an
+ * unchecked row is NEVER absorbed into a "we checked them all" count. When both are present the
+ * lead names the twins and the detail still names the unchecked — because a set reported as
+ * "5 nagekeken, geen dubbel" when only 4 were reachable is the same lie as before, multiplied.
+ *
+ * @param total how many rows the bundle actually holds, which may exceed what was attempted.
+ */
+export function buildBundleDoublePayNotice(
+  /** null while the sweep is still running — see below for why that is not "no line". */
+  findings: readonly BundleDoublePayFinding[] | null,
+  total: number,
+  locale: unknown,
+): DoublePayNotice | null {
+  const t = translator(locale);
+  const dir = localeDir(locale);
+  // No bundle, no sentence.
+  if (total === 0) return null;
+  // Still sweeping. This gets a line rather than a blank, because the confirm button is live the
+  // whole time: an owner who taps before the answers land would otherwise meet exactly the empty
+  // space this work exists to fill. It also covers a fetch that never settles, where the blank
+  // would never be replaced at all.
+  if (findings === null) return { tone: "unknown", lead: t("dubbel.bundel.bezig"), detail: [], dir };
+
+  const twins = findings.filter((f) => f.result.outcome === "twin");
+  const unchecked = findings.filter((f) => f.result.outcome === "unchecked");
+  // Rows the fan-out never reached. Not a failure of any single check — a bound on the whole
+  // sweep — so it is reported as its own sentence and never folded into a per-row count.
+  const notAttempted = Math.max(0, total - findings.length);
+
+  /** "Van N rekeningen konden we niet nakijken…", or nothing when every row was reachable. */
+  const uncheckedLine = (): string | null =>
+    unchecked.length === 0 ? null
+    : unchecked.length === 1 ? t("dubbel.bundel.onbekend.een")
+    : t("dubbel.bundel.onbekend.meer", { count: unchecked.length });
+
+  const boundLine = (): string | null =>
+    notAttempted === 0 ? null : t("dubbel.bundel.grens", { count: findings.length, totaal: total });
+
+  if (twins.length > 0) {
+    const numbers = twins.map((f) => f.invoiceNumber).filter((n): n is string => !!n && n.trim() !== "");
+    const lead =
+      // A set whose documents carry no readable number cannot be named. Saying so beats a sentence
+      // that trails off after a colon.
+      numbers.length === 0 ? t("dubbel.bundel.alarm.geenNummer", { count: twins.length })
+      : twins.length === 1 ? t("dubbel.bundel.alarm.een", { nummers: numbers.join(", ") })
+      : t("dubbel.bundel.alarm.meer", { count: twins.length, nummers: numbers.join(", ") });
+    const detail = [t("dubbel.bundel.watNu"), uncheckedLine(), boundLine()];
+    return { tone: "alarm", lead, detail: detail.filter((d): d is string => d !== null), dir };
+  }
+
+  if (unchecked.length > 0 || notAttempted > 0) {
+    // No twin among what WAS checked — which is not the same as no twin, and this is the sentence
+    // that keeps those two apart.
+    const lead = uncheckedLine() ?? t("dubbel.bundel.grens", { count: findings.length, totaal: total });
+    const detail = [t("dubbel.onbekend.watNu")];
+    const bound = uncheckedLine() === null ? null : boundLine();
+    if (bound) detail.unshift(bound);
+    return { tone: "unknown", lead, detail, dir };
+  }
+
+  return { tone: "clear", lead: t("dubbel.bundel.schoon", { count: findings.length }), detail: [], dir };
+}

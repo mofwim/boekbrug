@@ -2403,6 +2403,14 @@ test("[ANDER-TOTAAL] the document's own total reaches the confirm modal as one t
   assert.doesNotMatch(cleanHtml, /Staat dit bedrag op je factuur\?/, "no offer on an invoice that reads right");
 });
 
+// [DUBBEL-BEWIJS] The words on the screen, without the styles behind them.
+//
+// Asserting a number against raw markup reads the CSS too: `line-height:1.45` satisfies /4/, and
+// `border-radius:10px` satisfies /10/. Both of this file's double-pay tests had an assertion that
+// passed for that reason — "the search names how many it compared against" was being answered by a
+// line-height. What the owner reads is the text nodes, so that is what these assert on.
+const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
 test("[DUBBEL-BEWIJS] 'we could not look' does not render as 'we looked and found nothing'", async () => {
   // The whole point, painted. The no-double-pay check reached the screen as a warning or as
   // nothing at all, and "nothing at all" was doing two jobs: a completed search that found no
@@ -2430,9 +2438,9 @@ test("[DUBBEL-BEWIJS] 'we could not look' does not render as 'we looked and foun
 
   // The completed one names the size of the set and the window; the failed one names neither,
   // because there was none. A number on the failed line would be a search that never happened.
-  assert.match(searched, /4/);
-  assert.match(searched, /120/);
-  assert.doesNotMatch(unread, /120/);
+  assert.match(textOf(searched), /4/, "the completed check names the size of the set");
+  assert.match(textOf(searched), /120/, "…and the window it looked back over");
+  assert.doesNotMatch(textOf(unread), /120/, "a check that never ran names no window");
 
   // Nothing to report yet renders nothing at all — the dialog before the answer arrives.
   assert.equal(paint(null), "", "no result yet → no line, not an empty box");
@@ -2456,4 +2464,52 @@ test("[DUBBEL-BEWIJS] 'we could not look' does not render as 'we looked and foun
   );
   assert.match(ar, /dir="rtl"/);
   assert.doesNotMatch(ar, /border-left|padding-left|text-align:right/);
+});
+
+test("[DUBBEL-BUNDEL] one unreachable row is never absorbed into a clean set", async () => {
+  // The bundle dialog pays N supplier invoices on one tap and never ran the duplicate check at
+  // all. Now it does — and the thing that has to hold is the precedence: a row the sweep could not
+  // reach may not be counted among the ones it cleared. "Alle 5 nagekeken" over a set where only
+  // four were reachable is the original defect, multiplied by the number of invoices.
+  const { default: DoublePayNotice } = await import("../../src/components/invoice/DoublePayNotice");
+  const { buildBundleDoublePayNotice } = await import("../../src/lib/double-pay-check");
+
+  const row = (invoiceNumber: string | null, outcome: string, reason: string | null = null) => ({
+    invoiceNumber,
+    result: {
+      outcome, match: null, reason,
+      search: outcome === "unchecked" ? null : { candidates: 2, anchor: "iban", days: 120, capped: false, limit: 50 },
+    },
+  });
+  const paint = (findings: unknown, total: number) => renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(DoublePayNotice as any, {
+      notice: buildBundleDoublePayNotice(findings as never, total, "nl"),
+    }),
+  );
+
+  const allClear = paint([row("A", "clear"), row("B", "clear"), row("C", "clear")], 3);
+  const oneUnread = paint([row("A", "clear"), row("B", "unchecked", "candidates_unreadable"), row("C", "clear")], 3);
+  assert.notEqual(allClear, oneUnread, "a set with an unreachable row may not paint as a clean one");
+  assert.match(textOf(allClear), /3/, "the clean one names how many it checked");
+  assert.doesNotMatch(textOf(oneUnread), /Alle 3/, "…and the other one does not claim all three");
+
+  // A twin leads, and the unreachable row beside it still appears — otherwise "1 lijkt al betaald"
+  // quietly implies the rest were cleared.
+  const both = paint([row("2026-014", "twin"), row("B", "unchecked", "network"), row("C", "clear")], 3);
+  assert.match(textOf(both), /2026-014/, "the twin is named by its number");
+  assert.match(textOf(both), /1 rekening/, "…and the row that could not be checked is still on the screen");
+
+  // Still sweeping is its own state, not a blank: the confirm button is live the whole time.
+  const busy = paint(null, 4);
+  assert.ok(busy.length > 0, "a sweep in flight says so rather than showing nothing");
+  assert.doesNotMatch(textOf(busy), /\d/, "…and claims no count it does not have yet");
+  assert.equal(paint([], 0), "", "no bundle → no line at all");
+
+  // 30 selected, 25 swept. The five never looked at are reported, not counted clean.
+  const swept = Array.from({ length: 25 }, (_, i) => row(`A${i}`, "clear"));
+  const bounded = paint(swept, 30);
+  assert.match(textOf(bounded), /25/);
+  assert.match(textOf(bounded), /30/);
+  assert.notEqual(bounded, paint(swept, 25), "a bounded sweep and a complete one may not look alike");
 });

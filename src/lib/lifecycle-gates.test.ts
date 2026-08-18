@@ -12214,3 +12214,64 @@ test("[DUBBEL-BEWIJS] the no-double-pay check can say it did not check", () => {
     assert.ok(used.has(key), `${key} is a whole sentence the builder chooses between`);
   }
 });
+
+test("[DUBBEL-BUNDEL] the bundle pay path asks the question too", () => {
+  // executeBundlePay marks N supplier invoices paid — one Bank/Contant answer, then N writes
+  // through /api/invoice/pay-toggle. It never called the duplicate check once. So the path that
+  // pays the MOST invoices in a single tap, and the one where the owner is weighing five documents
+  // instead of one, was the path with no check on it — and nothing on that dialog said so.
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // The sweep exists, and it goes to the same read-only route the single-invoice path uses. A
+  // second, private notion of "already paid" is the one thing that must not appear here.
+  assert.match(client, /const \[bundleCheck, setBundleCheck\]/);
+  const sweepAt = client.indexOf("const BUNDLE_CHECK_LIMIT");
+  assert.ok(sweepAt > 0, "the fan-out is bounded by a named constant, not a bare number");
+  const sweep = client.slice(sweepAt, sweepAt + 2200);
+  assert.match(sweep, /bundlePayRows\.slice\(0, BUNDLE_CHECK_LIMIT\)/);
+  assert.match(sweep, /fetch\('\/api\/incoming\/check-paid'/);
+  // Both failure paths of the sweep report themselves. `!res.ok` covers a 401 and a refusal; the
+  // catch covers a dropped connection. Either one silently becoming a clean row is the defect.
+  assert.equal((sweep.match(/outcome: 'unchecked', match: null, search: null, reason: 'network'/g) ?? []).length, 2,
+    "a refused response AND a thrown fetch each mark that row unchecked");
+  assert.match(sweep, /let cancelled = false/,
+    "a second bundle may not receive the first sweep's answers");
+
+  // The bound must reach the SENTENCE, not just the slice. What the sweep did not look at may not
+  // be counted as clean — that absorption is the whole defect, one level up.
+  assert.match(client, /buildBundleDoublePayNotice\(bundleCheck, bundlePayRows\.length, taal\)/,
+    "the builder is handed the FULL bundle size, so it can name what the sweep never reached");
+  // Nullable on purpose: null means the sweep is still running, which renders "we are still
+  // checking" — the confirm button is live the whole time, so a blank there is the same silence.
+  assert.doesNotMatch(client, /buildBundleDoublePayNotice\(bundleCheck \?\? \[\]/,
+    "`?? []` would render 'we checked 0 of 5' while the sweep is in flight");
+
+  // A stale verdict may not survive into the next set: cleared when a bundle opens, when it is
+  // cancelled, and when it is paid.
+  assert.equal((client.match(/setBundleCheck\(null\)/g) ?? []).length, 3,
+    "open, cancel and execute each drop the previous set's answers");
+  // …and cleared OUTSIDE the effect body — react-hooks/set-state-in-effect is an eslint error here.
+  assert.doesNotMatch(client, /if \(!bundlePayRows\) \{ setBundleCheck\(null\)/);
+
+  // ── The rule itself, in the pure module ──
+  const pure = code("src/lib/double-pay-check.ts");
+  const at = pure.indexOf("export function buildBundleDoublePayNotice");
+  assert.ok(at > 0);
+  const body = pure.slice(at);
+  assert.match(body, /const notAttempted = Math\.max\(0, total - findings\.length\)/);
+  // Precedence: a twin leads, but an unreachable row is still named beneath it. Without that, "1
+  // lijkt al betaald" quietly implies the other four were cleared.
+  assert.match(body, /const detail = \[t\("dubbel\.bundel\.watNu"\), uncheckedLine\(\), boundLine\(\)\]/);
+  assert.match(body, /if \(unchecked\.length > 0 \|\| notAttempted > 0\)/,
+    "an unreachable row may never fall through to the all-clear");
+
+  // ── The vocabulary ──
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const used = [...body.matchAll(/["'](dubbel\.bundel\.[a-zA-Z.]+)["']/g)].map((m) => m[1]);
+  assert.ok(new Set(used).size >= 7, `the bundle builder reaches its vocabulary (found ${new Set(used).size})`);
+  for (const key of new Set(used)) {
+    assert.ok(messages.includes(`'${key}':`), `${key} exists in the catalogue`);
+    assert.match(messages.slice(messages.indexOf(`'${key}':`), messages.indexOf(`'${key}':`) + 400), /nl: '/,
+      `${key} has a Dutch sentence`);
+  }
+});

@@ -113,7 +113,10 @@ import { buildPaymentEvidenceLine, type PaymentEvidence } from '@/lib/payment-ev
 import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
 // [DUBBEL-BEWIJS] What the no-double-pay check actually did — including when it could not run.
 // The words live in the pure module, the colours in the component; this screen holds neither.
-import { buildDoublePayNotice, type DoublePayResult } from '@/lib/double-pay-check'
+import {
+  buildDoublePayNotice, buildBundleDoublePayNotice,
+  type DoublePayResult, type BundleDoublePayFinding,
+} from '@/lib/double-pay-check'
 import DoublePayNotice from '@/components/invoice/DoublePayNotice'
 // [CREDIT-SIGN] Which way the MONEY moves — a creditnota reverses its document's direction.
 import { moneyDirection } from '@/lib/credited-invoices'
@@ -587,6 +590,10 @@ export default function IncomingManageClient({
   // the owner taps, this comes back from the route a moment later, and on the paths where the
   // route could not answer it is the ONLY thing the dialog has to say about it.
   const [payCheck, setPayCheck]         = useState<DoublePayResult | null>(null)
+  // [DUBBEL-BUNDEL] The same answer for every row of a bundle. `null` while the sweep is still
+  // running, which renders nothing — a set reported as clean before it was checked would be the
+  // defect again, just faster.
+  const [bundleCheck, setBundleCheck]   = useState<BundleDoublePayFinding[] | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
@@ -753,7 +760,7 @@ export default function IncomingManageClient({
   // single invoice — every mutation audited, nothing new invented). Failures
   // (e.g. a verwerkt lock) leave that invoice open and are reported honestly.
   async function executeBundlePay(rows: IncomingRow[], method: 'bank' | 'kas', paymentDate: string) {
-    setBundlePayRows(null)
+    setBundlePayRows(null); setBundleCheck(null)
     setBundleBusy(true)
     // [BUNDEL-SELECTIE] Leave select mode entirely BEFORE the loop, not after it. `rows` is already
     // a snapshot, so the batch itself is unaffected. Two things made the timing matter: selectedRows
@@ -915,6 +922,49 @@ export default function IncomingManageClient({
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionParam, focusId, invoices.length])
+
+  // ── [DUBBEL-BUNDEL] The duplicate check, for every row of a bundle ────────────────────────────
+  //
+  // executeBundlePay wrote N pay-toggles and never asked this question once. The single-invoice
+  // path has warned about a re-sent invoice for a long time; selecting the same five invoices and
+  // tapping once skipped it entirely, with nothing on the dialog to say a check had been skipped.
+  //
+  // The sweep is read-only (check-paid writes no audit row and holds no limiter), so it runs in
+  // parallel. It is BOUNDED, because a selection has no ceiling, and what it did not reach is
+  // reported rather than counted as clean — see buildBundleDoublePayNotice.
+  const BUNDLE_CHECK_LIMIT = 25
+  useEffect(() => {
+    if (!bundlePayRows) return
+    // A second bundle opened while the first sweep was in flight must not receive the first one's
+    // answers. `cancelled` is the whole guard: the effect re-runs on a new bundlePayRows identity,
+    // and the previous run's setState is dropped on the floor.
+    let cancelled = false
+    const rows = bundlePayRows.slice(0, BUNDLE_CHECK_LIMIT)
+    void (async () => {
+      const findings = await Promise.all(rows.map(async (row): Promise<BundleDoublePayFinding> => {
+        try {
+          const res = await fetch('/api/incoming/check-paid', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoiceId: row.id }),
+          })
+          const data = await res.json()
+          if (!res.ok || typeof data?.outcome !== 'string') {
+            // A refused, unauthorised or old-shape reply is not a clean row. Same rule as the
+            // single-invoice path: not blocking is right, going quiet is not.
+            return { invoiceNumber: row.invoice_number ?? null, result: { outcome: 'unchecked', match: null, search: null, reason: 'network' } }
+          }
+          return {
+            invoiceNumber: row.invoice_number ?? null,
+            result: { outcome: data.outcome, match: data.match ?? null, search: data.search ?? null, reason: data.reason ?? null },
+          }
+        } catch {
+          return { invoiceNumber: row.invoice_number ?? null, result: { outcome: 'unchecked', match: null, search: null, reason: 'network' } }
+        }
+      }))
+      if (!cancelled) setBundleCheck(findings)
+    })()
+    return () => { cancelled = true }
+  }, [bundlePayRows])
 
   // [OVER-DATUM] Today as a plain ISO day, computed ONCE per render and passed to every row, so
   // all rows are judged against the same boundary (and overdueDays stays pure — it never reads a
@@ -3451,6 +3501,10 @@ export default function IncomingManageClient({
             const rows = bundleCtx.rows
             for (const row of rows) markPrepared(row)
             setBundleCtx(null)
+            // [DUBBEL-BUNDEL] A fresh set starts with no answers, which renders "we are still
+            // checking" rather than the previous set's verdict. Cleared here rather than in the
+            // effect: a setState in an effect body is what react-hooks/set-state-in-effect is for.
+            setBundleCheck(null)
             setBundlePayRows(rows)
           }}
           onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
@@ -3591,7 +3645,10 @@ export default function IncomingManageClient({
           confirmLabel={t('ink.jaMarkeerBetaald')}
           confirmBg={M3.success}
           onConfirm={() => { /* paymentChoice handles it */ }}
-          onCancel={() => setBundlePayRows(null)}
+          onCancel={() => { setBundlePayRows(null); setBundleCheck(null) }}
+          // [DUBBEL-BUNDEL] Above the Bank/Contant choice, so the owner meets it before they pick
+          // a method — never between them and the button. It informs; it does not gate.
+          notice={<DoublePayNotice notice={buildBundleDoublePayNotice(bundleCheck, bundlePayRows.length, taal)} />}
           paymentChoice={(method, paymentDate) => executeBundlePay(bundlePayRows, method, paymentDate)}
         />
       )}

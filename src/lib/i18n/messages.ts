@@ -10217,6 +10217,68 @@ export const MESSAGES = {
     en: 'Check for yourself whether you have already paid this invoice before ticking it off.',
   },
 
+  // ─── [DUBBEL-BUNDEL] The same three answers, for a whole set at once ─────────────────────────
+  //
+  // executeBundlePay marked N supplier invoices paid through /api/invoice/pay-toggle and never
+  // called the duplicate check at all. The path that pays the MOST invoices in one tap — and where
+  // the owner is reviewing five documents instead of one — had no check, and the dialog said
+  // nothing about not having one.
+  //
+  // Precedence in these sentences is deliberate: a real twin outranks an unchecked row, but an
+  // unchecked row is never absorbed into a "we checked them all" count. That absorption is the
+  // whole defect, one level up.
+
+  'dubbel.bundel.alarm.een': {
+    nl: 'Eén van deze rekeningen lijkt je al betaald te hebben: {nummers}.',
+    ar: 'يبدو أنك دفعت إحدى هذه الفواتير من قبل: {nummers}.',
+    en: 'One of these invoices looks like one you have already paid: {nummers}.',
+  },
+  'dubbel.bundel.alarm.meer': {
+    nl: '{count} van deze rekeningen lijk je al betaald te hebben: {nummers}.',
+    ar: 'يبدو أنك دفعت {count} من هذه الفواتير من قبل: {nummers}.',
+    en: '{count} of these invoices look like ones you have already paid: {nummers}.',
+  },
+  // The same alarm for a set whose documents carry no readable number. It cannot name them, and
+  // says so rather than printing a sentence that trails off into nothing.
+  'dubbel.bundel.alarm.geenNummer': {
+    nl: '{count} van deze rekeningen lijk je al betaald te hebben. We kunnen ze hier niet bij nummer noemen.',
+    ar: 'يبدو أنك دفعت {count} من هذه الفواتير من قبل. لا يمكننا تسميتها هنا بالأرقام.',
+    en: '{count} of these invoices look like ones you have already paid. We cannot name them by number here.',
+  },
+  'dubbel.bundel.onbekend.een': {
+    nl: 'Van 1 rekening konden we niet nakijken of je hem al betaald hebt.',
+    ar: 'هناك فاتورة واحدة لم نتمكّن من التحقّق ممّا إذا كنت قد دفعتها.',
+    en: 'For 1 invoice we could not check whether you have already paid it.',
+  },
+  'dubbel.bundel.onbekend.meer': {
+    nl: 'Van {count} rekeningen konden we niet nakijken of je ze al betaald hebt.',
+    ar: 'هناك {count} فواتير لم نتمكّن من التحقّق ممّا إذا كنت قد دفعتها.',
+    en: 'For {count} invoices we could not check whether you have already paid them.',
+  },
+  'dubbel.bundel.schoon': {
+    nl: 'Alle {count} nagekeken: geen ervan lijkt al betaald.',
+    ar: 'تم التحقّق من {count} جميعها: لا يبدو أن أياً منها مدفوع من قبل.',
+    en: 'All {count} checked: none of them looks already paid.',
+  },
+  'dubbel.bundel.grens': {
+    nl: 'We hebben er {count} van de {totaal} nagekeken. Over de rest zeggen we niets, want daar hebben we niet naar gekeken.',
+    ar: 'راجعنا {count} من أصل {totaal}. ولا نقول شيئاً عن البقية لأننا لم نطّلع عليها.',
+    en: 'We checked {count} of the {totaal}. We say nothing about the rest, because we did not look at them.',
+  },
+  // The sweep is still running. Its own state on purpose: the owner can tap confirm at any moment,
+  // including before the answers land, and a blank space there is the same silence as before —
+  // just briefer. It also covers a fetch that never settles, where a blank would be permanent.
+  'dubbel.bundel.bezig': {
+    nl: 'We kijken nog na of je een van deze rekeningen al betaald hebt.',
+    ar: 'ما زلنا نتحقّق ممّا إذا كنت قد دفعت إحدى هذه الفواتير من قبل.',
+    en: 'We are still checking whether you have already paid any of these invoices.',
+  },
+  'dubbel.bundel.watNu': {
+    nl: 'Kijk die eerst na voordat je de hele set afvinkt.',
+    ar: 'راجع تلك أولاً قبل أن تعلّم المجموعة كلها كمدفوعة.',
+    en: 'Check those first before ticking off the whole set.',
+  },
+
   // ─── [CREDIT-BEWIJS] Which credit notes produced "Deels gecrediteerd · € 250" ────────────────
   //
   // Same shape as the instalments above, and the same reason: the chip states a conclusion the
