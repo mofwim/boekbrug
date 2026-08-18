@@ -11,10 +11,6 @@ import { PushNotificationCard } from '@/components/settings/PushNotificationCard
 import { LanguageCard } from '@/components/settings/LanguageCard'
 // [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
 import { SnelStartCard } from '@/components/settings/SnelStartCard'
-// [2FA] The second step. Not role-gated: a medewerker issues invoices in the owner's number series
-// and a boekhouder reads the whole administratie, so every password on this account opens the same
-// door. The panel reads its own state — this page hands it nothing.
-import { TweestapsPaneel } from '@/components/settings/TweestapsPaneel'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -768,10 +764,17 @@ export default function SettingsPage() {
         {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}
         <SnelStartCard />
 
-        {/* [2FA] Verificatie in twee stappen. Above the role-specific cards, because it is the one
-            card on this page that every account has and the only one that decides who may act as
-            this account at all. */}
-        <TweestapsPaneel />
+        {/* [BEVEILIGING] Verificatie in twee stappen stond hier, en staat nu op een eigen scherm.
+            Eén plek om hem aan te zetten, en die plek staat naast het antwoord op de vraag die er
+            werkelijk achter zit — wie kan er bij deze administratie. Twee schakelaars voor één slot
+            is hoe iemand hem op het ene scherm uitzet en op het andere blijft lezen dat hij aanstaat. */}
+        <a
+          href="/dashboard/beveiliging"
+          className="block bg-white rounded-2xl p-5 shadow-sm space-y-1 hover:bg-gray-50"
+        >
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('bev.titel')}</p>
+          <p className="text-sm text-gray-500 leading-relaxed">{t('bev.uitleg')}</p>
+        </a>
 
         {/* [FACTUUR-B] Factuurnummering — ZZP'er only */}
         {profile.role === 'zzper' && (

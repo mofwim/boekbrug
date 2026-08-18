@@ -44,6 +44,8 @@ import { translator } from '@/lib/i18n/t'
 import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
 // [BTW-RESERVERING] Het geld op de rekening dat al van de Belastingdienst is.
 import BtwReservationPanel from '@/components/btw/BtwReservationPanel'
+// [BEVEILIGING] Zie de kop van dat bestand: hij rendert niets zodra de tweede stap aanstaat.
+import { TweestapsHint } from '@/components/beveiliging/TweestapsHint'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -314,6 +316,12 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
           {t('vandaag.aandacht')}
         </p>
       </header>
+
+      {/* [BEVEILIGING] Alleen zichtbaar zolang de tweede stap UIT staat, en weg zodra hij aanstaat.
+          Geen wegklikbare banner: dit is levende toestand, dus er valt niets te onthouden en hij kan
+          niet blijven staan nadat het feit dat hij noemt niet meer waar is. Op dit scherm omdat een
+          eigenaar die het tegeltje nooit opent, anders nooit hoort dat het slot bestaat. */}
+      <TweestapsHint />
 
       {/* [BTW-RESERVERING] Wat er van het saldo al van de Belastingdienst is.
           Boven de lijsten, want het verandert wat de rest betekent: "€ 3.000 te ontvangen" leest

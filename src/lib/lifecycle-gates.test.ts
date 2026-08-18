@@ -12781,3 +12781,106 @@ test("[SPOOR-BEWIJS] an unreadable reminder trail never reads as a clear one", (
   assert.match(tier, /if \(off <= daysOverdue\) currentTier = off/,
     "the tier comes from the invoice's age, so an empty trail cannot escalate anyone early");
 });
+
+// ─── [BEVEILIGING] The screen that answers "who can read my books" ─────────────────
+//
+// It exists because a zzp'er handing seven years of books to an app he has never heard of is asked
+// to take one thing purely on faith. The screen replaces the faith with his own data — so the one
+// thing it must never do is reassure him on an answer it could not establish. "Alleen jij" is a
+// promise; made on a half-failed read it is worse than no screen, because he stops looking.
+
+test("[BEVEILIGING] the reassuring sentence is chosen by the read, never by counting rows", () => {
+  // holders.length is always ≥ 1 (the owner is added unconditionally), so a panel that decided
+  // "alleen jij" from the list length would say it just as confidently over a bookkeeper link that
+  // failed to load. The distinction lives in `complete`, and the component has to consult it.
+  const panel = code("src/components/beveiliging/ToegangPaneel.tsx");
+  assert.match(panel, /bev\.wie\.alleenJij/, "the panel no longer renders the private-administration sentence");
+  assert.match(panel, /bev\.wie\.onvolledig/, "the panel has no sentence for a read that did not finish");
+  assert.match(panel, /!complete/, "the headline is not gated on whether every source answered");
+  assert.doesNotMatch(
+    panel, /holders\.length/,
+    "the panel is counting the rows it happens to hold — that number is a floor, not a total",
+  );
+
+  // And the module that computes it must keep the two apart at the source.
+  const rule = code("src/lib/security-overview.ts");
+  assert.match(rule, /complete \? holders\.length : null/,
+    "a count is being produced without checking that every source answered");
+});
+
+test("[BEVEILIGING] a failed read is never handed on as an empty one", () => {
+  // The route reads three independent sources. Each must arrive as a state, not as a list —
+  // Promise.all would also let one permitted failure drag down two answers that came back fine.
+  const route = code("src/app/api/beveiliging/route.ts");
+  assert.match(route, /Promise\.allSettled/, "one failing read takes the others down with it");
+  assert.match(route, /state: "unreadable"/, "there is no failure state — a failed read becomes an empty list");
+  assert.doesNotMatch(
+    route, /trailCount[^\n]*\?\?\s*0/,
+    "the trail count falls back to 0 — '0 handelingen vastgelegd' over a full logbook tells the owner nothing is being recorded",
+  );
+
+  // loadCompanyMembers used to fold a read error into { members: [] }. This screen depends on it
+  // not doing that any more, and nothing else in the file would notice if it started again.
+  const server = code("src/lib/acting-for-server.ts");
+  assert.match(server, /unreadable: true/, "loadCompanyMembers cannot report a failed read any more");
+});
+
+test("[BEVEILIGING] the screen is reachable without typing its address", () => {
+  // Same failure as [LOGBOEK] one screen up: a route with no door into it passes tsc, passes the
+  // build, answers correctly to curl, and no owner will ever see it.
+  const referrers: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p.startsWith("src/app/dashboard/beveiliging/")) continue; // its own files are not a way in
+      if (code(p).includes("/dashboard/beveiliging")) referrers.push(p);
+    }
+  };
+  scan("src");
+  const linked = referrers.filter((p) => /href:? *['"]\/dashboard\/beveiliging['"]/.test(code(p)));
+  assert.ok(
+    linked.length > 0,
+    `/dashboard/beveiliging is named but never linked — mentioned in:\n  ${referrers.join("\n  ")}`,
+  );
+});
+
+test("[BEVEILIGING] there is one place to switch the lock, not two", () => {
+  // The panel reads its own state from the auth server, so two copies on two screens would not
+  // disagree about whether two-step is ON. They would disagree about where you switched it: an
+  // owner turns it off in Instellingen, opens Beveiliging, and finds a card that still offers to
+  // turn it off — with no way to tell which screen he is arguing with.
+  const users: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/components/settings/TweestapsPaneel.tsx") continue; // the component itself
+      if (/<TweestapsPaneel\s*\/>/.test(readFileSync(p, "utf8"))) users.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(users, ["src/app/dashboard/beveiliging/BeveiligingClient.tsx"],
+    "the two-step panel is rendered on more than one screen:\n  " + users.join("\n  "));
+});
+
+test("[BEVEILIGING] the home-screen hint says nothing unless it is certain the lock is off", () => {
+  // Three states, and only ONE of them puts a line on the screen. "Zet twee stappen aan" shown to
+  // someone who switched it on last week is the app being wrong about his own account on the screen
+  // he trusts most for numbers — and it teaches him that these messages are noise, which costs
+  // every other message on that screen its credibility. `on !== false` is what keeps the unknown
+  // case silent; `on === false` alone would render on `null` too.
+  const hint = code("src/components/beveiliging/TweestapsHint.tsx");
+  assert.match(hint, /on !== false/, "the hint renders on an unreadable state — it must stay silent there");
+  assert.match(hint, /mfaIsOn/, "the hint decides for itself what 'on' means instead of asking mfa.ts");
+  // No dismissal machinery: the line IS the state, so there is nothing to remember and no way for
+  // it to outlive the fact it states.
+  assert.doesNotMatch(hint, /localStorage|dismiss|verberg/i,
+    "the hint has grown a dismiss button — then it either nags or goes quiet forever after one tap");
+
+  // And it has to be on the screen an owner actually opens, or the whole point is lost.
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /<TweestapsHint \/>/,
+    "the hint is not rendered on Vandaag — an owner who never opens the tile never learns the lock exists");
+});

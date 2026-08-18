@@ -150,6 +150,17 @@ export const SALES_SCREENS: readonly string[] = [
   "/dashboard/invoice",
   // Their clients. Same here: RLS (clients_member_read) limits it to what they entered.
   "/dashboard/klanten",
+  // [BEVEILIGING] Their OWN account's security, and this is not a widening of what they may see.
+  //
+  // A medewerker issues invoices in the owner's doorlopende nummerreeks, so his password is worth
+  // exactly as much to an attacker as the owner's — and until this line he could not switch
+  // two-step on for it, because the panel lives behind a screen he may not open. A lock the person
+  // most worth attacking cannot reach is not a lock.
+  //
+  // What he sees there is his own account: /api/beveiliging reads the bookkeeper links and the team
+  // of the SESSION user, and a medewerker owns neither, so the list is himself. Nothing about the
+  // owner's administration appears on it.
+  "/dashboard/beveiliging",
 ];
 
 /**
