@@ -246,3 +246,81 @@ export function vakRegelsVoorFormulier(slug: string): Array<{ description: strin
     btw_rate: r.btw_rate,
   }));
 }
+
+/**
+ * [VAK-WISSEL] Wat er met de regels gebeurt als iemand een ANDER beroep kiest.
+ *
+ * ── HET GEVAL ──
+ *
+ * Kies "monteur", kies daarna "schoonmaker", kies daarna "transport": je krijgt de regels van alle
+ * drie onder elkaar. Op /factuur-maken stonden er zo negentien lege regels met een prijs van 0,00.
+ *
+ * De regel die dat veroorzaakte was op zichzelf goed bedacht en staat er ook uitgeschreven:
+ * bestaande, INGEVULDE regels blijven staan, want een sjabloon dat iemands werk overschrijft is
+ * in één klik van hulp in schade veranderd. Dat klopt nog steeds.
+ *
+ * Alleen was de MAATSTAF verkeerd. "Ingevuld" werd gelezen als "heeft een omschrijving" — en een
+ * sjabloonregel heeft er altijd een, want het sjabloon zette hem er zelf neer. Het formulier
+ * beschermde dus het werk van zichzelf tegen zichzelf.
+ *
+ * ── DE MAATSTAF DIE HET WEL IS ──
+ *
+ * Van de gebruiker, en dus beschermd, is elke regel waar HIJ iets aan heeft gedaan: een prijs
+ * ingevuld, het aantal veranderd, of de omschrijving aangepast. Wat het vorige sjabloon precies zo
+ * heeft achtergelaten — omschrijving onveranderd, aantal 1, geen prijs — is geen werk maar
+ * steigerwerk, en dat mag weg.
+ *
+ * Daarmee blijft de nuttige uitkomst overeind: wie én monteur én koerier is, kiest allebei en
+ * houdt de regels die hij heeft ingevuld. Wie zich vergiste in het beroep, krijgt geen stapel.
+ *
+ * De lege startregel (geen omschrijving, geen prijs) verdwijnt ook — die stond er alleen omdat het
+ * formulier met één regel begint, en telde vroeger als "ingevuld" doordat het aantal 1 is.
+ */
+export interface VakFormulierRegel {
+  description: string;
+  quantity: string;
+  unit_price: string;
+  btw_rate: number;
+}
+
+/** "12,50" → 12.5 · "" → 0 · onleesbaar → 0. Alleen om te zien ÓF er iets staat. */
+function bedrag(waarde: string): number {
+  const n = Number(String(waarde ?? "").replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Heeft de gebruiker aan deze regel gezeten?
+ *
+ * `sjabloonOmschrijvingen` zijn de omschrijvingen die het VORIGE beroep heeft neergezet. Staat de
+ * omschrijving daar nog letterlijk in, is het aantal nog 1 en is er geen prijs, dan is er niets aan
+ * gedaan.
+ */
+export function isEigenWerk(regel: VakFormulierRegel, sjabloonOmschrijvingen: ReadonlySet<string>): boolean {
+  const prijs = bedrag(regel.unit_price);
+  const aantalOngewijzigd = String(regel.quantity ?? "").trim() === "1";
+  if (prijs !== 0) return true;
+  if (!aantalOngewijzigd) return true;
+  const omschrijving = String(regel.description ?? "").trim();
+  if (omschrijving === "") return false; // de lege startregel
+  return !sjabloonOmschrijvingen.has(regel.description);
+}
+
+/**
+ * De regels na het wisselen van beroep: het eigen werk van de gebruiker, gevolgd door het nieuwe
+ * sjabloon.
+ *
+ * `vorigSlug` mag leeg zijn (eerste keuze) — dan is er geen sjabloon om te herkennen en verdwijnt
+ * alleen de lege startregel.
+ */
+export function regelsNaVakwissel(
+  huidige: readonly VakFormulierRegel[],
+  vorigSlug: string,
+  nieuwSlug: string,
+): VakFormulierRegel[] {
+  const nieuw = vakRegelsVoorFormulier(nieuwSlug);
+  if (nieuw.length === 0) return [...huidige];
+  const vorige = new Set(vakRegelsVoorFormulier(vorigSlug).map((r) => r.description));
+  const eigen = huidige.filter((r) => isEigenWerk(r, vorige));
+  return [...eigen, ...nieuw];
+}

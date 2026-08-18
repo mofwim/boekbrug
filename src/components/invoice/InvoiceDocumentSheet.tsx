@@ -127,16 +127,27 @@ export default function InvoiceDocumentSheet({
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 320, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
-      <div className="sheet-scroll"
+      {/* [BLAD-SCROLL] `sheet-frame`, niet `sheet-scroll`. Dit blad heeft een VASTE kop (naam +
+          sluitknop) en daaronder een schuivend deel. Met `sheet-scroll` was het paneel zelf óók een
+          scroller, dus stonden er twee om dezelfde inhoud: de kop schoof mee weg, en op de bodem
+          van de binnenste nam de buitenste het over. Dat is wat er als "scrolt niet goed" uitziet.
+
+          En de inline `maxHeight: '92dvh'` die hier stond, overschreef stilzwijgend de 88dvh uit de
+          klasse — een grens die daar met een meting bij staat (Chromium 393×852: een paneel van
+          862px in een scherm van 852px, bovenkant afgesneden). Twee getallen voor dezelfde grens,
+          waarvan het gemeten getal verloor. Nu staat de grens op één plek. */}
+      <div className="sheet-frame"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),
           borderRadius: `${R.lg}px ${R.lg}px 0 0`, boxShadow: EL2, fontFamily: FONT,
-          display: 'flex', flexDirection: 'column', maxHeight: '92dvh',
-          // [BLAD-EEN-SCROLLER] The .sheet-scroll class makes the PANEL scroll. This one is a flex
-          // column with its own scrolling body, so two nested `auto` scrollers were competing for
-          // the same gesture. Exactly one may scroll, and it is the body below.
-          overflowY: 'hidden',
+          // [BLAD-EEN-SCROLLER] No inline maxHeight and no inline overflow: both live in the
+          // .sheet-frame class above. Two sessions fixed the same two-scroller bug in the same
+          // hour — this branch inline, main in the class — and the class is the right half: an
+          // inline 92dvh silently outranks the MEASURED 88dvh the class carries (Chromium
+          // 393x852: an 862px panel in an 852px screen, top ten pixels cut off). One limit, one
+          // place, and the measured number is the one that survives.
+          display: 'flex', flexDirection: 'column',
           // [SHEET-BOTTOM] On the PANEL, not on the scroll area inside it. The panel is what the
           // bottom navigation overlaps, and putting the clearance one level in leaves the last
           // control tappable only while the content happens to scroll.
@@ -161,10 +172,11 @@ export default function InvoiceDocumentSheet({
           </button>
         </div>
 
-        {/* [BLAD-EEN-SCROLLER] flex:1 + minHeight:0 is what actually makes this scroll. A flex item
-            defaults to min-height:auto and therefore refuses to shrink below its content, so
-            `overflowY: auto` alone never engages and the panel silently grows past its own
-            maxHeight. overscrollBehavior keeps the gesture from chaining to the page behind. */}
+        {/* [BLAD-EEN-SCROLLER] The ONLY scroller in this sheet. flex:1 claims what the fixed head
+            leaves over, and minHeight:0 is not optional: a flex item defaults to min-height:auto
+            and therefore refuses to shrink below its content, so `overflowY: auto` alone never
+            engages and the panel silently grows past the frame's own limit. overscrollBehavior
+            keeps the gesture from chaining to the page behind. */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px' }}>
           {/* ── What we read ── the half that makes looking at the paper WORTH something ── */}
           <div style={{ background: M3.surfaceVariant, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
@@ -228,7 +240,7 @@ export default function InvoiceDocumentSheet({
               <iframe
                 src={doc.url}
                 title={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })}
-                style={{ width: '100%', height: '58vh', border: 'none', background: '#fff' }}
+                style={{ width: '100%', height: '58dvh', border: 'none', background: '#fff' }}
               />
             )}
           </div>

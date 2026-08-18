@@ -11188,3 +11188,76 @@ test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already
   assert.match(unit, /the sentence that stops a reminder names the bank line and what to do/);
   assert.match(unit, /narrowing to one invoice narrows the ANSWER, never the search/);
 });
+
+// ─── [BLAD-SCROLL] Eén blad, één scroller, één grens ─────────────────────────
+//
+// `.sheet-scroll` maakt van een paneel de scroller en zet de grens op 88dvh — met een meting in de
+// toelichting (Chromium 393×852: een paneel van 862px in een scherm van 852px, bovenkant
+// afgesneden). Twee bladen zetten daar een eigen `maxHeight` overheen, en dat ging stil: inline
+// wint van een klasse, dus het gemeten getal verloor van een getal zonder meting. FairUseModal deed
+// het zelfs met `vh` in plaats van `dvh` — precies het verschil waar de klasse voor bestaat.
+//
+// InvoiceDocumentSheet had er nog een tweede laag bij: de klasse op het paneel én een eigen
+// `overflow-y: auto` op de inhoud. Twee geneste scrollers om dezelfde inhoud is wat "het blad
+// scrolt niet goed" betekent — je duwt de ene, de andere beweegt, de vaste kop schuift mee weg, en
+// op de bodem van de binnenste neemt de buitenste het over.
+
+test("[BLAD-SCROLL] a sheet never overrides the measured height of its own class", () => {
+  const dir = "src";
+  const walk = (d: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(d)) {
+      const p = `${d}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // Een overschrijving MET reden mag, en dat onderscheid is de poort waard. FeedbackButton zet
+  // 85dvh omdat daar het toetsenbord bij moet: met het invoerveld open krimpt het zichtbare
+  // scherm, en 88dvh laat de verzendknop erachter verdwijnen. Die redenering staat uitgeschreven
+  // bij de regel zelf, mét meting (393×830, knop op 814px, balk vanaf 766px).
+  //
+  // Een poort die zo'n regel zou wegdwingen maakt de code slechter, niet beter. Dus staat hij hier
+  // met naam en reden — en een nieuwe uitzondering kost dezelfde moeite: hem hier opschrijven.
+  const MET_REDEN = new Map<string, string>([
+    ["src/components/feedback/FeedbackButton.tsx",
+     "85dvh laat ruimte voor het toetsenbord; 88dvh zet de verzendknop erachter. Gemeten."],
+  ]);
+
+  const overtreders: string[] = [];
+  for (const f of walk(dir)) {
+    if (MET_REDEN.has(f)) continue;
+    const src = code(f);
+    for (const m of src.matchAll(/className="sheet-(scroll|frame)"/g)) {
+      // Het style-object van hetzelfde element: ruim genomen, want er staan lange commentaren in.
+      const venster = src.slice(m.index, m.index + 1400);
+      const eind = venster.indexOf("\n        >");
+      const element = eind > 0 ? venster.slice(0, eind) : venster.slice(0, 900);
+      if (/maxHeight:/.test(element)) {
+        overtreders.push(`${f} (sheet-${m[1]})`);
+      }
+    }
+  }
+  assert.deepEqual(overtreders, [],
+    "these set an inline maxHeight beside sheet-scroll/sheet-frame — inline wins, so the class's\n" +
+    "measured limit is silently discarded. Put the limit in the class, not next to it:\n  " +
+    overtreders.join("\n  "));
+});
+
+test("[BLAD-SCROLL] the panel that holds a scroller does not scroll itself", () => {
+  // De twee helften van het paar horen bij elkaar: het paneel houdt vast, het deel eronder schuift.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const frame = css.slice(css.indexOf(".sheet-frame {"), css.indexOf(".sheet-scroll {"));
+  assert.match(frame, /overflow:\s*hidden/, "a frame that scrolls is just sheet-scroll with extra steps");
+  assert.match(frame, /max-height:\s*88vh;[\s\S]*max-height:\s*88dvh;/,
+    "keep the vh fallback under the dvh line — dvh is what the mobile toolbar makes honest");
+
+  const blad = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(blad, /className="sheet-frame"/, "this sheet has a fixed header, so the panel must not scroll");
+  // En het schuivende deel moet ook echt kunnen krimpen. Zonder minHeight: 0 weigert een flex-item
+  // kleiner te worden dan zijn inhoud, en dan schuift er niets — het paneel groeit gewoon door.
+  assert.match(blad, /flex: 1, minHeight: 0, overflowY: 'auto'/,
+    "the scrolling part needs flex: 1 AND minHeight: 0, or it never becomes a scroller");
+});

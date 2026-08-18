@@ -32,7 +32,7 @@ import KennisbankLinks from '@/components/KennisbankLinks'
 import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
-import { vakOpties, vakBySlug, vakRegelsVoorFormulier } from '@/lib/vak-sjablonen'
+import { vakOpties, vakBySlug, vakRegelsVoorFormulier, regelsNaVakwissel } from '@/lib/vak-sjablonen'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts. The public tool gets it
 // too: a wrong invoice date here becomes a wrong quarter the moment the invoice is real.
 import DateFieldNL from '@/components/ui/DateFieldNL'
@@ -481,24 +481,20 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
     }))
   }, [hydrated, sender, client, lines, invoiceDate, deliveryDate])
 
-  // [VAK-SJABLONEN] Regels van een beroep erbij zetten. Bestaande, ingevulde regels blijven
-  // staan — alleen lege worden opgeruimd. Een sjabloon dat het werk van de gebruiker overschrijft
-  // zou de functie in één klik van hulp in schade veranderen.
+  // [VAK-SJABLONEN] Regels van een beroep erbij zetten. Ingevulde regels blijven staan; wat het
+  // VORIGE sjabloon onaangeraakt heeft achtergelaten gaat weg.
+  //
+  // Dat tweede ontbrak, en het gevolg was zichtbaar: monteur kiezen, dan schoonmaker, dan
+  // transport gaf negentien regels van 0,00 onder elkaar. De maatstaf hier was "heeft een
+  // omschrijving" — en die heeft een sjabloonregel altijd, want het sjabloon zette hem er zelf
+  // neer. Het formulier beschermde het werk van zichzelf tegen zichzelf.
+  //
+  // De regel zelf staat nu in vak-sjablonen.ts (regelsNaVakwissel), met een test erbij: wat er
+  // met andermans ingevulde bedragen gebeurt, is niets om in een klikhandler te laten wonen.
   function pasVakToe(slug: string) {
+    const vorig = vak
     setVak(slug)
-    const sjabloon = vakRegelsVoorFormulier(slug)
-    if (!sjabloon.length) return
-    setLines((prev) => {
-      const behouden = prev.filter(
-        (l) => l.description.trim() !== '' || parseNum(l.quantity) !== 0 || parseNum(l.unit_price) !== 0,
-      )
-      return [...behouden, ...sjabloon.map((r) => ({
-        description: r.description,
-        quantity: r.quantity,
-        unit_price: r.unit_price,
-        btw_rate: r.btw_rate,
-      }))]
-    })
+    setLines((prev) => regelsNaVakwissel(prev, vorig, slug) as Line[])
   }
 
   const gekozenVak = vakBySlug(vak)

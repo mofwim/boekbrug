@@ -55,7 +55,12 @@ export default function FairUseModal({
           // area: this panel sticks to the bottom of the screen, and on mobile
           // BottomNav paints on top of it.
           padding: '24px 20px 0', paddingBottom: sheetPaddingBottom(20),
-          maxHeight: '85vh', overflowY: 'auto',
+          // [BLAD-SCROLL] Geen eigen maxHeight/overflow meer: `sheet-scroll` zet allebei al, en
+          // deze regel overschreef ze stilzwijgend — mét `vh` in plaats van `dvh`. Juist dat
+          // verschil is waar de klasse voor is: op een telefoon rekent `vh` tegen het GROTE
+          // scherm, dus met de adresbalk in beeld stak dit paneel er bovenuit. De klasse zegt
+          // 88dvh, met de meting erbij; hier stond 85vh zonder.
+
           boxShadow: '0 -4px 24px rgba(0,0,0,0.18)',
         }}
       >

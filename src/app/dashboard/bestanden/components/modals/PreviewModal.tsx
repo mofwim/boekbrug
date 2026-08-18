@@ -57,15 +57,20 @@ export function PreviewModal({ doc, onClose }: { doc: BestandRow; onClose: () =>
       display: "flex", alignItems: "flex-end",
       background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
     }}>
-      <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{
+      {/* [BLAD-SCROLL] `sheet-frame`: dit paneel houdt zijn inhoud vast en het schuiven gebeurt in
+          de preview eronder (flex: 1, overflow: auto). Het stond op `sheet-scroll` — de klasse die
+          van het paneel juist wél een scroller maakt — en werd daarna met een inline `overflow:
+          hidden` weer teruggedraaid. Twee regels die elkaar opheffen, plus een inline `maxHeight`
+          die de gemeten 88dvh uit de klasse overschreef. Nu zegt de klasse wat het is. */}
+      <div className="sheet-frame" onClick={e => e.stopPropagation()} style={{
         width: "100%", maxWidth: 560, margin: "0 auto",
         background: T.surface,
         borderRadius: `${T.xl} ${T.xl} 0 0`,
         // [SHEET-BOTTOM] Reserve the bottom bar. Without it the last button in
         // this panel lands behind BottomNav, which paints at z-index 2000.
         paddingBottom: sheetPaddingBottom(0),
-        boxShadow: T.elev3, overflow: "hidden",
-        display: "flex", flexDirection: "column", maxHeight: "92dvh",
+        boxShadow: T.elev3,
+        display: "flex", flexDirection: "column",
       }}>
         {/* Handle */}
         <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
