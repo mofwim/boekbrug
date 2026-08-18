@@ -143,3 +143,48 @@ test("[BETALINGSVERSCHIL] tightening the policy can only ever find fewer", () =>
   }
   assert.ok(strict.total <= loose.total, "a stricter policy cannot write off more");
 });
+
+// ─── [DEEL-CREDIT] A creditnota is not an unpaid remainder ───────────────────────────
+//
+// The detector read `total − paid` and knew nothing about credits, so money the owner had given
+// back in writing came out the other end as money that "is not going to arrive". Both of its
+// answers were wrong at once, and in opposite directions — see the two cases below.
+
+test("[DEEL-CREDIT] a credited invoice paid in full has nothing left to report", () => {
+  // € 500 invoiced, € 8 credited, the customer pays the € 492 that is actually owed. The invoice
+  // is settled. Before this, the detector saw € 8 open, under the € 10 ceiling, standing still —
+  // and told the owner € 8 "is niet meer binnengekomen, waarschijnlijk bankkosten". It came back
+  // because they sent it back.
+  const zonderKennis = detect({ total_inc_btw: 500, amount_paid: 492 });
+  assert.ok(zonderKennis, "without the credit it looks exactly like a bank charge");
+  assert.equal(zonderKennis!.remainder, 8);
+
+  const metKennis = detect({ total_inc_btw: 500, amount_paid: 492, credited_inc_btw: 8 });
+  assert.equal(metKennis, null, "with the credit there is nothing open and nothing to say");
+});
+
+test("[DEEL-CREDIT] the ceiling follows what is OWED, so a credit cannot widen a write-off", () => {
+  // The compounding case. € 500 invoiced, € 480 credited, € 10 paid: € 20 was owed and half of it
+  // is genuinely unpaid. A ceiling taken over the GROSS total is € 10 — and the credit-reduced
+  // remainder is also € 10, so the two errors meet and file a half-unpaid invoice under
+  // "afronding". Against the € 20 actually owed the ceiling is € 0,40, and it stays a debt.
+  assert.equal(differenceCeiling({ total_inc_btw: 500, amount_paid: 10 }), 10);
+  assert.equal(differenceCeiling({ total_inc_btw: 500, amount_paid: 10 }, DEFAULT_PAYMENT_DIFFERENCE, 480), 0.4);
+
+  const hit = detect({ total_inc_btw: 500, amount_paid: 10, credited_inc_btw: 480 });
+  assert.equal(hit, null, "half of what was owed is a debt, whatever the gross invoice was");
+});
+
+test("[DEEL-CREDIT] a caller that knows of no credit gets exactly the old answer", () => {
+  // The incoming side of this app uses the OTHER model — an invoice and its creditnota are two
+  // open items a payment settles together by pairing — so it passes nothing, and nothing changes.
+  const zonder = detect({ total_inc_btw: 1000, amount_paid: 995 });
+  const metNul = detect({ total_inc_btw: 1000, amount_paid: 995, credited_inc_btw: 0 });
+  assert.deepEqual(zonder, metNul);
+  assert.equal(zonder?.remainder, 5);
+});
+
+test("[DEEL-CREDIT] a credit larger than the invoice never turns the remainder negative", () => {
+  const hit = detect({ total_inc_btw: 100, amount_paid: 50, credited_inc_btw: 900 });
+  assert.equal(hit, null);
+});

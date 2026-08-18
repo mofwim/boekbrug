@@ -79,6 +79,16 @@ export interface PaymentDifferenceInvoice extends PartialPayInvoice {
   invoice_number?: string | null;
   /** The day the last money landed on this invoice. Null when nothing has been paid at all. */
   last_payment_date?: string | null;
+  /**
+   * [DEEL-CREDIT] What has been credited against this invoice, incl. btw, as a positive amount.
+   *
+   * Without it this detector reads a credit as an unpaid remainder, and both of its answers go
+   * wrong at once. Credit € 8 of a € 500 invoice and let the customer pay the remaining € 492:
+   * the remainder reads € 8, sits under the € 10 ceiling, stands still for a month, and the owner
+   * is told € 8 "is niet meer binnengekomen — waarschijnlijk bankkosten". It came back because
+   * they sent it back, in writing.
+   */
+  credited_inc_btw?: number | null;
 }
 
 export interface PaymentDifference {
@@ -99,12 +109,23 @@ function daysBetween(fromIso: string | null | undefined, toIso: string): number 
   return Math.floor((b - a) / 86_400_000);
 }
 
-/** The euro ceiling for THIS invoice: the percentage of its total, capped by the absolute. */
+/**
+ * The euro ceiling for THIS invoice: the percentage of its total, capped by the absolute.
+ *
+ * [DEEL-CREDIT] The percentage is taken over what is actually OWED — the total minus what was
+ * credited — and that is not a detail. Take it over the gross and a credit widens the ceiling
+ * while it narrows the remainder, so the two errors compound in the direction that writes money
+ * off: € 500 invoiced, € 480 credited, € 10 paid leaves € 10 genuinely unpaid of the € 20 owed —
+ * half of it — and a gross-based ceiling of € 10 would file that under "afronding". Against the
+ * € 20 actually owed the ceiling is € 0,40 and it is correctly left alone as a debt.
+ */
 export function differenceCeiling(
   invoice: PartialPayInvoice,
   opts: PaymentDifferenceOpts = DEFAULT_PAYMENT_DIFFERENCE,
+  creditedIncBtw = 0,
 ): number {
-  return toCents(Math.min((totalAmount(invoice) * opts.percent) / 100, opts.maxAmount));
+  const owed = Math.max(0, totalAmount(invoice) - Math.abs(Number(creditedIncBtw) || 0));
+  return toCents(Math.min((owed * opts.percent) / 100, opts.maxAmount));
 }
 
 /**
@@ -126,13 +147,16 @@ export function detectPaymentDifference(args: {
   const { invoice, today } = args;
   const opts = args.opts ?? DEFAULT_PAYMENT_DIFFERENCE;
 
-  const remainder = openAmount(invoice);
+  // [DEEL-CREDIT] Both figures below are net of what was credited — see the field's own note.
+  const credited = Math.abs(Number(invoice.credited_inc_btw) || 0);
+
+  const remainder = openAmount(invoice, credited);
   if (remainder <= CENT_EPSILON) return null; // nothing open — settled, or settled by status
 
   const paid = Math.max(0, invoice.amount_paid ?? 0);
   if (paid <= CENT_EPSILON) return null; // never paid at all: a debt, not a difference
 
-  if (remainder > differenceCeiling(invoice, opts)) return null; // too large to shrug at
+  if (remainder > differenceCeiling(invoice, opts, credited)) return null; // too large to shrug at
 
   const quiet = daysBetween(invoice.last_payment_date, today);
   if (quiet == null || quiet < opts.quietDays) return null; // still moving, or we cannot tell

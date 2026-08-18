@@ -10412,3 +10412,27 @@ test("[BTW-RESERVERING] the panel holds no language of its own", () => {
     assert.ok(copy.includes(`"${c}"`), `note code with no sentence: ${c}`);
   }
 });
+
+test("[DEEL-CREDIT] the home tile subtracts the credit it already went and read", () => {
+  // Three surfaces, one invoice, two answers. /api/daily-truth read the creditnota rows to decide
+  // WHICH invoices leave the list, and then summed the ones that stayed at their FULL open amount.
+  // The creditnota itself is gone by then — isOpenReceivable refuses one by design — so the € 50
+  // the customer got back was subtracted nowhere, and "Te ontvangen" on the home screen stood € 50
+  // above the facturenlijst and the accountant's debiteurenlijst, which both had it right.
+  //
+  // The rule is stated in full at outstandingAmount() in sales-overview.ts: on a surface that
+  // drops the creditnota, the credit comes off the invoice or it comes off nothing.
+  const route = code("src/app/api/daily-truth/route.ts");
+  assert.match(route, /creditedTotalsFrom\(creditRows \?\? \[\]\)/,
+    "the rows are already in hand — the same read that filters the list must also reduce it");
+  assert.match(route, /total: recv\.reduce\(\(s, r\) => s \+ openstaandOf\(r, creditedOn\(r\.id\)\), 0\)/,
+    "the receivable total is net of what was credited");
+  assert.match(route, /credited_inc_btw: creditedOn\(r\.id\)/,
+    "and so is the payment-difference detector, or it names a creditnota as a bank charge");
+
+  // The INCOMING side deliberately passes nothing. There an invoice and its creditnota are two
+  // open items a payment settles together by pairing ([BATCH-SIGN]); subtracting there as well
+  // would count the credit twice. Two models, each correct where it lives.
+  const pay = route.slice(route.indexOf("const toPay"), route.indexOf("const recvAll"));
+  assert.doesNotMatch(pay, /creditedOn/, "the pairing side must keep pairing");
+});

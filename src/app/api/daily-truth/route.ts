@@ -34,7 +34,7 @@ import { liveCashEntries } from "@/lib/cash-live";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [CREDITNOTA-NO-CHASE] the shared "is this still owed to me" rule — both sides of a credited
 // pair must leave the receivable list together (see src/lib/credited-invoices.ts)
-import { fullyCreditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from "@/lib/credited-invoices";
 // [OPEN-TOTAL] One definition of openstaand, shared with every other surface.
 import { openAmountSigned } from "@/lib/partial-payment";
 // [BETALINGSVERSCHIL] Het restje dat geen vordering is — meldend, nooit boekend.
@@ -179,9 +179,26 @@ export async function GET() {
   const recv = creditRows == null
     ? recvAll
     : filterOpenReceivables(recvAll, fullyCreditedIdsFrom(creditRows, recvAll));
+
+  // ── [DEEL-CREDIT] Hoeveel er per factuur is teruggegeven ──────────────────────────
+  //
+  // Dezelfde rijen die hierboven beslissen WELKE facturen van de lijst vallen, beslissen nu ook
+  // met HOEVEEL de rest meetelt. Zonder dat tweede gebruik loopt deze tegel precies mis op de
+  // manier die outstandingAmount() in sales-overview.ts beschrijft: de creditnota is uit de lijst
+  // gefilterd (isOpenReceivable weigert er een, met opzet), dus de € 50 die de klant terugkreeg
+  // werd nérgens meer afgetrokken. "Te ontvangen" op het thuisscherm stond dan € 50 te hoog,
+  // terwijl de facturenlijst en de debiteurenlijst van de boekhouder het juiste bedrag toonden —
+  // drie schermen, één factuur, twee antwoorden.
+  //
+  // Een mislukte creditnota-lezing geeft een LEGE map, niet een ontbrekende: dan valt er niets af,
+  // precies zoals hierboven de lijst dan ongefilterd blijft. Half degraderen zou een bedrag
+  // opleveren dat nooit ergens heeft gestaan.
+  const creditedByInvoice = creditedTotalsFrom(creditRows ?? []);
+  const creditedOn = (id: string) => creditedByInvoice.get(id) ?? 0;
+
   const toReceive = {
     count: recv.length,
-    total: recv.reduce((s, r) => s + openstaandOf(r), 0),
+    total: recv.reduce((s, r) => s + openstaandOf(r, creditedOn(r.id)), 0),
     overdue: recv.filter((r) => r.due_date && r.due_date < todayIso).length,
   };
 
@@ -204,6 +221,9 @@ export async function GET() {
       total_inc_btw: r.total_inc_btw,
       amount_paid: r.amount_paid,
       last_payment_date: r.payment_date ?? null,
+      // [DEEL-CREDIT] Zonder dit leest de detector een creditnota als een onbetaald restje en
+      // meldt hij "€ 8 komt niet meer binnen" over geld dat de eigenaar zelf heeft teruggegeven.
+      credited_inc_btw: creditedOn(r.id),
     })),
     today: todayIso,
   });

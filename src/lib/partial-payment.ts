@@ -53,10 +53,28 @@ export function openBalanceFromAmounts(invoice: PartialPayInvoice): number {
 /**
  * Openstaand: what is still owed on this invoice. 0 once the status says paid — the status
  * is the authority on completion, amount_paid only describes the road there.
+ *
+ * ── [DEEL-CREDIT] WHY THE CREDITED AMOUNT IS A PARAMETER ──
+ *
+ * Same shape, and for the same reason, as outstandingAmount() in sales-overview.ts: a credit of
+ * € 50 on a € 500 invoice has to come off SOMEWHERE, and every list that shows this number has
+ * already dropped the creditnota itself (isOpenReceivable refuses one by design, because leaving
+ * it in inflates the count and the overdue count even when the euros happen to cancel). So the
+ * credit is subtracted here or it is subtracted nowhere.
+ *
+ * It defaults to 0, which is not a shrug: the incoming side of this app uses the OTHER model,
+ * where an invoice and its creditnota are two open items a payment settles together by pairing
+ * (findSupplierSumMatch, reconcileBatch's [BATCH-SIGN]). Subtracting there as well would count the
+ * credit twice. Two models, each correct where it lives — a caller that passes nothing gets
+ * exactly the number it got before.
  */
-export function openAmount(invoice: PartialPayInvoice): number {
+export function openAmount(invoice: PartialPayInvoice, creditedIncBtw = 0): number {
   if (invoice.status === "paid") return 0;
-  return openBalanceFromAmounts(invoice);
+  const open = openBalanceFromAmounts(invoice);
+  // Magnitude: a creditnota is stored negative, and the question here is "how much came back".
+  const credited = Math.abs(Number(creditedIncBtw) || 0);
+  if (credited <= 0) return open;
+  return toCents(Math.max(0, open - credited));
 }
 
 /**
@@ -71,8 +89,8 @@ export function openAmount(invoice: PartialPayInvoice): number {
  * A total that does not add up to what the eye can add up is worse than no total, so summing uses
  * this one: the same magnitude, carrying the direction the invoice itself states.
  */
-export function openAmountSigned(invoice: PartialPayInvoice): number {
-  const open = openAmount(invoice);
+export function openAmountSigned(invoice: PartialPayInvoice, creditedIncBtw = 0): number {
+  const open = openAmount(invoice, creditedIncBtw);
   if (open === 0) return 0;
   return (invoice.total_inc_btw ?? 0) < 0 ? -open : open;
 }
