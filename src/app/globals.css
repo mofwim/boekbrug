@@ -786,6 +786,30 @@ input::placeholder, textarea::placeholder {
  * `overscroll-behavior: contain` houdt de pagina eronder stil zodra het paneel op zijn eind is —
  * anders scrolt de lijst achter de dialoog mee en staat de kaart bij het sluiten ergens anders.
  */
+/* Een paneel dat ZELF niet schuift, maar een schuivend deel BEVAT.
+ *
+ * `.sheet-scroll` maakt van het paneel de scroller. Dat klopt voor de meeste bladen: één blok
+ * inhoud dat te lang kan worden. Het klopt NIET zodra een blad een vaste kop heeft — een naam en
+ * een sluitknop die moeten blijven staan — want die kop staat dan in dezelfde scroller en schuift
+ * gewoon mee weg.
+ *
+ * InvoiceDocumentSheet deed het allebei tegelijk: de klasse op het paneel én een eigen
+ * `overflow-y: auto` op de inhoud eronder. Twee geneste scrollers om dezelfde inhoud is precies
+ * wat het voelt als een blad dat "niet goed scrolt": je duwt de ene en de andere beweegt, de kop
+ * verdwijnt, en op de bodem van de binnenste gaat de buitenste verder.
+ *
+ * Deze klasse is de andere helft van het paar: dezelfde grens en dezelfde border-box, maar het
+ * paneel houdt zijn inhoud vast (`overflow: hidden`) en het schuiven gebeurt één niveau dieper,
+ * in het element dat `flex: 1; min-height: 0` krijgt. `min-height: 0` is daar niet optioneel — een
+ * flex-item wil standaard niet kleiner worden dan zijn inhoud, en dan schuift er niets. */
+.sheet-frame {
+  box-sizing: border-box;
+  max-height: 88vh;
+  max-height: 88dvh;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
 .sheet-scroll {
   /* De grens geldt voor het HELE paneel, padding inbegrepen. Zonder deze regel begrenst
    * max-height alleen de inhoud en komt de padding er bovenop — en juist de bevestigingskaart uit

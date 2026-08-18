@@ -127,12 +127,21 @@ export default function InvoiceDocumentSheet({
       onClick={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 320, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
-      <div className="sheet-scroll"
+      {/* [BLAD-SCROLL] `sheet-frame`, niet `sheet-scroll`. Dit blad heeft een VASTE kop (naam +
+          sluitknop) en daaronder een schuivend deel. Met `sheet-scroll` was het paneel zelf óók een
+          scroller, dus stonden er twee om dezelfde inhoud: de kop schoof mee weg, en op de bodem
+          van de binnenste nam de buitenste het over. Dat is wat er als "scrolt niet goed" uitziet.
+
+          En de inline `maxHeight: '92dvh'` die hier stond, overschreef stilzwijgend de 88dvh uit de
+          klasse — een grens die daar met een meting bij staat (Chromium 393×852: een paneel van
+          862px in een scherm van 852px, bovenkant afgesneden). Twee getallen voor dezelfde grens,
+          waarvan het gemeten getal verloor. Nu staat de grens op één plek. */}
+      <div className="sheet-frame"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff', width: '100%', maxWidth: columnInner(COLUMN.work),
           borderRadius: `${R.lg}px ${R.lg}px 0 0`, boxShadow: EL2, fontFamily: FONT,
-          display: 'flex', flexDirection: 'column', maxHeight: '92dvh',
+          display: 'flex', flexDirection: 'column',
           // [SHEET-BOTTOM] On the PANEL, not on the scroll area inside it. The panel is what the
           // bottom navigation overlaps, and putting the clearance one level in leaves the last
           // control tappable only while the content happens to scroll.
@@ -157,7 +166,10 @@ export default function InvoiceDocumentSheet({
           </button>
         </div>
 
-        <div style={{ overflowY: 'auto', padding: '0 16px' }}>
+        {/* De ENIGE scroller van dit blad. `flex: 1` claimt de ruimte die de kop overlaat, en
+            `minHeight: 0` is niet optioneel: een flex-item wil standaard niet kleiner worden dan
+            zijn inhoud, en dan schuift er niets — het paneel groeit gewoon door. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px' }}>
           {/* ── What we read ── the half that makes looking at the paper WORTH something ── */}
           <div style={{ background: M3.surfaceVariant, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
             <p style={{ fontSize: 11.5, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 4px', letterSpacing: 0.3, textTransform: 'uppercase' }}>
@@ -220,7 +232,7 @@ export default function InvoiceDocumentSheet({
               <iframe
                 src={doc.url}
                 title={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })}
-                style={{ width: '100%', height: '58vh', border: 'none', background: '#fff' }}
+                style={{ width: '100%', height: '58dvh', border: 'none', background: '#fff' }}
               />
             )}
           </div>
