@@ -546,7 +546,11 @@ export default function FacturenClient({
     // without a round trip. Clearing the map synchronously here instead would be a setState in the
     // effect BODY, which cascades a render on every page the list loads.
     const ids = settledKey === '' ? [] : settledKey.split(',')
-    collectPaymentEvidence({ pipeline: supabase, ownerId: profile.id, invoiceIds: ids })
+    // The totals come along so a link from before amount_applied existed can be valued — it settled
+    // its invoice in full, and reading its NULL as 0 is what made this line cry wolf.
+    const totals: Record<string, number | null> = {}
+    for (const inv of invoices) if (inv.id) totals[inv.id] = inv.total_inc_btw ?? null
+    collectPaymentEvidence({ pipeline: supabase, ownerId: profile.id, invoiceIds: ids, totals })
       .then((map) => { if (live) setPaymentEvidence(map) })
       .catch((e) => {
         // [NO-SILENT-EMPTY] The collector already answers 'unknown' per invoice on a failed read;
@@ -1351,7 +1355,7 @@ export default function FacturenClient({
                           the owner paying their own customer, on the one line that exists to be
                           believed — and a sales invoice wrongly marked paid is money nobody ever
                           chases again, because nothing on any screen disagrees with it. */}
-                      <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'outgoing', taal)} />
+                      <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'outgoing', taal, inv)} />
                     </div>
 
                     {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)

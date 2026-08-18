@@ -2791,7 +2791,7 @@ export default function IncomingManageClient({
                             for: marked paid with nothing anywhere recording how. It is amber and
                             not grey because on this list that is a bill that may still be owed. */}
                         {isPaid && (
-                          <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'incoming', taal)} />
+                          <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'incoming', taal, inv)} />
                         )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
                             the only difference from an invoice is a minus sign in the amount, and

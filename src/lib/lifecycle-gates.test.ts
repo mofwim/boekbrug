@@ -11052,6 +11052,8 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.doesNotMatch(paintEv, /textAlign: 'right'/, "use textAlign: 'end'");
   assert.doesNotMatch(paintEv, /paddingLeft:/, "use paddingInlineStart");
 
+  const salesListEarly = code("src/app/dashboard/facturen/FacturenClient.tsx");
+
   // [ID-CHUNK] A PostgREST filter travels in the URL. The sales list is paged and unbounded, so a
   // bare .in() over a few hundred settled invoices blows the length limit — and what breaks is the
   // evidence line, which simply stops appearing. Chunked, so a long list costs more queries and
@@ -11062,6 +11064,51 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     "the id list may not travel in one URL");
   assert.match(ev, /export function settledInvoiceIds/,
     "only the rows that CLAIM to be settled are asked about");
+
+  // ── [DEELBETALING-BEWIJS] The hardest number in the app to check by hand ─────────────────────
+  //
+  // On a partly settled invoice "Deels betaald · nog € 460" is a conclusion the owner can only
+  // verify by opening their bank and adding up — the work this product exists to remove, handed
+  // back at the moment trust is being asked for. So the terms are named, each with its own
+  // evidence, and the sum is stated against the invoice total.
+  assert.match(ev, /t\('deel\.samen\.meer'/);
+  assert.match(ev, /entries\.push\(bewijs\)/,
+    "each term carries its OWN sentence — bank and hand are different claims");
+  for (const sentence of [
+    "{betaald} van {totaal} voldaan, in {count} betalingen:",
+    "de app rekent met {geboekt} betaald, maar de vastgelegde betalingen tellen op tot {geteld}",
+    "geen vastgelegd bedrag, dus het openstaande saldo is hier niet na te rekenen",
+  ]) {
+    assert.ok(cat.includes(sentence), `the catalogue lost: "${sentence}"`);
+  }
+
+  // [NO-SILENT-EMPTY] invoices.amount_paid is a CACHED Σ amount_applied, kept by a database
+  // function that also CLAMPS at the invoice magnitude. Nothing had ever held the two against each
+  // other, so a remainder no instalment supports rendered as fact. Both figures, never a silent
+  // preference for one.
+  assert.match(ev, /t\('deel\.verschil', \{ geboekt: EUR\.format\(geboekt\), geteld: EUR\.format\(ev\.total\) \}\)/);
+  assert.match(ev, /Math\.abs\(round2\(geboekt - ev\.total\)\) > CENT_EPSILON/,
+    "a cent of float dust is not a divergence");
+  assert.match(ev, /if \(ev\.totalKnown === false\)/,
+    "an unverifiable total may never read as a verified one");
+
+  // A link created before bank_tx_invoices.amount_applied existed carries NULL, and by construction
+  // settled its invoice IN FULL — the rule allocatedOnLine has always applied, where reading NULL
+  // as 0 would let the same euros be spent twice. Read as 0 here, the link was dropped and the
+  // invoice rendered the amber "marked paid, no payment linked" about an invoice with a bank line
+  // on it — a false alarm on the line that may never cry wolf.
+  assert.match(ev, /amountApplied: number \| null/);
+  assert.match(ev, /if \(link\.amountApplied === null\)/);
+  assert.match(evCollect, /amountApplied: l\.amount_applied == null \? null : Number\(l\.amount_applied\) \|\| 0/,
+    "the collector may not coerce NULL to 0 — that is where the false alarm came from");
+  // …and both screens hand over the totals that value it.
+  assert.match(evCollect, /classifyPayment\(perInvoice\.get\(id\) \?\? \[\], args\.totals\?\.\[id\]\)/);
+  assert.match(code("src/app/dashboard/incoming/manage/page.tsx"), /totals: Object\.fromEntries\(/);
+  assert.match(salesListEarly, /totals\[inv\.id\] = inv\.total_inc_btw \?\? null/);
+
+  // The sentence runs inside a LIST ROW, where a throw blanks the screen rather than one line.
+  assert.match(ev, /\(ev\.applied \?\? \[\]\)\.find/,
+    "an evidence object assembled elsewhere carries no `applied`, and must not crash the row");
 
   // …and all of it actually reaches BOTH screens. A proof computed and not rendered is the defect
   // class this whole file exists for.
@@ -11128,10 +11175,13 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     ["src/app/dashboard/facturen/FacturenClient.tsx", "'outgoing'"],
   ] as const) {
     const client = code(screen);
+    // …and the INVOICE travels with it. That fourth argument is what makes the arithmetic possible:
+    // the total to measure the instalments against, and the amount_paid to hold their sum up to.
+    // Without it the line is back to a conclusion with no working.
     assert.match(
       client,
-      new RegExp(`<PaymentEvidenceLine line=\\{buildPaymentEvidenceLine\\(paymentEvidence\\[inv\\.id\\], ${direction}, taal\\)\\} />`),
-      `${screen} must paint the shared line, in its own direction and the owner's language`,
+      new RegExp(`<PaymentEvidenceLine line=\\{buildPaymentEvidenceLine\\(paymentEvidence\\[inv\\.id\\], ${direction}, taal, inv\\)\\} />`),
+      `${screen} must paint the shared line, in its own direction, the owner's language and against its own invoice`,
     );
     // [TAAL] …and keep no sentence of its own about it. Keys stripped first — see copyOf.
     const copy = copyOf(screen);
@@ -11143,7 +11193,7 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   // reads the evidence itself, through the owner's OWN session. Both tables carry a
   // `user_id = auth.uid()` select policy, so RLS scopes it exactly and no route widens anything.
   const salesList = code("src/app/dashboard/facturen/FacturenClient.tsx");
-  assert.match(salesList, /collectPaymentEvidence\(\{ pipeline: supabase, ownerId: profile\.id, invoiceIds: ids \}\)/);
+  assert.match(salesList, /collectPaymentEvidence\(\{ pipeline: supabase, ownerId: profile\.id, invoiceIds: ids, totals \}\)/);
   assert.match(salesList, /settledInvoiceIds\(invoices\)\.join\(','\)/,
     "keyed on the settled ids, or the same rows are re-read on every render");
   // [NO-SILENT-EMPTY] A throw must reach every row asked about as 'unknown'. A missing line reads

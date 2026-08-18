@@ -22,6 +22,12 @@ export async function collectPaymentEvidence(args: {
   pipeline: any
   ownerId: string
   invoiceIds: readonly string[]
+  /**
+   * Per invoice id, its total_inc_btw — used to value a link whose amount_applied is NULL. The
+   * caller has these rows on screen already; without them such a link is still counted as a
+   * settlement, only its amount stays unknown (and the sentence says so instead of printing € 0).
+   */
+  totals?: Readonly<Record<string, number | null>>
 }): Promise<Record<string, PaymentEvidence>> {
   const out: Record<string, PaymentEvidence> = {}
   if (args.invoiceIds.length === 0) return out
@@ -88,7 +94,10 @@ export async function collectPaymentEvidence(args: {
     const list = perInvoice.get(id) ?? []
     list.push({
       transactionId: txId,
-      amountApplied: Number(l.amount_applied) || 0,
+      // NULL is preserved, never coerced to 0 — see PaymentLink. `Number(null) || 0` turned a
+      // legacy link (settled in full, amount not recorded) into "nothing applied", and the invoice
+      // then rendered the amber alarm about a payment that is sitting right there in the bank.
+      amountApplied: l.amount_applied == null ? null : Number(l.amount_applied) || 0,
       paidOn: (l.paid_on as string | null) ?? null,
       method: (l.method as string | null) ?? null,
       transaction: txId ? byTx.get(txId) ?? null : null,
@@ -96,6 +105,6 @@ export async function collectPaymentEvidence(args: {
     perInvoice.set(id, list)
   }
 
-  for (const id of args.invoiceIds) out[id] = classifyPayment(perInvoice.get(id) ?? [])
+  for (const id of args.invoiceIds) out[id] = classifyPayment(perInvoice.get(id) ?? [], args.totals?.[id])
   return out
 }

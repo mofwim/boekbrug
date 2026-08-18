@@ -327,6 +327,12 @@ export default async function Page({
     pipeline: supabase,
     ownerId: user.id,
     invoiceIds: rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'),
+    // The totals come along so a link from before amount_applied existed can be valued: it settled
+    // its invoice in full, and reading its NULL as 0 made this line report "geen betaling
+    // gekoppeld" about an invoice with a bank line on it.
+    totals: Object.fromEntries(
+      rows.filter((r) => typeof r.id === 'string').map((r) => [r.id as string, r.total_inc_btw ?? null]),
+    ),
   }).catch((e) => {
     console.error('[BETAALBEWIJS] evidence failed — the list still renders', {
       userId: user.id, error: e instanceof Error ? e.message : String(e),

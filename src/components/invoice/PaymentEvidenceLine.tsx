@@ -25,6 +25,8 @@
 // The component holds no language and no direction of its own — both travel on the line object
 // built by payment-evidence.ts.
 
+import type React from 'react'
+
 import { M3 } from '@/lib/design/tokens'
 import type { PaymentEvidenceLine as EvidenceLine } from '@/lib/payment-evidence'
 
@@ -38,15 +40,34 @@ const TONE: Record<EvidenceLine['tone'], string> = {
 
 export default function PaymentEvidenceLine({ line }: { line: EvidenceLine | null | undefined }) {
   if (!line) return null
+  const base: React.CSSProperties = {
+    display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4,
+    fontSize: 11.5, textAlign: 'start',
+  }
   return (
-    <span
-      dir={line.dir}
-      style={{
-        display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4,
-        fontSize: 11.5, textAlign: 'start', color: TONE[line.tone],
-      }}
-    >
-      {line.text}
+    <span dir={line.dir} style={{ display: 'block' }}>
+      <span style={{ ...base, color: TONE[line.tone] }}>{line.text}</span>
+
+      {/* [DEELBETALING-BEWIJS] The terms the lead is made of. On a partly settled invoice "nog
+          € 460 open" is the hardest number in the app to check by hand — the owner would have to
+          open their bank and add up, which is the work this product exists to remove. Each term
+          carries its OWN evidence, so a bank-proven instalment and a hand-recorded one are never
+          flattened into one claim about the whole invoice. */}
+      {line.entries.map((entry, i) => (
+        <span key={i} style={{ ...base, marginTop: 1, paddingInlineStart: 10, color: M3.neutral }}>
+          · {entry}
+        </span>
+      ))}
+
+      {/* [NO-SILENT-EMPTY] invoices.amount_paid is a cached sum of exactly those terms. When the
+          two disagree the screen is showing a remainder no instalment supports, and it may not
+          quietly believe one side — so it names both figures and leaves the judgement where it
+          belongs. Red, because this is the one line here that asks for action. */}
+      {line.warning && (
+        <span style={{ ...base, marginTop: 2, color: M3.error, fontWeight: 600 }}>
+          {line.warning}
+        </span>
+      )}
     </span>
   )
 }

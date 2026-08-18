@@ -10023,24 +10023,24 @@ export const MESSAGES = {
   },
 
   'betaal.hand': {
-    nl: 'Door jou afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
-    ar: 'أنت علّمتها بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
-    en: 'Ticked off by you on {datum} — no bank line is linked to it.',
+    nl: '{bedrag} door jou afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you on {datum} — no bank line is linked to it.',
   },
   'betaal.hand.zonderDatum': {
-    nl: 'Door jou afgevinkt — er is geen bankregel aan gekoppeld.',
-    ar: 'أنت علّمتها — لا يوجد سطر بنكي مرتبط بها.',
-    en: 'Ticked off by you — no bank line is linked to it.',
+    nl: '{bedrag} door jou afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you — no bank line is linked to it.',
   },
   'betaal.hand.kas': {
-    nl: 'Door jou contant afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
-    ar: 'أنت علّمتها نقداً بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
-    en: 'Ticked off by you as cash on {datum} — no bank line is linked to it.',
+    nl: '{bedrag} door jou contant afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت نقداً بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you as cash on {datum} — no bank line is linked to it.',
   },
   'betaal.hand.kas.zonderDatum': {
-    nl: 'Door jou contant afgevinkt — er is geen bankregel aan gekoppeld.',
-    ar: 'أنت علّمتها نقداً — لا يوجد سطر بنكي مرتبط بها.',
-    en: 'Ticked off by you as cash — no bank line is linked to it.',
+    nl: '{bedrag} door jou contant afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت نقداً — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you as cash — no bank line is linked to it.',
   },
 
   // Money OUT — a bill the owner paid.
@@ -10088,6 +10088,45 @@ export const MESSAGES = {
 
   // The bank's own text, quoted verbatim — it is the string the owner RECOGNISES, and recognition
   // is the whole mechanism here. A tidied version is a string they have never seen.
+  // ─── [DEELBETALING-BEWIJS] The arithmetic behind "nog € X open", written out ─────────────────
+  //
+  // A partly settled invoice is where a conclusion is hardest to check by hand: the row says
+  // "Deels betaald · nog € 460", and the owner has no way to see WHICH instalments produced that
+  // without opening their bank and adding up. So the instalments are named, each with its own
+  // evidence, and the sum is stated beside the invoice total.
+
+  'deel.samen.meer': {
+    nl: '{betaald} van {totaal} voldaan, in {count} betalingen:',
+    ar: 'سُدِّد {betaald} من {totaal}، على {count} دفعات:',
+    en: '{betaald} of {totaal} settled, in {count} payments:',
+  },
+  // No key for "one instalment": every payment sentence now carries its own amount, bank and hand
+  // alike. A wrapper that prefixed the figure produced it twice on a bank line ("€ 500,00 —
+  // € 500,00 bijgeschreven…") and read as two dashes on a hand-recorded one.
+
+  // [NO-SILENT-EMPTY] invoices.amount_paid is a CACHED SUM of the very rows listed above. When the
+  // two disagree the screen is showing a remainder no instalment supports, and it may not quietly
+  // believe one side: it says both figures and leaves the judgement where it belongs.
+  'deel.verschil': {
+    nl: 'Let op: de app rekent met {geboekt} betaald, maar de vastgelegde betalingen tellen op tot {geteld}. Laat dit nakijken voordat je hierop afgaat.',
+    ar: 'تنبيه: التطبيق يحسب {geboekt} مدفوعاً، بينما مجموع الدفعات المسجَّلة {geteld}. راجع هذا قبل الاعتماد عليه.',
+    en: 'Note: the app is working with {geboekt} paid, but the recorded payments add up to {geteld}. Have this checked before relying on it.',
+  },
+  // The sum could not be checked at all — a legacy link with no amount anywhere. Never silence:
+  // an unverifiable total that reads like a verified one is the whole failure mode here.
+  'deel.verschil.onmeetbaar': {
+    nl: 'Eén van deze betalingen heeft geen vastgelegd bedrag, dus het openstaande saldo is hier niet na te rekenen.',
+    ar: 'إحدى هذه الدفعات بلا مبلغ مسجَّل، لذا لا يمكن التحقق من الرصيد المتبقي هنا.',
+    en: 'One of these payments has no recorded amount, so the outstanding balance cannot be verified here.',
+  },
+
+  // The one case where no figure may be printed: a legacy link with no amount of its own AND no
+  // bank row to read one from. "€ 0,00 afgeschreven" would be a number nobody wrote down.
+  'betaal.bank.bedragOnbekend': {
+    nl: 'Er is een bankbetaling aan deze factuur gekoppeld; het bedrag is hier niet vastgelegd.',
+    ar: 'هناك دفعة بنكية مرتبطة بهذه الفاتورة؛ المبلغ غير مسجَّل هنا.',
+    en: 'A bank payment is linked to this invoice; the amount is not recorded here.',
+  },
   'betaal.bank.omschrijving': { nl: '{regel} — “{tekst}”', ar: '{regel} — «{tekst}»', en: '{regel} — “{tekst}”' },
   'betaal.bank.meer.een': {
     nl: '{regel} (+ 1 andere betaling)',

@@ -52,7 +52,9 @@ test('[BETAALBEWIJS] a hand-recorded payment says so, and does not borrow the ba
   assert.equal(ev.kind, 'manual')
   assert.equal(isBankProven(ev), false)
   const text = describePayment(ev)
-  assert.match(text, /Door jou/)
+  // The AMOUNT is named here too now. apply_manual_payment always records one, and on a partly
+  // settled invoice an instalment without its figure is exactly the term you cannot check.
+  assert.match(text, /€\s?1\.224,75 door jou afgevinkt/)
   assert.match(text, /geen bankregel/)
   assert.doesNotMatch(text, /afgeschreven/, 'nothing was demonstrably debited')
 })
@@ -189,4 +191,96 @@ test('[BETAALBEWIJS] only the rows that CLAIM to be settled are asked about', ()
   assert.deepEqual(settledInvoiceIds([
     { id: 'z', status: 'paid' }, { id: 'a', status: 'paid' }, { id: 'z', status: 'paid' },
   ]), ['a', 'z'])
+})
+
+test('[DEELBETALING-BEWIJS] a NULL amount_applied settled the invoice in full, and is never zero', () => {
+  // bank_tx_invoices rows created before the column carry NULL. bank-line-budget.ts has always
+  // valued such a link at the invoice's own total — reading it as 0 there would let the same euros
+  // be spent twice. Read as 0 HERE, the link was filtered out and the invoice reported "als betaald
+  // gemarkeerd, maar er is geen betaling aan gekoppeld": a false alarm about an invoice with a bank
+  // line on it, on the one line that may never cry wolf.
+  const legacy: PaymentLink[] = [{
+    transactionId: 'tx-old', amountApplied: null, paidOn: '2025-11-04', method: 'bank',
+    transaction: { date: '2025-11-04', amount: -1210, description: 'FACTUUR 2025-088',
+      counterpartName: 'BALKIP B.V.', counterpartIban: null },
+  }]
+
+  // `assert.equal` from node:assert/strict is an assertion signature, so each line below narrows
+  // the union for the next — no defensive ternary needed, and TypeScript rejects one as dead.
+  const valued = classifyPayment(legacy, -1210)
+  assert.equal(valued.kind, 'bank', 'a link IS a payment, whatever its column says')
+  assert.equal(valued.total, 1210, 'valued at the invoice magnitude, exactly as allocatedOnLine does')
+  assert.equal(valued.totalKnown, true)
+
+  // Without an invoice total the link still counts — it exists — but the sum is not knowable, and
+  // the panel says so rather than letting a 0 pass for a figure.
+  const unvalued = classifyPayment(legacy)
+  assert.equal(unvalued.kind, 'bank')
+  assert.equal(unvalued.totalKnown, false)
+  const line = buildPaymentEvidenceLine(unvalued, 'incoming', 'nl',
+    { status: 'paid', total_inc_btw: -1210, amount_paid: 1210 })
+  assert.match(line!.warning!, /niet na te rekenen/, 'an unverifiable total may not read as a verified one')
+
+  // A genuine zero is still nothing: a link that applied 0 settles nothing, and counting it would
+  // make "Betaald" true on an invoice where no money moved.
+  assert.equal(classifyPayment([{ ...legacy[0], amountApplied: 0 }], -1210).kind, 'none')
+})
+
+test('[DEELBETALING-BEWIJS] the cached amount_paid is held against the rows it caches', () => {
+  // invoices.amount_paid is Σ bank_tx_invoices.amount_applied, maintained by a database function
+  // that also CLAMPS at the invoice magnitude. Nothing had ever compared the two — so a link
+  // removed outside the app's own paths, or a total corrected downward after payments were booked,
+  // left a remainder no instalment supports, shown as fact.
+  const links: PaymentLink[] = [
+    { transactionId: 'tx-1', amountApplied: 500, paidOn: '2026-07-03', method: 'bank' },
+    { transactionId: null, amountApplied: 250, paidOn: '2026-07-14', method: 'bank' },
+  ]
+  const ev = classifyPayment(links, 1210)
+
+  // Agreement is silence.
+  assert.equal(
+    buildPaymentEvidenceLine(ev, 'outgoing', 'nl', { status: 'sent', total_inc_btw: 1210, amount_paid: 750 })!.warning,
+    null,
+  )
+  // Disagreement names BOTH figures — never a silent preference for one of them.
+  const drift = buildPaymentEvidenceLine(ev, 'outgoing', 'nl', { status: 'sent', total_inc_btw: 1210, amount_paid: 800 })!
+  assert.match(drift.warning!, /€\s?800,00/)
+  assert.match(drift.warning!, /€\s?750,00/)
+  // A cent of float dust is not a divergence.
+  assert.equal(
+    buildPaymentEvidenceLine(ev, 'outgoing', 'nl', { status: 'sent', total_inc_btw: 1210, amount_paid: 750.004 })!.warning,
+    null,
+  )
+  // No invoice to compare against → no claim either way.
+  assert.equal(buildPaymentEvidenceLine(ev, 'outgoing', 'nl')!.warning, null)
+})
+
+test('[DEELBETALING-BEWIJS] the terms are listed only when there is more than one', () => {
+  const one = classifyPayment([{ transactionId: 'tx-1', amountApplied: 500, paidOn: '2026-07-03', method: 'bank' }], 500)
+  const single = buildPaymentEvidenceLine(one, 'outgoing', 'nl', { status: 'paid', total_inc_btw: 500, amount_paid: 500 })!
+  assert.deepEqual(single.entries, [], 'one payment has nothing to add up')
+
+  const two = classifyPayment([
+    { transactionId: 'tx-1', amountApplied: 500, paidOn: '2026-07-03', method: 'bank' },
+    { transactionId: null, amountApplied: 250, paidOn: '2026-07-14', method: 'bank' },
+  ], 1210)
+  const many = buildPaymentEvidenceLine(two, 'outgoing', 'nl', { status: 'sent', total_inc_btw: 1210, amount_paid: 750 })!
+  assert.equal(many.entries.length, 2)
+  // Each term carries its own amount AND its own kind of proof — bank and hand are different
+  // claims, and one line about "€ 750 betaald" would flatten them into the stronger one.
+  assert.match(many.entries[0], /€\s?500,00 bijgeschreven/)
+  assert.match(many.entries[1], /€\s?250,00 door jou afgevinkt/)
+})
+
+test('[DEELBETALING-BEWIJS] the sentence survives an evidence object it did not build', () => {
+  // describePayment runs inside a LIST ROW. A throw there does not blank one line, it blanks the
+  // screen — which is the entire reason tests/render/ exists. An evidence object assembled
+  // anywhere but classifyPayment carries no `applied`, and the link's own amount answers the same
+  // question, so it falls back instead of reaching into undefined.
+  const handmade = {
+    kind: 'bank' as const, total: 500, totalKnown: true,
+    links: [{ transactionId: 'tx-1', amountApplied: 500, paidOn: '2026-07-03', method: 'bank' }],
+  } as unknown as ReturnType<typeof classifyPayment>
+  assert.match(describePayment(handmade, 'outgoing'), /€\s?500,00 bijgeschreven/)
+  assert.equal(buildPaymentEvidenceLine(handmade, 'outgoing')!.entries.length, 0)
 })

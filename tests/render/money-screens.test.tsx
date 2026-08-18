@@ -273,7 +273,7 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
   const hand = render({ p1: { kind: "manual", total: 1224.75, links: [{
     transactionId: null, amountApplied: 1224.75, paidOn: "2026-08-20", method: "bank", transaction: null,
   }] } });
-  assert.match(hand, /Door jou/);
+  assert.match(hand, /€\s?1\.224,75 door jou afgevinkt/);
   assert.doesNotMatch(hand, /afgeschreven/, "nothing was demonstrably debited");
 
   // Marked paid with nothing recording how — the state that keeps the other two worth believing.
@@ -281,7 +281,7 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
   // …and a failed read says that, instead of asserting there is no evidence.
   assert.match(render({ p1: { kind: "unknown" } }), /konden niet nakijken/);
   // An older render that sends nothing leaves the row exactly as it was.
-  assert.doesNotMatch(render({}), /afgeschreven|Door jou|geen betaling aan gekoppeld/);
+  assert.doesNotMatch(render({}), /afgeschreven|door jou afgevinkt|geen betaling aan gekoppeld/i);
 });
 
 test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, and until when", async () => {
@@ -387,7 +387,7 @@ test("[BETAALBEWIJS] one component paints the four claims, and each one differen
 
   // The owner's own tick is true, and is not the same claim — so it is not green.
   const hand = paint(classifyPayment([{ transactionId: null, amountApplied: 2420, paidOn: "2026-07-14", method: "bank" } as never]), "outgoing");
-  assert.match(hand, /Door jou afgevinkt/);
+  assert.match(hand, /€\s?2\.420,00 door jou afgevinkt/, "the instalment names its own amount");
   assert.doesNotMatch(hand, /#0B8043/);
 
   // Marked paid with nothing recording how — amber, because on a sales invoice that is money the
@@ -409,6 +409,90 @@ test("[BETAALBEWIJS] one component paints the four claims, and each one differen
     ),
     "",
   );
+});
+
+test("[DEELBETALING-BEWIJS] a partly settled invoice shows the terms, not just the remainder", async () => {
+  // "Deels betaald · nog € 460" is the hardest number in this app to check by hand: the owner would
+  // have to open their bank and add up, which is the work the product exists to remove. So the
+  // instalments are named, each carrying its OWN evidence — a bank-proven term and a hand-recorded
+  // one are never flattened into one claim about the whole invoice.
+  const { default: PaymentEvidenceLine } = await import("../../src/components/invoice/PaymentEvidenceLine");
+  const { buildPaymentEvidenceLine, classifyPayment } = await import("../../src/lib/payment-evidence");
+
+  const invoice = { status: "sent", total_inc_btw: 1210, amount_paid: 750 };
+  const links = [
+    { transactionId: "tx-1", amountApplied: 500, paidOn: "2026-07-03", method: "bank",
+      transaction: { date: "2026-07-03", amount: 500, description: "termijn 1",
+        counterpartName: "Kiwi Food Market", counterpartIban: null } },
+    { transactionId: null, amountApplied: 250, paidOn: "2026-07-14", method: "bank" },
+  ];
+  const paint = (inv: unknown) => renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(PaymentEvidenceLine as any, {
+      line: buildPaymentEvidenceLine(
+        classifyPayment(links as never, 1210), "outgoing", "nl", inv as never,
+      ),
+    }),
+  );
+
+  const html = paint(invoice);
+  // The sum, against the invoice it is a part of — the arithmetic the chip only states the end of.
+  assert.match(html, /€\s?750,00 van €\s?1\.210,00 voldaan, in 2 betalingen/);
+  // Both terms, each with its own amount and its own kind of proof.
+  assert.match(html, /€\s?500,00 bijgeschreven op 3 juli 2026 van Kiwi Food Market/);
+  assert.match(html, /€\s?250,00 door jou afgevinkt op 14 juli 2026/);
+  // Nothing is wrong here, so nothing shouts.
+  assert.doesNotMatch(html, /Let op/);
+
+  // [NO-SILENT-EMPTY] amount_paid is a CACHED sum of exactly those rows, maintained by a database
+  // function that also CLAMPS at the invoice magnitude. Nothing had ever held the two against each
+  // other, so a remainder no instalment supports rendered as fact. Both figures, never a silent
+  // preference for one.
+  const drift = paint({ ...invoice, amount_paid: 800 });
+  assert.match(drift, /Let op/);
+  assert.match(drift, /€\s?800,00 betaald/);
+  assert.match(drift, /tellen op tot €\s?750,00/);
+
+  // A single payment keeps the plain sentence — no lead, no bullets, nothing to add up.
+  const one = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(PaymentEvidenceLine as any, {
+      line: buildPaymentEvidenceLine(
+        classifyPayment([links[0]] as never, 1210), "outgoing", "nl",
+        { status: "sent", total_inc_btw: 1210, amount_paid: 500 } as never,
+      ),
+    }),
+  );
+  assert.doesNotMatch(one, /voldaan, in/);
+  assert.match(one, /€\s?500,00 bijgeschreven/);
+});
+
+test("[DEELBETALING-BEWIJS] a link from before amount_applied existed is not 'no payment'", async () => {
+  // bank_tx_invoices rows created before the column carry NULL, and by construction settled their
+  // invoice IN FULL — the rule allocatedOnLine has always applied, where reading NULL as 0 would
+  // let the same euros be spent twice. Read as zero here, the link was dropped and the invoice
+  // rendered the amber "marked paid, no payment linked": a false alarm about an invoice with a
+  // bank line on it, on the one line that may never cry wolf.
+  const { default: PaymentEvidenceLine } = await import("../../src/components/invoice/PaymentEvidenceLine");
+  const { buildPaymentEvidenceLine, classifyPayment } = await import("../../src/lib/payment-evidence");
+
+  const legacy = [{
+    transactionId: "tx-old", amountApplied: null, paidOn: "2025-11-04", method: "bank",
+    transaction: { date: "2025-11-04", amount: -1210, description: "FACTUUR 2025-088",
+      counterpartName: "BALKIP B.V.", counterpartIban: null },
+  }];
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(PaymentEvidenceLine as any, {
+      line: buildPaymentEvidenceLine(
+        classifyPayment(legacy as never, -1210), "incoming", "nl",
+        { status: "paid", total_inc_btw: -1210, amount_paid: 1210 } as never,
+      ),
+    }),
+  );
+  assert.doesNotMatch(html, /geen betaling aan gekoppeld/, "it HAS a bank line");
+  assert.match(html, /#0B8043/, "and a bank line is what green means");
+  assert.match(html, /€\s?1\.210,00 afgeschreven op 4 november 2025 naar BALKIP B\.V\./);
 });
 
 test("[OPENSTAAND-BEWIJS] the sales list proves the other direction, in its own words", async () => {
