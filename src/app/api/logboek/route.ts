@@ -125,19 +125,28 @@ export async function GET(req: NextRequest) {
   //
   // So we ask one cheap question the owner may ask himself (accountant_clients_select: "the client
   // and the accountant can each still read the link"): is a bookkeeper linked to me at all? If yes,
-  // and this page contains not one row authored by anyone else, then either the bookkeeper genuinely
-  // has not touched anything yet, or that policy is not in place — and we cannot tell which from
-  // here. The screen then says so (log.spoorOnvolledig) instead of implying completeness.
+  // a second question follows at the foot of this file — does the trail hold ANY action by someone
+  // who is not me? If that answer is no, then either the bookkeeper genuinely has not touched
+  // anything yet, or that policy is not in place — and we cannot tell which from here. The screen
+  // then says so (log.spoorOnvolledig) instead of implying completeness.
   //
-  // Two boundaries on the claim, because the sentence it raises asserts something concrete ("Er
+  // Three boundaries on the claim, because the sentence it raises asserts something concrete ("Er
   // ontbreekt een instelling in de database") and must not be raised on a hunch:
   //
   //   · Only on the FIRST page. On page four, "no row by someone else here" says nothing at all —
   //     the bookkeeper's actions were most likely on page one, already read, already seen. Raising a
   //     misconfiguration warning there would be a false statement about a database we just watched
   //     work correctly.
-  //   · Only when the link read SUCCEEDED. On an error we omit the flag entirely and never a
-  //     `false`: we did not establish that things are fine, we established nothing. Asserting a
+  //   · And never off this page's FIFTY ROWS either, which is the subtler version of the same
+  //     mistake. An owner who invoices weekly writes fifty audit rows in a month across the 89
+  //     actions; a bookkeeper who filed the aangifte last quarter is then nowhere near page one, and
+  //     a page-one test would raise "er ontbreekt een instelling in de database" against a database
+  //     with nothing wrong with it — for most active owners, most of the year. A warning that cries
+  //     wolf on the common case is worse than no warning, because this is the one sentence on the
+  //     screen whose entire value is that it is rare. So the question goes to the WHOLE trail, in
+  //     its own query, and only down the path where the answer is about to be yes.
+  //   · Only when the reads SUCCEEDED. On an error we omit the flag entirely and never a `false`:
+  //     we did not establish that things are fine, we established nothing. Asserting a
   //     misconfiguration you could not check is the same sin as hiding one you could.
   const linkProbe =
     before === null
@@ -147,17 +156,36 @@ export async function GET(req: NextRequest) {
   // Independent reads, so they go together — see [WATERVAL]. Neither needs the other's answer.
   const [{ data, error }, link] = await Promise.all([logQuery, linkProbe]);
 
-  // [NO-SILENT-EMPTY] The one branch this whole file is built around.
-  if (error) {
+  // [NO-SILENT-EMPTY] The one branch this whole file is built around — and it has TWO halves,
+  // because a failed read does not always arrive carrying an error.
+  //
+  // `error` is the obvious half. The other half is `data === null` with `error === null`, and
+  // postgrest-js really does produce that pair. Its processResponse() leaves `data` at its initial
+  // null when a 2xx arrives with an EMPTY BODY, and its workaround for postgrest-js#295 rewrites a
+  // 404-with-empty-body into `{ data: null, error: null, status: 204 }` — a shape invented for
+  // DELETE and handed to every verb. Both are exactly what an edge proxy in front of PostgREST
+  // answers when the API is unreachable, when the project is paused or restoring, or when the schema
+  // cache has not been told this table exists: a read that never happened, wearing a success's
+  // clothes.
+  //
+  // `data ?? []` is the line that would swallow it. The route would answer 200 with `entries: []`,
+  // the screen would take that as a successful read of an empty trail, and the owner would be shown
+  // "Er is nog niets gebeurd om te tonen" (log.leeg) about a database we never managed to ask. That
+  // is the precise lie this feature was built to prevent, arriving through the one door nobody
+  // watches — the success path. So no rows AND no error is unreadable here, never empty.
+  if (error || data === null) {
     console.error("[LOGBOEK] audit_logs read failed — refusing to answer with an empty log", {
       userId: user.id,
       before,
-      error: error.message,
+      // Spelled out rather than left undefined: "no error at all" is the whole point of this second
+      // half, and a log line reading `error: undefined` is how the next reader concludes it cannot
+      // happen and puts the `?? []` back.
+      error: error ? error.message : "no error and no rows — the read did not reach PostgREST",
     });
     return NextResponse.json({ error: "log_unreadable" }, { status: 503 });
   }
 
-  const fetched = data ?? [];
+  const fetched = data;
   let page = fetched.slice(0, PAGE_SIZE);
   let nextCursor: string | null = null;
 
@@ -208,21 +236,65 @@ export async function GET(req: NextRequest) {
 
   let hasBookkeeper: boolean | null = null;
   if (link !== null) {
-    if (link.error) {
+    // Same two halves as the log read above: an error, OR no rows and no error at all. A null `data`
+    // here would sail through `(link.data ?? []).length > 0` as a confident "no bookkeeper linked",
+    // which is a fact about the database asserted out of a read that never landed.
+    if (link.error || link.data === null) {
       console.error("[LOGBOEK] accountant link read failed — omitting the completeness flag", {
         userId: user.id,
-        error: link.error.message,
+        error: link.error ? link.error.message : "no error and no rows — the read did not happen",
       });
     } else {
-      hasBookkeeper = (link.data ?? []).length > 0;
+      hasBookkeeper = link.data.length > 0;
     }
   }
 
   const response: LogboekResponse = { entries, nextCursor };
-  // byOther comes from toLogboekEntry, not from a second comparison written here — one definition of
-  // "someone else did this", used by the screen and by this check alike.
+
+  // ── THE HONESTY PROBE, SECOND HALF ────────────────────────────────────────────────────────────
+  //
+  // `!entries.some((e) => e.byOther)` is the CHEAP half: fifty rows, already in memory, and when one
+  // of them was performed by someone else we are done — the policy demonstrably works, and nothing
+  // needs to be asked or claimed. byOther comes from toLogboekEntry rather than from a comparison
+  // written out again here, so the screen and this check agree by construction.
+  //
+  // What that half may NOT do is answer no on its own. Page one is fifty rows of a trail that grows
+  // by dozens a month, so "the bookkeeper is not on this page" is the normal state of affairs for
+  // every owner whose bookkeeper works quarterly — see the second boundary in the header. So on that
+  // branch, and only on that branch, we go and ask the question the sentence actually makes: does
+  // the trail hold ANY row at all whose actor is not me?
+  //
+  // Only audit_logs_about_me can return such a row. The old policy is `auth.uid() = user_id`, which
+  // this filter excludes by definition, so an empty answer here means precisely what the warning
+  // says it might: either that policy is missing, or the bookkeeper has genuinely done nothing yet.
+  // Those two remain indistinguishable from here, and the sentence names both.
+  //
+  // `.neq("user_id", user.id)` is byOther's rule in SQL rather than a looser restatement of it: `<>`
+  // is unknown for a NULL actor and drops the row, exactly as byOther refuses to call an unknown
+  // actor "someone else". One definition of the thing, in two dialects.
+  //
+  // Deliberately NOT in the Promise.all above, and that is not a [WATERVAL] slip. That rule is about
+  // not serialising reads whose answers do not depend on each other; this one is only worth issuing
+  // when a bookkeeper is linked AND page one showed nobody else, which is knowable only after both
+  // of those have come back. Putting it in the batch would charge every owner on every first page
+  // for an answer almost all of them already have in hand.
   if (hasBookkeeper === true && !entries.some((e) => e.byOther)) {
-    response.spoorOnvolledig = true;
+    const { data: byOthers, error: probeError } = await supabase
+      .from("audit_logs")
+      .select("id")
+      .neq("user_id", user.id)
+      .limit(1);
+
+    if (probeError || byOthers === null) {
+      // Nothing established, so nothing claimed — the third boundary in the header. The trail itself
+      // read fine and goes out as it is; only the warning stays unsaid.
+      console.error("[LOGBOEK] could not establish whether anyone else acted — omitting the flag", {
+        userId: user.id,
+        error: probeError ? probeError.message : "no error and no rows — the read did not happen",
+      });
+    } else if (byOthers.length === 0) {
+      response.spoorOnvolledig = true;
+    }
   }
 
   return NextResponse.json(response, { headers: { "Cache-Control": "no-store" } });
