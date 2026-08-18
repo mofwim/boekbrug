@@ -10088,6 +10088,58 @@ export const MESSAGES = {
 
   // The bank's own text, quoted verbatim — it is the string the owner RECOGNISES, and recognition
   // is the whole mechanism here. A tidied version is a string they have never seen.
+  // ─── [BINNENGEKOMEN-BEWIJS] Money in that belongs to no invoice ──────────────────────────────
+  //
+  // The mirror of the openstaand panel, asked of the MONEY. Readiness already counts unexplained
+  // receipts, and a count cannot tell three payments of € 5 from three of € 5.000 — the first is
+  // tidiness, the second is turnover that was never invoiced (art. 52 AWR). So the SUM is named,
+  // and so is the day the most recent one arrived: old is a tidy-up, this week is a gap.
+
+  'binnen.scope.een': {
+    nl: '1 ontvangen betaling nagekeken tegen {facturen}.',
+    ar: 'رُوجعت دفعة واردة واحدة مقابل {facturen}.',
+    en: '1 received payment checked against {facturen}.',
+  },
+  'binnen.scope.meer': {
+    nl: '{count} ontvangen betalingen nagekeken tegen {facturen}.',
+    ar: 'رُوجعت {count} دفعة واردة مقابل {facturen}.',
+    en: '{count} received payments checked against {facturen}.',
+  },
+  'binnen.tegen.geen': { nl: 'geen openstaande verkoopfacturen', ar: 'لا فواتير مبيعات مفتوحة', en: 'no open sales invoices' },
+  'binnen.tegen.een': { nl: '1 openstaande verkoopfactuur', ar: 'فاتورة مبيعات مفتوحة واحدة', en: '1 open sales invoice' },
+  'binnen.tegen.meer': { nl: '{count} openstaande verkoopfacturen', ar: '{count} فاتورة مبيعات مفتوحة', en: '{count} open sales invoices' },
+
+  // Money already in, on an invoice the app still calls open — the same finding as the panel
+  // above, said from the other side, and the one the owner can act on in a click.
+  'binnen.herkend.een': {
+    nl: '1 daarvan lijkt bij een factuur te horen die nog openstaat.',
+    ar: 'واحدة منها يبدو أنها تخصّ فاتورة ما زالت مفتوحة.',
+    en: '1 of them appears to belong to an invoice that is still open.',
+  },
+  'binnen.herkend.meer': {
+    nl: '{count} daarvan lijken bij facturen te horen die nog openstaan.',
+    ar: '{count} منها يبدو أنها تخصّ فواتير ما زالت مفتوحة.',
+    en: '{count} of them appear to belong to invoices that are still open.',
+  },
+
+  // The figure the app never showed. Never an accusation — a payment with no invoice can be a
+  // deposit, a private transfer or a refund, and the owner is the only one who knows which.
+  'binnen.onbekend.een': {
+    nl: '1 betaling van {bedrag} hoort bij geen enkele factuur in je boeken (laatste op {datum}).',
+    ar: 'دفعة واحدة بمبلغ {bedrag} لا تخصّ أي فاتورة في دفاترك (آخرها في {datum}).',
+    en: '1 payment of {bedrag} belongs to no invoice in your books (most recent on {datum}).',
+  },
+  'binnen.onbekend.meer': {
+    nl: '{count} betalingen van samen {bedrag} horen bij geen enkele factuur in je boeken (laatste op {datum}).',
+    ar: '{count} دفعات بمجموع {bedrag} لا تخصّ أي فاتورة في دفاترك (آخرها في {datum}).',
+    en: '{count} payments totalling {bedrag} belong to no invoice in your books (most recent on {datum}).',
+  },
+  'binnen.onbekend.watNu': {
+    nl: 'Koppel ze bij Bank, of maak er een factuur voor als er omzet in zit.',
+    ar: 'اربطها في صفحة Bank، أو أصدر لها فاتورة إن كانت إيراداً.',
+    en: 'Link them under Bank, or invoice them if they are turnover.',
+  },
+
   // ─── [CREDIT-BEWIJS] Which credit notes produced "Deels gecrediteerd · € 250" ────────────────
   //
   // Same shape as the instalments above, and the same reason: the chip states a conclusion the

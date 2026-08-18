@@ -11286,6 +11286,7 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.match(render, /the pay screen states what was checked, against what, and until when/);
   assert.match(render, /carries the bank line that says so/);
   assert.match(render, /the sales list proves the other direction, in its own words/);
+  assert.match(render, /the panel says what came in that belongs to no invoice/);
   assert.match(render, /one component paints the four claims, and each one differently/);
 });
 
@@ -11397,6 +11398,56 @@ test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already
       `${field} reaches BOTH the cron run record and the response`);
   }
 
+  // ── [BINNENGEKOMEN-BEWIJS] The same engine, asked of the money ───────────────────────────────
+  //
+  // proveOpenInvoices asks per INVOICE ("is this thing I call open already paid?"); this asks per
+  // PAYMENT ("what did this pay — and if nothing, how much of that is there?"). Same rule, because
+  // two views of one answer can disagree only if they are computed twice.
+  // Read here rather than leaning on a name from the neighbouring test — this block moved once
+  // already and picked up a `proof` that belongs to [OPENSTAAND-BEWIJS], where it is in scope.
+  const proofEngine = code("src/lib/open-invoice-proof.ts");
+  assert.match(proofEngine, /export function proveIncomingPayments/);
+  const incomingAt = proofEngine.indexOf("export function proveIncomingPayments");
+  const incomingBody = proofEngine.slice(incomingAt);
+  assert.match(incomingBody, /if \(!isProvingCandidate\(c\.signals\)\) continue/,
+    "the same evidence rule, not a second private notion of a match");
+  assert.match(incomingBody, /transactions\.filter\(\(t\) => \(t\.amount \?\? 0\) > 0\)/,
+    "credits only — a debit belonging to nothing is a cost without a receipt, answered elsewhere");
+  // The SUM, which is the whole point. Readiness already counts unexplained receipts, and a count
+  // cannot tell three payments of € 5 from three of € 5.000 — only the second is turnover that was
+  // never invoiced (art. 52 AWR).
+  assert.match(incomingBody, /total \+= Math\.abs\(t\.amount\)/);
+  assert.match(incomingBody, /newest === null \|\| t\.date > newest/,
+    "…and the day, because old is a tidy-up and this week is a gap");
+  // A line key built from the line's own fields: transactionId is nullable, so two id-less lines
+  // would collide on '' and one payment's match would silence another's.
+  assert.match(proofEngine, /function lineKey\(t: BankTransaction\)/);
+  assert.doesNotMatch(incomingBody, /best\.has\(t\.transactionId\)/);
+
+  // With NOTHING open the collector used to return early — answering "niets te controleren" about
+  // an owner who may well be receiving money into a book with no invoices in it, which is exactly
+  // the state this names.
+  const proofCollect = code("src/lib/open-invoice-proof-collect.ts");
+  assert.match(proofCollect, /const anchor = invoices\[0\]\?\.invoice_date \?\? bankThrough \?\? '1970-01-01'/);
+  assert.match(proofCollect, /direction === 'outgoing'\s*\?\s*proveIncomingPayments\(invoices, transactions\)/,
+    "only the sales side — an unattached credit there is a customer payment");
+
+  // …and the sentence never accuses. A payment with no invoice can be a deposit, a private
+  // transfer or a refund, and the owner is the only one who knows which.
+  const catalogue = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const sentence of [
+    "{count} ontvangen betalingen nagekeken tegen {facturen}.",
+    "horen bij geen enkele factuur in je boeken (laatste op {datum})",
+    "Koppel ze bij Bank, of maak er een factuur voor als er omzet in zit.",
+  ]) {
+    assert.ok(catalogue.includes(sentence), `the catalogue lost: "${sentence}"`);
+  }
+  assert.match(code("src/lib/open-invoice-proof-text.ts"),
+    /if \(!incoming \|\| incoming\.checkedPayments === 0\) return \[\]/,
+    "nothing received → no sentence, rather than reassurance about a search over an empty set");
+  assert.match(code("src/components/invoice/OpenInvoiceProofPanel.tsx"), /panel\.incoming\.map/,
+    "and the panel paints it");
+
   const creditUnit = readFileSync("src/lib/credit-evidence.test.ts", "utf8");
   assert.match(creditUnit, /a creditnota moves money the OTHER way than its document points/);
   assert.match(creditUnit, /the chip states an amount; this states the documents behind it/);
@@ -11404,6 +11455,8 @@ test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already
   const unit = readFileSync("src/lib/open-invoice-proof.test.ts", "utf8");
   assert.match(unit, /the sentence that stops a reminder names the bank line and what to do/);
   assert.match(unit, /narrowing to one invoice narrows the ANSWER, never the search/);
+  assert.match(unit, /the same engine, asked of the money instead of the invoice/);
+  assert.match(unit, /the sentence names the sum and the day, and never accuses/);
 });
 
 // ─── [BLAD-SCROLL] Eén blad, één scroller, één grens ─────────────────────────

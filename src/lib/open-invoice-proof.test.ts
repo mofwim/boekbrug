@@ -9,9 +9,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { proveOpenInvoices, describeProof, describeHit, isProvingCandidate } from './open-invoice-proof'
+import { proveOpenInvoices, proveIncomingPayments, describeProof, describeHit, isProvingCandidate } from './open-invoice-proof'
 // [HERINNER-BEWIJS] The sentence a held reminder is explained with — same module, same rule.
-import { describeChaseBlock } from './open-invoice-proof-text'
+import { describeChaseBlock, describeIncoming } from './open-invoice-proof-text'
 import type { InvoiceForMatching } from './bank-matching'
 import type { BankTransaction } from './bank-parser'
 
@@ -268,4 +268,83 @@ test('[HERINNER-BEWIJS] narrowing to one invoice narrows the ANSWER, never the s
   assert.equal(forA.length, 1, 'the invoice the payment quotes is held')
   assert.equal(whole.hits.filter((h) => h.invoiceId === 'b').length, 0,
     'the other invoice of the same customer is not, and a per-invoice query could not tell')
+})
+
+test('[BINNENGEKOMEN-BEWIJS] the same engine, asked of the money instead of the invoice', () => {
+  // proveOpenInvoices asks per INVOICE: is this thing I call open perhaps already paid?
+  // This asks per PAYMENT: what did this pay — and if it paid nothing on the books, how much of
+  // that is there? Same rule (isProvingCandidate), because two views of one answer can disagree
+  // only if they are computed twice.
+  const sale: InvoiceForMatching = {
+    id: 'out-1', invoice_number: '2026-014', total_inc_btw: 2420, amount_paid: 0,
+    invoice_date: '2026-07-01', due_date: '2026-07-15', client_name: 'Kiwi Food Market',
+    direction: 'outgoing', status: 'sent', accountant_status: null, vendor_iban: null,
+  }
+  const line = (over: Partial<BankTransaction>): BankTransaction => ({
+    date: '2026-07-14', amount: 2420, currency: 'EUR', description: 'Factuur 2026-014',
+    counterpartName: 'Kiwi Food Market', counterpartIban: 'NL91ABNA0417164300',
+    reference: null, transactionId: 'tx-1', rawLine: '', ...over,
+  })
+
+  const proof = proveIncomingPayments([sale], [
+    line({}),
+    line({ transactionId: 'tx-2', amount: 1500, description: 'overboeking', counterpartName: 'Onbekend BV', counterpartIban: 'NL02RABO0123456789', date: '2026-07-20' }),
+    line({ transactionId: 'tx-3', amount: 300, description: 'contant', counterpartName: null, counterpartIban: null, date: '2026-07-05' }),
+    // A DEBIT is not this question. Money going out that belongs to nothing is a cost without a
+    // receipt, and readiness answers that one.
+    line({ transactionId: 'tx-4', amount: -800, description: 'huur', counterpartName: 'Verhuurder' }),
+  ])
+
+  assert.equal(proof.checkedPayments, 3, 'credits only')
+  assert.equal(proof.checkedInvoices, 1, 'and the scope it was held against')
+  assert.equal(proof.matched.length, 1)
+  assert.equal(proof.matched[0].invoiceNumber, '2026-014')
+  assert.equal(proof.matched[0].amount, 2420, 'reported as the magnitude on the statement')
+
+  // The figure a COUNT cannot carry. Readiness says "2 ontvangen betalingen zonder factuur", which
+  // is the same sentence whether those are € 5 each or € 5.000 — and only one of those is turnover
+  // that was never invoiced (art. 52 AWR).
+  assert.equal(proof.unexplained.count, 2)
+  assert.equal(proof.unexplained.total, 1800)
+  assert.equal(proof.unexplained.newest, '2026-07-20', 'old is a tidy-up; this week is a gap')
+
+  // With nothing open, every credit is unexplained — and that is a real state rather than an
+  // error. An owner receiving money into a book with no invoices in it is exactly who this is for.
+  const nothingOpen = proveIncomingPayments([], [line({}), line({ transactionId: 'tx-9', amount: 100 })])
+  assert.equal(nothingOpen.checkedInvoices, 0)
+  assert.equal(nothingOpen.matched.length, 0)
+  assert.equal(nothingOpen.unexplained.count, 2)
+  assert.equal(nothingOpen.unexplained.total, 2520)
+
+  // No credits at all → nothing to say, and it says nothing rather than reassuring about a search
+  // over an empty set.
+  assert.deepEqual(describeIncoming(proveIncomingPayments([sale], [])), [])
+})
+
+test('[BINNENGEKOMEN-BEWIJS] the sentence names the sum and the day, and never accuses', () => {
+  const sale: InvoiceForMatching = {
+    id: 'out-1', invoice_number: '2026-014', total_inc_btw: 2420, amount_paid: 0,
+    invoice_date: '2026-07-01', due_date: '2026-07-15', client_name: 'Kiwi Food Market',
+    direction: 'outgoing', status: 'sent', accountant_status: null, vendor_iban: null,
+  }
+  const zinnen = describeIncoming(proveIncomingPayments([sale], [
+    { date: '2026-07-14', amount: 2420, currency: 'EUR', description: 'Factuur 2026-014',
+      counterpartName: 'Kiwi Food Market', counterpartIban: 'NL91ABNA0417164300',
+      reference: null, transactionId: 'tx-1', rawLine: '' },
+    { date: '2026-07-20', amount: 1500, currency: 'EUR', description: 'overboeking',
+      counterpartName: 'Onbekend BV', counterpartIban: 'NL02RABO0123456789',
+      reference: null, transactionId: 'tx-2', rawLine: '' },
+  ]))
+  const alles = zinnen.join(' ')
+  // The scope, as everywhere else in this line of work.
+  assert.match(alles, /2 ontvangen betalingen nagekeken tegen 1 openstaande verkoopfactuur/)
+  // Money already in, on an invoice still called open.
+  assert.match(alles, /1 daarvan lijkt bij een factuur te horen die nog openstaat/)
+  // The sum and the day — not a count.
+  assert.match(alles, /€\s?1\.500,00/)
+  assert.match(alles, /20 juli 2026/)
+  // Never an accusation: a payment with no invoice can be a deposit, a private transfer or a
+  // refund, and the owner is the only one who knows which. It says what can be DONE.
+  assert.doesNotMatch(alles, /zwart|fraude|niet aangegeven|verzwegen/i)
+  assert.match(alles, /Koppel ze bij Bank/)
 })

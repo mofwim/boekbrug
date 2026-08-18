@@ -36,9 +36,9 @@
 import { matchTransactions, type InvoiceForMatching, type MatchCandidate, type MatchSignal } from './bank-matching'
 import type { BankTransaction } from './bank-parser'
 import { round2 } from './invoice-totals'
-import type { OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
+import type { IncomingPaymentHit, IncomingPaymentProof, OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
 
-export type { OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
+export type { IncomingPaymentHit, IncomingPaymentProof, OpenInvoiceHit, OpenInvoiceProof, ProofDirection } from './open-invoice-proof-types'
 
 /**
  * What a payment must prove before it is put in front of the owner as "this bill may already be
@@ -148,6 +148,101 @@ export function proveOpenInvoices(
   hits.sort((a, b) => b.confidence - a.confidence)
 
   return { direction, checkedInvoices, checkedTransactions, hits }
+}
+
+/**
+ * [BINNENGEKOMEN-BEWIJS] The same engine, grouped the other way.
+ *
+ * proveOpenInvoices inverts matchTransactions to answer per INVOICE. This keeps the engine's own
+ * direction — per transaction — because the question is about the money: what did this payment
+ * pay, and if it paid nothing on the books, how much of that is there?
+ *
+ * Same rule, deliberately: isProvingCandidate, not a second private notion of a match. Two views
+ * of one answer can disagree only if they are computed twice, so they are not.
+ *
+ * `payments` are the unattached lines the caller already holds. Only CREDITS count here — a debit
+ * that belongs to nothing is a cost without a receipt, which is a different question with its own
+ * answer elsewhere (readiness' undocumentedCount).
+ */
+/**
+ * A stable key for one bank line, built from the line's own fields.
+ *
+ * `transactionId` alone will not do: bank-parser types it nullable, and two lines with no id would
+ * then collide on '' — one payment's match would silence another's. And reference identity is not
+ * available either, because the engine may return transactions it rebuilt rather than the objects
+ * it was handed. The fields below are what the owner sees on the statement, which is exactly the
+ * granularity at which two lines are genuinely the same line.
+ */
+function lineKey(t: BankTransaction): string {
+  return `${t.transactionId ?? ''}|${t.date}|${t.amount}|${t.description}`
+}
+
+export function proveIncomingPayments(
+  openInvoices: readonly InvoiceForMatching[],
+  transactions: readonly BankTransaction[],
+): IncomingPaymentProof {
+  const credits = transactions.filter((t) => (t.amount ?? 0) > 0)
+  const checkedPayments = credits.length
+  const checkedInvoices = openInvoices.length
+  const empty: IncomingPaymentProof = {
+    checkedPayments, checkedInvoices, matched: [],
+    unexplained: { count: 0, total: 0, newest: null },
+  }
+  if (checkedPayments === 0) return empty
+
+  // Held against the open invoices when there are any. With none, every credit is unexplained by
+  // construction — and that is a real state, not an error: an owner who has issued no invoices and
+  // is receiving money is exactly who this sentence is for.
+  const best = new Map<string, { candidate: MatchCandidate; tx: BankTransaction }>()
+  if (checkedInvoices > 0) {
+    const result = matchTransactions([...credits], [...openInvoices])
+    for (const m of result.matches) {
+      for (const c of m.candidates) {
+        if (!isProvingCandidate(c.signals)) continue
+        const key = lineKey(m.transaction)
+        const seen = best.get(key)
+        if (!seen || c.confidence > seen.candidate.confidence) {
+          best.set(key, { candidate: c, tx: m.transaction })
+        }
+      }
+    }
+  }
+
+  const byId = new Map(openInvoices.map((i) => [i.id, i]))
+  const matched: IncomingPaymentHit[] = []
+  for (const { candidate, tx } of best.values()) {
+    const inv = byId.get(candidate.invoiceId)
+    if (!inv) continue
+    const paid = Math.max(0, inv.amount_paid ?? 0)
+    matched.push({
+      transactionId: tx.transactionId ?? '',
+      date: tx.date,
+      amount: Math.abs(tx.amount),
+      description: tx.description,
+      counterpartName: tx.counterpartName,
+      invoiceId: candidate.invoiceId,
+      invoiceNumber: inv.invoice_number,
+      clientName: inv.client_name,
+      openAmount: round2(Math.max(0, Math.abs(inv.total_inc_btw ?? 0) - paid)),
+      confidence: candidate.confidence,
+      reason: candidate.reason,
+    })
+  }
+  matched.sort((a, b) => b.confidence - a.confidence)
+
+  // Everything else. The SUM is the point: a count cannot tell three payments of € 5 from three of
+  // € 5.000, and only the second is unbilled turnover.
+  let count = 0
+  let total = 0
+  let newest: string | null = null
+  for (const t of credits) {
+    if (best.has(lineKey(t))) continue
+    count += 1
+    total += Math.abs(t.amount)
+    if (t.date && (newest === null || t.date > newest)) newest = t.date
+  }
+
+  return { checkedPayments, checkedInvoices, matched, unexplained: { count, total: round2(total), newest } }
 }
 
 // [OPENSTAAND-BEWIJS] The sentences live in open-invoice-proof-text.ts and are re-exported here,

@@ -77,6 +77,25 @@ export default function OpenInvoiceProofPanel({ panel }: { panel: ProofPanel | n
           </div>
         ))}
 
+        {/* [BINNENGEKOMEN-BEWIJS] The same search, said from the money's side: what came in, how
+            much of it looks like a known invoice, and what the rest add up to. That last figure is
+            the one this app never showed — readiness counts unexplained receipts, and a count
+            cannot tell three payments of € 5 from three of € 5.000. Only the second is turnover
+            that was never invoiced.
+
+            Never an accusation: a payment with no invoice can be a deposit, a private transfer or
+            a refund, and the owner is the only one who knows which. */}
+        {panel.incoming.map((zin, i) => (
+          <p key={i} style={{
+            fontSize: 12.5, margin: i === 0 ? '8px 0 0' : '2px 0 0', lineHeight: 1.5,
+            paddingTop: i === 0 ? 8 : 0,
+            borderTop: i === 0 ? `1px solid ${M3.outlineVariant}` : undefined,
+            color: M3.neutral,
+          }}>
+            {zin}
+          </p>
+        ))}
+
         {/* [NO-SILENT-EMPTY] A bounded check presented as a complete one is exactly the false
             reassurance this panel exists to remove. */}
         {panel.bounded && (

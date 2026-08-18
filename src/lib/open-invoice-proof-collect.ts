@@ -17,7 +17,7 @@
 // days off. Everything is bounded and every bound is reported — see `capped` below.
 
 import { fetchAllRows } from './supabase-paginate'
-import { proveOpenInvoices, type ProofDirection } from './open-invoice-proof'
+import { proveIncomingPayments, proveOpenInvoices, type ProofDirection } from './open-invoice-proof'
 import type { OpenInvoiceProofResult } from './open-invoice-proof-types'
 import type { InvoiceForMatching } from './bank-matching'
 import type { BankTransaction } from './bank-parser'
@@ -80,6 +80,7 @@ export async function collectOpenInvoiceProof(args: {
   const empty: OpenInvoiceProofResult = {
     direction, checkedInvoices: 0, checkedTransactions: 0, hits: [],
     bankThrough: null, readFailed: false, capped: { invoices: 0, transactions: 0 },
+    incoming: null,
   }
 
   // ── The open bills ──
@@ -148,12 +149,18 @@ export async function collectOpenInvoiceProof(args: {
     return { ...empty, readFailed: true }
   }
 
-  if (invoices.length === 0) {
-    return { ...empty, bankThrough, capped: { invoices: cappedInvoices, transactions: 0 } }
-  }
-
   // ── The payments that are not attached to anything ──
-  const since = daysBefore(invoices[0].invoice_date ?? '1970-01-01', LOOKBACK_DAYS)
+  //
+  // The window starts a month before the OLDEST open invoice: a payment made before the bill
+  // existed is not that bill's payment, and the month of slack absorbs a prepayment and a date
+  // read a few days off.
+  //
+  // With nothing open there is no such anchor, and this used to return early — answering "niets te
+  // controleren" about an owner who may well be receiving money into a book with no invoices in
+  // it, which is precisely the state [BINNENGEKOMEN-BEWIJS] exists to name. The window is then the
+  // same month measured back from the newest bank line, and the panel states it either way.
+  const anchor = invoices[0]?.invoice_date ?? bankThrough ?? '1970-01-01'
+  const since = daysBefore(anchor, LOOKBACK_DAYS)
   let txRows: Array<Record<string, unknown>>
   try {
     txRows = await fetchAllRows((from, to) => args.pipeline
@@ -187,6 +194,12 @@ export async function collectOpenInvoiceProof(args: {
   }))
 
   const proof = proveOpenInvoices(invoices, transactions, direction)
+  // [BINNENGEKOMEN-BEWIJS] The same two sets, asked the other question. Only on the sales side:
+  // an unattached CREDIT there is a customer payment, while on the purchase side it would be a
+  // refund or a deposit — a different question with a different answer.
+  const incoming = direction === 'outgoing'
+    ? proveIncomingPayments(invoices, transactions)
+    : null
   // The counts stay whole on purpose. `checkedInvoices` is the SCOPE of the search, and the search
   // really did hold this payment against all of them — reporting the caller's shortlist instead
   // would turn the one honest number on the panel into a smaller, flattering one.
@@ -196,5 +209,6 @@ export async function collectOpenInvoiceProof(args: {
     bankThrough,
     readFailed: false,
     capped: { invoices: cappedInvoices, transactions: cappedTransactions },
+    incoming,
   }
 }

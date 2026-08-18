@@ -467,6 +467,68 @@ test("[DEELBETALING-BEWIJS] a partly settled invoice shows the terms, not just t
   assert.match(one, /€\s?500,00 bijgeschreven/);
 });
 
+test("[BINNENGEKOMEN-BEWIJS] the panel says what came in that belongs to no invoice", async () => {
+  // The mirror of the openstaand sentence, asked of the MONEY. Readiness already counts unexplained
+  // receipts, and a count cannot tell three payments of € 5 from three of € 5.000 — only the second
+  // is turnover that was never invoiced. So the SUM is named, and the day the last one arrived.
+  const { default: OpenInvoiceProofPanel } = await import("../../src/components/invoice/OpenInvoiceProofPanel");
+  const { buildProofPanel } = await import("../../src/lib/open-invoice-proof-text");
+  const { proveIncomingPayments } = await import("../../src/lib/open-invoice-proof");
+
+  const paint = (incoming: unknown) => renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(OpenInvoiceProofPanel as any, {
+      panel: buildProofPanel({
+        direction: "outgoing", checkedInvoices: 7, checkedTransactions: 210, hits: [],
+        bankThrough: "2026-08-15", readFailed: false, capped: { invoices: 0, transactions: 0 },
+        incoming,
+      } as never, "nl"),
+    }),
+  );
+
+  // Built by the ENGINE, not written out by hand. A literal would hold the SENTENCE and not the
+  // arithmetic behind it — deleting the line that sums the unexplained payments left this test
+  // green, because the number it printed was one the test had supplied. The negative control is
+  // the only reason that is not still true.
+  const sale = {
+    id: "out-1", invoice_number: "2026-014", total_inc_btw: 2420, amount_paid: 0,
+    invoice_date: "2026-07-01", due_date: "2026-07-15", client_name: "Kiwi Food Market",
+    direction: "outgoing", status: "sent", accountant_status: null, vendor_iban: null,
+  };
+  const line = (over: Record<string, unknown>) => ({
+    date: "2026-07-14", amount: 2420, currency: "EUR", description: "Factuur 2026-014",
+    counterpartName: "Kiwi Food Market", counterpartIban: "NL91ABNA0417164300",
+    reference: null, transactionId: "tx-1", rawLine: "", ...over,
+  });
+  const html = paint(proveIncomingPayments([sale] as never, [
+    line({}),
+    line({ transactionId: "tx-2", amount: 3000, description: "overboeking", counterpartName: "Onbekend BV", counterpartIban: "NL02RABO0123456789", date: "2026-08-11" }),
+    line({ transactionId: "tx-3", amount: 1820, description: "contant", counterpartName: null, counterpartIban: null, date: "2026-07-05" }),
+  ] as never));
+  // The scope, again — held against a stated number of invoices.
+  assert.match(html, /3 ontvangen betalingen nagekeken tegen 1 openstaande verkoopfactuur/);
+  // Money already in, on invoices the app still calls open.
+  assert.match(html, /1 daarvan lijkt bij een factuur te horen die nog openstaat/);
+  // The figure a count cannot carry, and the day that says whether this is old or happening now.
+  assert.match(html, /€\s?4\.820,00/, "€ 3.000 + € 1.820, summed by the engine and not by this test");
+  assert.match(html, /11 augustus 2026/);
+  // Never an accusation — it says what can be DONE.
+  assert.match(html, /Koppel ze bij Bank/);
+  assert.doesNotMatch(html, /zwart|fraude|verzwegen/i);
+
+  // Nothing received → no sentence at all, rather than a reassuring one about a search over an
+  // empty set. Silence here is the honest answer.
+  const quiet = paint({ checkedPayments: 0, checkedInvoices: 7, matched: [], unexplained: { count: 0, total: 0, newest: null } });
+  assert.doesNotMatch(quiet, /ontvangen betalingen nagekeken/);
+  // …and so is a purchase-side panel, where the question does not apply.
+  assert.doesNotMatch(paint(null), /ontvangen betalingen nagekeken/);
+
+  // Everything received is placed → the scope is stated, and no alarm follows it.
+  const clean = paint({ checkedPayments: 4, checkedInvoices: 7, matched: [{ transactionId: "a" }], unexplained: { count: 0, total: 0, newest: null } });
+  assert.match(clean, /4 ontvangen betalingen nagekeken/);
+  assert.doesNotMatch(clean, /hoort bij geen enkele factuur|horen bij geen enkele factuur/);
+});
+
 test("[CREDIT-BEWIJS] a refund is money leaving, and the credits behind the chip are named", async () => {
   // Two things about the documents that give money BACK.
   //

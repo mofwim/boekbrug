@@ -64,4 +64,54 @@ export interface OpenInvoiceProofResult extends OpenInvoiceProof {
   readFailed: boolean
   /** What the ceilings dropped, so the screen can say the check was bounded. */
   capped: { invoices: number; transactions: number }
+  /**
+   * [BINNENGEKOMEN-BEWIJS] The same two sets, grouped the other way — present only on the sales
+   * side, where an unattached CREDIT is a customer payment. Null on the purchase side, where an
+   * unattached debit is a cost without a receipt and has its own answer elsewhere.
+   */
+  incoming: IncomingPaymentProof | null
+}
+
+/** One received payment that is attached to nothing yet. */
+export interface IncomingPaymentHit {
+  transactionId: string
+  date: string
+  /** The magnitude the owner reads on their statement. */
+  amount: number
+  description: string
+  counterpartName: string | null
+  /** The open invoice it looks like — present only when the evidence rule accepted the pairing. */
+  invoiceId: string
+  invoiceNumber: string | null
+  clientName: string | null
+  openAmount: number
+  confidence: number
+  reason: string
+}
+
+/**
+ * [BINNENGEKOMEN-BEWIJS] The other side of the same question, asked of the MONEY.
+ *
+ * proveOpenInvoices asks, per invoice: is this thing I call open perhaps already paid?
+ * This asks, per payment: which invoice is this — and if none, is it revenue with no invoice?
+ *
+ * The second half is the number the app never showed. Readiness counts unexplained receipts, and
+ * a count cannot tell three payments of € 5 from three of € 5.000: the first is tidiness, the
+ * second is unbilled turnover and an administratieplicht problem (art. 52 AWR).
+ */
+export interface IncomingPaymentProof {
+  /** How many unattached received payments were examined. */
+  checkedPayments: number
+  /** How many open invoices they were held against — the scope, again. */
+  checkedInvoices: number
+  /** Payments that DO look like a known invoice. Money already in, still being chased. */
+  matched: IncomingPaymentHit[]
+  /** Payments that look like nothing on the books. */
+  unexplained: {
+    count: number
+    /** Their sum. This is the figure a count cannot carry. */
+    total: number
+    /** The most recent of them, so the owner knows whether this is old or happening now. */
+    newest: string | null
+  }
 }

@@ -23,7 +23,7 @@
 import { translator } from './i18n/t'
 import { localeDir, type Locale } from './i18n/locale'
 import type {
-  OpenInvoiceHit, OpenInvoiceProof, OpenInvoiceProofResult, ProofDirection,
+  IncomingPaymentProof, OpenInvoiceHit, OpenInvoiceProof, OpenInvoiceProofResult, ProofDirection,
 } from './open-invoice-proof-types'
 
 /** Dutch money, as the rest of the app writes it. Not translated — see format-nl.ts. */
@@ -139,6 +139,13 @@ export interface OpenInvoiceProofPanel {
   rows: ProofPanelRow[]
   /** "Niet alles is meegenomen: …", or null when the check was complete. */
   bounded: string | null
+  /**
+   * [BINNENGEKOMEN-BEWIJS] The same search, said from the money's side: how many received payments
+   * were held against how many open invoices, how many of them look like one, and — the figure a
+   * count cannot carry — what the rest add up to. Null when there is nothing received to say it
+   * about, or on the purchase side where the question does not apply.
+   */
+  incoming: string[]
   /** Carried here so the words and the layout can never render out of step. */
   dir: 'ltr' | 'rtl'
 }
@@ -160,7 +167,7 @@ export function buildProofPanel(
   const outgoing = proof.direction === 'outgoing'
 
   if (proof.readFailed) {
-    return { alarm: false, failed: true, lead: t('bewijs.leesFout'), rows: [], bounded: null, dir }
+    return { alarm: false, failed: true, lead: t('bewijs.leesFout'), rows: [], bounded: null, incoming: [], dir }
   }
 
   const rows: ProofPanelRow[] = proof.hits.map((h) => {
@@ -193,8 +200,56 @@ export function buildProofPanel(
     lead: describeProof(proof, proof.bankThrough, locale),
     rows,
     bounded,
+    incoming: describeIncoming(proof.incoming, locale),
     dir,
   }
+}
+
+/**
+ * [BINNENGEKOMEN-BEWIJS] What came in, and how much of it belongs to nothing.
+ *
+ * Empty when there is nothing received to say it about — an owner with no unattached credits gets
+ * no sentence, rather than a reassuring one about a search that found nothing because there was
+ * nothing to search.
+ *
+ * Never an accusation. A payment with no invoice can be a deposit, a private transfer or a refund,
+ * and the owner is the only one who knows which — so the app states the amount and the day, and
+ * says what can be done about it.
+ */
+export function describeIncoming(
+  incoming: IncomingPaymentProof | null | undefined,
+  locale: Locale = 'nl',
+): string[] {
+  if (!incoming || incoming.checkedPayments === 0) return []
+  const t = translator(locale)
+
+  const tegen = incoming.checkedInvoices === 0
+    ? t('binnen.tegen.geen')
+    : incoming.checkedInvoices === 1
+      ? t('binnen.tegen.een')
+      : t('binnen.tegen.meer', { count: incoming.checkedInvoices })
+  const out = [
+    incoming.checkedPayments === 1
+      ? t('binnen.scope.een', { facturen: tegen })
+      : t('binnen.scope.meer', { count: incoming.checkedPayments, facturen: tegen }),
+  ]
+
+  if (incoming.matched.length > 0) {
+    out.push(incoming.matched.length === 1
+      ? t('binnen.herkend.een')
+      : t('binnen.herkend.meer', { count: incoming.matched.length }))
+  }
+
+  const { count, total, newest } = incoming.unexplained
+  if (count > 0) {
+    const datum = dayNL(newest) ?? (newest ?? '')
+    const bedrag = EUR.format(total)
+    out.push(count === 1
+      ? t('binnen.onbekend.een', { bedrag, datum })
+      : t('binnen.onbekend.meer', { count, bedrag, datum }))
+    out.push(t('binnen.onbekend.watNu'))
+  }
+  return out
 }
 
 /**
