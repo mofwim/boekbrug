@@ -9677,8 +9677,13 @@ test("[DEEL-CREDIT] the facturenlijst tells withdrawn apart from partly credited
     "the 'Gecrediteerd' chip is for a withdrawn invoice only");
   assert.match(client, /\{!isVolledigGecrediteerd\(inv\) && gecrediteerdOp\(inv\.id\) > 0 && \(/,
     "a partly credited invoice gets its own chip rather than silence");
-  assert.match(client, /\{isPartiallyPaid\(inv\) && !isVolledigGecrediteerd\(inv\) && \(/,
-    "the deelbetaling chip — and the tap target under it — must survive a partial credit");
+  // The chip must survive a partial credit — that is what this line has always guarded. It now
+  // also has to be RIGHT about the amount: measured against the gross total, an invoice whose
+  // remaining € 450 has been paid still counts as "partly paid", and the chip announces € 0,00
+  // open on an invoice that is finished. So the predicate is told what came back, and the
+  // suppression stays limited to a WITHDRAWN invoice, exactly as before.
+  assert.match(client, /\{isPartiallyPaid\(inv, gecrediteerdOp\(inv\.id\)\) && !isVolledigGecrediteerd\(inv\) && \(/,
+    "the deelbetaling chip — and the tap target under it — must survive a partial credit, and must measure against what is owed");
 
   // [TDZ] De helper staat vóór zijn gebruiker. De buurscherm-bug die tests/render/ bestaat om te
   // vangen was precies dit: een const die zeventig regels boven zijn declaratie werd gelezen.
@@ -10435,4 +10440,31 @@ test("[DEEL-CREDIT] the home tile subtracts the credit it already went and read"
   // would count the credit twice. Two models, each correct where it lives.
   const pay = route.slice(route.indexOf("const toPay"), route.indexOf("const recvAll"));
   assert.doesNotMatch(pay, /creditedOn/, "the pairing side must keep pairing");
+});
+
+test("[DEEL-CREDIT] the invoice list never states an open amount the credit beside it contradicts", () => {
+  // The facturenlijst prints a chip that names the credited amount — "Deels gecrediteerd € 50" —
+  // and printed, two lines below it, an open amount that ignored that very number. It also fed the
+  // gross figure to three other places, and one of them is not a display at all:
+  //
+  //   · the bundle preview, where the SERVER already subtracts the credit (betaalverzoek.ts), so
+  //     the owner read a total higher than the amount the customer's QR would ask for — the exact
+  //     sentence the comment beside that line already warned about, one level down;
+  //   · the "Betaald?" dialog, where openAmount is the field's CAP. Gross, it let the owner record
+  //     a € 500 payment on an invoice they had put in writing was only € 450 for.
+  //
+  // The data was already loaded on this screen (creditedAmounts / gecrediteerdOp) to draw the chip.
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const gross = [...list.matchAll(/openAmount\(inv\)/g)];
+  assert.deepEqual(gross.map(() => "openAmount(inv)"), [],
+    "every open-amount on this screen must be told what was credited — openAmount(inv, gecrediteerdOp(inv.id))");
+  assert.match(list, /isPartiallyPaid\(inv, gecrediteerdOp\(inv\.id\)\)/,
+    "…including the predicate that decides whether the chip appears at all, or a settled invoice keeps one saying € 0,00 open");
+
+  // The INCOMING screen passes nothing, deliberately: there an invoice and its creditnota are two
+  // open items a payment settles together by pairing ([BATCH-SIGN]). Subtracting there too would
+  // count the credit twice. Two models, each correct where it lives.
+  const incoming = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.doesNotMatch(incoming, /openAmount\w*\([^)]*gecrediteerd/,
+    "the pairing side must keep pairing");
 });

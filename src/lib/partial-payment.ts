@@ -165,11 +165,15 @@ export function paymentExceedsOpenBalance(
  * settled. A fully-open invoice (nothing paid) and a completed one are both false — they
  * have their own, clearer UI (the plain amount, and the 'Betaald' chip).
  */
-export function isPartiallyPaid(invoice: PartialPayInvoice): boolean {
+export function isPartiallyPaid(invoice: PartialPayInvoice, creditedIncBtw = 0): boolean {
   if (invoice.status === "paid") return false;
   const paid = paidAmount(invoice);
-  const total = totalAmount(invoice);
-  return paid > CENT_EPSILON && paid < total - CENT_EPSILON;
+  // [DEEL-CREDIT] Measured against what is OWED, not against what was invoiced. Credit € 50 of a
+  // € 500 invoice and let the customer pay the € 450 that is left: against the gross total that
+  // reads as "partly paid", and the chip beside it would announce € 0,00 still open on an invoice
+  // that is finished. Against the € 450 owed it is simply settled, which is what it is.
+  const owed = Math.max(0, totalAmount(invoice) - Math.abs(Number(creditedIncBtw) || 0));
+  return paid > CENT_EPSILON && paid < owed - CENT_EPSILON;
 }
 
 /**

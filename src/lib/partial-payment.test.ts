@@ -349,3 +349,9 @@ check("zonder credit is het antwoord exact wat het was",
   openAmount({ status: "sent", total_inc_btw: 500, amount_paid: 200 }) === 300);
 check("het teken van de factuur blijft staan bij een credit",
   openAmountSigned({ status: "received", total_inc_btw: -500, amount_paid: 0 }, 50) === -450);
+check("een factuur waarvan de rest na creditering is voldaan is niet 'deels betaald'",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 450 }, 50) === false);
+check("…maar hij is dat wél zolang er echt iets openstaat",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 200 }, 50) === true);
+check("zonder credit blijft het oordeel exact hetzelfde",
+  isPartiallyPaid({ status: "sent", total_inc_btw: 500, amount_paid: 450 }) === true);
