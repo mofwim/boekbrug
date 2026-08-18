@@ -106,6 +106,8 @@ export function vendorsAreDifferent(a: string | null | undefined, b: string | nu
 // [BOEK-SAFECORE] jsonb column type for invoices.field_confidence — mirrors the
 // audit.ts pattern (derive the Json type from generated types, cast at write).
 import type { Database } from '@/types/database.types'
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from '@/lib/format-nl'
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -4214,7 +4216,8 @@ export async function syncUserEmails(
         },
         invoiceDate,
         totalIncBtw: typeof classification.totalIncBtw === 'number' ? classification.totalIncBtw : null,
-        today: new Date().toISOString().slice(0, 10),
+        // [TZ] Same contract as the intake route: paymentDateOutOfWindow wants an Amsterdam day.
+        today: amsterdamToday(),
       })
 
       // [BON-EMAIL] A paid suggestion is never auto-booked. Auto-advance lands an invoice as

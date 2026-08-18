@@ -102,6 +102,8 @@ import { deriveDueDate } from "@/lib/safecore"
 import type { Database } from "@/types/database.types"
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit"
 import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
+// [TZ] The owner's day, not the server's — see amsterdamToday().
+import { amsterdamToday } from "@/lib/format-nl";
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -1072,7 +1074,11 @@ export async function POST(req: NextRequest) {
     },
     invoiceDate,
     totalIncBtw: v.total_inc_btw ?? null,
-    today: new Date().toISOString().slice(0, 10),
+    // [TZ] paymentDateOutOfWindow's parameter is named `todayAmsterdam`, and it was handed a UTC
+    // date. Today the day of slack it allows (it accepts up to today+1) absorbs the difference, so
+    // nothing misbehaves — this is a broken contract rather than a live defect, and it is fixed
+    // because the slack is what is hiding it, not a reason it is safe.
+    today: amsterdamToday(),
   });
 
   // [AUTO-ADVANCE] A confident, clean, ORDINARY invoice may skip the manual verify tap and land
