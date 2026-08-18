@@ -111,6 +111,8 @@ import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 // screen holds neither the words nor the colours — see the header of PaymentEvidenceLine.tsx.
 import { buildPaymentEvidenceLine, type PaymentEvidence } from '@/lib/payment-evidence'
 import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
+// [CREDIT-SIGN] Which way the MONEY moves — a creditnota reverses its document's direction.
+import { moneyDirection } from '@/lib/credited-invoices'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  // type-only: erased, no server code in the bundle
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
@@ -2791,7 +2793,10 @@ export default function IncomingManageClient({
                             for: marked paid with nothing anywhere recording how. It is amber and
                             not grey because on this list that is a bill that may still be owed. */}
                         {isPaid && (
-                          <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'incoming', taal, inv)} />
+                          // The direction is the MONEY's, not the list's. Every row here is an
+                          // incoming document, but a supplier's creditnota pays the owner BACK —
+                          // hard-coding 'incoming' describes that refund as money leaving.
+                          <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], moneyDirection(inv), taal, inv)} />
                         )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
                             the only difference from an invoice is a minus sign in the amount, and

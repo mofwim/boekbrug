@@ -10088,6 +10088,46 @@ export const MESSAGES = {
 
   // The bank's own text, quoted verbatim — it is the string the owner RECOGNISES, and recognition
   // is the whole mechanism here. A tidied version is a string they have never seen.
+  // ─── [CREDIT-BEWIJS] Which credit notes produced "Deels gecrediteerd · € 250" ────────────────
+  //
+  // Same shape as the instalments above, and the same reason: the chip states a conclusion the
+  // owner can only check by going and finding the credit notes. Unlike a bank line, these are
+  // documents THEY sent, each with a number on it — so naming them is not evidence the app has to
+  // gather, only evidence it was already holding and never showed.
+
+  'credit.samen.een': {
+    nl: '{bedrag} teruggegeven met 1 creditnota:',
+    ar: 'أُعيد {bedrag} بإشعار دائن واحد:',
+    en: '{bedrag} credited back with 1 credit note:',
+  },
+  'credit.samen.meer': {
+    nl: '{bedrag} teruggegeven met {count} creditnota\u2019s:',
+    ar: 'أُعيد {bedrag} بـ{count} إشعارات دائنة:',
+    en: '{bedrag} credited back with {count} credit notes:',
+  },
+  'credit.regel': {
+    nl: '{nummer} · {datum} — {bedrag}',
+    ar: '{nummer} · {datum} — {bedrag}',
+    en: '{nummer} · {datum} — {bedrag}',
+  },
+  'credit.regel.zonderDatum': { nl: '{nummer} — {bedrag}', ar: '{nummer} — {bedrag}', en: '{nummer} — {bedrag}' },
+  // A creditnota still in concept has no number yet, and that is the truth rather than a gap:
+  // the number falls when it is sent (Art. 35).
+  'credit.regel.zonderNummer': {
+    nl: 'Concept — nog geen nummer · {bedrag}',
+    ar: 'مسودة — بلا رقم بعد · {bedrag}',
+    en: 'Draft — no number yet · {bedrag}',
+  },
+
+  // [NO-SILENT-EMPTY] The credit read did not answer. Every amount on the list may then be too
+  // high, and the withdrawn-invoice chips are missing — so the screen says so rather than letting
+  // an invoice the owner formally withdrew look completely chaseable.
+  'credit.leesFout': {
+    nl: 'We konden niet nakijken welke facturen je hebt gecrediteerd. De bedragen hieronder kunnen te hoog staan.',
+    ar: 'تعذّر التحقق من الفواتير التي أصدرت لها إشعارات دائنة. قد تكون المبالغ أدناه أعلى من الواقع.',
+    en: 'We could not check which invoices you have credited. The amounts below may be too high.',
+  },
+
   // ─── [DEELBETALING-BEWIJS] The arithmetic behind "nog € X open", written out ─────────────────
   //
   // A partly settled invoice is where a conclusion is hardest to check by hand: the row says

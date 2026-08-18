@@ -467,6 +467,78 @@ test("[DEELBETALING-BEWIJS] a partly settled invoice shows the terms, not just t
   assert.match(one, /€\s?500,00 bijgeschreven/);
 });
 
+test("[CREDIT-BEWIJS] a refund is money leaving, and the credits behind the chip are named", async () => {
+  // Two things about the documents that give money BACK.
+  //
+  // The direction first, because it was WRONG on screen: the evidence line took its direction from
+  // the invoice's `direction` column, which describes the DOCUMENT. A creditnota moves money the
+  // other way — the owner refunds the customer — so a € 500 refund rendered as "bijgeschreven …
+  // van Kiwi Food Market" beside a bank line of −500. Money leaving, described as money arriving.
+  const { default: PaymentEvidenceLine } = await import("../../src/components/invoice/PaymentEvidenceLine");
+  const { default: CreditEvidenceLine } = await import("../../src/components/invoice/CreditEvidenceLine");
+  const { buildPaymentEvidenceLine, classifyPayment } = await import("../../src/lib/payment-evidence");
+  const { buildCreditEvidenceLine } = await import("../../src/lib/credit-evidence");
+  const { moneyDirection } = await import("../../src/lib/credited-invoices");
+
+  const creditnota = { direction: "outgoing", invoice_type: "creditnota", status: "paid", total_inc_btw: -500, amount_paid: 500 };
+  const refund = classifyPayment([{
+    transactionId: "tx-r", amountApplied: 500, paidOn: "2026-07-20", method: "bank",
+    transaction: { date: "2026-07-20", amount: -500, description: "terugbetaling CR-2026-003",
+      counterpartName: "Kiwi Food Market", counterpartIban: null },
+  }] as never, -500);
+
+  const paid = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(PaymentEvidenceLine as any, {
+      line: buildPaymentEvidenceLine(refund, moneyDirection(creditnota), "nl", creditnota as never),
+    }),
+  );
+  assert.match(paid, /afgeschreven op 20 juli 2026 naar Kiwi Food Market/, "the money LEFT");
+  assert.doesNotMatch(paid, /bijgeschreven/, "…and saying otherwise contradicts the bank line beside it");
+
+  // …and the sales list's own invoices are unaffected: an ordinary outgoing invoice still reads
+  // as money arriving. A fix that flipped BOTH would just be the same bug the other way round.
+  const factuur = { direction: "outgoing", invoice_type: "factuur", status: "paid", total_inc_btw: 2420, amount_paid: 2420 };
+  const incoming = classifyPayment([{
+    transactionId: "tx-1", amountApplied: 2420, paidOn: "2026-07-14", method: "bank",
+    transaction: { date: "2026-07-14", amount: 2420, description: "FACTUUR 2026-014",
+      counterpartName: "Kiwi Food Market", counterpartIban: null },
+  }] as never, 2420);
+  assert.match(
+    renderToStaticMarkup(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(PaymentEvidenceLine as any, {
+        line: buildPaymentEvidenceLine(incoming, moneyDirection(factuur), "nl", factuur as never),
+      }),
+    ),
+    /bijgeschreven op 14 juli 2026 van Kiwi Food Market/,
+  );
+
+  // Second: the credits behind "Deels gecrediteerd · € 250", by number and date. These are papers
+  // the OWNER sent, and an accountant asks about them by number.
+  const credits = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(CreditEvidenceLine as any, {
+      line: buildCreditEvidenceLine([
+        { invoiceNumber: "CR-2026-004", invoiceDate: "2026-07-20", amount: 100 },
+        { invoiceNumber: "CR-2026-003", invoiceDate: "2026-07-14", amount: 150 },
+      ]),
+    }),
+  );
+  assert.match(credits, /€\s?250,00 teruggegeven met 2 creditnota/);
+  assert.match(credits, /CR-2026-004 · 20 juli 2026 — €\s?100,00/);
+  assert.match(credits, /CR-2026-003 · 14 juli 2026 — €\s?150,00/);
+
+  // An invoice with no credits paints nothing at all, rather than an empty claim.
+  assert.equal(
+    renderToStaticMarkup(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(CreditEvidenceLine as any, { line: buildCreditEvidenceLine([]) }),
+    ),
+    "",
+  );
+});
+
 test("[DEELBETALING-BEWIJS] a link from before amount_applied existed is not 'no payment'", async () => {
   // bank_tx_invoices rows created before the column carry NULL, and by construction settled their
   // invoice IN FULL — the rule allocatedOnLine has always applied, where reading NULL as 0 would

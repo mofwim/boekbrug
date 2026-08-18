@@ -9682,7 +9682,12 @@ test("[DEEL-CREDIT] the facturenlijst tells withdrawn apart from partly credited
   const client = code("src/app/dashboard/facturen/FacturenClient.tsx");
   assert.doesNotMatch(client, /creditedIds/,
     "the yes/no set must be gone, not merely bypassed");
-  assert.match(client, /\.select\('original_invoice_id, total_inc_btw'\)/,
+  // The AMOUNT, and not one frozen spelling of the column list. [CREDIT-BEWIJS] added
+  // invoice_number and invoice_date so the chip can name the documents behind it, and a gate that
+  // pins the exact string goes red on a read that grew MORE honest — which is how a gate gets
+  // weakened instead of obeyed.
+  const creditSelect = /\.select\('original_invoice_id, total_inc_btw([^']*)'\)/.exec(client);
+  assert.ok(creditSelect,
     "the read must fetch the AMOUNT — without it nothing here can tell the two states apart");
   assert.match(client, /setCreditedAmounts\(creditedTotalsFrom\(rows\)\)/,
     "…through the shared definition, not a second sum of the same rows");
@@ -11115,6 +11120,67 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.match(ev, /\(ev\.applied \?\? \[\]\)\.find/,
     "an evidence object assembled elsewhere carries no `applied`, and must not crash the row");
 
+  // ── [CREDIT-SIGN] The direction of the MONEY, not of the document ────────────────────────────
+  //
+  // The invoices table has ONE `direction` column and it describes who issued the document. On an
+  // ordinary invoice that is also the way the money moves, so the two were treated as one thing.
+  // On a creditnota they are opposites — the owner refunds the customer — and the evidence line
+  // said so out loud: a € 500 refund rendered as "bijgeschreven … van Kiwi Food Market" beside a
+  // bank line of −500.
+  const credits = code("src/lib/credited-invoices.ts");
+  assert.match(credits, /export function moneyDirection/);
+  assert.match(credits, /return documentIsOutgoing === credit \? "incoming" : "outgoing"/,
+    "a creditnota reverses the flow its document direction implies");
+  // A row can carry the SIGN before anyone has set the type (an AI read, an import), and the
+  // screens already treat a negative total as a credit — this has to agree with them.
+  assert.match(credits, /\(Number\(row\.total_inc_btw\) \|\| 0\) < 0/);
+  // …and NEITHER screen may hard-code a direction any more. That is what put a refund in the
+  // owner's income in the first place.
+  for (const screen of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+  ]) {
+    const client = code(screen);
+    assert.match(client, /buildPaymentEvidenceLine\(paymentEvidence\[inv\.id\], moneyDirection\(inv\), taal, inv\)/,
+      `${screen} must take the direction from the money, not from the list it is on`);
+  }
+
+  // ── [CREDIT-BEWIJS] Which credit notes are behind "Deels gecrediteerd · € 250" ───────────────
+  //
+  // The same argument as the instalments, with a different answer: an instalment is proved by
+  // somebody else's record, a credit by a document the OWNER sent — one an accountant asks about
+  // by number. The app was already holding this and never showed it.
+  const creditText = code("src/lib/credit-evidence.ts");
+  assert.match(creditText, /export function buildCreditEvidenceLine/);
+  assert.match(creditText, /if \(!credits \|\| credits\.length === 0\) return null/,
+    "an invoice with no credits gets no line, not an empty claim");
+  assert.match(creditText, /t\('credit\.regel\.zonderNummer'/,
+    "a creditnota in concept has no number yet — that is Art. 35, not a gap");
+  assert.match(credits, /export function creditDetailsFrom/);
+  assert.match(credits, /if \(amount <= EPSILON\) continue/, "a credit of nothing gives nothing back");
+  assert.match(salesListEarly, /<CreditEvidenceLine line=\{buildCreditEvidenceLine\(creditRows\.get\(inv\.id\), taal\)\} \/>/);
+  for (const sentence of [
+    "{bedrag} teruggegeven met {count} creditnota",
+    "We konden niet nakijken welke facturen je hebt gecrediteerd",
+  ]) {
+    assert.ok(cat.includes(sentence), `the catalogue lost: "${sentence}"`);
+  }
+
+  // [NO-SILENT-EMPTY] `const { data }` without `error` — supabase-js does not throw — turned a
+  // failed credit read into an EMPTY credit map. Every credited invoice then showed its full total
+  // as outstanding and lost its "Gecrediteerd" chip, so an invoice the owner formally withdrew
+  // looked completely chaseable. On money given back in writing, that is the one direction this
+  // screen may not fail in quietly.
+  assert.match(salesListEarly, /setCreditsReadFailed\(true\)/);
+  assert.match(salesListEarly, /\{creditsReadFailed && \(/, "…and the screen says so");
+  assert.match(salesListEarly, /t\('credit\.leesFout'\)/);
+  // [PAGINATION] …and it is paged. PostgREST caps a response at ~1000 rows silently, and a lost
+  // credit is an invoice that reappears as fully owed.
+  const creditReadAt = salesListEarly.indexOf(".eq('invoice_type', 'creditnota')");
+  assert.ok(creditReadAt > 0, "the credit read still exists");
+  const creditRead = salesListEarly.slice(Math.max(0, creditReadAt - 900), creditReadAt + 300);
+  assert.match(creditRead, /fetchAllRows/, "the credit read may not take the first thousand and stop");
+
   // …and all of it actually reaches BOTH screens. A proof computed and not rendered is the defect
   // class this whole file exists for.
   const page = code("src/app/dashboard/incoming/manage/page.tsx");
@@ -11183,10 +11249,16 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     // …and the INVOICE travels with it. That fourth argument is what makes the arithmetic possible:
     // the total to measure the instalments against, and the amount_paid to hold their sum up to.
     // Without it the line is back to a conclusion with no working.
+    //
+    // The DIRECTION is no longer a literal here. It used to be the list's own — 'incoming' on the
+    // pay screen, 'outgoing' on the sales list — and that is exactly what put a refund in the
+    // owner's income: a creditnota moves money the other way than the document it belongs to.
+    // [CREDIT-SIGN] below holds the rule itself; this only holds that the screen asks for it.
+    void direction;
     assert.match(
       client,
-      new RegExp(`<PaymentEvidenceLine line=\\{buildPaymentEvidenceLine\\(paymentEvidence\\[inv\\.id\\], ${direction}, taal, inv\\)\\} />`),
-      `${screen} must paint the shared line, in its own direction, the owner's language and against its own invoice`,
+      /<PaymentEvidenceLine line=\{buildPaymentEvidenceLine\(paymentEvidence\[inv\.id\], moneyDirection\(inv\), taal, inv\)\} \/>/,
+      `${screen} must paint the shared line, in the MONEY's direction, the owner's language and against its own invoice`,
     );
     // [TAAL] …and keep no sentence of its own about it. Keys stripped first — see copyOf.
     const copy = copyOf(screen);
@@ -11199,8 +11271,13 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   // `user_id = auth.uid()` select policy, so RLS scopes it exactly and no route widens anything.
   const salesList = code("src/app/dashboard/facturen/FacturenClient.tsx");
   assert.match(salesList, /collectPaymentEvidence\(\{ pipeline: supabase, ownerId: profile\.id, invoiceIds: ids, totals \}\)/);
-  assert.match(salesList, /settledInvoiceIds\(invoices\)\.join\(','\)/,
-    "keyed on the settled ids, or the same rows are re-read on every render");
+  // Keyed on the settled ids AND their totals. Ids alone was not enough: the totals feed the
+  // legacy-link valuation, and the effect read them out of its closure — so an invoice whose total
+  // was corrected kept the OLD figure in the map and a NULL-amount link was valued at an amount
+  // the invoice no longer carries. eslint pointed at exactly that missing dependency.
+  assert.match(salesList, /const ids = settledInvoiceIds\(invoices\)/);
+  assert.match(salesList, /key: ids\.map\(\(id\) => `\$\{id\}:\$\{totals\[id\] \?\? ''\}`\)\.join\(','\)/,
+    "the key must move when a total moves, or the same rows are re-read with a stale figure");
   // [NO-SILENT-EMPTY] A throw must reach every row asked about as 'unknown'. A missing line reads
   // as "nothing to say", which is the state this whole feature exists to remove.
   assert.match(salesList, /all\[id\] = \{ kind: 'unknown' \}/);
@@ -11319,6 +11396,10 @@ test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already
     assert.equal((cron.match(new RegExp(field.replace(",", ",\\s"), "g")) ?? []).length, 2,
       `${field} reaches BOTH the cron run record and the response`);
   }
+
+  const creditUnit = readFileSync("src/lib/credit-evidence.test.ts", "utf8");
+  assert.match(creditUnit, /a creditnota moves money the OTHER way than its document points/);
+  assert.match(creditUnit, /the chip states an amount; this states the documents behind it/);
 
   const unit = readFileSync("src/lib/open-invoice-proof.test.ts", "utf8");
   assert.match(unit, /the sentence that stops a reminder names the bank line and what to do/);
