@@ -37,6 +37,13 @@ const STATIC_TITLES = new Map<string, string>([
   // chrome never renders for it — the title entry would be dead config. See that page's header.
   ["/dashboard/artikelen", "Artikelen"],
   ["/dashboard/kluis", "Kluis"],
+  // [LOGBOEK] Plain Dutch, like every other entry in this map — this registry is not translated.
+  // It is the FIRST-PAINT label only: a page that registers a title through useSubPageHeader wins
+  // over this map (see the resolution order at the top of the file), so the log screen can present
+  // t('log.titel') in the owner's own language without ever flashing a bar with no name on it.
+  // Without an entry here at all the bar renders NOTHING — a real screen with no back button and
+  // no heading, the failure already documented for settings/facturering below.
+  ["/dashboard/logboek", "Logboek"],
   // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.
   ["/dashboard/vragen", "Vragen van je boekhouder"],
   ["/dashboard/klaar", "Ben ik klaar?"],

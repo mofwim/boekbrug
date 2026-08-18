@@ -27,6 +27,14 @@ const ITEMS = [
   { icon: 'people',       labelKey: 'wp.klanten',   subKey: 'wp.klanten.sub',   href: '/dashboard/klanten',  bg: M3.success,   color: '#fff' },
   { icon: 'shield',       labelKey: 'wp.kluis',     subKey: 'wp.kluis.sub',     href: '/dashboard/kluis', bg: '#455A64', color: '#fff' },
   { icon: 'settings',     labelKey: 'wp.gegevens',  subKey: 'wp.gegevens.sub',  href: '/dashboard/settings', bg: M3.tertiary,  color: '#fff' },
+  // [LOGBOEK] The trail 60 files write and no screen ever showed. It belongs on THIS hub and not
+  // in the bottom bar: that bar carries four destinations per role on purpose (see its header) and
+  // defers everything else to the home tiles — and a log is something you consult after the fact,
+  // not a place you work from. Owner-only by construction: page.tsx above redirects an accountant
+  // to their own home before this list renders, so no entry has to gate itself.
+  // `history` is in the icon_names subset in layout.tsx; a name outside it renders as raw ligature
+  // text (see material-icons.test.ts).
+  { icon: 'history',      labelKey: 'log.titel',    subKey: 'log.uitleg',       href: '/dashboard/logboek',  bg: '#5F6368',    color: '#fff' },
 ] as const
 
 export default function WerkplekClient() {

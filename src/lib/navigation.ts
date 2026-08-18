@@ -219,6 +219,19 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/werkplek',
   },
 
+  // ── logboek (the audit trail) → werkplek ─────────────────────────────────
+  // [LOGBOEK] Its one door is the werkplek tile (see ITEMS in WerkplekClient.tsx), so Terug
+  // returns THERE. Without a rule the catch-all below sends it to the home instead — the same
+  // jump-past-the-parent the bank/categoriseren note above describes, and the werkplek is the
+  // only screen this visitor actually passed through. If a second door is ever added (from the
+  // home, or from Instellingen), mark it with ?from= and branch here exactly like
+  // incoming/manage does, rather than making one group of visitors travel back through a
+  // screen they never saw.
+  {
+    match: /^\/dashboard\/logboek$/,
+    parent: () => '/dashboard/werkplek',
+  },
+
   // ── all other /dashboard/* → home per role ────────────────────────────────
   // covers: /facturen, /klanten, /bestanden, /incoming, /quarterly,
   //         /settings, /werkplek (zzp), etc.

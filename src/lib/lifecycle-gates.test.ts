@@ -11827,3 +11827,292 @@ test("[TZ] the two doors onto an invoice date use the SAME clock", () => {
   assert.doesNotMatch(accountant, /new Date\(\)\.toISOString\(\)/,
     "the accountant screen may not fall back to the browser's UTC date for a legal document date");
 });
+
+// ─── [LOGBOEK] The trail that was written from sixty files and shown to nobody ────────────────
+//
+// audit_logs is written from 60 files in 89 distinct actions. Every one of those writes worked,
+// and until this feature not one row had ever been rendered on a screen. That was survivable while
+// the owner was the only person writing — what had happened in the administration was what they
+// had just done themselves, and the notification they got at that moment was the whole story. It
+// stopped being survivable when a mandated bookkeeper could issue invoices under the owner's BTW
+// number, chase their customers and confirm their purchase invoices: audit_logs.user_id is the
+// ACTOR, so every one of those rows carries the BOOKKEEPER, and the owner — who stays answerable
+// for all of it (art. 35a Wet OB, art. 52 AWR) — could see exactly none of them. The migration
+// that opened the read side (supabase/migrations/audit_logs_client_read.sql: policy
+// audit_logs_about_me over audit_row_is_about_me()) sat in the database with no caller at all.
+//
+// The gates below are the ways this feature can be shipped and still be worthless. Not one of them
+// turns anything red on its own — tsc, eslint and next build all stay green through every single
+// one, and so does the smoke test, which never logs in:
+//
+//   · an action nobody wrote a sentence for — the row lands on the screen as `bank.overapplied`;
+//   · the route reaching for service_role, which would make the RLS policy this whole screen rests
+//     on decorative and hand one entrepreneur's trail to another;
+//   · a failed read answered with `[]` — the screen then says, in Dutch, that nothing has happened
+//     in this administration, which is the one lie an audit trail may never tell;
+//   · a screen nobody can reach, which is what the migration already was.
+
+test("[LOGBOEK] every audit action has a sentence, so no row reaches the screen as an identifier", () => {
+  // toLogboekEntry never drops a row and never throws — it cannot, because a trail that hides what
+  // it has no words for reads as COMPLETE while it is not, and the gaps are invisible by
+  // construction. What it does instead is fall back to log.onbekend ("Handeling vastgelegd") with
+  // the raw action name beside it in mono. That fallback is right for the 40 historical rows
+  // written before this union existed, and it is WRONG for an action a colleague adds next month:
+  // nothing fails, nothing is red, and the owner reads "Handeling vastgelegd — bank.overapplied"
+  // on the one screen they opened to find out what was done in their name.
+  //
+  // So the union is read out of audit.ts and held against the catalogue. It has to happen HERE or
+  // nowhere: audit.ts imports supabase-pipeline and therefore builds the service_role client, so
+  // logboek.ts deliberately does not import it — not even for the type (see that file's header).
+  // This gate IS the link between the two files.
+  const audit = code("src/lib/audit.ts");
+  const unionStart = audit.indexOf("export type AuditAction =");
+  assert.ok(unionStart > -1, "the AuditAction union moved — this gate reads it straight out of the file");
+
+  // The union runs to the first genuinely EMPTY line after it. Every member sits on its own
+  // `| '...'` line and code() has already turned the comments between them into whitespace, so no
+  // blank line can occur inside it today.
+  const unionEnd = audit.indexOf("\n\n", unionStart);
+  const union = audit.slice(unionStart, unionEnd);
+  const actions = [...union.matchAll(/\|\s*'([a-z][\w.]*)'/g)].map((m) => m[1]);
+
+  // Two floors under the parse, because every assertion below is a loop over `actions` — and a
+  // loop over an empty or truncated list PASSES, silently, forever. That is this file's own
+  // [STRIPPER-BLIND] defect class, and it is at its most dangerous in exactly this shape: a gate
+  // whose subject is a list it extracts itself.
+  assert.ok(
+    actions.length >= 89,
+    `expected at least the 89 known audit actions, parsed ${actions.length} — the union's shape ` +
+      "changed and this gate is now checking a fraction of it",
+  );
+  // And the slice really took the WHOLE union: what sits between where it stopped and the next
+  // declaration is nothing but whitespace. Without this, a blank line introduced halfway down the
+  // union would leave every action below it unchecked, with the gate still green.
+  const afterUnion = audit.slice(unionEnd, audit.indexOf("export", unionEnd));
+  assert.match(
+    afterUnion, /^\s*$/,
+    "there is now a blank line INSIDE the AuditAction union — this gate stops at the first one, " +
+      "so everything below it would go unchecked while this test stayed green",
+  );
+
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const declared = new Set([...messages.matchAll(/^\s{2}'([\w.]+)':\s*\{/gm)].map((m) => m[1]));
+  assert.ok(declared.size > 0, "the catalogue may not be empty");
+
+  const speechless = actions.filter((a) => !declared.has(`log.${a}`));
+  assert.deepEqual(
+    speechless, [],
+    "these actions are written to audit_logs and have no sentence, so they reach the logboek as " +
+      `a bare identifier — add a 'log.<action>' key for each:\n  ${speechless.join("\n  ")}`,
+  );
+
+  // The other direction. These twelve are the screen's own words — the heading, the three states,
+  // the filter chips — and they are the only 'log.' keys that answer to no action. Anything else
+  // left in the catalogue is a sentence for an action that no longer exists: a renamed action gets
+  // caught by the half above (its new name has no key), but the OLD sentence stays behind, still
+  // listed in logboek.ts's SENTENCE_KEYS, so tsc and the [TAAL] orphan gate both stay green over a
+  // phrase describing something the app can no longer do.
+  const SCREEN_KEYS = new Set([
+    "log.titel", "log.uitleg", "log.leeg", "log.mislukt", "log.onbekend", "log.doorAnder",
+    "log.meer", "log.filter.alles", "log.filter.geld", "log.filter.document",
+    "log.filter.toegang", "log.spoorOnvolledig",
+  ]);
+  const stale = [...declared].filter(
+    (k) => k.startsWith("log.") && !SCREEN_KEYS.has(k) && !actions.includes(k.slice("log.".length)),
+  );
+  assert.deepEqual(
+    stale, [],
+    `sentences in the catalogue for actions that are not in the union:\n  ${stale.join("\n  ")}`,
+  );
+});
+
+test("[LOGBOEK] the trail is read with the SESSION client, so RLS decides what is in it", () => {
+  // Every other owner-facing read route in this app reaches for createPipelineClient() and pins
+  // each query to user.id by hand. This one must not, and the difference is the entire feature.
+  //
+  // The rows the owner cannot see anywhere else are the ones a BOOKKEEPER wrote in their
+  // administration, and those carry the bookkeeper in user_id. A hand-written .eq("user_id",
+  // user.id) would therefore hide precisely the half this screen exists for, while looking
+  // perfectly correct — a filtered list is not an error, it is a shorter list, and nobody can tell
+  // a short trail from a quiet month by looking at it.
+  //
+  // Which leaves the query below with no WHERE clause at all, and that is only safe because RLS
+  // decides instead: "Users see own logs" plus audit_logs_about_me, resolved per entity_type by
+  // audit_row_is_about_me(), which answers false for anything it does not know. On service_role
+  // those policies do not apply — the same query would then return every entrepreneur's audit
+  // trail to whoever opened the screen. Session client or leak; there is no third state.
+  const route = code("src/app/api/logboek/route.ts");
+
+  // The anchor first. Every doesNotMatch below is worthless over a file that stopped containing
+  // the query — it would pass vacuously, which is the failure mode this file was built around.
+  assert.match(route, /\.from\("audit_logs"\)/, "the route must still be the one that reads audit_logs");
+
+  assert.match(route, /createServerSupabaseClient\(\)/, "the read runs as the logged-in owner");
+  assert.doesNotMatch(
+    route, /createPipelineClient/,
+    "service_role bypasses row level security, so this route would answer with rows from other " +
+      "people's administrations — audit_logs_about_me is the only thing scoping this query",
+  );
+  assert.doesNotMatch(
+    route, /\.eq\("user_id"/,
+    "a user_id filter here hides exactly what the owner came for: user_id is the ACTOR, so this " +
+      "line would drop every action their bookkeeper performed in their own administration",
+  );
+});
+
+test("[LOGBOEK] a failed read answers 503, and never an empty log", () => {
+  // [NO-SILENT-EMPTY], at the place it is decided. supabase-js does not throw: a timed-out or
+  // policy-refused read comes back as { data: null, error }, and one `?? []` on that path turns
+  // "we could not read your trail" into "nothing has happened in your administration". Those are
+  // different sentences on the screen (log.mislukt vs log.leeg) and only one of them is a claim.
+  //
+  // It is the claim that makes this worse than an ordinary swallowed error. The owner opens this
+  // screen to establish that nothing was done behind their back; an empty page answers that
+  // question with a lie, in the reassuring direction, and they close the tab satisfied. A logbook
+  // that goes quiet when it breaks is worse than no logbook at all, because a quiet logbook is
+  // believed.
+  const route = code("src/app/api/logboek/route.ts");
+
+  // TWO halves, and the second is the one that was nearly missed. postgrest-js can hand back
+  // `{ data: null, error: null }` on a path it calls SUCCESS: in processResponse's catch branch a
+  // 404 with an empty body sets status 204 and leaves both fields null (verified in
+  // node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts, the issue-295 workaround). That is
+  // exactly the shape an edge proxy returns when PostgREST is unreachable, when the project is
+  // paused, or when the schema cache has never heard of this table — a read that never happened,
+  // wearing a success's clothes. `data ?? []` swallows it and the screen says "Er is nog niets
+  // gebeurd om te tonen" about a database we never managed to ask.
+  assert.match(
+    route, /if \(error \|\| data === null\) \{[\s\S]{0,600}?status: 503/,
+    "no rows AND no error is an unreadable log too — not an empty one",
+  );
+  assert.doesNotMatch(
+    route, /data \?\? \[\]/,
+    "`data ?? []` turns a read that never reached PostgREST into the claim that nothing happened",
+  );
+  assert.match(route, /error: "log_unreadable"/, "…under the name the screen knows it by");
+  assert.doesNotMatch(
+    route, /entries: \[\]/,
+    "this route may never hand the screen an empty list — an empty `entries` array leaving this " +
+      "file is a statement that nothing happened, and a database hiccup does not get to make it",
+  );
+
+  // ORDER, not merely presence. `const fetched = data ?? []` is correct where it stands — after
+  // the refusal — and catastrophic before it: the same line then coerces a failed read into an
+  // empty page and the 503 below becomes unreachable. Nothing about that reordering fails to
+  // compile, and both variants read fine in a diff.
+  // ORDER, not merely presence: the refusal has to come before anything reads `data`. Nothing about
+  // reordering those two fails to compile, and both variants read fine in a diff.
+  const refusal = route.indexOf("log_unreadable");
+  const firstUse = route.indexOf("const fetched = data");
+  assert.ok(refusal > -1 && firstUse > -1, "both the refusal and the first use of data must be findable");
+  assert.ok(
+    refusal < firstUse,
+    "`data` is read BEFORE the unreadable case is refused, so a failed read leaves this route as a " +
+      "200 with an empty log — the exact answer the whole feature exists to prevent",
+  );
+});
+
+test("[LOGBOEK] the screen tells 'nothing happened' apart from 'we could not read it'", () => {
+  // The route refusing with 503 buys nothing if the client turns that into a blank list. Three
+  // states, and the second and third look identical unless the screen is written to keep them
+  // apart: rows / read-and-empty / could-not-read.
+  const ui = code("src/app/dashboard/logboek/LogboekClient.tsx");
+
+  assert.match(ui, /if \(!res\.ok\) throw/, "every non-2xx is a failed read, not a short one");
+  assert.match(
+    ui, /if \(!Array\.isArray\(rows\)\) throw/,
+    "an answer we cannot recognise is a failed read too — not an empty one",
+  );
+  assert.doesNotMatch(
+    ui, /\?\? \[\]/,
+    "one `?? []` in this component is the single line that turns the feature back into the thing " +
+      "it was built against: a broken read painted as a quiet administration",
+  );
+
+  // The empty sentence is gated on BOTH the state and the cursor, and that second half is not
+  // decoration: with a page still outstanding, "Er is nog niets gebeurd" is a statement about our
+  // paging wearing the words of a statement about the administration.
+  assert.match(
+    ui, /status === 'ok' && visible\.length === 0 && nextCursor === null/,
+    "log.leeg may only be rendered when the read SUCCEEDED and there is genuinely nothing left " +
+      "to fetch — not whenever the list happens to be empty",
+  );
+  assert.match(ui, /setStatus\('failed'\)/, "a first page that failed has its own state…");
+  assert.match(ui, /setMoreFailed\(true\)/, "…and so does a second page, which must not wipe the rows already read");
+});
+
+test("[LOGBOEK] the screen holds no language of its own", () => {
+  // One hard-coded Dutch sentence is how a translation stays permanently half-finished: the screen
+  // still looks right in Dutch, so nothing points at the gap — and this is the screen an owner who
+  // reads Dutch least comfortably has the most reason to open. Same rule as InvoiceSentModal and
+  // BtwReservationPanel; the check is different because the words here are not one copy object but
+  // a hundred catalogue entries, so the catalogue itself is the list of forbidden strings.
+  const ui = code("src/app/dashboard/logboek/LogboekClient.tsx");
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+
+  const dutch = [...messages.matchAll(/^\s{2}'(log\.[\w.]+)':\s*\{\s*(?:\n\s*)?nl: '([^']*)'/gm)]
+    .map((m) => [m[1], m[2]] as const)
+    // Sentences, not words. 'log.filter.alles' is "Alles", and a gate that fires on a word that
+    // short would fire on an identifier one day and teach the next person to weaken it.
+    .filter(([, value]) => value.length >= 15);
+  assert.ok(dutch.length >= 80, `expected the log sentences from the catalogue, found ${dutch.length}`);
+  for (const [key, value] of dutch) {
+    assert.ok(!ui.includes(value), `the sentence for ${key} is baked into the component: "${value}"`);
+  }
+
+  // And the SHAPE of a Dutch string in a rendered position, so a sentence written next month fails
+  // this too — the part a list of known values cannot do. These are the [TAAL] sweep's patterns:
+  // a text node on its own line, a string inside a JSX expression, a talking template literal, an
+  // attribute a person reads.
+  const leftovers: string[] = [];
+  for (const pattern of [
+    /> *([A-ZÉ][^<>{}\n]{3,70}?) *</g,
+    />\s*\n\s+([A-ZÉ][^<>{}]{3,150}?)\s*\n\s*[<{]/g,
+    /'([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''—-]+){1,12}[.?…]?)'/g,
+    /"([A-ZÉ][a-zéë]+(?: [a-zéëA-Z0-9.,…''""—;:()-]+){1,16}[.?!…:]?)"/g,
+    /`([A-ZÉ][a-zéë]+[^`]{2,120})`/g,
+    /(?:label|placeholder|title|aria-label)="([^"]{3,70})"/g,
+  ]) {
+    for (const m of ui.matchAll(pattern)) leftovers.push(m[1]);
+  }
+  assert.deepEqual(
+    leftovers, [],
+    `these read like sentences typed into the component instead of taken from t(...):\n  ${leftovers.join("\n  ")}`,
+  );
+
+  // Physical sides are wrong in exactly one language, which is the one nobody checks — and the
+  // direction has to travel with the words or a fresh load with an Arabic cookie lays this column
+  // out left-to-right (the root <html> only flips on a language SWITCH).
+  assert.match(ui, /dir=\{dir\}/, "the column carries its own direction");
+  assert.doesNotMatch(ui, /textAlign: 'right'/, "use textAlign: 'end'");
+  assert.doesNotMatch(ui, /paddingLeft:/, "use paddingInlineStart");
+});
+
+test("[LOGBOEK] the screen is reachable without typing its address", () => {
+  // The read policy audit_logs_about_me had been in the database for months, correct and complete,
+  // and worth nothing at all because no caller existed. A route with no link into it is the same
+  // thing one layer up: it passes tsc, it passes the build, it answers correctly to curl, and no
+  // owner will ever see a row of their trail.
+  const referrers: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      // The screen's own files do not count as a way in.
+      if (p.startsWith("src/app/dashboard/logboek/")) continue;
+      if (code(p).includes("/dashboard/logboek")) referrers.push(p);
+    }
+  };
+  scan("src");
+  assert.ok(referrers.length > 0, "nothing in the app names /dashboard/logboek — the screen is unreachable");
+
+  // Naming the path is not linking to it: DashboardChrome carries "/dashboard/logboek" in its
+  // static title map, which keeps the sub-page bar from ever being nameless and takes nobody
+  // anywhere. Somewhere there has to be an actual door.
+  const linked = referrers.filter((p) => /href:? *['"]\/dashboard\/logboek['"]/.test(code(p)));
+  assert.ok(
+    linked.length > 0,
+    `/dashboard/logboek is named but never linked — mentioned in:\n  ${referrers.join("\n  ")}`,
+  );
+});
