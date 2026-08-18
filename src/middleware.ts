@@ -12,23 +12,57 @@ import { canAccessScreen } from "@/lib/acting-for";
 // terms as "volledig openbaar" while this guard redirected every logged-out visitor to /login.
 import { isPublic } from "@/lib/public-paths";
 
+// [2FA] The rule itself is NOT in this file. See the block at the point of use below and the
+// header of src/lib/mfa.ts: this file has no tests of its own, and this is the one decision in the
+// app that can shut every user out of every page.
+import { asAalLevel, mfaGate, MFA_CHALLENGE_PATH, type AalLevel } from "@/lib/mfa";
+
 /**
- * [BESTEMMING] The login URL for a request, carrying where the visitor was going.
+ * [BESTEMMING] A redirect URL for a request, carrying where the visitor was going.
  *
  * This used to be inlined at the single redirect below; it is a function now because the
  * env-degrade branch above sends people to the same place and must send them there the same way —
  * a second, slightly different copy is how "?redirect=" quietly stops working on one of the paths.
  *
+ * [2FA] The destination is a parameter for that same reason, not because two are needed today: the
+ * second-step gate below interrupts a navigation exactly like the login guard does, and has to hand
+ * the visitor back to the page he was opening in exactly the same shape. Carrying the bestemming is
+ * a property of this file, not of the /login URL.
+ *
  * pathname + search, so a quarter filter or a search term travels along. The value comes from our
- * own request, so it always starts with a single "/" — and /login re-checks it with safeRedirect
- * regardless.
+ * own request, so it always starts with a single "/" — and the receiving screen re-checks it with
+ * safeRedirect regardless.
  */
-function loginUrlFor(request: NextRequest): URL {
-  const login = new URL("/login", request.url);
+function redirectUrlFor(request: NextRequest, destination: string): URL {
+  const url = new URL(destination, request.url);
   const vandaan = request.nextUrl.pathname + request.nextUrl.search;
   // "/" is de openbare homepage en geen bestemming om naar terug te keren.
-  if (vandaan !== "/") login.searchParams.set("redirect", vandaan);
-  return login;
+  if (vandaan !== "/") url.searchParams.set("redirect", vandaan);
+  return url;
+}
+
+/** The login URL for a request, with the bestemming attached. See redirectUrlFor above. */
+function loginUrlFor(request: NextRequest): URL {
+  return redirectUrlFor(request, "/login");
+}
+
+/**
+ * [SESSION-REFRESH] Carry the freshly written session cookies onto a response that REPLACES the
+ * one they were written on.
+ *
+ * getUser() above refreshes an expired-but-refreshable token and writes the new pair onto
+ * `response` through the setAll() callback. Every branch that returns something else — a redirect,
+ * a 403 — throws that response away, and with it the new cookies. The browser then keeps the OLD
+ * refresh token, which has just been spent: Supabase issues refresh tokens for single use, so the
+ * next attempt is a reuse, and a reuse ends the session. The user is signed out for no reason he
+ * can see, at the exact moment we were sending him somewhere.
+ *
+ * It cost nothing to be right about this, so: no branch in this file returns a bare response any
+ * more. Cheap when there is nothing to carry — the loop runs over an empty list.
+ */
+function withRefreshedCookies(from: NextResponse, to: NextResponse): NextResponse {
+  from.cookies.getAll().forEach((cookie) => to.cookies.set(cookie));
+  return to;
 }
 
 export async function middleware(request: NextRequest) {
@@ -77,6 +111,67 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
+  // [2FA] Two-step verification: does this session still owe the second step?
+  //
+  // Read HERE, above the /api branch, and that placement is the whole point of this block. A gate
+  // that only covers pages is a lock on the shop door with the delivery entrance open: the attacker
+  // this feature exists to stop holds a stolen PASSWORD, so he holds a valid session cookie at
+  // aal1, and he does not need a screen —
+  //     curl -H 'Cookie: sb-…' -X POST /api/invoice/send
+  // issues an invoice in the owner's name and in his doorlopende nummerreeks, which cannot be
+  // withdrawn afterwards. That is precisely the harm the enrolment screen promises to prevent, so
+  // the API has to be behind the same step as the screens.
+  //
+  // WHY THIS APPLIES THE RULE AND DOES NOT RESTATE IT. A wrong branch in these few lines fails
+  // nothing that runs in CI: it type-checks, it builds, and the smoke test never logs in. What it
+  // does instead is send EVERY page of EVERY user to /verificatie — including the settings screen
+  // that would switch two-step back off, and the sign-out that would end the session. That is an
+  // entrepreneur locked out of seven years of records he is legally obliged to keep, by us, with no
+  // door left open. So the decision lives in src/lib/mfa.ts, in a function with no I/O and a test
+  // per branch (the exemptions for /verificatie, /login and /uitloggen are precisely what stop this
+  // redirect from looping), and this file only fetches the two levels and does what it says. If the
+  // rule has to change, change it there — where it is tested — and not here.
+  //
+  // Only for a signed-in request: a logged-out visitor has no level to read, and this runs on every
+  // navigation, crawlers included.
+  let owesSecondStep = false;
+  if (user) {
+    // getAuthenticatorAssuranceLevel() reads the session that is already in hand — verified at
+    // node_modules/@supabase/auth-js: it decodes the `aal` claim and counts the verified factors on
+    // the session user. No extra network round-trip per navigation.
+    //
+    // Wrapped anyway, because a throw HERE is not "this session is unverified", it is a 500 on every
+    // page at once — the exact outage [ENV-DEGRADE] above exists to prevent, and this call sits even
+    // deeper in the request. Whatever goes wrong, both levels stay null; mfaGate() leans null to
+    // "allow" and its header explains why open is the right direction once the password has already
+    // been checked, and why a stolen password cannot produce that null.
+    let currentLevel: AalLevel = null;
+    let nextLevel: AalLevel = null;
+    try {
+      const { data: aal, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      // A returned error is not a thrown one: `data` is simply null, both levels stay unknown and
+      // the gate opens. That is the direction we want, but it must be LOUD — "two-step is switched
+      // on and nobody is ever asked for a code" is a failure that looks precisely like success from
+      // every screen, so the log is the only place it can ever surface.
+      if (error) {
+        console.error("[2FA] Assurance level unreadable — letting the request through", {
+          path: request.nextUrl.pathname,
+          error: error.message,
+        });
+      }
+      currentLevel = asAalLevel(aal?.currentLevel);
+      nextLevel = asAalLevel(aal?.nextLevel);
+    } catch (thrown) {
+      console.error("[2FA] Assurance level threw — letting the request through", {
+        path: request.nextUrl.pathname,
+        error: thrown instanceof Error ? thrown.message : String(thrown),
+      });
+    }
+
+    owesSecondStep =
+      mfaGate({ currentLevel, nextLevel, pathname: request.nextUrl.pathname }).action === "challenge";
+  }
+
   // [SESSION-REFRESH] API routes: getUser() above already refreshed the token
   // (and wrote new cookies onto `response`) if it was expired-but-refreshable.
   // We must NOT redirect API requests — a fetch() caller expects JSON, not an
@@ -85,6 +180,21 @@ export async function middleware(request: NextRequest) {
   // what fixes the intermittent 42501 on API writes (e.g. accountant invite),
   // which previously never ran middleware at all (api was in the matcher exclude).
   if (request.nextUrl.pathname.startsWith("/api")) {
+    // [2FA] The same answer as a page gets, in the shape a fetch() caller can read. Never a
+    // redirect: a caller expecting JSON follows a 302 to an HTML login page and reports "unexpected
+    // token <" — which is how a security refusal turns into a bug nobody can diagnose.
+    //
+    // 403 and not 401: the session is valid, it is the second step that is missing. The code is
+    // what a client checks to know it should send the user to /verificatie rather than to /login.
+    if (owesSecondStep) {
+      return withRefreshedCookies(
+        response,
+        NextResponse.json(
+          { error: "mfa_required", redirect: MFA_CHALLENGE_PATH },
+          { status: 403 },
+        ),
+      );
+    }
     return response;
   }
 
@@ -94,7 +204,18 @@ export async function middleware(request: NextRequest) {
   // inloggen kwam iedereen op /dashboard uit — ook wie halverwege zijn werk zat. Hoe dat wordt
   // meegegeven staat bij loginUrlFor hierboven, zodat er één versie van die regel bestaat.
   if (!user && !isPublic(request.nextUrl.pathname)) {
-    return NextResponse.redirect(loginUrlFor(request));
+    return withRefreshedCookies(response, NextResponse.redirect(loginUrlFor(request)));
+  }
+
+  // [2FA] The page shape of the answer read above: hand him the challenge, then hand him back the
+  // page he was opening.
+  if (owesSecondStep) {
+    // [BESTEMMING] The same "?redirect=" as the login guard, from the same helper: after the six
+    // digits he lands back where he was, not on a generic dashboard.
+    return withRefreshedCookies(
+      response,
+      NextResponse.redirect(redirectUrlFor(request, MFA_CHALLENGE_PATH)),
+    );
   }
 
   // Logged in, on dashboard → check onboarding
@@ -110,7 +231,7 @@ export async function middleware(request: NextRequest) {
       .single();
 
     if (profile && !profile.onboarding_done) {
-      return NextResponse.redirect(new URL("/onboarding", request.url));
+      return withRefreshedCookies(response, NextResponse.redirect(new URL("/onboarding", request.url)));
     }
 
     // [ACTING-FOR] Een verkoopmedewerker hoort op zijn eigen scherm, niet in de bank of de aangifte
@@ -136,7 +257,7 @@ export async function middleware(request: NextRequest) {
       { ownerId: koppeling.owner_id as string, actorId: user.id, role: "verkoop" },
       request.nextUrl.pathname,
     )) {
-      return NextResponse.redirect(new URL("/dashboard/verkoop", request.url));
+      return withRefreshedCookies(response, NextResponse.redirect(new URL("/dashboard/verkoop", request.url)));
     }
   }
 

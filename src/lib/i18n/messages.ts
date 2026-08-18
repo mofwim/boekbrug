@@ -10162,6 +10162,108 @@ export const MESSAGES = {
     en: 'Your bookkeeper is linked, but none of their actions appear here yet. A database setting is missing.',
     ar: 'محاسبك مرتبط، لكن لا تظهر أي من إجراءاته هنا بعد. ينقص إعداد في قاعدة البيانات.',
   },
+
+  // ─── [2FA] Verificatie in twee stappen ──────────────────────────────────────────────────────
+  //
+  // The wording carries one thing the generic version of this feature does not: WHY it is heavier
+  // here than on an ordinary account. A mandated bookkeeper and an invited medewerker both issue
+  // invoices in the owner's unbroken number series, under the owner's BTW number — so a stolen
+  // password is not access to a dashboard, it is the authority to make documents that cannot be
+  // withdrawn. And the lockout sentence is not fine print: losing the phone means losing the way
+  // into records the Belastingdienst can ask for, so it is said BEFORE the switch, not after.
+
+  'mfa.titel': { nl: 'Verificatie in twee stappen', en: 'Two-step verification', ar: 'التحقق بخطوتين' },
+  'mfa.staatAan': { nl: 'Staat aan', en: 'Switched on', ar: 'مُفعَّل' },
+  'mfa.staatUit': { nl: 'Staat uit', en: 'Switched off', ar: 'غير مُفعَّل' },
+  'mfa.waarom': {
+    nl: 'Wie jouw wachtwoord heeft, kan facturen uitreiken op jouw naam en in jouw doorlopende nummerreeks. Die kun je daarna niet meer intrekken. Een tweede stap sluit dat af.',
+    en: 'Anyone with your password can issue invoices in your name and in your unbroken number series. Those cannot be withdrawn afterwards. A second step closes that off.',
+    ar: 'من يملك كلمة مرورك يستطيع إصدار فواتير باسمك وفي سلسلة أرقامك المتصلة. ولا يمكن سحبها بعد ذلك. الخطوة الثانية تُغلق هذا الباب.',
+  },
+  'mfa.aanzetten': { nl: 'Aanzetten', en: 'Switch on', ar: 'تفعيل' },
+  'mfa.uitzetten': { nl: 'Uitzetten', en: 'Switch off', ar: 'إيقاف' },
+  'mfa.annuleren': { nl: 'Annuleren', en: 'Cancel', ar: 'إلغاء' },
+  'mfa.scan.uitleg': {
+    nl: 'Scan deze code met je authenticator-app (bijvoorbeeld Google Authenticator, 1Password of Bitwarden).',
+    en: 'Scan this code with your authenticator app (Google Authenticator, 1Password or Bitwarden, for example).',
+    ar: 'امسح هذا الرمز بتطبيق المصادقة لديك (مثل Google Authenticator أو 1Password أو Bitwarden).',
+  },
+  'mfa.scan.handmatig': {
+    nl: 'Kun je niet scannen? Typ deze sleutel over in je app:',
+    en: 'Cannot scan? Type this key into your app instead:',
+    ar: 'لا يمكنك المسح؟ اكتب هذا المفتاح في تطبيقك:',
+  },
+  'mfa.code.label': { nl: 'Code uit je app', en: 'Code from your app', ar: 'الرمز من تطبيقك' },
+  'mfa.bevestig': { nl: 'Bevestigen', en: 'Confirm', ar: 'تأكيد' },
+  'mfa.verifieer': { nl: 'Verifiëren', en: 'Verify', ar: 'تحقّق' },
+  'mfa.verificatie.uitleg': {
+    nl: 'Vul de zescijferige code in die je authenticator-app nu toont.',
+    en: 'Enter the six-digit code your authenticator app is showing now.',
+    ar: 'أدخل الرمز المكوّن من ستة أرقام الذي يعرضه تطبيقك الآن.',
+  },
+  'mfa.fout.ongeldig': {
+    nl: 'Die code klopt niet. Codes verlopen na een halve minuut — probeer de nieuwste uit je app.',
+    en: 'That code is not right. Codes expire after half a minute — try the newest one in your app.',
+    ar: 'هذا الرمز غير صحيح. الرموز تنتهي خلال نصف دقيقة — جرّب أحدث رمز في تطبيقك.',
+  },
+  'mfa.fout.mislukt': {
+    nl: 'We konden je code nu niet controleren. Dit betekent niet dat de code fout is — probeer het zo meteen opnieuw.',
+    en: 'We could not check your code just now. That does not mean the code is wrong — try again in a moment.',
+    ar: 'تعذّر التحقق من رمزك الآن. هذا لا يعني أن الرمز خاطئ — أعد المحاولة بعد قليل.',
+  },
+  'mfa.fout.aanzetten': {
+    nl: 'Het aanzetten is niet gelukt. Er is niets veranderd: je logt in zoals altijd.',
+    en: 'Switching it on did not work. Nothing changed: you sign in as before.',
+    ar: 'لم ينجح التفعيل. لم يتغيّر شيء: تسجّل الدخول كالمعتاد.',
+  },
+  'mfa.gelukt': {
+    nl: 'Verificatie in twee stappen staat nu aan. Vanaf je volgende aanmelding vragen we ook om een code.',
+    en: 'Two-step verification is on. From your next sign-in we will also ask for a code.',
+    ar: 'التحقق بخطوتين مُفعَّل الآن. سنطلب رمزاً أيضاً عند تسجيل دخولك التالي.',
+  },
+  'mfa.uit.gelukt': {
+    nl: 'Verificatie in twee stappen staat uit. Je logt weer in met alleen je wachtwoord.',
+    en: 'Two-step verification is off. You sign in with your password alone again.',
+    ar: 'التحقق بخطوتين مُوقَف. ستسجّل الدخول بكلمة المرور وحدها.',
+  },
+  'mfa.waarschuwing.telefoon': {
+    nl: 'Raak je je telefoon kwijt, dan raak je ook de toegang tot je administratie kwijt. Bewaar de sleutel hierboven ergens veilig, of voeg straks een tweede apparaat toe.',
+    en: 'If you lose your phone, you lose access to your administration too. Keep the key above somewhere safe, or add a second device afterwards.',
+    ar: 'إن فقدت هاتفك فقدت الوصول إلى إدارتك أيضاً. احفظ المفتاح أعلاه في مكان آمن، أو أضف جهازاً ثانياً لاحقاً.',
+  },
+  'mfa.waarschuwing.sessies': {
+    nl: 'Andere apparaten waarop je nu bent ingelogd, worden uitgelogd.',
+    en: 'Other devices you are signed in on will be signed out.',
+    ar: 'ستُسجَّل الأجهزة الأخرى المسجَّلة حالياً خارج الحساب.',
+  },
+  'mfa.kwijt.titel': { nl: 'Je telefoon kwijt?', en: 'Lost your phone?', ar: 'فقدت هاتفك؟' },
+  'mfa.kwijt.uitleg': {
+    nl: 'Heb je een tweede apparaat toegevoegd, gebruik dan de code daarvan. Zo niet, mail dan naar support@boekbrug.nl vanaf het e-mailadres van je account — we zetten de tweede stap dan uit na controle.',
+    en: 'If you added a second device, use the code from that one. If not, e-mail support@boekbrug.nl from your account address and we will switch the second step off after checking.',
+    ar: 'إن أضفت جهازاً ثانياً فاستخدم رمزه. وإن لم تفعل، راسل support@boekbrug.nl من بريد حسابك وسنُوقف الخطوة الثانية بعد التحقق.',
+  },
+  'mfa.herstel.titel': { nl: 'Eerst de tweede stap', en: 'The second step first', ar: 'الخطوة الثانية أولاً' },
+  'mfa.herstel.uitleg': {
+    nl: 'Op dit account staat verificatie in twee stappen aan. Zonder deze controle zou iemand die bij je e-mail kan via een herstellink een nieuw wachtwoord kiezen en zo binnenkomen. Voer eerst de code uit je app in; daarna kun je hier je wachtwoord wijzigen.',
+    en: 'This account has two-step verification switched on. Without this check, anyone who reaches your e-mail could pick a new password through a reset link and walk in. Enter the code from your app first; after that you can change your password here.',
+    ar: 'هذا الحساب مُفعَّل عليه التحقق بخطوتين. بدون هذا الفحص يستطيع من يصل إلى بريدك أن يختار كلمة مرور جديدة عبر رابط الاستعادة ويدخل. أدخل الرمز من تطبيقك أولاً، ثم يمكنك تغيير كلمة المرور هنا.',
+  },
+  'mfa.uitloggen': { nl: 'Uitloggen', en: 'Sign out', ar: 'تسجيل الخروج' },
+  'mfa.nietsTeVerifieren': {
+    nl: 'Op dit account staat geen verificatie in twee stappen aan, dus er is hier niets te bevestigen.',
+    en: 'This account has no two-step verification switched on, so there is nothing to confirm here.',
+    ar: 'لا يوجد تحقق بخطوتين مُفعَّل على هذا الحساب، فليس هنا ما يُؤكَّد.',
+  },
+  'mfa.verder': { nl: 'Verder', en: 'Continue', ar: 'متابعة' },
+  'mfa.fout.lezen': {
+    nl: 'We konden dit nu niet lezen. Probeer het zo meteen opnieuw.',
+    en: 'We could not read this just now. Try again in a moment.',
+    ar: 'تعذّرت قراءة هذا الآن. أعد المحاولة بعد قليل.',
+  },
+  'mfa.apparaten': { nl: 'Apparaten', en: 'Devices', ar: 'الأجهزة' },
+  'mfa.apparaatToevoegen': { nl: 'Tweede apparaat toevoegen', en: 'Add a second device', ar: 'إضافة جهاز ثانٍ' },
+  'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
+  'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

@@ -9,6 +9,55 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { ErrorMessage } from '@/components/ui/Feedback'
 import { wachtwoordOpslaanFout } from '@/lib/auth-errors'
+// [2FA] Zie het blok bij `tweedeStap` hieronder: dit is de ene plek waar de middleware niet komt.
+import { asAalLevel, owesSecondStep } from '@/lib/mfa'
+// [TAAL] De rest van dit scherm is nog hard-gecodeerd Nederlands van vóór de vertaling. De twee
+// nieuwe zinnen hieronder zijn dat niet: 2FA-taal hoort in de taal die de eigenaar heeft gekozen,
+// en één zin uit de catalogus is er één minder die vastzit.
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
+
+/**
+ * [2FA] Does this recovery session still owe the second step?
+ *
+ * ── WHY THIS CHECK CANNOT LIVE IN THE MIDDLEWARE ──
+ *
+ * Every other screen is covered there: mfaGate() runs on each navigation and redirects a session
+ * that has not done the second step. This one page slips past it, and not by oversight — by the
+ * shape of the flow. The recovery link is opened by someone with NO session, so the middleware
+ * sees an anonymous request to a public path and lets it through, correctly. The session is then
+ * created HERE, in the browser, by exchangeCodeForSession(); and the new password is set from the
+ * same page, without a single navigation in between. There is no request left for a guard to judge.
+ *
+ * Without this check, two-step verification protects nothing against the one attacker it most
+ * needs to: whoever can read the owner's e-mail asks for a reset link, chooses a new password, and
+ * signs in — the second factor never comes up, because the account he is signing into is one he
+ * now knows the password of. A lock on every door in the building, and the key under the mat.
+ *
+ * ── AND WHY IT STILL LEANS OPEN WHEN IT CANNOT TELL ──
+ *
+ * Same direction as the middleware, for a harder reason. An unreadable level here would otherwise
+ * show "enter the code from your app" to someone who has no app — a dead end with no way past it,
+ * on the screen of a person who is here precisely because they cannot get in. The failure that
+ * opens this branch is a session read going wrong milliseconds after a session was successfully
+ * established, which is rare and, crucially, nothing an attacker can bring about: he can hold the
+ * mailbox and the link, and neither makes getAuthenticatorAssuranceLevel() fail.
+ */
+async function tweedeStapNodig(supabase: ReturnType<typeof createClient>): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    if (error || !data) {
+      // Loud, because "two-step is on and the reset link walks straight past it" is a failure that
+      // looks exactly like success from this screen.
+      console.error('[2FA] Kon het verificatieniveau niet lezen op het herstelscherm', error?.message)
+      return false
+    }
+    return owesSecondStep(asAalLevel(data.currentLevel), asAalLevel(data.nextLevel))
+  } catch (fout) {
+    console.error('[2FA] Verificatieniveau wierp een fout op het herstelscherm', fout)
+    return false
+  }
+}
 
 export default function WachtwoordHerstellenPage() {
   const [password, setPassword] = useState('')
@@ -17,7 +66,10 @@ export default function WachtwoordHerstellenPage() {
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
   // Of deze link ons daadwerkelijk een sessie heeft opgeleverd. 'bezig' tot we het weten.
-  const [linkStatus, setLinkStatus] = useState<'bezig' | 'goed' | 'verlopen'>('bezig')
+  // [2FA] 'tweedeStap' is de vierde uitkomst: de link werkt, maar dit account vraagt eerst om de
+  // code uit de app. Zie tweedeStapNodig() hieronder.
+  const [linkStatus, setLinkStatus] = useState<'bezig' | 'goed' | 'verlopen' | 'tweedeStap'>('bezig')
+  const t = translator(useLocale())
 
   // [BUILD-NO-SECRETS] The client is built where it is USED, never during render.
   //
@@ -41,16 +93,14 @@ export default function WachtwoordHerstellenPage() {
     const init = async () => {
       const supabase = getSupabase()
       const { data } = await supabase.auth.getSession()
-      if (data.session) { setLinkStatus('goed'); return }
-
-      const code = new URLSearchParams(window.location.search).get('code')
-      if (code) {
+      if (!data.session) {
+        const code = new URLSearchParams(window.location.search).get('code')
+        // Geen sessie en geen code: hier is niemand via een herstelmail binnengekomen.
+        if (!code) { setLinkStatus('verlopen'); return }
         const { error } = await supabase.auth.exchangeCodeForSession(code)
-        setLinkStatus(error ? 'verlopen' : 'goed')
-        return
+        if (error) { setLinkStatus('verlopen'); return }
       }
-      // Geen sessie en geen code: hier is niemand via een herstelmail binnengekomen.
-      setLinkStatus('verlopen')
+      setLinkStatus(await tweedeStapNodig(supabase) ? 'tweedeStap' : 'goed')
     }
     init()
   }, [])
@@ -136,6 +186,34 @@ export default function WachtwoordHerstellenPage() {
           </a>
           <a href="/login" className="block mt-4 text-sm text-gray-500 hover:text-gray-700">
             Terug naar inloggen
+          </a>
+        </div>
+      </div>
+    )
+  }
+
+  // [2FA] De link werkt, maar dit account vraagt eerst om de code uit de app. Geen formulier dus:
+  // een wachtwoordveld dat er staat en straks toch wordt geweigerd is erger dan geen veld.
+  //
+  // Doorverwijzen naar /verificatie in plaats van hier een tweede codeveld te bouwen. Dat scherm
+  // kent alle drie de uitkomsten al uit elkaar te houden (verifieerd / verkeerde code / we konden
+  // het niet controleren) en heeft de uitweg voor wie zijn telefoon kwijt is; een tweede, kleinere
+  // kopie ervan zou precies die zorgvuldigheid missen. Na de zes cijfers komt hij hier terug — met
+  // een sessie op aal2, zodat dit scherm meteen het formulier laat zien.
+  if (linkStatus === 'tweedeStap') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
+          <div aria-hidden="true" style={{ fontSize: '48px', marginBottom: '16px' }}>🔐</div>
+          <h1 className="text-2xl font-bold text-gray-900">{t('mfa.herstel.titel')}</h1>
+          <p className="text-gray-500 text-sm mt-2" style={{ lineHeight: 1.6 }}>
+            {t('mfa.herstel.uitleg')}
+          </p>
+          <a
+            href="/verificatie?redirect=%2Fwachtwoord-herstellen"
+            className="inline-block mt-6 px-6 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
+          >
+            {t('mfa.verifieer')}
           </a>
         </div>
       </div>
