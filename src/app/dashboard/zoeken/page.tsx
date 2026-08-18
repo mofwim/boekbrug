@@ -22,14 +22,14 @@ export default async function Page({
   const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+  // [WATERVAL] De zoekterm staat in de URL en heeft de rol nergens voor nodig; hij stond er alleen
+  // onder omdat hij later was opgeschreven.
+  const [{ data: profile }, { q }] = await Promise.all([
+    supabase.from('profiles').select('role').eq('id', user.id).single(),
+    searchParams,
+  ])
 
   const role: Role = profile?.role === 'accountant' ? 'accountant' : 'zzper'
-  const { q } = await searchParams
   const initialQuery = (q ?? '').slice(0, 100)
 
   return (

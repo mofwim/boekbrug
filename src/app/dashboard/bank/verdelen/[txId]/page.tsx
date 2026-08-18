@@ -29,71 +29,93 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
 
   const pipeline = createPipelineClient()
 
-  const { data: tx } = await pipeline
-    .from('bank_transactions')
-    .select('id, amount, date, description, counterpart_name, user_id')
-    .eq('id', txId)
-    .eq('user_id', user.id)
-    .maybeSingle()
+  // ── [WATERVAL] De regel zelf en wat er al aan hangt ─────────────────────────
+  //
+  // De koppelingslezing hieronder vraagt naar transaction_id — dat is txId, en dat staat al in de
+  // URL. Ze wachtte dus op de bankregel zonder er iets van nodig te hebben. Wat er WEL van afhangt
+  // staat in de tweede golf: de facturen áchter die koppelingen, en de lijst om uit te kiezen (die
+  // hangt aan het teken van het bedrag).
+  //
+  // allSettled voor de tweede: die telling mág mislukken — zie de try eronder — en met Promise.all
+  // zou een mislukte koppelingslezing de bankregel meesleuren en dit scherm onbereikbaar maken.
+  const [txS, linksS] = await Promise.allSettled([
+    pipeline
+      .from('bank_transactions')
+      .select('id, amount, date, description, counterpart_name, user_id')
+      .eq('id', txId)
+      .eq('user_id', user.id)
+      .maybeSingle(),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (pipeline as any)
+      .from('bank_tx_invoices')
+      .select('invoice_id, amount_applied')
+      .eq('transaction_id', txId)
+      .eq('user_id', user.id) as Promise<{ data: Array<{ invoice_id: string; amount_applied: number | null }> | null }>,
+  ])
+
+  if (txS.status === 'rejected') throw txS.reason
+  const { data: tx } = txS.value
   if (!tx) redirect('/dashboard/bank')
 
-  // Wat eerdere koppelingen al van deze regel namen — via allocatedOnLine, dezelfde som als
-  // /api/bank/allocate en als allocate_bank_payment onder zijn lock.
+  // Wat eerdere koppelingen al van deze regel namen. De optelling zelf staat onder de tweede golf,
+  // bij het getal dat eruit komt.
+  const rows = linksS.status === 'fulfilled'
+    ? ((linksS.value.data ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>)
+    : []
+
+  const richting = settleableDirection(Number(tx.amount) || 0)
+
+  // ── [WATERVAL] Tweede golf: de facturen achter de koppelingen, en de keuzelijst ──
+  const [linkedS, { data: invRows }] = await Promise.all([
+    rows.length > 0
+      ? pipeline
+          .from('invoices')
+          .select('id, direction, invoice_type, total_inc_btw')
+          .in('id', rows.map((r) => r.invoice_id))
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .then((r) => r, () => ({ data: null }))
+      : Promise.resolve({ data: null }),
+    pipeline
+      .from('invoices')
+      .select('id, direction, invoice_type, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status')
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .eq('direction', richting)
+      // [BETAALPLAN] UITSLUITEN, niet opsommen — en dat verschil is hier een fout waard.
+      //
+      // Hier stond een lijst met toegestane statussen, waaronder 'partial'. Die status bestaat niet:
+      // de CHECK op invoices.status kent draft, sent, paid, overdue, received, processing, processed,
+      // unclear en archived, en een deels betaalde factuur HOUDT gewoon zijn status — alleen
+      // amount_paid verschuift (apply_bank_payment zet pas 'paid' als het bedrag rond is). De lijst
+      // beschreef dus een toestand die niet kan bestaan, en dat viel niet op omdat een IN-filter met
+      // een onbekende waarde niet klaagt: hij vindt hem gewoon nooit.
+      //
+      // Erger is wat een opsomming stilzwijgend WEGLAAT. Elke status die iemand later toevoegt valt
+      // er buiten, en het gevolg is geen foutmelding maar een factuur die de eigenaar niet kan
+      // aanwijzen terwijl hij hem wel moet betalen. Uitsluiten faalt de andere kant op: een nieuwe
+      // status verschijnt in de lijst en valt op, in plaats van te verdwijnen en niet op te vallen.
+      //
+      // Wat hier NIET thuishoort is precies te benoemen: een concept is nog geen schuld, betaald is
+      // geen schuld meer, gearchiveerd is uit beeld, en 'processing'/'unclear' zijn stukken die de
+      // eigenaar nog moet bevestigen — daar geld op boeken zou een bedrag vastleggen dat nog niet
+      // eens is nagekeken.
+      .not('status', 'in', '(draft,paid,archived,processing,unclear)')
+      .order('invoice_date', { ascending: true })
+      .limit(300),
+  ])
+
+  // De som via allocatedOnLine — dezelfde als in /api/bank/allocate en in allocate_bank_payment
+  // onder zijn lock. Ontbreekt ze (mislukte lezing), dan is het scherm ruimer dan nodig en weigert
+  // de route alsnog: precies dezelfde uitkomst als toen deze lezing hier nog stond.
   //
   // [CREDITNOTA] Deze telling stond hier uitgeschreven, met Math.abs eromheen, en dat is precies
   // waar hij misging: een creditnota van € 150 die al aan deze regel hing NAM geen € 150, hij GAF
   // € 150. Als magnitude geteld verdween er € 300 uit het budget en toonde dit scherm een betaling
   // die al "helemaal verdeeld" was terwijl er nog € 1.000 te verdelen viel. Drie kopieën van
   // dezelfde som is hoe dat kon: één ervan wist het, twee niet. Nu is het er één.
-  let alreadyAllocated = 0
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: links } = await (pipeline as any)
-      .from('bank_tx_invoices')
-      .select('invoice_id, amount_applied')
-      .eq('transaction_id', txId)
-      .eq('user_id', user.id)
-    const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>
-    if (rows.length > 0) {
-      const { data: linked } = await pipeline
-        .from('invoices')
-        .select('id, direction, invoice_type, total_inc_btw')
-        .in('id', rows.map((r) => r.invoice_id))
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      alreadyAllocated = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0).allocated
-    }
-  } catch {
-    /* zonder deze telling is het scherm ruimer dan nodig; de route weigert alsnog */
-  }
-
-  const richting = settleableDirection(Number(tx.amount) || 0)
-
-  const { data: invRows } = await pipeline
-    .from('invoices')
-    .select('id, direction, invoice_type, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status')
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-    .eq('direction', richting)
-    // [BETAALPLAN] UITSLUITEN, niet opsommen — en dat verschil is hier een fout waard.
-    //
-    // Hier stond een lijst met toegestane statussen, waaronder 'partial'. Die status bestaat niet:
-    // de CHECK op invoices.status kent draft, sent, paid, overdue, received, processing, processed,
-    // unclear en archived, en een deels betaalde factuur HOUDT gewoon zijn status — alleen
-    // amount_paid verschuift (apply_bank_payment zet pas 'paid' als het bedrag rond is). De lijst
-    // beschreef dus een toestand die niet kan bestaan, en dat viel niet op omdat een IN-filter met
-    // een onbekende waarde niet klaagt: hij vindt hem gewoon nooit.
-    //
-    // Erger is wat een opsomming stilzwijgend WEGLAAT. Elke status die iemand later toevoegt valt
-    // er buiten, en het gevolg is geen foutmelding maar een factuur die de eigenaar niet kan
-    // aanwijzen terwijl hij hem wel moet betalen. Uitsluiten faalt de andere kant op: een nieuwe
-    // status verschijnt in de lijst en valt op, in plaats van te verdwijnen en niet op te vallen.
-    //
-    // Wat hier NIET thuishoort is precies te benoemen: een concept is nog geen schuld, betaald is
-    // geen schuld meer, gearchiveerd is uit beeld, en 'processing'/'unclear' zijn stukken die de
-    // eigenaar nog moet bevestigen — daar geld op boeken zou een bedrag vastleggen dat nog niet
-    // eens is nagekeken.
-    .not('status', 'in', '(draft,paid,archived,processing,unclear)')
-    .order('invoice_date', { ascending: true })
-    .limit(300)
+  const linked = linkedS.data
+  const alreadyAllocated = rows.length > 0 && linked
+    ? allocatedOnLine(rows, linked, Number(tx.amount) || 0).allocated
+    : 0
 
   const facturen: VerdeelFactuur[] = (invRows ?? [])
     // Een factuur die de boekhouder al verwerkte is dicht voor nieuw geld — hem tonen zou een

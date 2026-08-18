@@ -19,17 +19,17 @@ export default async function BestandenServerPage() {
 
   if (!user) redirect("/login");
 
-  // [BOEK-033] Read onboarding_done + role in a single query
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("onboarding_done, role")
-    .eq("id", user.id)
-    .single();
+  // [WATERVAL] De jaarstructuur hangt niet aan het profiel — hij kent alleen user.id — en stond er
+  // toch onder te wachten. Nu gaan ze samen de deur uit; de omleiding eronder gebeurt nog steeds
+  // voordat er iets op het scherm komt.
+  const [{ data: profile }] = await Promise.all([
+    // [BOEK-033] Read onboarding_done + role in a single query
+    supabase.from("profiles").select("onboarding_done, role").eq("id", user.id).single(),
+    // [BOEK-033] Ensure year structure exists — idempotent, fast-path on built years
+    ensureYearStructure(user.id, new Date().getFullYear()),
+  ]);
 
   if (!profile?.onboarding_done) redirect("/onboarding");
-
-  // [BOEK-033] Ensure year structure exists — idempotent, fast-path on built years
-  await ensureYearStructure(user.id, new Date().getFullYear());
 
   // [BOEK-033] Pass role for the sidebar logo to point to the correct home
 // [BOEK-002] narrow role to BestandenPage's union (Supabase returns generic string after type regen)
