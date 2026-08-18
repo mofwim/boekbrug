@@ -10140,6 +10140,83 @@ export const MESSAGES = {
     en: 'Link them under Bank, or invoice them if they are turnover.',
   },
 
+  // ─── [DUBBEL-BEWIJS] The no-double-pay check, saying what it did ─────────────────────────────
+  //
+  // The check answers "have you already paid this?" and had exactly two answers on screen: a
+  // warning, or an ordinary pay dialog. "We could not look" rendered as the second one — the same
+  // pixels as a completed search that found nothing. Four separate paths reached it: the invoice
+  // unreadable, the paid set unreadable, no amount on the document, no vendor to anchor on.
+  //
+  // These sentences give the check its third answer, and give the other two the SEARCH behind
+  // them. Whole sentences per case rather than a noun parameter: 'rekening'/'rekeningen' is a
+  // Dutch plural, and a language with a dual or with suffix harmony cannot be served by swapping
+  // the noun into a slot.
+
+  'dubbel.zoek.geen': {
+    nl: 'Nagekeken: je hebt deze leverancier de afgelopen {dagen} dagen niet eerder dit bedrag betaald.',
+    ar: 'تم التحقّق: لم تدفع لهذا المورّد هذا المبلغ خلال آخر {dagen} يوماً.',
+    en: 'Checked: you have not paid this supplier this amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.een': {
+    nl: 'Nagekeken tegen 1 rekening die je deze leverancier de afgelopen {dagen} dagen voor hetzelfde bedrag betaalde.',
+    ar: 'تمّت المقارنة مع فاتورة واحدة دفعتها لهذا المورّد بالمبلغ نفسه خلال آخر {dagen} يوماً.',
+    en: 'Checked against 1 invoice you paid this supplier for the same amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.meer': {
+    nl: 'Nagekeken tegen {count} rekeningen die je deze leverancier de afgelopen {dagen} dagen voor hetzelfde bedrag betaalde.',
+    ar: 'تمّت المقارنة مع {count} فواتير دفعتها لهذا المورّد بالمبلغ نفسه خلال آخر {dagen} يوماً.',
+    en: 'Checked against {count} invoices you paid this supplier for the same amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.grens': {
+    nl: 'We hebben de {count} meest recente bekeken. Betaalde je deze leverancier vaker dit bedrag, dan zitten de oudste er niet bij.',
+    ar: 'راجعنا أحدث {count} منها. إن كنت قد دفعت لهذا المورّد هذا المبلغ أكثر من ذلك، فالأقدم ليست ضمنها.',
+    en: 'We looked at the {count} most recent. If you paid this supplier this amount more often than that, the oldest are not included.',
+  },
+  'dubbel.anker.iban': {
+    nl: 'De leverancier is herkend aan het IBAN, dus aan een rekeningnummer dat maar op één manier geschreven kan worden.',
+    ar: 'جرى التعرّف على المورّد عبر الـiban، أي عبر رقم حساب لا يُكتب إلا بصورة واحدة.',
+    en: 'The supplier was identified by iban — an account number that can only be written one way.',
+  },
+  'dubbel.anker.naam': {
+    nl: 'De leverancier is herkend aan de naam, niet aan een IBAN. Staat die naam op de twee rekeningen net anders geschreven, dan ziet deze controle ze niet als dezelfde leverancier.',
+    ar: 'جرى التعرّف على المورّد بالاسم لا بالـiban. فإن كُتب الاسم على الفاتورتين بصيغتين مختلفتين قليلاً، فلن يعتبرهما هذا الفحص مورّداً واحداً.',
+    en: 'The supplier was identified by name, not by iban. If that name is written even slightly differently on the two invoices, this check does not see them as the same supplier.',
+  },
+
+  'dubbel.onbekend.factuur': {
+    nl: 'We konden deze rekening zelf niet lezen, dus we hebben niet kunnen nakijken of je hem al betaald hebt.',
+    ar: 'لم نتمكّن من قراءة هذه الفاتورة نفسها، فلم نستطع التحقّق ممّا إذا كنت قد دفعتها من قبل.',
+    en: 'We could not read this invoice itself, so we could not check whether you have already paid it.',
+  },
+  'dubbel.onbekend.eerder': {
+    nl: 'We konden je eerder betaalde rekeningen niet lezen, dus we hebben niet kunnen nakijken of je deze al betaald hebt.',
+    ar: 'لم نتمكّن من قراءة فواتيرك المدفوعة سابقاً، فلم نستطع التحقّق ممّا إذا كنت قد دفعت هذه من قبل.',
+    en: 'We could not read your previously paid invoices, so we could not check whether you have already paid this one.',
+  },
+  'dubbel.onbekend.bedrag': {
+    nl: 'Op deze rekening staat geen bruikbaar bedrag. Zonder bedrag kunnen we niet nakijken of je hem al betaald hebt.',
+    ar: 'لا يحمل هذا المستند مبلغاً صالحاً للاستعمال. وبلا مبلغ لا يمكننا التحقّق ممّا إذا كنت قد دفعته من قبل.',
+    en: 'This invoice carries no usable amount. Without one we cannot check whether you have already paid it.',
+  },
+  'dubbel.onbekend.leverancier': {
+    nl: 'Op deze rekening staat geen leverancier en geen IBAN. Zonder een van die twee kunnen we niet nakijken of je hem al betaald hebt.',
+    ar: 'لا يحمل هذا المستند اسم مورّد ولا iban. وبدون أحدهما لا يمكننا التحقّق ممّا إذا كنت قد دفعته من قبل.',
+    en: 'This invoice carries neither a supplier nor an iban. Without one of the two we cannot check whether you have already paid it.',
+  },
+  // Covers every way the SCREEN failed to get an answer — a dropped connection, an expired
+  // session, a request the route refused. Deliberately does not name which: the owner's next step
+  // is the same in all of them, and guessing wrong about the cause is worse than not saying.
+  'dubbel.onbekend.netwerk': {
+    nl: 'De controle op dubbel betalen is niet uitgevoerd.',
+    ar: 'لم يُنفَّذ فحص الدفع المزدوج.',
+    en: 'The double-payment check did not run.',
+  },
+  'dubbel.onbekend.watNu': {
+    nl: 'Kijk zelf even na of je deze rekening al betaald hebt voordat je hem afvinkt.',
+    ar: 'تحقّق بنفسك ممّا إذا كنت قد دفعت هذه الفاتورة قبل أن تعلّمها كمدفوعة.',
+    en: 'Check for yourself whether you have already paid this invoice before ticking it off.',
+  },
+
   // ─── [CREDIT-BEWIJS] Which credit notes produced "Deels gecrediteerd · € 250" ────────────────
   //
   // Same shape as the instalments above, and the same reason: the chip states a conclusion the

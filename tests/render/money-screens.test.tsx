@@ -2402,3 +2402,58 @@ test("[ANDER-TOTAAL] the document's own total reaches the confirm modal as one t
   const cleanHtml = render(cleanInvoice);
   assert.doesNotMatch(cleanHtml, /Staat dit bedrag op je factuur\?/, "no offer on an invoice that reads right");
 });
+
+test("[DUBBEL-BEWIJS] 'we could not look' does not render as 'we looked and found nothing'", async () => {
+  // The whole point, painted. The no-double-pay check reached the screen as a warning or as
+  // nothing at all, and "nothing at all" was doing two jobs: a completed search that found no
+  // twin, and five separate paths where no search happened. Both opened the same pay dialog.
+  //
+  // Rendering the two side by side is the assertion: if they ever produce the same markup again,
+  // the owner is once more one tap from paying a supplier twice with the app's blessing.
+  const { default: DoublePayNotice } = await import("../../src/components/invoice/DoublePayNotice");
+  const { buildDoublePayNotice } = await import("../../src/lib/double-pay-check");
+
+  const paint = (result: unknown) => renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(DoublePayNotice as any, { notice: buildDoublePayNotice(result as never, "nl") }),
+  );
+
+  const searched = paint({
+    outcome: "clear", match: null, reason: null,
+    search: { candidates: 4, anchor: "iban", days: 120, capped: false, limit: 50 },
+  });
+  const unread = paint({ outcome: "unchecked", match: null, search: null, reason: "candidates_unreadable" });
+
+  assert.notEqual(searched, unread, "a failed read and a completed search may never paint the same");
+  assert.ok(searched.length > 0, "a completed check says what it compared against");
+  assert.ok(unread.length > 0, "and a failed one says it failed — never an empty span");
+
+  // The completed one names the size of the set and the window; the failed one names neither,
+  // because there was none. A number on the failed line would be a search that never happened.
+  assert.match(searched, /4/);
+  assert.match(searched, /120/);
+  assert.doesNotMatch(unread, /120/);
+
+  // Nothing to report yet renders nothing at all — the dialog before the answer arrives.
+  assert.equal(paint(null), "", "no result yet → no line, not an empty box");
+
+  // Each of the five reasons paints, and paints its own sentence. A shared "er ging iets mis"
+  // would tell the owner nothing they can act on, and two of the five they can fix themselves.
+  const reasons = ["invoice_unreadable", "candidates_unreadable", "no_amount", "no_vendor", "network"];
+  const painted = reasons.map((reason) => paint({ outcome: "unchecked", match: null, search: null, reason }));
+  assert.ok(painted.every((h) => h.length > 0), "every reason reaches the screen");
+  assert.equal(new Set(painted).size, 5, "five causes, five different lines");
+
+  // [TAAL] The direction travels with the words, on the same object — so an Arabic-reading owner
+  // cannot get the sentence in one direction and the layout in the other.
+  const ar = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(DoublePayNotice as any, {
+      notice: buildDoublePayNotice(
+        { outcome: "unchecked", match: null, search: null, reason: "no_amount" } as never, "ar",
+      ),
+    }),
+  );
+  assert.match(ar, /dir="rtl"/);
+  assert.doesNotMatch(ar, /border-left|padding-left|text-align:right/);
+});

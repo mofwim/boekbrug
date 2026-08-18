@@ -12116,3 +12116,101 @@ test("[LOGBOEK] the screen is reachable without typing its address", () => {
     `/dashboard/logboek is named but never linked — mentioned in:\n  ${referrers.join("\n  ")}`,
   );
 });
+
+test("[DUBBEL-BEWIJS] the no-double-pay check can say it did not check", () => {
+  // /api/incoming/check-paid answers ONE question — "have you already paid this?" — on the screen
+  // where the next tap sends money out. It had two answers and needed three: a warning, a clean
+  // check, and "we could not look". Five paths produced the third while rendering as the second:
+  // the invoice unreadable, the paid set unreadable, no amount on the document, no vendor to
+  // anchor on, and a network failure the screen caught and swallowed.
+  //
+  // The two that need no database are the sharpest. An invoice with no readable amount and no
+  // readable vendor is a document the reader could not make sense of — precisely the one most
+  // likely to have been uploaded twice — so the check switched itself off hardest on the invoices
+  // it understood least, and said nothing about having done so.
+  const route = code("src/app/api/incoming/check-paid/route.ts");
+
+  // Every exit that ANSWERS the question goes through one of two builders, so no exit can invent
+  // its own shape or forget a field. The auth/parse guards are not answers — they carry `error`
+  // and an HTTP status, and the screen reads them off res.ok.
+  assert.match(route, /function answer\(r: DoublePayResult\)/);
+  assert.match(route, /function unchecked\(reason: DoublePayUnchecked\)/);
+  assert.match(route, /outcome: 'unchecked', match: null, search: null, reason/);
+
+  // THE regression this gate exists for: the old silent answer must not come back. A bare
+  // `duplicate: false` is the exact literal that made a database error look like a clean check.
+  assert.doesNotMatch(route, /duplicate: false/,
+    "a bare `duplicate: false` is the silence this whole change removes");
+  // `duplicate` itself stays, derived from the outcome, for any caller still on the old shape.
+  assert.match(route, /duplicate: r\.outcome === 'twin'/);
+
+  // Both reads are read. supabase-js returns { data: null, error } rather than throwing, so a
+  // destructure without `error` converts every failure into an empty result ([NO-SILENT-EMPTY]).
+  assert.match(route, /const \{ data: target, error: targetError \} = await supabase/);
+  assert.match(route, /const \{ data: matches, error: matchesError \} = await query/);
+  for (const reason of ["invoice_unreadable", "candidates_unreadable", "no_amount", "no_vendor"]) {
+    assert.match(route, new RegExp(`unchecked\\('${reason}'\\)`),
+      `${reason} reports itself instead of answering "no duplicate"`);
+  }
+
+  // The SEARCH travels with every concluded answer. `candidates` is the count BEFORE pickPaidTwin's
+  // fences on purpose: that is how wide the search was, and reporting the survivors instead would
+  // describe the conclusion twice and the search not at all.
+  assert.match(route, /candidates: candidates\.length/);
+  assert.match(route, /anchor: target\.vendor_iban \? \('iban' as const\) : \('name' as const\)/);
+  // The candidate ceiling is named, not left as a bare literal in the query — a bounded search
+  // that cannot report its own bound is a complete-looking one.
+  assert.match(route, /const MAX_CANDIDATES = 50/);
+  assert.match(route, /\.limit\(MAX_CANDIDATES\)/);
+  assert.match(route, /capped: candidates\.length >= MAX_CANDIDATES/);
+
+  // ── The screen ──
+  const client = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // The catch used to open the ordinary pay dialog and say nothing. Not blocking was right; the
+  // silence was the defect, and both halves have to stay.
+  assert.match(client, /setPayCheck\(\{ outcome: 'unchecked', match: null, search: null, reason: 'network' \}\)/);
+  assert.equal((client.match(/reason: 'network' \}\)/g) ?? []).length, 2,
+    "both the thrown case AND the non-ok response report themselves — a 401 is not a clean check");
+  // The notice reaches the sheet that spends the money, and the one that warns.
+  assert.match(client, /notice=\{payCtx\.newStatus === 'paid'/);
+  assert.match(client, /<DoublePayNotice notice=\{buildDoublePayNotice\(payCheck, taal\)\} \/>/);
+  assert.match(client, /<DoublePayNotice notice=\{buildDoublePayNotice\(dupWarn\.check \?\? null, taal\)\} \/>/);
+  // A stale answer may not survive its dialog: the next invoice's sheet must not open still
+  // showing the previous one's search.
+  assert.equal((client.match(/setPayCheck\(null\)/g) ?? []).length, 3,
+    "cancel, the 'nee, nog niet' exit and executePay each clear the previous answer");
+
+  // ── [TAAL] The component holds no language and no direction of its own ──
+  const comp = readFileSync("src/components/invoice/DoublePayNotice.tsx", "utf8");
+  assert.match(comp, /dir=\{notice\.dir\}/, "direction travels with the words, on the same object");
+  // Every word on this component comes through the notice object. The check is structural rather
+  // than a hunt for known Dutch phrases: a JSX TEXT NODE is what a hard-coded sentence looks like,
+  // and there must be none. The first version of this assertion looked for a quoted string
+  // starting with a capital — which JSX text is not — so it passed on a component with
+  // `<span>Wij konden niet nakijken</span>` welded into it, and would have passed forever, on the
+  // one file claiming to hold no language. That is [STRIPPER-BLIND]'s defect one level up: an
+  // assertion that matches a MENTION instead of the WIRING.
+  const jsxText = code("src/components/invoice/DoublePayNotice.tsx").match(/>[^<>{}]*[A-Za-z]{2,}[^<>{}]*</g);
+  assert.equal(jsxText, null,
+    `the component holds no words of its own — found ${JSON.stringify(jsxText)}`);
+  // Physical sides are wrong in exactly one language, which is the one nobody checks.
+  assert.match(comp, /borderInlineStart/);
+  assert.doesNotMatch(comp, /borderLeft|paddingLeft|textAlign: 'right'/);
+
+  // ── The vocabulary ──
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const pure = code("src/lib/double-pay-check.ts");
+  const used = new Set([...pure.matchAll(/["'](dubbel\.[a-zA-Z.]+)["']/g)].map((m) => m[1]));
+  assert.ok(used.size >= 11, `the notice builder reaches its vocabulary (found ${used.size})`);
+  for (const key of used) {
+    assert.ok(messages.includes(`'${key}':`), `${key} exists in the catalogue`);
+    // Dutch is required per key; a gap in another language falls back to Dutch, never to a key.
+    const at = messages.indexOf(`'${key}':`);
+    assert.match(messages.slice(at, at + 400), /nl: '/, `${key} has a Dutch sentence`);
+  }
+  // A noun inside a sentence is not a parameter: 'rekening'/'rekeningen' is a Dutch plural, and a
+  // language with a dual or with suffix harmony cannot be served by swapping the noun into a slot.
+  for (const key of ["dubbel.zoek.geen", "dubbel.zoek.een", "dubbel.zoek.meer"]) {
+    assert.ok(used.has(key), `${key} is a whole sentence the builder chooses between`);
+  }
+});

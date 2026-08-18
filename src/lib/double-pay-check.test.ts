@@ -6,7 +6,10 @@
 //   · a re-sent invoice (same number) and an unreadable number must KEEP warning: that is the
 //     only thing between the owner and a second payment.
 
-import { pickPaidTwin, type PaidTwinCandidate } from './double-pay-check'
+import {
+  pickPaidTwin, buildDoublePayNotice,
+  type PaidTwinCandidate, type DoublePayResult, type DoublePayUnchecked,
+} from './double-pay-check'
 
 let passed = 0, failed = 0
 function check(name: string, cond: boolean) {
@@ -143,6 +146,115 @@ console.log('\n— the date fence: two numbers on ONE day is one document, read 
 console.log('\n— nothing to weigh —')
 {
   check('no candidates → null', pickPaidTwin({ invoice_number: '20260457', invoice_date: '2026-07-15' }, []) === null)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// [DUBBEL-BEWIJS] The check's third answer.
+//
+// Everything above tests WHICH invoice is worth warning about. This tests what the owner is told
+// when the check could not get that far — because for five separate reasons it produced exactly
+// the screen a completed search produces, and the owner then paid a supplier twice.
+
+const clearResult = (over: Partial<DoublePayResult> = {}): DoublePayResult => ({
+  outcome: 'clear', match: null, reason: null,
+  search: { candidates: 3, anchor: 'iban', days: 120, capped: false, limit: 50 },
+  ...over,
+})
+const uncheckedResult = (reason: DoublePayUnchecked): DoublePayResult =>
+  ({ outcome: 'unchecked', match: null, search: null, reason })
+
+console.log('\n— the search is stated, not just the conclusion —')
+{
+  const n = buildDoublePayNotice(clearResult({ search: { candidates: 0, anchor: 'iban', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('no candidates → says so, and names the window', !!n && n.lead.includes('120') && n.tone === 'clear')
+  check('and does not claim to have compared anything', !!n && !n.lead.includes('Nagekeken tegen'))
+}
+{
+  const n = buildDoublePayNotice(clearResult({ search: { candidates: 1, anchor: 'iban', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('exactly one candidate gets the singular sentence', !!n && n.lead.includes('1 rekening ') && !n.lead.includes('rekeningen'))
+}
+{
+  const n = buildDoublePayNotice(clearResult({ search: { candidates: 7, anchor: 'iban', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('seven candidates are named as seven', !!n && n.lead.includes('7 rekeningen'))
+}
+
+console.log('\n— the anchor is a claim about how well the search could work —')
+{
+  const iban = buildDoublePayNotice(clearResult({ search: { candidates: 2, anchor: 'iban', days: 120, capped: false, limit: 50 } }), 'nl')
+  const naam = buildDoublePayNotice(clearResult({ search: { candidates: 2, anchor: 'name', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('iban and name do not say the same thing', !!iban && !!naam && iban.detail[0] !== naam.detail[0])
+  // The name anchor is an exact escaped ilike: "Kiwi Food Market" and "Kiwi Food Market B.V." are
+  // two different suppliers to this query. The owner is the only one who can catch that, and only
+  // if they are told which anchor was used.
+  check('the name anchor states that a different spelling is a different supplier', !!naam && naam.detail[0].includes('anders geschreven'))
+}
+
+console.log('\n— a bounded search says it was bounded —')
+{
+  const n = buildDoublePayNotice(clearResult({ search: { candidates: 50, anchor: 'iban', days: 120, capped: true, limit: 50 } }), 'nl')
+  check('the ceiling is reported, with its number', !!n && n.detail.some((d) => d.includes('50')))
+  const open = buildDoublePayNotice(clearResult({ search: { candidates: 4, anchor: 'iban', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('and an unbounded one does not invent a ceiling', !!open && open.detail.length === 1)
+}
+
+console.log('\n— THE ONE THIS EXISTS FOR: "could not look" never renders as "looked and found nothing" —')
+{
+  const reasons: DoublePayUnchecked[] = ['invoice_unreadable', 'candidates_unreadable', 'no_amount', 'no_vendor', 'network']
+  const clear = buildDoublePayNotice(clearResult(), 'nl')
+  const notices = reasons.map((r) => buildDoublePayNotice(uncheckedResult(r), 'nl'))
+  check('every reason produces a notice', notices.every((n) => !!n))
+  // Null-safe on purpose: when a regression makes only SOME reasons go quiet, the suite has to
+  // survive long enough to say which. An earlier draft crashed on the first null and hid four.
+  check('none of them is toned as a clean check', notices.every((n) => n?.tone === 'unknown'))
+  check('none of them reads like the clean sentence', notices.every((n) => n?.lead !== clear!.lead))
+  // Five distinct causes, five distinct sentences — a shared "er ging iets mis" would tell the
+  // owner nothing they could act on, and two of these five are fixable by them (the document has
+  // no amount / no supplier on it).
+  check('the five reasons are five different sentences', new Set(notices.map((n) => n?.lead ?? '')).size === 5)
+  check('each one says what to do instead', notices.every((n) => (n?.detail.length ?? 0) > 0))
+}
+{
+  // The two that need no database at all, and are the sharpest: an invoice with no readable
+  // amount or vendor is the document most likely to have been uploaded twice, and the check
+  // switched itself off hardest exactly there.
+  const geenBedrag = buildDoublePayNotice(uncheckedResult('no_amount'), 'nl')
+  const geenLev = buildDoublePayNotice(uncheckedResult('no_vendor'), 'nl')
+  check('no amount names the amount as the missing thing', !!geenBedrag && geenBedrag.lead.includes('bedrag'))
+  check('no vendor names the supplier and the iban', !!geenLev && geenLev.lead.includes('leverancier') && geenLev.lead.includes('IBAN'))
+}
+
+console.log('\n— a found twin still states its search —')
+{
+  const n = buildDoublePayNotice(clearResult({ outcome: 'twin', search: { candidates: 9, anchor: 'name', days: 120, capped: false, limit: 50 } }), 'nl')
+  check('a twin is toned as an alarm', !!n && n.tone === 'alarm')
+  check('and the set it came out of is named', !!n && n.lead.includes('9'))
+}
+
+console.log('\n— nothing to report is not the same as a report of nothing —')
+{
+  check('no result at all → no line', buildDoublePayNotice(null, 'nl') === null)
+  check('undefined → no line', buildDoublePayNotice(undefined, 'nl') === null)
+  // A response from before this shape existed: a conclusion with no search behind it. The line has
+  // nothing to add, so it adds nothing — rather than inventing a search that never happened.
+  check('a concluded result with no search states no search',
+    buildDoublePayNotice({ outcome: 'clear', match: null, search: null, reason: null }, 'nl') === null)
+  // An unchecked result with no reason must still speak: going quiet there would restore exactly
+  // the silence this whole section is about.
+  const n = buildDoublePayNotice({ outcome: 'unchecked', match: null, search: null, reason: null }, 'nl')
+  check('an unchecked result with no reason still says it was not checked', !!n && n.tone === 'unknown')
+}
+
+console.log('\n— [TAAL] Dutch is the source and the fallback; direction travels with the words —')
+{
+  const nl = buildDoublePayNotice(uncheckedResult('candidates_unreadable'), 'nl')
+  const onbekend = buildDoublePayNotice(uncheckedResult('candidates_unreadable'), 'zz')
+  check('an unknown locale falls back to Dutch, never to a key', !!onbekend && onbekend.lead === nl!.lead)
+  check('and never to a blank', !!onbekend && onbekend.lead.trim().length > 0)
+  const ar = buildDoublePayNotice(uncheckedResult('candidates_unreadable'), 'ar')
+  check('Arabic carries rtl on the same object as its words', !!ar && ar.dir === 'rtl' && ar.lead !== nl!.lead)
+  check('Dutch carries ltr', !!nl && nl.dir === 'ltr')
+  const en = buildDoublePayNotice(clearResult(), 'en')
+  check('English is translated too', !!en && en.lead !== buildDoublePayNotice(clearResult(), 'nl')!.lead)
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`)

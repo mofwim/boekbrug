@@ -45,7 +45,7 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from 'react'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { createClient } from '@/lib/supabase'
@@ -111,6 +111,10 @@ import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 // screen holds neither the words nor the colours — see the header of PaymentEvidenceLine.tsx.
 import { buildPaymentEvidenceLine, type PaymentEvidence } from '@/lib/payment-evidence'
 import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
+// [DUBBEL-BEWIJS] What the no-double-pay check actually did — including when it could not run.
+// The words live in the pure module, the colours in the component; this screen holds neither.
+import { buildDoublePayNotice, type DoublePayResult } from '@/lib/double-pay-check'
+import DoublePayNotice from '@/components/invoice/DoublePayNotice'
 // [CREDIT-SIGN] Which way the MONEY moves — a creditnota reverses its document's direction.
 import { moneyDirection } from '@/lib/credited-invoices'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  // type-only: erased, no server code in the bundle
@@ -573,8 +577,16 @@ export default function IncomingManageClient({
   const [dupWarn, setDupWarn]           = useState<{
     ctx: PayCtx
     match: { id?: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null; payment_date: string | null }
+    // [DUBBEL-BEWIJS] The search behind the warning. A twin found among fifty candidates and a
+    // twin found among one are the same warning with very different weight behind them.
+    check?: DoublePayResult | null
   } | null>(null)
   useCloseOnBack(!!dupWarn, () => setDupWarn(null))
+  // [DUBBEL-BEWIJS] What the check reported for the invoice whose pay dialog is open. Kept beside
+  // payCtx rather than inside it because it arrives from a different place: payCtx is minted when
+  // the owner taps, this comes back from the route a moment later, and on the paths where the
+  // route could not answer it is the ONLY thing the dialog has to say about it.
+  const [payCheck, setPayCheck]         = useState<DoublePayResult | null>(null)
   const [checkingId, setCheckingId]     = useState<string | null>(null)
   // [MATCH-BUTTON] On-demand reconciliation run (bank + kas + categorization) and its report.
   const [matchBusy, setMatchBusy]       = useState(false)
@@ -1421,13 +1433,30 @@ export default function IncomingManageClient({
         body: JSON.stringify({ invoiceId: inv.id }),
       })
       const data = await res.json()
-      if (res.ok && data.duplicate && data.match) {
-        setDupWarn({ ctx, match: data.match })
+      // [DUBBEL-BEWIJS] The route now says which of three things happened. A response that carries
+      // no `outcome` is one from before this shape existed (a deploy window, a cached reply): read
+      // it the old two-valued way and state no search, which is exactly what it could support.
+      const check: DoublePayResult = typeof data?.outcome === 'string'
+        ? { outcome: data.outcome, match: data.match ?? null, search: data.search ?? null, reason: data.reason ?? null }
+        : { outcome: data?.duplicate ? 'twin' : 'clear', match: data?.match ?? null, search: null, reason: null }
+      if (!res.ok) {
+        // A refused or unauthorised request is not a clean check either. It used to fall through
+        // the `else` below into an ordinary pay dialog, which is the same silence as the rest.
+        setPayCheck({ outcome: 'unchecked', match: null, search: null, reason: 'network' })
+        setPayCtx(ctx)
+      } else if (check.outcome === 'twin' && check.match) {
+        setDupWarn({ ctx, match: check.match, check })
       } else {
-        setPayCtx(ctx) // no twin → normal flow
+        // No twin, or no answer. Either way the owner may pay — and either way the dialog now says
+        // which of the two it was.
+        setPayCheck(check)
+        setPayCtx(ctx)
       }
     } catch {
-      // Check failed (network etc.) — never block paying; open the normal dialog.
+      // Check failed (network etc.) — never block paying; open the normal dialog. Not blocking was
+      // always right; the part that was wrong is that it also said nothing, so a dropped
+      // connection and a completed search produced the same screen.
+      setPayCheck({ outcome: 'unchecked', match: null, search: null, reason: 'network' })
       setPayCtx(ctx)
     } finally {
       setCheckingId(null)
@@ -1715,7 +1744,7 @@ export default function IncomingManageClient({
   // Returns whether the write actually landed — [REMOVAL-ALTERNATIVE] chains a removal onto a
   // successful undo, and must never re-open the remove sheet on a payment that is still booked.
   async function executePay(ctx: PayCtx): Promise<boolean> {
-    setPayCtx(null); setProcessingId(ctx.id)
+    setPayCtx(null); setPayCheck(null); setProcessingId(ctx.id)
     // [MANUAL-PARTIAL-PAY] A deelbetaling leaves the invoice on 'Te betalen' — only a full
     // settlement flips the status, so don't claim otherwise before the server answers.
     const isPartialIntent = ctx.newStatus === 'paid' && ctx.amount != null
@@ -3716,8 +3745,14 @@ export default function IncomingManageClient({
           }
           confirmLabel={payCtx.newStatus === 'paid' ? t('ink.jaMarkeerBetaald') : t('ink.ongedaanMaken')}
           confirmBg={payCtx.newStatus === 'paid' ? M3.success : M3.warning}
+          // [DUBBEL-BEWIJS] Only on the mark-paid direction. An UNDO cannot pay anything twice,
+          // so a sentence about the double-payment check there would be noise attached to the one
+          // action it has nothing to say about.
+          notice={payCtx.newStatus === 'paid'
+            ? <DoublePayNotice notice={buildDoublePayNotice(payCheck, taal)} />
+            : undefined}
           onConfirm={() => executePay(payCtx)}
-          onCancel={() => setPayCtx(null)}
+          onCancel={() => { setPayCtx(null); setPayCheck(null) }}
           paymentChoice={
             payCtx.newStatus === 'paid'
               ? (method, paymentDate, amount) => executePay({
@@ -3740,7 +3775,7 @@ export default function IncomingManageClient({
                   label: t('ink.neeNogNiet'),
                   onClick: () => {
                     const inv = invoices.find(i => i.id === payCtx.id)
-                    setPayCtx(null)
+                    setPayCtx(null); setPayCheck(null)
                     if (inv) markNotPaid(inv)
                   },
                 }
@@ -3805,6 +3840,11 @@ export default function IncomingManageClient({
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
               {t('ink.mogelijkBetaaldUitleg')}
             </p>
+            {/* [DUBBEL-BEWIJS] The search behind the warning. A twin found among fifty candidates
+                and a twin found among one are the same alarm with very different weight behind
+                it — and when the vendor was matched by NAME rather than iban, the owner is the
+                only one who can tell whether the two names are really the same supplier. */}
+            <DoublePayNotice notice={buildDoublePayNotice(dupWarn.check ?? null, taal)} />
             <div style={{ background: '#F8F9FA', borderRadius: R.md, padding: '10px 14px', marginBottom: 20, fontSize: 13, color: '#202124' }}>
               <div style={{ fontWeight: 600 }}>{dupWarn.match.client_name ?? '—'}</div>
               <div style={{ color: '#5F6368', marginTop: 2 }}>
@@ -3830,7 +3870,7 @@ export default function IncomingManageClient({
               </button>
               {/* The owner can still insist this is a separate, genuinely-due invoice */}
               <button
-                onClick={() => { const c = dupWarn.ctx; setDupWarn(null); setPayCtx(c) }}
+                onClick={() => { const c = dupWarn.ctx, chk = dupWarn.check ?? null; setDupWarn(null); setPayCheck(chk); setPayCtx(c) }}
                 style={{ width: '100%', padding: '12px', borderRadius: R.full, background: 'transparent', color: M3.warning, fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT }}>
                 {t('inkoop.tochBetaald')}
               </button>
@@ -4100,12 +4140,17 @@ function InfoLine({ label, value, mono }: { label: string; value: string | null 
   )
 }
 
-function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
+function BottomSheet({ title, body, warning, notice, confirmLabel, confirmBg, onConfirm, onCancel, paymentChoice, secondaryAction, openAmount: openBalance }: {
   title: string
   body: string
   // [INVOICE-REMOVE] The consequence to weigh before tapping — shown in an amber box, the same
   // one the sales list uses, so a warning looks identical wherever the owner meets it.
   warning?: string
+  // [DUBBEL-BEWIJS] A rendered node rather than a string, because what goes here is a built object
+  // with its own direction and tone (see DoublePayNotice.tsx). Distinct from `warning`: that box
+  // is the CONSEQUENCE of tapping confirm, this one is what the app did or could not do before
+  // offering the button at all.
+  notice?: ReactNode
   confirmLabel: string
   confirmBg: string
   onConfirm: () => void
@@ -4151,6 +4196,11 @@ function BottomSheet({ title, body, warning, confirmLabel, confirmBg, onConfirm,
             <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.5, margin: 0 }}>{warning}</p>
           </div>
         )}
+
+        {/* [DUBBEL-BEWIJS] Above the pay controls, which is where the owner is looking in the
+            second before they tap. Never between them and the button — this informs, it does not
+            gate (SAFECORE ⑤). */}
+        {notice}
 
         {paymentChoice ? (
           <>
