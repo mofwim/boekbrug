@@ -9998,6 +9998,113 @@ export const MESSAGES = {
     en: 'Search invoices, amounts, files…',
   },
 
+  // ─── [BETAALBEWIJS] Under every "Betaald", how we know ──────────────────────────────────────
+  //
+  // A payment PROVEN by a bank line and a payment the owner ticked by hand are different facts.
+  // The first is corroborated by a third party; the second is a memory. Rendering both as the same
+  // word borrows the bank's authority for the tick — and when the tick was a mistake, nothing on
+  // the screen ever says so.
+  //
+  // The direction is not decoration. Money leaves for a purchase invoice and ARRIVES for a sales
+  // one, so "afgeschreven naar Kiwi Food Market" under an invoice Kiwi paid describes the owner
+  // paying their own customer. Own keys per direction, per rule 1 of this file.
+
+  'betaal.onbekend': {
+    nl: 'We konden niet nakijken waar deze betaling vandaan komt.',
+    ar: 'تعذّر التحقق من مصدر هذه الدفعة.',
+    en: 'We could not check where this payment came from.',
+  },
+  // Honest, and rare. "Betaald" with nothing recording how is the one case where the app has a
+  // status and no evidence at all — saying so is what keeps the other two worth believing.
+  'betaal.geen': {
+    nl: 'Als betaald gemarkeerd, maar er is geen betaling aan gekoppeld.',
+    ar: 'مُعلَّمة كمدفوعة، لكن لا توجد دفعة مرتبطة بها.',
+    en: 'Marked as paid, but no payment is linked to it.',
+  },
+
+  'betaal.hand': {
+    nl: 'Door jou afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: 'أنت علّمتها بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: 'Ticked off by you on {datum} — no bank line is linked to it.',
+  },
+  'betaal.hand.zonderDatum': {
+    nl: 'Door jou afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: 'أنت علّمتها — لا يوجد سطر بنكي مرتبط بها.',
+    en: 'Ticked off by you — no bank line is linked to it.',
+  },
+  'betaal.hand.kas': {
+    nl: 'Door jou contant afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: 'أنت علّمتها نقداً بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: 'Ticked off by you as cash on {datum} — no bank line is linked to it.',
+  },
+  'betaal.hand.kas.zonderDatum': {
+    nl: 'Door jou contant afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: 'أنت علّمتها نقداً — لا يوجد سطر بنكي مرتبط بها.',
+    en: 'Ticked off by you as cash — no bank line is linked to it.',
+  },
+
+  // Money OUT — a bill the owner paid.
+  'betaal.bank.inkoop': {
+    nl: '{bedrag} afgeschreven op {datum} naar {naam}',
+    ar: 'خُصم {bedrag} في {datum} إلى {naam}',
+    en: '{bedrag} debited on {datum} to {naam}',
+  },
+  'betaal.bank.inkoop.zonderNaam': {
+    nl: '{bedrag} afgeschreven op {datum}',
+    ar: 'خُصم {bedrag} في {datum}',
+    en: '{bedrag} debited on {datum}',
+  },
+  'betaal.bank.inkoop.zonderDatum': {
+    nl: '{bedrag} afgeschreven naar {naam}',
+    ar: 'خُصم {bedrag} إلى {naam}',
+    en: '{bedrag} debited to {naam}',
+  },
+  'betaal.bank.inkoop.kaal': {
+    nl: '{bedrag} afgeschreven',
+    ar: 'خُصم {bedrag}',
+    en: '{bedrag} debited',
+  },
+  // Money IN — an invoice the owner issued and a customer settled.
+  'betaal.bank.verkoop': {
+    nl: '{bedrag} bijgeschreven op {datum} van {naam}',
+    ar: 'وصل {bedrag} في {datum} من {naam}',
+    en: '{bedrag} credited on {datum} from {naam}',
+  },
+  'betaal.bank.verkoop.zonderNaam': {
+    nl: '{bedrag} bijgeschreven op {datum}',
+    ar: 'وصل {bedrag} في {datum}',
+    en: '{bedrag} credited on {datum}',
+  },
+  'betaal.bank.verkoop.zonderDatum': {
+    nl: '{bedrag} bijgeschreven van {naam}',
+    ar: 'وصل {bedrag} من {naam}',
+    en: '{bedrag} credited from {naam}',
+  },
+  'betaal.bank.verkoop.kaal': {
+    nl: '{bedrag} bijgeschreven',
+    ar: 'وصل {bedrag}',
+    en: '{bedrag} credited',
+  },
+
+  // The bank's own text, quoted verbatim — it is the string the owner RECOGNISES, and recognition
+  // is the whole mechanism here. A tidied version is a string they have never seen.
+  'betaal.bank.omschrijving': { nl: '{regel} — “{tekst}”', ar: '{regel} — «{tekst}»', en: '{regel} — “{tekst}”' },
+  'betaal.bank.meer.een': {
+    nl: '{regel} (+ 1 andere betaling)',
+    ar: '{regel} (+ دفعة أخرى)',
+    en: '{regel} (+ 1 other payment)',
+  },
+  'betaal.bank.meer.meer': {
+    nl: '{regel} (+ {count} andere betalingen)',
+    ar: '{regel} (+ {count} دفعات أخرى)',
+    en: '{regel} (+ {count} other payments)',
+  },
+  'betaal.bank.deelsHand': {
+    nl: '{regel} Een deel is door jou zelf afgevinkt.',
+    ar: '{regel} جزء منها علّمته أنت بنفسك.',
+    en: '{regel} Part of it was ticked off by you.',
+  },
+
   // ─── [OPENSTAAND-BEWIJS] The panel that states the SEARCH, not the conclusion ───────────────
   //
   // Rule 1 of this file, applied literally: the noun is never a parameter. "inkoopfactuur" and

@@ -159,6 +159,19 @@ export default async function VerkoopPage() {
     }
   }
 
+  // [BETAALBEWIJS] Deliberately NOT on this screen, and that is a decision rather than an omission.
+  //
+  // The evidence line under "Betaald" names the bank line that carries the payment — the date, the
+  // counterparty and the statement text. Those rows live under `user_id = auth.uid()`, so the
+  // reader here often cannot see them at all: this page is the EMPLOYEE's, and their read boundary
+  // is `created_by = actorId` on purpose (acting-for.ts). Showing it would mean fetching the
+  // OWNER's bank through service_role and handing it to somebody whose view of the administratie
+  // was narrowed on purpose — widening a privacy boundary for a nicety.
+  //
+  // The owner gets the line on their own list (/dashboard/facturen), where their own session reads
+  // their own rows and RLS scopes it exactly. If an employee ever needs it, that is a product
+  // decision about what a medewerker may see, not a rendering detail.
+
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.
   return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} gecrediteerd={gecrediteerd} />

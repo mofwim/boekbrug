@@ -9,7 +9,11 @@
 // every invoice comes back 'unknown' rather than 'none' — "we could not look" is the truth there,
 // and 'none' would tell the owner their payments have no evidence when what is missing is a table.
 
-import { fetchAllRows } from './supabase-paginate'
+// [ID-CHUNK] fetchAllRowsForIds, not a bare .in(). A PostgREST filter travels in the URL, so a
+// list of a few hundred uuids blows the length limit long before it breaks anything visible — and
+// what it breaks HERE is the evidence under "Betaald", which would simply stop appearing. The
+// sales list is paged and unbounded, so this is reachable in ordinary use, not in theory.
+import { fetchAllRows, fetchAllRowsForIds } from './supabase-paginate'
 import { classifyPayment, type PaymentEvidence, type PaymentLink } from './payment-evidence'
 import { isMissingRelation } from './pg-missing'
 
@@ -31,11 +35,11 @@ export async function collectPaymentEvidence(args: {
 
   let links: Array<Record<string, unknown>>
   try {
-    links = await fetchAllRows((from, to) => args.pipeline
+    links = await fetchAllRowsForIds([...args.invoiceIds], (chunk, from, to) => args.pipeline
       .from('bank_tx_invoices')
       .select('invoice_id, transaction_id, amount_applied, paid_on, method')
       .eq('user_id', args.ownerId)
-      .in('invoice_id', [...args.invoiceIds])
+      .in('invoice_id', chunk)
       .order('invoice_id', { ascending: true })
       .range(from, to))
   } catch (e) {
@@ -49,11 +53,11 @@ export async function collectPaymentEvidence(args: {
   const byTx = new Map<string, NonNullable<PaymentLink['transaction']>>()
   if (txIds.length > 0) {
     try {
-      const rows = await fetchAllRows<Record<string, unknown>>((from, to) => args.pipeline
+      const rows = await fetchAllRowsForIds<Record<string, unknown>, string>(txIds, (chunk, from, to) => args.pipeline
         .from('bank_transactions')
         .select('id, date, amount, description, counterpart_name, counterpart_iban')
         .eq('user_id', args.ownerId)
-        .in('id', txIds)
+        .in('id', chunk)
         .order('id', { ascending: true })
         .range(from, to))
       for (const r of rows) {

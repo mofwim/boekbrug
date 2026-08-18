@@ -23,6 +23,14 @@
 // Pure: no I/O, no clock, no database.
 
 import { round2 } from './invoice-totals'
+// [TAAL] The words come from the catalogue; this module still decides WHICH words. Dutch is the
+// source and the fallback, so an owner who has not chosen a language sees exactly what they saw
+// before this file was translated — the tests below assert that literally.
+import { translator } from './i18n/t'
+import { localeDir, type Locale } from './i18n/locale'
+// The direction of the money. Shared with the proof panel so one vocabulary describes both halves
+// of the same question: is what we say about this euro true, and how do we know?
+import type { ProofDirection } from './open-invoice-proof-types'
 
 /** One settlement row, as bank_tx_invoices holds it. */
 export interface PaymentLink {
@@ -90,40 +98,57 @@ function dayNL(iso: string | null | undefined): string | null {
  * their own screen, and a cleaned-up version of it is a string they have never seen. Recognition
  * is the entire mechanism — the owner is not asked to verify anything, only to recognise.
  *
- * Dutch, because the entrepreneur reads it (AGENTS.md).
+ * `direction` decides whether the money LEFT or ARRIVED. It is not a nicety: "afgeschreven naar
+ * Kiwi Food Market" under an invoice Kiwi paid describes the owner paying their own customer, on
+ * the one line that exists to be believed.
  */
-export function describePayment(ev: PaymentEvidence): string {
+export function describePayment(
+  ev: PaymentEvidence,
+  direction: ProofDirection = 'incoming',
+  locale: Locale = 'nl',
+): string {
+  const t = translator(locale)
   switch (ev.kind) {
     case 'unknown':
-      return 'We konden niet nakijken waar deze betaling vandaan komt.'
+      return t('betaal.onbekend')
     case 'none':
       // Honest, and rare. "Betaald" with nothing recording how is the one case where the app has a
       // status and no evidence at all — saying so is what keeps the other two worth believing.
-      return 'Als betaald gemarkeerd, maar er is geen betaling aan gekoppeld.'
+      return t('betaal.geen')
     case 'manual': {
       const l = ev.links[0]
-      const dag = dayNL(l.paidOn)
-      const hoe = l.method === 'kas' ? ' contant' : ''
-      return (
-        `Door jou${hoe} afgevinkt${dag ? ` op ${dag}` : ''} — ` +
-        'er is geen bankregel aan gekoppeld.'
-      )
+      const datum = dayNL(l.paidOn)
+      const kas = l.method === 'kas'
+      if (kas) return datum ? t('betaal.hand.kas', { datum }) : t('betaal.hand.kas.zonderDatum')
+      return datum ? t('betaal.hand', { datum }) : t('betaal.hand.zonderDatum')
     }
     case 'bank':
     case 'mixed': {
       const bank = ev.links.filter((l) => l.transactionId)
       const l = bank[0]
-      const t = l?.transaction
-      const dag = dayNL(t?.date ?? l?.paidOn)
-      const naam = t?.counterpartName?.trim()
-      const oms = t?.description?.trim()
-      const bedrag = t?.amount != null ? EUR.format(Math.abs(t.amount)) : EUR.format(ev.total)
-      const meer = bank.length > 1 ? ` (+ ${bank.length - 1} andere betaling${bank.length > 2 ? 'en' : ''})` : ''
-      const hand = ev.kind === 'mixed' ? ' Een deel is door jou zelf afgevinkt.' : ''
-      return (
-        `${bedrag} afgeschreven${dag ? ` op ${dag}` : ''}${naam ? ` naar ${naam}` : ''}` +
-        `${oms ? ` — "${oms}"` : ''}${meer}.${hand}`
-      )
+      const tx = l?.transaction
+      const datum = dayNL(tx?.date ?? l?.paidOn)
+      const naam = tx?.counterpartName?.trim()
+      const bedrag = tx?.amount != null ? EUR.format(Math.abs(tx.amount)) : EUR.format(ev.total)
+      const out = direction !== 'outgoing'
+
+      // Four shapes per direction, because both the name and the date can genuinely be missing —
+      // a bank line whose own row could not be read still proves that a bank line CARRIES this
+      // payment, and that claim is worth keeping without its text.
+      let regel: string
+      if (datum && naam) regel = out ? t('betaal.bank.inkoop', { bedrag, datum, naam }) : t('betaal.bank.verkoop', { bedrag, datum, naam })
+      else if (datum) regel = out ? t('betaal.bank.inkoop.zonderNaam', { bedrag, datum }) : t('betaal.bank.verkoop.zonderNaam', { bedrag, datum })
+      else if (naam) regel = out ? t('betaal.bank.inkoop.zonderDatum', { bedrag, naam }) : t('betaal.bank.verkoop.zonderDatum', { bedrag, naam })
+      else regel = out ? t('betaal.bank.inkoop.kaal', { bedrag }) : t('betaal.bank.verkoop.kaal', { bedrag })
+
+      const tekst = tx?.description?.trim()
+      if (tekst) regel = t('betaal.bank.omschrijving', { regel, tekst })
+      if (bank.length === 2) regel = t('betaal.bank.meer.een', { regel })
+      else if (bank.length > 2) regel = t('betaal.bank.meer.meer', { regel, count: bank.length - 1 })
+      // Punctuation, not language: every locale in this catalogue ends a sentence with a full stop,
+      // and a key whose entire content is "." would be a translation nobody can get wrong or right.
+      regel = `${regel}.`
+      return ev.kind === 'mixed' ? t('betaal.bank.deelsHand', { regel }) : regel
     }
   }
 }
@@ -138,4 +163,68 @@ export function describePayment(ev: PaymentEvidence): string {
  */
 export function isBankProven(ev: PaymentEvidence): boolean {
   return ev.kind === 'bank' || ev.kind === 'mixed'
+}
+
+/** What a screen paints under "Betaald". No language of its own — see the header. */
+export interface PaymentEvidenceLine {
+  text: string
+  /**
+   * How loudly to say it. Not decoration: a bank-proven payment and the owner's own tick are
+   * different claims, and a screen that renders them identically borrows the bank's authority for
+   * one of them.
+   *
+   *   bank     a third party corroborates this
+   *   hand     true, and the app is the only witness
+   *   geen     marked paid with nothing recording how — the one case worth interrupting for
+   *   onbekend the read failed, which is never the same answer as "nothing is recorded"
+   */
+  tone: 'bank' | 'hand' | 'geen' | 'onbekend'
+  /** Carried here so the words and the layout can never render out of step. */
+  dir: 'ltr' | 'rtl'
+}
+
+/**
+ * Build that line, or null when there is nothing to say.
+ *
+ * Null happens for an invoice the screen sent no evidence for — an older render, or a row the
+ * server did not ask about. The row then looks exactly as it did before this feature existed,
+ * which is the only honest thing to do with an answer nobody has.
+ */
+export function buildPaymentEvidenceLine(
+  ev: PaymentEvidence | undefined | null,
+  direction: ProofDirection = 'incoming',
+  locale: Locale = 'nl',
+): PaymentEvidenceLine | null {
+  if (!ev) return null
+  const tone: PaymentEvidenceLine['tone'] =
+    ev.kind === 'unknown' ? 'onbekend'
+      : ev.kind === 'none' ? 'geen'
+        : isBankProven(ev) ? 'bank'
+          : 'hand'
+  return { text: describePayment(ev, direction, locale), tone, dir: localeDir(locale) }
+}
+
+/**
+ * The invoices on a screen that CLAIM to be settled — the only ones worth asking about.
+ *
+ * A screen that asked for every row would read the whole ledger's payment links to draw a line
+ * under a handful of them. Deliberately not capped: the reads it feeds are chunked by id, so
+ * there is no length ceiling to hide behind — and a silent cap here would leave later rows with
+ * no line at all, which reads as "nothing to say" rather than "not asked".
+ *
+ * Sorted and deduplicated so a screen can use the result as a cache key: the loader's page order
+ * is not guaranteed, and an unstable key re-reads the same rows on every render.
+ */
+export function settledInvoiceIds(
+  rows: ReadonlyArray<{ id?: string | null; status?: string | null; amount_paid?: number | null }>,
+): string[] {
+  const out = new Set<string>()
+  for (const r of rows) {
+    if (!r.id) continue
+    // 'paid' is the claim this line explains. A PARTLY paid invoice is not claiming to be settled,
+    // but it does carry payments — and the instalment the owner is asked to believe deserves the
+    // same evidence, so it is in.
+    if (r.status === 'paid' || (typeof r.amount_paid === 'number' && r.amount_paid > 0.005)) out.add(r.id)
+  }
+  return [...out].sort()
 }

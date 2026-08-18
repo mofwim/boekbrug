@@ -11019,6 +11019,42 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     "collapsing those two makes a busy database assert an invoice has no payment evidence");
   assert.match(ev, /export function isBankProven/,
     "a bank-proven payment and the owner's own tick are different claims");
+  // The direction of the money reaches the WORDS. "afgeschreven naar Kiwi Food Market" under an
+  // invoice Kiwi paid describes the owner paying their own customer, on the line that exists to be
+  // believed. Own keys per direction — a shared one with the verb as a parameter is the mistranslation
+  // rule 1 of messages.ts forbids.
+  assert.match(ev, /t\('betaal\.bank\.inkoop'/);
+  assert.match(ev, /t\('betaal\.bank\.verkoop'/);
+  for (const sentence of [
+    "{bedrag} afgeschreven op {datum} naar {naam}",
+    "{bedrag} bijgeschreven op {datum} van {naam}",
+    "Als betaald gemarkeerd, maar er is geen betaling aan gekoppeld.",
+    "We konden niet nakijken waar deze betaling vandaan komt.",
+  ]) {
+    assert.ok(cat.includes(sentence), `the catalogue lost: "${sentence}"`);
+  }
+  // Four claims, four tones — rendering the bank's word and the owner's tick alike is the whole
+  // thing this feature exists to stop.
+  assert.match(ev, /tone: 'bank' \| 'hand' \| 'geen' \| 'onbekend'/);
+  assert.match(ev, /if \(!ev\) return null/,
+    "a row nobody sent evidence for gets no line, not an empty claim");
+  const paintEv = code("src/components/invoice/PaymentEvidenceLine.tsx");
+  assert.match(paintEv, /dir=\{line\.dir\}/, "the direction travels with the words");
+  assert.match(paintEv, /\{line\.text\}/);
+  assert.match(paintEv, /TONE\[line\.tone\]/, "the colour comes off the model, not off a branch here");
+  assert.doesNotMatch(paintEv, /textAlign: 'right'/, "use textAlign: 'end'");
+  assert.doesNotMatch(paintEv, /paddingLeft:/, "use paddingInlineStart");
+
+  // [ID-CHUNK] A PostgREST filter travels in the URL. The sales list is paged and unbounded, so a
+  // bare .in() over a few hundred settled invoices blows the length limit — and what breaks is the
+  // evidence line, which simply stops appearing. Chunked, so a long list costs more queries and
+  // never a silently shorter answer.
+  const evCollect = code("src/lib/payment-evidence-collect.ts");
+  assert.match(evCollect, /fetchAllRowsForIds/);
+  assert.doesNotMatch(evCollect, /\.in\('invoice_id', \[\.\.\.args\.invoiceIds\]\)/,
+    "the id list may not travel in one URL");
+  assert.match(ev, /export function settledInvoiceIds/,
+    "only the rows that CLAIM to be settled are asked about");
 
   // …and all of it actually reaches BOTH screens. A proof computed and not rendered is the defect
   // class this whole file exists for.
@@ -11039,6 +11075,14 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     "the sales list asks the question of its OWN direction — the default is the pay screen's");
   assert.match(salesPage, /openProof=\{openProof\}/);
 
+  // A screen's own COPY, with the message keys taken out first.
+  //
+  // The naive version — does the file contain this Dutch word — fired on `t('ink.afgeschrevenOp')`,
+  // which is a key NAME and the opposite of hardcoded copy: it is the word living in the catalogue
+  // exactly as intended. A gate that goes red on correct code is one that gets deleted, so the keys
+  // are stripped and what is left is what the component actually spells out itself.
+  const copyOf = (screen: string) => code(screen).replace(/t\(\s*'[\w.]+'/g, "t(");
+
   // ONE component paints both. Two copies of a promise about the owner's books drift apart, and
   // this repo has the receipts: eleven copies of a status chip disagreed about four statuses.
   for (const screen of [
@@ -11056,8 +11100,9 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     // the failure line, the per-hit question and the bounded note hard-coded in the component —
     // the half-finished translation AGENTS.md warns about, which hides itself because the screen
     // still looks right in Dutch.
+    const copy = copyOf(screen);
     for (const dutch of ["Niet alles is meegenomen", "In je bank staat", "niet met je bank vergelijken"]) {
-      assert.ok(!client.includes(dutch), `${screen} still holds copy of its own: "${dutch}"`);
+      assert.ok(!copy.includes(dutch), `${screen} still holds copy of its own: "${dutch}"`);
     }
   }
   // The component itself holds none either — it paints what the panel object hands it, direction
@@ -11070,10 +11115,39 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.doesNotMatch(panel, /textAlign: 'right'/, "use textAlign: 'end'");
   assert.doesNotMatch(panel, /paddingLeft:/, "use paddingInlineStart");
 
+  // …and BOTH lists paint it, each in its own direction. One component, one set of states.
+  for (const [screen, direction] of [
+    ["src/app/dashboard/incoming/manage/IncomingManageClient.tsx", "'incoming'"],
+    ["src/app/dashboard/facturen/FacturenClient.tsx", "'outgoing'"],
+  ] as const) {
+    const client = code(screen);
+    assert.match(
+      client,
+      new RegExp(`<PaymentEvidenceLine line=\\{buildPaymentEvidenceLine\\(paymentEvidence\\[inv\\.id\\], ${direction}, taal\\)\\} />`),
+      `${screen} must paint the shared line, in its own direction and the owner's language`,
+    );
+    // [TAAL] …and keep no sentence of its own about it. Keys stripped first — see copyOf.
+    const copy = copyOf(screen);
+    for (const dutch of ["afgeschreven", "bijgeschreven", "Door jou afgevinkt", "geen betaling aan gekoppeld"]) {
+      assert.ok(!copy.includes(dutch), `${screen} still holds copy of its own: "${dutch}"`);
+    }
+  }
+  // The sales list has no server prop to lean on — its rows arrive by paging in the browser — so it
+  // reads the evidence itself, through the owner's OWN session. Both tables carry a
+  // `user_id = auth.uid()` select policy, so RLS scopes it exactly and no route widens anything.
+  const salesList = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.match(salesList, /collectPaymentEvidence\(\{ pipeline: supabase, ownerId: profile\.id, invoiceIds: ids \}\)/);
+  assert.match(salesList, /settledInvoiceIds\(invoices\)\.join\(','\)/,
+    "keyed on the settled ids, or the same rows are re-read on every render");
+  // [NO-SILENT-EMPTY] A throw must reach every row asked about as 'unknown'. A missing line reads
+  // as "nothing to say", which is the state this whole feature exists to remove.
+  assert.match(salesList, /all\[id\] = \{ kind: 'unknown' \}/);
+
   const render = readFileSync("tests/render/money-screens.test.tsx", "utf8");
   assert.match(render, /the pay screen states what was checked, against what, and until when/);
   assert.match(render, /carries the bank line that says so/);
   assert.match(render, /the sales list proves the other direction, in its own words/);
+  assert.match(render, /one component paints the four claims, and each one differently/);
 });
 
 test("[HERINNER-BEWIJS] nothing is chased at a customer whose payment is already in the bank", () => {

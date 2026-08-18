@@ -56,6 +56,11 @@ import type { MessageKey } from '@/lib/i18n/messages'
 import { buildProofPanel } from '@/lib/open-invoice-proof-text'
 import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-types'
+// [BETAALBEWIJS] Under every "Betaald", the bank line that says so — the same pure rule and the
+// same component the pay screen uses, reading the owner's OWN rows through RLS (see below).
+import { collectPaymentEvidence } from '@/lib/payment-evidence-collect'
+import { buildPaymentEvidenceLine, settledInvoiceIds, type PaymentEvidence } from '@/lib/payment-evidence'
+import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -510,6 +515,52 @@ export default function FacturenClient({
     invoices, loading, hasMore, refreshing,
     loadMore, refresh, updateOptimistic, removeOptimistic,
   } = useInfiniteInvoices({ userId: profile.id, status: statusMap[filter] })
+
+  // ── [BETAALBEWIJS] How do we know this one is paid? ────────────────────────────────────────
+  //
+  // "Betaald" on this list is read off amount_paid, and nothing here had ever looked at
+  // bank_tx_invoices. So the word carried no evidence: to check it the owner opened their bank in
+  // another tab and searched — the exact work this product exists to remove, handed back at the
+  // moment trust is being asked for.
+  //
+  // On the SALES side the stakes point the other way from the pay screen. A purchase invoice
+  // wrongly marked paid is a bill that may still be owed and will be chased by the supplier. A
+  // sales invoice wrongly marked paid is money the owner believes came in and never asks for
+  // again — nobody chases it, so nothing ever surfaces it. That is the state this line names.
+  //
+  // Read from the BROWSER, with the owner's own session. bank_tx_invoices and bank_transactions
+  // both carry `user_id = auth.uid()` select policies, so RLS scopes this exactly and no route
+  // needs to widen anything. The list is paged, so this follows the loaded ids rather than
+  // fetching per row.
+  const [paymentEvidence, setPaymentEvidence] = useState<Record<string, PaymentEvidence>>({})
+  // Only settled rows are asked about, and the key is a stable string so a re-render with the same
+  // ids does not re-read. Sorted because the loader's order is not guaranteed between pages.
+  const settledKey = useMemo(
+    () => settledInvoiceIds(invoices).join(','),
+    [invoices],
+  )
+  useEffect(() => {
+    if (!profile?.id) return
+    let live = true
+    // Always through the collector, including the empty case — it answers {} for an empty list
+    // without a round trip. Clearing the map synchronously here instead would be a setState in the
+    // effect BODY, which cascades a render on every page the list loads.
+    const ids = settledKey === '' ? [] : settledKey.split(',')
+    collectPaymentEvidence({ pipeline: supabase, ownerId: profile.id, invoiceIds: ids })
+      .then((map) => { if (live) setPaymentEvidence(map) })
+      .catch((e) => {
+        // [NO-SILENT-EMPTY] The collector already answers 'unknown' per invoice on a failed read;
+        // reaching HERE means it threw outright. Every row asked about then says "we could not
+        // look" rather than silently losing its line, because a missing line reads as "nothing to
+        // say" and this feature exists to stop exactly that.
+        console.error('[BETAALBEWIJS] payment evidence unreadable', e)
+        if (!live) return
+        const all: Record<string, PaymentEvidence> = {}
+        for (const id of ids) all[id] = { kind: 'unknown' }
+        setPaymentEvidence(all)
+      })
+    return () => { live = false }
+  }, [profile?.id, settledKey, supabase])
 
   // [BRIDGE-NOTIF] Reveal a ?focus= row once it's present in the loaded list.
   //
@@ -1294,6 +1345,13 @@ export default function FacturenClient({
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
                       </p>
+
+                      {/* [BETAALBEWIJS] Under the claim, how we know it.
+                          'outgoing': the money ARRIVED. "afgeschreven naar" here would describe
+                          the owner paying their own customer, on the one line that exists to be
+                          believed — and a sales invoice wrongly marked paid is money nobody ever
+                          chases again, because nothing on any screen disagrees with it. */}
+                      <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'outgoing', taal)} />
                     </div>
 
                     {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)

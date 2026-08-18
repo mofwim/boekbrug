@@ -263,7 +263,11 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
       counterpartName: "BALKIP B.V.", counterpartIban: null },
   }] } });
   assert.match(bank, /afgeschreven/);
-  assert.match(bank, /&quot;FACTUUR 264091 BALKIP&quot;|"FACTUUR 264091 BALKIP"/, "the owner's own statement line");
+  // Curly quotes, as the rest of the catalogue writes them. The QUOTES are the app's punctuation;
+  // the string between them is the bank's, and only the second one may never be touched.
+  assert.match(bank, /\u201cFACTUUR 264091 BALKIP\u201d/, "the owner's own statement line");
+  // On the pay screen the money LEFT. The sales list asserts the opposite word — see below.
+  assert.doesNotMatch(bank, /bijgeschreven/);
 
   // The owner's own tick reads differently — it may not borrow the bank's authority.
   const hand = render({ p1: { kind: "manual", total: 1224.75, links: [{
@@ -346,6 +350,65 @@ test("[OPENSTAAND-BEWIJS] the pay screen states what was checked, against what, 
 
   // …and an older render that sends nothing shows no panel rather than an empty claim.
   assert.doesNotMatch(render(null), /vergeleken met/);
+});
+
+test("[BETAALBEWIJS] one component paints the four claims, and each one differently", async () => {
+  // The line itself is proved in the unit suite; what is held HERE is that it reaches a screen and
+  // that the four states do not look alike. Rendering a bank-proven payment and the owner's own
+  // tick identically borrows the bank's authority for the tick — and when the tick was a mistake,
+  // nothing on the screen ever says so.
+  const { default: PaymentEvidenceLine } = await import("../../src/components/invoice/PaymentEvidenceLine");
+  const { buildPaymentEvidenceLine, classifyPayment } = await import("../../src/lib/payment-evidence");
+
+  const paint = (ev: unknown, direction: "incoming" | "outgoing") => renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(PaymentEvidenceLine as any, {
+      line: buildPaymentEvidenceLine(ev as never, direction),
+    }),
+  );
+
+  const bankLink = {
+    transactionId: "tx-1", amountApplied: 2420, paidOn: "2026-07-14", method: "bank",
+    transaction: {
+      date: "2026-07-14", amount: 2420, description: "FACTUUR 2026-014",
+      counterpartName: "Kiwi Food Market", counterpartIban: null,
+    },
+  };
+
+  // A customer's payment, on a SALES invoice: the money arrived.
+  const verkoop = paint(classifyPayment([bankLink as never]), "outgoing");
+  assert.match(verkoop, /bijgeschreven/);
+  assert.match(verkoop, /van Kiwi Food Market/);
+  assert.doesNotMatch(verkoop, /afgeschreven/, "that word describes the owner paying their customer");
+  assert.match(verkoop, /#0B8043/, "bank green — a third party corroborates this");
+
+  // The same link on the pay screen: the money left.
+  assert.match(paint(classifyPayment([bankLink as never]), "incoming"), /afgeschreven/);
+
+  // The owner's own tick is true, and is not the same claim — so it is not green.
+  const hand = paint(classifyPayment([{ transactionId: null, amountApplied: 2420, paidOn: "2026-07-14", method: "bank" } as never]), "outgoing");
+  assert.match(hand, /Door jou afgevinkt/);
+  assert.doesNotMatch(hand, /#0B8043/);
+
+  // Marked paid with nothing recording how — amber, because on a sales invoice that is money the
+  // owner believes came in and never chases again.
+  const geen = paint(classifyPayment([]), "outgoing");
+  assert.match(geen, /geen betaling aan gekoppeld/);
+  assert.match(geen, /#7C5800/);
+
+  // [NO-SILENT-EMPTY] A failed read is its own answer, and never the same one as "nothing linked".
+  const onbekend = paint(classifyPayment(null), "outgoing");
+  assert.match(onbekend, /konden niet nakijken/);
+  assert.doesNotMatch(onbekend, /geen betaling aan gekoppeld/);
+
+  // …and a row nobody sent evidence for paints nothing at all, rather than an empty claim.
+  assert.equal(
+    renderToStaticMarkup(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(PaymentEvidenceLine as any, { line: null }),
+    ),
+    "",
+  );
 });
 
 test("[OPENSTAAND-BEWIJS] the sales list proves the other direction, in its own words", async () => {

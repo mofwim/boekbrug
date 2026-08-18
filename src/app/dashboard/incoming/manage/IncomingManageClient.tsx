@@ -107,7 +107,10 @@ import { round2 } from '@/lib/invoice-totals'
 // this screen holds no language of its own — see the header of open-invoice-proof-text.ts.
 import { buildProofPanel } from '@/lib/open-invoice-proof-text'
 import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
-import { describePayment, isBankProven, type PaymentEvidence } from '@/lib/payment-evidence'
+// [BETAALBEWIJS] The line is built in the pure module and painted by a shared component; this
+// screen holds neither the words nor the colours — see the header of PaymentEvidenceLine.tsx.
+import { buildPaymentEvidenceLine, type PaymentEvidence } from '@/lib/payment-evidence'
+import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  // type-only: erased, no server code in the bundle
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
@@ -2784,25 +2787,11 @@ export default function IncomingManageClient({
                             different facts, and until now they rendered as the same word. Naming
                             which one it is costs a sentence and is the whole difference between
                             "the app says" and "your bank says". */}
-                        {isPaid && paymentEvidence[inv.id] && paymentEvidence[inv.id].kind !== 'none' && (
-                          <span
-                            style={{
-                              display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4,
-                              fontSize: 11.5,
-                              color: isBankProven(paymentEvidence[inv.id]) ? '#0B8043'
-                                : paymentEvidence[inv.id].kind === 'unknown' ? M3.error : M3.neutral,
-                            }}
-                          >
-                            {describePayment(paymentEvidence[inv.id])}
-                          </span>
-                        )}
-                        {/* The one case worth interrupting for: marked paid, with nothing anywhere
-                            recording how. Rare, real, and the state that keeps the other two worth
-                            believing — so it is amber and not grey. */}
-                        {isPaid && paymentEvidence[inv.id]?.kind === 'none' && (
-                          <span style={{ display: 'block', whiteSpace: 'normal', marginTop: 3, lineHeight: 1.4, fontSize: 11.5, color: '#7C5800' }}>
-                            {describePayment(paymentEvidence[inv.id])}
-                          </span>
+                        {/* One component, one set of states — including the one worth interrupting
+                            for: marked paid with nothing anywhere recording how. It is amber and
+                            not grey because on this list that is a bill that may still be owed. */}
+                        {isPaid && (
+                          <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], 'incoming', taal)} />
                         )}
                         {/* [CREDITNOTA-SIGNAL] Booked correctly: just say so. Without this badge
                             the only difference from an invoice is a minus sign in the amount, and
