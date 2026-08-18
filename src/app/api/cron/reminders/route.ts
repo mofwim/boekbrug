@@ -241,6 +241,21 @@ export async function GET(req: NextRequest) {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch(() => [] as { invoice_id: string; day_offset: number }[]);
+  // [SPOOR-BEWIJS] That `.catch(() => [])` degrades an unreadable trail to "nothing sent yet",
+  // which is the exact shape of the defect the manual route had. Here it is survivable, and it is
+  // worth writing down WHY, because the reason lives two hundred lines away and in a database
+  // index rather than in this function:
+  //
+  //   · the tier is chosen by AGE, not from the trail — reminderTierDue() takes the highest offset
+  //     the invoice has reached, so an empty trail cannot escalate anyone early;
+  //   · the send is CLAIM-THEN-SEND on UNIQUE(invoice_id, day_offset) with ignoreDuplicates, and an
+  //     empty claim result means "already sent, do not send".
+  //
+  // So a re-send of a tier already sent is refused by the index, not by this read. The manual route
+  // has no such backstop — its offset is DERIVED from the trail (nextManualOffset), so an empty
+  // trail hands it a free number and the mail goes out. That is why the fix lives there and this
+  // stays as it is. If the claim below ever loses ignoreDuplicates or its onConflict, this line
+  // becomes a double-dunning bug the same afternoon — which is what the gate pins.
 
   // ── [CREDITNOTA-NO-CHASE] Which candidates were withdrawn with a creditnota? ──
   // A credited invoice KEEPS its 'sent'/'overdue' status, its positive total and its due date

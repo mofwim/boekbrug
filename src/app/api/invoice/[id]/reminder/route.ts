@@ -107,12 +107,29 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
 
     // ── Het spoor tot nu toe: hoeveel gingen er al uit, en wanneer de laatste? ──
+    //
+    // [SPOOR-BEWIJS] De fout wordt gelezen, en dat is de hele reparatie. supabase-js geeft bij een
+    // mislukte query { data: null, error } terug in plaats van te gooien, dus `eerder ?? []`
+    // maakte van een databasehapering een LEEG spoor — en een leeg spoor is een toestemming:
+    // canRemind telt dan nul herinneringen (het plafond van drie valt weg) en heeft geen datum om
+    // de wachttijd vanaf te meten (die valt óók weg). Beide bewakers zetten zichzelf uit.
+    //
+    // Dat is niet theoretisch, en de UNIQUE-index vangt het maar half op. Staat er al een
+    // handmatige herinnering, dan botst nextManualOffset op -1 en gaat er niets uit. Kwamen de
+    // eerdere herinneringen van de CRON (offsets 14, 30), dan is -1 nog vrij: de wachttijd is
+    // omzeild, de claim slaagt, en de klant die gisteren de 14-dagenherinnering kreeg krijgt er
+    // vandaag nog een. Eén mail te veel bij iemand anders in de inbox, door een leesfout.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: eerder } = await (pipeline as any)
+    const { data: eerder, error: spoorErr } = await (pipeline as any)
       .from('invoice_reminders')
       .select('day_offset, sent_at, status')
       .eq('invoice_id', id)
       .order('sent_at', { ascending: false })
+    if (spoorErr) {
+      console.error('[SPOOR-BEWIJS] herinneringsspoor onleesbaar — geen mail, geen aanname', {
+        id, ownerId, error: spoorErr.message,
+      })
+    }
     const rijen: Array<{ day_offset: number; sent_at: string; status: string }> = eerder ?? []
     const geslaagd = rijen.filter((r) => r.status !== 'failed')
 
@@ -136,6 +153,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         invoice_type: (inv as any).invoice_type ?? 'factuur',
         last_reminder_at: geslaagd[0]?.sent_at ?? null,
         reminder_count: geslaagd.length,
+        // [SPOOR-BEWIJS] De twee velden hierboven zijn alleen te vertrouwen als de lezing lukte.
+        // De regel weigert zelf als dat niet zo is — hier staat geen tweede versie van die regel,
+        // want twee plekken die "mag dit" beantwoorden zijn er één te veel.
+        reminderTrailKnown: !spoorErr,
       },
       Date.now(),
     )

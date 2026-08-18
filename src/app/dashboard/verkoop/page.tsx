@@ -159,10 +159,23 @@ export default async function VerkoopPage() {
         f.reminder_count = b?.aantal ?? 0
       }
     } catch {
-      // De tabel bestaat, maar mocht de lezing mislukken dan blijft het spoor leeg. Dat maakt de
-      // knop RUIMER dan hij hoort te zijn, dus zetten we hem dan liever helemaal uit: de route
-      // toetst dezelfde regel nog een keer en weigert alsnog, met de juiste zin erbij.
-      for (const f of facturen) f.reminder_count = undefined
+      // [SPOOR-BEWIJS] Mislukt de lezing, dan blijft het spoor leeg — en een leeg spoor is geen
+      // "er ging nog niets uit", maar "we weten het niet". Dat maakt de knop RUIMER dan hij hoort
+      // te zijn.
+      //
+      // Hier stond `f.reminder_count = undefined` met de bedoeling de knop dan helemaal uit te
+      // zetten. Dat deed het niet. `undefined` verbergt alleen het chipje "N eerder verstuurd" op
+      // de rij; canRemind leest `(f.reminder_count ?? 0)`, dus undefined wordt nul en het plafond
+      // van drie herinneringen valt juist wég. De regel eronder — "de route toetst dezelfde regel
+      // nog een keer" — klopte ook niet: die route liet de fout van diezelfde lezing vallen, dus
+      // hij kreeg exact hetzelfde lege spoor voorgeschoteld. Twee lagen die naar elkaar wezen.
+      //
+      // Nu wordt de vraag gesteld in plaats van geraden: canRemind weigert op dit veld, met een
+      // zin die zegt wat er niet te lezen viel. De route zet hem óók, op zijn eigen lezing.
+      for (const f of facturen) {
+        f.reminder_count = undefined
+        f.reminderTrailKnown = false
+      }
     }
   }
 

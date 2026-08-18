@@ -12718,3 +12718,66 @@ test("[2FA] no screen holds a Dutch 2FA sentence of its own", () => {
     );
   }
 });
+
+test("[SPOOR-BEWIJS] an unreadable reminder trail never reads as a clear one", () => {
+  // The one action in this app whose output is a letter in somebody else's inbox. Two guards stand
+  // in front of it — a cooling-off period, and a ceiling of three manual reminders after which
+  // art. 6:96 BW makes the next step the entrepreneur's decision rather than a button. Both are
+  // read off invoice_reminders, and supabase-js answers a failed query with { data: null, error }
+  // rather than throwing. So `data ?? []` turned a database hiccup into an EMPTY trail, and an
+  // empty trail is not a refusal — it is a permission. Nothing to count toward the ceiling, no
+  // date to measure the cooling-off period from. Both guards switched themselves off, silently.
+  const rule = code("src/lib/sales-overview.ts");
+
+  // The rule can be TOLD the trail is unknown, and refuses on it.
+  assert.match(rule, /reminderTrailKnown\?: boolean/);
+  assert.match(rule, /if \(f\.reminderTrailKnown === false\)/);
+  // `=== false`, not `!== true`: absent has to keep reading as known, or every existing caller —
+  // the accountant's debtor board included — silently loses its reminder button.
+  assert.doesNotMatch(rule, /if \(f\.reminderTrailKnown !== true\)/);
+
+  // ORDER is the assertion, not just presence. The guard has to sit AHEAD of the two checks the
+  // trail feeds, or the owner is told "wacht nog 3 dagen" about a date nobody read — and handed a
+  // legal decision (art. 6:96) on the strength of a count nobody read.
+  const guardAt = rule.indexOf("if (f.reminderTrailKnown === false)");
+  const ceilingAt = rule.indexOf("if ((f.reminder_count ?? 0) >= MAX_MANUAL_REMINDERS)");
+  const cooldownAt = rule.indexOf("if (f.last_reminder_at)");
+  assert.ok(guardAt > 0 && ceilingAt > 0 && cooldownAt > 0, "could not locate the three guards");
+  assert.ok(guardAt < ceilingAt, "the trail guard must precede the three-reminder ceiling");
+  assert.ok(guardAt < cooldownAt, "…and the cooling-off period");
+  // …but never ahead of a reason that is true whatever the trail says. "Deze factuur is betaald"
+  // is more use to the owner than a sentence about a read.
+  assert.ok(rule.indexOf('reason: "Deze factuur is betaald."') < guardAt,
+    "a settled invoice keeps its own sentence — the trail may not mask a better answer");
+
+  // ── The two readers that can fail must SAY so. The default is "known", so the safety lives here.
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  assert.match(route, /const \{ data: eerder, error: spoorErr \} = await/);
+  assert.match(route, /reminderTrailKnown: !spoorErr/);
+  // No second copy of the rule in the route: two places answering "may this go out" is one too many.
+  assert.doesNotMatch(route, /if \(spoorErr\)[\s\S]{0,200}?return NextResponse\.json/);
+
+  const screen = code("src/app/dashboard/verkoop/page.tsx");
+  assert.match(screen, /f\.reminderTrailKnown = false/);
+  // The comment that used to stand here claimed `reminder_count = undefined` turned the button
+  // off. It did not — undefined only hides the "N eerder verstuurd" chip, and canRemind reads
+  // `(f.reminder_count ?? 0)`, so undefined became zero and the ceiling fell away instead.
+  assert.match(code("src/app/dashboard/verkoop/VerkoopClient.tsx"), /\(f\.reminder_count \?\? 0\) > 0 &&/,
+    "the chip is all `undefined` ever controlled");
+
+  // ── Why the CRON may keep degrading its own trail read to [] ──
+  //
+  // It chooses the tier by AGE, not from the trail, and claims it with ignoreDuplicates on
+  // UNIQUE(invoice_id, day_offset) — an empty claim means "already sent, do not send". Those two
+  // together are the whole reason a failed read there cannot double-dun anyone. The manual route
+  // has no such backstop because its offset is DERIVED from the trail. If the claim ever loses
+  // either half, that `.catch(() => [])` becomes a double-dunning bug the same afternoon.
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /onConflict: "invoice_id,day_offset", ignoreDuplicates: true/,
+    "the cron's trail read is only survivable because the claim is idempotent");
+  assert.match(cron, /if \(!claimed \|\| claimed\.length === 0\)/,
+    "…and because an empty claim result means DO NOT SEND");
+  const tier = code("src/lib/invoice-reminders.ts");
+  assert.match(tier, /if \(off <= daysOverdue\) currentTier = off/,
+    "the tier comes from the invoice's age, so an empty trail cannot escalate anyone early");
+});
