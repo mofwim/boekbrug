@@ -17,6 +17,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { decidePlan, type PlanDecision } from '@/lib/subscription'
 import { PLUS } from '@/lib/plan'
 import { FAIR_USE_LIMITS, NEAR_LIMIT_RATIO, evaluateFairUse, formatLimit } from '@/lib/fair-use'
@@ -51,27 +52,43 @@ export default async function FactureringPage({
 }: {
   searchParams: Promise<{ betaald?: string }>
 }) {
-  // [TAAL] Servercomponent: de vertaler komt uit de request, niet uit een hook.
-  const t = await serverTranslator()
-  const params = await searchParams
-  const justPaid = params.betaald === '1'
-
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  // De abonnementskolommen komen uit billing_subscription.sql, met de hand toegepast →
-  // ontspannen client, en ingepakt zodat een nog niet toegepaste migratie een eerlijk
-  // paneel oplevert in plaats van een fout.
-  let profile: BillingProfile | null = null
-  let columnsPresent = true
-  try {
+  // ── [WATERVAL] De vertaler, de URL en het profiel kennen elkaar niet ────────
+  //
+  // Ze stonden op een rij met een `await` ervoor, dus de profiellezing begon pas nadat de vertaler
+  // klaar was — terwijl geen van drieën iets van de andere twee wil weten.
+  //
+  // allSettled voor de derde: die lezing MAG mislukken (de abonnementskolommen komen uit
+  // billing_subscription.sql, met de hand toegepast), en dat afvangen is de hele reden voor de try
+  // hieronder. Met Promise.all zou een nog niet toegepaste migratie dit scherm laten crashen in
+  // plaats van een eerlijk "gratis"-paneel te tonen.
+  const [tS, paramsS, profileS] = await Promise.allSettled([
+    // [TAAL] Servercomponent: de vertaler komt uit de request, niet uit een hook.
+    serverTranslator(),
+    searchParams,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
+    (supabase as any)
       .from('profiles')
       .select('role, subscription_status, subscription_plan, current_period_end, stripe_customer_id')
       .eq('id', user.id)
-      .single()
+      .single() as Promise<{ data: BillingProfile | null; error: unknown }>,
+  ])
+
+  if (tS.status === 'rejected') throw tS.reason
+  if (paramsS.status === 'rejected') throw paramsS.reason
+  const t = tS.value
+  const params = paramsS.value
+  const justPaid = params.betaald === '1'
+
+  let profile: BillingProfile | null = null
+  let columnsPresent = true
+  try {
+    if (profileS.status === 'rejected') throw profileS.reason
+    const { data, error } = profileS.value
     if (error) columnsPresent = false
     else profile = data as BillingProfile
   } catch {

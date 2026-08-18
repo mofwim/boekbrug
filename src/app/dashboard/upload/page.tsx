@@ -5,14 +5,14 @@
 // page just gives the owner a single door with MULTI-FILE selection + a live per-file result list.
 
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import UploadClient from "./UploadClient";
 
 export const metadata = { title: "Uploaden — BoekBrug" };
 
 export default async function UploadPage() {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
   if (!user) redirect("/login");
   return <UploadClient />;
 }

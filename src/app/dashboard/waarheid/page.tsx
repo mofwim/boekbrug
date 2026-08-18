@@ -5,14 +5,14 @@
 
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import WaarheidClient from "./WaarheidClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function WaarheidPage() {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
   if (!user) redirect("/login");
   // [NAMED-QUARTER] WaarheidClient reads ?year&quarter so it can open on a specific quarter — the
   // old /dashboard/resultaat redirects here carrying exactly that. useSearchParams opts a client

@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic'
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import type { Role } from '@/lib/navigation'
 import ZoekenClient from './ZoekenClient'
 
@@ -17,17 +18,18 @@ export default async function Page({
   searchParams: Promise<{ q?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+  // [WATERVAL] De zoekterm staat in de URL en heeft de rol nergens voor nodig; hij stond er alleen
+  // onder omdat hij later was opgeschreven.
+  const [{ data: profile }, { q }] = await Promise.all([
+    supabase.from('profiles').select('role').eq('id', user.id).single(),
+    searchParams,
+  ])
 
   const role: Role = profile?.role === 'accountant' ? 'accountant' : 'zzper'
-  const { q } = await searchParams
   const initialQuery = (q ?? '').slice(0, 100)
 
   return (

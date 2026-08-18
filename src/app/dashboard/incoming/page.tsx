@@ -4,6 +4,7 @@
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import IncomingInvoicesClient from "./IncomingInvoicesClient";
 // [IMPORT-MONITOR] Part 1 — read-time health classification (visibility only).
 import {
@@ -80,57 +81,28 @@ const INVOICE_COLUMNS =
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
 
   if (!user) redirect("/login");
 
   // [BOEK-011] Fetch role for the Logo Universal Click pattern
   // (Navigation Strategy v1.0). Incoming is ZZP-only in practice,
   // but the link is dynamic for consistency across the app.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  const userRole: "zzper" | "accountant" =
-    profile?.role === "accountant" ? "accountant" : "zzper";
-
-  // Email connection status
-  // [ZERO-ROWS-NORMAL] .maybeSingle(): "no mailbox connected" is the ordinary state for most
-  // owners, and .single() reports it as an error (PostgREST 406) that this call site discards.
-  // The .limit(1) STAYS — email_connections is UNIQUE(user_id, provider), so an owner may have
-  // BOTH Gmail and Outlook, and maybeSingle() without a limit fetches a list and returns null
-  // once it sees more than one row: that owner's connection banner would silently read
-  // "niet verbonden" while their mail was importing fine.
-  const { data: connection } = await supabase
-    .from("email_connections")
-    // needs_reauth post-dates the generated types → cast on read (as the sync path does).
-    .select("provider, email, connected_at, needs_reauth")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-
-  // [BOEK-011] Pending invoices — status 'processing', awaiting confirmation.
-  // Sorted by invoice_date (newest first): created_at is the IMPORT moment,
-  // which for backfilled email syncs has nothing to do with the invoice's real
-  // date — sorting on it made the queue look shuffled.
+  // ── [WATERVAL] Acht leesacties die niets van elkaar willen weten ──────────────
   //
-  // [QUEUE-COMPLETE] fetchAllRows, no cap: this is the ONLY surface where a
-  // 'processing' invoice can be verified, while the badges elsewhere
-  // (ZzpDashboard, Vandaag's toVerifyCount) show the EXACT head-count. With
-  // the old .limit(100), a large mailbox backfill said "130 wachten" while
-  // the queue showed 100 and rows 101+ were unreachable.
+  // Ze stonden hier onder elkaar met een `await` ervoor, en dat is precies zo duur als het klinkt:
+  // de pagina wachtte acht keer op een heen-en-weer naar de database vóór er één byte naar de
+  // browser ging. Niet omdat de tweede de eerste nodig had — ze hebben allemaal alleen `user.id` —
+  // maar omdat `await` op een regel eronder nu eenmaal wacht.
   //
-  // [NO-SILENT-EMPTY] The .catch(() => null) below is right — a failed read may not blank the
-  // page — but one line further down `pendingRaw ?? []` threw away the only difference that
-  // matters here. An empty queue renders "Alles verwerkt": on THIS screen that sentence says
-  // every incoming invoice has been checked and passed on, which is the exact opposite of what a
-  // failed read knows. The owner stops looking, and an unconfirmed invoice never reaches
-  // Crediteuren, the voorbelasting or the aangifte. Same rule and the same banner as Crediteuren
-  // next door: the page renders whatever DID load, and says out loud that it could not look.
+  // [NO-SILENT-EMPTY] En parallel lezen mag niet betekenen dat een MISLUKTE lezing weer stil is.
+  // Twee sessies raakten dit blok in dezelfde week: de ene maakte er één rit van, de andere gaf
+  // elke lezing een vlag. Zonder die vlag valt een kapotte lezing terug op `?? []`, en dan zegt dit
+  // scherm "Alles verwerkt" — op de wachtrij betekent die zin dat élke binnengekomen factuur is
+  // nagekeken en doorgezet, wat het tegenovergestelde is van wat een mislukte lezing weet. De
+  // eigenaar stopt met kijken en een onbevestigde factuur bereikt Crediteuren, de voorbelasting en
+  // de aangifte nooit. Dus: één rit én de vlag.
   const readFailed: string[] = [];
   const readOrFlag = async <T,>(label: string, run: () => Promise<T[] | null>): Promise<T[]> => {
     try {
@@ -145,34 +117,19 @@ export default async function IncomingPage() {
       return [];
     }
   };
-
-  const pendingRaw = await readOrFlag("controlewachtrij", () => fetchAllRows((from, to) => supabase
-    .from("invoices")
-    .select(INVOICE_COLUMNS)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .eq("status", "processing")
-    .order("invoice_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: true })
-    .range(from, to)
-  ));
-
-  // [BOEK-011] Ignored invoices — status 'archived', can be restored
-  // [QUEUE-COMPLETE] Also uncapped (was 50): an archived invoice beyond the
-  // cap was invisible on the only surface that can restore it (Bewaarplicht —
-  // archive is the app's "delete", so recovery must always be reachable).
+  // Ze stonden hier onder elkaar met een `await` ervoor, en dat is precies zo duur als het klinkt:
+  // de pagina wachtte acht keer op een heen-en-weer naar de database vóór er één byte naar de
+  // browser ging. Niet omdat de tweede de eerste nodig had — ze hebben allemaal alleen `user.id` —
+  // maar omdat `await` op een regel eronder nu eenmaal wacht.
   //
-  // [NEGEER-REDEN] Deze lijst — en alleen deze — leest ook archive_reason, want dat label hoort
-  // bij "waarom staat dit hier". De migratie invoice_archive_reason.sql wordt met de hand
-  // toegepast, dus zolang die nog niet gedraaid is bestaat de kolom niet en zou de hele query
-  // falen → een LEEG Genegeerd-tabblad, precies de plek waar niets verloren mag lijken. Daarom:
-  // probeer mét de kolom, val bij een fout terug op de kale kolomlijst. Dan ontbreekt hooguit
-  // het label.
-  // [SUPERSEDE] superseded_by_number rides along on the SAME fallback: archive_reason says the
-  // CATEGORY ("Dubbel"), this says WHICH invoice replaced it. Both arrive by hand-applied
-  // migration, and both are labels — if either column is missing the query falls back to the bare
-  // list, so the Genegeerd tab is never empty over a missing note.
+  // Dit is de goedkoopste soort snelheid die er is: geen enkele query verandert, geen enkele regel
+  // logica verschuift, alleen de VOLGORDE waarin erop gewacht wordt. Wat acht ritten na elkaar was,
+  // is nu één rit voor alle acht.
+  //
+  // Wat NIET in deze golf zit, en waarom: de mappenpaden van de documenten. Die query heeft de
+  // document_id's van de facturen hierboven nodig, dus die kán niet eerder — hij staat verderop als
+  // tweede golf. Een read die van een ander afhangt hoort niet in een Promise.all; dat is geen
+  // stijlkwestie maar het verschil tussen sneller en stuk.
   const ignoredColumns = `${INVOICE_COLUMNS}, archive_reason, superseded_by_number`;
   const fetchIgnored = (columns: string) =>
     fetchAllRows((from, to) => supabase
@@ -185,47 +142,101 @@ export default async function IncomingPage() {
       .order("id", { ascending: true })
       .range(from, to)
     );
-  // [NO-SILENT-EMPTY] The column fallback stays exactly as it was — a missing label column must
-  // not empty this tab. Only the LAST resort changes: when even the bare list will not read, the
-  // tab said "niets genegeerd" about the one surface from which an archived invoice can be
-  // restored. Archiving is this app's delete, so an empty Genegeerd tab is a claim that nothing
-  // is recoverable.
-  const ignoredRaw = await readOrFlag("genegeerde facturen", () =>
-    fetchIgnored(ignoredColumns).catch(() => fetchIgnored(INVOICE_COLUMNS)));
 
-  // [INCOMING-BEVESTIGD] Confirmed invoices — verified out of the queue ('received', te betalen)
-  // or already settled ('paid'). Before this tab they vanished to /incoming/manage (Crediteuren),
-  // which felt like the work was lost. Surfacing the recent ones here — in place, read-only with a
-  // status badge — closes that gap. Newest first, bounded; the full ledger stays on Crediteuren.
-  //
-  // [INBOX-CROWD-OUT] Two queries, not one shared cap: in the old single query
-  // (received+paid, newest 50 by invoice_date) newer paid rows crowded older
-  // UNPAID rows out of the tab, so an open bill shown on Vandaag was nowhere to
-  // be found here. Unpaid ('received') rows are actionable → own query, higher
-  // bound; paid rows stay a bounded recent slice (full ledger on Crediteuren).
-  // [NO-SILENT-EMPTY] `const { data }` without `error`: supabase-js does not throw, it returns
-  // { data: null, error }, so a failed read arrived here as an empty tab that says the owner has
-  // confirmed nothing. Both reads now travel through the same flag as the two above.
-  const { data: confirmedReceivedRaw, error: confirmedReceivedErr } = await supabase
-    .from("invoices")
-    .select(`${INVOICE_COLUMNS}, status`)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .eq("status", "received")
-    .order("invoice_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(500);
+  const [
+    profileRes,
+    connectionRes,
+    pendingRaw,
+    ignoredRaw,
+    confirmedReceivedRes,
+    confirmedPaidRes,
+    allFoldersRes,
+    readingMemory,
+  ] = await Promise.all([
+    // [BOEK-011] De rol, voor het Logo Universal Click-patroon.
+    supabase.from("profiles").select("role").eq("id", user.id).single(),
 
-  const { data: confirmedPaidRaw, error: confirmedPaidErr } = await supabase
-    .from("invoices")
-    .select(`${INVOICE_COLUMNS}, status`)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .eq("status", "paid")
-    .order("invoice_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(50);
+    // [ZERO-ROWS-NORMAL] .maybeSingle(): "geen mailbox gekoppeld" is de gewone toestand, en
+    // .single() meldt dat als fout. De .limit(1) BLIJFT — email_connections is
+    // UNIQUE(user_id, provider), dus iemand kan Gmail én Outlook hebben, en maybeSingle() zonder
+    // limiet geeft null zodra het er meer dan één ziet: die eigenaar zou "niet verbonden" lezen
+    // terwijl zijn mail prima binnenkomt.
+    supabase
+      .from("email_connections")
+      // needs_reauth post-dates the generated types → cast on read (as the sync path does).
+      .select("provider, email, connected_at, needs_reauth")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle(),
 
+    // [QUEUE-COMPLETE] Ongecapt: dit is het ENIGE scherm waar een 'processing'-factuur bevestigd
+    // kan worden, terwijl de badges elders de exacte koppen tellen. Met de oude .limit(100) zei
+    // een grote backfill "130 wachten" terwijl de wachtrij er 100 toonde.
+    //
+    // Gesorteerd op invoice_date (nieuwste eerst): created_at is het IMPORT-moment, en dat heeft
+    // bij een backfill niets met de echte factuurdatum te maken — daarop sorteren maakte de
+    // wachtrij door elkaar gegooid.
+    readOrFlag("controlewachtrij", () => fetchAllRows((from, to) => supabase
+      .from("invoices")
+      .select(INVOICE_COLUMNS)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "processing")
+      .order("invoice_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to)
+        )),
+
+    // Genegeerd: mét het label, en bij een ontbrekende kolom zonder. Zie de toelichting bij
+    // fetchIgnored hierboven — een leeg Genegeerd-tabblad is de plek waar niets verloren mag lijken.
+    // De kolom-fallback blijft; alleen de LAATSTE redding verandert: lukt zelfs de kale lijst niet,
+    // dan zei het tabblad "niets genegeerd" over het enige scherm waar een gearchiveerde factuur
+    // terug te halen is. Archiveren is hier het verwijderen, dus dat is een claim dat er niets meer
+    // te redden valt.
+    readOrFlag("genegeerde facturen", () =>
+      fetchIgnored(ignoredColumns).catch(() => fetchIgnored(INVOICE_COLUMNS))),
+
+    // [INBOX-CROWD-OUT] Twee queries, geen gedeelde cap: in één gezamenlijke query verdrongen
+    // nieuwere betaalde rijen de oudere ONBETAALDE, en dan stond een openstaande rekening wel op
+    // Vandaag maar nergens hier.
+    supabase
+      .from("invoices")
+      .select(`${INVOICE_COLUMNS}, status`)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "received")
+      .order("invoice_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(500),
+
+    supabase
+      .from("invoices")
+      .select(`${INVOICE_COLUMNS}, status`)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .eq("status", "paid")
+      .order("invoice_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(50),
+
+    // Alle mappen van de eigenaar — nodig om straks de volledige paden op te bouwen. Hij hangt
+    // NIET van de documenten af (die koppeling gaat de andere kant op), dus hij mag hier mee.
+    supabase.from("folders").select("id, name, parent_id").eq("user_id", user.id),
+
+    // [READING-MEMORY] Wat deze eigenaar bij welke leverancier steeds corrigeert. Eén gedeelde
+    // lezing (reading-memory-source.ts), zodat dit scherm en het betaalscherm niet elk iets anders
+    // over dezelfde leverancier beweren.
+    loadReadingMemory(supabase, user.id),
+  ]);
+
+  const { data: profile } = profileRes;
+  const { data: connection } = connectionRes;
+  // [NO-SILENT-EMPTY] `const { data }` zonder `error`: supabase-js gooit niet, het geeft
+  // { data: null, error } terug — dus kwam een mislukte lezing hier aan als een leeg tabblad dat
+  // zegt dat de eigenaar niets heeft bevestigd. Beide lezingen lopen nu langs dezelfde vlag.
+  const { data: confirmedReceivedRaw, error: confirmedReceivedErr } = confirmedReceivedRes;
+  const { data: confirmedPaidRaw, error: confirmedPaidErr } = confirmedPaidRes;
   if (confirmedReceivedErr || confirmedPaidErr) {
     console.error("[NO-SILENT-EMPTY] incoming source read failed", {
       userId: user.id, source: "bevestigde facturen",
@@ -233,6 +244,10 @@ export default async function IncomingPage() {
     });
     readFailed.push("bevestigde facturen");
   }
+  const { data: allFolders } = allFoldersRes;
+
+  const userRole: "zzper" | "accountant" =
+    profile?.role === "accountant" ? "accountant" : "zzper";
 
   // Merge back to one newest-first list (the client renders a single tab).
   // ISO dates compare correctly as strings; nulls sort last, created_at breaks ties.
@@ -293,11 +308,7 @@ export default async function IncomingPage() {
     }
   }
 
-  // Load every folder the user owns — to resolve full paths
-  const { data: allFolders } = await supabase
-    .from("folders")
-    .select("id, name, parent_id")
-    .eq("user_id", user.id);
+  // De mappen zijn al binnen: ze zaten in de golf bovenaan, want ze hangen van niets af.
 
   const folderById = new Map<string, { name: string; parent_id: string | null }>();
   for (const f of (allFolders ?? []) as unknown as Array<{
@@ -357,10 +368,7 @@ export default async function IncomingPage() {
   const ignoredInvoices = withFolder(ignoredBase);
   const confirmedInvoices = withFolder(confirmedBase);
 
-  // ── [READING-MEMORY] What has this owner kept correcting, and at which supplier? ──
-  // One shared read (reading-memory-source.ts), so this screen and the pay screen cannot end up
-  // telling the owner that a supplier is fine on one and a repeat offender on the other.
-  const readingMemory = await loadReadingMemory(supabase, user.id);
+  // [READING-MEMORY] Ook al binnen — zie de golf bovenaan.
 
   // Resolved to a plain object here, not handed to the client as a Map: only the suppliers actually
   // sitting in the queue can produce a hint, so this ships a handful of sentences instead of the

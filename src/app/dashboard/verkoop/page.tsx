@@ -91,14 +91,31 @@ export default async function VerkoopPage() {
   // terugkrijgt. (De route weigert hem alsnog, dus er ging niets de deur uit; er stond een knop
   // die alleen een foutmelding kon geven.) De regel stond er, alleen niet het gegeven waar hij op
   // oordeelt — en een bewaker zonder invoer ziet er precies zo uit als een bewaker.
-  const { data: facturenRuw } = await supabase
+  const facturenQ = supabase
     .from('invoices')
     .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
     .eq('sender_id', acting.ownerId)
     .eq('created_by', acting.actorId)
     .order('created_at', { ascending: false })
-    .limit(200) as { data: (SalesInvoice & { original_invoice_id?: string | null })[] | null }
+    .limit(200)
 
+  const pipeline = createPipelineClient()
+
+  // ── [WATERVAL] De facturen en de naam van de baas weten niets van elkaar ────────────
+  //
+  // Allebei hangen ze alleen aan `acting`, dat hierboven al vaststaat, en toch wachtte de naam op
+  // de facturenlijst. Het herinneringsspoor verderop hoort er NIET bij: dat vraagt naar precies
+  // deze factuur-id's en kan dus per definitie niet eerder.
+  //
+  // De naam van het bedrijf waarvoor hij werkt. Het profiel van de eigenaar is voor zijn sessie
+  // onleesbaar (RLS), dus via service_role — en pas nádat de koppeling is bewezen, wat hierboven
+  // is gebeurd: getActingFor() geeft alleen een andere ownerId terug bij een geldige koppeling.
+  const [{ data: facturenRaw }, { data: baas }] = await Promise.all([
+    facturenQ,
+    pipeline.from('profiles').select('company_name, full_name').eq('id', acting.ownerId).single(),
+  ])
+
+  const facturenRuw = facturenRaw as unknown as (SalesInvoice & { original_invoice_id?: string | null })[] | null
   const facturen: SalesInvoice[] = facturenRuw ?? []
 
   // [DEEL-CREDIT] Hoeveel er per factuur is gecrediteerd, zodat "openstaand" het RESTANT noemt en
@@ -115,16 +132,6 @@ export default async function VerkoopPage() {
     gecrediteerd[id] = bedrag
   }
 
-  const pipeline = createPipelineClient()
-
-  // De naam van het bedrijf waarvoor hij werkt. Het profiel van de eigenaar is voor zijn sessie
-  // onleesbaar (RLS), dus via service_role — en pas nádat de koppeling is bewezen, wat hierboven
-  // is gebeurd: getActingFor() geeft alleen een andere ownerId terug bij een geldige koppeling.
-  const { data: baas } = await pipeline
-    .from('profiles')
-    .select('company_name, full_name')
-    .eq('id', acting.ownerId)
-    .single()
   const bedrijf = baas?.company_name || baas?.full_name || 'je werkgever'
 
   // Het herinneringsspoor. invoice_reminders heeft geen leespolicy voor een medewerker (de tabel

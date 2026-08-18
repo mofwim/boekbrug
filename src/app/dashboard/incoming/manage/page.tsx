@@ -20,6 +20,7 @@ import IncomingManageClient from './IncomingManageClient'
 import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan'
 // [READING-MEMORY] The same supplier memory the verify queue shows — one shared read.
 import { readingHintFor, vendorKey } from '@/lib/reading-memory'
+import { getSessionUser } from '@/lib/session-user'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import type { ComponentProps } from 'react'
 // [OPENSTAAND-BEWIJS] Is anything on the pay list already settled in the bank? See the block below.
@@ -48,20 +49,83 @@ const COLS =
 //  · it is dead weight for them anyway: with no exempt turnover there is nothing to apportion.
 const COLS_VRIJGESTELD = COLS + ', vat_deduction'
 
+/**
+ * [WATERVAL] Turn a settled promise back into a value or a throw.
+ *
+ * The reads on this page each handle their own failure, and that is the point of them: an empty
+ * list here reads as "you owe nobody anything" ([NO-SILENT-EMPTY]). Running them together must not
+ * take that away, so the wave uses allSettled and this hands each rejection back to the block that
+ * was always meant to catch it — the code below is unchanged in what it does with a failure.
+ */
+function settled<T>(r: PromiseSettledResult<T>): T {
+  if (r.status === 'rejected') throw r.reason
+  return r.value
+}
+
 export default async function Page({
   searchParams,
 }: {
   searchParams: Promise<{ focus?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  // ── [WATERVAL] Zeven lezingen die niet op elkaar hoeven te wachten ─────────────────
+  //
+  // Ze stonden onder elkaar met een `await` ervoor: elf keer heen en weer naar de database voordat
+  // dit scherm iets liet zien. En dit is het scherm waar de ondernemer VANAF BETAALT — het traagste
+  // scherm van de app was uitgerekend het scherm waar hij het vaakst wacht.
+  //
+  // Geen van deze zeven wil iets van de ander weten; ze kennen allemaal alleen user.id. Wat er WEL
+  // van afhangt blijft eronder staan: de kolomlijst hangt aan het profiel (`cols`), de facturenrijen
+  // hangen aan die kolomlijst, en de deeplink-lezing hangt aan die rijen. Die volgorde is echt en
+  // blijft dus echt.
+  //
+  // allSettled, niet all: elk blok hieronder handelt zijn EIGEN mislukking af, en dat is op dit
+  // scherm het halve verhaal ([NO-SILENT-EMPTY]). Met Promise.all zou de eerste mislukte lezing de
+  // andere zes meesleuren en de pagina omvertrekken — precies het tegenovergestelde van wat die
+  // blokken doen. settled() geeft de worp terug aan het blok dat hem hoort te vangen.
+  const [profileS, countS, scanS, memoryS, filedS, incassoS, paramsS] = await Promise.allSettled([
+    supabase.from('profiles').select('*').eq('id', user.id).single(),
+
+    // [INVOICE-COUNTER] Het WARE aantal bevestigde inkoopfacturen — zie de toelichting verderop,
+    // bij het blok dat er iets mee doet.
+    supabase
+      .from('invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('receiver_id', user.id)
+      .eq('direction', 'incoming')
+      .in('status', ['received', 'paid']),
+
+    // [SCAN-WHOLE-BOOK] De scan over het HELE boek — zie de toelichting verderop.
+    fetchAllRows<ScanRow>((from, to) => supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw')
+      .eq('receiver_id', user.id)
+      .eq('direction', 'incoming')
+      .in('status', ['received', 'paid'])
+      // [PAGE-KEY] by id, for the same reason the open-rows query below uses it: created_at ties
+      // have no defined order, so across .range() windows a row could be served twice or skipped.
+      .order('id', { ascending: true })
+      .range(from, to)
+    ),
+
+    loadReadingMemory(supabase, user.id),
+
+    // btw_filings is not in the generated types yet — the same cast /api/btw/file uses.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).from('btw_filings').select('year, quarter').eq('user_id', user.id) as Promise<{ data: { year: number; quarter: number }[] | null; error: { message: string } | null }>,
+
+    // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).from('suppliers').select('name_key').eq('user_id', user.id).eq('auto_incasso', true) as Promise<{ data: { name_key: string | null }[] | null; error: { message: string } | null }>,
+
+    searchParams,
+  ])
+
+  const { data: profile } = settled(profileS)
 
   if (!profile) redirect('/login')
 
@@ -148,12 +212,7 @@ export default async function Page({
   // Null on failure → the client simply omits the disclosure, never guesses a total. That one was
   // honest already; its error is read only so a failing count is visible in the logs instead of
   // looking like an owner who happens to have none.
-  const { count: totalCount, error: countErr } = await supabase
-    .from('invoices')
-    .select('id', { count: 'exact', head: true })
-    .eq('receiver_id', user.id)
-    .eq('direction', 'incoming')
-    .in('status', ['received', 'paid'])
+  const { count: totalCount, error: countErr } = settled(countS)
   if (countErr) console.error('[INVOICE-COUNTER] count read failed — disclosure omitted', { userId: user.id, error: countErr.message })
 
   // [SCAN-WHOLE-BOOK] The scan runs over EVERY confirmed inkoopfactuur, not over the list.
@@ -173,17 +232,7 @@ export default async function Page({
   // most dangerous sentence this screen could produce out of a failed query.
   let bookScan: InvoiceScan | null = null
   try {
-    const scanRows = await fetchAllRows<ScanRow>((from, to) => supabase
-      .from('invoices')
-      .select('id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw')
-      .eq('receiver_id', user.id)
-      .eq('direction', 'incoming')
-      .in('status', ['received', 'paid'])
-      // [PAGE-KEY] by id, for the same reason the open-rows query above uses it: created_at ties
-      // have no defined order, so across .range() windows a row could be served twice or skipped.
-      .order('id', { ascending: true })
-      .range(from, to)
-    )
+    const scanRows = settled(scanS)
     bookScan = scanInvoices(scanRows)
   } catch (e) {
     console.error('[SCAN-WHOLE-BOOK] scan read failed — the banner says it could not look', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
@@ -194,7 +243,7 @@ export default async function Page({
   // the OTHER door through which the owner corrects a misread invoice, and the correction modal is
   // the same checking moment — "you have fixed the btw at this supplier three times" is worth
   // knowing while you are typing the fourth. Recorded from here already; now also shown here.
-  const readingMemory = await loadReadingMemory(supabase, user.id)
+  const readingMemory = settled(memoryS)
   const readingHints: Record<string, string> = {}
   for (const r of rows) {
     const hint = readingHintFor(r.client_name, readingMemory)
@@ -211,12 +260,7 @@ export default async function Page({
   // and the banner says so instead of guessing.
   let filedQuarters: string[] | null = []
   try {
-    // btw_filings is not in the generated types yet — the same cast /api/btw/file uses.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('btw_filings')
-      .select('year, quarter')
-      .eq('user_id', user.id)
+    const { data, error } = settled(filedS)
     if (error) throw new Error(error.message)
     filedQuarters = (data ?? []).map((f: { year: number; quarter: number }) => `${f.year}-Q${f.quarter}`)
   } catch (e) {
@@ -237,13 +281,7 @@ export default async function Page({
   // client keeps every incasso row in its incasso state and only the switch goes quiet.
   let incassoKeys: string[] | null = []
   try {
-    // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('suppliers')
-      .select('name_key')
-      .eq('user_id', user.id)
-      .eq('auto_incasso', true)
+    const { data, error } = settled(incassoS)
     if (error) throw new Error(error.message)
     incassoKeys = (data ?? []).map((s: { name_key: string | null }) => s.name_key).filter(Boolean) as string[]
   } catch (e) {
@@ -258,7 +296,7 @@ export default async function Page({
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
   // lands. Same receiver/direction/status guards — never someone else's row.
-  const { focus } = await searchParams
+  const { focus } = settled(paramsS)
   if (focus && !rows.some((r) => r.id === focus)) {
     const { data: focused, error: focusErr } = await supabase
       .from('invoices')

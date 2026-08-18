@@ -2,15 +2,15 @@
 // [TURNOVER-IMPORT] Server wrapper — auth guard, then the self-contained import client.
 
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import DagomzetImportClient from "./DagomzetImportClient";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Dagomzet — BoekBrug" };
 
 export default async function DagomzetPage() {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
   if (!user) redirect("/login");
   // [COHERENCE-DAGOMZET] TurnoverInsights is rendered ONCE, inside DagomzetImportClient
   // (at the top, above the import panel), so it lives in the same 640px centered

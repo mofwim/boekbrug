@@ -10,6 +10,7 @@ import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
 import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
+import { getSessionUser } from '@/lib/session-user'
 import { isActingForOther } from '@/lib/acting-for'
 
 export default async function DashboardLayout({
@@ -18,33 +19,40 @@ export default async function DashboardLayout({
   children: React.ReactNode
 }) {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts): this layout, the page inside it and
+  // getActingFor() below render in ONE React pass and all three want the same verified user.
+  // They used to ask the auth server three separate times, in sequence, before a byte left.
+  const user = await getSessionUser()
 
-  let profile: { id: string; email?: string | null; role?: string | null } | null = null
-
-  if (user) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, email, role')
-      .eq('id', user.id)
-      .single()
-    profile = data
-  }
+  // ── [WATERVAL] Het profiel en "namens wie" hangen niet van elkaar af ────────────────
+  //
+  // Ze stonden onder elkaar, dus de rol wachtte op het profiel terwijl geen van beide iets van de
+  // ander wilde weten — allebei kennen ze alleen user.id. Deze layout draait boven ELKE
+  // /dashboard/*-pagina, dus die ene overbodige wachtbeurt zat op elk scherm in de app.
+  //
+  // getActingFor() staat er ook in als er niemand is ingelogd. Dat kost niets: hij ziet dan zelf
+  // geen gebruiker en geeft meteen null terug, zonder één query.
+  const [profileRes, acting] = await Promise.all([
+    user
+      ? supabase.from('profiles').select('id, email, role').eq('id', user.id).single()
+      : Promise.resolve({ data: null }),
+    // [ACTING-FOR] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
+    //
+    // Zijn profiles.role is gewoon 'zzper' — hij is een normale gebruiker die toevallig voor
+    // iemand anders werkt. Zonder deze regel ziet hij dus de volledige balk: Bank, Kas, Aangifte,
+    // Brug. Klikken bounct hem terug (de middleware), en een menu vol links die je terugwerpen is
+    // erger dan geen menu: het laat de app kapot lijken terwijl hij precies doet wat hij moet doen.
+    //
+    // Dit is presentatie, geen grens — de grens is RLS. Verdwijnt deze regel, dan ziet hij weer
+    // links die nergens heen gaan, geen gegevens van zijn baas.
+    getActingFor(),
+  ])
+  const profile = profileRes.data as { id: string; email?: string | null; role?: string | null } | null
 
   // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
   // parent/home via src/lib/navigation.ts).
   const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
 
-  // [ACTING-FOR] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
-  //
-  // Zijn profiles.role is gewoon 'zzper' — hij is een normale gebruiker die toevallig voor
-  // iemand anders werkt. Zonder deze regel ziet hij dus de volledige balk: Bank, Kas, Aangifte,
-  // Brug. Klikken bounct hem terug (de middleware), en een menu vol links die je terugwerpen is
-  // erger dan geen menu: het laat de app kapot lijken terwijl hij precies doet wat hij moet doen.
-  //
-  // Dit is presentatie, geen grens — de grens is RLS. Verdwijnt deze regel, dan ziet hij weer
-  // links die nergens heen gaan, geen gegevens van zijn baas.
-  const acting = await getActingFor()
   const isMedewerker = !!acting && isActingForOther(acting)
 
   return (

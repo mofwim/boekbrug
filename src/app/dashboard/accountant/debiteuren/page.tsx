@@ -17,6 +17,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { buildDebtorBoard, type DebtorInput } from '@/lib/accountant-debtors'
 // [CREDITNOTA-NO-CHASE] De gedeelde regel "is dit nog geld dat ik krijg" — beide helften van een
@@ -69,25 +70,31 @@ function readClock(): number {
 export default async function AccountantDebiteurenPage() {
   const supabase = await createServerSupabaseClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, onboarding_done')
-    .eq('id', user.id)
-    .maybeSingle()
+  // ── [WATERVAL] Het profiel en het mandaat kennen elkaar niet ────────────────
+  //
+  // Ze hangen allebei alleen aan user.id, en toch wachtte het mandaat op het profiel. De lezingen
+  // eronder wachten wél ergens op — de koppeling op de gemandateerde klanten, de facturen op die
+  // koppeling — en die volgorde is echt en blijft dus staan.
+  //
+  // De rolcontroles blijven onder de golf: dat is een grens, geen volgorde. Wie hier niet hoort
+  // wordt weggestuurd voordat er ook maar iets van dit antwoord op een scherm belandt.
+  const [{ data: profile }, { data: mandaten }] = await Promise.all([
+    supabase.from('profiles').select('role, onboarding_done').eq('id', user.id).maybeSingle(),
+    // ── Toestemming, met de sessie ───────────────────────────────────────────
+    supabase
+      .from('accountant_invoice_mandates')
+      .select('zzper_id')
+      .eq('accountant_id', user.id)
+      .is('revoked_at', null),
+  ])
 
   if (!profile) redirect('/login')
   if (!profile.onboarding_done) redirect('/onboarding')
   if (profile.role !== 'accountant') redirect('/dashboard')
-
-  // ── Toestemming, met de sessie ─────────────────────────────────────────────
-  const { data: mandaten } = await supabase
-    .from('accountant_invoice_mandates')
-    .select('zzper_id')
-    .eq('accountant_id', user.id)
-    .is('revoked_at', null)
 
   const gemandateerd = Array.from(new Set((mandaten ?? []).map((m) => m.zzper_id).filter(Boolean)))
 

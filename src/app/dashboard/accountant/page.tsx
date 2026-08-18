@@ -7,6 +7,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import AccountantHome from '@/modules/accountant/pages/AccountantHome'
 import {
   getAccountantClients,
@@ -34,7 +35,8 @@ export default async function AccountantPage() {
   const supabase = await createServerSupabaseClient()
 
   // Auth
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   // Profile
@@ -56,28 +58,42 @@ export default async function AccountantPage() {
   // [WERKVOORRAAD] Naast de klantenlijst en de to-do's, want hij hangt van geen van beide af: hij
   // leest de mandaten en telt in twee query's. Faalt hij, dan komt hij leeg terug en toont de home
   // de werkregel niet — nooit een foutpagina voor een getal.
-  const [clients, todos, workQueues] = await Promise.all([
+  // [WATERVAL] De bel en de ongelezen berichten horen in deze golf en stonden eronder. Ze kennen
+  // alleen profile.id — niet de klantenlijst, niet de to-do's, niet de werkvoorraad — en toch
+  // wachtten ze op alle drie. Op het traagste scherm van de boekhouder waren dat twee volle ritten
+  // die nergens op wachtten behalve op de volgorde waarin ze waren opgeschreven.
+  const [
+    clients,
+    todos,
+    workQueues,
+    { data: notifications, error: notifErr },
+    { count: unreadMessages },
+  ] = await Promise.all([
     getAccountantClients(profile.id),
     getTodoFeed(profile.id),
     getAccountantWorkQueues(supabase, profile.id, readClock()),
+
+    // Notifications — fetched server-side, passed as initial state to client
+    // [NO-SILENT-EMPTY] `?? []` op een mislukte lezing zet "Geen meldingen" in de bel. Dat is een
+    // uitspraak over wat er voor deze boekhouder klaarstaat, en een gefaalde lezing weet dat niet.
+    supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+      .limit(20),
+
+    supabase
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('receiver_id', profile.id)
+      .eq('read', false),
   ])
+
+  // En dit blijft er WEL achter: het overzicht rekent op de klantenlijst hierboven. Zie [FAN-OUT] —
+  // hem meesturen zou betekenen dat hij de lijst zelf nog een keer ophaalt, met vijf query's per
+  // klant eraan vast.
   const overview = await getAccountantOverview(profile.id, clients)
-
-  // Notifications — fetched server-side, passed as initial state to client
-  // [NO-SILENT-EMPTY] `?? []` op een mislukte lezing zet "Geen meldingen" in de bel. Dat is een
-  // uitspraak over wat er voor deze boekhouder klaarstaat, en een gefaalde lezing weet dat niet.
-  const { data: notifications, error: notifErr } = await supabase
-    .from('notifications')
-    .select('*')
-    .eq('user_id', profile.id)
-    .order('created_at', { ascending: false })
-    .limit(20)
-
-  const { count: unreadMessages } = await supabase
-    .from('messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('receiver_id', profile.id)
-    .eq('read', false)
 
   return (
       <AccountantHome

@@ -9756,7 +9756,14 @@ test("[CREDITNOTA-NO-CHASE] the verkoop query selects the column its own guard j
   // weigerde hem alsnog, dus er ging niets de deur uit; er stond een knop die alleen een
   // foutmelding kon geven. De bewaker stond er, alleen niet het gegeven waar hij op oordeelt.
   const page = code("src/app/dashboard/verkoop/page.tsx");
-  const select = page.slice(page.indexOf("from('invoices')"), page.indexOf("const facturen"));
+  // Slice the SELECT itself — from the table to the first filter — not "everything up to the next
+  // `const facturen…`". That anchor assumed the query is awaited straight into its variable, and
+  // the moment the read was hoisted into a Promise.all the slice ran backwards and silently became
+  // the empty string: a gate that passes on nothing, or (as here) fails for a reason that has
+  // nothing to do with the column it guards. What this test is about is which columns come back.
+  const fromInvoices = page.slice(page.indexOf("from('invoices')"));
+  const select = fromInvoices.slice(0, fromInvoices.indexOf(".eq("));
+  assert.ok(select.includes(".select("), "the anchor must land on a real select, not an empty slice");
   assert.match(select, /invoice_type/, "without this column the creditnota guard cannot fire");
   assert.match(select, /original_invoice_id/, "…and without this one nothing can be netted");
 
@@ -11334,4 +11341,72 @@ test("[BLAD-SCROLL] the panel that holds a scroller does not scroll itself", () 
   // kleiner te worden dan zijn inhoud, en dan schuift er niets — het paneel groeit gewoon door.
   assert.match(blad, /flex: 1, minHeight: 0, overflowY: 'auto'/,
     "the scrolling part needs flex: 1 AND minHeight: 0, or it never becomes a scroller");
+});
+
+
+// ─── [WATERVAL] Eén verificatie per verzoek, en niemand die er stiekem omheen gaat ───
+//
+// Een /dashboard/*-scherm vroeg drie keer aan de authenticatieserver wie er is: de layout, de
+// pagina, en getActingFor() eronder. Drie keer heen en weer, na elkaar, met dezelfde cookie, voor
+// hetzelfde antwoord — en pas dáárna begon het scherm iets te lezen. Dat is nu één vraag per
+// verzoek (session-user.ts).
+//
+// De drie poorten hieronder bewaken elk iets anders, en de eerste is de enige die over geld gaat.
+
+test("[WATERVAL] the memoised reader VERIFIES — it never falls back to reading the cookie", () => {
+  // Dit is de poort die ertoe doet. `getSession()` leest het token uit de cookie en gelooft het;
+  // `getUser()` legt het voor aan de authenticatieserver en wacht op het oordeel. Die tweede is
+  // trager, en dat is precies waarom iemand die dit bestand ooit "sneller" komt maken hem zou
+  // vervangen — de app blijft werken, de tests blijven groen, en vanaf dat moment bepaalt een
+  // meegestuurde cookie wie je bent. In een boekhoudapp is dat het hele slot.
+  //
+  // Memoïseren mag; de vraag overslaan niet.
+  const dal = code("src/lib/session-user.ts");
+  assert.match(dal, /supabase\.auth\.getUser\(\)/,
+    "the answer may be reused within a request, but it must still be an ANSWER from the auth server");
+  assert.doesNotMatch(dal, /auth\.getSession\(/,
+    "getSession() trusts the cookie it was handed — never the door for 'who is this'");
+});
+
+test("[WATERVAL] the reader is memoised per REQUEST, never cached over time", () => {
+  // React's cache() leeft precies zolang als één render/verzoek. Dat verschil is het hele punt:
+  // een medewerker van wie de toegang zojuist is ingetrokken hoort bij zijn VOLGENDE klik buiten
+  // te staan, niet na een minuut. Wie hier een TTL-cache van maakt maakt van een intrekking een
+  // vertraging — en dat is geen prestatiekwestie maar een toegangskwestie.
+  //
+  // Verdwijnt cache() juist helemáál, dan is er niets kapot en merkt niemand iets: het scherm
+  // wordt alleen weer stil twee keer zo traag. Dat is precies het soort achteruitgang dat geen
+  // enkele andere test opmerkt, en daarom staat hij hier.
+  const dal = code("src/lib/session-user.ts");
+  assert.match(dal, /import \{ cache \} from "react"/, "the memo comes from React, per render pass");
+  assert.match(dal, /export const getSessionUser = cache\(/,
+    "unwrapped, this is just getUser() with extra steps — every caller pays the round-trip again");
+});
+
+test("[WATERVAL] no server page asks the auth server a second time behind the layout's back", () => {
+  // De besparing zit er alleen in als iedereen dezelfde deur gebruikt. Eén pagina die zijn eigen
+  // supabase.auth.getUser() doet, betaalt zijn eigen rit — en omdat het scherm het gewoon dóét,
+  // ziet niemand dat terug behalve in de laadtijd.
+  //
+  // De publieke landingspagina staat er met opzet buiten: die valt niet onder de dashboard-layout,
+  // dus er is niemand om een antwoord mee te delen, en hij leest `data` in plaats van `user`.
+  const BUITEN = new Set(["src/app/page.tsx"]);
+  const schermen: string[] = [];
+  const loop = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) loop(pad);
+      else if (/^(page|layout)\.tsx$/.test(e)) schermen.push(pad);
+    }
+  };
+  loop("src/app");
+  assert.ok(schermen.length > 30, "the walker found almost nothing — it is looking in the wrong place");
+
+  const overtreders = schermen
+    .filter((f) => !BUITEN.has(f))
+    .filter((f) => !/^\s*['"]use client['"]/m.test(readFileSync(f, "utf8").split("\n").slice(0, 6).join("\n")))
+    .filter((f) => /auth\.getUser\(/.test(code(f)));
+  assert.deepEqual(overtreders, [],
+    "these server components ask the auth server themselves; use getSessionUser() from session-user.ts:\n  " +
+    overtreders.join("\n  "));
 });
