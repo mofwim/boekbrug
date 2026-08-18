@@ -42,6 +42,8 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /facturen and /manage.
 import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
+// [BTW-RESERVERING] Het geld op de rekening dat al van de Belastingdienst is.
+import BtwReservationPanel from '@/components/btw/BtwReservationPanel'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -312,6 +314,13 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
           {t('vandaag.aandacht')}
         </p>
       </header>
+
+      {/* [BTW-RESERVERING] Wat er van het saldo al van de Belastingdienst is.
+          Boven de lijsten, want het verandert wat de rest betekent: "€ 3.000 te ontvangen" leest
+          heel anders naast "€ 2.100 daarvan is btw". Het paneel haalt zijn eigen cijfer op ná de
+          eerste render (zie de component) en toont niets tot het iets te zeggen heeft — dit scherm
+          blijft dus even snel als het [WATERVAL] werk het maakte. */}
+      <BtwReservationPanel />
 
       {/* [P1-STUCK-PROCESSING] Nudge for invoices imported/photographed but not yet verified.
           Ambiguous ones stay in the verify queue with no reminder and their cost + BTW-aftrek
