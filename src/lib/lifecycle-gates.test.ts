@@ -10468,3 +10468,31 @@ test("[DEEL-CREDIT] the invoice list never states an open amount the credit besi
   assert.doesNotMatch(incoming, /openAmount\w*\([^)]*gecrediteerd/,
     "the pairing side must keep pairing");
 });
+
+test("[DEEL-CREDIT] all three readers of the creditnota set page past the same silent cap", () => {
+  // Three surfaces read the identical set — same select, same filters — to answer the identical
+  // question: which invoices were withdrawn, and by how much. Their comments say in as many words
+  // that they must agree ("the home tile already filters both … without this they contradict each
+  // other, with the home saying 'niets te doen' while this page shows a red '55 dagen te laat'").
+  //
+  // Two of them paged past PostgREST's silent ~1000-row cap and one did not, so the agreement held
+  // only until an owner's thousand-and-first creditnota. And the error ran the wrong way: a credit
+  // that falls off the end is a credit nobody subtracts, so the owner chases a customer for money
+  // they took back in writing.
+  const readers: Array<[string, string]> = [
+    ["src/app/dashboard/vandaag/page.tsx", "the daily control centre"],
+    ["src/app/api/daily-truth/route.ts", "the home tile"],
+    ["src/app/api/cron/reminders/route.ts", "the reminder cron"],
+  ];
+  for (const [path, what] of readers) {
+    const src = code(path);
+    const i = src.indexOf('.eq("invoice_type", "creditnota")');
+    assert.ok(i > 0, `${what} no longer reads the creditnota set at all (${path})`);
+    // The paging call wraps the query, so it sits BEFORE the filter in the source.
+    const chain = src.slice(Math.max(0, i - 900), i + 300);
+    assert.match(chain, /fetchAllRows(ForIds)?[<(]/,
+      `${what} reads this set unpaged — past ~1000 creditnota's it silently disagrees with the other two (${path})`);
+    assert.match(chain, /\.order\("id", \{ ascending: true \}\)/,
+      `${what} must page on a unique key, or a row is served twice or skipped (${path})`);
+  }
+});

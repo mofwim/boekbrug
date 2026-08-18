@@ -26,6 +26,8 @@ import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 // [CREDITNOTA-NO-CHASE] shared "is this still owed to me" rule — both sides of a credited pair
 // must leave the list together (see src/lib/credited-invoices.ts)
 import { fullyCreditedIdsFrom, filterOpenReceivables } from "@/lib/credited-invoices";
+// [PAGINATION] Past PostgREST's silent ~1000-row cap — see the creditnota read below.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 // [AUTO-INCASSO] The same normalized supplier key the registry stores — see src/lib/auto-incasso.ts.
 import { supplierNameKey } from "@/lib/supplier-registry";
 // [OFFERTE-OPVOLGING] Welke offerte vandaag aandacht vraagt — één regel, zie dat bestand.
@@ -212,15 +214,29 @@ export default async function VandaagPage() {
   // other, with the home saying "niets te doen" while this page shows a red "55 dagen te laat".
   // Same shared rule and the same honest degradation: an errored lookup keeps the old list.
   const remindAll = (remindRaw ?? []) as unknown as VandaagInvoice[];
+  // [PAGINATION] Paged, like the two surfaces that read this very same set — and that is the
+  // whole reason it has to be. PostgREST caps a plain .select() at ~1000 rows and says nothing.
+  // /api/daily-truth pages this read (fetchAllRows) and so does the reminder cron
+  // (fetchAllRowsForIds); this one did not, so past a thousand creditnota's the three quietly
+  // stopped agreeing — and the comment directly above exists BECAUSE they must agree. The home
+  // tile would drop a withdrawn invoice from "Herinner je klant" while this page kept it on the
+  // list in red, which is the exact contradiction that comment was written to prevent.
+  //
+  // The direction of the error is the bad one too: a credit that falls off the end is a credit
+  // that is not subtracted, so the owner chases a customer for money they took back in writing.
   const creditRows = remindAll.length > 0
-    ? await supabase
+    ? await fetchAllRows<{ original_invoice_id: string | null; total_inc_btw: number | null }>((from, to) => supabase
         .from("invoices")
         // [DEEL-CREDIT] The amount too: a partial credit does not take the invoice off the list.
         .select("original_invoice_id, total_inc_btw")
         .eq("sender_id", user.id)
         .eq("invoice_type", "creditnota")
         .not("original_invoice_id", "is", null)
-        .then(({ data, error }) => (error ? null : (data ?? [])))
+        // [PAGE-KEY] by id: a stable, unique order, so no row is served twice or skipped across
+        // .range() windows. The same key both sibling readers use.
+        .order("id", { ascending: true })
+        .range(from, to)
+      ).catch(() => null)
     : [];
   const remind = creditRows == null
     ? remindAll
