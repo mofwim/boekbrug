@@ -12275,3 +12275,446 @@ test("[DUBBEL-BUNDEL] the bundle pay path asks the question too", () => {
       `${key} has a Dutch sentence`);
   }
 });
+
+// ─── [2FA] The lock, and the two ways it stops being one ───────────────────────────
+//
+// A second step fails in exactly two directions, and they are opposites. Left too loose it is
+// decoration: a stolen password still issues invoices in the owner's doorlopende nummerreeks, and
+// those cannot be withdrawn. Pulled too tight it is a trap: an entrepreneur cannot reach records he
+// is legally obliged to keep for seven years, on a screen we built, with no door left open.
+//
+// Neither direction fails anything else that runs in CI. tsc, eslint and next build never CALL the
+// middleware; the smoke test never logs in. So the gates below are about PLACEMENT — where the rule
+// is applied, and whether every surface it has to cover is actually behind it.
+
+test("[2FA] nothing in the app decides for itself what 'two-step is on' means", () => {
+  // The middleware's own copy of this is pinned by "[2FA] the middleware applies the rule and
+  // states none of it itself" further down; this is the same refusal for every OTHER file. A panel
+  // that answers the question itself is how a screen ends up saying "staat uit" while every
+  // navigation is being challenged for a code — and the owner believes the screen.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/lib/mfa.ts") continue; // the file that DEFINES the answer
+      if (/nextLevel\s*[!=]==?\s*["']aal2["']/.test(code(p))) offenders.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(offenders, [],
+    "these decide for themselves what 'two-step is on' means:\n  " + offenders.join("\n  "));
+});
+
+test("[2FA] the API is behind the step, not only the screens", () => {
+  // THE ONE THAT MATTERS MOST. The attacker this feature exists to stop holds a PASSWORD, so he
+  // holds a valid session cookie at aal1 — and he does not need a browser:
+  //     curl -H 'Cookie: sb-…' -X POST /api/invoice/send
+  // issues an invoice in the owner's name and permanent number series. A gate on pages alone is a
+  // lock on the shop door with the delivery entrance open, and it would look completely finished
+  // from every screen.
+  //
+  // /api returns early in this file by design ([SESSION-REFRESH]: a fetch() caller must never be
+  // handed a redirect). So the check has to happen BEFORE that return, and answer in JSON.
+  const mw = readFileSync("src/middleware.ts", "utf8");
+  const apiBranch = mw.slice(mw.indexOf('startsWith("/api")', mw.indexOf("SESSION-REFRESH] API routes")));
+  const untilReturn = apiBranch.slice(0, apiBranch.indexOf("return response;"));
+  assert.match(untilReturn, /owesSecondStep/,
+    "the /api branch returns before consulting the second step — every route is reachable with a stolen password");
+  assert.match(untilReturn, /status: 403/, "an API refusal must be a status, not a redirect");
+  assert.doesNotMatch(untilReturn, /NextResponse\.redirect/,
+    "a fetch() caller handed a 302 to an HTML page reports 'unexpected token <' — a refusal nobody can diagnose");
+
+  // The decision must be taken above the branch, or it cannot be consulted inside it.
+  const decision = mw.indexOf("owesSecondStep =");
+  const apiReturn = mw.indexOf('startsWith("/api")', mw.indexOf("SESSION-REFRESH] API routes"));
+  assert.ok(decision > 0 && decision < apiReturn,
+    "the level is read after the /api branch, so the branch can only ever see 'no'");
+});
+
+test("[2FA] the money routes are not on the reachable-at-aal1 list", () => {
+  // The exemption list is the one thing standing between "the API is gated" and "the API is gated
+  // except where it counts". Each entry there is a hole; these are the ones that must never appear.
+  const rule = code("src/lib/mfa.ts");
+  const list = rule.slice(rule.indexOf("REACHABLE_AT_AAL1 = ["), rule.indexOf("] as const;", rule.indexOf("REACHABLE_AT_AAL1 = [")));
+  assert.ok(list.length > 40, "could not read the exemption list — this gate is reading a hole");
+
+  // The entries themselves, not a substring of the list text: "/api/bank/enablebanking/callback"
+  // CONTAINS "/api/bank" without exempting it, and a gate that cannot tell those apart teaches
+  // people to work around itself.
+  const entries = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(entries.length >= 3, "the exemption list parsed to almost nothing — this gate is reading a hole");
+  const reachable = (path: string) => entries.some((e) => path === e || path.startsWith(`${e}/`));
+  for (const forbidden of ["/dashboard", "/dashboard/bank", "/api/invoice/send", "/api/invoice/draft",
+                           "/api/bank/attach-invoice", "/api/clients", "/onboarding", "/wachtwoord-herstellen"]) {
+    assert.ok(!reachable(forbidden),
+      `${forbidden} is reachable at aal1 — that is the lock switched off for the surface it exists to protect`);
+  }
+  // And the exits must still be there: without them the lock is a trap.
+  assert.ok(list.includes("MFA_CHALLENGE_PATH"), "the challenge page is no longer exempt — that is an infinite redirect");
+  assert.ok(reachable("/login"), "someone who cannot finish the step has no way back to the login");
+});
+
+test("[2FA] the reset link cannot walk around the second step", () => {
+  // The one flow the middleware cannot see. /wachtwoord-herstellen is opened by someone with NO
+  // session, so the guard lets it through — correctly — and the session is then created IN THE
+  // BROWSER by exchangeCodeForSession(), with the new password set from the same page and no
+  // navigation in between. Whoever reads the owner's e-mail would otherwise ask for a reset link,
+  // choose a new password and sign in, and the second factor would never come up.
+  const page = code("src/app/wachtwoord-herstellen/page.tsx");
+  assert.match(page, /owesSecondStep/, "the recovery screen does not ask whether a second step is owed");
+  const guard = page.indexOf("owesSecondStep");
+  const update = page.indexOf("updateUser({ password })");
+  assert.ok(guard > 0 && update > 0 && guard < update,
+    "the level is checked after the password is already changed");
+  assert.match(page, /'tweedeStap'/, "there is no state for 'the link works, but the code comes first'");
+});
+
+test("[2FA] no branch throws away a refreshed session cookie", () => {
+  // getUser() refreshes an expired-but-refreshable token and writes the new pair onto `response`.
+  // A branch that returns a DIFFERENT response drops them, the browser keeps the spent refresh
+  // token, and Supabase ends the session on the reuse — the owner is signed out for no reason he
+  // can see, at the exact moment we were sending him to verify.
+  const mw = code("src/middleware.ts");
+  const bare = [...mw.matchAll(/return NextResponse\.(redirect|json)\(/g)];
+  // One exception, and it is real: [ENV-DEGRADE] runs before any Supabase client exists, so there
+  // is no `response` cookie to carry and nothing was refreshed.
+  const envDegrade = mw.indexOf("hasAnonKey");
+  const envDegradeEnd = mw.indexOf("createServerClient(", envDegrade);
+  const leaks = bare.filter((m) => (m.index ?? 0) > envDegradeEnd);
+  assert.deepEqual(leaks.map((m) => m[0]), [],
+    "these return a fresh response without carrying the refreshed cookies — wrap them in withRefreshedCookies()");
+});
+
+test("[2FA] the challenge screen never sends anyone anywhere on its own", () => {
+  // This is the page the middleware redirects TO. A second, independent judgement about the same
+  // session — milliseconds later, against a different client — only has to disagree once for the
+  // browser to bounce between /verificatie and its target forever, and that is an entrepreneur who
+  // can reach no page at all, including the sign-out that would let him start over.
+  const shell = code("src/app/verificatie/page.tsx");
+  assert.doesNotMatch(shell, /redirect\(/, "the challenge page must not redirect — see its own header");
+  assert.doesNotMatch(shell, /getSessionUser|auth\.getUser/,
+    "the challenge page must not re-judge the session the middleware just judged");
+
+  // And the way out has to be ON it, not behind a failed attempt: the person who needs it is the
+  // one for whom the form can never work.
+  const client = code("src/app/verificatie/VerificatieClient.tsx");
+  assert.match(client, /signOut\(\)/, "the challenge screen has no way out of itself");
+  assert.match(client, /mfa\.kwijt\.titel/, "the 'lost your phone' section is not rendered");
+});
+
+test("[2FA] one definition of whose fault a failed code was", () => {
+  // "We could not check your code" is true of every failure. "Your code is wrong" is a claim about
+  // what the owner typed, and a screen that makes it on a rate limit teaches someone holding a
+  // CORRECT code that their authenticator is broken. Both screens ask the same question, so a
+  // second copy of the answer is how one of them starts blaming people for a 429.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/lib/mfa.ts") continue;
+      if (/function isWrongCode|function asAalLevel/.test(code(p))) offenders.push(p);
+    }
+  };
+  scan("src");
+  assert.deepEqual(offenders, [],
+    "these keep their own copy of an mfa.ts helper:\n  " + offenders.join("\n  "));
+});
+
+// ─── [2FA] The rule is one function, and it runs first, and its words are not in the screens ───
+//
+// The block above pins WHAT the second step covers. These pin the three things that decide whether
+// it works at all, and every one of them is a matter of placement rather than of logic:
+//
+//   · the middleware APPLIES mfaGate and states none of the rule itself — an inline copy is a
+//     second rule with no test behind it, on the one decision that can lock every user out;
+//   · it is settled BEFORE any later branch can answer instead, and it cannot throw;
+//   · /verificatie needs a session but is exempt from the step it asks for — get either half
+//     wrong and the browser bounces forever, on the one screen that could end the bounce.
+//
+// None of this fails anything else in CI. tsc and next build never call the middleware, the smoke
+// test never logs in, and a redirect loop compiles perfectly.
+//
+// Relative imports, as at possible-duplicate-collect above: these gates ASK the rule instead of
+// reading its source, because "the exemption is in the list" is a fact about a string, and "the
+// challenge page is not challenged" is the fact that actually keeps the loop shut.
+import { MFA_CHALLENGE_PATH, mfaGate } from "./mfa";
+import { isPublic } from "./public-paths";
+
+test("[2FA] the middleware applies the rule and states none of it itself", () => {
+  // Every branch of the second step is argued and tested in src/lib/mfa.ts because a wrong one here
+  // is invisible: it type-checks, it builds, and its effect is that EVERY page of EVERY user is sent
+  // to /verificatie — the settings screen that would switch the feature off included. A copy of the
+  // comparison in this file is a second rule that nothing runs, in the file that has no tests.
+  const mw = code("src/middleware.ts");
+
+  assert.match(
+    mw, /import \{[^}]*\bmfaGate\b[^}]*\} from "@\/lib\/mfa"/,
+    "the middleware no longer takes mfaGate from src/lib/mfa.ts — whatever it decides with instead " +
+      "is a rule with no test behind it",
+  );
+  assert.match(mw, /mfaGate\(\{/, "the middleware must APPLY the rule, not merely import it");
+  assert.match(
+    mw, /mfaGate\(\{[^}]*\}\)\.action/,
+    "the answer is not read — a gate whose result is computed and dropped is the lock switched off",
+  );
+
+  // The level half. The sibling gate above forbids the nextLevel comparison; this is the other one,
+  // and either alone is enough to re-state the rule here. `currentLevel === 'aal1'` looks harmless
+  // until the day mfa.ts learns a third level and this line keeps answering for the old two.
+  assert.doesNotMatch(
+    mw, /currentLevel\s*[!=]==?\s*["']aal[12]["']/,
+    "the middleware compares assurance levels itself — that comparison belongs in mfa.ts, where " +
+      "every branch is argued and tested",
+  );
+
+  // The path half, which is how a loop is actually built. The exemption inside mfa.ts and the
+  // destination in this file must be the same string, or the redirect target is a path the rule
+  // does not exempt and the browser bounces between the two forever.
+  assert.doesNotMatch(
+    mw, /["']\/verificatie["']/,
+    "the challenge path is spelled out here instead of taken from MFA_CHALLENGE_PATH — two copies " +
+      "of that string is precisely how the exemption and the destination drift apart",
+  );
+});
+
+test("[2FA] the step is settled before the onboarding query can answer instead", () => {
+  // ORDER, not presence. Both redirects below are correct where they stand, and swapping them
+  // compiles, builds and reads fine in a diff.
+  //
+  // The onboarding branch RETURNS. Put the gate underneath it and a session that still owes the
+  // second step is redirected to /onboarding on the strength of a profiles read performed for that
+  // same unproven session — the app answering a request it had decided not to answer yet. The
+  // second step is the first thing decided about a signed-in request for that reason: nothing below
+  // it may reply first.
+  const mw = code("src/middleware.ts");
+
+  const gateAt = mw.indexOf("mfaGate({");
+  const challengeAt = mw.indexOf("redirectUrlFor(request, MFA_CHALLENGE_PATH)");
+  const profileAt = mw.indexOf('.from("profiles")');
+  assert.ok(gateAt > -1, "the gate is not applied in this file at all");
+  assert.ok(challengeAt > -1, "the challenge redirect is gone — the gate decides and nothing acts on it");
+  assert.ok(profileAt > -1, "the onboarding query moved; this gate reads it straight out of the file");
+
+  assert.ok(
+    gateAt < profileAt,
+    "the second step is decided AFTER the onboarding profile query — a database round-trip on " +
+      "every navigation in front of a decision that needs none, run for a session that has not yet " +
+      "proved it may act",
+  );
+  assert.ok(
+    challengeAt < profileAt,
+    "the onboarding branch can now return before the challenge does, so a half-onboarded owner at " +
+      "aal1 is sent to /onboarding instead of to the code — the gate is still there and no longer " +
+      "the first thing that answers",
+  );
+});
+
+test("[2FA] the assurance-level read cannot throw out of the handler", () => {
+  // A throw HERE is not "this session is unverified", it is a 500 on every page and every API route
+  // at once — the outage [ENV-DEGRADE] exists to prevent, from a call that sits deeper in the
+  // request. Wrapped, both levels stay null, and mfaGate leans null to allow for the reasons its
+  // header sets out. Unwrapped, one bad response from GoTrue takes the whole app down, including
+  // /api/health and the two pages AVG art. 13 requires to stay reachable.
+  const mw = code("src/middleware.ts");
+
+  const readAt = mw.indexOf("getAuthenticatorAssuranceLevel(");
+  assert.ok(readAt > -1, "the assurance level is not read in the middleware at all — the gate has nothing to judge");
+
+  const tryAt = mw.lastIndexOf("try {", readAt);
+  assert.ok(tryAt > -1, "the assurance-level read is not inside a try block at all");
+
+  // Inside THAT block, and it has to be counted rather than assumed: `lastIndexOf` finds the
+  // nearest `try` above the read, which is not the same thing as the read being inside it. An
+  // earlier try/catch that has already closed, with the read below it in a plain block, satisfies
+  // every cheaper test and catches nothing at all.
+  //
+  // So the braces are walked: the try's own brace is the first one here, and it is still open at
+  // the read exactly when the depth never returns to zero in between.
+  let depth = 0;
+  let closedBeforeTheRead = false;
+  for (const ch of mw.slice(tryAt, readAt)) {
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) closedBeforeTheRead = true;
+    }
+  }
+  assert.ok(
+    depth >= 1 && !closedBeforeTheRead,
+    "the `try` above this read is already closed before it — the read sits outside the block that " +
+      "was meant to hold it, and a throw from it leaves the handler",
+  );
+
+  const catchAt = mw.indexOf("catch", readAt);
+  const applyAt = mw.indexOf("owesSecondStep =", readAt);
+  assert.ok(catchAt > -1, "nothing catches what this read throws");
+  assert.ok(applyAt > -1, "the gate is not applied after the read");
+  assert.ok(
+    catchAt < applyAt,
+    "the catch lands after the rule has already been applied, so the throwing path never reaches " +
+      "the gate at all",
+  );
+});
+
+test("[2FA] the challenge page needs a session, and is exempt from the step it asks for", () => {
+  // Two halves of one loop, and each is harmless-looking on its own.
+  //
+  // Public, and the challenge screen is reachable without signing in: a form that can only fail,
+  // shown to someone who has no session to promote. It is a page ABOUT a session, so it belongs
+  // behind the login guard like every other one.
+  //
+  // Not exempt inside the rule, and the redirect to it is itself challenged: /verificatie →
+  // /verificatie → /verificatie, forever, taking the sign-out on the same screen with it. That is
+  // not a bug report, it is an entrepreneur who can reach no page at all — including the settings
+  // screen that would switch the feature back off.
+  assert.equal(
+    isPublic(MFA_CHALLENGE_PATH), false,
+    `${MFA_CHALLENGE_PATH} is in PUBLIC_PATHS — the challenge screen is served to visitors with no ` +
+      "session at all, whose code can never be verified because there is nothing to promote",
+  );
+
+  // The anchor first: in this state an ordinary page MUST be challenged. Without it, a rule that
+  // had quietly started allowing everything would pass the exemption check below vacuously — this
+  // file's own defect class, on the assertion that keeps the loop shut.
+  const stuck = { currentLevel: "aal1", nextLevel: "aal2" } as const;
+  assert.equal(
+    mfaGate({ ...stuck, pathname: "/dashboard" }).action, "challenge",
+    "a verified factor that this session has not used must challenge an ordinary page — if it does " +
+      "not, the whole feature is off and the exemption below proves nothing",
+  );
+  assert.equal(
+    mfaGate({ ...stuck, pathname: MFA_CHALLENGE_PATH }).action, "allow",
+    `${MFA_CHALLENGE_PATH} is not exempt in mfa.ts, so the middleware redirects to a path the rule ` +
+      "then challenges — an infinite bounce with the sign-out button on the far side of it",
+  );
+});
+
+test("[2FA] the challenge screen keeps 'wrong code' apart from 'we could not check'", () => {
+  // The one thing this screen must never do is tell someone that a correct code is invalid. They
+  // are holding a phone with six digits on it and cannot reach records they are legally obliged to
+  // keep for seven years; "die code klopt niet" reads as a fact about their authenticator, so they
+  // stop retrying the one thing that would have worked in ten seconds and go looking for a password
+  // reset that cannot help — the password was never the problem.
+  //
+  // So both sentences have to exist, and the harsher one may only be said when the SERVER said it.
+  // One key doing both jobs is the failure, and it is invisible: the screen looks finished.
+  const screen = code("src/app/verificatie/VerificatieClient.tsx");
+
+  assert.match(
+    screen, /t\(["']mfa\.fout\.ongeldig["']\)/,
+    "the challenge screen no longer has a sentence for a code that is genuinely wrong",
+  );
+  assert.match(
+    screen, /t\(["']mfa\.fout\.mislukt["']\)/,
+    "every failure now reads as 'that code is wrong' — a rate limit, a dropped connection and a " +
+      "GoTrue hiccup included, told to someone holding a correct code",
+  );
+  assert.match(
+    screen, /isWrongCode\(/,
+    "the two are no longer told apart by the shared rule in mfa.ts, so this screen has its own " +
+      "opinion about whose fault a failure was",
+  );
+
+  // And the direction of the asymmetry. A thrown error is the network dropping mid-request; it says
+  // nothing whatsoever about the digits.
+  assert.doesNotMatch(
+    screen, /catch[\s\S]{0,160}?mfa\.fout\.ongeldig/,
+    "a thrown error is turned into 'your code is wrong' — the one claim we may only make when the " +
+      "server made it first",
+  );
+});
+
+test("[2FA] the lockout warning is read before the switch is thrown", () => {
+  // Switching two-step on hands the way into seven years of records to a device that can be dropped
+  // in a canal. That sentence is not fine print, and its POSITION is the whole of its value: said
+  // next to the secret, before the confirm button, it is a warning; said in a confirmation
+  // afterwards it is an apology, and the QR it points at ("bewaar de sleutel hierboven") is gone.
+  //
+  // The same holds for the other one: verifying signs every other session out, and someone who
+  // reads that after the fact has already been signed out of the laptop they were working on.
+  const panel = code("src/components/settings/TweestapsPaneel.tsx");
+
+  const phoneAt = panel.indexOf("mfa.waarschuwing.telefoon");
+  const sessionsAt = panel.indexOf("mfa.waarschuwing.sessies");
+  const confirmAt = panel.indexOf("mfa.bevestig");
+  assert.ok(phoneAt > -1, "the enrolment panel does not warn that losing the phone loses the administration");
+  assert.ok(sessionsAt > -1, "the enrolment panel does not warn that every other session is signed out");
+  assert.ok(confirmAt > -1, "the confirm button is gone — this gate is reading a hole");
+
+  assert.ok(
+    phoneAt < confirmAt,
+    "the lockout warning now sits AFTER the confirm button, so it is read by someone who has " +
+      "already thrown the switch and whose recovery key is no longer on the screen",
+  );
+  assert.ok(
+    sessionsAt < confirmAt,
+    "the 'other devices are signed out' warning sits after the confirm button, where it can only " +
+      "explain something that has already happened",
+  );
+});
+
+test("[2FA] no screen holds a Dutch 2FA sentence of its own", () => {
+  // One hard-coded sentence is how a translation stays permanently half-finished: the screen still
+  // looks right in Dutch, so nothing points at the gap. It bites hardest here — the owner reading
+  // Dutch least comfortably is the one being asked to lock themselves out of their own books.
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const sentences = [...messages.matchAll(/^\s{2}'(mfa\.[\w.]+)':\s*\{\s*nl: '([^']*)'/gm)]
+    .map((m) => [m[1], m[2]] as const)
+    // Sentences, not words. 'mfa.staatAan' is "Staat aan", and a gate firing on something that
+    // short would one day fire on an identifier and teach the next person to weaken it.
+    .filter(([, value]) => value.length >= 15);
+  assert.ok(
+    sentences.length >= 15,
+    `expected the 2FA sentences from the catalogue, parsed ${sentences.length} — the catalogue's ` +
+      "shape changed and this gate is now sweeping for almost nothing",
+  );
+
+  /**
+   * The page's tab title, which is the one Dutch string a screen is allowed to hold.
+   *
+   * `export const metadata` is resolved on the server at request time, where the owner's chosen
+   * language is not in hand — every page in this app carries a Dutch title for that reason
+   * ('Logboek — BoekBrug', 'Verkoop — BoekBrug'). Only the FIRST title string after the
+   * declaration is dropped, so a Dutch sentence anywhere else in the file is still caught.
+   */
+  function withoutTabTitle(src: string): string {
+    const at = src.indexOf("export const metadata");
+    if (at === -1) return src;
+    return src.slice(0, at) + src.slice(at).replace(/title:\s*(['"]).*?\1/, " ");
+  }
+
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      // The catalogue is where these sentences live; it is not a screen.
+      if (p.startsWith("src/lib/i18n/")) continue;
+      const src = withoutTabTitle(code(p));
+      for (const [key, value] of sentences) {
+        if (src.includes(value)) offenders.push(`${p} :: ${key}`);
+      }
+    }
+  };
+  scan("src");
+  assert.deepEqual(
+    offenders, [],
+    "these have a 2FA sentence typed into them instead of taken from t(...):\n  " + offenders.join("\n  "),
+  );
+
+  // And the shape, so a sentence written next month fails this too — the part a list of known
+  // values cannot do. Every visible word on these two screens comes out of the catalogue, so a bare
+  // text node between two tags is by definition a string that was typed here.
+  for (const f of ["src/app/verificatie/VerificatieClient.tsx", "src/components/settings/TweestapsPaneel.tsx"]) {
+    const bare = [...code(f).matchAll(/>\s*([A-Za-zÀ-ÿ][^<>{}]{2,})</g)].map((m) => m[1].trim());
+    assert.deepEqual(
+      bare, [],
+      `${f} renders text it did not get from t(...):\n  ${bare.join("\n  ")}`,
+    );
+  }
+});
