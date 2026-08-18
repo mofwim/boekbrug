@@ -8,6 +8,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [SEC-STORAGE-PATH] A row you may read is not a path you may sign — see storage-path.ts.
 import { pathBelongsToOwner } from '@/lib/storage-path'
@@ -35,18 +36,10 @@ const FOLDER_COLS = 'id, name, parent_id, folder_type, user_id'
 
 export default async function BrugServerPage() {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('onboarding_done, role')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.onboarding_done) redirect('/onboarding')
-
-  const isAccountant = profile.role === 'accountant'
 
   // RLS does the filtering:
   //  - ZZP'er: owner_all / zzp_select → own invoices; documents_owner_all → own docs.
@@ -78,7 +71,11 @@ export default async function BrugServerPage() {
       return []
     }
   }
-  const [invoicesRaw, documentsRaw, foldersRaw] = await Promise.all([
+  // [WATERVAL] Het profiel hoort in deze golf en niet ervoor. Het stond erboven met een eigen
+  // `await`, dus de drie zware lezingen begonnen pas nadat de rol binnen was — terwijl ze er niets
+  // van willen weten: RLS doet hier de afbakening, niet het profiel. Wat er WEL van afhangt is de
+  // klantnamenlijst verderop, en die blijft dan ook staan waar hij staat.
+  const [invoicesRaw, documentsRaw, foldersRaw, { data: profile }] = await Promise.all([
     readOrFlag('facturen', () => fetchAllRows((from, to) => supabase
       .from('invoices').select(INVOICE_COLS)
       .order('id', { ascending: true }).range(from, to)
@@ -91,7 +88,12 @@ export default async function BrugServerPage() {
       .from('folders').select(FOLDER_COLS)
       .order('id', { ascending: true }).range(from, to)
     )),
+    supabase.from('profiles').select('onboarding_done, role').eq('id', user.id).single(),
   ])
+
+  if (!profile?.onboarding_done) redirect('/onboarding')
+
+  const isAccountant = profile.role === 'accountant'
 
   // NOTE: cast via `unknown` because database.types.ts may predate the B.1
   // migration (payment_method / shared). The columns DO exist in the DB;

@@ -11,7 +11,7 @@
 // worden bewaakt — het scherm helpt, de server beslist.
 
 import { redirect } from 'next/navigation'
-import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { settleableDirection } from '@/lib/payment-plan'
 import { allocatedOnLine } from '@/lib/bank-line-budget'
@@ -22,9 +22,9 @@ export const dynamic = 'force-dynamic'
 
 export default async function VerdeelPage({ params }: { params: Promise<{ txId: string }> }) {
   const { txId } = await params
-  const supabase = await createServerSupabaseClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   const pipeline = createPipelineClient()

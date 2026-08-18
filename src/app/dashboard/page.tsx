@@ -2,6 +2,7 @@
 // [INTEGRATION] role-based entry routing — May 2026
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { redirect } from 'next/navigation'
 import DashboardClient from './DashboardClient'
 
@@ -10,7 +11,8 @@ export const dynamic = 'force-dynamic'
 export default async function DashboardPage() {
   const supabase = await createServerSupabaseClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   // Alleen wat dit scherm gebruikt. Hier stond `select('*')`, en die rij ging vervolgens als

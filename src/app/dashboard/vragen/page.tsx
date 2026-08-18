@@ -20,6 +20,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from '@/lib/storage-path'
@@ -34,29 +35,55 @@ export const metadata = { title: 'Vragen van je boekhouder — BoekBrug' }
 
 export default async function VragenPage() {
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, onboarding_done')
-    .eq('id', user.id)
-    .single()
+  // ── [WATERVAL] Vier lezingen die alleen user.id kennen ───────────────────────
+  //
+  // Ze stonden op een rij met een `await` ervoor, dus dit scherm ging vier keer heen en weer
+  // voordat het iets kon tonen — terwijl geen van de vier op een ander wachtte. De lezingen die
+  // wél ergens op wachten staan in de tweede golf hieronder, en dat is niet cosmetisch: die
+  // vragen naar de id's die hier uit komen.
+  //
+  // De twee vraag-lezingen blijven APART, met opzet — zie de toelichting bij de factuurvragen:
+  // ze komen langs verschillende RLS-policies binnen en één gecombineerde query zou allebei de
+  // helften laten vallen zodra de tweede policy nog niet is uitgerold. Tegelijk uitvoeren
+  // verandert daar niets aan; het is dezelfde twee query's, alleen niet meer na elkaar.
+  const [
+    { data: profile },
+    { data: statusData, error: statusErr },
+    { data: invStatusData, error: invStatusErr },
+    { data: link },
+  ] = await Promise.all([
+    supabase.from('profiles').select('role, onboarding_done').eq('id', user.id).single(),
+
+    // ── De openstaande vragen ──────────────────────────────────────────────────
+    // Geen .eq('user_id', …) — die kolom bestaat hier niet; de policy koppelt de rij aan
+    // het document en het document aan de eigenaar. Faalt de lezing, dan tonen wij géén
+    // lege lijst maar een eerlijke foutmelding (zie loadFailed): "geen vragen" is een
+    // bewering, en die mag nooit uit een mislukte query komen.
+    supabase
+      .from('accountant_subject_status')
+      .select('subject_id, status, vraag_text, updated_at')
+      .eq('subject_type', 'document')
+      .eq('status', VRAAG_STATUS),
+
+    // [FACTUURVRAAG] De vragen over FACTUREN — zie de toelichting verderop, bij het blok dat ze
+    // samenvoegt. Aparte lezing, geen OR op subject_type, en dat blijft zo.
+    supabase
+      .from('accountant_subject_status')
+      .select('subject_id, status, vraag_text, updated_at')
+      .eq('subject_type', 'invoice')
+      .eq('status', VRAAG_STATUS),
+
+    // ── De boekhouder ──────────────────────────────────────────────────────────
+    supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', user.id).maybeSingle(),
+  ])
 
   if (!profile?.onboarding_done) redirect('/onboarding')
   // Dit is het scherm van de ondernemer. De boekhouder stelt zijn vragen op /dashboard/brug.
   if (profile.role === 'accountant') redirect('/dashboard/accountant')
-
-  // ── De openstaande vragen ────────────────────────────────────────────────────
-  // Geen .eq('user_id', …) — die kolom bestaat hier niet; de policy koppelt de rij aan
-  // het document en het document aan de eigenaar. Faalt de lezing, dan tonen wij géén
-  // lege lijst maar een eerlijke foutmelding (zie loadFailed): "geen vragen" is een
-  // bewering, en die mag nooit uit een mislukte query komen.
-  const { data: statusData, error: statusErr } = await supabase
-    .from('accountant_subject_status')
-    .select('subject_id, status, vraag_text, updated_at')
-    .eq('subject_type', 'document')
-    .eq('status', VRAAG_STATUS)
 
   let loadFailed = Boolean(statusErr)
   const statusRows = (statusData ?? []) as VraagStatusRow[]
@@ -65,12 +92,33 @@ export default async function VragenPage() {
   // Zonder trashed-filter: een vraag over een weggegooid bestand blijft een openstaande
   // vraag, en het scherm zegt dat het in de prullenbak ligt.
   const docIds = statusRows.map((r) => r.subject_id)
-  const { data: docs } = docIds.length
-    ? await supabase
-        .from('documents')
-        .select('id, file_name, file_url, trashed')
-        .in('id', docIds)
-    : { data: [] as Array<{ id: string; file_name: string | null; file_url: string | null; trashed: boolean | null }> }
+
+  const invStatusRows = (invStatusData ?? []) as VraagStatusRow[]
+  const invIds = invStatusRows.map((r) => r.subject_id)
+
+  // ── [WATERVAL] Tweede golf: de drie lezingen die de id's van hierboven nodig hadden ──
+  //
+  // Ze hangen elk van iets uit de eerste golf af — de documenten van de documentvragen, de
+  // facturen van de factuurvragen, de naam van de boekhouder van de koppeling — maar NIET van
+  // elkaar. Dus opnieuw: één rit voor alle drie in plaats van drie ritten.
+  //
+  // De naam van de boekhouder gaat via service_role, en pas nadat de koppeling in de eerste golf
+  // is bewezen. Uitsluitend voor de wéérgave van die naam, nooit om te bepalen wát iemand mag
+  // zien — daarom hangt hij aan accountantId en niet aan user.id.
+  const accountantId: string | null = link?.accountant_id ?? null
+  const pipeline = createPipelineClient()
+
+  const [{ data: docs }, { data: invData }, { data: accProfile }] = await Promise.all([
+    docIds.length
+      ? supabase.from('documents').select('id, file_name, file_url, trashed').in('id', docIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; file_name: string | null; file_url: string | null; trashed: boolean | null }> }),
+    invIds.length
+      ? supabase.from('invoices').select('id, invoice_number, client_name, total_inc_btw, invoice_date').in('id', invIds)
+      : Promise.resolve({ data: [] as VraagInvoiceRow[] }),
+    accountantId
+      ? pipeline.from('profiles').select('full_name, company_name').eq('id', accountantId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ])
 
   const docRows = (docs ?? []) as Array<{
     id: string; file_name: string | null; file_url: string | null; trashed: boolean | null
@@ -90,21 +138,6 @@ export default async function VragenPage() {
   //
   // [NO-SILENT-EMPTY] invoiceLoadFailed telt apart mee in loadFailed: "geen vragen" mag nooit uit
   // een mislukte lezing komen, en dat geldt voor deze helft net zo goed als voor de andere.
-  const { data: invStatusData, error: invStatusErr } = await supabase
-    .from('accountant_subject_status')
-    .select('subject_id, status, vraag_text, updated_at')
-    .eq('subject_type', 'invoice')
-    .eq('status', VRAAG_STATUS)
-
-  const invStatusRows = (invStatusData ?? []) as VraagStatusRow[]
-  const invIds = invStatusRows.map((r) => r.subject_id)
-  const { data: invData } = invIds.length
-    ? await supabase
-        .from('invoices')
-        .select('id, invoice_number, client_name, total_inc_btw, invoice_date')
-        .in('id', invIds)
-    : { data: [] as VraagInvoiceRow[] }
-
   // Een mislukte lezing van deze helft is óók een reden om niet 'geen vragen' te zeggen.
   if (invStatusErr) loadFailed = true
 
@@ -119,25 +152,9 @@ export default async function VragenPage() {
     return 0
   })
 
-  // ── De boekhouder ────────────────────────────────────────────────────────────
-  const { data: link } = await supabase
-    .from('accountant_clients')
-    .select('accountant_id')
-    .eq('zzper_id', user.id)
-    .maybeSingle()
-
-  const accountantId: string | null = link?.accountant_id ?? null
-
+  // ── De naam van de boekhouder ────────────────────────────────────────────────
   let accountantNaam: string | null = null
-  const pipeline = createPipelineClient()
   if (accountantId) {
-    // service_role — uitsluitend voor de wéérgave van de naam, en pas nadat de koppeling
-    // hierboven is bewezen. Nooit om te bepalen wát iemand mag zien.
-    const { data: accProfile } = await pipeline
-      .from('profiles')
-      .select('full_name, company_name')
-      .eq('id', accountantId)
-      .maybeSingle()
     const naam = (accProfile?.full_name ?? '').trim()
     const bedrijf = (accProfile?.company_name ?? '').trim()
     accountantNaam = naam || bedrijf || null

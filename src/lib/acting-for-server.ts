@@ -13,6 +13,7 @@
 
 import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveActingFor, type ActingFor, type MemberLink } from "@/lib/acting-for";
 import { resolveAccountantActing, canConfirmForClient, type MandateRow } from "@/lib/accountant-mandate";
@@ -27,8 +28,10 @@ import { isMissingColumn } from "@/lib/pg-missing";
  * next click, not after a minute.
  */
 export const getActingFor = cache(async (): Promise<ActingFor | null> => {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Through getSessionUser(), so the layout, the page and this function share ONE
+  // verification round-trip per request instead of each paying for its own. Same question, same
+  // answer, same request — see session-user.ts for why that is memoised and not cached.
+  const user = await getSessionUser();
   if (!user) return null;
 
   let link: MemberLink | null = null;
@@ -85,7 +88,8 @@ export async function getActingForClient(
   if (!clientId) return getActingFor();
 
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request — see session-user.ts. Verification unchanged.
+  const user = await getSessionUser();
   if (!user) return null;
 
   // Their own administration through the accountant door is not an accountant question at all —
@@ -168,7 +172,8 @@ export async function canConfirmForClientServer(clientId: string | null | undefi
   if (!clientId) return false;
 
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request — see session-user.ts. Verification unchanged.
+  const user = await getSessionUser();
   if (!user || user.id === clientId) return false;
 
   const [{ data: profile }, { data: link }, { data: mandate }] = await Promise.all([

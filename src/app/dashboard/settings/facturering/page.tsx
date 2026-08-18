@@ -17,6 +17,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { decidePlan, type PlanDecision } from '@/lib/subscription'
 import { PLUS } from '@/lib/plan'
 import { FAIR_USE_LIMITS, NEAR_LIMIT_RATIO, evaluateFairUse, formatLimit } from '@/lib/fair-use'
@@ -57,7 +58,8 @@ export default async function FactureringPage({
   const justPaid = params.betaald === '1'
 
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   // De abonnementskolommen komen uit billing_subscription.sql, met de hand toegepast →

@@ -3,6 +3,7 @@
 
 import { Suspense } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import { redirect } from "next/navigation";
 import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
 import { COLUMN } from "@/lib/design/tokens";
@@ -13,7 +14,8 @@ export const metadata = {
 
 export default async function QuarterlyPage() {
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase

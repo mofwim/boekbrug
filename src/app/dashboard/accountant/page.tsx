@@ -7,6 +7,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import AccountantHome from '@/modules/accountant/pages/AccountantHome'
 import {
   getAccountantClients,
@@ -34,7 +35,8 @@ export default async function AccountantPage() {
   const supabase = await createServerSupabaseClient()
 
   // Auth
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   // Profile

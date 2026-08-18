@@ -1,12 +1,14 @@
 // src/app/onboarding/page.tsx
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 
 export default async function OnboardingPage() {
   const supabase = await createServerSupabaseClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
   if (!user) redirect("/login");
 
   // [HERVATTEN] Mét de bedrijfsgegevens die er al staan. Ze werden hier niet gelezen en dus ook

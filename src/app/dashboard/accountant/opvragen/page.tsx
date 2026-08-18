@@ -12,6 +12,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { lastCompletedQuarter } from '@/lib/quarter'
 import AccountantOpvragen, { type OpvraagKlant } from '@/modules/accountant/pages/AccountantOpvragen'
 
@@ -45,7 +46,8 @@ function recenteKwartalen(now: Date): { year: number; quarter: number; label: st
 export default async function AccountantOpvragenPage() {
   const supabase = await createServerSupabaseClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   const { data: profile } = await supabase

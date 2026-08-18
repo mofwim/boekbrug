@@ -6,6 +6,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import { ensureYearStructure } from "@/lib/bestanden";
 import { BestandenPage } from "./BestandenPage";
 
@@ -13,7 +14,8 @@ export const metadata = { title: "Mijn bestanden — BoekBrug" };
 
 export default async function BestandenServerPage() {
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
 
   if (!user) redirect("/login");
 

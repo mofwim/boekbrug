@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { getSessionUser } from '@/lib/session-user'
 import { summarizeVault, type VaultInvoice, type VaultDocument } from '@/lib/compliance-vault'
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import { PURPOSE_PARAM, parsePurpose } from '@/lib/account-purpose'
@@ -19,20 +20,41 @@ export default async function Page({
 }) {
   const params = await searchParams
   const supabase = await createServerSupabaseClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser()
   if (!user) redirect('/login')
 
   // [KLUIS] Waarvoor dit account is aangemaakt. Bepaalt alleen de begroeting hieronder —
   // nooit wat iemand mag. Ontbreekt de kolom (migratie nog niet toegepast), dan is het
   // antwoord 'boekhouden' en verandert er niets.
+  //
+  // [WATERVAL] Deze lezing zat vóór de twee zware lezingen onderaan, met een eigen `await`, dus die
+  // begonnen pas als de begroeting bekend was — terwijl ze er niets van willen weten. Ze staan nu
+  // in dezelfde golf. Wat er WEL van afhangt is het zelfherstel hieronder, en dat blijft er dus
+  // achter staan.
+  //
+  // allSettled, niet all: deze ene lezing mág mislukken (de kolom kan er nog niet zijn) en dat is
+  // de hele reden voor de try eronder. Met Promise.all zou die toegestane mislukking de twee
+  // andere lezingen meesleuren en de kluis leeg tonen — op het scherm dat bewijst dat er niets
+  // verloren gaat.
+  const [purposeS, invoicesS, documentsS] = await Promise.allSettled([
+    supabase.from('profiles').select('account_purpose').eq('id', user.id).single(),
+    fetchAllRows((from, to) => supabase
+      .from('invoices')
+      .select('invoice_date, direction, invoice_type, status, total_inc_btw, receiver_id')
+      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      .order('id', { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) => supabase
+      .from('documents')
+      .select('doc_type, year, period, trashed')
+      .eq('user_id', user.id)
+      .order('id', { ascending: true }).range(from, to)),
+  ])
+
   let purpose = 'boekhouden'
   try {
-    const { data } = await supabase
-      .from('profiles')
-      .select('account_purpose')
-      .eq('id', user.id)
-      .single()
-    purpose = parsePurpose(data?.account_purpose)
+    if (purposeS.status === 'rejected') throw purposeS.reason
+    purpose = parsePurpose(purposeS.value.data?.account_purpose)
   } catch {
     /* kolom bestaat nog niet → 'boekhouden' */
   }
@@ -84,18 +106,12 @@ export default async function Page({
   // surface (aangifte/result/readiness effDir).
   // [PAGINATION] The vault spans EVERY year (7-yr bewaarplicht) — a multi-year shop can
   // exceed the 1000-row cap, so page past it (else old years silently show fewer records).
-  const [invoices, documents] = await Promise.all([
-    fetchAllRows((from, to) => supabase
-      .from('invoices')
-      .select('invoice_date, direction, invoice_type, status, total_inc_btw, receiver_id')
-      .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-      .order('id', { ascending: true }).range(from, to)),
-    fetchAllRows((from, to) => supabase
-      .from('documents')
-      .select('doc_type, year, period, trashed')
-      .eq('user_id', user.id)
-      .order('id', { ascending: true }).range(from, to)),
-  ])
+  // De lezingen zelf zitten in de golf bovenaan; hier staat alleen nog wat ze betekenen. Een
+  // mislukte lezing werpt door, precies zoals hij dat deed toen de query hier nog stond.
+  if (invoicesS.status === 'rejected') throw invoicesS.reason
+  if (documentsS.status === 'rejected') throw documentsS.reason
+  const invoices = invoicesS.value
+  const documents = documentsS.value
 
   // [KLUIS-INCOMING] Infer a null direction from ownership before the vault math splits
   // uit/in — so an email-imported incoming invoice with no explicit direction still counts.

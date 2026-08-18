@@ -21,6 +21,7 @@
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getSessionUser } from "@/lib/session-user";
 import VandaagClient, { type VandaagInvoice } from "./VandaagClient";
 // [CREDITNOTA-NO-CHASE] shared "is this still owed to me" rule — both sides of a credited pair
 // must leave the list together (see src/lib/credited-invoices.ts)
@@ -46,16 +47,32 @@ const SELECT =
 export default async function VandaagPage() {
   const supabase = await createServerSupabaseClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
+  const user = await getSessionUser();
 
   if (!user) redirect("/login");
+
+  // ── [WATERVAL] Zes lezingen die niets van elkaar willen weten ───────────────────
+  //
+  // Dit is het scherm waar de ondernemer na het inloggen op landt, en het wachtte zes keer na
+  // elkaar op de database voordat er iets te zien was. Niet omdat de tweede de eerste nodig had —
+  // alle zes kennen alleen user.id — maar omdat een `await` op de regel eronder nu eenmaal wacht.
+  //
+  // Daarom staat er hieronder geen `await` meer voor de query's zelf: een Supabase-query is pas
+  // een verzoek op het moment dat er iets op wacht. Zolang niemand dat doet is het een BESCHRIJVING
+  // van een verzoek, en die kun je met z'n zessen tegelijk de deur uit doen (de Promise.all
+  // verderop). Geen enkele query verandert daardoor, geen enkele filterregel verschuift, en elke
+  // toelichting blijft staan bij wat hij toelicht — alleen de volgorde van het WACHTEN verandert.
+  //
+  // Wat er NIET in meegaat: de creditnota-lezing verderop. Die wordt alleen gedaan als er iets te
+  // herinneren VALT, en dat weet je pas als de herinneringslijst binnen is. Hem toch meesturen zou
+  // betekenen dat elke ondernemer zonder openstaande facturen — precies de nieuwe gebruiker — een
+  // query betaalt waarvan het antwoord meteen wordt weggegooid.
 
   // [TODAY-LISTS-V1] List 1 — Te betalen: incoming invoices verified but unpaid.
   // status='received' = verified Crediteur awaiting payment (NOT 'processing',
   // which is still in the verification queue; NOT 'paid'). Payment state = status.
-  const { data: payableRaw, error: payableErr } = await supabase
+  const payableQ = supabase
     .from("invoices")
     .select(SELECT)
     .eq("receiver_id", user.id)
@@ -68,7 +85,7 @@ export default async function VandaagPage() {
   // [TODAY-LISTS-V1] List 2 — Herinner je klant: outgoing invoices sent but unpaid.
   // status IN ('sent','overdue') — 'overdue' included defensively; if the app never
   // promotes sent→overdue automatically it simply matches nothing extra (safe).
-  const { data: remindRaw, error: remindErr } = await supabase
+  const remindQ = supabase
     .from("invoices")
     .select(SELECT)
     .eq("sender_id", user.id)
@@ -88,7 +105,7 @@ export default async function VandaagPage() {
   // Alleen VERSTUURDE offertes: een concept is nooit de deur uit geweest. Welke van deze rijen
   // vandaag aandacht vragen, beslist offerte-followup.ts — hier wordt niets gefilterd op datum,
   // zodat de regel op één plek staat en niet half in een query.
-  const { data: offertesRaw, error: offertesErr } = await supabase
+  const offertesQ = supabase
     .from("invoices")
     .select(SELECT)
     .eq("sender_id", user.id)
@@ -106,7 +123,7 @@ export default async function VandaagPage() {
   // to 'received'; the AMBIGUOUS / low-confidence ones stay here, and with no reminder they rot
   // silently — their voorbelasting (BTW-aftrek) and cost never reach the books. Surface the count
   // on the daily control center so the owner is nudged to clear them. Head-count only (no rows).
-  const { count: toVerifyCount, error: toVerifyErr } = await supabase
+  const toVerifyQ = supabase
     .from("invoices")
     .select("id", { count: "exact", head: true })
     .eq("receiver_id", user.id)
@@ -117,7 +134,7 @@ export default async function VandaagPage() {
   // list above (it filters `due_date IS NOT NULL` to date-sort). So a real cost the owner still
   // owes appears on NO task list and can be silently forgotten. Surface a count nudge here so it is
   // never invisible — the owner opens it to add a date / pay. Head-count only (no rows).
-  const { count: datelessPayableCount, error: datelessErr } = await supabase
+  const datelessQ = supabase
     .from("invoices")
     .select("id", { count: "exact", head: true })
     .eq("receiver_id", user.id)
@@ -129,6 +146,32 @@ export default async function VandaagPage() {
     // creditnota — it's a real dateless bill whose amount wasn't read — so keep it counted; a
     // plain `.gte(total,0)` dropped it (SQL: NULL >= 0 → NULL) and hid a genuine payable.
     .or("total_inc_btw.gte.0,total_inc_btw.is.null");
+
+  // [AUTO-INCASSO] De leverancierslezing hoort bij de golf, de BEOORDELING ervan blijft staan waar
+  // hij hoort (hieronder, bij de lijst die hij filtert). Hij vangt zijn eigen fout af — anders zou
+  // één hikkende leverancierslezing de hele pagina omvertrekken, terwijl het blok hieronder er juist
+  // op rekent dat het die fout zelf mag afhandelen en de lijst ongemoeid laat.
+  //
+  // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const incassoQ = (supabase as any)
+    .from("suppliers")
+    .select("name_key")
+    .eq("user_id", user.id)
+    .eq("auto_incasso", true)
+    .then(
+      (r: { data: unknown; error: unknown }) => r,
+      (e: unknown) => ({ data: null, error: e }),
+    ) as Promise<{ data: { name_key: string | null }[] | null; error: unknown }>;
+
+  const [
+    { data: payableRaw, error: payableErr },
+    { data: remindRaw, error: remindErr },
+    { data: offertesRaw, error: offertesErr },
+    { count: toVerifyCount, error: toVerifyErr },
+    { count: datelessPayableCount, error: datelessErr },
+    incassoRes,
+  ] = await Promise.all([payableQ, remindQ, offertesQ, toVerifyQ, datelessQ, incassoQ]);
 
   const payableAll = (payableRaw ?? []) as unknown as VandaagInvoice[];
 
@@ -147,14 +190,8 @@ export default async function VandaagPage() {
   // dropping a genuinely payable invoice because a supplier lookup hiccuped would hide a bill.
   let incassoKeys: Set<string> | null = null;
   try {
-    // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from("suppliers")
-      .select("name_key")
-      .eq("user_id", user.id)
-      .eq("auto_incasso", true);
-    if (error) throw new Error(error.message);
+    const { data, error } = incassoRes;
+    if (error) throw new Error(String((error as { message?: string }).message ?? error));
     incassoKeys = new Set(
       ((data ?? []) as { name_key: string | null }[]).map((s) => s.name_key).filter((k): k is string => !!k),
     );
