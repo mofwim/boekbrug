@@ -261,6 +261,24 @@ export const MESSAGES = {
   'lijst.herhalen.stop': { nl: 'Stoppen met herhalen', ar: 'إيقاف التكرار', en: 'Stop repeating' },
   'lijst.herhalen.stopKort': { nl: 'Stop', ar: 'إيقاف', en: 'Stop' },
   'lijst.herhalen.uitleg': { nl: 'De app zet het concept klaar; versturen blijft aan jou.', ar: 'يُجهّز التطبيق المسودة، ويبقى الإرسال بيدك.', en: 'The app prepares the draft; sending stays with you.' },
+  // ── [RUST] De regel die het herhaalpaneel samenvat ───────────────────────────────────────
+  // Het paneel eronder is het antwoord op "wat staat er aan en hoe zet ik het uit", en het stond
+  // uitgeklapt boven de facturenlijst — met per serie een klant, een cadans en twee knoppen. Dat
+  // is een beheerscherm boven een lijst, en de lijst is waarvoor je hier komt.
+  //
+  // Wat NIET mag verdwijnen is dat er iets loopt: dit is de enige functie in de app die uit
+  // zichzelf facturen maakt, en het bestand hierboven legt vast dat zoiets nooit moeilijker uit te
+  // zetten mag zijn dan het aan te zetten was. Vandaar de telling in de regel zelf, en één tik naar
+  // dezelfde knoppen — niet twee.
+  //
+  // Loopt er niets meer, dan zegt de regel dát; "0 lopen" laten lezen als rust terwijl er drie
+  // gepauzeerde series klaarstaan is precies de stilte die dit paneel moest wegnemen.
+  'lijst.herhaal.lopen': { nl: '{n} herhalingen lopen', ar: '{n} تكرارات شغّالة', en: '{n} recurring series are running' },
+  'lijst.herhaal.loopt': { nl: '1 herhaling loopt', ar: 'تكرار واحد شغّال', en: '1 recurring series is running' },
+  'lijst.herhaal.stil': { nl: '{n} herhalingen staan stil', ar: '{n} تكرارات متوقّفة', en: '{n} recurring series are paused' },
+  'lijst.herhaal.stilEen': { nl: '1 herhaling staat stil', ar: 'تكرار واحد متوقّف', en: '1 recurring series is paused' },
+  'lijst.herhaal.toon': { nl: 'Toon en beheer ze', ar: 'اعرضها وأدِرها', en: 'Show and manage them' },
+  'lijst.herhaal.verberg': { nl: 'Verberg ze weer', ar: 'أخفِها', en: 'Hide them again' },
   'lijst.herhalen.gestopt': { nl: 'Herhalen gestopt — klaarstaande concepten blijven staan', ar: 'أُوقف التكرار — وتبقى المسودات الجاهزة كما هي', en: 'Repeating stopped — drafts already prepared stay put' },
 
   'lijst.boekhouder.geen': { nl: 'Geen boekhouder gekoppeld', ar: 'لا يوجد محاسب مرتبط', en: 'No accountant linked' },
