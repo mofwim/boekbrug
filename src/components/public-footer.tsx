@@ -37,6 +37,10 @@ export default function PublicFooter() {
         <div style={col}>
           <div style={head}>BoekBrug</div>
           <Link href="/blog" style={link}>Blog</Link>
+          {/* [KANTOOR-VOORDEUR] The office's entrance, linked site-wide. It is the only page here
+              written for someone other than the ondernemer, and a page nothing links to is a page
+              nobody reaches. */}
+          <Link href="/voor-boekhouders" style={link}>Voor boekhouders</Link>
           <Link href="/register" style={link}>Gratis account</Link>
           <Link href="/login" style={link}>Inloggen</Link>
           {showDonation && <Link href="/steun" style={link}>Steun BoekBrug</Link>}

@@ -288,12 +288,19 @@ export default async function PrijzenPage({
               tot de volgende maand, of Plus nemen.
             </Faq>
 
+            {/* [KANTOOR-STAFFEL] Dit antwoord zei "een tarief per klant". Dat was de vorige
+                vorm, en hij is bewust verlaten: §5.8 van de voorwaarden en
+                src/lib/accountant-pricing.ts kennen een STAFFEL per kantoor, waarin één klant
+                erbij binnen de trede niets kost. Twee beschrijvingen van hetzelfde bedrag lopen
+                altijd uiteen — hier waren ze het al niet meer eens met de bindende tekst. */}
             <Faq q="Betaalt mijn boekhouder ook?">
               Tot en met {ACCOUNTANT_FREE_CLIENTS} gekoppelde klanten niet — dan is het portaal
-              gratis, zonder klok en zonder proefperiode. Heeft hij er meer, dan komt daar een
-              tarief per klant bij. Dat staat nog niet vast, en zolang wij het niet minstens 30
-              dagen vooraf hebben aangekondigd is het portaal volledig kosteloos. Wat hij betaalt
-              verandert nooit iets aan wat jij betaalt.
+              gratis, zonder klok en zonder proefperiode. Heeft hij er meer, dan geldt een staffel
+              per kantoor: binnen een trede kost één klant erbij niets. Die tarieven zijn nog niet
+              actief, en zolang wij ze niet minstens 30 dagen vooraf hebben aangekondigd is het
+              portaal volledig kosteloos. Wat hij betaalt verandert nooit iets aan wat jij betaalt
+              — de staffel staat op{' '}
+              <Link href="/voor-boekhouders" style={{ color: '#1a73e8' }}>voor boekhouders</Link>.
             </Faq>
 
             <Faq q="Kan ik maandelijks opzeggen?">
