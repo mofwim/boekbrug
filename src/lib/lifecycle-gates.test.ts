@@ -703,6 +703,46 @@ test("[WATERMARK-SERVER-TIME] a future-dated message is dropped from the walk, w
   );
 });
 
+// ─── [WATERMARK-HOLD] The two rules that stop mail being lost forever ────────────────
+//
+// The watermark is the point every later sync starts from. Move it past mail that was never
+// actually processed and that mail leaves every future window — permanently, silently, with each
+// run reporting success and the owner simply never seeing those purchase invoices again. There is
+// no error, no retry, and nothing on any screen; the only symptom is an invoice that does not
+// exist.
+//
+// Three rules protect it. The future-date clamp above was pinned. These two were not — measured by
+// breaking them: `else if (!fetchComplete)` → `else if (false)` and the per-attachment completeness
+// test → `if (false) return false` both left the entire email, bank and cash suite green.
+
+test("[WATERMARK-HOLD] an incomplete fetch holds the mark", () => {
+  // fetchComplete is false when the provider listing was throttled or truncated, or when any
+  // attachment fetch failed. The mark must not move then: the messages that were never listed are
+  // OLDER than the ones that were, so advancing jumps straight over them.
+  const src = code("src/lib/email-integration.ts");
+  assert.match(
+    src, /\}\s*else if \(!fetchComplete\)\s*\{/,
+    "the watermark no longer waits for a complete fetch — a throttled listing now advances the " +
+      "mark past mail that was never fetched, and it is out of every future window",
+  );
+});
+
+test("[WATERMARK-HOLD] a message counts as done only when EVERY attachment is done", () => {
+  // One email, three attachments, one of which failed to classify. The three share a
+  // receivedDateTime, so the mark either passes all of them or none — and passing them means the
+  // failed one is never fetched again. It is not in the books and not in the skip registry either;
+  // it is simply gone.
+  const src = code("src/lib/email-integration.ts");
+  const at = src.indexOf("const messageComplete =");
+  assert.ok(at > 0, "the per-message completeness test is gone — this gate is reading a hole");
+  const fn = src.slice(at, src.indexOf("\n    }", at));
+  assert.match(
+    fn, /if \(!\(knownKeys\.has\(key\) \|\| completedKeys\.has\(key\)\)\) return false/,
+    "a message is being called complete without checking each of its attachments — the mark then " +
+      "passes an email whose attachment never imported, and that attachment is lost for good",
+  );
+});
+
 // ─── Every import door still reaches the books ────────────────────────────────────────
 //
 // The doors are: the camera/upload intake, the UBL e-invoice intake, the manual file upload, and
@@ -12975,4 +13015,40 @@ test("[DOORLOPEND] the check is on a screen, not only in a route", () => {
   };
   scan("src");
   assert.ok(users.length > 0, "nothing renders the numbering check — it is a route nobody reads");
+});
+
+test("[EIGEN-FACTUUR] the own-invoice verdict is ACTED ON, not merely computed", () => {
+  // Two gates above already pin that the reader ASKS the question and that it asks it before the
+  // identity scrub destroys the evidence. Neither pins that the ANSWER is used — measured: changing
+  // the condition to `if (false && eigenStuk.isOwn)` left every one of them green, along with the
+  // whole bank/email/cash suite. The call stays, its position stays, the Dutch notice stays in the
+  // file, and the document is booked as a purchase again.
+  //
+  // What that costs is on the record in the comment beside it, from the reported case: € 362,38 of
+  // TURNOVER stands again as a cost and € 32,61 of BTW OWED is claimed back as voorbelasting — a
+  // € 65 swing on one document, in the direction the Belastingdienst charges interest on, with
+  // every number real and every total adding up. Five doors read documents and all five would do
+  // it, silently.
+  const ai = code("src/lib/ai.ts");
+
+  const verdictAt = ai.indexOf("const eigenStuk = looksLikeOwnDocument(");
+  assert.ok(verdictAt > 0, "the reader no longer computes the own-document verdict at all");
+
+  // The condition itself, exactly. A gate matching only /eigenStuk\.isOwn/ would pass on
+  // `if (false && eigenStuk.isOwn)` — the mention survives every way of neutralising it.
+  const after = ai.slice(verdictAt);
+  assert.match(
+    after, /\n\s*if \(eigenStuk\.isOwn\) \{/,
+    "the verdict is computed and never acted on — an own sales invoice is booked as a cost again",
+  );
+
+  // …and what it does with it: refuse the document as an invoice. Anything softer (a flag, a lower
+  // confidence) still lets the purchase be created, which is the whole harm.
+  const branch = after.slice(after.indexOf("if (eigenStuk.isOwn)"));
+  const end = branch.indexOf("};");
+  assert.ok(end > 0, "could not read the refusal branch — this gate is reading a hole");
+  assert.match(
+    branch.slice(0, end), /is_invoice: false/,
+    "the own-document branch no longer refuses the document — it must return is_invoice: false",
+  );
 });

@@ -1,12 +1,86 @@
 # Jouw lijst — alles wat alleen jij kunt doen
 
-*Bijgewerkt 29 juli 2026. Elk codepunt op deze tak is af, getest en gepusht; wat hier staat
-is de rest.*
+*Bijgewerkt 29 juli 2026, met een aanvulling van 19 augustus bovenaan. Elk codepunt op deze tak
+is af, getest en gepusht; wat hier staat is de rest.*
 
 > **Lees dit als één ding:** de app is vandaag veilig live te zetten. Er wordt niemand
 > gefactureerd, niemand buitengesloten en er wordt niets verwijderd, ongeacht wat je van
 > deze lijst wel of niet doet. Alles hieronder maakt iets *mogelijk* — geen enkel punt
 > repareert iets dat stuk is.
+
+---
+
+## 0. Vóór de eerste tester — augustus 2026
+
+*Deze lijst is van 29 juli. Sindsdien zijn er **43 migraties** bijgekomen en is er drie weken aan
+functionaliteit op `main` gezet. Wat hieronder staat is wat daardoor is veranderd aan de vraag
+"kan ik dit aan iemand geven". De rest van dit document blijft gelden.*
+
+**☐ Eén query, en die is het belangrijkst van allemaal**
+
+```
+docs/WELKE_MIGRATIES_STAAN_ER.sql
+```
+
+Punt 1 hieronder zegt "de migraties zijn af", en dat was waar op 29 juli. Er zijn er daarna 43
+bij gekomen — de bankbevestiging, de deelcreditnota, de regelkorting, het offerte-akkoord, de
+factuurbijlage, `ai_budget_settle`, de opslagharding. Welke daarvan in jouw database staan, weet
+dit bestand niet en ik ook niet; die query wel. Hij leest alleen de catalogus en verandert niets.
+
+De uitkomst die telt is de MIDDELSTE. `OPEN` is ongemakkelijk maar eerlijk: de functie doet niets
+en de code weet dat. **`GEDEELTELIJK` is het gevaarlijke geval** — halverwege gestopt, dus een
+deel van de bescherming staat er en een deel niet. Lees dan het CONTROLE-blok van dát bestand.
+
+**☐ `CRON_SECRET` vervangen — niet omdat hij zwak is**
+
+Hij is tijdens het bouwen gegenereerd in een terminal waarvan de uitvoer werd meegeschreven. Zie
+`LIVE_GAAN.md §2`: een geheim dat ergens is afgedrukt is geen geheim meer. Vervangen is één
+handeling (Vercel → Generate → deploy) en er verhuist geen enkele staat mee. Zolang het niet
+gebeurt is het geen storing die je ziet — en zonder een geldige waarde antwoorden **alle zes
+crons 401 en doen niets**, stil.
+
+**☐ `SYNC_START_DATE` moet LEEG zijn in Vercel**
+
+Hij is gezet voor de pilot, om historische facturen van Kiwi op te halen. Maar hij is **globaal**:
+hij vervangt de ondergrens van *iedere* gebruiker, niet die van één. Staat hij nog gevuld als je
+tester zich aanmeldt, dan haalt diens eerste sync maanden aan vreemde post op — zijn maandtegoed
+op, jouw AI-rekening, en een verificatiewachtrij vol dingen die hij nooit heeft gevraagd. Leeg
+laten betekent: vanaf zijn eigen registratiedatum, wat de bedoeling is.
+
+**☐ `NEXT_PUBLIC_COMPANY_LEGAL_NAME` en `_ADDRESS`**
+
+Deze twee gelden **vanaf de eerste gebruiker**, niet vanaf de eerste euro: de privacyverklaring
+noemt daarmee de verwerkingsverantwoordelijke, en dat is wat AVG art. 13 verlangt. Zonder ze leest
+er "BoekBrug, gevestigd te Tilburg" met "(adres volgt)". `_KVK` en `_BTW` mogen wachten tot je geld
+aanneemt — die staan al in punt 6 van `LIVE_GAAN.md`.
+
+Voor tien mensen die jou persoonlijk kennen is dat te verdedigen. Voor een open aanmeldknop niet.
+
+**☐ Leaked Password Protection aanzetten (Supabase → Auth)**
+
+Kost één schakelaar. Sinds augustus staat er verificatie in twee stappen in de app
+(`/dashboard/beveiliging`), maar die zet de eigenaar zelf aan; dit werkt vanaf de eerste
+registratie en zonder dat iemand iets hoeft te doen.
+
+**☐ De twee losse SQL-blokken die nog wachten**
+
+- `ai_budget_settle.sql` — regels **48 t/m 92** (BEGIN → COMMIT, niet de commentaarstaart).
+  Zonder dit rekent de dagzekering af op `max_tokens` in plaats van op werkelijk verbruik, en
+  slaat hij dus te vroeg door.
+- `storage_bucket_hardening.sql` — het **CONTROLE**-blok, vóór de eerste echte gebruiker.
+
+**☑ Wat sinds 29 juli aantoonbaar beter is geworden**
+
+Niet om gerust te stellen, maar omdat het de vraag "is het klaar" verplaatst: de geldpaden zijn in
+augustus doorgelicht (`MONEY_PATH_AUDIT_2026-08.md`), er staat nu een slot op het account én op de
+programmakant ervan, elke handeling is terug te lezen in een logboek dat de eigenaar zelf opent, de
+doorlopende nummerreeks wordt gecontroleerd op gaten — inclusief het gat aan het eind dat alleen de
+teller ziet — en van de e-mailimport en de betalingskoppeling is gemeten welke waarborgen kapot
+konden zonder dat één test rood werd. Dat waren er zes; ze zijn nu vastgepind.
+
+**Wat dat NIET is:** bewijs dat het bij een echte administratie klopt. Geen enkele controle in dit
+document vervangt één ondernemer die één volledig kwartaal doorloopt en zijn boekhouder het laat
+ophalen. Dat is precies de poort in `LIVE_GAAN.md §7`, en die staat er niet voor niets.
 
 ---
 

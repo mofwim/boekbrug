@@ -24,6 +24,7 @@ import {
   DEFAULT_OPTIONS,
   type InvoiceForMatching,
   type MatchCandidate,
+  type TransactionMatch,
 } from "./bank-matching";
 
 let passed = 0;
@@ -499,6 +500,80 @@ console.log("\n— [BANK-CHOICE-NOCLAIM] an ambiguous choice does not steal a ca
   check("first tx is a choice (not forced auto)", r.matches[0].outcome === "choice");
   check("second tx is NOT 'none' (candidate wasn't stolen)", r.matches[1].outcome !== "none");
   check("both txns keep both candidates", r.matches[0].candidates.length === 2 && r.matches[1].candidates.length === 2);
+}
+
+console.log("\n— [BANK-AUTO-CONFIRM] the tier's own clauses, asked DIRECTLY —");
+{
+  // ── WHY THESE ARE BUILT BY HAND INSTEAD OF THROUGH matchTransactions() ──
+  //
+  // Every clause below is a SECOND guard on a fact the scorer already weighs, and the scorer wins
+  // first. A "2e termijn" caps confidence at 0.6 in scorePair, so the pair leaves matchTransactions
+  // as 'choice' and autoConfirmTier returns null on its very first line — before the clause under
+  // test is ever reached. A case routed through the matcher therefore passes whether the clause
+  // exists or not.
+  //
+  // That is not a hypothesis. Deleting the instalment veto from autoConfirmTier left this entire
+  // suite green, including the case named "instalment reference → NOT safe" a few blocks below:
+  // it asserts the right thing and proves the wrong guard. The same held for the name threshold
+  // and for the date requirement — three clauses that decide whether money is booked with NO
+  // human, none of them pinned.
+  //
+  // Keeping the second guard is right: autoConfirmTier is exported, and bank-rematch and
+  // bank-auto-confirm reach it with matches they assembled themselves. It just has to be asked on
+  // its own terms, which is what this block does.
+  const cand = (p: Partial<MatchCandidate> = {}): MatchCandidate => ({
+    invoiceId: "inv-1",
+    invoiceNumber: "001-2026",
+    amount: 1210,
+    invoiceDate: "2026-02-01",
+    confidence: 0.92,
+    // No 'reference' and no 'iban': that is what makes this the amount_only tier rather than
+    // 'certain', which is the tier whose clauses are under test here.
+    signals: ["amount", "counterpart", "date"],
+    reason: "",
+    nameSim: 1,
+    nameIdentity: true,
+    ...p,
+  });
+  const asAuto = (t: BankTransaction, c: MatchCandidate): TransactionMatch => ({
+    transaction: t, outcome: "auto", best: c, candidates: [c],
+  });
+
+  // The control. Without it every assertion below could pass because the pair is unbookable for
+  // some reason that has nothing to do with the clause being tested.
+  check("[BANK-AUTO-CONFIRM] the baseline pair DOES book at the flagged tier",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV" }), cand())) === "amount_only");
+
+  // [BANK-PARTIAL] An instalment must never mark the whole invoice paid unattended. The word is in
+  // the description only — the reference stays a clean single number, so the multi-invoice clause
+  // above it cannot be what refuses this.
+  check("[BANK-PARTIAL] 'deelbetaling' in the text refuses the tier outright",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV", description: "deelbetaling" }), cand())) === null);
+  check("[BANK-PARTIAL] …and so does '2e termijn'",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV", description: "2e termijn" }), cand())) === null);
+  check("[BANK-PARTIAL] …and 'aanbetaling'",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV", description: "aanbetaling project" }), cand())) === null);
+
+  // [BANK-AMOUNT-ONLY] Booking on a NAME demands a strong one. 0.6 is the shared-token collision
+  // the constant's own comment names — "De Vries Bouw" against "De Vries Transport" — and a
+  // same-amount coincidence from such a look-alike must not mark an invoice paid with no human.
+  check("[BANK-AMOUNT-ONLY] a merely-similar name (0.6) does not book",
+    autoConfirmTier(asAuto(tx({ counterpartName: "De Vries Transport" }), cand({ nameSim: 0.6 }))) === null);
+  check("[BANK-AMOUNT-ONLY] exactly at the 0.8 bar it does",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV" }), cand({ nameSim: 0.8 }))) === "amount_only");
+  check("[BANK-AMOUNT-ONLY] a hair below the bar it does not",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV" }), cand({ nameSim: 0.79 }))) === null);
+
+  // [BANK-AMOUNT-ONLY-DATE] The reported case, in one line: a €150 credit from an unrelated
+  // "J. Jansen" arriving MONTHS after an open €150 invoice to "Jansen Consultancy" auto-marked it
+  // paid, and the real debtor was never chased again. Name and amount alone booked unbounded into
+  // the future; the date signal is the bound.
+  check("[BANK-AMOUNT-ONLY-DATE] no date proximity → no unattended booking",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen BV" }), cand({ signals: ["amount", "counterpart"] }))) === null);
+
+  // And the clause that is already pinned elsewhere, kept here so the four read as one rule.
+  check("[BANK-AMOUNT-ONLY-TOKENS] a name that is not an identity does not book",
+    autoConfirmTier(asAuto(tx({ counterpartName: "Jansen Holding" }), cand({ nameIdentity: false }))) === null);
 }
 
 console.log("\n— [BANK-AUTO-CONFIRM] only a near-certain single match is safe to auto-book —");
