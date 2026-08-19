@@ -13099,3 +13099,61 @@ test("[KENMERK-BEIDE] a payment quotes both identifiers, from one rule", () => {
   // the invoice it paid. It matches invoice-number-like tokens, which both identifiers satisfy.
   assert.match(code("src/lib/bank-parser.ts"), /remi\.match\(\/\\b\[A-Z\]\{0,3\}\\d\{3,\}\[A-Z0-9\]\*\\b\/g\)/);
 });
+
+test("[NAAM-BIJ-BINNENKOMST] the sheet names the stored file, and lets it be renamed there", () => {
+  // A phone files IMG_20260819_211723.jpg. Bestanden has had a rename for a long time — but
+  // finding the file there first means recognising that string among the others, and the one
+  // moment the owner is looking straight at it is the confirmation sheet.
+  //
+  // That sheet also named the WRONG file. It printed the browser's File.name while intake stores
+  // the converted one: maybeImageToPdf wraps a photo into a PDF ([INTAKE-IMG-PDF]), so `foto.jpg`
+  // is filed as `foto.pdf`, and an owner going to look for it searched for a name that is not
+  // there.
+  const route = code("src/app/api/intake/route.ts");
+  const sheet = code("src/components/intake/IntakeButton.tsx");
+
+  // The server reports what it STORED, on both paths that file a document: the AI path (where the
+  // conversion happens) and the unreadable-type path (where it does not).
+  // Anchored on the RESPONSE, not on the field name alone: `file_name: upload.fileName` also
+  // appears twice as a database insert, so the bare pattern matched those and stayed green with
+  // the response field deleted — an assertion pinned to a mention instead of the wiring.
+  assert.match(route, /folder_name: folderName,\s*file_name: upload\.fileName,/);
+  assert.match(route, /folder_name: bc\.length \? bc\[bc\.length - 1\] : null,\s*file_name: file\.name,/);
+  // …and the sheet prefers it, falling back only when a path does not report one.
+  assert.match(sheet, /fileName: data\.file_name \|\| file\.name,/);
+
+  // The rename itself: same endpoint and same payload the Bestanden screen uses, so there is one
+  // way to rename a file and not two.
+  assert.match(sheet, /fetch\(`\/api\/bestanden\?id=\$\{encodeURIComponent\(id\)\}`/);
+  assert.match(sheet, /body: JSON\.stringify\(\{ file_name: next \}\)/);
+  const page = code("src/app/dashboard/bestanden/BestandenPage.tsx");
+  assert.match(page, /\{ file_name: newName \}/, "the two callers agree on the payload");
+
+  // THE honesty rule, and the reason this is not merely a nicety: a rename that only succeeded
+  // locally is worse than none — the owner walks away believing the file is called something it is
+  // not, and then cannot find it. On a failure the OLD name stays and a sentence says so.
+  const saveAt = sheet.indexOf("async function saveName()");
+  assert.ok(saveAt > 0, "the save handler is where the rule lives");
+  const save = sheet.slice(saveAt, saveAt + 1200);
+  assert.match(save, /if \(!res\.ok\) \{ setNameError\(t\('int\.naam\.mislukt'\)\); return \}/,
+    "a refused rename never updates the name on screen");
+  assert.match(save, /catch \{[\s\S]{0,220}setNameError\(t\('int\.naam\.mislukt'\)\)/,
+    "…and neither does a dropped connection");
+  // The local update happens only AFTER the response was accepted.
+  assert.ok(save.indexOf("if (!res.ok)") < save.indexOf("setDestModal((m) =>"),
+    "the screen follows the server, never leads it");
+
+  // A half-typed name may not survive its sheet: the next upload would open in edit mode showing a
+  // previous file's name over a new file.
+  assert.match(sheet, /const closeDest = \(\) => \{ setDestModal\(null\); setNameDraft\(null\); setNameError\(null\) \}/);
+  assert.doesNotMatch(sheet, /onClick=\{\(\) => setDestModal\(null\)\}/,
+    "every exit goes through the one closer");
+
+  // [TAAL] The words come from the catalogue, and the rename reuses the sentences Bestanden
+  // already has rather than inventing a second Dutch for the same button.
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["best.naamWijzigen", "best.opslaan", "lijst.annuleren", "int.naam.aria", "int.naam.mislukt"]) {
+    assert.ok(messages.includes(`'${key}':`), `${key} exists in the catalogue`);
+    assert.match(sheet, new RegExp(`t\\('${key.replace(".", "\\.")}'\\)`), `${key} is actually rendered`);
+  }
+});

@@ -108,7 +108,43 @@ export default function IntakeButton({
     // WEGGEGOOID zodra er een mapnaam was. Zie de modal onderaan.
     { fileName: string; message: string; folderName: string | null; folderId: string | null; documentId: string | null; isDuplicate?: boolean; couldNotRead?: boolean } | null
   >(null)
-  useCloseOnBack(!!destModal, () => setDestModal(null))
+  // [NAAM-BIJ-BINNENKOMST] The rename, offered where the name is worst. `null` = not renaming;
+  // a string = the draft being typed. Kept beside destModal rather than inside it because it is
+  // the owner's unsaved intent, and it must never be mistaken for what the server holds.
+  const [nameDraft, setNameDraft] = useState<string | null>(null)
+  const [nameBusy, setNameBusy] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
+  // [NAAM-BIJ-BINNENKOMST] Save the new name, or say plainly that it was not saved.
+  //
+  // Same rule the Bestanden screen already follows: on a failure the OLD name stays on screen. A
+  // rename that only succeeded locally is worse than none — the owner walks away believing the
+  // file is called something it is not, and then cannot find it.
+  async function saveName() {
+    const id = destModal?.documentId
+    const next = (nameDraft ?? '').trim()
+    if (!id || !next || next === destModal?.fileName) { setNameDraft(null); setNameError(null); return }
+    setNameBusy(true); setNameError(null)
+    try {
+      const res = await fetch(`/api/bestanden?id=${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_name: next }),
+      })
+      if (!res.ok) { setNameError(t('int.naam.mislukt')); return }
+      setDestModal((m) => (m ? { ...m, fileName: next } : m))
+      setNameDraft(null)
+    } catch {
+      // A dropped connection is not a saved name either.
+      setNameError(t('int.naam.mislukt'))
+    } finally {
+      setNameBusy(false)
+    }
+  }
+
+  // [NAAM-BIJ-BINNENKOMST] One closer for the sheet, because the draft has to die with it. A
+  // half-typed name left in state reopens the NEXT upload's sheet already in edit mode, showing a
+  // previous file's name over a new file — the one mistake this feature must not introduce.
+  const closeDest = () => { setDestModal(null); setNameDraft(null); setNameError(null) }
+  useCloseOnBack(!!destModal, closeDest)
   const cameraRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -392,7 +428,11 @@ export default function IntakeButton({
         // deze upload de enige was; anders melden en in de samenvatting opnemen.
         noteLanded(file.name, t('int.landed.bestand'))
         if (mayNavigate()) setDestModal({
-          fileName: file.name,
+          // [NAAM-BIJ-BINNENKOMST] The name the server STORED. A photo is wrapped into a PDF at
+          // intake ([INTAKE-IMG-PDF]), so `IMG_20260819_211723.jpg` is filed as `.pdf` — and this
+          // sheet used to print the browser's File.name, naming a file that is not the one in
+          // Bestanden. An owner who went looking would search for the wrong thing.
+          fileName: data.file_name || file.name,
           message: data.message || t('int.opgeslagen'),
           folderName: data.folder_name ?? null,
           folderId: data.folder_id ?? null,
@@ -765,7 +805,7 @@ export default function IntakeButton({
 
       {destModal && (
         <div
-          onClick={() => setDestModal(null)}
+          onClick={closeDest}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 400 }}
         >
           <div className="sheet-scroll"
@@ -795,9 +835,52 @@ export default function IntakeButton({
                 {destModal.isDuplicate ? 'ℹ️' : destModal.couldNotRead ? '⚠️' : '📁'}
               </span>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {destModal.fileName}
-                </p>
+                {/* [NAAM-BIJ-BINNENKOMST] The name, and the one moment it is worth changing.
+                    A phone files IMG_20260819_211723.jpg and the owner is looking straight at it;
+                    Bestanden has had a rename for a long time, but finding the file there first
+                    means recognising that string among the others. Only offered when the upload
+                    actually produced a document to rename. */}
+                {nameDraft === null ? (
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '0 0 2px' }}>
+                    <p style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {destModal.fileName}
+                    </p>
+                    {destModal.documentId && !destModal.isDuplicate && (
+                      <button
+                        onClick={() => { setNameError(null); setNameDraft(destModal.fileName) }}
+                        style={{ flexShrink: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#1a73e8', fontFamily: 'inherit' }}
+                      >
+                        {t('best.naamWijzigen')}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ margin: '0 0 6px' }}>
+                    <input
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') void saveName(); if (e.key === 'Escape') { setNameDraft(null); setNameError(null) } }}
+                      aria-label={t('int.naam.aria')}
+                      autoFocus
+                      disabled={nameBusy}
+                      style={{ width: '100%', boxSizing: 'border-box', fontSize: 13, fontWeight: 600, color: '#202124', padding: '7px 9px', borderRadius: 8, border: '1px solid #DADCE0', fontFamily: 'inherit' }}
+                    />
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                      <button onClick={() => void saveName()} disabled={nameBusy}
+                        style={{ background: '#1a73e8', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 600, cursor: nameBusy ? 'default' : 'pointer', opacity: nameBusy ? 0.6 : 1, fontFamily: 'inherit' }}>
+                        {t('best.opslaan')}
+                      </button>
+                      <button onClick={() => { setNameDraft(null); setNameError(null) }} disabled={nameBusy}
+                        style={{ background: 'none', color: '#5f6368', border: 'none', padding: '6px 8px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        {t('lijst.annuleren')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {/* A rename that did not save keeps the OLD name above and says so here. */}
+                {nameError && (
+                  <p style={{ fontSize: 12, color: '#B3261E', margin: '0 0 4px', lineHeight: 1.45 }}>{nameError}</p>
+                )}
                 {/* De mapnaam WON hier van de boodschap, ook wanneer die boodschap "we konden dit
                     document niet lezen — controleer het" was. Precies de zin die de eigenaar moet
                     lezen verdween dus zodra het bestand netjes was opgeborgen. Nu wint de reden, en
@@ -826,7 +909,7 @@ export default function IntakeButton({
                       const url = destModal.folderId
                         ? `/dashboard/bestanden?folder=${destModal.folderId}&focus=${focus}`
                         : `/dashboard/bestanden?focus=${focus}`
-                      setDestModal(null)
+                      closeDest()
                       router.push(url)
                     }}
                     style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#1a73e8', fontSize: 12, fontWeight: 600, textDecoration: 'underline' }}
@@ -838,7 +921,7 @@ export default function IntakeButton({
             </div>
 
             <button
-              onClick={() => setDestModal(null)}
+              onClick={closeDest}
               style={{
                 width: '100%', padding: '16px', borderRadius: 14,
                 background: '#34a853', color: '#fff', border: 'none',
@@ -887,6 +970,10 @@ export interface IntakeResult {
   // Only one of them was read; `numbers` names what is still missing. Never a block — the
   // invoice imports, held out of auto-booking, and `message` already says what to do.
   multipleInvoices?: { numbers: string[] }
+  // [NAAM-BIJ-BINNENKOMST] The name as STORED, which is not always the name that was uploaded:
+  // a photo is wrapped into a PDF at intake, so `foto.jpg` is filed as `foto.pdf`. Absent on the
+  // paths that do not file a document.
+  file_name?: string
   // [INTAKE-DEST-MODAL] present for destination 'document' → deep-link + highlight
   document_id?: string
   folder_id?: string | null
