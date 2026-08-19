@@ -73,6 +73,12 @@ export default function InvoiceDocumentSheet({
 }) {
   const t = translator(useLocale())
   const [doc, setDoc] = useState<DocState>({ phase: 'loading' })
+  // [BLAD-GEBAAR] Does the DOCUMENT own the scroll gesture, or the sheet? False by default, so the
+  // sheet always scrolls when it opens — the state the owner is in for the first, and usually only,
+  // gesture they make here. Paging is the deliberate second act, and it is reversible: without a
+  // way back the fix would trade one trap for another, and on a phone there is no pointer-leave to
+  // fall back on.
+  const [paging, setPaging] = useState(false)
 
   useEffect(() => {
     // Cancel-guarded: the sheet can be closed and reopened on another row before this resolves,
@@ -237,11 +243,60 @@ export default function InvoiceDocumentSheet({
               </p>
             )}
             {doc.phase === 'ready' && doc.kind !== 'image' && doc.kind !== 'structured' && (
-              <iframe
-                src={doc.url}
-                title={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })}
-                style={{ width: '100%', height: '58dvh', border: 'none', background: '#fff' }}
-              />
+              /* [BLAD-GEBAAR] The document does not take the scroll gesture until it is asked to.
+                 An <iframe> is its own scroll container, so an embedded PDF viewer swallows the
+                 gesture the moment the finger is over it — and at 58dvh it is most of the sheet.
+                 [BLAD-EEN-SCROLLER] moved the two exits OUT of the scroller so this wall could not
+                 hide them, which was right and was not the whole defect: the wall is still there,
+                 and it appears the instant the document finishes loading. Reported exactly that
+                 way — "the scroll breaks after the pdf opens".
+                 The <img> branch above needs none of this: an image carries no scroller. */
+              <div style={{ position: 'relative', width: '100%' }}>
+                <iframe
+                  src={doc.url}
+                  title={t('dsh.factuurAlt', { number: invoice.invoice_number ?? '' })}
+                  style={{ width: '100%', height: '58dvh', border: 'none', background: '#fff', display: 'block' }}
+                />
+                {!paging && (
+                  /* A plain element over the frame. It has no scroller of its own, so the gesture
+                     travels to the sheet's one scroller exactly as it does over the checks above.
+                     It is a BUTTON, not a bare div: this is reachable by keyboard and announced,
+                     and it says why a tap is needed instead of leaving a preview that quietly
+                     ignores one. */
+                  <button
+                    type="button"
+                    onClick={() => setPaging(true)}
+                    style={{
+                      position: 'absolute', inset: 0, width: '100%', border: 'none', cursor: 'pointer',
+                      background: 'transparent', display: 'flex', alignItems: 'flex-end',
+                      justifyContent: 'center', padding: '0 0 12px', fontFamily: FONT,
+                    }}
+                  >
+                    <span style={{
+                      background: 'rgba(32,33,36,0.78)', color: '#fff', fontSize: 12.5, fontWeight: 600,
+                      padding: '7px 14px', borderRadius: R.full,
+                    }}>{t('dsh.gebaar.ontgrendel')}</span>
+                  </button>
+                )}
+                {paging && (
+                  /* The way back. Without it this would trade one trap for another: on a phone
+                     there is no pointer-leave to fall back on, so an owner who tapped once would
+                     own the document's scroller for the rest of the sheet's life. Placed over the
+                     frame's corner rather than under it, because "under the document" is precisely
+                     where a control cannot be reached. */
+                  <button
+                    type="button"
+                    onClick={() => setPaging(false)}
+                    style={{
+                      position: 'absolute', insetInlineEnd: 10, bottom: 10, border: 'none', cursor: 'pointer',
+                      background: 'rgba(32,33,36,0.78)', color: '#fff', fontSize: 12.5, fontWeight: 600,
+                      padding: '7px 14px', borderRadius: R.full, fontFamily: FONT,
+                    }}
+                  >
+                    {t('dsh.gebaar.vergrendel')}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
