@@ -82,8 +82,29 @@ with kandidaat as (
     -- A row carrying ONLY a total is not a contradiction — it is an unread breakdown, which
     -- the intake gate already reports in its own words. Counting it here would send the
     -- owner hunting for an error that is really a missing reading.
+    --
+    -- [NUL-IS-OOK-ONGELEZEN] Measured 19 August 2026: an unread breakdown does NOT arrive as
+    -- NULL. Of 509 invoices, zero carried a NULL in either column and three carried 0 in BOTH
+    -- while the total was 4.917,90 / 3.819,82 / 236,29. So the two lines above excluded a state
+    -- that does not occur, and the report named three held invoices as broken figures — exactly
+    -- the hunt the comment above says it does not want to send anyone on.
+    --
+    -- ex = 0 AND btw = 0 beside a non-zero total is never a legitimate Dutch invoice, not even a
+    -- vrijgestelde or 0%-rate one: those carry ex = incl with btw = 0, never ex = 0. So it can
+    -- only mean "not read yet", and it belongs with the NULLs.
+    --
+    -- All three sat on status 'processing' — held in the verify queue by the [BTW-GATE] in
+    -- src/lib/auto-advance.ts, which refuses to auto-book a materially-priced invoice whose btw
+    -- reads as zero without an explicit 0% rate. They are therefore doing exactly what they
+    -- should, and IN_OK in /api/aangifte ('paid', 'received') keeps them out of the return while
+    -- they wait. Nothing here is a defect; the report was.
     and i.total_ex_btw is not null
     and i.btw_amount is not null
+    and not (
+      coalesce(i.total_ex_btw, 0) = 0
+      and coalesce(i.btw_amount, 0) = 0
+      and coalesce(i.total_inc_btw, 0) <> 0
+    )
 ),
 beoordeeld as (
   select

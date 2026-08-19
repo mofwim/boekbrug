@@ -196,6 +196,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('email_sender_rules.sql', 'policy', 'email_sender_rules_select_own', 'email_sender_rules', 'public'),
   ('email_sender_rules.sql', 'policy', 'email_sender_rules_update_own', 'email_sender_rules', 'public'),
   ('email_sender_rules.sql', 'table', 'email_sender_rules', null, 'public'),
+  ('email_skipped_attachments_owner_read.sql', 'policy', 'owner reads own skipped attachments', 'email_skipped_attachments', 'public'),
   ('factuur_b_numbering.sql', 'column', 'invoice_number_padding', 'profiles', 'public'),
   ('factuur_b_numbering.sql', 'column', 'invoice_number_template', 'profiles', 'public'),
   ('factuur_b_numbering.sql', 'constraint', 'invoices_sender_invoice_number_key', null, 'public'),
@@ -380,7 +381,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 104 migraties
+-- NIET VAST TE STELLEN — 9 van de 105 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of
