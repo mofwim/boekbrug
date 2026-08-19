@@ -137,6 +137,22 @@ CREATE TABLE public.company_members (
   PRIMARY KEY (owner_id, member_id)
 );
 
+-- [OBSERVABILITY] The import skip registry. Present here for one reason: production had RLS ON
+-- and NO policy on it, so the panel that exists to prove nothing is silently lost read zero rows
+-- and reported "niets overgeslagen" over 324 real ones. The columns are the production ones, no
+-- more — this fixture invents nothing.
+CREATE TABLE public.email_skipped_attachments (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id           uuid NOT NULL,
+  source_message_id text NOT NULL,
+  filename          text,
+  reason            text NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+-- RLS ON with no policy is exactly the state that shipped. The migration under test adds the
+-- only policy, so anything an impersonated session reaches, it reaches THROUGH that policy.
+ALTER TABLE public.email_skipped_attachments ENABLE ROW LEVEL SECURITY;
+
 -- In production RLS on invoices/invoice_lines is ON (enabled outside these migrations, from the
 -- original dashboard setup — the base invoices_zzp_* policies are NOT in this repo). Enabling it
 -- here means: under the test, ONLY the mandate policies exist, so any row an impersonated session
