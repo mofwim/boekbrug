@@ -81,6 +81,10 @@ export const PUBLIC_PATHS = [
   // [KLUIS] De voordeur voor mensen die geen boekhoudprogramma zoeken maar een oplossing voor
   // hun bewaarplicht. Moet uitgelogd leesbaar zijn — dat is het hele punt van de pagina.
   "/bewaarplicht",
+  // [BELOFTE-BEWIJS] De beveiligingspagina. Openbaar omdat hij bedoeld is voor wie nog GEEN account
+  // heeft — dat is precies de lezer die de vraag stelt. Botst niet met de prefixregel: het scherm
+  // in de app heet /dashboard/beveiliging en begint dus niet met deze string.
+  "/beveiliging",
   "/voorwaarden",
   "/cookies",
   // [PUBLIC-SURFACE] Deze twee stonden er NIET in, en dat was zichtbaar voor iedere bezoeker.

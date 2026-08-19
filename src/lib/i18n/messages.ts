@@ -10770,6 +10770,59 @@ export const MESSAGES = {
   // withdrawn. And the lockout sentence is not fine print: losing the phone means losing the way
   // into records the Belastingdienst can ask for, so it is said BEFORE the switch, not after.
 
+  // ── [DOORLOPEND] Loopt de factuurnummering door? ───────────────────────────────────
+  //
+  // Artikel 35 Wet OB vraagt een doorlopende reeks. Een gat is meestal geen fraude en geen bug: het
+  // nummer wordt vóór de factuur toegekend, dus een verzending die halverwege strandt verbrandt er
+  // één. Dat mág — de Belastingdienst accepteert een gat dat je kunt UITLEGGEN. Wat niet mag is een
+  // gat dat niemand heeft gezien. Vandaar de toon hieronder: benoemen, niet alarmeren.
+  'doorlopend.klopt': {
+    nl: 'Je factuurnummering loopt door, zonder gaten.',
+    en: 'Your invoice numbering runs unbroken, with no gaps.',
+    ar: 'ترقيم فواتيرك متصل، بلا فجوات.',
+  },
+  'doorlopend.halfGecontroleerd': {
+    nl: 'Het einde van de reeks konden we nu niet nakijken.',
+    en: 'We could not check the end of the series just now.',
+    ar: 'لم نتمكن الآن من فحص نهاية السلسلة.',
+  },
+  'doorlopend.nietGelezen': {
+    nl: 'We konden je nummering nu niet nakijken. Dat betekent niet dat er iets mis is.',
+    en: 'We could not check your numbering just now. That does not mean anything is wrong.',
+    ar: 'تعذّر علينا فحص ترقيمك الآن. هذا لا يعني أن هناك خطأ.',
+  },
+  'doorlopend.gatenTitel': {
+    nl: 'Er ontbreken nummers in je reeks',
+    en: 'Numbers are missing from your series',
+    ar: 'تنقص أرقام من سلسلتك',
+  },
+  'doorlopend.reeks.factuur': { nl: 'Facturen', en: 'Invoices', ar: 'الفواتير' },
+  'doorlopend.reeks.creditnota': { nl: 'Creditnota\'s', en: 'Credit notes', ar: 'الإشعارات الدائنة' },
+  'doorlopend.ontbreekt': {
+    nl: '— nummer {nummers} is nooit uitgereikt.',
+    en: '— number {nummers} was never issued.',
+    ar: '— الرقم {nummers} لم يُصدر قط.',
+  },
+  'doorlopend.eindeReeks': {
+    nl: '— {aantal} aan het eind van de reeks: de teller staat hoger dan je hoogste factuur.',
+    en: '— {aantal} at the end of the series: the counter stands higher than your highest invoice.',
+    ar: '— {aantal} في نهاية السلسلة: العدّاد أعلى من أعلى فاتورة لديك.',
+  },
+  'doorlopend.dubbel': {
+    nl: '— nummer {nummers} komt twee keer voor. Dit hoort niet te kunnen; laat het ons weten.',
+    en: '— number {nummers} appears twice. This should not be possible; please tell us.',
+    ar: '— الرقم {nummers} يتكرر مرتين. هذا لا يُفترض أن يحدث؛ أخبرنا به.',
+  },
+  'doorlopend.onleesbaar': {
+    nl: 'Deze nummers passen niet in je huidige opmaak, dus die konden we niet meetellen: {nummers}. Meestal is dat overgenomen historie uit een vorig pakket.',
+    en: 'These numbers do not fit your current format, so we could not include them: {nummers}. Usually that is history carried over from a previous package.',
+    ar: 'هذه الأرقام لا تطابق تنسيقك الحالي فلم نستطع احتسابها: {nummers}. غالباً ما تكون سجلات منقولة من برنامج سابق.',
+  },
+  'doorlopend.watNu': {
+    nl: 'Een verbrand nummer kun je niet opnieuw gebruiken, en dat hoeft ook niet: de Belastingdienst accepteert een gat dat je kunt uitleggen. Schrijf op wat er gebeurde en houd het bij je administratie — dan weet je het vóór je boekhouder ernaar vraagt.',
+    en: 'A burned number cannot be reused, and it does not need to be: the tax office accepts a gap you can explain. Write down what happened and keep it with your records — then you know before your bookkeeper asks.',
+    ar: 'الرقم المحروق لا يمكن إعادة استخدامه، ولا حاجة لذلك: مصلحة الضرائب تقبل فجوة يمكنك تفسيرها. دوِّن ما حدث واحفظه مع سجلاتك — عندها تعرفه قبل أن يسألك محاسبك.',
+  },
   // ── [BEVEILIGING] Wie kan bij deze administratie ───────────────────────────────────
   //
   // Dit scherm beantwoordt de enige vraag die een zzp'er niet zelf kan controleren als hij zijn
@@ -10809,6 +10862,24 @@ export const MESSAGES = {
     nl: 'Je administratie hangt aan één wachtwoord',
     en: 'Your administration hangs on one password',
     ar: 'إدارتك معلَّقة على كلمة مرور واحدة',
+  },
+  'bev.apparaten.titel': { nl: 'Andere apparaten', en: 'Other devices', ar: 'الأجهزة الأخرى' },
+  // De eerlijke helft staat in de zin zelf: wat we NIET kunnen tonen, staat er vóór wat we wel kunnen.
+  'bev.apparaten.uitleg': {
+    nl: 'We kunnen je niet laten zien op welke apparaten je bent ingelogd — die lijst geeft de inlogdienst niet vrij, en een lijst die we zelf zouden verzinnen klopt juist niet in het geval waarvoor je hem nodig hebt. Wat we wél kunnen: alle andere sessies in één keer uitloggen. Vermoed je dat iemand je wachtwoord heeft, doe dan dit én zet verificatie in twee stappen aan.',
+    en: 'We cannot show you which devices you are signed in on — the auth service does not hand that list out, and a list we made up ourselves would be wrong in exactly the case you need it for. What we can do: sign every other session out at once. If you suspect someone has your password, do this and switch on two-step verification.',
+    ar: 'لا نستطيع أن نُريك على أي الأجهزة أنت مسجَّل الدخول — خدمة الدخول لا تُتيح تلك القائمة، وقائمة نختلقها نحن ستكون خاطئة تحديداً في الحالة التي تحتاجها من أجلها. ما نستطيعه: إنهاء كل الجلسات الأخرى دفعة واحدة. إن كنت تشك أن أحداً يملك كلمة مرورك، فافعل هذا وفعِّل التحقق بخطوتين.',
+  },
+  'bev.apparaten.knop': { nl: 'Log alle andere apparaten uit', en: 'Sign out every other device', ar: 'إنهاء الجلسات على كل الأجهزة الأخرى' },
+  'bev.apparaten.gelukt': {
+    nl: 'Alle andere sessies zijn uitgelogd. Dit apparaat blijft ingelogd.',
+    en: 'Every other session has been signed out. This device stays signed in.',
+    ar: 'أُنهيت كل الجلسات الأخرى. هذا الجهاز يبقى مسجَّلاً.',
+  },
+  'bev.apparaten.mislukt': {
+    nl: 'Het is niet gelukt, en we weten niet of er iets is uitgelogd. Probeer het zo meteen opnieuw.',
+    en: 'It did not work, and we do not know whether anything was signed out. Try again in a moment.',
+    ar: 'لم تنجح العملية، ولا نعرف إن أُنهيت أي جلسة. أعد المحاولة بعد قليل.',
   },
   'bev.log.titel': { nl: 'Wat er is vastgelegd', en: 'What has been recorded', ar: 'ما الذي سُجِّل' },
   'bev.log.uitleg': {

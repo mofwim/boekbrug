@@ -46,6 +46,7 @@ export default function PublicFooter() {
           <div style={head}>Juridisch</div>
           <Link href="/prijzen" style={link}>Prijzen</Link>
           <Link href="/bewaarplicht" style={link}>Bewaarplicht</Link>
+          <Link href="/beveiliging" style={link}>Beveiliging</Link>
           <Link href="/eerlijk-gebruik" style={link}>Eerlijk gebruik</Link>
           <Link href="/privacy" style={link}>Privacyverklaring</Link>
           <Link href="/voorwaarden" style={link}>Algemene Voorwaarden</Link>

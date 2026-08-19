@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from "react";
 
+import { ApparatenPaneel } from "@/components/beveiliging/ApparatenPaneel";
 import { ToegangPaneel } from "@/components/beveiliging/ToegangPaneel";
 import { TweestapsPaneel } from "@/components/settings/TweestapsPaneel";
 import { COLUMN, FONT, M3 } from "@/lib/design/tokens";
@@ -102,6 +103,11 @@ export default function BeveiligingClient() {
             TweestapsPaneel. It sits FIRST because it is the only thing on this screen the owner can
             change in ten seconds, and the rest of the screen is what makes him want to. */}
         <TweestapsPaneel />
+
+        {/* Direct onder het slot, en dat is de volgorde van het probleem: wie vermoedt dat zijn
+            wachtwoord ergens ligt, zet de tweede stap aan én gooit elke andere sessie eruit. Twee
+            knoppen onder elkaar, geen zoektocht. */}
+        <ApparatenPaneel />
 
         {load.state === "reading" && (
           <div className="bg-white rounded-2xl p-5 shadow-sm">

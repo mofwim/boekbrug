@@ -12,6 +12,8 @@ import { lastCompletedQuarter } from '@/lib/quarter'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [DOORLOPEND] Zie de kop van dat bestand: één regel als het klopt, een kader als het niet klopt.
+import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -132,6 +134,15 @@ export default function KlaarClient() {
         </div>
 
         <h1 style={{ fontSize: 24, fontWeight: 700, color: M3.onSurface, margin: '12px 0 14px' }}>{t('klr.titel')}</h1>
+
+        {/* [DOORLOPEND] Loopt de nummering door? Boven de kwartaalkiezer, want dit is JAARBREED en
+            geen kwartaalvraag — en het is precies de vraag die een boekhouder als eerste stelt.
+            Zwijgt op één regel als het klopt: wie dit paneel nooit iets heeft zien zeggen, weet
+            niet dat er iemand meekijkt, en een controle waarvan je niet weet dat hij bestaat levert
+            geen enkel vertrouwen op. */}
+        <div style={{ marginBottom: 16 }}>
+          <NummeringPaneel />
+        </div>
 
         {/* Quarter picker */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 18, alignItems: 'center' }}>

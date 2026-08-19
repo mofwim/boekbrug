@@ -12696,6 +12696,19 @@ test("[2FA] no screen holds a Dutch 2FA sentence of its own", () => {
       // The catalogue is where these sentences live; it is not a screen.
       if (p.startsWith("src/lib/i18n/")) continue;
       const src = withoutTabTitle(code(p));
+      // A PUBLIC page is not a screen either, and the difference is not a technicality.
+      //
+      // The rule this gate enforces is "the app holds no language of its own" — the app being the
+      // part that renders in whatever language the OWNER chose. A public page has no owner and no
+      // language setting: /bewaarplicht, /prijzen and /beveiliging are read by a visitor with no
+      // account, they are argued in Dutch on purpose (AGENTS.md: Dutch is the source language),
+      // and the translated versions of them are separate routes rather than a t() call. Sweeping
+      // them here would mean a public page could never use the words "verificatie in twee stappen"
+      // — the exact phrase it needs in order to sell the feature.
+      //
+      // Detected structurally rather than by a hand-list, so it cannot rot: a page is public when
+      // it renders the public chrome. Stop rendering it and the exemption goes with it.
+      if (/PublicFooter|PublicHeader/.test(src)) continue;
       for (const [key, value] of sentences) {
         if (src.includes(value)) offenders.push(`${p} :: ${key}`);
       }
@@ -12883,4 +12896,83 @@ test("[BEVEILIGING] the home-screen hint says nothing unless it is certain the l
   // And it has to be on the screen an owner actually opens, or the whole point is lost.
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /<TweestapsHint \/>/,
     "the hint is not rendered on Vandaag — an owner who never opens the tile never learns the lock exists");
+});
+
+test("[BEVEILIGING] signing other devices out never takes this one with it", () => {
+  // scope 'global' would sign THIS session out too: the owner presses a button on his own security
+  // screen and lands on the login. He reads that as the app breaking, not as the thing he asked
+  // for — and the one press he most needs to trust becomes the one he never presses again.
+  const panel = code("src/components/beveiliging/ApparatenPaneel.tsx");
+  assert.match(panel, /signOut\(\{ scope: "others" \}\)/, "the panel no longer scopes the sign-out to other sessions");
+  assert.doesNotMatch(panel, /scope: "global"/, "'global' signs this device out as well");
+
+  // And a call we did not see finish is never reported as a success. "Alle andere apparaten zijn
+  // uitgelogd" is a claim, and this is the screen where a wrong one costs most: the owner stops
+  // worrying about a session that is still open.
+  assert.match(panel, /catch \{[\s\S]*?setOutcome\("failed"\)/,
+    "a thrown error does not land on the failure state — a dropped connection would read as success");
+});
+
+// ─── [DOORLOPEND] The invoice numbering, which is what an accountant checks first ──
+
+test("[DOORLOPEND] the numbering read pages, because a truncated read invents gaps", () => {
+  // [PAGINATION] PostgREST silently caps a plain select at ~1000 rows. On any other screen that
+  // costs you rows you cannot see; HERE it manufactures a hundred imaginary missing invoices, on
+  // the screen of an owner whose administration is in perfect order — the single worst way for this
+  // particular check to be wrong, because a tool that is wrong the first time it speaks is one
+  // nobody reads the second time.
+  const route = code("src/app/api/invoice/continuity/route.ts");
+  // The CALL, not the import. Matching the bare name passed over a route whose fetchAllRows() had
+  // been unwrapped entirely — the import line kept the word in the file. Second time that hole has
+  // turned up in this session's gates; it is the [STRIPPER-BLIND] shape, and it is worth looking for
+  // every time a gate asserts that something is "used".
+  assert.match(
+    route, /fetchAllRows<NumberedInvoice>\(/,
+    "the invoice numbers are no longer read through the pager — a plain select stops at ~1000 rows",
+  );
+  assert.match(route, /\.order\("id", \{ ascending: true \}\)/,
+    "paged without a unique order: a tie at a page boundary drops or repeats a row, which reads as a gap");
+});
+
+test("[DOORLOPEND] a counter that could not be read is null, never an empty list", () => {
+  // counters: [] would mean "every counter agrees with the invoices" — a green verdict on the half
+  // of the check that did not run, and that half is the one that sees a gap at the END of a series,
+  // which is the likeliest gap there is.
+  const route = code("src/app/api/invoice/continuity/route.ts");
+  assert.match(route, /let counters: CounterRow\[\] \| null = null;/,
+    "the counters no longer start as 'not read' — an empty list would read as 'nothing was burned'");
+  assert.match(route, /countersRead: counters !== null/,
+    "the screen is not told which half of the check actually ran");
+
+  // And the rule must keep leaning that way: null in, null out.
+  const rule = code("src/lib/invoice-continuity.ts");
+  assert.match(rule, /counters === null \|\| counter === undefined/,
+    "a missing counter no longer produces null — it would become a comfortable zero");
+});
+
+test("[DOORLOPEND] a pro forma is not part of the doorlopende reeks", () => {
+  // An offerte is not a fiscal document. Giving it a format would file its numbers in a series they
+  // do not belong to and report gaps in both.
+  const route = code("src/app/api/invoice/continuity/route.ts");
+  const formats = route.slice(route.indexOf("const formats"), route.indexOf("let counters"));
+  assert.ok(formats.length > 40, "could not read the format list — this gate is reading a hole");
+  assert.ok(!formats.includes("pro_forma"), "pro forma numbers are being checked as if they were invoices");
+  assert.ok(formats.includes('type: "factuur"') && formats.includes('type: "creditnota"'),
+    "one of the two fiscal series is no longer checked at all");
+});
+
+test("[DOORLOPEND] the check is on a screen, not only in a route", () => {
+  // The [LOGBOEK] failure again: a check that answers correctly to curl and that no owner ever sees.
+  const users: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      if (p === "src/components/beveiliging/NummeringPaneel.tsx") continue;
+      if (/<NummeringPaneel\s*\/>/.test(readFileSync(p, "utf8"))) users.push(p);
+    }
+  };
+  scan("src");
+  assert.ok(users.length > 0, "nothing renders the numbering check — it is a route nobody reads");
 });

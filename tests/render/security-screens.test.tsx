@@ -104,3 +104,80 @@ test("[BEVEILIGING] the screen itself renders, in its three load states", async 
   assert.ok(html.length > 0, "the security screen rendered nothing");
   assert.match(html, /Beveiliging|beveiliging|administratie/, "the screen has no words on it");
 });
+
+// ─── [DOORLOPEND] The numbering verdict ──────────────────────────────────────────────
+
+const series = (over: Record<string, unknown> = {}) => ({
+  type: "factuur", year: 2026, first: 1, last: 3, issued: 3,
+  missing: [] as number[], burnedAtEnd: 0 as number | null, duplicates: [] as string[], ...over,
+});
+
+test("[DOORLOPEND] a clean series says so in one line, and never in a warning box", () => {
+  return (async () => {
+    const { NummeringUitslag } = await import("../../src/components/beveiliging/NummeringPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    const html = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, {
+        report: { series: [series()], unreadable: [], clean: true, unaccounted: 0, countersRead: true },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(html, /loopt door/, "the healthy answer must be on the screen — a check nobody sees buys no confidence");
+    assert.doesNotMatch(html, /amber/, "a green box the size of a warning teaches people to skim this spot");
+    assert.doesNotMatch(html, /ontbreken/);
+  })();
+});
+
+test("[DOORLOPEND] a gap names the numbers, and a burned end says the counter is ahead", () => {
+  return (async () => {
+    const { NummeringUitslag } = await import("../../src/components/beveiliging/NummeringPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    const html = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, {
+        report: {
+          series: [series({ missing: [2], last: 4 }), series({ type: "creditnota", burnedAtEnd: 1 })],
+          unreadable: ["2026/0009"],
+          clean: false,
+          unaccounted: null,
+          countersRead: true,
+        },
+        t: translator("nl"),
+      }),
+    );
+    // The number itself, because "er ontbreekt iets" is not something an owner can act on.
+    assert.match(html, /nummer 2 is nooit uitgereikt/);
+    // The end-of-series case, which a hole-scan cannot see at all.
+    assert.match(html, /teller staat hoger/);
+    // Both series named separately, so the owner knows which one to look at.
+    assert.match(html, /Facturen 2026/);
+    assert.match(html, /Creditnota/);
+    // Unreadable numbers are shown as themselves — an owner recognises his own imported history.
+    assert.match(html, /2026\/0009/);
+    // And a next step, because a finding with none is a screen that worries someone and leaves him.
+    assert.match(html, /kun je niet opnieuw gebruiken/);
+  })();
+});
+
+test("[DOORLOPEND] half a check is never reported as a whole one", () => {
+  return (async () => {
+    const { NummeringUitslag } = await import("../../src/components/beveiliging/NummeringPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    // Clean as far as we could see, but the counters did not answer — so the end of the series is
+    // unchecked, which is exactly where a burned number is likeliest to sit.
+    const html = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, {
+        report: { series: [series({ burnedAtEnd: null })], unreadable: [], clean: true, unaccounted: null, countersRead: false },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(html, /loopt door/);
+    assert.match(html, /einde van de reeks konden we nu niet nakijken/, "the unchecked half must be named");
+
+    // And "we could not check" is its own answer, never a quiet clean one.
+    const failed = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, { report: null, t: translator("nl") }),
+    );
+    assert.match(failed, /konden je nummering nu niet nakijken/);
+    assert.doesNotMatch(failed, /loopt door/, "a failed check must never render the reassuring sentence");
+  })();
+});
