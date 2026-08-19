@@ -1,5 +1,5 @@
 // [PUSH] Pure test — run: npx tsx src/lib/push-payload.test.ts
-import { buildPushPayload, isGoneStatus, isVapidConfigured } from "./push-payload";
+import { buildPushPayload, isGoneStatus, isVapidConfigured, normalizeVapidSubject } from "./push-payload";
 
 let pass = 0, fail = 0;
 function eq(name: string, got: unknown, want: unknown) {
@@ -63,6 +63,42 @@ eq("missing private -> false", isVapidConfigured({ publicKey: "a", subject: "mai
 eq("missing subject -> false", isVapidConfigured({ publicKey: "a", privateKey: "b" }), false);
 eq("blank strings -> false", isVapidConfigured({ publicKey: "  ", privateKey: "  ", subject: "  " }), false);
 eq("empty object -> false", isVapidConfigured({}), false);
+
+console.log("\n— normalizeVapidSubject —");
+// The exact production value. VAPID_SUBJECT held a bare address, web-push threw on every send,
+// and push was off for 23 users between 31 July and 19 August without one visible symptom.
+eq("the bare address that disabled push is completed to mailto:",
+  normalizeVapidSubject("mofwim@gmail.com"), "mailto:mofwim@gmail.com");
+eq("an address with surrounding whitespace is trimmed first",
+  normalizeVapidSubject("  info@boekbrug.nl \n"), "mailto:info@boekbrug.nl");
+
+eq("a mailto: URI is already right and is left alone",
+  normalizeVapidSubject("mailto:info@boekbrug.nl"), "mailto:info@boekbrug.nl");
+eq("an https: URL is the other form web-push accepts",
+  normalizeVapidSubject("https://boekbrug.nl/contact"), "https://boekbrug.nl/contact");
+
+// web-push demands https: or mailto: specifically (vapid-helper.js:84). Silently upgrading http:
+// would change which URL the push service is told to reach, so it is refused instead.
+eq("http: is not silently upgraded to https:", normalizeVapidSubject("http://boekbrug.nl"), null);
+eq("some other scheme is refused", normalizeVapidSubject("ftp://boekbrug.nl"), null);
+
+eq("nothing set stays nothing", normalizeVapidSubject(undefined), null);
+eq("blank stays nothing", normalizeVapidSubject("   "), null);
+eq("null stays nothing", normalizeVapidSubject(null), null);
+
+// Strict on purpose: completing a typo produces a mailto: nobody reads, which is worse than off.
+eq("a name is not an address", normalizeVapidSubject("BoekBrug support"), null);
+eq("no domain dot is not an address", normalizeVapidSubject("info@localhost"), null);
+eq("two @ is not an address", normalizeVapidSubject("a@b@c.nl"), null);
+eq("an address with a space is not an address", normalizeVapidSubject("in fo@boekbrug.nl"), null);
+
+console.log("\n— isVapidConfigured, now that the subject must be usable —");
+// This is the assertion that would have caught it: complete config, present subject, and the
+// old check said yes because the string was non-empty.
+eq("a bare address now completes rather than reaching web-push raw",
+  isVapidConfigured({ publicKey: "a", privateKey: "b", subject: "mofwim@gmail.com" }), true);
+eq("a subject that is set but unusable is NOT configured",
+  isVapidConfigured({ publicKey: "a", privateKey: "b", subject: "BoekBrug support" }), false);
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
