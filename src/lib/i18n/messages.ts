@@ -779,6 +779,19 @@ export const MESSAGES = {
   'best.uitklappen': { nl: 'Uitklappen', ar: 'توسيع', en: 'Expand' },
   'best.naamWijzigen': { nl: 'Naam wijzigen', ar: 'إعادة التسمية', en: 'Rename' },
 
+  // ─── [BLAD-GEBAAR] Whose gesture is it — the sheet's, or the document's? ─────────────────────
+  //
+  // An embedded PDF viewer is its own scroll container: the moment the finger is over it, it takes
+  // the gesture and the sheet stops moving. The panel already keeps its two exits outside the
+  // scroller so they stay reachable, but that only stopped the wall from HIDING them — it is still
+  // a wall, and it appears the moment the document finishes loading.
+  //
+  // So the document does not take the gesture until it is asked to. These two sentences are the
+  // asking, and they are on screen rather than implied: a preview that ignores a tap for reasons
+  // the owner cannot see is its own small betrayal.
+  'dsh.gebaar.ontgrendel': { nl: 'Tik om in het document te bladeren', ar: 'انقر للتنقّل داخل المستند', en: 'Tap to page through the document' },
+  'dsh.gebaar.vergrendel': { nl: 'Klaar met bladeren', ar: 'انتهيت من التصفّح', en: 'Done paging' },
+
   // ─── [NAAM-BIJ-BINNENKOMST] Renaming at the moment the file arrives ──────────────────────────
   //
   // Bestanden has had a rename for a long time; what it did not have was a rename at the ONE

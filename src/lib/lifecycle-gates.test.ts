@@ -5244,8 +5244,16 @@ test("[DOC-GEEN-BLADZIJDE] the sheet explains a machine-readable file instead of
   assert.match(sheet, /\{noPageNotice\(doc\.name\)\}/, "…which says why there is nothing to show");
   // The frame must now EXCLUDE it. Without this the new branch would render the sentence AND the
   // iframe under it, which is worse than either alone.
+  // [BLAD-GEBAAR] The window, not adjacency. This asserted `&& (\n<iframe` — the frame sitting
+  // IMMEDIATELY after the condition — which is a proxy for the claim, and the proxy broke the day
+  // the frame gained a positioned wrapper so an overlay could stop it swallowing the scroll
+  // gesture. The claim is unchanged and is what is asserted now: THIS condition, the one naming
+  // 'structured', is the condition that guards the only iframe in the file. Drop the exclusion and
+  // it still fails.
+  assert.equal((sheet.match(/<iframe/g) ?? []).length, 1,
+    "one frame in this sheet — the window below assumes it");
   assert.match(
-    sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \(\n\s*<iframe/,
+    sheet, /doc\.kind !== 'image' && doc\.kind !== 'structured' && \([\s\S]{0,1200}?<iframe/,
     "the iframe branch must exclude structured files, not merely be preceded by one",
   );
   // The source is not hidden — it stops being the default view. [TAAL] Asserted on the KEY, not
@@ -13168,4 +13176,63 @@ test("[NAAM-BIJ-BINNENKOMST] the sheet names the stored file, and lets it be ren
     assert.ok(messages.includes(`'${key}':`), `${key} exists in the catalogue`);
     assert.match(sheet, new RegExp(`t\\('${key.replace(".", "\\.")}'\\)`), `${key} is actually rendered`);
   }
+});
+
+test("[BLAD-GEBAAR] the document does not take the scroll gesture until it is asked to", () => {
+  // Reported from the app, in the words that name the mechanism exactly: "the scroll breaks after
+  // the pdf opens". An <iframe> is its own scroll container, so an embedded PDF viewer swallows
+  // the gesture the moment the finger is over it — and this frame is 58dvh, most of the sheet.
+  //
+  // [BLAD-EEN-SCROLLER] already moved the two exits OUT of the scroller so the wall could not HIDE
+  // them. That was right and it was not the whole defect: the wall is still a wall, and it appears
+  // the instant doc.phase turns 'ready'. Before that the slot holds a 200px loading line and the
+  // sheet scrolls fine, which is precisely why the report says "after".
+  //
+  // A SOURCE gate rather than a render one, deliberately: the sheet fetches its document in an
+  // effect, effects do not run under renderToStaticMarkup, so every render test of this component
+  // sees phase 'loading' and can never reach the iframe branch at all. Asserting this in
+  // money-screens.test.tsx would have produced a test that passes without ever rendering the thing
+  // it names.
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  // The frame lives in a positioned wrapper, or an absolute overlay has nothing to anchor to.
+  assert.match(sheet, /<div style=\{\{ position: 'relative', width: '100%' \}\}>\s*<iframe/,
+    "the iframe is wrapped, so the overlay can cover exactly it");
+  // The gesture belongs to the sheet by default. This is the state the owner is in for the first —
+  // and usually only — gesture they make here.
+  assert.match(sheet, /const \[paging, setPaging\] = useState\(false\)/);
+  assert.match(sheet, /\{!paging && \(/, "with paging off, something covers the frame");
+  assert.match(sheet, /onClick=\{\(\) => setPaging\(true\)\}/, "…and a tap hands the gesture over");
+
+  // REVERSIBLE. Without a way back this trades one trap for another: on a phone there is no
+  // pointer-leave, so an owner who tapped once would own the document's scroller for good.
+  assert.match(sheet, /\{paging && \(/);
+  assert.match(sheet, /onClick=\{\(\) => setPaging\(false\)\}/, "…and a way back out of it");
+
+  // A <button>, not a bare div: keyboard-reachable and announced. A transparent div over a
+  // document is invisible to everything except a mouse.
+  const overlayAt = sheet.indexOf("onClick={() => setPaging(true)}");
+  assert.ok(overlayAt > 0);
+  assert.match(sheet.slice(Math.max(0, overlayAt - 400), overlayAt), /<button\s+type="button"/,
+    "the overlay is a button");
+
+  // …and it SAYS why a tap is needed. A preview that silently ignores one is its own small
+  // betrayal — the owner concludes the document is broken.
+  for (const key of ["dsh.gebaar.ontgrendel", "dsh.gebaar.vergrendel"]) {
+    assert.match(sheet, new RegExp(`t\\('${key.replace(/\./g, "\\.")}'\\)`), `${key} is rendered`);
+    assert.ok(readFileSync("src/lib/i18n/messages.ts", "utf8").includes(`'${key}':`),
+      `${key} exists in the catalogue`);
+  }
+
+  // The IMAGE branch gets none of this, and that is the point rather than an oversight: an <img>
+  // carries no scroller, so a photographed bon never stole the gesture. Covering it would add a
+  // tap to a preview that always worked.
+  const imgAt = sheet.indexOf("alt={t('dsh.factuurAlt'");
+  assert.ok(imgAt > 0 && imgAt < overlayAt, "the image branch comes first and is left alone");
+  assert.doesNotMatch(sheet.slice(imgAt, overlayAt - 400), /setPaging/,
+    "no overlay over an image — it never took the gesture");
+
+  // Physical sides are wrong in exactly one language, which is the one nobody checks.
+  assert.match(sheet, /insetInlineEnd: 10/);
+  assert.doesNotMatch(sheet, /position: 'absolute'[^}]*right: 10/);
 });
