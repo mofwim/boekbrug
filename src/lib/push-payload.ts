@@ -52,11 +52,72 @@ export function isGoneStatus(status: number | undefined | null): boolean {
   return status === 404 || status === 410;
 }
 
-/** VAPID config is complete only when BOTH keys AND a contact subject are set. */
+/**
+ * The VAPID contact, in the shape the push services actually accept — or null when there is
+ * nothing usable.
+ *
+ * ── WHY THIS EXISTS: PUSH WAS OFF IN PRODUCTION FOR THREE WEEKS ──
+ * VAPID_SUBJECT was set to a bare e-mail address. web-push requires a URI: it runs
+ * `new URL(subject)` and then demands protocol `https:` or `mailto:`
+ * (node_modules/web-push/src/vapid-helper.js:68). A bare address parses as nothing at all, so
+ * every single send threw "Vapid subject is not a valid URL" — 30 failures across 23 users
+ * between 31 July and 19 August, on the cron routes, the intake and every notification write.
+ *
+ * The feature failed in the quietest way available: push.ts catches, logs and disables, exactly
+ * as its no-throw contract requires, so nothing broke and nobody was told. An operator who fills
+ * a field labelled "contact" with a contact address is not making a mistake worth losing a
+ * feature over — so the address is completed here instead of rejected.
+ *
+ * What is NOT done: an `http:` URL is not upgraded to `https:`, and nothing is invented. Those
+ * would change WHO the push service reaches, which is the one thing this value is for.
+ */
+export function normalizeVapidSubject(raw: string | undefined | null): string | null {
+  const subject = raw?.trim();
+  if (!subject) return null;
+
+  // Already a URI? Then it is accepted or rejected exactly as web-push would.
+  const asUri = parseAllowedSubject(subject);
+  if (asUri) return asUri;
+
+  // A bare e-mail address is the one thing worth completing: it is what someone types into a
+  // field asking for a contact, and `mailto:` is the only URI it could have meant.
+  if (looksLikeBareEmail(subject)) return parseAllowedSubject(`mailto:${subject}`);
+
+  return null;
+}
+
+/** The subject if web-push would take it: parseable, and https: or mailto:. */
+function parseAllowedSubject(candidate: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  return url.protocol === "https:" || url.protocol === "mailto:" ? candidate : null;
+}
+
+/**
+ * Deliberately strict, because the cost of being wrong is asymmetric: a false positive turns a
+ * typo into a `mailto:` the push service cannot reach, while a false negative just leaves the
+ * feature off — which is where it already was. One @, something either side, no whitespace, and
+ * no scheme of its own.
+ */
+function looksLikeBareEmail(value: string): boolean {
+  return /^[^\s:@]+@[^\s:@]+\.[^\s:@]+$/.test(value);
+}
+
+/**
+ * VAPID config is complete only when BOTH keys are set AND the contact subject is one the push
+ * services will accept. It checked only that the subject was non-empty, which is precisely how a
+ * value that is present and unusable got all the way to web-push and disabled the feature there.
+ */
 export function isVapidConfigured(env: {
   publicKey?: string;
   privateKey?: string;
   subject?: string;
 }): boolean {
-  return Boolean(env.publicKey?.trim() && env.privateKey?.trim() && env.subject?.trim());
+  return Boolean(
+    env.publicKey?.trim() && env.privateKey?.trim() && normalizeVapidSubject(env.subject),
+  );
 }

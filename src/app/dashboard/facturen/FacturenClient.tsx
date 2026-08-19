@@ -222,6 +222,11 @@ export default function FacturenClient({
   // behind a different filter tab. A feature that creates invoices by itself may never be harder
   // to switch off than it was to switch on.
   const [scheduleList, setScheduleList] = useState<ScheduleRow[]>([])
+
+  // [RUST] Staat het herhaalpaneel open? Standaard niet — zie de regel-sleutels in messages.ts.
+  // Niet onthouden tussen bezoeken: de stand hoort bij deze blik op de lijst, niet bij de
+  // gebruiker, en een voorkeur die blijft plakken verbergt de volgende serie die erbij komt.
+  const [showHerhaal, setShowHerhaal] = useState(false)
   const schedules = useMemo(() => {
     // PAUSED schedules belong in here too. Leaving them out made the row offer "Herhalen"
     // again, which the server refuses (one schedule per invoice) — a dead end on a button the
@@ -1243,7 +1248,39 @@ export default function FacturenClient({
             deliberately ABOVE the list: something the app does on its own belongs in sight.
             Hidden entirely when nothing repeats, and while searching (the results are the
             answer to a different question). */}
-        {!searching && scheduleList.length > 0 && (
+        {/* ── [RUST] Eén regel boven het paneel ───────────────────────────────────────────
+            Het paneel hieronder is ongewijzigd; het staat alleen niet meer standaard open. Wat
+            uit zichzelf facturen maakt hoort in zicht te blijven, dus de telling staat in de regel
+            en de knoppen om te pauzeren of te stoppen zijn één tik weg — niet twee, en niet
+            achter een filtertab. */}
+        {!searching && scheduleList.length > 0 && (() => {
+          const actief = scheduleList.filter(sc => sc.active).length
+          const regel = actief > 0
+            ? (actief === 1 ? t('lijst.herhaal.loopt') : t('lijst.herhaal.lopen', { n: actief }))
+            : (scheduleList.length === 1
+                ? t('lijst.herhaal.stilEen')
+                : t('lijst.herhaal.stil', { n: scheduleList.length }))
+          return (
+            <button
+              onClick={() => setShowHerhaal(v => !v)}
+              aria-expanded={showHerhaal}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', marginBottom: showHerhaal ? 8 : 14, padding: '9px 14px', borderRadius: R.md, border: '1px solid #E8EAED', background: '#fff', color: '#5F6368', cursor: 'pointer', fontFamily: FONT, fontSize: 12.5, fontWeight: 500, textAlign: 'start' }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: actief > 0 ? '#137333' : '#80868B', flexShrink: 0 }}>autorenew</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{regel}</span>
+              </span>
+              <span
+                className="material-symbols-outlined"
+                aria-label={showHerhaal ? t('lijst.herhaal.verberg') : t('lijst.herhaal.toon')}
+                style={{ fontSize: 18, flexShrink: 0 }}
+              >
+                {showHerhaal ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+          )
+        })()}
+        {!searching && showHerhaal && scheduleList.length > 0 && (
           <div style={{ background: '#fff', borderRadius: R.md, border: '1px solid #E8EAED', padding: '14px 16px', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>

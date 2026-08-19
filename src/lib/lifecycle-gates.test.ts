@@ -6482,7 +6482,19 @@ test("[TAAL] the document becomes right-to-left before it is painted, and stays 
 
   const boot = code("src/lib/i18n/locale-boot.ts");
   assert.match(boot, /try\{/, "it runs first on every page; a throw there is a broken app");
-  assert.match(boot, /indexOf\(l\)<0\)return/, "a user-written cookie may not reach document.lang");
+
+  // The script takes its answer from TWO sources — the URL prefix on /ar, /tr and /en, and the
+  // owner's cookie — and both are attacker-writable: anyone can request a path and anyone can
+  // set a cookie. Each must be checked against the vocabulary before it reaches document.lang,
+  // or the root element ends up claiming a language that does not exist.
+  //
+  // These match the LISTS, not the expression around them. The shape is allowed to change —
+  // locale-boot.test.ts RUNS the script against a fake document and proves the behaviour — but
+  // a guard that quietly disappears is exactly what this gate is here to catch.
+  assert.match(boot, /\$\{JSON\.stringify\(LOCALES\)\}\.indexOf\(/,
+    "a user-written cookie may not reach document.lang unvalidated");
+  assert.match(boot, /\$\{JSON\.stringify\(PREFIXED_LOCALES\)\}\.indexOf\(/,
+    "the URL prefix must decide the language on /ar, /tr and /en, whatever the cookie says");
 });
 
 test("[STATUS] the word for an invoice's state is written once", () => {

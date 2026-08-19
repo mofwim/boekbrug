@@ -261,6 +261,24 @@ export const MESSAGES = {
   'lijst.herhalen.stop': { nl: 'Stoppen met herhalen', ar: 'إيقاف التكرار', en: 'Stop repeating' },
   'lijst.herhalen.stopKort': { nl: 'Stop', ar: 'إيقاف', en: 'Stop' },
   'lijst.herhalen.uitleg': { nl: 'De app zet het concept klaar; versturen blijft aan jou.', ar: 'يُجهّز التطبيق المسودة، ويبقى الإرسال بيدك.', en: 'The app prepares the draft; sending stays with you.' },
+  // ── [RUST] De regel die het herhaalpaneel samenvat ───────────────────────────────────────
+  // Het paneel eronder is het antwoord op "wat staat er aan en hoe zet ik het uit", en het stond
+  // uitgeklapt boven de facturenlijst — met per serie een klant, een cadans en twee knoppen. Dat
+  // is een beheerscherm boven een lijst, en de lijst is waarvoor je hier komt.
+  //
+  // Wat NIET mag verdwijnen is dat er iets loopt: dit is de enige functie in de app die uit
+  // zichzelf facturen maakt, en het bestand hierboven legt vast dat zoiets nooit moeilijker uit te
+  // zetten mag zijn dan het aan te zetten was. Vandaar de telling in de regel zelf, en één tik naar
+  // dezelfde knoppen — niet twee.
+  //
+  // Loopt er niets meer, dan zegt de regel dát; "0 lopen" laten lezen als rust terwijl er drie
+  // gepauzeerde series klaarstaan is precies de stilte die dit paneel moest wegnemen.
+  'lijst.herhaal.lopen': { nl: '{n} herhalingen lopen', ar: '{n} تكرارات شغّالة', en: '{n} recurring series are running' },
+  'lijst.herhaal.loopt': { nl: '1 herhaling loopt', ar: 'تكرار واحد شغّال', en: '1 recurring series is running' },
+  'lijst.herhaal.stil': { nl: '{n} herhalingen staan stil', ar: '{n} تكرارات متوقّفة', en: '{n} recurring series are paused' },
+  'lijst.herhaal.stilEen': { nl: '1 herhaling staat stil', ar: 'تكرار واحد متوقّف', en: '1 recurring series is paused' },
+  'lijst.herhaal.toon': { nl: 'Toon en beheer ze', ar: 'اعرضها وأدِرها', en: 'Show and manage them' },
+  'lijst.herhaal.verberg': { nl: 'Verberg ze weer', ar: 'أخفِها', en: 'Hide them again' },
   'lijst.herhalen.gestopt': { nl: 'Herhalen gestopt — klaarstaande concepten blijven staan', ar: 'أُوقف التكرار — وتبقى المسودات الجاهزة كما هي', en: 'Repeating stopped — drafts already prepared stay put' },
 
   'lijst.boekhouder.geen': { nl: 'Geen boekhouder gekoppeld', ar: 'لا يوجد محاسب مرتبط', en: 'No accountant linked' },
@@ -4347,6 +4365,63 @@ export const MESSAGES = {
     nl: 'Automatische incasso',
     ar: 'خصم تلقائي',
     en: 'Direct debit',
+  },
+  // ── [RUST] De regel die twee panelen vervangt ────────────────────────────────────────────
+  // Dit scherm heet Inkoopfacturen en zijn werk is de LIJST. De scan-melding en de
+  // auto-verwerkt-nudge stonden er allebei uitgeklapt boven, samen goed voor een half scherm
+  // advies vóór de eerste factuur. Ze zijn niet fout — ze zijn alleen niet het antwoord op de
+  // vraag waarmee je dit scherm opent.
+  //
+  // Een telling is genoeg om te beslissen of je gaat kijken; de panelen zelf staan één tik weg.
+  // Bewust KORT: geen werkwoord, geen uitroep, geen kleur die om aandacht vraagt.
+  //
+  // Wat NIET meevouwt, en dat is de hele grens: alles wat zegt dat dit scherm onvolledig is
+  // ([NO-SILENT-EMPTY]) of dat je hier geld twee keer kunt uitgeven ([AUTO-INCASSO]) blijft
+  // staan. Dat is geen advies maar een waarschuwing, en een waarschuwing die je moet openklappen
+  // is er geen.
+  'ink.advies.kloppenNiet': {
+    nl: '{n} kloppen niet',
+    ar: '{n} غير صحيحة',
+    en: '{n} are wrong',
+  },
+  'ink.advies.kloptNietEen': {
+    nl: '1 klopt niet',
+    ar: 'واحدة غير صحيحة',
+    en: '1 is wrong',
+  },
+  // [SCAN-WHOLE-BOOK] Dezelfde telling, maar eerlijk begrensd. Zonder deze twee zou de
+  // samengevouwen regel '3 kloppen niet' zeggen terwijl er alleen in DEZE lijst is gekeken — een
+  // bounded read gepresenteerd als een compleet antwoord, precies de fout waarvoor het paneel
+  // eronder zijn eigen zin heeft. Wat opengeklapt waar moest zijn, moet dichtgeklapt ook waar zijn.
+  'ink.advies.kloppenNietLijst': {
+    nl: '{n} kloppen niet in deze lijst',
+    ar: '{n} غير صحيحة في هذه القائمة',
+    en: '{n} in this list are wrong',
+  },
+  'ink.advies.kloptNietEenLijst': {
+    nl: '1 klopt niet in deze lijst',
+    ar: 'واحدة غير صحيحة في هذه القائمة',
+    en: '1 in this list is wrong',
+  },
+  'ink.advies.autoVerwerkt': {
+    nl: '{n} automatisch verwerkt',
+    ar: '{n} عولجت تلقائياً',
+    en: '{n} processed automatically',
+  },
+  'ink.advies.autoVerwerktEen': {
+    nl: '1 automatisch verwerkt',
+    ar: 'واحدة عولجت تلقائياً',
+    en: '1 processed automatically',
+  },
+  'ink.advies.open': {
+    nl: 'Toon wat hierachter zit',
+    ar: 'اعرض التفاصيل',
+    en: 'Show what is behind this',
+  },
+  'ink.advies.dicht': {
+    nl: 'Verberg dit weer',
+    ar: 'أخفِ هذا',
+    en: 'Hide this again',
   },
   'ink.autoNudge': {
     nl: '{n} facturen zijn automatisch verwerkt — bekijk',

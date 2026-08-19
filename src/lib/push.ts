@@ -15,7 +15,7 @@
 
 import webpush from "web-push";
 import { createPipelineClient } from "./supabase-pipeline";
-import { buildPushPayload, isGoneStatus, isVapidConfigured } from "./push-payload";
+import { buildPushPayload, isGoneStatus, isVapidConfigured, normalizeVapidSubject } from "./push-payload";
 
 const VAPID = {
   publicKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
@@ -25,15 +25,32 @@ const VAPID = {
 };
 
 let vapidReady: boolean | null = null;
-/** Configure web-push once. Returns false (and stays quiet) when unconfigured. */
+/**
+ * Configure web-push once. Returns false (and stays quiet) when unconfigured.
+ *
+ * The subject goes through normalizeVapidSubject rather than straight to web-push. A bare e-mail
+ * address in VAPID_SUBJECT threw inside setVapidDetails on every send for three weeks, and the
+ * catch below did exactly what it promises — logged and disabled the feature — so push was off in
+ * production and nothing said so out loud. Completing an address to `mailto:` costs nothing and
+ * removes the whole failure mode; anything still unusable leaves the feature off, as before.
+ */
 function ensureVapid(): boolean {
   if (vapidReady !== null) return vapidReady;
-  if (!isVapidConfigured(VAPID)) {
+  const subject = normalizeVapidSubject(VAPID.subject);
+  if (!isVapidConfigured(VAPID) || !subject) {
+    // One line, once per instance, and only when a subject was SET but cannot be used. Silence is
+    // right for "the feature is off"; it is wrong for "you configured it and it does not work".
+    if (VAPID.subject?.trim() && !subject) {
+      console.error(
+        "[push] VAPID_SUBJECT is not an https: or mailto: URI and could not be read as an " +
+          "e-mail address — push is off. Set it to mailto:<address> or an https: URL.",
+      );
+    }
     vapidReady = false;
     return false;
   }
   try {
-    webpush.setVapidDetails(VAPID.subject!, VAPID.publicKey!, VAPID.privateKey!);
+    webpush.setVapidDetails(subject, VAPID.publicKey!, VAPID.privateKey!);
     vapidReady = true;
   } catch (err) {
     console.error("[push] invalid VAPID config — push disabled:", err);

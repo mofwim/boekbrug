@@ -60,10 +60,22 @@ export async function loadMatchMemory(client: AnyClient, userId: string): Promis
     fetchAllRowsForIds<InvRow, string>(invIds, (chunk, from, to) =>
       client
         .from("invoices")
+        .select("id, client_name")
         // Ownership is checked the way every other invoice read in this line checks it: an
         // administration can be on either side of a document.
+        //
+        // [VOLGORDE] .or() comes AFTER .select(), and that is not a style choice. .from() returns
+        // a query builder that can only start a verb — select/insert/update/delete; the filters
+        // live on what .select() returns. Called one line earlier it is not a filter that fails,
+        // it is `undefined is not a function`, and it took the whole read down:
+        // "TypeError: e.from(...).or is not a function", six times on /api/bank/match.
+        //
+        // Nothing caught it before production. The client here is AnyClient — deliberately
+        // relaxed, because these tables are not in the generated types — so tsc had no method
+        // list to check against, and the caller catches and continues without the memory. The
+        // result was the quietest possible failure: bank matching ran, produced answers, and
+        // silently never used a single thing the owner had already confirmed.
         .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
-        .select("id, client_name")
         .in("id", chunk)
         .order("id", { ascending: true })
         .range(from, to),
