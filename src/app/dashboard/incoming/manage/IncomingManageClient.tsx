@@ -50,6 +50,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } fro
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
+import { paymentReferenceFor } from '@/lib/payment-reference'
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
@@ -4638,9 +4639,13 @@ function PreparePaymentSheet({
     if (paid <= 0.005) return total
     return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid)
   })()
-  // Reference: betalingskenmerk when present, else the invoice number (the EPC
-  // remittance field — what the owner quotes when paying).
-  const reference = (inv.payment_reference ?? inv.invoice_number ?? '').trim()
+  // [KENMERK-BEIDE] Reference: the betalingskenmerk AND the invoice number, because a creditor
+  // routinely asks for both and quoting one is what makes a payment unallocatable. This line used
+  // to be `payment_reference ?? invoice_number`, so the moment a kenmerk existed the document's
+  // own number was dropped from the QR, the copy row and the transfer. See payment-reference.ts
+  // for the invoice this was measured on — it asks for both in its own words and charges interest
+  // on a payment it cannot place.
+  const reference = paymentReferenceFor(inv)
   const ibanOk = isValidIban(inv.vendor_iban)
   const ibanDisplay = (inv.vendor_iban ?? '').replace(/(.{4})/g, '$1 ').trim()
 

@@ -327,6 +327,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true, destination: "document", document_id: doc.id, folder_id: folderId,
       folder_name: bc.length ? bc[bc.length - 1] : null,
+      // [NAAM-BIJ-BINNENKOMST] Unchanged on this path — nothing is converted here — but reported
+      // for the same reason: the sheet names what is in Bestanden, never what the browser sent.
+      file_name: file.name,
       message: "We konden dit bestandstype niet automatisch uitlezen, maar het staat veilig in je bestanden — je accountant krijgt het en je kunt het zelf controleren.",
     })
   }
@@ -881,6 +884,11 @@ export async function POST(req: NextRequest) {
       document_id: doc?.id ?? null,
       folder_id: folderId,
       folder_name: folderName,
+      // [NAAM-BIJ-BINNENKOMST] The name as STORED, which is not always the name that was uploaded:
+      // maybeImageToPdf wraps a photo into a PDF, so `foto.jpg` is filed as `foto.pdf`. The sheet
+      // used to print the browser's own File.name, so it named a file that is not the one in
+      // Bestanden — an owner going to look for it would search for the wrong thing.
+      file_name: upload.fileName,
       message: couldNotRead
         ? "We konden dit document niet lezen. Het staat veilig in je bestanden — controleer het, of upload een duidelijkere foto als het een factuur of bon is."
         : "Opgeslagen in je bestanden (geen factuur of bon herkend).",

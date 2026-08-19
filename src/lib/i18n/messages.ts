@@ -760,6 +760,19 @@ export const MESSAGES = {
   'best.terug': { nl: 'Terug', ar: 'رجوع', en: 'Back' },
   'best.uitklappen': { nl: 'Uitklappen', ar: 'توسيع', en: 'Expand' },
   'best.naamWijzigen': { nl: 'Naam wijzigen', ar: 'إعادة التسمية', en: 'Rename' },
+
+  // ─── [NAAM-BIJ-BINNENKOMST] Renaming at the moment the file arrives ──────────────────────────
+  //
+  // Bestanden has had a rename for a long time; what it did not have was a rename at the ONE
+  // moment the name is guaranteed to be useless — a phone camera files IMG_20260819_211723.jpg,
+  // and the owner is looking straight at it. Finding it again later means recognising that string
+  // among the others.
+  'int.naam.aria': { nl: 'Nieuwe bestandsnaam', ar: 'اسم ملف جديد', en: 'New file name' },
+  'int.naam.mislukt': {
+    nl: 'De naam is niet opgeslagen — het bestand staat nog onder de oude naam in je bestanden.',
+    ar: 'لم يُحفظ الاسم — لا يزال الملف بالاسم القديم في ملفاتك.',
+    en: 'The name was not saved — the file is still under its old name in your files.',
+  },
   'best.leeg': { nl: 'Deze map is leeg', ar: 'هذا المجلد فارغ', en: 'This folder is empty' },
   'best.nogNiets': { nl: 'Nog niets hier', ar: 'لا شيء هنا بعد', en: 'Nothing here yet' },
   'best.nietsGevonden': { nl: 'Niets gevonden', ar: 'لم يُعثر على شيء', en: 'Nothing found' },

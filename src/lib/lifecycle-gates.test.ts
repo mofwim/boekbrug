@@ -13052,3 +13052,108 @@ test("[EIGEN-FACTUUR] the own-invoice verdict is ACTED ON, not merely computed",
     "the own-document branch no longer refuses the document — it must return is_invoice: false",
   );
 });
+
+test("[KENMERK-BEIDE] a payment quotes both identifiers, from one rule", () => {
+  // Measured on a pension invoice: factuurnummer PN000037785, betalingskenmerk E100732098, and the
+  // paper asking for both — "onder vermelding van E100732098 / PN000037785", and in its
+  // Betalingscondities "uw werkgevernummer EN factuurnummer". Two screens composed that reference
+  // and BOTH treated the pair as alternatives:
+  //
+  //   the QR sheet   (inv.payment_reference ?? inv.invoice_number ?? '')
+  //   the bundle     (inv.payment_reference || inv.invoice_number || '')
+  //
+  // so the moment a kenmerk existed, the document's own number was dropped from the transfer. A
+  // creditor who cannot tell WHICH invoice a payment settles books it against the account instead,
+  // and the same page prices that: "Bij te late betaling ... wordt rente in rekening gebracht".
+  const rule = code("src/lib/payment-reference.ts");
+  assert.match(rule, /export function paymentReferenceFor/);
+  // Both identifiers when they differ; one when they do not. The contains-checks are what keep a
+  // kenmerk that already spells out both from printing the invoice number twice.
+  assert.match(rule, /if \(k === n\) return kenmerk;/);
+  assert.match(rule, /if \(k\.includes\(n\)\) return kenmerk;/);
+  assert.match(rule, /if \(n\.includes\(k\)\) return nummer;/);
+  assert.match(rule, /return `\$\{kenmerk\}\$\{JOIN\}\$\{nummer\}`;/);
+
+  // ONE rule, both sites. Two places answering "what does this payment quote" is how the pair
+  // drifted apart in the first place — the QR used ?? and the bundle used ||.
+  const sheet = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const bundle = code("src/lib/bundel-betaling.ts");
+  assert.match(sheet, /const reference = paymentReferenceFor\(inv\)/);
+  assert.match(bundle, /const refOf = \(inv: BundelBetalingInvoice\) => paymentReferenceFor\(inv\);/);
+  for (const [name, src] of [["the QR sheet", sheet], ["the bundle", bundle]] as const) {
+    assert.doesNotMatch(src, /payment_reference \?\? inv\.invoice_number|payment_reference \|\| inv\.invoice_number/,
+      `${name} may not re-derive its own precedence`);
+  }
+
+  // The remittance is UNSTRUCTURED (EPC line 11), so there is no ISO 11649 structured reference to
+  // corrupt by adding a second number to it — free text is exactly what that field is for. If this
+  // ever moves to the structured field, combining two identifiers stops being safe.
+  // readFileSync, not code(): the marker for that field IS the comment naming it, and code()
+  // strips comments — an assertion searching a stripped source for a comment can never match, and
+  // would have passed only in the direction that hides a regression.
+  const epc = readFileSync("src/lib/epc-qr.ts", "utf8");
+  assert.match(epc, /'',\s*\/\/ 10 structured reference \(empty\)/,
+    "the structured reference stays empty — the pair goes in the unstructured remittance");
+
+  // And our OWN importer must read both back off the statement, or the debit cannot be matched to
+  // the invoice it paid. It matches invoice-number-like tokens, which both identifiers satisfy.
+  assert.match(code("src/lib/bank-parser.ts"), /remi\.match\(\/\\b\[A-Z\]\{0,3\}\\d\{3,\}\[A-Z0-9\]\*\\b\/g\)/);
+});
+
+test("[NAAM-BIJ-BINNENKOMST] the sheet names the stored file, and lets it be renamed there", () => {
+  // A phone files IMG_20260819_211723.jpg. Bestanden has had a rename for a long time — but
+  // finding the file there first means recognising that string among the others, and the one
+  // moment the owner is looking straight at it is the confirmation sheet.
+  //
+  // That sheet also named the WRONG file. It printed the browser's File.name while intake stores
+  // the converted one: maybeImageToPdf wraps a photo into a PDF ([INTAKE-IMG-PDF]), so `foto.jpg`
+  // is filed as `foto.pdf`, and an owner going to look for it searched for a name that is not
+  // there.
+  const route = code("src/app/api/intake/route.ts");
+  const sheet = code("src/components/intake/IntakeButton.tsx");
+
+  // The server reports what it STORED, on both paths that file a document: the AI path (where the
+  // conversion happens) and the unreadable-type path (where it does not).
+  // Anchored on the RESPONSE, not on the field name alone: `file_name: upload.fileName` also
+  // appears twice as a database insert, so the bare pattern matched those and stayed green with
+  // the response field deleted — an assertion pinned to a mention instead of the wiring.
+  assert.match(route, /folder_name: folderName,\s*file_name: upload\.fileName,/);
+  assert.match(route, /folder_name: bc\.length \? bc\[bc\.length - 1\] : null,\s*file_name: file\.name,/);
+  // …and the sheet prefers it, falling back only when a path does not report one.
+  assert.match(sheet, /fileName: data\.file_name \|\| file\.name,/);
+
+  // The rename itself: same endpoint and same payload the Bestanden screen uses, so there is one
+  // way to rename a file and not two.
+  assert.match(sheet, /fetch\(`\/api\/bestanden\?id=\$\{encodeURIComponent\(id\)\}`/);
+  assert.match(sheet, /body: JSON\.stringify\(\{ file_name: next \}\)/);
+  const page = code("src/app/dashboard/bestanden/BestandenPage.tsx");
+  assert.match(page, /\{ file_name: newName \}/, "the two callers agree on the payload");
+
+  // THE honesty rule, and the reason this is not merely a nicety: a rename that only succeeded
+  // locally is worse than none — the owner walks away believing the file is called something it is
+  // not, and then cannot find it. On a failure the OLD name stays and a sentence says so.
+  const saveAt = sheet.indexOf("async function saveName()");
+  assert.ok(saveAt > 0, "the save handler is where the rule lives");
+  const save = sheet.slice(saveAt, saveAt + 1200);
+  assert.match(save, /if \(!res\.ok\) \{ setNameError\(t\('int\.naam\.mislukt'\)\); return \}/,
+    "a refused rename never updates the name on screen");
+  assert.match(save, /catch \{[\s\S]{0,220}setNameError\(t\('int\.naam\.mislukt'\)\)/,
+    "…and neither does a dropped connection");
+  // The local update happens only AFTER the response was accepted.
+  assert.ok(save.indexOf("if (!res.ok)") < save.indexOf("setDestModal((m) =>"),
+    "the screen follows the server, never leads it");
+
+  // A half-typed name may not survive its sheet: the next upload would open in edit mode showing a
+  // previous file's name over a new file.
+  assert.match(sheet, /const closeDest = \(\) => \{ setDestModal\(null\); setNameDraft\(null\); setNameError\(null\) \}/);
+  assert.doesNotMatch(sheet, /onClick=\{\(\) => setDestModal\(null\)\}/,
+    "every exit goes through the one closer");
+
+  // [TAAL] The words come from the catalogue, and the rename reuses the sentences Bestanden
+  // already has rather than inventing a second Dutch for the same button.
+  const messages = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["best.naamWijzigen", "best.opslaan", "lijst.annuleren", "int.naam.aria", "int.naam.mislukt"]) {
+    assert.ok(messages.includes(`'${key}':`), `${key} exists in the catalogue`);
+    assert.match(sheet, new RegExp(`t\\('${key.replace(".", "\\.")}'\\)`), `${key} is actually rendered`);
+  }
+});
