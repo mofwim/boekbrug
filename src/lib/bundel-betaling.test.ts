@@ -47,7 +47,15 @@ console.log("\n— buildBundelBetaling —");
     inv({ id: "a", payment_reference: "KENMERK-77", invoice_number: "F-1001" }),
     inv({ id: "b", invoice_number: "F-1002", total_inc_btw: 50 }),
   ]);
-  check("betalingskenmerk wins over invoice number", r.reference === "KENMERK-77, F-1002");
+  // [KENMERK-BEIDE] This used to read "betalingskenmerk wins over invoice number" and asserted
+  // "KENMERK-77, F-1002" — the kenmerk REPLACING F-1001. It is not a contest: the two identify
+  // different things. A kenmerk says which account or which werkgever; the invoice number says
+  // which document. Measured on a pension invoice that asks for both in its own words and charges
+  // interest on a payment it cannot place, dropping either half is what makes a debit
+  // unallocatable — and on a bundle it means the supplier sees one payment and cannot tell which
+  // of the invoices in it were settled.
+  check("both identifiers travel, per invoice", r.reference === "KENMERK-77 / F-1001, F-1002");
+  check("…and the invoice with only a number is unchanged", (r.reference ?? "").endsWith("F-1002"));
 }
 {
   const r = buildBundelBetaling([

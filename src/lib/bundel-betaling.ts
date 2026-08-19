@@ -52,6 +52,7 @@
 // cannot express, and the two would drift apart on the one screen where they must not.
 
 import { buildEpcQrPayload, isValidIban, normalizeIban, EPC_REMITTANCE_MAX } from "./epc-qr";
+import { paymentReferenceFor } from "./payment-reference";
 // [CREDIT-SAFE] The one answer to "is this a debt?" that the whole money line shares.
 import { creditStance, payableAsDebt } from "./creditnota-signal";
 // [CREDIT-VERREKEN] The app's existing "is this the same party?" key — it strips punctuation and
@@ -251,7 +252,12 @@ export function buildBundelBetaling(
   // [CREDIT-VERREKEN] The credits are named too, after "-/-" — the notation a Dutch creditor
   // administration reads as a deduction. Without them the supplier sees a payment that is short by
   // the credit and no reason for it, which is exactly the letter this feature exists to avoid.
-  const refOf = (inv: BundelBetalingInvoice) => (inv.payment_reference || inv.invoice_number || "").trim();
+  // [KENMERK-BEIDE] Per invoice, BOTH identifiers when it carries two different ones. The old
+  // `payment_reference || invoice_number` dropped the document's own number as soon as a kenmerk
+  // existed — on a bundle that means the supplier sees one debit and cannot tell which of the
+  // invoices in it were settled. Shared with the single-invoice sheet so the two can never answer
+  // this differently.
+  const refOf = (inv: BundelBetalingInvoice) => paymentReferenceFor(inv);
   const debtRefs = debts.map(refOf).filter(Boolean).join(", ");
   const creditRefs = credits.map(refOf).filter(Boolean).join(", ");
   const reference = creditRefs ? `${debtRefs} -/- ${creditRefs}` : debtRefs;
