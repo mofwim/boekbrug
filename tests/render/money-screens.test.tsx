@@ -223,10 +223,17 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.match(html, /Op de bon staat &quot;wisselgeld&quot;/, "the tender line is quoted");
   assert.match(html, /Zet de betaling hieronder terug/, "…and undoing it is offered beside it");
 
-  // A filed quarter changes what the owner has to DO, so it must be said, not implied.
-  assert.match(html, /aangifte al ingediend/, "a filed quarter is marked as a correction");
-  // [SCAN-WHOLE-BOOK] With no server scan, the banner must NOT claim to have checked everything.
-  assert.match(html, /konden we nu niet nakijken/, "a list-only count says it is a list-only count");
+  // [RUST] A filed quarter changes what the owner has to DO, and the scan panel says so — but the
+  // panel now sits behind one line, because this screen's job is the list and a half-screen of
+  // advice above it is advice nobody reads twice. What the screen still owes without a tap is that
+  // there is something to look at AT ALL; the quarter detail travels with the panel it belongs to.
+  assert.match(html, /Toon wat hierachter zit/, "the collapsed line offers the scan detail");
+  assert.doesNotMatch(html, /aangifte al ingediend/, "the quarter detail comes with the panel, not without it");
+  // [SCAN-WHOLE-BOOK] With no server scan, the count must NOT claim to have checked everything —
+  // and that has to hold on the COLLAPSED line too, which is the only version most visits see.
+  // "3 kloppen niet" over 200 visible rows reads as a total; "in deze lijst" is what stops it.
+  assert.match(html, /kloppen niet in deze lijst|klopt niet in deze lijst/,
+    "the collapsed line carries the scan's own boundary");
 });
 
 test("[AUTO-INCASSO] an incasso invoice loses the two things that would cost money", async () => {
@@ -372,9 +379,21 @@ test("[SCAN-WHOLE-BOOK] the banner counts the whole book, and names what is out 
       })),
   );
 
-  assert.match(html, /3 geboekte facturen kloppen niet/, "the count is the whole book's, not the list's");
-  assert.match(html, /al je 3 bevestigde inkoopfacturen/, "and it says which set it counted");
-  assert.match(html, /2 ervan staan niet in deze lijst/, "the unreachable findings are named");
+  // [RUST] The banner sits behind one collapsed line now. Two things had to survive that, and they
+  // are what this test pins instead of the full sentences.
+  //
+  // FIRST: the COUNT stays on screen with no tap, and it is still the whole book's. That is the
+  // failure this test was written for — a bounded read presented as a complete answer — and it
+  // would come straight back if the collapsed line counted only the rows it can see.
+  assert.match(html, /3 kloppen niet/, "the collapsed line carries the whole book's count");
+  assert.doesNotMatch(html, /1 klopt niet/, "…and never the count of just this list");
+
+  // SECOND: the caveat and the worklist button are behind the SAME toggle. That is the property
+  // that replaces "always visible": an owner cannot reach a worklist which misses two findings
+  // without being shown, in the same breath, that it misses them. Asserted together on purpose —
+  // a change that let one of the two out without the other is the actual danger here.
+  assert.doesNotMatch(html, /2 ervan staan niet in deze lijst/, "the caveat is behind the toggle");
+  assert.doesNotMatch(html, /Toon alleen deze/, "…and so is the worklist button it qualifies");
 });
 
 test("[RENDER-GATE] the pay screen renders when the read failed, and says so", async () => {

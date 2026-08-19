@@ -4322,6 +4322,63 @@ export const MESSAGES = {
     ar: 'خصم تلقائي',
     en: 'Direct debit',
   },
+  // ── [RUST] De regel die twee panelen vervangt ────────────────────────────────────────────
+  // Dit scherm heet Inkoopfacturen en zijn werk is de LIJST. De scan-melding en de
+  // auto-verwerkt-nudge stonden er allebei uitgeklapt boven, samen goed voor een half scherm
+  // advies vóór de eerste factuur. Ze zijn niet fout — ze zijn alleen niet het antwoord op de
+  // vraag waarmee je dit scherm opent.
+  //
+  // Een telling is genoeg om te beslissen of je gaat kijken; de panelen zelf staan één tik weg.
+  // Bewust KORT: geen werkwoord, geen uitroep, geen kleur die om aandacht vraagt.
+  //
+  // Wat NIET meevouwt, en dat is de hele grens: alles wat zegt dat dit scherm onvolledig is
+  // ([NO-SILENT-EMPTY]) of dat je hier geld twee keer kunt uitgeven ([AUTO-INCASSO]) blijft
+  // staan. Dat is geen advies maar een waarschuwing, en een waarschuwing die je moet openklappen
+  // is er geen.
+  'ink.advies.kloppenNiet': {
+    nl: '{n} kloppen niet',
+    ar: '{n} غير صحيحة',
+    en: '{n} are wrong',
+  },
+  'ink.advies.kloptNietEen': {
+    nl: '1 klopt niet',
+    ar: 'واحدة غير صحيحة',
+    en: '1 is wrong',
+  },
+  // [SCAN-WHOLE-BOOK] Dezelfde telling, maar eerlijk begrensd. Zonder deze twee zou de
+  // samengevouwen regel '3 kloppen niet' zeggen terwijl er alleen in DEZE lijst is gekeken — een
+  // bounded read gepresenteerd als een compleet antwoord, precies de fout waarvoor het paneel
+  // eronder zijn eigen zin heeft. Wat opengeklapt waar moest zijn, moet dichtgeklapt ook waar zijn.
+  'ink.advies.kloppenNietLijst': {
+    nl: '{n} kloppen niet in deze lijst',
+    ar: '{n} غير صحيحة في هذه القائمة',
+    en: '{n} in this list are wrong',
+  },
+  'ink.advies.kloptNietEenLijst': {
+    nl: '1 klopt niet in deze lijst',
+    ar: 'واحدة غير صحيحة في هذه القائمة',
+    en: '1 in this list is wrong',
+  },
+  'ink.advies.autoVerwerkt': {
+    nl: '{n} automatisch verwerkt',
+    ar: '{n} عولجت تلقائياً',
+    en: '{n} processed automatically',
+  },
+  'ink.advies.autoVerwerktEen': {
+    nl: '1 automatisch verwerkt',
+    ar: 'واحدة عولجت تلقائياً',
+    en: '1 processed automatically',
+  },
+  'ink.advies.open': {
+    nl: 'Toon wat hierachter zit',
+    ar: 'اعرض التفاصيل',
+    en: 'Show what is behind this',
+  },
+  'ink.advies.dicht': {
+    nl: 'Verberg dit weer',
+    ar: 'أخفِ هذا',
+    en: 'Hide this again',
+  },
   'ink.autoNudge': {
     nl: '{n} facturen zijn automatisch verwerkt — bekijk',
     ar: 'عولجت {n} فاتورة تلقائياً — اعرضها',

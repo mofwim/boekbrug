@@ -919,6 +919,20 @@ export default function IncomingManageClient({
   // a worklist.
   const [onlyFlagged, setOnlyFlagged] = useState(false)
 
+  // [RUST] Staat het advies open? Standaard NIET.
+  //
+  // Dit scherm heet Inkoopfacturen en zijn werk is de lijst. De scan-melding en de
+  // auto-verwerkt-nudge stonden er allebei uitgeklapt bovenop — samen een half scherm advies vóór
+  // de eerste factuurregel. Geen van beide is fout; ze zijn alleen niet het antwoord op de vraag
+  // waarmee iemand dit scherm opent, en advies dat je elke keer wegleest is advies dat je op den
+  // duur niet meer leest. Nu staat er één regel met de tellingen, en één tik brengt de panelen
+  // ongewijzigd terug.
+  //
+  // Bewust NIET onthouden tussen bezoeken: de stand hoort bij deze blik op de lijst, niet bij de
+  // gebruiker. Een voorkeur die blijft plakken zou betekenen dat iemand die het ooit dichtklapte
+  // een nieuw signaal nooit meer opengeklapt ziet.
+  const [showAdvies, setShowAdvies] = useState(false)
+
   // [SCAN-WHOLE-BOOK] TWO scans, and the difference between them is the honest part.
   //
   // `listScan` is over the rows on this screen — every open invoice plus the 200 most recent paid
@@ -971,6 +985,34 @@ export default function IncomingManageClient({
   }).length
   // [AUTO-ADVANCE] Count for the review nudge — how many invoices the app booked for you.
   const autoCount = invoices.filter(isAutoVerified).length
+
+  // [RUST] De samengevouwen regel: alleen de tellingen, in de volgorde waarin ze ertoe doen.
+  //
+  // Twee losse feiten naast elkaar met een punt ertussen — GEEN zin met de aantallen erin
+  // gemonteerd. Dat is de [TAAL]-regel en hij is hier niet theoretisch: 'kloppen niet' en
+  // 'automatisch verwerkt' vervoegen in het Arabisch verschillend naar aantal, dus elk feit heeft
+  // zijn eigen sleutel met een eigen enkelvoud.
+  //
+  // De nudge telt alleen mee als hij ook echt zou verschijnen (filter !== 'auto'), anders belooft
+  // de regel iets dat er na het openklappen niet staat.
+  const adviesDelen: string[] = []
+  if (scan.total > 0) {
+    // [SCAN-WHOLE-BOOK] De grens van de telling reist mee. Het paneel eronder zegt in zijn eigen
+    // zin welke set het nakeek; de regel die het paneel vervangt moet dat ook zeggen, anders leest
+    // een telling over 200 zichtbare rijen als een telling over de hele administratie.
+    adviesDelen.push(scanIsWholeBook
+      ? (scan.total === 1
+          ? t('ink.advies.kloptNietEen')
+          : t('ink.advies.kloppenNiet', { n: scan.total }))
+      : (scan.total === 1
+          ? t('ink.advies.kloptNietEenLijst')
+          : t('ink.advies.kloppenNietLijst', { n: scan.total })))
+  }
+  if (autoCount > 0 && filter !== 'auto') {
+    adviesDelen.push(autoCount === 1
+      ? t('ink.advies.autoVerwerktEen')
+      : t('ink.advies.autoVerwerkt', { n: autoCount }))
+  }
 
   // ── [INVOICE-COUNTER] "Hoeveel facturen heb ik eigenlijk?" ───────────────────
   // Derived from `invoices` on every render, NOT from a server number fetched once. That is the
@@ -2162,6 +2204,35 @@ export default function IncomingManageClient({
             </div>
           </div>
         )}
+        {/* ── [RUST] Eén regel in plaats van twee panelen ──────────────────────────────────
+            De twee blokken hieronder — de scan-melding en de auto-verwerkt-nudge — stonden
+            allebei uitgeklapt boven de lijst. Samen vulden ze het scherm vóór de eerste
+            factuurregel met dingen die niemand had gevraagd op het moment dat hij dit scherm
+            opende. Ze staan er nu nog steeds, achter hun eigen telling.
+
+            Wat NIET meevouwt staat er bewust boven: [NO-SILENT-EMPTY] zegt dat deze lijst
+            onvolledig kan zijn en [AUTO-INCASSO] zegt dat je hier geld twee keer kunt uitgeven.
+            Dat zijn geen adviezen maar waarschuwingen, en een waarschuwing die je moet
+            openklappen is er geen. */}
+        {adviesDelen.length > 0 && (
+          <button
+            onClick={() => setShowAdvies(v => !v)}
+            aria-expanded={showAdvies}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', marginBottom: 10, padding: '9px 14px', borderRadius: R.md, border: '1px solid #E8EAED', background: '#fff', color: '#5F6368', cursor: 'pointer', fontFamily: FONT, fontSize: 12.5, fontWeight: 500, textAlign: 'start' }}
+          >
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {adviesDelen.join(' · ')}
+            </span>
+            <span
+              className="material-symbols-outlined"
+              aria-label={showAdvies ? t('ink.advies.dicht') : t('ink.advies.open')}
+              style={{ fontSize: 18, flexShrink: 0 }}
+            >
+              {showAdvies ? 'expand_less' : 'expand_more'}
+            </span>
+          </button>
+        )}
+        {showAdvies && (<>
         {/* [INVOICE-SCAN] How much is standing wrong, and where.
             Before this, every warning lived on a single card: useful once you were already looking
             at that card, useless for the question the owner has after seeing two of them — how many
@@ -2235,6 +2306,7 @@ export default function IncomingManageClient({
             {autoCount === 1 ? t('ink.autoNudgeEen') : t('ink.autoNudge', { n: autoCount })}
           </button>
         )}
+        </>)}
         {/* [SEARCH] In-page live filter */}
         {invoices.length > 0 && (
           <div style={{ position: 'relative', marginBottom: 10 }}>
