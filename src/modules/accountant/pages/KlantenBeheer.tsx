@@ -39,13 +39,19 @@ function readinessLine(r: ClientReadiness): string {
 
 interface Props {
   initialClients: ClientSummary[]
+  /**
+   * [BOEKHOUDER-LEEG] true = the list could not be READ. This screen manages the links themselves,
+   * so "Nog geen klanten gekoppeld" is a statement about this accountant's mandates — and a failed
+   * read knows nothing about those.
+   */
+  clientsUnreadable?: boolean
 }
 
 // ─────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────
 
-export default function KlantenBeheer({ initialClients }: Props) {
+export default function KlantenBeheer({ initialClients, clientsUnreadable }: Props) {
   const router = useRouter()
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
@@ -218,7 +224,15 @@ export default function KlantenBeheer({ initialClients }: Props) {
             </div>
           )}
 
-          {clients.length === 0 ? (
+          {clientsUnreadable ? (
+            /* [BOEKHOUDER-LEEG] "Nog geen klanten gekoppeld" is a claim about this accountant's
+               mandates. A read that failed cannot make it, and on the screen where links are
+               managed it would read as "your mandates are gone". */
+            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0, lineHeight: 1.55 }}>
+              We konden je klantenlijst nu niet ophalen.<br />
+              Dit zegt niets over je koppelingen — alleen dat wij ze even niet konden lezen.
+            </p>
+          ) : clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
               Nog geen klanten gekoppeld
             </p>

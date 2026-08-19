@@ -63,8 +63,8 @@ export default async function AccountantPage() {
   // wachtten ze op alle drie. Op het traagste scherm van de boekhouder waren dat twee volle ritten
   // die nergens op wachtten behalve op de volgorde waarin ze waren opgeschreven.
   const [
-    clients,
-    todos,
+    clientResult,
+    todoResult,
     workQueues,
     { data: notifications, error: notifErr },
     { count: unreadMessages },
@@ -93,6 +93,15 @@ export default async function AccountantPage() {
   // En dit blijft er WEL achter: het overzicht rekent op de klantenlijst hierboven. Zie [FAN-OUT] —
   // hem meesturen zou betekenen dat hij de lijst zelf nog een keer ophaalt, met vijf query's per
   // klant eraan vast.
+  // [BOEKHOUDER-LEEG] Unwrapped here, and the failure travels on to the screen. A failed read used
+  // to arrive as an empty array and the landing page rendered the FIRST-RUN onboarding state —
+  // "Voeg je eerste klant toe" — to an accountant who may have forty. The bell beside it already
+  // knew the difference (notifErr, below); these two did not.
+  const clients = clientResult.clients
+  const todos = todoResult.todos
+  const clientsUnreadable = clientResult.readFailed
+  const todosUnreadable = todoResult.readFailed
+
   const overview = await getAccountantOverview(profile.id, clients)
 
   return (
@@ -107,6 +116,8 @@ export default async function AccountantPage() {
           role: profile.role,
         }}
         overview={overview}
+        clientsUnreadable={clientsUnreadable}
+        todosUnreadable={todosUnreadable}
         workQueues={workQueues}
         clients={clients}
         todos={todos}

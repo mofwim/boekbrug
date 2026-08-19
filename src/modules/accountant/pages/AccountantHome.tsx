@@ -66,6 +66,14 @@ interface Props {
   }
   overview: AccountantOverview
   /**
+   * [BOEKHOUDER-LEEG] true = the client list could not be READ, which is not the same as having no
+   * clients. Without this the screen showed the first-run onboarding state — "Voeg je eerste klant
+   * toe" — to an accountant who may have forty, and told a working practice it had none.
+   */
+  clientsUnreadable?: boolean
+  /** Same for the to-do feed: "nothing to do" and "we could not look" are different answers. */
+  todosUnreadable?: boolean
+  /**
    * [WERKVOORRAAD] De cijfers achter de vier werktegels. Optioneel omdat de home ouder is dan
    * deze regel en er ook zonder hoort te openen — een scherm dat crasht op een ontbrekend getal
    * is erger dan een scherm zonder dat getal.
@@ -100,7 +108,7 @@ function timeSalutation(): string {
 // Component
 // ─────────────────────────────────────────────────────────
 
-export default function AccountantHome({ profile, overview, workQueues, clients, todos, notifications: initialNotifs, notificationsError, unreadMessages: initialUnread }: Props) {
+export default function AccountantHome({ profile, overview, workQueues, clients, todos, clientsUnreadable, todosUnreadable, notifications: initialNotifs, notificationsError, unreadMessages: initialUnread }: Props) {
   // [READINESS-P4] overview + todos are now RENDERED (below) — they are backed by
   // honest facts: overview = provable counts (open questions / missing bank), todos
   // = concrete actionable items from getTodoFeed. No "ready" verdict is shown, so
@@ -370,6 +378,23 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         {/* [READINESS-P4] To-do — concrete actionable items (open questions,
             unprocessed invoices, missing bank data). Every item is a real gap the
             accountant can act on; clicking opens the client. */}
+        {/* [BOEKHOUDER-LEEG] The to-do feed is the sharpest of the three, because of WHEN it is
+            read. An accountant told "nothing to do" in aangifte week closes the app and the work
+            does not get done — there is no second signal to catch it and the deadline is
+            statutory. So an unreadable feed says so, above the list rather than instead of it. */}
+        {todosUnreadable && (
+          <div style={{
+            margin: '0 0 12px', padding: '12px 14px', borderRadius: 12,
+            background: '#FCE8E6', border: '1px solid #F5C6C2',
+          }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px' }}>
+              We konden je takenlijst nu niet ophalen
+            </p>
+            <p style={{ fontSize: 12.5, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>
+              Dit betekent niet dat er niets te doen is — alleen dat wij het even niet konden lezen.
+            </p>
+          </div>
+        )}
         {todos.length > 0 && (
           <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
@@ -427,7 +452,26 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             </div>
           )}
 
-          {clients.length === 0 ? (
+          {clientsUnreadable ? (
+            /* [BOEKHOUDER-LEEG] The read failed, so this screen knows nothing about this
+               accountant's practice — and the one thing it may not do is describe it. Below stands
+               the FIRST-RUN state, "Voeg je eerste klant toe", which is the right thing to show
+               somebody who has none and a false statement about somebody who has forty. An owner
+               who sees an empty screen doubts the screen because they know their own books; an
+               accountant does not, and forms a professional judgement on what we hand them.
+               No action offered: there is nothing to fix here, and inviting a client would be a
+               second wrong answer on top of the first. */
+            <div style={{ padding: '28px 16px', textAlign: 'center' }}>
+              <span className="material-symbols-outlined" style={{ color: '#B3261E', fontSize: 24 }}>error_outline</span>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '8px 0 4px' }}>
+                We konden je klantenlijst nu niet ophalen
+              </p>
+              <p style={{ fontSize: 12.5, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>
+                Dit zegt niets over je klanten — alleen dat wij ze even niet konden lezen. Ververs
+                de pagina; blijft dit staan, laat het ons weten.
+              </p>
+            </div>
+          ) : clients.length === 0 ? (
             /* [ONBOARDING] First-run empty state — a clear, tappable first action
                for a brand-new accountant instead of a dead line of text. */
             <button

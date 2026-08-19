@@ -125,9 +125,30 @@ async function computeClientReadiness(
  * Returns all clients linked to this accountant, each with honest readiness facts.
  * Sorted "needs attention first": open questions, then unprocessed items.
  */
+/**
+ * [BOEKHOUDER-LEEG] An empty list, and whether it means anything.
+ *
+ * `clients: []` with `readFailed: true` is not "no clients" — it is "we could not read your
+ * clients", and on this portal those two are not close. An owner who sees an empty screen knows
+ * their own books and doubts the screen. An accountant does not: they see what we hand them and
+ * form a professional judgement their client is paying for.
+ *
+ * Measured on the landing page: when this read failed the accountant was shown the FIRST-RUN
+ * onboarding state — "Voeg je eerste klant toe · Nodig een klant uit of koppel een bestaande" — to
+ * someone who may have forty. The app told a working practice it had no practice.
+ *
+ * The bell on that same page already got this right (`notifErr`, [NO-SILENT-EMPTY]); the client
+ * list and the to-do feed were simply missed, and they are the two the whole portal rests on.
+ */
+export interface ClientListResult {
+  clients: ClientSummary[]
+  /** true = the read failed. The screen must say so instead of rendering an empty practice. */
+  readFailed: boolean
+}
+
 export async function getAccountantClients(
   accountantId: string
-): Promise<ClientSummary[]> {
+): Promise<ClientListResult> {
   const supabase = await createServerSupabaseClient()
 
   const { data, error } = await supabase
@@ -143,7 +164,16 @@ export async function getAccountantClients(
     `)
     .eq('accountant_id', accountantId)
 
-  if (error || !data) return []
+  if (error) {
+    // [BOEKHOUDER-LEEG] Read, reported, and NOT collapsed into "no clients". The error was already
+    // being captured here and then thrown away with the same `return []` a genuinely empty book
+    // produces — which is worse than never reading it, because somebody looked and discarded it.
+    console.error('[BOEKHOUDER-LEEG] client list unreadable', {
+      accountantId, error: error.message,
+    })
+    return { clients: [], readFailed: true }
+  }
+  if (!data) return { clients: [], readFailed: true }
 
   // [KWARTAAL] Het AANGIFTE-kwartaal, niet het lopende.
   //
@@ -184,13 +214,14 @@ export async function getAccountantClients(
   const valid = summaries.filter((s): s is ClientSummary => s !== null)
 
   // Sort "needs attention first": open questions, then most unprocessed items.
-  return valid.sort((a, b) => {
+  // readFailed:false — this path only runs when the read succeeded; the failures returned above.
+  return { readFailed: false, clients: valid.sort((a, b) => {
     const q = b.readiness.openQuestions - a.readiness.openQuestions
     if (q !== 0) return q
     const aOpen = a.readiness.sharedInvoices - a.readiness.processedInvoices
     const bOpen = b.readiness.sharedInvoices - b.readiness.processedInvoices
     return bOpen - aOpen
-  })
+  }) }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -303,7 +334,11 @@ export async function getAccountantOverview(
   // op het traagste scherm van de sessie.
   clients?: ClientSummary[]
 ): Promise<AccountantOverview> {
-  const clientList = clients ?? await getAccountantClients(accountantId)
+  // [BOEKHOUDER-LEEG] When this fetches its own list, a failed read yields an empty one and these
+  // counts would read as a real "0 clients, 0 questions". The landing page always passes the list
+  // it already has (see [FAN-OUT]), and it is the page that renders the failure — so the honest
+  // thing here is to count what was actually read, and never to invent a zero of its own.
+  const clientList = clients ?? (await getAccountantClients(accountantId)).clients
 
   return {
     total_clients: clientList.length,
@@ -321,11 +356,25 @@ export async function getAccountantOverview(
  * One TodoItem per client per issue type.
  * Sorted by urgency: client_question first, then invoices_to_process, then missing_file.
  */
-export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
+/**
+ * [BOEKHOUDER-LEEG] The to-do feed, and whether an empty one means anything.
+ *
+ * The worst of the three collapses, because of WHEN it is read. An accountant told "nothing to do"
+ * in aangifte week closes the app, and the work does not get done — there is no second signal to
+ * catch it, and the deadline is statutory. This read did not even capture its error: a bare
+ * `const { data: links }` followed by `if (!links) return []`.
+ */
+export interface TodoFeedResult {
+  todos: TodoItem[]
+  /** true = the read failed. "Nothing to do" and "we could not look" are not the same answer. */
+  readFailed: boolean
+}
+
+export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult> {
   const supabase = await createServerSupabaseClient()
 
   // Get all linked clients (id + name only — lightweight)
-  const { data: links } = await supabase
+  const { data: links, error: linksError } = await supabase
     .from('accountant_clients')
     .select(`
       profiles!zzper_id (
@@ -336,7 +385,12 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
     `)
     .eq('accountant_id', accountantId)
 
-  if (!links) return []
+  if (linksError || !links) {
+    console.error('[BOEKHOUDER-LEEG] to-do feed unreadable', {
+      accountantId, error: linksError?.message ?? 'no rows and no error',
+    })
+    return { todos: [], readFailed: true }
+  }
 
   // [KWARTAAL] Het aangifte-kwartaal — zie de toelichting bij de eerste aanroep hierboven.
   const { year, quarter } = getActiveAangifte()
@@ -434,7 +488,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoItem[]> {
     invoices_to_process: 1,
     missing_file: 2,
   }
-  return todos.sort((a, b) => URGENCY[a.type] - URGENCY[b.type])
+  return { readFailed: false, todos: todos.sort((a, b) => URGENCY[a.type] - URGENCY[b.type]) }
 }
 
 // ─────────────────────────────────────────────────────────

@@ -24,7 +24,10 @@ export default async function KlantenBeheerPage() {
   if (!profile?.onboarding_done) redirect('/onboarding')
   if (profile.role !== 'accountant') redirect('/dashboard')
 
-  const clients = await getAccountantClients(profile.id)
+  // [BOEKHOUDER-LEEG] This screen manages the links themselves, so an empty list here is read as
+  // "no clients to manage". Same distinction as the landing page: the failure is carried, not
+  // flattened into a zero.
+  const { clients, readFailed: clientsUnreadable } = await getAccountantClients(profile.id)
 
-  return <KlantenBeheer initialClients={clients} />
+  return <KlantenBeheer initialClients={clients} clientsUnreadable={clientsUnreadable} />
 }
