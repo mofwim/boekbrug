@@ -13252,3 +13252,80 @@ test("[BLAD-GEBAAR] the document does not take the scroll gesture until it is as
   assert.match(sheet, /insetInlineEnd: 10/);
   assert.doesNotMatch(sheet, /position: 'absolute'[^}]*right: 10/);
 });
+
+test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () => {
+  // Asked directly: is the accountant portal ready to be shown to an accountant? It was not, in
+  // one way that matters more there than anywhere else in the app.
+  //
+  // Three reads answered a failure with the same value a genuinely empty book produces. On the
+  // landing page that rendered the FIRST-RUN onboarding state — "Voeg je eerste klant toe · Nodig
+  // een klant uit of koppel een bestaande" — to an accountant who may have forty. The app told a
+  // working practice it had no practice.
+  //
+  // Why this is worse here than on the owner's side: an owner who sees an empty screen knows their
+  // own books and doubts the screen. An accountant does not. They see what we hand them and form a
+  // professional judgement their client is paying for, and an empty screen is an answer rather
+  // than a question. The bell on that same page already knew the difference (notifErr,
+  // [NO-SILENT-EMPTY]); these two were simply missed, and they are the two the portal rests on.
+  const repo = code("src/modules/accountant/accountant.repository.ts");
+
+  // The failure is a VALUE the caller can see, not an empty array it cannot tell apart.
+  assert.match(repo, /export interface ClientListResult/);
+  assert.match(repo, /export interface TodoFeedResult/);
+  // Anchored to the ERROR BRANCH, not to the string appearing anywhere: there are two failure
+  // returns for the client list (the error, and no-rows-at-all), and matching the bare literal
+  // stayed green when the first one was flipped to readFailed:false — an assertion satisfied by
+  // the OTHER return than the one it was about.
+  assert.match(repo, /console\.error\('\[BOEKHOUDER-LEEG\] client list unreadable'[\s\S]{0,200}?return \{ clients: \[\], readFailed: true \}/,
+    "the failed client read reports itself AND says the list is not to be believed");
+  assert.match(repo, /console\.error\('\[BOEKHOUDER-LEEG\] to-do feed unreadable'[\s\S]{0,200}?return \{ todos: \[\], readFailed: true \}/,
+    "…and so does the to-do feed");
+  // Neither failure path may ever claim the read was fine.
+  assert.doesNotMatch(repo, /return \{ clients: \[\], readFailed: false \}/);
+  assert.doesNotMatch(repo, /return \{ todos: \[\], readFailed: false \}/);
+  // The old collapse must not come back on either.
+  assert.doesNotMatch(repo, /if \(error \|\| !data\) return \[\]\n\n  \/\/ \[KWARTAAL\]/,
+    "the client list may not answer a failed read with an empty book");
+  assert.doesNotMatch(repo, /if \(!links\) return \[\]/,
+    "…nor the to-do feed, which did not even read its error");
+  // The to-do read now captures its error at all.
+  assert.match(repo, /const \{ data: links, error: linksError \}/);
+
+  // The success paths still say so explicitly, or `readFailed` would be undefined and read as
+  // false by accident rather than by statement.
+  assert.match(repo, /return \{ readFailed: false, clients: valid\.sort/);
+  assert.match(repo, /return \{ readFailed: false, todos: todos\.sort/);
+
+  // ── The screens. A flag nobody renders is the half-fix this file exists to catch. ──
+  const page = code("src/app/dashboard/accountant/page.tsx");
+  assert.match(page, /const clientsUnreadable = clientResult\.readFailed/);
+  assert.match(page, /const todosUnreadable = todoResult\.readFailed/);
+  assert.match(page, /clientsUnreadable=\{clientsUnreadable\}/);
+  assert.match(page, /todosUnreadable=\{todosUnreadable\}/);
+
+  const home = code("src/modules/accountant/pages/AccountantHome.tsx");
+  // ORDER is the assertion: the unreadable branch must come BEFORE the empty-practice one, or the
+  // onboarding state wins on exactly the read that failed.
+  // The empty-practice state is the ELSE of the unreadable one — a chain, not two independent
+  // conditions. That is a stronger claim than "one appears before the other in the file": it
+  // cannot be satisfied by two branches that both render.
+  assert.match(home, /\{clientsUnreadable \? \([\s\S]{0,1600}?\) : clients\.length === 0 \? \(/,
+    "an unreadable list is answered INSTEAD of an empty one, not beside it");
+  assert.match(home, /\{todosUnreadable && \(/, "and the to-do feed says so above its list");
+
+  // The management screen makes the same claim about mandates and needs the same distinction.
+  const beheer = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(beheer, /\{clientsUnreadable \? \([\s\S]{0,1000}?\) : clients\.length === 0 \? \(/,
+    "…on the screen where links are managed too");
+  assert.match(code("src/app/dashboard/clients/beheer/page.tsx"),
+    /clientsUnreadable=\{clientsUnreadable\}/, "the flag is passed, not merely destructured");
+
+  // [TAAL] The accountant module is deliberately Dutch-only (AGENTS.md): its user is a Dutch
+  // professional reading Dutch administraties under Dutch law, and the owner's language setting
+  // describes the OWNER. So these sentences are Dutch on purpose and are NOT a catalogue miss.
+  assert.match(home, /We konden je klantenlijst nu niet ophalen/);
+  assert.match(home, /We konden je takenlijst nu niet ophalen/);
+  // …and each says the same thing: this is about our reading, not about your practice.
+  assert.match(home, /Dit zegt niets over je klanten/);
+  assert.match(home, /Dit betekent niet dat er niets te doen is/);
+});
