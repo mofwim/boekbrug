@@ -77,7 +77,31 @@ export type { IncomingPaymentHit, IncomingPaymentProof, OpenInvoiceHit, OpenInvo
 const IDENTITY_SIGNALS = new Set<MatchSignal>([
   'reference', 'iban', 'supplier_iban', 'counterpart', 'memory', 'prepared',
 ])
-const AMOUNT_SIGNALS = new Set<MatchSignal>(['amount', 'near_amount'])
+/**
+ * [BEWIJS-EXACT] Exact only. `near_amount` is deliberately NOT proof here.
+ *
+ * Reported from the app, with the panel on screen: of three invoices it raised, two were wrong in
+ * the same way. GROOTHANDEL M.H. BAL V.O.F., invoice 263737 for € 973,23, matched against a bank
+ * line of € 991,85 — and that line's own reference reads "263052", which is a different invoice.
+ * Invoice 263855 for € 1.208,46 against € 1.206,55 quoting "263138". Both are payments for other
+ * bills from the same wholesaler, and the panel asked the owner to look at them anyway.
+ *
+ * near_amount earns its place in the RECONCILIATION screen, where a human is already comparing two
+ * columns and confirming books a deelbetaling with the difference named. That is a different
+ * question at a different bar. This panel asks one thing about one document — "is this bill
+ * perhaps already paid?" — unasked, on a screen the owner opened for something else. "Close but
+ * not equal" is the shape of a DIFFERENT invoice from the same supplier far more often than it is
+ * the shape of this one being settled, and a wholesaler who bills similar amounts every week turns
+ * that into a coincidence generator.
+ *
+ * This narrows the panel and nothing else: isProvingCandidate is this file's filter alone. What
+ * the matching engine scores, offers and auto-books is untouched.
+ *
+ * The failure this guards is the one the header of this file already names — a false alarm here is
+ * the app crying wolf about its own bookkeeping, and after two of those nobody reads the third.
+ * Two of three was the measured rate.
+ */
+const AMOUNT_SIGNALS = new Set<MatchSignal>(['amount'])
 
 /** Does this pairing carry evidence, rather than arithmetic? */
 export function isProvingCandidate(signals: readonly MatchSignal[]): boolean {

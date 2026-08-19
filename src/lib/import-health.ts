@@ -642,28 +642,34 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // The AI told us which fields it was unsure about. Mirror the modal's logic:
   // a missing score defaults to confident (1) so we never false-flag clean rows.
   if (fc) {
+    // [EEN-VELD-EEN-ZIN] One field, one sentence — as a RULE, not per field.
+    //
+    // Two axes describe the same three fields. The VALUE axis is a fact about what was stored
+    // ("ontbreekt", "staat nergens in de tekst"); the CONFIDENCE axis is the reader's opinion of
+    // it ("is onzeker"). When both fire, the card printed two rows about one field with exactly
+    // the same action behind them.
+    //
+    // This was fixed for the invoice number alone, on a Univé invoice that showed four warnings
+    // where there were three things wrong. That was a special case where a rule belonged: the
+    // supplier and the date had the identical shape and kept both sentences. A list that pads
+    // itself teaches the owner to skim, and the row that matters is then skimmed with the rest.
+    //
+    // The value axis wins because it says more. The FLAG is set either way, so the field is
+    // pointed at exactly as hard as before — only the weaker second sentence goes. Suppressing
+    // the flag instead would hide the field, which is the opposite of the intent.
+    const softer = (already: boolean, sentence: string) => { if (!already) reasons.push(sentence) }
+
     if ((fc.vendor ?? 1) < LOW_CONFIDENCE) {
+      softer(flags.vendor, 'de leverancier is onzeker')
       flags.vendor = true
-      reasons.push('de leverancier is onzeker')
     }
     if ((fc.invoice_number ?? 1) < LOW_CONFIDENCE && !isKassabon(fc)) {
-      // [DUBBELE-ZIN] De vlag altijd; de ZIN alleen als de waarde-as er nog niets over zei.
-      //
-      // Twee assen, één veld. Gemeten op een Univé-factuur: het nummer was de EMAIL-<ts>
-      // plaatshouder én de lezer was er onzeker over, dus de kaart zette twee regels onder elkaar
-      // — "het factuurnummer ontbreekt of kon niet worden gelezen" en "het factuurnummer is
-      // onzeker" — met precies dezelfde handeling erachter. Vier waarschuwingen waar er drie
-      // stonden, over drie dingen.
-      //
-      // De waarde-as wint omdat zij meer zegt: "ontbreekt" is een feit over wat er is opgeslagen,
-      // "onzeker" is een mening van de lezer erover. De vlag blijft in beide gevallen staan, dus
-      // het veld wordt even hard aangewezen; alleen de tweede zin vervalt.
-      if (!flags.invoiceNumber) reasons.push('het factuurnummer is onzeker')
+      softer(flags.invoiceNumber, 'het factuurnummer is onzeker')
       flags.invoiceNumber = true
     }
     if ((fc.invoice_date ?? 1) < LOW_CONFIDENCE) {
+      softer(flags.invoiceDate, 'de factuurdatum is onzeker')
       flags.invoiceDate = true
-      reasons.push('de factuurdatum is onzeker')
     }
   }
 
