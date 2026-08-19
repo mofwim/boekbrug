@@ -647,8 +647,19 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       reasons.push('de leverancier is onzeker')
     }
     if ((fc.invoice_number ?? 1) < LOW_CONFIDENCE && !isKassabon(fc)) {
+      // [DUBBELE-ZIN] De vlag altijd; de ZIN alleen als de waarde-as er nog niets over zei.
+      //
+      // Twee assen, één veld. Gemeten op een Univé-factuur: het nummer was de EMAIL-<ts>
+      // plaatshouder én de lezer was er onzeker over, dus de kaart zette twee regels onder elkaar
+      // — "het factuurnummer ontbreekt of kon niet worden gelezen" en "het factuurnummer is
+      // onzeker" — met precies dezelfde handeling erachter. Vier waarschuwingen waar er drie
+      // stonden, over drie dingen.
+      //
+      // De waarde-as wint omdat zij meer zegt: "ontbreekt" is een feit over wat er is opgeslagen,
+      // "onzeker" is een mening van de lezer erover. De vlag blijft in beide gevallen staan, dus
+      // het veld wordt even hard aangewezen; alleen de tweede zin vervalt.
+      if (!flags.invoiceNumber) reasons.push('het factuurnummer is onzeker')
       flags.invoiceNumber = true
-      reasons.push('het factuurnummer is onzeker')
     }
     if ((fc.invoice_date ?? 1) < LOW_CONFIDENCE) {
       flags.invoiceDate = true
