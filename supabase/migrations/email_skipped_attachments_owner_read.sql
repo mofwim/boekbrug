@@ -1,0 +1,70 @@
+-- =====================================================================
+-- [OBSERVABILITY] The skip registry was unreadable by the only person it is for
+-- =====================================================================
+-- Problem (confirmed on the live database, 19 August 2026):
+--   `public.email_skipped_attachments` has RLS ENABLED and ZERO policies.
+--   Under RLS, a table with no policy denies every row to `authenticated`
+--   WITHOUT raising an error — the read simply returns nothing.
+--
+--   The writer is the import pipeline (createPipelineClient, service_role),
+--   so rows land correctly and the table is not empty. Measured:
+--       335 rows total — 324 for one owner, 11 for another.
+--
+--   The reader is /api/email/skipped, which runs on the user-facing client
+--   (createServerSupabaseClient → anon key + session cookies, RLS applies).
+--   Executed as `authenticated` with that owner's id as auth.uid(), the
+--   same query the route runs returned 0 rows and no error.
+--
+-- Why this one matters more than a blank list usually does:
+--   That endpoint feeds "Overgeslagen bij import (en waarom)" — the panel
+--   whose entire purpose is that no attachment is ever silently lost. Its
+--   own source comment says what happens when it answers wrongly:
+--
+--       "An owner looking for an invoice that never arrived would be told,
+--        in writing, that nothing was skipped, and stop looking."
+--
+--   That is exactly what production has been doing. The route guards the
+--   failure it expected — `skippedError` is checked and answers 503 rather
+--   than "" — but an RLS denial is not an error. It is a successful read of
+--   nothing, so every guard passed and the panel reported reassurance.
+--
+-- Fix: give the owner a read of their OWN rows. This is what the route
+--   already asks for (`.eq('user_id', user.id)`); the policy makes the
+--   database agree instead of silently returning nothing.
+--
+-- Scope, deliberately narrow:
+--   * SELECT only. The pipeline writes as service_role and bypasses RLS, so
+--     there is no INSERT/UPDATE/DELETE policy to add — and adding one would
+--     let a session write its own skip history, which nothing needs.
+--   * `authenticated` only, never `public`. An anonymous caller has no
+--     business enumerating filenames.
+--   * No accountant clause. A boekhouder reads documents and invoices, not
+--     the owner's mail-import diagnostics; granting it here would widen the
+--     accountant boundary in a migration about a panel.
+--
+-- Safety (every reader of this table was checked before writing this):
+--   * /api/email/skipped            → user client, filters user_id → FIXED by this
+--   * src/lib/email-integration.ts  → createPipelineClient (service_role) → unaffected
+--   No other code path reads the table.
+--
+-- Not applied to the two sibling tables the same linter flags:
+--   `cron_runs` is read only through createPipelineClient (health route and
+--   cron-heartbeat), and `ai_spend_daily` has no application reader at all.
+--   For those, "RLS on, no policy" is the correct locked state and adding a
+--   policy would open something nothing asked for.
+--
+-- Reversibility: fully reversible — see the ROLLBACK block at the bottom.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- UP
+-- ---------------------------------------------------------------------
+CREATE POLICY "owner reads own skipped attachments" ON public.email_skipped_attachments
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------
+-- ROLLBACK (restores the previous behaviour exactly: readable by nobody)
+-- ---------------------------------------------------------------------
+-- DROP POLICY IF EXISTS "owner reads own skipped attachments" ON public.email_skipped_attachments;

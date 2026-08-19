@@ -11,15 +11,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { LOCALE_BOOT_SCRIPT, RTL_LOCALES } from './locale-boot'
-import { LOCALES, LOCALE_META } from './locale'
+import { LOCALE_BOOT_SCRIPT, PREFIXED_LOCALES, RTL_LOCALES } from './locale-boot'
+import { DEFAULT_LOCALE, LOCALES, LOCALE_META, localePrefix } from './locale'
 import { LOCALE_COOKIE } from './use-locale'
 
-/** Run the boot script the way a browser would, over a document that only has what it touches. */
-function boot(cookie: string): { lang: string; dir: string } {
+/**
+ * Run the boot script the way a browser would, over a document and a location that have only
+ * what it touches. The path defaults to '/' — the unprefixed Dutch surface — so every test
+ * written before the URL became a source still asks exactly what it asked then.
+ */
+function boot(cookie: string, pathname = '/'): { lang: string; dir: string } {
   const documentElement = { lang: 'nl', dir: 'ltr' }
   const document = { cookie, documentElement }
-  new Function('document', LOCALE_BOOT_SCRIPT)(document)
+  new Function('document', 'location', LOCALE_BOOT_SCRIPT)(document, { pathname })
   return { lang: documentElement.lang, dir: documentElement.dir }
 }
 
@@ -97,4 +101,75 @@ test('[TAAL] the copies inside the script still agree with locale.ts', () => {
   }
   // And RTL_LOCALES is derived, not typed twice — this asserts the derivation still finds Arabic.
   assert.deepEqual(RTL_LOCALES, ['ar'])
+  // Same for the prefix list: Dutch is canonical and must never appear in it, or the script
+  // would read '/nl' as a language and stamp a prefix the router does not serve.
+  assert.ok(!PREFIXED_LOCALES.includes(DEFAULT_LOCALE), 'Dutch must not carry a URL prefix')
+  assert.deepEqual(PREFIXED_LOCALES, ['en', 'ar', 'tr'])
+})
+
+// ---------------------------------------------------------------------------------------------
+// [TAAL] The URL as a source of language, and why it outranks the cookie.
+// ---------------------------------------------------------------------------------------------
+
+test('[TAAL] an Arabic article turns the document around with no cookie at all', () => {
+  // This is the visitor the Arabic articles exist for: arrived from a search engine, has never
+  // seen this site, carries nothing. Before the URL was read, they got Arabic text in a
+  // left-to-right document announcing itself as Dutch.
+  assert.deepEqual(boot('', '/ar/blog/zzp-belasting-2026'), { lang: 'ar', dir: 'rtl' })
+  assert.deepEqual(boot('', '/ar/blog'), { lang: 'ar', dir: 'rtl' })
+  assert.deepEqual(boot('', '/ar/prijzen'), { lang: 'ar', dir: 'rtl' })
+})
+
+test('[TAAL] every prefixed language boots from its own URL', () => {
+  for (const l of PREFIXED_LOCALES) {
+    assert.deepEqual(
+      boot('', `${localePrefix(l)}/blog`), { lang: l, dir: LOCALE_META[l].dir },
+      `${l} does not boot from its own prefix`,
+    )
+  }
+})
+
+test('[TAAL] the document outranks the reader — a page is the language it is written in', () => {
+  // An owner who reads Dutch opening an Arabic article still gets an Arabic document, and an
+  // owner who reads Arabic opening the English page still gets a left-to-right one. The cookie
+  // describes the reader; the prefix describes the text on the screen.
+  assert.deepEqual(boot(`${LOCALE_COOKIE}=nl`, '/ar/blog/x'), { lang: 'ar', dir: 'rtl' })
+  assert.deepEqual(boot(`${LOCALE_COOKIE}=ar`, '/en/prijzen'), { lang: 'en', dir: 'ltr' })
+  assert.deepEqual(boot(`${LOCALE_COOKIE}=ar`, '/tr/blog'), { lang: 'tr', dir: 'ltr' })
+})
+
+test('[TAAL] an unprefixed path still honours the cookie, because that is the dashboard', () => {
+  // /dashboard is translated by preference, not by URL. Nothing above may take that away.
+  assert.deepEqual(boot(`${LOCALE_COOKIE}=ar`, '/dashboard/facturen'), { lang: 'ar', dir: 'rtl' })
+  assert.deepEqual(boot(`${LOCALE_COOKIE}=tr`, '/dashboard'), { lang: 'tr', dir: 'ltr' })
+})
+
+test('[TAAL] a Dutch route whose name merely starts with a language code is not that language', () => {
+  // The match is on the whole first segment. A prefix match would make '/entree' English and
+  // '/artikelen' Arabic — both of which are real Dutch words this app could route on.
+  for (const path of ['/entree', '/artikelen', '/enquete', '/trechter', '/arbeid']) {
+    assert.deepEqual(boot('', path), { lang: 'nl', dir: 'ltr' }, `${path} must stay Dutch`)
+  }
+})
+
+test('[TAAL] the Dutch surface is left exactly as the markup built it', () => {
+  // Dutch is canonical and unprefixed, so there is nothing to change and nothing to write.
+  assert.deepEqual(boot('', '/'), { lang: 'nl', dir: 'ltr' })
+  assert.deepEqual(boot('', '/blog/zzp-belasting-2026'), { lang: 'nl', dir: 'ltr' })
+  assert.deepEqual(boot('', '/factuur-maken/loodgieter'), { lang: 'nl', dir: 'ltr' })
+  // '/nl/...' is not a route this app serves; it must not be honoured as one either.
+  assert.deepEqual(boot('', '/nl/blog'), { lang: 'nl', dir: 'ltr' })
+})
+
+test('[TAAL] it cannot throw when the location is missing or strange', () => {
+  // Same reasoning as the cookie: this runs on the first line of every page in the app.
+  for (const pathname of ['', '//', '/ar', '/AR/blog', '/%%%']) {
+    assert.doesNotThrow(() => boot('', pathname), `pathname ${JSON.stringify(pathname)} threw`)
+  }
+  assert.doesNotThrow(() => {
+    new Function('document', 'location', LOCALE_BOOT_SCRIPT)(
+      { cookie: '', documentElement: {} },
+      { get pathname(): string { throw new Error('no location') } },
+    )
+  })
 })

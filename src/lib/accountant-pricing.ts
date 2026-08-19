@@ -113,8 +113,11 @@ export const ACCOUNTANT_BANDS: readonly AccountantBand[] = [
   { upTo: null, monthlyExclBtw: 149 },
 ];
 
-/** Euro as the Netherlands writes it: "€ 49,00". */
-function euro(amount: number): string {
+/**
+ * Euro as the Netherlands writes it: "€ 49,00". Exported because /voor-boekhouders renders the
+ * same ladder as the Terms do, and a second copy of this format is how "€ 49.00" reaches a page.
+ */
+export function euro(amount: number): string {
   return `€ ${amount.toFixed(2).replace(".", ",")}`;
 }
 

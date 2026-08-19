@@ -84,9 +84,11 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      // De taal in de MARKUP is Nederlands, en dat blijft zo: dat is wat er statisch wordt
-      // gebouwd. Het script hieronder zet lang/dir om vóór de eerste paint als de ondernemer
-      // een andere taal heeft gekozen.
+      // The MARKUP says Dutch and stays that way: it is what gets built statically, for every
+      // route at once, and reading a cookie or a header here would trade the SSG of 212 blog
+      // articles for two attributes (see locale-boot.ts). The script below corrects lang/dir
+      // before the first paint, from the URL prefix on /ar, /tr and /en, and otherwise from the
+      // owner's chosen language.
       lang="nl"
       dir="ltr"
       /* [SCROLL] No `h-full` here: height:100% on the root is half of what
@@ -94,9 +96,10 @@ export default function RootLayout({
       className={`${roboto.variable} ${notoArabic.variable} antialiased`}
     >
       <head>
-        {/* [TAAL] Vóór alles: de gekozen taal op <html>, synchroon, vóór de eerste paint. Een
-            client-effect zou de hele layout ná het schilderen van kant laten wisselen — op een
-            Arabisch scherm is dat geen flikkering maar een sprong. */}
+        {/* [TAAL] Before anything else: the document's language on <html>, synchronously, before
+            the first paint. A client effect would flip the whole layout AFTER painting — on an
+            Arabic screen that is not a flicker but the page jumping sides. This is the pattern
+            Next documents for exactly this ("preventing flash before hydration"). */}
         <script dangerouslySetInnerHTML={{ __html: LOCALE_BOOT_SCRIPT }} />
 
         {/* [Design System] Material Symbols — icon font, CDN.

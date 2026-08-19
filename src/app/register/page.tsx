@@ -10,7 +10,7 @@ import { ErrorMessage } from '@/components/ui/Feedback'
 // [FUNNEL-OVERDRACHT] Zeggen dat de factuur uit de gratis generator bewaard is — zie hieronder.
 import { readHandoff, hasInvoiceContent } from '@/lib/factuur-handoff'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
-import { ROLE_PARAM } from '@/lib/register-intent'
+import { ROLE_PARAM, parseRole } from '@/lib/register-intent'
 import { EMAIL_REGEX } from '@/lib/validation'
 import {
   PURPOSE_PARAM,
@@ -29,8 +29,21 @@ function RegisterContent() {
   // (De initialisatie leest de querystring rechtstreeks in plaats van via `purpose`, omdat
   // useState hier draait vóór de regel die `purpose` berekent.)
   const isArchief = searchParams.get(PURPOSE_PARAM) === 'archief'
-  const [step, setStep] = useState(isArchief ? 2 : 1)
-  const [role, setRole] = useState(isArchief ? ARCHIEF_ROLE : '')
+
+  // [KANTOOR-VOORDEUR] /voor-boekhouders stuurt hierheen met ?rol=accountant. Wie binnenkomt van
+  // een pagina die over niets anders gaat dan boekhouders, heeft de vraag "wie ben jij" al
+  // beantwoord door erop te klikken; hem die opnieuw stellen leest als niet opgelet hebben.
+  //
+  // De waarde gaat door parseRole en niet rechtstreeks de state in, want een querystring is
+  // invoer: alles behalve 'zzper' of 'accountant' telt als niets gekozen en levert gewoon stap 1
+  // op. Het is dezelfde toets die de OAuth-callback doet, om dezelfde reden.
+  //
+  // Het slaat stap 1 alleen OVER — de terugknop brengt hem er alsnog heen, want een rol is een
+  // zelfverklaring en de bezoeker mag hem veranderen.
+  const voorafGekozenRol = parseRole(searchParams.get(ROLE_PARAM))
+
+  const [step, setStep] = useState(isArchief || voorafGekozenRol ? 2 : 1)
+  const [role, setRole] = useState(isArchief ? ARCHIEF_ROLE : (voorafGekozenRol ?? ''))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')

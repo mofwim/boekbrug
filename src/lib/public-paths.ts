@@ -81,6 +81,11 @@ export const PUBLIC_PATHS = [
   // [KLUIS] De voordeur voor mensen die geen boekhoudprogramma zoeken maar een oplossing voor
   // hun bewaarplicht. Moet uitgelogd leesbaar zijn — dat is het hele punt van de pagina.
   "/bewaarplicht",
+  // [KANTOOR-VOORDEUR] De voordeur voor een administratiekantoor. Openbaar om dezelfde reden als
+  // /prijzen: hij is geschreven voor iemand die nog geen account heeft en er anders ook nooit een
+  // maakt. Veilig tegen de prefix-regel — het portaal zelf heet /dashboard/accountant en begint
+  // dus niet met deze string.
+  "/voor-boekhouders",
   // [BELOFTE-BEWIJS] De beveiligingspagina. Openbaar omdat hij bedoeld is voor wie nog GEEN account
   // heeft — dat is precies de lezer die de vraag stelt. Botst niet met de prefixregel: het scherm
   // in de app heet /dashboard/beveiliging en begint dus niet met deze string.
