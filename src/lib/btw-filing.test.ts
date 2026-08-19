@@ -1,5 +1,5 @@
 // [TRUTH-FILED] Pure test for btw-filing.ts — run: npx tsx src/lib/btw-filing.test.ts
-import { computeFilingDivergence, decideFilingWrite, SUPPLETIE_THRESHOLD, type FilingFigures } from "./btw-filing";
+import { computeFilingDivergence, decideFilingWrite, SUPPLETIE_THRESHOLD, outstandingCorrection, correctionRoute, type FilingFigures } from "./btw-filing";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -122,5 +122,52 @@ console.log("— [FILING-NO-OVERWRITE] wat een indiening met een bestaande indie
   check("expliciet replace:true → vervangen", decideFilingWrite({ hasExisting: true, replace: true }) === "replace");
 }
 
+
+// ── [SUPPLETIE-VERREKEND] What has NOT yet been declared ─────────────────────
+//
+// A correction of €1.000 or less may go into the next regular aangifte. Once it has, the snapshot
+// still differs from the live figures — the snapshot is deliberately never rewritten — so the app
+// has to remember that the gap was already reported, or it offers the same correction next quarter
+// and the owner declares it twice.
+
+console.log("— outstandingCorrection: what is still owed after what was carried —");
+{
+  check("nothing carried → the whole delta is outstanding", outstandingCorrection(160, null) === 160);
+  check("undefined is the same as nothing", outstandingCorrection(160, undefined) === 160);
+  check("fully carried → nothing left", outstandingCorrection(160, 160) === 0);
+
+  // THE CASE THE AMOUNT EXISTS FOR. Booked 1260, corrected to 1100 and carried (−160), then a late
+  // invoice takes it to 1050. Still owed: −50. A boolean 'carried' would say nothing is owed.
+  check("a SECOND movement after a carry is still owed", outstandingCorrection(-210, -160) === -50);
+
+  // Sign travels: declaring less and then moving further down keeps the direction.
+  check("direction survives", outstandingCorrection(-210, -160) < 0);
+  check("over-carried is not negative-of-itself", outstandingCorrection(160, 200) === -40);
+
+  // Half a cent may not decide a €1.000 threshold or a printed sentence.
+  check("rounded to cents", outstandingCorrection(1000.005, 0) === 1000.01);
+  check("nonsense in, zero out", outstandingCorrection(NaN, 0) === 0);
+  check("a nonsense carry is treated as no carry", outstandingCorrection(160, NaN) === 160);
+
+  // The route is judged on what REMAINS, never on the history of how it accumulated.
+  check("nothing outstanding → no route", correctionRoute(0) === "none");
+  check("rounding noise → no route", correctionRoute(0.004) === "none");
+  check("under the threshold → carry", correctionRoute(160) === "carry");
+  check("exactly €1.000 → carry (the rule is 'more than')", correctionRoute(1000) === "carry");
+  check("over → suppletie", correctionRoute(1000.01) === "suppletie");
+  check("direction does not change the route", correctionRoute(-1500) === "suppletie");
+
+  // Two movements of €700 never become one suppletie: the first is carried, and the second is
+  // judged on what is left, not on the €1.400 the quarter has moved in total.
+  check("700 carried, 700 more → still a carry", correctionRoute(outstandingCorrection(1400, 700)) === "carry");
+  // …and a €1.400 movement with €900 carried still needs a suppletie for the remaining €500 — no:
+  // €500 is under the threshold, so it is a carry. This is the correct answer and worth pinning,
+  // because reading the threshold against the TOTAL movement would demand a form for €500.
+  check("1400 moved, 900 carried → the remaining 500 is a carry", correctionRoute(outstandingCorrection(1400, 900)) === "carry");
+  check("1400 moved, 100 carried → 1300 still needs a suppletie", correctionRoute(outstandingCorrection(1400, 100)) === "suppletie");
+}
+
+// The summary and the exit stay LAST. A block appended after process.exit() runs not one line
+// and still prints "36 passed" — which is how a test file grows a section nobody notices is dead.
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

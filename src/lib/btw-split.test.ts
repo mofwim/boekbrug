@@ -160,3 +160,68 @@ test('[BTW-SPLIT] junk rows are ignored rather than treated as a read block', ()
   })
   assert.deepEqual(v, { kind: 'single-rate', rate: 21 }, 'falls back to the rate test')
 })
+
+// ── [RIJ-KLOPT-NIET] A row that contradicts its own rate is not corroboration ─
+//
+// BALKIP B.V. 264091. Its per-rate block prints two rows — 21% over 0,00 giving 0,00, and 9% over
+// 1.123,62 giving 101,13. The reader returned ONE row: the rate from the first, the amounts from the
+// second. Its columns then reproduced our excl and our btw exactly, so the block was accepted as a
+// verified blend and the checklist put a GREEN TICK beside "Btw-bedrag nagerekend — 21%".
+//
+// 21% of 1.123,62 is 235,96. The row disagreed with its own rate by € 134,83, and the one constraint
+// that would have caught it — base × rate = btw, free, printed right there — was never asked.
+
+test("[RIJ-KLOPT-NIET] a rate taken from the wrong row no longer earns a tick", () => {
+  const v = classifyBtwSplit({
+    totalExBtw: 1123.62,
+    btwAmount: 101.13,
+    rows: [{ rate: 21, base: 1123.62, btw: 101.13 }],
+  });
+  assert.equal(v.kind, "row-inconsistent");
+  assert.equal(btwSplitCorroborated(v), false, "the column sums agree and it is still not evidence");
+  const detail = btwSplitDetail(v, 101.13);
+  assert.match(detail!, /21%/, "the rate the row claims");
+  assert.match(detail!, /€\s?1\.123,62/, "over what");
+  assert.match(detail!, /€\s?235,96/, "what that rate would actually produce");
+  assert.match(detail!, /€\s?101,13/, "and what is printed instead");
+});
+
+test("[RIJ-KLOPT-NIET] the block as the invoice actually prints it is still verified", () => {
+  // Both rows, the 21% one empty. 0 × 21% = 0 is consistent by definition, so an empty rate line —
+  // which every Dutch block has — can never trip this.
+  const v = classifyBtwSplit({
+    totalExBtw: 1123.62,
+    btwAmount: 101.13,
+    rows: [{ rate: 21, base: 0, btw: 0 }, { rate: 9, base: 1123.62, btw: 101.13 }],
+  });
+  assert.equal(v.kind, "blend-verified");
+  assert.equal(btwSplitCorroborated(v), true);
+});
+
+test("[RIJ-KLOPT-NIET] per-line rounding does not make an honest block inconsistent", () => {
+  // A supplier who rounds every line and then sums drifts a few cents from base × rate. The
+  // tolerance is the same one the single-rate test uses — half a per mille of the base — so this
+  // check refuses a € 134 contradiction without refusing a € 0,02 one.
+  // 9% of 1.000 is 90,00 and 21% of 1.000 is 210,00; each row is printed a cent over.
+  const v = classifyBtwSplit({
+    totalExBtw: 2000, btwAmount: 300.02,
+    rows: [{ rate: 9, base: 1000, btw: 90.01 }, { rate: 21, base: 1000, btw: 210.01 }],
+  });
+  assert.equal(v.kind, "blend-verified");
+});
+
+test("[RIJ-KLOPT-NIET] a real mixed-rate block still passes, and a swapped one does not", () => {
+  const honest = classifyBtwSplit({
+    totalExBtw: 1500, btwAmount: 300,
+    rows: [{ rate: 9, base: 1000, btw: 90 }, { rate: 21, base: 500, btw: 105 }],
+  });
+  assert.equal(honest.kind, "blend-mismatch", "these rows are honest but do not sum to the stored btw");
+  // The same two bases with the rates swapped: each row now contradicts itself, which is the
+  // stronger finding and the one that names what to look at.
+  const swapped = classifyBtwSplit({
+    totalExBtw: 1500, btwAmount: 195,
+    rows: [{ rate: 21, base: 1000, btw: 90 }, { rate: 9, base: 500, btw: 105 }],
+  });
+  assert.equal(swapped.kind, "row-inconsistent");
+  assert.equal((swapped as { offenders: readonly unknown[] }).offenders.length, 2, "both rows are named");
+});

@@ -229,6 +229,36 @@ export async function uploadDocument(
     }
   }
 
+  // [BRUG-UPLOAD-DELEN] Did the owner drop this file INTO "Gedeeld met boekhouder"?
+  //
+  // The magic folder was built for exactly one act — putting a document where the accountant can
+  // reach it — and the bestanden PATCH route honours that: a MOVE into folder_type='shared' sets
+  // shared=true, which is the flag the accountant's RLS reads. An UPLOAD into that same folder went
+  // straight through this insert, which never wrote the flag. So the owner opened the shared folder,
+  // dropped the file, saw it sitting there, and the accountant received nothing. Silent, and in the
+  // one direction where silence is worst: the owner believes the document has been handed over.
+  //
+  // This is not "upload now shares by default" — the rule the header of /api/files states still
+  // holds everywhere else. It shares when the owner puts the file in the folder whose entire
+  // purpose is sharing, which is the same declaration a move makes.
+  let sharedOnUpload = false;
+  if (opts.folderId) {
+    const { data: folder, error: folderError } = await supabase
+      .from("folders")
+      .select("folder_type")
+      .eq("id", opts.folderId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (folderError) {
+      // Not fatal — a file that lands unshared is recoverable with one tap, a failed upload is not.
+      // Logged because the owner will believe it was shared, and that belief is the whole defect.
+      console.error("[BRUG-UPLOAD-DELEN] kon de doelmap niet lezen — het bestand wordt niet gedeeld", {
+        folderId: opts.folderId, error: folderError.message,
+      });
+    }
+    sharedOnUpload = folder?.folder_type === "shared";
+  }
+
   // 2. Insert metadata — file_url stores the storage path (signed URL on read)
   const { data, error: dbError } = await supabase
     .from("documents")
@@ -245,6 +275,10 @@ export async function uploadDocument(
       notes: opts.notes ?? null,
       folder_id: opts.folderId ?? null,          // [I#1] honour the chosen folder (else NULL = root)
       content_hash: contentHash,                 // [BRIDGE-EXTRACT] byte-hash for cross-path dedup
+      // [BRUG-UPLOAD-DELEN] The period stamped above is this upload's own quarter, which is exactly
+      // what the PATCH route falls back to when a document has no better one — so the closing
+      // package places it the same way whether it was shared by a move or by being uploaded here.
+      shared: sharedOnUpload,
     })
     .select("id")
     .single();
@@ -255,9 +289,12 @@ export async function uploadDocument(
     return { id: "", error: dbError.message };
   }
 
-  // [FIN-UNIFY] Upload never shares. Sharing is a separate, explicit step on the
-  // documents.shared flag (bestanden PATCH route) — that is where the accountant is
-  // granted access, so no accountant notification is emitted here.
+  // [FIN-UNIFY] Upload does not share BY ITSELF — sharing is an explicit act on the
+  // documents.shared flag. [BRUG-UPLOAD-DELEN] Dropping a file into "Gedeeld met boekhouder" IS
+  // that act, and it is the only case where this insert sets the flag; every other upload lands
+  // unshared exactly as before. No accountant notification is emitted here either way: the /brug
+  // screen and the closing package read the flag, and adding a notification is a product decision
+  // rather than a bug fix.
   return { id: data.id };
 }
 

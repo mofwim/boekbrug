@@ -173,7 +173,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.invoice.numbering_change_blocked", "log.invoice.arithmetic_blocked", "log.cash.entry_added",
   "log.cash.entry_removed", "log.cash.opening_balance_set", "log.turnover.auto_imported",
   "log.turnover.day_removed", "log.ledger.auto_imported", "log.btw.filed",
-  "log.btw.filed_despite_warnings", "log.btw.filing_unlocked",
+  "log.btw.filed_despite_warnings", "log.btw.filing_unlocked", "log.btw.correction_carried",
   // Level 2 — Accountant relationships
   "log.accountant.client_invited", "log.accountant.client_linked", "log.accountant.client_unlinked",
   "log.accountant.invoice_status_set", "log.accountant.invoice_mandate_granted",

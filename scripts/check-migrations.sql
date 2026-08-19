@@ -24,6 +24,13 @@
 --   PRE-FIX book_bank_batch installed from the commit before the fix: TE DOEN, exactly where a
 --                           "does the function exist" check would have said OK
 --
+-- [SUPPLETIE] The four btw_filings rows were verified the same way, in both directions: on a
+-- database built from btw_filings.sql alone all four say TE DOEN; after btw_filings_divergence.sql
+-- and btw_filings_carried.sql all four flip to OK; and running both a second time changes nothing
+-- (every statement is IF NOT EXISTS, and the CHECK is guarded by a pg_constraint lookup). The
+-- constraint gets its own row because a column can exist while the rule around it never was
+-- created — and that rule is what keeps "verwerkt in 2026-Q7" off an accountant's screen.
+--
 -- That last one is the whole reason this file exists rather than a list in a chat message.
 
 with checks(soort, naam, migratie, waarom, aanwezig) as (
@@ -106,6 +113,35 @@ with checks(soort, naam, migratie, waarom, aanwezig) as (
          exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
                  where n.nspname='public' and p.proname='seed_invoice_counter'
                    and pg_get_functiondef(p.oid) like '%GREATEST%')
+
+  -- [SUPPLETIE] The two columns that hold the moment a filed quarter first moved. Without them the
+  -- correction routes still work and still tell the owner — the stamp is deploy-safe — but the
+  -- moment of awareness is not recorded, and art. 10a AWR runs its clock from exactly that moment.
+  -- It cannot be reconstructed afterwards, which is why this row exists rather than a shrug.
+  union all select 'kolom', 'btw_filings.first_divergence_at', 'btw_filings_divergence.sql',
+         'het moment waarop een ingediend kwartaal voor het EERST veranderde (art. 10a AWR)',
+         exists (select 1 from information_schema.columns
+                 where table_schema='public' and table_name='btw_filings' and column_name='first_divergence_at')
+
+  union all select 'kolom', 'btw_filings.last_divergence_at', 'btw_filings_divergence.sql',
+         'wanneer het voor het LAATST veranderde — of een kwartaal nog in beweging is',
+         exists (select 1 from information_schema.columns
+                 where table_schema='public' and table_name='btw_filings' and column_name='last_divergence_at')
+
+  -- Without this one the "Verwerkt"-knop op de aangifte antwoordt 503 en legt niets vast. Dat is
+  -- eerlijk, maar het betekent ook dat dezelfde correctie volgend kwartaal opnieuw wordt
+  -- aangeboden — en twee keer aangeven is duurder dan één keer vergeten.
+  union all select 'kolom', 'btw_filings.carried_saldo', 'btw_filings_carried.sql',
+         'hoeveel van een correctie al in een latere aangifte is verwerkt (zonder dit: dubbel aangeven)',
+         exists (select 1 from information_schema.columns
+                 where table_schema='public' and table_name='btw_filings' and column_name='carried_saldo')
+
+  -- De begrenzing zelf, niet alleen de kolom: zonder de CHECK kan er "verwerkt in 2026-Q7" op het
+  -- scherm van een boekhouder komen. Op naam gecontroleerd, want een kolom kan bestaan terwijl de
+  -- constraint eromheen nooit is aangemaakt.
+  union all select 'constraint', 'btw_filings_carried_quarter_check', 'btw_filings_carried.sql',
+         'een verwerkt-kwartaal moet een BESTAAND kwartaal zijn (1 t/m 4)',
+         exists (select 1 from pg_constraint where conname='btw_filings_carried_quarter_check')
 
   union all select 'functie', 'recompute_invoice_amount_paid', 'invoice_partial_payments.sql',
          'houdt amount_paid gelijk aan de som van de deelbetalingen',

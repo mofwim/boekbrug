@@ -159,12 +159,38 @@ export default async function VerkoopPage() {
         f.reminder_count = b?.aantal ?? 0
       }
     } catch {
-      // De tabel bestaat, maar mocht de lezing mislukken dan blijft het spoor leeg. Dat maakt de
-      // knop RUIMER dan hij hoort te zijn, dus zetten we hem dan liever helemaal uit: de route
-      // toetst dezelfde regel nog een keer en weigert alsnog, met de juiste zin erbij.
-      for (const f of facturen) f.reminder_count = undefined
+      // [SPOOR-BEWIJS] Mislukt de lezing, dan blijft het spoor leeg — en een leeg spoor is geen
+      // "er ging nog niets uit", maar "we weten het niet". Dat maakt de knop RUIMER dan hij hoort
+      // te zijn.
+      //
+      // Hier stond `f.reminder_count = undefined` met de bedoeling de knop dan helemaal uit te
+      // zetten. Dat deed het niet. `undefined` verbergt alleen het chipje "N eerder verstuurd" op
+      // de rij; canRemind leest `(f.reminder_count ?? 0)`, dus undefined wordt nul en het plafond
+      // van drie herinneringen valt juist wég. De regel eronder — "de route toetst dezelfde regel
+      // nog een keer" — klopte ook niet: die route liet de fout van diezelfde lezing vallen, dus
+      // hij kreeg exact hetzelfde lege spoor voorgeschoteld. Twee lagen die naar elkaar wezen.
+      //
+      // Nu wordt de vraag gesteld in plaats van geraden: canRemind weigert op dit veld, met een
+      // zin die zegt wat er niet te lezen viel. De route zet hem óók, op zijn eigen lezing.
+      for (const f of facturen) {
+        f.reminder_count = undefined
+        f.reminderTrailKnown = false
+      }
     }
   }
+
+  // [BETAALBEWIJS] Deliberately NOT on this screen, and that is a decision rather than an omission.
+  //
+  // The evidence line under "Betaald" names the bank line that carries the payment — the date, the
+  // counterparty and the statement text. Those rows live under `user_id = auth.uid()`, so the
+  // reader here often cannot see them at all: this page is the EMPLOYEE's, and their read boundary
+  // is `created_by = actorId` on purpose (acting-for.ts). Showing it would mean fetching the
+  // OWNER's bank through service_role and handing it to somebody whose view of the administratie
+  // was narrowed on purpose — widening a privacy boundary for a nicety.
+  //
+  // The owner gets the line on their own list (/dashboard/facturen), where their own session reads
+  // their own rows and RLS scopes it exactly. If an employee ever needs it, that is a product
+  // decision about what a medewerker may see, not a rendering detail.
 
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.

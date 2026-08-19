@@ -49,6 +49,15 @@ interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
 // the screen shows a fresh concept for a closed quarter and says nothing about it.
 interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number }
 
+// [SUPPLETIE-VERREKEND] A correction from an EARLIER filed quarter, €1.000 or less, that has not
+// been declared anywhere yet. The Belastingdienst allows those to be processed in the next regular
+// aangifte — which this app has been advising on two screens without ever producing the number.
+//
+// Its own block, never a rubriek: a correction from a previous quarter reconciles with no invoice
+// of this one, and a total that cannot be traced back to a document is the shape of number nobody
+// trusts. The owner or their accountant places it on the form.
+interface Correction { quarter: string; filedAt: string; btwSaldoDelta: number; carriedSaldo: number; outstanding: number }
+
 export default function AangifteClient() {
   const t = translator(useLocale())
   const sp = useSearchParams()
@@ -62,6 +71,13 @@ export default function AangifteClient() {
   const [icp, setIcp] = useState<Icp | null>(null)
   const [filed, setFiled] = useState<Filed | null>(null)
   const [filedUnknown, setFiledUnknown] = useState(false)
+  const [corrections, setCorrections] = useState<Correction[]>([])
+  const [correctionsUnknown, setCorrectionsUnknown] = useState(false)
+  // [SUPPLETIE-VERREKEND] Which correction the owner is currently marking as processed, and what
+  // the server said about the last one. The tick is a deliberate act (see /api/btw/carry): the app
+  // may not infer that a correction was included in a return it did not file.
+  const [carrying, setCarrying] = useState<string | null>(null)
+  const [carryNote, setCarryNote] = useState<string | null>(null)
   // [LOAD-REASON] Why the concept is not on screen. "Kon de concept-aangifte niet laden" was the
   // answer to every failure, including an expired session — which the owner cannot fix by
   // refreshing, and which is the most common one of the set.
@@ -72,6 +88,43 @@ export default function AangifteClient() {
   // judges by the Dutch calendar.
   const curYear = Number(amsterdamToday().slice(0, 4))
 
+  /**
+   * [SUPPLETIE-VERREKEND] "Ik heb deze correctie in deze aangifte verwerkt."
+   *
+   * The amount is NOT sent — the server recomputes it from the same engine that produced the line,
+   * so a screen left open while the books moved cannot record a carry that no longer matches. All
+   * this posts is which quarter goes into which.
+   *
+   * The row is removed only on the server's ok. Removing it optimistically would hide a correction
+   * that is still owed, on the screen the owner fills a tax return from.
+   */
+  async function markCarried(c: Correction) {
+    if (carrying) return
+    setCarrying(c.quarter); setCarryNote(null)
+    try {
+      const res = await fetch('/api/btw/carry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: { year: Number(c.quarter.slice(0, 4)), quarter: Number(c.quarter.slice(6)) },
+          into: { year, quarter },
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.ok) {
+        setCarryNote(typeof json.error === 'string'
+          ? json.error
+          : t('aang.correcties.mislukt'))
+        return
+      }
+      setCorrections((prev) => prev.filter((x) => x.quarter !== c.quarter))
+    } catch {
+      setCarryNote(t('aang.correcties.geenVerbinding'))
+    } finally {
+      setCarrying(null)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -80,6 +133,7 @@ export default function AangifteClient() {
       // synchrone setState in de effect-body zelf zit.
       setLoading(true); setData(null); setArt29(null); setIcp(null)
       setFiled(null); setFiledUnknown(false); setLoadError(null)
+      setCorrections([]); setCorrectionsUnknown(false); setCarryNote(null)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json().catch(() => ({}))
@@ -105,6 +159,8 @@ export default function AangifteClient() {
           badDebtCount: Number(json.badDebtCount) || 0,
         })
         setIcp(json.icp ?? null)
+        setCorrections(Array.isArray(json.corrections) ? json.corrections : [])
+        setCorrectionsUnknown(json.correctionsUnknown === true)
         setFiled((json.filed as Filed | null) ?? null)
         setFiledUnknown(json.filedUnknown === true)
       } catch {
@@ -268,6 +324,75 @@ export default function AangifteClient() {
                 strong color={teBetalen ? M3.onSurface : M3.success}
               />
             </div>
+
+            {/* [SUPPLETIE-VERREKEND] Corrections from earlier quarters that are already at the
+                Belastingdienst. Under €1.000 they may be processed in this return — the app has
+                been saying so for a while without ever producing the number, which left the owner
+                to work out what to carry and from where.
+
+                Its own block, above the ICP one and below the totals, for the same reason ICP has
+                one: it is not a rubriek of THIS quarter, and a figure folded into a total that
+                reconciles with no invoice of this period is a figure nobody trusts. It is named,
+                dated to its source quarter, and placed on the form by the owner or their
+                accountant — the app never files anything. */}
+            {(corrections.length > 0 || correctionsUnknown) && (
+              <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '16px 18px', marginBottom: 16 }}>
+                <div style={{ fontSize: 12.5, color: M3.neutral, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
+                  {t('aang.correcties')}
+                </div>
+                {corrections.length > 0 && (
+                  <div style={{ fontSize: 13, color: M3.neutral, lineHeight: 1.55, marginBottom: 12 }}>
+                    {t('aang.correcties.uitleg')}
+                  </div>
+                )}
+                {corrections.map((c) => (
+                  <div key={c.quarter} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '9px 0', borderBottom: `1px solid ${M3.outlineVariant}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{c.quarter}</div>
+                      <div style={{ fontSize: 12.5, color: M3.neutral }}>
+                        {c.outstanding > 0 ? t('aang.correcties.meer') : t('aang.correcties.minder')}
+                        {/* What was already carried, when part of this quarter has been. Without it
+                            the line and the Waarheid page appear to disagree about the same
+                            quarter — one showing the whole movement, the other what is left. */}
+                        {Math.abs(c.carriedSaldo) > 0.005 && ` · ${t('aang.correcties.eerderVerwerkt', { amount: eur.format(Math.abs(c.carriedSaldo)) })}`}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
+                        {eur.format(Math.abs(c.outstanding))}
+                      </span>
+                      {/* The tick, and it is the owner's. Marking it automatically when this
+                          quarter is filed would assume they included it — and when they did not,
+                          the app would have closed a duty at the Belastingdienst that still
+                          stands. One press, with the amount beside it. */}
+                      <button
+                        onClick={() => void markCarried(c)}
+                        disabled={carrying !== null}
+                        style={{ padding: '6px 12px', borderRadius: 999, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface, fontSize: 12.5, fontWeight: 600, cursor: carrying ? 'default' : 'pointer', opacity: carrying === c.quarter ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                      >
+                        {carrying === c.quarter ? t('aang.correcties.bezig') : t('aang.correcties.verwerkt')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {/* Whatever the server said about the last attempt — including its refusals, which
+                    are states with a way out named in them ("meer dan €1.000 — dien een suppletie
+                    in"). A generic failure line would send the owner at a button that cannot work. */}
+                {carryNote && (
+                  <div style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.5, marginTop: 10 }}>
+                    {carryNote}
+                  </div>
+                )}
+                {/* [NO-SILENT-EMPTY] An empty block means "there is nothing to carry". This is the
+                    other answer, and on the screen a tax return is filled in from, the two may
+                    never look the same. */}
+                {correctionsUnknown && (
+                  <div style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.5, marginTop: corrections.length > 0 ? 10 : 0 }}>
+                    {t('aang.correcties.onbekend')}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* [ICP] The ICP-opgaaf — a SEPARATE declaration, so it gets its own block outside
                 the rubriek list. Everything the form asks for is already here (land, BTW-nummer,

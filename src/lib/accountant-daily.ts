@@ -48,6 +48,22 @@ export interface AccountantDaySignals {
   daysToDeadline: number | null
   /** Clients whose aangifte for that quarter is not filed yet. 0 → the deadline says nothing. */
   clientsNotFiled: number
+  /**
+   * [SUPPLETIE] Filed quarters, across this accountant's clients, whose figures FIRST moved in the
+   * last day. This is the trigger: art. 10a AWR turns a moved filing into a reporting duty, and the
+   * accountant is the person who discharges it.
+   *
+   * Counted from btw_filings.first_divergence_at, which is stamped once and never moved, so this is
+   * true today and false tomorrow by construction — the same no-state rule as newToConfirm.
+   */
+  newlyDivergedQuarters: number
+  /**
+   * How many filed quarters are standing in that state in total. CONTEXT, never the reason to send
+   * — exactly like totalToConfirm. A standing suppletie repeated every morning is the nag this
+   * module exists to refuse; a standing suppletie mentioned in a message that was going out anyway
+   * is the reminder that costs nothing.
+   */
+  divergedQuarters: number
 }
 
 export interface AccountantDayMessage {
@@ -83,7 +99,12 @@ export function deadlineSpeaks(days: number | null, clientsNotFiled: number): bo
 export function planAccountantDay(s: AccountantDaySignals): AccountantDayMessage | null {
   const newWork = Math.max(0, s.newToConfirm)
   const deadline = deadlineSpeaks(s.daysToDeadline, s.clientsNotFiled)
-  if (newWork === 0 && !deadline) return null
+  // [SUPPLETIE] A filing that has moved is the third thing worth a morning. It ranks ABOVE new work
+  // and below the deadline: new work is a stack that waits patiently, this is a duty at the
+  // Belastingdienst with a clock on it, and the deadline is the same duty about to become a fine.
+  const diverged = Math.max(0, s.newlyDivergedQuarters)
+  const divergedStanding = Math.max(0, s.divergedQuarters)
+  if (newWork === 0 && !deadline && diverged === 0) return null
 
   const parts: string[] = []
 
@@ -106,6 +127,25 @@ export function planAccountantDay(s: AccountantDaySignals): AccountantDayMessage
     }
   }
 
+  if (diverged > 0) {
+    // Named as a CHANGE to something already sent, never as "an error": the figures moved after the
+    // aangifte went out, which is an ordinary consequence of a late invoice or a corrected reading.
+    // Calling it a mistake would make an accountant defensive about a routine correction.
+    const extra = divergedStanding > diverged
+      ? ` In totaal staan er ${divergedStanding} gewijzigde ingediende kwartalen open.`
+      : ''
+    parts.push(
+      `${diverged === 1
+        ? 'Een al ingediend kwartaal is gewijzigd'
+        : `${diverged} al ingediende kwartalen zijn gewijzigd`} — controleer of er een suppletie nodig is.${extra}`,
+    )
+  } else if (divergedStanding > 0) {
+    // Context only, on a morning that was already speaking. Never a reason to send on its own.
+    parts.push(
+      `Er ${divergedStanding === 1 ? 'staat 1 gewijzigd ingediend kwartaal' : `staan ${divergedStanding} gewijzigde ingediende kwartalen`} open.`,
+    )
+  }
+
   if (newWork > 0) {
     const stapel = s.totalToConfirm > newWork
       ? ` De stapel is nu ${s.totalToConfirm} stuks.`
@@ -116,22 +156,30 @@ export function planAccountantDay(s: AccountantDaySignals): AccountantDayMessage
   }
 
   return {
-    title: dayTitle(s, deadline, newWork),
+    title: dayTitle(s, deadline, newWork, diverged),
     body: parts.join(' '),
     // The deadline sends them to the board that shows every client's position; new work sends them
     // straight to the stack. Whichever is the more urgent decides, so the link always matches the
-    // first sentence.
-    link: deadline ? '/dashboard/accountant/agenda' : '/dashboard/accountant/bevestigen',
+    // first sentence. A moved filing is a per-client question about a past quarter, so it goes to
+    // the same board the deadline uses — the stack of unconfirmed invoices cannot answer it.
+    link: deadline || diverged > 0 ? '/dashboard/accountant/agenda' : '/dashboard/accountant/bevestigen',
   }
 }
 
 /** The one line that has to earn the tap. Names the number — never "er is iets". */
-function dayTitle(s: AccountantDaySignals, deadline: boolean, newWork: number): string {
+function dayTitle(s: AccountantDaySignals, deadline: boolean, newWork: number, diverged: number): string {
   if (deadline) {
     const d = s.daysToDeadline as number
     if (d < 0) return 'De aangiftedatum is verstreken'
     if (d === 0) return 'Vandaag is de laatste dag voor de aangifte'
     return d === 1 ? 'Morgen is de aangiftedatum' : `Nog ${d} dagen tot de aangiftedatum`
+  }
+  // [SUPPLETIE] Above new work: a stack of unconfirmed invoices waits without cost, a filing that
+  // has moved does not. The title names the number, like every other one here.
+  if (diverged > 0) {
+    return diverged === 1
+      ? 'Een ingediend kwartaal is gewijzigd'
+      : `${diverged} ingediende kwartalen zijn gewijzigd`
   }
   return newWork === 1 ? '1 nieuw stuk om te bevestigen' : `${newWork} nieuwe stukken om te bevestigen`
 }

@@ -13,7 +13,9 @@ import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 // [DEEL-CREDIT] One definition of how much has been credited, and of when that is the whole thing.
-import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
+import { creditedTotalsFrom, creditDetailsFrom, fullyCreditedIdsFrom, moneyDirection, type CreditDetail } from '@/lib/credited-invoices'
+// [PAGINATION] PostgREST's silent ~1000-row cap — see the credit read below.
+import { fetchAllRows } from '@/lib/supabase-paginate'
 import { useInfiniteInvoices } from '@/hooks/useInfiniteInvoices'
 import type { InvoiceStatusFilter, InvoiceRow } from '@/hooks/useInfiniteInvoices'
 
@@ -51,6 +53,19 @@ import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
 import { payToggleAnswer, isVerwerktConflict } from '@/lib/pay-toggle-reason'
 import type { MessageKey } from '@/lib/i18n/messages'
+// [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by the same component the
+// pay screen uses. Never open-invoice-proof.ts itself — that reaches the whole matching engine.
+import { buildProofPanel } from '@/lib/open-invoice-proof-text'
+import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
+import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-types'
+// [BETAALBEWIJS] Under every "Betaald", the bank line that says so — the same pure rule and the
+// same component the pay screen uses, reading the owner's OWN rows through RLS (see below).
+import { collectPaymentEvidence } from '@/lib/payment-evidence-collect'
+import { buildPaymentEvidenceLine, settledInvoiceIds, type PaymentEvidence } from '@/lib/payment-evidence'
+import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
+// [CREDIT-BEWIJS] Which credit notes are behind the "gecrediteerd" chip — see the row below.
+import { buildCreditEvidenceLine } from '@/lib/credit-evidence'
+import CreditEvidenceLine from '@/components/invoice/CreditEvidenceLine'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -171,9 +186,14 @@ export default function FacturenClient({
   // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
   // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
   makers = {},
+  // [OPENSTAAND-BEWIJS] What the server checked before this list was drawn: every invoice we are
+  // chasing, held against every unattached credit in the bank, with the scope of that search.
+  // Null when it could not run — and then the panel says that rather than nothing.
+  openProof = null,
 }: {
   profile: { id: string }
   makers?: Record<string, string>
+  openProof?: OpenInvoiceProofResult | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -279,20 +299,50 @@ export default function FacturenClient({
   //     credited invoice lost the one line saying what is still owed, and with it the tap target
   //     for recording the next instalment.
   const [creditedAmounts, setCreditedAmounts] = useState<Map<string, number>>(new Map())
+  /**
+   * [NO-SILENT-EMPTY] The credit read did not answer, and every amount below may be too high.
+   *
+   * `const { data }` without `error` — supabase-js does not throw, it returns { data: null, error }
+   * — so a failed read arrived here as an EMPTY credit map. Every credited invoice then showed its
+   * full total as outstanding, the "Gecrediteerd" chip disappeared, and an invoice the owner had
+   * formally withdrawn looked completely chaseable. On money that was given back in writing, that
+   * is the worst direction for this screen to fail in.
+   */
+  const [creditsReadFailed, setCreditsReadFailed] = useState(false)
+  /** Per invoice id, the credits themselves — number and date, so the chip can show its working. */
+  const [creditRows, setCreditRows] = useState<Map<string, CreditDetail[]>>(new Map())
 
   useEffect(() => {
     if (!profile?.id) return
-    supabase
-      .from('invoices')
-      .select('original_invoice_id, total_inc_btw')
-      .eq('sender_id', profile.id)
-      .eq('invoice_type', 'creditnota')
-      .not('original_invoice_id', 'is', null)
-      .then(({ data }) => {
-        const rows = ((data ?? []) as unknown as { original_invoice_id: string | null; total_inc_btw: number | null }[])
+    let live = true
+    // [PAGINATION] Paged, not a bare select. PostgREST caps a response at ~1000 rows and says
+    // nothing about it, so an owner past that many creditnotas silently lost the rest — and losing
+    // a credit means an invoice reappears as fully owed.
+    fetchAllRows<{ original_invoice_id: string | null; total_inc_btw: number | null; invoice_number: string | null; invoice_date: string | null }>(
+      (from, to) => supabase
+        .from('invoices')
+        .select('original_invoice_id, total_inc_btw, invoice_number, invoice_date')
+        .eq('sender_id', profile.id)
+        .eq('invoice_type', 'creditnota')
+        .not('original_invoice_id', 'is', null)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+      .then((rows) => {
+        if (!live) return
         setCreditedAmounts(creditedTotalsFrom(rows))
+        setCreditRows(creditDetailsFrom(rows))
+        setCreditsReadFailed(false)
       })
-  }, [profile?.id])
+      .catch((e) => {
+        console.error('[DEEL-CREDIT] credit read failed — amounts on this list may be too high', e)
+        if (!live) return
+        // Deliberately NOT cleared: a stale map beats an empty one, because empty means "nothing
+        // was credited" — a claim this screen has no basis for making. The banner says so.
+        setCreditsReadFailed(true)
+      })
+    return () => { live = false }
+  }, [profile?.id, supabase])
 
   /** [DEEL-CREDIT] What has been credited against this invoice, incl. btw, as a positive amount. */
   const gecrediteerdOp = useCallback(
@@ -511,6 +561,61 @@ export default function FacturenClient({
     invoices, loading, hasMore, refreshing,
     loadMore, refresh, updateOptimistic, removeOptimistic,
   } = useInfiniteInvoices({ userId: profile.id, status: statusMap[filter] })
+
+  // ── [BETAALBEWIJS] How do we know this one is paid? ────────────────────────────────────────
+  //
+  // "Betaald" on this list is read off amount_paid, and nothing here had ever looked at
+  // bank_tx_invoices. So the word carried no evidence: to check it the owner opened their bank in
+  // another tab and searched — the exact work this product exists to remove, handed back at the
+  // moment trust is being asked for.
+  //
+  // On the SALES side the stakes point the other way from the pay screen. A purchase invoice
+  // wrongly marked paid is a bill that may still be owed and will be chased by the supplier. A
+  // sales invoice wrongly marked paid is money the owner believes came in and never asks for
+  // again — nobody chases it, so nothing ever surfaces it. That is the state this line names.
+  //
+  // Read from the BROWSER, with the owner's own session. bank_tx_invoices and bank_transactions
+  // both carry `user_id = auth.uid()` select policies, so RLS scopes this exactly and no route
+  // needs to widen anything. The list is paged, so this follows the loaded ids rather than
+  // fetching per row.
+  const [paymentEvidence, setPaymentEvidence] = useState<Record<string, PaymentEvidence>>({})
+  // Only settled rows are asked about, and the key is a stable string so a re-render with the same
+  // ids does not re-read. Sorted because the loader's order is not guaranteed between pages.
+  // The ids AND the totals in one memo. They were separate, with the effect reading `invoices`
+  // from its closure while depending only on the id string — so an invoice whose total was
+  // corrected kept the OLD total in the map, and a legacy link would be valued at a figure the
+  // invoice no longer carries. eslint pointed at exactly that.
+  const settled = useMemo(() => {
+    const ids = settledInvoiceIds(invoices)
+    const totals: Record<string, number | null> = {}
+    for (const inv of invoices) if (inv.id) totals[inv.id] = inv.total_inc_btw ?? null
+    return { ids, totals, key: ids.map((id) => `${id}:${totals[id] ?? ''}`).join(',') }
+  }, [invoices])
+  const settledKey = settled.key
+  useEffect(() => {
+    if (!profile?.id) return
+    let live = true
+    // Always through the collector, including the empty case — it answers {} for an empty list
+    // without a round trip. Clearing the map synchronously here instead would be a setState in the
+    // effect BODY, which cascades a render on every page the list loads.
+    // The totals come along so a link from before amount_applied existed can be valued — it settled
+    // its invoice in full, and reading its NULL as 0 is what made this line cry wolf.
+    const { ids, totals } = settled
+    collectPaymentEvidence({ pipeline: supabase, ownerId: profile.id, invoiceIds: ids, totals })
+      .then((map) => { if (live) setPaymentEvidence(map) })
+      .catch((e) => {
+        // [NO-SILENT-EMPTY] The collector already answers 'unknown' per invoice on a failed read;
+        // reaching HERE means it threw outright. Every row asked about then says "we could not
+        // look" rather than silently losing its line, because a missing line reads as "nothing to
+        // say" and this feature exists to stop exactly that.
+        console.error('[BETAALBEWIJS] payment evidence unreadable', e)
+        if (!live) return
+        const all: Record<string, PaymentEvidence> = {}
+        for (const id of ids) all[id] = { kind: 'unknown' }
+        setPaymentEvidence(all)
+      })
+    return () => { live = false }
+  }, [profile?.id, settledKey, settled, supabase])
 
   // [BRIDGE-NOTIF] Reveal a ?focus= row once it's present in the loaded list.
   //
@@ -1101,6 +1206,41 @@ export default function FacturenClient({
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
+        {/* ── [OPENSTAAND-BEWIJS] What we checked, and against what ────────────────────────────
+            The mirror of the panel on the pay screen, and on this side it carries more weight. A
+            purchase invoice wrongly called open costs the owner a second payment, which they can
+            claw back. A SALES invoice wrongly called open is chased: a reminder, a firmer one, and
+            on the last tier a statutory aanmaning naming incassokosten — sent to a customer who
+            paid three weeks ago. That is the most expensive thing this product can do, and no
+            arithmetic on this screen can see it coming, because the app's own books say the
+            invoice is open.
+
+            So the list states the SEARCH before it states any conclusion: how many invoices were
+            held against how many bank lines, and up to which day the bank data reaches. Above the
+            filters' results and above the list, because it qualifies both.
+
+            Never blocking, and never hidden while searching: a proof that could not run says so
+            rather than leaving a silence that reads as "everything is fine". */}
+        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal)} />
+
+        {/* [NO-SILENT-EMPTY] The credit read did not answer, and this list cannot say what it
+            normally says. Every amount below may be too high and the withdrawn-invoice chips are
+            missing — so an invoice the owner formally credited looks completely chaseable, which
+            is the one direction this screen may not fail in quietly. The list still renders
+            (a stale list beats a blank one); it just stops claiming to be right about credits. */}
+        {creditsReadFailed && (
+          <div role="status" style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10,
+            padding: '11px 13px', borderRadius: R.md, fontFamily: FONT,
+            border: '1px solid #F5C6C0', background: '#FCE8E6',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <p style={{ fontSize: 12.5, color: '#8C1D18', margin: 0, lineHeight: 1.5 }}>
+              {t('credit.leesFout')}
+            </p>
+          </div>
+        )}
+
         {/* [HERHAAL] Everything that repeats, in one place at the top.
             The per-row button can only be found by finding the invoice, and the invoice that
             started a monthly series is a year older every twelve concepts. This panel is the
@@ -1310,6 +1450,23 @@ export default function FacturenClient({
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {inv.client_name ?? '—'} · {fmtDate(inv.invoice_date)}
                       </p>
+
+                      {/* [BETAALBEWIJS] Under the claim, how we know it.
+                          The direction comes from moneyDirection(), not from the list this row is
+                          on. Every row here is an OUTGOING document, but a creditnota moves money
+                          the other way: the owner refunds the customer. Hard-coded 'outgoing', a
+                          refund of € 500 rendered as "bijgeschreven … van Kiwi Food Market" beside
+                          a bank line of −500 — money leaving, described as money arriving, on the
+                          one line that exists to be believed. */}
+                      <PaymentEvidenceLine line={buildPaymentEvidenceLine(paymentEvidence[inv.id], moneyDirection(inv), taal, inv)} />
+
+                      {/* [CREDIT-BEWIJS] …and which credit notes reduced it. The chip beside the
+                          amount states "Deels gecrediteerd · € 250"; this states the documents
+                          that produced it, by number and date. They are papers the OWNER sent, and
+                          an accountant asks about them by number — so the app was already holding
+                          this and simply never showed it. It sits here rather than beside the chip
+                          because the chip column is one nowrap line wide. */}
+                      <CreditEvidenceLine line={buildCreditEvidenceLine(creditRows.get(inv.id), taal)} />
                     </div>
 
                     {/* [ROW-LAYOUT] flex column/align/gap/shrink live in .inv-row-side (globals.css)

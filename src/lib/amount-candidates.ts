@@ -47,6 +47,36 @@ const cents = (n: number): number => Math.round(n * 100)
 const MIN_TOTAL = 1
 
 /**
+ * [TARIEF-MOGELIJK] The highest BTW rate the Netherlands has. A totals block whose btw/ex exceeds
+ * it is not a totals block.
+ *
+ * ── WHY THIS WAS THE MISSING HALF ──
+ *
+ * "ex + btw = inc, to the cent" is a real constraint, and the header above argues it is rare by
+ * accident. On a wholesale invoice it is not rare at all, because the QUANTITY column is a column
+ * of small integers and small integers add up constantly. Measured on a real one (BALKIP B.V.
+ * 264091): POTEN 50, VLEUGELS 30, KIP FILET 80 — and the owner was shown
+ *
+ *     "er staat wél € 50,00 + € 30,00 btw = € 80,00"
+ *
+ * about an invoice for € 1.224,75. Seven such triples were found on that document and EVERY ONE of
+ * them implied an impossible rate: 60%, 50%, 33%, 30%, 25%. Not one was a totals block.
+ *
+ * The rate is what tells them apart, and it costs one division. A Dutch invoice's btw is 0%, 9% or
+ * 21%, or any blend between them when rates are mixed — so anything above 21% is arithmetic that
+ * happens to work, not money. Deliberately a CEILING rather than a match against the three rates:
+ * a genuine mixed-rate block lands between them, and demanding an exact rate would throw away the
+ * blocks this feature exists to find.
+ */
+const MAX_NL_BTW_RATE = 0.21
+
+/**
+ * A hair of slack, because the block is read off a scan. 21% of a large net rounds to a cent that
+ * can sit a fraction over the ceiling; refusing that would drop real blocks over rounding.
+ */
+const RATE_SLACK = 0.005
+
+/**
  * How many amounts to consider. A transcription of a three-page invoice runs to dozens of tokens,
  * and the search below is quadratic — bounded so a pathological reply cannot stall a request.
  * The totals block is always among the LARGEST amounts on the page, so the cap keeps the ones
@@ -101,6 +131,10 @@ export function totalsCandidates(amounts: readonly number[]): TotalsCandidate[] 
       // `a` is the larger of the pair (the list is sorted), so it is the ex-BTW side. A block where
       // the BTW exceeds the net is not a Dutch invoice; refusing it drops half the false pairs.
       if (b > a) continue
+      // [TARIEF-MOGELIJK] …and half is not enough. 30 on 50 passes the test above and is a 60%
+      // rate, which is the shape a quantity column produces. The rate is what separates a totals
+      // block from three integers that happen to add up.
+      if (b / a > MAX_NL_BTW_RATE + RATE_SLACK) continue
       out.push({ ex: a, btw: b, inc })
     }
   }
@@ -118,14 +152,30 @@ export function alternativeTotals(
   readTotalIncBtw: number | null | undefined,
   amounts: readonly number[],
 ): TotalsCandidate | null {
-  const found = totalsCandidates(amounts)
+  const known = typeof readTotalIncBtw === 'number' && Number.isFinite(readTotalIncBtw)
+    ? Math.abs(readTotalIncBtw)
+    : null
+
+  // [SCHAAL] A competing reading of a number is the same size as that number.
+  //
+  // The rate filter kills most of the quantity-column noise; it cannot kill all of it, because a
+  // 20% ratio is not impossible. On the measured invoice (read € 1.224,75) what survived was
+  // 10 + 2 = 12 — three quantities, arithmetically perfect, and absurd as "the total on this
+  // document" the moment you hold it next to what was read.
+  //
+  // This claim is "we may have read your total wrong". A misread is a digit, a transposition, a
+  // decimal point — it is never two orders of magnitude, and the two cases this feature was built
+  // from are both within one percent (1.149,56 vs 1.160,68). A factor of ten is far wider than
+  // either and still refuses everything that is merely arithmetic.
+  //
+  // When nothing was read there is nothing to be the same size as, and the block stands on its own.
+  const floor = known === null ? 0 : known / 10
+  const found = totalsCandidates(amounts).filter((c) => c.inc >= floor)
   if (found.length === 0) return null
 
   const best = found[0]
-  if (typeof readTotalIncBtw === 'number' && Number.isFinite(readTotalIncBtw)) {
-    // The reader's own figure, corroborated. Nothing to raise.
-    if (cents(Math.abs(readTotalIncBtw)) === cents(best.inc)) return null
-  }
+  // The reader's own figure, corroborated. Nothing to raise.
+  if (known !== null && cents(known) === cents(best.inc)) return null
   return best
 }
 

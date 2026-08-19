@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   groundVendorName, vendorGroundingText, distinctiveTokens,
-  MIN_DISTINCTIVE_TOKEN, MIN_TEXT_LENGTH,
+  MIN_DISTINCTIVE_TOKEN, MIN_TEXT_LENGTH, MIN_FUSED_LENGTH,
 } from "./vendor-grounding";
 
 /** The BALKIP invoice, as its text layer reads. Shortened, but every token is from the document. */
@@ -144,4 +144,53 @@ test("[GEGROND-NAAM] a missing name still produces a sentence, never a template 
   const said = h.reasons.find((r) => r.includes("staat nergens in de tekst")) ?? "";
   assert.ok(said.length > 0);
   assert.doesNotMatch(said, /null|undefined|""/, "a hole where the name should be");
+});
+
+test("[GEGROND-DOMEIN] a name printed only inside the domain is not 'nergens'", () => {
+  // MEASURED. An HVO Meat invoice: the letterhead is a logo — an image, carrying no characters —
+  // and the only text form of the company name is its own e-mail address and website. The card
+  // said 'de naam "HVO Meat" staat nergens in de tekst van dit document' two rows above its own
+  // "Afzender: administratie@hvomeat.nl". A check that contradicts evidence the same screen is
+  // showing is worse than no check: it teaches the owner to tap past the one that is right.
+  const hvo =
+    "Piet Stuurmanweg 6 2742 JX Waddinxveen Tel: +31 (0)70 - 31 75544 administratie@hvomeat.nl " +
+    "IBAN NL25 RABO 0133 3688 82 BTW: NL0069.13.179B01 K.v.K.: Haaglanden 27147334 " +
+    "Kiwi Food Market Verdiplein 13 5049NM Tilburg Factuurnummer: 3320359 Datum: 14-08-2026 " +
+    "Subtotaal EUR 2.760,28 9,0 % BTW over 2.760,28 248,43 TE BETALEN IN EURO's 3.008,71 " +
+    "Alle offertes en leveringen geschieden volgens de Algemene Voorwaarden van de Centrale " +
+    "Organisatie voor de Vleesgroothandel www.hvomeat.nl";
+  assert.equal(groundVendorName("HVO Meat", hvo), "found", "the domain IS the name, printed twice");
+  // The legal form must not break it — supplierNameKey strips it, so the fused key is the same.
+  assert.equal(groundVendorName("HVO Meat B.V.", hvo), "found");
+
+  // THE CONTROL, and the reason this file exists: a name that is genuinely not on the paper is
+  // still caught. Loosening the match may not cost the check the case it was built for.
+  assert.equal(groundVendorName("GROOTHANDEL M.H. BAL V.O.F.", hvo), "absent");
+  // A stranger sharing NO token with the paper. Not "Sligro Food Group": this document says
+  // "Kiwi Food Market", so " food " is a whole word in it and one distinctive token is enough
+  // by design — that assertion would have been testing the design, not the fix.
+  assert.equal(groundVendorName("Univé Zuid-Nederland", hvo), "absent");
+});
+
+test("[GEGROND-DOMEIN] fusing stops at a space, so no name is invented", () => {
+  // The dangerous version of this fix would fuse the WHOLE text and match across word boundaries.
+  // Then any document containing "... de vries ..." would corroborate a supplier called De Vries,
+  // and the check would confirm names that were never printed — the exact false corroboration the
+  // whole-token rule was protecting against, reintroduced through the back door.
+  // The name has to be one whose PIECES are not words of the text — otherwise the ordinary
+  // whole-token path answers first and the fusing is never exercised. "Vanderberg" is a single
+  // token; the text says "van der berg", three words that no company printed together.
+  const text =
+    "Factuur van Jansen Groente en Fruit BV te Rotterdam. Bezorgadres: van der berg laan 12, " +
+    "3011 AA Rotterdam. Subtotaal 100,00 BTW 9,00 Totaal 109,00. Betaling binnen 14 dagen na " +
+    "factuurdatum, onder vermelding van het factuurnummer. Vragen? bel ons kantoor op werkdagen.";
+  assert.equal(groundVendorName("Vanderberg", text), "absent",
+    "three neighbouring words are not a company name");
+  // …while a name the document really does print stays found, through the ordinary token path.
+  assert.equal(groundVendorName("Jansen Groente", text), "found", "printed with spaces — the token path");
+
+  // Below the length floor nothing is searched this way: a short fused key is a coincidence
+  // waiting to happen, which is why MIN_FUSED_LENGTH is stricter than the token threshold.
+  assert.ok(MIN_FUSED_LENGTH > MIN_DISTINCTIVE_TOKEN,
+    "a substring match must be held to a higher bar than a whole-token one");
 });

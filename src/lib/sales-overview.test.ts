@@ -144,6 +144,58 @@ test("an unreadable previous date turns the button OFF, not on", () => {
   assert.equal(out.allowed, false);
 });
 
+test("[SPOOR-BEWIJS] an unreadable trail turns the button OFF, not on", () => {
+  // The neighbouring test above pins the same failure direction for an unparseable DATE, and gets
+  // it right: "better a day late than a customer reminded twice in one day". That branch was
+  // simply unreachable from the failure that actually happens. supabase-js answers a failed query
+  // with { data: null, error } rather than throwing, so `data ?? []` hands this rule an EMPTY
+  // trail — not a broken one — and an empty trail is a permission: nothing to count toward the
+  // ceiling, no date to measure the cooling-off period from.
+  const out = canRemind(f({ reminderTrailKnown: false }), NOW);
+  assert.equal(out.allowed, false, "an unknown trail may never read as a clear one");
+  if (!out.allowed) {
+    assert.match(out.reason, /niet nakijken/, "…and says what could not be read");
+    assert.match(out.reason, /twee/, "…and why that matters: the customer would get two");
+  }
+
+  // THE case the UNIQUE index cannot catch, and the reason this is a real defect rather than a
+  // tidy one. With the trail unreadable, canRemind used to see zero reminders and no date, so it
+  // allowed the send; nextManualOffset([]) then returns -1. If the earlier reminders were manual
+  // that -1 collides and nothing goes out. If they came from the CRON (offsets 14, 30), -1 is
+  // still free — the claim succeeds and the mail goes to a customer who was reminded yesterday.
+  const yesterday = new Date(NOW - 86_400_000).toISOString();
+  const cronOnly = canRemind(f({ reminderTrailKnown: false, reminder_count: 0, last_reminder_at: null }), NOW);
+  assert.equal(cronOnly.allowed, false, "an empty-looking trail is exactly the case that must not send");
+  // …and the same invoice with a KNOWN empty trail is still allowed, so this guard narrows nothing
+  // it should not. A first reminder on a genuinely un-reminded invoice keeps working.
+  assert.equal(canRemind(f({ reminderTrailKnown: true }), NOW).allowed, true);
+  assert.equal(canRemind(f({}), NOW).allowed, true, "absent reads as known — every existing caller is unchanged");
+  // The guard sits AHEAD of the two checks the trail feeds, and the REASON is how you can tell —
+  // asserting `allowed` alone cannot, because both orderings refuse. The sentence is the point:
+  // "wacht nog 3 dagen" claims we know a reminder went out three days ago, and we do not. The
+  // screen can leave a stale last_reminder_at on a row (its own read assigns per invoice inside
+  // the try, so a throw partway leaves some rows filled), which is exactly how a trail we could
+  // not read still arrives here carrying a date.
+  const stale = canRemind(f({ reminderTrailKnown: false, last_reminder_at: yesterday }), NOW);
+  assert.equal(stale.allowed, false);
+  if (!stale.allowed) {
+    assert.match(stale.reason, /niet nakijken/, "an unreadable trail may not be reported as a cooldown");
+    assert.doesNotMatch(stale.reason, /Wacht nog/, "…which would claim a date we never read");
+  }
+  const over = canRemind(f({ reminderTrailKnown: false, reminder_count: MAX_MANUAL_REMINDERS }), NOW);
+  assert.equal(over.allowed, false);
+  if (!over.allowed) {
+    assert.match(over.reason, /niet nakijken/, "nor as a count we never read");
+    assert.doesNotMatch(over.reason, /beslissing van de ondernemer/,
+      "…which would hand the owner a legal decision on the strength of a failed query");
+  }
+  // …but never over a reason that is true whatever the trail says. A paid invoice is paid, and
+  // that sentence is more useful to the owner than one about a read.
+  const paid = canRemind(f({ reminderTrailKnown: false, status: "paid" }), NOW);
+  assert.equal(paid.allowed, false);
+  if (!paid.allowed) assert.match(paid.reason, /betaald/, "the trail never masks a better answer");
+});
+
 test("there is an upper limit — beyond it, it is no longer reminding", () => {
   const out = canRemind(f({ reminder_count: MAX_MANUAL_REMINDERS }), NOW);
   assert.equal(out.allowed, false);

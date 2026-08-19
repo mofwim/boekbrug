@@ -89,6 +89,7 @@ import { useRouter } from "next/navigation";
 import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { M3, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
+import { applyServerRefresh } from '@/lib/queue-sync'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
@@ -191,6 +192,11 @@ interface Props {
   // queue, and only past the threshold — most queues carry none at all. Optional: an older server
   // render, or a failed audit read, simply sends nothing and the cards look as they always did.
   readingHints?: Record<string, string>;
+  // [NO-SILENT-EMPTY] Which of the server's reads did not come back, in the server's own Dutch
+  // source names. Empty (or absent, from an older render) means every list below is the whole
+  // list. Non-empty qualifies EVERYTHING on this screen — the counts, the tabs, and above all the
+  // absence of rows, which on this page renders as "Alles verwerkt".
+  readFailed?: string[];
 }
 
 type Tab = "pending" | "ignored" | "confirmed";
@@ -3247,6 +3253,9 @@ export default function IncomingInvoicesClient({
   // [READING-MEMORY] Empty by default: most owners have no supplier past the threshold, and a
   // missing prop must render the queue exactly as it rendered before this existed.
   readingHints = {},
+  // [NO-SILENT-EMPTY] Defaults to empty, so an older server render behaves exactly as before —
+  // but an EMPTY array means "every read succeeded", which is a claim, not an absence.
+  readFailed = [],
 }: Props) {
   const t = translator(useLocale())
   const dialog = useDialog();
@@ -3258,6 +3267,34 @@ export default function IncomingInvoicesClient({
 
   const [pending, setPending] = useState<IncomingInvoice[]>(initialInvoices);
   const [ignored, setIgnored] = useState<IncomingInvoice[]>(ignoredInvoices);
+  // [WACHTRIJ-VERS] useState reads its initial value ONCE, so every router.refresh() on this page
+  // delivered fresh rows to a hook that had already made up its mind — including the one at
+  // handleReimport, whose own comment says "pick up the refreshed amounts + health". A card
+  // therefore kept the amounts read at page load, and the verify modal opens seeded from that card:
+  // the owner reviewing a just-corrected invoice was shown, and confirmed, the number the
+  // correction had replaced.
+  //
+  // Content only. Membership stays the screen's, or a refresh landing inside an optimistic removal
+  // would put a confirmed invoice back in the queue — see the rule and its tests in queue-sync.ts.
+  //
+  // Adjusted DURING RENDER, not in an effect. React supports exactly this shape for "a prop
+  // changed, so a piece of state derived from it must move with it": the re-render happens before
+  // anything is committed, so the screen never paints the stale row. An effect would paint it
+  // first and correct it a frame later — a cascading render this file already warns about at three
+  // other call sites, and one the linter refuses outright.
+  const [pendingSeed, setPendingSeed] = useState(initialInvoices);
+  if (pendingSeed !== initialInvoices) {
+    // Reference identity, deliberately: a server render always produces a NEW array, and comparing
+    // contents here would mean walking the whole queue on every render to answer a question the
+    // pointer already answers.
+    setPendingSeed(initialInvoices);
+    setPending((prev) => applyServerRefresh(prev, initialInvoices));
+  }
+  const [ignoredSeed, setIgnoredSeed] = useState(ignoredInvoices);
+  if (ignoredSeed !== ignoredInvoices) {
+    setIgnoredSeed(ignoredInvoices);
+    setIgnored((prev) => applyServerRefresh(prev, ignoredInvoices));
+  }
   // [INCOMING-BEVESTIGD] Read-only surface of recently confirmed invoices — no mutations here.
   const [confirmed] = useState<IncomingInvoice[]>(confirmedInvoices);
   const [tab, setTab] = useState<Tab>("pending");
@@ -3495,12 +3532,21 @@ export default function IncomingInvoicesClient({
             // it looked like: it re-read the owner's whole account N times to find, at most, what
             // one pass at the end finds anyway.
             deferAutoConfirm: true,
-            total_ex_btw: inv.total_ex_btw,
-            btw_amount: inv.btw_amount,
-            total_inc_btw: inv.total_inc_btw,
-            client_name: inv.client_name,
-            invoice_number: inv.invoice_number,
-            invoice_date: inv.invoice_date,
+            // [BULK-GEEN-ECHO] And NOTHING else. The block above says what this path is — "books
+            // the stored amounts AS-IS, with no per-invoice review" — and it then sent six fields
+            // copied out of this component's state, which is not the same thing at all.
+            //
+            // The confirm route treats every field as optional and keeps what is stored when one is
+            // absent, so these six added no information. What they could do is OVERWRITE. This list
+            // is seeded from the server render and never updated afterwards: `pending` holds the
+            // rows as they were when the page loaded, and router.refresh() cannot change that —
+            // useState ignores a new initial value. So after "Opnieuw inlezen" corrected an amount,
+            // or after a correction made in another tab, a bulk confirm wrote the OLD numbers back
+            // over the new ones, and the invoice went into the books and the aangifte wrong. A
+            // human being reviewed nothing on this path, so there was nobody to notice.
+            //
+            // The single verify still sends amounts, and must: those come from the modal, typed or
+            // approved by the owner looking at the document.
           }),
         });
         if (res.ok) {
@@ -3974,6 +4020,12 @@ export default function IncomingInvoicesClient({
   ).length;
   const readyToConfirmCount = pending.length - needsAttentionCount;
 
+  // [NO-SILENT-EMPTY] One flag, read twice: by the subtitle (which must not say "Alles verwerkt")
+  // and by the banner below it (which says WHICH list is short). Both halves are needed — a banner
+  // above a line that reads "Alles verwerkt" is a page contradicting itself, and a subtitle that
+  // goes quiet without saying why is an owner wondering whether their invoices are gone.
+  const loadIncomplete = readFailed.length > 0;
+
   return (
     <div
       style={{
@@ -3999,7 +4051,16 @@ export default function IncomingInvoicesClient({
       <div style={{ padding: "20px 16px 0", marginBottom: 14 }}>
         {/* [IMPORT-MONITOR] Two-axis subtitle — calm about correctness, honest
             about flow. Never says "done" while items still wait to be sent. */}
-        {pending.length === 0 ? (
+        {/* [NO-SILENT-EMPTY] The empty state comes SECOND. "Alles verwerkt" is a statement about
+            the owner's books — every incoming invoice checked and passed on — and a failed read is
+            the one condition under which this page knows nothing about that. It used to be the
+            first branch, so a queue that could not be read looked exactly like a queue that was
+            finished, on the only screen where a 'processing' invoice can be confirmed at all. */}
+        {loadIncomplete ? (
+          <p style={{ fontSize: 14, color: "#B3261E", margin: "4px 0 0", fontWeight: 600 }}>
+            {t('ink.wachtrijOnbekend')}
+          </p>
+        ) : pending.length === 0 ? (
           <p style={{ fontSize: 14, color: "#5f6368", margin: "4px 0 0" }}>
             {t('ink.allesVerwerkt')}
           </p>
@@ -4023,6 +4084,34 @@ export default function IncomingInvoicesClient({
       </div>
 
       <div style={{ padding: "0 16px" }}>
+        {/* ── [NO-SILENT-EMPTY] "We konden niet alles lezen" ───────────────────────────────────
+            Above the tabs, because it qualifies all three of them: the counts in the tab labels
+            are counts of what LOADED, and a tab whose read failed shows (nothing) exactly like a
+            tab that is genuinely empty. The subtitle already refuses to say "Alles verwerkt"; this
+            says WHICH list is short and offers the one action that can fix it. Same shape and the
+            same two sentences as Crediteuren next door — one screen's way of admitting this must
+            not have to be learned twice. */}
+        {loadIncomplete && (
+          <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "12px 14px", borderRadius: 12, border: "1px solid #F5C6C0", background: "#FCE8E6" }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#B3261E", margin: 0, lineHeight: 1.4 }}>
+                {/* [TAAL] readFailed holds the server's own Dutch source names — data, shown as-is. */}
+                {t('ink.bronnenNietOpgehaald', { sources: readFailed.join(" en ") })}
+              </p>
+              <p style={{ fontSize: 12.5, color: "#8C1D18", margin: "3px 0 0", lineHeight: 1.45 }}>
+                {t('ink.lijstNietCompleet')}
+              </p>
+              <button
+                onClick={() => router.refresh()}
+                style={{ marginTop: 8, padding: "7px 14px", borderRadius: 999, border: "none", background: M3.error, color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}
+              >
+                {t('inkoop.opnieuwProberen')}
+              </button>
+            </div>
+          </div>
+        )}
+
         <ConnectEmailCard status={connectionStatus} />
 
         {/* Tabs */}

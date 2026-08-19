@@ -102,6 +102,18 @@ export interface ImportHealth {
     // booked as a debt. Not a verdict — a refusal to let it skip the human. See the function's
     // header in creditnota-signal.ts for why this bar is lower than the sign-flip bar.
     creditPrefix: boolean
+    /**
+     * [NIET-OP-HET-DOCUMENT] The read total was not found in the blind transcription of this
+     * document. A finding in its own right — and NOT an arithmetic problem, which is what it used
+     * to be filed as.
+     *
+     * The two share `arithmetic` because both mean "do not book this unseen", and that part is
+     * right. What was wrong is the SENTENCE the checklist then printed: "excl. + btw komt niet uit
+     * op het totaal", on the measured invoice where 1.123,62 + 101,13 = 1.224,75 exactly. An owner
+     * who checks that claim finds it false, and a check that is caught lying once is a check nobody
+     * reads again — including on the invoice where it is right.
+     */
+    notOnDocument: boolean
   }
 }
 
@@ -259,6 +271,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     ibanChanged: false,
     multipleInvoices: false,
     creditPrefix: false,
+    notOnDocument: false,
   }
 
   const fc = inv.field_confidence
@@ -310,7 +323,11 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     _grounding?: { totalIncBtw?: string; alternative?: { ex: number; btw: number; inc: number } }
   } | null)?._grounding
   if (grounding?.totalIncBtw === 'absent') {
+    // Both: `arithmetic` still holds this row out of auto-booking (it always did, and that is
+    // right), while `notOnDocument` says WHICH finding it is so the checklist can stop describing
+    // it as a sum that does not add up. See the flag's own comment.
     flags.arithmetic = true
+    flags.notOnDocument = true
     // [ANDER-TOTAAL] "controleer het aan de factuur zelf" was true and, on its own, a dead end: it
     // sends the owner to find the paper. The witness that just proved the read total is not printed
     // also transcribed what IS printed — and when those amounts contain a block that adds up, the
@@ -630,8 +647,19 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       reasons.push('de leverancier is onzeker')
     }
     if ((fc.invoice_number ?? 1) < LOW_CONFIDENCE && !isKassabon(fc)) {
+      // [DUBBELE-ZIN] De vlag altijd; de ZIN alleen als de waarde-as er nog niets over zei.
+      //
+      // Twee assen, één veld. Gemeten op een Univé-factuur: het nummer was de EMAIL-<ts>
+      // plaatshouder én de lezer was er onzeker over, dus de kaart zette twee regels onder elkaar
+      // — "het factuurnummer ontbreekt of kon niet worden gelezen" en "het factuurnummer is
+      // onzeker" — met precies dezelfde handeling erachter. Vier waarschuwingen waar er drie
+      // stonden, over drie dingen.
+      //
+      // De waarde-as wint omdat zij meer zegt: "ontbreekt" is een feit over wat er is opgeslagen,
+      // "onzeker" is een mening van de lezer erover. De vlag blijft in beide gevallen staan, dus
+      // het veld wordt even hard aangewezen; alleen de tweede zin vervalt.
+      if (!flags.invoiceNumber) reasons.push('het factuurnummer is onzeker')
       flags.invoiceNumber = true
-      reasons.push('het factuurnummer is onzeker')
     }
     if ((fc.invoice_date ?? 1) < LOW_CONFIDENCE) {
       flags.invoiceDate = true

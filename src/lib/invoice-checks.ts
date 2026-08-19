@@ -47,7 +47,7 @@ export type CheckOutcome =
 
 export interface InvoiceCheck {
   /** Stable id for keys and tests. */
-  id: 'arithmetic' | 'btw-split' | 'duplicate' | 'iban' | 'single-invoice' | 'date' | 'number' | 'kind'
+  id: 'arithmetic' | 'total-on-document' | 'btw-split' | 'duplicate' | 'iban' | 'single-invoice' | 'date' | 'number' | 'kind'
   /** What was checked. Dutch — this is what the owner reads (AGENTS.md). */
   label: string
   outcome: CheckOutcome
@@ -90,8 +90,20 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   out.push({
     id: 'arithmetic',
     label: 'Bedragen kloppen met elkaar',
-    outcome: health.flags.arithmetic ? 'flagged' : totalDerived ? 'not-checked' : 'passed',
-    detail: health.flags.arithmetic
+    // [NIET-OP-HET-DOCUMENT] Judged on the ARITHMETIC, which is what this row is named after.
+    // flags.arithmetic carries two different findings — a sum that does not add up, and a total
+    // that is not in the document's text — because both mean "do not book this unseen". That part
+    // is right; printing one row about both is not. On BALKIP 264091 this row said "excl. + btw
+    // komt niet uit op het totaal" over 1.123,62 + 101,13 = 1.224,75, which is exact to the cent.
+    // An owner who checks that and finds it false stops reading the whole list — including on the
+    // invoice where it is right. The other finding has its own row below.
+    outcome: health.flags.arithmetic && !health.flags.notOnDocument
+      ? 'flagged'
+      : totalDerived ? 'not-checked' : 'passed',
+    // The SAME condition as the outcome above. Keying the detail on flags.arithmetic while the
+    // outcome is keyed on the narrower question put a green tick over the sentence "excl. + btw
+    // komt niet uit op het totaal" — a row contradicting itself, which is worse than either half.
+    detail: health.flags.arithmetic && !health.flags.notOnDocument
       ? 'excl. + btw komt niet uit op het totaal'
       : totalDerived === 'total'
         ? 'het totaal stond niet los op de factuur — wij hebben het uit excl. + btw berekend'
@@ -99,6 +111,25 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
           ? 'het bedrag excl. btw stond niet los op de factuur — wij hebben het uit totaal − btw berekend'
           : null,
   })
+
+  // ── 1b. Is the total we read actually printed on the paper? ──
+  //
+  // [GEGROND-OCR] proved it is not: a second, blind read of the document transcribed every amount
+  // it could see, and ours was not among them. That is a different question from whether the three
+  // amounts agree — they can agree perfectly and still all be wrong together — and it is the
+  // question the owner can settle fastest, because they are holding the invoice.
+  //
+  // Only when it fired. A row that says "we found your total" on every clean invoice would be a
+  // green tick for a check that mostly cannot run (a photo has no text to search), and this
+  // checklist does not hand out ticks it has not earned.
+  if (health.flags.notOnDocument) {
+    out.push({
+      id: 'total-on-document',
+      label: 'Totaalbedrag teruggevonden op het document',
+      outcome: 'flagged',
+      detail: 'het bedrag dat wij lazen staat niet in de tekst van dit document — vergelijk het even met de factuur',
+    })
+  }
 
   // ── 2. The btw itself ──
   //

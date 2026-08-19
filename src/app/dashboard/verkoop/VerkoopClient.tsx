@@ -70,17 +70,37 @@ export default function VerkoopClient({
   const router = useRouter()
   const [bezig, setBezig] = useState<string | null>(null)
   const [melding, setMelding] = useState<{ tekst: string; goed: boolean } | null>(null)
+  /**
+   * [HERINNER-BEWIJS] The invoice whose reminder the server held back because a payment that looks
+   * like it is sitting unattached in the bank.
+   *
+   * Kept as state and not folded into `melding`, because it carries an ACTION. A dead end here
+   * would be its own defect: an owner who knows that bank line is for something else must be able
+   * to chase their customer, and the app has no standing to be certain — it read two numbers off a
+   * statement. The route accepts the override on a second, deliberate press.
+   */
+  const [ondanksBank, setOndanksBank] = useState<string | null>(null)
 
-  async function herinner(id: string) {
-    setBezig(id); setMelding(null)
+  async function herinner(id: string, ondanks = false) {
+    setBezig(id); setMelding(null); setOndanksBank(null)
     try {
-      const res = await fetch(`/api/invoice/${id}/reminder`, { method: 'POST' })
+      const res = await fetch(`/api/invoice/${id}/reminder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ondanks ? { confirmDespiteBankMatch: true } : {}),
+      })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
+        // The bank-payment answer is not a failure — it is a question, and it comes with the bank
+        // line in it. Showing it as a red dead end would teach the owner to ignore the one message
+        // on this screen that can stop a wrong aanmaning.
+        if (json?.code === 'bank_payment_found') setOndanksBank(id)
         setMelding({ tekst: json?.error || vert('vk.herinnerenMislukt'), goed: false })
         return
       }
-      setMelding({ tekst: vert('vk.herinneringVerstuurd'), goed: true })
+      // [NO-SILENT-EMPTY] The reminder went out, but the bank comparison did not run. The owner is
+      // told, because "verstuurd" alone would claim a check that never happened.
+      setMelding({ tekst: json?.warning || vert('vk.herinneringVerstuurd'), goed: !json?.warning })
       router.refresh()
     } catch {
       setMelding({ tekst: vert('vk.herinnerenMisluktVerbinding'), goed: false })
@@ -165,6 +185,22 @@ export default function VerkoopClient({
           }}>
             {melding.tekst}
           </p>
+        )}
+
+        {/* [HERINNER-BEWIJS] The way out of the block, and deliberately the smaller button: the
+            app's finding is the default, the owner's knowledge overrides it. */}
+        {ondanksBank && (
+          <button
+            onClick={() => herinner(ondanksBank, true)}
+            disabled={bezig === ondanksBank}
+            style={{
+              marginTop: 8, padding: '8px 14px', borderRadius: R.full, cursor: 'pointer',
+              border: `1px solid ${M3.outline}`, background: M3.surface, color: M3.onSurface,
+              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+            }}
+          >
+            {vert('vk.herinnerToch')}
+          </button>
         )}
 
         <div style={{ marginTop: 24 }}>
