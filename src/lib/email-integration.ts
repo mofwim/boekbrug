@@ -2683,6 +2683,10 @@ export async function syncUserEmails(
     // transientError adds the capacity-outage case, so no case main handled is lost.)
     configOutage?: boolean
     transientError?: boolean
+    // [COST-GUARD] budgetOutage = the GLOBAL daily spend fuse refused the call. App-wide by
+    // construction (one ceiling for every user and every path), so it is an outage-hold exactly
+    // like configOutage — never this file's fault, and never a verdict about this file.
+    budgetOutage?: boolean
   }
 
   // Mini concurrency limiter — no external dep. Inline so the helper stays
@@ -3180,12 +3184,21 @@ export async function syncUserEmails(
         const { isAiConfigError } = await import('@/lib/ai-model')
         const configOutage = isAiConfigError(err)
         const transientError = isTransientAiError(err)
+        // [COST-GUARD] (c) the GLOBAL DAILY SPEND FUSE refused the call. Third member of the same
+        // family, and the one that used to arrive here as a verdict instead of an error: the fuse
+        // refuses before Anthropic is reached, so it carries no status code and no network symptom
+        // and neither predicate above recognises it. It is app-wide (one ceiling, all users, all
+        // paths) and it heals by itself at midnight, so it holds like a config outage rather than
+        // poison-pilling — a held invoice is read tomorrow, a buried one never is.
+        const { isAiBudgetError } = await import('@/lib/ai-budget')
+        const budgetOutage = isAiBudgetError(err)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
           classifyFailed: true,
           configOutage,
           transientError,
+          budgetOutage,
         }
       }
     }
@@ -3207,6 +3220,10 @@ export async function syncUserEmails(
   const classifiedTotal = classified.length
   const classifiedFailed = classified.filter((c) => c.classifyFailed).length
   const configOutageAny = classified.some((c) => c.configOutage)
+  // [COST-GUARD] One blown fuse is app-wide by definition, so a single occurrence makes the whole
+  // run an outage — the same reasoning as a config outage, and deliberately not the batch-wide
+  // "everyone failed" proof a transient error needs.
+  const budgetOutageAny = classified.some((c) => c.budgetOutage)
 
   // [EERLIJK-GEBRUIK] Teruggeven wat niet gelezen ís. Dit maakt de zin op /eerlijk-gebruik
   // waar: "Een bestand dat wij niet konden lezen telt ook niet mee — mislukte pogingen komen
@@ -3229,14 +3246,15 @@ export async function syncUserEmails(
     })
   }
   const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
-  const outageActive = configOutageAny || transientOutage
+  const outageActive = configOutageAny || budgetOutageAny || transientOutage
 
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed, configOutage, transientError } of classified) {
+  for (const { attachment, classification, classifyFailed, configOutage, transientError, budgetOutage } of classified) {
     const wmKey = `${attachment.messageId}:${attachment.filename}`
-    // An outage-hold when: a config outage (always), or a transient error DURING a batch-wide outage.
+    // An outage-hold when: a config outage (always), the spend fuse (always), or a transient error
+    // DURING a batch-wide outage.
     // A lone transient failure (some files succeeded) is NOT an outage → it takes the poison-pill path.
-    const outageHold = configOutage || (transientError && outageActive)
+    const outageHold = configOutage || budgetOutage || (transientError && outageActive)
     try {
       // [MODEL-OUTAGE] An app-wide model/config failure (invalid CLAUDE_MODEL → 404, auth) is not
       // this file's fault. NEVER count it toward the poison-pill give-up and NEVER register it as

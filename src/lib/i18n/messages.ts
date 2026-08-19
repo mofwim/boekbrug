@@ -6480,6 +6480,11 @@ export const MESSAGES = {
     ar: 'بهذا تكون الفاتورة مدفوعة بالكامل.',
     en: 'With this the invoice is fully paid.',
   },
+  'ink.wachtrijOnbekend': {
+    nl: 'We konden niet zien wat er klaarstaat',
+    ar: 'تعذّر علينا رؤية ما هو في الانتظار',
+    en: 'We could not see what is waiting',
+  },
   'ink.wordtBetaaldGemarkeerd': {
     nl: 'Inkoopfactuur {number} wordt als betaald gemarkeerd.',
     ar: 'ستُعلَّم فاتورة المشتريات {number} كمدفوعة.',
@@ -9666,6 +9671,56 @@ export const MESSAGES = {
   // ── [TAAL-BLIND] The 472 strings the first scanner could not see — multi-line text
   // nodes and strings inside JSX expressions. Translated in one sweep; the extended gate
   // patterns above the SCREENS list are what keeps this from regrowing.
+  'aang.correcties': {
+    nl: 'Correcties uit eerdere kwartalen',
+    ar: 'تصحيحات من أرباع سابقة',
+    en: 'Corrections from earlier quarters',
+  },
+  'aang.correcties.uitleg': {
+    nl: 'Deze kwartalen zijn al ingediend en daarna gewijzigd. Omdat het verschil per kwartaal €1.000 of minder is, mag je het in deze aangifte verwerken — tel het bij de betreffende rubriek op. Wij vullen niets voor je in.',
+    ar: 'هذه الأرباع قُدِّمت بالفعل ثم تغيّرت. وبما أن الفرق في كل ربع €1.000 أو أقل، يجوز لك معالجته في هذا الـaangifte — أضِفه إلى البند المعني. نحن لا نملأ شيئاً نيابةً عنك.',
+    en: 'These quarters have been filed and have changed since. Because the difference per quarter is €1,000 or less, you may process it in this return — add it to the relevant rubriek. We fill in nothing for you.',
+  },
+  'aang.correcties.meer': {
+    nl: 'meer te betalen',
+    ar: 'مبلغ إضافي مستحق',
+    en: 'more to pay',
+  },
+  'aang.correcties.minder': {
+    nl: 'minder te betalen',
+    ar: 'مبلغ أقل مستحق',
+    en: 'less to pay',
+  },
+  'aang.correcties.eerderVerwerkt': {
+    nl: 'eerder al {amount} verwerkt',
+    ar: 'سبق معالجة {amount}',
+    en: '{amount} already processed earlier',
+  },
+  'aang.correcties.verwerkt': {
+    nl: 'Verwerkt',
+    ar: 'تمت المعالجة',
+    en: 'Processed',
+  },
+  'aang.correcties.bezig': {
+    nl: 'Bezig…',
+    ar: 'جارٍ…',
+    en: 'Working…',
+  },
+  'aang.correcties.onbekend': {
+    nl: 'We konden niet van alle eerdere kwartalen nagaan of er nog iets te verrekenen is. Kijk op de Waarheid-pagina voordat je deze aangifte indient.',
+    ar: 'تعذّر علينا التحقّق من كل الأرباع السابقة إن كان لا يزال هناك ما يُسوّى. راجع صفحة Waarheid قبل تقديم هذا الـaangifte.',
+    en: 'We could not check every earlier quarter for anything still to settle. Look at the Waarheid page before you file this return.',
+  },
+  'aang.correcties.mislukt': {
+    nl: 'Vastleggen mislukt — er is niets gewijzigd. Probeer het zo meteen opnieuw.',
+    ar: 'فشل التسجيل — لم يتغيّر شيء. حاول مرة أخرى بعد قليل.',
+    en: 'Could not record it — nothing was changed. Try again in a moment.',
+  },
+  'aang.correcties.geenVerbinding': {
+    nl: 'Geen verbinding — er is niets gewijzigd.',
+    ar: 'لا يوجد اتصال — لم يتغيّر شيء.',
+    en: 'No connection — nothing was changed.',
+  },
   'aang.geenVerbinding': {
     nl: 'Geen verbinding — probeer het zo meteen opnieuw.',
     ar: 'لا يوجد اتصال — حاول مرة أخرى بعد قليل.',
@@ -9943,6 +9998,541 @@ export const MESSAGES = {
     en: 'Search invoices, amounts, files…',
   },
 
+  // ─── [BETAALBEWIJS] Under every "Betaald", how we know ──────────────────────────────────────
+  //
+  // A payment PROVEN by a bank line and a payment the owner ticked by hand are different facts.
+  // The first is corroborated by a third party; the second is a memory. Rendering both as the same
+  // word borrows the bank's authority for the tick — and when the tick was a mistake, nothing on
+  // the screen ever says so.
+  //
+  // The direction is not decoration. Money leaves for a purchase invoice and ARRIVES for a sales
+  // one, so "afgeschreven naar Kiwi Food Market" under an invoice Kiwi paid describes the owner
+  // paying their own customer. Own keys per direction, per rule 1 of this file.
+
+  'betaal.onbekend': {
+    nl: 'We konden niet nakijken waar deze betaling vandaan komt.',
+    ar: 'تعذّر التحقق من مصدر هذه الدفعة.',
+    en: 'We could not check where this payment came from.',
+  },
+  // Honest, and rare. "Betaald" with nothing recording how is the one case where the app has a
+  // status and no evidence at all — saying so is what keeps the other two worth believing.
+  'betaal.geen': {
+    nl: 'Als betaald gemarkeerd, maar er is geen betaling aan gekoppeld.',
+    ar: 'مُعلَّمة كمدفوعة، لكن لا توجد دفعة مرتبطة بها.',
+    en: 'Marked as paid, but no payment is linked to it.',
+  },
+
+  'betaal.hand': {
+    nl: '{bedrag} door jou afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you on {datum} — no bank line is linked to it.',
+  },
+  'betaal.hand.zonderDatum': {
+    nl: '{bedrag} door jou afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you — no bank line is linked to it.',
+  },
+  'betaal.hand.kas': {
+    nl: '{bedrag} door jou contant afgevinkt op {datum} — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت نقداً بتاريخ {datum} — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you as cash on {datum} — no bank line is linked to it.',
+  },
+  'betaal.hand.kas.zonderDatum': {
+    nl: '{bedrag} door jou contant afgevinkt — er is geen bankregel aan gekoppeld.',
+    ar: '{bedrag} علّمتها أنت نقداً — لا يوجد سطر بنكي مرتبط بها.',
+    en: '{bedrag} ticked off by you as cash — no bank line is linked to it.',
+  },
+
+  // Money OUT — a bill the owner paid.
+  'betaal.bank.inkoop': {
+    nl: '{bedrag} afgeschreven op {datum} naar {naam}',
+    ar: 'خُصم {bedrag} في {datum} إلى {naam}',
+    en: '{bedrag} debited on {datum} to {naam}',
+  },
+  'betaal.bank.inkoop.zonderNaam': {
+    nl: '{bedrag} afgeschreven op {datum}',
+    ar: 'خُصم {bedrag} في {datum}',
+    en: '{bedrag} debited on {datum}',
+  },
+  'betaal.bank.inkoop.zonderDatum': {
+    nl: '{bedrag} afgeschreven naar {naam}',
+    ar: 'خُصم {bedrag} إلى {naam}',
+    en: '{bedrag} debited to {naam}',
+  },
+  'betaal.bank.inkoop.kaal': {
+    nl: '{bedrag} afgeschreven',
+    ar: 'خُصم {bedrag}',
+    en: '{bedrag} debited',
+  },
+  // Money IN — an invoice the owner issued and a customer settled.
+  'betaal.bank.verkoop': {
+    nl: '{bedrag} bijgeschreven op {datum} van {naam}',
+    ar: 'وصل {bedrag} في {datum} من {naam}',
+    en: '{bedrag} credited on {datum} from {naam}',
+  },
+  'betaal.bank.verkoop.zonderNaam': {
+    nl: '{bedrag} bijgeschreven op {datum}',
+    ar: 'وصل {bedrag} في {datum}',
+    en: '{bedrag} credited on {datum}',
+  },
+  'betaal.bank.verkoop.zonderDatum': {
+    nl: '{bedrag} bijgeschreven van {naam}',
+    ar: 'وصل {bedrag} من {naam}',
+    en: '{bedrag} credited from {naam}',
+  },
+  'betaal.bank.verkoop.kaal': {
+    nl: '{bedrag} bijgeschreven',
+    ar: 'وصل {bedrag}',
+    en: '{bedrag} credited',
+  },
+
+  // The bank's own text, quoted verbatim — it is the string the owner RECOGNISES, and recognition
+  // is the whole mechanism here. A tidied version is a string they have never seen.
+  // ─── [BINNENGEKOMEN-BEWIJS] Money in that belongs to no invoice ──────────────────────────────
+  //
+  // The mirror of the openstaand panel, asked of the MONEY. Readiness already counts unexplained
+  // receipts, and a count cannot tell three payments of € 5 from three of € 5.000 — the first is
+  // tidiness, the second is turnover that was never invoiced (art. 52 AWR). So the SUM is named,
+  // and so is the day the most recent one arrived: old is a tidy-up, this week is a gap.
+
+  'binnen.scope.een': {
+    nl: '1 ontvangen betaling nagekeken tegen {facturen}.',
+    ar: 'رُوجعت دفعة واردة واحدة مقابل {facturen}.',
+    en: '1 received payment checked against {facturen}.',
+  },
+  'binnen.scope.meer': {
+    nl: '{count} ontvangen betalingen nagekeken tegen {facturen}.',
+    ar: 'رُوجعت {count} دفعة واردة مقابل {facturen}.',
+    en: '{count} received payments checked against {facturen}.',
+  },
+  'binnen.tegen.geen': { nl: 'geen openstaande verkoopfacturen', ar: 'لا فواتير مبيعات مفتوحة', en: 'no open sales invoices' },
+  'binnen.tegen.een': { nl: '1 openstaande verkoopfactuur', ar: 'فاتورة مبيعات مفتوحة واحدة', en: '1 open sales invoice' },
+  'binnen.tegen.meer': { nl: '{count} openstaande verkoopfacturen', ar: '{count} فاتورة مبيعات مفتوحة', en: '{count} open sales invoices' },
+
+  // Money already in, on an invoice the app still calls open — the same finding as the panel
+  // above, said from the other side, and the one the owner can act on in a click.
+  'binnen.herkend.een': {
+    nl: '1 daarvan lijkt bij een factuur te horen die nog openstaat.',
+    ar: 'واحدة منها يبدو أنها تخصّ فاتورة ما زالت مفتوحة.',
+    en: '1 of them appears to belong to an invoice that is still open.',
+  },
+  'binnen.herkend.meer': {
+    nl: '{count} daarvan lijken bij facturen te horen die nog openstaan.',
+    ar: '{count} منها يبدو أنها تخصّ فواتير ما زالت مفتوحة.',
+    en: '{count} of them appear to belong to invoices that are still open.',
+  },
+
+  // The figure the app never showed. Never an accusation — a payment with no invoice can be a
+  // deposit, a private transfer or a refund, and the owner is the only one who knows which.
+  'binnen.onbekend.een': {
+    nl: '1 betaling van {bedrag} hoort bij geen enkele factuur in je boeken (laatste op {datum}).',
+    ar: 'دفعة واحدة بمبلغ {bedrag} لا تخصّ أي فاتورة في دفاترك (آخرها في {datum}).',
+    en: '1 payment of {bedrag} belongs to no invoice in your books (most recent on {datum}).',
+  },
+  'binnen.onbekend.meer': {
+    nl: '{count} betalingen van samen {bedrag} horen bij geen enkele factuur in je boeken (laatste op {datum}).',
+    ar: '{count} دفعات بمجموع {bedrag} لا تخصّ أي فاتورة في دفاترك (آخرها في {datum}).',
+    en: '{count} payments totalling {bedrag} belong to no invoice in your books (most recent on {datum}).',
+  },
+  'binnen.onbekend.watNu': {
+    nl: 'Koppel ze bij Bank, of maak er een factuur voor als er omzet in zit.',
+    ar: 'اربطها في صفحة Bank، أو أصدر لها فاتورة إن كانت إيراداً.',
+    en: 'Link them under Bank, or invoice them if they are turnover.',
+  },
+
+  // ─── [DUBBEL-BEWIJS] The no-double-pay check, saying what it did ─────────────────────────────
+  //
+  // The check answers "have you already paid this?" and had exactly two answers on screen: a
+  // warning, or an ordinary pay dialog. "We could not look" rendered as the second one — the same
+  // pixels as a completed search that found nothing. Four separate paths reached it: the invoice
+  // unreadable, the paid set unreadable, no amount on the document, no vendor to anchor on.
+  //
+  // These sentences give the check its third answer, and give the other two the SEARCH behind
+  // them. Whole sentences per case rather than a noun parameter: 'rekening'/'rekeningen' is a
+  // Dutch plural, and a language with a dual or with suffix harmony cannot be served by swapping
+  // the noun into a slot.
+
+  'dubbel.zoek.geen': {
+    nl: 'Nagekeken: je hebt deze leverancier de afgelopen {dagen} dagen niet eerder dit bedrag betaald.',
+    ar: 'تم التحقّق: لم تدفع لهذا المورّد هذا المبلغ خلال آخر {dagen} يوماً.',
+    en: 'Checked: you have not paid this supplier this amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.een': {
+    nl: 'Nagekeken tegen 1 rekening die je deze leverancier de afgelopen {dagen} dagen voor hetzelfde bedrag betaalde.',
+    ar: 'تمّت المقارنة مع فاتورة واحدة دفعتها لهذا المورّد بالمبلغ نفسه خلال آخر {dagen} يوماً.',
+    en: 'Checked against 1 invoice you paid this supplier for the same amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.meer': {
+    nl: 'Nagekeken tegen {count} rekeningen die je deze leverancier de afgelopen {dagen} dagen voor hetzelfde bedrag betaalde.',
+    ar: 'تمّت المقارنة مع {count} فواتير دفعتها لهذا المورّد بالمبلغ نفسه خلال آخر {dagen} يوماً.',
+    en: 'Checked against {count} invoices you paid this supplier for the same amount in the past {dagen} days.',
+  },
+  'dubbel.zoek.grens': {
+    nl: 'We hebben de {count} meest recente bekeken. Betaalde je deze leverancier vaker dit bedrag, dan zitten de oudste er niet bij.',
+    ar: 'راجعنا أحدث {count} منها. إن كنت قد دفعت لهذا المورّد هذا المبلغ أكثر من ذلك، فالأقدم ليست ضمنها.',
+    en: 'We looked at the {count} most recent. If you paid this supplier this amount more often than that, the oldest are not included.',
+  },
+  'dubbel.anker.iban': {
+    nl: 'De leverancier is herkend aan het IBAN, dus aan een rekeningnummer dat maar op één manier geschreven kan worden.',
+    ar: 'جرى التعرّف على المورّد عبر الـiban، أي عبر رقم حساب لا يُكتب إلا بصورة واحدة.',
+    en: 'The supplier was identified by iban — an account number that can only be written one way.',
+  },
+  'dubbel.anker.naam': {
+    nl: 'De leverancier is herkend aan de naam, niet aan een IBAN. Staat die naam op de twee rekeningen net anders geschreven, dan ziet deze controle ze niet als dezelfde leverancier.',
+    ar: 'جرى التعرّف على المورّد بالاسم لا بالـiban. فإن كُتب الاسم على الفاتورتين بصيغتين مختلفتين قليلاً، فلن يعتبرهما هذا الفحص مورّداً واحداً.',
+    en: 'The supplier was identified by name, not by iban. If that name is written even slightly differently on the two invoices, this check does not see them as the same supplier.',
+  },
+
+  'dubbel.onbekend.factuur': {
+    nl: 'We konden deze rekening zelf niet lezen, dus we hebben niet kunnen nakijken of je hem al betaald hebt.',
+    ar: 'لم نتمكّن من قراءة هذه الفاتورة نفسها، فلم نستطع التحقّق ممّا إذا كنت قد دفعتها من قبل.',
+    en: 'We could not read this invoice itself, so we could not check whether you have already paid it.',
+  },
+  'dubbel.onbekend.eerder': {
+    nl: 'We konden je eerder betaalde rekeningen niet lezen, dus we hebben niet kunnen nakijken of je deze al betaald hebt.',
+    ar: 'لم نتمكّن من قراءة فواتيرك المدفوعة سابقاً، فلم نستطع التحقّق ممّا إذا كنت قد دفعت هذه من قبل.',
+    en: 'We could not read your previously paid invoices, so we could not check whether you have already paid this one.',
+  },
+  'dubbel.onbekend.bedrag': {
+    nl: 'Op deze rekening staat geen bruikbaar bedrag. Zonder bedrag kunnen we niet nakijken of je hem al betaald hebt.',
+    ar: 'لا يحمل هذا المستند مبلغاً صالحاً للاستعمال. وبلا مبلغ لا يمكننا التحقّق ممّا إذا كنت قد دفعته من قبل.',
+    en: 'This invoice carries no usable amount. Without one we cannot check whether you have already paid it.',
+  },
+  'dubbel.onbekend.leverancier': {
+    nl: 'Op deze rekening staat geen leverancier en geen IBAN. Zonder een van die twee kunnen we niet nakijken of je hem al betaald hebt.',
+    ar: 'لا يحمل هذا المستند اسم مورّد ولا iban. وبدون أحدهما لا يمكننا التحقّق ممّا إذا كنت قد دفعته من قبل.',
+    en: 'This invoice carries neither a supplier nor an iban. Without one of the two we cannot check whether you have already paid it.',
+  },
+  // Covers every way the SCREEN failed to get an answer — a dropped connection, an expired
+  // session, a request the route refused. Deliberately does not name which: the owner's next step
+  // is the same in all of them, and guessing wrong about the cause is worse than not saying.
+  'dubbel.onbekend.netwerk': {
+    nl: 'De controle op dubbel betalen is niet uitgevoerd.',
+    ar: 'لم يُنفَّذ فحص الدفع المزدوج.',
+    en: 'The double-payment check did not run.',
+  },
+  'dubbel.onbekend.watNu': {
+    nl: 'Kijk zelf even na of je deze rekening al betaald hebt voordat je hem afvinkt.',
+    ar: 'تحقّق بنفسك ممّا إذا كنت قد دفعت هذه الفاتورة قبل أن تعلّمها كمدفوعة.',
+    en: 'Check for yourself whether you have already paid this invoice before ticking it off.',
+  },
+
+  // ─── [DUBBEL-BUNDEL] The same three answers, for a whole set at once ─────────────────────────
+  //
+  // executeBundlePay marked N supplier invoices paid through /api/invoice/pay-toggle and never
+  // called the duplicate check at all. The path that pays the MOST invoices in one tap — and where
+  // the owner is reviewing five documents instead of one — had no check, and the dialog said
+  // nothing about not having one.
+  //
+  // Precedence in these sentences is deliberate: a real twin outranks an unchecked row, but an
+  // unchecked row is never absorbed into a "we checked them all" count. That absorption is the
+  // whole defect, one level up.
+
+  'dubbel.bundel.alarm.een': {
+    nl: 'Eén van deze rekeningen lijkt je al betaald te hebben: {nummers}.',
+    ar: 'يبدو أنك دفعت إحدى هذه الفواتير من قبل: {nummers}.',
+    en: 'One of these invoices looks like one you have already paid: {nummers}.',
+  },
+  'dubbel.bundel.alarm.meer': {
+    nl: '{count} van deze rekeningen lijk je al betaald te hebben: {nummers}.',
+    ar: 'يبدو أنك دفعت {count} من هذه الفواتير من قبل: {nummers}.',
+    en: '{count} of these invoices look like ones you have already paid: {nummers}.',
+  },
+  // The same alarm for a set whose documents carry no readable number. It cannot name them, and
+  // says so rather than printing a sentence that trails off into nothing.
+  'dubbel.bundel.alarm.geenNummer': {
+    nl: '{count} van deze rekeningen lijk je al betaald te hebben. We kunnen ze hier niet bij nummer noemen.',
+    ar: 'يبدو أنك دفعت {count} من هذه الفواتير من قبل. لا يمكننا تسميتها هنا بالأرقام.',
+    en: '{count} of these invoices look like ones you have already paid. We cannot name them by number here.',
+  },
+  'dubbel.bundel.onbekend.een': {
+    nl: 'Van 1 rekening konden we niet nakijken of je hem al betaald hebt.',
+    ar: 'هناك فاتورة واحدة لم نتمكّن من التحقّق ممّا إذا كنت قد دفعتها.',
+    en: 'For 1 invoice we could not check whether you have already paid it.',
+  },
+  'dubbel.bundel.onbekend.meer': {
+    nl: 'Van {count} rekeningen konden we niet nakijken of je ze al betaald hebt.',
+    ar: 'هناك {count} فواتير لم نتمكّن من التحقّق ممّا إذا كنت قد دفعتها.',
+    en: 'For {count} invoices we could not check whether you have already paid them.',
+  },
+  'dubbel.bundel.schoon': {
+    nl: 'Alle {count} nagekeken: geen ervan lijkt al betaald.',
+    ar: 'تم التحقّق من {count} جميعها: لا يبدو أن أياً منها مدفوع من قبل.',
+    en: 'All {count} checked: none of them looks already paid.',
+  },
+  'dubbel.bundel.grens': {
+    nl: 'We hebben er {count} van de {totaal} nagekeken. Over de rest zeggen we niets, want daar hebben we niet naar gekeken.',
+    ar: 'راجعنا {count} من أصل {totaal}. ولا نقول شيئاً عن البقية لأننا لم نطّلع عليها.',
+    en: 'We checked {count} of the {totaal}. We say nothing about the rest, because we did not look at them.',
+  },
+  // The sweep is still running. Its own state on purpose: the owner can tap confirm at any moment,
+  // including before the answers land, and a blank space there is the same silence as before —
+  // just briefer. It also covers a fetch that never settles, where a blank would be permanent.
+  'dubbel.bundel.bezig': {
+    nl: 'We kijken nog na of je een van deze rekeningen al betaald hebt.',
+    ar: 'ما زلنا نتحقّق ممّا إذا كنت قد دفعت إحدى هذه الفواتير من قبل.',
+    en: 'We are still checking whether you have already paid any of these invoices.',
+  },
+  'dubbel.bundel.watNu': {
+    nl: 'Kijk die eerst na voordat je de hele set afvinkt.',
+    ar: 'راجع تلك أولاً قبل أن تعلّم المجموعة كلها كمدفوعة.',
+    en: 'Check those first before ticking off the whole set.',
+  },
+
+  // ─── [CREDIT-BEWIJS] Which credit notes produced "Deels gecrediteerd · € 250" ────────────────
+  //
+  // Same shape as the instalments above, and the same reason: the chip states a conclusion the
+  // owner can only check by going and finding the credit notes. Unlike a bank line, these are
+  // documents THEY sent, each with a number on it — so naming them is not evidence the app has to
+  // gather, only evidence it was already holding and never showed.
+
+  'credit.samen.een': {
+    nl: '{bedrag} teruggegeven met 1 creditnota:',
+    ar: 'أُعيد {bedrag} بإشعار دائن واحد:',
+    en: '{bedrag} credited back with 1 credit note:',
+  },
+  'credit.samen.meer': {
+    nl: '{bedrag} teruggegeven met {count} creditnota\u2019s:',
+    ar: 'أُعيد {bedrag} بـ{count} إشعارات دائنة:',
+    en: '{bedrag} credited back with {count} credit notes:',
+  },
+  'credit.regel': {
+    nl: '{nummer} · {datum} — {bedrag}',
+    ar: '{nummer} · {datum} — {bedrag}',
+    en: '{nummer} · {datum} — {bedrag}',
+  },
+  'credit.regel.zonderDatum': { nl: '{nummer} — {bedrag}', ar: '{nummer} — {bedrag}', en: '{nummer} — {bedrag}' },
+  // A creditnota still in concept has no number yet, and that is the truth rather than a gap:
+  // the number falls when it is sent (Art. 35).
+  'credit.regel.zonderNummer': {
+    nl: 'Concept — nog geen nummer · {bedrag}',
+    ar: 'مسودة — بلا رقم بعد · {bedrag}',
+    en: 'Draft — no number yet · {bedrag}',
+  },
+
+  // [NO-SILENT-EMPTY] The credit read did not answer. Every amount on the list may then be too
+  // high, and the withdrawn-invoice chips are missing — so the screen says so rather than letting
+  // an invoice the owner formally withdrew look completely chaseable.
+  'credit.leesFout': {
+    nl: 'We konden niet nakijken welke facturen je hebt gecrediteerd. De bedragen hieronder kunnen te hoog staan.',
+    ar: 'تعذّر التحقق من الفواتير التي أصدرت لها إشعارات دائنة. قد تكون المبالغ أدناه أعلى من الواقع.',
+    en: 'We could not check which invoices you have credited. The amounts below may be too high.',
+  },
+
+  // ─── [DEELBETALING-BEWIJS] The arithmetic behind "nog € X open", written out ─────────────────
+  //
+  // A partly settled invoice is where a conclusion is hardest to check by hand: the row says
+  // "Deels betaald · nog € 460", and the owner has no way to see WHICH instalments produced that
+  // without opening their bank and adding up. So the instalments are named, each with its own
+  // evidence, and the sum is stated beside the invoice total.
+
+  'deel.samen.meer': {
+    nl: '{betaald} van {totaal} voldaan, in {count} betalingen:',
+    ar: 'سُدِّد {betaald} من {totaal}، على {count} دفعات:',
+    en: '{betaald} of {totaal} settled, in {count} payments:',
+  },
+  // No key for "one instalment": every payment sentence now carries its own amount, bank and hand
+  // alike. A wrapper that prefixed the figure produced it twice on a bank line ("€ 500,00 —
+  // € 500,00 bijgeschreven…") and read as two dashes on a hand-recorded one.
+
+  // [NO-SILENT-EMPTY] invoices.amount_paid is a CACHED SUM of the very rows listed above. When the
+  // two disagree the screen is showing a remainder no instalment supports, and it may not quietly
+  // believe one side: it says both figures and leaves the judgement where it belongs.
+  'deel.verschil': {
+    nl: 'Let op: de app rekent met {geboekt} betaald, maar de vastgelegde betalingen tellen op tot {geteld}. Laat dit nakijken voordat je hierop afgaat.',
+    ar: 'تنبيه: التطبيق يحسب {geboekt} مدفوعاً، بينما مجموع الدفعات المسجَّلة {geteld}. راجع هذا قبل الاعتماد عليه.',
+    en: 'Note: the app is working with {geboekt} paid, but the recorded payments add up to {geteld}. Have this checked before relying on it.',
+  },
+  // The sum could not be checked at all — a legacy link with no amount anywhere. Never silence:
+  // an unverifiable total that reads like a verified one is the whole failure mode here.
+  'deel.verschil.onmeetbaar': {
+    nl: 'Eén van deze betalingen heeft geen vastgelegd bedrag, dus het openstaande saldo is hier niet na te rekenen.',
+    ar: 'إحدى هذه الدفعات بلا مبلغ مسجَّل، لذا لا يمكن التحقق من الرصيد المتبقي هنا.',
+    en: 'One of these payments has no recorded amount, so the outstanding balance cannot be verified here.',
+  },
+
+  // The one case where no figure may be printed: a legacy link with no amount of its own AND no
+  // bank row to read one from. "€ 0,00 afgeschreven" would be a number nobody wrote down.
+  'betaal.bank.bedragOnbekend': {
+    nl: 'Er is een bankbetaling aan deze factuur gekoppeld; het bedrag is hier niet vastgelegd.',
+    ar: 'هناك دفعة بنكية مرتبطة بهذه الفاتورة؛ المبلغ غير مسجَّل هنا.',
+    en: 'A bank payment is linked to this invoice; the amount is not recorded here.',
+  },
+  'betaal.bank.omschrijving': { nl: '{regel} — “{tekst}”', ar: '{regel} — «{tekst}»', en: '{regel} — “{tekst}”' },
+  'betaal.bank.meer.een': {
+    nl: '{regel} (+ 1 andere betaling)',
+    ar: '{regel} (+ دفعة أخرى)',
+    en: '{regel} (+ 1 other payment)',
+  },
+  'betaal.bank.meer.meer': {
+    nl: '{regel} (+ {count} andere betalingen)',
+    ar: '{regel} (+ {count} دفعات أخرى)',
+    en: '{regel} (+ {count} other payments)',
+  },
+  'betaal.bank.deelsHand': {
+    nl: '{regel} Een deel is door jou zelf afgevinkt.',
+    ar: '{regel} جزء منها علّمته أنت بنفسك.',
+    en: '{regel} Part of it was ticked off by you.',
+  },
+
+  // ─── [OPENSTAAND-BEWIJS] The panel that states the SEARCH, not the conclusion ───────────────
+  //
+  // Rule 1 of this file, applied literally: the noun is never a parameter. "inkoopfactuur" and
+  // "verkoopfactuur" get their own keys per sentence, because Arabic agreement and Turkish suffix
+  // harmony both hang off the noun — and because the two panels are read by the same person in the
+  // same session, so they may never collapse into one sentence about two different piles of money.
+  //
+  // The counted phrases ARE parameters, and that is the exception the rule allows: each is a
+  // complete noun phrase built from its own key, carrying its own number and its own agreement, so
+  // the frame around it never has to inflect.
+
+  'bewijs.geenOpen.inkoop': {
+    nl: 'Er staan geen inkoopfacturen open om na te kijken.',
+    ar: 'لا توجد فواتير شراء مفتوحة للمراجعة.',
+    en: 'There are no open purchase invoices to check.',
+  },
+  'bewijs.geenOpen.verkoop': {
+    nl: 'Er staan geen verkoopfacturen open om na te kijken.',
+    ar: 'لا توجد فواتير مبيعات مفتوحة للمراجعة.',
+    en: 'There are no open sales invoices to check.',
+  },
+
+  'bewijs.aantal.inkoop.een': {
+    nl: '1 openstaande inkoopfactuur',
+    ar: 'فاتورة شراء مفتوحة واحدة',
+    en: '1 open purchase invoice',
+  },
+  'bewijs.aantal.inkoop.meer': {
+    nl: '{count} openstaande inkoopfacturen',
+    ar: '{count} فاتورة شراء مفتوحة',
+    en: '{count} open purchase invoices',
+  },
+  'bewijs.aantal.verkoop.een': {
+    nl: '1 openstaande verkoopfactuur',
+    ar: 'فاتورة مبيعات مفتوحة واحدة',
+    en: '1 open sales invoice',
+  },
+  'bewijs.aantal.verkoop.meer': {
+    nl: '{count} openstaande verkoopfacturen',
+    ar: '{count} فاتورة مبيعات مفتوحة',
+    en: '{count} open sales invoices',
+  },
+
+  // No bank data is NOT a clean bill of health, and this sentence may never be shortened into one.
+  'bewijs.geenBank': {
+    nl: '{facturen} — nog niet vergeleken met je bank. Er staan geen banktransacties klaar om tegen te houden; importeer je bankafschrift.',
+    ar: '{facturen} — لم تُقارَن بعد بحسابك البنكي. لا توجد حركات بنكية جاهزة للمقارنة؛ استورد كشف حسابك.',
+    en: '{facturen} — not yet compared with your bank. There are no bank transactions to hold them against; import your bank statement.',
+  },
+
+  'bewijs.scope.een': {
+    nl: '{facturen} vergeleken met 1 banktransactie{tot}.',
+    ar: '{facturen} قُورنت بحركة بنكية واحدة{tot}.',
+    en: '{facturen} compared with 1 bank transaction{tot}.',
+  },
+  'bewijs.scope.meer': {
+    nl: '{facturen} vergeleken met {tx} banktransacties{tot}.',
+    ar: '{facturen} قُورنت بـ{tx} حركة بنكية{tot}.',
+    en: '{facturen} compared with {tx} bank transactions{tot}.',
+  },
+  // The horizon — where the app stops knowing. The single most trust-building clause on the panel
+  // and the cheapest, so it is its own key and never silently dropped by a translation.
+  'bewijs.scope.tot': { nl: ' t/m {datum}', ar: ' حتى {datum}', en: ' through {datum}' },
+
+  'bewijs.niets': {
+    nl: '{scope} Geen betaling gevonden die bij een van deze facturen past.',
+    ar: '{scope} لم نجد أي دفعة تطابق واحدة من هذه الفواتير.',
+    en: '{scope} No payment found that matches any of these invoices.',
+  },
+  'bewijs.raak.een': {
+    nl: '{scope} Bij 1 factuur vonden we tóch een betaling die erbij lijkt te passen.',
+    ar: '{scope} ومع ذلك وجدنا لدى فاتورة واحدة دفعة يبدو أنها تخصّها.',
+    en: '{scope} For 1 invoice we did find a payment that appears to match it.',
+  },
+  'bewijs.raak.meer': {
+    nl: '{scope} Bij {count} facturen vonden we tóch een betaling die erbij lijkt te passen.',
+    ar: '{scope} ومع ذلك وجدنا لدى {count} فواتير دفعات يبدو أنها تخصّها.',
+    en: '{scope} For {count} invoices we did find a payment that appears to match them.',
+  },
+
+  // On a purchase invoice the owner looks for money that LEFT; on a sales invoice for money that
+  // ARRIVED. One wrong preposition here is a sentence read twice and believed half.
+  'bewijs.hit.inkoop': {
+    nl: '{bedrag} op {datum} aan {naam}',
+    ar: '{bedrag} في {datum} إلى {naam}',
+    en: '{bedrag} on {datum} to {naam}',
+  },
+  'bewijs.hit.verkoop': {
+    nl: '{bedrag} op {datum} van {naam}',
+    ar: '{bedrag} في {datum} من {naam}',
+    en: '{bedrag} on {datum} from {naam}',
+  },
+  'bewijs.hit.zonderNaam': { nl: '{bedrag} op {datum}', ar: '{bedrag} في {datum}', en: '{bedrag} on {datum}' },
+  // The bank's own text, quoted verbatim: it is the string the owner recognises, and a tidied
+  // version of it is a string they have never seen.
+  'bewijs.hit.omschrijving': { nl: '{regel} — “{tekst}”', ar: '{regel} — «{tekst}»', en: '{regel} — “{tekst}”' },
+
+  'bewijs.regel.open': { nl: '{bedrag} open', ar: '{bedrag} مستحقة', en: '{bedrag} outstanding' },
+  'bewijs.regel.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },
+  // A question, never a verdict: both numbers come from a reading, and picking a winner is the
+  // overconfidence that produces the wrong number in the first place.
+  'bewijs.vraag.inkoop': {
+    nl: 'In je bank staat {bewijs}. Klopt het dat deze factuur nog openstaat?',
+    ar: 'في حسابك البنكي: {bewijs}. هل صحيح أن هذه الفاتورة ما زالت غير مدفوعة؟',
+    en: 'Your bank shows {bewijs}. Is it correct that this invoice is still outstanding?',
+  },
+  'bewijs.vraag.verkoop': {
+    nl: 'In je bank staat {bewijs}. Klopt het dat deze klant nog niet betaald heeft?',
+    ar: 'في حسابك البنكي: {bewijs}. هل صحيح أن هذا العميل لم يدفع بعد؟',
+    en: 'Your bank shows {bewijs}. Is it correct that this customer has not paid yet?',
+  },
+
+  // [NO-SILENT-EMPTY] A proof that could not run may never read as one that found nothing.
+  'bewijs.leesFout': {
+    nl: 'We konden je openstaande facturen nu niet met je bank vergelijken. Deze lijst klopt met wat er in de app staat, maar is niet tegen je bankafschriften gehouden.',
+    ar: 'تعذّرت مقارنة فواتيرك المفتوحة بحسابك البنكي الآن. هذه القائمة مطابقة لما في التطبيق، لكنها لم تُقارَن بكشوف حسابك.',
+    en: 'We could not compare your open invoices with your bank just now. This list matches what is in the app, but has not been held against your bank statements.',
+  },
+
+  // A bounded check presented as a complete one is exactly the false reassurance this panel
+  // exists to remove. Three whole sentences, never a fragment glued to a conjunction.
+  'bewijs.beperkt.facturen': {
+    nl: 'Niet alles is meegenomen: {count} facturen vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {count} فاتورة خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {count} invoices fell outside this check.',
+  },
+  'bewijs.beperkt.transacties': {
+    nl: 'Niet alles is meegenomen: {count} banktransacties vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {count} حركة بنكية خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {count} bank transactions fell outside this check.',
+  },
+  // [HERINNER-BEWIJS] The most expensive mistake this product can make, stated to the owner
+  // before it is made. A reminder — and on the last tier a statutory aanmaning naming
+  // incassokosten — sent to a customer who already paid is not a wrong number on a screen; it is
+  // the owner's relationship with the person who pays them. Never a verdict: the app says what it
+  // saw and leaves the decision where it belongs.
+  // The way past the block. Named as the action it is, not as a dismissal — the owner is not
+  // waving a warning away, they are telling the app something it could not know.
+  'vk.herinnerToch': { nl: 'Toch herinneren', ar: 'أرسل التذكير على أي حال', en: 'Remind anyway' },
+  'bewijs.herinner.geblokkeerd': {
+    nl: 'Nog niet verstuurd: in je bank staat {bewijs}. Koppel die betaling bij Bank, of verstuur de herinnering toch als het om iets anders gaat.',
+    ar: 'لم تُرسل بعد: في حسابك البنكي {bewijs}. اربط هذه الدفعة في صفحة Bank، أو أرسل التذكير على أي حال إن كانت تخصّ شيئاً آخر.',
+    en: 'Not sent yet: your bank shows {bewijs}. Link that payment under Bank, or send the reminder anyway if it is about something else.',
+  },
+  // [NO-SILENT-EMPTY] The check itself did not run. The reminder still goes out — the owner
+  // pressed the button and the app has no ground to refuse — but it may not pretend it looked.
+  'bewijs.herinner.nietGecontroleerd': {
+    nl: 'Verstuurd. We konden deze factuur niet met je bank vergelijken, dus is niet gecontroleerd of er al betaald is.',
+    ar: 'أُرسل. تعذّرت مقارنة هذه الفاتورة بحسابك البنكي، لذلك لم يُتحقق ممّا إذا كانت مدفوعة.',
+    en: 'Sent. We could not compare this invoice with your bank, so whether it was already paid has not been checked.',
+  },
+
+  'bewijs.beperkt.beide': {
+    nl: 'Niet alles is meegenomen: {facturen} facturen en {transacties} banktransacties vielen buiten deze controle.',
+    ar: 'لم يُشمل كل شيء: {facturen} فاتورة و{transacties} حركة بنكية خارج نطاق هذا الفحص.',
+    en: 'Not everything was included: {facturen} invoices and {transacties} bank transactions fell outside this check.',
+  },
+
   // ─── [BTW-RESERVERING] The money in the account that is already the tax office's ────────────
   //
   // Every sentence here is about money the owner believes they have. They are deliberately short
@@ -10088,6 +10678,14 @@ export const MESSAGES = {
   'log.btw.filed': { nl: 'BTW-aangifte als ingediend gemarkeerd', en: 'VAT return marked as filed', ar: 'وُسم الإقرار الضريبي كمُقدَّم' },
   'log.btw.filed_despite_warnings': { nl: 'BTW-aangifte ingediend ondanks waarschuwingen', en: 'VAT return filed despite warnings', ar: 'قُدّم الإقرار رغم التحذيرات' },
   'log.btw.filing_unlocked': { nl: 'Een ingediend kwartaal weer opengezet', en: 'A filed quarter re-opened', ar: 'أُعيد فتح ربع مُقدَّم' },
+  // [SUPPLETIE-VERREKEND] Added by another session in the same week as the logboek itself, which
+  // is exactly the collision AGENTS.md describes: both branches merged cleanly and the COMBINATION
+  // was broken — an action with no sentence reaches the logboek as a bare identifier.
+  'log.btw.correction_carried': {
+    nl: 'Een correctie in een latere aangifte verwerkt',
+    en: 'A correction processed in a later VAT return',
+    ar: 'عولج تصحيح ضمن إقرار لاحق',
+  },
   'log.accountant.client_invited': { nl: 'Klant uitgenodigd', en: 'Client invited', ar: 'دُعي عميل' },
   'log.accountant.client_linked': { nl: 'Koppeling met een boekhouder tot stand gekomen', en: 'Link with a bookkeeper established', ar: 'تمّ ربط مع محاسب' },
   'log.accountant.client_unlinked': { nl: 'Koppeling met een boekhouder verbroken', en: 'Link with a bookkeeper ended', ar: 'أُنهي الربط مع محاسب' },

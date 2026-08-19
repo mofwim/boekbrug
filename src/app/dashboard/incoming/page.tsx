@@ -96,6 +96,32 @@ export default async function IncomingPage() {
   // browser ging. Niet omdat de tweede de eerste nodig had — ze hebben allemaal alleen `user.id` —
   // maar omdat `await` op een regel eronder nu eenmaal wacht.
   //
+  // [NO-SILENT-EMPTY] En parallel lezen mag niet betekenen dat een MISLUKTE lezing weer stil is.
+  // Twee sessies raakten dit blok in dezelfde week: de ene maakte er één rit van, de andere gaf
+  // elke lezing een vlag. Zonder die vlag valt een kapotte lezing terug op `?? []`, en dan zegt dit
+  // scherm "Alles verwerkt" — op de wachtrij betekent die zin dat élke binnengekomen factuur is
+  // nagekeken en doorgezet, wat het tegenovergestelde is van wat een mislukte lezing weet. De
+  // eigenaar stopt met kijken en een onbevestigde factuur bereikt Crediteuren, de voorbelasting en
+  // de aangifte nooit. Dus: één rit én de vlag.
+  const readFailed: string[] = [];
+  const readOrFlag = async <T,>(label: string, run: () => Promise<T[] | null>): Promise<T[]> => {
+    try {
+      const rows = await run();
+      if (rows === null) throw new Error("read returned no rows object");
+      return rows;
+    } catch (e) {
+      console.error("[NO-SILENT-EMPTY] incoming source read failed", {
+        userId: user.id, source: label, error: e instanceof Error ? e.message : String(e),
+      });
+      readFailed.push(label);
+      return [];
+    }
+  };
+  // Ze stonden hier onder elkaar met een `await` ervoor, en dat is precies zo duur als het klinkt:
+  // de pagina wachtte acht keer op een heen-en-weer naar de database vóór er één byte naar de
+  // browser ging. Niet omdat de tweede de eerste nodig had — ze hebben allemaal alleen `user.id` —
+  // maar omdat `await` op een regel eronder nu eenmaal wacht.
+  //
   // Dit is de goedkoopste soort snelheid die er is: geen enkele query verandert, geen enkele regel
   // logica verschuift, alleen de VOLGORDE waarin erop gewacht wordt. Wat acht ritten na elkaar was,
   // is nu één rit voor alle acht.
@@ -150,7 +176,7 @@ export default async function IncomingPage() {
     // Gesorteerd op invoice_date (nieuwste eerst): created_at is het IMPORT-moment, en dat heeft
     // bij een backfill niets met de echte factuurdatum te maken — daarop sorteren maakte de
     // wachtrij door elkaar gegooid.
-    fetchAllRows((from, to) => supabase
+    readOrFlag("controlewachtrij", () => fetchAllRows((from, to) => supabase
       .from("invoices")
       .select(INVOICE_COLUMNS)
       .eq("receiver_id", user.id)
@@ -160,11 +186,16 @@ export default async function IncomingPage() {
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, to)
-    ).catch(() => null),
+        )),
 
     // Genegeerd: mét het label, en bij een ontbrekende kolom zonder. Zie de toelichting bij
     // fetchIgnored hierboven — een leeg Genegeerd-tabblad is de plek waar niets verloren mag lijken.
-    fetchIgnored(ignoredColumns).catch(() => fetchIgnored(INVOICE_COLUMNS).catch(() => null)),
+    // De kolom-fallback blijft; alleen de LAATSTE redding verandert: lukt zelfs de kale lijst niet,
+    // dan zei het tabblad "niets genegeerd" over het enige scherm waar een gearchiveerde factuur
+    // terug te halen is. Archiveren is hier het verwijderen, dus dat is een claim dat er niets meer
+    // te redden valt.
+    readOrFlag("genegeerde facturen", () =>
+      fetchIgnored(ignoredColumns).catch(() => fetchIgnored(INVOICE_COLUMNS))),
 
     // [INBOX-CROWD-OUT] Twee queries, geen gedeelde cap: in één gezamenlijke query verdrongen
     // nieuwere betaalde rijen de oudere ONBETAALDE, en dan stond een openstaande rekening wel op
@@ -201,8 +232,18 @@ export default async function IncomingPage() {
 
   const { data: profile } = profileRes;
   const { data: connection } = connectionRes;
-  const { data: confirmedReceivedRaw } = confirmedReceivedRes;
-  const { data: confirmedPaidRaw } = confirmedPaidRes;
+  // [NO-SILENT-EMPTY] `const { data }` zonder `error`: supabase-js gooit niet, het geeft
+  // { data: null, error } terug — dus kwam een mislukte lezing hier aan als een leeg tabblad dat
+  // zegt dat de eigenaar niets heeft bevestigd. Beide lezingen lopen nu langs dezelfde vlag.
+  const { data: confirmedReceivedRaw, error: confirmedReceivedErr } = confirmedReceivedRes;
+  const { data: confirmedPaidRaw, error: confirmedPaidErr } = confirmedPaidRes;
+  if (confirmedReceivedErr || confirmedPaidErr) {
+    console.error("[NO-SILENT-EMPTY] incoming source read failed", {
+      userId: user.id, source: "bevestigde facturen",
+      error: (confirmedReceivedErr ?? confirmedPaidErr)?.message,
+    });
+    readFailed.push("bevestigde facturen");
+  }
   const { data: allFolders } = allFoldersRes;
 
   const userRole: "zzper" | "accountant" =
@@ -357,6 +398,7 @@ export default async function IncomingPage() {
       connectionStatus={connectionStatus}
       userRole={userRole}
       readingHints={readingHints}
+      readFailed={readFailed}
     />
   );
 }

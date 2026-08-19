@@ -30,6 +30,8 @@ import { planAccountantDay } from "@/lib/accountant-daily";
 import { getAangifteDeadline } from "@/modules/accountant/accountant.service";
 import { lastCompletedQuarter } from "@/lib/quarter";
 import { amsterdamToday } from "@/lib/format-nl";
+// [DEPLOY-SAFE] The divergence stamps arrive by a hand-applied migration — see the block below.
+import { isMissingColumn, isMissingRelation } from "@/lib/pg-missing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -95,9 +97,35 @@ export async function GET(req: NextRequest) {
   // Yesterday, as a timestamp — the window for "new". A day exactly, so a run that slips by an hour
   // neither repeats nor skips anything.
   const since = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString();
+  const sinceMs = Date.parse(since);
+
+  /**
+   * Is this timestamp inside the "new" window?
+   *
+   * PARSED, not compared as a string, and the difference is measurable. PostgREST renders a
+   * timestamptz as `2026-08-15T10:00:00+00:00` while this cron builds `2026-08-15T00:00:00.000Z`,
+   * and a lexicographic comparison of the two diverges at the window boundary: `+` is 0x2B and `.`
+   * is 0x2E, so a stamp at exactly midnight UTC sorts BEFORE the window it is supposed to open.
+   *
+   * A microsecond, and it matters for one reason: these signals fire ONCE by design. A newly
+   * arrived stack is news today and ordinary tomorrow; a filing that moved is announced on the day
+   * it moved and afterwards only rides along on a message that was going out anyway. Miss the one
+   * firing and the accountant is never told at all.
+   *
+   * An unparseable value is not new. A row this cannot read must not manufacture a message.
+   */
+  const isNew = (iso: string | null | undefined): boolean => {
+    const ms = Date.parse(iso ?? "");
+    return Number.isFinite(ms) && ms >= sinceMs;
+  };
 
   let sent = 0;
   let quiet = 0;
+  // [CRON-HONEST] Third counter, and without it the two above cannot tell a healthy morning from a
+  // broken one. Every accountant this run could not be served — a read that threw, a notification
+  // the database refused — used to leave no number at all: `sent` and `quiet` simply did not add up
+  // to `accountants`, and nothing anywhere compares those. See the heartbeat at the end.
+  let failed = 0;
 
   for (const [accountantId, clientIds] of clientsByAccountant) {
     try {
@@ -112,7 +140,7 @@ export async function GET(req: NextRequest) {
           .order("id", { ascending: true }).range(from, to),
       );
       const totalToConfirm = rows.length;
-      const newToConfirm = rows.filter((r) => (r.created_at ?? "") >= since).length;
+      const newToConfirm = rows.filter((r) => isNew(r.created_at)).length;
 
       // Which of this accountant's clients have NOT filed the due quarter. A failed read here must
       // not read as "everyone still has to file" — that would invent urgency — so it degrades to
@@ -138,7 +166,48 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      const message = planAccountantDay({ newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled });
+      // [SUPPLETIE] Filed quarters at this accountant's clients whose figures have MOVED since the
+      // aangifte went out. art. 10a AWR makes that a reporting duty with a clock on it, and the
+      // accountant is the person who discharges it — so it belongs in the one message they read.
+      //
+      // Cheap by construction: btw_filings carries the stamp (first_divergence_at, written once at
+      // the moment a correction lands in a filed quarter) and the partial index covers exactly the
+      // stamped rows. No figure is recomputed here — the divergence was already established where
+      // it happened.
+      //
+      // Degrades to ZERO on any failure, deliberately, and for the same reason the deadline half
+      // above does: this signal ADDS urgency, so an unreadable answer must make the morning quieter
+      // rather than invent a suppletie that may not exist. Logged, never silent to the operator.
+      let newlyDivergedQuarters = 0;
+      let divergedQuarters = 0;
+      try {
+        const diverged = await fetchAllRows<{ first_divergence_at: string | null }>((from, to) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (pipeline as any).from("btw_filings").select("user_id, year, quarter, first_divergence_at")
+            .in("user_id", clientIds)
+            .not("first_divergence_at", "is", null)
+            .order("user_id", { ascending: true }).range(from, to),
+        );
+        divergedQuarters = diverged.length;
+        newlyDivergedQuarters = diverged.filter((d) => isNew(d.first_divergence_at)).length;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // [DEPLOY-SAFE] btw_filings_divergence.sql is applied by hand. Until it lands there is no
+        // stamp to read, and that is a complete answer (nothing has been recorded as moved) rather
+        // than a failure worth an error line every morning.
+        if (isMissingColumn(message) || isMissingRelation(message)) {
+          console.log("[CRON-DAGSTART] divergence stamps not migrated yet — the suppletie signal stays quiet");
+        } else {
+          console.warn("[CRON-DAGSTART] btw_filings divergence unreadable — the suppletie signal stays quiet this run", {
+            accountantId, error: message,
+          });
+        }
+      }
+
+      const message = planAccountantDay({
+        newToConfirm, totalToConfirm, daysToDeadline, clientsNotFiled,
+        newlyDivergedQuarters, divergedQuarters,
+      });
       if (!message) { quiet++; continue; }
 
       const melding = await createNotification({
@@ -149,20 +218,39 @@ export async function GET(req: NextRequest) {
         link: message.link,
       });
       if (!melding.ok) {
+        // The message was composed and then not delivered: this accountant has work waiting and
+        // will not hear about it. Counted, so the run cannot report itself green.
         console.error("[CRON-DAGSTART] notification insert failed", { accountantId, error: melding.error });
+        failed++;
         continue;
       }
       sent++;
     } catch (e) {
-      // Best-effort per accountant: one failure must never stop the rest of the round.
+      // Best-effort per accountant: one failure must never stop the rest of the round. Continuing
+      // is right; being silent about it is not — an accountant skipped here is one who was not told
+      // about a confirm stack or a deadline, which is the entire purpose of this job.
+      failed++;
       console.error("[CRON-DAGSTART] accountant skipped", {
         accountantId, error: e instanceof Error ? e.message : String(e),
       });
     }
   }
 
-  await finishCronRun(pipeline, cronRunId, { ok: true, result: { sent, quiet } });
+  // [CRON-HONEST] `ok: true` used to be a constant here, and it is the one field with a reader:
+  // judgeCron turns ok=false into "gefaald" on /api/health. So a run in which EVERY accountant threw
+  // — an unreachable invoices table, a notifications table refusing every insert — closed its own
+  // heartbeat green with sent:0, quiet:0, and the health page said the morning message was fine.
+  // The same shape the reminders cron already uses: the run is good when nothing failed.
+  await finishCronRun(pipeline, cronRunId, {
+    ok: failed === 0,
+    result: { sent, quiet, failed },
+    ...(failed > 0
+      ? { error: `${failed} of ${clientsByAccountant.size} accountants could not be served` }
+      : {}),
+  });
   // `quiet` is returned on purpose: a run where everybody was quiet is the healthy common case, and
-  // without the number it is indistinguishable from a run that found nobody at all.
-  return NextResponse.json({ ok: true, accountants: clientsByAccountant.size, sent, quiet, daysToDeadline });
+  // without the number it is indistinguishable from a run that found nobody at all. `failed` is
+  // returned for the same reason in the other direction — a caller reading only `sent` cannot tell
+  // "nobody needed a message" from "nobody could be reached".
+  return NextResponse.json({ ok: failed === 0, accountants: clientsByAccountant.size, sent, quiet, failed, daysToDeadline });
 }

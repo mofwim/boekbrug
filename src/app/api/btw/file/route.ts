@@ -13,23 +13,12 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence, decideFilingWrite } from "@/lib/btw-filing";
+import { quarterBounds, figuresOf, readFiling } from "@/lib/filed-quarter";
 // [KAS-NEGATIEF] The same drawer witness /dashboard/klaar blocks on — see the gate below.
 import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { logAuditAction, getClientIP } from "@/lib/audit";
-// [DEPLOY-SAFE] "btw_filings isn't there yet" vs "the read failed" — see pg-missing.ts
-import { isMissingRelation } from "@/lib/pg-missing";
 // [TZ] "Has this quarter ended?" is an Amsterdam-day question — see the filing-window gate below.
 import { amsterdamToday, formatDateNL } from "@/lib/format-nl";
-
-function pad(n: number): string { return String(n).padStart(2, "0"); }
-
-function quarterBounds(year: number, quarter: number): { start: string; end: string } {
-  const startMonth = (quarter - 1) * 3;
-  const start = `${year}-${pad(startMonth + 1)}-01`;
-  const endD = new Date(Date.UTC(year, startMonth + 3, 0));
-  const end = `${endD.getUTCFullYear()}-${pad(endD.getUTCMonth() + 1)}-${pad(endD.getUTCDate())}`;
-  return { start, end };
-}
 
 function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: number } | null {
   const y = Number(year);
@@ -39,60 +28,11 @@ function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: 
   return { year: y, quarter: q };
 }
 
-/** The five figures btw_filings freezes, plus when it was frozen. */
-interface FilingRow {
-  filed_at: string;
-  omzet: number | null; kosten: number | null;
-  btw_verschuldigd: number | null; btw_voorbelasting: number | null; btw_saldo: number | null;
-}
-
-const FILING_COLS = "filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo";
-
-function figuresOf(row: FilingRow) {
-  return {
-    omzet: Number(row.omzet) || 0,
-    kosten: Number(row.kosten) || 0,
-    btwVerschuldigd: Number(row.btw_verschuldigd) || 0,
-    btwVoorbelasting: Number(row.btw_voorbelasting) || 0,
-    btwSaldo: Number(row.btw_saldo) || 0,
-  };
-}
-
-/**
- * [FILING-NO-OVERWRITE] Read the existing filing for one quarter — ONE place, because three
- * handlers here need the same answer and the answer has three states, not two:
- *
- *   { row }            — there is a filing
- *   { row: null }      — there is none (or btw_filings has not been migrated here yet)
- *   { failed: true }   — we could not tell
- *
- * The third one is the whole point. Every caller of this table used to drop the read error, and
- * "we could not tell" then rendered as "not filed" — which is the answer that OFFERS to file, and
- * filing overwrote the snapshot. A read failure must never be able to start that.
- */
-async function readFiling(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any,
-  userId: string,
-  year: number,
-  quarter: number,
-): Promise<{ row: FilingRow | null; failed: boolean }> {
-  const { data, error } = await db
-    .from("btw_filings")
-    .select(FILING_COLS)
-    .eq("user_id", userId)
-    .eq("year", year)
-    .eq("quarter", quarter)
-    .maybeSingle();
-  if (error) {
-    // A table that has not been created yet genuinely holds no filings — deploy-safe, not unknown.
-    if (isMissingRelation(error.message)) return { row: null, failed: false };
-    console.error("[FILING-NO-OVERWRITE] btw_filings read failed", { userId, year, quarter, error: error.message });
-    return { row: null, failed: true };
-  }
-  return { row: (data as FilingRow | null) ?? null, failed: false };
-}
-
+// [SUPPLETIE] quarterBounds / FILING_COLS / figuresOf / readFiling used to live here as private
+// copies. They now come from lib/filed-quarter.ts, because the correction routes ask the SAME
+// question ("is this quarter filed, and has it moved?") and two copies of that rule drift on the
+// first change to either — which for this particular rule means one screen announcing a suppletie
+// and another staying quiet about the same quarter.
 /** One sentence for "we could not read your filing", used wherever that read is fail-closed. */
 const READ_FAILED = {
   error: "filing_read_failed",

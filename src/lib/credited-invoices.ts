@@ -23,6 +23,8 @@
 // after a partial credit — and that amount is printed in a reminder to a customer. Two roundings
 // disagree on exactly the half cents that end up in a demand for payment.
 import { round2 } from "./invoice-totals";
+// The direction of the MONEY, which is not always the direction of the document — see below.
+import type { ProofDirection } from "./open-invoice-proof-types";
 
 /** The fields the receivable rule reads. A subset of the invoices row. */
 export interface CreditableInvoiceRow {
@@ -97,6 +99,48 @@ export function creditedTotalsFrom(
   return out;
 }
 
+/**
+ * [CREDIT-BEWIJS] One credit, as the owner would recognise it: its number, its date, its amount.
+ *
+ * creditedTotalsFrom answers "how much came back" and nothing else, which is all the arithmetic
+ * needs and less than the screen needs. "Deels gecrediteerd · € 250" is a conclusion the owner can
+ * only check by finding the credit notes themselves — and a credit note is a document they SENT,
+ * with a number on it. Naming them costs one more column in a query that was already running.
+ */
+export interface CreditDetail {
+  /** The creditnota's own number. Null only for a draft that never got one (Art. 35). */
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  /** What this credit gave back, as a positive amount. */
+  amount: number;
+}
+
+/** The credits per invoice, newest first — the same rows creditedTotalsFrom adds up. */
+export function creditDetailsFrom(
+  creditnotaRows: readonly (CreditnotaRow & { invoice_number?: string | null; invoice_date?: string | null })[] | null | undefined
+): Map<string, CreditDetail[]> {
+  const out = new Map<string, CreditDetail[]>();
+  for (const r of creditnotaRows ?? []) {
+    const id = r?.original_invoice_id;
+    if (!id) continue;
+    const amount = magnitude(r?.total_inc_btw);
+    if (amount <= EPSILON) continue;
+    const list = out.get(id) ?? [];
+    list.push({
+      invoiceNumber: r.invoice_number ?? null,
+      invoiceDate: r.invoice_date ?? null,
+      amount: round2(amount),
+    });
+    out.set(id, list);
+  }
+  // Newest first: the credit the owner is most likely to be looking for is the last one they sent.
+  // A row without a date sorts last rather than jumping the queue on an empty string.
+  for (const list of out.values()) {
+    list.sort((a, b) => (b.invoiceDate ?? "").localeCompare(a.invoiceDate ?? ""));
+  }
+  return out;
+}
+
 /** Half a cent — the same margin the rest of the app uses for "this amount is settled". */
 const EPSILON = 0.005;
 
@@ -167,4 +211,35 @@ export function openAfterCredit(
   const rest = totaal - betaald - gecrediteerd;
   if (rest <= 0) return 0;
   return round2(rest);
+}
+
+/**
+ * [CREDIT-SIGN] Which way the MONEY moves for this document — not which way the document points.
+ *
+ * The invoices table has one `direction` column and it describes the DOCUMENT: who issued it. For
+ * an ordinary invoice that is also the direction of the money, so the two were treated as the same
+ * thing everywhere. On a creditnota they are opposites:
+ *
+ *     outgoing factuur     the owner issued it   → money comes IN
+ *     outgoing creditnota  the owner issued it   → money goes OUT   (a refund to the customer)
+ *     incoming factuur     a supplier issued it  → money goes OUT
+ *     incoming creditnota  a supplier issued it  → money comes IN
+ *
+ * The evidence line under "Betaald" got this wrong for exactly the two credit cases: a refund the
+ * owner paid out rendered as "€ 500,00 bijgeschreven … van Kiwi Food Market" while the bank line
+ * beside it read −500. Money leaving, described as money arriving, on the one line on that screen
+ * that exists to be believed.
+ *
+ * A creditnota is recognised by its type OR by a negative total — the same pair the screens use,
+ * because a row can carry the sign before anyone has set the type (an AI read, an import).
+ */
+export function moneyDirection(row: {
+  direction?: string | null;
+  invoice_type?: string | null;
+  total_inc_btw?: number | null;
+}): ProofDirection {
+  const documentIsOutgoing = (row.direction ?? "outgoing") !== "incoming";
+  const credit = isCreditnota(row as CreditableInvoiceRow) || (Number(row.total_inc_btw) || 0) < 0;
+  // XOR: a creditnota reverses the flow its document direction implies.
+  return documentIsOutgoing === credit ? "incoming" : "outgoing";
 }

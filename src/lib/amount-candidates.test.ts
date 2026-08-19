@@ -198,3 +198,60 @@ test("[ANDER-TOTAAL] with no alternative the honest old sentence stays", async (
   assert.match(reason, /controleer het aan de factuur zelf/,
     "when the app has nothing better, it says so rather than inventing a candidate");
 });
+
+// ── [TARIEF-MOGELIJK] + [SCHAAL] A quantity column is not a totals block ─────
+//
+// Measured on BALKIP B.V. 264091, a poultry wholesaler's invoice for € 1.224,75. Its Aantal column
+// prints POTEN 50, VLEUGELS 30, KIP FILET 80 — and the owner was shown, on the card, in the app's
+// own voice:
+//
+//     "er staat wél € 50,00 + € 30,00 btw = € 80,00"
+//
+// Seven such triples were on that document and every one of them implied an impossible rate: 60%,
+// 50%, 33%, 30%, 25%. The sum identity is a real constraint and, on a wholesale invoice, nowhere
+// near enough — small integers add up constantly. Two cheap constraints separate money from
+// arithmetic: a possible Dutch rate, and the same order of magnitude as what was read.
+
+/** The amounts a blind transcription of that invoice produces, quantity column included. */
+const BALKIP = [
+  50, 30, 80, 40, 15, 12, 10, 9, 5, 2,        // the Aantal column
+  2.28, 114.00, 2.57, 77.10, 3.44, 51.60,     // price / line total pairs
+  5.69, 455.20, 2.56, 102.40, 2.31, 11.55,
+  3.96, 39.60, 5.27, 52.70, 2.52, 25.20,
+  2.96, 26.64, 6.81, 75.11, 7.71, 92.52,
+];
+
+test("[TARIEF-MOGELIJK] no candidate implies a rate the Netherlands does not have", () => {
+  for (const c of totalsCandidates(BALKIP)) {
+    assert.ok(c.btw / c.ex <= 0.2151,
+      `${c.ex} + ${c.btw} = ${c.inc} implies ${(c.btw / c.ex * 100).toFixed(0)}% — not a Dutch invoice`);
+  }
+  assert.ok(!totalsCandidates(BALKIP).some((c) => c.inc === 80),
+    "50 + 30 = 80 is a 60% rate: three quantities, not a totals block");
+});
+
+test("[SCHAAL] a competing reading of a number is the same size as that number", () => {
+  // Nothing at all is offered for this invoice, so the owner reads the honest "check it against the
+  // factuur" instead of a figure the app assembled out of a quantity column.
+  assert.equal(alternativeTotals(1224.75, BALKIP), null);
+
+  // A 20% ratio is not impossible, so the rate filter alone cannot reject it. What can: € 12 is not
+  // a rival reading of € 1.224,75.
+  const small = [10, 2, 12, 5, 3, 8];
+  assert.ok(totalsCandidates(small).some((c) => c.inc === 12), "12 IS a candidate on its own");
+  assert.equal(alternativeTotals(1224.75, small), null, "…but not as the total of this invoice");
+  assert.equal(alternativeTotals(11.5, small)?.inc, 12, "…and it speaks when the read is that size");
+  // The boundary is a factor of ten — wide enough for a decimal-point slip, the commonest misread.
+  assert.equal(alternativeTotals(120, small)?.inc, 12, "exactly ten times smaller still speaks");
+  assert.equal(alternativeTotals(140, small), null, "eleven times is too far to be the same number");
+});
+
+test("[TARIEF-MOGELIJK] the cases this feature was BUILT from still fire", () => {
+  // If a filter added here kills these, the filter is wrong and not the feature.
+  const alt = alternativeTotals(1149.56, NEMAFOOD);
+  assert.deepEqual(alt, { ex: 1065.14, btw: 95.54, inc: 1160.68 }, "NemaFood is still found");
+  assert.equal(alternativeTotals(1120, [1000, 210, 1210, 55, 12])?.inc, 1210, "a 21% block");
+  assert.equal(alternativeTotals(2810, [2000, 180, 2180, 44])?.inc, 2180, "a 9% block");
+  assert.equal(alternativeTotals(1160.68, NEMAFOOD), null, "a corroborated read stays silent");
+  assert.equal(alternativeTotals(null, NEMAFOOD)?.inc, 1160.68, "with no read, the block stands alone");
+});

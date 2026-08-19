@@ -36,6 +36,9 @@ import {
   reminderTierDue,
   openstaandOf,
   amsterdamTodayDayNumber,
+  // [HERINNER-BEWIJS] Needed to tell the FIRST day a tier came due from every day after it — see
+  // the hold below, where that difference decides whether the owner is interrupted again.
+  dayNumberFromIso,
 } from "@/lib/invoice-reminders";
 // [CREDITNOTA-NO-CHASE] shared helper for the credited-ids set
 // [DEEL-CREDIT] …and it is a COVERAGE question now, not a yes/no one. A partly credited invoice
@@ -51,6 +54,10 @@ import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 import { reportHandledFailure } from "@/lib/report-handled"
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path"
+// [HERINNER-BEWIJS] Before chasing a customer, ask the bank whether they already paid. Same
+// engine and same rule as the panel on the sales list — see the block inside the owner loop.
+import { collectOpenInvoiceProof } from "@/lib/open-invoice-proof-collect";
+import { describeHit } from "@/lib/open-invoice-proof-text";
 
 const EUR_NL = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 // [TZ] timeZone PINNED — same reason as lib/incasso.ts: formatDayNL builds midnight UTC from the
@@ -234,6 +241,21 @@ export async function GET(req: NextRequest) {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch(() => [] as { invoice_id: string; day_offset: number }[]);
+  // [SPOOR-BEWIJS] That `.catch(() => [])` degrades an unreadable trail to "nothing sent yet",
+  // which is the exact shape of the defect the manual route had. Here it is survivable, and it is
+  // worth writing down WHY, because the reason lives two hundred lines away and in a database
+  // index rather than in this function:
+  //
+  //   · the tier is chosen by AGE, not from the trail — reminderTierDue() takes the highest offset
+  //     the invoice has reached, so an empty trail cannot escalate anyone early;
+  //   · the send is CLAIM-THEN-SEND on UNIQUE(invoice_id, day_offset) with ignoreDuplicates, and an
+  //     empty claim result means "already sent, do not send".
+  //
+  // So a re-send of a tier already sent is refused by the index, not by this read. The manual route
+  // has no such backstop — its offset is DERIVED from the trail (nextManualOffset), so an empty
+  // trail hands it a free number and the mail goes out. That is why the fix lives there and this
+  // stays as it is. If the claim below ever loses ignoreDuplicates or its onConflict, this line
+  // becomes a double-dunning bug the same afternoon — which is what the gate pins.
 
   // ── [CREDITNOTA-NO-CHASE] Which candidates were withdrawn with a creditnota? ──
   // A credited invoice KEEPS its 'sent'/'overdue' status, its positive total and its due date
@@ -304,6 +326,11 @@ export async function GET(req: NextRequest) {
   let sent = 0;
   let failed = 0;
   let skippedDuplicate = 0;
+  // [HERINNER-BEWIJS] Two different holds, counted apart: `bankHeld` is "the bank says this may
+  // already be paid" (a finding), `bankCheckHeld` is "we could not look" (an outage). Collapsing
+  // them would hide a broken read inside a number that looks like the guard working.
+  let bankHeld = 0;
+  let bankCheckHeld = 0;
   let ownersProcessed = 0;
   let truncated = 0;
 
@@ -340,23 +367,28 @@ export async function GET(req: NextRequest) {
       (i.client_email?.trim().toLowerCase() || i.client_name?.trim().toLowerCase() || "");
     const openstaandVan = (i: { total_inc_btw?: number | null; amount_paid?: number | null; id: string }) =>
       openAfterCredit(i.total_inc_btw, i.amount_paid, creditedByInvoice.get(i.id) ?? 0);
-    const claimsPerDebiteur = new Map<string, Array<{ invoiceNumber: string | null; open: number }>>();
-    for (const i of ownerInvoices) {
-      const open = openstaandVan(i);
-      if (open <= 0) continue;
-      const k = debiteurSleutel(i);
-      if (k === "") continue;
-      const list = claimsPerDebiteur.get(k);
-      if (list) list.push({ invoiceNumber: i.invoice_number, open });
-      else claimsPerDebiteur.set(k, [{ invoiceNumber: i.invoice_number, open }]);
-    }
     // Which debtors already received THE letter in this run. The second final-tier invoice of the
     // same debtor still gets its ordinary reminder and its trail row — it simply does not carry a
     // second statutory demand, because the first one already covered it by name.
     const aangemaand = new Set<string>();
 
+    // ── [HERINNER-BEWIJS] Nobody is watching this run ──────────────────────────────────────
+    //
+    // Every check above asks the BOOKS whether the invoice is open — status, amount_paid, the
+    // creditnota's — and all three answer "open" for the one case that costs the most: the customer
+    // paid, the bank line arrived, and nothing has attached it to the invoice yet. The books cannot
+    // see that, so nothing here could, and the letter went out to somebody who owes nothing.
+    //
+    // On the manual button that is a bad moment. Here it is worse, because on the final tier this
+    // cron does not send a nudge — it sends the statutory aanmaning that makes incassokosten
+    // claimable (art. 6:96 BW), at a customer who paid three weeks ago, with no human in the loop
+    // to notice.
+    //
+    // The tiers are computed first so the read below only happens for owners who are actually about
+    // to send something, and so the LOOP and the CHECK can never disagree about which invoices are
+    // in play.
+    const tierByInvoice = new Map<string, number>();
     for (const inv of ownerInvoices) {
-      // Pure decision: which tier (or none) is due right now?
       const tier = reminderTierDue({
         dueDate: inv.due_date,
         todayDayNumber: today,
@@ -376,7 +408,110 @@ export async function GET(req: NextRequest) {
         // nothing on any screen saying why the reminders went quiet.
         hasCreditnota: openAfterCredit(inv.total_inc_btw, 0, creditedByInvoice.get(inv.id) ?? 0) <= 0,
       });
+      if (tier != null) tierByInvoice.set(inv.id, tier);
+    }
+
+    // What the bank says about exactly those invoices. One read per owner, and only when there is
+    // something to send.
+    const bankHitById = new Map<string, string>();
+    if (tierByInvoice.size > 0) {
+      const bewijs = await collectOpenInvoiceProof({
+        pipeline, ownerId, direction: "outgoing", invoiceIds: [...tierByInvoice.keys()],
+      }).catch((e) => {
+        console.error("[HERINNER-BEWIJS] bankcontrole mislukt", { ownerId, error: e instanceof Error ? e.message : String(e) });
+        return null;
+      });
+      if (!bewijs || bewijs.readFailed) {
+        // FAIL CLOSED, per owner — the same trade the creditnota guard already makes in this file,
+        // and for the same reason: a held reminder costs a day (the schedule is daily and every
+        // tier is claimed idempotently, so tomorrow's run sends exactly what today's would have),
+        // while a wrong aanmaning costs a customer.
+        //
+        // Held, but never silently. The owner is the one who can act on it, and a cron that quietly
+        // stops chasing money is indistinguishable from one that is broken.
+        bankCheckHeld += tierByInvoice.size;
+        console.warn("[HERINNER-BEWIJS] herinneringen aangehouden — bank niet te vergelijken", {
+          ownerId, invoices: tierByInvoice.size,
+        });
+        // [TAAL-DB] Notification text is stored in the database and read back as data — Dutch, like
+        // every other notification this app writes.
+        await createNotification({
+          userId: ownerId,
+          title: "Herinneringen even niet verstuurd",
+          body: `We konden ${tierByInvoice.size === 1 ? "1 factuur" : `${tierByInvoice.size} facturen`} niet met je bank vergelijken, dus hebben we vandaag geen herinnering gestuurd. Morgen proberen we het opnieuw — of stuur hem zelf vanaf Verkoop.`,
+          type: "invoice",
+          link: "/dashboard/verkoop",
+        }).catch(() => {});
+        continue;
+      }
+      for (const h of bewijs.hits) bankHitById.set(h.invoiceId, describeHit(h, "outgoing"));
+    }
+
+    // The claims that go INTO the statutory demand — built here, after the bank check, and never
+    // before it.
+    //
+    // Art. 6:96 lid 7 adds one debtor's hoofdsommen into a single aanmaning, and lid 6 applies the
+    // staffel once over that total. An invoice we are holding because its payment may already be
+    // in the bank must therefore not be in the sum: it would overstate the hoofdsom, and an
+    // over-stated fee is the classic ground on which the WHOLE incassokosten claim is struck — the
+    // owner does not lose the difference, they lose the lot. For a consumer lid 5 makes that
+    // dwingend recht.
+    //
+    // This is the second-order mistake the guard itself could have caused: invoice A is held, and
+    // its amount rides into the demand for invoice B of the same debtor anyway.
+    const claimsPerDebiteur = new Map<string, Array<{ invoiceNumber: string | null; open: number }>>();
+    for (const i of ownerInvoices) {
+      if (bankHitById.has(i.id)) continue;
+      const open = openstaandVan(i);
+      if (open <= 0) continue;
+      const k = debiteurSleutel(i);
+      if (k === "") continue;
+      const list = claimsPerDebiteur.get(k);
+      if (list) list.push({ invoiceNumber: i.invoice_number, open });
+      else claimsPerDebiteur.set(k, [{ invoiceNumber: i.invoice_number, open }]);
+    }
+
+    for (const inv of ownerInvoices) {
+      // The pure decision, taken once above and read here. It used to be computed inside this loop;
+      // the bank check needs the SAME answer a moment earlier, and two calls to a pure function
+      // with the same inputs is one call too many to keep honest — the day somebody adds an
+      // argument to one of them, the guard and the send disagree about which invoices are in play.
+      const tier = tierByInvoice.get(inv.id);
       if (tier == null) continue;
+
+      // [HERINNER-BEWIJS] A payment that looks like this invoice is sitting unattached in the bank.
+      // The tier is NOT claimed — claiming it here would burn the reminder on a letter nobody sent,
+      // and the invoice would then age silently toward the next tier having never been chased.
+      const bankRegel = bankHitById.get(inv.id);
+      if (bankRegel) {
+        bankHeld += 1;
+        console.warn("[HERINNER-BEWIJS] herinnering aangehouden — betaling lijkt al binnen", { invoiceId: inv.id, tier });
+        // Told ONCE, on the day the reminder would have gone out — and then held quietly.
+        //
+        // The tier is deliberately not claimed, so it stays due every day until the owner attaches
+        // the bank line. A notification per day would be the app nagging about its own uncertainty:
+        // one stray unreconciled payment from a monthly customer would produce a message every
+        // morning for as long as it sits there, and a daily message is one nobody reads by week two.
+        //
+        // The information is not lost by going quiet — the [OPENSTAAND-BEWIJS] panel on the sales
+        // list states this same finding every time the owner opens the screen. The INTERRUPTION
+        // happens once; the STANDING state is on the screen. (The outage branch above does repeat,
+        // and should: there the reminders have stopped and nothing on any screen says so.)
+        const dueDay = dayNumberFromIso(inv.due_date);
+        if (dueDay != null && dueDay + tier === today) {
+          // [TAAL-DB] Stored notification text — data, Dutch like every other one in this app. It
+          // names the bank line, because "we hebben iets niet gedaan" without the evidence is a
+          // message the owner cannot act on.
+          await createNotification({
+            userId: ownerId,
+            title: "Herinnering niet verstuurd — betaling lijkt al binnen",
+            body: `Factuur ${inv.invoice_number?.trim() || "—"} aan ${inv.client_name?.trim() || "je klant"} staat nog open, maar in je bank staat ${bankRegel}. Koppel die betaling bij Bank, of stuur de herinnering zelf vanaf Verkoop.`,
+            type: "invoice",
+            link: "/dashboard/bank",
+          }).catch(() => {});
+        }
+        continue;
+      }
 
       // CLAIM the tier atomically. ignoreDuplicates → an empty result means a
       // concurrent run already claimed it, so we send NOTHING (no double dunning).
@@ -575,6 +710,11 @@ export async function GET(req: NextRequest) {
     sent,
     failed,
     skippedDuplicate,
+    // [HERINNER-BEWIJS] Both holds reach the run record, so a guard that starts firing on
+    // everything — or a bank read that has quietly been failing for a week — is visible in
+    // /dashboard/waarheid instead of only in a log nobody opens.
+    bankHeld,
+    bankCheckHeld,
     ownersProcessed,
     truncated,
   } });
@@ -586,6 +726,11 @@ export async function GET(req: NextRequest) {
     sent,
     failed,
     skippedDuplicate,
+    // [HERINNER-BEWIJS] Both holds reach the run record, so a guard that starts firing on
+    // everything — or a bank read that has quietly been failing for a week — is visible in
+    // /dashboard/waarheid instead of only in a log nobody opens.
+    bankHeld,
+    bankCheckHeld,
     ownersProcessed,
     truncated,
   });

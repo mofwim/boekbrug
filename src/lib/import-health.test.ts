@@ -301,5 +301,32 @@ console.log('\n— [E-FACTUUR-BESLECHT] de leverancier stuurde het bedrag zelf m
     rommel.reasons.some((r) => r.includes('onzeker gelezen')))
 }
 
+console.log('\n— [DUBBELE-ZIN] one field, one sentence —')
+{
+  // MEASURED on a Univé invoice. The number was the EMAIL-<ts> placeholder AND the reader was
+  // unsure about it, so two axes fired and the card printed two rows with the same action behind
+  // them: "het factuurnummer ontbreekt of kon niet worden gelezen" and "het factuurnummer is
+  // onzeker". Four warnings where there were three things wrong. A list that pads itself is how an
+  // owner learns to skim past the row that matters.
+  const beide = inv({ invoice_number: 'EMAIL-1786744846846', field_confidence: { invoice_number: 0.3 } })
+  const over = classifyImportHealth(beide).reasons.filter((r) => r.includes('factuurnummer'))
+  check('placeholder + onzeker → één zin, niet twee', over.length === 1)
+  check('…en het is de zin die het meeste zegt', over[0]?.includes('ontbreekt') === true)
+  // The FLAG is unchanged, so the field is pointed at exactly as hard as before. Only the second
+  // sentence goes; suppressing the flag would have hidden the field instead of tidying the list.
+  check('de vlag blijft staan — het veld wordt even hard aangewezen',
+    classifyImportHealth(beide).flags.invoiceNumber === true)
+
+  // Each axis alone still speaks, or the dedup would have silenced a real signal. The
+  // confidence-only row is the one that matters here: with the value axis quiet, the flag can only
+  // come from the confidence branch itself, so this is what actually pins that it still sets it.
+  // (The assertion above cannot — there the value axis has already raised the flag either way.)
+  const alleenOnzeker = classifyImportHealth(inv({ field_confidence: { invoice_number: 0.3 } }))
+  check('alleen onzeker → die zin staat er wél', alleenOnzeker.reasons.some((r) => r.includes('onzeker')))
+  check('alleen onzeker → en de vlag wordt daar gezet', alleenOnzeker.flags.invoiceNumber === true)
+  const alleenLeeg = classifyImportHealth(inv({ invoice_number: 'EMAIL-1786744846846' }))
+  check('alleen plaatshouder → die zin staat er wél', alleenLeeg.reasons.some((r) => r.includes('ontbreekt')))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

@@ -69,6 +69,40 @@ export const MIN_DISTINCTIVE_TOKEN = 4;
  */
 export const MIN_TEXT_LENGTH = 200;
 
+/**
+ * [GEGROND-DOMEIN] The shortest fused name worth searching for.
+ *
+ * Six characters, and it carries more weight than the token threshold above because it is matched
+ * as a SUBSTRING. "hvomeat" and "kiwifoodmarket" are specific; "bal" inside a longer word is the
+ * false corroboration this file exists to prevent.
+ */
+export const MIN_FUSED_LENGTH = 6;
+
+/**
+ * The document with punctuation dropped INSIDE each run of characters, and the runs kept apart.
+ *
+ * There is exactly one place a company writes its own name with the spaces taken out, and it is on
+ * nearly every invoice it sends: its domain. "HVO Meat" is hvomeat.nl, "Kiwi Food Market" is
+ * kiwifoodmarket.nl. normalizeText turns `administratie@hvomeat.nl` into three separate words, so
+ * whole-token matching looks for " meat " and finds " hvomeat " instead — a name printed twice on
+ * the paper, read as absent.
+ *
+ * Runs are kept APART on purpose. Fusing the whole text would weld neighbouring words together and
+ * corroborate names that were never printed: "De Vries" would be confirmed by any document
+ * containing "... de vries ...", which is evidence of nothing. Only characters inside one unbroken
+ * run are joined — which is exactly an e-mail address, a URL, or a hyphenated name.
+ */
+function fuseWithinWords(text: string): string {
+  return ` ${text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z0-9]+/g, ""))
+    .filter(Boolean)
+    .join(" ")} `;
+}
+
 /** The same normalisation the registry keys on, applied to a whole document. */
 function normalizeText(text: string): string {
   return ` ${text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim()} `;
@@ -108,7 +142,24 @@ export function groundVendorName(
   const haystack = normalizeText(t);
   // Whole tokens only. Substring matching would confirm "bal" inside "balans" and "totaal", which
   // is precisely the kind of false corroboration this file exists to avoid.
-  return tokens.some((tok) => haystack.includes(` ${tok} `)) ? "found" : "absent";
+  if (tokens.some((tok) => haystack.includes(` ${tok} `))) return "found";
+
+  // [GEGROND-DOMEIN] ...and then the one place a company prints its name with the spaces removed.
+  //
+  // Measured on an HVO Meat invoice: the letterhead is a logo (an image, carrying no characters),
+  // and the only text form of the name is `administratie@hvomeat.nl` and `www.hvomeat.nl`. The
+  // distinctive token is "meat"; the text has "hvomeat"; whole-token matching cannot see it. So the
+  // card said 'de naam "HVO Meat" staat nergens in de tekst van dit document' — two rows above its
+  // own "Afzender: administratie@hvomeat.nl". The check contradicted evidence the screen was
+  // already showing, which is the fastest way to teach an owner to tap past every warning.
+  //
+  // The FULL key, never a single token: "hvomeat" is specific, "bal" is not, and that is the whole
+  // difference between corroboration and coincidence. Below MIN_FUSED_LENGTH nothing is searched
+  // this way, for the same reason the token threshold exists at all.
+  const fusedKey = supplierNameKey(name).replace(/ /g, "");
+  if (fusedKey.length >= MIN_FUSED_LENGTH && fuseWithinWords(t).includes(fusedKey)) return "found";
+
+  return "absent";
 }
 
 /**

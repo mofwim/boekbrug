@@ -61,6 +61,10 @@ import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
 import { correctedFields } from "@/lib/reading-memory";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
+// [SUPPLETIE] The one door to "did this touch a quarter that is already at the Belastingdienst?"
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { filedQuarterImpacts, describeFiledQuarterImpact, stampDivergence } from "@/lib/filed-quarter";
+import { createNotification } from "@/lib/notifications";
 import type { Database } from "@/types/database.types";
 
 type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
@@ -443,10 +447,66 @@ export async function PATCH(
       })
     : null;
 
+  // ── [SUPPLETIE] Did this correction move a quarter that is already at the Belastingdienst? ──
+  //
+  // GUARD 7, and it does not refuse. The six above protect the books; this one protects a duty the
+  // owner acquires the moment the books move: art. 10a AWR obliges them to report a filed aangifte
+  // that has turned out wrong, and the obligation is time-bound. Blocking would be the wrong
+  // answer here — the owner cannot issue a creditnota against their own supplier, and the number
+  // being corrected is a reading of someone else's paper, so refusing leaves the books permanently
+  // wrong AND the Belastingdienst uninformed. Allow, compute, and say the number.
+  //
+  // BOTH dates, because a corrected invoice_date moves the invoice out of one quarter and into
+  // another: the first loses the amount and the second gains it, and naming one describes half of
+  // what just happened.
+  //
+  // After the write, never before: an obligation announced for a correction that did not save is a
+  // suppletie the owner would file over nothing.
+  const filedImpact = await filedQuarterImpacts({
+    pipeline: createPipelineClient(),
+    ownerId: user.id,
+    dates: [invoice.invoice_date, patch.invoice_date ?? invoice.invoice_date],
+  });
+  const suppletie: string[] = filedImpact.impacts.map(describeFiledQuarterImpact);
+  if (filedImpact.unknown) {
+    // [NO-SILENT-EMPTY] "We could not check" is not "nothing happened". The correction stands
+    // either way, and the owner is told which half of the answer is missing rather than being left
+    // to read silence as an all-clear.
+    suppletie.push(
+      "We konden niet nakijken of dit kwartaal al is ingediend. Je correctie is opgeslagen — " +
+      "controleer op de Waarheid-pagina of er een suppletie nodig is.",
+    );
+  }
+  for (const impact of filedImpact.impacts) {
+    // [SUPPLETIE] The moment of awareness, recorded now because it cannot be reconstructed later.
+    // Deploy-safe and never blocking — see stampDivergence.
+    await stampDivergence({
+      db: createPipelineClient(), ownerId: user.id,
+      year: impact.year, quarter: impact.quarter, nowIso: new Date().toISOString(),
+    });
+    // In the bell as well as on the screen. The modal closes; a duty with a legal clock on it may
+    // not close with it, and the notification is what the owner still has tomorrow morning.
+    const melding = await createNotification({
+      userId: user.id,
+      title: `Ingediend kwartaal ${impact.label} is gewijzigd`,
+      body: describeFiledQuarterImpact(impact),
+      type: "status",
+      link: "/dashboard/waarheid",
+    });
+    if (!melding.ok) {
+      console.error("[SUPPLETIE] melding over een gewijzigd ingediend kwartaal mislukt", {
+        invoiceId: id, quarter: impact.label, error: melding.error,
+      });
+    }
+  }
+
   // The screen replaces its row with THIS, so it must be what was stored — otherwise a flipped
   // credit note would show positive until the next reload and the owner would correct it again.
   return NextResponse.json({
     ok: true,
+    // [SUPPLETIE] One sentence per already-filed quarter this correction moved. Empty on the
+    // ordinary correction, which is nearly all of them.
+    suppletie,
     // Null when nothing was learned — the client says nothing rather than claiming a memory that
     // does not exist.
     supplier_memory: aliasLearned?.message ?? null,

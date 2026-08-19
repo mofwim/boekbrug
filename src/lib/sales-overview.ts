@@ -45,6 +45,22 @@ export interface SalesInvoice {
   last_reminder_at?: string | null;
   /** How many reminders already went out — the cron tiers included. */
   reminder_count?: number;
+  /**
+   * [SPOOR-BEWIJS] false = the reminder trail could NOT be read. Never the same thing as "none
+   * were sent", which is what both fields above degrade to when a read fails.
+   *
+   * The two fields above are the only memory this rule has of what the customer has already
+   * received. supabase-js answers a failed query with { data: null, error } rather than throwing,
+   * so `data ?? []` turns a database hiccup into an empty trail — and an empty trail is a
+   * PERMISSION: the cooling-off period has nothing to measure from, and the three-reminder
+   * ceiling counts to zero. Both guards switch themselves off, silently, on the one action in
+   * this app whose output is a letter to somebody else's inbox.
+   *
+   * Undefined reads as "known", so a caller that never had a trail problem keeps exactly the
+   * behaviour it always had. The two readers that CAN fail set it explicitly, and a gate pins
+   * that they do.
+   */
+  reminderTrailKnown?: boolean;
 }
 
 /**
@@ -215,6 +231,22 @@ export function canRemind(f: SalesInvoice, nowMs: number, creditedIncBtw = 0): R
   if (!f.client_email) return { allowed: false, reason: "Deze klant heeft geen e-mailadres." };
   if (state !== "te-laat") {
     return { allowed: false, reason: "De vervaldatum is nog niet voorbij — herinneren kan vanaf dan." };
+  }
+  // [SPOOR-BEWIJS] Everything above is true whatever the trail says — paid, credited, no e-mail
+  // address, not due yet. Everything BELOW is read off the trail, so this is where an unreadable
+  // one has to stop: the ceiling would count to zero and the cooling-off period would have no
+  // date to measure from, and both would report themselves as "clear to send".
+  //
+  // This is the same answer the unparseable-date branch below already gives, for the same reason
+  // — it was simply never reachable from a read that returns NOTHING rather than something
+  // broken. Standing still costs the owner a day. The alternative costs their customer a second
+  // demand for money, which is the harm this whole rule exists to prevent.
+  if (f.reminderTrailKnown === false) {
+    return {
+      allowed: false,
+      reason:
+        "We kunnen nu niet nakijken welke herinneringen er al uit zijn. Zolang dat zo is versturen we niets — anders krijgt je klant er misschien twee. Probeer het straks opnieuw.",
+    };
   }
   if ((f.reminder_count ?? 0) >= MAX_MANUAL_REMINDERS) {
     return {

@@ -10,6 +10,8 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { loadTeamNames } from '@/lib/acting-for-server'
 import { getSessionUser } from '@/lib/session-user'
 import FacturenClient from './FacturenClient'
+// [OPENSTAAND-BEWIJS] Is anything we are chasing already in the bank? See the block below.
+import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
 
 export default async function Page() {
   const supabase = await createServerSupabaseClient()
@@ -58,5 +60,22 @@ export default async function Page() {
     } catch { /* kolom bestaat nog niet — dan valt er niets te tonen */ }
   }
 
-  return <FacturenClient profile={profile} makers={makers} />
+  // [OPENSTAAND-BEWIJS] The same question as on Crediteuren, mirrored — and on this side it is
+  // sharper. A purchase invoice wrongly marked open costs the owner a second payment; a SALES
+  // invoice wrongly marked open costs them a customer. The app chases it: a reminder, then a
+  // firmer one, and on the last tier a statutory aanmaning that names collection costs. Sending
+  // that to somebody who paid three weeks ago is the most expensive thing this product can do.
+  //
+  // So the list says what it checked, against what, and until when. Never blocking: a proof that
+  // could not run leaves the page exactly as it was and says so.
+  const openProof = await collectOpenInvoiceProof({
+    pipeline: supabase, ownerId: user.id, direction: 'outgoing',
+  }).catch((e) => {
+    console.error('[OPENSTAAND-BEWIJS] sales proof failed — the list still renders', {
+      userId: user.id, error: e instanceof Error ? e.message : String(e),
+    })
+    return null
+  })
+
+  return <FacturenClient profile={profile} makers={makers} openProof={openProof} />
 }

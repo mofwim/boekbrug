@@ -32,6 +32,11 @@ import { canRemind, nextManualOffset } from '@/lib/sales-overview'
 // [DEEL-CREDIT] Bedragen in plaats van ja/nee — zie de creditnota-controle verderop.
 import { creditedTotalsFrom, openAfterCredit } from '@/lib/credited-invoices'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+// [HERINNER-BEWIJS] Is the money already in the bank? Same engine, same rule, same sentence as the
+// panel on the sales list — see the block just before the claim below.
+import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
+import { describeChaseBlock } from '@/lib/open-invoice-proof-text'
+import { getServerLocale, serverTranslator } from '@/lib/i18n/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,12 +107,29 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
 
     // ── Het spoor tot nu toe: hoeveel gingen er al uit, en wanneer de laatste? ──
+    //
+    // [SPOOR-BEWIJS] De fout wordt gelezen, en dat is de hele reparatie. supabase-js geeft bij een
+    // mislukte query { data: null, error } terug in plaats van te gooien, dus `eerder ?? []`
+    // maakte van een databasehapering een LEEG spoor — en een leeg spoor is een toestemming:
+    // canRemind telt dan nul herinneringen (het plafond van drie valt weg) en heeft geen datum om
+    // de wachttijd vanaf te meten (die valt óók weg). Beide bewakers zetten zichzelf uit.
+    //
+    // Dat is niet theoretisch, en de UNIQUE-index vangt het maar half op. Staat er al een
+    // handmatige herinnering, dan botst nextManualOffset op -1 en gaat er niets uit. Kwamen de
+    // eerdere herinneringen van de CRON (offsets 14, 30), dan is -1 nog vrij: de wachttijd is
+    // omzeild, de claim slaagt, en de klant die gisteren de 14-dagenherinnering kreeg krijgt er
+    // vandaag nog een. Eén mail te veel bij iemand anders in de inbox, door een leesfout.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: eerder } = await (pipeline as any)
+    const { data: eerder, error: spoorErr } = await (pipeline as any)
       .from('invoice_reminders')
       .select('day_offset, sent_at, status')
       .eq('invoice_id', id)
       .order('sent_at', { ascending: false })
+    if (spoorErr) {
+      console.error('[SPOOR-BEWIJS] herinneringsspoor onleesbaar — geen mail, geen aanname', {
+        id, ownerId, error: spoorErr.message,
+      })
+    }
     const rijen: Array<{ day_offset: number; sent_at: string; status: string }> = eerder ?? []
     const geslaagd = rijen.filter((r) => r.status !== 'failed')
 
@@ -131,6 +153,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         invoice_type: (inv as any).invoice_type ?? 'factuur',
         last_reminder_at: geslaagd[0]?.sent_at ?? null,
         reminder_count: geslaagd.length,
+        // [SPOOR-BEWIJS] De twee velden hierboven zijn alleen te vertrouwen als de lezing lukte.
+        // De regel weigert zelf als dat niet zo is — hier staat geen tweede versie van die regel,
+        // want twee plekken die "mag dit" beantwoorden zijn er één te veel.
+        reminderTrailKnown: !spoorErr,
       },
       Date.now(),
     )
@@ -181,6 +207,47 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       )
     }
 
+    // ── [HERINNER-BEWIJS] Is the money already sitting in the bank? ─────────
+    //
+    // Everything above this line asks the BOOKS whether the invoice is open — the status, the
+    // amount_paid, the creditnota's. All three say "open" for the case that costs the most: the
+    // customer paid, the bank line came in, and nobody has attached it to the invoice yet. The
+    // books cannot see it, so no arithmetic here can, and the mail goes out to somebody who paid.
+    //
+    // What that costs is not a wrong number on a screen. It is the owner's relationship with the
+    // person who pays them — and on the cron's last tier it is a statutory aanmaning naming
+    // incassokosten, sent to a customer who owes nothing.
+    //
+    // So the same engine the bank screen runs is asked the reverse question, scoped to this one
+    // invoice. Not a verdict: the answer comes back as a sentence with the bank line in it, and
+    // the owner decides. `confirmDespiteBankMatch` is that decision, arriving on a second,
+    // deliberate press — an owner who knows the payment is for something else must not be stuck.
+    //
+    // [NO-SILENT-EMPTY] A check that could not RUN does not block: the owner pressed the button
+    // and the app has no ground to refuse them. But it may not pretend it looked either, so the
+    // answer carries a warning and the screen says the comparison did not happen.
+    let bankCheckFailed = false
+    if (body?.confirmDespiteBankMatch !== true) {
+      const bewijs = await collectOpenInvoiceProof({
+        pipeline, ownerId, direction: 'outgoing', invoiceIds: [id],
+      }).catch((e) => {
+        console.error('[HERINNER-BEWIJS] bankcontrole mislukt — er is niets geblokkeerd', {
+          id, error: e instanceof Error ? e.message : String(e),
+        })
+        return null
+      })
+      if (!bewijs || bewijs.readFailed) {
+        bankCheckFailed = true
+      } else if (bewijs.hits.length > 0) {
+        // A refusal may not consume a reminder tier — the claim is written below this block on
+        // purpose, so nothing about this invoice's trail has changed when we answer.
+        return NextResponse.json(
+          { error: describeChaseBlock(bewijs.hits[0], await getServerLocale()), code: 'bank_payment_found' },
+          { status: 409 },
+        )
+      }
+    }
+
     // ── Claim vóór de mail ──────────────────────────────────────────────────
     // Zelfde volgorde als bij SnelStart: het onomkeerbare (een mail bij een klant) gebeurt pas
     // nadat het spoor vaststaat. Andersom kan een dubbele tik twee mails opleveren waarvan er
@@ -214,8 +281,19 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       .eq('id', ownerId)
       .single()
 
+    // [REMINDER-TRUTH] The RESULT is read, and that is the whole fix. sendInvoiceReminder returns
+    // { delivered } precisely because a provider REJECTION is not an exception: deliverEmail logs
+    // it, reports it, and returns false. This route awaited it and threw the answer away, so a
+    // rejected address ended here — claim still on 'sent', 200 back to the screen, "verstuurd N".
+    //
+    // What that costs the owner is worse than a lost mail. `geslaagd` counts every row that is not
+    // 'failed', and it feeds canRemind: the phantom send sets last_reminder_at to now and pushes
+    // reminder_count up, so the button then REFUSES the next attempt for the whole cooling-off
+    // period. Told it went out, and then blocked from sending it. Meanwhile the invoice ages toward
+    // the WIK term on a letter the customer never received.
+    let delivery: { delivered: boolean }
     try {
-      await sendInvoiceReminder({
+      delivery = await sendInvoiceReminder({
         toEmail: inv.client_email as string,
         clientName: inv.client_name?.trim() || 'klant',
         zzperName: eigenaarProfiel?.company_name || eigenaarProfiel?.full_name || 'BoekBrug',
@@ -241,6 +319,30 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       return NextResponse.json({ error: 'De herinnering kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
     }
 
+    // [REMINDER-TRUTH] A REJECTION is not the ambiguous case a throw is. The provider refused the
+    // message, so it demonstrably did not go out and a second attempt cannot become a second letter
+    // at the customer. The claim is therefore RELEASED rather than marked 'failed' — same reasoning
+    // as the cron, and here it also matters that releasing restores the button: a row left behind
+    // would keep canRemind refusing on a reminder that never happened.
+    if (!delivery.delivered) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: releaseErr } = await (pipeline as any)
+        .from('invoice_reminders').delete().eq('id', claim.id)
+      if (releaseErr) {
+        // Read, never discarded: supabase-js reports a query error in the RESULT. A release that
+        // silently did not happen leaves the phantom send standing — the exact state this branch
+        // exists to undo — so it has to be visible even though the answer below stays the same.
+        console.error('[REMINDER-TRUTH] afgewezen herinnering NIET vrijgegeven — de knop blijft geblokkeerd', {
+          id, error: releaseErr.message,
+        })
+      }
+      console.error('[REMINDER-TRUTH] herinnering geweigerd door de mailprovider', { id })
+      return NextResponse.json(
+        { error: 'De herinnering is niet aangekomen — controleer het e-mailadres van je klant en probeer opnieuw' },
+        { status: 502 },
+      )
+    }
+
     // [DEBITEUREN] Stuurde de BOEKHOUDER hem, dan moet de ondernemer het weten. Aan de andere kant
     // van die mail zit ZIJN klant, en de relatie die eronder lijdt is de zijne. Hij hoort niet pas
     // bij het volgende telefoontje te horen dat er is aangedrongen — dan is het zijn probleem
@@ -263,11 +365,25 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       action: 'invoice.reminder_sent',
       entityType: 'invoice',
       entityId: id,
-      newValue: { to: inv.client_email, offset, namens: isActingForOther(acting) ? ownerId : null },
+      newValue: {
+        to: inv.client_email, offset, namens: isActingForOther(acting) ? ownerId : null,
+        // [HERINNER-BEWIJS] Two facts an accountant would want months later, and neither is
+        // reconstructable from the invoice: that the owner overrode a found bank payment, and that
+        // the comparison could not be made at all. Both are ordinary, defensible choices — which
+        // is exactly why they belong in the trail rather than in nobody's memory.
+        ...(body?.confirmDespiteBankMatch === true ? { despiteBankMatch: true } : {}),
+        ...(bankCheckFailed ? { bankCheckFailed: true } : {}),
+      },
       ipAddress: getClientIP(request),
     }).catch(() => {})
 
-    return NextResponse.json({ ok: true, verstuurd: geslaagd.length + 1 })
+    // [NO-SILENT-EMPTY] The reminder went out; whether it SHOULD have was not fully checked.
+    // Saying so is the difference between a product that is careful and one that looks careful.
+    return NextResponse.json({
+      ok: true,
+      verstuurd: geslaagd.length + 1,
+      ...(bankCheckFailed ? { warning: (await serverTranslator())('bewijs.herinner.nietGecontroleerd') } : {}),
+    })
   } catch (e) {
     console.error('[ACTING-FOR] /api/invoice/[id]/reminder', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })

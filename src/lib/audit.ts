@@ -154,6 +154,7 @@ export type AuditAction =
   | 'btw.filed'                        // ← [TRUTH-FILED] owner froze a quarter's BTW-aangifte snapshot as ingediend
   | 'btw.filed_despite_warnings'       // ← [FILING-GATE] owner froze the snapshot while readiness blockers were still open (acknowledged)
   | 'btw.filing_unlocked'              // ← [FILING-UNLOCK-AUDIT] owner removed a filing (quarter unlocked); oldValue carries the snapshot that was deleted
+  | 'btw.correction_carried'           // ← [SUPPLETIE-VERREKEND] owner declared an earlier quarter's ≤€1.000 correction in a later aangifte; newValue carries the amount and the target quarter
   // Level 2 — Accountant relationships
   | 'accountant.client_invited'
   | 'accountant.client_linked'

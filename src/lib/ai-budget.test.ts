@@ -177,3 +177,94 @@ test("[COST-GUARD] the estimate still refuses to be talked down by bad input", (
   // Rounded UP, never down: the reservation errs toward tripping early.
   assert.equal(estimateCostMicros(1, 0), Math.ceil(MICROS_PER_KTOK.cacheWrite / 1000));
 });
+
+// ── 6. A blown fuse is not a verdict about a document ────────────────
+//
+// The reader (verifyInvoiceFromPdf) turns every throw into a confidence-0 FALLBACK that says
+// is_invoice:false, and re-throws only what it recognises as infrastructure. The fuse refuses
+// BEFORE Anthropic is reached, so it carries no HTTP status and no network symptom, and neither of
+// the two existing predicates recognised it. A blown daily ceiling therefore arrived downstream as
+// a confident "this is not an invoice" — and on the e-mail sync that verdict is permanent
+// (registered could_not_read, watermark past it). These tests pin the recognition and both wirings.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { AI_BUDGET_EXHAUSTED_ERROR, isAiBudgetError, BUDGET_EXHAUSTED_MESSAGE } from "./ai-budget";
+import { isTransientAiError, isAiApiError } from "./ai";
+import { isAiConfigError } from "./ai-model";
+
+test("[COST-GUARD] the fuse is recognised — and by nothing that existed before it", () => {
+  const blown = new Error(AI_BUDGET_EXHAUSTED_ERROR);
+  assert.equal(isAiBudgetError(blown), true);
+
+  // THE WHOLE REASON THIS PREDICATE EXISTS. If any of these three ever answered true, the fuse
+  // would already have been re-thrown and #26 would not have been a defect.
+  assert.equal(isTransientAiError(blown), false, "no network symptom — it never reached the network");
+  assert.equal(isAiApiError(blown), false, "no HTTP status — it never reached the API");
+  assert.equal(isAiConfigError(blown), false, "the configuration is fine; the day's money is not");
+});
+
+test("[COST-GUARD] the predicate answers about the fuse and nothing else", () => {
+  // A real document verdict is a normal return, never an exception — but the errors that DO reach
+  // this predicate must not be mistaken for the fuse, or a genuine outage would hold forever.
+  for (const msg of [
+    "Claude API error 429: rate_limit_error",
+    "Claude API error 404: not_found_error",
+    "fetch failed",
+    "Claude API returned unexpected response shape",
+    "",
+  ]) {
+    assert.equal(isAiBudgetError(new Error(msg)), false, msg);
+  }
+  assert.equal(isAiBudgetError(null), false);
+  assert.equal(isAiBudgetError(undefined), false);
+  // Wrapped by a caller that prefixed its own context: still the fuse.
+  assert.equal(isAiBudgetError(new Error(`classify failed: ${AI_BUDGET_EXHAUSTED_ERROR}`)), true);
+  // A plain string, as a rejected non-Error would arrive.
+  assert.equal(isAiBudgetError(AI_BUDGET_EXHAUSTED_ERROR), true);
+});
+
+test("[COST-GUARD] the message the fuse throws is the one the predicate looks for", () => {
+  // Not a mention — the WIRING. The three transports must throw the shared constant, so the text
+  // cannot be rewritten at one end while the predicate keeps matching the old words at the other.
+  const ai = readFileSync(join(process.cwd(), "src/lib/ai.ts"), "utf8");
+  const throwsConstant = ai.match(/throw new Error\(AI_BUDGET_EXHAUSTED_ERROR\)/g) ?? [];
+  assert.equal(throwsConstant.length, 3, "callClaude, callClaudeWithPdf and callClaudeWithImage");
+  assert.equal(
+    ai.includes(`'${AI_BUDGET_EXHAUSTED_ERROR}'`) || ai.includes(`"${AI_BUDGET_EXHAUSTED_ERROR}"`),
+    false,
+    "no transport may throw the text literally — that is how the two ends drift apart",
+  );
+  // And the Dutch sentence a user reads when it blows is still a sentence, not a key.
+  assert.match(BUDGET_EXHAUSTED_MESSAGE, /niet beschikbaar/);
+});
+
+test("[COST-GUARD] the reader re-throws the fuse instead of calling it a document verdict", () => {
+  const ai = readFileSync(join(process.cwd(), "src/lib/ai.ts"), "utf8");
+  // Slice to the ONE condition that decides re-throw vs FALLBACK, so this cannot pass on the
+  // predicate merely being imported or named in a comment somewhere else in a 3000-line file.
+  const line = ai.split("\n").find((l) => l.includes("opts?.throwOnTransient") && l.includes("throw error"));
+  assert.ok(line, "the re-throw condition still exists");
+  assert.match(line!, /isAiBudgetError\(error\)/, "a blown fuse must leave as an error, not as is_invoice:false");
+});
+
+test("[COST-GUARD] the e-mail sync holds on a blown fuse instead of burying the invoice", () => {
+  // The second half, and the one with the permanent consequence: re-throwing alone would send the
+  // attachment down the poison-pill path (isAiConfigError and isTransientAiError both say no), and
+  // the fuse stays blown for the rest of the day — long enough to exhaust the attempts and register
+  // a real invoice as could_not_read. It has to hold like a config outage.
+  const sync = readFileSync(join(process.cwd(), "src/lib/email-integration.ts"), "utf8");
+
+  const catchLine = sync.split("\n").find((l) => l.includes("const budgetOutage = isAiBudgetError("));
+  assert.ok(catchLine, "the classify catch decides whether this was the fuse");
+
+  const holdLine = sync.split("\n").find((l) => l.includes("const outageHold ="));
+  assert.ok(holdLine, "the per-attachment outage decision still exists");
+  assert.match(holdLine!, /budgetOutage/, "unconditionally, exactly like configOutage — it is app-wide");
+
+  // And the hold must actually reach the give-up branch: the loop head has to destructure it.
+  const loopHead = sync.split("\n").find((l) => l.includes("of classified) {"));
+  assert.ok(loopHead, "the PHASE 2 loop still walks the classified attachments");
+  assert.match(loopHead!, /budgetOutage/, "a flag the loop never unpacks is a guard that never runs");
+});
