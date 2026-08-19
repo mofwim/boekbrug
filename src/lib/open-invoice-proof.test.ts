@@ -161,14 +161,66 @@ test('[OPENSTAAND-BEWIJS] evidence is identity plus amount — never arithmetic 
   // Every identity signal counts, and each still needs the amount to fit.
   for (const id of ['reference', 'iban', 'supplier_iban', 'counterpart', 'memory', 'prepared'] as const) {
     assert.equal(isProvingCandidate([id, 'amount']), true, id)
-    assert.equal(isProvingCandidate([id, 'near_amount']), true, `${id} + near`)
     assert.equal(isProvingCandidate([id, 'date']), false, `${id} without an amount that fits`)
     assert.equal(isProvingCandidate([id]), false, `${id} alone`)
+    // [BEWIJS-EXACT] This asserted `[id, 'near_amount'] → true`, and that is what the panel was
+    // measured doing wrong. GROOTHANDEL M.H. BAL V.O.F.: invoice 263737 for € 973,23 raised
+    // against a bank line of € 991,85 whose own reference reads "263052" — a different invoice
+    // from the same wholesaler. Two of the three alerts on that screen were this shape.
+    //
+    // near_amount belongs to the reconciliation screen, where a human is already comparing and
+    // confirming books a deelbetaling with the difference named. This panel asks one thing about
+    // one document, unasked. "Close but not equal" is the shape of a DIFFERENT invoice far more
+    // often than of this one being paid.
+    assert.equal(isProvingCandidate([id, 'near_amount']), false, `${id} + near is not proof HERE`)
   }
+  // …and the distinction is real rather than a blanket tightening: the same identity with an
+  // EXACT amount is still evidence, which is the case the panel exists for.
+  assert.equal(isProvingCandidate(['counterpart', 'amount']), true, 'exact still counts')
   // A date is never evidence of anything on its own, in either role.
   assert.equal(isProvingCandidate(['date']), false)
   assert.equal(isProvingCandidate(['amount']), false, 'the right size is not the right invoice')
   assert.equal(isProvingCandidate([]), false)
+})
+
+test('[BEWIJS-EXACT] the three alerts that were on the screen, through the real engine', () => {
+  // Reported as noise, with the panel open. Reproduced here from the figures it printed, and run
+  // through proveOpenInvoices rather than hand-fed signals — a test that supplies its own verdict
+  // would prove nothing about the rule.
+  const inv = (id: string, number: string, name: string, total: number) => ({
+    id, invoice_number: number, client_name: name, total_inc_btw: total, amount_paid: 0,
+    invoice_date: '2026-07-20', due_date: '2026-08-20', direction: 'incoming' as const,
+    status: 'received', accountant_status: null, vendor_iban: null,
+    payment_reference: null, payment_prepared_at: null,
+  })
+  const line = (amount: number, description: string, counterpartName: string, date = '2026-07-24') => ({
+    date, amount: -Math.abs(amount), currency: 'EUR', description,
+    counterpartName, counterpartIban: null, reference: null,
+    transactionId: `${description}-${amount}`, rawLine: '',
+  })
+
+  const BAL = 'GROOTHANDEL M.H. BAL V.O.F.'
+  const invoices = [
+    inv('a', 'FAC/2026/00296', 'Coroama Stefan Daniel', 40),
+    inv('b', '263737', BAL, 973.23),
+    inv('c', '263855', BAL, 1208.46),
+  ]
+  const bank = [
+    // Exact to the cent, and the counterparty is the same person. This is the case the panel is
+    // FOR: a bill that looks open while the money has already gone out.
+    line(40, 'COROAMA STEFAN DANIEL 26/00623', 'COROAMA STEFAN DANIEL', '2026-07-27'),
+    // € 18,62 off 263737, and its own reference names 263052 — a different invoice from the same
+    // wholesaler. Likewise € 1,91 off 263855, quoting 263138.
+    line(991.85, `${BAL} 263052`, BAL),
+    line(1206.55, `${BAL} 263138`, BAL),
+  ]
+
+  const proof = proveOpenInvoices(invoices, bank, 'incoming')
+  const flagged = proof.hits.map((h) => h.invoiceNumber).sort()
+  assert.deepEqual(flagged, ['FAC/2026/00296'],
+    'only the exact one survives — the two near-amount pairings were the reported noise')
+  assert.equal(proof.checkedInvoices, 3, 'the SEARCH is unchanged: all three were still examined')
+  assert.equal(proof.checkedTransactions, 3, '…against every line')
 })
 
 test('[OPENSTAAND-BEWIJS] the preposition follows the direction of the money', () => {

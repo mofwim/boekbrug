@@ -11043,6 +11043,22 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   assert.ok(idSet, "the identity set is declared");
   assert.doesNotMatch(idSet![1], /'date'/, "a date proves nothing about identity");
 
+  // [BEWIJS-EXACT] …and the amount must be EXACT. Reported from the app: of three invoices this
+  // panel raised, two were a near-amount pairing with the same wholesaler — invoice 263737 for
+  // € 973,23 against a € 991,85 line whose own reference reads "263052", a different invoice.
+  //
+  // near_amount belongs to the reconciliation screen, where a human is already comparing columns
+  // and confirming books a deelbetaling with the difference named. This panel asks one thing about
+  // one document, unasked, on a screen opened for something else. "Close but not equal" is the
+  // shape of a DIFFERENT invoice from the same supplier far more often than of this one being
+  // paid, and a wholesaler billing similar amounts weekly turns it into a coincidence generator.
+  const amtSet = /const AMOUNT_SIGNALS = new Set<MatchSignal>\(\[([\s\S]*?)\]\)/.exec(proof);
+  assert.ok(amtSet, "the amount set is declared");
+  assert.doesNotMatch(amtSet![1], /'near_amount'/,
+    "near_amount is not proof HERE — it is what made two of three alerts noise");
+  assert.match(amtSet![1], /'amount'/,
+    "…and the exact match still is, or the panel goes blind on the case it exists for");
+
   // 2. The SCOPE, which is the actual product. "We found no payment" is an absence, and an absence
   //    proves nothing unless the search is stated. Every number in the sentence is checkable
   //    against the owner's own bank in seconds.

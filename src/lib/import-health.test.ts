@@ -301,6 +301,38 @@ console.log('\n— [E-FACTUUR-BESLECHT] de leverancier stuurde het bedrag zelf m
     rommel.reasons.some((r) => r.includes('onzeker gelezen')))
 }
 
+console.log('\n— [EEN-VELD-EEN-ZIN] one field, one sentence — for every field, not one of them —')
+{
+  // The rule, applied to all three fields the two axes share. It was fixed for the invoice number
+  // alone; the supplier and the date had the identical shape and kept printing two rows about one
+  // field with the same action behind them. A special case where a rule belonged.
+  const veld = (over: Partial<HealthInput>, woord: string) => {
+    const r = classifyImportHealth(inv(over)).reasons.filter((x) => x.includes(woord))
+    return r
+  }
+  const lev = veld({
+    client_name: 'HVO Meat',
+    field_confidence: { vendor: 0.3, _vendorGrounding: { verdict: 'absent', name: 'HVO Meat' } },
+  } as Partial<HealthInput>, 'leverancier')
+  check('leverancier: waarde-as én onzeker → één zin', lev.length === 1)
+  check('…en het is de zin die het meeste zegt', lev[0]?.includes('staat nergens') === true)
+
+  const datum = veld({ invoice_date: null, field_confidence: { invoice_date: 0.3 } }, 'factuurdatum')
+  check('datum: waarde-as én onzeker → één zin', datum.length === 1)
+  check('…en het is de zin die het meeste zegt', datum[0]?.includes('ontbreekt') === true)
+
+  // Each axis ALONE still speaks, for every field — or the rule would have silenced a real signal
+  // instead of a duplicate one.
+  const alleenLev = classifyImportHealth(inv({ field_confidence: { vendor: 0.3 } }))
+  check('alleen onzeker (leverancier) → die zin staat er wél',
+    alleenLev.reasons.some((r) => r.includes('leverancier is onzeker')))
+  check('…en de vlag wordt daar gezet', alleenLev.flags.vendor === true)
+  const alleenDatum = classifyImportHealth(inv({ field_confidence: { invoice_date: 0.3 } }))
+  check('alleen onzeker (datum) → die zin staat er wél',
+    alleenDatum.reasons.some((r) => r.includes('factuurdatum is onzeker')))
+  check('…en de vlag wordt daar gezet', alleenDatum.flags.invoiceDate === true)
+}
+
 console.log('\n— [DUBBELE-ZIN] one field, one sentence —')
 {
   // MEASURED on a Univé invoice. The number was the EMAIL-<ts> placeholder AND the reader was
