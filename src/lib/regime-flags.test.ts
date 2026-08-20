@@ -144,5 +144,37 @@ console.log("\n— [KOR-5B] + [KOR-JAARGRENS]: wat de KOR-vlag verzweeg —");
     onder.some((f) => f.code === "kor" && /per JAAR/.test(f.detail)));
 }
 
+console.log("\n— [KOR-STIL] de ondernemer die in de KOR zit en het nooit zei —");
+{
+  // kor_active is een VERKLARING en staat standaard op false, dus "niet in de regeling" en "nooit
+  // Instellingen geopend" zijn dezelfde opgeslagen waarde. Alles wat de app over de KOR doet hangt
+  // aan die verklaring, en voor wie hem nooit deed is het allemaal inert.
+  const stil = detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: 6000 }));
+  check("onder de grens én KOR uit → de vlag verschijnt", stil.some((f) => f.code === "kor_possible"));
+  check("...en noemt waar je hem aanzet", stil.some((f) => f.code === "kor_possible" && /Instellingen/.test(f.detail)));
+  check("...en waarom het geld kost", stil.some((f) => f.code === "kor_possible" && /5a/.test(f.detail)));
+
+  // Precisie is de norm van dit bestand: een valse regimevlag is ruis die vertrouwen ondermijnt.
+  check("wie de KOR AL aan heeft, krijgt hem niet",
+    !detectRegimeFlags(sig({ korActive: true, omzetForKorCheck: 6000 })).some((f) => f.code === "kor_possible"));
+  check("wie ver boven de grens zit, kan er niet in vallen en ziet hem niet",
+    !detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: 80000 })).some((f) => f.code === "kor_possible"));
+  // Precies op de grens is nog binnen de regeling — dezelfde randregel als kor_threshold hierboven.
+  check("precies op de grens telt nog mee",
+    detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: KOR_THRESHOLD_EUR })).some((f) => f.code === "kor_possible"));
+  check("één euro erboven niet",
+    !detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: KOR_THRESHOLD_EUR + 1 })).some((f) => f.code === "kor_possible"));
+  // Een kwartaal zonder omzet zegt niets over iemands regime, en een gloednieuw account hoort niet
+  // te openen op een waarschuwing over een regeling waar het nog niet in kán zitten.
+  check("zonder omzet zwijgt de vlag",
+    !detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: 0 })).some((f) => f.code === "kor_possible"));
+  check("en zonder omzetcijfer óók",
+    !detectRegimeFlags(sig({ korActive: false })).some((f) => f.code === "kor_possible"));
+  // De twee KOR-vlaggen zijn elkaars spiegelbeeld en mogen elkaar nooit tegenspreken.
+  check("kor_possible en kor_threshold sluiten elkaar uit",
+    !detectRegimeFlags(sig({ korActive: false, omzetForKorCheck: 6000 })).some((f) => f.code === "kor_threshold")
+    && !detectRegimeFlags(sig({ korActive: true, omzetForKorCheck: 80000 })).some((f) => f.code === "kor_possible"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
