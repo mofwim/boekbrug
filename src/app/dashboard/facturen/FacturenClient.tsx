@@ -56,6 +56,9 @@ import type { MessageKey } from '@/lib/i18n/messages'
 // [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by the same component the
 // pay screen uses. Never open-invoice-proof.ts itself — that reaches the whole matching engine.
 import { buildProofPanel } from '@/lib/open-invoice-proof-text'
+// [BEWIJS-BEANTWOORDEN] De vraag die de ondernemer al beantwoord heeft, wordt niet nog eens
+// gesteld — en dat er iets is weggelegd, staat er. Zie open-invoice-proof-ack.ts.
+import { useProofAnswers } from '@/lib/use-proof-answers'
 import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-types'
 // [BETAALBEWIJS] Under every "Betaald", the bank line that says so — the same pure rule and the
@@ -200,6 +203,8 @@ export default function FacturenClient({
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
   const taal = useLocale()
+  // [BEWIJS-BEANTWOORDEN] Wat de ondernemer op het bewijspaneel al beantwoord heeft.
+  const proofAnswers = useProofAnswers()
   const t = translator(taal)
   const router   = useRouter()
   const supabase = createClient()
@@ -1221,7 +1226,7 @@ export default function FacturenClient({
 
             Never blocking, and never hidden while searching: a proof that could not run says so
             rather than leaving a silence that reads as "everything is fine". */}
-        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal)} />
+        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal, proofAnswers.answered)} actions={proofAnswers.actions} />
 
         {/* [NO-SILENT-EMPTY] The credit read did not answer, and this list cannot say what it
             normally says. Every amount below may be too high and the withdrawn-invoice chips are

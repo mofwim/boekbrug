@@ -107,6 +107,9 @@ import { round2 } from '@/lib/invoice-totals'
 // [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by a shared component;
 // this screen holds no language of its own — see the header of open-invoice-proof-text.ts.
 import { buildProofPanel } from '@/lib/open-invoice-proof-text'
+// [BEWIJS-BEANTWOORDEN] De vraag die de ondernemer al beantwoord heeft, wordt niet nog eens
+// gesteld — en dat er iets is weggelegd, staat er. Zie open-invoice-proof-ack.ts.
+import { useProofAnswers } from '@/lib/use-proof-answers'
 import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
 // [BETAALBEWIJS] The line is built in the pure module and painted by a shared component; this
 // screen holds neither the words nor the colours — see the header of PaymentEvidenceLine.tsx.
@@ -509,6 +512,8 @@ export default function IncomingManageClient({
   incassoKeys?: string[] | null
 }) {
   const taal = useLocale()
+  // [BEWIJS-BEANTWOORDEN] Wat de ondernemer op het bewijspaneel al beantwoord heeft.
+  const proofAnswers = useProofAnswers()
   const t = translator(taal)
   // [PAY-REASON] The shared rule, rendered in this screen's language. Every call site below is
   // unchanged — only where the sentence comes from is.
@@ -2298,7 +2303,7 @@ export default function IncomingManageClient({
             Deliberately calm when it finds nothing, which is nearly always. A green badge shouting
             "ALLES GECONTROLEERD" is decoration; a grey sentence with three real numbers in it is
             evidence, and it is the second one people come to rely on. */}
-        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal)} />
+        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal, proofAnswers.answered)} actions={proofAnswers.actions} />
 
         {loadIncomplete && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>

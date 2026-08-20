@@ -11291,7 +11291,12 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     "src/app/dashboard/facturen/FacturenClient.tsx",
   ]) {
     const client = code(screen);
-    assert.match(client, /<OpenInvoiceProofPanel panel=\{buildProofPanel\(openProof, taal\)\} \/>/,
+    // [BEWIJS-BEANTWOORDEN] The third argument is the set of questions the owner has already
+    // answered — see that gate below. It is admitted here rather than pinned, because THIS gate is
+    // about one component painting both screens in the owner's language; which arguments the
+    // builder takes is the other gate's business, and a gate that asserts two things fails for the
+    // wrong reason half the time.
+    assert.match(client, /<OpenInvoiceProofPanel panel=\{buildProofPanel\(openProof, taal[^)]*\)\}/,
       `${screen} must render the shared panel, in the owner's language`);
     // The screen imports the TEXT module, never the engine. open-invoice-proof.ts reaches
     // matchTransactions and would drag the whole matching engine into the browser bundle.
@@ -13563,4 +13568,54 @@ test("[BLAD-ACHTERGROND] een blad dat de terugknop overneemt, zet ook de pagina 
   assert.match(hook, /locks \+= 1/, "de hook telt op");
   assert.match(hook, /if \(locks <= 0\)/, "…en geeft pas vrij als de laatste weg is");
   assert.match(hook, /if \(released\) return/, "…en een dubbele vrijgave telt niet twee keer");
+});
+
+test("[BEWIJS-BEANTWOORDEN] de vraag is beantwoordbaar, op beide schermen", () => {
+  // GEMELD: het bewijspaneel vroeg "Klopt het dat deze factuur nog openstaat?" en bood niets om
+  // dat mee te beantwoorden. Wie het één keer had nagekeken kreeg dezelfde vraag elke keer weer.
+  // Een vraag zonder antwoord leert de ondernemer om over het paneel heen te lezen — en dit is de
+  // ene plek in de app die zijn werk laat zien.
+  const panel = code("src/components/invoice/OpenInvoiceProofPanel.tsx");
+  assert.match(panel, /actions&&|actions &&/, "de knop bestaat alleen waar het antwoord bewaard kan worden");
+  assert.match(panel, /onClick=\{\(\) => answer\(row\.ackKey\)\}/, "en beantwoordt de RIJ, niet de factuur");
+  assert.match(panel, /aria-label=\{panel\.answerAria\}/, "aangekondigd — 'Ja' zegt op zichzelf niets");
+  // [TAAL] Geen enkel woord in het onderdeel zelf: alles komt van het paneelobject.
+  assert.match(panel, /\{panel\.answerLabel\}/);
+  assert.match(panel, /\{panel\.hiddenAction\}/);
+  assert.match(panel, /\{panel\.answerNote\}/);
+
+  // Wat weggelegd is, staat er — mét de weg terug. Een rij wegleggen is de keuze van de
+  // ondernemer; verbergen DÁT er iets is weggelegd zou de onze zijn, op het paneel dat er
+  // uitsluitend is om nagekeken te kunnen worden.
+  assert.match(panel, /panel\.hidden &&/, "het paneel toont wat er is weggelegd");
+  assert.match(panel, /onClick=\{actions\.onShowAgain\}/, "…en hoe je het terugkrijgt");
+
+  // Het FILTEREN gebeurt vóór er een zin geschreven wordt. Zou het in het onderdeel gebeuren, dan
+  // bleef "Bij 1 factuur vonden we tóch een betaling" boven een lege lijst staan: een bewering
+  // zonder bewijs eronder, op precies het paneel dat dat hoort te voorkomen.
+  const tekst = code("src/lib/open-invoice-proof-text.ts");
+  const bouw = tekst.slice(tekst.indexOf("export function buildProofPanel"));
+  const filterOp = bouw.indexOf("partitionHits(proof.hits, answered)");
+  const leadOp = bouw.indexOf("lead: describeProof");
+  assert.ok(filterOp >= 0, "de beantwoorde vragen worden eruit gefilterd");
+  assert.ok(leadOp > filterOp, "en dat gebeurt vóór de kop geschreven wordt");
+
+  // Beide schermen die dit paneel tonen geven de acties door. Eén ervan zonder zou de vraag daar
+  // onbeantwoordbaar laten, en dat is het scherm waar hij gemeld werd.
+  for (const f of [
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+  ]) {
+    const src = code(f);
+    assert.match(src, /useProofAnswers\(\)/, `${f} houdt de antwoorden vast`);
+    assert.match(src, /buildProofPanel\(openProof, taal, proofAnswers\.answered\)/,
+      `${f} filtert de beantwoorde vragen eruit`);
+    assert.match(src, /actions=\{proofAnswers\.actions\}/, `${f} geeft de knoppen door`);
+  }
+
+  // En de sleutel is het PAAR. Alleen de factuur zou betekenen: één antwoord en dit scherm zwijgt
+  // voorgoed over die factuur — ook over de betaling die hem volgende maand wél blijkt te voldoen.
+  const ack = code("src/lib/open-invoice-proof-ack.ts");
+  assert.match(ack, /hit\.invoiceId, String\(tx\?\.date/, "de sleutel draagt de factuur én de betaling");
+  assert.match(ack, /Math\.abs\(Number\(tx\?\.amount\)/, "het teken is de richting, niet de identiteit");
 });

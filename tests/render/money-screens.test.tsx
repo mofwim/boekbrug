@@ -2650,3 +2650,55 @@ test("[UREN] de kolomladder staat in de stijl, niet een object dat erop lijkt", 
   assert.doesNotMatch(html, /padding-left|padding-right|text-align:\s*(left|right)/,
     "geen fysieke zijde in de opmaak");
 });
+
+test("[BEWIJS-BEANTWOORDEN] de vraag krijgt een knop om hem mee te beantwoorden", async () => {
+  // GEMELD: het paneel vroeg "Klopt het dat deze factuur nog openstaat?" en bood niets om dat mee
+  // te beantwoorden — geen kruisje, geen bevestiging, geen later. Wie het één keer had nagekeken,
+  // kreeg dezelfde vraag elke keer opnieuw.
+  const { default: OpenInvoiceProofPanel } = await import("../../src/components/invoice/OpenInvoiceProofPanel");
+  const { buildProofPanel } = await import("../../src/lib/open-invoice-proof-text");
+  const { hitKey } = await import("../../src/lib/open-invoice-proof-ack");
+
+  const treffer = {
+    invoiceId: "inv-1", invoiceNumber: "FAC/2026/00296", clientName: "Coroama Stefan Daniel",
+    openAmount: 40,
+    transaction: { date: "2026-07-27", amount: -40, description: "26/00623", counterpartName: "COROAMA STEFAN DANIEL" },
+    confidence: 0.7, reason: "bedrag en naam",
+  };
+  const proof = {
+    direction: "incoming" as const, checkedInvoices: 83, checkedTransactions: 1183,
+    bankThrough: "2026-07-28", hits: [treffer],
+    capped: { invoices: 0, transactions: 0 }, incoming: null, readFailed: false,
+  };
+  const acties = { onAnswer: () => {}, onShowAgain: () => {} };
+  const paint = (answered: Set<string>, withActions = true) => renderToStaticMarkup(
+    React.createElement(OpenInvoiceProofPanel as never, {
+      panel: buildProofPanel(proof as never, "nl", answered),
+      ...(withActions ? { actions: acties } : {}),
+    }),
+  );
+
+  const vragend = paint(new Set());
+  assert.match(textOf(vragend), /Klopt het dat deze factuur nog openstaat/, "de vraag staat er");
+  assert.match(textOf(vragend), /Ja, staat nog open/, "…en nu ook het antwoord");
+  assert.match(vragend, /<button/, "als echte knop, dus bereikbaar met een toetsenbord");
+  assert.match(vragend, /aria-label="[^"]+"/, "en aangekondigd — 'Ja' zegt op zichzelf niets");
+  // Waarom een beantwoorde vraag tóch terug kan komen. Zonder die zin lijkt hij weg te blijven, en
+  // dan is een nieuwe betaling die er wél bij past een verrassing die op een fout lijkt.
+  assert.match(textOf(vragend), /andere betaling/, "het paneel zegt wanneer het opnieuw vraagt");
+
+  // Beantwoord: de vraag is weg, de LEAD claimt niets meer, en dat er iets weg is staat er.
+  const beantwoord = paint(new Set([hitKey(treffer as never)]));
+  assert.doesNotMatch(textOf(beantwoord), /Klopt het dat deze factuur/, "de vraag wordt niet opnieuw gesteld");
+  assert.doesNotMatch(textOf(beantwoord), /Bij 1 factuur vonden we/, "de kop claimt geen vondst zonder rij eronder");
+  assert.match(textOf(beantwoord), /83/, "maar de SCOPE staat er nog — die zin is het hele product");
+  assert.match(textOf(beantwoord), /1 eerdere vraag/, "wat weggelegd is, staat er");
+  assert.match(textOf(beantwoord), /Toon ze weer/, "…met de weg terug");
+  assert.notEqual(vragend, beantwoord);
+
+  // Zonder acties (een scherm dat het antwoord nergens kan bewaren) is er geen knop — en ook geen
+  // half werkende die niets doet.
+  const zonder = paint(new Set(), false);
+  assert.doesNotMatch(textOf(zonder), /Ja, staat nog open/);
+  assert.match(textOf(zonder), /Klopt het dat deze factuur nog openstaat/, "de vraag zelf blijft staan");
+});

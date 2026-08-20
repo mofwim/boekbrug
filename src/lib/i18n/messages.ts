@@ -11092,6 +11092,51 @@ export const MESSAGES = {
   'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
   'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
 
+  // ─── [BEWIJS-BEANTWOORDEN] Het antwoord op de vraag die het bewijspaneel stelt ───────────────
+  //
+  // Het paneel vroeg "Klopt het dat deze factuur nog openstaat?" en bood niets om dat mee te
+  // beantwoorden. Wie het één keer had nagekeken, kreeg dezelfde vraag elke keer opnieuw. Een
+  // vraag zonder antwoord leert de ondernemer om over het paneel heen te lezen — en dit paneel is
+  // juist de ene plek in de app die zijn werk laat zien.
+  //
+  // De knop zegt het ANTWOORD, niet de handeling. "Sluiten" laat in het midden wat er is
+  // vastgesteld; "Ja, staat nog open" is wat de ondernemer heeft nagekeken, en dat is ook precies
+  // waarvoor de vraag hem bedankt door hem niet meer te stellen.
+
+  'bewijs.ack.knop': {
+    nl: 'Ja, staat nog open',
+    en: 'Yes, still open',
+    ar: 'نعم، ما زالت مستحقّة',
+  },
+  'bewijs.ack.knopAria': {
+    nl: 'Deze vraag is beantwoord — niet meer tonen',
+    en: 'This question is answered — stop showing it',
+    ar: 'أُجيب عن هذا السؤال — لا تعرضه مرة أخرى',
+  },
+  // Wat er is weggelegd, staat er. Dat een rij WEG is mag nooit zelf ook verdwijnen.
+  'bewijs.ack.verborgen.een': {
+    nl: '1 eerdere vraag heb je al beantwoord.',
+    en: 'You already answered 1 earlier question.',
+    ar: 'أجبت بالفعل عن سؤال واحد سابق.',
+  },
+  'bewijs.ack.verborgen.meer': {
+    nl: '{count} eerdere vragen heb je al beantwoord.',
+    en: 'You already answered {count} earlier questions.',
+    ar: 'أجبت بالفعل عن {count} أسئلة سابقة.',
+  },
+  'bewijs.ack.toonWeer': {
+    nl: 'Toon ze weer',
+    en: 'Show them again',
+    ar: 'أظهرها مجدداً',
+  },
+  // Waarom een beantwoorde vraag tóch terug kan komen. Zonder deze zin lijkt hij weg te zijn
+  // gebleven en dan is een nieuwe betaling die er wél bij past een verrassing.
+  'bewijs.ack.uitleg': {
+    nl: 'Komt er later een andere betaling die bij deze factuur past, dan vragen we het opnieuw.',
+    en: 'If a different payment turns up later that fits this invoice, we will ask again.',
+    ar: 'إن ظهرت لاحقاً دفعة أخرى تطابق هذه الفاتورة، فسنسأل من جديد.',
+  },
+
   // ─── [UREN] De gewerkte uren, en wat ervan nog te factureren valt ────────────────────────────
   //
   // Elke zin hier gaat over geld dat nog niet gefactureerd is, en dat is de reden dat dit scherm
