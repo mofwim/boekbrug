@@ -347,6 +347,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_registry.sql', 'index', 'suppliers_user_iban_uidx', null, 'public'),
   ('supplier_registry.sql', 'index', 'suppliers_user_name_key_idx', null, 'public'),
   ('supplier_registry.sql', 'policy', 'suppliers_delete_own', 'suppliers', 'public'),
+  ('urenregistratie.sql', 'index', 'idx_time_entries_invoice', null, 'public'),
+  ('urenregistratie.sql', 'index', 'idx_time_entries_unbilled', null, 'public'),
+  ('urenregistratie.sql', 'policy', 'time_entries_delete_own', 'time_entries', 'public'),
+  ('urenregistratie.sql', 'policy', 'time_entries_insert_own', 'time_entries', 'public'),
+  ('urenregistratie.sql', 'policy', 'time_entries_select_own', 'time_entries', 'public'),
+  ('urenregistratie.sql', 'policy', 'time_entries_update_own', 'time_entries', 'public'),
   ('vat_exemption.sql', 'column', 'vat_deduction', 'invoices', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_activity', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_since', 'profiles', 'public'),
@@ -389,7 +395,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 107 migraties
+-- NIET VAST TE STELLEN — 9 van de 108 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

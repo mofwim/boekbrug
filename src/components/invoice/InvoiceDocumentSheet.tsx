@@ -36,6 +36,11 @@ import { formatEuroNL } from '@/lib/format-nl'
 import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from '@/lib/invoice-checks'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BLAD-ACHTERGROND] Terwijl dit blad open staat, beweegt de pagina erachter niet. `overscroll-
+// behavior: contain` dekt alleen een gebaar dat IN de scroller begon; een veeg op de vaste kop, op
+// de twee knoppen eronder of op de rand naast het paneel ging er gewoon langs — en dan schuift de
+// factuurkaart onder het blad door dat je net had geopend. Zie de kop van dat bestand.
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 // [DOC-GEEN-BLADZIJDE] Welke bestanden een bladzijde hébben, en wat je zegt over de rest.
 import { previewKind, noPageNotice, fileOpenHref, type PreviewKind } from '@/lib/document-preview'
 // [TAAL] A component holds no language of its own.
@@ -102,6 +107,10 @@ export default function InvoiceDocumentSheet({
   }, [invoice.id])
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
   useCloseOnBack(true, onClose)
+  // [BLAD-ACHTERGROND] This component only exists while the sheet is open, so the lock is
+  // unconditional — it is taken on mount and released on unmount, which is exactly the sheet's
+  // life. Nothing else has to remember to switch it off.
+  useBodyScrollLock(true)
 
 
   useEffect(() => {

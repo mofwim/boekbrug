@@ -20,6 +20,7 @@ import { useSearch } from "@/hooks/useSearch";
 import { flattenGroups, type SearchResult, type SearchResultGroup } from "@/lib/search";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -592,14 +593,12 @@ export function SearchBar({ variant = "inline" }: { variant?: "inline" | "launch
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [compact]);
 
+  // [BLAD-ACHTERGROND] Via de gedeelde teller. De oude versie zette `overflow` onvoorwaardelijk op
+  // "" zodra hij dichtging — óók als er nog een blad open stond dat de pagina juist stil wilde
+  // houden. De teller kent die volgorde wel: de laatste die weggaat zet hem terug.
+  useBodyScrollLock(compact && open);
   useEffect(() => {
-    if (compact && open) {
-      document.body.style.overflow = "hidden";
-      setTimeout(() => mobileInputRef.current?.focus(), 50);
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => { document.body.style.overflow = ""; };
+    if (compact && open) setTimeout(() => mobileInputRef.current?.focus(), 50);
   }, [compact, open]);
 
   // [REACT] State aanpassen tijdens de render in plaats van in een effect: zodra de
