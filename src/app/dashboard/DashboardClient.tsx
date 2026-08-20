@@ -9,6 +9,8 @@
 import { ZzpDashboard } from './zzp/ZzpDashboard'
 import type { HeaderProfile } from './_shared'
 
-export default function DashboardClient({ profile }: { profile: HeaderProfile }) {
-  return <ZzpDashboard profile={profile} />
+export default function DashboardClient(
+  { profile, vehicleTrade = false }: { profile: HeaderProfile; vehicleTrade?: boolean },
+) {
+  return <ZzpDashboard profile={profile} vehicleTrade={vehicleTrade} />
 }

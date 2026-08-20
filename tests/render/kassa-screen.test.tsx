@@ -268,3 +268,77 @@ test("[VAK-BRUG] an accountant's bar never varies by trade", async () => {
   assert.equal(withFlag, without, "the flag cannot reach an accountant's bar");
   assert.doesNotMatch(withFlag, /\/dashboard\/kassa/, "…and never puts a counter on it");
 });
+
+test("[VOERTUIG] the fleet draws real cars, with where each APK stands", async () => {
+  const panels = await import("../../src/app/dashboard/voertuigen/VoertuigenPanels");
+  const { translator } = await import("../../src/lib/i18n/t");
+  const t = translator("nl");
+
+  const vehicles = [
+    { id: "1", kenteken: "12ABC3", description: "Volkswagen Golf", customer_name: "Jansen", customer_phone: "0612345678", apk_expiry: "2026-08-10", notes: null },
+    { id: "2", kenteken: "AB12CD", description: "Opel Corsa", customer_name: null, customer_phone: null, apk_expiry: "2026-09-01", notes: "Remmen nakijken" },
+    { id: "3", kenteken: "1ABC23", description: null, customer_name: null, customer_phone: null, apk_expiry: null, notes: null },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(panels.VehicleList, { vehicles, today: "2026-08-20", onRemove() {}, t }),
+  );
+  assert.ok(html.length > 0, "the list renders");
+  // The plate is printed the way it is on the car, derived from the sidecode shape.
+  assert.match(html, /12-ABC-3/, "a sidecode-7 plate is grouped correctly");
+  assert.match(html, /AB-12-CD/, "…and a sidecode-4 one");
+  assert.match(html, /1-ABC-23/, "…and a sidecode-8 one");
+  assert.match(html, /Volkswagen Golf/, "the car is named");
+  assert.match(html, /Remmen nakijken/, "a note is shown");
+  // Each state gets its OWN sentence — a noun inside a sentence is not a parameter.
+  assert.match(html, /APK is verlopen/, "an overdue car says so");
+  assert.match(html, /APK verloopt binnenkort/, "a due car says so");
+  // The one that must never read as reassurance: no date is a missing fact, not a valid APK.
+  assert.match(html, /APK-datum niet bekend/, "a car with no date says the date is missing");
+  assert.doesNotMatch(html, /1-ABC-23<\/span>[\s\S]{0,200}APK is nog geldig/, "…and never that it is valid");
+  // The reminder is only worth anything if it leads to the call.
+  assert.match(html, /tel:0612345678/, "the customer's number is tappable");
+});
+
+test("[VOERTUIG] the call list appears only when there is someone to call", async () => {
+  const panels = await import("../../src/app/dashboard/voertuigen/VoertuigenPanels");
+  const { vehiclesNeedingApk } = await import("../../src/lib/vehicle");
+  const { translator } = await import("../../src/lib/i18n/t");
+  const t = translator("nl");
+
+  const fleet = [
+    { id: "1", kenteken: "12ABC3", description: null, customer_name: "Jansen", customer_phone: "0612345678", apk_expiry: "2026-08-10", notes: null },
+    { id: "2", kenteken: "AB12CD", description: null, customer_name: null, customer_phone: null, apk_expiry: "2027-01-01", notes: null },
+  ];
+  const calling = vehiclesNeedingApk(fleet, "2026-08-20");
+
+  const html = renderToStaticMarkup(React.createElement(panels.ApkCallList, { vehicles: calling, t }));
+  assert.match(html, /12-ABC-3/, "the overdue car is listed");
+  assert.doesNotMatch(html, /AB-12-CD/, "…and the one that is fine is not");
+
+  // An empty "you have 0 reminders" panel trains an owner to stop reading the place his reminders
+  // appear, so it renders nothing at all.
+  const empty = renderToStaticMarkup(React.createElement(panels.ApkCallList, { vehicles: [], t }));
+  assert.equal(empty, "", "nothing to call about renders nothing at all");
+});
+
+test("[VOERTUIG] an empty garage says so, in Arabic too, without leaking a key", async () => {
+  const panels = await import("../../src/app/dashboard/voertuigen/VoertuigenPanels");
+  const { translator } = await import("../../src/lib/i18n/t");
+
+  const nl = renderToStaticMarkup(
+    React.createElement(panels.VehicleList, { vehicles: [], today: "2026-08-20", onRemove() {}, t: translator("nl") }),
+  );
+  assert.match(nl, /Nog geen voertuigen/, "an empty garage explains itself");
+
+  const ar = renderToStaticMarkup(
+    React.createElement(panels.VehicleList, {
+      vehicles: [{ id: "1", kenteken: "12ABC3", description: null, customer_name: null, customer_phone: null, apk_expiry: null, notes: null }],
+      today: "2026-08-20", onRemove() {}, t: translator("ar"),
+    }),
+  );
+  assert.doesNotMatch(ar, /vtg\.[a-zA-Z]/, "no message key leaked onto the screen");
+  // APK and kenteken are Dutch domain terms with no English equivalent — AGENTS.md names both.
+  // They stay as they are in every language, exactly like btw.
+  assert.match(ar, /APK/, "APK stays APK in Arabic");
+});

@@ -145,3 +145,24 @@ export function sellsOverCounter(slug: string | null | undefined): boolean {
   const vak = parseVak(slug);
   return vak !== null && COUNTER_TRADES.has(vak);
 }
+
+
+/**
+ * Does this trade work on vehicles?
+ *
+ * Kept separate from sellsOverCounter even though `automonteur` is in both, because they answer
+ * different questions and will drift: a mobile monteur who invoices every job still thinks in
+ * kentekens, and a kapper who takes money at a counter has no use for an APK list. Collapsing them
+ * into one "shop" flag is how a home screen ends up offering a barber a vehicle register.
+ *
+ * fietsenmaker is deliberately OUT. A bicycle has no kenteken and no APK, so the whole surface —
+ * plate, expiry, the reminder that justifies it — is empty for him. A screen that is structurally
+ * blank is worse than an absent one: it reads as a broken feature rather than an inapplicable one.
+ */
+const VEHICLE_TRADES: ReadonlySet<string> = new Set(["automonteur"]);
+
+/** Does this owner work on vehicles? Unknown trade → false. */
+export function worksOnVehicles(slug: string | null | undefined): boolean {
+  const vak = parseVak(slug);
+  return vak !== null && VEHICLE_TRADES.has(vak);
+}

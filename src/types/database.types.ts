@@ -562,6 +562,53 @@ export type Database = {
           },
         ]
       }
+      vehicles: {
+        Row: {
+          apk_expiry: string | null
+          created_at: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          description: string | null
+          id: string
+          kenteken: string
+          notes: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          apk_expiry?: string | null
+          created_at?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          description?: string | null
+          id?: string
+          kenteken: string
+          notes?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          apk_expiry?: string | null
+          created_at?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          description?: string | null
+          id?: string
+          kenteken?: string
+          notes?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vehicles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_turnover: {
         Row: {
           base_0: number

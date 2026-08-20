@@ -11199,6 +11199,44 @@ export const MESSAGES = {
     ar: 'بهذا يجهّز التطبيق قائمة أسعارك، بنسبة الـ btw التي تخصّ عملك. ويمكنك تعديل كل شيء لاحقاً.',
   },
 
+  // ─── [VOERTUIG] The cars a garage works on ───────────────────────────────────────────────────
+  // [TAAL] 'APK' and 'kenteken' are Dutch domain terms with no English equivalent in this context —
+  // AGENTS.md names both explicitly. They stay as they are in every language, exactly like btw.
+  'vtg.titel': { nl: 'Voertuigen', en: 'Vehicles', ar: 'المركبات', tr: 'Araçlar' },
+  'vtg.uitleg': {
+    nl: 'Leg vast welke auto’s je onder handen hebt. De APK-datum zet ze vanzelf bovenaan zodra die in zicht komt — dat is je reden om de klant te bellen.',
+    en: 'Record which cars you work on. The APK date moves them to the top by itself as it comes into view — that is your reason to call the customer.',
+    ar: 'سجّل السيارات التي تعمل عليها. تاريخ الـ APK يرفعها إلى الأعلى تلقائياً عند اقترابه — وهو سببك للاتصال بالزبون.',
+  },
+  'vtg.kenteken': { nl: 'Kenteken', en: 'Kenteken', ar: 'رقم اللوحة (kenteken)', tr: 'Plaka (kenteken)' },
+  'vtg.auto': { nl: 'Merk en model', en: 'Make and model', ar: 'الماركة والموديل' },
+  'vtg.klant': { nl: 'Klant', en: 'Customer', ar: 'الزبون' },
+  'vtg.telefoon': { nl: 'Telefoon', en: 'Phone', ar: 'الهاتف' },
+  'vtg.apk': { nl: 'APK verloopt op', en: 'APK expires on', ar: 'ينتهي الـ APK في' },
+  'vtg.notitie': { nl: 'Notitie', en: 'Note', ar: 'ملاحظة' },
+  'vtg.opslaan': { nl: 'Voertuig vastleggen', en: 'Record the vehicle', ar: 'تثبيت المركبة' },
+  'vtg.toevoegen': { nl: 'Voertuig toevoegen', en: 'Add a vehicle', ar: 'إضافة مركبة' },
+  'vtg.leeg': {
+    nl: 'Nog geen voertuigen. Voeg de eerste auto toe die je onder handen hebt.',
+    en: 'No vehicles yet. Add the first car you are working on.',
+    ar: 'لا مركبات بعد. أضف أول سيارة تعمل عليها.',
+  },
+  'vtg.verwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
+  'vtg.verwijderenVraag': { nl: 'Dit voertuig verwijderen?', en: 'Remove this vehicle?', ar: 'إزالة هذه المركبة؟' },
+  // One whole sentence per state — never one template with the state substituted in.
+  'vtg.status.expired': { nl: 'APK is verlopen', en: 'The APK has expired', ar: 'انتهى الـ APK' },
+  'vtg.status.due': { nl: 'APK verloopt binnenkort', en: 'The APK expires soon', ar: 'ينتهي الـ APK قريباً' },
+  'vtg.status.soon': { nl: 'APK komt in zicht', en: 'The APK is coming up', ar: 'يقترب موعد الـ APK' },
+  'vtg.status.ok': { nl: 'APK is nog geldig', en: 'The APK is still valid', ar: 'الـ APK ما زال سارياً' },
+  'vtg.status.unknown': {
+    nl: 'APK-datum niet bekend — vul hem in om deze auto op tijd terug te zien',
+    en: 'APK date unknown — fill it in to see this car back in time',
+    ar: 'تاريخ الـ APK غير معروف — أدخله لترى هذه السيارة في وقتها',
+  },
+  'vtg.bellen': { nl: 'Deze wil je bellen', en: 'These are worth calling', ar: 'هؤلاء تستحقّ الاتصال' },
+  'vtg.fout.laden': { nl: 'Kon de voertuigen niet laden.', en: 'Could not load the vehicles.', ar: 'تعذّر تحميل المركبات.' },
+  'vtg.fout.opslaan': { nl: 'Kon het voertuig niet opslaan.', en: 'Could not save the vehicle.', ar: 'تعذّر حفظ المركبة.' },
+
   'nav.kassa': { nl: 'Kassa', en: 'Till', ar: 'الكاسة', tr: 'Kasa' },
 
   'vak.titel': { nl: 'Begin met de regels van jouw vak', en: 'Start from your trade’s lines', ar: 'ابدأ من بنود مهنتك' },

@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getSessionUser } from '@/lib/session-user'
 import { redirect } from 'next/navigation'
 import DashboardClient from './DashboardClient'
+import { worksOnVehicles } from '@/lib/vak-profile'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,23 @@ export default async function DashboardPage() {
   // [INTEGRATION] accountant → accountant hub — May 2026
   if (profile.role === 'accountant') redirect('/dashboard/accountant')
 
+  // [VOERTUIG] Does this owner work on cars? Decides whether the home offers a vehicle register at
+  // all — a barber must never be shown one.
+  //
+  // ⚠️ Read APART from the select above, and deliberately narrow: the comment on that select warns
+  // that `*` grows silently with every column someone later adds, and adding `vak` to it would ALSO
+  // fail the whole read on a deployment where profile_vak.sql has not been applied by hand — and a
+  // null profile here does not degrade a tile, it redirects the owner to /onboarding. A home-screen
+  // nicety must never be able to send someone back through the wizard.
+  let vehicleTrade = false
+  try {
+    const { data: vakRow } = await supabase
+      .from('profiles').select('vak').eq('id', user.id).maybeSingle()
+    vehicleTrade = worksOnVehicles((vakRow as { vak?: string | null } | null)?.vak)
+  } catch {
+    /* no column yet → no vehicle tile, exactly as before */
+  }
+
   // ZZP → existing DashboardClient (unchanged)
-  return <DashboardClient profile={profile} />
+  return <DashboardClient profile={profile} vehicleTrade={vehicleTrade} />
 }
