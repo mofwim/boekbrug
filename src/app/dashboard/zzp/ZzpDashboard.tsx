@@ -237,6 +237,16 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 label={t('start.allesUploaden')} sub={t('start.allesUploaden.sub')}
                 onClick={() => router.push('/dashboard/upload')}
               />
+              {/* [KASSA] In Toevoegen and not in the administratie grid below, per this file's own
+                  extension rule: that grid holds the screens you go and READ, and a counter is
+                  something you DO — a barber taps it thirty times a day and never opens anything
+                  else. It is also the only door for an owner with no kassa-rapport: his PIN revenue
+                  otherwise reaches the books with no btw rate at all, which blocks his aangifte. */}
+              <ActionCard
+                icon="storefront" iconBg="#7B1FA2" iconColor="#fff"
+                label={t('start.kassa')} sub={t('start.kassa.sub')}
+                onClick={() => router.push('/dashboard/kassa')}
+              />
             </div>
           </section>
 

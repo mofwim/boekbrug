@@ -9,6 +9,10 @@
 
 import { useState, type ChangeEvent, type CSSProperties } from 'react'
 import TurnoverInsights from './TurnoverInsights'
+// [KASSA] The other way into this table. The upload reads a kassa-rapport; an owner without a kassa
+// has no such file, and daily_turnover.source has allowed 'manual' since the table was created with
+// nothing ever writing it. See the header of HandmatigeDag.tsx for what that cost him.
+import HandmatigeDag from './HandmatigeDag'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -47,7 +51,7 @@ const LEDGER_DONE_MANY: Record<string, MessageKey> = { pin: 'dzi.klaarPin', cash
 const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 
-export default function DagomzetImportClient() {
+export default function DagomzetImportClient({ korActive = false }: { korActive?: boolean } = {}) {
   const t = translator(useLocale())
   const [fileName, setFileName] = useState<string | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -329,6 +333,12 @@ export default function DagomzetImportClient() {
             </div>
           </div>
         )}
+
+        {/* [KASSA] Under the upload, not instead of it: a shop with a kassa uploads its Z-report and
+            never looks at this, and a shop without one had no door at all. Saving remounts the
+            insights panel above through the same refreshTick the import commit uses, so the day
+            appears in the figures immediately rather than after a reload. */}
+        <HandmatigeDag korActive={korActive} onSaved={() => setRefreshTick((n) => n + 1)} />
       </div>
     </div>
   )
