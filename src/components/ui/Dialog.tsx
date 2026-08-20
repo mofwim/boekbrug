@@ -32,6 +32,7 @@
 'use client'
 
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import {
   createContext,
   useCallback,
@@ -259,11 +260,13 @@ function DialogSurface({
 
   // Freeze the page behind the dialog. Without this the body scrolls under the
   // scrim on mobile, which makes the dialog look like it is floating away.
-  useEffect(() => {
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = previous }
-  }, [])
+  //
+  // [BLAD-ACHTERGROND] Via de gedeelde teller, niet meer met een eigen bewaar-en-herstel. Die
+  // versie was goed zolang dit de enige laag was, en fout zodra er een tweede onder ligt: een
+  // dialoog die boven het documentblad opent herstelde bij het sluiten de waarde van vóór ZICHZELF
+  // — en dan scrolt de pagina weer onder een blad dat nog gewoon open staat. De teller heeft die
+  // volgorde-afhankelijkheid niet: de laatste die weggaat zet hem terug, wie dat ook is.
+  useBodyScrollLock(true)
 
   const danger =
     (kind === 'confirm' && (options as ConfirmOptions).danger) ||

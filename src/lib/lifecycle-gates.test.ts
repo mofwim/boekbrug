@@ -13507,3 +13507,60 @@ test("[UREN] een onvolledig bedrag zegt dat het onvolledig is", () => {
   // versturen niet meer terugkomt.
   assert.match(ui, /filter\(\(e\) => entryValue\(e\) !== null\)/, "alleen wat gefactureerd kan worden gaat mee");
 });
+
+test("[BLAD-ACHTERGROND] een blad dat de terugknop overneemt, zet ook de pagina erachter stil", () => {
+  // GEMETEN, niet bedacht. Negen onderdelen in deze app nemen de systeem-terugknop over — dat is
+  // de definitie van "modaal" die deze codebase zelf al hanteert. Twee ervan bevroren de pagina
+  // erachter; zeven niet, waaronder het documentblad waar de ondernemer een PDF in bekijkt.
+  //
+  // Waarom `overscroll-behavior: contain` daar NIET genoeg is, en dit de hele klacht verklaart:
+  // die eigenschap stopt een gebaar dat het EINDE van de eigen scroller bereikt. Ze doet niets
+  // voor een gebaar dat die scroller nooit binnenkwam — de vaste kop met de leveranciersnaam, de
+  // twee knoppen onderaan, de rand backdrop naast het paneel. Een veeg op één daarvan scrolt de
+  // LIJST ERACHTER, en wat de ondernemer ziet is de factuurkaart die onder het blad door schuift.
+  // Het valt op zodra de PDF geladen is, omdat de ingesloten viewer dan het midden van het paneel
+  // inneemt en er alleen nog rand overblijft om je vinger op te zetten.
+  // Zelfde vorm als de andere gates in dit bestand: een eigen `walk`, want een gedeelde helper zou
+  // hier de enige gedeelde staat in het bestand zijn.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p2 = `${dir}/${e}`;
+      if (statSync(p2).isDirectory()) out.push(...walk(p2));
+      else if (p2.endsWith(".tsx") || p2.endsWith(".ts")) out.push(p2);
+    }
+    return out;
+  };
+  const files = walk("src").filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".test.tsx"));
+  const overlays = files.filter((f) => f.endsWith(".tsx") && /useCloseOnBack\(\s*true/.test(readFileSync(f, "utf8")));
+  assert.ok(overlays.length >= 9, `de regel dekt de bladen die er zijn (${overlays.length})`);
+
+  // Op de AANROEP, niet op de import. Deze gate matchte eerst `includes("useBodyScrollLock")` en
+  // bleef daardoor groen toen de aanroep uit het documentblad werd gehaald — de import stond er nog.
+  // Precies de fout die dit bestand overal elders opspoort: een bewering die een VERMELDING raakt
+  // in plaats van de bedrading.
+  const roeptSlotAan = (src: string) => /useBodyScrollLock\s*\(/.test(src.replace(/^import .*$/gm, ""));
+  const zonderSlot = overlays.filter((f) => !roeptSlotAan(readFileSync(f, "utf8")));
+  assert.deepEqual(zonderSlot, [],
+    "deze bladen nemen de terugknop over maar laten de pagina erachter gewoon doorscrollen:\n  · " +
+    zonderSlot.join("\n  · ") +
+    "\n\nGebruik useBodyScrollLock uit @/lib/use-body-scroll-lock — één regel, direct onder useCloseOnBack.");
+
+  // ÉÉN implementatie. Twee overlays deden het vroeger zelf met bewaar-en-herstel, en dat is goed
+  // zolang er één laag is: opent er een dialoog BOVEN een blad, dan herstelt de binnenste bij het
+  // sluiten de waarde van vóór zichzelf en scrolt de pagina weer onder een blad dat nog open staat.
+  // De teller in de hook heeft die volgorde-afhankelijkheid niet.
+  const eigenbouw = files
+    .filter((f) => !f.endsWith("use-body-scroll-lock.ts"))
+    .filter((f) => /body\.style\.overflow/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(eigenbouw, [],
+    "deze zetten body.style.overflow zelf; dat hoort via useBodyScrollLock zodat geneste bladen elkaar niet vroegtijdig vrijgeven:\n  · " +
+    eigenbouw.join("\n  · "));
+
+  // En de hook doet het met een TELLER, niet met een enkele booleaan. Zonder telling is de tweede
+  // ontgrendeling van een geneste dialoog degene die de pagina vrijgeeft.
+  const hook = readFileSync("src/lib/use-body-scroll-lock.ts", "utf8");
+  assert.match(hook, /locks \+= 1/, "de hook telt op");
+  assert.match(hook, /if \(locks <= 0\)/, "…en geeft pas vrij als de laatste weg is");
+  assert.match(hook, /if \(released\) return/, "…en een dubbele vrijgave telt niet twee keer");
+});
