@@ -150,6 +150,15 @@ export type AuditAction =
   // trail could not answer "which turnover days were removed" — the two were distinguishable only
   // by a `via` field inside the JSON payload. A reversal of money deserves its own name.
   | 'turnover.day_removed'             // ← [COHERENCE-TURNOVER-DELETE] owner removed one booked turnover day (wrong date / wrong period)
+  // [KASSA] A shop without a till rings its revenue up here, and these two are the ONLY trail that
+  // it happened. There is no Z-report behind them, no bank line and no supplier document — what the
+  // day says is what the owner tapped, exactly the argument that put cash.entry_added on this list.
+  // The void gets its own name for the reason turnover.day_removed does: money going back out of
+  // the BTW-authoritative day is a reversal, not a smaller sale, and "which tickets were voided" is
+  // a question the trail has to be able to answer on its own.
+  | 'till.ticket_rung'                 // ← [KASSA] owner rang up one ticket; newValue carries its lines and the day's new total
+  | 'till.ticket_voided'               // ← [KASSA] owner voided a ticket; oldValue is the only record that those lines existed
+  | 'turnover.day_entered'             // ← [KASSA] owner typed a whole day's takings by hand (no till, no Z-report)
   | 'ledger.auto_imported'             // ← [SHEET-INTAKE] app stored a PIN/kas grootboek export into ledger_daily (reconciliation witness)
   | 'btw.filed'                        // ← [TRUTH-FILED] owner froze a quarter's BTW-aangifte snapshot as ingediend
   | 'btw.filed_despite_warnings'       // ← [FILING-GATE] owner froze the snapshot while readiness blockers were still open (acknowledged)

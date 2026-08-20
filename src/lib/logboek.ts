@@ -113,6 +113,10 @@ const KIND_BY_DOMAIN: Readonly<Record<string, LogboekKind | undefined>> = {
   cash: "money",
   btw: "money",
   turnover: "money",
+  // [KASSA] A shop without a kassa rings its revenue up here, and that revenue goes straight into
+  // rubriek 1a/1b. It belongs in the same bucket as the Z-report it stands in for — an owner
+  // filtering his logbook on money must see the sale that made the day.
+  till: "money",
   ledger: "money",
   supplier: "money",
   snelstart: "money",
@@ -172,7 +176,9 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.invoice.superseded", "log.invoice.numbering_configured",
   "log.invoice.numbering_change_blocked", "log.invoice.arithmetic_blocked", "log.cash.entry_added",
   "log.cash.entry_removed", "log.cash.opening_balance_set", "log.turnover.auto_imported",
-  "log.turnover.day_removed", "log.ledger.auto_imported", "log.btw.filed",
+  "log.turnover.day_removed", "log.turnover.day_entered",
+  "log.till.ticket_rung", "log.till.ticket_voided",
+  "log.ledger.auto_imported", "log.btw.filed",
   "log.btw.filed_despite_warnings", "log.btw.filing_unlocked", "log.btw.correction_carried",
   // Level 2 — Accountant relationships
   "log.accountant.client_invited", "log.accountant.client_linked", "log.accountant.client_unlinked",
