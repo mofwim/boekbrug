@@ -1,5 +1,5 @@
 // [VAK-BRUG] Pure node test — run: npx tsx src/lib/vak-profile.test.ts
-import { parseVak, vakArticleSeeds, vakLetOp, vakLabel, VAK_PARAM } from "./vak-profile";
+import { parseVak, vakArticleSeeds, vakLetOp, vakLabel, sellsOverCounter, VAK_PARAM } from "./vak-profile";
 import { VAKKEN } from "./vak-sjablonen";
 
 let passed = 0, failed = 0;
@@ -60,6 +60,30 @@ console.log("\n— the journey, end to end —");
   check("…with a labour line among them",
     seeds.some((s) => s.description.toLowerCase().includes("arbeidsloon")));
   check("…charged by the hour", seeds.some((s) => s.unit === "uur"));
+}
+
+console.log("\n— who takes his money at a counter —");
+{
+  // The one question: does the money change hands at the moment the work is done?
+  check("a barber is paid at the counter", sellsOverCounter("kapper"));
+  check("a bike repairer too", sellsOverCounter("fietsenmaker"));
+  // A garage does both, and the counter is the half it does twenty times a week.
+  check("a garage counts as a counter trade", sellsOverCounter("automonteur"));
+
+  // These finish the work and then send a bill — taking Facturen off their bar would be the
+  // expensive mistake this predicate has to avoid.
+  check("a hovenier invoices", !sellsOverCounter("hovenier"));
+  check("a schilder invoices", !sellsOverCounter("schilder"));
+  check("an elektricien invoices", !sellsOverCounter("elektricien"));
+  check("a loodgieter invoices", !sellsOverCounter("loodgieter"));
+  check("general dienstverlening invoices", !sellsOverCounter("dienstverlening"));
+
+  // The fail direction: unknown means the invoice-shaped app everyone has had until now.
+  check("an unknown trade is not a counter trade",
+    !sellsOverCounter("astronaut") && !sellsOverCounter(null) && !sellsOverCounter(undefined) && !sellsOverCounter(""));
+  // Every counter trade must be a real trade, or the nav would key on a slug nothing can produce.
+  check("every counter trade is a trade the catalogue knows",
+    ["kapper", "fietsenmaker", "automonteur"].every((s) => parseVak(s) === s));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

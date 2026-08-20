@@ -53,6 +53,28 @@ type Destination = {
 // [TAAL] `label` is a catalogue KEY, not a word. The bar is on every screen, so it is the first
 // thing an owner reads in their own language — and the sentence in the send confirmation fills
 // itself from nav.invoices, so the two can never name the tab differently.
+// [VAK-BRUG] The counter trade's bar. Four destinations again, and three of them the same — only
+// the second changes, and that one change is the whole point.
+//
+// A kapper is paid EUR 25 by someone who walks out. He sends no invoice and has no "client", and
+// the bar on every screen of his app led with Facturen and Inkomend: a list he never adds to, and
+// an inbox for bills he barely gets. The Kassa he would use thirty times a day was a card inside
+// the home screen. The first thing he read, everywhere, was that this app is for somebody else.
+//
+// Facturen is not gone — it is one tap away on the home tiles, which is exactly what this file's
+// own header says they are for ("everything else stays reachable from the home tiles"). A garage
+// that bills a fleet customer still finds it there. What moved is which of the two is one tap and
+// which is two, and for this owner the counter is the frequent one by an order of magnitude.
+//
+// Inkomend stays: a barber does receive wholesaler bills, and that queue is where his voorbelasting
+// comes from.
+const OWNER_COUNTER: Destination[] = [
+  { href: '/dashboard', label: 'nav.start', icon: 'home', exact: true },
+  { href: '/dashboard/kassa', label: 'nav.kassa', icon: 'storefront' },
+  { href: '/dashboard/incoming', label: 'nav.incoming', icon: 'inbox', also: ['/dashboard/upload'] },
+  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
+]
+
 const OWNER: Destination[] = [
   { href: '/dashboard', label: 'nav.start', icon: 'home', exact: true },
   { href: '/dashboard/facturen', label: 'nav.invoices', icon: 'receipt_long', also: ['/dashboard/invoice'] },
@@ -89,14 +111,16 @@ function activeHref(pathname: string, items: Destination[]): string | null {
   return best?.href ?? null
 }
 
-export function BottomNav({ role }: { role: Role | null }) {
+export function BottomNav({ role, counter = false }: { role: Role | null; counter?: boolean }) {
   const pathname = usePathname()
   // Before the early return: a hook may not sit behind a condition.
   const taal = useLocale()
   if (!pathname) return null
 
   const t = translator(taal)
-  const items = role === 'accountant' ? ACCOUNTANT : OWNER
+  // An accountant's bar never varies by trade — the trade describes the OWNER, and the accountant
+  // works across many of them. Same reasoning as the Dutch-only accountant module in AGENTS.md.
+  const items = role === 'accountant' ? ACCOUNTANT : counter ? OWNER_COUNTER : OWNER
   const active = activeHref(pathname, items)
 
   return (
