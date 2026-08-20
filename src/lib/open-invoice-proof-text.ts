@@ -21,6 +21,8 @@
 // exactly what they saw before this file was translated, and the tests below assert that literally.
 
 import { translator } from './i18n/t'
+// [BEWIJS-BEANTWOORDEN] The question the owner already answered stops being asked — see that file.
+import { hitKey, partitionHits } from './open-invoice-proof-ack'
 import { localeDir, type Locale } from './i18n/locale'
 import type {
   IncomingPaymentProof, OpenInvoiceHit, OpenInvoiceProof, OpenInvoiceProofResult, ProofDirection,
@@ -119,6 +121,12 @@ export function describeHit(
 /** One invoice we call open, with the payment that looks like it. */
 export interface ProofPanelRow {
   invoiceId: string
+  /**
+   * [BEWIJS-BEANTWOORDEN] The identity of this QUESTION — the invoice and the payment together,
+   * not the invoice alone. Answering it silences this pairing; any other payment that ever looks
+   * like this invoice is a new question and gets asked. See open-invoice-proof-ack.ts.
+   */
+  ackKey: string
   /** "264091 · BALKIP B.V. — € 1.224,75 open" */
   title: string
   /** "In je bank staat …. Klopt het dat deze factuur nog openstaat?" */
@@ -148,6 +156,29 @@ export interface OpenInvoiceProofPanel {
   incoming: string[]
   /** Carried here so the words and the layout can never render out of step. */
   dir: 'ltr' | 'rtl'
+  /**
+   * [BEWIJS-BEANTWOORDEN] How many questions the owner has already answered and put away.
+   *
+   * Rendered as a line with a way to bring them back. Not optional politeness: this panel exists
+   * because an app that quietly decides what the owner does not need to see is exactly the app
+   * they cannot check. Putting a row away is their decision; hiding that a row WAS put away
+   * would be ours.
+   */
+  hiddenCount: number
+  /** The sentence for that line, or null when nothing is put away. */
+  hidden: string | null
+  /** The label on the control that brings them back. */
+  hiddenAction: string
+  /** The label on a row's answer control — "Ja, staat nog open". */
+  answerLabel: string
+  /** What that control is, for a screen reader, where "Ja" on its own says nothing. */
+  answerAria: string
+  /**
+   * Why an answered question can still come back: a DIFFERENT payment that fits this invoice is a
+   * new question. Without this sentence the row looks gone for good, and the day it returns the
+   * owner has no way to tell that from a bug.
+   */
+  answerNote: string
 }
 
 /**
@@ -160,6 +191,7 @@ export interface OpenInvoiceProofPanel {
 export function buildProofPanel(
   proof: OpenInvoiceProofResult | null | undefined,
   locale: Locale = 'nl',
+  answered: ReadonlySet<string> = EMPTY_ANSWERS,
 ): OpenInvoiceProofPanel | null {
   if (!proof) return null
   const t = translator(locale)
@@ -167,8 +199,21 @@ export function buildProofPanel(
   const outgoing = proof.direction === 'outgoing'
 
   if (proof.readFailed) {
-    return { alarm: false, failed: true, lead: t('bewijs.leesFout'), rows: [], bounded: null, incoming: [], dir }
+    return {
+      alarm: false, failed: true, lead: t('bewijs.leesFout'), rows: [], bounded: null, incoming: [], dir,
+      hiddenCount: 0, hidden: null, hiddenAction: t('bewijs.ack.toonWeer'),
+      answerLabel: t('bewijs.ack.knop'), answerAria: t('bewijs.ack.knopAria'),
+      answerNote: t('bewijs.ack.uitleg'),
+    }
   }
+
+  // [BEWIJS-BEANTWOORDEN] The answered questions come out FIRST, before a single sentence is
+  // written. That is the whole reason this is one function and not a filter in the component:
+  // `lead` counts the hits ("Bij 1 factuur vonden we tóch een betaling"), and a lead built from
+  // two hits above a list showing one is a claim with no evidence under it — which is precisely
+  // the kind of thing this panel exists to stop the app from doing.
+  const { asking, answered: weg } = partitionHits(proof.hits, answered)
+  proof = weg.length > 0 ? { ...proof, hits: asking } : proof
 
   const rows: ProofPanelRow[] = proof.hits.map((h) => {
     // Identity first, and both numbers on the line: what we call open, and the payment that looks
@@ -179,6 +224,7 @@ export function buildProofPanel(
     const bewijs = describeHit(h, proof.direction, locale)
     return {
       invoiceId: h.invoiceId,
+      ackKey: hitKey(h),
       title: `${wie} — ${t('bewijs.regel.open', { bedrag: EUR.format(h.openAmount) })}`,
       question: outgoing
         ? t('bewijs.vraag.verkoop', { bewijs })
@@ -202,8 +248,19 @@ export function buildProofPanel(
     bounded,
     incoming: describeIncoming(proof.incoming, locale),
     dir,
+    hiddenCount: weg.length,
+    hidden: weg.length === 0
+      ? null
+      : weg.length === 1 ? t('bewijs.ack.verborgen.een') : t('bewijs.ack.verborgen.meer', { count: weg.length }),
+    hiddenAction: t('bewijs.ack.toonWeer'),
+    answerLabel: t('bewijs.ack.knop'),
+    answerAria: t('bewijs.ack.knopAria'),
+    answerNote: t('bewijs.ack.uitleg'),
   }
 }
+
+/** One shared empty set, so the default argument does not allocate on every render. */
+const EMPTY_ANSWERS: ReadonlySet<string> = new Set<string>()
 
 /**
  * [BINNENGEKOMEN-BEWIJS] What came in, and how much of it belongs to nothing.

@@ -7,6 +7,11 @@ import { sheetPaddingBottom } from "@/lib/design/tokens";
 import { Icon } from "../ui/Icon";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BLAD-ACHTERGROND] Een blad dat de systeem-terugknop overneemt, is modaal genoeg om ook
+// de pagina erachter stil te zetten. `overscroll-behavior` dekt alleen een gebaar dat IN de
+// scroller begon; een veeg op de kop, op de knoppen eronder of naast het paneel ging er
+// langs — en dan schuift de lijst onder het blad door. Zie de kop van dat bestand.
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 
@@ -28,6 +33,7 @@ export function AiSuggestionModal({
   // [BACK-CLOSES] Back means "not now", which is the harmless one of the three outcomes: nothing
   // moves and the file is still in the root where the owner can find it.
   useCloseOnBack(true, onDismiss)
+  useBodyScrollLock(true)
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 400,

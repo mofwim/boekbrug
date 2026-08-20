@@ -11291,7 +11291,12 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     "src/app/dashboard/facturen/FacturenClient.tsx",
   ]) {
     const client = code(screen);
-    assert.match(client, /<OpenInvoiceProofPanel panel=\{buildProofPanel\(openProof, taal\)\} \/>/,
+    // [BEWIJS-BEANTWOORDEN] The third argument is the set of questions the owner has already
+    // answered — see that gate below. It is admitted here rather than pinned, because THIS gate is
+    // about one component painting both screens in the owner's language; which arguments the
+    // builder takes is the other gate's business, and a gate that asserts two things fails for the
+    // wrong reason half the time.
+    assert.match(client, /<OpenInvoiceProofPanel panel=\{buildProofPanel\(openProof, taal[^)]*\)\}/,
       `${screen} must render the shared panel, in the owner's language`);
     // The screen imports the TEXT module, never the engine. open-invoice-proof.ts reaches
     // matchTransactions and would drag the whole matching engine into the browser bundle.
@@ -13328,4 +13333,289 @@ test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () =>
   // …and each says the same thing: this is about our reading, not about your practice.
   assert.match(home, /Dit zegt niets over je klanten/);
   assert.match(home, /Dit betekent niet dat er niets te doen is/);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// [UREN] Urenregistratie — de gates over het ene uur dat nooit twee keer op een factuur mag staan.
+//
+// De rekenregels staan in src/lib/uren.test.ts en de databasekant in tests/sql/time_entries.test.sql.
+// Wat DIE twee niet kunnen zien is de BEDRADING: of de route die facturen maakt de uren ook
+// werkelijk vastzet, of hij terugdraait als dat mislukt, en of het scherm zijn zinnen uit de
+// catalogus haalt in plaats van ze zelf te bewaren. Dat is precies de klasse fouten waar dit
+// bestand voor bestaat — een geschreven weigering die door een buurregel onbereikbaar is geworden.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+test("[UREN-EENMALIG] de factuurroute zet de uren vast, en draait terug als dat niet lukt", () => {
+  const route = code("src/app/api/invoice/draft/route.ts");
+
+  // 1. De uren worden GELEZEN met een eigenaarsfilter en alleen als ze nog vrij zijn. Dit is een
+  //    service_role-client, dus RLS kijkt niet mee — het filter IS de afscherming ([RLS-UIT]).
+  const lees = route.slice(route.indexOf("time_entries"));
+  assert.match(lees.slice(0, 600), /\.eq\('user_id', ownerId\)/, "alleen eigen uren komen mee");
+  assert.match(lees.slice(0, 600), /\.is\('invoice_id', null\)/, "…en alleen nog niet gefactureerde");
+
+  // 2. De REGELS komen uit de uren, niet uit het verzoek. Zou de browser ze aanleveren, dan zijn
+  //    het bedrag op de factuur en het uur eronder twee losse beweringen — en alleen de eerste
+  //    komt bij de klant terecht.
+  assert.match(route, /body\.lines = gebouwd\.lines/, "de server bouwt de regels uit de uren");
+  assert.match(route, /linesFromEntries\(gevonden/, "…met de module die de som één keer doet");
+
+  // 3. Het VASTZETTEN gebeurt met dezelfde twee filters, en `.is('invoice_id', null)` is hier de
+  //    race-bewaker: twee tabbladen die tegelijk factureren komen allebei langs, en de tweede
+  //    krijgt nul rijen terug omdat de database de vraag beantwoordt.
+  const stamp = route.slice(route.indexOf("urenIds.length > 0"));
+  assert.ok(stamp.length > 0, "de vastzet-stap bestaat");
+  assert.match(stamp.slice(0, 900), /\.update\(\{ invoice_id: factuur\.id/, "de uren wijzen naar DEZE factuur");
+  assert.match(stamp.slice(0, 900), /\.eq\('user_id', ownerId\)/, "onder dezelfde eigenaar");
+  assert.match(stamp.slice(0, 900), /\.is\('invoice_id', null\)/, "en alleen als ze nog vrij waren");
+
+  // 4. En als er ook maar één uur niet terugkomt: de factuur gaat WEG. Een concept met regels waar
+  //    geen uren onder zitten laat die uren in de lijst staan, en dan gaan ze een tweede keer mee.
+  //
+  //    Het venster loopt tot het EINDE van de tak, niet tot een aantal tekens: een grens op
+  //    tekenafstand verschuift zodra iemand er een regel bij zet, en dan meet de gate iets anders
+  //    dan hij beweert. Deze ging daar zelf al een keer op rood.
+  const rollback = stamp.slice(stamp.indexOf("!uitkomst.ok"), stamp.indexOf("[ARTIKEL-LEREN]"));
+  assert.ok(rollback.length > 0 && rollback.length < 3000, "de terugdraai-tak is af te bakenen");
+  const volgorde = ["time_entries", "invoice_lines", "from('invoices')"].map((s2) => rollback.indexOf(s2));
+  assert.ok(volgorde.every((i) => i >= 0), "alle drie de opruimstappen staan er");
+  assert.deepEqual([...volgorde].sort((a, b) => a - b), volgorde,
+    "eerst de uren vrij, dan de regels, dan de factuur — een uur dat naar een verwijderde factuur wijst is het spook dat de foreign key hoort te voorkomen");
+  assert.match(rollback, /invoice_id: null/, "de wél vastgezette uren komen vrij");
+  assert.match(rollback, /\.delete\(\)[\s\S]{0,80}invoice_lines|invoice_lines[\s\S]{0,80}\.delete\(\)/, "de regels gaan weg");
+  assert.match(rollback, /status: 409/, "…en de ondernemer hoort het, in plaats van het te ontdekken");
+
+  // 5. Vrijloop: zonder `time_entry_ids` mag er NIETS van dit alles gebeuren. Dit is de route die
+  //    élke factuur maakt; een urenstap die ook zonder uren draait zou iedereen raken.
+  assert.match(route, /if \(body\.time_entry_ids !== undefined && body\.time_entry_ids !== null\)/,
+    "de hele urenstap zit achter één voorwaarde");
+  assert.match(route, /if \(urenIds\.length > 0\)/, "en het vastzetten ook");
+
+  // 6. [NO-SILENT-EMPTY] Een leesfout is geen lege urenlijst. supabase-js geeft `{data:null,error}`
+  //    terug in plaats van te gooien, dus zonder deze tak wordt een onbereikbare database een
+  //    factuur zonder regels.
+  assert.match(route, /if \(urenErr\)/, "de leesfout wordt gelezen");
+});
+
+test("[UREN-EENMALIG] een gefactureerd uur is geen invoerveld meer", () => {
+  const api = code("src/app/api/uren/route.ts");
+
+  // PATCH en DELETE dragen allebei het filter. Zonder dat kan de ondernemer het uur veranderen
+  // waar de factuurregel van zijn klant op rust — en art. 52 AWR verwacht dat die onderbouwing er
+  // nog is zoals hij was.
+  const patch = api.slice(api.indexOf("export async function PATCH"));
+  const del = api.slice(api.indexOf("export async function DELETE"));
+  assert.match(patch, /\.is\("invoice_id", null\)/, "PATCH raakt alleen nog vrije uren");
+  assert.match(del, /\.is\("invoice_id", null\)/, "DELETE ook");
+
+  // …en nul rijen betekent hier iets SPECIFIEKS. "Er ging iets mis" laat iemand achter die zijn
+  // wijziging kwijt is en niet weet waarom, terwijl het antwoord bekend is.
+  assert.match(patch, /already_billed/, "PATCH zegt WELKE van de twee het is");
+  assert.match(del, /already_billed/, "DELETE ook");
+  assert.match(patch, /status: 409/);
+  assert.match(del, /status: 409/);
+
+  // Elke schrijfactie draagt het eigenaarsfilter, want bij `namens` is dit een service_role-client.
+  for (const [naam, blok] of [["PATCH", patch], ["DELETE", del]] as const) {
+    assert.match(blok, /\.eq\("user_id", ctx\.ownerId\)/, `${naam} schrijft alleen in de eigen administratie`);
+  }
+
+  // [NO-SILENT-EMPTY] GET geeft bij een leesfout GEEN lege lijst terug. "Je hebt niets openstaan"
+  // op een kapotte database is het ene bericht waarop iemand die zijn uren kwijt is nooit had
+  // moeten vertrouwen.
+  const get = api.slice(api.indexOf("export async function GET"), api.indexOf("export async function POST"));
+  assert.match(get, /if \(error\)/, "de leesfout wordt gelezen");
+  assert.match(get, /status: 503/, "…en gemeld als storing, niet als leegte");
+});
+
+test("[UREN] de migratie laat het werk het document overleven", () => {
+  const sql = readFileSync("supabase/migrations/urenregistratie.sql", "utf8");
+
+  // De ene regel van het hele bestand. CASCADE zou het WERK wissen omdat de factuur eromheen
+  // verdween — en dan is er gewerkte tijd die nergens meer staat en waar niemand naar zoekt.
+  assert.match(sql, /invoice_id\s+uuid REFERENCES public\.invoices\(id\) ON DELETE SET NULL/,
+    "een weggegooid concept geeft zijn uren terug");
+  assert.match(sql, /client_id\s+uuid REFERENCES public\.clients\(id\) ON DELETE SET NULL/,
+    "een verwijderde klantkaart neemt het werk niet mee");
+  // De enige plek waar CASCADE juist is: een gewist account laat niets achter.
+  assert.match(sql, /user_id\s+uuid NOT NULL REFERENCES public\.profiles\(id\) ON DELETE CASCADE/,
+    "profiles, niet auth.users — dezelfde verankering als de rest van de app");
+
+  // Vier policies, allemaal op de eigen rijen. Een tabel met RLS aan en geen policy is dicht;
+  // een tabel met RLS UIT is open, en dat is de gevaarlijke kant.
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
+  for (const actie of ["select", "insert", "update", "delete"]) {
+    assert.match(sql, new RegExp(`time_entries_${actie}_own`), `${actie} heeft een eigen policy`);
+  }
+  assert.equal((sql.match(/user_id = auth\.uid\(\)/g) ?? []).length, 5,
+    "vier policies, waarvan update zowel USING als WITH CHECK draagt");
+
+  // De tabel staat in de types, want dan controleert de COMPILER de kolomnaam waarvan het hele
+  // punt afhangt in plaats van een typefout naar runtime te laten lopen.
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  assert.match(types, /time_entries: \{/, "time_entries staat in database.types.ts");
+  assert.match(types, /invoice_id\?: string \| null/, "…inclusief de kolom die alles draagt");
+});
+
+import { MESSAGES } from "./i18n/messages";
+
+test("[UREN] het scherm heeft geen taal van zichzelf", () => {
+  const ui = readFileSync("src/app/dashboard/uren/UrenClient.tsx", "utf8");
+
+  // Elke sleutel die het scherm gebruikt BESTAAT. Een ontbrekende sleutel valt in t() terug op de
+  // sleutel zelf, en `uren.maakFactuur` op een knop is erger dan diezelfde knop in het Nederlands.
+  const gebruikt = [...ui.matchAll(/t\('(uren\.[a-zA-Z.]+)'/g)].map((m) => m[1]);
+  assert.ok(gebruikt.length >= 20, `het scherm gebruikt de catalogus (${gebruikt.length} sleutels)`);
+  for (const key of new Set(gebruikt)) {
+    assert.ok(key in MESSAGES, `${key} bestaat in messages.ts`);
+  }
+
+  // …en elke sleutel die is verklaard wordt ook ergens GEBRUIKT. Een sleutel die nergens wordt
+  // gerenderd is een zin die iemand heeft laten vertalen en die niemand ooit ziet.
+  const verklaard = Object.keys(MESSAGES).filter((k) => k.startsWith("uren."));
+  const overal = ui + readFileSync("src/app/dashboard/uren/page.tsx", "utf8");
+  for (const key of verklaard) {
+    assert.ok(overal.includes(`'${key}'`), `${key} wordt ergens gerenderd`);
+  }
+
+  // De structurele helft: GEEN Nederlandse tekst als los JSX-tekstknooppunt. Eén hard-gecodeerde
+  // zin in een onderdeel is precies hoe een vertaling voorgoed half af blijft — het scherm ziet er
+  // in het Nederlands nog steeds goed uit, dus niets wijst op het gat.
+  //
+  // Aangehaalde strings tellen niet: die staan in stijlen en in fetch-paden. Dit zoekt tekst
+  // tussen > en <, wat JSX-tekst is en verder niets.
+  const jsxText = /> *([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ]{3,}) *</g;
+  const losseTekst = [...ui.matchAll(jsxText)].map((m) => m[1].trim());
+  assert.deepEqual(losseTekst, [], `het scherm draagt losse tekst: ${losseTekst.join(" | ")}`);
+
+  // Fysieke zijden zijn in precies één taal fout, en dat is de taal die niemand nakijkt.
+  assert.doesNotMatch(code("src/app/dashboard/uren/UrenClient.tsx"),
+    /(paddingLeft|paddingRight|marginLeft|marginRight|borderLeft:|borderRight:)/,
+    "logische zijden, geen fysieke");
+  assert.match(ui, /textAlign: 'start'/, "tekst begint waar de taal begint");
+  assert.match(ui, /borderInlineStart/, "…en de accentrand ook");
+});
+
+test("[UREN] een onvolledig bedrag zegt dat het onvolledig is", () => {
+  // De zwaarste van de UI-regels, en de reden dat groupBillable `withoutRate` teruggeeft in plaats
+  // van de uren zonder tarief stil bij nul op te tellen: een totaal dat de ondernemer niet kan
+  // narekenen tegen de lijst eronder is erger dan geen totaal.
+  const ui = readFileSync("src/app/dashboard/uren/UrenClient.tsx", "utf8");
+  assert.match(ui, /g\.withoutRate > 0 &&/, "het scherm kijkt of er iets buiten het bedrag valt");
+  assert.match(ui, /uren\.zonderTarief\.(een|meer)/, "…en zegt het dan met zoveel woorden");
+
+  // En de knop biedt geen factuur aan als er niets te factureren valt — een factuur van nul regels
+  // zou de route toch weigeren, en dan is de melding een raadsel in plaats van een uitleg.
+  assert.match(ui, /disabled=\{busy \|\| g\.entries\.length === g\.withoutRate\}/,
+    "geen factuurknop als elk uur nog een tarief mist");
+  // Alleen uren MÉT tarief reizen mee. Een uur zonder tarief op nul factureren is geld dat na het
+  // versturen niet meer terugkomt.
+  assert.match(ui, /filter\(\(e\) => entryValue\(e\) !== null\)/, "alleen wat gefactureerd kan worden gaat mee");
+});
+
+test("[BLAD-ACHTERGROND] een blad dat de terugknop overneemt, zet ook de pagina erachter stil", () => {
+  // GEMETEN, niet bedacht. Negen onderdelen in deze app nemen de systeem-terugknop over — dat is
+  // de definitie van "modaal" die deze codebase zelf al hanteert. Twee ervan bevroren de pagina
+  // erachter; zeven niet, waaronder het documentblad waar de ondernemer een PDF in bekijkt.
+  //
+  // Waarom `overscroll-behavior: contain` daar NIET genoeg is, en dit de hele klacht verklaart:
+  // die eigenschap stopt een gebaar dat het EINDE van de eigen scroller bereikt. Ze doet niets
+  // voor een gebaar dat die scroller nooit binnenkwam — de vaste kop met de leveranciersnaam, de
+  // twee knoppen onderaan, de rand backdrop naast het paneel. Een veeg op één daarvan scrolt de
+  // LIJST ERACHTER, en wat de ondernemer ziet is de factuurkaart die onder het blad door schuift.
+  // Het valt op zodra de PDF geladen is, omdat de ingesloten viewer dan het midden van het paneel
+  // inneemt en er alleen nog rand overblijft om je vinger op te zetten.
+  // Zelfde vorm als de andere gates in dit bestand: een eigen `walk`, want een gedeelde helper zou
+  // hier de enige gedeelde staat in het bestand zijn.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p2 = `${dir}/${e}`;
+      if (statSync(p2).isDirectory()) out.push(...walk(p2));
+      else if (p2.endsWith(".tsx") || p2.endsWith(".ts")) out.push(p2);
+    }
+    return out;
+  };
+  const files = walk("src").filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".test.tsx"));
+  const overlays = files.filter((f) => f.endsWith(".tsx") && /useCloseOnBack\(\s*true/.test(readFileSync(f, "utf8")));
+  assert.ok(overlays.length >= 9, `de regel dekt de bladen die er zijn (${overlays.length})`);
+
+  // Op de AANROEP, niet op de import. Deze gate matchte eerst `includes("useBodyScrollLock")` en
+  // bleef daardoor groen toen de aanroep uit het documentblad werd gehaald — de import stond er nog.
+  // Precies de fout die dit bestand overal elders opspoort: een bewering die een VERMELDING raakt
+  // in plaats van de bedrading.
+  const roeptSlotAan = (src: string) => /useBodyScrollLock\s*\(/.test(src.replace(/^import .*$/gm, ""));
+  const zonderSlot = overlays.filter((f) => !roeptSlotAan(readFileSync(f, "utf8")));
+  assert.deepEqual(zonderSlot, [],
+    "deze bladen nemen de terugknop over maar laten de pagina erachter gewoon doorscrollen:\n  · " +
+    zonderSlot.join("\n  · ") +
+    "\n\nGebruik useBodyScrollLock uit @/lib/use-body-scroll-lock — één regel, direct onder useCloseOnBack.");
+
+  // ÉÉN implementatie. Twee overlays deden het vroeger zelf met bewaar-en-herstel, en dat is goed
+  // zolang er één laag is: opent er een dialoog BOVEN een blad, dan herstelt de binnenste bij het
+  // sluiten de waarde van vóór zichzelf en scrolt de pagina weer onder een blad dat nog open staat.
+  // De teller in de hook heeft die volgorde-afhankelijkheid niet.
+  const eigenbouw = files
+    .filter((f) => !f.endsWith("use-body-scroll-lock.ts"))
+    .filter((f) => /body\.style\.overflow/.test(readFileSync(f, "utf8")));
+  assert.deepEqual(eigenbouw, [],
+    "deze zetten body.style.overflow zelf; dat hoort via useBodyScrollLock zodat geneste bladen elkaar niet vroegtijdig vrijgeven:\n  · " +
+    eigenbouw.join("\n  · "));
+
+  // En de hook doet het met een TELLER, niet met een enkele booleaan. Zonder telling is de tweede
+  // ontgrendeling van een geneste dialoog degene die de pagina vrijgeeft.
+  const hook = readFileSync("src/lib/use-body-scroll-lock.ts", "utf8");
+  assert.match(hook, /locks \+= 1/, "de hook telt op");
+  assert.match(hook, /if \(locks <= 0\)/, "…en geeft pas vrij als de laatste weg is");
+  assert.match(hook, /if \(released\) return/, "…en een dubbele vrijgave telt niet twee keer");
+});
+
+test("[BEWIJS-BEANTWOORDEN] de vraag is beantwoordbaar, op beide schermen", () => {
+  // GEMELD: het bewijspaneel vroeg "Klopt het dat deze factuur nog openstaat?" en bood niets om
+  // dat mee te beantwoorden. Wie het één keer had nagekeken kreeg dezelfde vraag elke keer weer.
+  // Een vraag zonder antwoord leert de ondernemer om over het paneel heen te lezen — en dit is de
+  // ene plek in de app die zijn werk laat zien.
+  const panel = code("src/components/invoice/OpenInvoiceProofPanel.tsx");
+  assert.match(panel, /actions&&|actions &&/, "de knop bestaat alleen waar het antwoord bewaard kan worden");
+  assert.match(panel, /onClick=\{\(\) => answer\(row\.ackKey\)\}/, "en beantwoordt de RIJ, niet de factuur");
+  assert.match(panel, /aria-label=\{panel\.answerAria\}/, "aangekondigd — 'Ja' zegt op zichzelf niets");
+  // [TAAL] Geen enkel woord in het onderdeel zelf: alles komt van het paneelobject.
+  assert.match(panel, /\{panel\.answerLabel\}/);
+  assert.match(panel, /\{panel\.hiddenAction\}/);
+  assert.match(panel, /\{panel\.answerNote\}/);
+
+  // Wat weggelegd is, staat er — mét de weg terug. Een rij wegleggen is de keuze van de
+  // ondernemer; verbergen DÁT er iets is weggelegd zou de onze zijn, op het paneel dat er
+  // uitsluitend is om nagekeken te kunnen worden.
+  assert.match(panel, /panel\.hidden &&/, "het paneel toont wat er is weggelegd");
+  assert.match(panel, /onClick=\{actions\.onShowAgain\}/, "…en hoe je het terugkrijgt");
+
+  // Het FILTEREN gebeurt vóór er een zin geschreven wordt. Zou het in het onderdeel gebeuren, dan
+  // bleef "Bij 1 factuur vonden we tóch een betaling" boven een lege lijst staan: een bewering
+  // zonder bewijs eronder, op precies het paneel dat dat hoort te voorkomen.
+  const tekst = code("src/lib/open-invoice-proof-text.ts");
+  const bouw = tekst.slice(tekst.indexOf("export function buildProofPanel"));
+  const filterOp = bouw.indexOf("partitionHits(proof.hits, answered)");
+  const leadOp = bouw.indexOf("lead: describeProof");
+  assert.ok(filterOp >= 0, "de beantwoorde vragen worden eruit gefilterd");
+  assert.ok(leadOp > filterOp, "en dat gebeurt vóór de kop geschreven wordt");
+
+  // Beide schermen die dit paneel tonen geven de acties door. Eén ervan zonder zou de vraag daar
+  // onbeantwoordbaar laten, en dat is het scherm waar hij gemeld werd.
+  for (const f of [
+    "src/app/dashboard/facturen/FacturenClient.tsx",
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+  ]) {
+    const src = code(f);
+    assert.match(src, /useProofAnswers\(\)/, `${f} houdt de antwoorden vast`);
+    assert.match(src, /buildProofPanel\(openProof, taal, proofAnswers\.answered\)/,
+      `${f} filtert de beantwoorde vragen eruit`);
+    assert.match(src, /actions=\{proofAnswers\.actions\}/, `${f} geeft de knoppen door`);
+  }
+
+  // En de sleutel is het PAAR. Alleen de factuur zou betekenen: één antwoord en dit scherm zwijgt
+  // voorgoed over die factuur — ook over de betaling die hem volgende maand wél blijkt te voldoen.
+  const ack = code("src/lib/open-invoice-proof-ack.ts");
+  assert.match(ack, /hit\.invoiceId, String\(tx\?\.date/, "de sleutel draagt de factuur én de betaling");
+  assert.match(ack, /Math\.abs\(Number\(tx\?\.amount\)/, "het teken is de richting, niet de identiteit");
 });

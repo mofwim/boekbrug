@@ -7,6 +7,11 @@ import { T } from "../../tokens";
 import { Icon } from "../ui/Icon";
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BLAD-ACHTERGROND] Een blad dat de systeem-terugknop overneemt, is modaal genoeg om ook
+// de pagina erachter stil te zetten. `overscroll-behavior` dekt alleen een gebaar dat IN de
+// scroller begon; een veeg op de kop, op de knoppen eronder of naast het paneel ging er
+// langs — en dan schuift de lijst onder het blad door. Zie de kop van dat bestand.
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 
@@ -38,6 +43,7 @@ export function RenameModal({ currentName, type, onConfirm, onClose }: RenameMod
   }, [currentName, type]);
   // [BACK-CLOSES] The system back button closes this, instead of leaving the page behind it.
   useCloseOnBack(true, onClose)
+  useBodyScrollLock(true)
 
 
   useEffect(() => {

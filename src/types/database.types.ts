@@ -23,6 +23,7 @@
 //     letting a typo through to runtime. Note which table each one is on: auto_incasso and
 //     incasso_suggested_at are on SUPPLIERS, not on profiles or bank_transactions.
 //     invoice_lines.vat_treatment, invoices.vat_deduction
+//   · time_entries               — supabase/migrations/urenregistratie.sql (whole table, [UREN])
 //                                 — supabase/migrations/vat_exemption.sql
 //
 // WHY THAT MATTERS. A type here is a CLAIM about the database, not a fact. Get one wrong and tsc
@@ -2298,6 +2299,71 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      // [UREN] supabase/migrations/urenregistratie.sql — hand-added for the reason this file's
+      // header gives: the generator needs credentials this environment does not have, and typing
+      // the table by hand is what makes the COMPILER check `invoice_id` instead of letting a typo
+      // reach the one column that decides whether an hour gets billed twice.
+      time_entries: {
+        Row: {
+          id: string
+          user_id: string
+          client_id: string | null
+          worked_on: string
+          description: string
+          hours: number
+          hourly_rate: number | null
+          invoice_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          client_id?: string | null
+          worked_on: string
+          description: string
+          hours: number
+          hourly_rate?: number | null
+          invoice_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          client_id?: string | null
+          worked_on?: string
+          description?: string
+          hours?: number
+          hourly_rate?: number | null
+          invoice_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
         ]

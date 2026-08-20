@@ -22,6 +22,9 @@ import { sheetPaddingBottom } from '@/lib/design/tokens'
 import type { FairUseNotice } from '@/lib/fair-use-notice'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BLAD-ACHTERGROND] Een blad dat de systeem-terugknop overneemt, is modaal genoeg om ook
+// de pagina erachter stil te zetten. Zie de kop van dat bestand.
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 
 export default function FairUseModal({
   notice,
@@ -31,6 +34,7 @@ export default function FairUseModal({
   onClose: () => void
 }) {
   useCloseOnBack(true, onClose)
+  useBodyScrollLock(true)
 
   return (
     <div

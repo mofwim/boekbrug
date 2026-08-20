@@ -26,12 +26,46 @@
 // built by open-invoice-proof-text.ts. One hard-coded string here is how a translation stays
 // permanently half-finished: the screen still looks right in Dutch, so nothing points at the gap.
 
+import { useCallback, useState } from 'react'
+
 import { M3, R } from '@/lib/design/tokens'
 import type { OpenInvoiceProofPanel as ProofPanel } from '@/lib/open-invoice-proof-text'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
-export default function OpenInvoiceProofPanel({ panel }: { panel: ProofPanel | null | undefined }) {
+/**
+ * [BEWIJS-BEANTWOORDEN] What a row's cross does.
+ *
+ * The panel used to ask "Klopt het dat deze factuur nog openstaat?" and give the owner nothing to
+ * answer with — so someone who checked it once saw the same question every time they opened the
+ * screen. A question with no answer teaches people to read past the panel, and this panel is the
+ * one place in the app that shows its working.
+ *
+ * The handler is passed IN rather than reached for here, because storage is not this component's
+ * business and a component that touches localStorage cannot be rendered by the render gate.
+ */
+export interface ProofPanelActions {
+  /** The owner answered this question: stop asking about this invoice-and-payment pair. */
+  onAnswer: (ackKey: string) => void
+  /** Bring every put-away question back. */
+  onShowAgain: () => void
+}
+
+export default function OpenInvoiceProofPanel({
+  panel, actions,
+}: {
+  panel: ProofPanel | null | undefined
+  /** Absent on a surface that has nowhere to keep an answer — the panel then simply has no cross. */
+  actions?: ProofPanelActions
+}) {
+  // Called before the early return: a hook may not be skipped, and `panel` is null on most renders
+  // of most screens, so this is the one order that is legal in both.
+  const [busy, setBusy] = useState<string | null>(null)
+  const answer = useCallback((key: string) => {
+    setBusy(key)
+    actions?.onAnswer(key)
+  }, [actions])
+
   if (!panel) return null
   const { alarm, failed } = panel
   return (
@@ -67,15 +101,47 @@ export default function OpenInvoiceProofPanel({ panel }: { panel: ProofPanel | n
             and ends in a question. Never applied: both come from a reading, and picking a winner
             is the overconfidence that produces the wrong number in the first place. */}
         {panel.rows.map((row) => (
-          <div key={row.invoiceId} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${M3.outlineVariant}` }}>
+          <div key={row.ackKey} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${M3.outlineVariant}` }}>
             <p style={{ fontSize: 13, fontWeight: 600, color: M3.onSurface, margin: 0, lineHeight: 1.4 }}>
               {row.title}
             </p>
             <p style={{ fontSize: 12.5, color: '#7C5800', margin: '2px 0 0', lineHeight: 1.45 }}>
               {row.question}
             </p>
+            {/* The answer. It says what the owner ESTABLISHED — "Ja, staat nog open" — rather than
+                what the button does to the screen: "sluiten" leaves it open which of the two
+                things was found, and this row is a question about money.
+
+                It never books anything and never marks anything paid. The opposite answer is not
+                a button here on purpose: if the invoice IS already paid, that is a payment to
+                link on the invoice itself, and a one-tap "mark as paid" built on a LIKENESS is
+                exactly the overconfidence the rest of this panel refuses. */}
+            {actions && (
+              <button
+                type="button"
+                onClick={() => answer(row.ackKey)}
+                disabled={busy === row.ackKey}
+                aria-label={panel.answerAria}
+                style={{
+                  marginTop: 6, padding: '5px 11px', borderRadius: R.full, cursor: 'pointer',
+                  border: `1px solid ${M3.outlineVariant}`, background: M3.surface,
+                  color: M3.neutral, fontFamily: FONT, fontSize: 12, fontWeight: 600,
+                }}
+              >
+                {panel.answerLabel}
+              </button>
+            )}
           </div>
         ))}
+
+        {/* What the answer button means, said once under the rows rather than on every one of
+            them. An answered question that silently returned would be indistinguishable from a
+            bug; this is the sentence that makes its return make sense. */}
+        {actions && panel.rows.length > 0 && (
+          <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 0 0', lineHeight: 1.45 }}>
+            {panel.answerNote}
+          </p>
+        )}
 
         {/* [BINNENGEKOMEN-BEWIJS] The same search, said from the money's side: what came in, how
             much of it looks like a known invoice, and what the rest add up to. That last figure is
@@ -101,6 +167,28 @@ export default function OpenInvoiceProofPanel({ panel }: { panel: ProofPanel | n
         {panel.bounded && (
           <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 0 0', lineHeight: 1.45 }}>
             {panel.bounded}
+          </p>
+        )}
+
+        {/* [BEWIJS-BEANTWOORDEN] What has been put away, and the way back to it.
+            Putting a row away is the owner's decision; hiding the FACT that a row was put away
+            would be ours, and this is the panel whose entire job is to be checkable. */}
+        {panel.hidden && (
+          <p style={{ fontSize: 11.5, color: M3.neutral, margin: '6px 0 0', lineHeight: 1.45 }}>
+            {panel.hidden}{' '}
+            {actions && (
+              <button
+                type="button"
+                onClick={actions.onShowAgain}
+                style={{
+                  border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+                  color: M3.primary, fontFamily: FONT, fontSize: 11.5, fontWeight: 600,
+                  textDecoration: 'underline',
+                }}
+              >
+                {panel.hiddenAction}
+              </button>
+            )}
           </p>
         )}
       </div>

@@ -20,6 +20,11 @@ import { sheetPaddingBottom } from '@/lib/design/tokens'
 import type { InvoiceSentNotice } from '@/lib/invoice-sent-notice'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [BLAD-ACHTERGROND] Een blad dat de systeem-terugknop overneemt, is modaal genoeg om ook
+// de pagina erachter stil te zetten. `overscroll-behavior` dekt alleen een gebaar dat IN de
+// scroller begon; een veeg op de kop, op de knoppen eronder of naast het paneel ging er
+// langs — en dan schuift de lijst onder het blad door. Zie de kop van dat bestand.
+import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 
 export default function InvoiceSentModal({
   notice,
@@ -36,6 +41,7 @@ export default function InvoiceSentModal({
   // invoice exists and is numbered. Every exit therefore navigates; the backdrop takes the same
   // route as the primary button.
   useCloseOnBack(true, onView)
+  useBodyScrollLock(true)
 
   return (
     <div

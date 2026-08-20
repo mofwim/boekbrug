@@ -37,6 +37,11 @@ import { learnFromLines } from '@/lib/article-learning-store'
 // [KLANT-EXTRA] Twee vrije klantregels onder de klantnaam — zie de kop van dat bestand.
 import { extraLineFields } from '@/lib/client-extra-lines-write'
 import { CLIENT_EXTRA_LINE_COLUMNS } from '@/lib/client-extra-lines'
+// [UREN-EENMALIG] Uren factureren. De regels komen uit deze module zodat het bedrag op de factuur
+// en het uur eronder dezelfde som zijn — zie de kop van uren.ts.
+import {
+  linesFromEntries, parseTimeEntryIds, verifyStamped, type TimeEntry, type TimeEntryIdsRefusal,
+} from '@/lib/uren'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +59,25 @@ type Soort = 'factuur' | 'creditnota' | 'offerte'
 function schoonEenheid(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : ''
   return s && isKnownUnit(s) ? s : null
+}
+
+/**
+ * [UREN] Waarom een uur niet gefactureerd kon worden.
+ *
+ * NOTE ON LANGUAGE: Dutch in an English file, for the reason AGENTS.md gives — these sentences are
+ * shown to the owner, and the rest of this route already answers in Dutch ('Een factuur zonder
+ * klant kan niet'). One route answering in two languages would be worse than either.
+ *
+ * Elke reden noemt wat de ondernemer NU kan doen. "Er ging iets mis" laat iemand die net een uur
+ * kwijt is met precies niets achter.
+ */
+const UREN_REFUSAL_NL: Record<TimeEntryIdsRefusal | 'none_billable' | 'no_rate', string> = {
+  not_a_list: 'De uren konden niet worden gelezen. Ververs de pagina en probeer het opnieuw.',
+  not_an_id: 'De uren konden niet worden gelezen. Ververs de pagina en probeer het opnieuw.',
+  empty: 'Kies eerst welke uren op de factuur moeten.',
+  too_many: 'Meer dan 200 uren op één factuur kan niet. Splits ze over twee facturen.',
+  none_billable: 'Deze uren staan al op een factuur, of bestaan niet meer. Ververs de pagina.',
+  no_rate: 'Bij deze uren staat nog geen uurtarief. Vul het tarief in, dan kunnen ze op de factuur.',
 }
 
 const DB_TYPE: Record<Soort, string> = {
@@ -100,6 +124,74 @@ export async function POST(request: NextRequest) {
     const soort: Soort =
       body.invoiceType === 'creditnota' ? 'creditnota' : body.invoiceType === 'offerte' ? 'offerte' : 'factuur'
 
+    const ownerId = invoiceOwnerId(acting)
+    const createdBy = invoiceCreatedBy(acting)
+
+    // service_role: de browser mag sender_id en created_by niet kiezen. Dat is het hele punt van
+    // deze route — RLS zou een INSERT met een zelfgekozen sender_id namelijk gewoon toestaan als
+    // die gelijk is aan auth.uid(), en dat is precies de verkeerde eigenaar.
+    //
+    // [UREN] Deze drie stonden vroeger vlak vóór de INSERT. Ze zijn naar boven verplaatst omdat de
+    // urenstap hieronder de eigenaar en de database al nodig heeft vóórdat de regels bestaan — hij
+    // MAAKT ze immers. Er zit niets tussen dat ze beïnvloedt: alle drie hangen alleen van `acting`
+    // af, dat hierboven al is vastgesteld.
+    const pipeline = createPipelineClient()
+
+    // ── [UREN-EENMALIG] Uren factureren: de regels komen van de UREN, niet van de browser ─────
+    //
+    // Staat `time_entry_ids` niet in het verzoek, dan gebeurt hier NIETS en is dit letterlijk de
+    // route van vóór deze functie. Staat hij er wel, dan bouwt de SERVER de factuurregels uit de
+    // opgeslagen uren.
+    //
+    // Waarom niet gewoon de regels van de browser overnemen: dan zou het bedrag op de factuur en
+    // het uur waaraan het vastzit twee losse beweringen zijn, en alleen de eerste komt bij de
+    // klant terecht. Nu is de factuur voor uren aantoonbaar DE uren.
+    //
+    // Alleen eigen, nog niet gefactureerde uren komen mee. `user_id = ownerId` staat er omdat dit
+    // een service_role-client is: RLS kijkt hier niet mee, dus het eigenaarsfilter is deze regel
+    // en niets anders ([RLS-UIT]).
+    let urenIds: string[] = []
+    if (body.time_entry_ids !== undefined && body.time_entry_ids !== null) {
+      const gevraagd = parseTimeEntryIds(body.time_entry_ids)
+      if (!gevraagd.ok) {
+        return NextResponse.json({ error: UREN_REFUSAL_NL[gevraagd.code], code: gevraagd.code }, { status: 400 })
+      }
+      const { data: uren, error: urenErr } = await pipeline
+        .from('time_entries')
+        .select('id, client_id, worked_on, description, hours, hourly_rate, invoice_id')
+        .in('id', gevraagd.ids)
+        .eq('user_id', ownerId)
+        .is('invoice_id', null)
+
+      // [NO-SILENT-EMPTY] supabase-js geeft bij een fout `{ data: null, error }` terug in plaats van
+      // te gooien. Zonder deze tak zou een onbereikbare database er hier uitzien als "geen uren" —
+      // en dat wordt dan een factuur zonder regels, of erger: een lege lijst die stil doorloopt.
+      if (urenErr) {
+        console.error('[UREN] uren lezen mislukt — geen concept gemaakt', { urenErr })
+        return NextResponse.json(
+          { error: 'De uren konden niet worden gelezen. Probeer het opnieuw.' },
+          { status: 503 },
+        )
+      }
+
+      const gevonden = (uren ?? []) as TimeEntry[]
+      if (gevonden.length === 0) {
+        // Elk gevraagd uur is verdwenen, van iemand anders, of staat al op een factuur. Dat is geen
+        // lege factuur waard, en het is precies het geval waarin stil doorgaan zou betekenen dat de
+        // ondernemer denkt te hebben gefactureerd.
+        return NextResponse.json({ error: UREN_REFUSAL_NL.none_billable, code: 'none_billable' }, { status: 409 })
+      }
+
+      const gebouwd = linesFromEntries(gevonden, Number(body.uren_btw_rate))
+      if (gebouwd.lines.length === 0) {
+        return NextResponse.json({ error: UREN_REFUSAL_NL.no_rate, code: 'no_rate' }, { status: 409 })
+      }
+      // De regels van de browser worden VERVANGEN, niet aangevuld: wie uren factureert, factureert
+      // de uren. Alles hieronder — validatie, totalen, korting, de INSERT — is daarna ongewijzigd.
+      body.lines = gebouwd.lines
+      urenIds = gebouwd.billedIds
+    }
+
     // ── De regels, gecontroleerd vóór ze de database raken ───────────────────
     // [MIN-REGEL] `soort` comes with them: a creditnota's lines are sent POSITIVE here and the sign
     // is applied below, so on this route the exemption changes nothing today — it is passed because
@@ -140,13 +232,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Een factuur zonder klant kan niet' }, { status: 400 })
     }
 
-    const ownerId = invoiceOwnerId(acting)
-    const createdBy = invoiceCreatedBy(acting)
-
-    // service_role: de browser mag sender_id en created_by niet kiezen. Dat is het hele punt van
-    // deze route — RLS zou een INSERT met een zelfgekozen sender_id namelijk gewoon toestaan als
-    // die gelijk is aan auth.uid(), en dat is precies de verkeerde eigenaar.
-    const pipeline = createPipelineClient()
 
     // ── De klant ─────────────────────────────────────────────────────────────
     // Een klant die inline is ingetikt (geen keuze uit de lijst) wordt hier aangemaakt, onder de
@@ -365,6 +450,59 @@ export async function POST(request: NextRequest) {
       await pipeline.from('invoices').delete().eq('id', factuur.id)
       console.error('[ACTING-FOR] regels wegschrijven mislukt — concept teruggedraaid', { lineErr })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
+    }
+
+    // ── [UREN-EENMALIG] De uren vastzetten op DEZE factuur ───────────────────────────────────
+    //
+    // Dit is het moment waarop "nog te factureren" ophoudt te gelden, en het moet samenvallen met
+    // het bestaan van de factuur — anders is er een venster waarin de regels er staan en de uren
+    // nog vrij zijn, en dan gaan ze een tweede keer mee.
+    //
+    // `.is('invoice_id', null)` staat er niet voor de netheid maar voor de RACE: twee tabbladen die
+    // tegelijk dezelfde uren factureren komen hier allebei langs, en de tweede krijgt nul rijen
+    // terug. Dat is de database die de vraag beantwoordt, niet wij die hopen.
+    //
+    // Komt er ook maar één uur niet terug, dan gaat de factuur weg. Een concept met regels waar
+    // geen uren onder zitten is erger dan geen factuur: de uren blijven in de lijst staan en worden
+    // straks nóg een keer gefactureerd, en de klant is degene die dat merkt.
+    if (urenIds.length > 0) {
+      const { data: vastgezet, error: urenLinkErr } = await pipeline
+        .from('time_entries')
+        .update({ invoice_id: factuur.id, updated_at: new Date().toISOString() })
+        .in('id', urenIds)
+        .eq('user_id', ownerId)
+        .is('invoice_id', null)
+        .select('id')
+
+      const uitkomst = urenLinkErr
+        ? { ok: false as const, missing: urenIds }
+        : verifyStamped(urenIds, ((vastgezet ?? []) as Array<{ id: string }>).map((r) => r.id))
+
+      if (!uitkomst.ok) {
+        // Eerst de uren die het WEL haalden weer losmaken, dan de regels, dan de factuur. In deze
+        // volgorde, want een uur dat naar een verwijderde factuur wijst is precies het spook dat
+        // de foreign key hoort te voorkomen — ON DELETE SET NULL vangt het op, maar erop leunen
+        // terwijl we het zelf kunnen opruimen is een aanname te veel.
+        // [RLS-UIT] Ook hier het eigenaarsfilter, al is `factuur.id` net onder ownerId aangemaakt.
+        // Deze client is service_role, dus RLS kijkt niet mee; een filter dat 'in dit geval toch
+        // wel goed gaat' is er een die bij de eerstvolgende verplaatsing van deze regel niet meer
+        // goed gaat, en dan is het een andere administratie.
+        await pipeline.from('time_entries').update({ invoice_id: null })
+          .eq('invoice_id', factuur.id).eq('user_id', ownerId)
+        await pipeline.from('invoice_lines').delete().eq('invoice_id', factuur.id)
+        await pipeline.from('invoices').delete().eq('id', factuur.id)
+        console.error('[UREN-EENMALIG] uren niet vastgezet — concept teruggedraaid', {
+          invoiceId: factuur.id, gevraagd: urenIds.length, missing: uitkomst.missing.length, urenLinkErr,
+        })
+        return NextResponse.json(
+          {
+            error: 'De uren konden niet aan deze factuur worden gekoppeld, dus is de factuur niet aangemaakt. ' +
+              'Ververs de pagina — waarschijnlijk staan ze inmiddels op een andere factuur.',
+            code: 'uren_not_linked',
+          },
+          { status: 409 },
+        )
+      }
     }
 
     // [ARTIKEL-LEREN] Wat de ondernemer hier typt, onthoudt de catalogus — vanaf de EERSTE factuur.
