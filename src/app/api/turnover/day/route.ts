@@ -61,7 +61,14 @@ async function readDayClaims(
   return {
     hasImportedDay: Boolean(turnoverRow) && turnoverRow.source !== TILL_SOURCE,
     cashOmzetCount: cashRes.count ?? 0,
-    tillSaleCount: tillRes.count ?? 0,
+    // ── DEPLOY-SAFE, and this route is the half that must not wait ──
+    // Code ships before a migration is applied by hand (the same reasoning as the column probe in
+    // cash-live.ts). till_sales may therefore not exist yet — and this route is precisely the one an
+    // owner needs on day one, because it is what unblocks an aangifte held shut by rate-less
+    // revenue. A missing table means no Kassa has ever run, which means no sales can be claiming
+    // this day, which is exactly what a count of zero says. The Kassa's own route makes no such
+    // allowance: without the table it genuinely cannot work, and should say so rather than pretend.
+    tillSaleCount: tillRes.error ? 0 : tillRes.count ?? 0,
   };
 }
 
@@ -149,10 +156,12 @@ export async function DELETE(req: NextRequest) {
     // tell them apart — the sales behind it can. Deleting the row while its tickets remain would
     // leave those sales on the counter's screen, visible and counting toward nothing: no omzet, no
     // btw, no drawer. The tickets are the record here, so they are what gets voided.
-    const { count: tillCount } = await supabase
+    // Same deploy-safety as above: no table means no Kassa has ever run, so nothing can be
+    // orphaned by removing this day.
+    const { count: tillCount, error: tillError } = await supabase
       .from("till_sales").select("id", { count: "exact", head: true })
       .eq("user_id", user.id).eq("sale_date", date);
-    if ((tillCount ?? 0) > 0) {
+    if (!tillError && (tillCount ?? 0) > 0) {
       return NextResponse.json(
         { error: "Deze dag is op de Kassa aangeslagen. Draai daar de bonnen terug die eraf moeten — dan telt de dag vanzelf opnieuw." },
         { status: 409 },
