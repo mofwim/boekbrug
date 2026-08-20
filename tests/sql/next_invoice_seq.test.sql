@@ -237,8 +237,9 @@ DECLARE u uuid := '11111111-1111-1111-1111-111111111111';
         conn text := 'dbname=' || current_database();
         a_seq int;
         b_seq int;
-        saw_lock boolean := false;
-        spins int := 0;
+        b_early int;
+        blocked boolean;
+        sqlstate_seen text;
 BEGIN
   -- Two independent connections. Everything below happens in THEM, not here: real backends, real
   -- transactions, one real row lock. This is the claim the function's own comment makes and that
@@ -253,39 +254,62 @@ BEGIN
     'SELECT public.next_invoice_seq(''' || u || ''', 2026, ''factuur'')') AS t(s int);
   PERFORM public.t_eq('A continues the series at 42', a_seq, 42);
 
-  -- B asks for one WHILE A still holds it. Sent asynchronously so this session can watch it wait
-  -- rather than deadlock against it.
+  -- B asks for one WHILE A still holds it, with a lock_timeout — and THAT is the whole assertion.
+  --
+  -- [SLOT-DETERMINISTISCH] This block used to send B's query asynchronously and then poll
+  -- pg_stat_activity for `wait_event_type = 'Lock'`, up to sixty times at 50 ms. It was a race
+  -- watching a race: the state it looked for exists only WHILE B is parked on the lock, so the
+  -- test had to catch a moment rather than establish a fact. Measured on an idle machine it needed
+  -- one spin of the sixty — a 60× margin — and CI still lost it once, failing a pull request that
+  -- contained no SQL at all. A gate that goes red on unrelated work is one people learn to re-run
+  -- without reading, which costs more than the gate is worth.
+  --
+  -- lock_timeout turns the observation into a guarantee. A holds the counter row and does not
+  -- commit until further down, so if the allocator serialises at all then B MUST sit on that lock,
+  -- and after 750 ms Postgres cancels it with SQLSTATE 55P03 (lock_not_available). Nothing is
+  -- sampled: a slow machine only means B reaches the lock later and is cancelled later. The error
+  -- travels back through dblink and PL/pgSQL catches it with its SQLSTATE intact — verified
+  -- against a real PostgreSQL 16 before this was written, in both directions.
+  --
+  -- And the OTHER outcome is the bug this file exists for: an allocator that does not serialise
+  -- returns a number here instead of blocking, and it is A's number. That is why b_early is
+  -- captured and reported rather than merely counted as "no error".
   PERFORM dblink_exec('sess_b', 'BEGIN');
-  PERFORM dblink_send_query('sess_b',
-    'SELECT public.next_invoice_seq(''' || u || ''', 2026, ''factuur'')');
-
-  -- Observed in pg_stat_activity, not inferred from dblink_is_busy. `is_busy` only says "not
-  -- finished yet", which is true of any query for its first millisecond — it would have reported a
-  -- block that never happened. wait_event_type = 'Lock' is the database saying B is waiting for a
-  -- lock somebody else holds.
-  WHILE spins < 60 AND NOT saw_lock LOOP
-    SELECT EXISTS (
-      SELECT 1 FROM pg_stat_activity
-      WHERE pid <> pg_backend_pid()
-        AND wait_event_type = 'Lock'
-        AND query LIKE '%next_invoice_seq%'
-    ) INTO saw_lock;
-    EXIT WHEN saw_lock;
-    spins := spins + 1;
-    PERFORM pg_sleep(0.05);
-  END LOOP;
-  PERFORM public.t_is('B is WAITING ON A LOCK — the two callers really are serialised',
-    saw_lock::text, 'true');
+  PERFORM dblink_exec('sess_b', 'SET lock_timeout = ''750ms''');
+  BEGIN
+    SELECT s INTO b_early FROM dblink('sess_b',
+      'SELECT public.next_invoice_seq(''' || u || ''', 2026, ''factuur'')') AS t(s int);
+    blocked := false;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS sqlstate_seen = RETURNED_SQLSTATE;
+    blocked := true;
+  END;
+  -- The number B got is IN the failure message, not merely absent from it. A non-serialising
+  -- allocator returns A's own number here, and "got false, expected true" would send the next
+  -- reader looking for a lock problem when the evidence is the 42 sitting in b_early.
+  PERFORM public.t_is(
+    'B is BLOCKED by A''s lock — the two callers really are serialised'
+      || CASE WHEN blocked THEN '' ELSE format(' — it returned %s instead of waiting', b_early) END,
+    blocked::text, 'true');
+  -- The specific cancellation, not any error at all. Without this a typo in the SQL would satisfy
+  -- the assertion above and the test would claim serialisation it never saw.
+  PERFORM public.t_is('…and blocked is what it was: a lock timeout, not some other failure',
+    coalesce(sqlstate_seen, '<none>'), '55P03');
+  -- B's transaction is aborted by the cancellation; give it back cleanly before reusing it.
+  PERFORM dblink_exec('sess_b', 'ROLLBACK');
+  PERFORM dblink_exec('sess_b', 'RESET lock_timeout');
   PERFORM public.t_eq('…and nothing is committed yet, so the counter still reads 41 outside',
     (SELECT last_seq FROM public.invoice_counters WHERE user_id = u AND year = 2026 AND type = 'factuur'), 41);
 
-  -- A commits; B is released and finishes.
+  -- A commits; the row is free and B asks again — this time it gets a number.
+  -- [SLOT-DETERMINISTISCH] Synchronous now. The async pair (dblink_send_query + a
+  -- dblink_get_result LOOP, because an empty result is what terminates the batch) existed only so
+  -- this session could watch B wait without deadlocking against it, and there is nothing to watch
+  -- any more. Its own comment recorded that it had already cost this block one failure.
   PERFORM dblink_exec('sess_a', 'COMMIT');
-  SELECT s INTO b_seq FROM dblink_get_result('sess_b') AS t(s int);
-  -- An async batch is not finished until an EMPTY result terminates it. Committing before that
-  -- drain earns "another command is already in progress" — which is how this block first failed,
-  -- and is worth writing down: dblink_get_result is a loop, not a single fetch.
-  PERFORM * FROM dblink_get_result('sess_b') AS t(s int);
+  PERFORM dblink_exec('sess_b', 'BEGIN');
+  SELECT s INTO b_seq FROM dblink('sess_b',
+    'SELECT public.next_invoice_seq(''' || u || ''', 2026, ''factuur'')') AS t(s int);
   PERFORM dblink_exec('sess_b', 'COMMIT');
 
   -- THE assertion. A non-atomic allocator reaches this line with b_seq = 42 = a_seq.
