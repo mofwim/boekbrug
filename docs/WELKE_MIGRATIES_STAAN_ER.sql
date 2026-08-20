@@ -369,7 +369,13 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vat_exemption.sql', 'constraint', 'invoices_vat_deduction_check', null, 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles', 'public'),
-  ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public')
+  ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public'),
+  ('vehicles.sql', 'index', 'idx_vehicles_user_apk', null, 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_delete_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_insert_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_select_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'table', 'vehicles', null, 'public')
 ),
 bevonden as (
   select p.*,
@@ -403,7 +409,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 110 migraties
+-- NIET VAST TE STELLEN — 9 van de 111 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

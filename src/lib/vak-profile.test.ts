@@ -1,5 +1,5 @@
 // [VAK-BRUG] Pure node test — run: npx tsx src/lib/vak-profile.test.ts
-import { parseVak, vakArticleSeeds, vakLetOp, vakLabel, sellsOverCounter, VAK_PARAM } from "./vak-profile";
+import { parseVak, vakArticleSeeds, vakLetOp, vakLabel, sellsOverCounter, worksOnVehicles, VAK_PARAM } from "./vak-profile";
 import { VAKKEN } from "./vak-sjablonen";
 
 let passed = 0, failed = 0;
@@ -84,6 +84,21 @@ console.log("\n— who takes his money at a counter —");
   // Every counter trade must be a real trade, or the nav would key on a slug nothing can produce.
   check("every counter trade is a trade the catalogue knows",
     ["kapper", "fietsenmaker", "automonteur"].every((s) => parseVak(s) === s));
+}
+
+console.log("\n— who works on vehicles —");
+{
+  check("a garage does", worksOnVehicles("automonteur"));
+  // A bicycle has no kenteken and no APK: the whole surface would be structurally blank for him,
+  // which reads as a broken feature rather than an inapplicable one.
+  check("a bike repairer does NOT, despite also being a counter trade",
+    sellsOverCounter("fietsenmaker") && !worksOnVehicles("fietsenmaker"));
+  check("a barber does not", !worksOnVehicles("kapper"));
+  check("a painter does not", !worksOnVehicles("schilder"));
+  check("an unknown trade does not",
+    !worksOnVehicles("astronaut") && !worksOnVehicles(null) && !worksOnVehicles(undefined));
+  // The two predicates answer different questions and must stay separable.
+  check("the vehicle trade is a real trade", parseVak("automonteur") === "automonteur");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

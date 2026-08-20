@@ -68,7 +68,9 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
+export function ZzpDashboard(
+  { profile, vehicleTrade = false }: { profile: HeaderProfile; vehicleTrade?: boolean },
+) {
   const router   = useRouter()
   const t        = translator(useLocale())
   const supabase = createClient()
@@ -279,6 +281,13 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 onClick={() => router.push('/dashboard/dagomzet')} />
               <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
+              {/* [VOERTUIG] Only for a trade that works on cars. A barber shown a vehicle register
+                  learns that this app guesses about him; a monteur without one has nowhere to put
+                  the only thing he actually thinks in. Unknown trade → absent, exactly as before. */}
+              {vehicleTrade && (
+                <AdminTile icon="directions_car" tint="#0B57D0" label={t('vtg.titel')}
+                  onClick={() => router.push('/dashboard/voertuigen')} />
+              )}
             </div>
           </section>
 
