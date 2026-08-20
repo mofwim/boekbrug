@@ -227,3 +227,44 @@ test("[VAK-BRUG] a trade's lines never arrive carrying a price", async () => {
     }
   }
 });
+
+test("[VAK-BRUG] a counter trade's phone bar leads with the Kassa, not with Facturen", async () => {
+  const { BottomNav } = await import("../../src/components/nav/BottomNav");
+
+  const counter = renderToStaticMarkup(
+    React.createElement(BottomNav, { role: "zzper" as never, counter: true }),
+  );
+  // The bar is on EVERY screen, so it is the first thing a barber reads about whose app this is.
+  assert.match(counter, /\/dashboard\/kassa/, "the counter is one tap away");
+  assert.doesNotMatch(counter, /\/dashboard\/facturen/, "…and the invoice list is not in the bar");
+  // Still four destinations — the file's own rule, and past four the labels stop fitting on 320px.
+  assert.match(counter, /\/dashboard\/incoming/, "his wholesaler bills stay reachable");
+  assert.match(counter, /\/dashboard\/bestanden/, "…and his files");
+
+  // The fail direction: anyone who has not told us a trade keeps exactly the bar they had.
+  const invoicing = renderToStaticMarkup(
+    React.createElement(BottomNav, { role: "zzper" as never, counter: false }),
+  );
+  assert.match(invoicing, /\/dashboard\/facturen/, "an invoicing owner keeps Facturen");
+  assert.doesNotMatch(invoicing, /\/dashboard\/kassa/, "…and does not get a counter he has no use for");
+
+  // Omitting the prop must behave like the old app, not like a counter shop.
+  const legacy = renderToStaticMarkup(
+    React.createElement(BottomNav, { role: "zzper" as never }),
+  );
+  assert.equal(legacy, invoicing, "no prop means the bar everyone has always had");
+});
+
+test("[VAK-BRUG] an accountant's bar never varies by trade", async () => {
+  const { BottomNav } = await import("../../src/components/nav/BottomNav");
+  // The trade describes the OWNER; an accountant works across many of them. Same reasoning as the
+  // deliberately Dutch-only accountant module in AGENTS.md.
+  const withFlag = renderToStaticMarkup(
+    React.createElement(BottomNav, { role: "accountant" as never, counter: true }),
+  );
+  const without = renderToStaticMarkup(
+    React.createElement(BottomNav, { role: "accountant" as never, counter: false }),
+  );
+  assert.equal(withFlag, without, "the flag cannot reach an accountant's bar");
+  assert.doesNotMatch(withFlag, /\/dashboard\/kassa/, "…and never puts a counter on it");
+});

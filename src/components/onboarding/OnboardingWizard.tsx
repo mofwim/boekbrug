@@ -36,6 +36,8 @@ import { readHandoff, hasSenderContent, toOnboardingCompany } from "@/lib/factuu
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { parseVak } from "@/lib/vak-profile";
+import { vakOpties } from "@/lib/vak-sjablonen";
 // ── Types ────────────────────────────────────────────────
 
 type Role = "zzp" | "accountant";
@@ -46,6 +48,11 @@ interface CompanyData {
   btw_number: string;
   iban: string;
   address: string;
+  // [VAK-BRUG] What kind of work he does. Optional, and it changes nothing he is allowed to do —
+  // it decides what the app OFFERS: which second destination his phone bar carries, and whether his
+  // empty price list can offer him his own trade's lines with the right btw rate already on them.
+  // Asked here because it is a fact about the business, on the screen that collects those.
+  vak: string;
 }
 
 interface OnboardingWizardProps {
@@ -117,7 +124,7 @@ export function OnboardingWizard({
   // leeg formulier en een slotscherm dat loog. Het comment boven StepDone zegt "Be HONEST about
   // readiness" — dat kan alleen als het scherm weet wat er al staat.
   const [company, setCompany] = useState<CompanyData>(
-    initialCompany ?? { company_name: "", kvk_number: "", btw_number: "", iban: "", address: "" }
+    initialCompany ?? { company_name: "", kvk_number: "", btw_number: "", iban: "", address: "", vak: "" }
   );
   // [FUNNEL-OVERDRACHT] Kwam deze gebruiker binnen via de gratis factuurgenerator, dan tikte
   // hij zijn bedrijfsblok daar al in — bedrijfsnaam, adres, KVK, BTW, IBAN. Dat is exact deze
@@ -183,6 +190,10 @@ export function OnboardingWizard({
         btw_number: p.btw_number || uit.btw_number,
         iban: p.iban || uit.iban,
         address: p.address || uit.address,
+        // [VAK-BRUG] Not carried from the free generator's stored block: that store predates this
+        // field, so there is nothing of his in it to preserve. Keeping whatever the wizard already
+        // has means a trade read from his profile survives this merge.
+        vak: p.vak,
       }));
       setPrefilledFromFactuur(true);
       /* eslint-enable react-hooks/set-state-in-effect */
@@ -356,6 +367,11 @@ export function OnboardingWizard({
           btw_number: btw || null,
           address: company.address.trim() || null,
           iban: iban || null,
+          // [VAK-BRUG] parseVak turns anything unrecognised into null, so a stale option or a
+          // tampered value stores "unknown" — which is the state every account was in until now
+          // and costs nothing. Never a guess: a WRONG trade would prefill another profession's
+          // btw rates, which is the one outcome this whole bridge exists to prevent.
+          vak: parseVak(company.vak),
         });
         setStep("3C"); // [FACTUUR-B] go to numbering step before Gmail
         return;
@@ -1040,6 +1056,37 @@ function StepManual({ company, setCompany, kvkError, setKvkError, btwError, setB
           onChange={(v) => { setCompany((p) => ({ ...p, iban: v })); setIbanError(""); }} />
         <Input id="ob-adres" autoComplete="street-address" label={t('onb.adres')} placeholder="Straat 1, 1234 AB Stad" value={company.address}
           onChange={(v) => setCompany((p) => ({ ...p, address: v }))} />
+
+        {/* [VAK-BRUG] The one question that lets the app configure itself, and it is optional.
+            vak-sjablonen.ts has known eleven trades and their correct btw rates all along, and only
+            the public invoice generator ever read them — so a barber who arrived any other way met
+            an app that had no idea what he does: an empty price list, and a phone bar leading with
+            Facturen he never sends. This answer decides what the app OFFERS and nothing about what
+            he may do; leaving it blank keeps everything exactly as it was. */}
+        <div>
+          <label
+            htmlFor="ob-vak"
+            style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#202124", marginBottom: 6 }}
+          >
+            {t('onb.vak')}
+          </label>
+          <select
+            id="ob-vak"
+            value={company.vak}
+            onChange={(e) => setCompany((p) => ({ ...p, vak: e.target.value }))}
+            style={{
+              width: "100%", fontSize: 16, padding: "12px 14px", borderRadius: 10,
+              border: "1px solid #dadce0", background: "#fff", color: "#202124",
+              boxSizing: "border-box",
+            }}
+          >
+            <option value="">{t('onb.vak.leeg')}</option>
+            {vakOpties().map((o) => (
+              <option key={o.slug} value={o.slug}>{o.label}</option>
+            ))}
+          </select>
+          <p style={{ margin: "6px 0 0", fontSize: 13, color: "#5f6368" }}>{t('onb.vak.uitleg')}</p>
+        </div>
       </div>
       {/* [COLD-START] Explain WHY "Volgende" is greyed out — a disabled button with
           no reason reads as "broken" to a first-time user. */}

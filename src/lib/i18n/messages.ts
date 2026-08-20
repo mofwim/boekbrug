@@ -11189,6 +11189,18 @@ export const MESSAGES = {
   },
 
   // ─── [VAK-BRUG] Filling an empty price list from the owner's trade ───────────────────────────
+  // The counter tab. Short because a nav label has ~9 characters before it wraps on a 320px screen.
+  // [VAK-BRUG] The trade question, on the company step of the wizard.
+  'onb.vak': { nl: 'Wat voor werk doe je?', en: 'What kind of work do you do?', ar: 'ما نوع عملك؟', tr: 'Ne iş yapıyorsun?' },
+  'onb.vak.leeg': { nl: 'Kies je vak (mag je overslaan)', en: 'Pick your trade (you may skip this)', ar: 'اختر مهنتك (يمكنك التخطّي)', tr: 'Mesleğini seç (atlayabilirsin)' },
+  'onb.vak.uitleg': {
+    nl: 'Hiermee zet de app je prijslijst alvast klaar, met het btw-tarief dat bij jouw werk hoort. Je kunt alles later aanpassen.',
+    en: 'This lets the app prepare your price list, with the btw rate that belongs to your work. You can change everything later.',
+    ar: 'بهذا يجهّز التطبيق قائمة أسعارك، بنسبة الـ btw التي تخصّ عملك. ويمكنك تعديل كل شيء لاحقاً.',
+  },
+
+  'nav.kassa': { nl: 'Kassa', en: 'Till', ar: 'الكاسة', tr: 'Kasa' },
+
   'vak.titel': { nl: 'Begin met de regels van jouw vak', en: 'Start from your trade’s lines', ar: 'ابدأ من بنود مهنتك' },
   'vak.uitleg': {
     nl: 'Kies je vak, vul in wat jij rekent, en je prijslijst staat er. Het btw-tarief staat er al bij — dat is het stukje waar het vaakst iets misgaat.',

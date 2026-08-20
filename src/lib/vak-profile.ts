@@ -102,3 +102,46 @@ export function vakLetOp(slug: string | null | undefined): string | null {
 export function vakLabel(slug: string | null | undefined): string | null {
   return vakBySlug(parseVak(slug))?.label ?? null;
 }
+
+
+/**
+ * ── DOES THIS TRADE TAKE MONEY AT A COUNTER? ──
+ *
+ * The distinction the app has never been able to make, and the one that decides whether it looks
+ * like it belongs to the person holding the phone.
+ *
+ * A kapper is paid EUR 25 by someone who then walks out; he sends no invoice, has no "client", and
+ * will open the Kassa thirty times a day. A hovenier finishes a garden and sends a bill; he opens
+ * Facturen. Both are zzp'ers, both are in VAKKEN, and until now the app showed them the same four
+ * navigation destinations — Facturen and Inkomend among them, for a barber who sends neither.
+ *
+ * The split is NOT "shop versus service" and not "product versus labour". It is exactly one
+ * question: does the money change hands at the moment the work is done? That is what makes a
+ * counter the right home screen instead of an invoice list.
+ *
+ * ── WHY A LIST AND NOT A FLAG ON THE TRADE ──
+ * VAKKEN is a Dutch-fielded data table about INVOICE LINES — descriptions, units, rates. This is a
+ * statement about how the APP should behave, which is this module's subject and not that one's. It
+ * also keeps the identifiers here English, per AGENTS.md, without an English field sitting oddly
+ * among `regels` and `let_op`.
+ *
+ * ── THE FAIL DIRECTION ──
+ * Unknown trade → false → the invoice-shaped navigation everyone has had until now. A wrong `true`
+ * would take Facturen off the bar of someone who invoices for a living; a wrong `false` costs a
+ * barber one extra tap through his home screen. The cheap mistake is the default.
+ *
+ * automonteur is deliberately IN. A garage does both — a fleet customer gets an invoice, and the
+ * man who came for two tyres pays at the desk — and of the two, the one he does twenty times a week
+ * is the counter. Facturen stays one tap away on the home tiles, which is what they are for.
+ */
+const COUNTER_TRADES: ReadonlySet<string> = new Set([
+  "kapper",       // paid per visit, never invoiced
+  "fietsenmaker", // repairs paid over the counter, parts sold outright
+  "automonteur",  // both, and the counter is the frequent half
+]);
+
+/** Does this owner take his money at a counter? Unknown trade → false (the invoice-shaped app). */
+export function sellsOverCounter(slug: string | null | undefined): boolean {
+  const vak = parseVak(slug);
+  return vak !== null && COUNTER_TRADES.has(vak);
+}
