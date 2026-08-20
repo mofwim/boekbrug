@@ -236,6 +236,12 @@ export type AuditAction =
   // btw-rate at the moment a line was made — so no invoice, total or aangifte moves by a cent.
   // What is destroyed is the list itself, permanently, which is exactly what an audit row is for.
   | 'article.bulk_deleted'
+  // [VAK-BRUG] The owner filled an empty price list from his trade's template in one action. Same
+  // level and same reasoning as its sibling above: articles are TEMPLATES, so no invoice, total or
+  // aangifte moves. What the trail records is that these lines came from a SJABLOON rather than
+  // from him — which is the question worth being able to answer later, because the template chose
+  // the btw-rate and he chose only the price.
+  | 'article.seeded_from_vak'
   | 'folder.created'
   | 'folder.deleted'
   | 'folder.renamed'

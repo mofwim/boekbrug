@@ -176,6 +176,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.invoice.superseded", "log.invoice.numbering_configured",
   "log.invoice.numbering_change_blocked", "log.invoice.arithmetic_blocked", "log.cash.entry_added",
   "log.cash.entry_removed", "log.cash.opening_balance_set", "log.turnover.auto_imported",
+  "log.article.seeded_from_vak",
   "log.turnover.day_removed", "log.turnover.day_entered",
   "log.till.ticket_rung", "log.till.ticket_voided",
   "log.ledger.auto_imported", "log.btw.filed",

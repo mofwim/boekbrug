@@ -191,3 +191,39 @@ test("[KASSA] the hand-typed day panel renders and holds its two totals apart", 
   assert.match(html, /Tegen 9%/, "the 9% box exists");
   assert.match(html, /Tegen 0%/, "the 0% box exists");
 });
+
+test("[VAK-BRUG] the trade panel offers every trade the catalogue knows", async () => {
+  const { default: VakPrijslijst } = await import("../../src/app/dashboard/artikelen/VakPrijslijst");
+  const { VAKKEN } = await import("../../src/lib/vak-sjablonen");
+
+  const html = renderToStaticMarkup(React.createElement(VakPrijslijst, {}));
+  assert.ok(html.length > 0, "the panel renders");
+  assert.match(html, /Begin met de regels van jouw vak/, "…and says what it is for");
+
+  // Every trade reachable, or the owner whose trade is missing concludes the app is not for him.
+  // Read from VAKKEN rather than a hard-coded list, so adding a twelfth trade cannot leave the
+  // dropdown behind.
+  for (const vak of VAKKEN) {
+    assert.ok(
+      html.includes(vak.label),
+      `the dropdown offers "${vak.label}"`,
+    );
+  }
+});
+
+test("[VAK-BRUG] a trade's lines never arrive carrying a price", async () => {
+  const { vakArticleSeeds } = await import("../../src/lib/vak-profile");
+  const { VAKKEN } = await import("../../src/lib/vak-sjablonen");
+
+  // Rule 1 of vak-sjablonen.ts, asserted at the boundary the screen actually reads. An hourly rate
+  // of EUR 65 is wrong for everyone except coincidentally one person, and a wrongly prefilled
+  // amount that slips through is worse than an empty field.
+  for (const vak of VAKKEN) {
+    const seeds = vakArticleSeeds(vak.slug);
+    assert.ok(seeds.length > 0, `${vak.slug} offers lines`);
+    for (const seed of seeds) {
+      assert.ok(!("unit_price" in seed), `${vak.slug} carries no price`);
+      assert.ok([0, 9, 21].includes(seed.btw_rate), `${vak.slug} carries a real Dutch rate`);
+    }
+  }
+});

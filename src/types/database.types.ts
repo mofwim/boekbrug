@@ -2038,6 +2038,7 @@ export type Database = {
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
+          vak: string | null
         }
         Insert: {
           address?: string | null
@@ -2071,6 +2072,7 @@ export type Database = {
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
+          vak?: string | null
         }
         Update: {
           address?: string | null
@@ -2104,6 +2106,7 @@ export type Database = {
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
+          vak?: string | null
         }
         Relationships: [
           {

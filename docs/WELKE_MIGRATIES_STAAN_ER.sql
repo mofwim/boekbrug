@@ -294,6 +294,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_user', null, 'public'),
   ('pay_bundles.sql', 'index', 'pay_bundle_invoices_unique_pair', null, 'public'),
   ('pay_bundles.sql', 'policy', 'pay_bundle_invoices_delete_own', 'pay_bundle_invoices', 'public'),
+  ('profile_vak.sql', 'column', 'vak', 'profiles', 'public'),
+  ('profile_vak.sql', 'function', 'handle_new_user', null, 'public'),
   ('push_subscriptions.sql', 'index', 'idx_push_subscriptions_user', null, 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', 'push_subscriptions', 'public'),
@@ -395,7 +397,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 108 migraties
+-- NIET VAST TE STELLEN — 9 van de 109 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

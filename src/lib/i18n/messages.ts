@@ -10775,6 +10775,7 @@ export const MESSAGES = {
   'log.cash.opening_balance_set': { nl: 'Beginsaldo van de kas ingesteld', en: 'Cash opening balance set', ar: 'ضُبط الرصيد الافتتاحي للصندوق' },
   'log.turnover.auto_imported': { nl: 'Dagomzet ingelezen', en: 'Daily turnover imported', ar: 'استُورد إيراد يومي' },
   'log.turnover.day_removed': { nl: 'Dagomzet van een dag verwijderd', en: 'A day of turnover removed', ar: 'حُذف إيراد يوم' },
+  'log.article.seeded_from_vak': { nl: 'Prijslijst gevuld vanuit een vak-sjabloon', en: 'Price list filled from a trade template', ar: 'مُلئت قائمة الأسعار من قالب مهنة' },
   'log.turnover.day_entered': { nl: 'Dagomzet zelf ingevuld', en: 'Daily turnover entered by hand', ar: 'أُدخل إيراد اليوم يدوياً' },
   'log.till.ticket_rung': { nl: 'Verkoop aangeslagen op de kassa', en: 'Sale rung up on the till', ar: 'سُجّلت عملية بيع على الكاسة' },
   'log.till.ticket_voided': { nl: 'Kassabon teruggedraaid', en: 'Till ticket voided', ar: 'أُلغيت فاتورة كاسة' },
@@ -11186,6 +11187,26 @@ export const MESSAGES = {
     en: 'Could not save the sale.',
     ar: 'تعذّر حفظ عملية البيع.',
   },
+
+  // ─── [VAK-BRUG] Filling an empty price list from the owner's trade ───────────────────────────
+  'vak.titel': { nl: 'Begin met de regels van jouw vak', en: 'Start from your trade’s lines', ar: 'ابدأ من بنود مهنتك' },
+  'vak.uitleg': {
+    nl: 'Kies je vak, vul in wat jij rekent, en je prijslijst staat er. Het btw-tarief staat er al bij — dat is het stukje waar het vaakst iets misgaat.',
+    en: 'Pick your trade, fill in what you charge, and your price list is there. The btw rate is already set — that is the part that most often goes wrong.',
+    ar: 'اختر مهنتك، واملأ ما تتقاضاه، فتجهز قائمة أسعارك. نسبة الـ btw مضبوطة سلفاً — وهي الجزء الذي يُخطئ فيه الناس أكثر.',
+  },
+  'vak.kies': { nl: 'Wat is je vak?', en: 'What is your trade?', ar: 'ما مهنتك؟' },
+  'vak.prijsKop': { nl: 'Wat reken jij?', en: 'What do you charge?', ar: 'كم تتقاضى؟' },
+  'vak.prijsUitleg': {
+    nl: 'Laat leeg wat je niet aanbiedt — die regel wordt niet gemaakt. Je kunt alles later nog aanpassen.',
+    en: 'Leave blank what you do not offer — that line is not created. You can change everything later.',
+    ar: 'اترك ما لا تقدّمه فارغاً — لن يُنشأ ذلك السطر. ويمكنك تعديل كل شيء لاحقاً.',
+  },
+  'vak.opslaan': { nl: 'Prijslijst maken', en: 'Create the price list', ar: 'أنشئ قائمة الأسعار' },
+  'vak.klaar': { nl: 'Je prijslijst staat er. Op de Kassa sla je hem nu met één tik aan.', en: 'Your price list is there. On the Kassa you now ring it up with one tap.', ar: 'قائمة أسعارك جاهزة. تسجّلها الآن على الكاسة بنقرة واحدة.' },
+  'vak.letOpKop': { nl: 'Let op bij dit vak', en: 'Watch out in this trade', ar: 'انتبه في هذه المهنة' },
+  'vak.fout.opslaan': { nl: 'Kon de prijslijst niet maken.', en: 'Could not create the price list.', ar: 'تعذّر إنشاء قائمة الأسعار.' },
+  'vak.fout.leeg': { nl: 'Vul minstens één prijs in.', en: 'Fill in at least one price.', ar: 'املأ سعراً واحداً على الأقل.' },
 
   // ─── [KASSA] A whole day typed by hand, on the Dagomzet screen ───────────────────────────────
   'dzh.titel': { nl: 'Dag zelf invullen', en: 'Enter a day yourself', ar: 'أدخل اليوم بنفسك' },
