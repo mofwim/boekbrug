@@ -11091,6 +11091,110 @@ export const MESSAGES = {
   'mfa.apparaatToevoegen': { nl: 'Tweede apparaat toevoegen', en: 'Add a second device', ar: 'إضافة جهاز ثانٍ' },
   'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
   'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
+
+  // ─── [UREN] De gewerkte uren, en wat ervan nog te factureren valt ────────────────────────────
+  //
+  // Elke zin hier gaat over geld dat nog niet gefactureerd is, en dat is de reden dat dit scherm
+  // bestaat: overtikken uit een schrift lekt maar één kant op. Waar een bedrag onvolledig is,
+  // zegt de tekst dat — een totaal dat stil een uur zonder tarief weglaat is een getal dat de
+  // ondernemer niet kan narekenen tegen de lijst ernaast.
+
+  'uren.titel': { nl: 'Uren', en: 'Hours', ar: 'الساعات' },
+  'uren.subtitel': {
+    nl: 'Schrijf op wat je gewerkt hebt. Wat er nog niet op een factuur staat, zet je hier in één keer om.',
+    en: 'Write down what you worked. Whatever is not on an invoice yet, you turn into one here.',
+    ar: 'سجّل ما عملته. وما لم يُدرَج بعد في فاتورة، تحوّله من هنا دفعة واحدة.',
+  },
+  'uren.nieuw': { nl: 'Uur toevoegen', en: 'Add hours', ar: 'إضافة ساعات' },
+  'uren.leeg.titel': { nl: 'Nog geen uren', en: 'No hours yet', ar: 'لا ساعات بعد' },
+  'uren.leeg.uitleg': {
+    nl: 'Zodra je hier uren opschrijft, zie je per klant wat er nog te factureren valt — en maak je daar met één knop een factuur van.',
+    en: 'Once you write hours here, you see per customer what is still to be invoiced — and turn it into an invoice with one button.',
+    ar: 'ما إن تسجّل ساعات هنا، ترى لكل عميل ما لم يُفوتَر بعد — وتحوّله إلى فاتورة بزر واحد.',
+  },
+
+  // ── De velden ──
+  'uren.veld.datum': { nl: 'Datum', en: 'Date', ar: 'التاريخ' },
+  'uren.veld.klant': { nl: 'Klant', en: 'Customer', ar: 'العميل' },
+  'uren.veld.omschrijving': { nl: 'Wat heb je gedaan?', en: 'What did you do?', ar: 'ماذا أنجزت؟' },
+  // Dit veld wordt de factuurregel. Dat hier zeggen scheelt een omschrijving als "werk" waar de
+  // klant later niets aan heeft — en de klant is degene die hem moet kunnen narekenen.
+  'uren.veld.omschrijvingHint': {
+    nl: 'Dit komt zo op de factuurregel te staan.',
+    en: 'This becomes the invoice line.',
+    ar: 'سيظهر هذا في سطر الفاتورة.',
+  },
+  'uren.veld.uren': { nl: 'Uren', en: 'Hours', ar: 'الساعات' },
+  'uren.veld.tarief': { nl: 'Uurtarief', en: 'Hourly rate', ar: 'أجر الساعة' },
+  'uren.veld.tariefHint': {
+    nl: 'Excl. btw. Laat leeg als je het nog niet weet — het uur blijft dan gewoon staan.',
+    en: 'Excl. btw. Leave it empty if you do not know yet — the hours stay recorded.',
+    ar: 'دون ضريبة القيمة المضافة. اتركه فارغاً إن لم تعرفه بعد — تبقى الساعات مسجّلة.',
+  },
+  'uren.veld.geenKlant': { nl: 'Geen klant', en: 'No customer', ar: 'بدون عميل' },
+  'uren.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
+  'uren.annuleren': { nl: 'Annuleren', en: 'Cancel', ar: 'إلغاء' },
+  'uren.bewerken': { nl: 'Aanpassen', en: 'Edit', ar: 'تعديل' },
+  'uren.verwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'حذف' },
+  'uren.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
+
+  // ── Wat er nog te factureren valt ──
+  'uren.teFactureren': { nl: 'Nog te factureren', en: 'Still to invoice', ar: 'لم يُفوتَر بعد' },
+  'uren.gefactureerd': { nl: 'Al gefactureerd', en: 'Already invoiced', ar: 'مُفوتَر بالفعل' },
+  'uren.maakFactuur': { nl: 'Maak factuur', en: 'Create invoice', ar: 'إنشاء فاتورة' },
+  'uren.urenKort': { nl: 'uur', en: 'h', ar: 'ساعة' },
+  // Een uur dat op een factuur staat is geen invoerveld meer — zie de kop van /api/uren.
+  'uren.staatOpFactuur': {
+    nl: 'Staat op een factuur',
+    en: 'On an invoice',
+    ar: 'مُدرَجة في فاتورة',
+  },
+  'uren.staatOpFactuurUitleg': {
+    nl: 'Dit uur staat op een factuur en kan niet meer worden aangepast. Gooi je dat concept weg, dan komt het uur weer vrij.',
+    en: 'These hours are on an invoice and can no longer be changed. Delete that draft and they become available again.',
+    ar: 'هذه الساعات مُدرَجة في فاتورة ولم يعد بالإمكان تعديلها. احذف تلك المسودة لتعود متاحة.',
+  },
+
+  // ── Waar een bedrag onvolledig is, staat het er ──
+  'uren.zonderTarief.een': {
+    nl: 'Bij 1 uur staat nog geen tarief — dat uur zit niet in dit bedrag en gaat niet mee op de factuur.',
+    en: '1 entry has no rate yet — it is not in this amount and will not go on the invoice.',
+    ar: 'سجلٌّ واحد بلا أجر بعد — غير محتسب في هذا المبلغ ولن يُدرَج في الفاتورة.',
+  },
+  'uren.zonderTarief.meer': {
+    nl: 'Bij {n} uren staat nog geen tarief — die zitten niet in dit bedrag en gaan niet mee op de factuur.',
+    en: '{n} entries have no rate yet — they are not in this amount and will not go on the invoice.',
+    ar: '{n} سجلات بلا أجر بعد — غير محتسبة في هذا المبلغ ولن تُدرَج في الفاتورة.',
+  },
+  'uren.geenTarief': { nl: 'Geen tarief', en: 'No rate', ar: 'بلا أجر' },
+
+  // ── Wat er misging ──
+  'uren.fout.laden': {
+    nl: 'De uren konden niet worden geladen. Dit is een storing, geen lege lijst — probeer het zo opnieuw.',
+    en: 'The hours could not be loaded. This is a failure, not an empty list — try again in a moment.',
+    ar: 'تعذّر تحميل الساعات. هذا عطل وليس قائمة فارغة — أعد المحاولة بعد قليل.',
+  },
+  'uren.fout.opslaan': {
+    nl: 'Dit uur is niet opgeslagen. Er is niets veranderd.',
+    en: 'These hours were not saved. Nothing changed.',
+    ar: 'لم تُحفَظ هذه الساعات. لم يتغيّر شيء.',
+  },
+  'uren.fout.factuur': {
+    nl: 'De factuur is niet gemaakt en je uren staan er nog. Ververs de pagina en probeer het opnieuw.',
+    en: 'The invoice was not created and your hours are still there. Refresh the page and try again.',
+    ar: 'لم تُنشأ الفاتورة وساعاتك ما زالت موجودة. حدّث الصفحة وأعد المحاولة.',
+  },
+  'uren.verwijderen.vraag': {
+    nl: 'Dit uur weggooien?',
+    en: 'Remove these hours?',
+    ar: 'حذف هذه الساعات؟',
+  },
+  'uren.verwijderen.uitleg': {
+    nl: 'Het verdwijnt uit je urenlijst. Werk dat je wel gedaan hebt, kun je daarna niet meer factureren.',
+    en: 'It disappears from your hours. Work you did do cannot be invoiced afterwards.',
+    ar: 'ستختفي من قائمة ساعاتك. ولن تتمكّن بعدها من فوترة عمل أنجزته فعلاً.',
+  },
+
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

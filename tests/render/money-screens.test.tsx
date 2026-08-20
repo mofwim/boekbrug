@@ -2532,3 +2532,121 @@ test("[DUBBEL-BUNDEL] one unreachable row is never absorbed into a clean set", a
   assert.match(textOf(bounded), /30/);
   assert.notEqual(bounded, paint(swept, 25), "a bounded sweep and a complete one may not look alike");
 });
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// [UREN] De urenregistratie — het scherm waar niet-gefactureerd werk zichtbaar wordt.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** One recorded stretch of work, in the shape the screen receives it. */
+const uur = (over: Record<string, unknown> = {}) => ({
+  id: "u1", client_id: "c1", worked_on: "2026-08-03", description: "Analyse",
+  hours: 2, hourly_rate: 95, invoice_id: null, ...over,
+});
+
+test("[UREN] het urenscherm rendert, met rijen die elke tak raken", async () => {
+  const { default: UrenClient } = await import("../../src/app/dashboard/uren/UrenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  // Rijen die de takken ÉCHT raken — tegen een lege lijst roept `[].map(cb)` de callback nooit aan
+  // en zou deze gate niets dekken, precies de val die de kop van dit bestand beschrijft.
+  const rows = [
+    uur({ id: "a", worked_on: "2026-08-03", hours: 2, hourly_rate: 95 }),
+    // Zonder tarief: telt in de uren, telt NIET in het bedrag, en moet dat zeggen.
+    uur({ id: "b", worked_on: "2026-08-04", description: "Overleg", hours: 3, hourly_rate: null }),
+    // Een tweede klant, zodat de groepering en de sortering op bedrag echt draaien.
+    uur({ id: "c", client_id: "c2", worked_on: "2026-08-05", description: "Bouw", hours: 8, hourly_rate: 120 }),
+    // Uren zonder klantkaart — een eigen groep, geen stille optelling bij iemand anders.
+    uur({ id: "d", client_id: null, worked_on: "2026-08-06", description: "Losse klus", hours: 1, hourly_rate: 60 }),
+    // Al gefactureerd: mag NIET in de te-factureren lijst staan.
+    uur({ id: "e", worked_on: "2026-07-01", description: "Vorige maand", hours: 4, hourly_rate: 95, invoice_id: "inv-1" }),
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null,
+        React.createElement(UrenClient as never, {
+          initialEntries: rows as never,
+          clients: [{ id: "c1", name: "Klant Een" }, { id: "c2", name: "Klant Twee" }],
+        }),
+      ),
+    ),
+  );
+  assert.ok(html.length > 0, "het scherm rendert");
+
+  const text = textOf(html);
+  assert.match(text, /Klant Een/, "de klantnaam komt van de kaart, niet van een id");
+  assert.match(text, /Klant Twee/);
+  // De groep zonder klantkaart staat er onder zijn eigen kop — hij mag niet bij een klant belanden.
+  assert.match(text, /Geen klant/);
+
+  // [CENT] De bedragen zijn de som van de uren, niet iets dat erop lijkt. 8 × 120 = 960, en
+  // 2 × 95 = 190 terwijl de drie uur zonder tarief er NIET in zitten.
+  assert.match(text, /960/, "de duurste groep toont haar eigen bedrag");
+  assert.match(text, /190/, "…en de andere telt alleen de uren mét tarief");
+
+  // De regel waar dit scherm om draait: een uur dat al op een factuur staat is geen kandidaat.
+  assert.doesNotMatch(text, /Vorige maand/, "een gefactureerd uur staat niet in de te-factureren lijst");
+
+  // En een bedrag dat een uur weglaat ZEGT dat. Zonder deze zin is € 190 een getal dat de
+  // ondernemer niet kan narekenen tegen de drie regels eronder.
+  assert.match(text, /nog geen tarief/, "het onvolledige bedrag noemt wat het niet meetelt");
+  assert.match(text, /Geen tarief/, "…en de regel zelf zegt het ook");
+});
+
+test("[UREN] een leesfout is geen lege urenlijst", async () => {
+  const { default: UrenClient } = await import("../../src/app/dashboard/uren/UrenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const paint = (entries: unknown[], loadFailed: boolean) => renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null,
+        React.createElement(UrenClient as never, {
+          initialEntries: entries as never, clients: [], loadFailed,
+        }),
+      ),
+    ),
+  );
+
+  const broken = paint([], true);
+  const empty = paint([], false);
+  // [NO-SILENT-EMPTY] De twee mogen niet op elkaar lijken. "Nog geen uren" op een kapotte database
+  // is het ene bericht waarop iemand die zijn uren kwijt is nooit had moeten vertrouwen.
+  assert.notEqual(broken, empty, "een storing schildert niet als een lege lijst");
+  assert.match(textOf(broken), /storing/, "de storing noemt zichzelf");
+  assert.doesNotMatch(textOf(broken), /Nog geen uren/, "…en belooft niet dat er niets openstaat");
+  assert.match(textOf(empty), /Nog geen uren/, "een écht lege lijst zegt wél dat hij leeg is");
+});
+
+test("[UREN] de kolomladder staat in de stijl, niet een object dat erop lijkt", async () => {
+  const { default: UrenClient } = await import("../../src/app/dashboard/uren/UrenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { COLUMN } = await import("../../src/lib/design/tokens");
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null,
+        React.createElement(UrenClient as never, {
+          initialEntries: [uur({ id: "a" })] as never, clients: [{ id: "c1", name: "Klant Een" }],
+        }),
+      ),
+    ),
+  );
+
+  // Gemeten, niet aangenomen: `{...COLUMN}` in een style-object schrijft `hub:480px;work:680px`
+  // in de DOM. Dat is geen CSS, dus de pagina had gewoon GEEN kolom — op een breed scherm loopt de
+  // regel dan van rand tot rand. tsc keurt het goed (het zijn geldige objectsleutels) en de build
+  // ook; alleen een render laat het zien.
+  assert.doesNotMatch(html, /hub:|work:/, "geen tokennaam als CSS-eigenschap");
+  assert.match(html, new RegExp(`max-width:\\s*${COLUMN.work}px`), "de werkkolom staat er als echte CSS");
+
+  // De richting bereikt de DOM. Onder renderToStaticMarkup is de taal altijd Nederlands (useLocale
+  // geeft daar zijn serversnapshot terug), dus dit meet de bedrading en niet de vertaling — die
+  // wordt statisch bewaakt door de [UREN-TAAL]-gate in lifecycle-gates.test.ts.
+  assert.match(html, /dir="ltr"/, "de richting reist mee met de woorden");
+  // Fysieke zijden zijn in precies één taal fout, en dat is de taal die niemand nakijkt.
+  assert.doesNotMatch(html, /padding-left|padding-right|text-align:\s*(left|right)/,
+    "geen fysieke zijde in de opmaak");
+});

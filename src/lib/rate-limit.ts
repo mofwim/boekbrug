@@ -38,6 +38,11 @@ export const RATE_LIMITS = {
   DOCUMENT_CLASSIFY:   { maxRequests: 50, windowMinutes: 60 },    // 50 / hour
   ACCOUNTANT_INVITE:   { maxRequests: 20, windowMinutes: 1440 },  // 20 / day
   INVOICE_SEND:        { maxRequests: 100, windowMinutes: 60 },   // 100 / hour
+  // [UREN] Uren opschrijven is TYPEN, geen versturen. De ondernemer die een kwartaal bijwerkt
+  // tikt er in één zitting zo honderdvijftig in, en INVOICE_SEND (100/uur) zou hem halverwege
+  // stilzetten — precies de gebruiker die zijn uren nu eindelijk bijhoudt in plaats van in een
+  // schrift. 300 is ruim boven wat iemand met de hand haalt en houdt de bovengrens gewoon bestaan.
+  UREN_WRITE:          { maxRequests: 300, windowMinutes: 60 },   // 300 / hour
   // [COST] AI/OCR calls to Claude — a per-user ceiling so one account can't drive
   // unbounded ANTHROPIC spend on the main intake/onboarding/email pipelines.
   AI_OCR:              { maxRequests: 240, windowMinutes: 60 },   // 240 AI reads / hour — a shop's month of receipts in one sitting (non-AI files no longer count)

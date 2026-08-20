@@ -121,6 +121,15 @@ CREATE TABLE public.profiles (
   role text
 );
 
+-- [UREN] The customer card. A production base table (not created by any migration in this repo —
+-- it predates them, like invoices), stubbed here to the two columns a foreign key needs: uren
+-- point at a client, and the FK is what makes "for whom" a relation instead of a typed-in name.
+CREATE TABLE public.clients (
+  id      uuid PRIMARY KEY,
+  user_id uuid,
+  name    text
+);
+
 -- The link an accountant must hold BESIDE the mandate — has_active_invoice_mandate joins both.
 CREATE TABLE public.accountant_clients (
   accountant_id uuid NOT NULL,
