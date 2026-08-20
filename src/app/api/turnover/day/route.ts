@@ -17,7 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { validateManualDay, daySourceConflict, buildTurnoverRow } from "@/lib/till-day";
+import { validateManualDay, daySourceConflict, buildTurnoverRow, korTillRefusal } from "@/lib/till-day";
 import { bookTurnoverRows } from "@/lib/turnover-book";
 import { TILL_SOURCE } from "@/lib/till-book";
 import { turnoverDateOutOfWindow, amsterdamToday } from "@/lib/turnover-import";
@@ -88,6 +88,17 @@ export async function POST(req: NextRequest) {
 
   const day = validateManualDay(body);
   if (!day.ok) return NextResponse.json({ error: day.error }, { status: 400 });
+
+  // [KOR-FACTUUR] A hand-typed day reaches rubriek 1a/1b exactly as directly as a rung-up one, so
+  // it carries the same refusal. The rates are the buckets that actually hold money — a KOR owner
+  // typing his whole day into the 0% box is doing precisely the right thing.
+  const { data: profile } = await supabase
+    .from("profiles").select("kor_active").eq("id", user.id).maybeSingle();
+  const kor = korTillRefusal({
+    korActive: Boolean(profile?.kor_active),
+    rates: [day.gross.gross_9 > 0 ? 9 : 0, day.gross.gross_21 > 0 ? 21 : 0],
+  });
+  if (kor) return NextResponse.json({ error: kor }, { status: 400 });
 
   try {
     const conflict = daySourceConflict(await readDayClaims(supabase, user.id, resolved.date));

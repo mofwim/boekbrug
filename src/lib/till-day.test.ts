@@ -16,6 +16,7 @@ import {
   validateTicket,
   daySourceConflict,
   validateManualDay,
+  korTillRefusal,
   type TillSale,
 } from "./till-day";
 import { checkTurnoverArithmetic, turnoverNetOmzet, turnoverBtw, reconcileDay } from "./turnover";
@@ -213,6 +214,29 @@ console.log("\n— a day typed by hand —");
   check("a slipped decimal is refused", validateManualDay({ gross_21: 9e9, pin: 9e9 }).ok === false);
   // Blank fields are a legitimate zero — a barber who took no 9% revenue leaves that box empty.
   check("blank boxes read as zero", validateManualDay({ gross_21: 100, gross_9: "", pin: "", cash: 100 }).ok === true);
+}
+
+console.log("\n— the KOR, at the counter —");
+{
+  // Most owners are not in the scheme and must never be touched by this.
+  check("an owner not in the KOR is never refused",
+    korTillRefusal({ korActive: false, rates: [21, 9] }) === null
+    && korTillRefusal({ korActive: null, rates: [21] }) === null
+    && korTillRefusal({ korActive: undefined, rates: [21] }) === null);
+  // The expensive case: btw stated under the KOR is OWED (art. 37) with nothing to offset it.
+  const refused = korTillRefusal({ korActive: true, rates: [21] });
+  check("a KOR owner ringing up 21% is refused", typeof refused === "string");
+  check("…and 9% too", typeof korTillRefusal({ korActive: true, rates: [9] }) === "string");
+  check("…and a mixed ticket, on the strength of its one bad line",
+    typeof korTillRefusal({ korActive: true, rates: [0, 0, 21] }) === "string");
+  check("a KOR owner ringing up 0% is fine — that is the whole scheme",
+    korTillRefusal({ korActive: true, rates: [0, 0] }) === null);
+  check("an empty ticket has nothing to object to",
+    korTillRefusal({ korActive: true, rates: [] }) === null);
+  // A refusal the owner cannot act on is a dead end.
+  check("the sentence names the scheme, the risk and where to change it",
+    typeof refused === "string" && refused.includes("KOR")
+    && refused.includes("0%") && refused.includes("Instellingen"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

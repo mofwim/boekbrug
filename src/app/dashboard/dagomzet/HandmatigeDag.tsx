@@ -25,6 +25,9 @@ import { failureText } from '@/lib/server-message'
 import { parseAmountNL } from '@/lib/parse-nl'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { amsterdamToday } from '@/lib/turnover-import'
+// [KOR-FACTUUR] The same sentence the invoice screen shows beside its rate menu — one legal
+// explanation, shared, rather than two screens that can drift apart about the same scheme.
+import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -48,7 +51,9 @@ const EMPTY: Record<FieldKey, string> = {
   gross_21: '', gross_9: '', gross_0: '', pin: '', cash: '', other: '',
 }
 
-export default function HandmatigeDag({ onSaved }: { onSaved?: () => void }) {
+export default function HandmatigeDag(
+  { korActive = false, onSaved }: { korActive?: boolean; onSaved?: () => void },
+) {
   const t = translator(useLocale())
   const [date, setDate] = useState(() => amsterdamToday())
   const [values, setValues] = useState<Record<FieldKey, string>>(EMPTY)
@@ -114,9 +119,17 @@ export default function HandmatigeDag({ onSaved }: { onSaved?: () => void }) {
       <DateFieldNL value={date} onChange={(iso) => { setDone(false); if (iso) setDate(iso) }} />
 
       <h3 style={groupHeading}>{t('dzh.omzetKop')}</h3>
-      {REVENUE_FIELDS.map((f) => (
+      {/* [KOR-FACTUUR] Under the KOR only the 0% box is offered, exactly as the invoice screen
+          offers 0% and nothing else. Preventing the mistake beats reporting it — and the write
+          refuses a rate above 0 anyway, for the tab left open from before the switch. */}
+      {(korActive ? REVENUE_FIELDS.filter((f) => f.key === 'gross_0') : REVENUE_FIELDS).map((f) => (
         <AmountRow key={f.key} label={t(f.labelKey)} value={values[f.key]} onChange={(v) => set(f.key, v)} />
       ))}
+      {korActive && (
+        <p style={{ fontFamily: FONT, fontSize: 12, color: M3.onSurfaceVariant, margin: '8px 0 0' }}>
+          {KOR_RATE_HINT}
+        </p>
+      )}
 
       <h3 style={groupHeading}>{t('dzh.betaaldKop')}</h3>
       {PAID_FIELDS.map((f) => (

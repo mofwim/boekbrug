@@ -38,6 +38,10 @@
 
 import { round2 } from "./invoice-totals";
 import type { DailyTurnover } from "./turnover";
+// [KOR-FACTUUR] One definition of "which lines charge btw" — see kor-invoice.ts. The DETECTION is
+// shared; only the sentence differs, because a counter is not an invoice and the owner is standing
+// at it with a customer in front of him.
+import { korLineViolations } from "./kor-invoice";
 
 /** The BTW rates a Dutch shop can ring up. Same set the articles catalogue and /api/cash accept. */
 export const TILL_RATES = [0, 9, 21] as const;
@@ -381,4 +385,40 @@ export function validateManualDay(raw: ManualDayInput | null | undefined): Manua
     };
   }
   return { ok: true, gross };
+}
+
+
+/**
+ * ── THE KOR, AT THE COUNTER ──
+ *
+ * kor-invoice.ts already stops this on the invoice path, and says why in as many words: under the
+ * kleineondernemersregeling an owner charges NO btw, and stating btw anyway makes it OWED (art. 37
+ * Wet OB) with no right to deduct anything against it.
+ *
+ * That module guards the invoice screen and the send route. It does not guard a till, because when
+ * it was written there was no till — and a shop's daily takings reach rubriek 1a/1b just as directly
+ * as an invoice does, through daily_turnover.btw_21. A KOR barber ringing up 21% all day would
+ * accrue a quarter of btw he does not owe, cannot offset, and would hear about at the aangifte.
+ *
+ * So the same rule gets the same enforcement here, and for the same reason it is enforced twice on
+ * the invoice path: the screen offers 0% and nothing else so the mistake cannot be made, and the
+ * write REFUSES rather than silently correcting — quietly changing what the owner just rang up for
+ * a customer who has already paid is not a fix.
+ *
+ * Returns the Dutch sentence to show, or null when there is nothing to object to. An owner not in
+ * the scheme (which is most of them) is never touched.
+ */
+export function korTillRefusal(args: {
+  korActive: boolean | null | undefined;
+  rates: readonly (number | null | undefined)[];
+}): string | null {
+  if (!args.korActive) return null;
+  const violations = korLineViolations(args.rates.map((btw_rate) => ({ btw_rate })));
+  if (violations.length === 0) return null;
+  return (
+    "Je hebt de kleineondernemersregeling (KOR) aanstaan, dus je brengt geen BTW in rekening — " +
+    "0% is het enige tarief. Deze verkoop rekent wel BTW, en die zou als verschuldigde BTW in je " +
+    "aangifte terechtkomen terwijl je onder de KOR niets mag terugvragen. Klopt de KOR niet meer? " +
+    "Pas hem aan bij Instellingen."
+  );
 }

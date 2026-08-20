@@ -51,7 +51,7 @@ const LEDGER_DONE_MANY: Record<string, MessageKey> = { pin: 'dzi.klaarPin', cash
 const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 
-export default function DagomzetImportClient() {
+export default function DagomzetImportClient({ korActive = false }: { korActive?: boolean } = {}) {
   const t = translator(useLocale())
   const [fileName, setFileName] = useState<string | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -338,7 +338,7 @@ export default function DagomzetImportClient() {
             never looks at this, and a shop without one had no door at all. Saving remounts the
             insights panel above through the same refreshTick the import commit uses, so the day
             appears in the figures immediately rather than after a reload. */}
-        <HandmatigeDag onSaved={() => setRefreshTick((n) => n + 1)} />
+        <HandmatigeDag korActive={korActive} onSaved={() => setRefreshTick((n) => n + 1)} />
       </div>
     </div>
   )

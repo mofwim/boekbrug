@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { validateTicket, daySourceConflict, sumSales, saleGross } from "@/lib/till-day";
+import { validateTicket, daySourceConflict, sumSales, saleGross, korTillRefusal } from "@/lib/till-day";
 // [CENT] Rounding to cents is defined in exactly one place — see the gate of that name in
 // lifecycle-gates.test.ts for the five copies that disagreed before it existed.
 import { round2 } from "@/lib/invoice-totals";
@@ -63,6 +63,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const sales = await readDaySales(supabase, user.id, resolved.date);
+    // [KOR-FACTUUR] The screen offers 0% and nothing else when the scheme is on — the same way the
+    // invoice screen does. Preventing the mistake beats reporting it, and the write below refuses
+    // anyway for the draft-made-before-the-switch case the screen cannot see.
+    const korActive = await readKorActive(supabase, user.id);
     // The screen needs to know BEFORE the owner taps anything whether this day is already claimed —
     // a conflict discovered only on the first sale is a counter that refuses a customer.
     const claims = await readDayClaims(supabase, user.id, resolved.date);
@@ -72,10 +76,24 @@ export async function GET(req: NextRequest) {
       sales,
       totals: dayTotals(sales),
       conflict: daySourceConflict(claims),
+      korActive,
     });
   } catch {
     return NextResponse.json({ error: "Kon de verkopen van vandaag niet laden." }, { status: 500 });
   }
+}
+
+/**
+ * Is the owner in the kleineondernemersregeling? Read fail-OPEN (false on an error), and that is the
+ * safe direction here rather than the reckless one: false is what every owner who is not in the
+ * scheme gets, so a failed read leaves the counter behaving exactly as it does for the large
+ * majority. Failing closed would refuse every sale in the shop over a profile hiccup.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function readKorActive(supabase: any, userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("profiles").select("kor_active").eq("id", userId).maybeSingle();
+  return Boolean(data?.kor_active);
 }
 
 /** What else already claims this day's revenue — the inputs to daySourceConflict. */
@@ -125,6 +143,16 @@ export async function POST(req: NextRequest) {
 
   const ticket = validateTicket(body.lines);
   if (!ticket.ok) return NextResponse.json({ error: ticket.error }, { status: 400 });
+
+  // [KOR-FACTUUR] Enforced at the write as well as on the screen, for the case the screen cannot
+  // see: a counter left open in a browser tab from before the owner switched the scheme on. It
+  // REFUSES rather than correcting — silently changing what was just rung up for a customer who has
+  // already paid is not a fix. See korTillRefusal for what the btw would cost under art. 37.
+  const kor = korTillRefusal({
+    korActive: await readKorActive(supabase, user.id),
+    rates: ticket.lines.map((l) => l.btw_rate),
+  });
+  if (kor) return NextResponse.json({ error: kor }, { status: 400 });
 
   try {
     // ── ONE DAY, ONE SOURCE ──

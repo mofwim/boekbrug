@@ -164,6 +164,19 @@ test("[KASSA] the panels render in Arabic without falling back to a key", async 
   assert.match(html, /كيف تم الدفع/, "…and the Arabic copy is actually used");
 });
 
+test("[KOR-FACTUUR] under the KOR the hand-typed day offers 0% and nothing else", async () => {
+  const { default: HandmatigeDag } = await import("../../src/app/dashboard/dagomzet/HandmatigeDag");
+  const html = renderToStaticMarkup(React.createElement(HandmatigeDag, { korActive: true }));
+  // Stating btw under the KOR makes it OWED (art. 37 Wet OB) with no right to deduct anything
+  // against it, and a day's takings reach rubriek 1a as directly as an invoice does. The boxes that
+  // could hold that btw are simply not offered.
+  assert.doesNotMatch(html, /Tegen 21%/, "the 21% box is not offered");
+  assert.doesNotMatch(html, /Tegen 9%/, "the 9% box is not offered");
+  assert.match(html, /Tegen 0%/, "…and the 0% box still is");
+  // Absent choices must be explained, not merely missing — the same sentence the invoice screen uses.
+  assert.match(html, /kleineondernemersregeling|KOR aanstaan/, "…with the reason written next to it");
+});
+
 test("[KASSA] the hand-typed day panel renders and holds its two totals apart", async () => {
   const { default: HandmatigeDag } = await import("../../src/app/dashboard/dagomzet/HandmatigeDag");
   const html = renderToStaticMarkup(React.createElement(HandmatigeDag, {}));

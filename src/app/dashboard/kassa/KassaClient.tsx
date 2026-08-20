@@ -26,6 +26,9 @@ import { translator } from '@/lib/i18n/t'
 import { failureText } from '@/lib/server-message'
 import { parseAmountNL } from '@/lib/parse-nl'
 import { articleGrossPrice, TILL_RATES, type TillMethod } from '@/lib/till-day'
+// [KOR-FACTUUR] The hint the invoice screen shows beside its rate menu — the same sentence here, so
+// the missing choices are explained rather than merely absent.
+import { KOR_ALLOWED_RATE, KOR_RATE_HINT } from '@/lib/kor-invoice'
 import {
   DayTakings, PriceList, TicketPanel, SalesHistory,
   type TicketLine, type StoredSale, type DayTotals, type PriceListItem,
@@ -50,6 +53,10 @@ export default function KassaClient() {
   const [totals, setTotals] = useState<DayTotals>(EMPTY_TOTALS)
   const [lines, setLines] = useState<TicketLine[]>([])
   const [conflict, setConflict] = useState<string | null>(null)
+  // [KOR-FACTUUR] Under the KOR the owner charges no btw, so the counter offers 0% and nothing
+  // else. The server refuses a rate above 0 as well — see korTillRefusal for why it refuses rather
+  // than correcting.
+  const [korActive, setKorActive] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -57,6 +64,9 @@ export default function KassaClient() {
   const [freeDescription, setFreeDescription] = useState('')
   const [freeAmount, setFreeAmount] = useState('')
   const [freeRate, setFreeRate] = useState<number>(21)
+  // Under the KOR the only offered button is 0%, but the default above was chosen before the
+  // profile arrived — so the EFFECTIVE rate is derived, never left to a stale piece of state.
+  const effectiveRate = korActive ? KOR_ALLOWED_RATE : freeRate
 
   const loadDay = useCallback(async () => {
     try {
@@ -69,6 +79,7 @@ export default function KassaClient() {
       // up front is the difference between a counter that explains itself and one that refuses a
       // customer who is standing there.
       setConflict(json.conflict ?? null)
+      setKorActive(Boolean(json.korActive))
     } catch {
       setError(t('kassa.fout.laden'))
     }
@@ -149,7 +160,7 @@ export default function KassaClient() {
     const amount = parseAmountNL(freeAmount)
     const description = freeDescription.trim()
     if (!description || amount <= 0) return
-    addLine({ description, quantity: 1, unit_price_incl: amount, btw_rate: freeRate, article_id: null })
+    addLine({ description, quantity: 1, unit_price_incl: amount, btw_rate: effectiveRate, article_id: null })
     setFreeDescription('')
     setFreeAmount('')
   }
@@ -253,8 +264,11 @@ export default function KassaClient() {
         onPick={(item) => addLine({
           description: item.description,
           quantity: 1,
+          // The price the customer pays is unchanged by the scheme — under the KOR there is simply
+          // no btw inside it, so the whole gross becomes 0%-turnover. The price list itself is not
+          // rewritten: it also feeds invoices, where the same rule is enforced separately.
           unit_price_incl: item.gross,
-          btw_rate: item.btw_rate,
+          btw_rate: korActive ? KOR_ALLOWED_RATE : item.btw_rate,
           article_id: item.id,
         })}
         t={t}
@@ -286,18 +300,18 @@ export default function KassaClient() {
             style={field}
           />
           <div style={{ display: 'flex', gap: 8 }} role="group" aria-label={t('kassa.tarief')}>
-            {TILL_RATES.map((rate) => (
+            {(korActive ? [KOR_ALLOWED_RATE] : TILL_RATES).map((rate) => (
               <button
                 key={rate}
                 type="button"
                 onClick={() => setFreeRate(rate)}
-                aria-pressed={freeRate === rate}
+                aria-pressed={effectiveRate === rate}
                 style={{
                   flex: 1, fontFamily: FONT, fontSize: 14, borderRadius: 10, padding: '10px 8px',
                   cursor: 'pointer',
-                  border: `1px solid ${freeRate === rate ? M3.primary : M3.outlineVariant}`,
-                  background: freeRate === rate ? M3.primary : M3.surface,
-                  color: freeRate === rate ? '#fff' : M3.onSurface,
+                  border: `1px solid ${effectiveRate === rate ? M3.primary : M3.outlineVariant}`,
+                  background: effectiveRate === rate ? M3.primary : M3.surface,
+                  color: effectiveRate === rate ? '#fff' : M3.onSurface,
                 }}
               >
                 {rate}%
@@ -315,7 +329,10 @@ export default function KassaClient() {
             {t('kassa.toevoegen')}
           </button>
           <p style={{ fontFamily: FONT, fontSize: 12, color: M3.onSurfaceVariant, margin: 0 }}>
-            {t('kassa.waaromTarief')}
+            {/* [KOR-FACTUUR] The sentence is Dutch from kor-invoice.ts on purpose: it is the SAME
+                string the invoice screen shows, and one legal explanation that two screens can
+                disagree about is worse than one they share. */}
+            {korActive ? KOR_RATE_HINT : t('kassa.waaromTarief')}
           </p>
         </div>
       </section>
