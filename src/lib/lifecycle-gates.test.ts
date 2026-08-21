@@ -13459,6 +13459,16 @@ test("[UREN] de migratie laat het werk het document overleven", () => {
 
 import { MESSAGES } from "./i18n/messages";
 
+/**
+ * The catalogue, indexable by a string variable.
+ *
+ * MESSAGES has a precise literal type — every key spelled out — which is exactly what makes the
+ * [TAAL] gates able to prove a key exists. It also means it cannot be indexed by a `string` that
+ * only becomes known at runtime, which is what a gate looping over a list of keys does. One
+ * widening alias here, instead of a cast at each call site.
+ */
+const CATALOGUE = MESSAGES as unknown as Record<string, Record<string, string>>;
+
 test("[UREN] het scherm heeft geen taal van zichzelf", () => {
   const ui = readFileSync("src/app/dashboard/uren/UrenClient.tsx", "utf8");
 
@@ -13618,4 +13628,175 @@ test("[BEWIJS-BEANTWOORDEN] de vraag is beantwoordbaar, op beide schermen", () =
   const ack = code("src/lib/open-invoice-proof-ack.ts");
   assert.match(ack, /hit\.invoiceId, String\(tx\?\.date/, "de sleutel draagt de factuur én de betaling");
   assert.match(ack, /Math\.abs\(Number\(tx\?\.amount\)/, "het teken is de richting, niet de identiteit");
+});
+
+test("[PRIJS-MODUS] de catalogus biedt dezelfde prijskeuze als de factuurschermen", () => {
+  // Een deel van de klanten werkt all-in (horeca, retail, "€ 50 all-in"). De factuurschermen boden
+  // die keuze al; de catalogus niet, dus daar moest de ondernemer de btw er eerst zelf uit rekenen
+  // — en die deling met de hand is waar de centen weglekken.
+  const ui = code("src/app/dashboard/artikelen/ArtikelenClient.tsx");
+
+  assert.match(ui, /switchPriceMode/, "de keuze bestaat");
+  assert.match(ui, /aria-pressed=\{priceMode === m\}/, "…en is aangekondigd, niet alleen gekleurd");
+  // DEZELFDE sleutel als de factuurschermen. Twee voorkeuren voor dezelfde vraag betekenen dat het
+  // ene scherm een andere prijs toont dan het andere.
+  assert.match(ui, /localStorage\.getItem\('boekbrug\.priceMode'\)/, "hij onthoudt via de gedeelde sleutel");
+  assert.match(ui, /localStorage\.setItem\('boekbrug\.priceMode'/, "…en schrijft naar diezelfde sleutel");
+  // De modus reist mee naar de server; die rekent om en slaat de ex-prijs op.
+  assert.match(ui, /price_mode: priceMode/, "de server hoort WELKE prijs er getypt is");
+  // Openen van een bestaand artikel gaat door priceFieldValue, niet door String(unit_price): een
+  // opgeslagen breuk rauw in een invoerveld is een getal dat niemand heeft getypt.
+  assert.match(ui, /priceFieldValue\(a\.unit_price, a\.btw_rate, priceMode\)/, "het veld toont een prijs, geen breuk");
+  // De omrekening komt uit price-mode.ts en wordt hier niet opnieuw uitgevonden.
+  assert.match(ui, /from '@\/lib\/price-mode'/, "één omrekening, gedeeld met de factuurschermen");
+
+  // ── Archiveren mag de PRIJS niet aanraken ──────────────────────────────────────────────────
+  // Vroeger ging bij archiveren de hele rij mee door de volledige validatie, en die rondt af op
+  // centen. Onschadelijk zolang elke prijs cent-rond WAS; niet meer zodra een all-in prijs als
+  // breuk wordt bewaard (€ 0,90 incl. bij 9% is € 0,8256880734…). Archiveren zou hem stil op
+  // € 0,83 zetten — een andere factuur, na een handeling die niets met de prijs te maken heeft.
+  const toggle = ui.slice(ui.indexOf("async function toggleArchive"), ui.indexOf("async function toggleArchive") + 700);
+  assert.match(toggle, /JSON\.stringify\(\{ archive: a\.active \}\)/, "archiveren stuurt alleen `archive`");
+  assert.doesNotMatch(toggle, /unit_price/, "…en raakt de prijs niet aan");
+  const route = code("src/app/api/articles/[id]/route.ts");
+  assert.match(route, /typeof b\.archive === "boolean"/, "de route kent die smalle vorm");
+
+  // ── En de validator ronde een incl-prijs NIET af ───────────────────────────────────────────
+  const lib = code("src/lib/articles.ts");
+  assert.match(lib, /mode === "incl" \? exFromIncl\(priceNum, rateNum\) : round2\(priceNum\)/,
+    "incl bewaart de exacte breuk, excl blijft op centen zoals het was");
+  // Het tarief wordt gecontroleerd VÓÓR de prijs erdoor gedeeld wordt, en met de functie die
+  // `null` en `""` niet als 0% leest — Number(null) is 0, en 0 is een echt tarief.
+  const rateCheck = lib.indexOf("isValidBtwRate(r.btw_rate)");
+  const convert = lib.indexOf("exFromIncl(priceNum, rateNum)");
+  assert.ok(rateCheck >= 0, "het tarief gaat door isValidBtwRate");
+  assert.ok(convert > rateCheck, "…en dat gebeurt vóór de omrekening");
+  assert.doesNotMatch(lib, /VALID_RATES/, "geen tweede, naïeve lijst met geldige tarieven ernaast");
+});
+
+test("[HERSTEL] de verzendknop belooft niet dat een factuur nooit meer te wijzigen is", () => {
+  // Een verstuurde factuur is WEL te corrigeren zolang er niets aan hangt — sentEditBlockers is de
+  // regel, en het bewerkscherm zet `canCorrectSent` op precies die voorwaarden. De waarschuwing bij
+  // het versturen zei nog het tegenovergestelde, en dat is de duurste soort onwaarheid: hij stuurt
+  // de ondernemer naar een CREDITNOTA — een tweede document, in zijn nummerreeks en in zijn
+  // aangifte — voor een tikfout die hij gewoon had mogen herstellen.
+
+  // De correctieweg bestaat écht; zonder deze twee zou de zin hieronder juist fout zijn.
+  assert.match(code("src/lib/invoice-editable.ts"), /export function sentEditBlockers/,
+    "de regel die bepaalt of een verstuurde factuur te corrigeren is");
+  assert.match(code("src/app/dashboard/invoice/[id]/edit/page.tsx"), /setCanCorrectSent\(/,
+    "en het bewerkscherm dat hem toepast");
+
+  for (const key of ["bewerk.modal.waarschuwing", "lijst.send.waarschuwing"]) {
+    const m = CATALOGUE[key];
+    assert.ok(m, `${key} bestaat`);
+    for (const [taal, zin] of Object.entries(m)) {
+      // Geen enkele taal mag de oude bewering nog dragen. Gericht op de FACTUUR, niet op het
+      // NUMMER: "het factuurnummer … is niet meer te wijzigen" hoort er juist te staan, en een
+      // gate die daar ook op afgaat dwingt de zin de andere kant op fout te worden. Deze gate
+      // ging daar zelf een keer op rood.
+      assert.doesNotMatch(zin, /deze factuur niet meer/,
+        `${key}.${taal} beweert nog dat de factuur zelf niet te wijzigen is`);
+      assert.doesNotMatch(zin, /no longer change this invoice/, `${key}.${taal} (en)`);
+      assert.doesNotMatch(zin, /لا يمكنك تعديل هذه الفاتورة/, `${key}.${taal} (ar)`);
+    }
+    // Wat er WEL vastligt is het nummer — art. 35 Wet OB, doorlopende reeks zonder gaten. Dat is
+    // de onomkeerbare helft, en die moet blijven staan: een waarschuwing die niets meer waarschuwt
+    // is erger dan geen waarschuwing.
+    assert.match(m.nl, /factuurnummer/, `${key}.nl noemt wat er wél vastligt`);
+    assert.match(m.nl, /betaald/, `${key}.nl noemt de voorwaarde waaronder corrigeren nog kan`);
+  }
+});
+
+test("[PDF-LAZY] de PDF-renderer komt niet in de eerste download van een scherm", () => {
+  // @react-pdf/renderer is ~1,4 MB en invoice-pdf.tsx importeert hem STATISCH. Eén gewone import
+  // van InvoicePDF in een client-scherm trekt die hele bundel dus alsnog binnen — hoeveel
+  // `dynamic()` er ook omheen staat. Dat is precies wat de kop van PdfDownloadButton.tsx beschrijft
+  // en waarom de gratis generator er één lazy BROK van maakte in plaats van twee losse.
+  //
+  // Deze gate is er omdat die val onzichtbaar is: het scherm werkt, de test slaagt, alleen de
+  // bundel is een megabyte zwaarder — op een telefoon op 4G seconden voordat er iets te doen valt.
+  assert.match(readFileSync("src/lib/invoice-pdf.tsx", "utf8"), /^import .*from '@react-pdf\/renderer'/m,
+    "de aanname waar deze hele gate op rust: invoice-pdf trekt de renderer statisch binnen");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p2 = `${dir}/${e}`;
+      if (statSync(p2).isDirectory()) out.push(...walk(p2));
+      else if (p2.endsWith(".tsx")) out.push(p2);
+    }
+    return out;
+  };
+
+  // Alleen CLIENT-bestanden tellen: een serverbestand levert geen browserbundel op. Daarom mag
+  // invoice-pdf-server.tsx InvoicePDF gewoon rechtstreeks importeren.
+  const clients = walk("src").filter((f) => {
+    const src = readFileSync(f, "utf8");
+    return /^['"]use client['"]/m.test(src) && !f.endsWith(".test.tsx");
+  });
+
+  const zwaar = clients.filter((f) => {
+    const src = code(f);
+    // Een STATISCHE import van het document of van de renderer zelf. `import(...)` binnen
+    // dynamic() is juist goed en matcht deze regexp niet (die eist regelbegin + `from`).
+    return /^import .*from '@\/lib\/invoice-pdf'/m.test(src)
+        || /^import .*from '@react-pdf\/renderer'/m.test(src);
+  });
+
+  // De twee lazy BROKKEN mogen het wél — dat is hun hele bestaansreden: zij worden zelf pas
+  // opgehaald wanneer er echt een PDF nodig is, en houden renderer + document bij elkaar zodat een
+  // latere import de deferral niet ongemerkt kan opheffen.
+  const BROKKEN = [
+    "src/app/factuur-maken/PdfDownloadButton.tsx",
+    "src/components/invoice/PdfPreviewButton.tsx",
+  ];
+  for (const brok of BROKKEN) {
+    assert.ok(existsSync(brok), `${brok} bestaat`);
+    const src = readFileSync(brok, "utf8");
+    assert.match(src, /from '@react-pdf\/renderer'/, `${brok} draagt de renderer zelf`);
+    assert.match(src, /from '@\/lib\/invoice-pdf'/, `${brok} draagt het document zelf — samen in één brok`);
+  }
+
+  const overtreders = zwaar.filter((f) => !BROKKEN.includes(f));
+  assert.deepEqual(overtreders, [],
+    "deze client-schermen trekken de PDF-renderer (~1,4 MB) in hun eerste download:\n  · " +
+    overtreders.join("\n  · ") +
+    "\n\nZet renderer én document samen in één lazy component (zie PdfPreviewButton.tsx) en laad die met dynamic().");
+
+  // En het nieuwe factuurscherm laadt het voorbeeld inderdaad lazy.
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(nieuw, /dynamic\(\(\) => import\('@\/components\/invoice\/PdfPreviewButton'\)/,
+    "het voorbeeld wordt pas opgehaald als de ondernemer erom vraagt");
+  assert.match(nieuw, /<PdfPreviewButton/, "…en staat echt in de knoppenbalk");
+});
+
+test("[NUMMER-VOORUITBLIK] het volgende nummer wordt getoond zonder er een te verbruiken", () => {
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // Het scherm LEEST de nummering; het mag hem nooit ophogen. next_invoice_seq() is de enige
+  // schrijver (factuur_b_numbering.sql), en die wordt bij VERZENDING aangeroepen — niet hier.
+  assert.match(nieuw, /fetch\('\/api\/invoice\/numbering'\)/, "de vooruitblik komt van de GET");
+  assert.doesNotMatch(nieuw, /next_invoice_seq/, "het scherm roept de allocator niet aan");
+  const numbering = code("src/app/api/invoice/numbering/route.ts");
+  const get = numbering.slice(numbering.indexOf("export async function GET"));
+  assert.doesNotMatch(get, /next_invoice_seq|\.rpc\(/, "de GET verbruikt geen nummer");
+  assert.match(get, /last_seq/, "hij leest de stand en telt er één bij op");
+
+  // Alleen voor een FACTUUR. Een offerte krijgt geen nummer uit deze reeks en een creditnota trekt
+  // uit haar eigen teller; een nummer tonen dat niet bij dit document hoort is erger dan geen.
+  assert.match(nieuw, /if \(invoiceType === 'factuur'\) \{[\s\S]{0,200}invoice\/numbering/,
+    "de vooruitblik wordt alleen voor een factuur opgehaald");
+  assert.match(nieuw, /invoiceType === 'factuur' && nextNumber &&/, "…en alleen dan getoond");
+
+  // Het is een VERWACHTING en het scherm zegt dat. Zonder die zin leest het getal als een
+  // toezegging, en verstuurt iemand anders er intussen één, dan klopt hij niet meer.
+  assert.match(nieuw, /t\('nieuw\.nummer\.verwacht'\)/, "de zin die zegt dat het nog niet vaststaat");
+  assert.match(CATALOGUE["nieuw.nummer.verwacht"].nl, /verzending/,
+    "…en die zin noemt WANNEER het wél vaststaat");
+
+  // En de bevestiging toont hetzelfde nummer, met dezelfde terugval als voorheen wanneer het
+  // onbekend is — nooit een leeg vak op de bevestiging van een onomkeerbare handeling.
+  assert.match(nieuw, /nextNumber \?\? t\('bewerk\.modal\.nummerBijVerzending'\)/,
+    "de bevestiging valt terug op de oude zin als het nummer onbekend is");
 });

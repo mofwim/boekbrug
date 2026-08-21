@@ -12,6 +12,9 @@ import VakPrijslijst from './VakPrijslijst'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 import { type Article } from '@/lib/articles'
+// [PRIJS-MODUS] Dezelfde omrekening als beide factuurschermen. Een eigen versie hier zou een
+// tweede antwoord zijn op "wat is € 0,90 all-in, precies", en die twee lopen uit elkaar op de cent.
+import { type PriceMode, priceFieldValue, inclFromEx, toDisplayCents } from '@/lib/price-mode'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -34,6 +37,22 @@ const EMPTY: Form = { code: '', description: '', unit_price: '', btw_rate: 21, u
 
 export default function ArtikelenClient() {
   const t = translator(useLocale())
+  // [PRIJS-MODUS] Dezelfde sleutel als de factuurschermen (`boekbrug.priceMode`), met opzet: wie
+  // zijn factuurregels all-in typt, typt zijn catalogus ook all-in. Twee losse voorkeuren voor
+  // dezelfde vraag zouden betekenen dat het ene scherm een andere prijs toont dan het andere.
+  const [priceMode, setPriceMode] = useState<PriceMode>('excl')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('boekbrug.priceMode')
+      // Zelfde uitzondering, met dezelfde reden, als de twee factuurschermen die deze sleutel al
+      // lezen: localStorage is een extern systeem en dit is precies waar een effect voor is — de
+      // opgeslagen keuze één keer binnenhalen bij het monteren. De regel beschermt tegen
+      // cascade-renders, en dit is er geen. Bewust hetzelfde patroon als daar: één voorkeur die op
+      // drie schermen op twee manieren wordt gelezen is één manier te veel.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === 'incl' || saved === 'excl') setPriceMode(saved)
+    } catch { /* opslag kan geblokkeerd zijn; excl is de veilige stand */ }
+  }, [])
   const dialog = useDialog()
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -68,9 +87,43 @@ export default function ArtikelenClient() {
     return articles.filter((a) => rowMatchesQuery(q, [a.code, a.description], [a.unit_price]))
   }, [articles, search])
 
+  /**
+   * Switch between typing incl. and excl. btw.
+   *
+   * The number in the field is REWRITTEN so it keeps meaning the same money: € 0,90 all-in becomes
+   * € 0,83 when you switch to excl, not a silent re-labelling of 0,90 as an ex-price. A toggle that
+   * only changed the label would be a 21% price change nobody asked for.
+   */
+  function switchPriceMode(next: PriceMode) {
+    setPriceMode(next)
+    try { localStorage.setItem('boekbrug.priceMode', next) } catch { /* niet erg */ }
+    setForm((p) => {
+      const typed = p.unit_price === '' ? null : Number(p.unit_price.replace(',', '.'))
+      if (typed === null || !Number.isFinite(typed)) return p
+      const ex = priceMode === 'incl' ? typed / (1 + (p.btw_rate || 0) / 100) : typed
+      return { ...p, unit_price: String(toDisplayCents(next === 'incl' ? inclFromEx(ex, p.btw_rate) : ex)) }
+    })
+  }
+
+  /**
+   * The other side of the price, or null while the field is empty or unreadable.
+   *
+   * Derived during render rather than kept in state: it is a function of the field and the rate,
+   * and a second copy in state is a second thing that can be stale.
+   */
+  const counterPrice = (() => {
+    const typed = form.unit_price === '' ? null : Number(form.unit_price.replace(',', '.'))
+    if (typed === null || !Number.isFinite(typed) || typed < 0) return null
+    const ex = priceMode === 'incl' ? typed / (1 + (form.btw_rate || 0) / 100) : typed
+    return toDisplayCents(priceMode === 'incl' ? ex : inclFromEx(ex, form.btw_rate))
+  })()
+
   function openNew() { setForm(EMPTY); setEditingId(null); setError(null); setShowForm(true) }
   function openEdit(a: Article) {
-    setForm({ code: a.code ?? '', description: a.description, unit_price: String(a.unit_price), btw_rate: a.btw_rate, unit: a.unit ?? '' })
+    // [PRIJSVELD-CENT] priceFieldValue, niet String(a.unit_price): de opgeslagen prijs kan een
+    // breuk zijn (€ 0,8256880734…), en die rauw in een invoerveld zetten is een getal dat niemand
+    // heeft getypt. Dezelfde functie die het factuurscherm gebruikt.
+    setForm({ code: a.code ?? '', description: a.description, unit_price: String(priceFieldValue(a.unit_price, a.btw_rate, priceMode)), btw_rate: a.btw_rate, unit: a.unit ?? '' })
     setEditingId(a.id); setError(null); setShowForm(true)
   }
 
@@ -82,6 +135,9 @@ export default function ArtikelenClient() {
     const payload = {
       code: form.code, description: form.description,
       unit_price: price, btw_rate: form.btw_rate, unit: form.unit,
+      // [PRIJS-MODUS] WELKE prijs hierboven staat. De server rekent hem om en slaat altijd de
+      // ex-prijs op — dit is een invoerstand, geen opslagformaat.
+      price_mode: priceMode,
     }
     try {
       const res = await fetch(editingId ? `/api/articles/${editingId}` : '/api/articles', {
@@ -97,9 +153,13 @@ export default function ArtikelenClient() {
   }
 
   async function toggleArchive(a: Article) {
+    // [PRIJS-MODUS] Alleen `archive`. Vroeger ging hier de HELE rij mee, en die reist dan door de
+    // volledige validatie — die rondt unit_price af op centen. Bij een all-in prijs is de opgeslagen
+    // prijs een breuk (€ 0,90 incl. bij 9% is € 0,8256880734…), en archiveren zou hem stilletjes
+    // op € 0,83 zetten. De veiligste manier om een veld niet te overschrijven is het niet te sturen.
     await fetch(`/api/articles/${a.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: a.code, description: a.description, unit_price: a.unit_price, btw_rate: a.btw_rate, unit: a.unit, active: !a.active }),
+      body: JSON.stringify({ archive: a.active }),
     })
     await load()
   }
@@ -204,9 +264,46 @@ export default function ArtikelenClient() {
               <Field label={t('art.omschrijving')} value={form.description} onChange={(v) => setForm((p) => ({ ...p, description: v }))} placeholder={t('art.voorbeeld')} />
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ width: 110 }}><Field label={t('art.code')} value={form.code} onChange={(v) => setForm((p) => ({ ...p, code: v }))} placeholder="22" /></div>
-                <div style={{ flex: 1 }}><Field label={t('art.prijsExcl')} value={form.unit_price} onChange={(v) => setForm((p) => ({ ...p, unit_price: v }))} placeholder="45,00" inputMode="decimal" /></div>
+                <div style={{ flex: 1 }}>
+                  <Field label={priceMode === 'incl' ? t('art.prijsIncl') : t('art.prijsExcl')} value={form.unit_price} onChange={(v) => setForm((p) => ({ ...p, unit_price: v }))} placeholder="45,00" inputMode="decimal" />
+                  {/* [PRIJS-MODUS] De tegenprijs, live. Wie all-in typt wil zien wat er excl. btw op
+                      de factuurregel belandt — dat is het getal waar hij zijn marge tegen afzet — en
+                      andersom. Hij staat er ALTIJD, ook in excl-modus, want de vraag "en wat betaalt
+                      mijn klant dan?" is even vaak de eerste. */}
+                  {counterPrice !== null && (
+                    <div style={{ fontSize: 11.5, color: M3.neutral, marginTop: 4, textAlign: 'start' }}>
+                      {priceMode === 'incl'
+                        ? t('art.tegenprijs.excl', { bedrag: eur.format(counterPrice) })
+                        : t('art.tegenprijs.incl', { bedrag: eur.format(counterPrice) })}
+                    </div>
+                  )}
+                </div>
                 <div style={{ width: 90 }}><Field label={t('art.eenheid')} value={form.unit} onChange={(v) => setForm((p) => ({ ...p, unit: v }))} placeholder="stuk" /></div>
               </div>
+              {/* [PRIJS-MODUS] Welke prijs staat er in het veld hierboven? Dezelfde keuze die de
+                  factuurschermen al boden, en dezelfde onthouden voorkeur — wie zijn regels all-in
+                  typt, typt zijn catalogus ook all-in. Opgeslagen wordt hoe dan ook de ex-prijs. */}
+              <div>
+                <div style={{ fontSize: 12, color: M3.neutral, marginBottom: 6 }}>{t('art.modus.aria')}</div>
+                <div style={{ display: 'flex', gap: 6 }} role="group" aria-label={t('art.modus.aria')}>
+                  {(['excl', 'incl'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => switchPriceMode(m)}
+                      aria-pressed={priceMode === m}
+                      style={{
+                        flex: 1, padding: '9px 0', borderRadius: R.sm, cursor: 'pointer',
+                        fontSize: 13.5, fontWeight: 600, fontFamily: FONT,
+                        border: `1px solid ${priceMode === m ? M3.primary : M3.outline}`,
+                        background: priceMode === m ? M3.primary : M3.surface,
+                        color: priceMode === m ? '#fff' : M3.onSurface,
+                      }}
+                    >{m === 'incl' ? t('art.modus.incl') : t('art.modus.excl')}</button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <div style={{ fontSize: 12, color: M3.neutral, marginBottom: 6 }}>{t('art.btwTarief')}</div>
                 <div style={{ display: 'flex', gap: 6 }}>

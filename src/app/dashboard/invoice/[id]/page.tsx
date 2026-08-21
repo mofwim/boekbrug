@@ -10,7 +10,6 @@ import { M3, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/token
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
-import { InvoicePDF } from '@/lib/invoice-pdf'
 import { InvoiceActions } from '@/components/invoice/InvoiceActions'
 import { InvoiceReminders } from '@/components/invoice/InvoiceReminders'
 import { InvoiceDetailSkeleton } from '@/components/ui/Skeletons'
@@ -27,10 +26,16 @@ import { formatDateNL } from '@/lib/format-nl'
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
 import { creditableRemaining, buildCreditSelection, type LineSelection } from '@/lib/partial-credit'
 
-const PDFDownloadLink = dynamic(
-  () => import('@react-pdf/renderer').then(mod => mod.PDFDownloadLink),
-  { ssr: false }
-)
+// [PDF-LAZY] Eén lazy BROK, niet twee losse imports. Hier stond `dynamic()` om PDFDownloadLink
+// heen terwijl InvoicePDF er twaalf regels hoger gewoon statisch werd geïmporteerd — en die ene
+// import trekt @react-pdf/renderer (~1,4 MB) alsnog in de eerste download van dit scherm. Precies
+// de val die de kop van PdfDownloadButton.tsx beschrijft en die daar op de PUBLIEKE pagina al was
+// opgelost; hier stond hij nog. Renderer én document zitten nu samen in PdfPreviewButton, dat pas
+// wordt opgehaald wanneer de ondernemer de PDF echt opvraagt.
+const PdfDocumentButton = dynamic(() => import('@/components/invoice/PdfPreviewButton'), {
+  ssr: false,
+  loading: () => null,
+})
 
 // [STATUS] Deze kaart was de "Design System"-kopie van de statuskleuren, en won daarmee terecht
 // van vijf andere — maar het waren er acht in totaal. Woord én kleur komen nu uit
@@ -694,38 +699,27 @@ export default function InvoiceDetailPage() {
                     and would emit a wrong document — show the original supplier
                     PDF from pdf_url instead. */}
                 {!isIncoming && invoice && profile && (
-                  <PDFDownloadLink
-                    document={
-                      <InvoicePDF
-                        invoice={{
-                          ...invoice,
-                          // [CREDITNOTA-REF] undefined on a normal factuur — the PDF prints the
-                          // reference line only for a creditnota that has one.
-                          original_invoice_number: correctedInvoice?.invoice_number,
-                          original_invoice_date: correctedInvoice?.invoice_date,
-                        }}
-                        lines={lines}
-                        profile={profile}
-                      />
-                    }
-                    fileName={`${invoice.invoice_number || 'concept'}.pdf`}
-                  >
-                    {({ loading: pdfLoading }: { loading: boolean }) => (
-                      <button style={{
-                        backgroundColor: '#1A73E8',
-                        color: 'white',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        padding: '8px 16px',
-                        borderRadius: 9999, // [DS] Material You pill
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
-                      }}>
-                        {pdfLoading ? t('nieuw.actie.laden') : '↓ PDF'}
-                      </button>
-                    )}
-                  </PDFDownloadLink>
+                  <PdfDocumentButton
+                    invoice={{
+                      ...invoice,
+                      // [CREDITNOTA-REF] undefined on a normal factuur — the PDF prints the
+                      // reference line only for a creditnota that has one.
+                      original_invoice_number: correctedInvoice?.invoice_number,
+                      original_invoice_date: correctedInvoice?.invoice_date,
+                    }}
+                    lines={lines}
+                    profile={profile}
+                    download={`${invoice.invoice_number || 'concept'}.pdf`}
+                    label={`↓ ${t('nieuw.pdf.knop')}`}
+                    busyLabel={t('nieuw.actie.pdfBezig')}
+                    failedLabel={t('nieuw.actie.pdfMislukt')}
+                    style={{
+                      backgroundColor: '#1A73E8', color: 'white', fontSize: 13, fontWeight: 500,
+                      padding: '8px 16px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+                      textDecoration: 'none', display: 'inline-flex', alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  />
                 )}
                 {isIncoming && invoice?.pdf_url && (
                   <button
