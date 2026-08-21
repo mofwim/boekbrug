@@ -92,18 +92,9 @@ export function refuseSupersede(
   return new Set(["processing", "received"]).has(old.status ?? "") ? null : "not_supersedable";
 }
 
-/** What the confirmation says before anything happens. Plain Dutch, no euphemism. */
-export function supersedeConfirmBody(
-  old: { invoice_number?: string | null },
-  replacement: { invoice_number?: string | null },
-): string {
-  const oldNr = (old.invoice_number ?? "").trim();
-  const newNr = (replacement.invoice_number ?? "").trim();
-  const oldName = oldNr ? `factuur ${oldNr}` : "de oude factuur";
-  const newName = newNr ? `factuur ${newNr}` : "deze factuur";
-  return (
-    `${oldName.charAt(0).toUpperCase() + oldName.slice(1)} verdwijnt uit je lijst en telt niet meer mee ` +
-    `in je kosten en voorbelasting — ${newName} vervangt hem. Hij blijft bewaard (7 jaar bewaarplicht) ` +
-    `en je kunt hem terugzetten bij Inkomend › Genegeerd.`
-  );
-}
+// [VERVANG] Er stond hier een supersedeConfirmBody(): dezelfde bevestigingstekst, in het
+// Nederlands, met dezelfde inhoud als 'ink.vervang.uitlegMetNr' in messages.ts. Die laatste is wat
+// er DAADWERKELIJK op het scherm komt, en hij bestaat in drie talen. Twee versies van één
+// waarschuwing is één versie die niemand ziet — en juist deze zou de indruk wekken de bron te
+// zijn, want hij staat naast de regel. Weg dus; de zin woont waar hij gerenderd wordt.
+

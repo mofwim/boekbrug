@@ -85,16 +85,11 @@ export type Verantwoording = {
   warnings: ClosingPackageWarning[];
 };
 
-/**
- * Assemble the page's contents.
- *
- * A plain projection on purpose: every number here is already computed and stated elsewhere in the
- * package, and recomputing one would create a page that disagrees with the files it summarises —
- * which is the one failure a document meant to be shown to a third party cannot survive.
- */
-export function buildVerantwoording(args: Verantwoording): Verantwoording {
-  return args;
-}
+// [VERANTWOORDING] Hier stond een buildVerantwoording(args) die `args` teruggaf. Een functie die
+// niets doet, en die daardoor de indruk wekt dat er ergens iets wordt samengesteld dat gecontroleerd
+// kan worden. Het TYPE is de afspraak; het samenstellen gebeurt in closing-package.ts waar de
+// getallen definitief zijn. Weg.
+
 
 /**
  * The sentence about the reconciliation, or null when there is nothing to say.

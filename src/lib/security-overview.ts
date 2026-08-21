@@ -175,16 +175,10 @@ export function buildSecurityOverview(args: {
   return { holders, complete, count: complete ? holders.length : null };
 }
 
-/**
- * Is this administration reachable by anyone besides its owner?
- *
- * Three answers, and the third is why this is a function. `null` is "we do not know" — returned
- * whenever a source failed AND the people we did read are only the owner, because the ones we could
- * not read are exactly the ones that would change the answer. Once someone else is already on the
- * list, a failed read cannot make that untrue, so the answer is a solid `true`.
- */
-export function sharedWithOthers(overview: SecurityOverview): boolean | null {
-  const others = overview.holders.filter((h) => h.kind !== "owner").length;
-  if (others > 0) return true;
-  return overview.complete ? false : null;
-}
+// [BEVEILIGING] Er stond hier een sharedWithOthers(): true/false/null voor "kan iemand anders bij
+// deze administratie". De redenering klopte — null wanneer een bron faalde ÉN we alleen de eigenaar
+// zagen, want juist de onleesbare bron zou het antwoord veranderen — maar geen enkele aanroeper
+// bestond, en de reden is structureel: het paneel heeft het AANTAL nodig, niet de vlag, en kiest
+// zijn zin op `complete` en `count`. Diezelfde drie uitkomsten staan daar in eigen woorden boven de
+// kopregel. Eén plek is genoeg.
+

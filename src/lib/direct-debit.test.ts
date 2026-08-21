@@ -11,7 +11,6 @@ import assert from 'node:assert/strict'
 import {
   readDirectDebit,
   isCertainDirectDebit,
-  directDebitEvidenceText,
 } from './direct-debit'
 
 // ─── The four doors ───────────────────────────────────────────────────────────
@@ -90,7 +89,6 @@ test('[DD-SIGNAL] a storno is never a collection', () => {
   assert.equal(back.isDirectDebit, false, 'money coming in is not a collection')
   assert.equal(back.reversal, true, 'and it must be recognisable AS a reversal, not merely ignored')
   assert.equal(isCertainDirectDebit(back), false, 'nothing may be acted on from a storno')
-  assert.match(directDebitEvidenceText(back) ?? '', /niet betaald/, 'the owner is told the invoice is still open')
 
   // The wording alone is enough, even when the sign is missing (a CSV whose amount failed to parse).
   const worded = readDirectDebit({ typeCode: 'NDDT', text: 'STORNO SEPA INCASSO', amount: null })
@@ -123,7 +121,6 @@ test('[DD-SIGNAL] nothing to go on is answered as nothing to go on', () => {
   assert.equal(blank.reversal, false)
   assert.equal(blank.mandateId, null)
   assert.equal(blank.creditorId, null)
-  assert.equal(directDebitEvidenceText(blank), null, 'and it claims nothing on screen')
 
   // Junk in must not throw or invent.
   assert.equal(readDirectDebit({}).signal, null)
@@ -139,19 +136,10 @@ test('[DD-SIGNAL] a mandate id is stored, not a novel', () => {
   assert.equal(readDirectDebit({ mandateId: 'M-1', typeCode: 'NDDT', amount: -1 }).mandateId, 'M-1', 'a real one is kept')
 })
 
-test('[DD-SIGNAL] every evidence sentence is something a person can read', () => {
-  const cases = [
-    readDirectDebit({ mandateId: 'M-1', amount: -1 }),
-    readDirectDebit({ creditorId: 'NL32ZZZ411951220000', amount: -1 }),
-    readDirectDebit({ typeCode: 'NDDT', amount: -1 }),
-    readDirectDebit({ text: 'SEPA Incasso', amount: -1 }),
-  ]
-  for (const c of cases) {
-    const t = directDebitEvidenceText(c)
-    assert.ok(t && t.length > 20, `${c.signal} has no sentence`)
-    assert.doesNotMatch(t!, /[A-Z_]{4,}/, `${c.signal} leaks a code into owner-facing text: "${t}"`)
-  }
-})
+// [DD-SIGNAL] Hier stond een test die eiste dat ELK signaal een eigen zin had en dat er geen
+// bankcode in die zin lekte. Die zin is er niet meer — directDebitEvidenceText is verwijderd omdat
+// geen scherm hem toonde — en een test over een verdwenen zin is geen bewijs meer, alleen ruis.
+// De REGEL eronder (welk signaal telt als zeker) staat hierboven wél gepind.
 
 // ─── End to end: does the signal survive the parsers? ─────────────────────────
 //

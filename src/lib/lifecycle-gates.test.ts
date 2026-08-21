@@ -5951,7 +5951,19 @@ test("[GEGROND-NAAM] an unfound name reaches the owner, on the vendor field", ()
   // Not the amounts: on the measured invoice all three were correct, and pointing at them would
   // send the owner to the only part that was right.
   assert.doesNotMatch(block.slice(0, 400), /flags\.arithmetic = true/);
-  assert.match(block.slice(0, 900), /staat nergens in de tekst van dit document/);
+  // [GEGROND-NAAM] De zin zelf staat niet meer hier. Hij stond op TWEE plekken — hier uitgeschreven
+  // én in vendor-grounding.ts naast het verdict — en de versie naast de regel had geen aanroeper,
+  // dus die bewerken zou niets veranderd hebben terwijl het er precies uitzag als het aanpassen van
+  // wat de eigenaar leest. Deze poort vraagt nu of dit scherm de zin OPHAALT; de zin zelf wordt
+  // hieronder gepind, in het bestand waar hij woont.
+  assert.match(block.slice(0, 900), /vendorGroundingText\('absent'/, "the screen must ask for the sentence, not write a second copy of it");
+  assert.match(
+    code("src/lib/vendor-grounding.ts"), /staat nergens in de tekst van dit document/,
+    "…and the sentence must still exist where the verdict does",
+  );
+  // Both shapes, because a blank name used to be the reason this screen kept its own copy: the
+  // library rendered `de naam "" staat nergens`, which is the app quoting an empty quotation.
+  assert.match(code("src/lib/vendor-grounding.ts"), /de gelezen leveranciersnaam staat nergens/, "a nameless read needs its own opening");
 });
 
 test("[GEGROND-NAAM] only 'absent' speaks, and it blocks nothing", () => {

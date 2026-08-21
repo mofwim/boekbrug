@@ -206,26 +206,12 @@ export function findStatementGaps(
   return { issues, accounts: byAccount.size, balancesKnown, covered };
 }
 
-/**
- * Eén zin voor het overzicht ("Klaar"-scherm). Nooit "compleet" claimen wanneer we geen saldi
- * hebben gezien — dan hebben we alleen de datums kunnen controleren, en dat zeggen we.
- */
-export function summarizeContinuity(r: ContinuityResult): string {
-  if (r.accounts === 0) return "Nog geen bankafschriften ingelezen.";
-  if (r.issues.length === 0) {
-    return r.balancesKnown
-      ? "Je bankafschriften sluiten op elkaar aan — geen ontbrekende periode gevonden."
-      : "Je bankafschriften sluiten qua periode op elkaar aan. Saldi staan niet in deze bestanden, dus dat deel konden we niet controleren.";
-  }
-  const gaps = r.issues.filter((i) => i.kind === "date_gap").length;
-  const breaks = r.issues.filter((i) => i.kind === "balance_break").length;
-  const overlaps = r.issues.filter((i) => i.kind === "overlap").length;
-  const parts: string[] = [];
-  if (gaps > 0) parts.push(gaps === 1 ? "1 ontbrekende periode" : `${gaps} ontbrekende periodes`);
-  if (breaks > 0) parts.push(breaks === 1 ? "1 saldobreuk" : `${breaks} saldobreuken`);
-  if (overlaps > 0) parts.push(overlaps === 1 ? "1 overlappend afschrift" : `${overlaps} overlappende afschriften`);
-  return `In je bankgeschiedenis: ${parts.join(" · ")}.`;
-}
+// [STATEMENT-CONTINUITY] Er stond hier een summarizeContinuity(): één samenvattende zin voor het
+// klaar-scherm. Dat scherm toont sinds jaar en dag de bevindingen ZELF — elke ontbrekende periode
+// met zijn eigen datums, via readiness — en sinds [DEKKING] ook de dekkingszin. Een samenvatting
+// daarboven zegt hetzelfde nog een keer, korter en vager. Hij is nooit aangeroepen, en dat was
+// terecht.
+
 
 // ── [DEKKING] Beslaan de afschriften het hele kwartaal? ────────────────────────────────
 

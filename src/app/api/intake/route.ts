@@ -62,7 +62,7 @@ import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
 import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
 // [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
-import { planReceiptSettlement } from "@/lib/receipt-auto-settle"
+import { planReceiptSettlement, settleNoticeText } from "@/lib/receipt-auto-settle"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
 // gecontroleerd. Een gescande stapel levert één factuur op; de rest verdwijnt spoorloos.
 import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoices, mergeUnverifiedSingle } from "@/lib/multi-invoice-pdf"
@@ -1302,8 +1302,15 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       title: settled ? "Bon automatisch verwerkt en afgeboekt" : "Factuur automatisch verwerkt",
       // .replace with a STRING replaces the first match only; a missing number left a second
       // double space untouched. A regex with /g collapses every run of spaces.
+      // [BON-BETAALWIJZE] De zin komt uit receipt-auto-settle.ts, naast de regel die besloot dat
+      // deze bon al was afgerekend. Hij stond hier ook uitgeschreven, en zwakker: hij noemde onze
+      // CONCLUSIE ("contant geboekt") en niet het WOORD OP HET PAPIER. "Wij dachten dat het contant
+      // was" is een mening die de eigenaar niet kan nakijken; `op de bon staat "Wisselgeld"` is een
+      // bewering die hij met één blik op de bon afdoet — en dat is het verschil tussen een melding
+      // en een geruststelling. Het bewijs lag hier al klaar (decision.paidEvidence, twee regels
+      // verderop gebruikt) en reisde alleen nooit mee naar de tekst.
       body: (settled
-        ? `${v.vendor || "Een leverancier"} — deze bon is gelezen en meteen als betaald geboekt (${settlePlan.method === "kas" ? "contant" : "met de pas"}, ${settlePlan.payDate}). Klopt dat niet, zet hem dan met één tik terug op openstaand.`
+        ? `${v.vendor || "Een leverancier"} — ${settleNoticeText(settlePlan, decision.paidEvidence ?? null) ?? ""}`
         : `${v.vendor || "Een leverancier"} — factuur ${v.invoice_number ?? ""} is automatisch geverifieerd en geboekt als inkoopfactuur (nog niet betaald). Controleer indien nodig.`
       ).replace(/ {2,}/g, " "),
       type: "invoice",

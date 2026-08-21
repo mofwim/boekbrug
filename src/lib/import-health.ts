@@ -29,6 +29,8 @@
 // upload read "✓ ready to confirm" (calm) instead of "review this" (alarm).
 
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
+// [GEGROND-NAAM] De zin hoort bij de regel, niet bij het scherm — zie het blok dat hem gebruikt.
+import { vendorGroundingText } from './vendor-grounding'
 // [E-FACTUUR] De cijfers die de leverancier zelf meestuurde — sterker dan elke lezing.
 import { eInvoiceOf, eInvoiceSettlesAmounts } from '@/lib/e-invoice'
 // [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
@@ -371,12 +373,12 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     // kunnen aanwijzen. De bedragen waren op de gemeten factuur juist — ze aanwijzen zou de
     // ondernemer naar het enige deel sturen dat wél goed was.
     flags.vendor = true
-    const naam = String(vendorGrounding.name ?? '').trim()
-    reasons.push(
-      naam
-        ? `de naam "${naam}" staat nergens in de tekst van dit document — controleer bij welke leverancier deze factuur hoort`
-        : 'de gelezen leveranciersnaam staat nergens in de tekst van dit document — controleer bij welke leverancier deze factuur hoort',
-    )
+    // The sentence comes from vendor-grounding.ts, where the verdict does. It stood written out
+    // here as well — word for word — which meant the copy beside the rule had no caller at all,
+    // and a future edit there would have changed nothing while looking like changing what the
+    // owner reads.
+    const zin = vendorGroundingText('absent', vendorGrounding.name ?? null)
+    if (zin) reasons.push(zin)
   }
 
   // [DOCCHECK] En de scherpere vorm van dezelfde vraag. 'present' betekent: het bedrag STAAT wel op

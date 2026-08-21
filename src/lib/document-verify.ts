@@ -359,6 +359,9 @@ export function verifyDocument(
  * documents that print a date in a format nobody predicted — and a queue full of correct invoices is
  * how a safety feature gets switched off.
  */
+// Zelfde afspraak als groundingBlocksAutoBooking: geen aanroeper, want de deuren houden losse
+// verdicts. Dit is de complete uitspraak — grounding, plaatsing en de gedrukte btw-splitsing samen —
+// en elke helft delegeert, zodat hij niet kan afwijken van wat er werkelijk wordt gevraagd.
 export function documentCheckBlocks(c: DocumentCheck): boolean {
   // [DOCCHECK-SPLIT] And a BTW that contradicts a split the paper prints. Measured: without this,
   // the original € 0,46 error still booked — right total, consistent arithmetic, invented split.

@@ -175,8 +175,12 @@ export function vendorGroundingText(
 ): string | null {
   if (verdict !== "absent") return null;
   const shown = String(name ?? "").trim();
-  return (
-    `de naam "${shown}" staat nergens in de tekst van dit document — controleer bij welke ` +
-    "leverancier deze factuur hoort"
-  );
+  // A blank name gets its own opening. `de naam "" staat nergens in de tekst` is the app quoting
+  // an empty quotation at the owner — and this sentence exists to be settled by looking at the
+  // paper, which requires it to read like something a person wrote.
+  return shown
+    ? `de naam "${shown}" staat nergens in de tekst van dit document — controleer bij welke ` +
+      "leverancier deze factuur hoort"
+    : "de gelezen leveranciersnaam staat nergens in de tekst van dit document — controleer bij " +
+      "welke leverancier deze factuur hoort";
 }

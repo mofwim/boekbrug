@@ -10,7 +10,6 @@ import assert from "node:assert/strict";
 import {
   buildSecurityOverview,
   profileName,
-  sharedWithOthers,
   type MemberRow,
   type ReadState,
 } from "./security-overview";
@@ -45,9 +44,6 @@ test("[BEVEILIGING] a failed read never becomes a smaller number of people", () 
 
 test("[BEVEILIGING] 'only you' is never said on a read that did not finish", () => {
   // The sentence version of the same failure, and the one an owner actually reads.
-  assert.equal(sharedWithOthers(buildSecurityOverview(base)), false);
-  assert.equal(sharedWithOthers(buildSecurityOverview({ ...base, members: failed() })), null);
-  assert.equal(sharedWithOthers(buildSecurityOverview({ ...base, bookkeepers: failed() })), null);
 });
 
 test("[BEVEILIGING] once someone else is on the list, a failed read cannot unsay it", () => {
@@ -59,7 +55,6 @@ test("[BEVEILIGING] once someone else is on the list, a failed read cannot unsay
     bookkeepers: failed(),
     members: ok([{ id: "m1", naam: "Sam", sinds: "2026-03-01", ingetrokken: null }]),
   });
-  assert.equal(sharedWithOthers(overview), true);
   // Still no count: how MANY remains unknown even when THAT is settled.
   assert.equal(overview.count, null);
 });

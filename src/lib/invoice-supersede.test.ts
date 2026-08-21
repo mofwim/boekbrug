@@ -4,7 +4,8 @@
 // lock, and a pair that is not a pair each have to stop it — and stop it with a reason the owner
 // can act on, never a silent no-op.
 
-import { refuseSupersede, SUPERSEDE_REFUSAL_TEXT, supersedeConfirmBody, type SupersedeInvoice } from './invoice-supersede'
+import { refuseSupersede, SUPERSEDE_REFUSAL_TEXT, type SupersedeInvoice } from './invoice-supersede'
+import { MESSAGES } from './i18n/messages'
 
 let passed = 0, failed = 0
 function check(name: string, cond: boolean) {
@@ -132,16 +133,21 @@ console.log('\n— every refusal has words the owner can act on —')
 
 console.log('\n— the confirmation says what leaves, and that it comes back —')
 {
-  const body = supersedeConfirmBody({ invoice_number: '26302050' }, { invoice_number: '26302051' })
-  check('names the invoice being replaced', body.includes('26302050'))
-  check('names the replacement', body.includes('26302051'))
+  // [VERVANG] Deze beloftes stonden gepind op supersedeConfirmBody(), een Nederlandse zin naast de
+  // regel die nooit werd gerenderd: het scherm toont 'ink.vervang.uitlegMetNr' uit messages.ts, in
+  // drie talen. De functie is weg; de beloftes blijven — ze horen bij de tekst die de eigenaar
+  // ECHT leest, dus daar staan ze nu op.
+  const body = MESSAGES['ink.vervang.uitlegMetNr'].nl
+  check('names the invoice being replaced', body.includes('{nr}'))
   check('promises the bewaarplicht', /7 jaar bewaarplicht/.test(body))
   check('names where it goes', /Genegeerd/.test(body))
+  check('and says this invoice simply stays in the queue', /wachtrij/.test(body))
 }
 {
-  // A missing number must not render "factuur  " — the sentence still has to read like Dutch.
-  const body = supersedeConfirmBody({ invoice_number: null }, { invoice_number: '  ' })
-  check('no number → still a sentence, no dangling label', /De oude factuur/.test(body) && !/factuur {2}/.test(body))
+  // Zonder nummer bestaat er een EIGEN zin, in plaats van "factuur  " met een gat erin.
+  const zonder = MESSAGES['ink.vervang.uitlegZonderNr'].nl
+  check('no number → its own sentence, no dangling label', /De andere factuur/.test(zonder) && !/factuur {2}/.test(zonder))
+  check('and it makes the same promise', /7 jaar bewaarplicht/.test(zonder))
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`)

@@ -2,7 +2,7 @@
 // Een ontbrekende maand bankgeschiedenis is onzichtbaar: beide bestanden die je WEL hebt kloppen
 // perfect. Deze tests pinnen vast dat we hem toch vinden — én dat we niet gaan roepen bij een
 // naadloze reeks, want een vals gat stuurt de eigenaar naar zijn bank voor niets.
-import { findStatementGaps, summarizeContinuity, type StatementPeriod } from "./bank-statement-continuity";
+import { findStatementGaps, type StatementPeriod } from "./bank-statement-continuity";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -41,7 +41,6 @@ console.log("\n[STATEMENT-CONTINUITY] naadloos = stil");
     st({ documentId: "c", from: "2026-03-01", to: "2026-03-31", opening: 1800, closing: 2000 }),
   ]);
   check("een aansluitende reeks geeft geen enkele melding", r.issues.length === 0);
-  check("de samenvatting bevestigt dat rustig", /sluiten op elkaar aan/.test(summarizeContinuity(r)));
 }
 
 console.log("\n[STATEMENT-CONTINUITY] saldobreuk terwijl de datums kloppen");
@@ -70,7 +69,6 @@ console.log("\n[STATEMENT-CONTINUITY] geen saldi in het bestand");
   ]);
   check("zonder saldi geen saldomelding", r.issues.length === 0);
   check("…en we zeggen eerlijk dat dat deel niet gecontroleerd is", r.balancesKnown === false);
-  check("de samenvatting claimt dan geen volledigheid", /niet controleren/.test(summarizeContinuity(r)));
 }
 
 console.log("\n[STATEMENT-CONTINUITY] twee rekeningen door elkaar");
@@ -107,7 +105,6 @@ console.log("\n[STATEMENT-CONTINUITY] robuustheid");
 {
   const r = findStatementGaps([]);
   check("geen afschriften → geen meldingen, geen claims", r.issues.length === 0 && r.accounts === 0);
-  check("de samenvatting zegt dat er nog niets is", /Nog geen bankafschriften/.test(summarizeContinuity(r)));
 }
 {
   const r = findStatementGaps([

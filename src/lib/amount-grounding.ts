@@ -253,6 +253,10 @@ export function groundMoneyFields(
  * gates — arithmetic, confidence, the duplicate probe — still apply there exactly as before. What
  * this adds is one more way to be CERTAIN, never a new way to be stuck.
  */
+// Geen aanroeper, met opzet: beide deuren houden een opgeslagen verdict, niet dit object, dus zij
+// vragen verdictBlocksAutoBooking() hieronder. Dit is de vorm voor wie de hele grounding in handen
+// heeft — de audit-route — en de plek waar de regel als geheel te lezen is. Hij DELEGEERT, dus hij
+// kan niet meer los gaan lopen van wat er echt beslist; dat was precies het probleem dat hier zat.
 export function groundingBlocksAutoBooking(g: MoneyGrounding): boolean {
   return verdictBlocksAutoBooking(g.totalIncBtw)
 }

@@ -188,18 +188,17 @@ export function isCertainDirectDebit(read: DirectDebitRead): boolean {
   return read.signal === 'mandate' || read.signal === 'creditor-id' || read.signal === 'type-code'
 }
 
-/** The Dutch sentence naming the evidence. Owner-facing product text (AGENTS.md). */
-export function directDebitEvidenceText(read: DirectDebitRead): string | null {
-  if (read.reversal) return 'deze incasso is teruggeboekt (storno) — de factuur is dus niet betaald'
-  if (!read.isDirectDebit) return null
-  switch (read.signal) {
-    case 'mandate': return 'je bank noemt hier een machtiging — dit is een automatische incasso'
-    case 'creditor-id': return 'je bank noemt hier een incassant-ID — dit is een automatische incasso'
-    case 'type-code': return 'je bank heeft deze afschrijving zelf als incasso geboekt'
-    case 'wording': return 'op het afschrift staat dat dit een incasso is'
-    default: return null
-  }
-}
+// [DD-SIGNAL] Er stond hier een directDebitEvidenceText(): de zin die de eigenaar zou vertellen
+// WAAROM een afschrijving als incasso is gelezen ("je bank noemt hier een machtiging"), en bij een
+// storno dat de factuur dus NIET betaald is. Geen enkel scherm toonde hem, en er is vandaag ook
+// geen plek waar een bankregel zijn incasso-verdict laat zien — die maken is een functie, geen
+// bedrading.
+//
+// Weg, en met opzet geen "voor later" laten staan: een zin die klaarligt en nergens verschijnt
+// leest als afgeleverd. De REGEL blijft (readDirectDebit, isCertainDirectDebit) en wordt gebruikt
+// voor het machtigingsbewijs hieronder. Komt het scherm er, dan komt de zin met dat scherm mee —
+// dan is er tenminste iemand die hem leest.
+
 
 // ─── From lines to a proposal ─────────────────────────────────────────────────
 //
