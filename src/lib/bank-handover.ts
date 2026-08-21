@@ -119,6 +119,15 @@ export function buildBankHandoverCsv(args: {
   transactions: readonly HandoverTx[];
   invoiceById: ReadonlyMap<string, HandoverInvoice>;
   read: boolean;
+  /**
+   * [DEKKING] One sentence about a quarter whose statements do not cover it, or null.
+   *
+   * It goes at the TOP, above the counts, because it changes what the counts MEAN. Every line in a
+   * month that was never imported is missing rather than matched, so "34 van de 40 gekoppeld" over
+   * such a quarter is not a small overstatement — it is a confident wrong sentence about the very
+   * thing this file exists to be trusted on.
+   */
+  coverage?: string | null;
 }): string {
   const { quarterLabel, transactions, invoiceById, read } = args;
   const lines: string[] = [];
@@ -130,6 +139,13 @@ export function buildBankHandoverCsv(args: {
     lines.push(esc("De bankregels konden niet worden gelezen. Er staat hieronder dus GEEN overzicht —"));
     lines.push(esc("niet omdat alles gekoppeld is, maar omdat we het niet hebben kunnen nakijken."));
     return lines.join("\r\n");
+  }
+
+  if (args.coverage) {
+    lines.push(esc("LET OP — dit kwartaal is niet volledig ingelezen"));
+    lines.push(esc(args.coverage));
+    lines.push(esc("De cijfers hieronder gaan alleen over de dagen die er WEL zijn."));
+    lines.push("");
   }
 
   const t = bankHandoverTotals(transactions, invoiceById);

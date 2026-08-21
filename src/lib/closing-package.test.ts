@@ -574,6 +574,21 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
   assert.match(src, /renderVerantwoordingPdf\(/, "the package no longer produces the page that can be filed");
   assert.match(src, /code: "verantwoording_failed"/, "a failed render is being swallowed");
   assert.match(src, /ownerKvk,/, "the owner's identifiers never reach the page it is filed against");
+
+  // [DEKKING] The question the reconciliation's whole claim rests on. A quarter in which February
+  // was never imported produces an afletering where every line is neatly matched and none of it is
+  // true — and nothing else in this package can see that, because a gap-scan between statements is
+  // structurally blind to a month missing at the edge.
+  assert.match(src, /coverageOfPeriod\(periods, start, end\)/, "the package no longer asks whether the bank data covers the quarter");
+  assert.match(src, /from\("bank_statement_periods"\)/, "…and it is asking it of nothing");
+  assert.match(src, /code: "bank_coverage_incomplete"/, "a quarter with a month missing is being handed over without a word");
+  // Both destinations, because they are two different readers: the CSV banner is for the person
+  // working through the open lines, the cover-page line is for whoever is shown the page later.
+  // One `coverage: coverageWarning` satisfies a loose match while the other is quietly null.
+  assert.equal(
+    (src.match(/coverage: coverageWarning,/g) ?? []).length, 2,
+    "the qualification must reach BOTH the reconciliation CSV and the cover page",
+  );
 });
 
 // ─── [SLUIS] The reading instruction ──────────────────────────────────────────

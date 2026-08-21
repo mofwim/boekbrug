@@ -88,6 +88,14 @@ export function VerantwoordingPDF({ v }: { v: Verantwoording }) {
         <Row label="BTW op inkopen" value={formatEuroNL(v.btwOnPurchases)} />
 
         <Text style={styles.section}>Afletteren</Text>
+        {/* [DEKKING] Above the numbers, because it changes what they mean: elke regel in een maand
+            die nooit is ingelezen ontbreekt in plaats van gekoppeld te zijn. */}
+        {v.coverage ? (
+          <Text style={[styles.body, { fontFamily: 'Helvetica-Bold', marginBottom: 3 }]}>
+            Let op — dit kwartaal is niet volledig ingelezen. {v.coverage} De cijfers hieronder gaan
+            alleen over de dagen die er wel zijn.
+          </Text>
+        ) : null}
         {handover ? (
           <>
             <Text style={styles.body}>{handover}</Text>

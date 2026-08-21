@@ -53,6 +53,13 @@ import {
   type UblLineRow,
 } from "./ubl-inputs";
 import { CLIENT_EXTRA_LINE_COLUMNS } from "./client-extra-lines";
+// [DEKKING] Does the bank data cover the whole quarter? The reconciliation below is only worth
+// what this answers — see the header above coverageOfPeriod.
+import {
+  coverageOfPeriod,
+  coverageSentence,
+  type StatementPeriod as ContinuityStatementPeriod,
+} from "./bank-statement-continuity";
 // [AFLETTEREN] The finished half of the accountant's own job — see the header of that module.
 // [VERANTWOORDING] The cover page. Server-only, like this module.
 import { renderVerantwoordingPdf } from "./verantwoording-pdf";
@@ -617,7 +624,7 @@ interface AssembleInput {
    * lines could not be read, because an absent file and an empty table both read as "everything
    * is accounted for".
    */
-  bankHandover?: { csv: string; totals: HandoverTotals | null } | null;
+  bankHandover?: { csv: string; totals: HandoverTotals | null; coverage?: string | null } | null;
   /**
    * [VERANTWOORDING] The owner's own identifiers, for the cover page. Absent is absent — the page
    * simply omits the line rather than printing "KvK —", which on a document meant to be shown to
@@ -1082,6 +1089,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       btwOnSales: zzpSummary.totalBtwIn,
       btwOnPurchases: zzpSummary.totalBtwOut,
       handover: bankHandover?.totals ?? null,
+      coverage: bankHandover?.coverage ?? null,
       warnings,
     });
     zip.file(`Verantwoording-Q${quarter}-${year}.pdf`, verantwoordingPdf);
@@ -2679,7 +2687,51 @@ export async function buildClosingPackageZip(args: {
   // disagree about which lines exist. `bankReadFailed` is passed straight through: a package
   // whose bank read failed gets a file that says so, and never an empty table that reads as
   // "every line is accounted for".
-  const bankHandover: { csv: string; totals: HandoverTotals | null } | null = (() => {
+  // ── [DEKKING] Do the statements actually cover this quarter? ──
+  //
+  // Asked BEFORE the reconciliation is written, because the reconciliation's whole claim depends
+  // on it. A quarter in which February was never imported produces an afletering in which every
+  // line is neatly matched and none of it is true: the invoices paid that month still stand open
+  // and the turnover that came in is tied to nothing. "34 van de 40 gekoppeld" over such a quarter
+  // is the most confident wrong sentence this package could print.
+  //
+  // Its own failable read: on a database where bank_statement_periods.sql is still open, or on an
+  // administration whose statements were imported before it existed, this yields checked:false —
+  // "we did not look", which is not the same as "covered" and must never render as one.
+  let coverage: ReturnType<typeof coverageOfPeriod> = { accounts: [], complete: false, checked: false };
+  try {
+    const { data: periodRows } = await supabase
+      .from("bank_statement_periods")
+      .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+      .eq("user_id", ownerId)
+      .order("period_start", { ascending: true });
+    const periods: ContinuityStatementPeriod[] = ((periodRows ?? []) as unknown as Array<{
+      document_id: string; iban: string | null; period_start: string | null; period_end: string | null;
+      opening_balance: number | null; closing_balance: number | null;
+    }>)
+      .filter((r) => !!r.period_start && !!r.period_end)
+      .map((r) => ({
+        documentId: r.document_id,
+        iban: r.iban,
+        from: (r.period_start as string).slice(0, 10),
+        to: (r.period_end as string).slice(0, 10),
+        opening: r.opening_balance,
+        closing: r.closing_balance,
+      }));
+    coverage = coverageOfPeriod(periods, start, end);
+  } catch (e) {
+    console.error("[DEKKING] could not read the statement periods — coverage stays unchecked", {
+      ownerId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  const coverageWarning = coverageSentence(coverage);
+  if (coverageWarning) {
+    warnings.push({ code: "bank_coverage_incomplete", message: coverageWarning });
+  }
+
+  const bankHandover: { csv: string; totals: HandoverTotals | null; coverage: string | null } | null = (() => {
     const rows = (bankAllRows ?? []) as HandoverTx[];
     if (!bankReadFailed && rows.length === 0) return null; // nothing to reconcile, so no file
     const invoiceById = new Map<string, HandoverInvoice>(
@@ -2694,10 +2746,19 @@ export async function buildClosingPackageZip(args: {
       ]),
     );
     return {
-      csv: buildBankHandoverCsv({ quarterLabel: `Q${quarter} ${year}`, transactions: rows, invoiceById, read: !bankReadFailed }),
+      csv: buildBankHandoverCsv({
+        quarterLabel: `Q${quarter} ${year}`,
+        transactions: rows,
+        invoiceById,
+        read: !bankReadFailed,
+        coverage: coverageWarning,
+      }),
       // Null on a failed read: the counts would all be zero, and a zero here is indistinguishable
       // from a quarter in which nothing needed matching.
       totals: bankReadFailed ? null : bankHandoverTotals(rows, invoiceById),
+      // [DEKKING] Travels with the reconciliation because it qualifies it — the cover page prints
+      // it above the same numbers, for the same reason the CSV does.
+      coverage: coverageWarning,
     };
   })();
 

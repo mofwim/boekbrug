@@ -61,6 +61,16 @@ export type Verantwoording = {
 
   /** null when there was nothing to reconcile, or when the bank could not be read. */
   handover: HandoverTotals | null;
+  /**
+   * [DEKKING] One sentence about a quarter whose statements do not cover it, or null.
+   *
+   * It stands INSIDE the reconciliation section and above its numbers, for the same reason it
+   * does in bankafletering.csv: it changes what those numbers mean. It is also repeated among the
+   * warnings below — deliberately. This is the page somebody quotes, and the reader who quotes
+   * the reconciliation must have read the qualification in the same breath, not four lines lower
+   * under a different heading.
+   */
+  coverage?: string | null;
   warnings: ClosingPackageWarning[];
 };
 

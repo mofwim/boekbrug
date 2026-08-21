@@ -147,3 +147,33 @@ test("[VERANTWOORDING] the reconciliation sentence reads like Dutch in every sha
   assert.equal(handoverSentence(null), null);
   assert.equal(handoverSentence(h({ lines: 0, matched: 0, unmatched: 0 })), null, "a quarter with no bank lines makes no claim");
 });
+
+// ─── [DEKKING] The qualification that must be read in the same breath ─────────────────
+
+test("[VERANTWOORDING] an incomplete quarter is qualified where the numbers are, not only below", () => {
+  // This is the page somebody quotes. A reader who quotes "34 van de 40 gekoppeld" must have read
+  // the qualification in the same breath — not four lines lower under a different heading, and
+  // certainly not in another file.
+  return (async () => {
+    const text = await textOf({
+      coverage: "Van dit kwartaal ontbreken 28 dagen aan bankafschrift: 1-2-2026 t/m 28-2-2026.",
+      warnings: [{ code: "bank_coverage_incomplete", message: "Van dit kwartaal ontbreken 28 dagen aan bankafschrift." }],
+    });
+    const qualifyAt = text.indexOf("niet volledig ingelezen");
+    const claimAt = text.indexOf("34 van de 40");
+    assert.notEqual(qualifyAt, -1, "the page states a reconciliation over a quarter it never says was incomplete");
+    assert.ok(qualifyAt < claimAt, "the qualification must come before the claim it qualifies");
+    assert.ok(text.includes("28 dagen"));
+
+    // And still among the warnings, deliberately twice: the sections are read by different people
+    // for different reasons.
+    assert.ok(text.includes("niet hebben kunnen vaststellen"));
+  })();
+});
+
+test("[VERANTWOORDING] a complete quarter is not qualified at all", () => {
+  return (async () => {
+    const text = await textOf({ coverage: null });
+    assert.ok(!text.includes("niet volledig ingelezen"), "a caveat on every page is a caveat nobody reads");
+  })();
+});

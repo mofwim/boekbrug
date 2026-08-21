@@ -226,3 +226,119 @@ export function summarizeContinuity(r: ContinuityResult): string {
   if (overlaps > 0) parts.push(overlaps === 1 ? "1 overlappend afschrift" : `${overlaps} overlappende afschriften`);
   return `In je bankgeschiedenis: ${parts.join(" · ")}.`;
 }
+
+// ── [DEKKING] Beslaan de afschriften het hele kwartaal? ────────────────────────────────
+
+/**
+ * Wat er van een periode NIET door een afschrift wordt gedekt, per rekening.
+ *
+ * ── WAAROM DIT NAAST findStatementGaps STAAT EN NIET ERIN ──
+ *
+ * findStatementGaps kijkt tussen afschriften ONDERLING: A eindigt 31-01, B begint 01-03, dus
+ * februari ontbreekt. Dat is precies dezelfde vorm als de gatencontrole op de factuurnummering —
+ * en dus ook precies even blind aan de RANDEN. Wie alleen januari uploadt heeft geen enkel gat
+ * tussen zijn afschriften: er is er maar één. Februari en maart ontbreken gewoon, en niets in
+ * die controle kan dat zien.
+ *
+ * Voor het kwartaalpakket is dat de belangrijkste vraag die er is. Het pakket levert een
+ * afletering af — welke bankregel bij welke factuur hoort — en die leest als een afgeronde
+ * klus. Over een maand die nooit is ingelezen is elke regel keurig gekoppeld en klopt er niets
+ * van: de facturen die in die maand betaald zijn staan nog open, en de omzet die erin binnenkwam
+ * is nergens aangesloten.
+ *
+ * ── DE DISCIPLINE ──
+ *
+ * Per rekening, om dezelfde reden als hierboven: twee rekeningen door elkaar zijn geen gat.
+ * `checked: false` wanneer er van deze gebruiker géén afschriftperiodes bekend zijn — dan is er
+ * niet gekeken, en dat is iets anders dan "gedekt". Een dag telt als gedekt zodra één afschrift
+ * van die rekening hem beslaat; overlap is hier geen probleem (dat meldt findStatementGaps).
+ */
+export interface PeriodCoverage {
+  iban: string | null;
+  /** De stukken van de gevraagde periode die geen enkel afschrift beslaat. */
+  missing: Array<{ from: string; to: string; days: number }>;
+  /** Hoeveel afschriften van deze rekening de periode raken. */
+  statements: number;
+}
+
+export interface CoverageResult {
+  accounts: PeriodCoverage[];
+  /** True wanneer elke rekening de hele periode dekt. False zodra er ook maar één dag mist. */
+  complete: boolean;
+  /** False wanneer er geen afschriftperiodes zijn — niet gekeken, nooit "wel gedekt". */
+  checked: boolean;
+}
+
+export function coverageOfPeriod(
+  statements: StatementPeriod[],
+  from: string,
+  to: string,
+): CoverageResult {
+  if (!isIso(from) || !isIso(to) || toMs(from) > toMs(to)) {
+    return { accounts: [], complete: false, checked: false };
+  }
+  const usable = (statements ?? []).filter((s) => isIso(s.from) && isIso(s.to) && toMs(s.from) <= toMs(s.to));
+  if (usable.length === 0) return { accounts: [], complete: false, checked: false };
+
+  const byAccount = new Map<string, StatementPeriod[]>();
+  for (const s of usable) {
+    const key = (s.iban ?? "").trim() || "";
+    byAccount.set(key, [...(byAccount.get(key) ?? []), s]);
+  }
+
+  const accounts: PeriodCoverage[] = [];
+  for (const [key, list] of byAccount) {
+    // Alleen de stukken die binnen de gevraagde periode vallen, op datum.
+    const spans = list
+      .map((s) => ({
+        from: toMs(s.from) < toMs(from) ? from : s.from,
+        to: toMs(s.to) > toMs(to) ? to : s.to,
+      }))
+      .filter((s) => toMs(s.from) <= toMs(s.to))
+      .sort((a, b) => toMs(a.from) - toMs(b.from));
+
+    const missing: Array<{ from: string; to: string; days: number }> = [];
+    // De wandelaar: alles vóór `cursor` is gedekt. Elk span dat later begint laat een gat achter.
+    let cursor = from;
+    for (const span of spans) {
+      if (toMs(span.from) > toMs(cursor)) {
+        const gapTo = addDays(span.from, -1);
+        missing.push({
+          from: cursor,
+          to: gapTo,
+          days: Math.round((toMs(gapTo) - toMs(cursor)) / DAY_MS) + 1,
+        });
+      }
+      if (toMs(span.to) >= toMs(cursor)) cursor = addDays(span.to, 1);
+    }
+    // En de rand aan het EIND, waar de controle tussen afschriften structureel blind voor is.
+    if (toMs(cursor) <= toMs(to)) {
+      missing.push({ from: cursor, to, days: Math.round((toMs(to) - toMs(cursor)) / DAY_MS) + 1 });
+    }
+    accounts.push({ iban: key === "" ? null : key, missing, statements: spans.length });
+  }
+
+  accounts.sort((a, b) => (a.iban ?? "").localeCompare(b.iban ?? ""));
+  return { accounts, complete: accounts.every((a) => a.missing.length === 0), checked: true };
+}
+
+/**
+ * Eén zin over de dekking, of null wanneer er niets te melden valt.
+ *
+ * Null wanneer NIET gekeken kon worden: daar hoort de afletering zelf iets over te zeggen, en
+ * twee verschillende zinnen over hetzelfde onbekende maken het alleen onduidelijker.
+ */
+export function coverageSentence(c: CoverageResult): string | null {
+  if (!c.checked || c.complete) return null;
+  const gaps = c.accounts.flatMap((a) => a.missing.map((m) => ({ iban: a.iban, ...m })));
+  if (gaps.length === 0) return null;
+  const days = gaps.reduce((sum, g) => sum + g.days, 0);
+  const first = gaps[0];
+  const where = first.iban ? ` (${first.iban})` : "";
+  const rest = gaps.length > 1 ? ` en ${gaps.length - 1} andere periode${gaps.length > 2 ? "s" : ""}` : "";
+  return (
+    `Van dit kwartaal ${days === 1 ? "ontbreekt 1 dag" : `ontbreken ${days} dagen`} aan bankafschrift: ` +
+    `${nlDate(first.from)} t/m ${nlDate(first.to)}${where}${rest}. ` +
+    "Wat in die periode is betaald of ontvangen staat niet in dit pakket."
+  );
+}

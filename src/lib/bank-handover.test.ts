@@ -147,3 +147,31 @@ test("[AFLETTEREN] a semicolon in a description does not open a new column", () 
   const row = out.split("\r\n").find((l) => l.includes("termijn 2"))!;
   assert.match(row, /"Betaling; termijn 2"/);
 });
+
+// ─── [DEKKING] The sentence that changes what the counts mean ─────────────────────────
+
+test("[AFLETTEREN] an incomplete quarter says so ABOVE the counts, not below them", () => {
+  // THE ONE THAT MATTERS SECOND-MOST, after the failed read. Every line in a month that was never
+  // imported is missing rather than matched, so "34 van de 40 gekoppeld" over such a quarter is
+  // not a small overstatement — it is the most confident wrong sentence this file could print.
+  const out = buildBankHandoverCsv({
+    quarterLabel: "Q1 2026",
+    transactions: [tx(), tx({ invoice_id: null, status: null })],
+    invoiceById: invoices,
+    read: true,
+    coverage: "Van dit kwartaal ontbreken 28 dagen aan bankafschrift: 1-2-2026 t/m 28-2-2026.",
+  });
+  const warningAt = out.indexOf("niet volledig ingelezen");
+  const countsAt = out.indexOf("Gekoppeld aan een factuur;");
+  assert.notEqual(warningAt, -1, "the gap is not mentioned at all");
+  assert.ok(warningAt < countsAt, "a reader who stops at the numbers must have passed the warning first");
+  assert.match(out, /ontbreken 28 dagen/);
+  assert.match(out, /alleen over de dagen die er WEL zijn/, "…and what the numbers below it are about");
+});
+
+test("[AFLETTEREN] a complete quarter carries no coverage warning at all", () => {
+  // A banner on every file is a banner nobody reads, including on the quarter where it is true.
+  const out = csv([tx()]);
+  assert.doesNotMatch(out, /niet volledig ingelezen/);
+  assert.doesNotMatch(out, /LET OP/);
+});
