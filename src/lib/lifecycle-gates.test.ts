@@ -1207,8 +1207,16 @@ test("[GEGROND] the only non-self-referential check on a money field is actually
   }
 
   const aa = code("src/lib/auto-advance.ts");
+  // [GEGROND] The refusal, asked through the rule rather than by restating its literal.
+  //
+  // This gate used to pin `s.totalGrounding === "absent"` written out here. That literal WAS the
+  // veto — and it meant the version in amount-grounding.ts, the one with the reasoning above it
+  // about why 'unreadable' does not block, had no caller at all. Editing the documented rule would
+  // have changed nothing while looking exactly like changing what may auto-book. The rule now has
+  // one definition and this door asks it; the negative controls in amount-grounding.test.ts cover
+  // the rule's own content.
   assert.match(
-    aa, /if \(!amountsSettled && s\.totalGrounding === "absent"\)[\s\S]{0,120}?advance: false/,
+    aa, /if \(!amountsSettled && verdictBlocksAutoBooking\(s\.totalGrounding\)\)[\s\S]{0,120}?advance: false/,
     "and the gate must REFUSE on it — a signal that is passed in and ignored is decoration",
   );
   // [E-FACTUUR-BESLECHT] The ONE thing that may relax it, pinned by name.
@@ -1449,7 +1457,9 @@ test("[DOCCHECK] the sharper check is wired at every point the weaker one was", 
 
   const aa = code("src/lib/auto-advance.ts");
   assert.match(
-    aa, /if \(!amountsSettled && s\.totalPlacement === "present"\)[\s\S]{0,140}?advance: false/,
+    // [DOCCHECK] Same move as the grounding veto one gate up: the rule lives in document-verify.ts
+    // beside its reasoning, and this door asks it instead of writing the literal a second time.
+    aa, /if \(!amountsSettled && placementBlocksAutoBooking\(s\.totalPlacement\)\)[\s\S]{0,140}?advance: false/,
     "and the gate must REFUSE on it — 'present' IS the subtotal-read-as-total shape",
   );
   // The two states that must never block: a photo, and a correctly-placed total.

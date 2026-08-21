@@ -39,7 +39,7 @@
 // Three states, never two. A check that could not RUN (no text layer) is its own answer and may
 // never read as passed OR as failed. That rule is why this is worth trusting at all.
 
-import { groundAmount, type GroundingVerdict } from './amount-grounding'
+import { groundAmount, verdictBlocksAutoBooking, type GroundingVerdict } from './amount-grounding'
 import { round2 } from './invoice-totals'
 
 /**
@@ -364,7 +364,30 @@ export function documentCheckBlocks(c: DocumentCheck): boolean {
   // the original € 0,46 error still booked — right total, consistent arithmetic, invented split.
   // Narrow on purpose: it fires only when the document ASSERTS a different split, never merely
   // because the BTW was not printed (which every receipt-with-a-rate would trip).
-  return c.total === 'absent' || c.total === 'present' || c.btwContradiction !== null
+  //
+  // Each half delegates rather than restating its literal: auto-advance.ts asks the same three
+  // questions of stored verdicts, and three rules written twice is three chances for the copy
+  // nobody calls to drift away from the one that decides.
+  return (
+    verdictBlocksAutoBooking(c.total as GroundingVerdict) ||
+    placementBlocksAutoBooking(c.total) ||
+    c.btwContradiction !== null
+  )
+}
+
+/**
+ * The placement half, asked of a bare verdict — the shape both auto-booking doors actually hold.
+ *
+ * 'present' only. Not 'absent', which the grounding rule already holds one step earlier, and not
+ * 'unreadable', which means there was no text to search: a photographed receipt is the ordinary
+ * case this app is built for, and refusing to automate it would take the product away in the name
+ * of protecting it.
+ *
+ * Null and undefined do not block, for the same reason as in verdictBlocksAutoBooking: absent from
+ * the blob means the check never ran on this document.
+ */
+export function placementBlocksAutoBooking(p: TotalVerdict | null | undefined): boolean {
+  return p === 'present'
 }
 
 /**

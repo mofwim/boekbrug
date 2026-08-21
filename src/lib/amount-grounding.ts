@@ -254,7 +254,24 @@ export function groundMoneyFields(
  * this adds is one more way to be CERTAIN, never a new way to be stuck.
  */
 export function groundingBlocksAutoBooking(g: MoneyGrounding): boolean {
-  return g.totalIncBtw === 'absent'
+  return verdictBlocksAutoBooking(g.totalIncBtw)
+}
+
+/**
+ * The same rule, asked of a bare verdict.
+ *
+ * Both auto-booking doors hold a stored verdict rather than a MoneyGrounding — groundingOf() reads
+ * it out of field_confidence — so they could not use the function above, and auto-advance.ts wrote
+ * `=== "absent"` itself instead. That left two statements of one rule in two files, and the one
+ * with the twenty lines of reasoning above it was the one nobody called: editing it would have
+ * changed nothing while looking exactly like changing the veto.
+ *
+ * Null and undefined do NOT block, deliberately. Absent from the blob means the check never ran on
+ * this document (an older row, a path that stored no grounding), and a check that did not run may
+ * not hold an invoice any more than it may wave one through — the other gates still apply.
+ */
+export function verdictBlocksAutoBooking(v: GroundingVerdict | null | undefined): boolean {
+  return v === 'absent'
 }
 
 /**

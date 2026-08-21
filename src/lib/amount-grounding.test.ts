@@ -14,12 +14,14 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   groundAmount,
   groundMoneyFields,
   groundingBlocksAutoBooking,
   groundingText,
+  verdictBlocksAutoBooking,
 } from './amount-grounding'
 
 test('[GEGROND] the amount that is printed is found', () => {
@@ -193,3 +195,42 @@ test('[GEGROND] an adversarial sweep: no amount is ever confirmed by a different
   assert.deepEqual(falsePositives, [], 'an amount was confirmed by a document printing a different one')
   assert.deepEqual(falseNegatives, [], 'a correctly printed amount was not found — that is a false alarm')
 })
+
+import { placementBlocksAutoBooking } from './document-verify'
+
+// ─── The gate: one veto, one definition ──────────────────────────────────────────────
+
+test("[GEGROND] the auto-booking vetoes are defined here and in document-verify, not restated", () => {
+  // What this catches, stated plainly: auto-advance.ts used to write `s.totalGrounding === "absent"`
+  // and `s.totalPlacement === "present"` itself. Those are the same two rules that live in these
+  // modules with twenty lines of reasoning above them explaining why 'unreadable' does NOT block
+  // and why only 'present' does — and both of those explained versions had no caller at all.
+  //
+  // That is worse than dead code. It reads as the authority and is not one: an edit to the
+  // documented rule would have changed nothing while looking exactly like changing what may
+  // auto-book, and the literal that actually decides sits in another file with no explanation
+  // beside it.
+  const auto = readFileSync("src/lib/auto-advance.ts", "utf8");
+  assert.match(auto, /verdictBlocksAutoBooking\(s\.totalGrounding\)/, "the grounding veto is restated instead of asked");
+  assert.match(auto, /placementBlocksAutoBooking\(s\.totalPlacement\)/, "the placement veto is restated instead of asked");
+  assert.doesNotMatch(
+    auto,
+    /totalGrounding === "absent"|totalPlacement === "present"/,
+    "a second copy of a veto is a second thing to keep in step, and one of the two will lose",
+  );
+
+  // And the documented functions must still BE the rule rather than having become wrappers around
+  // a literal that drifted.
+  assert.equal(verdictBlocksAutoBooking("absent"), true);
+  assert.equal(verdictBlocksAutoBooking("found"), false);
+  assert.equal(verdictBlocksAutoBooking("unreadable"), false, "a photographed receipt is the ordinary case, not a refusal");
+  assert.equal(verdictBlocksAutoBooking(null), false, "a check that never ran may not hold an invoice…");
+  assert.equal(verdictBlocksAutoBooking(undefined), false, "…nor may an older row without the verdict");
+
+  assert.equal(placementBlocksAutoBooking("present"), true, "printed, but not where a total is printed");
+  assert.equal(placementBlocksAutoBooking("anchored"), false);
+  assert.equal(placementBlocksAutoBooking("largest"), false);
+  assert.equal(placementBlocksAutoBooking("absent"), false, "held one step earlier by the grounding rule — not twice");
+  assert.equal(placementBlocksAutoBooking("unreadable"), false);
+  assert.equal(placementBlocksAutoBooking(null), false);
+});

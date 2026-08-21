@@ -22,6 +22,12 @@
 // and undo any one. Pure + testable (run: npx tsx src/lib/auto-advance.test.ts).
 
 import { classifyImportHealth, type HealthInput } from "./import-health";
+// [GEGROND]/[DOCCHECK] The two vetoes below are DEFINED in those modules, next to the reasoning
+// that justifies them. This file used to restate them as `=== "absent"` and `=== "present"`, which
+// left the versions carrying the explanation with no caller at all — so editing them would have
+// changed nothing while looking exactly like changing what may auto-book.
+import { verdictBlocksAutoBooking } from "./amount-grounding";
+import { placementBlocksAutoBooking } from "./document-verify";
 // [E-FACTUUR-BESLECHT] The one witness that is not a reading. See the gate below.
 import { eInvoiceSettlesAmounts } from "./e-invoice";
 
@@ -145,7 +151,7 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // and the date, which parseEInvoice does not vouch for. One axis, closed properly.
   const amountsSettled = eInvoiceSettlesAmounts(s.health.field_confidence);
 
-  if (!amountsSettled && s.totalGrounding === "absent") {
+  if (!amountsSettled && verdictBlocksAutoBooking(s.totalGrounding)) {
     return { advance: false, reason: "total_not_in_document_text" };
   }
 
@@ -156,7 +162,7 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   //
   // Only 'present' is added here; 'absent' is already held one line up, and 'unreadable' still holds
   // nothing.
-  if (!amountsSettled && s.totalPlacement === "present") {
+  if (!amountsSettled && placementBlocksAutoBooking(s.totalPlacement)) {
     return { advance: false, reason: "total_not_where_a_total_is_printed" };
   }
 
