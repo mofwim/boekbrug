@@ -54,6 +54,8 @@ import {
 } from "./ubl-inputs";
 import { CLIENT_EXTRA_LINE_COLUMNS } from "./client-extra-lines";
 // [AFLETTEREN] The finished half of the accountant's own job — see the header of that module.
+// [VERANTWOORDING] The cover page. Server-only, like this module.
+import { renderVerantwoordingPdf } from "./verantwoording-pdf";
 import {
   buildBankHandoverCsv,
   bankHandoverTotals,
@@ -616,6 +618,13 @@ interface AssembleInput {
    * is accounted for".
    */
   bankHandover?: { csv: string; totals: HandoverTotals | null } | null;
+  /**
+   * [VERANTWOORDING] The owner's own identifiers, for the cover page. Absent is absent — the page
+   * simply omits the line rather than printing "KvK —", which on a document meant to be shown to
+   * a third party looks like a company that has none.
+   */
+  ownerKvk?: string | null;
+  ownerBtw?: string | null;
   /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
    *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
@@ -723,6 +732,8 @@ export function buildLeesmij(args: {
 
   L.push("WAT ER VOOR JOU IS OM TE LEZEN");
   L.push("");
+  L.push("  Verantwoording-…pdf        één pagina: wat er is aangeleverd en wat er is vastgesteld,");
+  L.push("                             met datum. Bedoeld om af te drukken en in je dossier te doen.");
   L.push("  bankafletering.csv         welke bankregel bij welke factuur hoort, en wat er nog open staat");
   L.push("  overzicht.csv              alle facturen van het kwartaal op een rij");
   L.push("  overzicht.json             dezelfde gegevens machineleesbaar, met de ruwe BTW-cijfers");
@@ -1044,6 +1055,45 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // in", and overzicht.json is not counted either for the same reason: a reading instruction is
   // not a piece of evidence, and inflating the count by one would make it disagree with the
   // summary the accountant-handoff screen shows.
+
+  // ── Verantwoording-{kwartaal}.pdf ──
+  // [VERANTWOORDING] The one page in this archive that can be printed, filed and shown to somebody
+  // else. Rendered HERE and not by the orchestrator because every number on it — the file count,
+  // the e-factuur count, the raw BTW figures — is only final at this point, and a cover page that
+  // disagrees with the files it summarises is worse than none.
+  //
+  // Best-effort: a failed render costs the accountant a cover sheet, never his quarter. The gap is
+  // stated as a warning rather than left as an absence nobody can explain.
+  try {
+    const verantwoordingPdf = await renderVerantwoordingPdf({
+      quarterLabel,
+      clientName,
+      kvkNumber: (input.ownerKvk ?? "").trim() || null,
+      btwNumber: (input.ownerBtw ?? "").trim() || null,
+      generatedAt: summary.generatedAt,
+      outgoingCount: outgoing.length,
+      incomingCount: incoming.length,
+      filesIncluded,
+      eInvoiceCount: eInvoiceXmlCount,
+      bankStatementIncluded: summary.bankStatementIncluded,
+      salesByRate: salesSummary.btwBreakdown.map((b) => ({ rate: b.rate, totalExcl: b.totalExcl, totalBtw: b.totalBtw })),
+      totalSalesIncl: zzpSummary.totalIn,
+      totalPurchaseIncl: zzpSummary.totalOut,
+      btwOnSales: zzpSummary.totalBtwIn,
+      btwOnPurchases: zzpSummary.totalBtwOut,
+      handover: bankHandover?.totals ?? null,
+      warnings,
+    });
+    zip.file(`Verantwoording-Q${quarter}-${year}.pdf`, verantwoordingPdf);
+  } catch (e) {
+    warnings.push({
+      code: "verantwoording_failed",
+      message:
+        "De verantwoordingspagina kon niet worden gemaakt en zit niet in dit pakket. De stukken, " +
+        "het overzicht en de afletering zijn wel compleet.",
+    });
+    console.error("[VERANTWOORDING] cover page render failed", { error: e instanceof Error ? e.message : String(e) });
+  }
 
   zip.file(
     "overzicht.json",
@@ -1658,12 +1708,17 @@ export async function buildClosingPackageZip(args: {
   const warnings: ClosingPackageWarning[] = [];
 
   let clientName = "Onbekend";
+  // [VERANTWOORDING] kvk_number and btw_number ride along for the cover page. Both are columns the
+  // invoice PDF and the UBL export already read unconditionally, so they carry no migration risk —
+  // unlike kor_active below, which keeps its own query for exactly that reason.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("company_name, full_name")
+    .select("company_name, full_name, kvk_number, btw_number")
     .eq("id", ownerId)
     .maybeSingle();
   if (profile) clientName = profile.company_name || profile.full_name || "Onbekend";
+  const ownerKvk = (profile as { kvk_number?: string | null } | null)?.kvk_number ?? null;
+  const ownerBtw = (profile as { btw_number?: string | null } | null)?.btw_number ?? null;
   // [REGIME-FLAGS] Owner's KOR declaration (drives the accountant-handoff flag, never a figure).
   // [DEPLOY-SAFE] Fetched in its OWN query — never folded into the clientName select above — so if
   // the regime_kor.sql migration lags this deploy, a missing column only nulls korActive (→ no
@@ -2677,6 +2732,8 @@ export async function buildClosingPackageZip(args: {
     euPurchases,
     kasboekXlsx,
     bankHandover,
+    ownerKvk,
+    ownerBtw,
     warnings,
   });
 }

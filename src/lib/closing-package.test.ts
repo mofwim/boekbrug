@@ -567,6 +567,13 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
   assert.match(src, /read: !bankReadFailed/, "a failed bank read must reach the file — an empty table reads as 'all matched'");
   assert.match(src, /totals: bankReadFailed \? null/, "zeroes over an unread quarter read as a finished job");
   assert.match(src, /^\s*bankHandover,\s*$/m, "…and it is never built and then not passed on");
+
+  // [VERANTWOORDING] The cover page is rendered inside the assembler, where the numbers are final.
+  // Its own failure mode: a render that throws must cost a cover sheet, never the quarter — and it
+  // must SAY so, because an absent page nobody can explain is worse than a stated gap.
+  assert.match(src, /renderVerantwoordingPdf\(/, "the package no longer produces the page that can be filed");
+  assert.match(src, /code: "verantwoording_failed"/, "a failed render is being swallowed");
+  assert.match(src, /ownerKvk,/, "the owner's identifiers never reach the page it is filed against");
 });
 
 // ─── [SLUIS] The reading instruction ──────────────────────────────────────────
@@ -721,4 +728,29 @@ test("[AFLETTEREN] no reconciliation → no file and a null in the JSON, never a
     const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
     assert.equal(overzicht.afletteren, null, "a zero here reads as 'nothing needed matching'");
   })();
+});
+
+// ─── [VERANTWOORDING] The page that leaves the archive ────────────────────────
+
+test("[VERANTWOORDING] the cover page is in the ZIP, named for its quarter", () => {
+  return (async () => {
+    const inv = incomingInvoice({ id: "in-11" });
+    const { zipBytes } = await assembleClosingPackageZip({
+      ...emptyAssemble,
+      incoming: [inv],
+      pdfByInvoice: new Map([[inv.id, { path: "u/incoming/v.pdf", name: "v.pdf", bytes: bytes("%PDF") }]]),
+      ownerKvk: "94386676",
+      ownerBtw: "NL005079680B23",
+    });
+    const zip = await JSZip.loadAsync(zipBytes);
+    const file = zip.file("Verantwoording-Q1-2026.pdf");
+    assert.ok(file, "the cover page is missing from the package");
+    const head = await file!.async("string");
+    assert.ok(head.startsWith("%PDF"), "it must be a real PDF, not a text file with a pdf name");
+  })();
+});
+
+test("[VERANTWOORDING] the LEESMIJ points at it, in the list of things to read", () => {
+  assert.match(leesmij(), /Verantwoording-…pdf/);
+  assert.match(leesmij(), /in je dossier/, "and says what it is for — a page to file, not another export");
 });

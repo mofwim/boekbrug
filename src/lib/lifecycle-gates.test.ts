@@ -6417,21 +6417,29 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
   // sees changed by a pixel. The entire difference lands in Arabic, where physical sides put the
   // labels, the bullets and the amounts on the wrong side of every row.
   //
-  // THE ONE EXEMPTION, and it is not cosmetic: src/lib/invoice-pdf.tsx is @react-pdf/renderer,
-  // not the DOM. It supports `textAlign: left|right|center` and physical padding, and silently
-  // ignores the logical forms — so the sweep would have collapsed the amount columns on the
-  // invoice PDF, which is the legal document. It is also correct for it to stay physical: the PDF
-  // is Dutch in every language (see the header of messages.ts), so it is never right-to-left.
-  const PDF_STYLES = "src/lib/invoice-pdf.tsx";
+  // THE EXEMPTION, and it is not cosmetic: a @react-pdf/renderer document is not the DOM. It
+  // supports `textAlign: left|right|center` and physical padding, and silently IGNORES the logical
+  // forms — so the sweep would have collapsed the amount columns on the invoice PDF, which is the
+  // legal document. It is also correct for those files to stay physical: the PDF is Dutch in every
+  // language (see the header of messages.ts), so it is never right-to-left.
+  //
+  // [VERANTWOORDING] It used to be one hard-coded path. A second PDF document — the quarter
+  // package's cover page — landed on this gate for the same reason, which made the choice: name
+  // the CAUSE instead of the file. A module that imports @react-pdf/renderer is a PDF, cannot use
+  // logical properties, and is never mirrored; a DOM component does not import it by accident. A
+  // literal list would have to be extended by hand every time, and the person who forgets is the
+  // one who thinks the gate is wrong about his file.
+  const isPdfDocument = (src: string) => /from ['"]@react-pdf\/renderer['"]/.test(src);
   const offenders: string[] = [];
 
   const scan = (dir: string) => {
     for (const e of readdirSync(dir)) {
       const p = `${dir}/${e}`;
       if (statSync(p).isDirectory()) { scan(p); continue; }
-      if (!/\.tsx?$/.test(p) || p === PDF_STYLES) continue;
+      if (!/\.tsx?$/.test(p)) continue;
       if (/\.test\.tsx?$/.test(p)) continue;
       const src = code(p);
+      if (isPdfDocument(src)) continue;
       if (/textAlign: ['"](?:left|right)['"]/.test(src)) offenders.push(`${p} — textAlign`);
       if (/\b(?:padding|margin|border)(?:Left|Right):/.test(src)) offenders.push(`${p} — physical box side`);
       // Fixed/absolute positioning: a FAB pinned `right: 20` sits in the mirrored thumb zone's
@@ -6466,10 +6474,16 @@ test("[TAAL] the screen uses logical directions, so Arabic is a layout and not a
     `use textAlign start/end and the Inline box properties:\n  ${offenders.join("\n  ")}`,
   );
 
-  // And the exemption must still BE the exemption — if this file stops being a react-pdf
-  // stylesheet, the reason for the carve-out is gone and it should join the rest.
-  const pdf = readFileSync(PDF_STYLES, "utf8");
-  assert.match(pdf, /from '@react-pdf\/renderer'/, "the carve-out exists because this is not the DOM");
+  // And the exemption must still EXEMPT something, or the rule above is scanning a codebase in
+  // which nothing was ever carved out — a gate that passes because its subject vanished. Both PDF
+  // documents are named here on purpose: the check is that the carve-out still applies to them,
+  // and the previous version of this gate proved the value of asking, by failing the moment a
+  // second react-pdf document appeared.
+  for (const doc of ["src/lib/invoice-pdf.tsx", "src/lib/verantwoording-pdf.tsx"]) {
+    const src = readFileSync(doc, "utf8");
+    assert.ok(isPdfDocument(src), `${doc} is no longer a react-pdf document — the carve-out for it is gone`);
+    assert.match(src, /textAlign: ['"](?:left|right)['"]/, `${doc} no longer needs the carve-out — drop it from this list`);
+  }
 });
 
 test("[TAAL] the document becomes right-to-left before it is painted, and stays static", () => {
