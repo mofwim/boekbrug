@@ -15,6 +15,7 @@ import {
   fmtDateNL,
   toExportRowFull,
   invoicesToCsv,
+  invoicesToCsvAccountant,
   type InvRow,
 } from './export'
 
@@ -167,4 +168,60 @@ test('[EXPORT-CSV] a creditnota keeps its negative amounts and its type', () => 
   assert.equal(r.btw_rate, 21, 'a negative over a negative is still 21%')
   const csv = invoicesToCsv([r])
   assert.ok(csv.includes('-121,00') || csv.includes('-121'), 'the minus reaches the file')
+})
+
+// ─── [SLUIS] The accountant's all-clients export ──────────────────────────────
+
+test("[SLUIS] the accountant CSV names the administration AND the invoice's counterpart", () => {
+  // The one it lost. This file spans many administrations, so column 1 has to say whose books a
+  // row belongs to — and it said so by writing the administration's name into the slot where the
+  // owner's export puts client_name. The counterpart then disappeared: its e-mail, street,
+  // postcode and city all still on the row, with somebody else's name beside them.
+  //
+  // An accountant reconciles by name. A hundred rows in which every name reads "Kiwi Food Market"
+  // cannot be reconciled at all.
+  const row = { ...toExportRowFull(ROW, 'Q3 2026'), klant_id: 'klant-1' }
+  const csv = invoicesToCsvAccountant([row], { 'klant-1': 'Kiwi Food Market' })
+  const [header, line] = csv.split('\n')
+
+  assert.match(header, /^Administratie;/, "column 1 says whose books this is")
+  assert.ok(header.includes('Tegenpartij'), "the invoice's own counterpart has a column of its own")
+
+  const cells = line.split(';')
+  assert.equal(cells[0], 'Kiwi Food Market', 'the administration')
+  assert.equal(cells[3], 'Stichting Contour de Twern', 'and the party the invoice is actually with')
+  assert.notEqual(cells[0], cells[3], 'the two must be separate columns, not the same value twice')
+
+  // Same invariant as the owner's export: a column added to one and not the other shifts every
+  // field after it, and an amount lands under a date with nothing looking broken.
+  assert.equal(
+    fieldCount(line), header.split(';').length,
+    `header has ${header.split(';').length} columns, the row has ${fieldCount(line)}`,
+  )
+})
+
+test("[SLUIS] both exports carry the same columns, with the administration in front", () => {
+  // The two files are read side by side by the same person. Keeping them column-for-column
+  // identical apart from the leading one is what makes that possible — and it is the cheapest way
+  // to notice that a column added to one was forgotten in the other.
+  const row = { ...toExportRowFull(ROW, 'Q3 2026'), klant_id: 'klant-1' }
+  const owner = invoicesToCsv([row]).split('\n')[0].split(';')
+  const accountant = invoicesToCsvAccountant([row], {}).split('\n')[0].split(';')
+
+  assert.equal(accountant[0], 'Administratie')
+  assert.deepEqual(
+    accountant.slice(1).map((c) => (c === 'Tegenpartij' ? 'Klant' : c)),
+    owner,
+    "the accountant export is the owner export plus one leading column — no more, no less",
+  )
+})
+
+test("[SLUIS] an unknown administration falls back to the counterpart, and still names it twice", () => {
+  // A row whose klant_id is not in the lookup. The fallback is the counterpart's own name, which
+  // is the only name in hand — and it must still appear in the Tegenpartij column, because the
+  // reader cannot know that column 1 fell back.
+  const row = { ...toExportRowFull(ROW, 'Q3 2026'), klant_id: 'onbekend' }
+  const cells = invoicesToCsvAccountant([row], {}).split('\n')[1].split(';')
+  assert.equal(cells[0], 'Stichting Contour de Twern')
+  assert.equal(cells[3], 'Stichting Contour de Twern')
 })

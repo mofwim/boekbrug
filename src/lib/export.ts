@@ -227,15 +227,34 @@ export function invoicesToCsv(rows: InvoiceExportRowFull[]): string {
   return lines.join("\r\n");
 }
 
-// [BOEK-014] Accountant all-clients CSV — adds "Klant" column at position 1
+/**
+ * [BOEK-014] Accountant all-clients CSV — the same columns as the owner's export, with the
+ * administration the row belongs to in front.
+ *
+ * [SLUIS] And with the TEGENPARTIJ back. This export spans many administrations, so column 1 had
+ * to say whose books a row belongs to — and it did that by writing the administration's name into
+ * the slot where the owner's CSV puts `client_name`. The result: the invoice's own counterpart
+ * disappeared from the file. Its e-mail, street, postcode and city were all still there, in a row
+ * where the name beside them belonged to somebody else entirely.
+ *
+ * That is not a cosmetic loss. An accountant reconciles by name — this invoice against that bank
+ * line, this supplier against that ledger account — and a list of a hundred invoices in which
+ * every "Klant" reads "Kiwi Food Market" cannot be reconciled at all.
+ *
+ * Column 1 is now called "Administratie", because "Klant" meant two different things in the two
+ * exports and the one that could be mistaken for the other was this one.
+ */
 export function invoicesToCsvAccountant(
   rows: InvoiceExportRowFull[],
   clientNames: Record<string, string> // klant_id → display name
 ): string {
   const headers = [
-    "Klant",           // extra column — which client this invoice belongs to
+    "Administratie",   // extra column — whose books this invoice belongs to
     "Factuurnummer",
     "Type",            // [BOEK-014]
+    // [SLUIS] The invoice's own counterpart: the customer on a sale, the supplier on a purchase.
+    // Same position as "Klant" in invoicesToCsv, so the two files line up column for column.
+    "Tegenpartij",
     "E-mail",
     "Adres",
     "Postcode",
@@ -265,6 +284,7 @@ export function invoicesToCsvAccountant(
         klantName,
         r.invoice_number,
         r.invoice_type ?? "factuur", // [BOEK-014]
+        r.client_name,
         r.client_email,
         r.client_address,
         r.client_postal_code,
