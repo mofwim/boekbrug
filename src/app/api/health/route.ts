@@ -21,6 +21,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { checkEnv, envVerdict, missingEnv } from "@/lib/deploy-health";
 import { CRON_JOBS, judgeCron, cronHealthNote, type CronJob, type CronRunRow } from "@/lib/cron-heartbeat";
+import { SITE_URL, siteUrlIssue } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,21 @@ export async function GET(req: NextRequest) {
   const env = checkEnv(process.env);
   const envOordeel = envVerdict(env);
   const envMist = missingEnv(env).map((m) => ({ key: m.key, ernst: m.severity, gevolg: m.gevolg }));
+
+  // ── 1b. De canonieke host ────────────────────────────────────────────
+  // [CANONIEK] NEXT_PUBLIC_BASE_URL is de duurste variabele die er is in precies de zin die
+  // bovenaan dit bestand staat: staat hij verkeerd, dan gebeurt er NIETS zichtbaars. De schermen
+  // kloppen, de build is groen, de rookproef slaagt — want die test paden tegen de server die
+  // draait, niet de host die in de bestanden wordt gezet. Wat er stukgaat staat buiten de app:
+  // sitemap.xml, robots.txt en elke canonical wijzen dan naar een host die doorstuurt, Google zet
+  // alle pagina's onder "Pagina met omleiding" en indexeert er geen enkele.
+  //
+  // Daarom staat de opgeloste host hier LETTERLIJK in het antwoord. Dit is de enige plek waar dit
+  // eindpunt een waarde van een omgevingsvariabele teruggeeft, en dat mag: deze staat al in de
+  // HTML van elke publieke pagina. Wie zojuist heeft gedeployed leest hier in één verzoek welke
+  // host hij aan zoekmachines belooft, in plaats van het weken later uit een console te moeten
+  // afleiden.
+  const canoniek = siteUrlIssue();
 
   // ── 2. Is de database bereikbaar, en staan de bestanden dicht? ───────
   const pipeline = createPipelineClient();
@@ -147,7 +163,8 @@ export async function GET(req: NextRequest) {
 
   // ── Het eindoordeel ──────────────────────────────────────────────────
   const kapot = envOordeel === "kapot" || !dbBereikbaar || bucketPrive === false;
-  const letOp = envOordeel === "let-op" || cronsMetProbleem.length > 0 || bucketPrive === null;
+  const letOp =
+    envOordeel === "let-op" || cronsMetProbleem.length > 0 || bucketPrive === null || canoniek !== null;
   const verdict = kapot ? "kapot" : letOp ? "let-op" : "gezond";
 
   return NextResponse.json(
@@ -158,6 +175,11 @@ export async function GET(req: NextRequest) {
         oordeel: envOordeel,
         // Alleen wat mist. Wat er staat is niet interessant, en de waarden verlaten de server nooit.
         mist: envMist,
+      },
+      // [CANONIEK] De host die deze deploy aan zoekmachines belooft, plus wat er mis mee is.
+      canoniek: {
+        url: SITE_URL,
+        ...(canoniek ? { probleem: canoniek.code, gevolg: canoniek.gevolg } : {}),
       },
       database: { bereikbaar: dbBereikbaar, ...(dbFout ? { fout: dbFout } : {}) },
       bestanden: {
