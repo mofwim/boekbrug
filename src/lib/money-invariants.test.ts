@@ -10,6 +10,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   findMoneyViolations,
@@ -430,4 +431,40 @@ test("[GELD-INVARIANT-KAS] the biggest euros come first here too", () => {
     lowestPoint: { date: "2026-05-12", balance: -50 },
   });
   assert.deepEqual(v.map((x) => x.euros), [900, 50, 15]);
+});
+
+// ─── The gate: the audit must actually run somewhere ─────────────────────────────────
+
+test("[GELD-INVARIANT] the audit is wired to a route and a screen, not merely exported", () => {
+  // The defect this gate exists for is the one this module HAD. Every function here was complete,
+  // considered and tested, and nothing called it: no route, no screen, no cron. A sweep over the
+  // exports of src/lib found it — three exports of a money audit, referenced by nothing but their
+  // own tests.
+  //
+  // That is exactly the failure this file's own header warns about one axis over: something
+  // computed and told to no one. A test suite is not a caller; it proves the arithmetic and
+  // proves nothing about whether anybody is ever shown the answer.
+  const route = readFileSync("src/app/api/money-audit/route.ts", "utf8");
+  assert.match(route, /findMoneyViolations\(\{/, "the invoice/payments axis no longer runs");
+  assert.match(route, /findDrawerViolations\(\{/, "the drawer axis no longer runs");
+  assert.match(route, /moneyAuditHeadline\(violations\)/, "the one line that says whether anything needs doing");
+  // Owner-only, for the reason spelled out in the route: a medewerker is the sender of no invoice,
+  // so he would read an EMPTY set — and an empty set has no differences, so the screen would tell
+  // him the books are fine about an administration he cannot see.
+  assert.match(route, /requireOwner\(/, "[ACTING-FOR] a member would be told an empty administration is in order");
+  // The drawer half must be allowed to fail ALONE and say so. Silence there reads as "checked".
+  // Matched as the ASSIGNMENT, not as the bare word: `drawerChecked` also appears in its own
+  // declaration and in the JSON body, so a loose match survives deleting the one line that ever
+  // sets it — and then every drawer read reports as unchecked while the code still "mentions" it.
+  assert.match(
+    route, /drawerChecked = true;/,
+    "nothing sets drawerChecked any more — every drawer read now reports as not-run",
+  );
+  assert.match(route, /drawerChecked,/, "…and it never reaches the screen");
+
+  const panel = readFileSync("src/components/beveiliging/GeldPaneel.tsx", "utf8");
+  assert.match(panel, /fetch\("\/api\/money-audit"\)/, "the panel no longer asks");
+
+  const screen = readFileSync("src/app/dashboard/klaar/KlaarClient.tsx", "utf8");
+  assert.match(screen, /<GeldPaneel \/>/, "the panel exists and is on no screen — the same defect, one level up");
 });

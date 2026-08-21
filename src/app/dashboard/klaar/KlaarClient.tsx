@@ -14,6 +14,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [DOORLOPEND] Zie de kop van dat bestand: één regel als het klopt, een kader als het niet klopt.
 import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
+import { GeldPaneel } from '@/components/beveiliging/GeldPaneel'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -142,6 +143,14 @@ export default function KlaarClient() {
             geen enkel vertrouwen op. */}
         <div style={{ marginBottom: 16 }}>
           <NummeringPaneel />
+        </div>
+
+        {/* [GELD-INVARIANT] En de andere vraag die een boekhouder als eerste stelt: kloppen de
+            boeken met zichzelf? Niet "was elke boeking goed toen ze gebeurde" — dat geloofde elke
+            boeking van zichzelf — maar telt het resultaat nu nog op. Ook jaarbreed, ook stil op
+            één regel als er niets te melden valt. */}
+        <div style={{ marginBottom: 16 }}>
+          <GeldPaneel />
         </div>
 
         {/* Quarter picker */}

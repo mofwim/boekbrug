@@ -181,3 +181,85 @@ test("[DOORLOPEND] half a check is never reported as a whole one", () => {
     assert.doesNotMatch(failed, /loopt door/, "a failed check must never render the reassuring sentence");
   })();
 });
+
+// ─── [GELD-INVARIANT] Do the books agree with themselves? ────────────────────────────
+
+// money-invariants.ts was complete, considered and tested — and nothing called it. No screen, no
+// route, no cron. A money audit that runs nowhere is the exact defect that file warns about in its
+// own header: computed, and told to no one.
+//
+// These render the verdict, because the rule is tested as VALUES elsewhere and a component that
+// computed the right answer and printed the wrong sentence would pass every test over there.
+
+const finding = (over: Record<string, unknown> = {}) => ({
+  kind: "paid_without_payments",
+  entityId: "inv-1",
+  euros: 1210,
+  message: "Factuur 20260046 staat op betaald, maar er staat geen enkele betaling tegenover (€ 1.210,00).",
+  ...over,
+});
+
+test("[GELD-INVARIANT] books that agree say so in one line, and never in a warning box", () => {
+  return (async () => {
+    const { GeldUitslag } = await import("../../src/components/beveiliging/GeldPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    const html = renderToStaticMarkup(
+      React.createElement(GeldUitslag, {
+        audit: { headline: "", violations: [], drawer: [], drawerChecked: true },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(html, /Geen enkel verschil gevonden/, "the healthy answer must be on the screen — a check nobody sees buys no confidence");
+    assert.doesNotMatch(html, /amber/, "a green box the size of a warning teaches people to skim this spot");
+    assert.doesNotMatch(html, /oneens/);
+  })();
+});
+
+test("[GELD-INVARIANT] a difference is stated in the rule's own words, with a next step", () => {
+  return (async () => {
+    const { GeldUitslag } = await import("../../src/components/beveiliging/GeldPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    const html = renderToStaticMarkup(
+      React.createElement(GeldUitslag, {
+        audit: {
+          headline: "",
+          violations: [finding()],
+          drawer: [finding({ kind: "drawer_negative", entityId: "2026-02-11", message: "De kaslade staat op 11-02-2026 onder nul (€ 40,00 negatief)." })],
+          drawerChecked: true,
+        },
+        t: translator("nl"),
+      }),
+    );
+    // The sentence comes from the rule because it names the two figures that disagree — summarising
+    // it on the screen would lose exactly that.
+    assert.match(html, /20260046 staat op betaald/);
+    assert.match(html, /€ 1\.210,00/, "the euros are what decide whether this waits until Monday");
+    assert.match(html, /kaslade staat op 11-02-2026 onder nul/, "the drawer axis is shown alongside, not instead");
+    // And a next step, because a finding with none worries someone and leaves him there.
+    assert.match(html, /niet automatisch/);
+  })();
+});
+
+test("[GELD-INVARIANT] half a check is never reported as a whole one", () => {
+  return (async () => {
+    const { GeldUitslag } = await import("../../src/components/beveiliging/GeldPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    // Clean as far as we could see, but the drawer half did not run — and the till is exactly
+    // where a missing movement hides best.
+    const half = renderToStaticMarkup(
+      React.createElement(GeldUitslag, {
+        audit: { headline: "", violations: [], drawer: [], drawerChecked: false },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(half, /Geen enkel verschil gevonden/);
+    assert.match(half, /kaslade konden we nu niet nakijken/, "the unchecked half must be named");
+
+    // And "we could not check" is its own answer, never a quiet clean one.
+    const failed = renderToStaticMarkup(
+      React.createElement(GeldUitslag, { audit: null, t: translator("nl") }),
+    );
+    assert.match(failed, /konden je boeken nu niet nakijken/);
+    assert.doesNotMatch(failed, /Geen enkel verschil gevonden/, "a failed check must never render the reassuring sentence");
+  })();
+});

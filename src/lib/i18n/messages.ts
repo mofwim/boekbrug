@@ -10964,6 +10964,42 @@ export const MESSAGES = {
     en: 'A burned number cannot be reused, and it does not need to be: the tax office accepts a gap you can explain. Write down what happened and keep it with your records — then you know before your bookkeeper asks.',
     ar: 'الرقم المحروق لا يمكن إعادة استخدامه، ولا حاجة لذلك: مصلحة الضرائب تقبل فجوة يمكنك تفسيرها. دوِّن ما حدث واحفظه مع سجلاتك — عندها تعرفه قبل أن يسألك محاسبك.',
   },
+  // ── [GELD-INVARIANT] Kloppen de boeken met zichzelf ────────────────────────────────
+  //
+  // Alleen de OMLIJSTING staat hier. De bevindingen zelf komen als zin uit money-invariants.ts,
+  // omdat ze bedragen en factuurnummers bevatten die per geval verschillen — precies zoals het
+  // klaar-scherm de zinnen van readiness.ts rendert. Wat hier staat is wat het scherm zegt als er
+  // NIETS te melden valt, en dat is de helft die er het meest toe doet: een controle die alleen
+  // spreekt als ze iets vindt, bewijst nooit dat ze gedraaid heeft.
+  // Geen titelsleutel: het paneel zwijgt op één regel als alles klopt, precies als het
+  // nummeringspaneel ernaast. Een kop boven een regel die zegt dat er niets aan de hand is, maakt
+  // van die regel een blok — en een blok ter grootte van een waarschuwing is hoe mensen leren over
+  // die plek heen te lezen. De kop bestaat alleen in het waarschuwingsvak, hieronder.
+  'geld.klopt': {
+    nl: 'Elke factuur klopt met de betalingen die eraan hangen. Geen enkel verschil gevonden.',
+    en: 'Every invoice agrees with the payments attached to it. No difference found.',
+    ar: 'كل فاتورة تتطابق مع المدفوعات المرتبطة بها. لم يُعثر على أي فرق.',
+  },
+  'geld.ladeNietGecontroleerd': {
+    nl: 'De kaslade konden we nu niet nakijken.',
+    en: 'We could not check the cash drawer just now.',
+    ar: 'لم نتمكن الآن من فحص درج النقد.',
+  },
+  'geld.nietGelezen': {
+    nl: 'We konden je boeken nu niet nakijken. Dat betekent niet dat er iets mis is.',
+    en: 'We could not check your books just now. That does not mean anything is wrong.',
+    ar: 'تعذّر علينا فحص دفاترك الآن. هذا لا يعني أن هناك خطأ.',
+  },
+  'geld.verschillenTitel': {
+    nl: 'Twee bronnen zijn het oneens',
+    en: 'Two sources disagree',
+    ar: 'مصدران غير متفقين',
+  },
+  'geld.watNu': {
+    nl: 'We herstellen dit niet automatisch: bij een verschil moet er één bron gekozen worden, en fout kiezen schrijft een onwaar bedrag over een waar bedrag heen. Kijk het na, of leg het voor aan je boekhouder.',
+    en: 'We do not repair this automatically: a difference means one source has to be chosen, and choosing wrong writes a false amount over a true one. Check it, or put it to your bookkeeper.',
+    ar: 'لا نصلح هذا تلقائياً: الفرق يعني وجوب اختيار مصدر واحد، والاختيار الخاطئ يكتب مبلغاً غير صحيح فوق مبلغ صحيح. راجعه، أو اعرضه على محاسبك.',
+  },
   // ── [BEVEILIGING] Wie kan bij deze administratie ───────────────────────────────────
   //
   // Dit scherm beantwoordt de enige vraag die een zzp'er niet zelf kan controleren als hij zijn
