@@ -29,7 +29,7 @@
 // automatisch herstellen moet er één kiezen. Fout kiezen schrijft een onwaar getal over een waar
 // getal heen en wist het bewijs dat ze ooit verschilden. Dit stelt vast. Beslissen is mensenwerk.
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 // [ACTING-FOR] Owner only — dezelfde reden als /api/invoice/continuity: een medewerker is de
 // sender_id van geen enkele factuur, dus hij zou een LEGE set lezen. En een lege set heeft geen
@@ -37,6 +37,11 @@ import { NextResponse } from "next/server";
 // hij niet kan zien. Een vals groen op precies de controle die nooit vals groen mag zijn.
 import { requireOwner } from "@/lib/owner-only";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { getSessionUser } from "@/lib/session-user";
+// [BRUG] Dezelfde dubbelpad-autorisatie als /api/closing-package, /api/readiness en /api/aangifte.
+// Eén plek, want dit is de vraag waar een fout meteen betekent dat iemand in andermans boeken kijkt.
+import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import {
   findMoneyViolations,
@@ -52,12 +57,37 @@ import { loadDrawerWitness } from "@/lib/drawer-witness";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const guard = await requireOwner("Deze controle");
-  if (guard.response) return guard.response;
-  const ownerId = guard.acting!.ownerId;
-
+export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
+  const clientId = req.nextUrl.searchParams.get("clientId");
+
+  // ── Wie mag welke boeken zien ──
+  //
+  // [BRUG] Twee paden, en ze verschillen niet alleen in autorisatie maar ook in CLIENT.
+  //
+  //   · Zonder clientId: de eigenaar over zijn eigen administratie, gelezen met zijn eigen
+  //     sessie. requireOwner blijft hier staan en niet resolveQuarterOwner: een medewerker is de
+  //     sender_id van geen enkele factuur, dus hij zou een LEGE set lezen — en een lege set heeft
+  //     geen enkel verschil, dus dit scherm zou hem melden dat de boeken kloppen over een
+  //     administratie die hij niet kan zien. resolveQuarterOwner kent dat onderscheid niet.
+  //   · Met clientId: de gekoppelde boekhouder over de administratie van zijn klant. Dan MOET de
+  //     pipeline-client lezen: RLS geeft een boekhouder geen enkele rij van zijn klant terug, en
+  //     door de sessie lezen zou hier precies dezelfde valse groene uitslag opleveren.
+  let ownerId: string;
+  let db = supabase;
+  if (clientId) {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const resolved = await resolveQuarterOwner(supabase, user.id, clientId);
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    ownerId = resolved.ownerId;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    db = createPipelineClient() as any;
+  } else {
+    const guard = await requireOwner("Deze controle");
+    if (guard.response) return guard.response;
+    ownerId = guard.acting!.ownerId;
+  }
 
   // ── As 1: facturen ↔ betalingen ──
   //
@@ -72,7 +102,7 @@ export async function GET() {
   try {
     const [invRows, linkRows, txRows] = await Promise.all([
       fetchAllRows<Record<string, unknown>>((from, to) =>
-        supabase
+        db
           .from("invoices")
           .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, sender_id, receiver_id")
           .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
@@ -81,7 +111,7 @@ export async function GET() {
           .range(from, to),
       ),
       fetchAllRows<Record<string, unknown>>((from, to) =>
-        supabase
+        db
           .from("bank_tx_invoices")
           .select("transaction_id, invoice_id, amount_applied")
           .eq("user_id", ownerId)
@@ -89,7 +119,7 @@ export async function GET() {
           .range(from, to),
       ),
       fetchAllRows<Record<string, unknown>>((from, to) =>
-        supabase
+        db
           .from("bank_transactions")
           .select("id, amount")
           .eq("user_id", ownerId)
@@ -144,10 +174,10 @@ export async function GET() {
     const now = new Date();
     const year = now.getUTCFullYear();
     const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
-    const state = await loadCashSettlementState(supabase, ownerId);
+    const state = await loadCashSettlementState(db, ownerId);
     if (state.ok) {
       const sync = computeCashSettlementSync(state.paid, state.existing);
-      const witness = await loadDrawerWitness({ client: supabase, ownerId, year, quarter });
+      const witness = await loadDrawerWitness({ client: db, ownerId, year, quarter });
       drawer = findDrawerViolations({
         settlementEntries: state.existing,
         sync,

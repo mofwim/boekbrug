@@ -463,7 +463,12 @@ test("[GELD-INVARIANT] the audit is wired to a route and a screen, not merely ex
   assert.match(route, /drawerChecked,/, "…and it never reaches the screen");
 
   const panel = readFileSync("src/components/beveiliging/GeldPaneel.tsx", "utf8");
-  assert.match(panel, /fetch\("\/api\/money-audit"\)/, "the panel no longer asks");
+  // [BRUG] The panel now carries an optional clientId, so it serves both sides of the bridge: the
+  // owner asking about his own books, and the accountant asking about a client he is linked to.
+  // Matched on the path rather than the whole call, and separately on the clientId travelling —
+  // dropping that parameter would silently show the accountant HIS OWN books under his client's
+  // name, which is the worst way this screen could be wrong.
+  assert.match(panel, /fetch\(`\/api\/money-audit\$\{clientId/, "the panel no longer asks, or stopped passing the client it is looking at");
 
   const screen = readFileSync("src/app/dashboard/klaar/KlaarClient.tsx", "utf8");
   assert.match(screen, /<GeldPaneel \/>/, "the panel exists and is on no screen — the same defect, one level up");

@@ -9,6 +9,8 @@
 // Action dropdown: Verwerkt / In behandeling / Vraag (Not Found removed)
 
 import { useState, useEffect, useRef } from 'react'
+import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
+import { GeldPaneel } from '@/components/beveiliging/GeldPaneel'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
@@ -440,6 +442,19 @@ export default function KwartaalPage() {
         {packageError && (
           <p style={{ fontSize: 12.5, color: '#B3261E', margin: '-8px 2px 0' }}>{packageError}</p>
         )}
+
+        {/* [BRUG] De twee vragen die een boekhouder als eerste stelt over een administratie, en die
+            tot vandaag alleen IN het kwartaalpakket zaten: loopt de nummering door (art. 35 Wet OB),
+            en kloppen de boeken met zichzelf. Ze staan hier boven de cijfers, want ze bepalen of die
+            cijfers iets waard zijn — en ze zwijgen op één regel als er niets aan de hand is.
+
+            JAARBREED, niet per kwartaal: de nummerteller loopt per (jaar, soort), en de geldaudit
+            vergelijkt facturen met hun betalingen ongeacht de periode. Daarom staan ze buiten de
+            kwartaalkiezer hieronder. */}
+        <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 14, display: 'grid', gap: 10 }}>
+          <NummeringPaneel clientId={clientId} />
+          <GeldPaneel clientId={clientId} />
+        </div>
 
         {/* Quarter summary */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>

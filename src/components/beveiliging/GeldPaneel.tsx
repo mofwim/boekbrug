@@ -36,7 +36,7 @@ type Audit = {
 /** Three states, never blurred — the same discipline as every other panel in this app. */
 type Load = { state: "reading" } | { state: "unreadable" } | { state: "ok"; audit: Audit };
 
-export function GeldPaneel() {
+export function GeldPaneel({ clientId }: { clientId?: string } = {}) {
   const t = translator(useLocale());
   const [load, setLoad] = useState<Load>({ state: "reading" });
 
@@ -44,7 +44,9 @@ export function GeldPaneel() {
     let alive = true;
     void (async () => {
       try {
-        const res = await fetch("/api/money-audit");
+        // [BRUG] Dezelfde uitslag, aan beide kanten van de brug. Met een clientId leest de route de
+        // administratie van die klant — en alleen wanneer accountant_clients de koppeling bewijst.
+        const res = await fetch(`/api/money-audit${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`);
         const json = await res.json().catch(() => null);
         if (!alive) return;
         if (!res.ok || !json?.ok || !Array.isArray(json.violations)) {
@@ -68,7 +70,7 @@ export function GeldPaneel() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [clientId]);
 
   if (load.state === "reading") return null; // nothing to say yet; a spinner here is a stutter
   if (load.state === "unreadable") return <GeldUitslag audit={null} t={t} />;

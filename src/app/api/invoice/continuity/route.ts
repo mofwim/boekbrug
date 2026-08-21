@@ -19,11 +19,15 @@
 // A failed counters read yields `counters: null`, which the rule turns into burnedAtEnd: null —
 // "we did not check that half" — and never into a comfortable zero.
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 // [ACTING-FOR] requireOwner and not getSessionUser — see the block at the guard below.
 import { requireOwner } from "@/lib/owner-only";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { getSessionUser } from "@/lib/session-user";
+// [BRUG] Dubbelpad, gedeeld met /api/closing-package en de kwartaalroutes — zie het blok in GET.
+import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import {
   checkContinuity,
@@ -39,7 +43,7 @@ export const dynamic = "force-dynamic";
 const DEFAULT_TEMPLATE = "{year}{seq}";
 const DEFAULT_PADDING = 4;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   // [ACTING-FOR] Owner only — and the gate in acting-for-gates.test.ts caught the first version of
   // this route for saying nothing about it. That gate's comment describes exactly what happened
   // here: "someone adds /api/invoice/something-new, writes user.id like everywhere else, and
@@ -56,17 +60,40 @@ export async function GET() {
   // it to a member) — and resolving the owner here would mean reading his entire invoice list
   // through a member's session, where RLS returns only that member's own rows and would manufacture
   // a gap out of every row it withheld.
-  const guard = await requireOwner("Deze controle");
-  if (guard.response) return guard.response;
-  const ownerId = guard.acting!.ownerId;
-
   const supabase = await createServerSupabaseClient();
+  const clientId = req.nextUrl.searchParams.get("clientId");
+
+  // [BRUG] De boekhouder mag deze uitslag ook zien — het is de eerste vraag die hij stelt, en tot
+  // nu toe kwam het antwoord alleen in het kwartaalpakket voorbij. Zelfde dubbelpad als
+  // /api/closing-package, met dezelfde twee verschillen als daar:
+  //
+  //   · zonder clientId blijft requireOwner staan, want resolveQuarterOwner kent het verschil
+  //     tussen een eigenaar en een MEDEWERKER niet — en die zou een lege reeks lezen, waarna dit
+  //     scherm hem meldt dat zijn nummering doorloopt over facturen die hij niet kan zien;
+  //   · met clientId leest de pipeline, want RLS geeft een boekhouder geen enkele factuurrij van
+  //     zijn klant, en een lege lezing is hier precies de valse groene uitslag die deze controle
+  //     bestaat om te voorkomen.
+  let ownerId: string;
+  let db = supabase;
+  if (clientId) {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const resolved = await resolveQuarterOwner(supabase, user.id, clientId);
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    ownerId = resolved.ownerId;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    db = createPipelineClient() as any;
+  } else {
+    const guard = await requireOwner("Deze controle");
+    if (guard.response) return guard.response;
+    ownerId = guard.acting!.ownerId;
+  }
 
   // [WATERVAL] Three independent reads, started together. allSettled because each has its own
   // honest failure and Promise.all would let one drag down two answers that arrived fine.
   const [invoicesResult, countersResult, profileResult] = await Promise.allSettled([
     fetchAllRows<NumberedInvoice>((from, to) =>
-      supabase
+      db
         .from("invoices")
         .select("invoice_number, invoice_type")
         .eq("sender_id", ownerId)
@@ -76,8 +103,8 @@ export async function GET() {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    supabase.from("invoice_counters").select("type, year, last_seq").eq("user_id", ownerId),
-    supabase
+    db.from("invoice_counters").select("type, year, last_seq").eq("user_id", ownerId),
+    db
       .from("profiles")
       .select("invoice_number_template, invoice_number_padding")
       .eq("id", ownerId)

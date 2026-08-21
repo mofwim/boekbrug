@@ -44,7 +44,7 @@ function seriesLabel(s: SeriesReport, t: (k: "doorlopend.reeks.factuur" | "doorl
   return s.year === null ? name : `${name} ${s.year}`;
 }
 
-export function NummeringPaneel() {
+export function NummeringPaneel({ clientId }: { clientId?: string } = {}) {
   const t = translator(useLocale());
   const [load, setLoad] = useState<Load>({ state: "reading" });
 
@@ -52,7 +52,9 @@ export function NummeringPaneel() {
     let alive = true;
     void (async () => {
       try {
-        const res = await fetch("/api/invoice/continuity");
+        // [BRUG] Dezelfde uitslag, aan beide kanten van de brug. Met een clientId leest de route de
+        // administratie van die klant — en alleen wanneer accountant_clients de koppeling bewijst.
+        const res = await fetch(`/api/invoice/continuity${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`);
         const json = await res.json().catch(() => null);
         if (!alive) return;
         if (!res.ok || !json?.ok || !Array.isArray(json.series)) {
@@ -78,7 +80,7 @@ export function NummeringPaneel() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [clientId]);
 
   if (load.state === "reading") return null; // nothing to say yet; a spinner here is a stutter
   if (load.state === "unreadable") return <NummeringUitslag report={null} t={t} />;
