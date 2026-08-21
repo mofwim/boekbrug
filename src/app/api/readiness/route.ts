@@ -9,7 +9,7 @@
 
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [STATEMENT-CONTINUITY] gaten TUSSEN de ingelezen bankafschriften (pure vergelijking).
-import { findStatementGaps } from "@/lib/bank-statement-continuity";
+import { findStatementGaps, coverageOfPeriod, coverageSentence } from "@/lib/bank-statement-continuity";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
@@ -226,6 +226,56 @@ export async function GET(req: NextRequest) {
     }
   } catch {
     /* fail-soft — zonder deze controle blijft de rest van de readiness precies zoals hij was */
+  }
+
+  // [DEKKING] En de vraag waar de controle hierboven structureel blind voor is: beslaan de
+  // afschriften dit kwartaal HELEMAAL?
+  //
+  // findStatementGaps kijkt tussen afschriften ONDERLING, en daarom heeft de tak hierboven ook
+  // `rows.length >= 2` nodig. Wie alleen januari heeft geüpload heeft geen gat tussen zijn
+  // afschriften — er is er maar één — en levert een kwartaal in waar twee maanden aan betalingen
+  // simpelweg niet bestaan. Precies dezelfde blindheid als een gatencontrole op factuurnummers
+  // die het EINDE van de reeks niet ziet.
+  //
+  // Eigen leesbeurt, met een eigen filter: de query hierboven neemt een marge van 45 dagen rond
+  // het kwartaal, wat klopt voor "welk afschrift ligt naast dit gat" maar niet voor dekking — een
+  // jaarafschrift dat op 1 januari van het VORIGE jaar begint dekt dit kwartaal wél en zou buiten
+  // die marge vallen. Dan zouden we een compleet kwartaal als ontbrekend melden, en een vals gat
+  // is precies hoe een controle het vertrouwen verliest dat ze nodig heeft.
+  try {
+    const { data: overlapping } = await pipeline
+      .from("bank_statement_periods")
+      .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+      .eq("user_id", ownerId)
+      // Overlapt met het kwartaal: begint niet ná het einde en eindigt niet vóór het begin.
+      .lte("period_start", end)
+      .gte("period_end", start)
+      .order("period_start", { ascending: true });
+
+    const rows = (overlapping ?? []).filter((p) => p.period_start && p.period_end);
+    const coverage = coverageOfPeriod(
+      rows.map((p) => ({
+        documentId: p.document_id,
+        iban: p.iban,
+        from: (p.period_start as string).slice(0, 10),
+        to: (p.period_end as string).slice(0, 10),
+        opening: p.opening_balance,
+        closing: p.closing_balance,
+      })),
+      start,
+      end,
+    );
+    const sentence = coverageSentence(coverage);
+    if (sentence) {
+      // Vóór de gaten tussen afschriften: een ontbrekende MAAND is een groter gat dan een
+      // aansluiting die een dag mist, en de eigenaar leest de eerste regel het beste.
+      bankGapMessages = [
+        `${sentence} Download dat afschrift bij je bank en lees het in bij Bank.`,
+        ...bankGapMessages,
+      ].slice(0, 5);
+    }
+  } catch {
+    /* fail-soft, om dezelfde reden als hierboven */
   }
 
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──

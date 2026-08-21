@@ -6,6 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { findStatementGaps } from "./bank-statement-continuity";
 
@@ -100,4 +101,35 @@ test("[DEKKING] no statements at all is 'not checked', never 'not covered'", () 
   assert.equal(none.checked, false);
   assert.equal(none.complete, false, "and it is certainly not complete either");
   assert.equal(coverageSentence(none), null, "an unchecked quarter must not produce a finding");
+});
+
+// ─── The gate: both readers must actually ask ────────────────────────────────────────
+
+test("[DEKKING] the question is asked where it can still be answered, and where it is handed over", () => {
+  // Two places, and they are not redundant.
+  //
+  // The closing package tells the ACCOUNTANT a quarter is incomplete. By then it is a note in a
+  // file: he cannot download his client's bank statement. Readiness tells the OWNER, before he
+  // hands anything over, while the fix is one download from his own bank — and it BLOCKS, which
+  // is the whole promise of the screen ("er is niets zoekgeraakt").
+  //
+  // Readiness had exactly the same blindness this function exists for: its existing check needs
+  // `rows.length >= 2` because it compares statements to EACH OTHER, so an owner with one
+  // statement for the quarter saw nothing at all.
+  const readiness = readFileSync("src/app/api/readiness/route.ts", "utf8");
+  assert.match(readiness, /coverageOfPeriod\(/, "the owner is no longer told his quarter is incomplete");
+  assert.match(readiness, /bankGapMessages = \[/, "…or is told, and it reaches no verdict");
+  // The filter, which is the subtle half. The neighbouring-gap query takes a 45-day margin around
+  // the quarter, which is right for "which statement lies next to this gap" and wrong for
+  // coverage: a yearly statement starting last January covers this quarter and falls outside that
+  // margin, so the check would report a fully covered quarter as entirely missing. A false gap is
+  // exactly how a check loses the trust it needs.
+  assert.match(
+    readiness,
+    /\.lte\("period_start", end\)\s*\n\s*\.gte\("period_end", start\)/,
+    "the coverage read must select statements that OVERLAP the quarter, not those starting near it",
+  );
+
+  const pkg = readFileSync("src/lib/closing-package.ts", "utf8");
+  assert.match(pkg, /coverageOfPeriod\(periods, start, end\)/, "the package no longer checks coverage");
 });
