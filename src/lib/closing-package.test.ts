@@ -7,6 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
+import { readFileSync } from "node:fs";
 import {
   buildOverviewCsv,
   costWithoutInvoiceWarning,
@@ -399,4 +400,151 @@ test("[NO-SILENT-EMPTY] shared documents that could not be read are named, not a
   assert.equal(sharedOutsideWarning(0, true), null);
   // And a real count still says how many sit outside.
   assert.match(sharedOutsideWarning(3, true)!.message, /3 gedeeld/);
+});
+
+// ─── [SLUIS] The supplier's own e-factuur, next to his PDF ────────────────────
+
+// The one thing in this package that no accounting package has to SCAN. A purchase invoice in
+// UBL/CII is read mechanically straight into a booking; a PDF is OCR'd and then corrected by a
+// human. The supplier already sent the XML and the e-mail import already stored it — this is only
+// about handing it over.
+//
+// The base name is the whole trick and it is easy to get subtly wrong: intake services pair a PDF
+// and an XML BY FILENAME and treat the pair as one document. Two names make two documents out of
+// one invoice, and then a failed XML no longer falls back to the PDF — it becomes a second,
+// half-read record of a bill that exists once.
+
+const incomingInvoice = (over: Partial<PackageInvoice> = {}) =>
+  invoice({
+    id: "in-1",
+    direction: "incoming",
+    invoice_number: "F-9911",
+    client_name: "Sligro",
+    invoice_date: "2026-02-04",
+    status: "paid",
+    document_id: "doc-1",
+    ...over,
+  });
+
+const bytes = (s: string) => new TextEncoder().encode(s);
+
+async function entriesOf(zipBytes: Uint8Array): Promise<string[]> {
+  const zip = await JSZip.loadAsync(zipBytes);
+  return Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+}
+
+test("[SLUIS] the e-factuur lands beside its PDF under the SAME base name", async () => {
+  const inv = incomingInvoice();
+  const { zipBytes, summary } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    incoming: [inv],
+    pdfByInvoice: new Map([[inv.id, { path: "u/incoming/1-f9911.pdf", name: "f9911.pdf", bytes: bytes("%PDF-1.7") }]]),
+    xmlByInvoice: new Map([[inv.id, { path: "u/incoming/2-f9911.xml", name: "f9911.xml", bytes: bytes("<Invoice/>") }]]),
+    paymentDates: noPayDates,
+  });
+
+  const names = await entriesOf(zipBytes);
+  const pdf = names.find((n) => n.endsWith(".pdf") && n.startsWith("facturen-en-bonnen/"));
+  const xml = names.find((n) => n.endsWith(".xml") && n.startsWith("facturen-en-bonnen/"));
+  assert.ok(pdf, "the invoice PDF is missing from the package");
+  assert.ok(xml, "the supplier's e-factuur was not added");
+  assert.equal(
+    xml!.replace(/\.xml$/, ""),
+    pdf!.replace(/\.pdf$/, ""),
+    "the two files must share one base name — a service that pairs them by name sees two documents otherwise",
+  );
+  // Same folder, so a drag-and-drop of one directory carries the pair together.
+  assert.match(xml!, /^facturen-en-bonnen\/inkomend\/betaald\//);
+
+  const zip = await JSZip.loadAsync(zipBytes);
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.e_facturen_bijgevoegd, 1, "the count the accountant reads must say one");
+  assert.equal(summary.filesIncluded, 2, "the XML is a file in the package, not a free rider");
+});
+
+test("[SLUIS] an e-factuur that IS the only evidence is written once, not twice", async () => {
+  // A supplier who sends nothing but UBL. Then the invoice's stored document is that XML, so the
+  // ordinary evidence line already wrote it — under its own .xml extension, thanks to
+  // [EVIDENCE-EXT]. Writing it again would put a second entry with the identical name into the
+  // archive: JSZip keeps the last, nothing looks broken, and the count would claim a file the ZIP
+  // does not separately contain.
+  const inv = incomingInvoice({ id: "in-2" });
+  const same = { path: "u/incoming/3-only.xml", name: "only.xml", bytes: bytes("<Invoice/>") };
+  const { zipBytes, summary } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    incoming: [inv],
+    pdfByInvoice: new Map([[inv.id, same]]),
+    xmlByInvoice: new Map([[inv.id, same]]),
+  });
+
+  const names = await entriesOf(zipBytes);
+  const inFolder = names.filter((n) => n.startsWith("facturen-en-bonnen/"));
+  assert.equal(inFolder.length, 1, `expected one evidence file, got: ${inFolder.join(", ")}`);
+  assert.match(inFolder[0], /\.xml$/, "and it keeps its real extension");
+  assert.equal(summary.filesIncluded, 1);
+
+  const zip = await JSZip.loadAsync(zipBytes);
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.e_facturen_bijgevoegd, 1, "it still counts — it is simply not written twice");
+});
+
+test("[SLUIS] an invoice without an e-factuur gets none, and the count stays honest", async () => {
+  const withXml = incomingInvoice({ id: "in-3", invoice_number: "F-1" });
+  const without = incomingInvoice({ id: "in-4", invoice_number: "F-2" });
+  const { zipBytes } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    incoming: [withXml, without],
+    pdfByInvoice: new Map([
+      [withXml.id, { path: "u/incoming/a.pdf", name: "a.pdf", bytes: bytes("%PDF") }],
+      [without.id, { path: "u/incoming/b.pdf", name: "b.pdf", bytes: bytes("%PDF") }],
+    ]),
+    xmlByInvoice: new Map([[withXml.id, { path: "u/incoming/a.xml", name: "a.xml", bytes: bytes("<Invoice/>") }]]),
+  });
+
+  const names = await entriesOf(zipBytes);
+  assert.equal(names.filter((n) => n.endsWith(".xml")).length, 1);
+  const zip = await JSZip.loadAsync(zipBytes);
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.e_facturen_bijgevoegd, 1);
+});
+
+test("[SLUIS] a package built without the map is unchanged, never broken", async () => {
+  // Optional on purpose: every existing caller and every test above passes no map at all. It must
+  // mean "there were none", and it must not mean a crash halfway through an accountant's download.
+  const inv = incomingInvoice({ id: "in-5" });
+  const { zipBytes } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    incoming: [inv],
+    pdfByInvoice: new Map([[inv.id, { path: "u/incoming/c.pdf", name: "c.pdf", bytes: bytes("%PDF") }]]),
+  });
+  const names = await entriesOf(zipBytes);
+  assert.equal(names.filter((n) => n.endsWith(".xml")).length, 0);
+  const zip = await JSZip.loadAsync(zipBytes);
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.e_facturen_bijgevoegd, 0);
+});
+
+// ─── [SLUIS] The gate the value tests cannot be ────────────────────────────────
+
+test("[SLUIS] the orchestrator really hands the e-facturen over, and really checks them", () => {
+  // xmlByInvoice is OPTIONAL, which is right for callers that have none — and is exactly why this
+  // gate exists. Drop the one line that passes the map and every test above still passes: they
+  // call the assembler directly. What ships is a package with no e-facturen in it, identical in
+  // every visible way to a quarter that genuinely had none.
+  //
+  // The other three claims are the ones that make the XML safe to put next to a PDF under that
+  // PDF's name. Together they say: this file belongs to THIS invoice (documents.invoice_id), it
+  // sits in THIS owner's folder, the owner has not thrown it away, and its CONTENT is an invoice
+  // rather than a CAMT.053 statement that happens to end in .xml.
+  const src = readFileSync("src/lib/closing-package.ts", "utf8");
+
+  assert.match(
+    src,
+    /^\s*xmlByInvoice,\s*$/m,
+    "the orchestrator no longer passes xmlByInvoice — every package now ships without e-facturen, silently",
+  );
+  assert.match(src, /looksLikeInvoiceXmlBytes\(/, "the content check is no longer CALLED — any .xml would be shipped as an e-factuur");
+  assert.match(src, /\.in\("invoice_id", incomingIds\)/, "the e-facturen are no longer tied to their own invoice");
+  assert.match(src, /if \(!pathBelongsToOwner\(pad, ownerId\)\) continue;/, "[SEC-STORAGE-PATH] the owner-folder check on the e-factuur path is gone");
+  assert.match(src, /\.eq\("trashed", false\)\s*\n\s*\.in\("invoice_id"/, "a discarded file is being delivered to the accountant again");
 });

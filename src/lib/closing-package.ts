@@ -30,6 +30,9 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import type { PipelineClient } from "./supabase-pipeline";
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from "./storage-path";
+// [SLUIS] The content sniff that decides whether an .xml really is an invoice — see the block
+// that uses it in the orchestrator below.
+import { looksLikeInvoiceXmlBytes } from "./e-invoice";
 import {
   quarterStartDate,
   quarterEndDate,
@@ -517,6 +520,27 @@ interface AssembleInput {
   incoming: PackageInvoice[];
   /** invoiceId → downloaded PDF (outgoing via pdf_url, incoming via documents) */
   pdfByInvoice: Map<string, PackageFile>;
+  /**
+   * [SLUIS] invoiceId → the supplier's OWN e-factuur XML, when he sent one.
+   *
+   * Why this is the most valuable byte in the package, and why it is here rather than in a
+   * cleverer place: every intake tool an accountant uses — SnelStart's mailbox, Basecone,
+   * TriFact365, Zenvoices, Exact's scan-en-herken — swallows ONE document at a time and hands
+   * back a booking proposal it read with OCR. A PURCHASE invoice in UBL is the single exception:
+   * it is read mechanically, straight into a booking, with the file attached and no OCR anywhere
+   * in the chain. The supplier already sent it, the e-mail import already stored it (see
+   * email-integration.ts — an e-factuur XML is deliberately not charged against the AI budget
+   * because nothing about it costs a model), and until now the accountant never got it.
+   *
+   * It is written next to its PDF under the SAME base name. That is not cosmetic either: the
+   * intake tools pair a PDF and an XML by filename and treat the pair as one document. Two names
+   * make two documents out of one invoice.
+   *
+   * Optional so a caller that has no XMLs at all passes nothing. The orchestrator below always
+   * passes it; the gate in closing-package-gates asserts that it does, because "forgot to pass
+   * the map" and "this quarter had no e-facturen" produce an identical, silent, empty package.
+   */
+  xmlByInvoice?: Map<string, PackageFile>;
   /** the bank statement file(s) for the quarter (passthrough), if any */
   bankFiles: PackageFile[];
   /** optional kilometer registration files the owner uploaded */
@@ -564,12 +588,18 @@ interface AssembleInput {
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
   const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
+  // [SLUIS] Absent map = no e-facturen to add. Never a silent skip of a map that WAS handed over.
+  const xmlByInvoice = input.xmlByInvoice ?? new Map<string, PackageFile>();
   const warnings = [...input.warnings];
   const quarterLabel = `Q${quarter} ${year}`;
   const zip = new JSZip();
   // [READINESS-EVIDENCE] Count INVOICE PDFs specifically (distinct from filesIncluded, which also
   // folds in bank + shared files) so the summary can report a true invoices-with-evidence figure.
   let invoicePdfCount = 0;
+  // [SLUIS] How many invoices travel with the supplier's own e-factuur XML beside them. Reported
+  // in overzicht.json, because it is the one number that tells the accountant how much of this
+  // package books itself.
+  let eInvoiceXmlCount = 0;
 
   let filesIncluded = 0;
 
@@ -651,6 +681,25 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.${ext}`, bytes);
       filesIncluded++;
       invoicePdfCount++;
+
+      // [SLUIS] …and the supplier's own e-factuur beside it, under the SAME base name, because
+      // that is what makes an intake tool treat the two files as ONE document instead of two.
+      //
+      // Guarded on the storage path rather than the extension: when the e-factuur XML is itself
+      // the invoice's only evidence, `file` above IS that XML and it has already been written.
+      // Writing it a second time would produce two entries with the same name — JSZip keeps the
+      // last, so nothing visibly breaks, and the count in overzicht.json would quietly overstate
+      // what is in the package.
+      const eFactuur = xmlByInvoice.get(inv.id);
+      if (eFactuur && eFactuur.path !== file.path) {
+        zip.file(`facturen-en-bonnen/${dir}/${bucket}/${baseName}.xml`, eFactuur.bytes);
+        filesIncluded++;
+        eInvoiceXmlCount++;
+      } else if (eFactuur) {
+        // Same file, already written under its own .xml extension by the line above — it counts,
+        // it is simply not written twice.
+        eInvoiceXmlCount++;
+      }
     }
   }
 
@@ -797,6 +846,10 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         uitgaand_aantal: outgoing.length,
         inkomend_aantal: incoming.length,
         bestanden_bijgevoegd: filesIncluded,
+        // [SLUIS] Facturen die hun eigen e-factuur (UBL/CII) meebrengen. Voor deze regels hoeft
+        // geen enkel boekhoudpakket te scannen: ze worden mechanisch ingelezen, en het bestand
+        // staat onder dezelfde naam naast de PDF zodat een inleesdienst het als één document ziet.
+        e_facturen_bijgevoegd: eInvoiceXmlCount,
         bankafschrift_bijgevoegd: summary.bankStatementIncluded,
         // RAW numbers only — accountant computes the aangifte.
         btw_overzicht: {
@@ -1494,6 +1547,44 @@ export async function buildClosingPackageZip(args: {
     }
   }
 
+  // ── [SLUIS] The supplier's own e-factuur XML, per incoming invoice ──
+  //
+  // Found through documents.invoice_id, which the e-mail import writes back when it links a
+  // stored file to the invoice it produced (email-integration.ts, "[BOEK-011] Link the document
+  // back to the invoice"). That link is the only honest way to claim an XML belongs to a
+  // particular invoice; anything looser would put one supplier's e-factuur next to another
+  // supplier's PDF, under the same base name, which is worse than shipping nothing.
+  //
+  // Note what is NOT trusted here: the media type. A .xml arrives as application/xml, text/xml,
+  // application/octet-stream or nothing at all depending on the mail server — e-invoice.ts says
+  // so at length — so the type only narrows the candidates and the BYTES decide, below.
+  const xmlPathByInvoice = new Map<string, { path: string; name: string }>();
+  const incomingIds = incoming.map((i) => i.id);
+  if (incomingIds.length > 0) {
+    const { data: xmlDocs } = await supabase
+      .from("documents")
+      .select("invoice_id, file_url, file_name")
+      .eq("user_id", ownerId)
+      // A file the owner threw away is not evidence he wants delivered to his accountant.
+      .eq("trashed", false)
+      .in("invoice_id", incomingIds);
+    for (const d of (xmlDocs ?? []) as unknown as Array<{
+      invoice_id: string | null;
+      file_url: string | null;
+      file_name: string | null;
+    }>) {
+      if (!d.invoice_id || !d.file_url) continue;
+      // Read the extension off the STORAGE PATH for the same reason [EVIDENCE-EXT] does: the path
+      // is what the upload wrote, a display name from a mail attachment often carries none.
+      const pad = toStoragePath(d.file_url);
+      if (!/\.xml$/i.test(pad)) continue;
+      // [SEC-STORAGE-PATH] A row check is not a path check — same guard as the PDF read above.
+      if (!pathBelongsToOwner(pad, ownerId)) continue;
+      if (xmlPathByInvoice.has(d.invoice_id)) continue; // one e-factuur per invoice; first wins
+      xmlPathByInvoice.set(d.invoice_id, { path: pad, name: d.file_name ?? "e-factuur.xml" });
+    }
+  }
+
   // ── Bank statement(s) for the quarter (doc_type='bankafschrift') ──
   // [FIN-10] Select the statement FILE by its coverage PERIOD (tagged at upload
   // from the transaction date range), not by upload time: a Q1 statement is
@@ -1551,6 +1642,23 @@ export async function buildClosingPackageZip(args: {
   const pdfByInvoice = new Map<string, PackageFile>();
   for (const [invId, f] of pdfEntries) {
     if (f) pdfByInvoice.set(invId, f);
+  }
+
+  // [SLUIS] …and the e-facturen, with the CONTENT deciding whether each really is one. A CAMT.053
+  // bank statement is also XML, and an unrelated .xml attachment is also XML; shipping either one
+  // beside a PDF under that PDF's name would tell an intake tool "this is the machine-readable
+  // version of this invoice" about a file that is nothing of the kind. looksLikeInvoiceXmlBytes
+  // reads the root element and nothing else, which is exactly the claim being made.
+  const xmlEntries = await Promise.all(
+    [...xmlPathByInvoice.entries()].map(async ([invId, p]) => {
+      const f = await dl(p.path, p.name);
+      if (!f || !looksLikeInvoiceXmlBytes(Buffer.from(f.bytes))) return [invId, null] as const;
+      return [invId, f] as const;
+    })
+  );
+  const xmlByInvoice = new Map<string, PackageFile>();
+  for (const [invId, f] of xmlEntries) {
+    if (f) xmlByInvoice.set(invId, f);
   }
 
   const bankFilesRaw = await Promise.all(bankPaths.map((p) => dl(p.path, p.name)));
@@ -2117,6 +2225,7 @@ export async function buildClosingPackageZip(args: {
     outgoing,
     incoming,
     pdfByInvoice,
+    xmlByInvoice,
     bankFiles,
     kilometerFiles: [], // not a feature yet; passthrough hook reserved
     sharedFiles,
