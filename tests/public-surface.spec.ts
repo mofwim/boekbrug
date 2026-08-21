@@ -65,6 +65,29 @@ function isPublicFailure(status: number): boolean {
   return false;
 }
 
+/**
+ * [SITEMAP-404] The same test, one notch stricter, for the one source that is a PROMISE.
+ *
+ * The tolerance above is deliberate and stays: PUBLIC_PATHS is a list of prefixes the guard lets
+ * through, and some of them are not pages at all — /pay is /pay/[token], /steun is a 404 until a
+ * legal entity is configured. Answering 404 there is honest.
+ *
+ * sitemap.xml is a different kind of statement. It is not "this path is not behind the login", it
+ * is "here is a page, please index it", handed to Google and Bing on purpose. A URL in it that
+ * answers 404 is a promise we break on every crawl, and it comes back as exactly the message the
+ * owner reads in Search Console — "New reasons prevent pages in a sitemap from being indexed" —
+ * with no way to tell from the app that anything is wrong. Nothing on any screen changes, the
+ * build is green, and this sweep was green too: it only ever refused a redirect.
+ *
+ * 410 counts as well. It is the honest status for a page that is deliberately gone — and a page
+ * that is deliberately gone has no business being advertised in a sitemap.
+ */
+function isSitemapFailure(status: number): boolean {
+  if (isPublicFailure(status)) return true;
+  if (status === 404 || status === 410) return true;
+  return false;
+}
+
 test.describe('public surface', () => {
   test('every path the middleware calls public is reachable without a session', async ({ request }) => {
     const paths = PUBLIC_PATHS.filter((p) => !NEEDS_PARAM.has(p));
@@ -97,9 +120,15 @@ test.describe('public surface', () => {
       // under test, not the live site.
       const pathname = new URL(url).pathname;
       const status = await statusOf(request, pathname);
-      if (isPublicFailure(status)) failures.push(`${pathname} → ${status}`);
+      // [SITEMAP-404] Stricter than the other two sweeps — see the note at isSitemapFailure.
+      if (isSitemapFailure(status)) failures.push(`${pathname} → ${status}`);
     }
-    expect(failures, `sitemap URLs that did not serve: ${failures.join(', ')}`).toEqual([]);
+    expect(
+      failures,
+      `sitemap URLs that did not serve. A 3xx is the auth guard taking the page away; a 404 is a ` +
+        `page we advertised to Google that does not exist. Either way the sitemap is lying: ` +
+        `${failures.join(', ')}`,
+    ).toEqual([]);
   });
 
   test('every internal link in the public footer is reachable without a session', async ({ request }) => {

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import type { Database } from "@/types/database.types";
+import { parseVak } from "@/lib/vak-profile";
 
 type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 // [BOEK-015] fix: DB CHECK constraint = 'zzper' | 'accountant' | 'client'
@@ -67,6 +68,26 @@ if (typeof body.role === "string" && ROLE_MAP[body.role]) {
       { error: error.message, details: error.details, hint: error.hint },
       { status: 500 }
     );
+  }
+
+  // [VAK-BRUG] The trade, written APART from the patch above and never inside it.
+  //
+  // profile_vak.sql is applied by hand, so on a deployment where it has not landed this column does
+  // not exist — and a failed UPDATE would fail the whole request, which persistStep turns into a
+  // thrown error that pins the user on the company step. A field that only decides what the app
+  // OFFERS must never be able to block the wizard that collects his KvK and IBAN.
+  //
+  // parseVak is the gate: anything that is not one of the eleven known slugs becomes null, so a
+  // stale option or a tampered value stores "trade unknown" — the state every account was in until
+  // now. Never a guess, because a wrong trade would prefill another profession's btw rates.
+  if ("vak" in body) {
+    const vak = parseVak(typeof body.vak === "string" ? body.vak : null);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("profiles").update({ vak }).eq("id", user.id);
+    } catch {
+      /* no column yet → the app simply does not know his trade, which changes nothing he can do */
+    }
   }
 
   return NextResponse.json({ ok: true });

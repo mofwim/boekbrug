@@ -294,6 +294,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_user', null, 'public'),
   ('pay_bundles.sql', 'index', 'pay_bundle_invoices_unique_pair', null, 'public'),
   ('pay_bundles.sql', 'policy', 'pay_bundle_invoices_delete_own', 'pay_bundle_invoices', 'public'),
+  ('profile_vak.sql', 'column', 'vak', 'profiles', 'public'),
+  ('profile_vak.sql', 'function', 'handle_new_user', null, 'public'),
   ('push_subscriptions.sql', 'index', 'idx_push_subscriptions_user', null, 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', 'push_subscriptions', 'public'),
@@ -347,6 +349,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_registry.sql', 'index', 'suppliers_user_iban_uidx', null, 'public'),
   ('supplier_registry.sql', 'index', 'suppliers_user_name_key_idx', null, 'public'),
   ('supplier_registry.sql', 'policy', 'suppliers_delete_own', 'suppliers', 'public'),
+  ('till_sales.sql', 'index', 'idx_till_sales_ticket', null, 'public'),
+  ('till_sales.sql', 'index', 'idx_till_sales_user_date', null, 'public'),
+  ('till_sales.sql', 'policy', 'till_sales_delete_own', 'till_sales', 'public'),
+  ('till_sales.sql', 'policy', 'till_sales_insert_own', 'till_sales', 'public'),
+  ('till_sales.sql', 'policy', 'till_sales_select_own', 'till_sales', 'public'),
+  ('till_sales.sql', 'policy', 'till_sales_update_own', 'till_sales', 'public'),
   ('urenregistratie.sql', 'index', 'idx_time_entries_invoice', null, 'public'),
   ('urenregistratie.sql', 'index', 'idx_time_entries_unbilled', null, 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_delete_own', 'time_entries', 'public'),
@@ -361,7 +369,13 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vat_exemption.sql', 'constraint', 'invoices_vat_deduction_check', null, 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles', 'public'),
-  ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public')
+  ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public'),
+  ('vehicles.sql', 'index', 'idx_vehicles_user_apk', null, 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_delete_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_insert_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_select_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
+  ('vehicles.sql', 'table', 'vehicles', null, 'public')
 ),
 bevonden as (
   select p.*,
@@ -395,7 +409,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 108 migraties
+-- NIET VAST TE STELLEN — 9 van de 111 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

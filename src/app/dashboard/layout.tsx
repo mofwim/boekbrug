@@ -8,6 +8,7 @@ import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
+import { sellsOverCounter } from '@/lib/vak-profile'
 import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
 import { getSessionUser } from '@/lib/session-user'
@@ -52,6 +53,29 @@ export default async function DashboardLayout({
   // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
   // parent/home via src/lib/navigation.ts).
   const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
+  // [VAK-BRUG] Does this owner take his money at a counter? Decides which second destination the
+  // phone bar carries — see OWNER_COUNTER in BottomNav.tsx.
+  //
+  // ⚠️ Read APART from the profile select above, and that separation is the whole point. Adding
+  // `vak` to that select would make the entire read fail on any deployment where profile_vak.sql
+  // has not been applied by hand — and `profile` being null does not degrade one feature here, it
+  // removes the dashboard shell: every `{profile && …}` below is the chrome, the search launcher,
+  // the navigation bar and the Sentry user. A navigation nicety must never be able to take the
+  // navigation with it. Same shape as the account_purpose read in /onboarding/page.tsx, for the
+  // same reason and at the same cost of one small query.
+  //
+  // Unknown trade → false → the invoice-shaped bar everyone has had until now, so nothing changes
+  // for anyone who has not told us a trade.
+  let counterTrade = false
+  if (profile) {
+    try {
+      const { data: vakRow } = await supabase
+        .from('profiles').select('vak').eq('id', profile.id).maybeSingle()
+      counterTrade = sellsOverCounter((vakRow as { vak?: string | null } | null)?.vak)
+    } catch {
+      /* no column yet → the bar everyone has always had */
+    }
+  }
 
   const isMedewerker = !!acting && isActingForOther(acting)
 
@@ -80,7 +104,7 @@ export default async function DashboardLayout({
       {profile && !isMedewerker && <GlobalSearchLauncher />}
       {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
           links that hide below 640px. Role-aware destinations; see the component. */}
-      {profile && !isMedewerker && <BottomNav role={subnavRole} />}
+      {profile && !isMedewerker && <BottomNav role={subnavRole} counter={counterTrade} />}
       {/* [FEEDBACK] "Er ging iets mis" — op ELKE /dashboard/*-pagina, hier één keer gemonteerd.
           Per pagina toevoegen betekent na een half jaar op de helft van de pagina's, en dan juist
           niet op het scherm waar iets misging: dat is meestal het minst bezochte.

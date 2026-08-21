@@ -68,7 +68,9 @@ const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
+export function ZzpDashboard(
+  { profile, vehicleTrade = false }: { profile: HeaderProfile; vehicleTrade?: boolean },
+) {
   const router   = useRouter()
   const t        = translator(useLocale())
   const supabase = createClient()
@@ -237,6 +239,16 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 label={t('start.allesUploaden')} sub={t('start.allesUploaden.sub')}
                 onClick={() => router.push('/dashboard/upload')}
               />
+              {/* [KASSA] In Toevoegen and not in the administratie grid below, per this file's own
+                  extension rule: that grid holds the screens you go and READ, and a counter is
+                  something you DO — a barber taps it thirty times a day and never opens anything
+                  else. It is also the only door for an owner with no kassa-rapport: his PIN revenue
+                  otherwise reaches the books with no btw rate at all, which blocks his aangifte. */}
+              <ActionCard
+                icon="storefront" iconBg="#7B1FA2" iconColor="#fff"
+                label={t('start.kassa')} sub={t('start.kassa.sub')}
+                onClick={() => router.push('/dashboard/kassa')}
+              />
             </div>
           </section>
 
@@ -269,6 +281,13 @@ export function ZzpDashboard({ profile }: { profile: HeaderProfile }) {
                 onClick={() => router.push('/dashboard/dagomzet')} />
               <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
+              {/* [VOERTUIG] Only for a trade that works on cars. A barber shown a vehicle register
+                  learns that this app guesses about him; a monteur without one has nowhere to put
+                  the only thing he actually thinks in. Unknown trade → absent, exactly as before. */}
+              {vehicleTrade && (
+                <AdminTile icon="directions_car" tint="#0B57D0" label={t('vtg.titel')}
+                  onClick={() => router.push('/dashboard/voertuigen')} />
+              )}
             </div>
           </section>
 

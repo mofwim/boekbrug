@@ -505,6 +505,110 @@ export type Database = {
           },
         ]
       }
+      till_sales: {
+        Row: {
+          article_id: string | null
+          btw_rate: number
+          created_at: string | null
+          description: string
+          id: string
+          method: string
+          quantity: number
+          sale_date: string
+          ticket_id: string
+          unit_price_incl: number
+          user_id: string
+        }
+        Insert: {
+          article_id?: string | null
+          btw_rate: number
+          created_at?: string | null
+          description: string
+          id?: string
+          method: string
+          quantity: number
+          sale_date?: string
+          ticket_id: string
+          unit_price_incl: number
+          user_id: string
+        }
+        Update: {
+          article_id?: string | null
+          btw_rate?: number
+          created_at?: string | null
+          description?: string
+          id?: string
+          method?: string
+          quantity?: number
+          sale_date?: string
+          ticket_id?: string
+          unit_price_incl?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "till_sales_article_id_fkey"
+            columns: ["article_id"]
+            isOneToOne: false
+            referencedRelation: "articles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "till_sales_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vehicles: {
+        Row: {
+          apk_expiry: string | null
+          created_at: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          description: string | null
+          id: string
+          kenteken: string
+          notes: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          apk_expiry?: string | null
+          created_at?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          description?: string | null
+          id?: string
+          kenteken: string
+          notes?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          apk_expiry?: string | null
+          created_at?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          description?: string | null
+          id?: string
+          kenteken?: string
+          notes?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vehicles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_turnover: {
         Row: {
           base_0: number
@@ -1982,6 +2086,7 @@ export type Database = {
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
+          vak: string | null
         }
         Insert: {
           address?: string | null
@@ -2015,6 +2120,7 @@ export type Database = {
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
+          vak?: string | null
         }
         Update: {
           address?: string | null
@@ -2048,6 +2154,7 @@ export type Database = {
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
+          vak?: string | null
         }
         Relationships: [
           {

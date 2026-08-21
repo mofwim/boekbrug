@@ -95,6 +95,38 @@ test("assembleAccountExportZip produces a readable ZIP with all parts", async ()
   assert.equal(manifest.overgeslagen_bestanden.length, 1);
 });
 
+test("[KASSA] the export carries the sales behind the day, or says it could not read them", async () => {
+  // A shop without a till has no Z-report file behind its day, so till_sales is the ONLY record of
+  // what was actually sold. An export of "al je gegevens" that ships the aggregate and drops the
+  // detail is the harm this module is written against.
+  const sale = {
+    id: "s1", ticket_id: "t1", sale_date: "2026-08-20", description: "Knippen",
+    quantity: 1, unit_price_incl: 25, btw_rate: 21, method: "pin",
+  };
+  const { zipBytes } = await assembleAccountExportZip({
+    userId: "u1", profile: null, invoices: [], files: [],
+    dailyTurnover: [{ turnover_date: "2026-08-20", total_incl: 25 }],
+    tillSales: [sale],
+  });
+  const zip = await JSZip.loadAsync(zipBytes);
+  const sales = JSON.parse(await zip.file("kassaverkopen.json")!.async("string"));
+  assert.equal(sales.length, 1);
+  assert.equal(sales[0].description, "Knippen");
+  // Beside the day it aggregates into, never instead of it.
+  assert.ok(zip.file("dagomzet.json"), "the day itself is still exported");
+
+  // And the failure direction: an empty file would CLAIM nothing was ever rung up.
+  const { zipBytes: degraded } = await assembleAccountExportZip({
+    userId: "u1", profile: null, invoices: [], files: [],
+    tillSales: [], tillSalesAvailable: false,
+  });
+  const zip2 = await JSZip.loadAsync(degraded);
+  assert.equal(zip2.file("kassaverkopen.json"), null, "no empty file that would read as 'none'");
+  const note = await zip2.file("KASSAVERKOPEN-NIET-GELEZEN.txt")!.async("string");
+  assert.match(note, /niet worden gelezen/, "…a note saying so instead");
+  assert.match(note, /support@boekbrug\.nl/, "…and what the owner can do about it");
+});
+
 test("assembleAccountExportZip handles an empty account", async () => {
   const { zipBytes, summary } = await assembleAccountExportZip({
     userId: "u2",

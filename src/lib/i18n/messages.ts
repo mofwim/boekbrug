@@ -10811,6 +10811,10 @@ export const MESSAGES = {
   'log.cash.opening_balance_set': { nl: 'Beginsaldo van de kas ingesteld', en: 'Cash opening balance set', ar: 'ضُبط الرصيد الافتتاحي للصندوق' },
   'log.turnover.auto_imported': { nl: 'Dagomzet ingelezen', en: 'Daily turnover imported', ar: 'استُورد إيراد يومي' },
   'log.turnover.day_removed': { nl: 'Dagomzet van een dag verwijderd', en: 'A day of turnover removed', ar: 'حُذف إيراد يوم' },
+  'log.article.seeded_from_vak': { nl: 'Prijslijst gevuld vanuit een vak-sjabloon', en: 'Price list filled from a trade template', ar: 'مُلئت قائمة الأسعار من قالب مهنة' },
+  'log.turnover.day_entered': { nl: 'Dagomzet zelf ingevuld', en: 'Daily turnover entered by hand', ar: 'أُدخل إيراد اليوم يدوياً' },
+  'log.till.ticket_rung': { nl: 'Verkoop aangeslagen op de kassa', en: 'Sale rung up on the till', ar: 'سُجّلت عملية بيع على الكاسة' },
+  'log.till.ticket_voided': { nl: 'Kassabon teruggedraaid', en: 'Till ticket voided', ar: 'أُلغيت فاتورة كاسة' },
   'log.ledger.auto_imported': { nl: 'Kasstaat ingelezen', en: 'Till ledger imported', ar: 'استُورد كشف صندوق' },
   'log.btw.filed': { nl: 'BTW-aangifte als ingediend gemarkeerd', en: 'VAT return marked as filed', ar: 'وُسم الإقرار الضريبي كمُقدَّم' },
   'log.btw.filed_despite_warnings': { nl: 'BTW-aangifte ingediend ondanks waarschuwingen', en: 'VAT return filed despite warnings', ar: 'قُدّم الإقرار رغم التحذيرات' },
@@ -11156,6 +11160,200 @@ export const MESSAGES = {
     nl: 'Incl. btw: {bedrag}',
     en: 'Incl. btw: {bedrag}',
     ar: 'شامل الضريبة: {bedrag}',
+  },
+
+  // ─── [KASSA] The counter of a shop without a till ────────────────────────────────────────────
+  //
+  // Two rules from the head of this file do real work in this block, so they are worth pointing at
+  // before anyone adds a key here.
+  //
+  // A NOUN INSIDE A SENTENCE IS NOT A PARAMETER. "Pin", "Contant" and "Overig" are payment methods
+  // that appear both as button labels AND inside sentences ("… is contant betaald"). Every such
+  // sentence gets its own key per method rather than one template with {method} substituted, which
+  // would break Arabic agreement and Turkish suffix harmony on a screen an owner uses all day.
+  //
+  // A SENTENCE THAT POINTS AT A BUTTON NAMES THE BUTTON AS IT IS WRITTEN. The conflict notices are
+  // written server-side in Dutch (till-day.ts) because they name concrete screens — Kas, Dagomzet —
+  // whose navigation labels are still Dutch in every language. Translating the sentence without
+  // the label would send the owner hunting for a word that is nowhere in his interface.
+
+  'kassa.titel': { nl: 'Kassa', en: 'Till', ar: 'الكاسة' },
+  // The home card. Its sub-line says what the screen DOES, not what it is — a shop owner scanning
+  // his home screen is deciding where to tap, not reading a glossary.
+  'start.kassa': { nl: 'Kassa', en: 'Till', ar: 'الكاسة' },
+  'start.kassa.sub': {
+    nl: 'Sla je verkopen aan — met het juiste btw-tarief',
+    en: 'Ring up your sales — at the right btw rate',
+    ar: 'سجّل مبيعاتك — بنسبة الـ btw الصحيحة',
+  },
+  'kassa.uitleg': {
+    nl: 'Sla hier aan wat je verkoopt. Aan het eind van de dag staat je omzet met het juiste btw-tarief in je boekhouding — zonder kassabon en zonder overtypen.',
+    en: 'Ring up what you sell here. At the end of the day your revenue is in your books at the right btw rate — no till receipt, no retyping.',
+    ar: 'سجّل هنا ما تبيعه. في آخر اليوم تكون إيراداتك في دفاترك بنسبة الـ btw الصحيحة — بلا إيصال كاسة وبلا إعادة إدخال.',
+  },
+  'kassa.dagtotaal': { nl: 'Vandaag aangeslagen', en: 'Rung up today', ar: 'المسجَّل اليوم' },
+  'kassa.prijslijst': { nl: 'Prijslijst', en: 'Price list', ar: 'قائمة الأسعار' },
+  'kassa.prijslijstLeeg': {
+    nl: 'Je prijslijst is nog leeg. Zet je diensten er één keer in, dan sla je ze daarna met één tik aan.',
+    en: 'Your price list is still empty. Add your services once, then ring them up with a single tap.',
+    ar: 'قائمة أسعارك ما زالت فارغة. أدخل خدماتك مرة واحدة، ثم سجّلها بنقرة واحدة.',
+  },
+  'kassa.prijslijstBeheren': { nl: 'Prijslijst beheren', en: 'Manage price list', ar: 'إدارة قائمة الأسعار' },
+  'kassa.bon': { nl: 'Bon', en: 'Ticket', ar: 'الفاتورة' },
+  'kassa.bonLeeg': {
+    nl: 'Tik hierboven een dienst aan, of vul een vrij bedrag in.',
+    en: 'Tap a service above, or enter a free amount.',
+    ar: 'انقر خدمة في الأعلى، أو أدخل مبلغاً حراً.',
+  },
+  'kassa.vrijBedrag': { nl: 'Vrij bedrag', en: 'Free amount', ar: 'مبلغ حر' },
+  'kassa.omschrijving': { nl: 'Omschrijving', en: 'Description', ar: 'الوصف' },
+  'kassa.bedrag': { nl: 'Bedrag', en: 'Amount', ar: 'المبلغ' },
+  'kassa.tarief': { nl: 'Btw-tarief', en: 'Btw rate', ar: 'نسبة الـ btw' },
+  'kassa.toevoegen': { nl: 'Op de bon', en: 'Add to ticket', ar: 'أضف إلى الفاتورة' },
+  'kassa.regelWeg': { nl: 'Regel weghalen', en: 'Remove line', ar: 'إزالة السطر' },
+  'kassa.meer': { nl: 'Eentje erbij', en: 'One more', ar: 'واحد إضافي' },
+  'kassa.minder': { nl: 'Eentje eraf', en: 'One fewer', ar: 'واحد أقل' },
+  'kassa.totaal': { nl: 'Totaal', en: 'Total', ar: 'الإجمالي' },
+  'kassa.hoeBetaald': { nl: 'Hoe is er betaald?', en: 'How was it paid?', ar: 'كيف تم الدفع؟' },
+  'kassa.pin': { nl: 'Pin', en: 'Card', ar: 'بطاقة (Pin)' },
+  'kassa.contant': { nl: 'Contant', en: 'Cash', ar: 'نقداً' },
+  'kassa.overig': { nl: 'Overig', en: 'Other', ar: 'أخرى' },
+  'kassa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
+  'kassa.verkopenVandaag': { nl: 'Aangeslagen vandaag', en: 'Rung up today', ar: 'المسجَّل اليوم' },
+  'kassa.geenVerkopen': {
+    nl: 'Nog niets aangeslagen vandaag.',
+    en: 'Nothing rung up today yet.',
+    ar: 'لم يُسجَّل شيء اليوم بعد.',
+  },
+  'kassa.terugdraaien': { nl: 'Terugdraaien', en: 'Void', ar: 'إلغاء' },
+  'kassa.terugdraaienVraag': {
+    nl: 'Deze bon helemaal terugdraaien?',
+    en: 'Void this whole ticket?',
+    ar: 'إلغاء هذه الفاتورة بالكامل؟',
+  },
+  // One sentence per payment method — a noun inside a sentence is not a parameter.
+  'kassa.betaaldPin': { nl: 'Met pin betaald', en: 'Paid by card', ar: 'مدفوعة بالبطاقة' },
+  'kassa.betaaldContant': { nl: 'Contant betaald', en: 'Paid in cash', ar: 'مدفوعة نقداً' },
+  'kassa.betaaldOverig': { nl: 'Anders betaald', en: 'Paid another way', ar: 'مدفوعة بطريقة أخرى' },
+  'kassa.splitPin': { nl: 'Pin', en: 'Card', ar: 'بطاقة' },
+  'kassa.splitContant': { nl: 'Contant', en: 'Cash', ar: 'نقداً' },
+  'kassa.splitOverig': { nl: 'Overig', en: 'Other', ar: 'أخرى' },
+  'kassa.waaromTarief': {
+    nl: 'Het btw-tarief hoort bij de dienst, niet bij de betaling. Daarom staat het op de prijslijst en hoef je het hier niet elke keer te kiezen.',
+    en: 'The btw rate belongs to the service, not to the payment. That is why it lives on the price list and you do not choose it every time here.',
+    ar: 'نسبة الـ btw تتبع الخدمة لا طريقة الدفع. لذلك تُحفظ في قائمة الأسعار ولا تختارها هنا في كل مرة.',
+  },
+  'kassa.fout.laden': {
+    nl: 'Kon de verkopen van vandaag niet laden.',
+    en: 'Could not load today’s sales.',
+    ar: 'تعذّر تحميل مبيعات اليوم.',
+  },
+  'kassa.fout.opslaan': {
+    nl: 'Kon de verkoop niet opslaan.',
+    en: 'Could not save the sale.',
+    ar: 'تعذّر حفظ عملية البيع.',
+  },
+
+  // ─── [VAK-BRUG] Filling an empty price list from the owner's trade ───────────────────────────
+  // The counter tab. Short because a nav label has ~9 characters before it wraps on a 320px screen.
+  // [VAK-BRUG] The trade question, on the company step of the wizard.
+  'onb.vak': { nl: 'Wat voor werk doe je?', en: 'What kind of work do you do?', ar: 'ما نوع عملك؟', tr: 'Ne iş yapıyorsun?' },
+  'onb.vak.leeg': { nl: 'Kies je vak (mag je overslaan)', en: 'Pick your trade (you may skip this)', ar: 'اختر مهنتك (يمكنك التخطّي)', tr: 'Mesleğini seç (atlayabilirsin)' },
+  'onb.vak.uitleg': {
+    nl: 'Hiermee zet de app je prijslijst alvast klaar, met het btw-tarief dat bij jouw werk hoort. Je kunt alles later aanpassen.',
+    en: 'This lets the app prepare your price list, with the btw rate that belongs to your work. You can change everything later.',
+    ar: 'بهذا يجهّز التطبيق قائمة أسعارك، بنسبة الـ btw التي تخصّ عملك. ويمكنك تعديل كل شيء لاحقاً.',
+  },
+
+  // ─── [VOERTUIG] The cars a garage works on ───────────────────────────────────────────────────
+  // [TAAL] 'APK' and 'kenteken' are Dutch domain terms with no English equivalent in this context —
+  // AGENTS.md names both explicitly. They stay as they are in every language, exactly like btw.
+  'vtg.titel': { nl: 'Voertuigen', en: 'Vehicles', ar: 'المركبات', tr: 'Araçlar' },
+  'vtg.uitleg': {
+    nl: 'Leg vast welke auto’s je onder handen hebt. De APK-datum zet ze vanzelf bovenaan zodra die in zicht komt — dat is je reden om de klant te bellen.',
+    en: 'Record which cars you work on. The APK date moves them to the top by itself as it comes into view — that is your reason to call the customer.',
+    ar: 'سجّل السيارات التي تعمل عليها. تاريخ الـ APK يرفعها إلى الأعلى تلقائياً عند اقترابه — وهو سببك للاتصال بالزبون.',
+  },
+  'vtg.kenteken': { nl: 'Kenteken', en: 'Kenteken', ar: 'رقم اللوحة (kenteken)', tr: 'Plaka (kenteken)' },
+  'vtg.auto': { nl: 'Merk en model', en: 'Make and model', ar: 'الماركة والموديل' },
+  'vtg.klant': { nl: 'Klant', en: 'Customer', ar: 'الزبون' },
+  'vtg.telefoon': { nl: 'Telefoon', en: 'Phone', ar: 'الهاتف' },
+  'vtg.apk': { nl: 'APK verloopt op', en: 'APK expires on', ar: 'ينتهي الـ APK في' },
+  'vtg.notitie': { nl: 'Notitie', en: 'Note', ar: 'ملاحظة' },
+  'vtg.opslaan': { nl: 'Voertuig vastleggen', en: 'Record the vehicle', ar: 'تثبيت المركبة' },
+  'vtg.toevoegen': { nl: 'Voertuig toevoegen', en: 'Add a vehicle', ar: 'إضافة مركبة' },
+  'vtg.leeg': {
+    nl: 'Nog geen voertuigen. Voeg de eerste auto toe die je onder handen hebt.',
+    en: 'No vehicles yet. Add the first car you are working on.',
+    ar: 'لا مركبات بعد. أضف أول سيارة تعمل عليها.',
+  },
+  'vtg.verwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
+  'vtg.verwijderenVraag': { nl: 'Dit voertuig verwijderen?', en: 'Remove this vehicle?', ar: 'إزالة هذه المركبة؟' },
+  // One whole sentence per state — never one template with the state substituted in.
+  'vtg.status.expired': { nl: 'APK is verlopen', en: 'The APK has expired', ar: 'انتهى الـ APK' },
+  'vtg.status.due': { nl: 'APK verloopt binnenkort', en: 'The APK expires soon', ar: 'ينتهي الـ APK قريباً' },
+  'vtg.status.soon': { nl: 'APK komt in zicht', en: 'The APK is coming up', ar: 'يقترب موعد الـ APK' },
+  'vtg.status.ok': { nl: 'APK is nog geldig', en: 'The APK is still valid', ar: 'الـ APK ما زال سارياً' },
+  'vtg.status.unknown': {
+    nl: 'APK-datum niet bekend — vul hem in om deze auto op tijd terug te zien',
+    en: 'APK date unknown — fill it in to see this car back in time',
+    ar: 'تاريخ الـ APK غير معروف — أدخله لترى هذه السيارة في وقتها',
+  },
+  'vtg.bellen': { nl: 'Deze wil je bellen', en: 'These are worth calling', ar: 'هؤلاء تستحقّ الاتصال' },
+  'vtg.fout.laden': { nl: 'Kon de voertuigen niet laden.', en: 'Could not load the vehicles.', ar: 'تعذّر تحميل المركبات.' },
+  'vtg.fout.opslaan': { nl: 'Kon het voertuig niet opslaan.', en: 'Could not save the vehicle.', ar: 'تعذّر حفظ المركبة.' },
+
+  'nav.kassa': { nl: 'Kassa', en: 'Till', ar: 'الكاسة', tr: 'Kasa' },
+
+  'vak.titel': { nl: 'Begin met de regels van jouw vak', en: 'Start from your trade’s lines', ar: 'ابدأ من بنود مهنتك' },
+  'vak.uitleg': {
+    nl: 'Kies je vak, vul in wat jij rekent, en je prijslijst staat er. Het btw-tarief staat er al bij — dat is het stukje waar het vaakst iets misgaat.',
+    en: 'Pick your trade, fill in what you charge, and your price list is there. The btw rate is already set — that is the part that most often goes wrong.',
+    ar: 'اختر مهنتك، واملأ ما تتقاضاه، فتجهز قائمة أسعارك. نسبة الـ btw مضبوطة سلفاً — وهي الجزء الذي يُخطئ فيه الناس أكثر.',
+  },
+  'vak.kies': { nl: 'Wat is je vak?', en: 'What is your trade?', ar: 'ما مهنتك؟' },
+  'vak.prijsKop': { nl: 'Wat reken jij?', en: 'What do you charge?', ar: 'كم تتقاضى؟' },
+  'vak.prijsUitleg': {
+    nl: 'Laat leeg wat je niet aanbiedt — die regel wordt niet gemaakt. Je kunt alles later nog aanpassen.',
+    en: 'Leave blank what you do not offer — that line is not created. You can change everything later.',
+    ar: 'اترك ما لا تقدّمه فارغاً — لن يُنشأ ذلك السطر. ويمكنك تعديل كل شيء لاحقاً.',
+  },
+  'vak.opslaan': { nl: 'Prijslijst maken', en: 'Create the price list', ar: 'أنشئ قائمة الأسعار' },
+  'vak.klaar': { nl: 'Je prijslijst staat er. Op de Kassa sla je hem nu met één tik aan.', en: 'Your price list is there. On the Kassa you now ring it up with one tap.', ar: 'قائمة أسعارك جاهزة. تسجّلها الآن على الكاسة بنقرة واحدة.' },
+  'vak.letOpKop': { nl: 'Let op bij dit vak', en: 'Watch out in this trade', ar: 'انتبه في هذه المهنة' },
+  'vak.fout.opslaan': { nl: 'Kon de prijslijst niet maken.', en: 'Could not create the price list.', ar: 'تعذّر إنشاء قائمة الأسعار.' },
+  'vak.fout.leeg': { nl: 'Vul minstens één prijs in.', en: 'Fill in at least one price.', ar: 'املأ سعراً واحداً على الأقل.' },
+
+  // ─── [KASSA] A whole day typed by hand, on the Dagomzet screen ───────────────────────────────
+  'dzh.titel': { nl: 'Dag zelf invullen', en: 'Enter a day yourself', ar: 'أدخل اليوم بنفسك' },
+  'dzh.uitleg': {
+    nl: 'Geen kassa-rapport? Vul dan zelf in wat je die dag hebt omgezet. Het btw-tarief is het enige dat je nergens anders kwijt kunt — zonder tarief blokkeert je btw-aangifte.',
+    en: 'No till report? Then enter what you took that day yourself. The btw rate is the one thing you cannot record anywhere else — without it your btw return is blocked.',
+    ar: 'لا يوجد تقرير كاسة؟ أدخل بنفسك ما حقّقته ذلك اليوم. نسبة الـ btw هي الشيء الوحيد الذي لا يمكن تسجيله في مكان آخر — وبدونها يُحجب إقرار الـ btw.',
+  },
+  'dzh.datum': { nl: 'Welke dag', en: 'Which day', ar: 'أي يوم' },
+  'dzh.omzetKop': { nl: 'Omzet, inclusief btw', en: 'Revenue, including btw', ar: 'الإيراد شاملاً الـ btw' },
+  'dzh.omzet21': { nl: 'Tegen 21%', en: 'At 21%', ar: 'بنسبة 21%' },
+  'dzh.omzet9': { nl: 'Tegen 9%', en: 'At 9%', ar: 'بنسبة 9%' },
+  'dzh.omzet0': { nl: 'Tegen 0%', en: 'At 0%', ar: 'بنسبة 0%' },
+  'dzh.betaaldKop': { nl: 'Hoe er betaald is', en: 'How it was paid', ar: 'كيف تم الدفع' },
+  'dzh.totaalOmzet': { nl: 'Omzet bij elkaar', en: 'Revenue together', ar: 'مجموع الإيراد' },
+  'dzh.totaalBetaald': { nl: 'Betaald bij elkaar', en: 'Paid together', ar: 'مجموع المدفوع' },
+  'dzh.moetGelijk': {
+    nl: 'Deze twee moeten gelijk zijn — ze beschrijven dezelfde dag.',
+    en: 'These two must match — they describe the same day.',
+    ar: 'يجب أن يتساوى الرقمان — فهما يصفان اليوم نفسه.',
+  },
+  'dzh.opslaan': { nl: 'Dag vastleggen', en: 'Record the day', ar: 'تثبيت اليوم' },
+  'dzh.klaar': {
+    nl: 'De dag staat in je omzet, met het btw-tarief erbij.',
+    en: 'The day is in your revenue, with its btw rate.',
+    ar: 'اليوم مُسجَّل في إيرادك، ومعه نسبة الـ btw.',
+  },
+  'dzh.fout.opslaan': {
+    nl: 'Kon de dagomzet niet opslaan.',
+    en: 'Could not save the day’s revenue.',
+    ar: 'تعذّر حفظ إيراد اليوم.',
   },
 
   // ─── [BEWIJS-BEANTWOORDEN] Het antwoord op de vraag die het bewijspaneel stelt ───────────────

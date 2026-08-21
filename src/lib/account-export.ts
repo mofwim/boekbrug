@@ -98,6 +98,13 @@ interface AssembleInput {
   // buildAccountExport for why only the three cash.* actions travel.
   cashTrail?: unknown[];
   dailyTurnover?: unknown[];
+  // [KASSA] The per-sale detail of a shop without a till. It is NOT a money source — the engines
+  // read the aggregated daily_turnover row — but it is the ONLY record of what was actually sold,
+  // because there is no Z-report file behind it the way there is for a till shop. Leaving it out
+  // would ship an owner "al je gegevens" without the thing his day is made of.
+  tillSales?: unknown[];
+  /** Defaults to true. Pass false when the till_sales read failed — see the summary field. */
+  tillSalesAvailable?: boolean;
   messages?: unknown[];
   // [EXPORT-FILED] The filed BTW-aangiftes. Typed structurally, so a `select("*")` row keeps
   // any extra column it carries: the CSV reads the known fields, the JSON dumps all of them.
@@ -114,6 +121,21 @@ interface AssembleInput {
  * which is a claim about someone's tax history that a failed read does not license us to make.
  * Dutch, because whoever opens this ZIP in 2032 is the owner, their accountant or an inspector.
  */
+// [KASSA] Same shape and same reason as the note below it: an empty file would CLAIM that nothing
+// was ever rung up, and a failed read has established no such thing.
+const TILL_SALES_UNREADABLE_NOTE = [
+  "Je kassaverkopen konden bij het maken van deze export niet worden gelezen.",
+  "",
+  "Daarom staat er GEEN leeg bestand in deze export. Een leeg bestand zou betekenen dat je nooit",
+  "iets op de kassa hebt aangeslagen, en dat is op dit moment niet vastgesteld.",
+  "",
+  "Je dagomzet zelf staat wel in deze export (dagomzet.json) — dat is wat er in je boekhouding en",
+  "je BTW-aangifte telt. Dit bestand gaat over de losse verkopen daarachter.",
+  "",
+  "Wat je kunt doen: maak de export later opnieuw, of vraag je verkopen op via support@boekbrug.nl.",
+  "",
+].join("\n");
+
 const BTW_FILINGS_UNREADABLE_NOTE = [
   "Je ingediende BTW-aangiftes konden bij het maken van deze export niet worden gelezen.",
   "",
@@ -223,6 +245,8 @@ export async function assembleAccountExportZip(
   const cashEntries = input.cashEntries ?? [];
   const cashTrail = input.cashTrail ?? [];
   const dailyTurnover = input.dailyTurnover ?? [];
+  const tillSales = input.tillSales ?? [];
+  const tillSalesAvailable = input.tillSalesAvailable ?? true;
   const messages = input.messages ?? [];
   const btwFilings = input.btwFilings ?? [];
   const btwFilingsAvailable = input.btwFilingsAvailable ?? true;
@@ -269,6 +293,12 @@ export async function assembleAccountExportZip(
   // history and appears in profiel.json only as its current value.
   zip.file("kas-spoor.json", JSON.stringify(cashTrail, null, 2));
   zip.file("dagomzet.json", JSON.stringify(dailyTurnover, null, 2));
+  // [KASSA] Beside the day it aggregates into, never instead of it.
+  if (tillSalesAvailable) {
+    zip.file("kassaverkopen.json", JSON.stringify(tillSales, null, 2));
+  } else {
+    zip.file("KASSAVERKOPEN-NIET-GELEZEN.txt", TILL_SALES_UNREADABLE_NOTE);
+  }
   zip.file("berichten.json", JSON.stringify(messages, null, 2));
   // [EXPORT-FILED] Verbatim alongside the CSV: the CSV is what a human reads, this is the
   // guarantee that a column added to btw_filings later still leaves the account with it. Same
@@ -518,12 +548,41 @@ export async function buildAccountExportZip(args: {
     console.error("[EXPORT-FILED] btw_filings not readable — export ships without it, and says so", { userId, message });
   }
 
+  // [KASSA] till_sales.sql is applied by hand, exactly like btw_filings.sql — so the same two
+  // failures get the same two answers. A missing relation is a complete answer (no counter has ever
+  // run here), but it still must not masquerade as "this owner rang up nothing": it degrades to
+  // available:false and a note, never to an empty list. Any other error throws, like the ledgers.
+  // Not in the generated types on a deployment without the migration → relaxed client, same escape
+  // hatch btw_filings uses.
+  let tillSaleRows: unknown[] = [];
+  let tillSalesAvailable = true;
+  try {
+    tillSaleRows = await fetchAllRows<unknown>((from, to) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("till_sales")
+        .select("*")
+        .eq("user_id", userId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (!isMissingRelation(message)) {
+      throw new Error(`[KASSA] till_sales query failed: ${message}`);
+    }
+    tillSalesAvailable = false;
+    console.error("[KASSA] till_sales not readable — export ships without it, and says so", { userId, message });
+  }
+
   return assembleAccountExportZip({
     userId, profile, invoices, files, skipped,
     bankTransactions: bankRows,
     cashEntries: cashRows,
     cashTrail: cashTrailRows,
     dailyTurnover: turnoverRows,
+    tillSales: tillSaleRows,
+    tillSalesAvailable,
     messages: msgRows,
     btwFilings: btwFilingRows,
     btwFilingsAvailable,

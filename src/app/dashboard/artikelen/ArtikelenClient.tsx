@@ -5,6 +5,10 @@
 // saved once and reused. Manage here; pick from it while making a factuur.
 
 import { useEffect, useMemo, useState } from 'react'
+// [VAK-BRUG] The eleven trades in vak-sjablonen.ts, and the BTW rate each one carries, lived only
+// in the public funnel — /factuur-maken and its landing pages. An owner who told us his trade at
+// the front door found this catalogue empty anyway. See the header of VakPrijslijst.tsx.
+import VakPrijslijst from './VakPrijslijst'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 import { type Article } from '@/lib/articles'
@@ -315,6 +319,14 @@ export default function ArtikelenClient() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* [VAK-BRUG] Offered only on a genuinely empty catalogue, and not while searching: an
+            owner who already priced his work does not need a template, and a panel above his own
+            list would read as an invitation to duplicate it. `articles` (not `shown`) is the test
+            — a search that finds nothing is not an empty catalogue. */}
+        {!loading && articles.length === 0 && !search.trim() && (
+          <VakPrijslijst onCreated={() => void load()} />
         )}
 
         {loading ? (

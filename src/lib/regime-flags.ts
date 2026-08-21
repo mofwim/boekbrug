@@ -27,6 +27,7 @@ export const KOR_THRESHOLD_EUR = 20000;
 export type RegimeCode =
   | "kor"
   | "kor_threshold"
+  | "kor_possible"
   | "reverse_charge_purchase"
   | "reverse_charge_sale"
   | "margin_scheme";
@@ -112,6 +113,48 @@ export function detectRegimeFlags(s: RegimeSignals): RegimeFlag[] {
           "boekhouder controleren of de KOR nog van toepassing is.",
       });
     }
+  }
+
+  // ── [KOR-STIL] The mirror of kor_threshold, for the owner who is in the KOR and never said so ──
+  //
+  // kor_active is a DECLARATION and it defaults to false, so "not in the scheme" and "never opened
+  // Instellingen" are the same stored value. Everything the app does about the KOR — the 0%-only
+  // invoice screen, the send route's refusal, the counter's refusal — hangs off that declaration,
+  // and for the owner who never made it, all of it is inert. He is the one who most needs it.
+  //
+  // ── WHY THIS CONDITION AND NOT "HE DECLARED NOTHING" ──
+  // The header of this file sets the standard these flags are held to: high precision, because a
+  // false regime flag is noise that erodes trust. A flag on "no regime declared" would fire for
+  // every owner in the country every quarter, which is the definition of noise — and the ones who
+  // genuinely charge btw, the large majority, would learn to scroll past the place regime warnings
+  // appear.
+  //
+  // Turnover UNDER the KOR ceiling is the precise condition instead. It is the only population
+  // where the mistake is possible at all: an owner at €80.000 cannot be in the scheme, and never
+  // sees this. It is actionable in one sentence, and it names a real consequence — btw computed and
+  // paid on turnover that may carry none.
+  //
+  // Zero turnover is excluded deliberately. A quarter with no revenue says nothing about anyone's
+  // regime, and a brand-new account would otherwise open on a warning about a scheme it has not yet
+  // had the chance to be in.
+  if (
+    !s.korActive
+    && typeof s.omzetForKorCheck === "number"
+    && s.omzetForKorCheck > 0
+    && s.omzetForKorCheck <= KOR_THRESHOLD_EUR
+  ) {
+    flags.push({
+      code: "kor_possible",
+      title: "Val je onder de KOR?",
+      detail:
+        `Je omzet in dit tijdvak (€${Math.round(s.omzetForKorCheck).toLocaleString("nl-NL")}) blijft onder de ` +
+        `KOR-grens van €${KOR_THRESHOLD_EUR.toLocaleString("nl-NL")} per jaar. In BoekBrug staat de ` +
+        "kleineondernemersregeling UIT, dus dit concept rekent gewoon BTW over je omzet en zet die in " +
+        "5a als verschuldigd. Doe je wél mee aan de KOR, dan klopt dat niet: onder de KOR breng je " +
+        "geen BTW in rekening. Zet de KOR dan aan bij Instellingen — daarna houden je facturen en je " +
+        "kassa het tarief vanzelf op 0%. Weet je het niet zeker? Vraag het je boekhouder; hij ziet " +
+        "deze melding ook.",
+    });
   }
 
   // Phrase-gated line scan — one pass, de-dup evidence per regime.

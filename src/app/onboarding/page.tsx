@@ -70,6 +70,19 @@ export default async function OnboardingPage() {
     user.email ??
     "daar";
 
+  // [VAK-BRUG] The trade, so someone resuming the wizard a day later sees the answer he already
+  // gave rather than an empty dropdown. Read APART from the select above, exactly like
+  // account_purpose two blocks up and for the same reason: profile_vak.sql is applied by hand, and
+  // a missing column must cost the trade question, never the whole wizard.
+  let initialVak = "";
+  try {
+    const { data: vakRow } = await supabase
+      .from("profiles").select("vak").eq("id", user.id).maybeSingle();
+    initialVak = (vakRow as { vak?: string | null } | null)?.vak ?? "";
+  } catch {
+    /* kolom bestaat nog niet → gewoon een lege keuze, zoals altijd */
+  }
+
   const initialStep = Math.max(1, profile?.onboarding_step ?? 1);
   const initialRole = profile?.role === "accountant" ? "accountant" : "zzp";
 
@@ -90,6 +103,8 @@ export default async function OnboardingPage() {
         btw_number: profile?.btw_number ?? "",
         iban: profile?.iban ?? "",
         address: profile?.address ?? "",
+        // [VAK-BRUG] Read apart from the select above and tolerantly — see the block that reads it.
+        vak: initialVak,
       }}
     />
   );

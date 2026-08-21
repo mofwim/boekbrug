@@ -12,6 +12,7 @@ import { readHandoff, hasInvoiceContent } from '@/lib/factuur-handoff'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
 import { ROLE_PARAM, parseRole } from '@/lib/register-intent'
 import { EMAIL_REGEX } from '@/lib/validation'
+import { VAK_PARAM, parseVak } from '@/lib/vak-profile'
 import {
   PURPOSE_PARAM,
   landingPath,
@@ -75,6 +76,12 @@ function RegisterContent() {
   // krijgt daarom andere teksten, geen rolkeuze (hij is gewoon een ondernemer) en na
   // registratie zijn kluis in plaats van een wizard over facturen versturen.
   const purpose = parsePurpose(searchParams.get(PURPOSE_PARAM))
+  // [VAK-BRUG] Het vak waarmee de bezoeker binnenkwam. /factuur-maken/<vak> is een publieke
+  // landingspagina waar hij zijn beroep al KOOS — en tot nu toe raakte dat kwijt op het moment
+  // dat hij een account maakte, precies wanneer het het meest waard is: zijn prijslijst begint
+  // leeg en de Kassa opent op "je prijslijst is nog leeg". Onbekend → null, en dat is de normale
+  // toestand van elk bestaand account. Zie vak-profile.ts.
+  const vak = parseVak(searchParams.get(VAK_PARAM))
   const copy = purposeCopy(purpose)
 
   // Welke stap er te zien is. Op het archiefpad is dat altijd stap 2, wat er ook in `step`
@@ -299,6 +306,10 @@ function RegisterContent() {
           // onboarding_done meteen true, want die wizard gaat over facturen versturen en
           // een mailboxkoppeling — geen van beide waar deze bezoeker voor kwam.
           account_purpose: purpose,
+          // [VAK-BRUG] profile_vak.sql leest dit en zet het op profiles.vak. Alleen meesturen
+          // als we het weten: een lege string zou als 'een vak' door de trigger reizen en daar
+          // NULLIF'd worden — hetzelfde resultaat, maar via een omweg die niets zegt.
+          ...(vak ? { vak } : {}),
         },
       },
     })
