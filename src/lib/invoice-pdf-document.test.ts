@@ -550,3 +550,65 @@ test("[REGEL-KORTING] an invoice without a discount prints exactly what it alway
   assert.equal(metNulls, zonder);
   assert.ok(!zonder.includes("Korting"), "no discount, no discount row anywhere on the page");
 });
+
+// ─── [OCR-LEESBAAR] The PDF is the integration surface ───────────────────────────────
+
+// The accountant's intake — SnelStart's mailbox, Basecone, TriFact365, Zenvoices, Exact's
+// scan-en-herken — reads a SALES invoice by OCR'ing this PDF. It does not read the UBL beside it
+// (SnelStart's mailbox does not read a verkoop-UBL at all). So the text layer of this document is
+// the thing that decides how much retyping the accountant does, and that makes it an integration
+// contract rather than a layout detail.
+//
+// The failure it guards against is invisible on screen: a totals block rendered as an image, a
+// font substitution that breaks extraction, a number drawn glyph by glyph. The invoice still looks
+// perfect to the owner and to his customer, and the accountant's tool suddenly reads nothing.
+//
+// Measured before this test was written: 1 page, a real text layer, every field below extractable.
+
+const OCR_INVOICE = {
+  invoice_type: "factuur",
+  invoice_number: "20260046",
+  invoice_date: "2026-08-03",
+  due_date: "2026-09-02",
+  client_name: "Stichting Contour de Twern",
+  client_address: "Spoorlaan 444",
+  client_postal_code: "5038CH",
+  client_city: "Tilburg",
+  client_btw_number: "NL001234567B01",
+  total_ex_btw: 362.38,
+  btw_amount: 32.61,
+  total_inc_btw: 394.99,
+  status: "sent",
+};
+
+test("[OCR-LEESBAAR] every field the accountant's intake reads is in the text layer", async () => {
+  const text = await pdfText(await renderInvoicePdf(OCR_INVOICE, LINES, PROFILE));
+
+  // The four an intake tool keys a booking on. Any one of them missing means a human types it.
+  assert.ok(text.includes("20260046"), "the invoice number is not extractable");
+  assert.ok(text.includes("03-08-2026"), "the invoice date is not extractable");
+  assert.ok(text.includes("Kiwi Food Market"), "the supplier's name is not extractable");
+  assert.ok(text.includes("394,99"), "the total is not extractable");
+
+  // The BTW split, which decides the rubriek the invoice is booked into. A total alone is not
+  // enough: a 9% invoice booked at 21% is a wrong aangifte, not a formatting problem.
+  assert.ok(text.includes("362,38"), "the amount excluding BTW is missing");
+  assert.ok(text.includes("32,61"), "the BTW amount is missing");
+  assert.ok(/9,00%|9%/.test(text), "the BTW rate is missing");
+
+  // And the identifiers that let a tool recognise the SUPPLIER instead of asking every time.
+  assert.ok(text.includes("94386676"), "the KVK number is missing");
+  assert.ok(text.includes("NL005079680B23"), "the BTW number is missing");
+  assert.ok(text.includes("NL73INGB0107197480"), "the IBAN is missing — the payment cannot be matched");
+});
+
+test("[OCR-LEESBAAR] the document is one page with a real text layer", async () => {
+  // A PDF with no text layer is a scan as far as any intake tool is concerned, and gets the
+  // treatment a photographed receipt gets. This asserts the shape rather than the words, so a
+  // change that keeps the words but loses the layer still fails.
+  const buf = await renderInvoicePdf(OCR_INVOICE, LINES, PROFILE);
+  const doc = await getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise;
+  assert.equal(doc.numPages, 1, "an ordinary four-line invoice must not spill onto a second page");
+  const content = await (await doc.getPage(1)).getTextContent();
+  assert.ok(content.items.length > 20, `only ${content.items.length} text items — this reads as a scan`);
+});
