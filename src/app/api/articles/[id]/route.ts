@@ -34,8 +34,29 @@ const dbVoor = (namens: boolean) => (namens ? createPipelineClient() : supabase)
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Ongeldige gegevens." }, { status: 400 }); }
   const b = (body ?? {}) as Record<string, unknown>;
 
-  // Two supported PATCH shapes: (a) a full edit (validated), or (b) a lightweight
-  // {bump:true} that just increments usage_count when the article is billed on a line.
+  // Three supported PATCH shapes: (a) a full edit (validated), (b) a lightweight {bump:true} that
+  // just increments usage_count when the article is billed on a line, and (c) an {archive} that
+  // only flips `active`.
+  //
+  // [PRIJS-MODUS] (c) exists because of the PRICE. Archiving used to re-send every field and go
+  // through the full edit — which rounds unit_price to cents. That was harmless while every stored
+  // price WAS cents; it stops being harmless now that an all-in price is stored as the exact
+  // fraction (€ 0,90 incl at 9% is € 0,8256880734…). Archiving and unarchiving would have quietly
+  // rewritten it to € 0,83, and the owner's next invoice would be a different amount than the last
+  // one — after an action that has nothing to do with the price.
+  //
+  // A narrow shape rather than a smarter validator: the safest way not to rewrite a field is not
+  // to send it.
+  if (typeof b.archive === "boolean") {
+    const { error } = await dbVoor(isActingForOther(acting))
+      .from("articles")
+      .update({ active: !b.archive, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("user_id", ownerId);
+    if (error) return NextResponse.json({ error: "Kon niet bijwerken." }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
   if (b.bump === true) {
     const { data: cur } = await dbVoor(isActingForOther(acting)).from("articles").select("usage_count").eq("id", id).eq("user_id", ownerId).single();
     if (!cur) return NextResponse.json({ error: "Artikel niet gevonden." }, { status: 404 });

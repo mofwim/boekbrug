@@ -2702,3 +2702,24 @@ test("[BEWIJS-BEANTWOORDEN] de vraag krijgt een knop om hem mee te beantwoorden"
   assert.doesNotMatch(textOf(zonder), /Ja, staat nog open/);
   assert.match(textOf(zonder), /Klopt het dat deze factuur nog openstaat/, "de vraag zelf blijft staan");
 });
+
+test("[PRIJS-MODUS] het artikelenscherm overleeft een render", async () => {
+  const { default: ArtikelenClient } = await import("../../src/app/dashboard/artikelen/ArtikelenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null, React.createElement(ArtikelenClient as never, {})),
+    ),
+  );
+  assert.ok(html.length > 0, "het scherm rendert");
+
+  // Het FORMULIER is hier niet te bereiken: het staat achter `showForm`, en onder
+  // renderToStaticMarkup draait geen effect en klikt niemand. Deze gate dekt dus wat hij ziet —
+  // dat het scherm niet ontploft op de nieuwe hooks en de nieuwe afgeleide waarde — en de
+  // aanwezigheid van de keuze zelf wordt statisch bewaakt door [PRIJS-MODUS] in
+  // lifecycle-gates.test.ts. Een render-test die beweert de knop te zien terwijl hij nooit
+  // gerenderd wordt, is precies de lege bewering die dit bestand elders opspoort.
+  assert.doesNotMatch(html, /aria-pressed/, "het formulier staat dicht — de knoppen horen er nog niet te zijn");
+});

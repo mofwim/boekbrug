@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase'
 // [MIN-REGEL] Where the minus sign may live on a line, and when a document stops being a factuur
 // — see negative-line.ts.
 import { lineSignFault, staysAFactuur } from '@/lib/negative-line'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 // [BOEK-031] Navigation Strategy — May 2026
@@ -56,6 +57,17 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 // [KLANT-EXTRA] Zelfde bovengrens als het document en de schrijfroute — zie de kop daarvan.
 import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
+
+// [PDF-VOORBEELD][PDF-LAZY] Het voorbeeld is één lazy brok — de renderer (~1,4 MB) én het
+// document zitten samen in PdfPreviewButton.tsx, en dit scherm haalt dat bestand pas op wanneer de
+// ondernemer op "Bekijk als PDF" drukt. Zou InvoicePDF hier gewoon geïmporteerd worden, dan trok
+// die ene import de hele renderer alsnog in de eerste download en stelde de dynamic() niets voor —
+// precies de val die in de kop van PdfDownloadButton.tsx staat beschreven.
+const PdfPreviewButton = dynamic(() => import('@/components/invoice/PdfPreviewButton'), {
+  ssr: false,
+  loading: () => null,
+})
+
 
 // ─── Fixed Dutch formatting — never changes ────────────────────────────────────
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -482,6 +494,15 @@ function NewInvoicePageContent() {
 
   // ── Core state ──────────────────────────────────────────────────────────────
   const [profile, setProfile]         = useState<Profile | null>(null)
+  // [NUMMER-VOORUITBLIK] Het nummer dat deze factuur straks krijgt, om te WETEN — niet om op te
+  // rekenen. GET /api/invoice/numbering leest `last_seq` en telt er één bij op; het verbruikt
+  // niets, want alleen next_invoice_seq() mag de teller ophogen en dat gebeurt pas bij verzending.
+  //
+  // null = niet (meer) bekend, en dan toont het scherm de regel gewoon niet. Dat is de eerlijke
+  // lege stand: een medewerker krijgt hier een 403 (de route is eigenaar-only, zie owner-only.ts)
+  // en zíjn factuur wordt genummerd uit de teller van de EIGENAAR — een getal uit zijn eigen lege
+  // teller tonen zou een verkeerd nummer zijn, geen behulpzaam nummer.
+  const [nextNumber, setNextNumber] = useState<string | null>(null)
   // [BOEK-031] Navigation Strategy — parent + home via helper — May 2026
   const role: Role = (profile?.role === 'accountant' ? 'accountant' : 'zzper')
   const parentHref = useParentPath(role)
@@ -657,6 +678,18 @@ function NewInvoicePageContent() {
       // Profile
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (p) setProfile(p)
+      // Alleen voor een FACTUUR: een offerte krijgt geen nummer uit deze reeks, en een creditnota
+      // trekt uit haar eigen teller. Een nummer tonen dat niet bij dit document hoort is erger dan
+      // geen nummer tonen.
+      if (invoiceType === 'factuur') {
+        try {
+          const nr = await fetch('/api/invoice/numbering')
+          if (nr.ok) {
+            const nj = await nr.json()
+            if (typeof nj?.next === 'string' && nj.next) setNextNumber(nj.next)
+          }
+        } catch { /* een vooruitblik die niet laadt is geen fout op dit scherm */ }
+      }
 
       // [FACTUUR-A] Default Vervaldatum = Factuurdatum + 30 (default term),
       // computed timezone-proof via addDaysISO.
@@ -1620,6 +1653,24 @@ function NewInvoicePageContent() {
               </div>
             </div>
 
+            {/* [NUMMER-VOORUITBLIK] Welk nummer deze factuur straks krijgt, om te WETEN.
+                Bewust een rustige regel en geen veld: het nummer is niet te kiezen — het komt bij
+                verzending uit de doorlopende reeks (art. 35 Wet OB), atomair, zodat er geen gat in
+                valt. De tweede zin zegt dat het een verwachting is, want verstuurt iemand anders
+                er intussen één, dan is het een ander nummer. Een getal zonder die zin zou lezen
+                als een toezegging. */}
+            {invoiceType === 'factuur' && nextNumber && (
+              <div style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ textAlign: 'start' }}>
+                  <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>{t('nieuw.nummer.volgende')}</p>
+                  <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{t('nieuw.nummer.verwacht')}</p>
+                </div>
+                <span style={{ fontSize: 16, fontWeight: 600, color: '#202124', fontFamily: "'Roboto Mono', monospace", textAlign: 'end' }}>
+                  {nextNumber}
+                </span>
+              </div>
+            )}
+
             {/* [DS] Datums card */}
             {/* [FACTUUR-A] Clean native date fields + Dutch DD-MM-YYYY caption
                 under each (DateField). Vervaldatum gets quick payment-term chips. */}
@@ -2108,6 +2159,54 @@ function NewInvoicePageContent() {
                     {invoiceType === 'factuur' ? t('nieuw.actie.concept') : t('nieuw.actie.concept')}
                   </button>
                   )}
+                  {/* [PDF-VOORBEELD] Het document zien vóór het onomkeerbaar is. Alleen wanneer er
+                      iets te tonen is: zonder afzendergegevens of zonder regels zou het voorbeeld
+                      een lege pagina zijn, en een knop die een leeg vel oplevert is erger dan geen
+                      knop. Voor een offerte net zo goed — ook die gaat naar een klant. */}
+                  {profile && lines.length > 0 && (
+                    <PdfPreviewButton
+                      invoice={{
+                        // Er is nog geen nummer: dat wordt pas bij verzending toegekend, uit de
+                        // doorlopende reeks (art. 35 Wet OB). Het voorbeeld zegt CONCEPT in plaats
+                        // van een leeg vak, zodat niemand denkt dat de nummering stuk is.
+                        invoice_number: t('nieuw.pdf.nogGeenNummer'),
+                        invoice_type: invoiceType,
+                        invoice_date: invoiceDate,
+                        due_date: dueDate,
+                        delivery_date: deliveryDate,
+                        client_name: clientName,
+                        client_email: clientEmail,
+                        client_address: clientAddress,
+                        client_postal_code: clientPostal,
+                        client_city: clientCity,
+                        client_btw_number: clientBtw,
+                        // [KLANT-EXTRA] De twee vrije klantregels horen er ook op. Zonder deze
+                        // vier velden toont het voorbeeld een ander adresblok dan de factuur die
+                        // straks verstuurd wordt — en een voorbeeld dat afwijkt van het document
+                        // is erger dan geen voorbeeld.
+                        client_extra_line1: clientExtra1,
+                        client_extra_line2: clientExtra2,
+                        client_extra_line3: clientExtra3,
+                        client_extra_line4: clientExtra4,
+                        // Dezelfde drie bedragen die de bevestiging toont en die de server straks
+                        // opslaat — kortingTotalen, niet een tweede som hier.
+                        total_ex_btw: totalEx,
+                        btw_amount: btwAmount,
+                        total_inc_btw: totalInc,
+                      }}
+                      lines={lines}
+                      profile={profile}
+                      label={t('nieuw.actie.pdfBekijken')}
+                      busyLabel={t('nieuw.actie.pdfBezig')}
+                      failedLabel={t('nieuw.actie.pdfMislukt')}
+                      style={{
+                        flex: 1, minHeight: 48, borderRadius: 9999, border: '1px solid #DADCE0',
+                        backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500,
+                        cursor: 'pointer', textDecoration: 'none', display: 'inline-flex',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}
+                    />
+                  )}
                   {/* [BOEK-031] Annuleren — Link to parent — Navigation Strategy — May 2026 */}
                   <Link href={parentHref}
                     style={{ minHeight: 48, padding: '0 20px', borderRadius: 9999, border: 'none', backgroundColor: 'transparent', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2140,6 +2239,10 @@ function NewInvoicePageContent() {
             </p>
             <div style={{ backgroundColor: '#F8F9FA', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {([
+                // [NUMMER-VOORUITBLIK] Bekend? Dan het verwachte nummer. Niet bekend? Dan de zin
+                // die er altijd al stond — nooit een leeg vak op de bevestiging van een
+                // onomkeerbare handeling.
+                [t('bewerk.modal.nummer'), nextNumber ?? t('bewerk.modal.nummerBijVerzending')],
                 [t('nieuw.bevestig.aan'), clientName || '—'],
                 [t('nieuw.bevestig.email'), clientEmail || '—'],
                 [t('nieuw.bevestig.bedrag'), NL_NUMBER.format(totalInc)],

@@ -170,6 +170,31 @@ export const MESSAGES = {
   'nieuw.actie.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
   'nieuw.actie.versturenBezig': { nl: 'Versturen...', ar: 'جارٍ الإرسال...', en: 'Sending...' },
   'nieuw.actie.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
+  // [PDF-VOORBEELD] Het document zien vóór het onomkeerbaar is. "Bekijk" en niet "Download": de
+  // ondernemer wil kijken, niet een bestand in zijn map. De browser opent zijn eigen viewer.
+  // [NUMMER-VOORUITBLIK] Welk nummer deze factuur straks krijgt. Een VERWACHTING, geen belofte:
+  // het nummer wordt pas bij verzending toegekend, atomair, uit de doorlopende reeks (art. 35 Wet
+  // OB). Verstuurt iemand anders in de tussentijd een factuur, of wijzigt de ondernemer zijn
+  // sjabloon in Instellingen, dan is het een ander nummer — en de zin zegt dat, in plaats van een
+  // getal te tonen dat als vaststaand leest.
+  'nieuw.nummer.volgende': { nl: 'Volgend factuurnummer', ar: 'رقم الفاتورة التالي', en: 'Next invoice number' },
+  'nieuw.nummer.verwacht': {
+    nl: 'Verwacht — het nummer wordt definitief bij verzending.',
+    ar: 'متوقّع — يُخصَّص الرقم نهائياً عند الإرسال.',
+    en: 'Expected — the number becomes final on sending.',
+  },
+  'nieuw.pdf.knop': { nl: 'PDF', ar: 'PDF', en: 'PDF' },
+  'nieuw.actie.pdfBekijken': { nl: 'Bekijk als PDF', ar: 'عرض كـ PDF', en: 'View as PDF' },
+  'nieuw.actie.pdfBezig': { nl: 'PDF maken...', ar: 'جارٍ إنشاء PDF...', en: 'Building PDF...' },
+  // [NO-SILENT-EMPTY] Een knop die stil niets doet is erger dan een knop die zegt dat het misging.
+  'nieuw.actie.pdfMislukt': {
+    nl: 'Voorbeeld lukt niet',
+    ar: 'تعذّر إنشاء المعاينة',
+    en: 'Preview unavailable',
+  },
+  // Het voorbeeld draagt nog geen nummer, en dat mag niet als een fout lezen: het nummer wordt
+  // pas bij verzending toegekend, uit de doorlopende reeks (art. 35 Wet OB).
+  'nieuw.pdf.nogGeenNummer': { nl: 'CONCEPT', ar: 'مسودة', en: 'DRAFT' },
 
   'nieuw.bevestig.titel': { nl: 'Factuur versturen?', ar: 'إرسال الفاتورة؟', en: 'Send the invoice?' },
   // Art. 35 Wet OB, gezegd vóórdat het gebeurt. De <strong> om "definitief nummer" is opgeofferd:
@@ -3422,10 +3447,19 @@ export const MESSAGES = {
     ar: 'يُخصَّص عند الإرسال',
     en: 'Assigned on sending',
   },
+  // [HERSTEL] Deze zin zei tot nu toe dat een verstuurde factuur NOOIT meer te wijzigen is en dat
+  // een creditnota de enige weg is. Dat is niet meer waar en het was de duurste soort onwaarheid:
+  // hij stuurt de ondernemer naar een creditnota — een tweede document, in zijn nummerreeks, in
+  // zijn aangifte — voor een tikfout die hij gewoon had mogen herstellen.
+  //
+  // Wat WEL vastligt is het NUMMER (art. 35 Wet OB, doorlopende reeks zonder gaten). De factuur
+  // zelf is bewerkbaar zolang sentEditBlockers geen grendel vindt: niets betaald, geen bank- of
+  // kaskoppeling, geen creditnota, niet verwerkt door de boekhouder, kwartaal niet ingediend.
+  // Onbekend telt daar als grendel, dus de zin belooft niets wat de server kan weigeren.
   'bewerk.modal.waarschuwing': {
-    nl: 'Na verzending kun je deze factuur niet meer wijzigen. Voor correcties maak je een creditnota.',
-    ar: 'بعد الإرسال لا يمكنك تعديل هذه الفاتورة. للتصحيح تُنشئ إشعاراً دائناً (creditnota).',
-    en: 'After sending you can no longer change this invoice. For corrections you create a credit note.',
+    nl: 'Het factuurnummer ligt na verzending vast en is niet meer te wijzigen. De factuur zelf kun je nog corrigeren zolang hij niet betaald of verwerkt is — je klant krijgt dan automatisch de gecorrigeerde versie.',
+    ar: 'رقم الفاتورة يثبت عند الإرسال ولا يمكن تغييره. أما الفاتورة نفسها فيمكنك تصحيحها ما دامت غير مدفوعة وغير مُرحَّلة — وعندها يستلم عميلك النسخة المصحّحة تلقائياً.',
+    en: 'The invoice number is fixed on sending and cannot be changed. The invoice itself can still be corrected while it is unpaid and not yet booked — your customer then automatically receives the corrected version.',
   },
   'bewerk.omzettenVersturen': {
     nl: 'Omzetten naar factuur en versturen',
@@ -8373,10 +8407,12 @@ export const MESSAGES = {
     ar: 'الإرسال إلى {name}؟',
     en: 'Send to {name}?',
   },
+  // [HERSTEL] Dezelfde correctie als bewerk.modal.waarschuwing — twee schermen versturen een
+  // factuur, en ze mogen niet iets anders beweren over hetzelfde document.
   'lijst.send.waarschuwing': {
-    nl: 'Na verzending kun je deze factuur niet meer wijzigen. Voor correcties moet je een creditnota maken.',
-    ar: 'بعد الإرسال لا يمكنك تعديل هذه الفاتورة. للتصحيح عليك إنشاء إشعار دائن (creditnota).',
-    en: 'After sending you can no longer change this invoice. For corrections you must create a creditnota.',
+    nl: 'Het factuurnummer ligt na verzending vast en is niet meer te wijzigen. De factuur zelf kun je nog corrigeren zolang hij niet betaald of verwerkt is — je klant krijgt dan automatisch de gecorrigeerde versie.',
+    ar: 'رقم الفاتورة يثبت عند الإرسال ولا يمكن تغييره. أما الفاتورة نفسها فيمكنك تصحيحها ما دامت غير مدفوعة وغير مُرحَّلة — وعندها يستلم عميلك النسخة المصحّحة تلقائياً.',
+    en: 'The invoice number is fixed on sending and cannot be changed. The invoice itself can still be corrected while it is unpaid and not yet booked — your customer then automatically receives the corrected version.',
   },
   'lijst.vervangenDoor': {
     nl: 'Vervangen door {number}',
@@ -11091,6 +11127,36 @@ export const MESSAGES = {
   'mfa.apparaatToevoegen': { nl: 'Tweede apparaat toevoegen', en: 'Add a second device', ar: 'إضافة جهاز ثانٍ' },
   'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
   'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
+
+  // ─── [PRIJS-MODUS] Typ je de catalogusprijs inclusief of exclusief btw? ─────────────────────
+  //
+  // De factuurschermen boden deze keuze al; de catalogus niet. Wie all-in werkt — horeca, retail,
+  // een vast tarief "€ 50 all-in" — moest de btw er dus zelf uit rekenen vóór hij een artikel
+  // opsloeg, en die deling met de hand is precies waar de centen weglekken.
+  //
+  // De knop zegt WELKE prijs er in het veld staat, niet wat de app ermee doet. Opgeslagen wordt
+  // altijd de prijs excl. btw — zie de kop van price-mode.ts.
+
+  'art.prijsIncl': { nl: 'Prijs (incl. BTW)', en: 'Price (incl. BTW)', ar: 'السعر (شامل الضريبة)' },
+  'art.modus.excl': { nl: 'Excl. btw', en: 'Excl. btw', ar: 'دون الضريبة' },
+  'art.modus.incl': { nl: 'Incl. btw', en: 'Incl. btw', ar: 'شامل الضريبة' },
+  'art.modus.aria': {
+    nl: 'Staat er in het prijsveld een bedrag inclusief of exclusief btw?',
+    en: 'Is the price field an amount including or excluding btw?',
+    ar: 'هل المبلغ في حقل السعر شامل الضريبة أم دونها؟',
+  },
+  // De tegenprijs, onder het veld. Wie all-in typt wil de ex-prijs zien die op de factuur belandt,
+  // en andersom — dat is het getal waar hij zijn marge tegen afzet.
+  'art.tegenprijs.excl': {
+    nl: 'Excl. btw: {bedrag}',
+    en: 'Excl. btw: {bedrag}',
+    ar: 'دون الضريبة: {bedrag}',
+  },
+  'art.tegenprijs.incl': {
+    nl: 'Incl. btw: {bedrag}',
+    en: 'Incl. btw: {bedrag}',
+    ar: 'شامل الضريبة: {bedrag}',
+  },
 
   // ─── [BEWIJS-BEANTWOORDEN] Het antwoord op de vraag die het bewijspaneel stelt ───────────────
   //
