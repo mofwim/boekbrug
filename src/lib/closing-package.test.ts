@@ -589,6 +589,19 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
     (src.match(/coverage: coverageWarning,/g) ?? []).length, 2,
     "the qualification must reach BOTH the reconciliation CSV and the cover page",
   );
+
+  // [DOORLOPEND] Art. 35 continuity, computed over the WHOLE administration and not over the
+  // quarter. That distinction is the trap: the counter runs per (year, type), so held against Q1's
+  // invoices alone a package built in December reports forty "burned" numbers that were in fact
+  // issued in Q2 and Q3 — a false gap on the one check that may never be falsely alarming.
+  assert.match(src, /checkContinuity\(\{ invoices: numberRows, formats, counters \}\)/, "the package no longer checks the numbering");
+  assert.doesNotMatch(
+    src,
+    /invoices: numberRows[\s\S]{0,80}?invoice_date/,
+    "the numbering read must not be filtered to the quarter",
+  );
+  assert.match(src, /code: "numbering_not_continuous"/, "a broken series is being handed over without a word");
+  assert.match(src, /^\s*numbering,\s*$/m, "the verdict is computed and then not passed to the page");
 });
 
 // ─── [SLUIS] The reading instruction ──────────────────────────────────────────

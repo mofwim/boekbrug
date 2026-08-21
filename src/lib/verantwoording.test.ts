@@ -31,7 +31,10 @@ async function pdfText(buf: Buffer): Promise<string> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     out += content.items.map((it: any) => it.str + (it.hasEOL ? "\n" : "")).join("") + "\n";
   }
-  return out;
+  // Whitespace-normalised. A sentence that WRAPS is still the same sentence to the reader, and an
+  // assertion that fails because the renderer chose a different line break would be a test about
+  // the page width rather than about what the page says.
+  return out.replace(/\s+/g, " ").trim();
 }
 
 const V = (over: Partial<Verantwoording> = {}): Verantwoording => ({
@@ -51,6 +54,13 @@ const V = (over: Partial<Verantwoording> = {}): Verantwoording => ({
   btwOnSales: 246,
   btwOnPurchases: 142.3,
   handover: { lines: 40, matched: 34, unmatched: 6, matchedAmount: 4210, unmatchedAmount: 380, withDifference: 2 },
+  numbering: {
+    report: {
+      series: [{ type: "factuur", year: 2026, first: 1, last: 46, issued: 46, missing: [], burnedAtEnd: 0, duplicates: [] }],
+      unreadable: [], clean: true,
+    },
+    countersRead: true,
+  },
   warnings: [],
   ...over,
 });
@@ -126,13 +136,21 @@ test("[VERANTWOORDING] it is one page with a real text layer", async () => {
   // Everything above reads the text layer, so this is the control: a renderer that produced an
   // image would make every assertion above vacuous, and a second page means the disclaimer at the
   // bottom is no longer under the numbers it qualifies.
-  const buf = await renderVerantwoordingPdf(V({
-    warnings: Array.from({ length: 6 }, (_, i) => ({ code: `w${i}`, message: `Waarschuwing nummer ${i} over iets dat we niet konden vaststellen.` })),
-  }));
+  const warnings = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ code: `w${i}`, message: `Waarschuwing nummer ${i} over iets dat we niet konden vaststellen in dit kwartaal.` }));
+
+  const buf = await renderVerantwoordingPdf(V({ warnings: warnings(8) }));
   const doc = await getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise;
-  assert.equal(doc.numPages, 1, "with six warnings it must still be one page");
+  assert.equal(doc.numPages, 1, "a quarter with eight findings must still fit on one page");
   const content = await (await doc.getPage(1)).getTextContent();
   assert.ok(content.items.length > 40, `only ${content.items.length} text items — this reads as an image`);
+
+  // And when it genuinely cannot fit, it may flow — but the disclaimer travels with it. A page
+  // that spills its "this is not a verklaring" sentence off the end is the exact document this
+  // file exists to prevent.
+  const many = await pdfText(await renderVerantwoordingPdf(V({ warnings: warnings(40) })));
+  assert.ok(many.includes("geen accountantsverklaring"), "the disclaimer must survive a long findings list");
+  assert.ok(many.includes("er is niet geboekt"));
 });
 
 // ─── The sentence, as a value ────────────────────────────────────────────────────────
@@ -175,5 +193,70 @@ test("[VERANTWOORDING] a complete quarter is not qualified at all", () => {
   return (async () => {
     const text = await textOf({ coverage: null });
     assert.ok(!text.includes("niet volledig ingelezen"), "a caveat on every page is a caveat nobody reads");
+  })();
+});
+
+// ─── [DOORLOPEND] The first thing an accountant checks ────────────────────────────────
+
+const series = (over: Partial<import("./invoice-continuity").SeriesReport> = {}) => ({
+  type: "factuur", year: 2026, first: 1, last: 46, issued: 46,
+  missing: [] as number[], burnedAtEnd: 0 as number | null, duplicates: [] as string[], ...over,
+});
+
+test("[DOORLOPEND] a clean series is STATED, not merely not-warned-about", () => {
+  // The point of putting it on this page at all. Article 35 continuity is the first thing an
+  // accountant checks and among the first a boekencontrole asks about — and a check that only
+  // speaks when it finds something proves nothing about whether it ran.
+  return (async () => {
+    const text = await textOf();
+    assert.ok(text.includes("Factuurnummering"), "the section is missing entirely");
+    assert.ok(text.includes("1 t/m 46"), "the range an accountant can tie to the invoices");
+    assert.ok(text.includes("46 stuks"));
+    assert.ok(text.includes("doorlopend"));
+    assert.ok(text.includes("loopt door, zonder gaten"));
+  })();
+});
+
+test("[DOORLOPEND] a gap names the numbers, and a burned counter says the end is short", () => {
+  return (async () => {
+    const text = await textOf({
+      numbering: {
+        report: {
+          series: [series({ missing: [12, 13], last: 46 }), series({ type: "creditnota", first: 1, last: 3, issued: 2, burnedAtEnd: 1 })],
+          unreadable: ["2026/0009"],
+          clean: false,
+        },
+        countersRead: true,
+      },
+    });
+    assert.ok(text.includes("12, 13"), "an accountant cannot act on 'er ontbreekt iets'");
+    assert.ok(text.includes("nooit uitgereikt"));
+    assert.ok(text.includes("teller staat 1 hoger"), "the end-of-series case a hole-scan cannot see");
+    assert.ok(text.includes("Creditnota's"), "the two series are named apart");
+    assert.ok(text.includes("2026/0009"), "an unplaceable number is shown as itself");
+    assert.ok(text.includes("onderbreking"));
+  })();
+});
+
+test("[DOORLOPEND] half a check never presents itself as a whole one", () => {
+  // Without the counters only the MIDDLE of the series was examined, and the end is exactly where
+  // a burned number most often sits. On a page shown to a third party, a half check presenting
+  // itself as whole is the most expensive mistake available.
+  return (async () => {
+    const half = await textOf({ numbering: { report: { series: [series({ burnedAtEnd: null })], unreadable: [], clean: true }, countersRead: false } });
+    assert.ok(half.includes("einde van de reeks konden we nu niet nakijken"));
+    assert.ok(!half.includes("loopt door, zonder gaten"), "that sentence claims both halves ran");
+
+    const unread = await textOf({ numbering: null });
+    assert.ok(unread.includes("kon niet worden nagekeken"));
+    assert.ok(!unread.includes("doorlopend"), "a failed check must never render the reassuring word");
+  })();
+});
+
+test("[DOORLOPEND] an administration with no numbered invoices says so", () => {
+  return (async () => {
+    const text = await textOf({ numbering: { report: { series: [], unreadable: [], clean: true }, countersRead: true } });
+    assert.ok(text.includes("nog geen genummerde facturen"));
+    assert.ok(!text.includes("loopt door, zonder gaten"), "an empty series has no holes — that is not the same as being in order");
   })();
 });

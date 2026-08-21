@@ -61,6 +61,16 @@ import {
   type StatementPeriod as ContinuityStatementPeriod,
 } from "./bank-statement-continuity";
 // [AFLETTEREN] The finished half of the accountant's own job — see the header of that module.
+// [DOORLOPEND] Artikel 35 Wet OB: één doorlopende nummerreeks. The first thing an accountant
+// checks, computed here so he does not have to.
+import {
+  checkContinuity,
+  totalUnaccounted,
+  type ContinuityReport,
+  type CounterRow,
+  type NumberedInvoice,
+  type SeriesFormat,
+} from "./invoice-continuity";
 // [VERANTWOORDING] The cover page. Server-only, like this module.
 import { renderVerantwoordingPdf } from "./verantwoording-pdf";
 import {
@@ -625,6 +635,8 @@ interface AssembleInput {
    * is accounted for".
    */
   bankHandover?: { csv: string; totals: HandoverTotals | null; coverage?: string | null } | null;
+  /** [DOORLOPEND] The numbering verdict for the cover page. null = the numbers could not be read. */
+  numbering?: { report: ContinuityReport; countersRead: boolean } | null;
   /**
    * [VERANTWOORDING] The owner's own identifiers, for the cover page. Absent is absent — the page
    * simply omits the line rather than printing "KvK —", which on a document meant to be shown to
@@ -1090,6 +1102,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
       btwOnPurchases: zzpSummary.totalBtwOut,
       handover: bankHandover?.totals ?? null,
       coverage: bankHandover?.coverage ?? null,
+      numbering: input.numbering ?? null,
       warnings,
     });
     zip.file(`Verantwoording-Q${quarter}-${year}.pdf`, verantwoordingPdf);
@@ -2731,6 +2744,103 @@ export async function buildClosingPackageZip(args: {
     warnings.push({ code: "bank_coverage_incomplete", message: coverageWarning });
   }
 
+  // ── [DOORLOPEND] Loopt de factuurnummering door? ──
+  //
+  // Artikel 35 Wet OB verlangt een doorlopende reeks, en het is het eerste dat een boekhouder
+  // nakijkt en een van de eerste dingen waar een boekencontrole naar vraagt. De app rekent het al
+  // uit — /dashboard/beveiliging toont het — en het bereikte de boekhouder nooit. Nu wel: het is
+  // precies het soort vaststelling waarvoor de verantwoordingspagina bestaat.
+  //
+  // OVER HET HELE JAAR, niet over dit kwartaal, en dat is geen detail. De teller loopt per (jaar,
+  // soort); zou je hem naast alleen de facturen van Q1 leggen, dan meldt een pakket dat in
+  // december wordt gemaakt veertig "verbrande" nummers die gewoon in Q2 en Q3 zijn uitgereikt.
+  // Een vals gat op precies de controle die nooit vals mag zijn.
+  //
+  // Eigen mislukbare leesbeurten: zonder nummers geen oordeel, en zonder tellers alleen de helft
+  // die de facturen zelf laten zien — nooit een gerust "alles loopt door" over een halve controle.
+  let numbering: { report: ReturnType<typeof checkContinuity>; countersRead: boolean } | null = null;
+  try {
+    const numberRows = await fetchAllRows<NumberedInvoice>((from, to) =>
+      supabase
+        .from("invoices")
+        .select("invoice_number, invoice_type")
+        .eq("sender_id", ownerId)
+        .not("invoice_number", "is", null)
+        // [PAGINATION] Op id, uniek: een gelijkspel in created_at heeft geen vaste volgorde en een
+        // paginagrens middenin zo'n gelijkspel laat stil een rij vallen of verdubbelt hem.
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+
+    // De eigen sjabloon van de eigenaar. Ontbreekt de rij of de kolom, dan geldt de standaard —
+    // exact dezelfde terugval als /api/invoice/continuity.
+    let template = "{year}{seq}";
+    let padding = 4;
+    try {
+      const { data: fmt } = await supabase
+        .from("profiles")
+        .select("invoice_number_template, invoice_number_padding")
+        .eq("id", ownerId)
+        .maybeSingle();
+      const t = (fmt as { invoice_number_template?: string | null } | null)?.invoice_number_template;
+      const p = (fmt as { invoice_number_padding?: number | null } | null)?.invoice_number_padding;
+      if (typeof t === "string" && t.trim() !== "") template = t.trim();
+      if (typeof p === "number" && p > 0) padding = p;
+    } catch {
+      /* de standaard, en dat is precies wat er geldt als er nooit iets is ingesteld */
+    }
+
+    let counters: CounterRow[] | null = null;
+    try {
+      const { data: counterRows, error } = await supabase
+        .from("invoice_counters")
+        .select("type, year, last_seq")
+        .eq("user_id", ownerId);
+      if (!error && counterRows) counters = counterRows as CounterRow[];
+    } catch {
+      /* counters blijft null → burnedAtEnd null → "die helft hebben we niet gecontroleerd" */
+    }
+
+    // Twee reeksen, gesleuteld zoals invoice_counters (user_id, year, type). De creditnota houdt
+    // het systeemformaat wat de eigenaar ook voor zijn facturen koos — aanpassen is factuur-only,
+    // en een CR-nummer met het factuursjabloon lezen verzint een gat in de ene reeks en verbergt
+    // er een in de andere. pro_forma staat er met opzet niet bij: een offerte is geen fiscaal
+    // document en hoort in geen doorlopende reeks.
+    const formats: SeriesFormat[] = [
+      { type: "factuur", template, padding },
+      { type: "creditnota", template: "CR-{year}{seq}", padding: 4 },
+    ];
+    numbering = { report: checkContinuity({ invoices: numberRows, formats, counters }), countersRead: counters !== null };
+  } catch (e) {
+    console.error("[DOORLOPEND] could not read the invoice numbers — the package says nothing about numbering", {
+      ownerId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  if (numbering && !numbering.report.clean) {
+    const unaccounted = totalUnaccounted(numbering.report);
+    const holes = numbering.report.series.flatMap((s) => s.missing);
+    const parts: string[] = [];
+    if (holes.length > 0) {
+      parts.push(
+        `${holes.length === 1 ? "nummer" : "nummers"} ${holes.slice(0, 10).join(", ")}${holes.length > 10 ? " en meer" : ""} ${holes.length === 1 ? "is" : "zijn"} nooit uitgereikt`,
+      );
+    }
+    const burned = numbering.report.series.reduce((sum, s) => sum + (s.burnedAtEnd ?? 0), 0);
+    if (burned > 0) parts.push(`de teller staat ${burned} ${burned === 1 ? "nummer" : "nummers"} hoger dan de laatste factuur`);
+    if (numbering.report.unreadable.length > 0) {
+      parts.push(`${numbering.report.unreadable.length} ${numbering.report.unreadable.length === 1 ? "nummer" : "nummers"} in een onbekend formaat`);
+    }
+    warnings.push({
+      code: "numbering_not_continuous",
+      message:
+        `De factuurnummering loopt niet volledig door: ${parts.join(" · ")}. ` +
+        (unaccounted !== null ? `In totaal ${unaccounted} ${unaccounted === 1 ? "nummer" : "nummers"} niet verantwoord. ` : "") +
+        "Een verbrand nummer kun je niet opnieuw gebruiken; het is genoeg dat je weet waar het is gebleven.",
+    });
+  }
+
   const bankHandover: { csv: string; totals: HandoverTotals | null; coverage: string | null } | null = (() => {
     const rows = (bankAllRows ?? []) as HandoverTx[];
     if (!bankReadFailed && rows.length === 0) return null; // nothing to reconcile, so no file
@@ -2793,6 +2903,7 @@ export async function buildClosingPackageZip(args: {
     euPurchases,
     kasboekXlsx,
     bankHandover,
+    numbering,
     ownerKvk,
     ownerBtw,
     warnings,

@@ -11,23 +11,23 @@
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from '@react-pdf/renderer'
 
 import { formatEuroNL } from './format-nl'
-import { handoverSentence, type Verantwoording } from './verantwoording'
+import { handoverSentence, numberingLines, type Verantwoording } from './verantwoording'
 
 const styles = StyleSheet.create({
-  page: { paddingTop: 44, paddingBottom: 44, paddingHorizontal: 46, fontSize: 9.5, fontFamily: 'Helvetica', color: '#1a1a1a' },
+  page: { paddingTop: 38, paddingBottom: 34, paddingHorizontal: 44, fontSize: 9, fontFamily: 'Helvetica', color: '#1a1a1a' },
   brand: { fontSize: 8, color: '#6b7280', marginBottom: 2 },
   title: { fontSize: 17, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
-  sub: { fontSize: 10, color: '#374151', marginBottom: 14 },
-  meta: { fontSize: 8.5, color: '#6b7280', marginBottom: 18 },
-  section: { fontSize: 10.5, fontFamily: 'Helvetica-Bold', marginTop: 16, marginBottom: 6 },
+  sub: { fontSize: 10, color: '#374151', marginBottom: 10 },
+  meta: { fontSize: 8.5, color: '#6b7280', marginBottom: 12 },
+  section: { fontSize: 10, fontFamily: 'Helvetica-Bold', marginTop: 12, marginBottom: 4 },
   row: { flexDirection: 'row', marginBottom: 2.5 },
   label: { width: 210, color: '#4b5563' },
   value: { flex: 1 },
   amount: { width: 92, textAlign: 'right' },
   line: { borderBottomWidth: 0.7, borderBottomColor: '#e5e7eb', marginTop: 8, marginBottom: 2 },
-  body: { lineHeight: 1.45, color: '#374151' },
-  warn: { marginBottom: 3, lineHeight: 1.4 },
-  footer: { marginTop: 20, paddingTop: 10, borderTopWidth: 0.7, borderTopColor: '#e5e7eb', fontSize: 8, color: '#6b7280', lineHeight: 1.5 },
+  body: { lineHeight: 1.35, color: '#374151' },
+  warn: { marginBottom: 2, lineHeight: 1.3 },
+  footer: { marginTop: 14, paddingTop: 8, borderTopWidth: 0.7, borderTopColor: '#e5e7eb', fontSize: 8, color: '#6b7280', lineHeight: 1.5 },
 })
 
 const Row = ({ label, value }: { label: string; value: string }) => (
@@ -45,6 +45,7 @@ function nlDate(iso: string): string {
 
 export function VerantwoordingPDF({ v }: { v: Verantwoording }) {
   const handover = handoverSentence(v.handover)
+  const numbering = numberingLines(v.numbering)
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -117,6 +118,15 @@ export function VerantwoordingPDF({ v }: { v: Verantwoording }) {
           // finished job. Silence is the honest answer, and the warnings below say what happened.
           <Text style={styles.body}>Er is voor dit kwartaal geen afletering vastgelegd.</Text>
         )}
+
+        {/* [DOORLOPEND] Art. 35 Wet OB. Staat er ook als alles klopt: het is het eerste dat een
+            boekhouder nakijkt, en een controle die alleen spreekt als ze iets vindt bewijst niet
+            dat ze gedraaid heeft. */}
+        <Text style={styles.section}>Factuurnummering</Text>
+        {numbering.lines.map((l, i) => (
+          <Text key={i} style={styles.body}>{l}</Text>
+        ))}
+        <Text style={styles.body}>{numbering.verdict}</Text>
 
         <Text style={styles.section}>
           {v.warnings.length > 0 ? 'Wat we niet hebben kunnen vaststellen' : 'Bijzonderheden'}

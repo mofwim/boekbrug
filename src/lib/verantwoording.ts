@@ -32,6 +32,7 @@
 
 import type { ClosingPackageWarning } from "./closing-package";
 import type { HandoverTotals } from "./bank-handover";
+import type { ContinuityReport, SeriesReport } from "./invoice-continuity";
 
 /** One BTW rate's turnover, as buildQuarterlySummary reports it. */
 export type VerantwoordingRate = { rate: number; totalExcl: number; totalBtw: number };
@@ -61,6 +62,16 @@ export type Verantwoording = {
 
   /** null when there was nothing to reconcile, or when the bank could not be read. */
   handover: HandoverTotals | null;
+  /**
+   * [DOORLOPEND] De doorlopende nummerreeks (art. 35 Wet OB), of null wanneer de nummers niet
+   * gelezen konden worden.
+   *
+   * Dit staat op de pagina óók als er niets mis is, en dat is met opzet: het is het eerste dat een
+   * boekhouder nakijkt, en een controle die alleen spreekt als ze iets vindt bewijst niet dat ze
+   * gedraaid heeft. "Gecontroleerd en in orde, van 20260001 tot 20260046" is precies de zin waar
+   * deze pagina voor bestaat.
+   */
+  numbering: { report: ContinuityReport; countersRead: boolean } | null;
   /**
    * [DEKKING] One sentence about a quarter whose statements do not cover it, or null.
    *
@@ -97,4 +108,53 @@ export function handoverSentence(h: HandoverTotals | null): string | null {
   const matched = `${h.matched} van de ${h.lines} bankregels ${h.matched === 1 ? "is" : "zijn"} aan een factuur gekoppeld`;
   if (h.unmatched === 0) return `${matched}; er staat geen regel meer open.`;
   return `${matched}; ${h.unmatched === 1 ? "één regel staat" : `${h.unmatched} regels staan`} nog open.`;
+}
+
+
+/**
+ * De nummerreeks in zinnen, één per reeks, plus het oordeel.
+ *
+ * Puur en apart, omdat dit de tekst is die een derde leest en het rekenwerk niet. `countersRead`
+ * hoort er zichtbaar bij: zonder de tellers is alleen het MIDDEN van de reeks nagekeken, en het
+ * einde is precies waar een verbrand nummer het vaakst zit. Een halve controle die zich als hele
+ * presenteert is hier de duurste fout die er is.
+ */
+export function numberingLines(n: { report: ContinuityReport; countersRead: boolean } | null): {
+  lines: string[];
+  verdict: string;
+} {
+  if (!n) {
+    return { lines: [], verdict: "De factuurnummering kon niet worden nagekeken." };
+  }
+  const name = (s: SeriesReport) =>
+    `${s.type === "creditnota" ? "Creditnota's" : "Facturen"}${s.year === null ? "" : ` ${s.year}`}`;
+
+  const lines = n.report.series.map((s) => {
+    const range = `${s.first} t/m ${s.last}`;
+    const bits: string[] = [`${name(s)}: ${range}, ${s.issued} ${s.issued === 1 ? "stuk" : "stuks"}`];
+    if (s.missing.length > 0) {
+      bits.push(`${s.missing.length === 1 ? "nummer" : "nummers"} ${s.missing.slice(0, 10).join(", ")}${s.missing.length > 10 ? " en meer" : ""} nooit uitgereikt`);
+    }
+    if ((s.burnedAtEnd ?? 0) > 0) bits.push(`teller staat ${s.burnedAtEnd} hoger dan de laatste factuur`);
+    if (s.duplicates.length > 0) bits.push(`dubbel: ${s.duplicates.join(", ")}`);
+    if (s.missing.length === 0 && (s.burnedAtEnd ?? 0) === 0 && s.duplicates.length === 0) bits.push("doorlopend");
+    return bits.join(" — ");
+  });
+
+  if (n.report.unreadable.length > 0) {
+    lines.push(
+      `Niet te plaatsen in een bekend formaat: ${n.report.unreadable.slice(0, 8).join(", ")}${n.report.unreadable.length > 8 ? " en meer" : ""}.`,
+    );
+  }
+
+  if (n.report.series.length === 0 && n.report.unreadable.length === 0) {
+    return { lines: [], verdict: "Er zijn nog geen genummerde facturen." };
+  }
+
+  const verdict = n.report.clean
+    ? n.countersRead
+      ? "Gecontroleerd: de nummering loopt door, zonder gaten."
+      : "Gecontroleerd voor zover mogelijk: er zitten geen gaten tussen de uitgereikte nummers. Het einde van de reeks konden we nu niet nakijken."
+    : "Er zit een onderbreking in de nummering. Een verbrand nummer kun je niet opnieuw gebruiken; het gaat erom dat het verklaard is.";
+  return { lines, verdict };
 }
