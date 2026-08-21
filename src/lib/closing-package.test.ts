@@ -14,6 +14,7 @@ import {
   cashCostWithoutReceiptWarning,
   cashCostsWithoutReceipt,
   assembleClosingPackageZip,
+  buildLeesmij,
   effectiveDirection,
   datelessWarning,
   sharedOutsideWarning,
@@ -557,4 +558,92 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
   assert.match(src, /ublLinesFrom\(/, "the lines are being mapped somewhere other than the one shared place");
   assert.match(src, /\{ korActive \}/, "[E-FACTUUR-VERLEGD] without kor_active a 0% invoice to an EU customer is called a verlegde prestatie");
   assert.match(src, /code: "efactuur_missing"/, "an invoice that could not become an e-factuur is being dropped without a word");
+});
+
+// ─── [SLUIS] The reading instruction ──────────────────────────────────────────
+
+// Unzipped, the machine feed and the human documents look alike, and there is one rule the
+// accountant has to be TOLD rather than left to infer: a .pdf and the .xml beside it are one
+// invoice, and separating or renaming either makes two out of one.
+
+const leesmij = (over: Partial<Parameters<typeof buildLeesmij>[0]> = {}) =>
+  buildLeesmij({
+    quarterLabel: "Q1 2026", clientName: "Kiwi Food Market",
+    outgoingCount: 12, incomingCount: 30, eInvoiceCount: 7,
+    bankStatementIncluded: true, warnings: [], ...over,
+  });
+
+test("[SLUIS] the LEESMIJ says which folder goes into the program and which files are to be read", () => {
+  const txt = leesmij();
+  assert.match(txt, /facturen-en-bonnen\//);
+  assert.match(txt, /bankafschrift\//);
+  assert.match(txt, /overzicht\.csv/);
+  assert.match(txt, /concept-btw-aangifte\.csv/);
+  // And the sentence that keeps a concept from being read as a filing.
+  assert.match(txt, /niet ingediend/i, "a concept aangifte must never read as a filed one");
+  assert.match(txt, /Kiwi Food Market/);
+  assert.match(txt, /Q1 2026/);
+});
+
+test("[SLUIS] the pairing rule is stated, and so is what the XML is worth per direction", () => {
+  // THE ONE THAT MATTERS. An accountant who mails only the .xml of a SALES invoice into SnelStart
+  // finds that nothing arrived — their mailbox does not read a verkoop-UBL and takes the PDF
+  // beside it instead. Saying that here costs one line and is the only misunderstanding this file
+  // could otherwise cause.
+  const txt = leesmij({ eInvoiceCount: 7 });
+  assert.match(txt, /dezelfde bestandsnaam/, "the pairing is by name — that is the whole rule");
+  assert.match(txt, /hernoem ze niet/i);
+  assert.match(txt, /INKOOPfactuur[\s\S]*?rechtstreeks ingelezen/, "a purchase UBL is read mechanically");
+  assert.match(txt, /SnelStart[\s\S]*?verkoop-UBL \(nog\) niet/, "and a sales UBL is not, at that door");
+  assert.match(txt, /nooit alleen de \.xml/);
+});
+
+test("[SLUIS] with no e-facturen it says so, instead of explaining a rule about nothing", () => {
+  const txt = leesmij({ eInvoiceCount: 0 });
+  assert.match(txt, /geen e-factuur \(UBL\)/);
+  assert.doesNotMatch(txt, /hernoem ze niet/, "a pairing rule about zero pairs is noise on a page someone has to read");
+});
+
+test("[SLUIS] every warning is repeated where a person will actually see it", () => {
+  // They stand in overzicht.csv and overzicht.json too. Repeated here because this is the file
+  // that gets opened first, and a gap nobody read about is a gap that reaches the aangifte.
+  const txt = leesmij({
+    warnings: [
+      { code: "bank_missing", message: "Geen banktransacties gevonden voor dit kwartaal." },
+      { code: "efactuur_missing", message: "Van 2 facturen kon geen e-factuur worden gemaakt: 001, 002." },
+    ],
+  });
+  assert.match(txt, /Geen banktransacties gevonden/);
+  assert.match(txt, /Van 2 facturen kon geen e-factuur/);
+  assert.match(txt, /NIET HEBBEN KUNNEN VASTSTELLEN/);
+
+  // And when there is nothing to report it says THAT, rather than leaving a heading with a blank
+  // under it that reads like a section somebody forgot to fill in.
+  const clean = leesmij({ warnings: [] });
+  assert.match(clean, /geen onvolkomenheden/);
+  assert.doesNotMatch(clean, /NIET HEBBEN KUNNEN VASTSTELLEN/);
+});
+
+test("[SLUIS] a missing bank statement is called out on its own", () => {
+  assert.match(leesmij({ bankStatementIncluded: false }), /bankafschrift zit niet in dit pakket/);
+  assert.doesNotMatch(leesmij({ bankStatementIncluded: true }), /zit niet in dit pakket/);
+});
+
+test("[SLUIS] the LEESMIJ is in the ZIP, and is not counted as evidence", () => {
+  return (async () => {
+    const inv = incomingInvoice({ id: "in-9" });
+    const { zipBytes, summary } = await assembleClosingPackageZip({
+      ...emptyAssemble,
+      incoming: [inv],
+      pdfByInvoice: new Map([[inv.id, { path: "u/incoming/z.pdf", name: "z.pdf", bytes: bytes("%PDF") }]]),
+    });
+    const zip = await JSZip.loadAsync(zipBytes);
+    const txt = await zip.file("LEESMIJ.txt")!.async("string");
+    assert.match(txt, /BoekBrug — kwartaalpakket/);
+    // One evidence file went in. The instruction sheet is not one — same as overzicht.json — and
+    // counting it would make this number disagree with the handoff screen's.
+    assert.equal(summary.filesIncluded, 1);
+    const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+    assert.equal(overzicht.bestanden_bijgevoegd, 1);
+  })();
 });

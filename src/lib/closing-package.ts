@@ -606,6 +606,116 @@ interface AssembleInput {
   warnings: ClosingPackageWarning[];
 }
 
+/**
+ * [SLUIS] The first file the accountant opens.
+ *
+ * ── WHY A PACKAGE THIS COMPLETE STILL NEEDS ONE ──
+ *
+ * Every intake tool a Dutch accountant uses — SnelStart's mailbox, Basecone, TriFact365,
+ * Zenvoices, Exact's scan-en-herken — swallows ONE document at a time and hands back a booking
+ * proposal. None of them swallows a ZIP. So this archive is really two things at once: a pile of
+ * loose documents that belong in his program, and a set of quarter documents that belong in front
+ * of a person. Unzipped, they look alike.
+ *
+ * That mattered less while the package was PDFs only. Now that an .xml sits beside a .pdf under
+ * the same base name, there is a rule an accountant has to be told rather than left to infer: the
+ * pair is ONE invoice, the two files travel together, and renaming either of them makes two
+ * documents out of one. A service that pairs them by filename gets it right if nobody separates
+ * them, and silently books the invoice twice if somebody does.
+ *
+ * ── AND WHY IT IS HONEST ABOUT WHAT THE XML IS WORTH ──
+ *
+ * A purchase invoice in UBL is read mechanically, with no scanning anywhere in the chain. A SALES
+ * invoice in UBL is not read by SnelStart's mailbox at all — it reads the PDF beside it. Saying
+ * so here costs nothing and stops the one misunderstanding this file could cause: an accountant
+ * who mails only the .xml of a sales invoice into SnelStart and finds nothing arrived.
+ *
+ * Dutch, and not translated by anyone's language setting — same rule as the invoice PDF and the
+ * e-mail that carries it. The reader is a Dutch boekhouder working under Dutch law.
+ */
+export function buildLeesmij(args: {
+  quarterLabel: string;
+  clientName: string;
+  outgoingCount: number;
+  incomingCount: number;
+  eInvoiceCount: number;
+  bankStatementIncluded: boolean;
+  warnings: ClosingPackageWarning[];
+}): string {
+  const { quarterLabel, clientName, outgoingCount, incomingCount, eInvoiceCount } = args;
+  const L: string[] = [];
+
+  L.push(`BoekBrug — kwartaalpakket ${quarterLabel}`);
+  L.push(`Administratie: ${clientName}`);
+  L.push("");
+  L.push(`${outgoingCount} verkoopfacturen, ${incomingCount} inkoopfacturen en bonnen.`);
+  L.push("");
+  L.push("WAT ER IN JE PAKKET GAAT");
+  L.push("");
+  L.push("  facturen-en-bonnen/   de originele documenten, per richting en per betaalstatus");
+  L.push("  bankafschrift/        het afschrift van dit kwartaal, zoals het is aangeleverd");
+  L.push("");
+
+  if (eInvoiceCount > 0) {
+    L.push(
+      `Bij ${eInvoiceCount} ${eInvoiceCount === 1 ? "factuur" : "facturen"} staat een .xml naast de .pdf, ` +
+        "met dezelfde bestandsnaam. Dat is dezelfde factuur, machineleesbaar.",
+    );
+    L.push("");
+    L.push("  · Houd de twee bij elkaar en hernoem ze niet. Een inleesdienst koppelt ze op naam en");
+    L.push("    ziet ze dan als één document; los van elkaar worden het er twee.");
+    L.push("  · Bij een INKOOPfactuur wordt die .xml rechtstreeks ingelezen — geen scan, geen OCR,");
+    L.push("    en de bedragen komen van de leverancier zelf.");
+    L.push("  · Bij een VERKOOPfactuur ligt het aan je pakket. Basecone, TriFact365 en Zenvoices");
+    L.push("    lezen hem; de mailbox van SnelStart leest een verkoop-UBL (nog) niet en pakt de PDF");
+    L.push("    ernaast. Stuur bij twijfel altijd het paar, nooit alleen de .xml.");
+    L.push("");
+  } else {
+    L.push("Er zit in dit kwartaal geen e-factuur (UBL) bij de documenten.");
+    L.push("");
+  }
+
+  L.push("WAT ER VOOR JOU IS OM TE LEZEN");
+  L.push("");
+  L.push("  overzicht.csv              alle facturen van het kwartaal op een rij");
+  L.push("  overzicht.json             dezelfde gegevens machineleesbaar, met de ruwe BTW-cijfers");
+  L.push("  concept-btw-aangifte.csv   een CONCEPT, alleen als er omzet is. Niet ingediend.");
+  L.push("  concept-icp-opgaaf.csv     idem, en een APARTE opgaaf — geen rubriek van de aangifte");
+  L.push("  eu-inkopen.csv             de EU-inkopen als lijst, zonder verlegde BTW uit te rekenen");
+  L.push("  dagomzet.csv               de dagomzet per tarief, als er een kassa is");
+  L.push("  kaart-reconciliatie.csv    kas ↔ pinautomaat ↔ bank, met de dagen die niet sluiten");
+  L.push("  Kasboek-…xlsx              het kasboek met beginsaldo en eindsaldo per dag");
+  L.push("");
+  L.push("Niet elk bestand zit er altijd in: wat er niets te melden valt, wordt niet geschreven.");
+  L.push("");
+  L.push("WAT DIT PAKKET NIET DOET");
+  L.push("");
+  L.push("De aangifte is een CONCEPT en is niet ingediend. BoekBrug rekent de BTW niet voor je uit");
+  L.push("en boekt niets in een grootboek — het levert de stukken en de aansluiting aan, jij doet");
+  L.push("de beoordeling en de aangifte.");
+  L.push("");
+
+  if (args.warnings.length > 0) {
+    // The warnings stand in overzicht.csv and overzicht.json too. They are repeated here because
+    // this is the file a person actually opens first, and a gap nobody read about is a gap that
+    // reaches the aangifte.
+    L.push("WAT WE NIET HEBBEN KUNNEN VASTSTELLEN");
+    L.push("");
+    for (const w of args.warnings) L.push(`  · ${w.message}`);
+    L.push("");
+  } else {
+    L.push("Er zijn bij het samenstellen geen onvolkomenheden gevonden.");
+    L.push("");
+  }
+
+  if (!args.bankStatementIncluded) {
+    L.push("Let op: het originele bankafschrift zit niet in dit pakket.");
+    L.push("");
+  }
+
+  return L.join("\r\n");
+}
+
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
   const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
   // [SLUIS] Absent map = no e-facturen to add. Never a silent skip of a map that WAS handed over.
@@ -855,6 +965,27 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     warnings,
     generatedAt: new Date().toISOString(),
   };
+
+  // [SLUIS] The reading instruction, written LAST so it can report what actually went in — the
+  // e-factuur count and the warnings are only final at this point. Its own file rather than a
+  // line in overzicht.json, because the person who needs it does not open JSON.
+  zip.file(
+    "LEESMIJ.txt",
+    "\ufeff" +
+      buildLeesmij({
+        quarterLabel,
+        clientName,
+        outgoingCount: outgoing.length,
+        incomingCount: incoming.length,
+        eInvoiceCount: eInvoiceXmlCount,
+        bankStatementIncluded: bankFiles.length > 0,
+        warnings,
+      }),
+  );
+  // NOT counted in filesIncluded. That number means "documents of this administration that went
+  // in", and overzicht.json is not counted either for the same reason: a reading instruction is
+  // not a piece of evidence, and inflating the count by one would make it disagree with the
+  // summary the accountant-handoff screen shows.
 
   zip.file(
     "overzicht.json",
