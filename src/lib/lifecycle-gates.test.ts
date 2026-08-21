@@ -5821,17 +5821,30 @@ test("[KLANT-EXTRA] every reader of the customer block reads the SAME three line
   );
 });
 
-test("[E-FACTUUR] the UBL route passes vat_treatment through to the builder", () => {
+test("[E-FACTUUR] the exemption flag is fetched AND handed to the builder", () => {
   // The route SELECTED the flag, carried a fallback for it, and then dropped it in the map to
   // the builder's input — so every exempt line exported as category Z (0%-taxed) instead of E.
-  // A different legal fact, discovered only because this gate now counts both halves: the
-  // fetch AND the hand-over.
+  // A different legal fact, discovered only because this gate counts both halves: the fetch AND
+  // the hand-over.
+  //
+  // [SLUIS] Both halves have since moved to ubl-inputs.ts, because the quarter package builds the
+  // same e-factuur and a second copy of that mapping would drift. Which is not a reason to relax
+  // this gate — it is the reason it now guards ONE place instead of one of two. The same defect
+  // was in fact sitting one field over: discount_type and discount_value were selected and not
+  // handed over either, so BG-27 was never written and the agreed unit price was replaced by a
+  // price per line. Both are pinned here now.
+  const inputs = code("src/lib/ubl-inputs.ts");
+  for (const field of ["vat_treatment", "discount_type", "discount_value"]) {
+    assert.match(inputs, new RegExp(`UBL_LINES_SELECT\\s*=\\s*"[^"]*${field}`), `${field} left the SELECT`);
+    assert.match(
+      inputs, new RegExp(`\\{ ${field}: l\\.${field} \\}`),
+      `${field} is selected but not handed to buildInvoiceUbl — the file stays valid and loses the fact`,
+    );
+  }
+  // And the route reads them from there rather than defining its own list again.
   const route = code("src/app/api/export/ubl/route.ts");
-  assert.match(route, /LINES_SELECT\s*=\s*"[^"]*vat_treatment/, "the flag left the SELECT");
-  assert.match(
-    route, /vat_treatment:\s*l\.vat_treatment/,
-    "the flag is selected but not handed to buildInvoiceUbl — exempt lines export as Z",
-  );
+  assert.match(route, /UBL_LINES_SELECT/, "the route no longer uses the shared SELECT");
+  assert.match(route, /ublLinesFrom\(/, "the route maps its own lines again");
 });
 
 test("[KLANT-EXTRA] no write path names the columns without a fallback", () => {

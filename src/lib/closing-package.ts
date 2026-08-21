@@ -1,8 +1,14 @@
 // src/lib/closing-package.ts
 // [CLOSING-PACKAGE] Build ONE ZIP per quarter for the accountant: original
 // invoices/receipts (PDF, not regenerated) + bank statement (passthrough) +
-// a RAW BTW overview. No UBL, no vat_due, only verified invoices, honest about
-// gaps. Grounded in a real accountant request (facturen/bonnen + MT940).
+// a RAW BTW overview. No vat_due, only verified invoices, honest about gaps.
+// Grounded in a real accountant request (facturen/bonnen + MT940).
+//
+// [SLUIS] …and, since August 2026, the e-factuur beside each invoice: the supplier's own XML for
+// a purchase, ours for a sale, written under the SAME base name as the PDF. That is the half of
+// this package a machine can read — every intake tool an accountant uses (SnelStart's mailbox,
+// Basecone, TriFact365, Zenvoices, Exact) swallows one document at a time and OCRs it, and a
+// purchase invoice in UBL is the one thing in that chain that is read mechanically instead.
 //
 // Two PDF sources (Phase A finding):
 //   - OUTGOING (sales): the generated PDF lives at invoices.pdf_url (FACTUUR-A,
@@ -33,6 +39,20 @@ import { toStoragePath, pathBelongsToOwner } from "./storage-path";
 // [SLUIS] The content sniff that decides whether an .xml really is an invoice — see the block
 // that uses it in the orchestrator below.
 import { looksLikeInvoiceXmlBytes } from "./e-invoice";
+// [SLUIS] Our OWN e-factuur, for the outgoing side. The generator is pure and the row → input
+// mapping lives in ubl-inputs.ts, shared with /api/export/ubl — see the header of that module for
+// why a second copy of the mapping is the thing to avoid rather than the second SELECT.
+import { buildInvoiceUbl } from "./ubl-export";
+import {
+  UBL_LINES_SELECT_KEYED,
+  UBL_LINES_SELECT_KEYED_MINIMAL,
+  UBL_PROFILE_SELECT,
+  ublHeaderFrom,
+  ublLinesFrom,
+  type UblInvoiceRow,
+  type UblLineRow,
+} from "./ubl-inputs";
+import { CLIENT_EXTRA_LINE_COLUMNS } from "./client-extra-lines";
 import {
   quarterStartDate,
   quarterEndDate,
@@ -908,7 +928,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // (geen bankregel om tegenaan te leggen). Precies de vraag die het gesprek naar WhatsApp
 // terugstuurde, terwijl het antwoord al op het papier stond.
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
@@ -1561,18 +1581,36 @@ export async function buildClosingPackageZip(args: {
   const xmlPathByInvoice = new Map<string, { path: string; name: string }>();
   const incomingIds = incoming.map((i) => i.id);
   if (incomingIds.length > 0) {
-    const { data: xmlDocs } = await supabase
-      .from("documents")
-      .select("invoice_id, file_url, file_name")
-      .eq("user_id", ownerId)
-      // A file the owner threw away is not evidence he wants delivered to his accountant.
-      .eq("trashed", false)
-      .in("invoice_id", incomingIds);
-    for (const d of (xmlDocs ?? []) as unknown as Array<{
-      invoice_id: string | null;
-      file_url: string | null;
-      file_name: string | null;
-    }>) {
+    // [IN-CHUNK] Not a bare `.in()`: that has two silent ceilings — the ~1000-row response cap and
+    // a URL that outgrows the proxy's header buffer past a few hundred ids, which supabase-js
+    // reports as an ordinary error a caller reading only `data` never sees. Either one would drop
+    // e-facturen from a busy quarter and look exactly like a quarter that had none.
+    let xmlDocs: Array<{ invoice_id: string | null; file_url: string | null; file_name: string | null }> = [];
+    try {
+      xmlDocs = await fetchAllRowsForIds<
+        { invoice_id: string | null; file_url: string | null; file_name: string | null },
+        string
+      >(incomingIds, (chunk, from, to) =>
+        supabase
+          .from("documents")
+          .select("invoice_id, file_url, file_name")
+          .eq("user_id", ownerId)
+          // A file the owner threw away is not evidence he wants delivered to his accountant.
+          .eq("trashed", false)
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    } catch (e) {
+      // The e-facturen are an ADDITION to a package that is complete without them. A failed read
+      // here must never cost the accountant his invoices — it costs him the machine-readable copy,
+      // and it says so in the log.
+      console.error("[SLUIS] could not read the stored e-facturen — the package ships without them", {
+        ownerId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    for (const d of xmlDocs) {
       if (!d.invoice_id || !d.file_url) continue;
       // Read the extension off the STORAGE PATH for the same reason [EVIDENCE-EXT] does: the path
       // is what the upload wrote, a display name from a mail attachment often carries none.
@@ -1583,6 +1621,172 @@ export async function buildClosingPackageZip(args: {
       if (xmlPathByInvoice.has(d.invoice_id)) continue; // one e-factuur per invoice; first wins
       xmlPathByInvoice.set(d.invoice_id, { path: pad, name: d.file_name ?? "e-factuur.xml" });
     }
+  }
+
+  // ── [SLUIS] Our OWN e-factuur for every outgoing invoice ──
+  //
+  // The generator has existed for a long time and had exactly one caller: a download button. So an
+  // owner who never pressed it — which is every owner — sent his accountant PDFs only, and the
+  // accountant retyped or OCR'd invoices this app could have handed over machine-readable.
+  //
+  // Honest about what it is worth: SnelStart's own mailbox does NOT read a UBL SALES invoice (it
+  // reads the PDF beside it and OCRs that), so at their door this file changes nothing today. At
+  // Basecone, TriFact365 and Zenvoices it is read, and from 2030 it is the form the invoice has to
+  // be in anyway. It costs one query per quarter and it is written next to the PDF under the same
+  // base name, so a door that cannot use it simply ignores it.
+  //
+  // Every failure here is non-fatal by construction. This is an ADDITION to a package that is
+  // complete without it, and an accountant who cannot download his quarter because a profile field
+  // was empty is a far worse outcome than one who gets no XML.
+  const ublByInvoice = new Map<string, PackageFile>();
+  const ublFailed: string[] = [];
+  const outgoingIds = outgoing.map((i) => i.id);
+  if (outgoingIds.length > 0) {
+    // The supplier is the SELLER — the owner of this administration, never the accountant who
+    // pressed the button. Its own failable read: a missing profile means no e-facturen, not a
+    // broken package.
+    const { data: supplierRow } = await supabase
+      .from("profiles")
+      .select(UBL_PROFILE_SELECT)
+      .eq("id", ownerId)
+      .maybeSingle();
+
+    if (supplierRow) {
+      // The header columns are already in hand — INVOICE_FIELDS carries them — so this costs no
+      // extra query. Read off the RAW rows rather than the mapped PackageInvoice, which does not
+      // declare the address fields even though they travel on the object.
+      const ublRowById = new Map<string, UblInvoiceRow>();
+      for (const raw of invData ?? []) {
+        const r = raw as unknown as { id?: string } & UblInvoiceRow;
+        if (r.id) ublRowById.set(r.id, r);
+      }
+
+      // [KLANT-EXTRA] The free customer lines, in their OWN failable read: on a database where
+      // client_extra_lines.sql is still open this select fails (42703) and the e-facturen are what
+      // they always were, without the lines — instead of there being no e-facturen at all.
+      const extraById = new Map<string, Record<string, string | null>>();
+      try {
+        const extraRows = await fetchAllRowsForIds<Record<string, unknown>, string>(
+          outgoingIds,
+          (chunk, from, to) =>
+            // [BOEK-014] A composed select collapses PostgREST's result type to
+            // GenericStringError, so the shape is asserted here rather than typed. The columns are
+            // the shared constant's, and the read is allowed to fail — see the catch below.
+            supabase
+              .from("invoices")
+              .select(["id", ...CLIENT_EXTRA_LINE_COLUMNS].join(", "))
+              .in("id", chunk)
+              .order("id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<{
+              data: Record<string, unknown>[] | null;
+              error: { message: string } | null;
+            }>,
+        );
+        for (const row of extraRows) {
+          const { id, ...rest } = row as { id?: string } & Record<string, unknown>;
+          if (id) extraById.set(id, rest as Record<string, string | null>);
+        }
+      } catch {
+        // Migration not applied. Same silence the export route keeps, for the same reason.
+      }
+
+      // The lines, chunked and paged: a retail quarter runs past both silent ceilings of a bare
+      // `.in()`, and a truncated read would build an e-factuur that is missing lines while still
+      // being schema-valid — the worst shape a wrong invoice can take.
+      const readLines = async (columns: string) =>
+        fetchAllRowsForIds<UblLineRow & { invoice_id: string | null }, string>(
+          outgoingIds,
+          (chunk, from, to) =>
+            // [BOEK-014] The column list is chosen at runtime (full, or the reduced list on a
+            // database where an optional migration is still open), so PostgREST cannot type the
+            // result and the shape is asserted here. The two literals themselves come from
+            // ubl-inputs.ts and are pinned against each other by its test.
+            supabase
+              .from("invoice_lines")
+              .select(columns)
+              .in("invoice_id", chunk)
+              .order("id", { ascending: true })
+              .range(from, to) as unknown as PromiseLike<{
+              data: Array<UblLineRow & { invoice_id: string | null }> | null;
+              error: { message: string } | null;
+            }>,
+        );
+
+      let lineRows: Array<UblLineRow & { invoice_id: string | null }> = [];
+      let linesRead = true;
+      try {
+        lineRows = await readLines(UBL_LINES_SELECT_KEYED);
+      } catch {
+        // [UNIT]/[E-FACTUUR]/[REGEL-KORTING] One optional column that this deployment does not
+        // have yet fails the WHOLE select (42703). Retry with exactly the reduced list the shared
+        // module names — never one invented here, which is how the two would drift.
+        try {
+          lineRows = await readLines(UBL_LINES_SELECT_KEYED_MINIMAL);
+        } catch (e) {
+          linesRead = false;
+          console.error("[SLUIS] could not read the invoice lines — no e-facturen in this package", {
+            ownerId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      if (linesRead) {
+        const linesByInvoice = new Map<string, UblLineRow[]>();
+        for (const l of lineRows) {
+          if (!l.invoice_id) continue;
+          const bucket = linesByInvoice.get(l.invoice_id) ?? [];
+          bucket.push(l);
+          linesByInvoice.set(l.invoice_id, bucket);
+        }
+
+        const encoder = new TextEncoder();
+        for (const inv of outgoing) {
+          const row = ublRowById.get(inv.id);
+          const lines = linesByInvoice.get(inv.id) ?? [];
+          if (!row || lines.length === 0) {
+            ublFailed.push(inv.invoice_number ?? inv.id);
+            continue;
+          }
+          try {
+            const { xml } = buildInvoiceUbl(
+              ublHeaderFrom(row, extraById.get(inv.id) ?? null),
+              ublLinesFrom(lines),
+              supplierRow as unknown as Parameters<typeof buildInvoiceUbl>[2],
+              { korActive },
+            );
+            ublByInvoice.set(inv.id, {
+              // A generated file has no storage path. The empty string is deliberate and safe: the
+              // assembler compares this against the evidence file's path to avoid writing one file
+              // twice, and a downloaded evidence file always HAS a path.
+              path: "",
+              name: `${inv.invoice_number ?? inv.id}.xml`,
+              bytes: encoder.encode(xml),
+            });
+          } catch {
+            // UblValidationError: no KVK, no BTW number, no invoice number, no lines. Each is a
+            // real gap in the owner's own data, and none of them is a reason to withhold his
+            // quarter — so it is collected and stated once, below.
+            ublFailed.push(inv.invoice_number ?? inv.id);
+          }
+        }
+      }
+    } else {
+      console.error("[SLUIS] no supplier profile — this package carries no e-facturen", { ownerId });
+    }
+  }
+
+  if (ublFailed.length > 0) {
+    // Named, and named ONCE. The accountant is told which invoices arrived as PDF only, so he knows
+    // where the extra work is instead of discovering it invoice by invoice.
+    warnings.push({
+      code: "efactuur_missing",
+      message:
+        `Van ${ublFailed.length} ${ublFailed.length === 1 ? "factuur" : "facturen"} kon geen e-factuur (UBL) worden gemaakt — ` +
+        `die zitten alleen als PDF in dit pakket: ${ublFailed.slice(0, 10).join(", ")}` +
+        (ublFailed.length > 10 ? ` en ${ublFailed.length - 10} meer.` : ".") +
+        " Meestal ontbreekt er een KVK- of BTW-nummer bij de eigen gegevens.",
+    });
   }
 
   // ── Bank statement(s) for the quarter (doc_type='bankafschrift') ──
@@ -1656,7 +1860,10 @@ export async function buildClosingPackageZip(args: {
       return [invId, f] as const;
     })
   );
-  const xmlByInvoice = new Map<string, PackageFile>();
+  // Incoming: the supplier's own file, downloaded. Outgoing: ours, generated. Disjoint by
+  // construction — an invoice is one direction or the other — so one map carries both and the
+  // assembler needs to know nothing about where a given e-factuur came from.
+  const xmlByInvoice = new Map<string, PackageFile>(ublByInvoice);
   for (const [invId, f] of xmlEntries) {
     if (f) xmlByInvoice.set(invId, f);
   }

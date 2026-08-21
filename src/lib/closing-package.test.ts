@@ -544,7 +544,17 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
     "the orchestrator no longer passes xmlByInvoice — every package now ships without e-facturen, silently",
   );
   assert.match(src, /looksLikeInvoiceXmlBytes\(/, "the content check is no longer CALLED — any .xml would be shipped as an e-factuur");
-  assert.match(src, /\.in\("invoice_id", incomingIds\)/, "the e-facturen are no longer tied to their own invoice");
+  assert.match(src, /xmlDocs = await fetchAllRowsForIds</, "[IN-CHUNK] the stored-e-factuur read is a bare .in() again — it truncates a busy quarter in silence");
+  assert.match(src, /\.in\("invoice_id", chunk\)/, "the e-facturen are no longer tied to their own invoice");
   assert.match(src, /if \(!pathBelongsToOwner\(pad, ownerId\)\) continue;/, "[SEC-STORAGE-PATH] the owner-folder check on the e-factuur path is gone");
-  assert.match(src, /\.eq\("trashed", false\)\s*\n\s*\.in\("invoice_id"/, "a discarded file is being delivered to the accountant again");
+  assert.match(src, /\.eq\("trashed", false\)/, "a discarded file is being delivered to the accountant again");
+
+  // And the outgoing half: OUR e-factuur, built here rather than only behind a download button
+  // almost nobody presses. Through the shared mapper, never a second hand-written copy of it —
+  // that mapping has silently dropped a column twice (see ubl-inputs.ts).
+  assert.match(src, /buildInvoiceUbl\(/, "the package no longer generates the owner's own e-facturen");
+  assert.match(src, /ublHeaderFrom\(/, "the header is being mapped somewhere other than the one shared place");
+  assert.match(src, /ublLinesFrom\(/, "the lines are being mapped somewhere other than the one shared place");
+  assert.match(src, /\{ korActive \}/, "[E-FACTUUR-VERLEGD] without kor_active a 0% invoice to an EU customer is called a verlegde prestatie");
+  assert.match(src, /code: "efactuur_missing"/, "an invoice that could not become an e-factuur is being dropped without a word");
 });

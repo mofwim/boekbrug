@@ -25,10 +25,21 @@ import {
   buildInvoiceUbl,
   UblValidationError,
   type UblErrorCode,
-  type UblInvoiceHeader,
-  type UblInvoiceLine,
   type UblSupplier,
 } from "@/lib/ubl-export";
+// [E-FACTUUR] De SELECT's en de rij → generator-afbeelding staan in één module, omdat het
+// kwartaalpakket dezelfde e-factuur bouwt. Een tweede kopie van die afbeelding zou niet opvallen
+// en wél uiteenlopen — en dan zijn er twee e-facturen van één factuur die van elkaar verschillen.
+import {
+  UBL_INVOICE_SELECT,
+  UBL_LINES_SELECT,
+  UBL_LINES_SELECT_MINIMAL,
+  UBL_PROFILE_SELECT,
+  ublHeaderFrom,
+  ublLinesFrom,
+  type UblInvoiceRow,
+  type UblLineRow,
+} from "@/lib/ubl-inputs";
 // [UNIT] Herkent "die kolom ken ik niet" (42703/PGRST204) — zie de terugval bij de regels.
 import { isUnknownColumn } from "@/lib/created-by";
 // [KLANT-EXTRA] De drie vrije klantregels, in een EIGEN mislukbare leesbeurt — de hoofdselect
@@ -36,31 +47,8 @@ import { isUnknownColumn } from "@/lib/created-by";
 // open staat. Zelfde vorm als de terugkerende-facturen-cron.
 import { CLIENT_EXTRA_LINE_COLUMNS } from "@/lib/client-extra-lines";
 
-// [BOEK-020] Single-line SELECT literals — avoids GenericStringError (see BOEK-014)
-const INVOICE_SELECT =
-  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number" as const;
 
-// [UNIT] `unit` komt uit migratie invoice_line_unit.sql. Selecteren van een kolom die nog
-// niet bestaat laat de HELE query falen (42703) — en dan zou een boekhouder geen enkele UBL meer
-// kunnen ophalen. Vandaar twee lijsten en de terugval hieronder; zelfde les als created_by.
-// [E-FACTUUR] vat_treatment hoort in dezelfde optionele groep als `unit`: het is de vlag waaraan
-// een vrijgestelde regel (art. 11 Wet OB) te herkennen is, en zonder die vlag exporteert de UBL
-// hem als categorie Z — een 0%-BELASTE levering. Dat is een ander juridisch feit dan vrijgesteld,
-// en het is precies het feit dat de ontvanger anders moet boeken.
-// [REGEL-KORTING] En de twee kortingskolommen reizen in diezelfde optionele groep mee. Ze
-// veranderen geen bedrag — line_total is al netto — maar zonder hen kan de export het verschil
-// tussen de afgesproken prijs en het regelbedrag niet verklaren, en moet hij een stuksprijs
-// afdrukken die niemand heeft afgesproken.
-const LINES_SELECT =
-  "description, quantity, unit_price, btw_rate, line_total, unit, vat_treatment, discount_type, discount_value" as const;
-const LINES_SELECT_ZONDER_EENHEID =
-  "description, quantity, unit_price, btw_rate, line_total" as const;
 
-// [E-FACTUUR-VERLEGD] kor_active hoort erbij: onder de KOR wordt er geen btw berekend om een
-// reden die niets met verleggen te maken heeft, dus een 0%-factuur aan een EU-klant is dan GEEN
-// verlegde prestatie. Precies de vraag die de PDF ook aan dit veld stelt.
-const PROFILE_SELECT =
-  "company_name, full_name, kvk_number, btw_number, iban, address, postal_code, city, kor_active" as const;
 
 // [BOEK-020] Map generator error codes → Dutch user messages (UI text in Dutch).
 // Context-aware: when an accountant exports a client's invoice, missing seller
@@ -110,7 +98,7 @@ export async function GET(req: NextRequest) {
   //    shared/paid client invoice) ──
   const { data: invoiceRow, error: invErr } = await supabase
     .from("invoices")
-    .select(INVOICE_SELECT)
+    .select(UBL_INVOICE_SELECT)
     .eq("id", invoiceId)
     .maybeSingle();
 
@@ -174,7 +162,7 @@ export async function GET(req: NextRequest) {
   // die had ik vandaag al één keer te pakken.
   const eersteLezing = await supabase
     .from("invoice_lines")
-    .select(LINES_SELECT)
+    .select(UBL_LINES_SELECT)
     .eq("invoice_id", invoiceId)
     .order("id", { ascending: true });
 
@@ -186,7 +174,7 @@ export async function GET(req: NextRequest) {
     isUnknownColumn(eersteLezing.error, "unit") || isUnknownColumn(eersteLezing.error, "vat_treatment")
       ? await supabase
           .from("invoice_lines")
-          .select(LINES_SELECT_ZONDER_EENHEID)
+          .select(UBL_LINES_SELECT_MINIMAL)
           .eq("invoice_id", invoiceId)
           .order("id", { ascending: true })
       : eersteLezing;
@@ -199,7 +187,7 @@ export async function GET(req: NextRequest) {
   //    Critical: when an accountant exports, the supplier must be the ZZP'er. ──
   const { data: profileRow, error: profErr } = await supabase
     .from("profiles")
-    .select(PROFILE_SELECT)
+    .select(UBL_PROFILE_SELECT)
     .eq("id", ownerId)
     .single();
 
@@ -230,46 +218,14 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Map DB rows → pure generator inputs ──
-  const header: UblInvoiceHeader = {
-    invoice_number: inv.invoice_number,
-    invoice_date: inv.invoice_date,
-    due_date: inv.due_date,
-    invoice_type: inv.invoice_type,
-    total_ex_btw: inv.total_ex_btw,
-    btw_amount: inv.btw_amount,
-    total_inc_btw: inv.total_inc_btw,
-    client_name: inv.client_name,
-    client_address: inv.client_address,
-    client_postal_code: inv.client_postal_code,
-    client_city: inv.client_city,
-    client_btw_number: inv.client_btw_number,
-    ...((extraRow ?? {}) as Record<string, string | null>),
-  };
-
-  const lines: UblInvoiceLine[] = ((lineRows ?? []) as unknown as Array<{
-    description: string | null;
-    quantity: number | null;
-    unit_price: number | null;
-    btw_rate: number | null;
-    line_total: number | null;
-    unit?: string | null;
-    vat_treatment?: string | null;
-  }>).map((l) => ({
-    description: l.description,
-    quantity: l.quantity,
-    unit_price: l.unit_price,
-    btw_rate: l.btw_rate,
-    line_total: l.line_total,
-    // [UNIT] Ontbreekt de kolom (migratie invoice_line_unit.sql nog niet toegepast), dan is
-    // dit undefined en valt de export terug op C62 — precies het gedrag van vóór deze regel.
-    unit: l.unit ?? null,
-    // [E-FACTUUR] De vrijstellingsvlag werd hier WEL geselecteerd maar NIET doorgegeven — de
-    // generator kreeg hem nooit, dus een vrijgestelde regel exporteerde als categorie Z
-    // (0%-belast) in plaats van E. Dat is een ander juridisch feit, en precies het feit dat
-    // de ontvanger anders moet boeken. Zelfde terugvalvorm als `unit`: kolom onbekend →
-    // undefined → het gedrag van vóór de vlag.
-    ...(l.vat_treatment !== undefined ? { vat_treatment: l.vat_treatment } : {}),
-  }));
+  // [E-FACTUUR] Via ubl-inputs.ts, niet hier. Deze afbeelding stond hier ooit uitgeschreven, en
+  // twee keer is er in dat handwerk een kolom weggevallen die WÉL was geselecteerd: eerst
+  // `vat_treatment` (een vrijgestelde regel exporteerde als 0%-belast), daarna `discount_type` en
+  // `discount_value` (elke regelkorting was onzichtbaar in de e-factuur, dus BG-27 werd nooit
+  // geschreven en er stond een stuksprijs op die niemand had afgesproken). Beide keren bleef het
+  // bestand geldig en werd het niets zichtbaars — dat is precies waarom dit één plek moet zijn.
+  const header = ublHeaderFrom(inv as unknown as UblInvoiceRow, (extraRow ?? null) as Record<string, string | null> | null);
+  const lines = ublLinesFrom((lineRows ?? []) as unknown as UblLineRow[]);
 
   const supplier: UblSupplier = profileRow as unknown as UblSupplier;
 
