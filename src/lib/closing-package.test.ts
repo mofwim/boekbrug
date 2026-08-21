@@ -558,6 +558,15 @@ test("[SLUIS] the orchestrator really hands the e-facturen over, and really chec
   assert.match(src, /ublLinesFrom\(/, "the lines are being mapped somewhere other than the one shared place");
   assert.match(src, /\{ korActive \}/, "[E-FACTUUR-VERLEGD] without kor_active a 0% invoice to an EU customer is called a verlegde prestatie");
   assert.match(src, /code: "efactuur_missing"/, "an invoice that could not become an e-factuur is being dropped without a word");
+
+  // [AFLETTEREN] And the file that hands over WORK rather than documents. Its failure mode is the
+  // quiet one: drop the line that builds it and every value test above still passes, because they
+  // hand the assembler a reconciliation directly. What ships is a package without one, exactly
+  // like a quarter that had no bank lines.
+  assert.match(src, /buildBankHandoverCsv\(/, "the package no longer hands over the afletering");
+  assert.match(src, /read: !bankReadFailed/, "a failed bank read must reach the file — an empty table reads as 'all matched'");
+  assert.match(src, /totals: bankReadFailed \? null/, "zeroes over an unread quarter read as a finished job");
+  assert.match(src, /^\s*bankHandover,\s*$/m, "…and it is never built and then not passed on");
 });
 
 // ─── [SLUIS] The reading instruction ──────────────────────────────────────────
@@ -645,5 +654,71 @@ test("[SLUIS] the LEESMIJ is in the ZIP, and is not counted as evidence", () => 
     assert.equal(summary.filesIncluded, 1);
     const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
     assert.equal(overzicht.bestanden_bijgevoegd, 1);
+  })();
+});
+
+// ─── [AFLETTEREN] The reconciliation, in the package and in the LEESMIJ ───────
+
+const totals = (over: Partial<import("./bank-handover").HandoverTotals> = {}) => ({
+  lines: 40, matched: 34, unmatched: 6, matchedAmount: 4210, unmatchedAmount: 380, withDifference: 2, ...over,
+});
+
+test("[AFLETTEREN] the LEESMIJ leads with what is already done and names what is not", () => {
+  // The only line in that file about the accountant's HOURS rather than about our filing. Stated
+  // with a number and with the open lines in the same breath — a reconciliation that shows only
+  // its successes tells a professional nothing, because he cannot tell whether he is seeing all
+  // of them.
+  const txt = leesmij({ handover: totals() });
+  assert.match(txt, /Van de 40 bankregels/);
+  assert.match(txt, /zijn er 34/);
+  assert.match(txt, /6 regels staan nog open/);
+  assert.match(txt, /bankafletering\.csv/);
+  assert.match(txt, /Bij 2 gekoppelde regels wijkt het bedrag af/);
+  assert.match(txt, /deelbetaling/, "…and that a difference is not automatically an error");
+});
+
+test("[AFLETTEREN] with nothing left open it says so, and singulars read like Dutch", () => {
+  const done = leesmij({ handover: totals({ matched: 40, unmatched: 0, withDifference: 0 }) });
+  assert.match(done, /geen enkele regel meer open/);
+  assert.doesNotMatch(done, /wijkt het bedrag af/);
+
+  const one = leesmij({ handover: totals({ lines: 1, matched: 1, unmatched: 0, withDifference: 1 }) });
+  assert.match(one, /is er 1 al aan een factuur gekoppeld/);
+  assert.match(one, /Bij 1 gekoppelde regel wijkt/);
+});
+
+test("[AFLETTEREN] a package with no reconciliation makes no claim about one", () => {
+  // No bank lines at all, or a read that failed. Either way the sentence must be absent rather
+  // than present with zeroes in it — "0 van 0 gekoppeld" reads as a finished job.
+  const txt = leesmij({ handover: null });
+  assert.doesNotMatch(txt, /bankregels in dit kwartaal/);
+});
+
+test("[AFLETTEREN] bankafletering.csv is in the ZIP, and overzicht.json carries its totals", () => {
+  return (async () => {
+    const inv = incomingInvoice({ id: "in-10" });
+    const { zipBytes } = await assembleClosingPackageZip({
+      ...emptyAssemble,
+      incoming: [inv],
+      pdfByInvoice: new Map([[inv.id, { path: "u/incoming/q.pdf", name: "q.pdf", bytes: bytes("%PDF") }]]),
+      bankHandover: { csv: "Status;Datum\r\nNog te koppelen;2026-02-02", totals: totals() },
+    });
+    const zip = await JSZip.loadAsync(zipBytes);
+    const csv = await zip.file("bankafletering.csv")!.async("string");
+    assert.match(csv, /Nog te koppelen/);
+    const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+    assert.equal(overzicht.afletteren.bankregels, 40);
+    assert.equal(overzicht.afletteren.nog_te_koppelen, 6);
+    assert.equal(overzicht.afletteren.bedrag_nog_te_koppelen, 380);
+  })();
+});
+
+test("[AFLETTEREN] no reconciliation → no file and a null in the JSON, never a zero", () => {
+  return (async () => {
+    const { zipBytes } = await assembleClosingPackageZip({ ...emptyAssemble });
+    const zip = await JSZip.loadAsync(zipBytes);
+    assert.equal(zip.file("bankafletering.csv"), null);
+    const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+    assert.equal(overzicht.afletteren, null, "a zero here reads as 'nothing needed matching'");
   })();
 });

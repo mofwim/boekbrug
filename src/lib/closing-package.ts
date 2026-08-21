@@ -53,6 +53,14 @@ import {
   type UblLineRow,
 } from "./ubl-inputs";
 import { CLIENT_EXTRA_LINE_COLUMNS } from "./client-extra-lines";
+// [AFLETTEREN] The finished half of the accountant's own job — see the header of that module.
+import {
+  buildBankHandoverCsv,
+  bankHandoverTotals,
+  type HandoverInvoice,
+  type HandoverTx,
+  type HandoverTotals,
+} from "./bank-handover";
 import {
   quarterStartDate,
   quarterEndDate,
@@ -598,6 +606,16 @@ interface AssembleInput {
    *  verlegde BTW and its matching deduction stay out of the concept on purpose. It becomes its
    *  own file so the accountant has the invoices in front of them instead of hunting for them. */
   euPurchases?: ForeignPurchaseResult | null;
+  /**
+   * [AFLETTEREN] The bank statement with each line's invoice beside it, as the accountant's CSV,
+   * plus its totals. The one part of this package that hands over WORK rather than documents.
+   *
+   * `null` when there are no bank lines at all in the quarter — a package with nothing to
+   * reconcile writes no reconciliation. A FAILED read is not null: it is a csv that says the
+   * lines could not be read, because an absent file and an empty table both read as "everything
+   * is accounted for".
+   */
+  bankHandover?: { csv: string; totals: HandoverTotals | null } | null;
   /** [KASBOEK] The cash book as the accountant's running-balance .xlsx (Kiwi layout): the
    *  till's daily cash takings + cash-book movements, with Beginsaldo/Uitgaven/Ontvangsten/
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
@@ -640,6 +658,8 @@ export function buildLeesmij(args: {
   incomingCount: number;
   eInvoiceCount: number;
   bankStatementIncluded: boolean;
+  /** [AFLETTEREN] What of the reconciliation is already done. null = not reconciled / unreadable. */
+  handover?: HandoverTotals | null;
   warnings: ClosingPackageWarning[];
 }): string {
   const { quarterLabel, clientName, outgoingCount, incomingCount, eInvoiceCount } = args;
@@ -650,6 +670,32 @@ export function buildLeesmij(args: {
   L.push("");
   L.push(`${outgoingCount} verkoopfacturen, ${incomingCount} inkoopfacturen en bonnen.`);
   L.push("");
+  // [AFLETTEREN] The first thing he reads, because it is the only line in this file that is about
+  // his hours rather than about our filing. Stated as a fact with a number, never as a claim: the
+  // open lines are named in the same breath, and they are what he still has to do.
+  const h = args.handover;
+  if (h) {
+    L.push(
+      `Van de ${h.lines} bankregels in dit kwartaal ${h.matched === 1 ? "is er 1" : `zijn er ${h.matched}`} ` +
+        "al aan een factuur gekoppeld.",
+    );
+    if (h.unmatched > 0) {
+      L.push(
+        `${h.unmatched === 1 ? "Eén regel staat" : `${h.unmatched} regels staan`} nog open; die ` +
+          "staan bovenaan in bankafletering.csv.",
+      );
+    } else {
+      L.push("Er staat geen enkele regel meer open.");
+    }
+    if (h.withDifference > 0) {
+      L.push(
+        `Bij ${h.withDifference} gekoppelde ${h.withDifference === 1 ? "regel" : "regels"} wijkt het ` +
+          "bedrag af van de factuur. Dat kan een deelbetaling zijn — het staat er met het verschil bij.",
+      );
+    }
+    L.push("");
+  }
+
   L.push("WAT ER IN JE PAKKET GAAT");
   L.push("");
   L.push("  facturen-en-bonnen/   de originele documenten, per richting en per betaalstatus");
@@ -677,6 +723,7 @@ export function buildLeesmij(args: {
 
   L.push("WAT ER VOOR JOU IS OM TE LEZEN");
   L.push("");
+  L.push("  bankafletering.csv         welke bankregel bij welke factuur hoort, en wat er nog open staat");
   L.push("  overzicht.csv              alle facturen van het kwartaal op een rij");
   L.push("  overzicht.json             dezelfde gegevens machineleesbaar, met de ruwe BTW-cijfers");
   L.push("  concept-btw-aangifte.csv   een CONCEPT, alleen als er omzet is. Niet ingediend.");
@@ -717,7 +764,7 @@ export function buildLeesmij(args: {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx, bankHandover } = input;
   // [SLUIS] Absent map = no e-facturen to add. Never a silent skip of a map that WAS handed over.
   const xmlByInvoice = input.xmlByInvoice ?? new Map<string, PackageFile>();
   const warnings = [...input.warnings];
@@ -856,6 +903,16 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     });
   }
 
+  // ── bankafletering.csv ──
+  // [AFLETTEREN] Next to the statement, because it is about the statement. This is the file that
+  // hands over WORK: which bank line pays which invoice, already decided, with the lines that are
+  // still open standing above the ones that are done. Everything else in this package the
+  // accountant could have gathered himself.
+  if (bankHandover) {
+    zip.file("bankafletering.csv", "\ufeff" + bankHandover.csv);
+    filesIncluded++;
+  }
+
   // ── kilometers/ (optional — not a BoekBrug feature; passthrough if present) ──
   // No "missing" warning: BoekBrug doesn't track kilometer registration and it
   // only applies to owners who drive a business car, so an unconditional warning
@@ -979,6 +1036,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         incomingCount: incoming.length,
         eInvoiceCount: eInvoiceXmlCount,
         bankStatementIncluded: bankFiles.length > 0,
+        handover: bankHandover?.totals ?? null,
         warnings,
       }),
   );
@@ -1002,6 +1060,18 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         // staat onder dezelfde naam naast de PDF zodat een inleesdienst het als één document ziet.
         e_facturen_bijgevoegd: eInvoiceXmlCount,
         bankafschrift_bijgevoegd: summary.bankStatementIncluded,
+        // [AFLETTEREN] Wat er van het afletteren al gedaan is. null = er is niet afgeletterd of
+        // de bankregels konden niet worden gelezen — nooit een geruststellende nul.
+        afletteren: bankHandover?.totals
+          ? {
+              bankregels: bankHandover.totals.lines,
+              gekoppeld: bankHandover.totals.matched,
+              nog_te_koppelen: bankHandover.totals.unmatched,
+              bedrag_gekoppeld: bankHandover.totals.matchedAmount,
+              bedrag_nog_te_koppelen: bankHandover.totals.unmatchedAmount,
+              bedrag_wijkt_af: bankHandover.totals.withDifference,
+            }
+          : null,
         // RAW numbers only — accountant computes the aangifte.
         btw_overzicht: {
           omzet_per_tarief: salesSummary.btwBreakdown,
@@ -2192,10 +2262,13 @@ export async function buildClosingPackageZip(args: {
   // [PAGINATION] Same for bank lines — a quarter of a busy account can exceed 1000 rows.
   const bankAllRows = await fetchAllRows<{
     amount: number | null; category: string | null; invoice_id: string | null; date: string | null; description: string | null;
+    counterpart_name?: string | null; reference?: string | null; status?: string | null;
   }>((from, to) =>
     supabase
       .from("bank_transactions")
-      .select("amount, category, invoice_id, date, description, counterpart_name")
+      // [AFLETTEREN] reference and status ride along: the same rows already feed the concept
+      // aangifte, and a second read of the same table for two columns is a query nobody needs.
+      .select("amount, category, invoice_id, date, description, counterpart_name, reference, status")
       .eq("user_id", ownerId)
       .gte("date", start)
       .lte("date", end)
@@ -2545,6 +2618,34 @@ export async function buildClosingPackageZip(args: {
     });
   }
 
+  // ── [AFLETTEREN] The reconciliation the accountant would otherwise do by hand ──
+  //
+  // Built from the SAME bank rows the concept aangifte is built from, so the two can never
+  // disagree about which lines exist. `bankReadFailed` is passed straight through: a package
+  // whose bank read failed gets a file that says so, and never an empty table that reads as
+  // "every line is accounted for".
+  const bankHandover: { csv: string; totals: HandoverTotals | null } | null = (() => {
+    const rows = (bankAllRows ?? []) as HandoverTx[];
+    if (!bankReadFailed && rows.length === 0) return null; // nothing to reconcile, so no file
+    const invoiceById = new Map<string, HandoverInvoice>(
+      all.map((inv) => [
+        inv.id,
+        {
+          invoice_number: inv.invoice_number,
+          client_name: inv.client_name,
+          total_inc_btw: inv.total_inc_btw,
+          direction: inv.direction,
+        },
+      ]),
+    );
+    return {
+      csv: buildBankHandoverCsv({ quarterLabel: `Q${quarter} ${year}`, transactions: rows, invoiceById, read: !bankReadFailed }),
+      // Null on a failed read: the counts would all be zero, and a zero here is indistinguishable
+      // from a quarter in which nothing needed matching.
+      totals: bankReadFailed ? null : bankHandoverTotals(rows, invoiceById),
+    };
+  })();
+
   const kasboekXlsx: Uint8Array | null =
     !kasboekReadFailed && (kb.months.length > 0 || kb.openingBalance !== 0)
       ? matrixToXlsxBytes(kasboekToMatrix(kb, kasRemoved), `Kasboek Q${quarter} ${year}`)
@@ -2575,6 +2676,7 @@ export async function buildClosingPackageZip(args: {
     icp,
     euPurchases,
     kasboekXlsx,
+    bankHandover,
     warnings,
   });
 }
