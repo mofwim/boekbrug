@@ -10817,6 +10817,10 @@ export const MESSAGES = {
   'log.cash.entry_removed': { nl: 'Kasregel verwijderd', en: 'Cash entry removed', ar: 'حُذف قيد نقدي' },
   'log.cash.opening_balance_set': { nl: 'Beginsaldo van de kas ingesteld', en: 'Cash opening balance set', ar: 'ضُبط الرصيد الافتتاحي للصندوق' },
   'log.turnover.auto_imported': { nl: 'Dagomzet ingelezen', en: 'Daily turnover imported', ar: 'استُورد إيراد يومي' },
+  // [KASBOEK-LEZEN] "Gelezen", niet "ingelezen": er is niets geboekt, en het logboek mag dat niet
+  // suggereren. Een regel die als import leest, wordt later gelezen als bewijs dat de bedragen in
+  // de administratie staan — precies wat hier NIET is gebeurd.
+  'log.kasboek.imported_read_only': { nl: 'Kasboek gelezen (niets geboekt)', en: 'Cash book read (nothing booked)', ar: 'قُرئ دفتر النقد (لم يُقيَّد شيء)' },
   'log.turnover.day_removed': { nl: 'Dagomzet van een dag verwijderd', en: 'A day of turnover removed', ar: 'حُذف إيراد يوم' },
   'log.article.seeded_from_vak': { nl: 'Prijslijst gevuld vanuit een vak-sjabloon', en: 'Price list filled from a trade template', ar: 'مُلئت قائمة الأسعار من قالب مهنة' },
   'log.turnover.day_entered': { nl: 'Dagomzet zelf ingevuld', en: 'Daily turnover entered by hand', ar: 'أُدخل إيراد اليوم يدوياً' },

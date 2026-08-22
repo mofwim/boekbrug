@@ -1807,7 +1807,9 @@ async function handleSpreadsheet(
 
   // Store the raw file (best-effort) so the accountant has the source and the owner can open it.
   const documentId = await storeRawIncoming(
-    buffer, file, userId, supabase, plan.kind === "turnover" ? "kassa_zrapport" : "grootboek_export", source,
+    buffer, file, userId, supabase,
+    plan.kind === "turnover" ? "kassa_zrapport" : plan.kind === "kasboek" ? "kasboek" : "grootboek_export",
+    source,
   )
 
   // ── TURNOVER: authoritative omzet + BTW → daily_turnover ──────────────────────────────────
@@ -1849,6 +1851,50 @@ async function handleSpreadsheet(
       ok: true, destination: "turnover", document_id: documentId,
       days: booked.days, span: booked.span, total_incl: booked.total_incl,
       message: `Kassa-omzet geboekt ✓ — ${booked.days} dagen (${booked.span}). Controleer in Dagomzet.`,
+    })
+  }
+
+  // ── KASBOEK: gelezen en geteld, NOOIT geboekt ────────────────────────────────────────────
+  //
+  // Een echte klant leverde zijn kwartaalkasboek aan en de app bewaarde het als een dichtgeplakt
+  // bestand. Gemeten op datzelfde kwartaal: de ontvangsten klopten tot op de cent met wat de app
+  // had, en van de € 22.377,02 aan contante UITGAVEN kende de app er € 1.402,87 — de lade stond
+  // ruim € 19.000 te hoog.
+  //
+  // En toch boekt dit niets, om precies één reden: die € 1.402,87 zit er al in, geboekt via de
+  // facturen die ermee betaald zijn, en de boekhouder schrijft "hano 006220 en 006305 : 1.591,83
+  // ,,  famzfood : 162,52" op één regel van € 1.754,35. Automatisch overnemen boekt dubbel in de
+  // kas — waar een dubbele uitgave het saldo VERLAAGT en niemand het merkt tot de lade niet meer
+  // klopt. Welke regel welke bestaande boeking is, kan alleen de eigenaar zeggen.
+  //
+  // Dus: het bestand wordt bewaard, gelezen, en de uitkomst gaat terug naar het scherm. Beslissen
+  // is mensenwerk, in Kas.
+  if (plan.kind === "kasboek" && plan.kasboek) {
+    const k = plan.kasboek
+    const span = k.rows.length ? `${k.rows[0].date} t/m ${k.rows[k.rows.length - 1].date}` : ""
+    const eur = (n: number) => `€ ${n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    await logAuditAction({
+      userId, action: "kasboek.imported_read_only", entityType: "document", entityId: documentId ?? userId,
+      newValue: {
+        days: k.rows.length, span, opening: k.openingBalance, closing: k.closingBalance,
+        received: k.totalReceived, spent: k.totalSpent, warnings: k.warnings.length, file_name: file.name,
+      },
+      ipAddress: getClientIP(req),
+    }).catch(() => {})
+    return NextResponse.json({
+      ok: true, destination: "document", document_id: documentId, sheet_kind: "kasboek_review",
+      days: k.rows.length, span,
+      opening: k.openingBalance, closing: k.closingBalance,
+      received: k.totalReceived, spent: k.totalSpent,
+      warnings: k.warnings.map((w) => w.message),
+      message:
+        `Kasboek gelezen ✓ — ${k.rows.length} dagen (${span}). Begint op ${eur(k.openingBalance ?? 0)}, ` +
+        `eindigt op ${eur(k.closingBalance ?? 0)}; ${eur(k.totalReceived)} ontvangen, ${eur(k.totalSpent)} uitgegeven.` +
+        (k.warnings.length
+          ? ` Let op: ${k.warnings.length} regel(s) sluiten niet aan — ${k.warnings[0].message}`
+          : " Het blad sluit op zichzelf aan.") +
+        " Er is niets geboekt: een deel van deze uitgaven staat mogelijk al in je kas via de factuur" +
+        " waarmee je ze betaalde. Vergelijk het in Kas.",
     })
   }
 

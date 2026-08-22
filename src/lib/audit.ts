@@ -145,6 +145,10 @@ export type AuditAction =
   | 'cash.entry_removed'               // ← [KAS-SPOOR] a cash movement deleted; oldValue is the only record that it existed
   | 'cash.opening_balance_set'         // ← [KAS-SPOOR] the drawer's starting float changed; oldValue carries what it was
   | 'turnover.auto_imported'           // ← [SHEET-INTAKE] app booked a clean kassa Z-report into daily_turnover from the upload page
+  // [KASBOEK-LEZEN] Een kasboek van de boekhouder is GELEZEN en geteld — en met opzet niet geboekt
+  // (zie het blok in /api/intake). De naam zegt dat: 'read_only', want een spoor dat een import
+  // suggereert waar niets is geboekt, is een spoor dat later verkeerd wordt gelezen.
+  | 'kasboek.imported_read_only'
   // [DAGOMZET-AUDIT] Removing a booked day is a REVERSAL out of the BTW-authoritative table, not
   // an import. It shared 'turnover.auto_imported' with the write that creates the day, so the
   // trail could not answer "which turnover days were removed" — the two were distinguishable only

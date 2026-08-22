@@ -19,6 +19,7 @@
 //     it is always safe to store — it can never move a money figure by itself.
 
 import { detectSheetKind, type SheetKind } from "./detect-file";
+import { parseKasboekSheet, type KasboekImportResult } from "./kasboek-import";
 import { normalizeTurnoverSheet, type Cell, type ImportWarning } from "./turnover-import";
 import type { DailyTurnover } from "./turnover";
 import { parseLedgerSheet, ledgerDailyTotals, type LedgerKind } from "./ledger-import";
@@ -38,9 +39,11 @@ export interface LedgerPlan {
 }
 
 export interface SpreadsheetPlan {
-  kind: SheetKind; // turnover | ledger | unknown
+  kind: SheetKind; // turnover | ledger | kasboek | unknown
   turnover?: TurnoverPlan;
   ledger?: LedgerPlan;
+  /** [KASBOEK-LEZEN] Gelezen kasboek. Nooit een boeking — zie het blok in planSpreadsheetIngest. */
+  kasboek?: KasboekImportResult;
 }
 
 /**
@@ -57,6 +60,17 @@ export function planSpreadsheetIngest(matrix: Cell[][]): SpreadsheetPlan {
       kind,
       turnover: { rows, warnings, commitSafe: rows.length > 0 && warnings.length === 0 },
     };
+  }
+
+  // [KASBOEK-LEZEN] Gelezen, geteld, en NIET geboekt. De reden staat voluit in kasboek-import.ts:
+  // een deel van deze uitgaven staat al in de app, geboekt via de factuur die ermee is betaald, en
+  // de boekhouder zet drie facturen op één regel van € 1.754,35. Klakkeloos overnemen boekt dubbel
+  // in het kasboek — waar een dubbele uitgave het saldo verlaagt en niemand het merkt tot de lade
+  // niet meer klopt. Welke regel welke bestaande boeking IS, kan alleen de eigenaar zeggen.
+  if (kind === "kasboek") {
+    const kasboek = parseKasboekSheet(matrix);
+    if (!kasboek || kasboek.rows.length === 0) return { kind: "unknown" };
+    return { kind, kasboek };
   }
 
   if (kind === "ledger") {
