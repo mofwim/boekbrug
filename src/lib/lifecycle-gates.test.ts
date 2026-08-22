@@ -13951,3 +13951,35 @@ test("[BESTANDEN-WIJS] wat /api/intake stuurt om naartoe te linken, wordt ook ec
   assert.match(lib, /params\.set\("focus", id\)/, "focus staat er altijd op");
   assert.match(lib, /URLSearchParams/, "en de waarden worden gecodeerd, niet geplakt");
 });
+
+test("[CREDIT-AL-VERWERKT] de creditnota-melding noemt wat er AL waar is, niet alleen wat nog komt", () => {
+  // GEMELD als "waarom is er geen knop 'verwerkt' bij een creditnota?". Het antwoord is dat er
+  // niets te verwerken valt — en dat de melding dat niet zei.
+  //
+  // De boeken kloppen al: openAmountSigned() draait het teken om bij total_inc_btw < 0, dus een
+  // creditnota gaat vanzelf van "nog te betalen" af. Gemeten: 820,29 + (−51,80) = 768,49.
+  // Deze gate houdt die twee bij elkaar — de rekenregel en de zin die hem uitlegt. Verandert de
+  // regel, dan liegt de zin; verdwijnt de zin, dan zoekt de eigenaar weer naar een knop.
+  const partial = code("src/lib/partial-payment.ts");
+  assert.match(partial, /return \(invoice\.total_inc_btw \?\? 0\) < 0 \? -open : open/,
+    "een creditnota telt NEGATIEF mee in het openstaande saldo");
+
+  const zin = CATALOGUE["ink.creditKomtToe"];
+  assert.ok(zin, "de melding bestaat");
+  // Elke taal noemt zowel dat er niets te doen is als dat het al verwerkt is. Eén taal die alleen
+  // de toekomst noemt, laat precies de lezer van díé taal met de oorspronkelijke vraag zitten.
+  assert.match(zin.nl, /niets te bevestigen/, "nl: er valt niets te bevestigen");
+  assert.match(zin.nl, /al met een minbedrag/, "nl: en het staat er al met een minbedrag in");
+  assert.match(zin.en, /nothing to confirm/, "en");
+  assert.match(zin.en, /already stands as a negative amount/, "en");
+  assert.match(zin.ar, /لا شيء لتأكيده/, "ar");
+  assert.match(zin.ar, /مبلغ سالب/, "ar");
+
+  // En de rij is WEL weg te krijgen als de eigenaar dat wil — de prullenbak archiveert elke rij,
+  // zonder uitzondering voor een creditnota, en zet hem terug onder Inkomend › Genegeerd. Een
+  // melding die zegt "je hoeft niets te doen" naast een rij die niet weg KAN, zou de vraag alleen
+  // verplaatsen.
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const wisknop = manage.slice(manage.indexOf("handleRemoveRequest(inv)") - 400, manage.indexOf("handleRemoveRequest(inv)") + 200);
+  assert.doesNotMatch(wisknop, /creditnota/, "de verwijderknop sluit een creditnota niet uit");
+});
