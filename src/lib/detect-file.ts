@@ -51,7 +51,7 @@ export function sniffReadableMime(buffer: Uint8Array | Buffer): string | null {
   return null;
 }
 
-export type SheetKind = "turnover" | "ledger" | "unknown";
+export type SheetKind = "turnover" | "ledger" | "kasboek" | "unknown";
 
 const norm = (v: Cell): string => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -68,6 +68,12 @@ export function detectSheetKind(matrix: Cell[][]): SheetKind {
   const hasDatum = anyRow((cs) => cs.some((c) => /^datum$/.test(c) || /^datum:?$/.test(c)));
   const hasOmzetIncl = anyRow((cs) => cs.some((c) => /omzet incl/.test(c)));
   if (hasDatum && hasOmzetIncl) return "turnover";
+
+  // [KASBOEK-LEZEN] Vóór de grootboek-vraag, want een kasboek draagt óók uitgaven en ontvangsten.
+  // Wat het ONDERSCHEIDT is het lopende saldo: begin- én eindsaldo op elke regel. Een
+  // grootboekoverzicht heeft die niet, en zou hier dus nooit per ongeluk in vallen.
+  const hasSaldi = anyRow((cs) => cs.some((c) => /^beginsaldo$/.test(c)) && cs.some((c) => /^eindsaldo$/.test(c)));
+  if (hasSaldi) return "kasboek";
 
   const hasRekening = anyRow((cs) => cs.some((c) => /^rekening\s*nr/.test(c)));
   const hasLedgerCols = anyRow((cs) => cs.some((c) => /ontvangen/.test(c)) && cs.some((c) => /uitgaven/.test(c)));

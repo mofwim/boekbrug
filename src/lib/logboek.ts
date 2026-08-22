@@ -118,6 +118,10 @@ const KIND_BY_DOMAIN: Readonly<Record<string, LogboekKind | undefined>> = {
   // filtering his logbook on money must see the sale that made the day.
   till: "money",
   ledger: "money",
+  // [KASBOEK-LEZEN] Onder Geld, ook al is er niets geboekt. De filter beantwoordt "waar is aan mijn
+  // geld gezeten" — en een kasboek dat is ingelezen is precies het moment waarop iemand de lade
+  // langs de administratie legt. Onder 'systeem' zou hij verdwijnen tussen de aanmeldingen.
+  kasboek: "money",
   supplier: "money",
   snelstart: "money",
   // Paper: what is filed, not what is owed. 'article' is the invoice-line catalogue — templates,
@@ -179,7 +183,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.article.seeded_from_vak",
   "log.turnover.day_removed", "log.turnover.day_entered",
   "log.till.ticket_rung", "log.till.ticket_voided",
-  "log.ledger.auto_imported", "log.btw.filed",
+  "log.ledger.auto_imported", "log.kasboek.imported_read_only", "log.btw.filed",
   "log.btw.filed_despite_warnings", "log.btw.filing_unlocked", "log.btw.correction_carried",
   // Level 2 — Accountant relationships
   "log.accountant.client_invited", "log.accountant.client_linked", "log.accountant.client_unlinked",
