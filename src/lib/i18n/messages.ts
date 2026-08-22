@@ -4832,10 +4832,19 @@ export const MESSAGES = {
     ar: 'إن اخترت «نعم» فستُحفظ المبالغ كمبلغ سالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدلاً من أن تُضاف. انظر إلى الفاتورة — إن وُجد "Creditnota" أو "Creditfactuur" في الأعلى، أو مبلغ سالب في الأسفل، فهي إشعار دائن.',
     en: 'If you choose “yes”, the amounts are stored as a minus amount: it comes off your outstanding balance and its btw is deducted instead of added. Look at the invoice — if it says “Creditnota” or “Creditfactuur” at the top, or a minus amount at the bottom, it is one.',
   },
+  // [CREDIT-AL-VERWERKT] De eerste zin is nieuw, en hij is de reden dat deze melding een vraag
+  // opriep: hij vertelde alleen wat er nog GAAT gebeuren (terugstorting, of verrekening met een
+  // volgende factuur) en niet wat NU al waar is — de creditnota staat met een minbedrag in de
+  // boeken en is dus al van "nog te betalen" af. Gemeten: € 820,29 en € -51,80 samen geven
+  // € 768,49, want openAmountSigned() draait het teken om bij total_inc_btw < 0.
+  //
+  // Zonder die zin las de rij als iets dat nog een handeling nodig had, en de eigenaar zocht naar
+  // een knop "verwerkt" die er niet is — en er ook niet hoort te zijn, want er valt niets te
+  // verwerken. De zin die de zusterkey (ink.creditGeenBetaling) wél had, staat nu hier ook.
   'ink.creditKomtToe': {
-    nl: 'Dit is geld dat jóu toekomt — je hoeft niets te betalen. Krijg je het teruggestort, dan herkennen we dat in je bankafschrift. Verrekent je leverancier het met een volgende factuur, dan gaat het daar vanzelf vanaf.',
-    ar: 'هذا مال مستحق لك أنت — لا تحتاج لدفع شيء. إن أُعيد إلى حسابك فسنتعرّف عليه في كشفك البنكي. وإن قاصّه المورّد مع فاتورة قادمة فسيُخصم منها تلقائياً.',
-    en: 'This is money owed to YOU — you do not have to pay anything. If it is refunded, we recognise that in your bank statement. If your supplier settles it against a next invoice, it comes off there by itself.',
+    nl: 'Dit is geld dat jóu toekomt — je hoeft niets te betalen, en er is niets te bevestigen: hij staat al met een minbedrag in je boeken en is dus al van "nog te betalen" af. Krijg je het teruggestort, dan herkennen we dat in je bankafschrift. Verrekent je leverancier het met een volgende factuur, dan gaat het daar vanzelf vanaf.',
+    ar: 'هذا مال مستحق لك أنت — لا تحتاج لدفع شيء، ولا شيء لتأكيده: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، أي أنه خُصم بالفعل من «ما زال مستحقاً». إن أُعيد إلى حسابك فسنتعرّف عليه في كشفك البنكي. وإن قاصّه المورّد مع فاتورة قادمة فسيُخصم منها تلقائياً.',
+    en: 'This is money owed to YOU — you do not have to pay anything, and there is nothing to confirm: it already stands as a negative amount in your books, so it has already come off "still to pay". If it is refunded, we recognise that in your bank statement. If your supplier settles it against a next invoice, it comes off there by itself.',
   },
   'ink.creditnotaUitleg': {
     nl: 'Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt',
