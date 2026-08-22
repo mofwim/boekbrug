@@ -862,6 +862,13 @@ export const MESSAGES = {
   'up.paginasSamen': { nl: 'Hoort een papieren factuur bij elkaar? Voeg de pagina’s hier samen tot', ar: 'أوراق فاتورة واحدة؟ اجمع الصفحات هنا في', en: 'Pages of one paper invoice? Merge them here into' },
   'up.eenFactuur': { nl: 'Eén factuur, meerdere pagina’s', ar: 'فاتورة واحدة، عدة صفحات', en: 'One invoice, several pages' },
   'up.bekijkBestand': { nl: 'Bekijk bestand', ar: 'اعرض الملف', en: 'View the file' },
+  // [BESTANDEN-WIJS] Niet "bekijk" maar "waar staat het" — dat is de andere vraag na een upload,
+  // en de enige die het scherm tot nu toe met dode tekst beantwoordde.
+  'up.wijsInBestanden': {
+    nl: 'Toon in Bestanden',
+    ar: 'أظهره في الملفات',
+    en: 'Show in Files',
+  },
   'up.bekijkBestanden': { nl: 'Bekijk in Bestanden', ar: 'اعرض في الملفات', en: 'View in Files' },
   'up.naarVerifieren': { nl: 'Naar Te verifiëren', ar: 'إلى «بانتظار التدقيق»', en: 'To the verify queue' },
   'up.mogelijkheden': { nl: 'Bekijk de mogelijkheden', ar: 'اطّلع على الإمكانات', en: 'See what it can do' },
