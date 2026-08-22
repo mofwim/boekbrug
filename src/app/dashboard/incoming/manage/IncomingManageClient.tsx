@@ -2589,7 +2589,9 @@ export default function IncomingManageClient({
             </div>
           ) : <EmptyState />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          // [RIJ-RAND] 12 in plaats van 8. De rand op de kaart trekt de grens; deze paar pixels
+          // geven hem lucht, zodat twee kaarten niet als één blok met een streepje lezen.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {displayed.map(inv => {
               const isPaid    = inv.status === 'paid'
               const expanded  = expandedId === inv.id
@@ -2700,6 +2702,19 @@ export default function IncomingManageClient({
                     minWidth: 0,
                     borderRadius: R.lg,
                     overflow: 'hidden',
+                    // [RIJ-RAND] Een echte rand, niet alleen een schaduw.
+                    //
+                    // De kaart is wit op #F8F9FA met EL1 eronder — 0 1px 3px rgba(0,0,0,0.08).
+                    // Dat is genoeg diepte voor één kaart en te weinig grens voor er twintig
+                    // onder elkaar: op deze lijst liepen de rijen visueel in elkaar over, en bij
+                    // het scrollen kon je niet zien waar de ene factuur ophield en de volgende
+                    // begon. Gemeld, en op een scherm vol bedragen is dat geen smaakkwestie —
+                    // je leest het bedrag van de ene rij bij de leverancier van de andere.
+                    //
+                    // outlineVariant (#E0E0E0) is de scheidingskleur die deze app al gebruikt.
+                    // Tegen het WIT van de kaart, niet tegen de achtergrond, is hij het randje
+                    // dat de rij begrenst.
+                    border: `1px solid ${M3.outlineVariant}`,
                     boxShadow: highlightId === inv.id ? `0 0 0 2px ${M3.primary}, ${EL1}` : EL1,
                     transition: 'box-shadow 0.4s ease',
                   }}
