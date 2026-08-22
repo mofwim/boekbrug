@@ -263,3 +263,89 @@ test("[GELD-INVARIANT] half a check is never reported as a whole one", () => {
     assert.doesNotMatch(failed, /Geen enkel verschil gevonden/, "a failed check must never render the reassuring sentence");
   })();
 });
+
+// ─── [KASBOEK-NAAST-KAS] Het kasboek van de boekhouder, naast de kas ─────────────────
+
+// De lijst waarop een ondernemer beslist welk bedrag hij in zijn kas bijboekt. Twee dingen mogen
+// hier nooit op het scherm komen: het HELE bedrag van een regel waarvan de app een deel al kent
+// (dat boekt dubbel en verlaagt het saldo), en een knop bij een uitgave die de app wél kent en het
+// kasboek niet (die hangt meestal aan een factuur met een bon eronder).
+
+const kasDag = (over: Record<string, unknown> = {}) => ({
+  date: "2026-04-08", fileSpent: 1754.35, appSpent: 698.97, delta: 1055.38,
+  verdict: "ontbreekt" as const,
+  description: "hano 006220 en 006305 : 1.591,83 ,,  famzfood : 162,52",
+  fileReceived: 341.9, appReceived: 341.9, ...over,
+});
+
+const vergelijking = (over: Record<string, unknown> = {}) => ({
+  period: { from: "2026-04-01", to: "2026-06-30" },
+  openingBalance: 1018.32, closingBalance: 3850.35,
+  headline: "84 van de 91 dagen kloppen, op 7 dagen mist je kas samen € 20.974,15 aan uitgaven.",
+  summary: { days: 91, missingDays: 7, missingTotal: 20974.15, extraDays: 0, extraTotal: 0, equalDays: 84 },
+  days: [kasDag()], warnings: [], ...over,
+});
+
+test("[KASBOEK-NAAST-KAS] alleen het verschil staat op de knop, nooit het hele bedrag", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking(), keuze: { "2026-04-08": "kosten" },
+        onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.match(html, /Boek € 1\.055,38 als/, "het verschil, niet de 1.754,35 van de regel");
+    assert.doesNotMatch(html, /Boek € 1\.754,35/, "het hele bedrag boeken zet de 698,97 er een tweede keer in");
+    // Beide kanten staan erbij, zodat de eigenaar ziet WAAROM het 1.055,38 is.
+    assert.match(html, /kasboek € 1\.754,35/);
+    assert.match(html, /je kas € 698,97/);
+    // En de omschrijving van de boekhouder, ongewijzigd — het enige spoor van wat dit was.
+    assert.match(html, /famzfood/);
+  })();
+});
+
+test("[KASBOEK-NAAST-KAS] een uitgave die de app kent en het kasboek niet, krijgt geen knop", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({ days: [kasDag({ verdict: "app_meer", fileSpent: 0, appSpent: 250, delta: -250, description: null })] }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.doesNotMatch(html, /type="checkbox"/, "hier valt niets te boeken");
+    assert.match(html, /halen hem niet weg/, "…en zeker niets te wissen: die boeking heeft vaak een bon");
+  })();
+});
+
+test("[KASBOEK-NAAST-KAS] de kop noemt eerst wat er klopt, en het blad zijn eigen gaten", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({ warnings: ["Regel 40 (2026-05-03): begint met 1200,00 terwijl 2026-05-01 eindigde op 1450,00."] }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.match(html, /84 van de 91 dagen kloppen/);
+    // De waarschuwing van het blad staat BOVEN de lijst: hij zegt iets over elke regel eronder.
+    const waarschuwingOp = html.indexOf("begint met 1200,00");
+    const lijstOp = html.indexOf("famzfood");
+    assert.ok(waarschuwingOp !== -1 && waarschuwingOp < lijstOp, "een gat in de keten hoort boven de dagen te staan");
+  })();
+});
+
+test("[KASBOEK-NAAST-KAS] niets te doen wordt ook gezegd", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({ days: [], headline: "Alle 91 dagen kloppen: je kas zegt hetzelfde als het kasboek van je boekhouder." }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.match(html, /elke dag in dit kasboek komt overeen/);
+    assert.doesNotMatch(html, /Boek \d/, "geen knop als er niets te boeken valt");
+  })();
+});

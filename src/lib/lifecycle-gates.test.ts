@@ -7790,9 +7790,17 @@ test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
 });
 
 test("[UPLOAD-PLAFOND] every browser upload of a document goes through the shared fit", () => {
-  // By SHAPE, not by a list: a new upload screen added next month fails this too. A CSV or an
-  // MT940 is exempt — compression cannot make a text file smaller, and pretending otherwise would
-  // spend an upload proving it.
+  // By SHAPE, not by a list: a new upload screen added next month fails this too.
+  //
+  // The exempt routes are the ones that take a BOOKKEEPING FILE rather than a document: a CSV, an
+  // MT940, a .xls/.xlsx export. fitForUpload re-encodes an image and downsamples a PDF's pictures;
+  // it hands everything else straight back untouched, so a fit round-trip on a spreadsheet spends
+  // an upload proving nothing — and sendWithFit's 413 retry would then squeeze a file that cannot
+  // be squeezed and send the identical bytes a second time.
+  //
+  // (Written out when /api/kasboek/vergelijk joined the list. The old sentence said "a text file",
+  // which had already stopped being true: ledger/import and turnover/import take .xlsx, and a
+  // .xlsx is a zip. The cause is the file's KIND, not its encoding.)
   const walk = (dir: string): string[] => {
     const out: string[] = [];
     for (const e of readdirSync(dir)) {
@@ -7802,7 +7810,7 @@ test("[UPLOAD-PLAFOND] every browser upload of a document goes through the share
     }
     return out;
   };
-  const EXEMPT = /\/api\/(bank\/upload|turnover\/import|ledger\/import|eft\/import)/;
+  const EXEMPT = /\/api\/(bank\/upload|turnover\/import|ledger\/import|eft\/import|kasboek\/vergelijk)/;
 
   const raw: string[] = [];
   for (const f of walk("src/app").concat(walk("src/components"))) {

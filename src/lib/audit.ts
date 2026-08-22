@@ -149,6 +149,10 @@ export type AuditAction =
   // (zie het blok in /api/intake). De naam zegt dat: 'read_only', want een spoor dat een import
   // suggereert waar niets is geboekt, is een spoor dat later verkeerd wordt gelezen.
   | 'kasboek.imported_read_only'
+  // [KASBOEK-NAAST-KAS] En de tegenhanger: de eigenaar heeft ZELF dagen aangevinkt uit dat kasboek
+  // en die als kasuitgave laten boeken. Dít is wél geld, en het spoor moet dat zeggen — anders
+  // staat er straks een uitgave in de lade waarvan niemand kan zien waar hij vandaan kwam.
+  | 'kasboek.gap_booked'
   // [DAGOMZET-AUDIT] Removing a booked day is a REVERSAL out of the BTW-authoritative table, not
   // an import. It shared 'turnover.auto_imported' with the write that creates the day, so the
   // trail could not answer "which turnover days were removed" — the two were distinguishable only
