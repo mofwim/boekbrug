@@ -13,6 +13,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+// [BESTANDEN-WIJS] De regel over wanneer er een link MAG staan, en hoe hij eruitziet — apart
+// gehouden omdat een regel die in JSX staat een regel is die niemand test.
+import { bestandenDeepLink, targetFromIntake } from '@/lib/bestanden-deeplink'
 // [SIZE-SHRINK] Alleen de beslissing, geen compressor — dit bestand blijft licht.
 import { shouldOfferShrink } from '@/lib/tools/upload-shrink'
 // [INTAKE-IMG-NORMALIZE] Convert a picked HEIC/HEIF/WebP/BMP/TIFF (or an oversized JPG/PNG)
@@ -99,6 +102,11 @@ interface Item {
   // [MULTI-INVOICE] How many different invoices this ONE file appeared to contain. Only one was
   // read, so this row is a WARNING even though the upload succeeded — the others exist nowhere.
   multiInvoice?: number
+  // [BESTANDEN-WIJS] Waar dit bestand terecht is gekomen, zodat de rij ernaartoe kan LINKEN in
+  // plaats van het pad als dode tekst af te drukken. /api/intake stuurt dit al mee — bij een
+  // opgeslagen document als `document_id`, bij een geweigerd duplicaat als `existing.id` — met in
+  // zijn eigen commentaar de reden: "structured target so the client can deep-link + focus".
+  target?: { documentId: string; folderId: string | null }
 }
 
 /** Wat /api/intake terugstuurt, voor zover deze pagina het leest. Expliciet opgeschreven omdat het
@@ -117,6 +125,11 @@ interface IntakeResponse {
   archived?: Item['archived']
   // [MULTI-INVOICE] Eén bestand met meerdere factuurnummers erin; de route noemt de nummers.
   multipleInvoices?: { numbers?: string[] }
+  // [BESTANDEN-WIJS] De twee vormen waarin de route zegt waar het bestand staat. Los gelezen door
+  // targetFromIntake, zodat de duplicaat-vorm niet opnieuw vergeten kan worden.
+  document_id?: string
+  folder_id?: string | null
+  existing?: { id?: string; folder_id?: string | null; folder_name?: string | null }
 }
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -274,12 +287,16 @@ export default function UploadClient() {
               couldNotRead: data?.could_not_read === true,
               multiInvoice: data?.multipleInvoices?.numbers?.length,
               vendor: data?.vendor ?? null, total: data?.total_inc_btw ?? null, number: data?.invoice_number ?? null,
+              target: targetFromIntake(data) ?? undefined,
             })
           } else if (res.status === 409 && data?.duplicate) {
             patch(item.id, {
               status: 'duplicate', message: data.error || t('up.alToegevoegd'), canForce: !!data.canForce,
               // [DUP-ARCHIVED] alleen gezet als de bestaande factuur écht in Genegeerd staat
               archived: data.archived ?? undefined,
+              // [BESTANDEN-WIJS] Bij een duplicaat wijst de link naar het bestand dat er AL staat —
+              // dat is het bestand waar de melding over gaat.
+              target: targetFromIntake(data) ?? undefined,
             })
           } else {
             // [UPLOAD-ERRORS] Eén vertaler voor álle overige statussen — 402 fair use, 413 te groot,
@@ -733,6 +750,23 @@ export default function UploadClient() {
                           style={{ display: 'inline-block', marginTop: 4, fontSize: 12, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}>
                           {t('up.bekijkBestand')} →
                         </a>
+                      )}
+                      {/* [BESTANDEN-WIJS] En WAAR het staat. De regel erboven zegt het pad in
+                          woorden ("Dit bestand staat al in: 2026 / Q2 / april / Facturen") en liet
+                          de eigenaar die mappen daarna met de hand aflopen. Deze link opent de map
+                          en licht het bestand op — /dashboard/bestanden doet dat al voor ?folder=
+                          en ?focus=, er wees alleen nooit iets naartoe.
+
+                          Naast de preview-link, niet in plaats daarvan: die opent het BESTAND, deze
+                          wijst zijn PLEK. Na een upload zijn dat twee verschillende vragen. */}
+                      {bestandenDeepLink(it.target) && (
+                        <>
+                          {it.preview && <span style={{ color: M3.outlineVariant, margin: '0 6px' }}>·</span>}
+                          <Link href={bestandenDeepLink(it.target) as string}
+                            style={{ display: 'inline-block', marginTop: 4, fontSize: 12, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}>
+                            {t('up.wijsInBestanden')} →
+                          </Link>
+                        </>
                       )}
                     </div>
                     {it.status === 'done' && it.couldNotRead ? (

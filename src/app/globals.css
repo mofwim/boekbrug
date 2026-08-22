@@ -496,7 +496,13 @@ input::placeholder, textarea::placeholder {
    same .inv-row shape, so the same estimate holds: /dashboard/facturen (the read caps
    at 2000 invoices — the longest list in the app) and the /dashboard/incoming queue
    (read with no cap at all, [QUEUE-COMPLETE], so a mailbox backfill lands hundreds of
-   cards at once). */
+   cards at once).
+
+   [RIJ-RAND] /dashboard/incoming/manage geeft zijn kaarten sinds kort een 1px rand, dus daar is
+   de echte hoogte 117 en niet 115. Het getal blijft staan: het geldt voor drie lijsten en het
+   ophogen zou het voor de andere twee fout maken, terwijl 2px afwijking precies het soort
+   verschil is dat de alinea hierboven "kost niets" noemt — `auto` onthoudt de echte hoogte zodra
+   de rij één keer geschilderd is. Hier genoteerd zodat de volgende lezer niet gaat zoeken. */
 .inv-card { content-visibility: auto; contain-intrinsic-size: auto 115px; }
 
 @media (max-width: 520px) {

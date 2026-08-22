@@ -13849,3 +13849,49 @@ test("[NUMMER-VOORUITBLIK] het volgende nummer wordt getoond zonder er een te ve
   assert.match(nieuw, /nextNumber \?\? t\('bewerk\.modal\.nummerBijVerzending'\)/,
     "de bevestiging valt terug op de oude zin als het nummer onbekend is");
 });
+
+test("[BESTANDEN-WIJS] wat /api/intake stuurt om naartoe te linken, wordt ook echt gelezen", () => {
+  // Beide helften bestonden maandenlang en niets verbond ze. /dashboard/bestanden leest ?folder=
+  // en ?focus= (het opent de map, scrolt naar het bestand en licht het op), en /api/intake stuurt
+  // het doel mee mét de reden in zijn eigen commentaar: "structured target so the client can
+  // deep-link + focus". Het uploadscherm las dat veld niet, en drukte het pad af als dode tekst.
+  //
+  // Dat is de klasse fouten waar dit bestand voor bestaat: een mogelijkheid die is geschreven,
+  // beargumenteerd, en daarna door niets aangeroepen. Niets wordt rood als die verbinding
+  // wegvalt — het scherm blijft werken, het antwoordt alleen de vraag niet meer.
+
+  // 1. De ONTVANGENDE kant leest de parameters nog steeds.
+  const bestanden = code("src/app/dashboard/bestanden/BestandenPage.tsx");
+  assert.match(bestanden, /searchParams\.get\("folder"\)/, "de map-parameter wordt gelezen");
+  assert.match(bestanden, /searchParams\.get\("focus"\)/, "en de focus-parameter");
+  assert.match(bestanden, /setFocusId\(focus\)/, "…en focus licht echt een bestand op");
+
+  // 2. De ZENDENDE kant stuurt het doel nog steeds, in BEIDE vormen.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /document_id: doc\.id/, "een opgeslagen document draagt zijn id");
+  assert.match(intake, /existing: \{[\s\S]{0,120}id: existingDoc\.id/, "en een geweigerd duplicaat het id van het bestand dat er AL staat");
+
+  // 3. En het uploadscherm VERBINDT ze — op allebei de takken, want de duplicaat-tak is degene
+  //    die vergeten was.
+  const upload = code("src/app/dashboard/upload/UploadClient.tsx");
+  assert.equal((upload.match(/targetFromIntake\(data\)/g) ?? []).length, 2,
+    "zowel de geslaagde als de duplicaat-tak leest het doel");
+  // Op de VOORWAARDE, niet alleen op een vermelding. Deze gate matchte eerst de losse aanroep, en
+  // bleef daardoor groen toen de conditie op `false` werd gezet: de `href` verderop noemde de
+  // functie nog. Precies de fout die dit bestand overal elders opspoort.
+  assert.match(upload, /\{bestandenDeepLink\(it\.target\) && \(/, "de rij toont de link alleen als er een plek is");
+  assert.equal((upload.match(/bestandenDeepLink\(it\.target\)/g) ?? []).length, 2,
+    "twee keer: de voorwaarde en de href — verdwijnt er één, dan is de link dood of ongeguard");
+  assert.match(upload, /t\('up\.wijsInBestanden'\)/, "met woorden uit de catalogus");
+
+  // 4. De link staat NAAST de preview, niet in de plaats ervan: die opent het BESTAND, deze wijst
+  //    zijn PLEK. Na een upload zijn dat twee verschillende vragen.
+  assert.match(upload, /t\('up\.bekijkBestand'\)/, "de preview-link is er nog");
+
+  // 5. En de regel zelf: geen document-id ⇒ geen link. Een link die op de wortel van de
+  //    bestandsboom landt ziet eruit alsof hij werkte en zegt niets.
+  const lib = code("src/lib/bestanden-deeplink.ts");
+  assert.match(lib, /if \(!id\) return null/, "zonder id geen link");
+  assert.match(lib, /params\.set\("focus", id\)/, "focus staat er altijd op");
+  assert.match(lib, /URLSearchParams/, "en de waarden worden gecodeerd, niet geplakt");
+});
