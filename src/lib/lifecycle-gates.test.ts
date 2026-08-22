@@ -7789,6 +7789,40 @@ test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
   assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
 });
 
+test("[KASBOEK-NAAST-KAS] the comparison screen reads the drawer through kasboek.ts, not its own sums", () => {
+  // Two of these three were shipped as dead code and found later, which is why the gate asserts the
+  // CALL and not the export.
+  //
+  //   · compareKasboek existed for a whole commit with no caller at all — the reader shipped the
+  //     balance comparison, and the screen built on top of it compared days only. It is the
+  //     [SLUIS]-class defect this file keeps producing: a documented rule sitting beside its data
+  //     while nothing consults it.
+  //   · the route then summed its own per-day totals inline, reading receipts from daily_turnover
+  //     alone. Right for a till shop, and for everyone else it announces that a whole quarter of
+  //     cash income is missing.
+  //
+  // Both are invisible to tsc, to eslint and to the build: dead code compiles, and a wrong sum is a
+  // sum. So the wiring is pinned here.
+  const route = code("src/app/api/kasboek/vergelijk/route.ts");
+
+  assert.match(route, /compareKasboek\(/, "the saldi comparison must be CALLED, not merely exported");
+  assert.match(route, /openingBalanceBefore\(/, "the app's opening balance comes from kasboek.ts");
+  assert.match(route, /cashDayTotals\(/, "and so do the per-day totals");
+
+  // The [KAS-DUBBELTELLING] rule lives in exactly one place. A route that builds its own Map over
+  // cash rows has, by construction, a second opinion about the same drawer.
+  assert.doesNotMatch(
+    route, /new Map<string, number>\(\)/,
+    "the route is summing cash per day itself again — that is where the double-count rule gets lost",
+  );
+
+  // And the screen must be able to SAY what the comparison found. A route returning findings that
+  // no component renders is the same defect one layer up.
+  const panel = code("src/components/kas/KasboekVergelijken.tsx");
+  assert.match(route, /findings: comparison\.findings/, "the sentences leave the route");
+  assert.match(panel, /data\.findings \?\? \[\]\)\.map\(/, "…and the panel renders them");
+});
+
 test("[UPLOAD-PLAFOND] every browser upload of a document goes through the shared fit", () => {
   // By SHAPE, not by a list: a new upload screen added next month fails this too.
   //
@@ -8973,14 +9007,28 @@ test("[KAS-SAMENHANG] every reader that combines the drawer's two sources suppre
   // the drawer is overstated by a quarter's takings — and the negative-drawer gate is then computed
   // on a number that is too high, which is the direction that lets a bad quarter be filed.
   //
-  // Three combine them, and each must carry the rule: the pure projection (both halves), and the
-  // headline balance.
+  // Each combining function is named and checked in its OWN body.
+  //
+  // This was a count — "exactly 3 occurrences" — and a count cannot tell the difference between
+  // three functions each carrying the rule and two functions carrying it twice while a third does
+  // not. Moving a call from one function to another leaves the total untouched, which is the
+  // [STRIPPER-BLIND] shape: an assertion that matches the presence of a name rather than the place
+  // it is used. It also fails for the wrong reason the moment a fourth combiner is added correctly,
+  // and a gate that goes red on a correct change teaches people to edit the number.
   const kasboek = code("src/lib/kasboek.ts");
   assert.match(kasboek, /function isTillCountedOmzet/, "the predicate must exist once, shared");
-  assert.equal(
-    (kasboek.match(/isTillCountedOmzet\(/g) ?? []).length, 3,
-    "declared once and applied in BOTH combining functions — the carry-in and the in-quarter rows",
-  );
+  const bodyOf = (name: string): string => {
+    const at = kasboek.indexOf(`export function ${name}(`);
+    assert.ok(at >= 0, `${name} must exist in kasboek.ts`);
+    const next = kasboek.indexOf("\nexport ", at + 1);
+    return kasboek.slice(at, next < 0 ? kasboek.length : next);
+  };
+  for (const fn of ["openingBalanceBefore", "buildKasboek", "cashDayTotals"]) {
+    assert.match(
+      bodyOf(fn), /isTillCountedOmzet\(/,
+      `${fn} adds daily_turnover and cash_entries together and must skip a till-covered cash 'omzet'`,
+    );
+  }
   const cash = code("src/lib/cash.ts");
   assert.match(
     cash, /coveredDays[\s\S]{0,600}?\(e\.category \?\? ""\) !== "omzet"/,

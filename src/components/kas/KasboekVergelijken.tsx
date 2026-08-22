@@ -46,6 +46,10 @@ interface Vergelijking {
   summary: { days: number; missingDays: number; missingTotal: number; extraDays: number; extraTotal: number; equalDays: number };
   days: DayRow[];
   warnings: string[];
+  /** De saldi-kant: openingsstand van het bestand naast die van de app. */
+  balance?: { appOpening: number | null; fileOpening: number | null; openingDelta: number | null };
+  /** Nederlandse zinnen over de TOTALEN — dingen die geen enkele dagregel kan zeggen. */
+  findings?: string[];
 }
 
 /** De categorieën die de eigenaar zelf mag boeken — cash.ts houdt de andere drie dicht. */
@@ -91,6 +95,18 @@ export function VergelijkingLijst({
         {eur(data.closingBalance ?? 0)}
       </p>
 
+      {(data.findings ?? []).length > 0 && (
+        // De saldi, bóven de dagen. Een dagenlijst vergelijkt wat er TUSSEN de dagen gebeurt en kan
+        // per constructie niet zien dat de reeks op de verkeerde stand begint: staat de beginstand
+        // 1.911,18 te laag, dan is de lade elke dag van het kwartaal 1.911,18 te laag terwijl elke
+        // dag afzonderlijk klopt. Daarom staat dit hier en niet onderaan.
+        <div style={{ background: "#F1F3F4", border: "1px solid #DADCE0", borderRadius: 10, padding: 10 }}>
+          {(data.findings ?? []).map((f, i) => (
+            <p key={i} style={{ fontSize: 12.5, color: "#3C4043", margin: i ? "4px 0 0" : 0 }}>{f}</p>
+          ))}
+        </div>
+      )}
+
       {data.warnings.length > 0 && (
         // Het blad klopt niet met zichzelf. Dat staat bóven de lijst, want het zegt iets over ELKE
         // regel eronder — een gat in de keten betekent dat er een dag ontbreekt in het bestand zelf.
@@ -102,8 +118,12 @@ export function VergelijkingLijst({
       )}
 
       {data.days.length === 0 ? (
+        // "Er is niets te doen" mag alleen over de DAGEN gaan. De eerste versie zei het over het
+        // hele bestand, en dat is precies de valse groene uitslag die dit paneel moet voorkomen:
+        // elke dag kan kloppen terwijl de lade op de verkeerde stand begint. De bevindingen
+        // hierboven zeggen dan wat er wél aan de hand is, dus deze zin claimt hun helft niet.
         <p style={{ fontSize: 13, color: "#188038", margin: 0 }}>
-          Er is niets te doen: elke dag in dit kasboek komt overeen met je kas.
+          Elke dag in dit kasboek komt overeen met je kas — er is hier niets te boeken.
         </p>
       ) : (
         <div style={{ display: "grid", gap: 8 }}>

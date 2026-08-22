@@ -156,8 +156,31 @@ export function openingBalanceForQuarter(args: {
   quarter: Quarter;
   startingBalance?: number;
 }): number {
-  const { turnover, entries, year, quarter, startingBalance = 0 } = args;
-  const { start } = quarterRange(year, quarter);
+  const { turnover, entries, year, quarter, startingBalance } = args;
+  return openingBalanceBefore({ turnover, entries, start: quarterRange(year, quarter).start, startingBalance });
+}
+
+/**
+ * The same drawer opening balance, for any DAY rather than a quarter boundary.
+ *
+ * openingBalanceForQuarter never needed the quarter — it converted it to `start` on the first line
+ * and used nothing else. A period read from a file is an arbitrary span (the accountant's cash book
+ * runs 1 April to 30 June, but it can just as easily run 3 April to 27 June), so the caller that
+ * compares such a file against the app needs the balance at ITS first day.
+ *
+ * Extracted rather than re-summed at the call site, and that is the whole reason this function
+ * exists as a function: the naive spelling — add every cash movement dated before the start — is
+ * the [KAS-DUBBELTELLING] bug written out in full, and the long note above records that it has
+ * already been found twice in this codebase. A second copy in an import route would be the third.
+ */
+export function openingBalanceBefore(args: {
+  turnover: KasTurnoverDay[];
+  entries: KasEntry[];
+  /** ISO 'YYYY-MM-DD'. Movements dated strictly BEFORE this day are carried in. */
+  start: string;
+  startingBalance?: number;
+}): number {
+  const { turnover, entries, start, startingBalance = 0 } = args;
   const counted = tillCountedDays(turnover);
   let bal = startingBalance;
   for (const t of turnover) {
@@ -171,6 +194,67 @@ export function openingBalanceForQuarter(args: {
     bal += (e.direction === "in" ? 1 : -1) * (Number(e.amount) || 0);
   }
   return r2(bal);
+}
+
+/** Per day: what the app holds in cash. Both directions, both sources, one rule. */
+export interface CashDayTotals {
+  /** ISO day → cash that came IN that day. */
+  received: Map<string, number>;
+  /** ISO day → cash that went OUT that day, as a magnitude. */
+  spent: Map<string, number>;
+}
+
+/**
+ * What the app holds in cash per day over a span — the side of a comparison that is NOT the file.
+ *
+ * ── Why the receipts side is not simply daily_turnover ──
+ *
+ * The first version of the cash-book comparison built this map inline and summed only
+ * daily_turnover.cash_amount. For a till shop that is right and the totals matched to the cent. For
+ * everyone else it is wrong in the loudest possible way: an owner who writes his cash income as a
+ * cash_entries row with direction 'in' — which is what the Kas page's own form produces — has no
+ * daily_turnover rows at all, so the app's receipts read as zero and the screen announces that a
+ * whole quarter of income is missing. On a money screen a false alarm that large is not a smaller
+ * version of the real finding; it is the thing that makes the owner stop reading the screen.
+ *
+ * So both sources count, minus the overlap: a cash 'in' marked 'omzet' on a day the till already
+ * counted cash for is the SAME money reaching the drawer twice by design of the data model. That is
+ * isTillCountedOmzet, the identical predicate buildKasboek and openingBalanceBefore use — the three
+ * disagreeing is the bug those two exist to prevent, and a comparison screen that disagreed with
+ * the cash book printed directly beneath it would be worse than one that never shipped.
+ *
+ * Pure: the caller does the reading, this does the arithmetic.
+ */
+export function cashDayTotals(args: {
+  turnover: KasTurnoverDay[];
+  entries: KasEntry[];
+  /** ISO 'YYYY-MM-DD', inclusive on both ends. */
+  from: string;
+  to: string;
+}): CashDayTotals {
+  const { turnover, entries, from, to } = args;
+  const counted = tillCountedDays(turnover);
+  const received = new Map<string, number>();
+  const spent = new Map<string, number>();
+  const add = (m: Map<string, number>, d: string, n: number) => m.set(d, r2((m.get(d) ?? 0) + n));
+
+  for (const t of turnover) {
+    const d = isoDay(t.turnover_date);
+    if (!d || d < from || d > to) continue;
+    const cash = Number(t.cash_amount) || 0;
+    if (cash !== 0) add(received, d, cash);
+  }
+  for (const e of entries) {
+    const d = isoDay(e.entry_date);
+    if (!d || d < from || d > to) continue;
+    // Magnitude on both sides: a direction column already carries the sign, and a stored negative
+    // would otherwise subtract from the very total it belongs to.
+    const amount = Math.abs(Number(e.amount) || 0);
+    if (amount === 0) continue;
+    if (e.direction === "out") add(spent, d, amount);
+    else if (!isTillCountedOmzet(e, d, counted)) add(received, d, amount);
+  }
+  return { received, spent };
 }
 
 /**

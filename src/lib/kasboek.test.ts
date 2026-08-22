@@ -1,6 +1,6 @@
 // [KASBOEK] Pure node test — run: npx tsx src/lib/kasboek.test.ts
 // Validated against the store's REAL "Kiwi 1ste kw 2026" cash book numbers.
-import { buildKasboek, openingBalanceForQuarter, lowestDrawerPoint, kasboekToMatrix, removedInQuarter, type KasTurnoverDay, type KasEntry, type RemovedKasEntry } from "./kasboek";
+import { buildKasboek, openingBalanceForQuarter, openingBalanceBefore, cashDayTotals, lowestDrawerPoint, kasboekToMatrix, removedInQuarter, type KasTurnoverDay, type KasEntry, type RemovedKasEntry } from "./kasboek";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -267,6 +267,81 @@ console.log("\n— [KAS-SPOOR] removed movements are disclosed, never counted �
   check("the day it was removed travels with it, and an unknown one is blank, never invented",
     flat.some((r) => r.endsWith("|02-04-2026")) && flat.some((r) => r.startsWith("09-01-2026") && r.endsWith("|")));
   check("the eindsaldo itself did not move", kb.closingBalance === 200);
+}
+
+console.log("\n— [KAS-SPAN] the opening balance for an arbitrary day is the same rule as for a quarter —");
+{
+  // The quarter wrapper must not have its own arithmetic: same inputs, same answer, or one of the
+  // two is a second authority on the drawer's carry-in.
+  const t: KasTurnoverDay[] = [
+    { turnover_date: "2026-03-30", cash_amount: 100 },
+    { turnover_date: "2026-04-02", cash_amount: 55 },
+  ];
+  const e: KasEntry[] = [
+    { entry_date: "2026-03-12", direction: "out", amount: 892.86, category: "betaling", description: "Hano 006220" },
+    { entry_date: "2026-04-08", direction: "out", amount: 40, category: "kosten", description: "na de grens" },
+  ];
+  const viaQuarter = openingBalanceForQuarter({ turnover: t, entries: e, year: 2026, quarter: 2, startingBalance: 1018.32 });
+  const viaDate = openingBalanceBefore({ turnover: t, entries: e, start: "2026-04-01", startingBalance: 1018.32 });
+  check("quarter and date spellings agree exactly", viaQuarter === viaDate);
+  check("and the answer is the real one: 1018.32 + 100 − 892.86", near(viaDate, 225.46));
+
+  // The reason the function exists: a file's period need not start on a quarter boundary.
+  const midway = openingBalanceBefore({ turnover: t, entries: e, start: "2026-04-03", startingBalance: 1018.32 });
+  check("a start inside the quarter carries in what the quarter start could not see", near(midway, 280.46));
+
+  // [KAS-DUBBELTELLING] carried through the extraction.
+  const till: KasEntry[] = [{ entry_date: "2026-03-30", direction: "in", amount: 100, category: "omzet", description: "kassa geteld" }];
+  check("a till-counted cash 'omzet' before the start is still not counted twice",
+    near(openingBalanceBefore({ turnover: t, entries: till, start: "2026-04-01" }), 100));
+}
+
+console.log("\n— [KAS-SPAN] cashDayTotals is what the app holds, from BOTH sources —");
+{
+  const t: KasTurnoverDay[] = [
+    { turnover_date: "2026-04-01", cash_amount: 120.25 },
+    { turnover_date: "2026-03-31", cash_amount: 999 },   // before the span
+    { turnover_date: "2026-07-01", cash_amount: 999 },   // after the span
+  ];
+  const e: KasEntry[] = [
+    { entry_date: "2026-04-08", direction: "out", amount: 892.86, category: "betaling", description: "Hano 006220" },
+    { entry_date: "2026-04-08", direction: "out", amount: 61.49, category: "kosten", description: "tweede uitgave dezelfde dag" },
+    { entry_date: "2026-04-09", direction: "in", amount: 200, category: "omzet", description: "contante omzet, geen kassa-dag" },
+    { entry_date: "2026-03-01", direction: "out", amount: 500, category: "kosten", description: "voor de periode" },
+  ];
+  const { received, spent } = cashDayTotals({ turnover: t, entries: e, from: "2026-04-01", to: "2026-06-30" });
+
+  check("two payments on one day are summed, not overwritten", near(spent.get("2026-04-08") ?? 0, 954.35));
+  check("a movement before the span stays out", !spent.has("2026-03-01"));
+  check("dagomzet lands on the receipts side", near(received.get("2026-04-01") ?? 0, 120.25));
+  check("a turnover day outside the span stays out", !received.has("2026-03-31") && !received.has("2026-07-01"));
+
+  // The defect this function was extracted to fix.
+  check("a cash 'in' entry counts as a receipt — an owner without dagomzet is not reported as missing a quarter of income",
+    near(received.get("2026-04-09") ?? 0, 200));
+
+  // [KAS-DUBBELTELLING] on the in-span side.
+  const both = cashDayTotals({
+    turnover: [{ turnover_date: "2026-04-01", cash_amount: 120.25 }],
+    entries: [{ entry_date: "2026-04-01", direction: "in", amount: 120.25, category: "omzet", description: "kassa geteld" }],
+    from: "2026-04-01", to: "2026-06-30",
+  });
+  check("the till's cash and the 'omzet' entry mirroring it are the same money, counted once",
+    near(both.received.get("2026-04-01") ?? 0, 120.25));
+  const notOmzet = cashDayTotals({
+    turnover: [{ turnover_date: "2026-04-01", cash_amount: 120.25 }],
+    entries: [{ entry_date: "2026-04-01", direction: "in", amount: 40, category: "prive", description: "bijgestort" }],
+    from: "2026-04-01", to: "2026-06-30",
+  });
+  check("…but a cash 'in' that is NOT omzet on that same day is a real second movement",
+    near(notOmzet.received.get("2026-04-01") ?? 0, 160.25));
+
+  const negative = cashDayTotals({
+    turnover: [], entries: [{ entry_date: "2026-04-08", direction: "out", amount: -50, category: "kosten", description: "negatief opgeslagen" }],
+    from: "2026-04-01", to: "2026-06-30",
+  });
+  check("a stored negative on an 'out' row adds to the payments, never subtracts from them",
+    near(negative.spent.get("2026-04-08") ?? 0, 50));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

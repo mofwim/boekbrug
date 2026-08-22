@@ -34,7 +34,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
-import { parseKasboekSheet } from "@/lib/kasboek-import";
+import { parseKasboekSheet, compareKasboek } from "@/lib/kasboek-import";
+import { cashDayTotals, openingBalanceBefore, type KasEntry, type KasTurnoverDay } from "@/lib/kasboek";
 import { liveCashEntries } from "@/lib/cash-live";
 import { matchKasboekDays, matchHeadline } from "@/lib/kasboek-match";
 import { isCashCategory, closedCashCategoryReason } from "@/lib/cash";
@@ -144,15 +145,22 @@ export async function POST(req: NextRequest) {
   // [PAGINATION] Pagineren: een kwartaal van een winkel loopt langs de ~1000-rijengrens, en een
   // afgekapte lezing zou uitgaven als "ontbrekend" melden die er wél staan — waarna de eigenaar ze
   // een tweede keer boekt. Precies de fout die dit scherm voorkomt.
+  //
+  // Geen ondergrond op de datum. De periode van het bestand beantwoordt maar de HELFT van de
+  // vraag: de andere helft is waar de lade aan het begin van die periode op stond, en dat is de
+  // openingsstand plus alles wat ervóór gebeurde. Eén lezing zonder ondergrens voedt allebei —
+  // twee lezingen zouden twee waarheden over dezelfde rijen kunnen geven.
+  //
+  // `category` staat in de select omdat cashDayTotals hem nodig heeft: een contante 'omzet' op een
+  // dag die de kassa al geteld heeft is hetzelfde geld, en zonder die kolom is dat niet te zien.
   const liveCash = await liveCashEntries(supabase);
-  const cashRows = await fetchAllRows<{ entry_date: string | null; direction: string | null; amount: number | null }>(
+  const cashRows = await fetchAllRows<{ entry_date: string | null; direction: string | null; amount: number | null; category: string | null }>(
     (lo, hi) =>
       liveCash.only(
         supabase
           .from("cash_entries")
-          .select("entry_date, direction, amount")
+          .select("entry_date, direction, amount, category")
           .eq("user_id", user.id)
-          .gte("entry_date", from)
           .lte("entry_date", to),
       )
         .order("id", { ascending: true })
@@ -171,26 +179,62 @@ export async function POST(req: NextRequest) {
         .from("daily_turnover")
         .select("turnover_date, cash_amount")
         .eq("user_id", user.id)
-        .gte("turnover_date", from)
         .lte("turnover_date", to)
         .order("turnover_date", { ascending: true })
         .range(lo, hi),
   ).catch(() => []);
 
-  const spent = new Map<string, number>();
-  for (const r of cashRows) {
-    if (!r.entry_date || r.direction !== "out") continue;
-    const d = r.entry_date.slice(0, 10);
-    spent.set(d, round2((spent.get(d) ?? 0) + Math.abs(Number(r.amount) || 0)));
-  }
-  const received = new Map<string, number>();
-  for (const r of turnoverRows) {
-    if (!r.turnover_date) continue;
-    const d = r.turnover_date.slice(0, 10);
-    received.set(d, round2((received.get(d) ?? 0) + (Number(r.cash_amount) || 0)));
+  // De ingestelde beginstand van de lade.
+  //
+  // Een mislukte lezing wordt hier GEEN nul. Nul is een geldige beginstand, dus een stille nul zou
+  // het verschil met het bestand als een echte bevinding presenteren — "je lade begint 1.018,32 te
+  // laag" terwijl we alleen niet konden kijken. compareKasboek kent daar een derde antwoord voor:
+  // bij null zegt hij dat de openingsstand niet vergeleken is, en de dagvergelijking eronder blijft
+  // gewoon staan. Weigeren zou hier te veel weggooien voor te weinig.
+  const { data: prof, error: profErr } = await supabase
+    .from("profiles")
+    .select("kas_opening_balance")
+    .eq("id", user.id)
+    .maybeSingle();
+  const startingBalance = profErr
+    ? null
+    : Number((prof as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
+  if (profErr) {
+    console.error("[KASBOEK-NAAST-KAS] kas_opening_balance unreadable — the opening balance is reported as not compared", { userId: user.id, error: profErr.message });
   }
 
+  const entries: KasEntry[] = cashRows.map((r) => ({
+    entry_date: r.entry_date,
+    direction: r.direction === "in" ? "in" : "out",
+    amount: r.amount,
+    category: r.category,
+    description: null,
+  }));
+  const turnover: KasTurnoverDay[] = turnoverRows.map((r) => ({
+    turnover_date: r.turnover_date ?? "",
+    cash_amount: r.cash_amount,
+  }));
+
+  // Wat de app heeft, per dag én in totaal — uit kasboek.ts, dezelfde functie die het kasboek
+  // eronder op het scherm tekent. Twee schermen die naast elkaar staan en het oneens zijn over
+  // hetzelfde bedrag is erger dan één scherm dat er niet is.
+  const { spent, received } = cashDayTotals({ turnover, entries, from, to });
   const { days, summary } = matchKasboekDays(kasboek.rows, { spent, received });
+
+  // ── De saldi, die geen enkele dagvergelijking kan zien ──
+  //
+  // Dit is de rand-blindheid die in dit huis al twee keer eerder is gevonden (de nummerreeks, de
+  // bankdekking): een controle TUSSEN de dagen kan niet zien dat de reeks op de verkeerde stand
+  // begint. Klopt elke dag afzonderlijk en staat de beginstand 1.911,18 te laag, dan is de lade
+  // elke dag van het kwartaal 1.911,18 te laag — en de dagenlijst is volledig groen.
+  const appOpening =
+    startingBalance === null ? null : openingBalanceBefore({ turnover, entries, start: from, startingBalance });
+  const totalOf = (m: ReadonlyMap<string, number>) => round2([...m.values()].reduce((a, b) => a + b, 0));
+  const comparison = compareKasboek(kasboek, {
+    received: totalOf(received),
+    spent: totalOf(spent),
+    opening: appOpening,
+  });
 
   return NextResponse.json({
     ok: true,
@@ -200,6 +244,11 @@ export async function POST(req: NextRequest) {
     totals: { fileReceived: kasboek.totalReceived, fileSpent: kasboek.totalSpent },
     headline: matchHeadline(summary),
     summary,
+    // De saldi-kant: het bestand naast de app op openingsstand, ontvangsten en uitgaven in totaal.
+    // Nederlandse zinnen, want dit zijn bevindingen die een mens moet oplossen — niet iets wat
+    // deze route zelf mag rechtzetten.
+    balance: { appOpening, fileOpening: kasboek.openingBalance, openingDelta: comparison.openingDelta },
+    findings: comparison.findings,
     // Alleen de dagen die iets te zeggen hebben. De gelijke staan in `summary.equalDays` — het
     // getal dat vertrouwen geeft in de rest, zonder een lijst van 91 regels waar niemand doorheen komt.
     days: days.filter((d) => d.verdict !== "gelijk"),

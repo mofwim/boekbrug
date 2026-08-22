@@ -345,7 +345,70 @@ test("[KASBOEK-NAAST-KAS] niets te doen wordt ook gezegd", () => {
         keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
       }),
     );
-    assert.match(html, /elke dag in dit kasboek komt overeen/);
+    assert.match(html, /Elke dag in dit kasboek komt overeen/);
     assert.doesNotMatch(html, /Boek \d/, "geen knop als er niets te boeken valt");
+    // De zin gaat over de DAGEN en claimt niets over de saldi — zie de test hieronder.
+    assert.doesNotMatch(html, /niets te doen/, "dat zou ook over de openingsstand gaan");
+  })();
+});
+
+// ── De rand die geen dagvergelijking kan zien ──
+//
+// Dit is dezelfde blindheid als bij de factuurnummers en de bankdekking: een controle TUSSEN de
+// items ziet nooit dat de reeks op de verkeerde stand begint. Bij Kiwi klopte elke dag en stond de
+// lade toch € 1.911,18 te laag, want de app opende het kwartaal op −892,86 en het kasboek op
+// 1.018,32. Zonder deze regels is dat een volledig groen scherm boven een verkeerd kassaldo.
+
+test("[KASBOEK-NAAST-KAS] een kloppende dagenlijst boven een verkeerde openingsstand is geen groen scherm", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({
+          days: [],
+          headline: "Alle 91 dagen kloppen: je kas zegt hetzelfde als het kasboek van je boekhouder.",
+          balance: { appOpening: -892.86, fileOpening: 1018.32, openingDelta: 1911.18 },
+          findings: [
+            "De lade begint in dit kasboek op € 1.018,32 en in de app op −€ 892,86 — € 1.911,18 verschil op de openingsstand. Een kassaldo onder nul kan niet: er is meer uit de lade geboekt dan erin zat.",
+          ],
+        }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.match(html, /1\.911,18/, "het verschil op de openingsstand staat op het scherm");
+    assert.match(html, /Een kassaldo onder nul kan niet/, "en waarom een negatieve lade onmogelijk is");
+    // De dagen kloppen én de stand klopt niet. Allebei zichtbaar, tegelijk.
+    assert.match(html, /Elke dag in dit kasboek komt overeen/);
+  })();
+});
+
+test("[KASBOEK-NAAST-KAS] de bevindingen staan bóven de dagen, want ze gelden voor allemaal", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({
+          findings: ["In het kasboek staat € 20.974,15 aan contante uitgaven die de app niet kent. Zolang die ontbreken staat je kassaldo te hoog."],
+        }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    const bevinding = html.indexOf("20.974,15");
+    const eersteDag = html.indexOf("famzfood");
+    assert.ok(bevinding >= 0 && eersteDag >= 0, "beide staan op het scherm");
+    assert.ok(bevinding < eersteDag, "de bevinding over het totaal staat vóór de eerste dagregel");
+  })();
+});
+
+test("[KASBOEK-NAAST-KAS] zonder bevindingen verschijnt er geen leeg kader", () => {
+  return (async () => {
+    const { VergelijkingLijst } = await import("../../src/components/kas/KasboekVergelijken");
+    const html = renderToStaticMarkup(
+      React.createElement(VergelijkingLijst, {
+        data: vergelijking({ findings: [] }),
+        keuze: {}, onToggle: () => {}, onCategorie: () => {}, onBoek: () => {},
+      }),
+    );
+    assert.doesNotMatch(html, /#F1F3F4/, "een kader zonder inhoud leest als een mislukte lezing");
   })();
 });
