@@ -10814,6 +10814,7 @@ export const MESSAGES = {
   // suggereren. Een regel die als import leest, wordt later gelezen als bewijs dat de bedragen in
   // de administratie staan — precies wat hier NIET is gebeurd.
   'log.kasboek.imported_read_only': { nl: 'Kasboek gelezen (niets geboekt)', en: 'Cash book read (nothing booked)', ar: 'قُرئ دفتر النقد (لم يُقيَّد شيء)' },
+  'log.kasboek.gap_booked': { nl: 'Ontbrekende kasuitgaven uit het kasboek geboekt', en: 'Missing cash payments booked from the cash book', ar: 'قُيّدت مصروفات نقدية ناقصة من دفتر النقد' },
   'log.turnover.day_removed': { nl: 'Dagomzet van een dag verwijderd', en: 'A day of turnover removed', ar: 'حُذف إيراد يوم' },
   'log.article.seeded_from_vak': { nl: 'Prijslijst gevuld vanuit een vak-sjabloon', en: 'Price list filled from a trade template', ar: 'مُلئت قائمة الأسعار من قالب مهنة' },
   'log.turnover.day_entered': { nl: 'Dagomzet zelf ingevuld', en: 'Daily turnover entered by hand', ar: 'أُدخل إيراد اليوم يدوياً' },

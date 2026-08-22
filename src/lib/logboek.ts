@@ -183,7 +183,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.article.seeded_from_vak",
   "log.turnover.day_removed", "log.turnover.day_entered",
   "log.till.ticket_rung", "log.till.ticket_voided",
-  "log.ledger.auto_imported", "log.kasboek.imported_read_only", "log.btw.filed",
+  "log.ledger.auto_imported", "log.kasboek.imported_read_only", "log.kasboek.gap_booked", "log.btw.filed",
   "log.btw.filed_despite_warnings", "log.btw.filing_unlocked", "log.btw.correction_carried",
   // Level 2 — Accountant relationships
   "log.accountant.client_invited", "log.accountant.client_linked", "log.accountant.client_unlinked",

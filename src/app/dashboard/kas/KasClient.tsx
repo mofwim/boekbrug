@@ -9,6 +9,7 @@
 // below: the React Compiler memoizes the component, and a manual memo whose dependency it cannot
 // prove stable is refused anyway.
 import { useEffect, useRef, useState } from 'react'
+import KasboekVergelijken from '@/components/kas/KasboekVergelijken'
 import { useSearchParams } from 'next/navigation'
 import { rowMatchesQuery } from '@/lib/search'
 // [INTAKE-IMG-NORMALIZE] A cash receipt snapped as HEIC/HEIF on an iPhone would reach the reader as
@@ -839,6 +840,15 @@ export default function KasClient() {
             ))}
           </div>
         )}
+
+        {/* [KASBOEK-NAAST-KAS] Het kasboek dat de BOEKHOUDER stuurde, naast deze kas gelegd.
+            Staat direct boven de eigen kasboekweergave hieronder, want het beantwoordt dezelfde
+            vraag van de andere kant: zegt mijn lade hetzelfde als het blad van mijn boekhouder?
+            Bij een echte klant scheelde dat € 20.974,15 aan uitgaven die alleen in dat blad
+            stonden — en een lade die daardoor ruim € 19.000 te hoog stond. */}
+        <div style={{ marginTop: 28 }}>
+          <KasboekVergelijken />
+        </div>
 
         {/* [KASBOEK] Live quarterly cash book — the running-balance view the accountant gets,
             built live from the till's daily cash takings + these boekingen (never stored twice). */}
