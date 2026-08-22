@@ -35,6 +35,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
 import { parseKasboekSheet } from "@/lib/kasboek-import";
+import { liveCashEntries } from "@/lib/cash-live";
 import { matchKasboekDays, matchHeadline } from "@/lib/kasboek-match";
 import { isCashCategory, closedCashCategoryReason } from "@/lib/cash";
 import { round2 } from "@/lib/invoice-totals";
@@ -132,17 +133,28 @@ export async function POST(req: NextRequest) {
   const from = kasboek.rows[0].date;
   const to = kasboek.rows[kasboek.rows.length - 1].date;
 
-  // De kas van dezelfde periode. [PAGINATION] Pagineren: een kwartaal van een winkel loopt langs
-  // de ~1000-rijengrens, en een afgekapte lezing zou uitgaven als "ontbrekend" melden die er wél
-  // staan — waarna de eigenaar ze een tweede keer boekt. Precies de fout die dit scherm voorkomt.
+  // De kas van dezelfde periode.
+  //
+  // [KAS-ZACHT] Alleen de boekingen die nog meetellen. Een verwijderde kasregel blijft staan met
+  // een deleted_at, en zonder dit filter telt hij hier mee als "de app heeft deze uitgave al" —
+  // waarna de dag gelijk lijkt en de uitgave die er ECHT niet staat nooit wordt aangeboden. Dit
+  // scherm bestaat om het gat te vinden; een lezing die verwijderde boekingen meetelt verkleint
+  // dat gat zonder het te zeggen. De poort in lifecycle-gates.test.ts ving deze precies hier.
+  //
+  // [PAGINATION] Pagineren: een kwartaal van een winkel loopt langs de ~1000-rijengrens, en een
+  // afgekapte lezing zou uitgaven als "ontbrekend" melden die er wél staan — waarna de eigenaar ze
+  // een tweede keer boekt. Precies de fout die dit scherm voorkomt.
+  const liveCash = await liveCashEntries(supabase);
   const cashRows = await fetchAllRows<{ entry_date: string | null; direction: string | null; amount: number | null }>(
     (lo, hi) =>
-      supabase
-        .from("cash_entries")
-        .select("entry_date, direction, amount")
-        .eq("user_id", user.id)
-        .gte("entry_date", from)
-        .lte("entry_date", to)
+      liveCash.only(
+        supabase
+          .from("cash_entries")
+          .select("entry_date, direction, amount")
+          .eq("user_id", user.id)
+          .gte("entry_date", from)
+          .lte("entry_date", to),
+      )
         .order("id", { ascending: true })
         .range(lo, hi),
   ).catch(() => null);
