@@ -6,7 +6,7 @@
 // breadcrumb + folder/file list. No fetching, no rendering logic here —
 // that all lives server-side in bridge-tree.ts.
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import type { TreeNode, NodeBadge } from '@/lib/bridge-tree'
@@ -164,6 +164,20 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
   // rather than a page of JSON with the hub's whole selection gone.
   const [pkgBusy, setPkgBusy] = useState(false)
   const [pkgError, setPkgError] = useState<string | null>(null)
+
+  // [PAKKET-VERS] Per klant: wanneer dit kwartaalpakket voor het laatst is opgehaald, en of de
+  // administratie sindsdien veranderde. De zin komt als DATA van de server (net als pkgError
+  // hierboven) — dit scherm verzint er geen taal bij. Eén vraag dekt alle klanten tegelijk.
+  const [versMap, setVersMap] = useState<Record<string, { downloadedAt: string; total: number; sentence: string; unknown?: boolean }>>({})
+  const loadVers = useCallback(async (year: number, quarter: number) => {
+    try {
+      const res = await fetch(`/api/closing-package/vers?year=${year}&quarter=${quarter}`)
+      if (!res.ok) return
+      const json = await res.json()
+      if (json?.perClient) setVersMap(json.perClient)
+    } catch { /* geen regel is eerlijker dan een verzonnen regel */ }
+  }, [])
+
   async function downloadPackage(clientId: string, year: number, quarter: number) {
     setPkgBusy(true); setPkgError(null)
     try {
@@ -185,6 +199,9 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
+      // De kopie op de schijf is nu de administratie: de versheidsregel hoort dat direct te
+      // zeggen, anders blijft een amberkleurige waarschuwing staan over een download van net.
+      void loadVers(year, quarter)
     } catch {
       setPkgError(t('brug.fout.pakketOffline'))
     } finally {
@@ -195,6 +212,15 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
   const lastCompleted = lastCompletedQuarter()
   const [selectedYear, setSelectedYear] = useState<number>(lastCompleted.year)
   const [selectedQuarter, setSelectedQuarter] = useState<number>(lastCompleted.quarter)
+
+  // [PAKKET-VERS] De vraag hoort bij het gekozen kwartaal, niet bij de gekozen klant: het
+  // antwoord dekt alle klanten, dus wisselen van klant kost geen extra rondje.
+  useEffect(() => {
+    if (!isAccountant) return
+    // Zelfde idioom als de andere effecten hier: de setState gebeurt in de callback van een
+    // async functie, nooit in de effect-body zelf.
+    void (async () => { await loadVers(selectedYear, selectedQuarter) })()
+  }, [isAccountant, selectedYear, selectedQuarter, loadVers])
 
   // [BRIDGE-REFRESH] Re-fetch when the tab regains focus. The page is
   // force-dynamic server-side, but tab/folder navigation here is client-side
@@ -352,6 +378,16 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
             <div role="alert" style={{ marginTop: -6, marginBottom: 12, fontSize: 13, color: M3.error, lineHeight: 1.45 }}>
               {pkgError}
             </div>
+          )}
+
+          {/* [PAKKET-VERS] De kopie op de eigen schijf veroudert vanaf het moment van downloaden.
+              Amber zodra er sindsdien iets in het kwartaal bijkwam (of we het niet konden
+              nakijken), grijs zolang de kopie nog de administratie is. Alleen aanwezig als deze
+              boekhouder dit kwartaal al eens ophaalde — anders is er geen kopie die oud kan zijn. */}
+          {selectedClient && versMap[selectedClient.id] && (
+            <p style={{ marginTop: -6, marginBottom: 12, fontSize: 12.5, lineHeight: 1.5, color: (versMap[selectedClient.id].total > 0 || versMap[selectedClient.id].unknown) ? '#7C5800' : M3.onSurfaceVariant }}>
+              {versMap[selectedClient.id].sentence}
+            </p>
           )}
 
           {selectedClient ? (

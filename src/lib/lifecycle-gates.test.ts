@@ -7840,6 +7840,18 @@ test("[PAKKET-VERS] the staleness answer borrows the package's judgement and rea
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
   assert.match(board, /\/api\/closing-package\/vers\?year=/, "the werkboard asks the question");
   assert.match(board, /vers\[row\.id\]\.sentence/, "…and renders the answer on the row");
+
+  // The Brug is the OTHER place with a download button, and a warning that lives only on the
+  // board is a warning the accountant who works per-client never meets. It must also refresh
+  // after a successful download — an amber line still standing over a seconds-old copy teaches
+  // people the line is decoration.
+  const brug = code("src/app/dashboard/brug/BrugClient.tsx");
+  assert.match(brug, /\/api\/closing-package\/vers\?year=/, "the Brug asks the same question");
+  assert.match(brug, /versMap\[selectedClient\.id\]\.sentence/, "…and renders the answer beside its download button");
+  assert.match(
+    brug, /URL\.revokeObjectURL\(url\)\s*\n[^\n]*\n[^\n]*\n[^\n]*void loadVers\(year, quarter\)/,
+    "a successful download refreshes the line, so the warning clears in front of the accountant",
+  );
 });
 
 test("[KASBOEK-NAAST-KAS] the comparison screen reads the drawer through kasboek.ts, not its own sums", () => {
