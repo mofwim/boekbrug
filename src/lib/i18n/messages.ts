@@ -4827,6 +4827,34 @@ export const MESSAGES = {
     ar: 'فشل التصنيف التلقائي — البقية حُدّثت.',
     en: 'Automatic categorising did not work — the rest was updated.',
   },
+  // ─── [CREDIT-AFHANDELEN] Closing a creditnota — the RIGHT question, where "Heb je
+  // betaald?" is hidden on purpose ([CREDIT-NOT-PAYABLE]). Nothing is paid here: the money came
+  // BACK (refunded, in cash, or netted off by the supplier), and this only records that it did.
+  'ink.credit.afhandelenKnop': {
+    nl: 'Verrekend of terugontvangen?',
+    en: 'Netted off or received back?',
+    ar: 'تمت المقاصّة أو استرددته؟',
+  },
+  'ink.credit.afhandelenVraag': {
+    nl: 'Creditnota afhandelen?',
+    en: 'Close this credit note?',
+    ar: 'إغلاق الإشعار الدائن؟',
+  },
+  // The two method buttons say "Bank" and "Contant"; here is what they MEAN on a credit — the
+  // direction is reversed, so the body has to carry it: this is how the money came back, not how
+  // it went out. "Verrekend met een andere factuur" books as Bank: no cash moved, and the drawer
+  // must not claim it did.
+  'ink.credit.afhandelenUitleg': {
+    nl: 'Creditnota {number} wordt afgesloten: het bedrag is terugontvangen of verrekend. Kies Bank als het is teruggestort of verrekend met een andere factuur; Contant als je het contant terugkreeg — dan komt het in het kasboek als geld IN de la.',
+    en: 'Credit note {number} is closed: the amount was received back or netted off. Choose Bank if it was refunded or netted against another invoice; Contant if you received it in cash — it then enters the cash book as money INTO the drawer.',
+    ar: 'سيُغلق الإشعار الدائن {number}: المبلغ استُردّ أو تمت مقاصّته. اختر Bank إذا أُعيد إلى حسابك أو قوصّ مع فاتورة أخرى؛ وContant إذا استلمته نقداً — فيُقيَّد عندها في دفتر الصندوق كمال داخل إلى الدرج.',
+  },
+  'ink.credit.jaAfhandelen': {
+    nl: 'Ja, afgehandeld',
+    en: 'Yes, settled',
+    ar: 'نعم، انتهى',
+  },
+
   'ink.creditKiesJa': {
     nl: 'Kies je “ja”, dan worden de bedragen als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Kijk op de factuur — staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag onderaan, dan is het er een.',
     ar: 'إن اخترت «نعم» فستُحفظ المبالغ كمبلغ سالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدلاً من أن تُضاف. انظر إلى الفاتورة — إن وُجد "Creditnota" أو "Creditfactuur" في الأعلى، أو مبلغ سالب في الأسفل، فهي إشعار دائن.',
@@ -4841,10 +4869,17 @@ export const MESSAGES = {
   // Zonder die zin las de rij als iets dat nog een handeling nodig had, en de eigenaar zocht naar
   // een knop "verwerkt" die er niet is — en er ook niet hoort te zijn, want er valt niets te
   // verwerken. De zin die de zusterkey (ink.creditGeenBetaling) wél had, staat nu hier ook.
+  // [CREDIT-AFHANDELEN] Second rewrite of this sentence, and the history is the argument. First
+  // it only described the FUTURE, and the owner went looking for a "processed" button. Then
+  // (#256) it said "er is niets te bevestigen" — true for the BOOKS (the minus is already off
+  // the balance) but it left the row itself unclosable, and the very next report was "how do I
+  // close it?". Both fixes answered the accounting question; the owner was asking a WORKFLOW
+  // question. Now it says both facts: the books are already right, and the button underneath is
+  // how the row itself is closed once the money actually came back.
   'ink.creditKomtToe': {
-    nl: 'Dit is geld dat jóu toekomt — je hoeft niets te betalen, en er is niets te bevestigen: hij staat al met een minbedrag in je boeken en is dus al van "nog te betalen" af. Krijg je het teruggestort, dan herkennen we dat in je bankafschrift. Verrekent je leverancier het met een volgende factuur, dan gaat het daar vanzelf vanaf.',
-    ar: 'هذا مال مستحق لك أنت — لا تحتاج لدفع شيء، ولا شيء لتأكيده: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، أي أنه خُصم بالفعل من «ما زال مستحقاً». إن أُعيد إلى حسابك فسنتعرّف عليه في كشفك البنكي. وإن قاصّه المورّد مع فاتورة قادمة فسيُخصم منها تلقائياً.',
-    en: 'This is money owed to YOU — you do not have to pay anything, and there is nothing to confirm: it already stands as a negative amount in your books, so it has already come off "still to pay". If it is refunded, we recognise that in your bank statement. If your supplier settles it against a next invoice, it comes off there by itself.',
+    nl: 'Dit is geld dat jóu toekomt — je hoeft niets te betalen: hij staat al met een minbedrag in je boeken en is dus al van "nog te betalen" af. Komt de terugstorting op je bankafschrift binnen, dan herkennen we die. Al terugontvangen of door je leverancier verrekend? Sluit hem dan af met "Verrekend of terugontvangen?" hieronder.',
+    ar: 'هذا مال مستحق لك أنت — لا تحتاج لدفع شيء: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، أي أنه خُصم بالفعل من «ما زال مستحقاً». إن وصل الاسترداد في كشفك البنكي فسنتعرّف عليه. وإن كنت قد استرددته فعلاً أو قاصّه مورّدك، فأغلقه بزر «تمت المقاصّة أو استرددته؟» أدناه.',
+    en: 'This is money owed to YOU — you do not have to pay anything: it already stands as a negative amount in your books, so it has already come off "still to pay". If the refund arrives on your bank statement, we recognise it. Already received back, or netted off by your supplier? Then close it with "Netted off or received back?" below.',
   },
   'ink.creditnotaUitleg': {
     nl: 'Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt',
