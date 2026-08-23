@@ -106,6 +106,10 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
   )
   const [nudge, setNudge] = useState<Record<string, NudgeState>>({})
+  // [PAKKET-VERS] Per klant: wanneer dit kwartaalpakket voor het laatst is opgehaald en of er
+  // sindsdien iets in het kwartaal is bijgekomen. Alleen aanwezig voor klanten waarvan deze
+  // boekhouder het pakket al eens ophaalde — voor de rest is er geen kopie die oud kan zijn.
+  const [vers, setVers] = useState<Record<string, { downloadedAt: string; total: number; sentence: string; unknown?: boolean }>>({})
 
   const quarterLabel = `Q${quarter} ${year}`
   const deadline = getAangifteDeadline(year, quarter)
@@ -140,6 +144,26 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
       return { ...base, state: 'error' }
     }
   }, [clients])
+
+  // [PAKKET-VERS] Eén vraag voor het hele bord: welke pakketten van dit kwartaal heb ik al
+  // opgehaald, en is de administratie sindsdien veranderd? Mislukt de vraag, dan verdwijnen de
+  // regels gewoon — een bord zonder versheidsregel zegt niets, en dat is eerlijker dan een
+  // verzonnen "nog vers".
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      // Reset in dezelfde tick, maar buiten de effect-body zelf — zelfde idioom als de
+      // readiness-effect hieronder, om dezelfde lint-reden.
+      setVers({})
+      try {
+        const res = await fetch(`/api/closing-package/vers?year=${year}&quarter=${quarter}`)
+        if (!res.ok || cancelled) return
+        const json = await res.json()
+        if (!cancelled && json?.perClient) setVers(json.perClient)
+      } catch { /* geen regel is eerlijker dan een verzonnen regel */ }
+    })()
+    return () => { cancelled = true }
+  }, [year, quarter])
 
   // Fetch every client's readiness for the selected quarter, MAX_PARALLEL at a time.
   // Re-runs on quarter change / refresh; a stale run is cancelled so a quick switch
@@ -368,7 +392,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
 
                       Bewust alleen bij een geladen rij, en bewust geen extra knoppenrij als
                       er niets te melden is — een bord dat altijd vol staat leest niemand. */}
-                  {row.state === 'ok' && ((row.missingTitles?.length ?? 0) > 0 || row.status === 'ready') && (
+                  {row.state === 'ok' && ((row.missingTitles?.length ?? 0) > 0 || row.status === 'ready' || vers[row.id]) && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '0 16px 12px', marginTop: -4 }}>
                       {(row.missingTitles ?? []).slice(0, 3).map((titel) => (
                         <span
@@ -393,6 +417,17 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                       >
                         ⬇︎ Pakket
                       </a>
+
+                      {/* [PAKKET-VERS] De kopie op de eigen schijf veroudert vanaf het moment van
+                          downloaden, en een gedeelde map kan dat niet eens zeggen. Amber zodra er
+                          iets bijkwam of we het niet konden nakijken; grijs als de kopie nog de
+                          administratie is. Volle breedte onder de chips, want de zin hoort bij de
+                          hele rij, niet bij de knop. */}
+                      {vers[row.id] && (
+                        <p style={{ flexBasis: '100%', fontSize: 11.5, margin: '2px 0 0', lineHeight: 1.5, color: (vers[row.id].total > 0 || vers[row.id].unknown) ? '#7C5800' : '#80868b' }}>
+                          {vers[row.id].sentence}
+                        </p>
+                      )}
                     </div>
                   )}
 

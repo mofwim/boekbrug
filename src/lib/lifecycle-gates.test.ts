@@ -7789,6 +7789,33 @@ test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
   assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
 });
 
+test("[PAKKET-VERS] the staleness answer borrows the package's judgement and reaches the board", () => {
+  // The freshness count is a claim about the ZIP: "this many things would be in it now that were
+  // not in your copy". That claim is only true while the membership rules HERE are the membership
+  // rules THERE, and the way that fails in this codebase is never a wrong edit — it is a restated
+  // literal drifting after closing-package.ts changes (the duplicate-authority shape, found four
+  // times before). So the pure module must CALL the package's own judgement functions.
+  const pure = code("src/lib/package-freshness.ts");
+  assert.match(pure, /isVerifiedForPackage\(\{ direction/, "the package decides what a verified invoice is");
+  assert.match(pure, /effectiveDirection\(r, ownerId\)/, "and how a null direction is attributed");
+  assert.doesNotMatch(
+    pure, /["']sent["']\s*,\s*["']paid["']/,
+    "a restated status set is the drift this gate exists to prevent — import the rule, not its value",
+  );
+
+  // The route feeds it and the board says it. Each of these was dead code for a while in a
+  // sibling feature (compareKasboek shipped a whole commit with no caller), so the CALLS are
+  // pinned, not the exports.
+  const route = code("src/app/api/closing-package/vers/route.ts");
+  assert.match(route, /packageFreshness\(\{/, "the route computes freshness through the pure module");
+  assert.match(route, /lastDownloadPerOwner\(auditRows/, "…from the accountant's own download trail");
+  assert.match(route, /unknown: true/, "a failed read answers 'could not check' — never 'still fresh'");
+
+  const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(board, /\/api\/closing-package\/vers\?year=/, "the werkboard asks the question");
+  assert.match(board, /vers\[row\.id\]\.sentence/, "…and renders the answer on the row");
+});
+
 test("[KASBOEK-NAAST-KAS] the comparison screen reads the drawer through kasboek.ts, not its own sums", () => {
   // Two of these three were shipped as dead code and found later, which is why the gate asserts the
   // CALL and not the export.
