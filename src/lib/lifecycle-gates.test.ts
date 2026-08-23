@@ -13966,14 +13966,20 @@ test("[CREDIT-AL-VERWERKT] de creditnota-melding noemt wat er AL waar is, niet a
 
   const zin = CATALOGUE["ink.creditKomtToe"];
   assert.ok(zin, "de melding bestaat");
-  // Elke taal noemt zowel dat er niets te doen is als dat het al verwerkt is. Eén taal die alleen
-  // de toekomst noemt, laat precies de lezer van díé taal met de oorspronkelijke vraag zitten.
-  assert.match(zin.nl, /niets te bevestigen/, "nl: er valt niets te bevestigen");
-  assert.match(zin.nl, /al met een minbedrag/, "nl: en het staat er al met een minbedrag in");
-  assert.match(zin.en, /nothing to confirm/, "en");
+  // [CREDIT-AFHANDELEN] Herijkt. De vorige versie van deze gate eiste "er is niets te
+  // bevestigen" — juist voor de BOEKEN, en toch stond de eigenaar de dag erna weer met dezelfde
+  // vraag: de rij zelf was nergens af te sluiten. Nu eist hij het paar dat samen klopt: het
+  // minbedrag staat er al (de boekhouding), én de zin wijst naar de afsluitknop (de workflow) —
+  // met de knoptekst zoals die op de knop zelf staat, per taal, zodat de eigenaar niet zoekt naar
+  // een woord dat nergens in beeld is.
+  const knop = CATALOGUE["ink.credit.afhandelenKnop"];
+  assert.ok(knop, "de afsluitknop heeft zijn eigen tekst");
+  assert.match(zin.nl, /al met een minbedrag/, "nl: het staat er al met een minbedrag in");
+  assert.ok(zin.nl.includes(`"${knop.nl}"`), "nl: de melding noemt de knop zoals hij op het scherm staat");
   assert.match(zin.en, /already stands as a negative amount/, "en");
-  assert.match(zin.ar, /لا شيء لتأكيده/, "ar");
+  assert.ok(zin.en.includes(`"${knop.en}"`), "en: idem");
   assert.match(zin.ar, /مبلغ سالب/, "ar");
+  assert.ok(zin.ar.includes(`«${knop.ar}»`), "ar: idem");
 
   // En de rij is WEL weg te krijgen als de eigenaar dat wil — de prullenbak archiveert elke rij,
   // zonder uitzondering voor een creditnota, en zet hem terug onder Inkomend › Genegeerd. Een
@@ -13982,4 +13988,58 @@ test("[CREDIT-AL-VERWERKT] de creditnota-melding noemt wat er AL waar is, niet a
   const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   const wisknop = manage.slice(manage.indexOf("handleRemoveRequest(inv)") - 400, manage.indexOf("handleRemoveRequest(inv)") + 200);
   assert.doesNotMatch(wisknop, /creditnota/, "de verwijderknop sluit een creditnota niet uit");
+});
+
+test("[CREDIT-AFHANDELEN] een creditnota is af te sluiten — met de goede vraag, nooit met de foute", () => {
+  // GEMELD, twee keer: "hoe verwerk ik hem als klant? er is geen optie dat hij is afgehandeld."
+  // De hele keten onder het scherm kon het al — pay-toggle's PAYABLE laat 'received' toe,
+  // apply_manual_payment leest abs(total_inc_btw), amount_applied is een MAGNITUDE per afspraak
+  // (allocate_bank_payment.sql:215), en het kasboek draait de la-richting om voor een
+  // creditdocument ([CASH-CREDITNOTA]). Alleen de vraag op het scherm ontbrak: "Heb je betaald?"
+  // is daar met opzet verborgen, en er stond niets voor in de plaats.
+  const ui = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // 1. De knop bestaat, en ALLEEN voor een verklaarde credit. Een 'suspected' rij houdt eerst
+  //    haar correctievraag: een positief geboekte rij als credit afsluiten zou een echte schuld
+  //    als betaald markeren.
+  assert.match(ui, /inv\.status === 'received' && stance === 'credit' &&/,
+    "de afsluitknop staat achter de verklaarde credit-stand");
+  assert.match(ui, /requestPayCredit\(inv\)/, "…en roept het credit-pad aan");
+  // …terwijl de FOUTE vraag verborgen blijft: payable (payableAsDebt) bewaakt de betaalknop nog.
+  assert.match(ui, /inv\.status === 'received' && !incasso && payable &&/,
+    "Heb je betaald? blijft achter payableAsDebt");
+
+  // 2. Het credit-pad slaat de dubbelbetaal-check over (die zoekt een eerdere BETALING AAN de
+  //    leverancier — voor geld dat terugkomt is een 'clear' een geruststelling over de verkeerde
+  //    richting) en zet credit: true op de ctx.
+  const req = ui.slice(ui.indexOf("function requestPayCredit"), ui.indexOf("async function requestPay"));
+  assert.ok(req.length > 0, "requestPayCredit bestaat");
+  assert.doesNotMatch(req, /check-paid/, "geen dubbelbetaal-check op geld dat terugkomt");
+  assert.match(req, /credit: true/, "de ctx zegt welke vraag dit is");
+  assert.doesNotMatch(req, /openAmount:/, "geen openAmount → het deelbetalingsveld blijft weg");
+
+  // 3. Het blad: eigen vraag, eigen uitleg, en het bedrag ALTIJD null — heel of niet.
+  assert.match(ui, /payCtx\.credit \? t\('ink\.credit\.afhandelenVraag'\)/, "de titel is de credit-vraag");
+  assert.match(ui, /amount: payCtx\.credit \? null : amount/, "een credit sluit heel, nooit in termijnen");
+  assert.match(ui, /payCtx\.newStatus === 'paid' && !payCtx\.credit \? payCtx\.openAmount : undefined/,
+    "het deelbetalingsveld is voor een credit verborgen");
+  assert.match(ui, /payCtx\.newStatus === 'paid' && !payCtx\.credit\n\s*\? <DoublePayNotice/,
+    "geen dubbelbetaal-zin boven een credit-afsluiting");
+
+  // 4. De fundering waarop dit alles leunt, vastgepind waar hij ligt: de SQL leest de magnitude.
+  //    Verandert iemand abs() daar, dan is een credit 'no total to settle' en sterft dit pad
+  //    stil — deze regel is wat die wijziging luid maakt.
+  //    NB: invoice_manual_payment_idempotency_scope.sql HERDEFINIEERT de functie en laadt als
+  //    laatste — dát is de levende kopie. Deze gate pinde eerst alleen het eerste bestand, en de
+  //    negatieve controle bleef groen: abs() weggehaald uit de gepinde kopie, en de latere
+  //    definitie draaide gewoon door. Een bewering die een VERMELDING raakt in plaats van de
+  //    bedrading — binnen de gate die daarvoor moest waken. Beide kopieën gepind, zodat ook
+  //    onderlinge drift luid wordt.
+  for (const f of ["invoice_manual_payments.sql", "invoice_manual_payment_idempotency_scope.sql"]) {
+    assert.match(readFileSync(`supabase/migrations/${f}`, "utf8"),
+      /SELECT i\.status, i\.accountant_status, abs\(coalesce\(i\.total_inc_btw, 0\)\)/,
+      `${f}: apply_manual_payment rekent in abs()-ruimte`);
+  }
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  assert.match(route, /isIncoming \? \["received"\]/, "en de route laat 'received' toe — ook een credit");
 });

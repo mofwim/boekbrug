@@ -2723,3 +2723,47 @@ test("[PRIJS-MODUS] het artikelenscherm overleeft een render", async () => {
   // gerenderd wordt, is precies de lege bewering die dit bestand elders opspoort.
   assert.doesNotMatch(html, /aria-pressed/, "het formulier staat dicht — de knoppen horen er nog niet te zijn");
 });
+
+test("[CREDIT-AFHANDELEN] een creditnota krijgt de afsluitvraag — en nooit de betaalvraag", async () => {
+  // GEMELD, twee keer: "hoe verwerk ik hem als klant?" Een verklaarde creditnota verborg "Heb je
+  // betaald?" terecht ([CREDIT-NOT-PAYABLE]) en bood NIETS in de plaats — een rij zonder uitgang.
+  const { default: IncomingManageClient } = await import("../../src/app/dashboard/incoming/manage/IncomingManageClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const paint = (rows: unknown[]) => renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null,
+        // Same prop shape as the pay-screen test above: what page.tsx actually selects.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingManageClient as any, {
+          profile: { id: "u1" },
+          initialInvoices: rows,
+          totalCount: rows.length,
+          readFailed: [],
+          filedQuarters: [],
+        }),
+      ),
+    ),
+  );
+
+  // De rij uit het rapport: verklaarde creditnota, negatief geboekt, nog 'received'.
+  const credit = manageRow({
+    id: "cr", invoice_number: "CR0300343", client_name: "Dutch Sweets Company B.V.",
+    invoice_type: "creditnota", total_inc_btw: -51.8, total_ex_btw: -47.52, btw_amount: -4.28,
+  });
+  const met = textOf(paint([credit]));
+  assert.match(met, /Verrekend of terugontvangen\?/, "de afsluitvraag staat op de rij");
+  assert.doesNotMatch(met, /Heb je betaald\?/, "…en de betaalvraag niet — dat geld mag nooit weg");
+
+  // Een VERDACHTE rij (CR-prefix, maar positief geboekt) houdt haar correctievraag en krijgt de
+  // afsluitknop NIET: haar als credit afsluiten zou een echte schuld als betaald markeren.
+  const suspected = manageRow({ id: "sus", invoice_number: "CR0301267", total_inc_btw: 33.87 });
+  const sus = textOf(paint([suspected]));
+  assert.doesNotMatch(sus, /Verrekend of terugontvangen\?/, "een vermoeden is geen verklaring");
+
+  // En een gewone factuur is onveranderd: betaalvraag ja, afsluitvraag nee.
+  const gewoon = textOf(paint([manageRow({ id: "re" })]));
+  assert.match(gewoon, /Heb je betaald\?/);
+  assert.doesNotMatch(gewoon, /Verrekend of terugontvangen\?/);
+});

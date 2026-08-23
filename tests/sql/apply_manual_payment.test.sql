@@ -342,5 +342,67 @@ BEGIN
   PERFORM public.t_eq('and so may service-role', (SELECT amount_paid FROM public.invoices WHERE id = inv), 200);
 END $$;
 
+-- ══ [CREDIT-AFHANDELEN] A creditnota settles whole, in abs() space ═══════════════════════════
+--
+-- The screen's new "Verrekend of terugontvangen?" leans on exactly this: a NEGATIVE invoice,
+-- p_amount NULL, abs() magnitude, flip to paid. The block above (— a creditnota settles by its
+-- MAGNITUDE —) already proves the happy path; THIS one adds the two edges the button introduces:
+-- a closed credit refuses a second close (the double-tap that books a refund twice), and a typed
+-- amount clamps to the magnitude (a typo cannot overshoot). Kept with the report's own numbers.
+DO $$
+DECLARE
+  u   uuid := gen_random_uuid();
+  inv uuid := gen_random_uuid();
+  r   record;
+BEGIN
+  PERFORM set_config('test.uid', u::text, true);
+  INSERT INTO public.profiles (id, role) VALUES (u, 'zzper');
+  -- The row from the report: an incoming creditnota, stored NEGATIVE, still 'received'.
+  INSERT INTO public.invoices (id, receiver_id, status, invoice_type, total_inc_btw, amount_paid)
+  VALUES (inv, u, 'received', 'creditnota', -51.80, 0);
+
+  -- NULL amount = close it whole. The magnitude settles; the status flips.
+  SELECT * INTO r FROM public.apply_manual_payment(u, inv, NULL, DATE '2026-08-22', 'bank', ARRAY['received'], gen_random_uuid());
+  PERFORM public.t_eq('[CREDIT] the whole magnitude settles', r.applied, 51.80);
+  PERFORM public.t_eq('[CREDIT] amount_paid is the magnitude', r.amount_paid, 51.80);
+  IF NOT r.is_paid THEN
+    RAISE EXCEPTION '[CREDIT] the creditnota did not flip to paid';
+  END IF;
+  IF (SELECT status FROM public.invoices WHERE id = inv) <> 'paid' THEN
+    RAISE EXCEPTION '[CREDIT] status on the row disagrees with the function''s answer';
+  END IF;
+
+  -- The instalment row is a MAGNITUDE — the convention every reader flips at read time
+  -- (allocate_bank_payment.sql:215, [CASH-CREDITNOTA] in cash.ts). A signed row here would make
+  -- recompute_invoice_amount_paid produce a negative amount_paid and split the two paths.
+  PERFORM public.t_eq('[CREDIT] the instalment row carries the magnitude',
+    (SELECT amount_applied FROM public.bank_tx_invoices WHERE invoice_id = inv), 51.80);
+
+  -- Closed means closed: a second attempt must refuse, exactly as on a normal invoice.
+  BEGIN
+    PERFORM public.apply_manual_payment(u, inv, NULL, DATE '2026-08-23', 'bank', ARRAY['received'], gen_random_uuid());
+    RAISE EXCEPTION '[CREDIT] a closed creditnota accepted a second settlement';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END $$;
+
+-- …and a PARTIAL amount on a credit still clamps to the magnitude, so a typo cannot overshoot.
+DO $$
+DECLARE
+  u   uuid := gen_random_uuid();
+  inv uuid := gen_random_uuid();
+  r   record;
+BEGIN
+  PERFORM set_config('test.uid', u::text, true);
+  INSERT INTO public.profiles (id, role) VALUES (u, 'zzper');
+  INSERT INTO public.invoices (id, receiver_id, status, invoice_type, total_inc_btw, amount_paid)
+  VALUES (inv, u, 'received', 'creditnota', -136.00, 0);
+  SELECT * INTO r FROM public.apply_manual_payment(u, inv, 500, DATE '2026-08-22', 'bank', ARRAY['received'], gen_random_uuid());
+  PERFORM public.t_eq('[CREDIT] LEAST clamps a too-large amount to the magnitude', r.applied, 136.00);
+  IF NOT r.is_paid THEN
+    RAISE EXCEPTION '[CREDIT] clamped settlement should still close the credit';
+  END IF;
+END $$;
+
 \echo ''
 \echo '✅ apply_manual_payment: every assertion held against a real PostgreSQL.'

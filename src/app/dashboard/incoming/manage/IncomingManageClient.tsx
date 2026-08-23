@@ -388,6 +388,12 @@ interface PayCtx {
   clientKey?: string
   // What was still open when the dialog opened — the field's hint and cap.
   openAmount?: number
+  // [CREDIT-AFHANDELEN] This settlement closes a CREDITNOTA — money that came BACK (refunded,
+  // received in cash, or netted off by the supplier), not money paid out. Same route, same SQL
+  // (apply_manual_payment works in abs() space and amount_applied is a magnitude by convention —
+  // allocate_bank_payment.sql:215), but the sheet asks a different question and never offers an
+  // instalment: a credit is closed whole or not at all.
+  credit?: boolean
   // [REMOVAL-ALTERNATIVE] This undo was opened FROM the remove dialog ("Betaling terugdraaien").
   // On success the remove sheet re-opens, so taking the money off and taking the invoice out is
   // one flow instead of two errands the owner has to remember to finish.
@@ -1505,6 +1511,36 @@ export default function IncomingManageClient({
   // pay dialog. A failed check NEVER blocks paying (warn-don't-block, and the
   // check is a convenience, not a guard). 'received' → 'paid' only; an undo
   // (paid → received) skips the check entirely.
+  /**
+   * [CREDIT-AFHANDELEN] Close a creditnota: refunded, received in cash, or netted off.
+   *
+   * The whole chain below the screen already handles this — pay-toggle's PAYABLE admits
+   * 'received', apply_manual_payment reads abs(total_inc_btw), amount_applied is a magnitude and
+   * the kasboek flips the drawer direction for a credit document ([CASH-CREDITNOTA]). The only
+   * thing missing was the question on the screen; "Heb je betaald?" is hidden here on purpose
+   * ([CREDIT-NOT-PAYABLE]) because paying is the one thing that must never happen.
+   *
+   * No check-paid call, deliberately: that check searches the bank for an earlier PAYMENT TO the
+   * supplier, which for money coming back answers nothing — a "clear" would reassure about the
+   * wrong direction.
+   */
+  function requestPayCredit(inv: IncomingRow) {
+    // No setPayCheck(null) here, and that is measured, not lazy: every EXIT of the sheet already
+    // clears it (cancel, the 'nee, nog niet' answer, executePay — the [DUBBEL-BEWIJS] gate counts
+    // exactly those three), so payCheck is always null by the time a credit sheet can open. A
+    // fourth clear on the way IN would turn that gate's count into noise.
+    setPayCtx({
+      id: inv.id,
+      number: inv.invoice_number ?? '',
+      newStatus: 'paid',
+      // openAmount deliberately ABSENT: the sheet then renders no instalment field and both
+      // method buttons send amount null — settle the whole magnitude. A partial credit
+      // settlement would need its own thinking about the kasboek's one-entry limit first.
+      clientKey: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined,
+      credit: true,
+    })
+  }
+
   async function requestPay(inv: IncomingRow) {
     // [MANUAL-PARTIAL-PAY] openAmount = what is still owed (the full total on an untouched
     // invoice, the remainder once instalments were recorded) — the amount field's hint and cap.
@@ -3134,6 +3170,28 @@ export default function IncomingManageClient({
                           happen. payGuarded already caught the tap and asked a question back, which
                           is the right backstop — but a control that exists only to be refused is
                           still telling the owner the wrong thing about their own document. */}
+                      {/* [CREDIT-AFHANDELEN] The RIGHT question, where the wrong one is hidden.
+                          Only for a DECLARED credit (stance 'credit'): a 'suspected' row keeps its
+                          correction question first — closing a row as a credit while it is booked
+                          POSITIVE would mark a real debt paid. */}
+                      {inv.status === 'received' && stance === 'credit' && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (processingId === inv.id) return
+                            requestPayCredit(inv)
+                          }}
+                          style={{
+                            fontSize: 12, fontWeight: 500, borderRadius: R.full,
+                            border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT,
+                            background: M3.surfaceVariant, color: '#5f6368',
+                            display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                          }}>
+                          {processingId === inv.id
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            : t('ink.credit.afhandelenKnop')}
+                        </button>
+                      )}
                       {inv.status === 'received' && !incasso && payable && (
                         <button
                           onClick={e => {
@@ -3868,9 +3926,15 @@ export default function IncomingManageClient({
       {/* ── Pay dialog (Bank/Contant + date on mark-paid; single confirm on undo) ── */}
       {payCtx && (
         <BottomSheet
-          title={payCtx.newStatus === 'paid' ? t('ink.markeerBetaaldVraag') : t('ink.ongedaanVraag')}
+          title={payCtx.credit ? t('ink.credit.afhandelenVraag')
+            : payCtx.newStatus === 'paid' ? t('ink.markeerBetaaldVraag') : t('ink.ongedaanVraag')}
           body={
-            payCtx.newStatus === 'paid'
+            // [CREDIT-AFHANDELEN] Not "wordt als betaald gemarkeerd": nothing is being paid. The
+            // body also says what the two method buttons MEAN here, because their labels
+            // ("Bank"/"Contant") describe how the money came back, not how it went out.
+            payCtx.credit
+              ? t('ink.credit.afhandelenUitleg', { number: payCtx.number })
+              : payCtx.newStatus === 'paid'
               ? t('ink.wordtBetaaldGemarkeerd', { number: payCtx.number })
               // [UNDO-HONEST] An undo is all-or-nothing and it ERASES what was recorded, so the
               // sheet has to say which of the two it is about to do. On a fully paid invoice the
@@ -3893,12 +3957,13 @@ export default function IncomingManageClient({
                     : `${t('ink.teruggeplaatst', { number: payCtx.number })}${whereItGoes}`
                 })()
           }
-          confirmLabel={payCtx.newStatus === 'paid' ? t('ink.jaMarkeerBetaald') : t('ink.ongedaanMaken')}
+          confirmLabel={payCtx.credit ? t('ink.credit.jaAfhandelen')
+            : payCtx.newStatus === 'paid' ? t('ink.jaMarkeerBetaald') : t('ink.ongedaanMaken')}
           confirmBg={payCtx.newStatus === 'paid' ? M3.success : M3.warning}
           // [DUBBEL-BEWIJS] Only on the mark-paid direction. An UNDO cannot pay anything twice,
           // so a sentence about the double-payment check there would be noise attached to the one
           // action it has nothing to say about.
-          notice={payCtx.newStatus === 'paid'
+          notice={payCtx.newStatus === 'paid' && !payCtx.credit
             ? <DoublePayNotice notice={buildDoublePayNotice(payCheck, taal)} />
             : undefined}
           onConfirm={() => executePay(payCtx)}
@@ -3909,18 +3974,21 @@ export default function IncomingManageClient({
                   // [PAY-IDEMPOTENT] The key rides along from payCtx, minted when this dialog was
                   // opened (see requestPay). Generating it here gave every tap its own key, which
                   // is the one thing an idempotency key must not do.
-                  ...payCtx, paymentMethod: method, paymentDate, amount,
+                  // [CREDIT-AFHANDELEN] amount forced null on a credit: closed whole, never in
+                  // instalments — belt and braces on top of the hidden field.
+                  ...payCtx, paymentMethod: method, paymentDate,
+                  amount: payCtx.credit ? null : amount,
                 })
               : undefined
           }
           // [MANUAL-PARTIAL-PAY] Amount field only when marking as paid; an undo is
           // all-or-nothing ("Deelbetalingen wissen" resets to zero paid).
-          openAmount={payCtx.newStatus === 'paid' ? payCtx.openAmount : undefined}
+          openAmount={payCtx.newStatus === 'paid' && !payCtx.credit ? payCtx.openAmount : undefined}
           // [PAY-NOT-YET] Third answer on mark-paid only: "no, I have not paid".
           // Clears the prepared marker (Voorbereid chip + nudge disappear); the
           // invoice stays open as te betalen. Undo-paid keeps its two buttons.
           secondaryAction={
-            payCtx.newStatus === 'paid'
+            payCtx.newStatus === 'paid' && !payCtx.credit
               ? {
                   label: t('ink.neeNogNiet'),
                   onClick: () => {
