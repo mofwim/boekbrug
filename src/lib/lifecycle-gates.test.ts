@@ -7789,6 +7789,32 @@ test("[UPLOAD-PLAFOND] the budget is the platform's, not the app's", () => {
   assert.match(route, /const MAX_BYTES = \d+ \* 1024 \* 1024/, "the server's own cap stays");
 });
 
+test("[PAKKET-DEUR] a refused download answers in the language of its caller", () => {
+  // Five screens open /api/closing-package with a plain <a href> — a browser navigation — and one
+  // (the Brug) calls it with fetch(). A refusal must speak HTML to the first and JSON to the
+  // second: raw JSON in a navigated tab reads as "the product is broken" at the exact moment the
+  // accountant came to collect a quarter, and an HTML page handed to the Brug's fetch would break
+  // the error handling it already has.
+  const route = code("src/app/api/closing-package/route.ts");
+
+  // Every refusal goes through the one negotiating door. A bare NextResponse.json({ error is a
+  // new exit someone added past it — JSON in a navigated tab again, on exactly one code path,
+  // found by exactly one accountant.
+  // The pattern pins the LITERAL-string form: refuse() itself answers JSON through
+  // `{ error: zin }`, and that one line is the negotiation working, not a bypass of it.
+  assert.doesNotMatch(
+    route, /NextResponse\.json\(\{ error: ["']/,
+    "a refusal that bypasses refuse() answers a browser navigation with raw JSON",
+  );
+  assert.match(route, /includes\("text\/html"\)/, "the branch is the caller's Accept header");
+  // And both answers still exist: the negotiation is only real while there are two sides.
+  assert.match(route, /return NextResponse\.json\(\{ error: zin \}, \{ status \}\);/, "fetch callers keep their JSON");
+  assert.match(route, /text\/html; charset=utf-8/, "navigations get a page");
+  // The page is static: nothing from the request may be interpolated into the HTML. `zin` is one
+  // of the route's own literals; a query param in the template is reflected XSS on a money door.
+  assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
+});
+
 test("[PAKKET-VERS] the staleness answer borrows the package's judgement and reaches the board", () => {
   // The freshness count is a claim about the ZIP: "this many things would be in it now that were
   // not in your copy". That claim is only true while the membership rules HERE are the membership

@@ -32,13 +32,38 @@ function safe(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+// ── [PAKKET-DEUR] A refusal must land where the click came from ─────────────────────────────────
+//
+// Five screens reach this route through a plain <a href> — a browser NAVIGATION — because that is
+// the only way to hand the browser a download it can stream to disk. The happy path is fine; every
+// refusal was JSON. So a failed build, an expired session or a broken link dropped the accountant
+// on a raw {"error":"Pakket genereren mislukt"} page: no way back, no sentence, and it reads as
+// "the product is broken" at the exact moment he came to collect a quarter.
+//
+// Content negotiation, not a redirect: a navigation says `text/html` in its Accept header, a
+// fetch() caller (the Brug) says */* and keeps getting the JSON it already handles. The page is
+// static Dutch — nothing from the request is interpolated into it, so there is nothing to escape.
+function refuse(req: NextRequest, status: number, zin: string): NextResponse {
+  if (!(req.headers.get("accept") ?? "").includes("text/html")) {
+    return NextResponse.json({ error: zin }, { status });
+  }
+  const body = `<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Pakket niet opgehaald</title></head>
+<body style="font-family:system-ui,sans-serif;background:#F8F9FA;margin:0;display:grid;place-items:center;min-height:100vh">
+<main style="background:#fff;border:1px solid #E0E0E0;border-radius:12px;padding:28px 32px;max-width:420px">
+<h1 style="font-size:16px;margin:0 0 8px">Het pakket is niet opgehaald</h1>
+<p style="font-size:14px;color:#5F6368;line-height:1.6;margin:0">${zin}</p>
+<p style="font-size:13px;color:#5F6368;line-height:1.6;margin:12px 0 0">Ga terug naar het vorige scherm en probeer het opnieuw. Blijft dit gebeuren, meld het ons dan.</p>
+</main></body></html>`;
+  return new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
 export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
+    return refuse(req, 401, "Je bent niet (meer) ingelogd. Log opnieuw in en haal het pakket dan op.");
   }
 
   // ── Params ──
@@ -48,10 +73,10 @@ export async function GET(req: NextRequest) {
   const clientId = req.nextUrl.searchParams.get("clientId");
 
   if (!Number.isInteger(year) || year < 2020 || year > 2030) {
-    return NextResponse.json({ error: "Ongeldig jaar" }, { status: 400 });
+    return refuse(req, 400, "Deze link noemt een jaar dat we niet kennen.");
   }
   if (![1, 2, 3, 4].includes(quarterRaw)) {
-    return NextResponse.json({ error: "Ongeldig kwartaal" }, { status: 400 });
+    return refuse(req, 400, "Deze link noemt geen geldig kwartaal.");
   }
   const quarter = quarterRaw as Quarter;
 
@@ -66,7 +91,7 @@ export async function GET(req: NextRequest) {
       .eq("id", user.id)
       .single();
     if (profile?.role !== "accountant") {
-      return NextResponse.json({ error: "Geen toegang" }, { status: 403 });
+      return refuse(req, 403, "Dit pakket hoort bij een andere administratie dan de jouwe.");
     }
     const { data: link } = await supabase
       .from("accountant_clients")
@@ -75,7 +100,7 @@ export async function GET(req: NextRequest) {
       .eq("zzper_id", clientId)
       .maybeSingle();
     if (!link) {
-      return NextResponse.json({ error: "Geen toegang tot deze klant" }, { status: 403 });
+      return refuse(req, 403, "Je bent niet (meer) aan deze klant gekoppeld, dus dit pakket is niet van jou op te halen.");
     }
     ownerId = clientId;
 
@@ -104,7 +129,7 @@ export async function GET(req: NextRequest) {
     result = await buildClosingPackageZip({ ownerId, year, quarter, supabase: pipeline });
   } catch (err) {
     console.error("[CLOSING-PACKAGE] build failed", err);
-    return NextResponse.json({ error: "Pakket genereren mislukt" }, { status: 500 });
+    return refuse(req, 500, "Het samenstellen van het pakket is halverwege misgegaan. Er is niets verstuurd of veranderd; opnieuw proberen kan direct.");
   }
 
   // ── Filename ──
