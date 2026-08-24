@@ -12,7 +12,10 @@
 // =====================================================
 
 import { renderToBuffer } from '@react-pdf/renderer'
+import QRCode from 'qrcode'
 import { InvoicePDF } from './invoice-pdf'
+// [PDF-BETAAL-QR] The scan-to-pay QR on the paper itself — see pdf-betaal-qr.ts.
+import { epcPayloadForInvoicePdf } from './pdf-betaal-qr'
 
 /**
  * Render the official invoice PDF to a Buffer.
@@ -30,7 +33,23 @@ export async function renderInvoicePdf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   profile: any
 ): Promise<Buffer> {
+  // [PDF-BETAAL-QR] Built HERE so every server-rendered copy — the one the customer actually
+  // receives — carries it without each caller having to remember. Best-effort on purpose: a QR
+  // that cannot be built (no IBAN, creditnota, offerte, a QR-encoder hiccup) yields null and the
+  // document renders exactly as before — legal delivery outranks decoration ([FACTUUR-A]).
+  let betaalQr: { dataUrl: string; amount: number } | null = null
+  try {
+    const epc = epcPayloadForInvoicePdf(invoice, profile)
+    if (epc) {
+      betaalQr = {
+        dataUrl: await QRCode.toDataURL(epc.payload, { margin: 0, width: 240 }),
+        amount: epc.amount,
+      }
+    }
+  } catch {
+    betaalQr = null
+  }
   return renderToBuffer(
-    <InvoicePDF invoice={invoice} lines={lines} profile={profile} />
+    <InvoicePDF invoice={invoice} lines={lines} profile={profile} betaalQr={betaalQr} />
   ) as unknown as Promise<Buffer>
 }

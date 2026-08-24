@@ -14205,3 +14205,32 @@ test("[DUBBEL-STORM] een geblokkeerd duplicaat wordt niet elke twee uur opnieuw 
   assert.match(sync, /source_message_id: `\$\{dedupKey\}:dubbel`/,
     "de dubbel-skiprij draagt het :dubbel-suffix niet meer — dan is deze hele gate gratis waar");
 });
+
+test("[PDF-BETAAL-QR] de betaal-QR staat op het papier zelf — en alleen als hij hetzelfde vraagt als het papier", () => {
+  // GEVRAAGD: de QR met betaalgegevens die het betaalverzoek toont, ook op de factuur-PDF die de
+  // klant krijgt. De beslisser is puur en getest (pdf-betaal-qr.ts); de renderproef staat in
+  // invoice-pdf-server.test.ts. Deze gate pint de BEDRADING — drie plekken die elk afzonderlijk
+  // stil kunnen losraken terwijl alle tests groen blijven.
+  const server = code("src/lib/invoice-pdf-server.tsx");
+  // 1. De verzonden klantkopie bouwt de QR zelf, langs de gedeelde beslisser en encoder…
+  assert.match(server, /epcPayloadForInvoicePdf\(invoice, profile\)/,
+    "de serverrender beslist niet meer via pdf-betaal-qr — de verzonden PDF verliest zijn QR");
+  assert.match(server, /QRCode\.toDataURL\(epc\.payload/,
+    "de payload wordt niet meer gecodeerd — er is geen afbeelding om te renderen");
+  assert.match(server, /betaalQr=\{betaalQr\}/,
+    "de gebouwde QR bereikt het document niet");
+  // 2. …het document weigert een QR die een ANDER bedrag vraagt dan zijn eigen betaalzin, en
+  //    zet hem alleen op een factuur (offerte vraagt geen geld, creditnota is geld van ons).
+  const doc = code("src/lib/invoice-pdf.tsx");
+  assert.match(doc, /type === 'factuur' && betaalQr && Math\.abs\(betaalQr\.amount - displayTotal\) <= 0\.005/,
+    "de bedrag-overeenkomst is weg — het papier kan een QR dragen die iets anders vraagt dan zijn eigen zin");
+  // 3. De voorvertoning toont hetzelfde papier als de klant krijgt: zelfde beslisser, en de
+  //    qrcode-encoder DYNAMISCH zodat hij in de lazy-brok blijft ([PDF-LAZY]).
+  const knop = code("src/components/invoice/PdfPreviewButton.tsx");
+  assert.match(knop, /epcPayloadForInvoicePdf\(invoice, profile\)/,
+    "de voorvertoning beslist niet meer mee — klant en eigenaar zien verschillend papier");
+  assert.match(knop, /import\('qrcode'\)/,
+    "qrcode wordt niet meer dynamisch geladen in de voorvertoningsknop");
+  assert.match(knop, /betaalQr=\{betaalQr\}/,
+    "de voorvertoning bouwt de QR maar geeft hem niet aan het document");
+});
