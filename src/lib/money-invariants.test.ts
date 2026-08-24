@@ -297,6 +297,102 @@ test("[GELD-INVARIANT] transactions are only checked when they were passed in", 
   assert.deepEqual(v, []);
 });
 
+// ── [BANK-SPLIT] The Bank page and the invoice list must tell the same story ─────────
+//
+// The case a person actually found by eye: a bank line rendered "afgehandeld, automatisch
+// gekoppeld" while the invoice it points at sat on the incoming list as open and overdue. Every
+// booking path writes the pair consistently TODAY, but nothing ever re-checked the pairs that
+// already exist — damage from before the orderings (or from a crash between two writes) persisted
+// with both screens contradicting each other and no finding anywhere.
+
+test("[BANK-SPLIT] a matched line whose invoice the list still shows open is the finding itself", () => {
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "i1", status: "received", amountPaid: 0, totalIncBtw: 121 })],
+    links: [],
+    transactions: [{ id: "t1", amount: -121, invoiceId: "i1", status: "matched" }],
+  });
+  assert.deepEqual(kinds(v), ["matched_tx_unpaid_invoice"]);
+  assert.equal(v[0].entityId, "t1");
+  assert.equal(v[0].euros, 121);
+  // The message must name both sides of the contradiction and the button as it is written on the
+  // Bank page — the owner may not be sent hunting for a word the interface nowhere shows.
+  assert.match(v[0].message, /2026-0042/);
+  assert.match(v[0].message, /nog € 121,00 open/);
+  assert.match(v[0].message, /"Ontkoppelen"/);
+});
+
+test("[BANK-SPLIT] a matched line whose invoice is paid is the ordinary case — silent", () => {
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 121 })],
+    links: [link()],
+    transactions: [{ id: "t1", amount: -121, invoiceId: "i1", status: "matched" }],
+  });
+  assert.deepEqual(v, []);
+});
+
+test("[BANK-SPLIT] a pending line carrying an invoice_id is mid-multi-confirm, not a finding", () => {
+  // /api/bank/confirm records invoice_id while money remains unbooked and only flips to 'matched'
+  // when the line is fully spent. Flagging that intermediate state would fire on every partly
+  // confirmed batch in the country.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "received", amountPaid: 50, totalIncBtw: 121 })],
+    links: [link({ amountApplied: 50 })],
+    transactions: [{ id: "t1", amount: -500, invoiceId: "i1", status: "pending" }],
+  });
+  assert.ok(!kinds(v).includes("matched_tx_unpaid_invoice"), `fired on a pending line: ${JSON.stringify(v)}`);
+});
+
+test("[BANK-SPLIT] a matched line to an invoice that was not passed in is unjudgeable, not guilty", () => {
+  // The route reads invoices with .neq(status,'archived'), so a link onto an archived row lands
+  // here: no verdict — a check that cannot run must not report. (The read-only SQL sweep covers
+  // archived rows; this audit covers the live books.)
+  const v = findMoneyViolations({
+    invoices: [],
+    links: [],
+    transactions: [{ id: "t1", amount: -121, invoiceId: "gone", status: "matched" }],
+  });
+  assert.deepEqual(v, []);
+});
+
+test("[BANK-SPLIT] covered-but-open stays status_open_but_covered's finding — never two verdicts on one row", () => {
+  // amount_paid says fully covered while status still says open: that contradiction is already
+  // reported, with the opposite advice ("hij IS betaald"). A second finding from the bank side
+  // saying "één van de twee is onwaar" about the same row would argue with it.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "received", amountPaid: 121, totalIncBtw: 121 })],
+    links: [link({ amountApplied: 121 })],
+    transactions: [{ id: "t1", amount: -121, invoiceId: "i1", status: "matched" }],
+  });
+  assert.ok(kinds(v).includes("status_open_but_covered"), `expected the covered finding: ${JSON.stringify(v)}`);
+  assert.ok(!kinds(v).includes("matched_tx_unpaid_invoice"), "both verdicts fired on one row");
+});
+
+test("[BANK-SPLIT] the partial that is honestly mid-payment fires too, for the OPEN remainder", () => {
+  // 'matched' means the bank considers this line fully spent. If the invoice it spent itself on
+  // still shows €71 open, that €71 is the dispute — not the full total.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "received", amountPaid: 50, totalIncBtw: 121 })],
+    links: [link({ amountApplied: 50 })],
+    transactions: [{ id: "t1", amount: -121, invoiceId: "i1", status: "matched" }],
+  });
+  const split = v.find((x) => x.kind === "matched_tx_unpaid_invoice");
+  assert.ok(split, `expected the split finding: ${JSON.stringify(v)}`);
+  assert.equal(split!.euros, 71);
+});
+
+test("[BANK-SPLIT] the money-audit route actually feeds the check — columns AND mapping", () => {
+  // findMoneyViolations skips what it cannot see, BY DESIGN — so the route quietly dropping
+  // invoice_id or status from its select would switch this check off with every test above still
+  // green. The wiring is the assertion: the select carries the columns, the mapper hands them on.
+  const route = readFileSync("src/app/api/money-audit/route.ts", "utf8");
+  assert.match(
+    route, /\.select\("id, amount, invoice_id, status"\)/,
+    "the bank_transactions read no longer carries invoice_id + status — the matched-line check is switched off",
+  );
+  assert.match(route, /invoiceId: \(r\.invoice_id as string \| null\) \?\? null/, "invoice_id is read but never mapped");
+  assert.match(route, /status: \(r\.status as string \| null\) \?\? null,\n\s*\}\)\);\n\s*\} catch/, "status is read but never mapped into TransactionRow");
+});
+
 // ── The headline, and the order ──────────────────────────────────────
 
 test("[GELD-INVARIANT] the biggest euros come first, and the headline names the total", () => {
