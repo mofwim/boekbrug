@@ -61,6 +61,13 @@ export interface LinkRow {
 export interface TransactionRow {
   id: string;
   amount: number | null;
+  /**
+   * The direct link the Bank page renders its "afgehandeld" state from. Optional on purpose:
+   * a caller that does not read these columns simply does not get the matched-line check —
+   * a check that cannot run must not report a result (same rule as the unknown-invoice skip).
+   */
+  invoiceId?: string | null;
+  status?: string | null;
 }
 
 export type ViolationKind =
@@ -72,7 +79,8 @@ export type ViolationKind =
   | "status_open_but_covered"
   | "btw_arithmetic"
   | "creditnota_sign"
-  | "transaction_overallocated";
+  | "transaction_overallocated"
+  | "matched_tx_unpaid_invoice";
 
 export interface Violation {
   kind: ViolationKind;
@@ -290,6 +298,51 @@ export function findMoneyViolations(input: {
             `${eur(spent - moved)} meer dan er is overgemaakt.`,
         });
       }
+    }
+
+    // ── The Bank page and the invoice list must tell the same story ──
+    //
+    // A 'matched' transaction with an invoice_id is what the Bank page renders as "afgehandeld:
+    // this money paid that invoice". Every booking path writes that pair atomically-with-rollback
+    // (invoice → paid first, link second, loud rollback on failure), and every reversal detaches
+    // the link before or with the un-pay. So in a healthy administration the pair cannot disagree.
+    //
+    // But nothing ever LOOKED. Damage from before those orderings existed — or from a crash
+    // between two writes, or a hand-edit — persists silently: the Bank page keeps saying "betaald,
+    // afgehandeld" while the invoice list keeps saying "openstaand, te laat". The owner sees both
+    // screens and has no way to tell which one is lying; this is the split a person actually
+    // found by eye, and the only invariant here that was checkable all along and never checked.
+    //
+    // Skips, each for the same reason as elsewhere in this file:
+    //   · tx not 'matched' or no invoice_id — a pending line mid-multi-confirm legitimately
+    //     carries an invoice_id while more of its money is still unbooked;
+    //   · linked invoice not in the input — a check that cannot run must not report;
+    //   · invoice 'paid' — the ordinary, correct case;
+    //   · invoice fully covered by amount_paid — that shape is already reported as
+    //     status_open_but_covered, and two findings saying opposite things about one row is how
+    //     an audit stops being believed.
+    const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+    for (const t of input.transactions) {
+      if ((t.status ?? "") !== "matched" || !t.invoiceId) continue;
+      const linked = invoiceById.get(t.invoiceId);
+      if (!linked) continue;
+      if (claimsPaid(linked)) continue;
+      const total = Math.abs(num(linked.totalIncBtw));
+      const paid = Math.max(0, num(linked.amountPaid));
+      if (total > MONEY_EPSILON && paid >= total - MONEY_EPSILON) continue; // status_open_but_covered's case
+      const open = total > MONEY_EPSILON ? round2(total - paid) : Math.abs(num(t.amount));
+      out.push({
+        kind: "matched_tx_unpaid_invoice",
+        entityId: t.id,
+        euros: open,
+        // Names the button as it is written on the Bank page ('Ontkoppelen'), so the owner is not
+        // hunting for a word that is nowhere in the interface.
+        message:
+          `De Bank-pagina zegt: een regel van ${eur(Math.abs(num(t.amount)))} is afgehandeld en betaalde ` +
+          `${linked.invoiceNumber ?? "een factuur"}. De facturenlijst zegt: die factuur staat nog ${eur(open)} open. ` +
+          `Eén van de twee is onwaar — is de betaling echt, meld de factuur dan alsnog als betaald; ` +
+          `zo niet, kies "Ontkoppelen" bij die bankregel en koppel opnieuw.`,
+      });
     }
   }
 
