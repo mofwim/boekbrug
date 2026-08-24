@@ -42,6 +42,10 @@ import { sendWithFit } from "@/lib/upload-fit";
 import { describeUploadFailure } from "@/lib/upload-failure";
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
+// [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
+import { parseAmountNL } from "@/lib/parse-nl";
+// [CENT] Cent rounding comes from invoice-totals.round2 — one definition for the whole app.
+import { round2 } from "@/lib/invoice-totals";
 // [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
 import InvoiceDocumentSheet from "@/components/invoice/InvoiceDocumentSheet";
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
@@ -1030,6 +1034,26 @@ export function ConfirmPaidModal({
   const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
 
+  // [KOMMA-INVOER] What the owner SEES while typing, next to what the triplet HOLDS — the same
+  // pairing [DATE-NL] uses above, for the same reason: a display derived from the parsed number
+  // eats the keystroke that has not become a number yet. These fields were <input type="number">,
+  // and that refused the Dutch decimal comma outright: on the NemaFood invoice the btw is printed
+  // 95,54 and the field would not take anything past "95" — the one figure the modal exists to
+  // let the owner copy off the paper could not be typed. (It also put a spinner on money, and its
+  // parseFloat would have read a pasted "1.160,68" as 1.16.) Text + parseAmountNL reads every
+  // ordinary Dutch way of writing an amount; blur snaps the field to the value the triplet holds.
+  // Display rounds to the cent; the HELD value stays untouched (the triplet is deliberately
+  // unrounded — see amount-triplet.ts). Without the rounding, a derived field paints the float
+  // tail: 1160,68 − 95,54 held as 1065.1399999999999 would show as "1065,1399999999999".
+  const [amountDraft, setAmountDraft] = useState<{ field: "ex" | "btw" | "incl"; text: string } | null>(null);
+  const amountShown = (field: "ex" | "btw" | "incl", held: number) =>
+    amountDraft?.field === field ? amountDraft.text : String(round2(held)).replace(".", ",");
+  const typeAmount = (field: "ex" | "btw" | "incl", text: string) => {
+    setAmountDraft({ field, text });
+    const n = clampAmount(parseAmountNL(text));
+    applyTriplet(field === "ex" ? setExcl(triplet, n) : field === "btw" ? setBtw(triplet, n) : setIncl(triplet, n));
+  };
+
   // [BRIDGE-B] TRAIL 3 — legal BTW rate must round to 0 / 9 / 21. FLAG, never block.
   // [BTW-MIXED-RATE] A blended rate (e.g. 9%+21% food invoice → ~11%) is valid:
   // any value 0–21 can be a mix of legal NL rates. Only < 0 or > 21 is impossible.
@@ -1265,9 +1289,11 @@ export function ConfirmPaidModal({
                 <span style={{ fontSize: 14, color: "#5f6368" }}>{t('ink.bedragExcl')}</span>
                 {editing ? (
                   <input
-                    type="number"
-                    value={exBtw}
-                    onChange={(e) => applyTriplet(setExcl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
+                    type="text"
+                    inputMode="decimal"
+                    value={amountShown("ex", exBtw)}
+                    onChange={(e) => typeAmount("ex", e.target.value)}
+                    onBlur={() => setAmountDraft(null)}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -1286,9 +1312,11 @@ export function ConfirmPaidModal({
                 <span style={{ fontSize: 14, color: "#5f6368" }}>BTW</span>
                 {editing ? (
                   <input
-                    type="number"
-                    value={btwAmount}
-                    onChange={(e) => applyTriplet(setBtw(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
+                    type="text"
+                    inputMode="decimal"
+                    value={amountShown("btw", btwAmount)}
+                    onChange={(e) => typeAmount("btw", e.target.value)}
+                    onBlur={() => setAmountDraft(null)}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
@@ -1321,11 +1349,11 @@ export function ConfirmPaidModal({
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#202124" }}>{t('ink.totaal')}</span>
                 {editing ? (
                   <input
-                    type="number"
+                    type="text"
                     inputMode="decimal"
-                    step="0.01"
-                    value={totalIncBtw}
-                    onChange={(e) => applyTriplet(setIncl(triplet, clampAmount(parseFloat(e.target.value) || 0)))}
+                    value={amountShown("incl", totalIncBtw)}
+                    onChange={(e) => typeAmount("incl", e.target.value)}
+                    onBlur={() => setAmountDraft(null)}
                     aria-label={t('ink.totaalUitleg')}
                     style={{
                       width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
@@ -1631,10 +1659,12 @@ export function ConfirmPaidModal({
               {t('ink.betaaldBedrag')} <span style={{ color: "#5f6368", fontWeight: 400 }}>{t('ink.optioneel')}</span>
             </label>
             <input
-              type="number"
+              // [KOMMA-INVOER] Text, not number: the owner copies this off a Dutch bank app with a
+              // comma. The state is already the raw string (UI-only, not stored), so only the type
+              // and the placeholder's decimal separator had to change.
+              type="text"
               inputMode="decimal"
-              step="0.01"
-              placeholder={totalIncBtw.toFixed(2)}
+              placeholder={totalIncBtw.toFixed(2).replace(".", ",")}
               value={confirmAmount}
               onChange={(e) => setConfirmAmount(e.target.value)}
               disabled={submitting}

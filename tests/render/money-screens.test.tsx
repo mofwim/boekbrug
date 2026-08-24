@@ -1509,7 +1509,13 @@ test("[FULL-CORRECTION] the shared correction editor renders, and shows the supp
   // retyped correct figure is how a correct figure becomes a typo.
   assert.match(html, /26302050/);
   assert.match(html, /ATAPACK Cash &amp; Carry B\.V\./);
-  assert.match(html, /6662\.8/);
+  // [KOMMA-INVOER] The amounts render the way a Dutch owner writes them — comma decimal, in a
+  // TEXT field (a number input refuses that comma on the browsers that decide per locale; the
+  // NemaFood btw of 95,54 could not be typed at all). The stored 6662.8 must appear as 6662,8.
+  assert.match(html, /value="6662,8"/);
+  assert.match(html, /value="550,14"/);
+  assert.doesNotMatch(html, /type="number"/, "a number input is back — the Dutch comma is untypeable there");
+  assert.match(html, /inputMode="decimal"/, "the money fields lost the decimal keyboard hint");
   // [READING-MEMORY] travels with the editor, so it reaches /bank too.
   assert.match(html, /meestal het btw-bedrag/);
   // [KIND-CORRECTION] the one-way declaration, with the sentence that now describes what it does.

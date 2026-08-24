@@ -2739,13 +2739,26 @@ export async function syncUserEmails(
       // invoice (logos, signatures, catalogs). Without this registry they left
       // no DB trace → re-classified by Claude on every sync, and a batch full
       // of them made the sync loop spin with zero progress.
+      //
+      // [DUBBEL-STORM] …and the attachments blocked as SEMANTIC DUPLICATES, whose skip rows carry
+      // the `:dubbel` suffix ([DUBBEL-ZICHTBAAR] chose it so a dubbel-skip can coexist with a
+      // not-an-invoice skip of the same attachment). This lookup used to match plain keys only, so
+      // a blocked duplicate was in NEITHER registry knownKeys reads: never imported (no invoices
+      // row, no byte-hash) and its skip row unmatchable. Every sync inside the 24h watermark
+      // overlap then re-sent the SAME PDF to the model, re-blocked it, and re-logged
+      // invoice.duplicated — twelve model reads a day per duplicate attachment, for at least a
+      // day, visible in production as hour-on-hour identical audit rows (the FAMZFOOD trail:
+      // one rejected message id logged 14× in 32 hours). A supplier who re-attaches old invoices
+      // to every mail — FAMZFOOD does — turns that into a standing daily cost.
       const { data: skippedRows } = await supabase
         .from('email_skipped_attachments')
         .select('source_message_id')
         .eq('user_id', userId)
-        .in('source_message_id', keyChunk)
+        .in('source_message_id', [...keyChunk, ...keyChunk.map((k) => `${k}:dubbel`)])
       for (const row of (skippedRows ?? []) as Array<{ source_message_id: string | null }>) {
-        if (row.source_message_id) knownKeys.add(row.source_message_id)
+        const id = row.source_message_id
+        if (!id) continue
+        knownKeys.add(id.endsWith(':dubbel') ? id.slice(0, -':dubbel'.length) : id)
       }
     }
   }

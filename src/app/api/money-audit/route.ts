@@ -104,7 +104,9 @@ export async function GET(req: NextRequest) {
       fetchAllRows<Record<string, unknown>>((from, to) =>
         db
           .from("invoices")
-          .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, sender_id, receiver_id")
+          // [DUBBEL-GEBOEKT] client_name rides along for the duplicate-pair check — without it
+          // that check cannot run (two suppliers may share a number) and silently does not.
+          .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, sender_id, receiver_id, client_name")
           .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
           .neq("status", "archived")
           .order("id", { ascending: true })
@@ -142,6 +144,7 @@ export async function GET(req: NextRequest) {
       btwAmount: (r.btw_amount as number | null) ?? null,
       totalIncBtw: (r.total_inc_btw as number | null) ?? null,
       amountPaid: (r.amount_paid as number | null) ?? null,
+      clientName: (r.client_name as string | null) ?? null,
     }));
     links = linkRows
       .filter((r) => !!r.invoice_id)

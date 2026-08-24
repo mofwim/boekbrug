@@ -31,8 +31,13 @@
 // staat, wat op /dashboard/incoming een gemelde klacht was ([BLAD-GEBAAR]). De browser zijn eigen
 // viewer laten openen kost niets, werkt op elke telefoon, en geeft zoomen en delen gratis.
 
+import { useEffect, useState } from 'react'
 import { BlobProvider } from '@react-pdf/renderer'
 import { InvoicePDF } from '@/lib/invoice-pdf'
+// [PDF-BETAAL-QR] The preview must show the SAME paper the customer receives — including the
+// scan-to-pay QR the server render adds. Same pure decider, same encoder; the qrcode import is
+// dynamic so it stays inside this lazy brick with the renderer.
+import { epcPayloadForInvoicePdf } from '@/lib/pdf-betaal-qr'
 
 // De vormen die InvoicePDF verwacht. Bewust los getypt: dit bestand mag niets weten van het
 // formulier eromheen, anders hangt de lazy grens weer aan de pagina vast — dezelfde afweging als
@@ -70,8 +75,35 @@ export default function PdfPreviewButton({
    */
   download?: string
 }) {
+  // [PDF-BETAAL-QR] Async QR generation next to a sync document component: build the data URI in
+  // an effect, render the document without the QR until it lands (one quick re-render — the same
+  // progression the server render goes through, just visible). A failed build leaves it null and
+  // the preview matches the fallback the server would produce.
+  //
+  // The effect keys on the PAYLOAD STRING, not on the invoice/profile objects: the parent form
+  // rebuilds those on every keystroke, and an object dependency would regenerate the QR each
+  // render. The payload only changes when a figure that is IN the QR changes.
+  const epc = epcPayloadForInvoicePdf(invoice, profile)
+  const payload = epc?.payload ?? null
+  const amount = epc?.amount ?? 0
+  // State remembers WHICH payload the data URI was built for; the value handed to the document is
+  // DERIVED from that match. No synchronous setState in the effect (the lint is right — it
+  // cascades), and a stale image can never ride along: the moment the payload changes, the
+  // derived value is null until the fresh build lands.
+  const [built, setBuilt] = useState<{ payload: string; dataUrl: string; amount: number } | null>(null)
+  useEffect(() => {
+    if (!payload) return
+    let stale = false
+    import('qrcode')
+      .then((QR) => QR.toDataURL(payload, { margin: 0, width: 240 }))
+      .then((dataUrl) => { if (!stale) setBuilt({ payload, dataUrl, amount }) })
+      .catch(() => { /* no QR is yesterday's paper — the derived value below stays null */ })
+    return () => { stale = true }
+  }, [payload, amount])
+  const betaalQr = built && built.payload === payload ? { dataUrl: built.dataUrl, amount: built.amount } : null
+
   return (
-    <BlobProvider document={<InvoicePDF invoice={invoice} lines={lines} profile={profile} />}>
+    <BlobProvider document={<InvoicePDF invoice={invoice} lines={lines} profile={profile} betaalQr={betaalQr} />}>
       {({ url, loading, error }) => {
         // [NO-SILENT-EMPTY] A PDF that could not be built says so. A button that silently does
         // nothing on tap is the worst of the three states: the owner taps again, and again, and
