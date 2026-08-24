@@ -104,7 +104,9 @@ export async function GET(req: NextRequest) {
       fetchAllRows<Record<string, unknown>>((from, to) =>
         db
           .from("invoices")
-          .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, sender_id, receiver_id")
+          // [DUBBEL-GEBOEKT] client_name rides along for the duplicate-pair check — without it
+          // that check cannot run (two suppliers may share a number) and silently does not.
+          .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, sender_id, receiver_id, client_name")
           .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
           .neq("status", "archived")
           .order("id", { ascending: true })
@@ -121,7 +123,11 @@ export async function GET(req: NextRequest) {
       fetchAllRows<Record<string, unknown>>((from, to) =>
         db
           .from("bank_transactions")
-          .select("id, amount")
+          // [BANK-SPLIT] invoice_id + status ride along for the matched-line check: a 'matched'
+          // line whose invoice the list still shows open. Dropping either column here silently
+          // switches that check off — findMoneyViolations skips what it cannot see, by design —
+          // so the wiring is pinned in money-invariants.test.ts.
+          .select("id, amount, invoice_id, status")
           .eq("user_id", ownerId)
           .order("id", { ascending: true })
           .range(from, to),
@@ -138,6 +144,7 @@ export async function GET(req: NextRequest) {
       btwAmount: (r.btw_amount as number | null) ?? null,
       totalIncBtw: (r.total_inc_btw as number | null) ?? null,
       amountPaid: (r.amount_paid as number | null) ?? null,
+      clientName: (r.client_name as string | null) ?? null,
     }));
     links = linkRows
       .filter((r) => !!r.invoice_id)
@@ -149,7 +156,12 @@ export async function GET(req: NextRequest) {
         invoiceId: String(r.invoice_id),
         amountApplied: (r.amount_applied as number | null) ?? null,
       }));
-    transactions = txRows.map((r) => ({ id: String(r.id), amount: (r.amount as number | null) ?? null }));
+    transactions = txRows.map((r) => ({
+      id: String(r.id),
+      amount: (r.amount as number | null) ?? null,
+      invoiceId: (r.invoice_id as string | null) ?? null,
+      status: (r.status as string | null) ?? null,
+    }));
   } catch (e) {
     // De enige lezing waar deze controle niet buiten kan. Zonder de facturen valt er niets te
     // vergelijken, en "geen verschillen gevonden" over een mislukte lezing is de valse

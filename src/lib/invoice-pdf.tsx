@@ -23,7 +23,7 @@
 // Keep this module free of server-only imports.
 // =====================================================
 
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
+import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer'
 import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 // [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
 // the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
@@ -149,6 +149,12 @@ const styles = StyleSheet.create({
   // Payment
   payment: { marginTop: 34, fontSize: 10, color: '#3c4043', lineHeight: 1.5 },
 
+  // [PDF-BETAAL-QR] The scan-to-pay block under the payment sentence.
+  qrBlock: { marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  qrImage: { width: 84, height: 84 },
+  qrTitle: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#3c4043', marginBottom: 3 },
+  qrCaption: { fontSize: 9, color: '#5f6368', lineHeight: 1.5, maxWidth: 300 },
+
   footer: {
     position: 'absolute',
     bottom: 28,
@@ -245,6 +251,7 @@ export function InvoicePDF({
   invoice,
   lines,
   profile,
+  betaalQr,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   invoice: any
@@ -252,6 +259,13 @@ export function InvoicePDF({
   lines: any[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   profile: any
+  /**
+   * [PDF-BETAAL-QR] Scan-to-pay QR, pre-rendered to a data URI by the caller (QR generation is
+   * async, this component is not). `amount` is what the EPC payload asks for — the block below
+   * renders ONLY when it equals the printed total, so the paper can never carry a QR that asks a
+   * different figure than its own payment sentence. Optional: no QR is yesterday's paper.
+   */
+  betaalQr?: { dataUrl: string; amount: number } | null
 }) {
   const type = (invoice.invoice_type as string) || 'factuur'
   const docTitle = DOC_TITLES[type] ?? 'Factuur'
@@ -549,6 +563,24 @@ export function InvoicePDF({
         {/* Closing note — depends on the document type. A quote / pro forma
             must NOT demand payment or reference a "factuurnummer". */}
         {type === 'factuur' && <Text style={styles.payment}>{paymentText}</Text>}
+        {/* [PDF-BETAAL-QR] Scan-to-pay, on the paper itself. Only on a factuur (an offerte must
+            not demand payment, a creditnota is money WE owe), and only when the QR asks EXACTLY
+            the printed total — the payment sentence above names displayTotal, and a document must
+            never disagree with itself. A QR whose amount drifted from the printed figure silently
+            does not render: no QR is yesterday's paper, a wrong QR is a wrong payment. */}
+        {type === 'factuur' && betaalQr && Math.abs(betaalQr.amount - displayTotal) <= 0.005 && (
+          <View style={styles.qrBlock} wrap={false}>
+            {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf Image has no alt prop */}
+            <Image src={betaalQr.dataUrl} style={styles.qrImage} />
+            <View style={{ flexDirection: 'column' }}>
+              <Text style={styles.qrTitle}>Scan om te betalen</Text>
+              <Text style={styles.qrCaption}>
+                Scan deze QR-code met de app van je bank — het bedrag, ons rekeningnummer en het
+                betalingskenmerk staan er al in.
+              </Text>
+            </View>
+          </View>
+        )}
         {isCreditnota && (
           <Text style={styles.payment}>
             {/* [CREDITNOTA-REF] The reference comes FIRST: art. 219 Richtlijn 2006/112/EG only

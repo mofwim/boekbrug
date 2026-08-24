@@ -35,6 +35,10 @@
 // the owner and their accountant read it.
 
 import { round2 } from "./invoice-totals";
+// [DUBBEL-GEBOEKT] One spelling rule for invoice numbers, shared with the import dedup —
+// "26 / 3958" and "26/3958" are the same number, and that equality is exactly what this file
+// needs to re-check after the fact.
+import { normalizeInvoiceNumber } from "./safecore";
 
 /** One cent. Below this, two money figures are the same number. */
 export const MONEY_EPSILON = 0.005;
@@ -49,6 +53,13 @@ export interface InvoiceRow {
   btwAmount: number | null;
   totalIncBtw: number | null;
   amountPaid: number | null;
+  /**
+   * Supplier name, for the duplicate-pair check only. Optional: without it that check simply
+   * does not run — two suppliers may legitimately hand the same owner the same invoice number
+   * (every January is full of "2026-001"), so a pair without a same-supplier witness is not
+   * judgeable, and a check that cannot run must not report.
+   */
+  clientName?: string | null;
 }
 
 export interface LinkRow {
@@ -61,6 +72,13 @@ export interface LinkRow {
 export interface TransactionRow {
   id: string;
   amount: number | null;
+  /**
+   * The direct link the Bank page renders its "afgehandeld" state from. Optional on purpose:
+   * a caller that does not read these columns simply does not get the matched-line check —
+   * a check that cannot run must not report a result (same rule as the unknown-invoice skip).
+   */
+  invoiceId?: string | null;
+  status?: string | null;
 }
 
 export type ViolationKind =
@@ -72,7 +90,9 @@ export type ViolationKind =
   | "status_open_but_covered"
   | "btw_arithmetic"
   | "creditnota_sign"
-  | "transaction_overallocated";
+  | "transaction_overallocated"
+  | "matched_tx_unpaid_invoice"
+  | "duplicate_live_pair";
 
 export interface Violation {
   kind: ViolationKind;
@@ -241,6 +261,59 @@ export function findMoneyViolations(input: {
     }
   }
 
+  // ── [DUBBEL-GEBOEKT] The same bill must not live twice ──
+  //
+  // The FAMZFOOD case, read straight from the audit trail: the reader spelled one invoice number
+  // two ways ("26/3958" and "26 / 3958"), both rows reached the live books through a since-closed
+  // dedup gap, the bank matcher paid ONE of them — correctly — and the twin stayed behind as an
+  // "open, X days overdue" card the owner could not explain. Worse: invoice 26/1876 ended up PAID
+  // twice, once by the matcher and once by hand. Every copy counts its total into kosten and its
+  // btw into voorbelasting a second time — numbers that walk straight into the aangifte.
+  //
+  // The import door normalizes numbers today, so new twins are blocked ON THE WAY IN. This is the
+  // other half: the pairs that already exist, re-checked after the fact — the whole reason this
+  // file exists. Judged only for incoming, live (not archived/draft) rows of the SAME document
+  // type — a creditnota legitimately carries its factuur's number — and only when the supplier
+  // matches. The supplier compare is deliberately conservative (case/punctuation-insensitive
+  // equality, so "FAMZFOOD BV" pairs with "FAMZFOOD B.V."): a same supplier spelled two truly
+  // different ways stays unpaired, which is a missed finding — never a false alarm on two
+  // suppliers who both numbered an invoice "2026-001".
+  {
+    const vendorKey = (name: string | null | undefined) =>
+      String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const byDocKey = new Map<string, InvoiceRow[]>();
+    for (const inv of invoices) {
+      if (inv.direction !== "incoming") continue;
+      if (inv.status === "archived" || inv.status === "draft") continue;
+      const numKey = normalizeInvoiceNumber(inv.invoiceNumber);
+      const ven = vendorKey(inv.clientName);
+      if (!numKey || !ven) continue; // no number or no supplier witness → not judgeable
+      const key = `${inv.invoiceType ?? "factuur"}|${ven}|${numKey}`;
+      const group = byDocKey.get(key) ?? [];
+      group.push(inv);
+      byDocKey.set(key, group);
+    }
+    const statusWord = (s: string | null) =>
+      s === "paid" ? "betaald" : s === "processing" ? "in de wachtrij" : "openstaand";
+    for (const group of byDocKey.values()) {
+      if (group.length < 2) continue;
+      const totals = group.map((g) => Math.abs(num(g.totalIncBtw)));
+      // The biggest copy is the one that stays; everything beyond it is counted double.
+      const extra = round2(totals.reduce((s, v) => s + v, 0) - Math.max(...totals));
+      const counts = group.map((g) => statusWord(g.status));
+      out.push({
+        kind: "duplicate_live_pair",
+        entityId: group[0].id,
+        euros: extra > MONEY_EPSILON ? extra : Math.max(...totals),
+        message:
+          `${group[0].invoiceNumber ?? "Een factuur"} van ${group[0].clientName ?? "een leverancier"} staat ` +
+          `${group.length} keer in de administratie (${counts.join(" en ")}). Dezelfde kost telt zo dubbel mee ` +
+          `in je kosten en je voorbelasting. Bewaar het origineel en zet de kopie bij Genegeerd; ` +
+          `is de kopie al als betaald gemeld, draai die betaling daar eerst terug.`,
+      });
+    }
+  }
+
   // ── A payment cannot give more than it moved ──
   // The database enforces this under a lock at booking time (allocate_bank_payment reads Σ of the
   // line's other links). This finds anything that predates that guard, or slipped past it.
@@ -290,6 +363,51 @@ export function findMoneyViolations(input: {
             `${eur(spent - moved)} meer dan er is overgemaakt.`,
         });
       }
+    }
+
+    // ── The Bank page and the invoice list must tell the same story ──
+    //
+    // A 'matched' transaction with an invoice_id is what the Bank page renders as "afgehandeld:
+    // this money paid that invoice". Every booking path writes that pair atomically-with-rollback
+    // (invoice → paid first, link second, loud rollback on failure), and every reversal detaches
+    // the link before or with the un-pay. So in a healthy administration the pair cannot disagree.
+    //
+    // But nothing ever LOOKED. Damage from before those orderings existed — or from a crash
+    // between two writes, or a hand-edit — persists silently: the Bank page keeps saying "betaald,
+    // afgehandeld" while the invoice list keeps saying "openstaand, te laat". The owner sees both
+    // screens and has no way to tell which one is lying; this is the split a person actually
+    // found by eye, and the only invariant here that was checkable all along and never checked.
+    //
+    // Skips, each for the same reason as elsewhere in this file:
+    //   · tx not 'matched' or no invoice_id — a pending line mid-multi-confirm legitimately
+    //     carries an invoice_id while more of its money is still unbooked;
+    //   · linked invoice not in the input — a check that cannot run must not report;
+    //   · invoice 'paid' — the ordinary, correct case;
+    //   · invoice fully covered by amount_paid — that shape is already reported as
+    //     status_open_but_covered, and two findings saying opposite things about one row is how
+    //     an audit stops being believed.
+    const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+    for (const t of input.transactions) {
+      if ((t.status ?? "") !== "matched" || !t.invoiceId) continue;
+      const linked = invoiceById.get(t.invoiceId);
+      if (!linked) continue;
+      if (claimsPaid(linked)) continue;
+      const total = Math.abs(num(linked.totalIncBtw));
+      const paid = Math.max(0, num(linked.amountPaid));
+      if (total > MONEY_EPSILON && paid >= total - MONEY_EPSILON) continue; // status_open_but_covered's case
+      const open = total > MONEY_EPSILON ? round2(total - paid) : Math.abs(num(t.amount));
+      out.push({
+        kind: "matched_tx_unpaid_invoice",
+        entityId: t.id,
+        euros: open,
+        // Names the button as it is written on the Bank page ('Ontkoppelen'), so the owner is not
+        // hunting for a word that is nowhere in the interface.
+        message:
+          `De Bank-pagina zegt: een regel van ${eur(Math.abs(num(t.amount)))} is afgehandeld en betaalde ` +
+          `${linked.invoiceNumber ?? "een factuur"}. De facturenlijst zegt: die factuur staat nog ${eur(open)} open. ` +
+          `Eén van de twee is onwaar — is de betaling echt, meld de factuur dan alsnog als betaald; ` +
+          `zo niet, kies "Ontkoppelen" bij die bankregel en koppel opnieuw.`,
+      });
     }
   }
 

@@ -14137,3 +14137,129 @@ test("[CREDIT-AFHANDELEN] een creditnota is af te sluiten — met de goede vraag
   const route = code("src/app/api/invoice/pay-toggle/route.ts");
   assert.match(route, /isIncoming \? \["received"\]/, "en de route laat 'received' toe — ook een credit");
 });
+
+test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknippen", () => {
+  // GEMELD, derde ronde van dezelfde klacht, en pas nu de wortel. Op /dashboard/incoming staat
+  // InvoiceDocumentSheet IN de kaart, en .inv-card draagt content-visibility: auto ([LIST-PAINT]).
+  // Dat forceert PAINT CONTAINMENT: de kaart wordt het containing block van een fixed-afstammeling
+  // (inset: 0 = de kaartdoos) en knipt alles buiten zijn randen weg. Een paneel van 88dvh tegen
+  // een kaart van een paar honderd pixels: de kop mét sluitknop boven de knip, onbereikbaar — en
+  // sinds [BLAD-ACHTERGROND] de pagina erachter óók bevroren. Aan twee kanten vast.
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  // 1. De portal, mét zijn terugval. De volgorde is de bedrading: eerst de document-guard (anders
+  //    gooit createPortal onder react-dom/server en is elke render-gate over dit blad dood), dan
+  //    de portal naar body — waar geen voorouder met containment bestaat.
+  assert.match(sheet, /if \(typeof document === 'undefined'\) return sheet/,
+    "zonder document rendert het blad ter plekke — de render-gates lezen dezelfde markup");
+  assert.match(sheet, /return createPortal\(sheet, document\.body\)/,
+    "mét document verlaat het blad de kaartboom");
+
+  // 2. En de klasse van de fout, dichtgezet waar hij ontstond: InvoiceCard zelf schrijft geen
+  //    enkele eigen fixed-overlay. Het blad mag erin AANGEROEPEN worden (het portalt zichzelf
+  //    weg); een nieuwe overlay die er rechtstreeks in wordt getikt is de volgende die de
+  //    containment opeet. Het venster loopt van de kaart tot het eerstvolgende component.
+  const inc = readFileSync("src/app/dashboard/incoming/IncomingInvoicesClient.tsx", "utf8");
+  const kaart = inc.slice(inc.indexOf("export function InvoiceCard"), inc.indexOf("function DetailRow"));
+  assert.ok(kaart.length > 0, "InvoiceCard is af te bakenen");
+  assert.doesNotMatch(kaart, /position: ["']fixed["']/,
+    "InvoiceCard tekent zelf geen fixed-overlay — die zou door content-visibility worden weggeknipt");
+  // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
+  // gratis waar en bewaakt hij niets meer.
+  assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-input in de geldmodals", () => {
+  // GEMELD: op de NemaFood-factuur staat de btw als 95,54 — en het btw-veld van de bevestig-modal
+  // nam niets voorbij "95" aan. <input type="number"> weigert het Nederlandse decimaalteken, zet
+  // een spinner op geld, en zijn parseFloat las een geplakte "1.160,68" als 1.16. De twee modals
+  // waar een eigenaar bedragen van papier overtikt zijn nu tekstvelden met parseAmountNL
+  // (parse-nl.ts, sinds deze ronde getest) en een kladpaar naast de getallen — hetzelfde paar
+  // als [DATE-NL], om dezelfde reden: een weergave die uit het geparste getal wordt afgeleid,
+  // eet de toetsaanslag op die nog geen getal is.
+  for (const pad of [
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/components/invoice/InvoiceCorrectionModal.tsx",
+  ]) {
+    const src = code(pad);
+    // 1. De klasse zelf, dicht: geen enkel number-veld meer in deze bestanden. Een nieuw
+    //    aantal-veld (geen geld) mag ooit terugkomen — maar dan langs deze gate, met een reden.
+    assert.ok(!src.includes('type="number"'),
+      `${pad}: er staat weer een type="number" — een komma is daar onintypbaar`);
+    // 2. De lezer is de gedeelde: de bedrag-onChange loopt door parseAmountNL.
+    assert.match(src, /parseAmountNL\(/, `${pad}: parseAmountNL is niet aangesloten`);
+    // 3. Het kladpaar: het veld toont de toetsaanslagen, en blur zet het terug op wat er
+    //    werkelijk wordt vastgehouden.
+    assert.match(src, /amountDraft\?\.field === field \? amountDraft\.text/,
+      `${pad}: het kladpaar is weg — het veld toont dan het afgeleide getal en eet de komma`);
+    //    Geteld, niet genoemd: de bevestig-modal heeft DRIE velden en de correctie-modal rendert
+    //    zijn ene input drie keer — één overgebleven onBlur mag niet voor allemaal doorgaan.
+    const blurs = (src.match(/onBlur=\{\(\) => setAmountDraft\(null\)\}/g) ?? []).length;
+    const nodig = pad.includes("IncomingInvoicesClient") ? 3 : 1;
+    assert.ok(blurs >= nodig,
+      `${pad}: ${blurs} van de ${nodig} bedragvelden zet(ten) bij blur terug op de gehouden waarde`);
+  }
+  // 4. Alle drie de triplet-velden van de bevestig-modal zijn op het paar aangesloten — een veld
+  //    dat de oude parseFloat-weg terugkrijgt, blijft compileren en verliest alleen de komma.
+  const inc = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  for (const veld of ['"ex"', '"btw"', '"incl"']) {
+    assert.ok(inc.includes(`typeAmount(${veld}, e.target.value)`),
+      `bevestig-modal: veld ${veld} tikt niet door typeAmount`);
+    assert.ok(inc.includes(`amountShown(${veld}`),
+      `bevestig-modal: veld ${veld} toont het kladpaar niet`);
+  }
+  const corr = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.ok(corr.includes("amountShown(f.key, amounts[f.key])"),
+    "correctie-modal: de velden tonen het kladpaar niet");
+});
+
+test("[DUBBEL-STORM] een geblokkeerd duplicaat wordt niet elke twee uur opnieuw door het model gelezen", () => {
+  // GEZIEN in productie, in de audit-tabel van de eigenaar: hetzelfde geweigerde FAMZFOOD-PDF
+  // (rejected_message_id) 14 keer in 32 uur als invoice.duplicated gelogd — elke sync één
+  // volledige modellezing voor een bijlage waarvan het oordeel al vaststond. De oorzaak is een
+  // sleutelvorm-mismatch: de dubbel-skiprij heet `${dedupKey}:dubbel` ([DUBBEL-ZICHTBAAR]), maar
+  // PHASE 0 zocht email_skipped_attachments alleen op de KALE sleutel — en een geblokkeerd
+  // duplicaat staat nergens anders (geen invoices-rij, geen byte-hash). Binnen de 24u-overlap
+  // van het watermark kwam hij dus elke run terug.
+  const sync = code("src/lib/email-integration.ts");
+  // 1. De lookup dekt de gesuffixte vorm — via de kale chunk PLUS de :dubbel-variant.
+  assert.match(sync, /\.in\('source_message_id', \[\.\.\.keyChunk, \.\.\.keyChunk\.map\(\(k\) => `\$\{k\}:dubbel`\)\]\)/,
+    "PHASE 0 zoekt de dubbel-skiprijen niet meer — elke geblokkeerde dubbel kost weer een modellezing per sync");
+  // 2. …en het gevonden id wordt ONTdaan van het suffix vóór hij in knownKeys landt, want de
+  //    vergelijking verderop is op de kale sleutel (`${messageId}:${filename}`).
+  assert.match(sync, /knownKeys\.add\(id\.endsWith\(':dubbel'\) \? id\.slice\(0, -':dubbel'\.length\) : id\)/,
+    "de gesuffixte rij wordt gevonden maar niet teruggebracht naar de kale sleutel — knownKeys mist hem alsnog");
+  // 3. De schrijfkant houdt zijn suffix (dat was de afspraak van [DUBBEL-ZICHTBAAR]): verandert
+  //    die vorm, dan bewaakt de lookup hierboven niets meer.
+  assert.match(sync, /source_message_id: `\$\{dedupKey\}:dubbel`/,
+    "de dubbel-skiprij draagt het :dubbel-suffix niet meer — dan is deze hele gate gratis waar");
+});
+
+test("[PDF-BETAAL-QR] de betaal-QR staat op het papier zelf — en alleen als hij hetzelfde vraagt als het papier", () => {
+  // GEVRAAGD: de QR met betaalgegevens die het betaalverzoek toont, ook op de factuur-PDF die de
+  // klant krijgt. De beslisser is puur en getest (pdf-betaal-qr.ts); de renderproef staat in
+  // invoice-pdf-server.test.ts. Deze gate pint de BEDRADING — drie plekken die elk afzonderlijk
+  // stil kunnen losraken terwijl alle tests groen blijven.
+  const server = code("src/lib/invoice-pdf-server.tsx");
+  // 1. De verzonden klantkopie bouwt de QR zelf, langs de gedeelde beslisser en encoder…
+  assert.match(server, /epcPayloadForInvoicePdf\(invoice, profile\)/,
+    "de serverrender beslist niet meer via pdf-betaal-qr — de verzonden PDF verliest zijn QR");
+  assert.match(server, /QRCode\.toDataURL\(epc\.payload/,
+    "de payload wordt niet meer gecodeerd — er is geen afbeelding om te renderen");
+  assert.match(server, /betaalQr=\{betaalQr\}/,
+    "de gebouwde QR bereikt het document niet");
+  // 2. …het document weigert een QR die een ANDER bedrag vraagt dan zijn eigen betaalzin, en
+  //    zet hem alleen op een factuur (offerte vraagt geen geld, creditnota is geld van ons).
+  const doc = code("src/lib/invoice-pdf.tsx");
+  assert.match(doc, /type === 'factuur' && betaalQr && Math\.abs\(betaalQr\.amount - displayTotal\) <= 0\.005/,
+    "de bedrag-overeenkomst is weg — het papier kan een QR dragen die iets anders vraagt dan zijn eigen zin");
+  // 3. De voorvertoning toont hetzelfde papier als de klant krijgt: zelfde beslisser, en de
+  //    qrcode-encoder DYNAMISCH zodat hij in de lazy-brok blijft ([PDF-LAZY]).
+  const knop = code("src/components/invoice/PdfPreviewButton.tsx");
+  assert.match(knop, /epcPayloadForInvoicePdf\(invoice, profile\)/,
+    "de voorvertoning beslist niet meer mee — klant en eigenaar zien verschillend papier");
+  assert.match(knop, /import\('qrcode'\)/,
+    "qrcode wordt niet meer dynamisch geladen in de voorvertoningsknop");
+  assert.match(knop, /betaalQr=\{betaalQr\}/,
+    "de voorvertoning bouwt de QR maar geeft hem niet aan het document");
+});
