@@ -14108,3 +14108,34 @@ test("[CREDIT-AFHANDELEN] een creditnota is af te sluiten — met de goede vraag
   const route = code("src/app/api/invoice/pay-toggle/route.ts");
   assert.match(route, /isIncoming \? \["received"\]/, "en de route laat 'received' toe — ook een credit");
 });
+
+test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknippen", () => {
+  // GEMELD, derde ronde van dezelfde klacht, en pas nu de wortel. Op /dashboard/incoming staat
+  // InvoiceDocumentSheet IN de kaart, en .inv-card draagt content-visibility: auto ([LIST-PAINT]).
+  // Dat forceert PAINT CONTAINMENT: de kaart wordt het containing block van een fixed-afstammeling
+  // (inset: 0 = de kaartdoos) en knipt alles buiten zijn randen weg. Een paneel van 88dvh tegen
+  // een kaart van een paar honderd pixels: de kop mét sluitknop boven de knip, onbereikbaar — en
+  // sinds [BLAD-ACHTERGROND] de pagina erachter óók bevroren. Aan twee kanten vast.
+  const sheet = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  // 1. De portal, mét zijn terugval. De volgorde is de bedrading: eerst de document-guard (anders
+  //    gooit createPortal onder react-dom/server en is elke render-gate over dit blad dood), dan
+  //    de portal naar body — waar geen voorouder met containment bestaat.
+  assert.match(sheet, /if \(typeof document === 'undefined'\) return sheet/,
+    "zonder document rendert het blad ter plekke — de render-gates lezen dezelfde markup");
+  assert.match(sheet, /return createPortal\(sheet, document\.body\)/,
+    "mét document verlaat het blad de kaartboom");
+
+  // 2. En de klasse van de fout, dichtgezet waar hij ontstond: InvoiceCard zelf schrijft geen
+  //    enkele eigen fixed-overlay. Het blad mag erin AANGEROEPEN worden (het portalt zichzelf
+  //    weg); een nieuwe overlay die er rechtstreeks in wordt getikt is de volgende die de
+  //    containment opeet. Het venster loopt van de kaart tot het eerstvolgende component.
+  const inc = readFileSync("src/app/dashboard/incoming/IncomingInvoicesClient.tsx", "utf8");
+  const kaart = inc.slice(inc.indexOf("export function InvoiceCard"), inc.indexOf("function DetailRow"));
+  assert.ok(kaart.length > 0, "InvoiceCard is af te bakenen");
+  assert.doesNotMatch(kaart, /position: ["']fixed["']/,
+    "InvoiceCard tekent zelf geen fixed-overlay — die zou door content-visibility worden weggeknipt");
+  // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
+  // gratis waar en bewaakt hij niets meer.
+  assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});

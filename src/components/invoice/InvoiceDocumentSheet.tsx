@@ -41,6 +41,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // de twee knoppen eronder of op de rand naast het paneel ging er gewoon langs — en dan schuift de
 // factuurkaart onder het blad door dat je net had geopend. Zie de kop van dat bestand.
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
+// [BLAD-PORTAAL] Het blad verlaat de kaartboom — zie de kop van de return hieronder.
+import { createPortal } from 'react-dom'
 // [DOC-GEEN-BLADZIJDE] Welke bestanden een bladzijde hébben, en wat je zegt over de rest.
 import { previewKind, noPageNotice, fileOpenHref, type PreviewKind } from '@/lib/document-preview'
 // [TAAL] A component holds no language of its own.
@@ -136,7 +138,30 @@ export default function InvoiceDocumentSheet({
     </div>
   )
 
-  return (
+  // [BLAD-PORTAAL] Dit blad rendert via een PORTAL op document.body, en dat is geen stijlkeuze
+  // maar de derde — en echte — helft van de scroll-klacht.
+  //
+  // Op /dashboard/incoming staat dit blad IN de kaart (InvoiceCard, className="inv-card"), en
+  // .inv-card draagt `content-visibility: auto` ([LIST-PAINT]). Die eigenschap forceert PAINT
+  // CONTAINMENT, en paint containment doet twee dingen met een position:fixed-afstammeling:
+  // de KAART wordt zijn containing block (inset: 0 = de kaartdoos, niet het scherm), en alles
+  // buiten de kaartranden wordt WEGGEKNIPT — de kaart heeft bovendien zelf overflow:hidden.
+  //
+  // Het gevolg, precies zoals gemeld: een paneel van 88dvh uitgelijnd op de onderrand van een
+  // kaart van een paar honderd pixels, de kop mét sluitknop boven de knip — onbereikbaar — en
+  // sinds [BLAD-ACHTERGROND] de pagina erachter óók bevroren. De eigenaar zat aan twee kanten
+  // vast: de pagina scrolt niet (het slot doet zijn werk) en ín het blad kan hij nooit hoog
+  // genoeg om het te sluiten (de kop bestaat, maar is weggeknipt). Het slot was nooit de fout;
+  // het maakte de val alleen af.
+  //
+  // De portal lost het bij de WORTEL op: op document.body is er geen voorouder met containment,
+  // dus fixed betekent weer het scherm — vanaf elke aanroepplek, ook een toekomstige die dit
+  // blad opnieuw in een kaart zet.
+  //
+  // De terugval zonder `document` is voor tests/render: die draaien react-dom/server in kaal
+  // node, waar createPortal gooit en geen body bestaat. Daar rendert het blad gewoon ter plekke
+  // — de markup die de gates lezen is identiek, alleen de plaats in de DOM verschilt.
+  const sheet = (
     <div
       role="dialog" aria-modal="true" aria-label={t('dsh.aria')}
       onClick={onClose}
@@ -345,4 +370,6 @@ export default function InvoiceDocumentSheet({
       </div>
     </div>
   )
+  if (typeof document === 'undefined') return sheet
+  return createPortal(sheet, document.body)
 }
