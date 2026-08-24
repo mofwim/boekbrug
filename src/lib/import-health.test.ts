@@ -131,6 +131,23 @@ console.log('\n— [BTW-SUM-FIX] a DERIVED BTW is never presented as clean (it i
   check('note without an amount still warns', noAmount.level === 'needs-review' && noAmount.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r)))
 }
 
+console.log('\n— [ASSURANTIE] assurantiebelasting is geen aftrekbare BTW —')
+{
+  // After stripAssurantiebelastingBtw: the € 41,01 IPT has been folded into the cost (ex = incl,
+  // btw = 0), so ex + btw = incl holds and every arithmetic axis would be silent. The note is the
+  // only thing that keeps the document out of auto-advance and tells the owner what happened.
+  const ass = classifyImportHealth(inv({
+    total_ex_btw: 236.29, btw_amount: 0, total_inc_btw: 236.29,
+    field_confidence: { _assurantiebelasting: { read: 41.01 } },
+  }))
+  check('stripped assurantiebelasting → needs-review', ass.level === 'needs-review' && ass.flags.arithmetic === true)
+  check('reason says it is not BTW and names the amount', ass.reasons.some((r) => /assurantiebelasting/.test(r) && /geen BTW/.test(r) && r.includes('41,01')))
+  // Belt-and-suspenders: the SAME clean numbers WITHOUT the note stay clean — the note is the cause.
+  check('the same amounts without the note stay clean', classifyImportHealth(inv({ total_ex_btw: 236.29, btw_amount: 0, total_inc_btw: 236.29 })).level === 'clean')
+  const noAmt = classifyImportHealth(inv({ total_ex_btw: 236.29, btw_amount: 0, total_inc_btw: 236.29, field_confidence: { _assurantiebelasting: { read: null } } }))
+  check('note without an amount still warns', noAmt.level === 'needs-review' && noAmt.reasons.some((r) => /assurantiebelasting/.test(r)))
+}
+
 console.log('\n— [BON-NUMMER] een kassabon wordt niet beschuldigd van een ontbrekend factuurnummer —')
 {
   // Echte bon: Nettorama Huizen, contant, 6x spitskool. Een kassabon is een vereenvoudigde

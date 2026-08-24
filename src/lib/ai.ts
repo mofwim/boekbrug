@@ -282,6 +282,58 @@ export function fixExInclConfusion(
   return ex;
 }
 
+// [ASSURANTIE] Insurance premium tax is NOT deductible BTW, and it looks exactly like it.
+//
+// A real customer document — Univé "Overzicht van uw verzekeringen" for a Detailhandel shop —
+// prints a premium of € 236,29 with the line "Inclusief € 41,01 assurantiebelasting". That € 41,01
+// is assurantiebelasting (insurance premium tax, 21%), which sits on the same row a BTW figure
+// would, in the same euros, at the same rate. It is the one Dutch tax on a business document that
+// a VAT-registered owner may NEVER reclaim as voorbelasting — it is part of the cost.
+//
+// So a reader that captures € 41,01 into btw_amount produces a booking that claims € 41,01 of
+// deductible BTW that does not exist. That is not a display slip: it is a euro of refund on the
+// aangifte the Belastingdienst will disallow, with a naheffing on top. The direction is the one
+// this whole guard family exists to prevent — money out that was never owed in.
+//
+// The fix is money-safe by construction and asymmetric on purpose:
+//   · the deductible BTW becomes 0 and the tax folds back into the cost base (the full paid amount
+//     is a non-deductible cost), because under-claiming a small real BTW is recoverable and
+//     over-claiming IPT is not;
+//   · it NEVER books silently — `corrected` flags the row so classifyImportHealth holds it for a
+//     human, exactly like a derived BTW. A rare document that mixes real service-BTW with IPT
+//     (an insurance broker's fee) is then corrected upward by the person, at no cost but a review.
+//
+// It fires only when it actually removes money from the deductible column: assurantiebelasting
+// present AND a non-zero btw was read. An insurance receipt the reader already scored at 0 BTW is
+// correct as it stands and is left alone — the classification of the document as insurance is a
+// separate concern, not this guard's.
+export function stripAssurantiebelastingBtw(
+  text: string | null | undefined,
+  ex: number | undefined,
+  btw: number | undefined,
+  incl: number | undefined,
+): { ex: number | undefined; btw: number | undefined; corrected: boolean } {
+  const keep = { ex, btw, corrected: false };
+  if (!text) return keep;
+  // Normalize away the spacing a layout may insert between the two words ("assurantie belasting")
+  // and any casing. The term is unambiguous — it names exactly one Dutch tax — so a substring
+  // match carries no false-positive risk beyond documents that genuinely discuss it.
+  const norm = text.toLowerCase().replace(/[\s\u00a0]+/g, "");
+  if (!norm.includes("assurantiebelasting")) return keep;
+  // Nothing in the deductible column to remove → leave the document untouched. Whether it is
+  // classified as insurance is decided elsewhere; this guard only protects the BTW.
+  if (btw === undefined || Math.abs(btw) < 0.005) return keep;
+  // Fold the premium tax back into the cost base: the whole paid amount is the (non-deductible)
+  // cost. Prefer the printed incl total; fall back to ex+btw when incl was not read.
+  const newEx =
+    incl !== undefined && isFinite(incl)
+      ? incl
+      : ex !== undefined && isFinite(ex)
+        ? round2(ex + btw)
+        : ex;
+  return { ex: newEx, btw: 0, corrected: true };
+}
+
 // [BTW-SUM-FIX] On a MIXED-RATE invoice the BTW total is the one figure that is NOT printed as a
 // single number. The summary block prints one ROW PER RATE — each with its own grondslag on the
 // left and its own BTW on the right:
@@ -463,6 +515,12 @@ export interface VerifyInvoiceResult {
   // sign-inverted SAFECORE gate. Amounts on a creditnota are kept NEGATIVE as
   // printed — matching the outgoing creditnota route [BOEK-031].
   is_credit_note?: boolean;
+  // [ASSURANTIE] Did the document print "assurantiebelasting" (insurance premium tax)? That tax
+  // looks exactly like BTW — same euros, same 21% — but is the one Dutch tax a VAT-registered
+  // owner may NEVER reclaim as voorbelasting. The reader reports the fact; stripAssurantiebelastingBtw
+  // enforces the consequence (btw → 0, folded into the cost) and flags it for a human. True only
+  // on the literal word.
+  has_assurantiebelasting?: boolean;
   // [STATEMENT] Is this a STATEMENT OF ACCOUNT — a "rekeningoverzicht" / "openstaande facturen"
   // that LISTS MULTIPLE separate invoices with a summed balance? It is NOT a bookable invoice:
   // booking its total double-counts the individual invoices (which arrive on their own). True
@@ -510,6 +568,9 @@ export interface VerifyInvoiceResult {
     // Carries both figures so the owner sees exactly what changed; its presence keeps the
     // invoice in the verify queue (a derived BTW is never auto-booked).
     _btw_derived?: { read: number | null; used: number | null };
+    // [ASSURANTIE] Set when assurantiebelasting was stripped from the deductible BTW. Keeps the
+    // document in the verify queue (never auto-booked) and drives the owner-facing reason.
+    _assurantiebelasting?: { read: number | null };
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
@@ -1361,6 +1422,7 @@ Return only a JSON object with these exact keys:
   "paid_evidence": string or null,
   "paid_card_last4": string or null,
   "is_credit_note": boolean,
+  "has_assurantiebelasting": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
   "reminder_of_invoice_number": string or null,
@@ -1378,6 +1440,14 @@ Return only a JSON object with these exact keys:
   },
   "reason": string or null
 }
+
+Insurance premium tax (assurantiebelasting) — read carefully, this is money:
+- If the document prints "assurantiebelasting" (insurance premium tax), set
+  "has_assurantiebelasting": true and set "btw_amount" to 0.
+- Assurantiebelasting looks like BTW — the same euros, often 21% — but it is NOT BTW and may
+  never be reclaimed. An insurance premium (polis, verzekering, "Overzicht van uw verzekeringen")
+  carries assurantiebelasting, never deductible BTW. Never put that amount in "btw_amount".
+- Everything else on such a document is read normally (vendor, total_inc_btw, dates).
 
 Rules for is_invoice = true:
 - Must have a sender (vendor/company name)
@@ -2328,6 +2398,27 @@ Return JSON only.`;
         if (parsed.btw_rate !== undefined && parsed.btw_rate !== impliedRate) {
           parsed.btw_rate = undefined;
         }
+      }
+    }
+
+    // [ASSURANTIE] Insurance premium tax is not deductible BTW. The reader was told to zero it,
+    // but the guard enforces it regardless of what came back — a euro of IPT booked as
+    // voorbelasting is a refund the Belastingdienst disallows. It uses the model's own flag as the
+    // detector (the model read the file; the raw text is not here), and folds the tax back into
+    // the cost. `corrected` marks field_confidence so classifyImportHealth holds it for a human;
+    // it never auto-books, exactly like a derived BTW.
+    {
+      const signal = parsed.has_assurantiebelasting === true ? "assurantiebelasting" : null;
+      const g = stripAssurantiebelastingBtw(signal, parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw);
+      if (g.corrected) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _assurantiebelasting: { read: parsed.btw_amount ?? null },
+        };
+        parsed.total_ex_btw = g.ex;
+        parsed.btw_amount = g.btw;
+        // The premium tax is not a BTW rate, so a stated rate no longer describes this document.
+        parsed.btw_rate = undefined;
       }
     }
 

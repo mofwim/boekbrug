@@ -7815,6 +7815,35 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[ASSURANTIE] insurance premium tax never reaches the deductible BTW column", () => {
+  // A real Univé policy prints "Inclusief € 41,01 assurantiebelasting". That tax looks exactly like
+  // BTW and is the one Dutch tax that may never be reclaimed as voorbelasting. Reading it into
+  // btw_amount is a refund the Belastingdienst disallows — a money defect, not a display one — so
+  // three things must hold together, and each is invisible to tsc and the build on its own.
+  const ai = code("src/lib/ai.ts");
+
+  // 1. The reader is TOLD it is not BTW and to zero it — defense at the source.
+  assert.match(ai, /assurantiebelasting.*insurance premium tax|insurance premium tax.*assurantiebelasting/i, "the prompt names the tax");
+  assert.match(ai, /"has_assurantiebelasting": boolean/, "the model reports the fact in its JSON");
+
+  // 2. The guard is CALLED, not merely exported — the whole [SLUIS] lesson of this session. And it
+  //    is fed the model's flag, because the raw document text is not present at this layer.
+  assert.match(ai, /stripAssurantiebelastingBtw\(signal,/, "the guard runs on the extracted amounts");
+  assert.match(ai, /has_assurantiebelasting === true \? "assurantiebelasting" : null/, "…driven by the model's own flag");
+  assert.match(ai, /_assurantiebelasting: \{ read:/, "a correction marks field_confidence");
+
+  // 3. The mark forces a human check — it can never auto-book. import-health turns it into a
+  //    needs-review, exactly like a derived BTW.
+  const health = code("src/lib/import-health.ts");
+  // Look INSIDE the block, not for the strings anywhere in the file: flags.arithmetic and needs-review
+  // both appear in a dozen other checks, and a gate matching them file-wide stays green when the
+  // assurantiebelasting branch stops setting them (a negative control proved exactly that).
+  const assBlock = /if \(fc\?\._assurantiebelasting\)\s*\{([\s\S]*?)\n  \}/.exec(health)?.[1] ?? "";
+  assert.ok(assBlock.length > 0, "the health branch for assurantiebelasting must exist");
+  assert.match(assBlock, /flags\.arithmetic = true/, "…and it must block auto-advance (which requires level clean)");
+  assert.match(assBlock, /geen BTW/, "…with an owner-facing reason that says it is not BTW");
+});
+
 test("[PAKKET-VERS] the staleness answer borrows the package's judgement and reaches the board", () => {
   // The freshness count is a claim about the ZIP: "this many things would be in it now that were
   // not in your copy". That claim is only true while the membership rules HERE are the membership

@@ -159,6 +159,12 @@ export interface FieldConfidence {
   // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
   // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
   _btw_derived?: { read?: number | null; used?: number | null }
+  // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
+  // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
+  // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
+  // that tax is a real cost but never voorbelasting, and the change was ours — a human confirms,
+  // and it can never auto-book. `read` is the amount that had been misread as BTW.
+  _assurantiebelasting?: { read?: number | null }
   // [BTW-SPLIT] The per-rate summary block as PRINTED — one row per rate, grondslag on the left,
   // btw on the right. It is the only independent witness a MIXED-RATE invoice has: with two rates
   // in play, btw/excl can legally be anything between them, so the rate check self-disables and
@@ -536,6 +542,20 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       typeof used === 'number'
         ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
         : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
+
+  // [ASSURANTIE] The document carries assurantiebelasting, not BTW. We removed it from the
+  // deductible column (it is never voorbelasting) and folded it into the cost. Always a human
+  // check: the amount is a real cost, but whether this document is a bookable cost at all — a
+  // premium is usually paid on a separate nota — is a question only the owner can answer.
+  if (fc?._assurantiebelasting) {
+    flags.arithmetic = true
+    const read = fc._assurantiebelasting.read
+    reasons.push(
+      typeof read === 'number'
+        ? `dit is assurantiebelasting (${formatEuro(read)}), geen BTW — die mag je niet als voorbelasting aftrekken; we hebben hem uit de BTW gehaald, controleer dit`
+        : 'dit is assurantiebelasting, geen BTW — die mag je niet als voorbelasting aftrekken; we hebben hem uit de BTW gehaald, controleer dit'
     )
   }
 
