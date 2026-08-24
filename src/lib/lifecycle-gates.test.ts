@@ -14139,3 +14139,47 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
+
+test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-input in de geldmodals", () => {
+  // GEMELD: op de NemaFood-factuur staat de btw als 95,54 — en het btw-veld van de bevestig-modal
+  // nam niets voorbij "95" aan. <input type="number"> weigert het Nederlandse decimaalteken, zet
+  // een spinner op geld, en zijn parseFloat las een geplakte "1.160,68" als 1.16. De twee modals
+  // waar een eigenaar bedragen van papier overtikt zijn nu tekstvelden met parseAmountNL
+  // (parse-nl.ts, sinds deze ronde getest) en een kladpaar naast de getallen — hetzelfde paar
+  // als [DATE-NL], om dezelfde reden: een weergave die uit het geparste getal wordt afgeleid,
+  // eet de toetsaanslag op die nog geen getal is.
+  for (const pad of [
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+    "src/components/invoice/InvoiceCorrectionModal.tsx",
+  ]) {
+    const src = code(pad);
+    // 1. De klasse zelf, dicht: geen enkel number-veld meer in deze bestanden. Een nieuw
+    //    aantal-veld (geen geld) mag ooit terugkomen — maar dan langs deze gate, met een reden.
+    assert.ok(!src.includes('type="number"'),
+      `${pad}: er staat weer een type="number" — een komma is daar onintypbaar`);
+    // 2. De lezer is de gedeelde: de bedrag-onChange loopt door parseAmountNL.
+    assert.match(src, /parseAmountNL\(/, `${pad}: parseAmountNL is niet aangesloten`);
+    // 3. Het kladpaar: het veld toont de toetsaanslagen, en blur zet het terug op wat er
+    //    werkelijk wordt vastgehouden.
+    assert.match(src, /amountDraft\?\.field === field \? amountDraft\.text/,
+      `${pad}: het kladpaar is weg — het veld toont dan het afgeleide getal en eet de komma`);
+    //    Geteld, niet genoemd: de bevestig-modal heeft DRIE velden en de correctie-modal rendert
+    //    zijn ene input drie keer — één overgebleven onBlur mag niet voor allemaal doorgaan.
+    const blurs = (src.match(/onBlur=\{\(\) => setAmountDraft\(null\)\}/g) ?? []).length;
+    const nodig = pad.includes("IncomingInvoicesClient") ? 3 : 1;
+    assert.ok(blurs >= nodig,
+      `${pad}: ${blurs} van de ${nodig} bedragvelden zet(ten) bij blur terug op de gehouden waarde`);
+  }
+  // 4. Alle drie de triplet-velden van de bevestig-modal zijn op het paar aangesloten — een veld
+  //    dat de oude parseFloat-weg terugkrijgt, blijft compileren en verliest alleen de komma.
+  const inc = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  for (const veld of ['"ex"', '"btw"', '"incl"']) {
+    assert.ok(inc.includes(`typeAmount(${veld}, e.target.value)`),
+      `bevestig-modal: veld ${veld} tikt niet door typeAmount`);
+    assert.ok(inc.includes(`amountShown(${veld}`),
+      `bevestig-modal: veld ${veld} toont het kladpaar niet`);
+  }
+  const corr = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.ok(corr.includes("amountShown(f.key, amounts[f.key])"),
+    "correctie-modal: de velden tonen het kladpaar niet");
+});

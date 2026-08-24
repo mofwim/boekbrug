@@ -22,6 +22,10 @@
 
 import { useState } from 'react'
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+// [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
+import { parseAmountNL } from '@/lib/parse-nl'
+// [CENT] Cent rounding comes from invoice-totals.round2 — one definition for the whole app.
+import { round2 } from '@/lib/invoice-totals'
 // [SUPPLETIE] A duty with a legal clock on it is not a toast — see the block at the save below.
 import { useDialog } from '@/components/ui/Dialog'
 import { M3, R } from '@/lib/design/tokens'
@@ -96,6 +100,15 @@ export default function InvoiceCorrectionModal({
     btw: invoice.btw_amount ?? 0,
     incl: invoice.total_inc_btw ?? 0,
   })
+  // [KOMMA-INVOER] Same pairing as the confirm modal (IncomingInvoicesClient): the field shows the
+  // raw keystrokes while the numbers state holds the parse. These were <input type="number">, which
+  // refuses the Dutch decimal comma — the amounts this modal exists to copy off the paper are
+  // printed WITH one — and its parseFloat read a pasted "1.160,68" as 1.16.
+  // Display rounds to the cent; the held value stays untouched (amount-triplet is deliberately
+  // unrounded) — otherwise a derived field paints the float tail of ni − t.btw on screen.
+  const [amountDraft, setAmountDraft] = useState<{ field: 'ex' | 'btw' | 'incl'; text: string } | null>(null)
+  const amountShown = (field: 'ex' | 'btw' | 'incl', held: number) =>
+    amountDraft?.field === field ? amountDraft.text : String(round2(held)).replace('.', ',')
   const [number, setNumber] = useState(invoice.invoice_number ?? '')
   const [vendor, setVendor] = useState(invoice.client_name ?? '')
   const [date, setDate] = useState(invoice.invoice_date ?? '')
@@ -242,11 +255,11 @@ export default function InvoiceCorrectionModal({
           <div key={f.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 }}>
             <span style={{ fontSize: 14, fontWeight: f.strong ? 700 : 500, color: '#202124' }}>{f.label}</span>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.01"
-              value={amounts[f.key]}
-              onChange={(e) => setAmounts(f.apply(amounts, parseFloat(e.target.value) || 0))}
+              value={amountShown(f.key, amounts[f.key])}
+              onChange={(e) => { setAmountDraft({ field: f.key, text: e.target.value }); setAmounts(f.apply(amounts, parseAmountNL(e.target.value))) }}
+              onBlur={() => setAmountDraft(null)}
               aria-label={f.label}
               style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'end', outline: 'none', color: '#202124' }}
             />
