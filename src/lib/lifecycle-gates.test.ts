@@ -14183,3 +14183,25 @@ test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-
   assert.ok(corr.includes("amountShown(f.key, amounts[f.key])"),
     "correctie-modal: de velden tonen het kladpaar niet");
 });
+
+test("[DUBBEL-STORM] een geblokkeerd duplicaat wordt niet elke twee uur opnieuw door het model gelezen", () => {
+  // GEZIEN in productie, in de audit-tabel van de eigenaar: hetzelfde geweigerde FAMZFOOD-PDF
+  // (rejected_message_id) 14 keer in 32 uur als invoice.duplicated gelogd — elke sync één
+  // volledige modellezing voor een bijlage waarvan het oordeel al vaststond. De oorzaak is een
+  // sleutelvorm-mismatch: de dubbel-skiprij heet `${dedupKey}:dubbel` ([DUBBEL-ZICHTBAAR]), maar
+  // PHASE 0 zocht email_skipped_attachments alleen op de KALE sleutel — en een geblokkeerd
+  // duplicaat staat nergens anders (geen invoices-rij, geen byte-hash). Binnen de 24u-overlap
+  // van het watermark kwam hij dus elke run terug.
+  const sync = code("src/lib/email-integration.ts");
+  // 1. De lookup dekt de gesuffixte vorm — via de kale chunk PLUS de :dubbel-variant.
+  assert.match(sync, /\.in\('source_message_id', \[\.\.\.keyChunk, \.\.\.keyChunk\.map\(\(k\) => `\$\{k\}:dubbel`\)\]\)/,
+    "PHASE 0 zoekt de dubbel-skiprijen niet meer — elke geblokkeerde dubbel kost weer een modellezing per sync");
+  // 2. …en het gevonden id wordt ONTdaan van het suffix vóór hij in knownKeys landt, want de
+  //    vergelijking verderop is op de kale sleutel (`${messageId}:${filename}`).
+  assert.match(sync, /knownKeys\.add\(id\.endsWith\(':dubbel'\) \? id\.slice\(0, -':dubbel'\.length\) : id\)/,
+    "de gesuffixte rij wordt gevonden maar niet teruggebracht naar de kale sleutel — knownKeys mist hem alsnog");
+  // 3. De schrijfkant houdt zijn suffix (dat was de afspraak van [DUBBEL-ZICHTBAAR]): verandert
+  //    die vorm, dan bewaakt de lookup hierboven niets meer.
+  assert.match(sync, /source_message_id: `\$\{dedupKey\}:dubbel`/,
+    "de dubbel-skiprij draagt het :dubbel-suffix niet meer — dan is deze hele gate gratis waar");
+});

@@ -380,6 +380,99 @@ test("[BANK-SPLIT] the partial that is honestly mid-payment fires too, for the O
   assert.equal(split!.euros, 71);
 });
 
+// ── [DUBBEL-GEBOEKT] The same bill must not live twice ───────────────────────────────
+//
+// Straight from the FAMZFOOD audit trail: the reader spelled one number "26/3958" AND
+// "26 / 3958", both rows reached the books, the matcher paid one and the twin stayed open —
+// and 26/1876 ended up paid twice. Each copy counts kosten + voorbelasting a second time.
+
+test("[DUBBEL-GEBOEKT] the FAMZFOOD twin: two spellings, one paid, one still open", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26/3958", clientName: "FAMZFOOD BV", status: "paid", amountPaid: 630.15, totalExBtw: null, btwAmount: null, totalIncBtw: 630.15 }),
+      inv({ id: "b", invoiceNumber: "26 / 3958", clientName: "FAMZFOOD B.V.", status: "received", amountPaid: 0, totalExBtw: null, btwAmount: null, totalIncBtw: 630.15 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1, `expected exactly one pair finding: ${JSON.stringify(v)}`);
+  assert.equal(dup[0].euros, 630.15); // the copy's worth — the amount counted double
+  assert.match(dup[0].message, /2 keer/);
+  assert.match(dup[0].message, /betaald en openstaand/);
+  assert.match(dup[0].message, /Genegeerd/);
+});
+
+test("[DUBBEL-GEBOEKT] paid twice — the 26/1876 case — is the worst copy and still one finding", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26/1876", clientName: "FAMZFOOD BV", status: "paid", amountPaid: 665.02, totalExBtw: null, btwAmount: null, totalIncBtw: 665.02 }),
+      inv({ id: "b", invoiceNumber: "26 / 1876", clientName: "FAMZFOOD BV", status: "paid", amountPaid: 665.02, totalExBtw: null, btwAmount: null, totalIncBtw: 665.02 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1);
+  assert.match(dup[0].message, /betaald en betaald/);
+});
+
+test("[DUBBEL-GEBOEKT] two suppliers who both number an invoice 2026-001 are not a pair", () => {
+  // Every January is full of these. A false alarm here is how the audit stops being believed.
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "2026-001", clientName: "Bakkerij Jansen", totalExBtw: null, btwAmount: null }),
+      inv({ id: "b", invoiceNumber: "2026-001", clientName: "Groente Import BV", totalExBtw: null, btwAmount: null }),
+    ],
+    links: [],
+  });
+  assert.ok(!kinds(v).includes("duplicate_live_pair"), `paired across suppliers: ${JSON.stringify(v)}`);
+});
+
+test("[DUBBEL-GEBOEKT] a creditnota legitimately carries its factuur's number — no pair", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26/4000", clientName: "FAMZFOOD BV", invoiceType: "factuur", totalExBtw: null, btwAmount: null }),
+      inv({ id: "b", invoiceNumber: "26/4000", clientName: "FAMZFOOD BV", invoiceType: "creditnota", totalExBtw: null, btwAmount: null, totalIncBtw: -630.15, amountPaid: 0 }),
+    ],
+    links: [],
+  });
+  assert.ok(!kinds(v).includes("duplicate_live_pair"), `factuur paired with its creditnota: ${JSON.stringify(v)}`);
+});
+
+test("[DUBBEL-GEBOEKT] an archived copy is already dealt with, and a nameless row is unjudgeable", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26/5000", clientName: "FAMZFOOD BV", status: "paid", amountPaid: 121, totalExBtw: null, btwAmount: null }),
+      inv({ id: "b", invoiceNumber: "26/5000", clientName: "FAMZFOOD BV", status: "archived", totalExBtw: null, btwAmount: null }),
+      inv({ id: "c", invoiceNumber: "26/5000", clientName: null, totalExBtw: null, btwAmount: null }),
+    ],
+    links: [],
+  });
+  assert.ok(!kinds(v).includes("duplicate_live_pair"), `archived or nameless row formed a pair: ${JSON.stringify(v)}`);
+});
+
+test("[DUBBEL-GEBOEKT] three copies: everything beyond the biggest counts as the damage", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26/6000", clientName: "FAMZFOOD BV", status: "paid", amountPaid: 100, totalExBtw: null, btwAmount: null, totalIncBtw: 100 }),
+      inv({ id: "b", invoiceNumber: "26 /6000", clientName: "FAMZFOOD BV", status: "received", amountPaid: 0, totalExBtw: null, btwAmount: null, totalIncBtw: 100 }),
+      inv({ id: "c", invoiceNumber: "26/ 6000", clientName: "FAMZFOOD BV", status: "processing", amountPaid: 0, totalExBtw: null, btwAmount: null, totalIncBtw: 100 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1);
+  assert.equal(dup[0].euros, 200);
+  assert.match(dup[0].message, /3 keer/);
+});
+
+test("[DUBBEL-GEBOEKT] the route feeds the supplier name — without it the check silently sleeps", () => {
+  const route = readFileSync("src/app/api/money-audit/route.ts", "utf8");
+  assert.match(route, /amount_paid, sender_id, receiver_id, client_name"/,
+    "client_name left the invoices select — the duplicate-pair check no longer runs");
+  assert.match(route, /clientName: \(r\.client_name as string \| null\) \?\? null/,
+    "client_name is read but never mapped into InvoiceRow");
+});
+
 test("[BANK-SPLIT] the money-audit route actually feeds the check — columns AND mapping", () => {
   // findMoneyViolations skips what it cannot see, BY DESIGN — so the route quietly dropping
   // invoice_id or status from its select would switch this check off with every test above still
