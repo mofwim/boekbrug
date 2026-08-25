@@ -7816,6 +7816,38 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[ÉÉN-LEVERANCIERSSLEUTEL] the vendor key has one authority, and old keys heal instead of splitting", () => {
+  // The noise set existed twice, byte-identical; the day it needed the Univé fix there were two
+  // lists to fix. One declaration now, in safecore — and a second one anywhere in src is the
+  // regression this gate exists to refuse.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const declaring = walk("src").filter((f) => /VENDOR_SUFFIX_NOISE\w*\s*=/.test(code(f)));
+  assert.deepEqual(declaring, ["src/lib/safecore.ts"], "the noise set is declared exactly once, in safecore");
+
+  // The additions live apart from the base so the LEGACY key stays derivable — pre-addition
+  // suppliers.name_key rows hold it, and without it every merged supplier re-splits.
+  const safecore = code("src/lib/safecore.ts");
+  assert.match(safecore, /VENDOR_SUFFIX_NOISE_ADDED = \['ua', 'cooperatie'\]/, "the 2026 additions are their own list");
+  assert.match(safecore, /export function vendorCoreKeyLegacy/, "…and the legacy key is exported for healing");
+
+  // The registry heals at every name-key lookup — all three tiers, not one.
+  const registry = code("src/lib/supplier-registry.ts");
+  assert.equal(
+    (registry.match(/findByNameKeyHealing\(/g) ?? []).length, 4,
+    "declared once, called at the IBAN-adoption, KVK-adoption and name tiers",
+  );
+  assert.match(registry, /const \{ data: old \} = await build\(legacy\)/, "the legacy key is actually tried on a miss");
+  assert.match(registry, /await updateKey\(old\.id, key\)/, "…and a hit is rewritten to the current key");
+});
+
 test("[BEHEER] the operator page cannot exist without its gate", () => {
   // This page reads EVERY account's name, e-mail and plan with the service-role client. The one
   // thing that may never regress is the order: gate first, pipeline after — and notFound() for

@@ -75,23 +75,11 @@ import { createNotification } from '@/lib/notifications'
 import { fairUseHold, fairUseHoldMonth, fairUseHoldNotice } from '@/lib/fair-use-hold'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
-// Legal suffixes / entity noise stripped when comparing two vendor names for the
-// duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
-// and conservative — only universally-safe suffixes, never real name words.
-const VENDOR_SUFFIX_NOISE = new Set([
-  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
-])
-
-/** A comparison key for a vendor name: lowercased, legal suffixes + punctuation
- *  stripped, collapsed. Pure. Empty string when there's nothing usable. */
-export function vendorCoreKey(name: string | null | undefined): string {
-  const tokens = normalizeVendor(name)
-    .replace(/\./g, '')          // collapse dotted acronyms first: "b.v." → "bv"
-    .replace(/[^a-z0-9\s]/g, ' ') // other punctuation → separator
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && !VENDOR_SUFFIX_NOISE.has(t))
-  return tokens.join(' ')
-}
+// [ÉÉN-LEVERANCIERSSLEUTEL] The comparison key lives in safecore.ts now — this file held a
+// byte-identical copy of the noise set, and two lists that agree today drift the day one is
+// edited. Re-exported here because this module's own callers and tests import it from here.
+import { vendorCoreKey } from '@/lib/safecore'
+export { vendorCoreKey }
 
 /** True ONLY when both vendors are reliable AND their core keys differ — i.e. these
  *  are genuinely DIFFERENT suppliers (who might each issue the same invoice number for

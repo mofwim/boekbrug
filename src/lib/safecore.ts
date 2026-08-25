@@ -371,6 +371,52 @@ export function isPlaceholderInvoiceNumber(n: string | null | undefined): boolea
  * whitespace. NOT a full alias map (that's BRIDGE-ALIAS) — just formatting
  * normalization so "Atapack  B.V." and "atapack b.v." match.
  */
+// ── [ÉÉN-LEVERANCIERSSLEUTEL] The single vendor-key authority ─────────────────────────────────
+//
+// This set existed twice, byte-identical, in supplier-registry.ts (supplierNameKey) and
+// email-integration.ts (vendorCoreKey) — the duplicate-authority shape this codebase has now
+// caught five times: two copies agree today and drift the day one is edited. Found the usual way:
+// a real defect ("Coöperatie Univé Zuid-Nederland U.A." and "Univé Zuid-Nederland" produced
+// different keys, so the same insurer existed twice and the vendor-grounding check that blocks
+// auto-booking was quietly weakened) needed a fix in "the" list — and there were two lists.
+//
+// The additions live in their own array so the LEGACY key stays derivable: suppliers.name_key
+// rows written before the addition carry the old key, and a lookup that only knows the new one
+// would re-split every supplier the fix exists to merge. supplier-registry heals those rows at
+// lookup time (find by legacy key → rewrite to the current key) — no SQL backfill, because a SQL
+// reimplementation of this normalization would be a THIRD authority.
+const VENDOR_SUFFIX_NOISE_BASE = [
+  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
+] as const
+// 2026-08: 'ua' (U.A. — Uitgesloten Aansprakelijkheid, the coöperatie suffix) and 'cooperatie'
+// (the entity-form prefix; normalizeVendor's diacritic fold has already turned "Coöperatie" into
+// "cooperatie" by the time the filter runs). Entity-form words, never real name words — the same
+// admission rule that kept 'holding' and 'maatschap' safe.
+const VENDOR_SUFFIX_NOISE_ADDED = ['ua', 'cooperatie'] as const
+const NOISE_CURRENT = new Set<string>([...VENDOR_SUFFIX_NOISE_BASE, ...VENDOR_SUFFIX_NOISE_ADDED])
+const NOISE_LEGACY = new Set<string>(VENDOR_SUFFIX_NOISE_BASE)
+
+function coreKeyWith(name: string | null | undefined, noise: ReadonlySet<string>): string {
+  return normalizeVendor(name)
+    .replace(/\./g, '')            // collapse dotted acronyms: "b.v." → "bv", "u.a." → "ua"
+    .replace(/[^a-z0-9\s]/g, ' ')  // other punctuation → separator
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !noise.has(t))
+    .join(' ')
+}
+
+/** The vendor comparison/match key: lowercased, entity-form noise + punctuation stripped,
+ *  collapsed. Pure. Empty string when there is nothing usable. */
+export function vendorCoreKey(name: string | null | undefined): string {
+  return coreKeyWith(name, NOISE_CURRENT)
+}
+
+/** The key as it was computed BEFORE the 2026-08 noise additions — exactly what pre-existing
+ *  suppliers.name_key rows hold. Only for lookup-time healing; never for new writes. */
+export function vendorCoreKeyLegacy(name: string | null | undefined): string {
+  return coreKeyWith(name, NOISE_LEGACY)
+}
+
 export function normalizeVendor(v: string | null | undefined): string {
   // Fold diacritics so "Café de Kroon" ≡ "Cafe de Kroon" — without this, an accent variant
   // between two reads made the two vendors look "provably different" and suppressed a real

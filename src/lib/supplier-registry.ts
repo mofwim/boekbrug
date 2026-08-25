@@ -13,28 +13,51 @@
 // supplier_id (exactly the pre-registry behaviour). We create a supplier ONLY when we have a
 // reliable key (an IBAN, or a reliable name) — never a "Onbekende leverancier" island.
 
-import { normalizeVendor, isReliableVendor } from '@/lib/safecore'
+import { isReliableVendor, vendorCoreKey, vendorCoreKeyLegacy } from '@/lib/safecore'
 // [SUPPLIER-ALIAS] What the owner has already taught us a printed name means — see
 // src/lib/supplier-alias.ts. Best-effort by the same contract as this whole function.
 import { supplierIdForPrintedName } from '@/lib/supplier-alias-write'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database.types'
 
-// Legal-suffix noise stripped from the match key — mirrors vendorCoreKey in email-integration.
-// Universally-safe suffixes only, never real name words.
-const VENDOR_SUFFIX_NOISE = new Set([
-  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
-])
-
-/** Normalized match key: lowercased, legal suffixes + punctuation stripped, collapsed. Pure.
- *  Empty string when there's nothing usable (→ not a reliable key). */
+/** Normalized match key: lowercased, entity-form noise + punctuation stripped, collapsed. Pure.
+ *  Empty string when there's nothing usable (→ not a reliable key).
+ *
+ *  [ÉÉN-LEVERANCIERSSLEUTEL] This is the ONE authority in safecore.ts under a second name — this
+ *  file held a byte-identical copy of the noise set, and the day the set needed a fix (the
+ *  Univé/U.A. split) there were two lists to fix. The name stays because a dozen callers and the
+ *  stored suppliers.name_key semantics are keyed to it. */
 export function supplierNameKey(name: string | null | undefined): string {
-  const tokens = normalizeVendor(name)
-    .replace(/\./g, '')            // collapse dotted acronyms: "b.v." → "bv"
-    .replace(/[^a-z0-9\s]/g, ' ')  // other punctuation → separator
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && !VENDOR_SUFFIX_NOISE.has(t))
-  return tokens.join(' ')
+  return vendorCoreKey(name)
+}
+
+/**
+ * [SLEUTEL-HEELT] Find a supplier by name key, healing pre-2026-08 rows in passing.
+ *
+ * Rows written before 'ua'/'cooperatie' joined the noise set carry the OLD key
+ * ("cooperatie unive zuid nederland ua"), and a lookup that only knows the new one
+ * ("unive zuid nederland") would re-split every supplier the addition exists to merge — the
+ * defect would survive its own fix, one supplier at a time. So on a miss the LEGACY key is
+ * tried, and a hit is rewritten to the current key so the next lookup is a first-try hit.
+ * The rewrite is best-effort: a failed update still returns the match (worse index freshness,
+ * never a duplicate supplier). No SQL backfill, deliberately — a SQL reimplementation of the
+ * normalization would be a third authority, and the third is how the first two happened.
+ */
+async function findByNameKeyHealing(
+  build: (key: string) => PromiseLike<{ data: { id: string; name: string } | null }>,
+  updateKey: (id: string, key: string) => PromiseLike<unknown>,
+  name: string | null | undefined,
+): Promise<{ id: string; name: string } | null> {
+  const key = vendorCoreKey(name)
+  if (!key) return null
+  const { data: hit } = await build(key)
+  if (hit) return hit
+  const legacy = vendorCoreKeyLegacy(name)
+  if (legacy === key) return null
+  const { data: old } = await build(legacy)
+  if (!old) return null
+  try { await updateKey(old.id, key) } catch { /* healing is best-effort */ }
+  return old
 }
 
 /** Canonicalize an IBAN for storage/matching: strip whitespace, uppercase. Returns null when it
@@ -161,14 +184,11 @@ export async function resolveSupplierForImport(
       }
       //   (b) NAME match: a name-only record for the same company (no IBAN yet): attach the IBAN.
       if (reliableName) {
-        const { data: byName } = await supabase
-          .from('suppliers')
-          .select('id, name')
-          .eq('user_id', userId)
-          .eq('name_key', key)
-          .is('iban', null)
-          .limit(1)
-          .maybeSingle()
+        const byName = await findByNameKeyHealing(
+          (k) => supabase.from('suppliers').select('id, name').eq('user_id', userId).eq('name_key', k).is('iban', null).limit(1).maybeSingle(),
+          (id, k) => supabase.from('suppliers').update({ name_key: k }).eq('id', id),
+          cleanName,
+        )
         if (byName) {
           await supabase.from('suppliers').update({ iban }).eq('id', byName.id)
           return { id: byName.id, name: byName.name }
@@ -251,15 +271,11 @@ export async function resolveSupplierForImport(
       // so a KVK-only invoice doesn't spawn a DUPLICATE of a supplier we already hold under the
       // same name. Mirrors the IBAN tier's name-adoption and its same-name-collision risk posture.
       if (reliableName) {
-        const { data: byName } = await supabase
-          .from('suppliers')
-          .select('id, name')
-          .eq('user_id', userId)
-          .eq('name_key', key)
-          .is('kvk_number', null)
-          .order('created_at', { ascending: true })
-          .limit(1)
-          .maybeSingle()
+        const byName = await findByNameKeyHealing(
+          (k) => supabase.from('suppliers').select('id, name').eq('user_id', userId).eq('name_key', k).is('kvk_number', null).order('created_at', { ascending: true }).limit(1).maybeSingle(),
+          (id, k) => supabase.from('suppliers').update({ name_key: k }).eq('id', id),
+          cleanName,
+        )
         if (byName) {
           await supabase.from('suppliers').update({ kvk_number: kvk }).eq('id', byName.id)
           return { id: byName.id, name: byName.name }
@@ -294,14 +310,11 @@ export async function resolveSupplierForImport(
     }
 
     // ── 3. Name tier (no IBAN, no KVK): match by normalized name key ──────────────
-    const { data: byName } = await supabase
-      .from('suppliers')
-      .select('id, name')
-      .eq('user_id', userId)
-      .eq('name_key', key)
-      .order('created_at', { ascending: true }) // oldest = the canonical original
-      .limit(1)
-      .maybeSingle()
+    const byName = await findByNameKeyHealing(
+      (k) => supabase.from('suppliers').select('id, name').eq('user_id', userId).eq('name_key', k).order('created_at', { ascending: true }).limit(1).maybeSingle(),
+      (id, k) => supabase.from('suppliers').update({ name_key: k }).eq('id', id),
+      cleanName,
+    )
     if (byName) return { id: byName.id, name: byName.name }
 
     const { data: created } = await supabase

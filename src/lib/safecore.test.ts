@@ -8,7 +8,7 @@
 //
 // Style: plain check() functions + process exit code — same as retention.test.ts.
 
-import { evaluateArithmetic, normalizeInvoiceNumber, normalizeToIso, pickDedupMatch } from './safecore'
+import { evaluateArithmetic, normalizeInvoiceNumber, normalizeToIso, pickDedupMatch, vendorCoreKey, vendorCoreKeyLegacy } from './safecore'
 
 let failures = 0
 function check(name: string, cond: boolean, detail?: string) {
@@ -344,4 +344,28 @@ console.log('\n═══ [DEDUP-VENDOR-NORM] pickDedupMatch — de vergelijking 
 }
 
 console.log(`\n${failures === 0 ? '✅ ALLE TESTS GESLAAGD' : `❌ ${failures} FAILURES`}`)
+
+// ── [ÉÉN-LEVERANCIERSSLEUTEL] the vendor key, on the case that exposed the split ──────────────
+{
+  // The real defect: the same insurer under two printed names produced two keys, so the supplier
+  // existed twice and the grounding check that blocks auto-booking was quietly weakened.
+  check('Coöperatie Univé Zuid-Nederland U.A. ≡ Univé Zuid-Nederland',
+    vendorCoreKey('Coöperatie Univé Zuid-Nederland U.A.') === vendorCoreKey('Univé Zuid-Nederland'))
+  check('…and the shared key is the name itself',
+    vendorCoreKey('Coöperatie Univé Zuid-Nederland U.A.') === 'unive zuid nederland')
+
+  // The legacy key is what pre-addition suppliers.name_key rows hold — it must stay derivable,
+  // and DIFFER for exactly the names the addition touches (that difference drives the healing).
+  check('the legacy key still carries the old noise words',
+    vendorCoreKeyLegacy('Coöperatie Univé Zuid-Nederland U.A.') === 'cooperatie unive zuid nederland ua')
+  check('a name the addition does not touch has ONE key in both worlds',
+    vendorCoreKey('Atapack B.V.') === vendorCoreKeyLegacy('Atapack B.V.'))
+
+  // The old guarantees hold unchanged.
+  check('Atapack B.V. ≡ atapack  bv ≡ Atapack', vendorCoreKey('Atapack B.V.') === 'atapack' && vendorCoreKey('atapack  bv') === 'atapack')
+  check("'ua' only strips as a TOKEN, never inside a word",
+    vendorCoreKey('Uarto Meubels') === 'uarto meubels')
+  check('junk in, empty out', vendorCoreKey('  B.V. ') === '' && vendorCoreKey(null) === '')
+}
+
 process.exit(failures === 0 ? 0 : 1)

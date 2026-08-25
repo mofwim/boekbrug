@@ -150,7 +150,11 @@ test('[SUPPLIER-ALIAS] the import consults what the owner already taught it', ()
   // Ahead of the name tiers, behind the IBAN. An IBAN is a stronger statement about identity than a
   // name mapping, and letting a stale lesson outrank it could redirect a payment.
   const aliasAt = src.indexOf('supplierIdForPrintedName(')
-  const nameTierAt = src.indexOf(".eq('name_key', key)")
+  // [ÉÉN-LEVERANCIERSSLEUTEL] The name tier's marker moved: the raw .eq('name_key', key) now
+  // lives inside findByNameKeyHealing, and the tier is its LAST call site (the IBAN- and
+  // KVK-adoption lookups come earlier). The invariant is unchanged — alias before the plain
+  // name tier — only the spelling of the tier moved.
+  const nameTierAt = src.lastIndexOf('findByNameKeyHealing(')
   assert.ok(aliasAt > 0 && nameTierAt > 0, 'both tiers must still exist')
   assert.ok(aliasAt < nameTierAt, 'the alias must be consulted before the plain name tier')
   assert.match(src, /if \(!iban\) \{/, 'and never ahead of the IBAN, which is the stronger identity')
