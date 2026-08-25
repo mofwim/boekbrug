@@ -74,9 +74,11 @@ export const RATE_LIMITS = {
   RECONCILE_RUN:       { maxRequests: 20, windowMinutes: 60 },    // 20 matchrondes / uur
   // [DIEP-2] The year-scale read paths: XAF, IB-jaaroverzicht, UBL-export en het kwartaalpakket
   // lezen elk een heel jaar of kwartaal administratie in één GET, zonder AI en zonder plafond.
-  // 60/uur hindert geen boekhouder die een heel kantoor doorloopt (dat zijn er tientallen, met
-  // denkpauzes), en stopt wel een script dat de zwaarste leespas van de app laat ronddraaien.
-  HEAVY_EXPORT:        { maxRequests: 60, windowMinutes: 60 },    // 60 exports / hour
+  // [DIEP-3] 150, niet 60: een kantoor met zeventig klanten dat aan het kwartaaleinde ALLE
+  // pakketten in één zitting trekt is de bedoelde gebruiker, geen misbruiker — en de teller is
+  // per BOEKHOUDER, niet per klant. 150 draagt dat kantoor ruim en stopt nog steeds elk script
+  // dat de zwaarste leespas laat ronddraaien.
+  HEAVY_EXPORT:        { maxRequests: 150, windowMinutes: 60 },   // 150 exports / hour
   // [DIEP-3] Elk bericht is óók een e-mail en een push naar de gekoppelde partij. De koppeling
   // begrenst WIE je kunt bereiken; dit begrenst HOE VAAK — ruim boven een echt gesprek, ver
   // onder een scriptje dat andermans inbox voltrekt.
