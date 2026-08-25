@@ -1291,6 +1291,8 @@ export const MESSAGES = {
   'ublx.bezig': { nl: 'Bezig…', ar: 'جارٍ العمل…', en: 'Working…' },
   'ublx.klaar': { nl: 'Gedownload ✓', ar: 'تم التنزيل ✓', en: 'Downloaded ✓' },
   'ublx.knop': { nl: 'UBL exporteren', ar: 'تصدير UBL', en: 'Export UBL' },
+  'ublx.peppol.knop': { nl: 'Peppol-versie', ar: 'نسخة Peppol', en: 'Peppol version' },
+  'ublx.peppol.tip': { nl: 'Dezelfde factuur als Peppol BIS 3.0-bestand (vereist het BTW-nummer van de klant)', ar: 'الفاتورة نفسها كملف Peppol BIS 3.0 (يتطلب رقم BTW الخاص بالعميل)', en: 'The same invoice as a Peppol BIS 3.0 file (requires the client BTW number)' },
   'ublx.tip': {
     nl: 'Exporteer als UBL 2.1 (e-factuur) voor je boekhoudprogramma',
     ar: 'صدّر بصيغة UBL 2.1 (فاتورة إلكترونية) لبرنامج المحاسبة لديك',

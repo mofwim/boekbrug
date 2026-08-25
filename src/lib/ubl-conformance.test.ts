@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildInvoiceUbl } from "./ubl-export";
+import { buildInvoiceUbl, UblValidationError } from "./ubl-export";
 
 const SUPPLIER = {
   company_name: "Kiwi Food Market",
@@ -277,4 +277,55 @@ test("[UBL-CONFORMANCE] many small lines, where per-line rounding drifts furthes
     description: `Regel ${i + 1}`, quantity: 3, unit_price: 1.665, btw_rate: 21, line_total: 5,
   }));
   assertConformant(build(many, { total_ex_btw: 60, btw_amount: 12.6, total_inc_btw: 72.6 }), "12 x 4,995");
+});
+
+// ── [SI-UBL] Peppol BIS 3.0 mode ────────────────────────────────────────────────────────────────
+// The BIS identity and routing fields an access point validates BEFORE any amount is read. The
+// amounts themselves are the same builder, covered by every test above.
+
+function buildPeppol(lines: unknown[], header: Record<string, unknown> = {}): string {
+  return buildInvoiceUbl(
+    { ...HEADER, client_btw_number: "NL004495445B01", ...header } as never,
+    lines as never,
+    SUPPLIER as never,
+    { peppol: true } as never,
+  ).xml;
+}
+
+test("[SI-UBL] the BIS identity pair replaces the version tag, in schema order", () => {
+  const xml = buildPeppol(KIWI);
+  assert.match(xml, /urn:cen\.eu:en16931:2017#compliant#urn:fdc:peppol\.eu:2017:poacc:billing:3\.0/);
+  assert.match(xml, /urn:fdc:peppol\.eu:2017:poacc:billing:01:1\.0/);
+  assert.doesNotMatch(xml, /UBLVersionID/, "BIS files carry no UBLVersionID");
+  assert.ok(
+    xml.indexOf("CustomizationID") < xml.indexOf("ProfileID") && xml.indexOf("ProfileID") < xml.indexOf("<cbc:ID>"),
+    "CustomizationID, then ProfileID, then ID — order is not free in UBL",
+  );
+});
+
+test("[SI-UBL] both parties carry their electronic address, and the buyer name sits where BIS reads it", () => {
+  const xml = buildPeppol(KIWI);
+  assert.match(xml, /<cbc:EndpointID schemeID="0106">94386676<\/cbc:EndpointID>/, "supplier: KVK under EAS 0106");
+  assert.match(xml, /<cbc:EndpointID schemeID="9944">NL004495445B01<\/cbc:EndpointID>/, "buyer: BTW-nummer under EAS 9944");
+  // EndpointID must be the FIRST child of its Party — after PartyName the file is not schema-valid.
+  const cusParty = xml.slice(xml.indexOf("AccountingCustomerParty"));
+  assert.ok(cusParty.indexOf("EndpointID") < cusParty.indexOf("PartyName"), "EndpointID before PartyName");
+  assert.match(cusParty, /<cac:PartyLegalEntity>\s*<cbc:RegistrationName>Stichting Contour de Twern<\/cbc:RegistrationName>/,
+    "BT-44 lives in the buyer's PartyLegalEntity");
+  assert.match(xml, /<cbc:BuyerReference>2026-001<\/cbc:BuyerReference>/, "PEPPOL-EN16931-R003 satisfied");
+});
+
+test("[SI-UBL] a buyer without an electronic address is REFUSED, not shipped unroutable", () => {
+  assert.throws(
+    () => buildPeppol(KIWI, { client_btw_number: null }),
+    (e: Error) => e instanceof UblValidationError && e.code === "CLIENT_MISSING_PEPPOL_ADDRESS",
+  );
+});
+
+test("[SI-UBL] the default document is byte-identical to what it always was", () => {
+  // The lenient importer file is the one existing customers' accountants already rely on; the
+  // BIS mode must be an ADDITION, never a drift.
+  const plain = build(KIWI);
+  assert.match(plain, /<cbc:UBLVersionID>2\.1<\/cbc:UBLVersionID>/);
+  assert.doesNotMatch(plain, /CustomizationID|ProfileID|EndpointID|BuyerReference/);
 });

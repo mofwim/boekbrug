@@ -4,7 +4,9 @@
 //
 // Standard: UBL 2.1 (urn:oasis:names:specification:ubl:schema:xsd:Invoice-2)
 // Accepted by Dutch accounting software (Exact Online, Snelstart, Twinfield, Yuki).
-// NOT SI-UBL / Peppol BIS (no CustomizationID) — deliberately lenient for import use.
+// The DEFAULT document is NOT SI-UBL / Peppol BIS (no CustomizationID) — deliberately lenient
+// for import use, unchanged since it shipped. [SI-UBL] UblBuildOptions.peppol asks the same
+// builder for the Peppol BIS 3.0 identity of the same invoice — see the option's doc comment.
 //
 // Design rules:
 //  - Pure function: takes RAW data (not display-formatted rows), returns an XML string.
@@ -124,7 +126,11 @@ export type UblErrorCode =
   | "SUPPLIER_MISSING_NAME"
   | "NO_LINES"
   | "MISSING_INVOICE_NUMBER"
-  | "MISSING_INVOICE_DATE";
+  | "MISSING_INVOICE_DATE"
+  // [SI-UBL] Peppol routes on the buyer's electronic address (BT-49). Without any — this app
+  // can offer their BTW number (EAS 9944) and nothing else — a BIS document has no destination,
+  // and a file that LOOKS deliverable but is not is worse than a refusal that says why.
+  | "CLIENT_MISSING_PEPPOL_ADDRESS";
 
 export class UblValidationError extends Error {
   code: UblErrorCode;
@@ -440,6 +446,17 @@ export interface UblBuildOptions {
    * case and the behaviour of every caller before this option existed.
    */
   korActive?: boolean;
+  /**
+   * [SI-UBL] Peppol BIS Billing 3.0 mode. The default document stays exactly what it was —
+   * "bewust soepel", built to IMPORT into Exact/SnelStart/Twinfield/Yuki, no CustomizationID.
+   * With peppol:true the SAME document carries the BIS identity and the fields an access point
+   * validates: CustomizationID + ProfileID (and no UBLVersionID — BIS files do not carry one),
+   * EndpointID on both parties (supplier: KVK, EAS 0106; buyer: BTW-nummer, EAS 9944),
+   * a BuyerReference (PEPPOL-EN16931-R003), and a refusal when the buyer has no electronic
+   * address at all. Sending over the network still needs an access-point contract — this makes
+   * the FILE ready, it does not transmit it.
+   */
+  peppol?: boolean;
 }
 
 export interface UblBuildResult {
@@ -461,6 +478,10 @@ export function buildInvoiceUbl(
   const check = validateUblInputs(header, lines, supplier);
   if (!check.ok) {
     throw new UblValidationError(check.code, `UBL export blocked: ${check.code}`);
+  }
+  // [SI-UBL] The buyer's electronic address is the routing key of a Peppol document.
+  if (opts?.peppol && !header.client_btw_number?.trim()) {
+    throw new UblValidationError("CLIENT_MISSING_PEPPOL_ADDRESS", "UBL export blocked: CLIENT_MISSING_PEPPOL_ADDRESS");
   }
 
   // [E-FACTUUR-VERLEGD] One question, asked once, for the whole document — and asked of the same
@@ -616,18 +637,33 @@ export function buildInvoiceUbl(
   });
 
   // ── Header fields (order matters in UBL 2.1) ──
-  root.ele(NS.cbc, "UBLVersionID").txt("2.1");
+  // [SI-UBL] BIS mode swaps the version tag for the BIS identity pair; the schema puts
+  // CustomizationID and ProfileID exactly here, before ID. Everything else in this file is
+  // shared between the two modes — one builder, so the lenient file and the Peppol file can
+  // never disagree about a single amount.
+  if (opts?.peppol) {
+    root.ele(NS.cbc, "CustomizationID").txt("urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0");
+    root.ele(NS.cbc, "ProfileID").txt("urn:fdc:peppol.eu:2017:poacc:billing:01:1.0");
+  } else {
+    root.ele(NS.cbc, "UBLVersionID").txt("2.1");
+  }
   root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
   root.ele(NS.cbc, "IssueDate").txt(issueDate);
   if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
   // The code keeps its meaning; only the element it lives in follows the document type.
   root.ele(NS.cbc, isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
   root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
+  // [SI-UBL] PEPPOL-EN16931-R003: a buyer reference or order reference must be present. This app
+  // stores no separate buyer reference, so the invoice number stands in — the buyer's package
+  // shows it verbatim, which is also the reference a Dutch customer actually quotes when paying.
+  if (opts?.peppol) root.ele(NS.cbc, "BuyerReference").txt(header.invoice_number!.trim());
 
   // ── AccountingSupplierParty (the ZZP'er) ──
   const supParty = root
     .ele(NS.cac, "AccountingSupplierParty")
     .ele(NS.cac, "Party");
+  // [SI-UBL] EndpointID sits FIRST inside Party by schema order. Supplier: KVK, EAS 0106.
+  if (opts?.peppol) supParty.ele(NS.cbc, "EndpointID", { schemeID: "0106" }).txt(supplier.kvk_number!.trim());
   supParty.ele(NS.cac, "PartyName").ele(NS.cbc, "Name").txt(sName);
   const supAddr = supParty.ele(NS.cac, "PostalAddress");
   if (supplier.address?.trim()) supAddr.ele(NS.cbc, "StreetName").txt(supplier.address.trim());
@@ -647,6 +683,10 @@ export function buildInvoiceUbl(
   const cusParty = root
     .ele(NS.cac, "AccountingCustomerParty")
     .ele(NS.cac, "Party");
+  // [SI-UBL] Buyer electronic address (BT-49): their BTW-nummer under EAS 9944 (NL:VAT) — the
+  // one identifier this app holds for a business customer. Guarded above: peppol mode refused
+  // the document already when it is absent.
+  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: "9944" }).txt(header.client_btw_number!.trim());
   cusParty
     .ele(NS.cac, "PartyName")
     .ele(NS.cbc, "Name")
@@ -683,6 +723,11 @@ export function buildInvoiceUbl(
     const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");
     cusTax.ele(NS.cbc, "CompanyID").txt(header.client_btw_number.trim());
     cusTax.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  }
+  // [SI-UBL] BT-44 (buyer name) lives in PartyLegalEntity/RegistrationName under BIS — the
+  // PartyName above is not where a BIS validator looks for it.
+  if (opts?.peppol) {
+    cusParty.ele(NS.cac, "PartyLegalEntity").ele(NS.cbc, "RegistrationName").txt(header.client_name?.trim() || "Onbekend");
   }
 
   // ── PaymentMeans (IBAN) — optional, before TaxTotal ──

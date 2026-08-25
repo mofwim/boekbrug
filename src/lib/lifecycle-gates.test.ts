@@ -14652,3 +14652,31 @@ test("[BULK-UITNODIGEN] the bulk list walks the SAME door as the single button, 
   const limits = code("src/lib/rate-limit.ts");
   assert.match(limits, /ACCOUNTANT_INVITE:\s*\{ maxRequests: 200, windowMinutes: 1440 \}/, "200/day carries an office onboarding");
 });
+
+test("[SI-UBL] the Peppol identity is an addition on the one builder, never a second document", () => {
+  // Two builders for one invoice is the [E-FACTUUR] scar with a network attached: the moment the
+  // BIS file and the lenient file can carry different amounts, a customer's package and an
+  // accountant's import disagree about the same sale. So the mode is an OPTION on buildInvoiceUbl
+  // and every branch of it is pinned here.
+  const gen = code("src/lib/ubl-export.ts");
+  assert.match(gen, /if \(opts\?\.peppol && !header\.client_btw_number\?\.trim\(\)\) \{/,
+    "no electronic address → refusal, not an unroutable file");
+  assert.match(gen, /urn:cen\.eu:en16931:2017#compliant#urn:fdc:peppol\.eu:2017:poacc:billing:3\.0/,
+    "the BIS customization string is the real one");
+  assert.match(gen, /if \(opts\?\.peppol\) supParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "0106" \}\)/,
+    "supplier endpoint: KVK under EAS 0106");
+  assert.match(gen, /if \(opts\?\.peppol\) cusParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "9944" \}\)/,
+    "buyer endpoint: BTW-nummer under EAS 9944");
+  assert.match(gen, /\} else \{\s*\n\s*root\.ele\(NS\.cbc, "UBLVersionID"\)\.txt\("2\.1"\);/,
+    "the default document keeps its version tag — existing importers rely on the old shape");
+
+  // The route passes the question through and the button asks it; the conformance file proves
+  // the shape (including that the default stays byte-identical).
+  const route = code("src/app/api/export/ubl/route.ts");
+  assert.match(route, /searchParams\.get\("peppol"\) === "1"/, "?peppol=1 reaches the builder");
+  assert.match(route, /peppol,\s*\n\s*\}\);/, "…as the option, not a fork");
+  const knop = code("src/components/export/UblExportButton.tsx");
+  assert.match(knop, /handleExport\(true\)/, "the Peppol variant is clickable, not only a URL trick");
+  const spec = readFileSync("src/lib/ubl-conformance.test.ts", "utf8");
+  assert.match(spec, /byte-identical to what it always was/, "…and the no-drift proof exists");
+});
