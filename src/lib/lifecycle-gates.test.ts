@@ -7816,6 +7816,22 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[BEHEER] the operator page cannot exist without its gate", () => {
+  // This page reads EVERY account's name, e-mail and plan with the service-role client. The one
+  // thing that may never regress is the order: gate first, pipeline after — and notFound() for
+  // everyone else, so the page leaks nothing about its own existence. BEHEER_EMAILS unset means
+  // the page exists for nobody: it ships dark.
+  const page = code("src/app/dashboard/beheer/page.tsx");
+  const gateAt = page.indexOf("isBeheerder(user.email)");
+  const pipeAt = page.indexOf("createPipelineClient()");
+  assert.ok(gateAt > 0, "the gate is called");
+  assert.match(page, /if \(!user \|\| !isBeheerder\(user\.email\)\) notFound\(\)/, "…and refuses with notFound");
+  assert.ok(pipeAt > gateAt, "the cross-account client is only created AFTER the gate");
+  const lib = code("src/lib/beheer.ts");
+  assert.match(lib, /if \(!email\) return false/, "no e-mail is never an operator");
+  assert.match(lib, /process\.env\.BEHEER_EMAILS \|\| ""/, "unset env closes the page for everyone");
+});
+
 test("[UPLOAD-EERLIJK] what the upload doors say matches what actually happened", () => {
   // The audit's common thread on the upload side: failures dressed as success. Each wiring below
   // is a sentence that must keep telling the truth.

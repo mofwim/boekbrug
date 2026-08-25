@@ -412,3 +412,42 @@ test("[KASBOEK-NAAST-KAS] zonder bevindingen verschijnt er geen leeg kader", () 
     assert.doesNotMatch(html, /#F1F3F4/, "een kader zonder inhoud leest als een mislukte lezing");
   })();
 });
+
+// ─── [BEHEER] Het operatorscherm ─────────────────────────────────────────────────────────────
+
+test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het krijgt", () => {
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: {
+          users: [
+            { id: "a", name: "Kiwi Food Market", email: "kiwi@x.nl", role: "zzp", createdAt: "2026-01-05", plan: "plus" },
+            { id: "b", name: "B. Boekhouder", email: "b@k.nl", role: "boekhouder", createdAt: "2026-03-01", plan: "boekhouder" },
+          ],
+          links: [{ accountantName: "B. Boekhouder", clientName: "Kiwi Food Market", since: "2026-04-01" }],
+          counts: { total: 2, owners: 1, accountants: 1, links: 1 },
+        },
+      }),
+    );
+    assert.match(html, /Kiwi Food Market/);
+    assert.match(html, /B\. Boekhouder/);
+    assert.match(html, /koppelingen/);
+    // Alleen-lezen belofte staat op het scherm zelf.
+    assert.match(html, /Alleen-lezen/);
+  })();
+});
+
+test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () => {
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+      }),
+    );
+    assert.match(html, /Nog geen accounts/);
+    assert.match(html, /Nog geen koppelingen/);
+  })();
+});
+
