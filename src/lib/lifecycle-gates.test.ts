@@ -7816,6 +7816,48 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[UPLOAD-EERLIJK] what the upload doors say matches what actually happened", () => {
+  // The audit's common thread on the upload side: failures dressed as success. Each wiring below
+  // is a sentence that must keep telling the truth.
+  const ingest = code("src/lib/bank-ingest.ts");
+  // A failed transaction insert is loud, and the coverage claim needs landed rows.
+  assert.match(ingest, /insertFailed = true/, "the swallowed insert error now sets a flag");
+  assert.match(ingest, /statementDocId && inserted > 0 && !insertFailed/, "the period row is only written over landed rows");
+
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /result\.insertFailed\s*\?\s*`Bankafschrift gelezen/, "intake never says verwerkt over a failed insert");
+  assert.match(intake, /ok: !result\.insertFailed/, "…and the ok flag agrees");
+  assert.match(intake, /file\.size === 0/, "a zero-byte file is refused before it claims the empty hash");
+  assert.match(intake, /if \(v\.no_ai_call === true\)/, "a pre-call verdict refunds the reservation");
+  // The three file-is-the-outcome branches refuse honestly when nothing was stored.
+  assert.equal(
+    (intake.match(/Er is niets geboekt en niets bewaard/g) ?? []).length >= 4, true,
+    "every nothing-booked branch refuses when the store failed, instead of pointing at a screen where the file is not",
+  );
+
+  const deleteStmt = code("src/app/api/bank/delete-statement/route.ts");
+  assert.match(deleteStmt, /from\("bank_statement_periods"\)[\s\S]{0,80}\.delete\(\)/, "deleting a statement deletes its coverage claim");
+
+  // The shared writers carry the guards every door needs, not just the manual route.
+  const writer = code("src/lib/turnover-book.ts");
+  assert.match(writer, /seenDay\.has\(r\.turnover_date\)/, "duplicate-day guard lives in the turnover writer");
+  assert.match(writer, /rows\.length > 1000/, "the ledger writer refuses instead of silently truncating");
+  assert.match(writer, /seenLedgerDay\.has\(r\.ledger_date\)/, "…and has its own duplicate-day guard");
+
+  // The ledger parser carries the same date/number rules turnover already has.
+  const ledger = code("src/lib/ledger-import.ts");
+  assert.match(ledger, /isRealCalendarDate\(iso\)/, "no 2026-02-31 reaches Postgres");
+  assert.match(ledger, /\^\\d\{1,3\}\(\\\.\\d\{3\}\)\+\$/, "NL thousands are not read as decimals");
+
+  // The trashed-hash release reached the fifth door.
+  assert.match(code("src/lib/documents.ts"), /trashedDuplicateCleared\(supabase, userId, existingDoc\)/, "a trashed file no longer blocks its own re-upload");
+
+  // email/upload parity: no fabricated number, normalized date to the folder resolver.
+  const email = code("src/app/api/email/upload/route.ts");
+  assert.doesNotMatch(email, /UPLOAD-\$\{/, "no fabricated invoice numbers");
+  assert.match(email, /resolveImportTarget\(\s*user\.id,\s*invoiceDate,/, "the folder resolver gets the normalized date");
+});
+
 test("[KORTING-KETEN] the discount chain reaches every surface that bills the customer", () => {
   // The audit found the outgoing chain consistent everywhere EXCEPT where it left the app:
   // the e-factuur billed the undiscounted amount (columns read by the generator, selected by

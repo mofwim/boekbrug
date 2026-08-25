@@ -12,6 +12,7 @@
 // import. Before this, such an .xlsx sent to the bank endpoint decoded a binary ZIP as
 // UTF-8 and silently yielded ZERO transactions — a file that looked ingested but wasn't.
 
+import { isRealCalendarDate } from "./turnover-import";
 import { round2 } from './invoice-totals'
 
 export type Cell = string | number | null | undefined;
@@ -41,16 +42,38 @@ export interface LedgerParseResult { ledger: LedgerImport | null; warnings: Ledg
 
 const r2 = round2;
 
-/** NL/EN number ("1.234,56" / "1234.56" / number) → number. */
+/** NL/EN number ("1.234,56" / "1234.56" / number) → number.
+ *
+ * [QF5/L1 gespiegeld] Dit was de OUDE parser die turnover-import.ts al eerder verving, met
+ * precies de gemeten fouten van daar: "2.500" (NL-duizendtal zonder komma) werd 2,50 — een
+ * 1000×-onderschatting — en "1,234.56" (EN) werd 1,23456; haakjes/achterliggende min lieten het
+ * teken vallen. ledger_daily is de verzoeningsgetuige, niet de W&V — maar een getuige die
+ * duizendvoudig mis leest produceert valse (of verzwegen) breuken in exact de controle die
+ * ontbrekend geld moet vangen. Zelfde regels als turnover-import, om dezelfde redenen.
+ */
 function num(v: Cell): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
   if (typeof v !== "string") return 0;
   let s = v.trim();
   if (!s) return 0;
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
-  s = s.replace(/[^\d.\-]/g, "");
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1).trim(); }
+  if (/^-/.test(s) || /-$/.test(s)) negative = true;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    const digits = s.replace(/[^\d.]/g, "");
+    if (/^\d{1,3}(\.\d{3})+$/.test(digits)) s = s.replace(/\./g, "");
+  }
+  s = s.replace(/[^\d.]/g, "");
   const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n)) return 0;
+  return negative ? -n : n;
 }
 
 /** Date cell → ISO, or null. ISO / DD-MM-YYYY / Excel serial / Date-derived string. */
@@ -61,12 +84,20 @@ function parseDate(v: Cell): string | null {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
   }
   const s = String(v).trim();
+  // [DATE-REAL gespiegeld] Maand en dag onafhankelijk toetsen liet "31-02-2026" door als
+  // "2026-02-31" — een string die op een datum lijkt en er geen is. Postgres weigert hem en
+  // laat de HELE upsert vallen: één slechte cel, en een maand grootboek komt terug als "kon
+  // het grootboek niet opslaan" zonder dat iets de rij noemt. isRealCalendarDate is dezelfde
+  // check die turnover-import hiervoor kreeg.
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m) {
+    const iso = `${m[1]}-${m[2]}-${m[3]}`;
+    return isRealCalendarDate(iso) ? iso : null;
+  }
   m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
   if (m) {
-    const d = m[1].padStart(2, "0"), mo = m[2].padStart(2, "0");
-    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31) return `${m[3]}-${mo}-${d}`;
+    const iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    return isRealCalendarDate(iso) ? iso : null;
   }
   return null;
 }

@@ -392,6 +392,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 3b. [DEKKING-EERLIJK] De periode-rij van dit afschrift is een dekkingsclaim over weken die
+  //     zonet hun transacties verloren. Blijft zij staan, dan meldt coverageOfPeriod de maand
+  //     gedekt terwijl er nul regels liggen — precies de stilte waarvoor de continuïteitscheck
+  //     is gebouwd. Best-effort (de tabel kan in een oudere uitrol ontbreken), maar wel gelezen:
+  //     een fout wordt gelogd, nooit verzwegen als succes.
+  {
+    const { error: perErr } = await pipeline
+      .from("bank_statement_periods")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("document_id", documentId);
+    if (perErr) {
+      console.error("[DEKKING-EERLIJK] period-row delete failed — coverage may overclaim until re-import", {
+        documentId, error: perErr.message,
+      });
+    }
+  }
+
   // 4. Delete the documents row FIRST (removes it from the closing package at once).
   //    RLS already scopes to the user; the explicit user_id eq is belt-and-braces.
   const { error: delRowErr } = await supabase

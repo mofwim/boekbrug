@@ -460,6 +460,9 @@ export interface VerifyInvoiceResult {
   // to the human verify queue FLAGGED — never silently dropped. Distinct from
   // is_invoice:false (confidently NOT an invoice → quietly skipped).
   uncertain?: boolean;
+  // [FAIR-USE §3] True when the verdict was reached WITHOUT any model call (e.g. an invalid
+  // PDF caught by the pre-flight check). The caller releases the fair-use reservation.
+  no_ai_call?: boolean;
   vendor?: string;           // who sent the invoice
   amount?: number;           // total amount including BTW (numeric) — alias of total_inc_btw
   invoice_number?: string;   // invoice number if found
@@ -1799,6 +1802,11 @@ Return JSON only.`;
           is_invoice: false,
           confidence: 0,
           reason: 'Ongeldig PDF-bestand — overgeslagen',
+          // [FAIR-USE §3] Dit oordeel viel VÓÓR enige Claude-aanroep — er is geen lezing
+          // verbruikt. De routes geven het gereserveerde tegoed terug wanneer dit vlagje staat:
+          // "mislukte pogingen komen nooit op jouw rekening" gold al voor de crash-kant (release
+          // in de catch), maar niet voor dit pad, dat als gewoon resultaat terugkeert.
+          no_ai_call: true,
         };
       }
       if (preferRawPdf) {

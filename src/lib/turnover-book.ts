@@ -27,6 +27,8 @@ export interface TurnoverBookResult {
    * never tells the owner "opslaan mislukt" when what really happened is that the numbers are wrong.
    */
   rejected: string[];
+  /** [DAGOMZET-DUP-DAY] De dag die het blad twee keer noemt — de reden van de weigering. */
+  duplicateDay?: string;
 }
 
 /**
@@ -85,6 +87,21 @@ export async function bookTurnoverRows(
     if (opts?.preserveSplit) return base;
     return { ...base, pin_amount: r.pin_amount ?? null, cash_amount: r.cash_amount ?? null, other_amount: r.other_amount ?? null };
   });
+  // [DAGOMZET-DUP-DAY in de schrijver] Postgres kan ON CONFLICT DO UPDATE niet twee keer op
+  // dezelfde rij toepassen in één statement (21000): een blad dat een dag twee keer noemt liet
+  // de HELE upsert vallen. De handmatige route weigerde dit al mét de dagnaam — maar die guard
+  // stond in de route, dus de intake-deur en /api/documents/reprocess kregen hem niet en
+  // antwoordden "probeer het opnieuw" op een fout die bij elke poging identiek terugkomt. De
+  // regel hoort bij de schrijver, waar élke deur langskomt. Optellen of laatste-wint is allebei
+  // fout (zie de route voor waarom): weigeren en de dag noemen is het enige dat de eigenaar
+  // verder helpt.
+  const seenDay = new Set<string>();
+  for (const r of records) {
+    if (seenDay.has(r.turnover_date)) {
+      return { ok: false, days: 0, span: "", total_incl: 0, rejected: [], duplicateDay: r.turnover_date };
+    }
+    seenDay.add(r.turnover_date);
+  }
   const { error } = await supabase.from("daily_turnover").upsert(records, { onConflict: "user_id,turnover_date" });
   const dates = rows.map((r) => r.turnover_date).sort();
   const span = dates.length ? `${dates[0]} t/m ${dates[dates.length - 1]}` : "";
@@ -96,6 +113,10 @@ export interface LedgerBookResult {
   ok: boolean;
   days: number;
   span: string;
+  /** [DUP-DAY] De dag die het blad twee keer noemt. */
+  duplicateDay?: string;
+  /** [GEEN-STILLE-KAP] Het aantal rijen waarmee het bestand het plafond overschreed. */
+  tooMany?: number;
 }
 
 /**
@@ -109,7 +130,23 @@ export async function bookLedgerRows(
   accountNr: string | null,
   rows: { ledger_date: string; received: number; spent: number }[],
 ): Promise<LedgerBookResult> {
-  const records = rows.slice(0, 1000).map((r) => ({
+  // [GEEN-STILLE-KAP] slice(0, 1000) rapporteerde de afgekapte telling als succes: "1000 dagen
+  // (…)" over een bestand met meer, en niets zei dat er rijen vielen. De handmatige route
+  // WEIGERT >1000 met uitleg — het juiste gedrag, aan de verkeerde kant van de gedeelde
+  // schrijver. Nu weigert de schrijver zelf, zodat elke deur dezelfde eerlijke uitkomst geeft.
+  if (rows.length > 1000) {
+    return { ok: false, days: 0, span: "", tooMany: rows.length };
+  }
+  // [DUP-DAY] Zelfde 21000-val als bij dagomzet: één dubbel genoemde dag laat anders de hele
+  // upsert vallen met een niets-zeggende fout.
+  const seenLedgerDay = new Set<string>();
+  for (const r of rows) {
+    if (seenLedgerDay.has(r.ledger_date)) {
+      return { ok: false, days: 0, span: "", duplicateDay: r.ledger_date };
+    }
+    seenLedgerDay.add(r.ledger_date);
+  }
+  const records = rows.map((r) => ({
     user_id: userId,
     ledger_date: r.ledger_date,
     kind,

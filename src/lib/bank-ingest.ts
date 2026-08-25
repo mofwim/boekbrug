@@ -37,6 +37,9 @@ export interface BankImportResult {
   inserted: number;          // new rows written
   skipped: number;           // duplicates skipped (already stored)
   parseWarnings: string[];   // lines the parser could NOT read (each = a dropped tx)
+  // [BANK-INSERT-LUID] The transaction write itself failed (non-schema error): NOTHING landed.
+  // Callers must never render this result as "verwerkt".
+  insertFailed: boolean;
   statementStored: boolean;  // raw passthrough copy stored (or already present)
   minDate: string | null;    // earliest tx date (for period tagging / folder)
   // [DETECT] The upload is a spreadsheet (xlsx/xls), not a bank statement (MT940/CAMT).
@@ -163,6 +166,8 @@ export async function importBankStatement(args: {
 
   // ── dedup + insert transactions (only when the parse yielded some) ──
   let inserted = 0;
+  // [BANK-INSERT-LUID] True when the transaction upsert failed for a non-schema reason.
+  let insertFailed = false;
   let skipped = 0;
   let insertedIds: string[] = [];      // [BANK-TX-STATEMENT-LINK] the rows THIS import created
   if (alreadyImported) {
@@ -258,6 +263,22 @@ export async function importBankStatement(args: {
             skipped += rows.length - insertedIds.length;
           }
         }
+      } else {
+        // [BANK-INSERT-LUID] Every OTHER failure — a CHECK violation, 21000 (one file carrying
+        // two lines with the same external_id), a dropped connection — used to fall through this
+        // if with no else: inserted 0, skipped 0, parseWarnings empty, and the route then told
+        // the owner "Bankafschrift verwerkt — 0 transacties toegevoegd" over a whole month of
+        // bank lines that silently never landed. The raw file even claimed the content_hash, so
+        // a retry was refused as a duplicate. A failed money-insert is the loudest thing this
+        // module can have to say; say it in the channel both callers already surface.
+        insertFailed = true;
+        console.error("[BANK-INSERT-LUID] bank_transactions insert failed — the statement's lines did NOT land", {
+          userId, rows: rows.length, code: (error as { code?: string } | null)?.code, error: error?.message,
+        });
+        extraWarnings.push(
+          `De ${rows.length} transacties uit dit afschrift konden NIET worden opgeslagen (${error?.message ?? "onbekende fout"}). ` +
+          "Er is niets geboekt — verwijder het afschrift en probeer het opnieuw.",
+        );
       }
     }
   }
@@ -374,7 +395,14 @@ export async function importBankStatement(args: {
   // Best-effort en zonder await-afhankelijkheid van de rest: mislukt de insert — of bestaat de
   // tabel nog niet omdat de migratie nog niet gedraaid is — dan verliest de eigenaar alleen deze
   // extra controle, nooit zijn transacties of zijn bestand.
-  if (statementDocId) {
+  // [DEKKING-EERLIJK] De periode-rij is een DEKKINGSCLAIM: coverageOfPeriod, readiness en het
+  // kwartaalpakket lezen haar als "deze weken zijn er". Die claim mag alleen bestaan wanneer de
+  // regels van dit document ook echt in bank_transactions staan. Voorheen werd zij uit het
+  // GEPARSEERDE bestand geschreven, óók bij een mislukte insert en óók voor een duplicaat-upload
+  // (0 nieuw) — waarna het verwijderen van het ORIGINELE afschrift de transacties weghaalde
+  // terwijl de tweede rij de maand gedekt bleef noemen. Een duplicaat voegt geen dekking toe
+  // (die claim ligt al bij het origineel); een mislukte insert heeft niets te claimen.
+  if (statementDocId && inserted > 0 && !insertFailed) {
     try {
       const { max: maxDate } = dateRange(transactions);
       await pipeline.from("bank_statement_periods").upsert(
@@ -458,6 +486,7 @@ export async function importBankStatement(args: {
     inserted,
     skipped,
     parseWarnings: [...extraWarnings, ...(parsed?.parseErrors ?? [])],
+    insertFailed,
     statementStored,
     minDate: min,
     nonBankSpreadsheet,

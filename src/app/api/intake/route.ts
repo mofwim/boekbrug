@@ -157,6 +157,13 @@ export async function POST(req: NextRequest) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 })
   }
+  // [NUL-BYTES] Een leeg bestand heeft niets om te lezen én één gedeelde hash (SHA-256 van de
+  // lege string) — het eerste lege bestand claimt die hash en elk volgend leeg bestand, hoe het
+  // ook heet, wordt dan geweigerd als "staat al in je bestanden". Weigeren vóór alles, met een
+  // zin die zegt wat er aan de hand is. De twee sheet-routes doen dit al.
+  if (file.size === 0) {
+    return NextResponse.json({ error: "Dit bestand is leeg (0 bytes) — er valt niets te lezen. Controleer het bestand en probeer opnieuw." }, { status: 422 })
+  }
   if (file.size > MAX_BYTES) {
     return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 })
   }
@@ -454,6 +461,12 @@ export async function POST(req: NextRequest) {
       { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
       { status: 503 },
     )
+  }
+
+  // [FAIR-USE §3] Een oordeel dat vóór enige model-aanroep viel (ongeldige PDF) heeft geen
+  // lezing verbruikt — geef het gereserveerde tegoed terug. De crash-kant deed dit al.
+  if (v.no_ai_call === true) {
+    await gate.release()
   }
 
   const decision = decideFromAi({
@@ -836,6 +849,15 @@ export async function POST(req: NextRequest) {
     // orphaned in Storage (a leaked object with no row), and tell the owner to retry.
     if (docErr || !doc) {
       await supabase.storage.from("documents").remove([storagePath])
+      // [23505] De drie zuster-inserts vertalen een verloren race al naar een nette 409 — dit was
+      // de enige zonder. Een dubbelklik op uploaden kreeg hier een 500 "probeer opnieuw" over een
+      // bestand dat er net wél in kwam, vermomd als opslagfout.
+      if ((docErr as { code?: string } | null)?.code === "23505") {
+        return NextResponse.json(
+          { error: "Dit bestand staat al in je bestanden.", duplicate: true },
+          { status: 409 }
+        )
+      }
       return NextResponse.json(
         { error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." },
         { status: 500 }
@@ -1402,7 +1424,10 @@ async function storeRawIncoming(
     const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
     const { error: upErr } = await supabase.storage
       .from("documents").upload(storagePath, buffer, { contentType: file.type || "application/octet-stream", upsert: false })
-    if (upErr) return null
+    if (upErr) {
+      console.error("[STORE-RAW] storage upload failed — the file is NOT kept", { userId, file: file.name, error: upErr.message })
+      return null
+    }
     const folderId = await ensureImportedFolder(userId, "pipeline")
     const pipelineDoc = createPipelineClient()
     const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
@@ -1412,11 +1437,13 @@ async function storeRawIncoming(
       ai_processed: true, ai_doc_type: aiDocType, content_hash: hash,
     }).select("id").single()
     if (docErr || !doc) {
+      console.error("[STORE-RAW] documents insert failed — the file is NOT kept", { userId, file: file.name, error: docErr?.message })
       await supabase.storage.from("documents").remove([storagePath]).catch(() => {})
       return null
     }
     return doc.id
-  } catch {
+  } catch (e) {
+    console.error("[STORE-RAW] unexpected failure — the file is NOT kept", { userId, file: file.name, error: e instanceof Error ? e.message : String(e) })
     return null // storage is a convenience; the booking is the money-truth
   }
 }
@@ -1756,13 +1783,23 @@ async function handleDailySalesPdf(
   // lives in the audit log below (path: intake_pdf), not in this constrained column.
   const booked = await bookTurnoverRows(supabase, userId, [row], "z_report", { preserveSplit: true })
   if (!booked.ok) {
+  // [STORE-RAW-EERLIJK] Op deze tak wordt NIETS geboekt — het opgeslagen bestand is de hele
+  // uitkomst. Is dat opslaan mislukt (documentId null), dan is er letterlijk niets gebeurd,
+  // terwijl de oude melding de eigenaar naar een scherm stuurde waar het bestand niet staat.
+  // Weigeren is eerlijk, en veilig om te herhalen: de mislukte opslag heeft de content-hash
+  // niet geclaimd, dus een nieuwe poging kan wél slagen.
+  if (documentId === null) {
+      return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+    }
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
       // [TURNOVER-ARITHMETIC] Two different failures, two different sentences. "Opslaan is mislukt"
       // sends the owner to retry an import that will fail again in exactly the same way.
       message: booked.rejected.length
         ? `De bedragen van deze dag kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en voer de dag zelf in.`
-        : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+        : booked.duplicateDay
+          ? `Dit blad noemt ${booked.duplicateDay} twee keer. Er is niets geboekt — voeg de rijen van die dag samen in het bestand en importeer opnieuw.`
+          : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
     })
   }
   await logAuditAction({
@@ -1832,6 +1869,11 @@ async function handleSpreadsheet(
 
     const booked = await bookTurnoverRows(supabase, userId, rows, "z_report")
     if (!booked.ok) {
+      // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+      // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+      if (documentId === null) {
+        return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+      }
       // Never claim a booking that didn't happen. Store stays; tell the owner to retry via Dagomzet.
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
@@ -1839,7 +1881,9 @@ async function handleSpreadsheet(
         // owner to retry would send them into the same refusal.
         message: booked.rejected.length
           ? `De bedragen van ${booked.rejected.length === 1 ? "één dag" : `${booked.rejected.length} dagen`} kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en importeer opnieuw.`
-          : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+          : booked.duplicateDay
+            ? `Dit blad noemt ${booked.duplicateDay} twee keer. Er is niets geboekt — voeg de rijen van die dag samen in het bestand en importeer opnieuw.`
+            : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
       })
     }
     await logAuditAction({
@@ -1881,6 +1925,11 @@ async function handleSpreadsheet(
       },
       ipAddress: getClientIP(req),
     }).catch(() => {})
+    // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+    // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+    if (documentId === null) {
+      return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+    }
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "kasboek_review",
       days: k.rows.length, span,
@@ -1903,9 +1952,21 @@ async function handleSpreadsheet(
     const { kind, accountNr, rows } = plan.ledger
     const booked = await bookLedgerRows(supabase, userId, kind, accountNr, rows)
     if (!booked.ok) {
+      // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+      // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+      if (documentId === null) {
+        return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+      }
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "ledger_review",
-        message: "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
+        // [DUP-DAY / GEEN-STILLE-KAP] Een fout die bij elke poging identiek terugkomt mag niet
+        // "probeer opnieuw" heten — noem wat er aan de hand is, dan kan de eigenaar het bestand
+        // repareren in plaats van dezelfde muur te herhalen.
+        message: booked.duplicateDay
+          ? `Dit overzicht noemt ${booked.duplicateDay} twee keer. Er is niets opgeslagen — voeg de rijen van die dag samen en importeer opnieuw.`
+          : booked.tooMany
+            ? `Dit overzicht heeft ${booked.tooMany} dagregels — meer dan de 1000 die we in één keer verwerken. Splits het bestand (bijvoorbeeld per jaar) en importeer de delen apart.`
+            : "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
       })
     }
     await logAuditAction({
@@ -1933,12 +1994,17 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // report it honestly rather than 422-ing (which would trap the file behind byte-hash
   // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
   const unreadable = result.parseWarnings.length
+  // [BANK-INSERT-LUID] Een mislukte transactie-insert mag nooit als "verwerkt" op het scherm
+  // komen: er is dan een hele maand aan regels NIET geland terwijl het ruwe bestand wél is
+  // opgeslagen (en de content-hash claimt). De waarschuwing uit bank-ingest draagt de uitleg.
   let msg =
-    result.parsed === 0
-      ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
-      : unreadable > 0
-        ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
-        : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
+    result.insertFailed
+      ? `Bankafschrift gelezen (${result.parsed} transacties), maar het opslaan is MISLUKT — er is niets geboekt. ${result.parseWarnings[0] ?? ""}`
+      : result.parsed === 0
+        ? `${result.statementStored ? "Bankafschrift opgeslagen, maar er" : "Er"} zijn geen transacties gelezen — controleer het bestand.${unreadable > 0 ? ` (${result.parseWarnings[0]})` : ""}`
+        : unreadable > 0
+          ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
+          : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
   // [BANK-BALANCE §2.6] A statement whose begin/eindsaldo doesn't tie out to its own transactions
   // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
   // otherwise see), appended to the honest message and returned structured for the caller.
@@ -1947,7 +2013,8 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // verschillende gaten: balanceWarning kijkt binnen dit bestand, dit tussen de bestanden.
   if (result.continuityWarning) msg += ` ${result.continuityWarning}`
   return NextResponse.json({
-    ok: true,
+    // Niet ok wanneer het opslaan zelf faalde: de client toont dan een fout, geen groene rij.
+    ok: !result.insertFailed,
     destination: "bank",
     format: result.format,
     parsed: result.parsed,

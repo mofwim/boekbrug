@@ -54,7 +54,10 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({
-    ok: true,
+    // [BANK-INSERT-LUID] Niet ok wanneer de transactie-insert zelf faalde — het bestand staat er,
+    // de regels niet, en "ok" zou dat verschil wegpoetsen. parseWarnings draagt de uitleg.
+    ok: !result.insertFailed,
+    insertFailed: result.insertFailed,
     format: result.format,
     accountIban: result.accountIban,
     parsed: result.parsed,
