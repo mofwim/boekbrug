@@ -72,6 +72,11 @@ export const RATE_LIMITS = {
   // vaker tikken verandert niets; de limiet houdt alleen het herhaald hameren van die leespas
   // binnen de perken. 20/uur is ruim: één ronde is genoeg, en de cron draait toch elk uur.
   RECONCILE_RUN:       { maxRequests: 20, windowMinutes: 60 },    // 20 matchrondes / uur
+  // [DIEP-2] The year-scale read paths: XAF, IB-jaaroverzicht, UBL-export en het kwartaalpakket
+  // lezen elk een heel jaar of kwartaal administratie in één GET, zonder AI en zonder plafond.
+  // 60/uur hindert geen boekhouder die een heel kantoor doorloopt (dat zijn er tientallen, met
+  // denkpauzes), en stopt wel een script dat de zwaarste leespas van de app laat ronddraaien.
+  HEAVY_EXPORT:        { maxRequests: 60, windowMinutes: 60 },    // 60 exports / hour
   // [REPROCESS] "Boek mijn opgeslagen bestanden" downloadt in één klik tot 600 opgeslagen bestanden
   // uit Storage en haalt de tekst uit maximaal 250 PDF's. Qua bandbreedte en rekentijd de zwaarste
   // knop van de app — en hij had als enige zware route helemaal geen plafond. Er zit geen AI achter,

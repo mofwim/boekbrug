@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { FONT, M3, R } from '@/lib/design/tokens'
+import { failureText } from '@/lib/server-message'
 
 export default function AccepterenClient() {
   const router = useRouter()
@@ -28,7 +29,7 @@ export default function AccepterenClient() {
           router.push(`/login?next=${encodeURIComponent(`/team/accepteren?token=${token}`)}`)
           return
         }
-        setFout(json?.error || 'Accepteren mislukt')
+        setFout(failureText(res.status, json, 'Accepteren mislukt'))
         setBezig(false)
         return
       }

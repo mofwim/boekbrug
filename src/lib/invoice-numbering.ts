@@ -49,6 +49,8 @@ async function resolveFormat(
   userId: string,
   type: InvoiceNumberType
 ): Promise<{ template: string; padding: number } | null> {
+  // NOTE for callers of generateInvoiceNumber: `supabase` here is the READ client (see
+  // [NUMBER-READ-VISIBLE] below) — it must be able to SEE the OWNER's profiles row.
   const prefix = type === 'creditnota' ? 'CR-' : type === 'pro_forma' ? 'PF-' : ''
   // System default for every type (the factuur prefix is empty).
   // [FACTUUR-UNIFY] YEAR+sequence, padding 4 — one format across the whole
@@ -124,7 +126,16 @@ export async function generateInvoiceNumber(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any>,
   userId: string,
-  type: InvoiceNumberType
+  type: InvoiceNumberType,
+  // [NUMBER-READ-VISIBLE] The client for the TEMPLATE READ, when the session client cannot see the
+  // owner's profiles row. A verkoop-member or mandated accountant sends in the OWNER's series, but
+  // profiles RLS shows them no owner row: resolveFormat then got data:null/error:null and silently
+  // fell back to the DEFAULT scheme — a wrongly-shaped number drawn from the wrong COUNTER, so the
+  // owner's own next invoice continues a series a stranger started. The allocation RPC stays on the
+  // session client on purpose: next_invoice_seq() refuses auth.uid() IS NULL unconditionally, and
+  // that refusal is load-bearing (no server route may quietly mint a number on service_role).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readClient: SupabaseClient<any> = supabase
 ): Promise<string> {
   // [NUMMER-JAAR] The OWNER's year, not the server's. `new Date().getFullYear()` stood here and is
   // UTC: between 23:00 UTC on 31 December and midnight the Netherlands is already in the new year
@@ -134,7 +145,7 @@ export async function generateInvoiceNumber(
   // has said this since [TZ]; the numbering line was the last place still asking the server.
   const year = amsterdamYear()
 
-  const format = await resolveFormat(supabase, userId, type)
+  const format = await resolveFormat(readClient, userId, type)
   if (!format) return '' // see [NUMBER-READ-HONEST] — never number from an unknown scheme
   const { template, padding } = format
 

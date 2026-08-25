@@ -41,7 +41,7 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
   const [txS, linksS] = await Promise.allSettled([
     pipeline
       .from('bank_transactions')
-      .select('id, amount, date, description, counterpart_name, user_id')
+      .select('id, amount, date, description, counterpart_name, user_id, status')
       .eq('id', txId)
       .eq('user_id', user.id)
       .maybeSingle(),
@@ -56,6 +56,10 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
   if (txS.status === 'rejected') throw txS.reason
   const { data: tx } = txS.value
   if (!tx) redirect('/dashboard/bank')
+  // [CIRKEL-P3] Alleen een 'pending' regel is hier verdeelbaar. Een genegeerde of al geboekte
+  // regel toonde een normaal verdeelscherm waarvan de submit pas bij de server strandde — de
+  // eigenaar koos facturen voor niets. allocate_bank_payment weigert het toch; dit zegt het vooraf.
+  if ((tx as { status?: string | null }).status !== 'pending') redirect('/dashboard/bank?tab=done&quarter=all')
 
   // Wat eerdere koppelingen al van deze regel namen. De optelling zelf staat onder de tweede golf,
   // bij het getal dat eruit komt.

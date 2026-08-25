@@ -15,6 +15,7 @@ import { translator } from '@/lib/i18n/t'
 // [DOORLOPEND] Zie de kop van dat bestand: één regel als het klopt, een kader als het niet klopt.
 import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
 import { GeldPaneel } from '@/components/beveiliging/GeldPaneel'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -80,7 +81,7 @@ export default function KlaarClient() {
       const res = await fetch(`/api/closing-package?year=${y}&quarter=${q}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({} as { error?: string }))
-        setPkgError(j?.error ?? t('klr.fout.pakket'))
+        setPkgError(failureText(res.status, j, t('klr.fout.pakket')))
         return
       }
       const blob = await res.blob()

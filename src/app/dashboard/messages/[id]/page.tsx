@@ -47,7 +47,7 @@ export default function ConversationPage() {
       const res = await fetch(`/api/messages?with=${otherId}`)
       const data = await res.json().catch(() => null)
       if (!res.ok) {
-        setLoadError(data?.error || 'We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.')
+        setLoadError(failureText(res.status, data, 'We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.'))
         return
       }
       setLoadError('')

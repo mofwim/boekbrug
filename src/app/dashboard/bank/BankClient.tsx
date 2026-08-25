@@ -336,12 +336,23 @@ export default function BankClient() {
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
 
 
-  // Shared matcher call — used by both the initial load and after an upload.
-  const runMatch = useCallback(async () => {
-    const mr = await fetch('/api/bank/match')
-    const mrJson: MatchResponse = await mr.json()
-    if (!mr.ok) {
-      showToast(t('bank.fout.matchen'))
+  // Shared matcher call — used by the initial load, after an upload, and (background:true) by the
+  // tab-return refresh. [CIRKEL-C6] The body is guarded: mr.ok is checked BEFORE .json() (a
+  // gateway's HTML 502 threw first), a network failure is caught (the visibility path fired it as
+  // fire-and-forget → unhandled rejection → a Sentry event per alt-tab on a train), and a
+  // background run fails SILENTLY — five tab switches must not stack five red toasts.
+  const runMatch = useCallback(async (opts?: { background?: boolean }) => {
+    const background = opts?.background === true
+    let mrJson: MatchResponse
+    try {
+      const mr = await fetch('/api/bank/match')
+      if (!mr.ok) {
+        if (!background) showToast(t('bank.fout.matchen'))
+        return
+      }
+      mrJson = (await mr.json()) as MatchResponse
+    } catch {
+      if (!background) showToast(t('bank.fout.matchen'))
       return
     }
     setData(mrJson)
@@ -350,7 +361,10 @@ export default function BankClient() {
     for (const s of mrJson.suggestions) {
       if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
     }
-    setSelected(pre)
+    // [CIRKEL-C2] MERGE, owner first. Replacing wiped a manual pick on every refresh — and this
+    // screen's primary verification action (Bekijk factuur) opens a NEW TAB, so coming back from
+    // exactly that check fired the visibility refresh and reset the choice the owner just made.
+    setSelected((prev) => ({ ...pre, ...prev }))
   }, [showToast, t])
 
   // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).
@@ -505,10 +519,20 @@ export default function BankClient() {
 
   // [CIRKEL] A tab left open here while the owner pays on Crediteuren kept offering the
   // settled invoice until a manual reload — every in-page action re-runs the matcher, only
-  // cross-page mutations didn't. Re-run when the tab becomes visible again; the matcher is
-  // read-only, so the worst case of an extra run is a fresh answer.
+  // cross-page mutations didn't. Re-run when the tab becomes visible again.
+  // [CIRKEL-P4] The refresh may never TRIGGER money: fresh data feeds the once-per-mount
+  // auto-confirm effect, and if the first load had nothing safe that gate was still open — so a
+  // mere tab switch could book. The ref closes the gate before the background data arrives.
+  // In-flight guard: ten alt-tabs must be one request, not ten concurrent 13-second calls
+  // whose stale responses race each other into setData.
+  const visRefreshBusy = useRef(false)
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === 'visible') void runMatch() }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || visRefreshBusy.current) return
+      visRefreshBusy.current = true
+      autoRanRef.current = true
+      void runMatch({ background: true }).finally(() => { visRefreshBusy.current = false })
+    }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [runMatch])

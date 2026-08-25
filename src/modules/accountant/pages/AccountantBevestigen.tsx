@@ -31,6 +31,7 @@ import {
   planBulkConfirm, bulkConfirmable, bulkConfirmTitle, bulkConfirmWarnings, bulkConfirmResultText,
 } from '@/lib/bulk-confirm'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
+import { failureText } from '@/lib/server-message'
 
 export interface TeBevestigen {
   id: string
@@ -139,7 +140,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
         body: JSON.stringify({ clientId: rij.clientId, invoiceId: rij.id, question: tekst }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'De vraag kon niet worden verstuurd.')
+      if (!res.ok) throw new Error(failureText(res.status, data, 'De vraag kon niet worden verstuurd.'))
       setGevraagd((g) => ({ ...g, [rij.id]: true }))
       setVraagVoor(null)
       setVraagTekst('')
@@ -161,7 +162,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
         body: JSON.stringify({ clientId: rij.clientId, invoiceId: rij.id }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'Bevestigen mislukt.')
+      if (!res.ok) throw new Error(failureText(res.status, data, 'Bevestigen mislukt.'))
       setKlaar((k) => ({ ...k, [rij.id]: true }))
       router.refresh()
     } catch (e) {

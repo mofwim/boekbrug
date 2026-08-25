@@ -1735,10 +1735,28 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
     /strongExplain = \(sig[\s\S]{0,260}?isReceipt && sig\.includes\("counterpart"\) && sig\.includes\("amount"\) && sig\.includes\("date"\)/,
     "a paid kassabon must be able to explain its own bank line",
   );
+  // [CIRKEL-BEST-TIE] The passes now ask through explainHit (best OR a strong candidate — a
+  // near-tie nulls `best` and must still explain); the bon question rides in the closure.
   assert.match(
     matchRoute,
-    /strongExplain\(m\.best\.signals, receiptIds\.has\(m\.best\.invoiceId\)\)/,
+    /explainHit\(m as never, \(invId\) => receiptIds\.has\(invId\)\)/,
     "…and the paid pass must ASK the shared bar that bon question",
+  );
+  assert.match(
+    matchRoute,
+    /\(m\.candidates \?\? \[\]\)\.find\(\(cand\) => strongExplain\(cand\.signals/,
+    "a near-tie (best === null) still explains — candidates are scanned",
+  );
+  // [CIRKEL-VERWERKT] and [CIRKEL-PERF]: the explain candidates clear the accountant lock
+  // (isEligible refuses 'verwerkt' first), and the O(n·m) passes run over the unexplained
+  // debits only — never over every transaction again.
+  assert.ok(
+    (matchRoute.match(/accountant_status: null/g) ?? []).length >= 2,
+    "both explain passes clear accountant_status on their candidates",
+  );
+  assert.ok(
+    (matchRoute.match(/matchTransactions\(\[\.\.\.unexplained\]/g) ?? []).length === 2,
+    "both explain passes score the unexplained set, not the full transaction list",
   );
 });
 
@@ -4663,10 +4681,13 @@ test("[E-FACTUUR-VERLEGD] one predicate answers 'is this verlegd', for both docu
   // All three places that emit a category must carry it. An AllowanceCharge left at Z would be the
   // only Z on an AE document, and BR-Z-08 then demands a Z subtotal that does not exist — the
   // access point refuses the whole invoice over a discount line.
+  // [KOR-E] Every site now routes through catFor()/groupByRate(…, korDoc) so the KOR mapping and
+  // the verlegd fact reach the three category emitters identically — one place disagreeing is the
+  // exact defect this gate exists for, in either direction.
   for (const site of [
-    /groupByRate\(effLines, docReverseCharged\)/,
-    /taxCategoryId\(rate, lineVatKind\(l, docReverseCharged\)\)/,
-    /taxCategoryId\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
+    /groupByRate\(effLines, docReverseCharged, korDoc\)/,
+    /catFor\(rate, lineVatKind\(l, docReverseCharged\)\)/,
+    /catFor\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
   ]) {
     assert.match(ubl, site, `every category in the XML must read docReverseCharged: ${site}`);
   }
@@ -7245,6 +7266,22 @@ test("[NUMMER-JAAR] nothing on the numbering line reads the year off the server 
   }
 });
 
+test("[NUMBER-READ-VISIBLE] the template read sees the owner's row even when a member sends", () => {
+  // A verkoop-member or mandated accountant mints in the OWNER's series, but profiles RLS shows
+  // their session no owner row: resolveFormat answered data:null/error:null and silently numbered
+  // from the DEFAULT scheme — the wrong shape drawn from the wrong COUNTER, so the owner's own
+  // next invoice continues a series a stranger started. The read therefore travels on its own
+  // client; the allocation RPC stays on the session client because next_invoice_seq() refuses
+  // auth.uid() IS NULL unconditionally, and that refusal is load-bearing.
+  const lib = code("src/lib/invoice-numbering.ts");
+  assert.match(lib, /readClient: SupabaseClient<any> = supabase/, "the read client is its own parameter, defaulting to the session");
+  assert.match(lib, /resolveFormat\(readClient, userId, type\)/, "…and the template read uses IT");
+  assert.match(lib, /supabase\.rpc\('next_invoice_seq'/, "…while the mint stays on the session client");
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /await generateInvoiceNumber\(\s*\n\s*supabase, ownerId, numberType,\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*\)/,
+    "the send route hands the acting-aware read client");
+});
+
 test("[NUMMER-JAAR] the allocator and the lock derive the counter key the same way", () => {
   // Two files decided independently whether a template resets yearly, by each writing
   // `template.includes('{year}')`. They agreed — until one of them changed. The rule now lives in
@@ -7988,7 +8025,7 @@ test("[KORTING-KETEN] the discount chain reaches every surface that bills the cu
   // nobody) and the offerte conversion lost the line discounts the customer said yes to. Each
   // wiring below is invisible to tsc — a missing column in a select literal type-checks fine.
   const inputs = code("src/lib/ubl-inputs.ts");
-  assert.match(inputs, /client_btw_number, discount_type, discount_value" as const/, "the header select carries the document discount");
+  assert.match(inputs, /client_btw_number, discount_type, discount_value, original_invoice_id" as const/, "the header select carries the document discount");
   assert.match(inputs, /discount_type: row\.discount_type \?\? null/, "…and the mapper hands it to the generator");
   assert.match(
     code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,400}discount_type, discount_value"/,
@@ -8404,10 +8441,13 @@ test("[SERVER-ZIN] no screen renders a route's error straight", () => {
   // The offence is RENDERING the error, not reading it. A site that compares the code and maps it
   // to a sentence — `showToast(json?.error === 'lookup_failed' ? '…' : '…')` — is doing exactly the
   // right thing, and the first version of this gate flagged one of those.
-  const RAW = /(showToast|setError|setMessage|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+  // [DIEP-2] The first regex named two setter names, and a screen whose state is called
+  // setBulkError or setSaveError walked straight past it — thirteen live sites did. The sink is
+  // any setter whose NAME says it renders an error or message, plus the two non-setter sinks.
+  const RAW = /(showToast|set[A-Za-z]*(?:Error|Message|Fout)|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
 
   const offenders: string[] = [];
-  for (const f of walk("src/app").concat(walk("src/components"))) {
+  for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
     if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
     const src = code(f); // comments stripped — a note about the old shape must not count
     for (const m of src.matchAll(RAW)) {
@@ -9715,7 +9755,7 @@ test("[FACTUUR-BIJLAGE] the attachment is resolved BEFORE a number is minted", (
   // dat de ondernemer er bewust bij zette, of afbreken met een nummer dat al weg is.
   const send = code("src/app/api/invoice/send/route.ts");
   const bijlageAt = send.indexOf("const bijlageId =");
-  const nummerAt = send.indexOf("generateInvoiceNumber(supabase");
+  const nummerAt = send.indexOf("await generateInvoiceNumber(");
   assert.ok(bijlageAt > 0, "the send route must resolve the attachment");
   assert.ok(nummerAt > 0);
   assert.ok(bijlageAt < nummerAt,
@@ -9746,7 +9786,7 @@ test("[FACTUUR-BIJLAGE] the invoice PDF stays the first attachment", () => {
   // De klant opent de eerste bijlage, en dat hoort het document te zijn waar de mail over gaat.
   const email = code("src/lib/email.ts");
   const block = email.slice(email.indexOf("...(pdfBuffer || extraAttachment"));
-  const pdfAt = block.indexOf("filename: `${invoiceNumber}.pdf`");
+  const pdfAt = block.indexOf("filename: `${safeFileName(invoiceNumber)}.pdf`");
   const extraAt = block.indexOf("extraAttachment ? [extraAttachment]");
   assert.ok(pdfAt > 0 && extraAt > 0 && pdfAt < extraAt, "the legal document comes first");
 });
@@ -14608,6 +14648,24 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.doesNotMatch(pure, /rgs: "B[A-Za-z]+"[^\n]*Kruisposten/,
     "an unverified account carries NO RGS code — a wrong code misfiles an administration");
 
+  // [XAF-KAS] The audit's cash findings, pinned as shapes. A settle is recognized by invoice_id in
+  // the INVOICE id space (the old documentId guard compared two id spaces that never meet and was
+  // dead on every row); cost booking is an ALLOW-list of exactly the two categories the result
+  // engine books, so prive/transfer/tax/fee can never inflate the W-side again.
+  assert.match(pure, /row\.invoiceId && purchaseIds\.has\(row\.invoiceId\)/,
+    "a cash settle of a purchase invoice is matched in the invoice id space");
+  assert.match(pure, /row\.category === "kosten" \|\| row\.category === "salaris"/,
+    "cost booking is an allow-list — mirroring CASH_CATEGORIES in the result engine");
+  assert.match(pure, /const restC = totalC - salesC;/,
+    "[FIN-5] a Z-day remainder above tolerance still books its revenue on 8020");
+  assert.match(pure, /el\("endDate", input\.endDate\)/,
+    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31");
+  assert.match(pure, /: "<companyIdent\/>"/,
+    "companyIdent is a REQUIRED child of company in XAF 3.2 — empty element when KvK is absent, never omitted");
+  const xafSpec = readFileSync("src/lib/xaf-export.test.ts", "utf8");
+  assert.match(xafSpec, /\[XAF-DIFF\]/,
+    "the differential test against computeResult exists — the two engines may never drift apart in silence");
+
   // The route restates no attribution rule: the authorities are CALLED.
   const route = code("src/app/api/xaf/route.ts");
   assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization");
@@ -14616,6 +14674,11 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.match(route, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
   assert.match(route, /buildXafFile\(input\)/, "the pure module is CALLED, not merely exported");
   assert.match(route, /status: 503/, "a failed read refuses — a partial auditfile is a wrong administration");
+  assert.match(route, /`\$\{year\}-12-31` < vandaag \? `\$\{year\}-12-31` : vandaag/,
+    "[XAF-PERIODE] the declared period ends today for the running year — a file may not declare days that have not happened");
+  assert.match(route, /invoice_id/, "the cash select carries invoice_id — the settle branch is fed, not starved");
+  assert.match(route, /kor_active/, "the KOR flag reaches the file's own honesty notes");
+  assert.match(route, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
 
   // Both doors, or the person who actually files never finds it.
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
@@ -14642,14 +14705,17 @@ test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence nev
   assert.match(catchBlock, /return null;/, "every failure answers null — the mail pipeline steps aside, it never throws");
 
   // Both senders attach it; the PDF stays first (the legal document is the first thing opened).
+  // [ACTING-FOR] Both call sites hand the ACTING-AWARE client: a member's session sees none of
+  // the owner's rows, and the mail then silently left without its XML on exactly the invoices an
+  // office sends. The route proved authorization before this point.
   const send = code("src/app/api/invoice/send/route.ts");
-  assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(supabase, invoiceId\)/, "the send route builds it");
+  assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*invoiceId,\s*\n\s*\)/, "the send route builds it, through the acting-aware client");
   assert.match(send, /ublAttachment: ublBijlage/, "…and hands it to the mail");
   const credit = code("src/app/api/invoice/creditnota/route.ts");
-  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(supabase, creditnota\.id\)/, "the creditnota mail carries its UBL 381 twin");
+  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*creditnota\.id,\s*\n\s*\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
   const mail = code("src/lib/email.ts");
-  assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{invoiceNumber\}\.pdf`, content: pdfBuffer \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[ublAttachment\] : \[\]\)/,
-    "PDF first, then the UBL — the customer opens the document the mail is about");
+  assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{safeFileName\(invoiceNumber\)\}\.pdf`, content: pdfBuffer, contentType: 'application\/pdf' \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[\{ \.\.\.ublAttachment, contentType: 'application\/xml' \}\] : \[\]\)/,
+    "PDF first, then the UBL — the customer opens the document the mail is about; names are filename-safe and both parts declare their MIME type");
   assert.match(mail, /const eFactuurRegel = ublAttachment\s*\n?\s*\?/, "the body names the XML only when it is really there");
 });
 
@@ -14683,8 +14749,13 @@ test("[SI-UBL] the Peppol identity is an addition on the one builder, never a se
     "the BIS customization string is the real one");
   assert.match(gen, /if \(opts\?\.peppol\) supParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "0106" \}\)/,
     "supplier endpoint: KVK under EAS 0106");
-  assert.match(gen, /if \(opts\?\.peppol\) cusParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "9944" \}\)/,
-    "buyer endpoint: BTW-nummer under EAS 9944");
+  // [SI-UBL-EAS] The buyer's scheme is looked up from their VAT country, never hardcoded: 9944
+  // means NL:VAT specifically, and a DE number under it is an unresolvable address that
+  // "delivers" fine. Unmapped countries refuse with their own code instead of guessing.
+  assert.match(gen, /if \(opts\?\.peppol\) cusParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: buyerEas! \}\)/,
+    "buyer endpoint: the EAS code of the buyer's own country");
+  assert.match(gen, /NL: "9944",\s*\n\s*DE: "9930",/, "…from the verified EAS table");
+  assert.match(gen, /if \(opts\?\.peppol && !buyerEas\) \{/, "…and an unmapped VAT country refuses the Peppol variant");
   assert.match(gen, /\} else \{\s*\n\s*root\.ele\(NS\.cbc, "UBLVersionID"\)\.txt\("2\.1"\);/,
     "the default document keeps its version tag — existing importers rely on the old shape");
 

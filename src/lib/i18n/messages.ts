@@ -4702,14 +4702,14 @@ export const MESSAGES = {
     en: 'We could not fetch your {sources}',
   },
   'ink.bankWachtEen': {
-    nl: '1 gevonden betaling wacht op je keuze op de bankpagina →',
-    ar: 'دفعة واحدة معثور عليها تنتظر قرارك في صفحة البنك ←',
-    en: '1 found payment awaits your choice on the bank page →',
+    nl: '1 factuur heeft een gevonden bankkoppeling die op je keuze wacht →',
+    ar: 'فاتورة واحدة لها مطابقة بنكية معثور عليها تنتظر قرارك ←',
+    en: '1 invoice has a found bank match awaiting your choice →',
   },
   'ink.bankWacht': {
-    nl: '{count} gevonden betalingen wachten op je keuze op de bankpagina →',
-    ar: '{count} دفعات معثور عليها تنتظر قرارك في صفحة البنك ←',
-    en: '{count} found payments await your choice on the bank page →',
+    nl: '{count} facturen hebben een gevonden bankkoppeling die op je keuze wacht →',
+    ar: '{count} فواتير لها مطابقات بنكية معثور عليها تنتظر قرارك ←',
+    en: '{count} invoices have a found bank match awaiting your choice →',
   },
   'ink.btw': {
     nl: 'BTW',
@@ -6172,6 +6172,11 @@ export const MESSAGES = {
     nl: 'Dit zijn de {n} nieuwste van {totaal}. De rest vind je bij je bestanden.',
     ar: 'هذه أحدث {n} من أصل {totaal}. الباقي تجده في ملفاتك.',
     en: 'These are the {n} newest of {totaal}. The rest is in your files.',
+  },
+  'ink.skipped.kap': {
+    nl: 'Dit zijn de {n} nieuwste van {totaal} overgeslagen bijlagen.',
+    ar: 'هذه أحدث {n} من أصل {totaal} مرفقًا متخطًّى.',
+    en: 'These are the {n} newest of {totaal} skipped attachments.',
   },
   'ink.reread.klaar': {
     nl: 'Klaar.',

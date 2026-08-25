@@ -14,6 +14,8 @@ function baseInput(): XafInput {
     year: 2026,
     dateCreated: "2026-08-25",
     company: { name: "Kiwi Food Market", kvkNumber: "12345678", btwNumber: "NL123456789B01", address: "Dorpsstraat 1", postalCode: "1234 AB", city: "Utrecht" },
+    endDate: "2026-12-31",
+    regimeNotes: [],
     sales: [], purchases: [], bank: [], cash: [], turnover: [],
   };
 }
@@ -103,10 +105,12 @@ test("cash: covered omzet is a witness; voorbelasting books ONLY on a documented
   const input = baseInput();
   input.purchases.push({ id: "p-doc", invoiceNumber: "F-1", invoiceDate: "2026-06-01", vendorName: "Sligro", totalExBtw: 50, btwAmount: 10.5 });
   input.cash.push(
-    { id: "c1", date: "2026-06-02", direction: "in", amount: 121, category: "omzet", btwRate: 21, documentId: null, coveredByTurnover: true },
-    { id: "c2", date: "2026-06-03", direction: "in", amount: 121, category: "omzet", btwRate: 21, documentId: null, coveredByTurnover: false },
-    { id: "c3", date: "2026-06-04", direction: "out", amount: 60.5, category: "kantoor", btwRate: null, documentId: null, coveredByTurnover: false },
-    { id: "c4", date: "2026-06-05", direction: "out", amount: 60.5, category: "kosten", btwRate: 21, documentId: "p-doc", coveredByTurnover: false },
+    { id: "c1", date: "2026-06-02", direction: "in", amount: 121, category: "omzet", btwRate: 21, documentId: null, invoiceId: null, coveredByTurnover: true },
+    { id: "c2", date: "2026-06-03", direction: "in", amount: 121, category: "omzet", btwRate: 21, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "c3", date: "2026-06-04", direction: "out", amount: 60.5, category: "kosten", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    // The settle case rides on cash_entries.INVOICE_id — the audit found the old fixture
+    // inventing a documentId↔invoice-id equality production never has, certifying dead code.
+    { id: "c4", date: "2026-06-05", direction: "out", amount: 60.5, category: "betaling", btwRate: null, documentId: null, invoiceId: "p-doc", coveredByTurnover: false },
   );
   const r = buildXafFile(input);
   assert.equal(r.turnoverWitnessCount, 1, "the covered row is a witness, not a second booking");
@@ -123,7 +127,7 @@ test("cash: covered omzet is a witness; voorbelasting books ONLY on a documented
 
 test("a Z-day whose money side differs from its sales side books the difference as kasverschil", () => {
   const input = baseInput();
-  input.turnover.push({ date: "2026-07-01", base0: 0, base9: 100, base21: 200, btw9: 9, btw21: 42, pinAmount: 250, cashAmount: 100, otherAmount: 0 });
+  input.turnover.push({ date: "2026-07-01", base0: 0, base9: 100, base21: 200, btw9: 9, btw21: 42, pinAmount: 250, cashAmount: 100, otherAmount: 0, totalIncl: 351 });
   const r = buildXafFile(input);
   assert.equal(r.skipped.length, 0);
   assert.equal(r.totalDebit, r.totalCredit, "the plug keeps the day balanced");
@@ -151,4 +155,90 @@ test("snapRate derives only the rates that are really there", () => {
   assert.equal(snapRate(100, 0), 0);
   assert.equal(snapRate(100, 15), null);
   assert.equal(snapRate(0, 5), null);
+});
+
+test("[XAF-KAS] prive/transfer/tax never book as cost; a settle clears the sub-administration", () => {
+  const input = baseInput();
+  input.cash.push(
+    { id: "k1", date: "2026-03-01", direction: "out", amount: 500, category: "prive", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "k2", date: "2026-03-02", direction: "out", amount: 300, category: "transfer", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "k3", date: "2026-03-03", direction: "out", amount: 100, category: "tax", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "k4", date: "2026-03-04", direction: "out", amount: 121, category: "betaling", btwRate: null, documentId: null, invoiceId: "buiten-jaar", coveredByTurnover: false },
+  );
+  const r = buildXafFile(input);
+  const got = lines(r.xml);
+  assert.ok(!got.some(([a]) => a === "4000"),
+    "a prive-opname, a bank deposit and a tax payment are NOT deductible costs — the audit found all three booked as 4000");
+  assert.ok(got.some(([a, amt, tp]) => a === "1100" && amt === "300.00" && tp === "D"), "a transfer is the bank counterpart, not a cost");
+  assert.ok(got.some(([a, amt]) => a === "2100" && amt === "500.00"), "prive is a NAMED question");
+  assert.ok(got.some(([a, amt, tp]) => a === "1600" && amt === "121.00" && tp === "D"),
+    "a settle of an out-of-year invoice still clears crediteuren, never a phantom cost");
+});
+
+test("[XAF-KAS] a cash refund of a sale is NEGATIVE omzet, mirroring the engine — never a cost", () => {
+  const input = baseInput();
+  input.cash.push(
+    { id: "r1", date: "2026-04-01", direction: "out", amount: 121, category: "omzet", btwRate: 21, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "r2", date: "2026-04-02", direction: "out", amount: 50, category: "omzet", btwRate: 21, documentId: null, invoiceId: null, coveredByTurnover: true },
+  );
+  const r = buildXafFile(input);
+  assert.equal(r.turnoverWitnessCount, 1, "a refund rung on a Z-day is inside that day's net — witness, both directions");
+  const got = lines(r.xml);
+  assert.ok(got.some(([a, amt, tp]) => a === "8000" && amt === "100.00" && tp === "D"), "the refund DEBITS omzet");
+  assert.ok(got.some(([a, amt, tp]) => a === "1500" && amt === "21.00" && tp === "D"), "…and reverses its BTW");
+  assert.ok(!got.some(([a]) => a === "4000"), "money handed back is not a cost");
+});
+
+test("[FIN-5] a Z-day with only a printed total still books its revenue", () => {
+  const input = baseInput();
+  input.turnover.push({ date: "2026-07-02", base0: 0, base9: 0, base21: 0, btw9: 0, btw21: 0, pinAmount: 0, cashAmount: 500, otherAmount: 0, totalIncl: 500 });
+  const r = buildXafFile(input);
+  assert.equal(r.skipped.length, 0, "the day existed in neither journal before — €500 lived only in an XML comment");
+  const got = lines(r.xml);
+  assert.ok(got.some(([a, amt, tp]) => a === "8020" && amt === "500.00" && tp === "C"), "the remainder books as unrated turnover, named");
+  assert.ok(got.some(([a, amt, tp]) => a === "1000" && amt === "500.00" && tp === "D"));
+});
+
+test("[XAF-PERIODE] the header never declares days that have not happened", () => {
+  const input = baseInput();
+  input.endDate = "2026-05-15";
+  const r = buildXafFile(input);
+  assert.match(r.xml, /<endDate>2026-05-15<\/endDate>/);
+  assert.doesNotMatch(r.xml, /<periodNumber>6<\/periodNumber>/, "period 6 has not happened — declaring it empty is a false statement");
+  assert.match(r.xml, /<periodNumber>5<\/periodNumber>/);
+});
+
+test("[XAF-DIFF] the cash journal agrees with the result engine, category by category", async () => {
+  // The one test the audit said would have caught findings 1-5 in a single stroke: feed one
+  // cash fixture per category/direction through BOTH projections and hold their nets against
+  // each other. Every earlier defect was a disagreement between exactly these two numbers.
+  const { computeResult } = await import("./financial-result");
+  const cash = [
+    { id: "d1", date: "2026-02-01", direction: "in" as const,  amount: 121,  category: "omzet",    btwRate: 21,   documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "d2", date: "2026-02-02", direction: "out" as const, amount: 60.5, category: "kosten",   btwRate: 21,   documentId: "doc-1", invoiceId: null, coveredByTurnover: false },
+    { id: "d3", date: "2026-02-03", direction: "out" as const, amount: 40,   category: "kosten",   btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "d4", date: "2026-02-04", direction: "out" as const, amount: 500,  category: "prive",    btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "d5", date: "2026-02-05", direction: "out" as const, amount: 300,  category: "transfer", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+    { id: "d6", date: "2026-02-06", direction: "out" as const, amount: 121,  category: "omzet",    btwRate: 21,   documentId: null, invoiceId: null, coveredByTurnover: false },
+  ];
+  const input = baseInput();
+  input.cash.push(...cash);
+  const r = buildXafFile(input);
+  const got = lines(r.xml);
+  const net = (acc: string) => got
+    .filter(([a]) => a === acc || (acc === "8xxx" && a.startsWith("80")))
+    .reduce((s, [, amt, tp]) => s + (tp === "C" ? 1 : -1) * Number(amt), 0);
+
+  const engine = computeResult(
+    [], [],
+    cash.map((c) => ({ direction: c.direction, amount: c.amount, category: c.category, btw_rate: c.btwRate, date: c.date, document_id: c.documentId })),
+    [], new Set<string>(), 0, new Map(),
+  );
+  // omzet: engine nets the sale ex 100 against the refund ex -100 → 0; the 8xxx credits-minus-
+  // debits in the file must land on the same number.
+  assert.equal(Math.round(net("8xxx") * 100) / 100, Math.round(engine.omzet * 100) / 100, "omzet agrees");
+  // kosten: documented 50 ex + undocumented 40 gross = 90; prive/transfer excluded on BOTH sides.
+  assert.equal(Math.round(-net("4000") * 100) / 100, Math.round(engine.kosten * 100) / 100, "kosten agree");
+  // voorbelasting: only the documented bon claims (10.50).
+  assert.equal(Math.round(-net("1400") * 100) / 100, Math.round(engine.btwVoorbelasting * 100) / 100, "voorbelasting agrees");
 });

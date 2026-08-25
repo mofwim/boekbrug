@@ -27,6 +27,7 @@ import { COLUMN } from '@/lib/design/tokens';
 import { cleanVatNote, MAX_NOTE_LENGTH } from '@/lib/vat-statement'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 export default function SettingsPage() {
   const t = translator(useLocale())
@@ -436,7 +437,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/account/export', { method: 'POST' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || t('kluis.exportMislukt'))
+        setDelError(failureText(res.status, data, t('kluis.exportMislukt')))
         return
       }
       const blob = await res.blob()
@@ -470,7 +471,7 @@ export default function SettingsPage() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || t('act.verwijderenMislukt'))
+        setDelError(failureText(res.status, data, t('act.verwijderenMislukt')))
         return
       }
       await supabase.auth.signOut()

@@ -71,6 +71,14 @@ export interface UblInvoiceHeader {
   discount_type?: string | null;
   discount_value?: number | null;
   /**
+   * [CREDIT-REF] BG-3: the invoice this creditnota corrects, when the caller knows it. A booking
+   * system matches a credit note to its original by this reference; without it the credit lands
+   * as an orphan a person must pair by hand. Optional and best-effort — an old creditnota without
+   * a stored original simply carries no BillingReference, exactly as before.
+   */
+  original_invoice_number?: string | null;
+  original_invoice_date?: string | null;
+  /**
    * [KLANT-EXTRA] The three free lines under the customer's name ("t.a.v. …", a project or
    * purchase-order reference). Optional: a caller reading a database where
    * client_extra_lines.sql is still open simply has no keys here, and the XML is what it
@@ -130,7 +138,11 @@ export type UblErrorCode =
   // [SI-UBL] Peppol routes on the buyer's electronic address (BT-49). Without any — this app
   // can offer their BTW number (EAS 9944) and nothing else — a BIS document has no destination,
   // and a file that LOOKS deliverable but is not is worse than a refusal that says why.
-  | "CLIENT_MISSING_PEPPOL_ADDRESS";
+  | "CLIENT_MISSING_PEPPOL_ADDRESS"
+  // [SI-UBL-EAS] The buyer HAS a VAT number, but from a country whose VAT-number EAS code is not
+  // in our verified table. Stamping 9944 (NL:VAT) on a DE number would hand the network an
+  // address that can never resolve — the file validates and then silently goes nowhere.
+  | "CLIENT_PEPPOL_EAS_UNSUPPORTED";
 
 export class UblValidationError extends Error {
   code: UblErrorCode;
@@ -322,6 +334,30 @@ const NS = {
 };
 const EUR = "EUR";
 
+// [SI-UBL-EAS] BT-49 scheme per buyer country — the EAS code that says WHAT KIND of identifier
+// the electronic address is. 9944 means specifically "NL:VAT": a German VAT number under 9944 is
+// an address on the wrong street, syntactically valid and undeliverable. This table carries only
+// codes verified against the EN 16931 EAS code list; a VAT prefix outside it REFUSES the Peppol
+// variant rather than guessing, because a wrong scheme fails silently after delivery "succeeds".
+const PEPPOL_EAS_BY_VAT_COUNTRY: Record<string, string> = {
+  NL: "9944",
+  DE: "9930",
+  BE: "9925",
+  FR: "9957",
+  AT: "9914",
+  IT: "9906",
+  ES: "9920",
+  LU: "9938",
+  SE: "9955",
+  GB: "9932",
+};
+
+/** The EAS scheme for a buyer's VAT number, or null when the country is not in the verified table. */
+export function peppolEasForVat(btwNumber: string | null | undefined): string | null {
+  const prefix = (btwNumber ?? "").trim().slice(0, 2).toUpperCase();
+  return PEPPOL_EAS_BY_VAT_COUNTRY[prefix] ?? null;
+}
+
 // ─── Validation ─────────────────────────────────────────────────────────────────
 
 function supplierName(s: UblSupplier): string | null {
@@ -401,7 +437,15 @@ interface TaxGroup {
   category: UblTaxCategory;
   taxable: number; // Σ line ex-btw at this rate AND category
   tax: number; // round2(taxable * rate/100)
+  /** [KOR-E] This group is E because of the KOR, not art. 11 — the exemption reason differs. */
+  korExempt?: boolean;
 }
+
+// [KOR-E] Under the KOR a supply is VRIJGESTELD (art. 25 Wet OB 1968) — category E, not the Z of
+// a genuine zero rate. Z claims "0% applies to this supply", which is a different legal fact; a
+// buyer's system reading Z may still expect the seller in the ICP/aangifte chains a KOR'er is
+// exempt from. The reason text names the article, same discipline as taxExemptionReason.
+export const KOR_EXEMPTION_REASON = "Vrijgesteld van btw — kleineondernemersregeling (artikel 25 Wet OB 1968)";
 
 /**
  * One TaxSubtotal per (rate, category) pair — not per rate.
@@ -413,16 +457,20 @@ interface TaxGroup {
  * equal the sum of the lines carrying it, so the merged version is not only wrong in meaning, it
  * fails validation as soon as both appear on one invoice.
  */
-function groupByRate(lines: UblInvoiceLine[], documentIsReverseCharged = false): TaxGroup[] {
-  const map = new Map<string, { rate: number; category: UblTaxCategory; taxable: number }>();
+function groupByRate(lines: UblInvoiceLine[], documentIsReverseCharged = false, korActive = false): TaxGroup[] {
+  const map = new Map<string, { rate: number; category: UblTaxCategory; taxable: number; korExempt: boolean }>();
   for (const l of lines) {
     const rate = Number(l.btw_rate ?? 0);
-    const category = taxCategoryId(rate, lineVatKind(l, documentIsReverseCharged));
-    const key = `${rate}|${category}`;
+    // [KOR-E] Only a would-be Z becomes E under the KOR: an explicit art.-11 exemption stays E on
+    // its own ground, AE stays AE, and a taxed line (a pre-KOR invoice exported later) stays S.
+    const baseCategory = taxCategoryId(rate, lineVatKind(l, documentIsReverseCharged));
+    const korExempt = korActive && baseCategory === "Z";
+    const category: UblTaxCategory = korExempt ? "E" : baseCategory;
+    const key = `${rate}|${category}|${korExempt}`;
     const ex = Number(l.line_total ?? 0);
     const cur = map.get(key);
     if (cur) cur.taxable += ex;
-    else map.set(key, { rate, category, taxable: ex });
+    else map.set(key, { rate, category, taxable: ex, korExempt });
   }
   return [...map.values()]
     // 21 before 9 before 0; within one rate, a stable order by category so the XML is reproducible.
@@ -432,6 +480,7 @@ function groupByRate(lines: UblInvoiceLine[], documentIsReverseCharged = false):
       category: g.category,
       taxable: round2(g.taxable),
       tax: round2(g.taxable * (g.rate / 100)),
+      korExempt: g.korExempt,
     }));
 }
 
@@ -482,6 +531,13 @@ export function buildInvoiceUbl(
   // [SI-UBL] The buyer's electronic address is the routing key of a Peppol document.
   if (opts?.peppol && !header.client_btw_number?.trim()) {
     throw new UblValidationError("CLIENT_MISSING_PEPPOL_ADDRESS", "UBL export blocked: CLIENT_MISSING_PEPPOL_ADDRESS");
+  }
+  // [SI-UBL-EAS] …and the scheme of that address depends on the buyer's country. Hardcoding 9944
+  // stamped NL:VAT on every buyer, so a BIS file for a German customer carried an address that can
+  // never resolve. Refuse what we cannot address rather than misaddress it.
+  const buyerEas = opts?.peppol ? peppolEasForVat(header.client_btw_number) : null;
+  if (opts?.peppol && !buyerEas) {
+    throw new UblValidationError("CLIENT_PEPPOL_EAS_UNSUPPORTED", "UBL export blocked: CLIENT_PEPPOL_EAS_UNSUPPORTED");
   }
 
   // [E-FACTUUR-VERLEGD] One question, asked once, for the whole document — and asked of the same
@@ -540,8 +596,16 @@ export function buildInvoiceUbl(
       }))
     : effLinesRaw;
 
+  // [KOR-E] One document-level fact, read once, applied identically to subtotal, line and
+  // allowance categories — the three places a category appears may never disagree.
+  const korDoc = !!opts?.korActive;
+  const catFor = (rate: number, kind?: VatKind): UblTaxCategory => {
+    const c = taxCategoryId(rate, kind);
+    return korDoc && c === "Z" ? "E" : c;
+  };
+
   // Derive totals from lines (internal consistency over stored header).
-  const rawGroups = groupByRate(effLines, docReverseCharged);
+  const rawGroups = groupByRate(effLines, docReverseCharged, korDoc);
   const lineExtensionTotal = round2(rawGroups.reduce((s, g) => s + g.taxable, 0));
 
   // [KORTING] Een korting op de hele factuur is in Peppol BIS 3.0 GEEN aftrek van het totaal maar
@@ -649,7 +713,10 @@ export function buildInvoiceUbl(
   }
   root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
   root.ele(NS.cbc, "IssueDate").txt(issueDate);
-  if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
+  // [CREDIT-VERVALDATUM] CreditNote-2 has NO cbc:DueDate in its schema — the element exists only
+  // on Invoice-2. Writing it anyway made every creditnota schema-invalid, refused before any
+  // business rule runs. BT-9 travels on a credit note as PaymentMeans/PaymentDueDate — below.
+  if (dueDate && !isCreditNote) root.ele(NS.cbc, "DueDate").txt(dueDate);
   // The code keeps its meaning; only the element it lives in follows the document type.
   root.ele(NS.cbc, isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
   root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
@@ -657,6 +724,17 @@ export function buildInvoiceUbl(
   // stores no separate buyer reference, so the invoice number stands in — the buyer's package
   // shows it verbatim, which is also the reference a Dutch customer actually quotes when paying.
   if (opts?.peppol) root.ele(NS.cbc, "BuyerReference").txt(header.invoice_number!.trim());
+
+  // ── [CREDIT-REF] BillingReference (BG-3) — which invoice this creditnota corrects ──
+  // By UBL sequence it sits here, after BuyerReference and before the parties. Best-effort: a
+  // caller that knows the original passes it; a creditnota without one carries no reference,
+  // exactly the file it always was.
+  if (isCreditNote && header.original_invoice_number?.trim()) {
+    const origRef = root.ele(NS.cac, "BillingReference").ele(NS.cac, "InvoiceDocumentReference");
+    origRef.ele(NS.cbc, "ID").txt(header.original_invoice_number.trim());
+    const origDate = toUblDate(header.original_invoice_date ?? null);
+    if (origDate) origRef.ele(NS.cbc, "IssueDate").txt(origDate);
+  }
 
   // ── AccountingSupplierParty (the ZZP'er) ──
   const supParty = root
@@ -683,10 +761,10 @@ export function buildInvoiceUbl(
   const cusParty = root
     .ele(NS.cac, "AccountingCustomerParty")
     .ele(NS.cac, "Party");
-  // [SI-UBL] Buyer electronic address (BT-49): their BTW-nummer under EAS 9944 (NL:VAT) — the
-  // one identifier this app holds for a business customer. Guarded above: peppol mode refused
-  // the document already when it is absent.
-  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: "9944" }).txt(header.client_btw_number!.trim());
+  // [SI-UBL] Buyer electronic address (BT-49): their BTW-nummer under the EAS code of ITS OWN
+  // country — 9944 for an NL number, 9930 for a DE one ([SI-UBL-EAS]). Guarded above: peppol
+  // mode refused the document already when the number is absent or its country unmapped.
+  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: buyerEas! }).txt(header.client_btw_number!.trim());
   cusParty
     .ele(NS.cac, "PartyName")
     .ele(NS.cbc, "Name")
@@ -734,6 +812,9 @@ export function buildInvoiceUbl(
   if (supplier.iban?.trim()) {
     const pm = root.ele(NS.cac, "PaymentMeans");
     pm.ele(NS.cbc, "PaymentMeansCode").txt("30"); // 30 = credit transfer
+    // [CREDIT-VERVALDATUM] BT-9 on a credit note lives HERE — CreditNote-2 has no cbc:DueDate.
+    // Order is fixed: PaymentDueDate directly after PaymentMeansCode, before the account.
+    if (isCreditNote && dueDate) pm.ele(NS.cbc, "PaymentDueDate").txt(dueDate);
     pm.ele(NS.cac, "PayeeFinancialAccount").ele(NS.cbc, "ID").txt(supplier.iban.trim());
   }
 
@@ -750,7 +831,7 @@ export function buildInvoiceUbl(
     // reverse-charged invoice every line is AE, so an allowance left at Z would be the only Z on
     // the document — and BR-Z-08 then demands a Z subtotal whose taxable amount equals it, which
     // does not exist. The file would be refused at the access point over a discount line.
-    acCat.ele(NS.cbc, "ID").txt(taxCategoryId(a.rate, docReverseCharged ? "reverse_charge" : undefined));
+    acCat.ele(NS.cbc, "ID").txt(catFor(a.rate, docReverseCharged ? "reverse_charge" : undefined));
     acCat.ele(NS.cbc, "Percent").txt(String(a.rate));
     acCat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
   }
@@ -769,7 +850,8 @@ export function buildInvoiceUbl(
     // The element order matters — cbc:TaxExemptionReason sits between Percent and cac:TaxScheme in
     // the UBL sequence, and a document with the right content in the wrong order is rejected just
     // as hard as one with the wrong content.
-    const reason = taxExemptionReason(g.category);
+    // [KOR-E] A KOR exemption names its own article — art. 11 would claim a different law.
+    const reason = g.korExempt ? KOR_EXEMPTION_REASON : taxExemptionReason(g.category);
     if (reason) cat.ele(NS.cbc, "TaxExemptionReason").txt(reason);
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
   }
@@ -874,7 +956,7 @@ export function buildInvoiceUbl(
     const cat = item.ele(NS.cac, "ClassifiedTaxCategory");
     // [E-FACTUUR] The LINE's own category, so it matches the subtotal its amount was counted into.
     // ClassifiedTaxCategory carries no exemption reason — that lives on the TaxSubtotal above.
-    cat.ele(NS.cbc, "ID").txt(taxCategoryId(rate, lineVatKind(l, docReverseCharged)));
+    cat.ele(NS.cbc, "ID").txt(catFor(rate, lineVatKind(l, docReverseCharged)));
     cat.ele(NS.cbc, "Percent").txt(String(rate));
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
     // [PRIJS-RECONSTRUEERBAAR] De prijs moet het regelbedrag OPLEVEREN.

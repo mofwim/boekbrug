@@ -19,6 +19,7 @@ import { FONT, M3, R, COLUMN } from '@/lib/design/tokens'
 import { bouwAntwoordBericht, type OpenVraag } from '@/lib/vragen'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
@@ -159,7 +160,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setFout(json?.error || t('vr.fout.versturen'))
+        setFout(failureText(res.status, json, t('vr.fout.versturen')))
       } else {
         setVerstuurd(true)
         setAntwoord('')

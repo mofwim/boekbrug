@@ -639,7 +639,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                           truncated list concludes their invoice is not there. */}
                       {skippedTotal > (skippedItems?.length ?? 0) && (
                         <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 2, lineHeight: 1.5 }}>
-                          Dit zijn de {skippedItems?.length ?? 0} nieuwste van {skippedTotal} overgeslagen bijlagen.
+                          {t('ink.skipped.kap', { n: skippedItems?.length ?? 0, totaal: skippedTotal })}
                         </div>
                       )}
                     </div>
