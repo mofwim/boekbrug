@@ -86,6 +86,15 @@ export const MESSAGES = {
   // ondernemer een postcode laten typen die hier niet bestaat.
 
   'nieuw.titel.factuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
+  // [NUMMER-VOORUITBLIK] De kop draagt het verwachte nummer zodra het bekend is — de eigenaar moet
+  // bij BINNENKOMST weten welk nummer dit document straks krijgt, niet halverwege het formulier.
+  // "(verwacht)" reist mee in de kop zelf: een kaal getal daar zou als toezegging lezen, en het
+  // nummer valt pas definitief bij verzending.
+  'nieuw.titel.factuurMetNummer': {
+    nl: 'Nieuwe factuur · {nummer} (verwacht)',
+    ar: 'فاتورة جديدة · {nummer} (متوقّع)',
+    en: 'New invoice · {nummer} (expected)',
+  },
   'nieuw.titel.offerte': { nl: 'Nieuwe offerte', ar: 'عرض سعر جديد', en: 'New quote' },
   'nieuw.type': { nl: 'Type document', ar: 'نوع المستند', en: 'Document type' },
   'nieuw.type.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },

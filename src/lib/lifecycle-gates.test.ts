@@ -14286,6 +14286,17 @@ test("[NUMMER-VOORUITBLIK] het volgende nummer wordt getoond zonder er een te ve
   // onbekend is — nooit een leeg vak op de bevestiging van een onomkeerbare handeling.
   assert.match(nieuw, /nextNumber \?\? t\('bewerk\.modal\.nummerBijVerzending'\)/,
     "de bevestiging valt terug op de oude zin als het nummer onbekend is");
+
+  // GEVRAAGD, tweede keer: de eigenaar wil bij BINNENKOMST weten welk nummer dit document straks
+  // krijgt — de kaart stond er al, maar halverwege het formulier is niet "bij binnenkomst". De KOP
+  // draagt het nummer nu, mét "(verwacht)" in de zin zelf (een kaal getal in een kop leest als een
+  // toezegging), en de kop trekt bij zodra de vooruitblik binnenkomt.
+  assert.match(nieuw, /nextNumber \? t\('nieuw\.titel\.factuurMetNummer', \{ nummer: nextNumber \}\) : t\('nieuw\.titel\.factuur'\)/,
+    "de kop draagt het verwachte nummer niet meer");
+  assert.match(nieuw, /\[invoiceType, offerteId, nextNumber\]/,
+    "nextNumber staat niet in de header-deps — de kop registreert dan één keer zonder nummer en blijft zo staan");
+  assert.match(CATALOGUE["nieuw.titel.factuurMetNummer"].nl, /verwacht/,
+    "de kopzin zelf zegt dat het een verwachting is");
 });
 
 test("[BESTANDEN-WIJS] wat /api/intake stuurt om naartoe te linken, wordt ook echt gelezen", () => {
