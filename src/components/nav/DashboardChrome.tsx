@@ -36,6 +36,8 @@ const STATIC_TITLES = new Map<string, string>([
   // [RESULT→WAARHEID] /dashboard/resultaat is a server redirect to /dashboard/waarheid, so this
   // chrome never renders for it — the title entry would be dead config. See that page's header.
   ["/dashboard/artikelen", "Artikelen"],
+  // [IB-JAAR] First-paint label; the page itself registers its translated title.
+  ["/dashboard/jaar", "Jaaroverzicht"],
   ["/dashboard/kluis", "Kluis"],
   // [LOGBOEK] Plain Dutch, like every other entry in this map — this registry is not translated.
   // It is the FIRST-PAINT label only: a page that registers a title through useSubPageHeader wins

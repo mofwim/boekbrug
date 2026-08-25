@@ -417,6 +417,14 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                       >
                         ⬇︎ Pakket
                       </a>
+                      {/* [IB-JAAR] Het jaar van deze klant, geordend voor de IB-aangifte — dezelfde
+                          dubbelpad-route; het scherm geeft clientId alleen door. */}
+                      <a
+                        href={`/dashboard/jaar?clientId=${encodeURIComponent(row.id)}`}
+                        style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
+                      >
+                        Jaar
+                      </a>
 
                       {/* [PAKKET-VERS] De kopie op de eigen schijf veroudert vanaf het moment van
                           downloaden, en een gedeelde map kan dat niet eens zeggen. Amber zodra er

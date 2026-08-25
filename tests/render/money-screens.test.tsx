@@ -2773,3 +2773,47 @@ test("[CREDIT-AFHANDELEN] een creditnota krijgt de afsluitvraag — en nooit de 
   assert.match(gewoon, /Heb je betaald\?/);
   assert.doesNotMatch(gewoon, /Verrekend of terugontvangen\?/);
 });
+
+// ─── [IB-JAAR] Het jaaroverzicht voor de IB-aangifte ─────────────────────────────────────────
+
+test("[IB-JAAR] het paneel toont de W&V, het urencriterium en wat er NIET in zit", () => {
+  return (async () => {
+    const { JaarOverzichtPaneel } = await import("../../src/app/dashboard/jaar/JaarClient");
+    const t = (k: string) => k;
+    const html = renderToStaticMarkup(
+      React.createElement(JaarOverzichtPaneel, {
+        t: t as never,
+        overzicht: {
+          year: 2026,
+          wv: { opbrengsten: 85000.5, kosten: 32000.25, saldo: 53000.25 },
+          uren: { total: 1400, threshold: 1225, met: true, sentence: "Je registreerde 1.400 uur in 2026 — het urencriterium (1.225 uur) is op basis van je registratie gehaald." },
+          nietBijgehouden: ["afschrijvingen (investeringen boven € 450 schrijf je af)"],
+          kanttekeningen: [],
+        },
+      }),
+    );
+    assert.match(html, /85\.000,50/);
+    assert.match(html, /53\.000,25/);
+    assert.match(html, /urencriterium \(1\.225 uur\) is op basis van je registratie gehaald/);
+    assert.match(html, /afschrijvingen/, "de eerlijke lijst staat op het scherm");
+  })();
+});
+
+test("[IB-JAAR] een kanttekening verschijnt, en zonder kanttekeningen geen leeg amberkader", () => {
+  return (async () => {
+    const { JaarOverzichtPaneel } = await import("../../src/app/dashboard/jaar/JaarClient");
+    const basis = {
+      year: 2026,
+      wv: { opbrengsten: 100, kosten: 50, saldo: 50 },
+      uren: { total: null, threshold: 1225, met: null, sentence: "We konden je urenregistratie nu niet lezen — het urencriterium is niet beoordeeld." },
+      nietBijgehouden: ["voorraadmutatie"],
+      kanttekeningen: ["€ 4.200,00 omzet staat nog zonder BTW-tarief."],
+    };
+    const met = renderToStaticMarkup(React.createElement(JaarOverzichtPaneel, { t: ((k: string) => k) as never, overzicht: basis }));
+    assert.match(met, /4\.200,00 omzet staat nog zonder BTW-tarief/);
+    assert.match(met, /niet beoordeeld/, "een mislukte urenlezing zegt dat, nooit 'niet gehaald'");
+    const zonder = renderToStaticMarkup(React.createElement(JaarOverzichtPaneel, { t: ((k: string) => k) as never, overzicht: { ...basis, kanttekeningen: [] } }));
+    assert.doesNotMatch(zonder, /FFF8E1/, "geen leeg amberkader");
+  })();
+});
+

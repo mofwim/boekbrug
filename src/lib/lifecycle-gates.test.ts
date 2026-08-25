@@ -14537,3 +14537,39 @@ test("[PDF-BETAAL-QR] de betaal-QR staat op het papier zelf — en alleen als hi
   assert.match(knop, /betaalQr=\{betaalQr\}/,
     "de voorvertoning bouwt de QR maar geeft hem niet aan het document");
 });
+
+test("[IB-JAAR] the year overview is a projection of the sources, wired end to end", () => {
+  // The module computes NO tax. An amount labelled "your income tax" from a system that does not
+  // hold the owner's other income, deductions or partner situation is a wrong number wearing a
+  // confident face — and money-out errors are the unrecoverable direction. So the gate refuses
+  // the vocabulary of a tax CALCULATION anywhere in the pure module.
+  const pure = code("src/lib/ib-jaar.ts");
+  assert.match(pure, /URENCRITERIUM_HOURS = 1225/, "the urencriterium threshold is the Belastingdienst's number");
+  assert.doesNotMatch(
+    pure, /te betalen|verschuldigde (inkomsten)?belasting|heffingskorting|schijf/i,
+    "the module has started to compute or promise a tax amount — that is a different product and a wrong one",
+  );
+  // A failed hours read answers "could not look", never "criterium not met". The three-state
+  // shape is load-bearing: the accountant reads this to decide zelfstandigenaftrek.
+  assert.match(pure, /if \(hoursTotal === null\)/, "the could-not-look branch exists");
+  assert.match(pure, /met: null as boolean \| null/, "…and answers null, not false");
+
+  // The route reaches the numbers through the SAME engine as the quarters ([CENT]/[NO-SILENT-EMPTY]
+  // both live down there), authorizes through the same dual-path door as every accountant read,
+  // and refuses to render a year it could not compute.
+  const route = code("src/app/api/ib-jaar/route.ts");
+  assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization is CALLED");
+  assert.match(route, /computeResultForRange\(\{ pipeline/, "the year is the quarters' own engine over a longer range");
+  assert.match(route, /buildIbJaarOverzicht\(\{/, "the pure module is CALLED, not merely exported");
+  assert.match(route, /status: 503/, "a failed compute is a refusal, not an empty year");
+
+  // And the screen must exist on both doors. A year overview only the owner can reach misses the
+  // person who actually files the aangifte.
+  const chrome = code("src/components/nav/DashboardChrome.tsx");
+  assert.match(chrome, /\["\/dashboard\/jaar", "Jaaroverzicht"\]/, "the owner's nav carries the entry");
+  const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(board, /\/dashboard\/jaar\?clientId=\$\{encodeURIComponent\(row\.id\)\}/, "the werkboard links per client");
+  const client = code("src/app/dashboard/jaar/JaarClient.tsx");
+  assert.match(client, /\/api\/ib-jaar\?year=\$\{y\}\$\{clientId \? `&clientId=/, "the screen forwards clientId to the route");
+  assert.match(client, /setError\(failureText\(res\.status, json, t\('jaar\.fout'\)\)\)/, "a refused year is SAID through the [SERVER-ZIN] rule, not blanked and not a machine code");
+});
