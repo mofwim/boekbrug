@@ -14573,3 +14573,40 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   assert.match(client, /\/api\/ib-jaar\?year=\$\{y\}\$\{clientId \? `&clientId=/, "the screen forwards clientId to the route");
   assert.match(client, /setError\(failureText\(res\.status, json, t\('jaar\.fout'\)\)\)/, "a refused year is SAID through the [SERVER-ZIN] rule, not blanked and not a machine code");
 });
+
+test("[XAF] the auditfile is balanced by construction, honest about the rest, and reachable from both doors", () => {
+  // The three iron rules live in the pure module, and each has a shape a refactor could silently
+  // lose while every unit test stays green against a friendlier fixture. So the RULES are pinned.
+  const pure = code("src/lib/xaf-export.ts");
+  assert.match(pure, /if \(!balanced\(built\.lines\)\) \{ skipped\.push/,
+    "an unbalanced entry is REFUSED into skipped — never emitted, never patched");
+  assert.match(pure, /if \(Math\.abs\(grossC - storedC\) > 1\) return \{ reason/,
+    "the gross side is the sum of the parts, and a stored total that disagrees refuses the document");
+  assert.match(pure, /if \(totalDebitC !== totalCreditC\) \{/,
+    "the file-level balance assertion stands between the journals and the download");
+  assert.match(pure, /row\.documentId && \(row\.btwRate === 21 \|\| row\.btwRate === 9\)/,
+    "voorbelasting on a cash cost books ONLY when documented ([CASH-COST-VAT])");
+  assert.match(pure, /rgs: "BVorVbkTvo"/, "the verified RGS codes ride on the accounts");
+  assert.doesNotMatch(pure, /rgs: "B[A-Za-z]+"[^\n]*Kruisposten/,
+    "an unverified account carries NO RGS code — a wrong code misfiles an administration");
+
+  // The route restates no attribution rule: the authorities are CALLED.
+  const route = code("src/app/api/xaf/route.ts");
+  assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization");
+  assert.match(route, /\.filter\(isVerifiedForPackage\)/, "the package's own verified rule decides which invoices book");
+  assert.match(route, /toResultBankTx\(b\)\.posSettlement/, "the ONE card-payout predicate ([ONE-BANK-READ])");
+  assert.match(route, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
+  assert.match(route, /buildXafFile\(input\)/, "the pure module is CALLED, not merely exported");
+  assert.match(route, /status: 503/, "a failed read refuses — a partial auditfile is a wrong administration");
+
+  // Both doors, or the person who actually files never finds it.
+  const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(board, /\/api\/xaf\?year=\$\{year\}&clientId=/, "the werkboard downloads per client");
+  const jaar = code("src/app/dashboard/jaar/JaarClient.tsx");
+  assert.match(jaar, /\/api\/xaf\?year=\$\{year\}\$\{clientId/, "the year screen offers the owner the same file");
+
+  // And the public page may now say yes — but only the bounded yes the code supports.
+  const publiek = code("src/app/voor-boekhouders/page.tsx");
+  assert.doesNotMatch(publiek, /Nee, geen van beide/, "the old XAF/RGS denial would contradict the shipped export");
+  assert.match(publiek, /Vraagposten in plaats van gegokt/, "…and the stated limit stays on the page");
+});

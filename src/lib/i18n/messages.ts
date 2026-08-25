@@ -10879,6 +10879,7 @@ export const MESSAGES = {
   'jaar.kanttekeningen.titel': { nl: 'Kanttekeningen', en: 'Caveats', ar: 'ملاحظات' },
   'jaar.laden': { nl: 'Jaar doorrekenen…', en: 'Computing the year…', ar: 'جارٍ احتساب السنة…' },
   'jaar.fout': { nl: 'We konden het jaar nu niet doorrekenen. Probeer het zo opnieuw.', en: 'We could not compute the year right now. Try again shortly.', ar: 'تعذّر احتساب السنة الآن. حاول بعد قليل.' },
+  'jaar.xaf.link': { nl: 'Download auditbestand (XAF) voor de boekhouder', en: 'Download audit file (XAF) for your accountant', ar: 'نزّل ملف التدقيق (XAF) للمحاسب' },
 
   'log.kasboek.imported_read_only': { nl: 'Kasboek gelezen (niets geboekt)', en: 'Cash book read (nothing booked)', ar: 'قُرئ دفتر النقد (لم يُقيَّد شيء)' },
   'log.kasboek.gap_booked': { nl: 'Ontbrekende kasuitgaven uit het kasboek geboekt', en: 'Missing cash payments booked from the cash book', ar: 'قُيّدت مصروفات نقدية ناقصة من دفتر النقد' },

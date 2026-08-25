@@ -120,6 +120,17 @@ export default function JaarClient() {
       {busy && <p style={{ fontSize: 13.5, color: '#5F6368' }}>{t('jaar.laden')}</p>}
       {error && !busy && <p role="alert" style={{ fontSize: 13.5, color: '#C5221F' }}>{error}</p>}
       {overzicht && !busy && <JaarOverzichtPaneel overzicht={overzicht} t={t as never} />}
+      {overzicht && !busy && (
+        <p style={{ fontSize: 13, margin: 0 }}>
+          {/* [XAF] Het jaar als auditbestand — de boekhouder importeert dit in het eigen pakket. */}
+          <a
+            href={`/api/xaf?year=${year}${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ''}`}
+            style={{ color: '#1A73E8', fontWeight: 600, textDecoration: 'none' }}
+          >
+            ⬇︎ {t('jaar.xaf.link')}
+          </a>
+        </p>
+      )}
     </main>
   )
 }
