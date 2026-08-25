@@ -200,6 +200,10 @@ export async function GET(req: NextRequest) {
         if (!mail) { quiet++; continue; }
         const ok = await sendOchtendMail({ toEmail: p.email.trim(), subject: mail.subject, html: mail.html });
         if (ok) sent++; else failed++;
+        // [BULK-TEMPO] Adem tussen twee mails — dezelfde reden als de bulklus op KlantenBeheer:
+        // een strakke lus loopt tegen Resend's limiet en dan faalt de STAART, en een gemiste
+        // ochtend wordt nooit ingehaald (morgen gaat over morgen).
+        if (sent + failed < profielen.length) await new Promise((r) => setTimeout(r, 300));
       } catch (e) {
         // [CRON-HONEST] One owner's failure is counted, never spread to the rest of the morning.
         failed++;

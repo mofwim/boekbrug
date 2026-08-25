@@ -79,6 +79,15 @@ export const RATE_LIMITS = {
   // per BOEKHOUDER, niet per klant. 150 draagt dat kantoor ruim en stopt nog steeds elk script
   // dat de zwaarste leespas laat ronddraaien.
   HEAVY_EXPORT:        { maxRequests: 150, windowMinutes: 60 },   // 150 exports / hour
+  // [DIEP-3] /api/ib-jaar is GEEN download maar de databron van het jaarscherm — elke mount,
+  // elke jaarwissel, elke taalwissel is een fetch, en alles telt op de teller van de KIJKER
+  // (een boekhouder die 70 klantjaren doorloopt: één emmer). Een schermlezing hoort niet onder
+  // een exportplafond; dit is ruim genoeg voor élk kijkgedrag en stopt alleen een script.
+  YEAR_SCREEN:         { maxRequests: 600, windowMinutes: 60 },   // 600 screen reads / hour
+  // [DIEP-3] /api/export/ubl is één factuur per klik ("single-invoice export", zegt zijn eigen
+  // kop) — een kwartaal factuur-voor-factuur overzetten is de bedoelde handeling en haalt
+  // honderden klikken. Per handeling begrensd, zoals UREN_WRITE, niet als jaarexport.
+  UBL_SINGLE:          { maxRequests: 300, windowMinutes: 60 },   // 300 single exports / hour
   // [DIEP-3] Elk bericht is óók een e-mail en een push naar de gekoppelde partij. De koppeling
   // begrenst WIE je kunt bereiken; dit begrenst HOE VAAK — ruim boven een echt gesprek, ver
   // onder een scriptje dat andermans inbox voltrekt.

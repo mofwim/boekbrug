@@ -28,8 +28,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Ongeldig jaar" }, { status: 400 });
   }
 
-  // [DIEP-2] Year-scale read path — bounded like every other heavy surface.
-  const limited = await checkRateLimit({ userId: user.id, endpoint: "ib-jaar", ...RATE_LIMITS.HEAVY_EXPORT });
+  // [DIEP-3] A SCREEN read, not an export: the jaar screen fetches this on every mount and
+  // toggle, all on the viewer's one bucket — the export ceiling 429'd the 61st client-year an
+  // accountant opened (day-end audit). Screen-sized ceiling instead.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "ib-jaar", ...RATE_LIMITS.YEAR_SCREEN });
   if (!limited.allowed) return rateLimitResponse(limited);
 
   const owner = await resolveQuarterOwner(supabase, user.id, req.nextUrl.searchParams.get("clientId"));

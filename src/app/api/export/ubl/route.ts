@@ -99,8 +99,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
 
-  // [DIEP-2] One invoice per call, but still an uncapped read-and-build path — same ceiling.
-  const limited = await checkRateLimit({ userId: user.id, endpoint: "ubl-export", ...RATE_LIMITS.HEAVY_EXPORT });
+  // [DIEP-3] One invoice per call — a per-action ceiling, not the year-scale one: handing a
+  // quarter to a boekhoudpakket goes invoice-by-invoice and legitimately reaches hundreds.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "ubl-export", ...RATE_LIMITS.UBL_SINGLE });
   if (!limited.allowed) return rateLimitResponse(limited);
 
   const invoiceId = req.nextUrl.searchParams.get("invoiceId");
