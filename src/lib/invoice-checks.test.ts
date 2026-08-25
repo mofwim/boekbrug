@@ -252,3 +252,42 @@ test('[CHECKLIST-BEIDE] one unknown reads as one, several read as several', () =
   ] as never)
   assert.match(many, /2 controles konden we niet nagaan/)
 })
+
+// ── [RIJ-VERKEERD-ETIKET] + [ANDER-TOTAAL] The two rows that sent an owner searching ──────────
+
+test('[RIJ-VERKEERD-ETIKET] a mislabeled rate row earns its tick with the relabel said out loud', () => {
+  // GROOTHANDEL M.H. BAL 264242: the reader returned "21% over 697,09 = 62,74" — which is exactly
+  // 9%. The amounts corroborate; only the label was misread. The row must pass AND say so.
+  const checks = invoiceChecks(clean({
+    total_ex_btw: 697.09, btw_amount: 62.74, total_inc_btw: 759.83,
+    field_confidence: { _btw_rows: [{ rate: 21, base: 697.09, btw: 62.74 }] } as unknown as CheckInput['field_confidence'],
+  }))
+  const row = checks.find((c) => c.id === 'btw-split')
+  assert.ok(row, 'the btw row exists')
+  assert.equal(row!.outcome, 'passed')
+  assert.match(row!.detail!, /9%/, 'names the rate the amounts fit')
+  assert.match(row!.detail!, /misgelezen/, 'and never hides the relabel behind the tick')
+})
+
+test('[ANDER-TOTAAL] the total-on-document row names its witness and shows the block that IS printed', () => {
+  const checks = invoiceChecks(clean({
+    field_confidence: {
+      _grounding: { totalIncBtw: 'absent', source: 'ocr', alternative: { ex: 1065.14, btw: 95.54, inc: 1160.68 } },
+    } as unknown as CheckInput['field_confidence'],
+  }))
+  const row = checks.find((c) => c.id === 'total-on-document')
+  assert.ok(row, 'the row appears when the total is absent from the witness')
+  assert.equal(row!.outcome, 'flagged')
+  assert.match(row!.detail!, /blinde leesbeurt/, 'an OCR witness is named as what it is, not as "de tekst"')
+  assert.match(row!.detail!, /1\.160,68/, 'the block that IS on the paper lands on the screen')
+})
+
+test('[ANDER-TOTAAL] a text witness without an alternative keeps the plain sentence', () => {
+  const checks = invoiceChecks(clean({
+    field_confidence: { _grounding: { totalIncBtw: 'absent' } } as unknown as CheckInput['field_confidence'],
+  }))
+  const row = checks.find((c) => c.id === 'total-on-document')
+  assert.ok(row)
+  assert.match(row!.detail!, /tekst van dit document/)
+  assert.doesNotMatch(row!.detail!, /wél/, 'no invented alternative when the witness saw none')
+})

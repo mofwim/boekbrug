@@ -644,9 +644,13 @@ function NewInvoicePageContent() {
   // Called before the loading early-return so hook order stays stable.
   useSubPageHeader(
     {
+      // [NUMMER-VOORUITBLIK] Het verwachte nummer in de KOP, vanaf binnenkomst — de kaart verderop
+      // legt uit; de kop zorgt dat niemand hem hoeft te vinden. Zelfde eerlijkheid als de kaart:
+      // "(verwacht)" hoort bij het getal, want het nummer valt pas definitief bij verzending.
       title:
         invoiceType === 'offerte' ? t('nieuw.titel.offerte') :
-        invoiceType === 'creditnota' ? statusLabel('credit', taal) : t('nieuw.titel.factuur'),
+        invoiceType === 'creditnota' ? statusLabel('credit', taal) :
+        nextNumber ? t('nieuw.titel.factuurMetNummer', { nummer: nextNumber }) : t('nieuw.titel.factuur'),
       actions: invoiceType === 'offerte' && offerteId ? (
         <button onClick={() => setShowConvertDialog(true)}
           style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
@@ -654,7 +658,9 @@ function NewInvoicePageContent() {
         </button>
       ) : undefined,
     },
-    [invoiceType, offerteId]
+    // nextNumber in de deps: de kop moet bijtrekken zodra de vooruitblik binnenkomt — anders
+    // registreert hij één keer zonder nummer en blijft zo staan.
+    [invoiceType, offerteId, nextNumber]
   )
 
   // [KORTING] Percentage of bedrag, op de hele factuur — en op een offerte net zo goed: daar is

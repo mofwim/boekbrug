@@ -11457,12 +11457,19 @@ test("[CONTROLE-EERLIJK] the checklist says only things that are true of this in
   // a weak test: any misread preserving the two totals passes them, and taking the rate from one
   // printed row and the amounts from another is exactly such a misread.
   assert.match(split, /const offenders = rows\.filter\(\(r\) => \{/);
-  assert.match(split, /if \(offenders\.length > 0\) return \{ kind: 'row-inconsistent'/);
+  // [RIJ-VERKEERD-ETIKET] The offender path grew one strictly-guarded exit: a single non-zero row
+  // that IS our stored pair and fits exactly one OTHER legal rate is a mislabeled reading, settled
+  // by the arithmetic. Everything else still lands on 'row-inconsistent' — pin both the fallthrough
+  // and the triple guard, so loosening either is a red gate and not a quiet widening.
+  assert.match(split, /return \{ kind: 'row-inconsistent', rate, rows, offenders \}/);
+  assert.match(split, /if \(rowIsStoredPair && fits\.length === 1 && fits\[0\] !== r0\.rate\) \{/,
+    "the relabel fires only on the stored pair, a unique fitting rate, and a different label");
   const rowsAt = split.indexOf("const offenders = rows.filter");
   const sumAt = split.indexOf("const rowsBase = round2(");
   assert.ok(rowsAt > 0 && sumAt > rowsAt, "asked BEFORE the column sums are trusted");
-  // …and it may never count as corroboration, whatever its columns add up to.
-  assert.match(split, /return v\.kind === 'single-rate' \|\| v\.kind === 'blend-verified'/,
+  // …and corroboration stays an explicit allowlist: row-mislabeled earned its tick through the
+  // triple guard above; any OTHER new verdict still cannot become a tick by default.
+  assert.match(split, /return v\.kind === 'single-rate' \|\| v\.kind === 'blend-verified' \|\| v\.kind === 'row-mislabeled'/,
     "btwSplitCorroborated is an allowlist, so a new verdict cannot become a tick by default");
 
   const checks = code("src/lib/invoice-checks.ts");
@@ -14279,6 +14286,17 @@ test("[NUMMER-VOORUITBLIK] het volgende nummer wordt getoond zonder er een te ve
   // onbekend is — nooit een leeg vak op de bevestiging van een onomkeerbare handeling.
   assert.match(nieuw, /nextNumber \?\? t\('bewerk\.modal\.nummerBijVerzending'\)/,
     "de bevestiging valt terug op de oude zin als het nummer onbekend is");
+
+  // GEVRAAGD, tweede keer: de eigenaar wil bij BINNENKOMST weten welk nummer dit document straks
+  // krijgt — de kaart stond er al, maar halverwege het formulier is niet "bij binnenkomst". De KOP
+  // draagt het nummer nu, mét "(verwacht)" in de zin zelf (een kaal getal in een kop leest als een
+  // toezegging), en de kop trekt bij zodra de vooruitblik binnenkomt.
+  assert.match(nieuw, /nextNumber \? t\('nieuw\.titel\.factuurMetNummer', \{ nummer: nextNumber \}\) : t\('nieuw\.titel\.factuur'\)/,
+    "de kop draagt het verwachte nummer niet meer");
+  assert.match(nieuw, /\[invoiceType, offerteId, nextNumber\]/,
+    "nextNumber staat niet in de header-deps — de kop registreert dan één keer zonder nummer en blijft zo staan");
+  assert.match(CATALOGUE["nieuw.titel.factuurMetNummer"].nl, /verwacht/,
+    "de kopzin zelf zegt dat het een verwachting is");
 });
 
 test("[BESTANDEN-WIJS] wat /api/intake stuurt om naartoe te linken, wordt ook echt gelezen", () => {
