@@ -31,6 +31,7 @@ import { eInvoiceOf } from '@/lib/e-invoice'
 // [PAY-DATE-SANE] the floor the date picker offers — the ceiling is amsterdamToday() below
 import { PAYMENT_DATE_FLOOR } from '@/lib/payment-date'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
@@ -537,7 +538,7 @@ export default function IncomingManageClient({
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
   // [MATCH-BUTTON] applyMap installs the post-run map the matcher returns (no second fetch).
-  const { byInvoice: recon, confirmMatch, applyMap } = useInvoiceReconciliation()
+  const { byInvoice: recon, confirmMatch, applyMap, pendingMatchCount: bankPending } = useInvoiceReconciliation()
   // [BRIDGE-NOTIF] Deep links land here with ?focus= / ?action= (see the effects
   // below). Read once, up here, because the filter tab below is INITIALISED from
   // the URL — setting it from an effect would be a cascading render.
@@ -2341,6 +2342,21 @@ export default function IncomingManageClient({
             evidence, and it is the second one people come to rely on. */}
         <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal, proofAnswers.answered)} actions={proofAnswers.actions} />
 
+        {/* [CIRKEL] The standing count of work waiting on the OTHER page. It arrived in the same
+            response as the badges and used to be discarded; the post-run sheet showed it once and
+            vanished on close. Links to the all-quarters confirm tab so it can never land empty. */}
+        {bankPending > 0 && (
+          <Link
+            href="/dashboard/bank?tab=confirm&quarter=all"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '10px 14px', borderRadius: R.md, background: '#E8F0FE', textDecoration: 'none', fontFamily: FONT }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#174EA6', flexShrink: 0 }}>account_balance</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#174EA6', lineHeight: 1.4 }}>
+              {bankPending === 1 ? t('ink.bankWachtEen') : t('ink.bankWacht', { count: bankPending })}
+            </span>
+          </Link>
+        )}
+
         {loadIncomplete && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
@@ -2850,7 +2866,7 @@ export default function IncomingManageClient({
                               })
                               showToast(t('lijst.betalingBevestigd'))
                             }
-                            else if (r === 'navigate') router.push('/dashboard/bank')
+                            else if (typeof r === 'object' && r.navigate) router.push(r.txId ? `/dashboard/bank/verdelen/${r.txId}` : '/dashboard/bank')
                             else showToast(t('lijst.fout.bevestigen'))
                           }} />
                         )}
@@ -4217,7 +4233,20 @@ export default function IncomingManageClient({
         <MatchResultSheet
           result={matchResult}
           onClose={() => setMatchResult(null)}
-          onOpenBank={() => { setMatchResult(null); router.push('/dashboard/bank') }}
+          // [CIRKEL] Land where the work is: exactly one ambiguous match → straight to that line
+          // (/verdelen/{txId}); otherwise the confirm tab over ALL quarters, so the landing can
+          // never be an empty quarter about a real count (pendingMatchCount spans all quarters).
+          onOpenBank={() => {
+            setMatchResult(null)
+            const pendingTxIds = [...new Set(
+              Object.values(matchResult.byInvoice ?? {})
+                .map((r) => r.pendingMatch?.transactionId)
+                .filter((x): x is string => !!x),
+            )]
+            router.push(pendingTxIds.length === 1
+              ? `/dashboard/bank/verdelen/${pendingTxIds[0]}`
+              : '/dashboard/bank?tab=confirm&quarter=all')
+          }}
           // [MATCH-NAMED] The screen already holds every row, so naming what was booked costs no
           // round trip — and a second fetch could disagree with the patch just applied.
           supplierOf={(id) => invoices.find(i => i.id === id)?.client_name ?? null}

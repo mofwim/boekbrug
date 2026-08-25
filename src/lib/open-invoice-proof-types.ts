@@ -11,6 +11,9 @@ export interface OpenInvoiceHit {
   /** What is still open on the invoice — never the full total when instalments were paid. */
   openAmount: number
   transaction: {
+    /** [CIRKEL] The bank line's id, so the panel can offer "open in bank" next to dismiss —
+     *  the sales sibling (IncomingPaymentHit) always carried it; this side dropped it. */
+    transactionId: string | null
     date: string
     /** Negative: money out. Reported as the magnitude the owner reads on their statement. */
     amount: number

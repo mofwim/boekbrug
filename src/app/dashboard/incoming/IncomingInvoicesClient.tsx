@@ -520,6 +520,158 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     }
   };
 
+  // ── [CIRKEL] The overgeslagen/onleesbaar pile, extracted so BOTH states render it ──
+  //
+  // /api/email/skipped is source-agnostic (every document with a skipped ai_doc_type and no
+  // invoice), so an UPLOADED file that could not be read lands in it too — but the only UI for
+  // it lived inside the mailbox-connected branch. An upload-only owner therefore had no route to
+  // this list, and none to rereadDocument, the one action that turns such a file back into an
+  // invoice. That was the largest silent-loss surface in the intake flow: not lost data, lost
+  // VISIBILITY of data the app holds.
+  const overgeslagenBlok = (
+    <>
+        {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
+            transparency so a misjudged or unreadable document is never invisibly lost. */}
+        <div style={{ marginTop: 12 }}>
+          {!skippedOpen ? (
+            <button
+              onClick={openSkipped}
+              style={{
+                background: "transparent", border: "none", color: "#5f6368",
+                fontSize: 12.5, cursor: "pointer", padding: 0,
+              }}
+            >
+              {t('ink.overgeslagenBekijk')}
+            </button>
+          ) : (
+            <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>{t('ink.overgeslagen')}</span>
+                <button
+                  onClick={() => setSkippedOpen(false)}
+                  style={{ background: "transparent", border: "none", color: "#5f6368", fontSize: 13, cursor: "pointer" }}
+                >
+                  {t('ink.sluit')}
+                </button>
+              </div>
+              {skippedLoading ? (
+                <div style={{ fontSize: 13, color: "#5f6368" }}>{t('oneind.laden')}</div>
+              ) : skippedError ? (
+                /* [SKIPPED-READ-HONEST] The failure, in words, INSTEAD of the list. Not beside it:
+                   an all-clear next to an error is still an all-clear, and "Niets overgeslagen" is
+                   the sentence that makes an owner stop looking for the invoice they came for. */
+                <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", lineHeight: 1.5 }}>
+                  {skippedError}
+                </div>
+              ) : (
+                <>
+                  {couldNotReadCount > 0 && (
+                    <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
+                      {couldNotReadCount === 1 ? t('ink.sync.nietLezenEen') : t('ink.sync.nietLezenMeer', { n: couldNotReadCount })}
+                    </div>
+                  )}
+                  {/* [TWEEDE-KANS] The sentence above said "ze staan in je bestanden" and there was
+                      nothing to do there: the sync filters a given-up attachment out of every future
+                      run, and re-uploading the same bytes is refused as a duplicate. So the file was
+                      visible, unusable, and its voorbelasting unclaimed. Now the reader we have TODAY
+                      can be pointed at the file we already have. */}
+                  {(unreadDocs?.length ?? 0) > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 6, lineHeight: 1.5 }}>
+                        {t('ink.reread.uitleg')}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(unreadDocs ?? []).map((d) => (
+                          <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                            <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                              {d.fileName}
+                            </span>
+                            <button
+                              onClick={() => void rereadDocument(d.id)}
+                              disabled={rereadingId === d.id}
+                              style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, border: "1px solid #dadce0", background: "#fff", color: "#0B57D0", borderRadius: 999, padding: "5px 12px", cursor: rereadingId === d.id ? "default" : "pointer", minHeight: 32 }}
+                            >
+                              {rereadingId === d.id ? t('act.bezig') : t('ink.reread.knop')}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {/* [GEEN-STILLE-KAP] The cap, said out loud. The list stops at 50 and sorts
+                          newest-first, so the ones it drops are the OLDEST — nearest a deadline,
+                          likeliest to be the one being looked for. */}
+                      {couldNotReadCount > unreadDocs.length && (
+                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 6, lineHeight: 1.5 }}>
+                          {t('ink.reread.kap', { n: unreadDocs.length, totaal: couldNotReadCount })}
+                        </div>
+                      )}
+                      {rereadMessage && (
+                        <div style={{ fontSize: 12.5, color: "#202124", background: "#E8F0FE", borderRadius: 8, padding: "8px 10px", marginTop: 8, lineHeight: 1.5 }}>
+                          {rereadMessage}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
+                    <div style={{ fontSize: 12.5, color: "#5f6368" }}>
+                      {t('ink.nietsOvergeslagen')}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {/* [BIJLAGE-TERUGWEG] The date, not only the name. The one thing an owner can
+                          actually do with a misjudged attachment is open the e-mail it came in and
+                          add it by hand — and "sepa-01.pdf" alone does not find that e-mail. The
+                          API has returned createdAt all along; the row dropped it. */}
+                      {(skippedItems ?? []).map((s, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                          <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                            {s.filename}
+                            {s.createdAt && (
+                              <span style={{ color: "#a0a0a5" }}> · {formatDate(s.createdAt)}</span>
+                            )}
+                          </span>
+                          <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {friendlySkipReason(s.reason, t)}
+                          </span>
+                        </div>
+                      ))}
+                      {/* [GEEN-STILLE-KAP] Same for this list: 100 rows, newest first, and until now
+                          nothing said there were more. An owner scrolling to the bottom of a
+                          truncated list concludes their invoice is not there. */}
+                      {skippedTotal > (skippedItems?.length ?? 0) && (
+                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 2, lineHeight: 1.5 }}>
+                          Dit zijn de {skippedItems?.length ?? 0} nieuwste van {skippedTotal} overgeslagen bijlagen.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* [BIJLAGE-TERUGWEG] Two situations, two answers — this said one thing and it was
+                      false for the case an owner is most likely in.
+
+                      "Oudere e-mails opnieuw ophalen" cannot bring back an attachment that is IN
+                      this list. PHASE 0 of the sync loads email_skipped_attachments into knownKeys
+                      and filters those attachments out of EVERY run, backfill included — measured,
+                      and stated in the [TWEEDE-KANS] gate. So an owner reading "leek geen factuur"
+                      next to a real invoice followed this advice, got "0 nieuw", and concluded the
+                      invoice was never there. A wrong answer the app then confirmed.
+
+                      The bytes of a not-an-invoice attachment are deliberately discarded (a mailbox
+                      full of signature images is not worth storing), so the honest route back is the
+                      mailbox itself — which is why the rows above now carry their date. */}
+                  <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
+                    {t('ink.email.echteFactuur')}
+                    <br />
+                    {/* [TAAL] One key per sentence — the old <em>niet</em> split cannot survive a
+                        word order that changes per language. */}
+                    {t('ink.email.misFactuur')} {t('ink.email.nietTussen')}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+    </>
+  )
+
   if (status.connected) {
     const providerName = status.provider === "gmail" ? "Gmail" : "Outlook";
     // [EMAIL-HEALTH] The grant can be dead while the row still exists — never render the calm green
@@ -707,145 +859,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           )}
         </div>
 
-        {/* [OBSERVABILITY] What did import NOT turn into an invoice, and why. Read-only
-            transparency so a misjudged or unreadable document is never invisibly lost. */}
-        <div style={{ marginTop: 12 }}>
-          {!skippedOpen ? (
-            <button
-              onClick={openSkipped}
-              style={{
-                background: "transparent", border: "none", color: "#5f6368",
-                fontSize: 12.5, cursor: "pointer", padding: 0,
-              }}
-            >
-              {t('ink.overgeslagenBekijk')}
-            </button>
-          ) : (
-            <div style={{ background: "#f8f9fa", borderRadius: 10, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#202124" }}>{t('ink.overgeslagen')}</span>
-                <button
-                  onClick={() => setSkippedOpen(false)}
-                  style={{ background: "transparent", border: "none", color: "#5f6368", fontSize: 13, cursor: "pointer" }}
-                >
-                  {t('ink.sluit')}
-                </button>
-              </div>
-              {skippedLoading ? (
-                <div style={{ fontSize: 13, color: "#5f6368" }}>{t('oneind.laden')}</div>
-              ) : skippedError ? (
-                /* [SKIPPED-READ-HONEST] The failure, in words, INSTEAD of the list. Not beside it:
-                   an all-clear next to an error is still an all-clear, and "Niets overgeslagen" is
-                   the sentence that makes an owner stop looking for the invoice they came for. */
-                <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", lineHeight: 1.5 }}>
-                  {skippedError}
-                </div>
-              ) : (
-                <>
-                  {couldNotReadCount > 0 && (
-                    <div style={{ fontSize: 12.5, color: "#7A4B00", background: "#FFF3E0", borderRadius: 8, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
-                      {couldNotReadCount === 1 ? t('ink.sync.nietLezenEen') : t('ink.sync.nietLezenMeer', { n: couldNotReadCount })}
-                    </div>
-                  )}
-                  {/* [TWEEDE-KANS] The sentence above said "ze staan in je bestanden" and there was
-                      nothing to do there: the sync filters a given-up attachment out of every future
-                      run, and re-uploading the same bytes is refused as a duplicate. So the file was
-                      visible, unusable, and its voorbelasting unclaimed. Now the reader we have TODAY
-                      can be pointed at the file we already have. */}
-                  {(unreadDocs?.length ?? 0) > 0 && (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 6, lineHeight: 1.5 }}>
-                        {t('ink.reread.uitleg')}
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {(unreadDocs ?? []).map((d) => (
-                          <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
-                            <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-                              {d.fileName}
-                            </span>
-                            <button
-                              onClick={() => void rereadDocument(d.id)}
-                              disabled={rereadingId === d.id}
-                              style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, border: "1px solid #dadce0", background: "#fff", color: "#0B57D0", borderRadius: 999, padding: "5px 12px", cursor: rereadingId === d.id ? "default" : "pointer", minHeight: 32 }}
-                            >
-                              {rereadingId === d.id ? t('act.bezig') : t('ink.reread.knop')}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      {/* [GEEN-STILLE-KAP] The cap, said out loud. The list stops at 50 and sorts
-                          newest-first, so the ones it drops are the OLDEST — nearest a deadline,
-                          likeliest to be the one being looked for. */}
-                      {couldNotReadCount > unreadDocs.length && (
-                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 6, lineHeight: 1.5 }}>
-                          {t('ink.reread.kap', { n: unreadDocs.length, totaal: couldNotReadCount })}
-                        </div>
-                      )}
-                      {rereadMessage && (
-                        <div style={{ fontSize: 12.5, color: "#202124", background: "#E8F0FE", borderRadius: 8, padding: "8px 10px", marginTop: 8, lineHeight: 1.5 }}>
-                          {rereadMessage}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
-                    <div style={{ fontSize: 12.5, color: "#5f6368" }}>
-                      {t('ink.nietsOvergeslagen')}
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {/* [BIJLAGE-TERUGWEG] The date, not only the name. The one thing an owner can
-                          actually do with a misjudged attachment is open the e-mail it came in and
-                          add it by hand — and "sepa-01.pdf" alone does not find that e-mail. The
-                          API has returned createdAt all along; the row dropped it. */}
-                      {(skippedItems ?? []).map((s, i) => (
-                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
-                          <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-                            {s.filename}
-                            {s.createdAt && (
-                              <span style={{ color: "#a0a0a5" }}> · {formatDate(s.createdAt)}</span>
-                            )}
-                          </span>
-                          <span style={{ color: "#5f6368", flexShrink: 0, maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {friendlySkipReason(s.reason, t)}
-                          </span>
-                        </div>
-                      ))}
-                      {/* [GEEN-STILLE-KAP] Same for this list: 100 rows, newest first, and until now
-                          nothing said there were more. An owner scrolling to the bottom of a
-                          truncated list concludes their invoice is not there. */}
-                      {skippedTotal > (skippedItems?.length ?? 0) && (
-                        <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 2, lineHeight: 1.5 }}>
-                          Dit zijn de {skippedItems?.length ?? 0} nieuwste van {skippedTotal} overgeslagen bijlagen.
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {/* [BIJLAGE-TERUGWEG] Two situations, two answers — this said one thing and it was
-                      false for the case an owner is most likely in.
-
-                      "Oudere e-mails opnieuw ophalen" cannot bring back an attachment that is IN
-                      this list. PHASE 0 of the sync loads email_skipped_attachments into knownKeys
-                      and filters those attachments out of EVERY run, backfill included — measured,
-                      and stated in the [TWEEDE-KANS] gate. So an owner reading "leek geen factuur"
-                      next to a real invoice followed this advice, got "0 nieuw", and concluded the
-                      invoice was never there. A wrong answer the app then confirmed.
-
-                      The bytes of a not-an-invoice attachment are deliberately discarded (a mailbox
-                      full of signature images is not worth storing), so the honest route back is the
-                      mailbox itself — which is why the rows above now carry their date. */}
-                  <div style={{ fontSize: 11.5, color: "#a0a0a5", marginTop: 8, lineHeight: 1.5 }}>
-                    {t('ink.email.echteFactuur')}
-                    <br />
-                    {/* [TAAL] One key per sentence — the old <em>niet</em> split cannot survive a
-                        word order that changes per language. */}
-                    {t('ink.email.misFactuur')} {t('ink.email.nietTussen')}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+        {overgeslagenBlok}
 
         {/* [INCOMING-CHROME] The destructive one, last and quiet — a text button
             below a rule rather than a red-bordered block beside the daily action.
@@ -908,6 +922,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           </a>
         ))}
       </div>
+      {overgeslagenBlok}
     </div>
   );
 }
@@ -2652,8 +2667,10 @@ export function InvoiceCard({
                 <span style={{ fontSize: 15 }}>{invoice.status === "paid" ? "✓" : "•"}</span>
                 {invoice.status === "paid" ? t('status.paid') : t('ink.bevestigdTeBetalen')}
               </span>
+              {/* [CIRKEL] Land ON this invoice, not on top of a 200-row list — manage's ?focus=
+                  fetches an out-of-window row by id, so this cannot miss even for old paid rows. */}
               <a
-                href="/dashboard/incoming/manage"
+                href={`/dashboard/incoming/manage?focus=${encodeURIComponent(invoice.id)}`}
                 style={{ marginInlineStart: "auto", fontSize: 13, fontWeight: 600, color: "#1a73e8", textDecoration: "none" }}
               >
                 {t('ink.beheren')} ›
@@ -3248,6 +3265,17 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           style={{ marginTop: 6, display: "inline-block", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
                         >
                           {t('ink.result.naarInkoop')} →
+                        </Link>
+                      )}
+                      {/* [CIRKEL] A bank statement dropped on THIS page imported fine — and the
+                          row then offered nowhere to go, while the same outcome via the intake
+                          button pushes to /dashboard/bank. One destination for both doors. */}
+                      {r.status === "bank" && (
+                        <Link
+                          href="/dashboard/bank?tab=confirm&quarter=all"
+                          style={{ marginTop: 6, display: "inline-block", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          {t('ink.result.naarBank')} →
                         </Link>
                       )}
                     </div>

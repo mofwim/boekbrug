@@ -27,6 +27,7 @@
 // permanently half-finished: the screen still looks right in Dutch, so nothing points at the gap.
 
 import { useCallback, useState } from 'react'
+import Link from 'next/link'
 
 import { M3, R } from '@/lib/design/tokens'
 import type { OpenInvoiceProofPanel as ProofPanel } from '@/lib/open-invoice-proof-text'
@@ -117,19 +118,37 @@ export default function OpenInvoiceProofPanel({
                 link on the invoice itself, and a one-tap "mark as paid" built on a LIKENESS is
                 exactly the overconfidence the rest of this panel refuses. */}
             {actions && (
-              <button
-                type="button"
-                onClick={() => answer(row.ackKey)}
-                disabled={busy === row.ackKey}
-                aria-label={panel.answerAria}
-                style={{
-                  marginTop: 6, padding: '5px 11px', borderRadius: R.full, cursor: 'pointer',
-                  border: `1px solid ${M3.outlineVariant}`, background: M3.surface,
-                  color: M3.neutral, fontFamily: FONT, fontSize: 12, fontWeight: 600,
-                }}
-              >
-                {panel.answerLabel}
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => answer(row.ackKey)}
+                  disabled={busy === row.ackKey}
+                  aria-label={panel.answerAria}
+                  style={{
+                    marginTop: 6, padding: '5px 11px', borderRadius: R.full, cursor: 'pointer',
+                    border: `1px solid ${M3.outlineVariant}`, background: M3.surface,
+                    color: M3.neutral, fontFamily: FONT, fontSize: 12, fontWeight: 600,
+                  }}
+                >
+                  {panel.answerLabel}
+                </button>
+                {/* [CIRKEL] The opposite answer is deliberately NOT a one-tap "mark paid" (a
+                    likeness must not book) — but it needs a road, not only a dismissal. This
+                    opens the bank line where linking is guarded and in context. */}
+                {row.transactionId && (
+                  <Link
+                    href={`/dashboard/bank/verdelen/${row.transactionId}`}
+                    style={{
+                      marginTop: 6, padding: '5px 11px', borderRadius: R.full,
+                      border: `1px solid ${M3.outlineVariant}`, background: M3.surface,
+                      color: M3.primary, fontFamily: FONT, fontSize: 12, fontWeight: 600,
+                      textDecoration: 'none', display: 'inline-block',
+                    }}
+                  >
+                    {panel.bankLabel}
+                  </Link>
+                )}
+              </div>
             )}
           </div>
         ))}

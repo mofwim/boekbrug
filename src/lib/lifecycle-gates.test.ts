@@ -1726,10 +1726,19 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
   // The other consequence: a card bon becomes 'paid', which hides it from the matcher — and a
   // till prints neither an invoice number nor an IBAN, so the existing explain rule can never fire
   // for one. Without this, every pin-paid bon turns its own debit into a "missende inkoopfactuur".
+  // [CIRKEL] The rule moved into strongExplain — the ONE evidence bar the paid pass and the
+  // queued pass now share — so the pin follows it: the bar must carry the bon branch, and the
+  // paid pass must CALL it with the bon question.
+  const matchRoute = code("src/app/api/bank/match/route.ts");
   assert.match(
-    code("src/app/api/bank/match/route.ts"),
-    /receiptIds\.has\(m\.best\.invoiceId\)[\s\S]{0,140}?sig\.includes\("counterpart"\)[\s\S]{0,80}?sig\.includes\("amount"\)[\s\S]{0,80}?sig\.includes\("date"\)/,
+    matchRoute,
+    /strongExplain = \(sig[\s\S]{0,260}?isReceipt && sig\.includes\("counterpart"\) && sig\.includes\("amount"\) && sig\.includes\("date"\)/,
     "a paid kassabon must be able to explain its own bank line",
+  );
+  assert.match(
+    matchRoute,
+    /strongExplain\(m\.best\.signals, receiptIds\.has\(m\.best\.invoiceId\)\)/,
+    "…and the paid pass must ASK the shared bar that bon question",
   );
 });
 
@@ -14739,4 +14748,64 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
   const auto = code("src/lib/bank-auto-categorize.ts");
   assert.match(auto, /if \(molliePayoutHold\(t\)\) continue;/,
     "[MOLLIE-UITBETALING] a fee-reduced payout is never pre-coded into a second omzet");
+});
+
+test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carries its road", () => {
+  // The audit that produced this feature found one shape repeated eleven times: the DATA for the
+  // jump (a transaction id, an invoice id, a supplier name, a count) was already in the variable
+  // and was dropped at the UI boundary — four of five cross-page navigations were bare pushes.
+  // This gate pins each closed arc as a CALL or a rendered link, so a refactor that quietly
+  // reopens one fails here instead of in an owner's quarter.
+
+  // 1. The loudest arc: the bank page may never again tell the owner to re-upload an invoice
+  //    that is sitting in the verify queue. The queued explain-pass mirrors the paid one.
+  const match = code("src/app/api/bank/match/route.ts");
+  assert.match(match, /\.eq\("status", "processing"\)/, "the queued pass reads the verify queue");
+  assert.match(match, /queuedExplained\.set\(id, \{ invoiceId: inv\.id, invoiceNumber: inv\.invoice_number \}\)/,
+    "…and names the queued invoice per line");
+  assert.match(match, /explainedByQueued: txId != null \? queuedExplained\.get\(txId\) \?\? null : null,/,
+    "…and the DTO carries it out");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /!s\.explainedByPaid && !s\.explainedByQueued\)/, "the missing-invoice banner excludes both explanations");
+  assert.match(bank, /\/dashboard\/incoming\?focus=\$\{encodeURIComponent\(s\.explainedByQueued\.invoiceId\)\}/,
+    "…and the card links to the invoice's own verify step");
+
+  // 2. The ambiguous-match jump lands on the LINE, not on a quarter that may not contain it.
+  const hook = code("src/hooks/useInvoiceReconciliation.ts");
+  assert.match(hook, /return \{ navigate: true, txId: pending\?\.transactionId \?\? null \}/,
+    "the id is no longer read and thrown away one line later");
+  for (const f of ["src/app/dashboard/incoming/manage/IncomingManageClient.tsx", "src/app/dashboard/facturen/FacturenClient.tsx"]) {
+    assert.match(code(f), /r\.txId \? `\/dashboard\/bank\/verdelen\/\$\{r\.txId\}` : '\/dashboard\/bank'/,
+      `${f} pushes to the line when it knows one`);
+  }
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /'\/dashboard\/bank\?tab=confirm&quarter=all'/,
+    "the match sheet's fallback landing can never be an empty quarter");
+  assert.match(bank, /searchParams\.get\('quarter'\) === 'all' \? 'all'/, "…because ?quarter=all is honoured");
+
+  // 3+4. Bank-proven words are roads: the evidence line and the proof panel link their bank line.
+  const evidence = code("src/lib/payment-evidence.ts");
+  assert.match(evidence, /const txId = tone === 'bank'/, "only a bank-proven claim carries a jump — a hand-tick has nowhere to go");
+  assert.match(code("src/components/invoice/PaymentEvidenceLine.tsx"), /\/dashboard\/bank\/verdelen\/\$\{line\.txId\}/,
+    "the 'Betaald' sentence is a link, not dead text");
+  assert.match(code("src/lib/open-invoice-proof.ts"), /transactionId: tx\.transactionId \?\? null,/,
+    "the proof hit carries the line it is about (the sales sibling always did)");
+  assert.match(code("src/components/invoice/OpenInvoiceProofPanel.tsx"), /row\.transactionId && \(/,
+    "…and the panel offers the road next to the dismissal");
+
+  // 5-8. The small dropped ids: focus on Beheren, supplier on candidates, a destination on the
+  //      bank result row, and the skipped pile visible in BOTH mailbox states.
+  const queue = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(queue, /manage\?focus=\$\{encodeURIComponent\(invoice\.id\)\}/, "Beheren lands ON the invoice");
+  assert.match(bank, /cand\.clientName && <span/, "candidates say WHOSE invoice they are");
+  assert.match(queue, /r\.status === "bank" && \(/, "a statement dropped here gets a road to the bank page");
+  assert.equal((queue.match(/\{overgeslagenBlok\}/g) ?? []).length, 2,
+    "the unreadable-documents pile renders with AND without a connected mailbox");
+
+  // 9-10. The standing reciprocal count, and a bank tab that refreshes on return.
+  assert.match(code("src/app/api/bank/reconciliation/route.ts"), /pendingMatchCount \}\);/,
+    "the count the screens need leaves the API");
+  assert.match(manage, /\{bankPending > 0 && \(/, "…and stands on manage instead of vanishing with the sheet");
+  assert.match(bank, /document\.addEventListener\('visibilitychange', onVisible\)/,
+    "a tab left open re-asks the matcher instead of re-offering a settled invoice");
 });

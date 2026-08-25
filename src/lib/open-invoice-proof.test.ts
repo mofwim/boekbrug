@@ -126,7 +126,7 @@ test('[OPENSTAAND-BEWIJS] an empty list says so instead of implying a search', (
 test('[OPENSTAAND-BEWIJS] a hit changes the sentence but never removes the scope', () => {
   const hit = { direction: 'incoming' as const, checkedInvoices: 12, checkedTransactions: 340, hits: [{
     invoiceId: 'a', invoiceNumber: '264091', clientName: 'BALKIP B.V.', openAmount: 1224.75,
-    transaction: { date: '2026-08-20', amount: -1224.75, description: 'x', counterpartName: 'BALKIP B.V.' },
+    transaction: { transactionId: 'tx-1', date: '2026-08-20', amount: -1224.75, description: 'x', counterpartName: 'BALKIP B.V.' },
     confidence: 0.9, reason: 'bedrag en tegenpartij komen overeen',
   }] }
   const text = describeProof(hit, '2026-08-15')
@@ -229,7 +229,7 @@ test('[OPENSTAAND-BEWIJS] the preposition follows the direction of the money', (
   // the screen that has to be trusted most is a sentence read twice and believed half.
   const hit = {
     invoiceId: 'a', invoiceNumber: '2026-014', clientName: 'Kiwi Food Market', openAmount: 2420,
-    transaction: { date: '2026-07-14', amount: 2420, description: 'Factuur 2026-014', counterpartName: 'Kiwi Food Market' },
+    transaction: { transactionId: 'tx-2', date: '2026-07-14', amount: 2420, description: 'Factuur 2026-014', counterpartName: 'Kiwi Food Market' },
     confidence: 0.9, reason: 'x',
   }
   assert.match(describeHit(hit, 'outgoing'), /van Kiwi Food Market/)

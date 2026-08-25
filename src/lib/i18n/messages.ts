@@ -629,6 +629,10 @@ export const MESSAGES = {
   'bank.fout.factuurOpenen': { nl: 'Kon de factuur niet openen.', ar: 'تعذّر فتح الفاتورة.', en: 'Could not open the invoice.' },
   'bank.fout.factuurOphalen': { nl: 'Deze factuur kon niet worden opgehaald — controleer je verbinding.', ar: 'تعذّر جلب هذه الفاتورة — تحقّق من اتصالك.', en: 'This invoice could not be fetched — check your connection.' },
   'bank.fout.geenFactuur': { nl: 'Geen factuur gevonden voor deze transactie.', ar: 'لم يُعثر على فاتورة لهذه المعاملة.', en: 'No invoice found for this transaction.' },
+  // [CIRKEL] De factuur bestaat al in de app — hij wacht alleen op controle.
+  'bank.inWachtrij': { nl: 'Factuur {number} staat al in je controlewachtrij — niet opnieuw uploaden.', ar: 'الفاتورة {number} موجودة أصلاً في قائمة المراجعة — لا ترفعها مجدداً.', en: 'Invoice {number} is already in your review queue — no need to upload it again.' },
+  'bank.inWachtrijZonderNummer': { nl: 'Deze betaling lijkt te horen bij een factuur die al in je controlewachtrij staat — niet opnieuw uploaden.', ar: 'يبدو أن هذه الدفعة تعود لفاتورة موجودة أصلاً في قائمة المراجعة — لا ترفعها مجدداً.', en: 'This payment appears to belong to an invoice already in your review queue — no need to upload it again.' },
+  'bank.verifieerEerst': { nl: 'Verifieer de factuur', ar: 'راجع الفاتورة', en: 'Verify the invoice' },
   'bank.fout.geenBoeking': { nl: 'Geen geboekte betaling gevonden op deze regel.', ar: 'لا قيد دفع على هذا البند.', en: 'No booked payment found on this line.' },
   'bank.fout.geenNummers': { nl: 'Geen factuurnummers meer. Is dit geen factuur? Gebruik Negeren.', ar: 'لم تعد ثمة أرقام فواتير. أليست فاتورة؟ استخدم «تجاهل».', en: 'No invoice numbers left. Not an invoice? Use Ignore.' },
   'bank.fout.alToegewezen': { nl: 'Deze betaling is al volledig toegewezen aan facturen.', ar: 'هذه الدفعة وُزّعت بالكامل على فواتير.', en: 'This payment is already fully assigned to invoices.' },
@@ -4697,6 +4701,16 @@ export const MESSAGES = {
     ar: 'تعذّر جلب {sources}',
     en: 'We could not fetch your {sources}',
   },
+  'ink.bankWachtEen': {
+    nl: '1 gevonden betaling wacht op je keuze op de bankpagina →',
+    ar: 'دفعة واحدة معثور عليها تنتظر قرارك في صفحة البنك ←',
+    en: '1 found payment awaits your choice on the bank page →',
+  },
+  'ink.bankWacht': {
+    nl: '{count} gevonden betalingen wachten op je keuze op de bankpagina →',
+    ar: '{count} دفعات معثور عليها تنتظر قرارك في صفحة البنك ←',
+    en: '{count} found payments await your choice on the bank page →',
+  },
   'ink.btw': {
     nl: 'BTW',
     ar: 'btw',
@@ -6233,6 +6247,11 @@ export const MESSAGES = {
     nl: 'Naar Inkoopfacturen',
     ar: 'إلى فواتير المشتريات',
     en: 'To purchase invoices',
+  },
+  'ink.result.naarBank': {
+    nl: 'Naar de bankpagina',
+    ar: 'إلى صفحة البنك',
+    en: 'To the bank page',
   },
   'ink.result.statement': {
     nl: 'Rekeningoverzicht gecontroleerd',
@@ -11493,6 +11512,11 @@ export const MESSAGES = {
     nl: 'Ja, staat nog open',
     en: 'Yes, still open',
     ar: 'نعم، ما زالت مستحقّة',
+  },
+  'bewijs.bank.knop': {
+    nl: 'Bekijk in bank',
+    en: 'View in bank',
+    ar: 'اعرض في البنك',
   },
   'bewijs.ack.knopAria': {
     nl: 'Deze vraag is beantwoord — niet meer tonen',

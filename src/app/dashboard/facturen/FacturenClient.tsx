@@ -1438,7 +1438,7 @@ export default function FacturenClient({
                             // an amount-only match ('navigate') opens the bank page to review.
                             const r = await confirmMatch(id)
                             if (r === 'ok') { showToast(t('lijst.betalingBevestigd')); refresh() }
-                            else if (r === 'navigate') router.push('/dashboard/bank')
+                            else if (typeof r === 'object' && r.navigate) router.push(r.txId ? `/dashboard/bank/verdelen/${r.txId}` : '/dashboard/bank')
                             else showToast(t('lijst.fout.bevestigen'))
                           }} />
                         )}

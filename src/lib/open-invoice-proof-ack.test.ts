@@ -32,6 +32,7 @@ const hit = (over: Partial<OpenInvoiceHit> = {}): OpenInvoiceHit => ({
   clientName: "Coroama Stefan Daniel",
   openAmount: 40,
   transaction: {
+    transactionId: 'tx-1',
     date: "2026-07-27", amount: -40,
     description: "26/00623", counterpartName: "COROAMA STEFAN DANIEL",
   },

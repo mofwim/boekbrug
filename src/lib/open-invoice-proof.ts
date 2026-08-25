@@ -160,6 +160,7 @@ export function proveOpenInvoices(
       clientName: inv.client_name,
       openAmount,
       transaction: {
+        transactionId: tx.transactionId ?? null,
         date: tx.date,
         amount: tx.amount,
         description: tx.description,

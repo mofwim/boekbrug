@@ -26,6 +26,7 @@
 // built by payment-evidence.ts.
 
 import type React from 'react'
+import Link from 'next/link'
 
 import { M3 } from '@/lib/design/tokens'
 import type { PaymentEvidenceLine as EvidenceLine } from '@/lib/payment-evidence'
@@ -46,7 +47,18 @@ export default function PaymentEvidenceLine({ line }: { line: EvidenceLine | nul
   }
   return (
     <span dir={line.dir} style={{ display: 'block' }}>
-      <span style={{ ...base, color: TONE[line.tone] }}>{line.text}</span>
+      {/* [CIRKEL] A bank-proven claim links to its bank line — the id was always on the
+          evidence and was rendered as dead text. Hand-ticks stay plain: nothing to jump to. */}
+      {line.txId ? (
+        <Link
+          href={`/dashboard/bank/verdelen/${line.txId}`}
+          style={{ ...base, color: TONE[line.tone], textDecoration: 'underline', textDecorationColor: '#B7DFC9', textUnderlineOffset: 2 }}
+        >
+          {line.text}
+        </Link>
+      ) : (
+        <span style={{ ...base, color: TONE[line.tone] }}>{line.text}</span>
+      )}
 
       {/* [DEELBETALING-BEWIJS] The terms the lead is made of. On a partly settled invoice "nog
           € 460 open" is the hardest number in the app to check by hand — the owner would have to
