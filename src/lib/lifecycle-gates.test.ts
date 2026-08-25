@@ -7856,6 +7856,21 @@ test("[UPLOAD-EERLIJK] what the upload doors say matches what actually happened"
   const email = code("src/app/api/email/upload/route.ts");
   assert.doesNotMatch(email, /UPLOAD-\$\{/, "no fabricated invoice numbers");
   assert.match(email, /resolveImportTarget\(\s*user\.id,\s*invoiceDate,/, "the folder resolver gets the normalized date");
+
+  // A parsed file we must not book: non-EUR (there is no currency column — pounds would land as
+  // euros everywhere) and a multi-account export (first :25: wins, saldi cross accounts). Both
+  // refuse WITH the reason, at both doors.
+  assert.match(ingest, /cur && cur !== "EUR"/, "a non-EUR statement is refused, never booked as euros");
+  assert.match(ingest, /accts\.length > 1/, "a multi-account MT940 is refused with the remedy named");
+  assert.match(intake, /if \(result\.refused\)/, "intake surfaces the refusal");
+  assert.match(code("src/app/api/bank/upload/route.ts"), /if \(result\.refused\)/, "the bank door too");
+  // And a CSV import says out loud that its completeness cannot be checked.
+  assert.match(intake, /geen saldocontrole/, "CSV honesty note");
+
+  // Memory-based auto-categorisation is only confident when the SIGN agrees with the memory —
+  // an 'omzet' memory on a debit is a different movement, and would book omzet += negative.
+  const identity = code("src/lib/bank-identity.ts");
+  assert.match(identity, /memoryCategory === 'omzet' && amount > 0/, "sign-aware memory confidence");
 });
 
 test("[KORTING-KETEN] the discount chain reaches every surface that bills the customer", () => {

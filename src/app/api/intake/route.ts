@@ -1993,6 +1993,11 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // is still stored for the accountant (importBankStatement), so this is NOT an error:
   // report it honestly rather than 422-ing (which would trap the file behind byte-hash
   // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
+  // [VREEMD-BESTAND] Een geweigerd bestand (niet-EUR, meerdere rekeningen) is een fout met een
+  // reden, geen verwerking. Er is niets geboekt en geen dekking geclaimd.
+  if (result.refused) {
+    return NextResponse.json({ error: result.refused }, { status: 422 })
+  }
   const unreadable = result.parseWarnings.length
   // [BANK-INSERT-LUID] Een mislukte transactie-insert mag nooit als "verwerkt" op het scherm
   // komen: er is dan een hele maand aan regels NIET geland terwijl het ruwe bestand wél is
@@ -2009,6 +2014,11 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
   // otherwise see), appended to the honest message and returned structured for the caller.
   if (result.balanceWarning) msg += ` ${result.balanceWarning}`
+  // [CSV-EERLIJK] Een CSV draagt geen begin/eindsaldo, dus de volledigheidscontrole KAN niet
+  // draaien — en "geen waarschuwing" leest dan als "gecontroleerd". Zeg het verschil.
+  if (result.format === "CSV" && !result.balanceWarning && result.inserted > 0) {
+    msg += " Let op: een CSV bevat geen saldocontrole — wij kunnen niet nagaan of dit overzicht compleet is. MT940 of CAMT.053 van je bank kan dat wel."
+  }
   // [STATEMENT-CONTINUITY] …en of er een heel AFSCHRIFT tussen zit dat we nog niet hebben. Twee
   // verschillende gaten: balanceWarning kijkt binnen dit bestand, dit tussen de bestanden.
   if (result.continuityWarning) msg += ` ${result.continuityWarning}`

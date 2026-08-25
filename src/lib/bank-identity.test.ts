@@ -244,5 +244,18 @@ console.log("\n— [FEE-DEBIT-ONLY] interest RECEIVED is not a bank cost —");
     needsDocument(null, "Creditrente spaardeel", 45.2) === false);
 }
 
+console.log("\n— [TEKEN-EERST] een geheugen-hit is alleen zelfverzekerd als het teken meewerkt —");
+{
+  // 'omzet' onthouden en een AFSCHRIJVING zien: dit is een andere beweging dan de onthouden —
+  // blind toepassen boekt omzet += een negatief bedrag, stil. Suggestie blijft, zekerheid niet.
+  check("omzet-geheugen op een debet is nooit zelfverzekerd", suggestIdentity("Sligro", null, -250, "omzet").confident === false);
+  check("…maar de suggestie zelf blijft staan", suggestIdentity("Sligro", null, -250, "omzet").category === "omzet");
+  check("omzet-geheugen op een credit wél", suggestIdentity("Klant B.V.", null, 250, "omzet").confident === true);
+  check("kosten-geheugen op een debet wél", suggestIdentity("Sligro", null, -250, "kosten").confident === true);
+  check("kosten-geheugen op een BIJschrijving niet", suggestIdentity("Sligro", null, 250, "kosten").confident === false);
+  // Andere categorieën (prive, transfer, …) kennen geen tekenregel: beide kanten komen echt voor.
+  check("transfer-geheugen kent geen tekenregel", suggestIdentity("Eigen rekening", null, -100, "transfer").confident === true);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
