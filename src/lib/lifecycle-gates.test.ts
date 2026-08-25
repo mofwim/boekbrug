@@ -4431,7 +4431,8 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
   const plain = [...mail.matchAll(/from: 'BoekBrug <noreply@boekbrug\.nl>'/g)].length;
-  assert.equal(plain, 12, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
+  // 13 sinds [OCHTEND]: de ochtendmail schrijft aan de EIGENAAR, dus BoekBrug is de juiste afzender.
+  assert.equal(plain, 13, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
 
   // The name is never interpolated raw. It is typed by a user and lands in a header that reaches
   // strangers: a newline is header injection, and an @ or a bracket lets a display name pose as

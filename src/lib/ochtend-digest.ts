@@ -24,6 +24,8 @@
 
 import { escapeHtml } from "./escape-html";
 import { formatDateNL, formatEuroNL } from "./format-nl";
+// [CENT] The one cent-rounder — a second definition is how two screens disagree about a total.
+import { round2 } from "./invoice-totals";
 
 /** One payment recorded yesterday against an OUTGOING invoice. */
 export interface OchtendPayment {
@@ -47,9 +49,9 @@ export interface OchtendMail {
   html: string;
 }
 
-/** Sum of yesterday's recorded payments, in cents-safe form for display. */
+/** Sum of yesterday's recorded payments, rounded by the one cent-rounder ([CENT]). */
 function paymentsTotal(payments: OchtendPayment[]): number {
-  return Math.round(payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0) * 100) / 100;
+  return round2(payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0));
 }
 
 /**

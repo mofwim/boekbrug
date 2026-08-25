@@ -232,10 +232,13 @@ export async function POST(req: NextRequest) {
   // is the one notification a freelancer never tires of. Best-effort: the booking above is done
   // and a failed courtesy may never turn a delivered payment into a Mollie retry loop.
   try {
+    // [RLS-UIT] Owner-scoped like every service-role read on the money line: the paid invoice is
+    // the owner's OUTGOING invoice, so sender_id pins it to the same owner as the link row.
     const { data: betaaldeFactuur } = await pipeline
       .from('invoices')
       .select('invoice_number')
       .eq('id', link.invoice_id)
+      .eq('sender_id', link.user_id)
       .maybeSingle()
     const bedrag = applied != null && Number.isFinite(applied) && applied > 0
       ? applied
