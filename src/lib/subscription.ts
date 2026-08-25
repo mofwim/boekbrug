@@ -169,6 +169,28 @@ export function isKnownStatus(status: string): status is SubscriptionStatus {
  * kan hem sturen als er ooit een proefperiode op de prijs staat. Dan is hij, net als
  * 'active', gewoon een lopend abonnement.
  */
+/**
+ * [PROEFMAAND] Mag deze gebruiker de gratis proefmaand van Plus krijgen?
+ *
+ * Eén regel, en de regel is "nooit twee keer": de proefmaand is er voor wie Plus nog nooit had.
+ * De toets is `subscription_status` in profiles — die kolom wordt UITSLUITEND door de webhook
+ * geschreven, dus:
+ *
+ *   · null/afwezig  → er is nooit een abonnement geweest (een AFGEBROKEN checkout laat geen
+ *     status achter: Stripe stuurt dan geen webhook) → proefmaand;
+ *   · elke waarde   → er is ooit een abonnement geweest — actief, opgezegd ('canceled' blijft
+ *     bewust staan), haperend — en een tweede gratis maand is dan een korting die niemand is
+ *     beloofd → geen proefmaand. Gewoon Plus vanaf dag één, zoals voorheen.
+ *
+ * Faalveilig in de goedkope richting: kan de status niet worden gelezen, dan geeft de caller
+ * hier een niet-null placeholder door en start het abonnement ZONDER proefmaand. Een klant die
+ * er recht op had mist dan een gratis maand (vervelend, herstelbaar via Stripe); de omgekeerde
+ * fout deelt gratis maanden uit aan wie al klant was.
+ */
+export function trialEligible(subscriptionStatus: string | null | undefined): boolean {
+  return subscriptionStatus === null || subscriptionStatus === undefined || subscriptionStatus === "";
+}
+
 export function normalizeStripeStatus(raw: string | null | undefined): SubscriptionStatus {
   switch (raw) {
     case "active":
