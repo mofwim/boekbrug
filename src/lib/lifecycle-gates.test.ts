@@ -7816,6 +7816,28 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[BANK-RESTANTEN] the three reported bank residuals stay closed", () => {
+  // Each of these shipped as "reported, not fixed" in the bank-audit commit; this gate marks the
+  // moment they stopped being residuals.
+  const matching = code("src/lib/bank-matching.ts");
+  // An instalment from an identified ACCOUNT is offered as a choice — and name resemblance is
+  // explicitly not enough (with the amount matching nothing, the name is the coincidence).
+  assert.match(matching, /partialOk =\s*\n?\s*!amtOk && !nearOk &&\s*\n?\s*\(ibanOk \|\| supplierIbanOk \|\| rememberedOk\)/, "the instalment tier requires account identity");
+  assert.match(matching, /nearOk \|\| partialOk \? 0\.55 : 0\.35/, "…and stays below the booking bar");
+
+  // A confident memory hit consults the paid invoices before writing a P&L category.
+  const cat = code("src/lib/bank-auto-categorize.ts");
+  // The pattern pins the CONDITION OPENING: a negative control wrapped the same text in
+  // `if (false && …)` and a body-match stayed green — the [STRIPPER-BLIND] shape again.
+  assert.match(cat, /if \(\(s\.category === "kosten" \|\| s\.category === "omzet"\) && paidExplains\(t\.amount \?\? 0, t\.date\)\) continue;/, "the double-booking guard runs on P&L categories");
+  assert.match(cat, /export function paidInvoiceExplainsLine/, "…as a pure, tested rule");
+
+  // The content dedup only calls two accounts different when both are PROVABLE identities.
+  const imp = code("src/lib/bank-import.ts");
+  assert.match(imp, /\^\[A-Z\]\{2\}\\d\{2\}\[A-Z0-9\]\{11,30\}\$/, "only a real IBAN suffix counts as an account identity");
+  assert.match(imp, /incomingAccount && rowAccount && rowAccount !== incomingAccount\) continue/, "…and a different account never explains the line");
+});
+
 test("[INTAKE-CLAIM] the semantic-duplicate race has its database backstop", () => {
   // findSemanticDuplicate is read-then-insert and the camera uploads three files in parallel —
   // the same paper photographed twice passed the SELECT in both requests and booked twice. The
@@ -8861,7 +8883,7 @@ test("[BIJNA-BEDRAG] a close payment is offered with the difference named, and n
   // silent no-op this file's neighbours document twice over.
   assert.match(mod, /confidence \+= 0\.35;\s*\n\s*signals\.push\("near_amount"\)/,
     "the pair must be lifted over the listing floor, not merely allowed to reach it");
-  assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \? 0\.55 : 0\.35\);/,
+  assert.match(mod, /if \(!amtOk\) confidence = Math\.min\(confidence, nearOk \|\| partialOk \? 0\.55 : 0\.35\);/,
     "0.55: above the 0.5 listing floor and below the 0.7 booking bar");
   // Identity is required, and a name resemblance is not identity.
   // [GEHEUGEN] added `rememberedOk` to this line, which is the point of it — so the gate asks for

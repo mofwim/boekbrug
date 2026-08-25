@@ -282,5 +282,33 @@ console.log("\n— rowToTransaction —");
   check("null date → empty string (matcher-safe)", rowToTransaction({ id: "x", date: null, amount: 1, description: null, counterpart_name: null, reference: null }).date === "");
 }
 
+// ── [REKENING-IN-SLEUTEL] a second account's identical line is real money, not a duplicate ────
+{
+  const feeRow: ExistingTxKey = {
+    date: "2026-05-01", amount: -9.9, description: "Pakketkosten",
+    counterpart_name: "Grote Bank NV", reference: null,
+    source: "MT940:NL91ABNA0417164300", external_id: null,
+  };
+  const feeTx = tx({
+    date: "2026-05-01", amount: -9.9, description: "Pakketkosten",
+    counterpartName: "Grote Bank NV", reference: null, transactionId: null,
+  });
+  // Same fee, same day, DIFFERENT account: the second shop's line used to be dropped as a
+  // duplicate ("1 dubbel overgeslagen" over real money). Both accounts are stable IBANs, so the
+  // difference is provable — the line imports.
+  const other = dedupTransactions([feeTx], [feeRow], "MT940:NL65RABO0171136276");
+  check("[REKENING] zelfde regel op een ANDERE rekening importeert gewoon", other.toInsert.length === 1 && other.skipped === 0);
+  // Same account: still the duplicate it always was.
+  const same = dedupTransactions([feeTx], [feeRow], "MT940:NL91ABNA0417164300");
+  check("[REKENING] zelfde regel op DEZELFDE rekening blijft een dubbel", same.skipped === 1);
+  // A legacy row without an account (or a CSV that names none) stays compatible — unknown must
+  // never read as different.
+  const legacy = dedupTransactions([feeTx], [{ ...feeRow, source: null }], "MT940:NL65RABO0171136276");
+  check("[REKENING] een rij zonder rekening blijft gewoon ontdubbelen", legacy.skipped === 1);
+  // A session handle is not an identity — the enablebanking reconnect case keeps its recovery.
+  const handle = dedupTransactions([feeTx], [{ ...feeRow, source: "enablebanking:HASH-A" }], "enablebanking:NEW-UID");
+  check("[REKENING] een verplaatst sessiehandvat leest als onbekend, nooit als anders", handle.skipped === 1);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

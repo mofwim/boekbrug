@@ -268,6 +268,42 @@ export function dedupTransactions(
     return false;
   };
 
+  // [REKENING-IN-SLEUTEL] The account half of a stored `source` ("MT940:NL91…" → "NL91…").
+  // Layer 1 is already account-scoped; layer 2 was not, and the content fingerprint carries no
+  // account — so the SAME package fee, same day, same amount, no reference, debited from TWO
+  // business accounts had its second line counted as a duplicate of the first and silently
+  // dropped: money under-stated, and the owner told "1 dubbel overgeslagen" about a real
+  // transaction. A row from a provably DIFFERENT account may not explain an incoming line.
+  // Either side without an account (legacy rows, a CSV that names none) stays compatible — the
+  // pre-existing dedup behaviour, because "unknown" must never read as "different".
+  // …and "provably different" is a claim only a STABLE identity can make. The file formats put
+  // an IBAN after the colon; Enable Banking puts a SESSION handle there, which legitimately moves
+  // at every reconnect — the moved-scope recovery below layer 1 depends on layer 2 still matching
+  // then, so a moved handle must read as "unknown", never as "different". Hence: the account
+  // check only fires when BOTH suffixes are real IBANs.
+  const accountOf = (src: string | null | undefined): string => {
+    const at = (src ?? "").indexOf(":");
+    const suffix = at >= 0 ? (src ?? "").slice(at + 1).trim().toUpperCase() : "";
+    return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(suffix) ? suffix : "";
+  };
+  const incomingAccount = accountOf(source);
+  /** Like claim(), but a row only qualifies when its account is COMPATIBLE with the batch's.
+   *  Non-destructive scan: an incompatible row stays available for its own account's upload. */
+  const claimContent = (k: string): boolean => {
+    const list = byContent.get(k);
+    if (!list) return false;
+    for (let n = 0; n < list.length; n++) {
+      const i = list[n];
+      if (consumed[i]) continue;
+      const rowAccount = accountOf(existing[i].source);
+      if (incomingAccount && rowAccount && rowAccount !== incomingAccount) continue;
+      consumed[i] = true;
+      list.splice(n, 1);
+      return true;
+    }
+    return false;
+  };
+
   const toInsert: BankTransaction[] = [];
   let skipped = 0;
 
@@ -276,7 +312,7 @@ export function dedupTransactions(
       skipped++;
       continue;
     }
-    if (claim(byContent, keyOfTx(t))) {
+    if (claimContent(keyOfTx(t))) {
       skipped++;
       continue;
     }

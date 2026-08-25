@@ -1240,5 +1240,40 @@ console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is
 }
 
 
+
+// ── [DEELBETALING] an instalment from an identified account is offered, never booked ──────────
+{
+  const inv = {
+    id: "p1", invoice_number: "26-3958", total_inc_btw: 500, amount_paid: 0,
+    client_name: "Hano Import B.V.", direction: "incoming" as const, status: "received",
+    invoice_date: "2026-07-01", due_date: "2026-07-31", accountant_status: null,
+    vendor_iban: "NL91ABNA0417164300",
+  };
+  const tx = (over: Record<string, unknown> = {}) => ({
+    date: "2026-07-20", amount: -300, description: "SEPA Overboeking",
+    reference: null, counterpartName: "Hano Import B.V.", counterpartIban: "NL91ABNA0417164300",
+    transactionId: "p-t1", ...over,
+  });
+  const m = matchTransactions([tx()] as never, [inv] as never).matches[0];
+  check("[DEELBETALING] €300 van €500 open, van de eigen IBAN van de leverancier → aangeboden als keuze",
+    m.outcome === "choice" && (m.candidates[0]?.signals ?? []).includes("partial_amount"));
+  check("[DEELBETALING] …en de reden noemt beide bedragen",
+    /€300\.00 van €500\.00/.test(m.candidates[0]?.reason ?? ""));
+  check("[DEELBETALING] nooit automatisch geboekt", m.outcome !== "auto");
+
+  // Zonder rekening-identiteit is een kleiner bedrag GEEN kandidaat: met een bedrag dat nergens
+  // op past is de naam precies het toeval waar dit bestand zijn hele lengte tegen waakt.
+  const naamAlleen = matchTransactions(
+    [tx({ counterpartIban: "NL20INGB0001234567" })] as never,
+    [{ ...inv, vendor_iban: null }] as never,
+  ).matches[0];
+  check("[DEELBETALING] naam-alleen + kleiner bedrag blijft onzichtbaar", naamAlleen.outcome === "none");
+
+  // Een bedrag GROTER dan het openstaande is geen deelbetaling — dat is de overbetaling/batch-kant.
+  const groter = matchTransactions([tx({ amount: -700 })] as never, [inv] as never).matches[0];
+  check("[DEELBETALING] een groter bedrag valt niet onder deze tier",
+    !(groter.candidates?.[0]?.signals ?? []).includes("partial_amount"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
