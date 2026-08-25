@@ -28,7 +28,7 @@ import { create } from "xmlbuilder2";
 import { toUnitCode } from "./units";
 // [E-FACTUUR] Dezelfde zinsherkenning als de aangifte-vlag — één definitie van een juridisch feit.
 import { RE_REVERSE_CHARGE } from "./regime-flags";
-import { isReverseChargedInvoice, classifyVatNumber } from "./icp";
+import { isReverseChargedInvoice, classifyVatNumber, normalizeVatNumber } from "./icp";
 import { applyDiscount, parseDiscount } from "./invoice-discount";
 import { round2 } from "./invoice-totals";
 // [KLANT-EXTRA] Dezelfde drie vrije klantregels als op de PDF — één leesdefinitie voor beide
@@ -349,13 +349,31 @@ const PEPPOL_EAS_BY_VAT_COUNTRY: Record<string, string> = {
   ES: "9920",
   LU: "9938",
   SE: "9955",
-  GB: "9932",
 };
 
-/** The EAS scheme for a buyer's VAT number, or null when the country is not in the verified table. */
-export function peppolEasForVat(btwNumber: string | null | undefined): string | null {
-  const prefix = (btwNumber ?? "").trim().slice(0, 2).toUpperCase();
-  return PEPPOL_EAS_BY_VAT_COUNTRY[prefix] ?? null;
+/**
+ * The buyer's Peppol electronic address: EAS scheme + the NORMALIZED participant value — or null
+ * when no deliverable address can be derived.
+ *
+ * [SI-UBL-EAS-COHERENT] Two defects lived here, found by the day-end audit:
+ *   · this judged the raw 2-char prefix while buyerCountryCode judges through classifyVatNumber,
+ *     so a malformed "DE12345" or a post-Brexit GB number got an EAS address while the SAME file
+ *     said Country=NL — one document, two contradictory claims about the buyer;
+ *   · the emitted value was the raw entry ("DE 123.456.789"), which can never match the
+ *     registered participant "9930:de123456789" — validating and undeliverable at once.
+ * One judge now: classifyVatNumber. A shape it refuses (eu_suspect, none — GB included, which is
+ * why GB left the table) refuses the Peppol variant; the value that ships is the normalized one.
+ */
+export function peppolEndpointForVat(
+  btwNumber: string | null | undefined,
+): { eas: string; value: string } | null {
+  const shape = classifyVatNumber(btwNumber);
+  if (shape.kind === "domestic") {
+    return { eas: PEPPOL_EAS_BY_VAT_COUNTRY.NL, value: normalizeVatNumber(btwNumber) };
+  }
+  if (shape.kind !== "eu") return null;
+  const eas = PEPPOL_EAS_BY_VAT_COUNTRY[shape.country] ?? null;
+  return eas ? { eas, value: shape.vat } : null;
 }
 
 // ─── Validation ─────────────────────────────────────────────────────────────────
@@ -466,10 +484,15 @@ function groupByRate(lines: UblInvoiceLine[], documentIsReverseCharged = false, 
     const baseCategory = taxCategoryId(rate, lineVatKind(l, documentIsReverseCharged));
     const korExempt = korActive && baseCategory === "Z";
     const category: UblTaxCategory = korExempt ? "E" : baseCategory;
-    const key = `${rate}|${category}|${korExempt}`;
+    // [KOR-E] The key does NOT include korExempt. BR-E-08 asserts one E breakdown per rate whose
+    // taxable equals the sum of ALL E lines — a KOR-converted group and an art.-11 group split
+    // apart would each fail it, and the file would carry two contradictory legal claims about one
+    // rate. Merged, the group takes the KOR reason as soon as ANY line is there because of the
+    // KOR: art. 25 covers the whole enterprise, so the claim stays true for the art.-11 lines too.
+    const key = `${rate}|${category}`;
     const ex = Number(l.line_total ?? 0);
     const cur = map.get(key);
-    if (cur) cur.taxable += ex;
+    if (cur) { cur.taxable += ex; cur.korExempt = cur.korExempt || korExempt; }
     else map.set(key, { rate, category, taxable: ex, korExempt });
   }
   return [...map.values()]
@@ -534,9 +557,11 @@ export function buildInvoiceUbl(
   }
   // [SI-UBL-EAS] …and the scheme of that address depends on the buyer's country. Hardcoding 9944
   // stamped NL:VAT on every buyer, so a BIS file for a German customer carried an address that can
-  // never resolve. Refuse what we cannot address rather than misaddress it.
-  const buyerEas = opts?.peppol ? peppolEasForVat(header.client_btw_number) : null;
-  if (opts?.peppol && !buyerEas) {
+  // never resolve. Refuse what we cannot address rather than misaddress it — and judge the number
+  // through the SAME classifier the Country element uses, so the file can never say Country=NL
+  // next to a German electronic address ([SI-UBL-EAS-COHERENT]).
+  const buyerPeppol = opts?.peppol ? peppolEndpointForVat(header.client_btw_number) : null;
+  if (opts?.peppol && !buyerPeppol) {
     throw new UblValidationError("CLIENT_PEPPOL_EAS_UNSUPPORTED", "UBL export blocked: CLIENT_PEPPOL_EAS_UNSUPPORTED");
   }
 
@@ -763,8 +788,10 @@ export function buildInvoiceUbl(
     .ele(NS.cac, "Party");
   // [SI-UBL] Buyer electronic address (BT-49): their BTW-nummer under the EAS code of ITS OWN
   // country — 9944 for an NL number, 9930 for a DE one ([SI-UBL-EAS]). Guarded above: peppol
-  // mode refused the document already when the number is absent or its country unmapped.
-  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: buyerEas! }).txt(header.client_btw_number!.trim());
+  // mode refused the document already when the number is absent or its country unmapped. The
+  // VALUE is the normalized number: "DE 123.456.789" as typed can never match the registered
+  // participant "9930:de123456789" — the raw form validates and is undeliverable at once.
+  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: buyerPeppol!.eas }).txt(buyerPeppol!.value);
   cusParty
     .ele(NS.cac, "PartyName")
     .ele(NS.cbc, "Name")
@@ -816,24 +843,39 @@ export function buildInvoiceUbl(
     // Order is fixed: PaymentDueDate directly after PaymentMeansCode, before the account.
     if (isCreditNote && dueDate) pm.ele(NS.cbc, "PaymentDueDate").txt(dueDate);
     pm.ele(NS.cac, "PayeeFinancialAccount").ele(NS.cbc, "ID").txt(supplier.iban.trim());
+  } else if (isCreditNote && dueDate) {
+    // [CREDIT-VERVALDATUM] Without an IBAN there is no PaymentMeans to carry BT-9, so the date is
+    // dropped — a fact, and the warnings channel exists for exactly this kind of fact.
+    warnings.push("Creditnota carries a due date, but without a supplier IBAN there is no PaymentMeans to hold it — the date is not in the XML.");
   }
 
-  // ── AllowanceCharge (document-level discount, one per BTW rate) ──
+  // ── AllowanceCharge (document-level discount, one per tax GROUP it reduces) ──
   // [KORTING] Volgorde is niet vrij in UBL: AllowanceCharge staat vóór TaxTotal. Op de verkeerde
   // plek is het bestand niet schemavalide en komt het niet door de eerste poort heen.
-  for (const a of kortingUitkomst.allowances) {
+  //
+  // [KORTING-CATEGORIE] The allowance carries the category of the GROUP it actually reduces, and
+  // offByGroup already knows that mapping to the cent. Stamping the RATE's default category was
+  // wrong on an art.-11 invoice: the discount reduced the E group while its TaxCategory said Z —
+  // BR-Z-01 then demands a Z breakdown that does not exist, and the file is refused over a label
+  // its own amounts contradict. (On a reverse-charged invoice the same rule yields AE, as before.)
+  const emitAllowance = (amount: number, category: UblTaxCategory, rate: number) => {
     const ac = root.ele(NS.cac, "AllowanceCharge");
     ac.ele(NS.cbc, "ChargeIndicator").txt("false"); // false = korting, true = toeslag
     ac.ele(NS.cbc, "AllowanceChargeReason").txt("Korting");
-    ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(a.amount));
+    ac.ele(NS.cbc, "Amount", { currencyID: EUR }).txt(money(amount));
     const acCat = ac.ele(NS.cac, "TaxCategory");
-    // [E-FACTUUR-VERLEGD] The allowance carries the category of the supply it reduces. On a
-    // reverse-charged invoice every line is AE, so an allowance left at Z would be the only Z on
-    // the document — and BR-Z-08 then demands a Z subtotal whose taxable amount equals it, which
-    // does not exist. The file would be refused at the access point over a discount line.
-    acCat.ele(NS.cbc, "ID").txt(catFor(a.rate, docReverseCharged ? "reverse_charge" : undefined));
-    acCat.ele(NS.cbc, "Percent").txt(String(a.rate));
+    acCat.ele(NS.cbc, "ID").txt(category);
+    acCat.ele(NS.cbc, "Percent").txt(String(rate));
     acCat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  };
+  const ratesDistributed = new Set<number>();
+  for (const [i] of offByGroup) ratesDistributed.add(rawGroups[i].rate);
+  for (const [i, part] of offByGroup) emitAllowance(part, rawGroups[i].category, rawGroups[i].rate);
+  // A rate whose allowance found no group (the sign filter above) still has to appear, or
+  // AllowanceTotalAmount stops equalling the sum of its parts (BR-CO-11).
+  for (const a of kortingUitkomst.allowances) {
+    if (ratesDistributed.has(a.rate)) continue;
+    emitAllowance(a.amount, catFor(a.rate, docReverseCharged ? "reverse_charge" : undefined), a.rate);
   }
 
   // ── TaxTotal (one TaxSubtotal per rate) ──

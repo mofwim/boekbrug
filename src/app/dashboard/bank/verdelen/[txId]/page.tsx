@@ -15,7 +15,7 @@ import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { settleableDirection } from '@/lib/payment-plan'
 import { allocatedOnLine } from '@/lib/bank-line-budget'
-import VerdeelClient, { type VerdeelFactuur } from './VerdeelClient'
+import VerdeelClient, { GeboektPaneel, type VerdeelFactuur, type GeboekteRegel } from './VerdeelClient'
 import { round2 } from '@/lib/invoice-totals'
 
 export const dynamic = 'force-dynamic'
@@ -59,7 +59,49 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
   // [CIRKEL-P3] Alleen een 'pending' regel is hier verdeelbaar. Een genegeerde of al geboekte
   // regel toonde een normaal verdeelscherm waarvan de submit pas bij de server strandde — de
   // eigenaar koos facturen voor niets. allocate_bank_payment weigert het toch; dit zegt het vooraf.
-  if ((tx as { status?: string | null }).status !== 'pending') redirect('/dashboard/bank?tab=done&quarter=all')
+  //
+  // [CIRKEL-BEWIJS] Maar GEEN redirect: de betaalbewijs-link onder elke "Betaald" wijst precies
+  // hierheen, en een al geboekte regel is dan het NORMALE geval. Een redirect naar de algemene
+  // done-lijst maakte van "controleer deze claim" een zoekopdracht door honderden regels — het
+  // dagslot-audit bevestigde die kapotte weg dezelfde dag als hij ontstond. De regel toont nu
+  // zichzelf: het bedrag, en precies wat erop geboekt is.
+  const txStatus = (tx as { status?: string | null }).status
+  if (txStatus !== 'pending') {
+    const rows0 = linksS.status === 'fulfilled'
+      ? ((linksS.value.data ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>)
+      : []
+    let settled: GeboekteRegel['settled'] = []
+    if (rows0.length > 0) {
+      const { data: settledInv } = await pipeline
+        .from('invoices')
+        .select('id, invoice_number, client_name, total_inc_btw')
+        .in('id', rows0.map((r) => r.invoice_id))
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      const byId = new Map((settledInv ?? []).map((i) => [i.id, i]))
+      settled = rows0.map((r) => {
+        const inv = byId.get(r.invoice_id)
+        return {
+          id: r.invoice_id,
+          invoiceNumber: inv?.invoice_number ?? null,
+          partyName: inv?.client_name ?? null,
+          amount: round2(Math.abs(r.amount_applied ?? Number(inv?.total_inc_btw ?? 0))),
+        }
+      })
+    }
+    return (
+      <GeboektPaneel
+        transactie={{
+          id: tx.id,
+          amount: Number(tx.amount) || 0,
+          date: tx.date,
+          description: tx.description,
+          counterpartName: tx.counterpart_name,
+          alreadyAllocated: 0,
+        }}
+        geboekt={{ status: txStatus === 'ignored' ? 'ignored' : 'matched', settled }}
+      />
+    )
+  }
 
   // Wat eerdere koppelingen al van deze regel namen. De optelling zelf staat onder de tweede golf,
   // bij het getal dat eruit komt.

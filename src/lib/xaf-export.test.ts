@@ -169,7 +169,11 @@ test("[XAF-KAS] prive/transfer/tax never book as cost; a settle clears the sub-a
   const got = lines(r.xml);
   assert.ok(!got.some(([a]) => a === "4000"),
     "a prive-opname, a bank deposit and a tax payment are NOT deductible costs — the audit found all three booked as 4000");
-  assert.ok(got.some(([a, amt, tp]) => a === "1100" && amt === "300.00" && tp === "D"), "a transfer is the bank counterpart, not a cost");
+  // [XAF-KRUIS] Via 2100, NOT 1100: the bank journal books the same movement's statement line as
+  // 1100 against 2100, so booking 1100 here too counted the deposit twice on the bank account.
+  // The two 2100 legs cancel; 1100 moves exactly once, on the statement's side.
+  assert.ok(got.some(([a, amt, tp]) => a === "2100" && amt === "300.00" && tp === "D"), "a transfer is a kruispost, not a cost and not a second bank booking");
+  assert.ok(!got.some(([a, amt]) => a === "1100" && amt === "300.00"), "…and the cash journal never touches 1100 — that is the statement's booking");
   assert.ok(got.some(([a, amt]) => a === "2100" && amt === "500.00"), "prive is a NAMED question");
   assert.ok(got.some(([a, amt, tp]) => a === "1600" && amt === "121.00" && tp === "D"),
     "a settle of an out-of-year invoice still clears crediteuren, never a phantom cost");

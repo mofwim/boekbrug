@@ -275,7 +275,7 @@ export function ZzpDashboard(
                 onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
               <AdminTile icon="account_balance" tint="#1A73E8" label={t('start.tegel.bank')}
                 onClick={() => router.push('/dashboard/bank')} />
-              <AdminTile icon="payments" tint="#00897B" label="Kas"
+              <AdminTile icon="payments" tint="#00897B" label={t('start.tegel.kas')}
                 onClick={() => router.push('/dashboard/kas')} />
               <AdminTile icon="point_of_sale" tint="#7B1FA2" label={t('start.tegel.dagomzet')}
                 onClick={() => router.push('/dashboard/dagomzet')} />
@@ -297,7 +297,7 @@ export function ZzpDashboard(
               kept reachable (never orphaned) but de-emphasised because they overlap
               the live view. See the file-header decision note before touching this. */}
           <section>
-            <SectionLabel>Cijfers &amp; aangifte</SectionLabel>
+            <SectionLabel>{t('start.cijfers')}</SectionLabel>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {/* [TRUTH-LENS] Je financiële waarheid — één live beeld (omzet, kosten,
                   winst, BTW) met tijd-lens. Zelfde reconcile-pijplijn als de aangifte. */}
@@ -315,7 +315,7 @@ export function ZzpDashboard(
                   dead half-row. */}
               {/* [AANGIFTE] Concept rubrieken (1a/1b/5a/5b) — a draft, never a filing. */}
               <MiniCard icon="receipt_long" tint="#455A64"
-                label="Concept BTW-aangifte" sub="1a/1b/5a/5b"
+                label={t('start.conceptBtw')} sub="1a/1b/5a/5b"
                 onClick={() => router.push('/dashboard/aangifte')} />
             </div>
           </section>

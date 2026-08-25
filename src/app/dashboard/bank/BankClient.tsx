@@ -364,7 +364,21 @@ export default function BankClient() {
     // [CIRKEL-C2] MERGE, owner first. Replacing wiped a manual pick on every refresh — and this
     // screen's primary verification action (Bekijk factuur) opens a NEW TAB, so coming back from
     // exactly that check fired the visibility refresh and reset the choice the owner just made.
-    setSelected((prev) => ({ ...pre, ...prev }))
+    //
+    // [CIRKEL-C2-PRUNE] But a kept pick must still EXIST in that line's fresh candidates. The
+    // blind merge survived a pick whose invoice had just been booked elsewhere: the card then
+    // rendered the fresh best candidate while the confirm button posted the stale id — booking a
+    // different invoice than the screen showed, or (via the benign-409 path) stamping the line
+    // "bevestigd" with nothing booked at all. Day-end audit finding; the pick only survives while
+    // the matcher still offers it for that same line.
+    setSelected((prev) => {
+      const next: Record<string, string> = { ...pre }
+      for (const s of mrJson.suggestions) {
+        const kept = prev[s.transactionId]
+        if (kept && s.candidates.some((c) => c.invoiceId === kept)) next[s.transactionId] = kept
+      }
+      return next
+    })
   }, [showToast, t])
 
   // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).

@@ -231,6 +231,16 @@ export async function GET(req: NextRequest) {
         "supabase/migrations/client_extra_lines.sql toe",
       { invoiceId },
     );
+  } else if (extraErr) {
+    // [KLANT-EXTRA] Alleen de open-migratie-fout is onschuldig. Elke andere leesfout betekent dat
+    // de factuur klantregels KAN dragen die we niet hebben gelezen — en een geldig bestand waarin
+    // inhoud ontbreekt is erger dan een weigering: het pakket van de ontvanger boekt het als
+    // compleet. Zelfde regel als de mailroute (ubl-for-email.ts), zodat de twee paden niet twee
+    // verschillende bestanden van één factuur maken.
+    return NextResponse.json(
+      { error: "We konden de factuur nu niet volledig lezen. Probeer het zo opnieuw." },
+      { status: 503 },
+    );
   }
 
   // ── Map DB rows → pure generator inputs ──

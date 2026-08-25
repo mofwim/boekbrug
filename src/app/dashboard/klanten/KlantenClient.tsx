@@ -198,7 +198,13 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
       danger: true,
     })
     if (!ok) return
-    await supabase.from('clients').delete().eq('id', id)
+    // [NO-SILENT-EMPTY] Het resultaat werd weggegooid: een geweigerde of offline delete kreeg
+    // tóch "Klant verwijderd" en de rij kwam bij het volgende bezoek onverklaard terug.
+    const { error: delErr } = await supabase.from('clients').delete().eq('id', id)
+    if (delErr) {
+      showToast(t('kl.verwijderenMislukt'))
+      return
+    }
     setClients(prev => prev.filter(c => c.id !== id))
     showToast(t('kl.verwijderd'))
   }

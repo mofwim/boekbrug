@@ -110,11 +110,15 @@ export default async function VerkoopPage() {
   // De naam van het bedrijf waarvoor hij werkt. Het profiel van de eigenaar is voor zijn sessie
   // onleesbaar (RLS), dus via service_role — en pas nádat de koppeling is bewezen, wat hierboven
   // is gebeurd: getActingFor() geeft alleen een andere ownerId terug bij een geldige koppeling.
-  const [{ data: facturenRaw }, { data: baas }] = await Promise.all([
+  const [{ data: facturenRaw, error: facturenErr }, { data: baas }] = await Promise.all([
     facturenQ,
     pipeline.from('profiles').select('company_name, full_name').eq('id', acting.ownerId).single(),
   ])
 
+  // [NO-SILENT-EMPTY] Een mislukte lezing werd een bord met "€ 0,00 staat open" en een lege
+  // lijst — de verkeerdste twee uitspraken die dit scherm kan doen. De [SPOOR-BEWIJS]-regel
+  // hieronder repareerde precies dit voor het herinnerspoor; de hoofdlezing miste hem nog.
+  const facturenOnleesbaar = !!facturenErr
   const facturenRuw = facturenRaw as unknown as (SalesInvoice & { original_invoice_id?: string | null })[] | null
   const facturen: SalesInvoice[] = facturenRuw ?? []
 
@@ -132,7 +136,8 @@ export default async function VerkoopPage() {
     gecrediteerd[id] = bedrag
   }
 
-  const bedrijf = baas?.company_name || baas?.full_name || 'je werkgever'
+  const vert = await serverTranslator()
+  const bedrijf = baas?.company_name || baas?.full_name || vert('vkp.werkgever')
 
   // Het herinneringsspoor. invoice_reminders heeft geen leespolicy voor een medewerker (de tabel
   // hoort bij de eigenaar), dus service_role — strak gescoopt op de facturen die hierboven al
@@ -194,7 +199,7 @@ export default async function VerkoopPage() {
 
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.
-  return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} gecrediteerd={gecrediteerd} />
+  return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} gecrediteerd={gecrediteerd} laadFout={facturenOnleesbaar} />
 }
 
 /**

@@ -1200,7 +1200,10 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
 // (geen bankregel om tegenaan te leggen). Precies de vraag die het gesprek naar WhatsApp
 // terugstuurde, terwijl het antwoord al op het papier stond.
 const INVOICE_FIELDS =
-  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value" as const;
+  // [CREDIT-REF] original_invoice_id rijdt mee zodat de creditnota-e-factuur in het pakket
+  // dezelfde BillingReference draagt als zijn gemailde/gedownloade tweeling — twee e-facturen
+  // van één document die verschillen is precies de drift waar ubl-inputs.ts tegen bestaat.
+  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
@@ -1938,6 +1941,34 @@ export async function buildClosingPackageZip(args: {
         if (r.id) ublRowById.set(r.id, r);
       }
 
+      // [CREDIT-REF] BG-3 for the package's creditnotas, one failable batch read. A quarter's
+      // creditnotas are a handful, so a single .in() carries them; a failed read costs the
+      // reference, never the package — same best-effort contract as originalInvoiceRef.
+      const origRefById = new Map<string, { original_invoice_number: string | null; original_invoice_date: string | null }>();
+      try {
+        const origIds = [...new Set(
+          [...ublRowById.values()]
+            .filter((r) => r.invoice_type === "creditnota" && r.original_invoice_id)
+            .map((r) => r.original_invoice_id as string),
+        )];
+        if (origIds.length > 0) {
+          const { data: origRows } = await supabase
+            .from("invoices")
+            .select("id, invoice_number, invoice_date")
+            .in("id", origIds);
+          const byId = new Map((origRows ?? []).map((o) => [o.id as string, o]));
+          for (const r of ublRowById.values()) {
+            const o = r.original_invoice_id ? byId.get(r.original_invoice_id) : null;
+            if (o?.invoice_number) {
+              origRefById.set(r.original_invoice_id as string, {
+                original_invoice_number: o.invoice_number as string,
+                original_invoice_date: (o.invoice_date as string | null) ?? null,
+              });
+            }
+          }
+        }
+      } catch { /* best-effort: the creditnota is complete without BG-3 */ }
+
       // [KLANT-EXTRA] The free customer lines, in their OWN failable read: on a database where
       // client_extra_lines.sql is still open this select fails (42703) and the e-facturen are what
       // they always were, without the lines — instead of there being no e-facturen at all.
@@ -2027,7 +2058,12 @@ export async function buildClosingPackageZip(args: {
           }
           try {
             const { xml } = buildInvoiceUbl(
-              ublHeaderFrom(row, extraById.get(inv.id) ?? null),
+              ublHeaderFrom(
+                row,
+                extraById.get(inv.id) ?? null,
+                // [CREDIT-REF] Same BG-3 the mailed/downloaded twin carries.
+                row.original_invoice_id ? origRefById.get(row.original_invoice_id) ?? null : null,
+              ),
               ublLinesFrom(lines),
               supplierRow as unknown as Parameters<typeof buildInvoiceUbl>[2],
               { korActive },
@@ -2037,7 +2073,9 @@ export async function buildClosingPackageZip(args: {
               // assembler compares this against the evidence file's path to avoid writing one file
               // twice, and a downloaded evidence file always HAS a path.
               path: "",
-              name: `${inv.invoice_number ?? inv.id}.xml`,
+              // [BIJLAGE-NAAM] A custom template's "045/2026" would nest this into a surprise
+              // zip folder — the same slash the mail path already strips.
+              name: `${(inv.invoice_number ?? inv.id).replace(/[^a-zA-Z0-9._-]/g, "_")}.xml`,
               bytes: encoder.encode(xml),
             });
           } catch {

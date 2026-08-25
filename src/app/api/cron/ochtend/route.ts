@@ -48,10 +48,33 @@ export async function GET(req: NextRequest) {
   }
 
   const pipeline = createPipelineClient();
-  cronRunId = await beginCronRun(pipeline, "ochtend", cronStartedAt);
 
   // Yesterday as the owner's calendar day, and its exact UTC bounds.
   const vandaag = amsterdamToday();
+
+  // [OCHTEND-EENMAAL] At most one delivered morning per day. A second firing — a manual curl
+  // with the secret, a platform double-fire, a retry after a timeout that already sent hundreds
+  // of mails — would re-mail every owner. The heartbeat table already records each successful
+  // run; a green 'ochtend' row started on TODAY's Amsterdam day means the morning happened.
+  // Best-effort: an unreadable/absent table never blocks the mail (the guard is a courtesy on a
+  // courtesy), it only fails toward one extra send.
+  try {
+    // cron_runs is not in the generated types (hand-applied migration) — same relaxed cast the
+    // heartbeat module itself uses.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: eerdere } = await (pipeline as any)
+      .from("cron_runs")
+      .select("id")
+      .eq("job", "ochtend")
+      .eq("ok", true)
+      .gte("started_at", amsterdamMidnightUtc(vandaag).toISOString())
+      .limit(1);
+    if (Array.isArray(eerdere) && eerdere.length > 0) {
+      return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
+    }
+  } catch { /* see above — fail toward sending */ }
+
+  cronRunId = await beginCronRun(pipeline, "ochtend", cronStartedAt);
   const gisteren = amsterdamToday(new Date(amsterdamMidnightUtc(vandaag).getTime() - 1));
   const vanaf = amsterdamMidnightUtc(gisteren).toISOString();
   const tot = amsterdamMidnightUtc(vandaag).toISOString();
@@ -70,13 +93,13 @@ export async function GET(req: NextRequest) {
     // The invoices those payments settle — by id, because an invoice may be dated anywhere.
     const invIds = [...new Set(linkRows.map((r) => r.invoice_id).filter((x): x is string => !!x))];
     const invRows = await fetchAllRowsForIds<{
-      id: string; invoice_number: string | null; client_name: string | null;
+      id: string; invoice_number: string | null; client_name: string | null; invoice_type: string | null;
       direction: string | null; receiver_id: string | null; total_inc_btw: number | null;
     }, string>(
       invIds,
       (chunk, from, to) => pipeline
         .from("invoices")
-        .select("id, invoice_number, client_name, direction, receiver_id, total_inc_btw")
+        .select("id, invoice_number, client_name, invoice_type, direction, receiver_id, total_inc_btw")
         .in("id", chunk)
         .order("id", { ascending: true }).range(from, to),
     );
@@ -90,6 +113,11 @@ export async function GET(req: NextRequest) {
       const inv = invById.get(link.invoice_id);
       if (!inv) continue;
       if (effectiveDirection(inv, link.user_id) !== "outgoing") continue;
+      // [OCHTEND-CREDIT] A settled creditnota is money that went OUT (the refund the owner paid),
+      // and its amount_applied is stored as a magnitude — counted blind, the mail's subject
+      // claimed "€ 650 binnengekomen" over a day where € 150 of that LEFT the account. The
+      // day-end audit's money finding on this cron; a refund is not this mail's news.
+      if (inv.invoice_type === "creditnota" || (inv.total_inc_btw ?? 0) < 0) continue;
       const amount = typeof link.amount_applied === "number" && link.amount_applied > 0
         ? link.amount_applied
         : Math.abs(inv.total_inc_btw ?? 0);
@@ -121,18 +149,33 @@ export async function GET(req: NextRequest) {
       // [DEPLOY-SAFE] ochtend_mail arrives by a hand-applied migration. Until it exists the
       // whole select would 42703 — so the read retries without the column, and everyone is
       // treated as opted IN (the migration's own default).
-      const eerste = await pipeline
-        .from("profiles").select("id, email, role, ochtend_mail").in("id", userIds);
-      if (eerste.error && isMissingColumn(eerste.error.message, eerste.error.code)) {
-        const tweede = await pipeline.from("profiles").select("id, email, role").in("id", userIds);
-        if (tweede.error) throw new Error(`profielen: ${tweede.error.message}`);
-        profielen = (tweede.data ?? []) as unknown as ProfielRij[];
-      } else if (eerste.error) {
-        throw new Error(`profielen: ${eerste.error.message}`);
-      } else {
-        // The generated types predate ochtend_mail — same relaxed cast every open-migration
-        // column in this repo uses.
-        profielen = (eerste.data ?? []) as unknown as ProfielRij[];
+      //
+      // Chunked + paginated like EVERY read in this route: a bare .in() with the app-wide id
+      // list 414s past a few hundred uuids (killing the whole morning for everyone) and
+      // silently truncates past ~1000 rows (dropping owners from neither sent nor failed).
+      try {
+        profielen = await fetchAllRowsForIds<ProfielRij, string>(
+          userIds,
+          // The generated types predate ochtend_mail — same relaxed cast every open-migration
+          // column in this repo uses.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (chunk, from, to) => (pipeline as any)
+            .from("profiles")
+            .select("id, email, role, ochtend_mail")
+            .in("id", chunk)
+            .order("id", { ascending: true }).range(from, to) as PromiseLike<{ data: ProfielRij[] | null; error: { message: string } | null }>,
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!isMissingColumn(msg)) throw e;
+        profielen = await fetchAllRowsForIds<ProfielRij, string>(
+          userIds,
+          (chunk, from, to) => pipeline
+            .from("profiles")
+            .select("id, email, role")
+            .in("id", chunk)
+            .order("id", { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: ProfielRij[] | null; error: { message: string } | null }>,
+        );
       }
     }
 

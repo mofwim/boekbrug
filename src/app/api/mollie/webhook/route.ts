@@ -208,9 +208,20 @@ export async function POST(req: NextRequest) {
   // Geboekt. Lees wat de RPC ECHT toepaste: LEAST() kan een overbetaling hebben afgeklemd
   // (tussentijdse deelbetaling), en dat verschil is klantgeld dat terug moet — een feit, geen
   // voetnoot. applied < gevraagd ⇒ alarm + zin op de kaart; de rij wordt gewoon 'paid'.
-  const applied = Array.isArray(applyRows) && applyRows[0] ? Number((applyRows[0] as { applied: unknown }).applied) : null
+  //
+  // [MOLLIE-REPLAY] En lees `duplicate` en `is_paid` óók. Een herbezorging die de status-poort
+  // won (race, of een eerder mislukte stempel) komt hier met duplicate=true: de boeking bestond
+  // al, dus geen tweede overbetalingsalarm en geen tweede bel op de telefoon van de eigenaar —
+  // het dagslot-audit telde tot ~10 pushes voor één betaling langs die weg. is_paid voedt de
+  // beltekst: € 300 op een factuur van € 1.000 is geboekt, niet "op betaald gezet".
+  const rpcRow = Array.isArray(applyRows) && applyRows[0]
+    ? (applyRows[0] as { applied: unknown; duplicate: unknown; is_paid: unknown })
+    : null
+  const applied = rpcRow ? Number(rpcRow.applied) : null
+  const wasReplay = rpcRow?.duplicate === true
+  const invoiceFullyPaid = rpcRow?.is_paid === true
   let overpayNote: string | null = null
-  if (applied != null && Number.isFinite(applied) && applied < Number(link.amount_value) - 0.005) {
+  if (!wasReplay && applied != null && Number.isFinite(applied) && applied < Number(link.amount_value) - 0.005) {
     const teveel = (Number(link.amount_value) - applied).toFixed(2)
     overpayNote = `iDEAL-betaling van € ${link.amount_value} deels afgeklemd: € ${applied.toFixed(2)} geboekt, € ${teveel} was meer dan er open stond. De klant heeft recht op € ${teveel} teruggave.`
     reportHandledFailure({
@@ -221,17 +232,30 @@ export async function POST(req: NextRequest) {
     await setMollieConnectionError(link.user_id, overpayNote)
   }
 
-  await pipeline
+  const { error: stampErr } = await pipeline
     .from('mollie_payment_links')
     .update({ status: 'paid', paid_at: verdict.paidAt, marked_at: new Date().toISOString(), ...(overpayNote ? { last_error: overpayNote } : {}) })
     .eq('id', link.id)
     .eq('user_id', link.user_id)
+  if (stampErr) {
+    // [MOLLIE-REPLAY] De boeking staat; alleen de stempel niet. 503 laat Mollie opnieuw bellen —
+    // de volgende ronde vindt duplicate=true (geen tweede boeking, geen tweede bel) en probeert
+    // de stempel opnieuw. Een 200 hier liet de rij 'open' staan en elke herbezorging opnieuw
+    // alarmeren én bellen.
+    reportHandledFailure({
+      tag: 'MOLLIE', severity: 'gate-unavailable',
+      message: 'Mollie-stempel (status=paid) mislukt — Mollie belt opnieuw, boeking staat al.',
+      context: { rowId, invoiceId: link.invoice_id, detail: stampErr.message },
+    })
+    return NextResponse.json({ error: 'stamp failed' }, { status: 503 })
+  }
 
   // [PULS] The bell, per [JET-GAP0]'s own doctrine: money was recorded with nobody present, so
   // the owner is TOLD — bell + push, the same channel every automatic booking already uses. This
   // is the one notification a freelancer never tires of. Best-effort: the booking above is done
   // and a failed courtesy may never turn a delivered payment into a Mollie retry loop.
-  try {
+  // [MOLLIE-REPLAY] A replayed delivery already rang — one payment, one bell.
+  if (!wasReplay) try {
     // [RLS-UIT] Owner-scoped like every service-role read on the money line: the paid invoice is
     // the owner's OUTGOING invoice, so sender_id pins it to the same owner as the link row.
     const { data: betaaldeFactuur } = await pipeline
@@ -247,7 +271,12 @@ export async function POST(req: NextRequest) {
     const melding = await createNotification({
       userId: link.user_id,
       title: `${formatEuroNL(bedrag)} betaald via iDEAL`,
-      body: `Factuur${nummer} is zojuist via iDEAL betaald en op betaald gezet.` +
+      // [MOLLIE-REPLAY] is_paid uit de RPC beslist de zin: € 300 op een factuur van € 1.000 is
+      // "geboekt", niet "op betaald gezet" — de telefoon van de eigenaar mag niet meer beweren
+      // dan de administratie.
+      body: (invoiceFullyPaid
+        ? `Factuur${nummer} is zojuist via iDEAL betaald en op betaald gezet.`
+        : `Op factuur${nummer} is zojuist ${formatEuroNL(bedrag)} via iDEAL geboekt — er staat nog een restant open.`) +
         (overpayNote ? ' Let op: een deel was meer dan er open stond — zie de betaalpagina-kaart.' : ''),
       type: 'payment',
       link: `/dashboard/invoice/${link.invoice_id}`,

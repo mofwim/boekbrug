@@ -33,6 +33,7 @@ import { findUnrecordedCashWithdrawals } from "@/lib/cash-transfer-match";
 import { isCashTransferDescription } from "@/lib/bank-identity";
 // [KAS-DUBBELE-KOST] The same purchase written down twice — see cash-cost-overlap.ts.
 import { collectCashCostOverlaps } from "@/lib/cash-cost-overlap-collect";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,10 @@ export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // [DIEP-3] Bounded like its siblings — the day-end audit found this one uncapped.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "kasboek-export", ...RATE_LIMITS.HEAVY_EXPORT });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   const sp = req.nextUrl.searchParams;
   const { year, quarter } = quarterFromParams((k) => sp.get(k));

@@ -11,6 +11,7 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import JSZip from 'jszip'
 import { keepThroughYear } from '@/lib/compliance-vault'
 import { fetchAllRows } from '@/lib/supabase-paginate'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,6 +39,10 @@ export async function GET(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+
+  // [DIEP-3] Bounded like its siblings — the day-end audit found this one uncapped.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: 'kluis-export', ...RATE_LIMITS.HEAVY_EXPORT });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   const yearRaw = req.nextUrl.searchParams.get('year')
   const year = Number(yearRaw)

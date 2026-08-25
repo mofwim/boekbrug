@@ -77,6 +77,10 @@ export const RATE_LIMITS = {
   // 60/uur hindert geen boekhouder die een heel kantoor doorloopt (dat zijn er tientallen, met
   // denkpauzes), en stopt wel een script dat de zwaarste leespas van de app laat ronddraaien.
   HEAVY_EXPORT:        { maxRequests: 60, windowMinutes: 60 },    // 60 exports / hour
+  // [DIEP-3] Elk bericht is óók een e-mail en een push naar de gekoppelde partij. De koppeling
+  // begrenst WIE je kunt bereiken; dit begrenst HOE VAAK — ruim boven een echt gesprek, ver
+  // onder een scriptje dat andermans inbox voltrekt.
+  MESSAGE_SEND:        { maxRequests: 60, windowMinutes: 60 },    // 60 berichten / uur
   // [REPROCESS] "Boek mijn opgeslagen bestanden" downloadt in één klik tot 600 opgeslagen bestanden
   // uit Storage en haalt de tekst uit maximaal 250 PDF's. Qua bandbreedte en rekentijd de zwaarste
   // knop van de app — en hij had als enige zware route helemaal geen plafond. Er zit geen AI achter,

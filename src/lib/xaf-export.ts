@@ -414,16 +414,20 @@ function buildCash(
     };
   }
   if (row.category === "transfer") {
-    // Drawer ↔ bank. The bank side of the same movement books 1100 against 2100 (unlinked), so
-    // 1100 is the honest counterpart here and the two 2100-vraagposten shapes cancel.
+    // Drawer ↔ bank, via 2100 (kruis-/vraagposten) — NOT via 1100 directly. The bank journal
+    // books the SAME movement's statement line as 1100 against 2100 (an unlinked, non-POS line),
+    // so booking 1100 here too counted the deposit on the bank account twice and left a phantom
+    // residual on 2100. Through 2100 on this side, the two 2100 legs cancel and 1100 moves
+    // exactly once — the classic kruisposten shape. (Day-end audit: the old comment CLAIMED the
+    // cancel while booking the account that made it impossible.)
     return row.direction === "out"
       ? { lines: [
-          { accID: ACC.bank, debitC: amtC, desc: "Kasstorting naar bank", docRef },
+          { accID: ACC.vraagposten, debitC: amtC, desc: "Kasstorting naar bank (kruispost)", docRef },
           { accID: ACC.kas, debitC: -amtC, desc: "Kasstorting naar bank", docRef },
         ] }
       : { lines: [
           { accID: ACC.kas, debitC: amtC, desc: "Kasopname van bank", docRef },
-          { accID: ACC.bank, debitC: -amtC, desc: "Kasopname van bank", docRef },
+          { accID: ACC.vraagposten, debitC: -amtC, desc: "Kasopname van bank (kruispost)", docRef },
         ] };
   }
   // prive / tax / fee / unknown: a movement the P&L must NOT absorb. Named on vraagposten.
@@ -575,7 +579,10 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   out.push(input.company.kvkNumber ? el("companyIdent", esc(input.company.kvkNumber)) : "<companyIdent/>");
   out.push(el("companyName", esc(input.company.name)));
   out.push(el("taxRegistrationCountry", "NL"));
-  if (input.company.btwNumber) out.push(el("taxRegIdent", esc(input.company.btwNumber)));
+  // taxRegIdent heeft GEEN minOccurs="0" in het 3.2-schema — een onderneming zonder BTW-nummer
+  // (KOR-starter) kreeg een bestand dat als geheel niet valideerde. Leeg element, nooit weggelaten
+  // — dezelfde regel als companyIdent hierboven, en per xmllint tegen het officiële XSD bevestigd.
+  out.push(input.company.btwNumber ? el("taxRegIdent", esc(input.company.btwNumber)) : "<taxRegIdent/>");
   if (input.company.address || input.company.city) {
     out.push("<streetAddress>");
     if (input.company.address) out.push(el("streetname", esc(input.company.address)));
@@ -614,7 +621,12 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</vatCodes>");
   out.push("<periods>");
-  const lastMonth = monthOf(input.endDate) || 12;
+  // [XAF-PERIODE] Through today's month — AND through the latest month any entry actually names.
+  // invoice_date is owner-entered, so a post-dated September invoice exists in an August file;
+  // its periodNumber must be a DECLARED period or the file contradicts itself (schema-silently:
+  // the XSD does not cross-check, so only an importer would trip over it).
+  const lastEntryMonth = entries.reduce((mx, e) => Math.max(mx, monthOf(e.date) || 0), 0);
+  const lastMonth = Math.max(monthOf(input.endDate) || 12, lastEntryMonth) || 12;
   for (let m = 1; m <= lastMonth; m++) {
     const last = new Date(Date.UTC(year, m, 0)).getUTCDate();
     out.push("<period>");

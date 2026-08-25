@@ -825,3 +825,59 @@ test("[KOR-E] under the KOR a 0% supply is VRIJGESTELD (E, art. 25) — never ze
   );
   assert.match(zonderKor.xml, /<cbc:ID>Z<\/cbc:ID>/, "a genuine 0% supply stays Z");
 });
+
+test("[SI-UBL-EAS-COHERENT] the address and the Country element are judged by one classifier", () => {
+  // A malformed DE number: the country logic calls it eu_suspect, so the address logic may not
+  // hand it an EAS scheme — one document, one claim about the buyer.
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "DE12345" }), [line()], supplier, { peppol: true }),
+    /CLIENT_PEPPOL_EAS_UNSUPPORTED/,
+    "a number the country classifier rejects gets no electronic address",
+  );
+  // Post-Brexit GB: not an EU VAT shape, so no Peppol address — before, it got 9932 next to Country=NL.
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "GB123456789" }), [line()], supplier, { peppol: true }),
+    /CLIENT_PEPPOL_EAS_UNSUPPORTED/,
+  );
+  // The value that ships is NORMALIZED: spaces and dots can never match a registered participant.
+  const de = buildInvoiceUbl(header({ client_btw_number: "DE 811.907.980" }), [line()], supplier, { peppol: true });
+  assert.match(de.xml, /<cbc:EndpointID schemeID="9930">DE811907980</, "the participant value is the normalized number");
+});
+
+test("[KOR-E] a KOR owner with an art.-11 line gets ONE E breakdown per rate — BR-E-08 sums ALL E lines", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 200, btw_amount: 0, total_inc_btw: 200, client_btw_number: null }),
+    [
+      line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100, vat_treatment: "exempt" } as never),
+      line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100 }),
+    ],
+    supplier, { korActive: true },
+  );
+  const subtotals = [...xml.matchAll(/<cac:TaxSubtotal>/g)].length;
+  assert.equal(subtotals, 1, "two E groups at one rate each fail BR-E-08 — merged, the sum is right");
+  assert.match(xml, /<cbc:TaxableAmount currencyID="EUR">200\.00</, "…and it covers ALL exempt lines");
+  assert.match(xml, /kleineondernemersregeling/, "the merged group claims the regime that covers the whole enterprise");
+});
+
+test("[KORTING-CATEGORIE] a document discount over exempt lines carries category E, not a phantom Z", () => {
+  const { xml } = buildInvoiceUbl(
+    header({
+      total_ex_btw: 90, btw_amount: 0, total_inc_btw: 90, client_btw_number: null,
+      discount_type: "amount", discount_value: 10,
+    }),
+    [line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100, vat_treatment: "exempt" } as never)],
+    supplier,
+  );
+  const ac = /<cac:AllowanceCharge>[\s\S]*?<\/cac:AllowanceCharge>/.exec(xml)?.[0] ?? "";
+  assert.match(ac, /<cbc:ID>E<\/cbc:ID>/, "the allowance names the category of the group it reduces");
+  assert.doesNotMatch(xml, /<cbc:ID>Z<\/cbc:ID>/, "no Z anywhere — BR-Z-01 would demand a Z breakdown that does not exist");
+});
+
+test("[CREDIT-VERVALDATUM] a creditnota without an IBAN says out loud that the due date is not in the file", () => {
+  const { warnings } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-9", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ quantity: -2, unit_price: 50, line_total: -100 })],
+    { ...supplier, iban: null },
+  );
+  assert.ok(warnings.some((w) => /due date/.test(w)), "a dropped legal date is a fact, and warnings is where facts go");
+});
