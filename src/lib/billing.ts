@@ -21,6 +21,8 @@
 
 import Stripe from "stripe";
 
+import { PLUS_TRIAL_DAYS } from "@/lib/plan";
+
 // ── Configuration ────────────────────────────────────────────────────
 //
 // [MODEL-CONFIG lesson, applied to billing] ai.ts records what a hard-coded
@@ -146,6 +148,10 @@ export async function createCheckoutSession(params: {
   profileId: string;
   successUrl: string;
   cancelUrl: string;
+  /** [PROEFMAAND] Eerste maand gratis — alleen voor wie nog nooit een abonnement had.
+   *  De BESLISSING valt in trialEligible (subscription.ts, puur en getest); dit bestand
+   *  vertaalt haar alleen naar Stripe, zoals het hele bestand alleen Stripe spreekt. */
+  withTrial: boolean;
 }): Promise<Stripe.Checkout.Session> {
   if (!STRIPE_PRICE_ID_PLUS) {
     throw new Error("[BILLING] Missing STRIPE_PRICE_ID_PLUS");
@@ -169,7 +175,14 @@ export async function createCheckoutSession(params: {
     tax_id_collection: { enabled: true },
     customer_update: { address: "auto", name: "auto" },
     // The webhook reads this to find the profile without trusting any URL.
-    subscription_data: { metadata: { profile_id: params.profileId } },
+    // [PROEFMAAND] trial_period_days: Stripe int niets tot de proefmaand om is; de mandaat
+    // (iDEAL→SEPA of kaart) wordt wél meteen vastgelegd, dus na de maand loopt de incasso
+    // vanzelf en wie binnen de maand opzegt betaalt niets. 'trialing' komt bij de webhook
+    // binnen en wordt door normalizeStripeStatus al als lopend abonnement gelezen.
+    subscription_data: {
+      metadata: { profile_id: params.profileId },
+      ...(params.withTrial ? { trial_period_days: PLUS_TRIAL_DAYS } : {}),
+    },
     metadata: { profile_id: params.profileId },
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,

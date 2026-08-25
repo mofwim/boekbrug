@@ -1291,6 +1291,8 @@ export const MESSAGES = {
   'ublx.bezig': { nl: 'Bezig…', ar: 'جارٍ العمل…', en: 'Working…' },
   'ublx.klaar': { nl: 'Gedownload ✓', ar: 'تم التنزيل ✓', en: 'Downloaded ✓' },
   'ublx.knop': { nl: 'UBL exporteren', ar: 'تصدير UBL', en: 'Export UBL' },
+  'ublx.peppol.knop': { nl: 'Peppol-versie', ar: 'نسخة Peppol', en: 'Peppol version' },
+  'ublx.peppol.tip': { nl: 'Dezelfde factuur als Peppol BIS 3.0-bestand (vereist het BTW-nummer van de klant)', ar: 'الفاتورة نفسها كملف Peppol BIS 3.0 (يتطلب رقم BTW الخاص بالعميل)', en: 'The same invoice as a Peppol BIS 3.0 file (requires the client BTW number)' },
   'ublx.tip': {
     nl: 'Exporteer als UBL 2.1 (e-factuur) voor je boekhoudprogramma',
     ar: 'صدّر بصيغة UBL 2.1 (فاتورة إلكترونية) لبرنامج المحاسبة لديك',
@@ -10864,6 +10866,23 @@ export const MESSAGES = {
   // [KASBOEK-LEZEN] "Gelezen", niet "ingelezen": er is niets geboekt, en het logboek mag dat niet
   // suggereren. Een regel die als import leest, wordt later gelezen als bewijs dat de bedragen in
   // de administratie staan — precies wat hier NIET is gebeurd.
+  // [IB-JAAR] Het jaaroverzicht voor de inkomstenbelasting — schermchroom; de inhoudelijke
+  // zinnen (uren, kanttekeningen, niet-bijgehouden) komen als data van de server, in het
+  // Nederlands, zoals elke administratieve waarheid hier.
+  'jaar.titel': { nl: 'Jaaroverzicht voor de IB-aangifte', en: 'Year overview for the income tax return', ar: 'ملخص السنة لإقرار ضريبة الدخل' },
+  'jaar.intro': { nl: 'Je jaar, geordend zoals de aangifte inkomstenbelasting erom vraagt. Dit rekent geen belasting uit — het zet je cijfers klaar om over te nemen, en zegt eerlijk wat er nog mist.', en: 'Your year, arranged the way the income tax return asks for it. It computes no tax — it lays out your figures to copy over, and says honestly what is still missing.', ar: 'سنتك مرتبة كما يطلبها إقرار ضريبة الدخل. لا يحسب ضريبة — يجهّز أرقامك للنقل ويقول بصدق ما الناقص.' },
+  'jaar.wv.titel': { nl: 'Winst-en-verliesrekening', en: 'Profit and loss', ar: 'حساب الأرباح والخسائر' },
+  'jaar.wv.opbrengsten': { nl: 'Opbrengsten', en: 'Revenue', ar: 'الإيرادات' },
+  'jaar.wv.kosten': { nl: 'Kosten', en: 'Costs', ar: 'التكاليف' },
+  'jaar.wv.saldo': { nl: 'Saldo (winst)', en: 'Balance (profit)', ar: 'الرصيد (الربح)' },
+  'jaar.uren.titel': { nl: 'Urencriterium', en: 'Hours criterion', ar: 'معيار الساعات' },
+  'jaar.mist.titel': { nl: 'Wat hier niet in zit', en: 'What is not in here', ar: 'ما ليس مشمولاً هنا' },
+  'jaar.mist.intro': { nl: 'Deze administratie houdt het volgende niet bij — neem het mee vóór je cijfers overneemt:', en: 'This administration does not track the following — account for it before copying figures:', ar: 'هذه الإدارة لا تتتبع التالي — خذه بالحسبان قبل نقل الأرقام:' },
+  'jaar.kanttekeningen.titel': { nl: 'Kanttekeningen', en: 'Caveats', ar: 'ملاحظات' },
+  'jaar.laden': { nl: 'Jaar doorrekenen…', en: 'Computing the year…', ar: 'جارٍ احتساب السنة…' },
+  'jaar.fout': { nl: 'We konden het jaar nu niet doorrekenen. Probeer het zo opnieuw.', en: 'We could not compute the year right now. Try again shortly.', ar: 'تعذّر احتساب السنة الآن. حاول بعد قليل.' },
+  'jaar.xaf.link': { nl: 'Download auditbestand (XAF) voor de boekhouder', en: 'Download audit file (XAF) for your accountant', ar: 'نزّل ملف التدقيق (XAF) للمحاسب' },
+
   'log.kasboek.imported_read_only': { nl: 'Kasboek gelezen (niets geboekt)', en: 'Cash book read (nothing booked)', ar: 'قُرئ دفتر النقد (لم يُقيَّد شيء)' },
   'log.kasboek.gap_booked': { nl: 'Ontbrekende kasuitgaven uit het kasboek geboekt', en: 'Missing cash payments booked from the cash book', ar: 'قُيّدت مصروفات نقدية ناقصة من دفتر النقد' },
   'log.turnover.day_removed': { nl: 'Dagomzet van een dag verwijderd', en: 'A day of turnover removed', ar: 'حُذف إيراد يوم' },

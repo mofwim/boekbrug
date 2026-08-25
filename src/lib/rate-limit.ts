@@ -36,7 +36,12 @@ export interface RateLimitResult {
 export const RATE_LIMITS = {
   EMAIL_SYNC:          { maxRequests: 10, windowMinutes: 5 },     // 10 / 5min
   DOCUMENT_CLASSIFY:   { maxRequests: 50, windowMinutes: 60 },    // 50 / hour
-  ACCOUNTANT_INVITE:   { maxRequests: 20, windowMinutes: 1440 },  // 20 / day
+  // [BULK-UITNODIGEN] Was 20/day — sized for one-at-a-time invites. An administratiekantoor
+  // moving its bestand over invites 50-200 clients in ONE sitting (the bulk paste on
+  // KlantenBeheer loops this same route), and 20 stopped that office a tenth of the way in.
+  // 200 still bounds the spam surface: only a verified accountant account reaches the route,
+  // every address is one they typed, and the duplicate-invite check swallows repeats.
+  ACCOUNTANT_INVITE:   { maxRequests: 200, windowMinutes: 1440 }, // 200 / day
   INVOICE_SEND:        { maxRequests: 100, windowMinutes: 60 },   // 100 / hour
   // [UREN] Uren opschrijven is TYPEN, geen versturen. De ondernemer die een kwartaal bijwerkt
   // tikt er in één zitting zo honderdvijftig in, en INVOICE_SEND (100/uur) zou hem halverwege

@@ -18,6 +18,7 @@
 // A bank statement is never run through the invoice extractor. SAFECORE Rule 1
 // (arithmetic) still applies on the invoice/receipt write path.
 
+import { round2 } from "@/lib/invoice-totals"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
@@ -80,7 +81,7 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate, normalizeInvoiceNumber, vendorCoreKey } from "@/lib/safecore"
 // [DUP-TRASHED] De uitzondering op de byte-hash-poort voor een bestand dat de eigenaar zelf heeft
 // weggegooid. Gedeeld met /api/email/upload, /api/bank/attach-invoice en de mailsync — vier kopieën
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
@@ -156,6 +157,13 @@ export async function POST(req: NextRequest) {
   const file = formData.get("file")
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Geen bestand ontvangen" }, { status: 400 })
+  }
+  // [NUL-BYTES] Een leeg bestand heeft niets om te lezen én één gedeelde hash (SHA-256 van de
+  // lege string) — het eerste lege bestand claimt die hash en elk volgend leeg bestand, hoe het
+  // ook heet, wordt dan geweigerd als "staat al in je bestanden". Weigeren vóór alles, met een
+  // zin die zegt wat er aan de hand is. De twee sheet-routes doen dit al.
+  if (file.size === 0) {
+    return NextResponse.json({ error: "Dit bestand is leeg (0 bytes) — er valt niets te lezen. Controleer het bestand en probeer opnieuw." }, { status: 422 })
   }
   if (file.size > MAX_BYTES) {
     return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 })
@@ -456,6 +464,12 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // [FAIR-USE §3] Een oordeel dat vóór enige model-aanroep viel (ongeldige PDF) heeft geen
+  // lezing verbruikt — geef het gereserveerde tegoed terug. De crash-kant deed dit al.
+  if (v.no_ai_call === true) {
+    await gate.release()
+  }
+
   const decision = decideFromAi({
     is_invoice: v.is_invoice,
     document_kind: v.document_kind,
@@ -680,6 +694,75 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       )
     }
+
+    // ── [INTAKE-CLAIM] The database backstop for the WINDOW the gate above cannot see ─────────
+    //
+    // findSemanticDuplicate is read-then-insert, and the camera surface uploads three files in
+    // parallel: the same paper photographed twice (different bytes, so the byte-hash index is
+    // blind) can pass the SELECT in both requests before either has inserted — both land, both
+    // can auto-advance, cost and voorbelasting booked twice. The claim closes that window with a
+    // UNIQUE (user_id, claim_key) index; the KEY is computed here, by the same one authority
+    // (normalizeInvoiceNumber / vendorCoreKey) the gate itself uses — SQL never recomputes it.
+    //
+    //   · force=true skips the claim: the owner explicitly said "add anyway", and a claim from
+    //     the row he is duplicating on purpose would refuse exactly what he just confirmed;
+    //   · no usable key (no number, no reliable vendor+total) → no claim. Unidentifiable twice-
+    //     uploaded junk is the review queue's problem, not worth refusing real documents over;
+    //   · a claim older than two minutes is STALE (its request is long dead) — taken over, not
+    //     honoured, so a crash between claim and insert never wedges a supplier's invoices;
+    //   · [DEPLOY-SAFE] a missing table (intake_claims.sql not applied yet) degrades to today's
+    //     behaviour: no backstop, never a blocked upload.
+    if (!force) {
+      const claimTotal = v.total_inc_btw ?? v.amount ?? null
+      const nrKey = normalizeInvoiceNumber(v.invoice_number ?? "")
+      const vdKey = vendorCoreKey(v.vendor ?? "")
+      const claimKey =
+        nrKey && claimTotal != null
+          ? `nr:${nrKey}|${round2(claimTotal)}`
+          : vdKey && claimTotal != null
+            ? `vd:${vdKey}|${round2(claimTotal)}|${v.invoice_date ?? ""}`
+            : null
+      if (claimKey) {
+        // intake_claims komt uit intake_claims.sql (met de hand toegepast) en staat niet in de
+        // gegenereerde typen — zelfde ontspannen client als planForUser, om dezelfde reden.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const claimPipe = createPipelineClient() as any
+        const { error: claimErr } = await claimPipe
+          .from("intake_claims")
+          .insert({ user_id: user.id, claim_key: claimKey })
+        if (claimErr && (claimErr as { code?: string }).code === "23505") {
+          // Someone holds this claim. Honour it only while it is FRESH.
+          const { data: holder } = await claimPipe
+            .from("intake_claims")
+            .select("id, created_at")
+            .eq("user_id", user.id)
+            .eq("claim_key", claimKey)
+            .maybeSingle()
+          const ageMs = holder?.created_at ? Date.now() - Date.parse(holder.created_at) : Infinity
+          if (holder && ageMs < 120_000) {
+            return NextResponse.json(
+              {
+                error:
+                  "Ditzelfde document wordt op dit moment al verwerkt (een dubbele upload of dubbelklik). Wacht een paar seconden en kijk in je overzicht — staat het er dan niet, probeer het opnieuw.",
+                duplicate: true,
+                inFlight: true,
+              },
+              { status: 409 },
+            )
+          }
+          if (holder) {
+            // Stale — take it over so a crashed request never wedges this supplier's invoices.
+            await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id).catch(() => {})
+          }
+        } else if (claimErr && (claimErr as { code?: string }).code !== "42P01") {
+          // Any other failure: log, proceed. The backstop must never refuse real uploads over
+          // its own hiccup — the semantic gate above already ran.
+          console.error("[INTAKE-CLAIM] claim insert failed (proceeding without backstop)", { error: claimErr.message })
+        }
+        // Opportunistic hygiene: sweep this user's stale claims so the table stays tiny.
+        await claimPipe.from("intake_claims").delete().eq("user_id", user.id).lt("created_at", new Date(Date.now() - 3_600_000).toISOString()).catch(() => {})
+      }
+    }
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
 
     // [DEDUP-SOFT] Not a CONFIDENT duplicate (or none) — is it a POSSIBLE one? (same amount +
@@ -836,6 +919,15 @@ export async function POST(req: NextRequest) {
     // orphaned in Storage (a leaked object with no row), and tell the owner to retry.
     if (docErr || !doc) {
       await supabase.storage.from("documents").remove([storagePath])
+      // [23505] De drie zuster-inserts vertalen een verloren race al naar een nette 409 — dit was
+      // de enige zonder. Een dubbelklik op uploaden kreeg hier een 500 "probeer opnieuw" over een
+      // bestand dat er net wél in kwam, vermomd als opslagfout.
+      if ((docErr as { code?: string } | null)?.code === "23505") {
+        return NextResponse.json(
+          { error: "Dit bestand staat al in je bestanden.", duplicate: true },
+          { status: 409 }
+        )
+      }
       return NextResponse.json(
         { error: "Opslaan in je bestanden is mislukt — probeer het opnieuw." },
         { status: 500 }
@@ -1402,7 +1494,10 @@ async function storeRawIncoming(
     const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
     const { error: upErr } = await supabase.storage
       .from("documents").upload(storagePath, buffer, { contentType: file.type || "application/octet-stream", upsert: false })
-    if (upErr) return null
+    if (upErr) {
+      console.error("[STORE-RAW] storage upload failed — the file is NOT kept", { userId, file: file.name, error: upErr.message })
+      return null
+    }
     const folderId = await ensureImportedFolder(userId, "pipeline")
     const pipelineDoc = createPipelineClient()
     const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
@@ -1412,11 +1507,13 @@ async function storeRawIncoming(
       ai_processed: true, ai_doc_type: aiDocType, content_hash: hash,
     }).select("id").single()
     if (docErr || !doc) {
+      console.error("[STORE-RAW] documents insert failed — the file is NOT kept", { userId, file: file.name, error: docErr?.message })
       await supabase.storage.from("documents").remove([storagePath]).catch(() => {})
       return null
     }
     return doc.id
-  } catch {
+  } catch (e) {
+    console.error("[STORE-RAW] unexpected failure — the file is NOT kept", { userId, file: file.name, error: e instanceof Error ? e.message : String(e) })
     return null // storage is a convenience; the booking is the money-truth
   }
 }
@@ -1756,13 +1853,23 @@ async function handleDailySalesPdf(
   // lives in the audit log below (path: intake_pdf), not in this constrained column.
   const booked = await bookTurnoverRows(supabase, userId, [row], "z_report", { preserveSplit: true })
   if (!booked.ok) {
+  // [STORE-RAW-EERLIJK] Op deze tak wordt NIETS geboekt — het opgeslagen bestand is de hele
+  // uitkomst. Is dat opslaan mislukt (documentId null), dan is er letterlijk niets gebeurd,
+  // terwijl de oude melding de eigenaar naar een scherm stuurde waar het bestand niet staat.
+  // Weigeren is eerlijk, en veilig om te herhalen: de mislukte opslag heeft de content-hash
+  // niet geclaimd, dus een nieuwe poging kan wél slagen.
+  if (documentId === null) {
+      return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+    }
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
       // [TURNOVER-ARITHMETIC] Two different failures, two different sentences. "Opslaan is mislukt"
       // sends the owner to retry an import that will fail again in exactly the same way.
       message: booked.rejected.length
         ? `De bedragen van deze dag kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en voer de dag zelf in.`
-        : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+        : booked.duplicateDay
+          ? `Dit blad noemt ${booked.duplicateDay} twee keer. Er is niets geboekt — voeg de rijen van die dag samen in het bestand en importeer opnieuw.`
+          : "Dagomzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
     })
   }
   await logAuditAction({
@@ -1832,6 +1939,11 @@ async function handleSpreadsheet(
 
     const booked = await bookTurnoverRows(supabase, userId, rows, "z_report")
     if (!booked.ok) {
+      // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+      // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+      if (documentId === null) {
+        return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+      }
       // Never claim a booking that didn't happen. Store stays; tell the owner to retry via Dagomzet.
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "turnover_review",
@@ -1839,7 +1951,9 @@ async function handleSpreadsheet(
         // owner to retry would send them into the same refusal.
         message: booked.rejected.length
           ? `De bedragen van ${booked.rejected.length === 1 ? "één dag" : `${booked.rejected.length} dagen`} kunnen niet kloppen (${booked.rejected[0]}). Er is niets geboekt — deze bedragen gaan naar je btw-aangifte, dus controleer het Z-rapport en importeer opnieuw.`
-          : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
+          : booked.duplicateDay
+            ? `Dit blad noemt ${booked.duplicateDay} twee keer. Er is niets geboekt — voeg de rijen van die dag samen in het bestand en importeer opnieuw.`
+            : "Kassa-omzet gelezen, maar opslaan is mislukt — probeer het in Dagomzet opnieuw.",
       })
     }
     await logAuditAction({
@@ -1881,6 +1995,11 @@ async function handleSpreadsheet(
       },
       ipAddress: getClientIP(req),
     }).catch(() => {})
+    // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+    // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+    if (documentId === null) {
+      return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+    }
     return NextResponse.json({
       ok: true, destination: "document", document_id: documentId, sheet_kind: "kasboek_review",
       days: k.rows.length, span,
@@ -1903,9 +2022,21 @@ async function handleSpreadsheet(
     const { kind, accountNr, rows } = plan.ledger
     const booked = await bookLedgerRows(supabase, userId, kind, accountNr, rows)
     if (!booked.ok) {
+      // [STORE-RAW-EERLIJK] Zie de eerste tak: niets geboekt + niets bewaard = niets gebeurd,
+      // en de melding mag de eigenaar niet naar een scherm sturen waar het bestand niet staat.
+      if (documentId === null) {
+        return NextResponse.json({ error: "We konden dit bestand nu niet opslaan. Er is niets geboekt en niets bewaard — probeer het zo opnieuw." }, { status: 503 })
+      }
       return NextResponse.json({
         ok: true, destination: "document", document_id: documentId, sheet_kind: "ledger_review",
-        message: "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
+        // [DUP-DAY / GEEN-STILLE-KAP] Een fout die bij elke poging identiek terugkomt mag niet
+        // "probeer opnieuw" heten — noem wat er aan de hand is, dan kan de eigenaar het bestand
+        // repareren in plaats van dezelfde muur te herhalen.
+        message: booked.duplicateDay
+          ? `Dit overzicht noemt ${booked.duplicateDay} twee keer. Er is niets opgeslagen — voeg de rijen van die dag samen en importeer opnieuw.`
+          : booked.tooMany
+            ? `Dit overzicht heeft ${booked.tooMany} dagregels — meer dan de 1000 die we in één keer verwerken. Splits het bestand (bijvoorbeeld per jaar) en importeer de delen apart.`
+            : "Grootboek-overzicht gelezen, maar opslaan is mislukt — probeer het opnieuw.",
       })
     }
     await logAuditAction({
@@ -1932,22 +2063,38 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
   // is still stored for the accountant (importBankStatement), so this is NOT an error:
   // report it honestly rather than 422-ing (which would trap the file behind byte-hash
   // dedup on retry). Aligns the intake path with /api/bank/upload's lenient behavior.
+  // [VREEMD-BESTAND] Een geweigerd bestand (niet-EUR, meerdere rekeningen) is een fout met een
+  // reden, geen verwerking. Er is niets geboekt en geen dekking geclaimd.
+  if (result.refused) {
+    return NextResponse.json({ error: result.refused }, { status: 422 })
+  }
   const unreadable = result.parseWarnings.length
+  // [BANK-INSERT-LUID] Een mislukte transactie-insert mag nooit als "verwerkt" op het scherm
+  // komen: er is dan een hele maand aan regels NIET geland terwijl het ruwe bestand wél is
+  // opgeslagen (en de content-hash claimt). De waarschuwing uit bank-ingest draagt de uitleg.
   let msg =
-    result.parsed === 0
-      ? "Bankafschrift opgeslagen, maar er zijn geen transacties gelezen — controleer het bestand."
-      : unreadable > 0
-        ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
-        : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
+    result.insertFailed
+      ? `Bankafschrift gelezen (${result.parsed} transacties), maar het opslaan is MISLUKT — er is niets geboekt. ${result.parseWarnings[0] ?? ""}`
+      : result.parsed === 0
+        ? `${result.statementStored ? "Bankafschrift opgeslagen, maar er" : "Er"} zijn geen transacties gelezen — controleer het bestand.${unreadable > 0 ? ` (${result.parseWarnings[0]})` : ""}`
+        : unreadable > 0
+          ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
+          : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
   // [BANK-BALANCE §2.6] A statement whose begin/eindsaldo doesn't tie out to its own transactions
   // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
   // otherwise see), appended to the honest message and returned structured for the caller.
   if (result.balanceWarning) msg += ` ${result.balanceWarning}`
+  // [CSV-EERLIJK] Een CSV draagt geen begin/eindsaldo, dus de volledigheidscontrole KAN niet
+  // draaien — en "geen waarschuwing" leest dan als "gecontroleerd". Zeg het verschil.
+  if (result.format === "CSV" && !result.balanceWarning && result.inserted > 0) {
+    msg += " Let op: een CSV bevat geen saldocontrole — wij kunnen niet nagaan of dit overzicht compleet is. MT940 of CAMT.053 van je bank kan dat wel."
+  }
   // [STATEMENT-CONTINUITY] …en of er een heel AFSCHRIFT tussen zit dat we nog niet hebben. Twee
   // verschillende gaten: balanceWarning kijkt binnen dit bestand, dit tussen de bestanden.
   if (result.continuityWarning) msg += ` ${result.continuityWarning}`
   return NextResponse.json({
-    ok: true,
+    // Niet ok wanneer het opslaan zelf faalde: de client toont dan een fout, geen groene rij.
+    ok: !result.insertFailed,
     destination: "bank",
     format: result.format,
     parsed: result.parsed,

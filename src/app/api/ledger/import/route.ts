@@ -14,6 +14,7 @@
 // raises a break on a mismatch. Revenue/cost still come solely from daily_turnover / invoices /
 // cash_entries. So this route deliberately does NOT touch any money total.
 
+import { logAuditAction } from "@/lib/audit";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
@@ -66,6 +67,17 @@ export async function POST(req: NextRequest) {
       .from("ledger_daily")
       .upsert(records, { onConflict: "user_id,ledger_date,kind" });
     if (error) return NextResponse.json({ error: "kon het grootboek niet opslaan" }, { status: 500 });
+
+    // [DAGOMZET-AUDIT gespiegeld] Elke geldnabije schrijf is naspeurbaar — de dagomzet-commit
+    // logt al zo, de intake-grootboektak ook; alleen deze deur was stil. Best-effort: een
+    // logfout mag een gelukte commit nooit terugdraaien.
+    await logAuditAction({
+      userId: user.id,
+      action: "ledger.auto_imported",
+      entityType: "ledger_daily",
+      entityId: user.id,
+      newValue: { days: records.length, kind, account_nr: accountNr, path: "ledger_import_route" },
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true, committed: records.length, kind });
   }

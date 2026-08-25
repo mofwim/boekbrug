@@ -124,6 +124,17 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
     return { advance: false, reason: "zero_btw_not_explicit_zero_rate" };
   }
 
+  // [ONGEGROND-AFGELEID] A gross WE computed is a gross the grounding gate never saw. When the
+  // reader returned ex + btw but no total, the pipeline derives incl = ex + btw AFTER
+  // groundMoneyFields ran — so the grounding verdict for the total is 'unreadable' (blocks
+  // nothing, by design) while the identity holds by construction (checks nothing, by
+  // construction). Every gate below then passes a booked gross that was never compared against
+  // the paper. The [GEGROND] rule directly below refuses an ungrounded READ total; this refuses
+  // the ungrounded DERIVED one, for exactly the same reason.
+  if (s.health.field_confidence?._total_derived === "total") {
+    return { advance: false, reason: "total_derived_never_grounded" };
+  }
+
   // [GEGROND] The reader reported a total that is NOT printed anywhere in the document's own text.
   // That is not low confidence and it is not bad arithmetic — the other gates cannot see it at all,
   // because they only ever compare the read against itself. It is a figure the paper does not

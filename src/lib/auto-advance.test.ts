@@ -304,5 +304,24 @@ console.log("\n— [E-FACTUUR-BESLECHT] de leverancier stuurde zijn eigen cijfer
   }
 }
 
+console.log("\n— [ONGEGROND-AFGELEID] a gross the app derived never books unattended —");
+{
+  // The reader returned ex + btw and no total; the pipeline derived incl = ex + btw AFTER the
+  // grounding gate ran, so the grounding verdict for the total is 'unreadable' (blocks nothing)
+  // and the identity holds by construction (checks nothing). The gross that would book was never
+  // compared against the paper.
+  const derived = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { ...clean().health.field_confidence, _total_derived: "total" as const } },
+  }));
+  check("derived total → blocked", derived.advance === false);
+  check("…with its own reason", derived.reason === "total_derived_never_grounded");
+  // A derived EX is different: the total existed and WAS grounded; ex = incl − btw is arithmetic
+  // over two grounded figures. This rule leaves it alone (other gates still apply).
+  check("derived excl alone does not trip THIS rule",
+    shouldAutoAdvanceInvoice(clean({
+      health: { ...clean().health, field_confidence: { ...clean().health.field_confidence, _total_derived: "excl" as const } },
+    })).reason !== "total_derived_never_grounded");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

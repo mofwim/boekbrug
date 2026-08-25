@@ -14,8 +14,9 @@
 // then flow from these on accrual — so a wrong learned code is visible on the categorisatie screen
 // (review scope) and one tap fixes it.
 
+import { round2 } from "./invoice-totals";
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 import { counterpartKey, suggestIdentity } from "./bank-identity";
 
 export interface AutoCategorized {
@@ -30,6 +31,41 @@ export interface AutoCategorized {
  * it only ever touches category=null lines and only writes confident suggestions. Returns the
  * codings made (empty when there is no learned memory yet or nothing to code).
  */
+/** A paid-invoice row as the double-booking guard needs it. */
+export interface PaidExplainerRow {
+  direction: string | null;
+  total_inc_btw: number | null;
+  amount_paid: number | null;
+  payment_date: string | null;
+  marked_paid_at: string | null;
+  invoice_date: string | null;
+}
+
+/**
+ * [DUBBEL-GEDEKT] Does a PAID invoice already explain this bank line's money? Pure — the caller
+ * reads, this decides. Same direction, same magnitude to the cent, settled within two weeks of
+ * the line. An UNDATABLE pair errs toward true: the guard prevents a double booking, and holding
+ * a line for a human is recoverable where a doubled cost in the aangifte is not.
+ */
+export function paidInvoiceExplainsLine(
+  paidRows: readonly PaidExplainerRow[],
+  txAmount: number,
+  txDate: string | null,
+): boolean {
+  const mag = round2(Math.abs(txAmount));
+  const wantDir = txAmount < 0 ? "incoming" : "outgoing";
+  const txMs = txDate ? Date.parse(txDate) : NaN;
+  return paidRows.some((inv) => {
+    if ((inv.direction ?? "") !== wantDir) return false;
+    const invMag = round2(Math.abs(Number(inv.total_inc_btw) || 0));
+    if (Math.abs(invMag - mag) > 0.01) return false;
+    const settled = inv.payment_date ?? inv.marked_paid_at ?? inv.invoice_date;
+    if (!settled || Number.isNaN(txMs)) return true; // undatable → err toward NOT double-booking
+    const d = Math.abs(txMs - Date.parse(settled));
+    return d <= 14 * 86_400_000;
+  });
+}
+
 export async function applyLearnedBankCategories(args: {
   pipeline: PipelineClient;
   userId: string;
@@ -68,7 +104,7 @@ export async function applyLearnedBankCategories(args: {
   // can exceed it, and a silently-skipped tail would leave money uncoded with no signal).
   const rows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("id, amount, counterpart_name, description")
+    .select("id, amount, counterpart_name, description, date")
     .eq("user_id", userId)
     .eq("status", "pending")
     .is("invoice_id", null)
@@ -76,12 +112,52 @@ export async function applyLearnedBankCategories(args: {
     .order("id", { ascending: true })
     .range(from, to));
 
+  // ── [DUBBEL-GEDEKT] Is this money already explained by a PAID invoice? ──────────────────────
+  //
+  // The engine books a bank line's kosten/omzet only when invoice_id is NULL — and the invoice
+  // itself books through INCOMING_OK. So a bill the owner marked paid by hand (or incasso-settle
+  // paid with no bank line) has its cost in the books ALREADY; when its bank debit then arrives,
+  // the matcher excludes paid invoices, the line finds no candidate, and a confident memory hit
+  // used to code it 'kosten' — the same cost twice, in resultaat and the closing package, with
+  // nothing flagging it (readiness only counts excluded categories). So before a MEMORY hit is
+  // allowed to write a P&L category, the paid invoices are consulted: same direction, same
+  // magnitude to the cent-tolerance, settled within two weeks of the line's date → skip, leave
+  // the line for the human, who will link it instead of double-booking it. Only kosten/omzet —
+  // 'transfer'/'prive' carry no P&L and cannot double-book.
+  //
+  // Fail-open on a failed read, deliberately: this guard prevents a DOUBLE booking, and its own
+  // hiccup must not turn auto-coding off wholesale — the pre-guard behaviour was live for months.
+  const candidateAmounts = [...new Set(
+    (rows as { amount: number | null }[])
+      .map((t) => Math.abs(Number(t.amount) || 0))
+      .filter((a) => a > 0.005)
+      .map((a) => round2(a)),
+  )];
+  let paidRows: PaidExplainerRow[] = [];
+  try {
+    paidRows = await fetchAllRowsForIds<PaidExplainerRow, number>(candidateAmounts, (chunk, from, to) => pipeline
+      .from("invoices")
+      .select("direction, total_inc_btw, amount_paid, payment_date, marked_paid_at, invoice_date")
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+      .eq("status", "paid")
+      .in("total_inc_btw", chunk)
+      .order("id", { ascending: true })
+      .range(from, to));
+  } catch (e) {
+    console.error("[DUBBEL-GEDEKT] paid-invoice read failed — auto-categorize proceeds without the double-booking guard this run", e);
+  }
+  const paidExplains = (txAmount: number, txDate: string | null): boolean =>
+    paidInvoiceExplainsLine(paidRows, txAmount, txDate);
+
   const applied: AutoCategorized[] = [];
-  for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null }[]) {
+  for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }[]) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
     const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory);
     if (!s.confident) continue; // ambiguous → leave for the human (never a guessed cost/omzet)
+    // [DUBBEL-GEDEKT] A P&L category over money a paid invoice already explains is a double
+    // booking, not a coding. The human links it instead.
+    if ((s.category === "kosten" || s.category === "omzet") && paidExplains(t.amount ?? 0, t.date)) continue;
 
     const { data, error } = await pipeline
       .from("bank_transactions")

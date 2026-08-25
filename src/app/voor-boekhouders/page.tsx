@@ -23,7 +23,12 @@
 // four things an office WILL ask about, and it is better to answer them here, correctly, than to
 // be found out in a demo. Every one of those four is verified in code, not remembered:
 // docs/MARKTPOSITIE_2026.md re-verified them on 14 August 2026 and src/lib/ubl-export.ts:7 still
-// says what it says.
+// says what it says. Since 25 August 2026 the XAF/RGS answer is YES with a stated limit: the
+// export lives in src/lib/xaf-export.ts, validates against the official 3.2 XSD, and carries
+// verified RGS references on the main accounts only — the FAQ text below says exactly that much.
+// Same day, the Peppol answer became "beide bestaan": UblBuildOptions.peppol builds the BIS 3.0
+// identity of the same invoice ([SI-UBL], conformance-tested), while sending over the network
+// still needs an access-point contract — and the FAQ says that limit out loud too.
 //
 // ── NO AMOUNT IS TYPED HERE ──
 // The ladder comes from src/lib/accountant-pricing.ts and the free boundary from
@@ -174,14 +179,20 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
   {
     vraag: 'Is er een XAF-auditbestand of RGS-rekeningschema?',
     antwoord:
-      'Nee, geen van beide. Werkt jouw kantoor op RGS, dan sluit BoekBrug daar vandaag niet op ' +
-      'aan.',
+      'Ja: per klant en per jaar is er een XML Auditfile Financieel 3.2 (gevalideerd tegen het ' +
+      'officiële schema), met verkoopboek, inkoopboek, bank, kas en dagomzet als sluitende ' +
+      'boekingen. De hoofdrekeningen dragen hun RGS-referentiecode; wat de app niet kan ' +
+      'plaatsen staat benoemd op Vraagposten in plaats van gegokt op een rekening. Een volledig ' +
+      'RGS-schema op detailniveau is er nog niet.',
   },
   {
     vraag: 'Is de UBL-export Peppol/SI-UBL?',
     antwoord:
-      'Nee. Het is UBL 2.1 zonder CustomizationID — bewust soepel, bedoeld om te IMPORTEREN in ' +
-      'Exact Online, SnelStart, Twinfield of Yuki. Voor een Peppol-netwerk is het niet geschikt.',
+      'Beide bestaan. De standaard-export is UBL 2.1 zonder CustomizationID — bewust soepel, ' +
+      'bedoeld om te IMPORTEREN in Exact Online, SnelStart, Twinfield of Yuki. Daarnaast is elke ' +
+      'factuur als Peppol BIS 3.0-document te downloaden (vereist het BTW-nummer van de klant ' +
+      'als elektronisch adres). Verzenden ÓVER het Peppol-netwerk doet BoekBrug nog niet — daar ' +
+      'is een accesspoint-contract voor nodig.',
   },
   {
     vraag: 'Kan ik mijn hele bestaande klantenbestand overzetten?',

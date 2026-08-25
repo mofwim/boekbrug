@@ -723,9 +723,14 @@ function NewInvoicePageContent() {
       //                     gelezen. De klant ging akkoord met EUR 900 en kreeg EUR 1.000
       //                     gefactureerd.
       if (offerteParam) {
+        // [REGEL-KORTING mee] De REGELkorting reisde hier niet mee: de select miste
+        // discount_type/discount_value en de map zette ze niet, dus een regel
+        // "10 × 50,00, korting 10%" (akkoord: 450) werd gefactureerd als 500. Zelfde
+        // verlies-klasse als de kopkorting eronder — de klant zei ja tegen het ene bedrag
+        // en kreeg het andere, op een genummerd document.
         const { data: offLines } = await supabase
           .from('invoice_lines')
-          .select('description, quantity, unit_price, btw_rate, unit, vat_treatment')
+          .select('description, quantity, unit_price, btw_rate, unit, vat_treatment, discount_type, discount_value')
           .eq('invoice_id', offerteParam)
         if (offLines && offLines.length > 0) {
           setLines(offLines.map(l => ({
@@ -735,6 +740,10 @@ function NewInvoicePageContent() {
             btw_rate:    l.btw_rate    ?? 21,
             unit:        l.unit ?? null,
             vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null,
+            discount_type: l.discount_type === 'percent' || l.discount_type === 'amount' ? l.discount_type : null,
+            // Het regelmodel houdt de korting als RUWE invoerstring (zoals het invoerveld);
+            // de databasekolom is numeriek — dus hier terug naar de invoervorm.
+            discount_value: l.discount_value == null ? undefined : String(l.discount_value),
           })))
         }
         // De korting van de offerte, van de KOP. Zonder deze read gaat precies het bedrag verloren
@@ -1081,6 +1090,12 @@ function NewInvoicePageContent() {
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
         client_extra_line4: clientExtra4,
+        // [KORTING-KOP mee] De gewone submit stuurt de DOCUMENTkorting mee; dit conversiepad
+        // deed dat niet, terwijl de offertekorting hierboven wél in de state was geladen. De
+        // klant zei ja tegen 1.089 en het bevestigingspaneel toonde dat bedrag — de factuur
+        // werd 1.210. Zelfde velden als de gewone submit, dezelfde server-validatie.
+        discount_type: discountType,
+        discount_value: discountValue,
         lines: lines.map(l => ({
           description: l.description,
           quantity: l.quantity,

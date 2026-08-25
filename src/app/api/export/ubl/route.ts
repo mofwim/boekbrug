@@ -71,6 +71,10 @@ function dutchError(code: UblErrorCode, isOwner: boolean): string {
       return "Deze factuur heeft nog geen factuurnummer. Verstuur de factuur eerst.";
     case "MISSING_INVOICE_DATE":
       return "Deze factuur heeft geen geldige factuurdatum.";
+    case "CLIENT_MISSING_PEPPOL_ADDRESS":
+      // [SI-UBL] Peppol routes on het BTW-nummer van de klant (EAS 9944) — zonder dat nummer
+      // heeft een BIS-document geen bestemming.
+      return "Voor een Peppol-versie is het BTW-nummer van de klant nodig. Vul dat in op de factuur en probeer opnieuw.";
   }
 }
 
@@ -90,6 +94,8 @@ export async function GET(req: NextRequest) {
   }
 
   const invoiceId = req.nextUrl.searchParams.get("invoiceId");
+  // [SI-UBL] De Peppol-variant van hetzelfde document — zie UblBuildOptions.peppol.
+  const peppol = req.nextUrl.searchParams.get("peppol") === "1";
   if (!invoiceId) {
     return NextResponse.json({ error: "invoiceId ontbreekt" }, { status: 400 });
   }
@@ -235,6 +241,9 @@ export async function GET(req: NextRequest) {
   try {
     const result = buildInvoiceUbl(header, lines, supplier, {
       korActive: !!(profileRow as { kor_active?: boolean | null }).kor_active,
+      // [SI-UBL] ?peppol=1 vraagt dezelfde factuur als Peppol BIS 3.0-document — één bouwer,
+      // twee identiteiten, nooit twee bedragen.
+      peppol,
     });
     xml = result.xml;
     warnings = result.warnings;
@@ -254,7 +263,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Download response ──
-  const filename = `boekbrug-factuur-${safeFilenamePart(inv.invoice_number)}-ubl.xml`;
+  const filename = `boekbrug-factuur-${safeFilenamePart(inv.invoice_number)}${peppol ? "-peppol" : ""}-ubl.xml`;
 
   return new NextResponse(xml, {
     status: 200,

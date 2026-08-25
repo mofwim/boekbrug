@@ -148,6 +148,12 @@ export default async function PrijzenPage({
             <div style={{ fontSize: 14, color: '#5f6368', marginBottom: 16 }}>
               {PLUS.btwNote} · {PLUS.cancelNote}
             </div>
+            {/* [PROEFMAAND] De zin komt uit plan.ts, net als de prijs — één bron, overal
+                hetzelfde. En hij staat BOVEN de knop: wie hem pas na het klikken zou lezen,
+                heeft hem niet gehad toen het ertoe deed. */}
+            <p style={{ fontSize: 14.5, fontWeight: 600, color: '#188038', margin: '0 0 12px' }}>
+              Nieuw op Plus? Dan is {PLUS.trialNote}.
+            </p>
             <SubscribeButton />
             <p style={{ fontSize: 13.5, color: '#5f6368', margin: '16px 0 0', lineHeight: 1.6 }}>
               {/* [LIMIET-ZIN] `ai.free`, niet formatLimit(): die geeft "50 per maand" terug, en in
@@ -301,6 +307,16 @@ export default async function PrijzenPage({
               portaal volledig kosteloos. Wat hij betaalt verandert nooit iets aan wat jij betaalt
               — de staffel staat op{' '}
               <Link href="/voor-boekhouders" style={{ color: '#1a73e8' }}>voor boekhouders</Link>.
+            </Faq>
+
+            <Faq q="Hoe werkt de gratis proefmaand van Plus?">
+              Neem je voor het eerst Plus, dan is de eerste maand gratis. Je legt bij het afrekenen
+              wel je betaalwijze vast, maar er wordt niets geïnd tot de maand om is — en zeg je
+              binnen die maand op, dan betaal je helemaal niets. Na de proefmaand loopt Plus gewoon
+              door voor {PLUS.priceLabel} {PLUS.period}. De proefmaand is er één keer: wie al eens Plus had,
+              start meteen betaald. En verloopt je proefmaand zonder dat je iets doet aan een
+              opzegging die je vergat? Dan val je nooit in een slot &mdash; opzeggen kan altijd, en je
+              gegevens blijven altijd van jou.
             </Faq>
 
             <Faq q="Kan ik maandelijks opzeggen?">

@@ -14,7 +14,7 @@ import { resolveSupplierForImport } from "@/lib/supplier-registry";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
-import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso } from "@/lib/safecore";
+import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalizeToIso, normalizeVendor } from "@/lib/safecore";
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect";
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory";
@@ -89,6 +89,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (file.size === 0) {
+    return NextResponse.json({ error: "Dit bestand is leeg (0 bytes) — er valt niets te lezen." }, { status: 422 })
+  }
   if (file.size > 10 * 1024 * 1024) {
     return NextResponse.json({ error: "Bestand te groot — max 10MB" }, { status: 400 });
   }
@@ -206,7 +209,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // [FAIR-USE §3] Een oordeel dat vóór enige model-aanroep viel (ongeldige PDF) heeft geen
+  // lezing verbruikt.
+  if (verification.no_ai_call === true) {
+    await gate.release();
+  }
+
   if (!verification.is_invoice) {
+    // [FAIR-USE §3] "mislukte pogingen komen nooit op jouw rekening" — een afgewezen bestand is
+    // geen verbruikte lezing. De 503 hierboven gaf de gate al terug; deze 422 hield hem in.
+    if (verification.no_ai_call !== true) await gate.release();
     return NextResponse.json(
       {
         error:
@@ -244,19 +256,25 @@ const dup = await findSemanticDuplicate(
         .eq("receiver_id", user.id)
         .eq("direction", "incoming")
         .eq("total_inc_btw", q.total);
-      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
+      // [DEDUP-VENDOR-NORM] Geen .ilike op de naam: PostgREST vertaalt een * in de waarde naar %
+      // vóór de escape (safecore.ts documenteert de meting), en deze tier blokkeert — dus een
+      // acquirer-naam ("SUMUP *CAFE") hield echte bonnen buiten de boeken. Naam hieronder in
+      // code, als letterlijke genormaliseerde gelijkheid.
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       // [DEDUP-NUMBER-NORM] Compare the number whitespace-normalized in code (an exact .eq
       // missed "26 / 3958" vs "26/3958"); the candidate set is already pinned by total(+date).
       // [DEDUP-WINDOW] Deterministic order + a wide cap so the number match never falls
       // outside the window (dropping the .eq removed the natural bound).
-      const { data, error: dedupErr } = await query.order("id", { ascending: false }).limit(200);
+      const { data, error: dedupErr } = await query.order("created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false }).limit(200);
       if (dedupErr) dedupCheckFailed = true;
       const rows = data ?? [];
       const hit =
         q.tier === "number" && q.invoiceNumber
           ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-          : rows[0];
+          : q.tier === "vendor" && q.vendor
+            ? rows.find((r) => normalizeVendor(r.client_name ?? "") === normalizeVendor(q.vendor ?? "") && normalizeVendor(q.vendor ?? "") !== "")
+            : rows[0];
       return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
     }
   );
@@ -301,7 +319,8 @@ const dup = await findSemanticDuplicate(
               // still be fetched for the cent-precise in-code compare (assessPossibleDuplicate).
               .gte("total_inc_btw", total - 0.005)
               .lte("total_inc_btw", total + 0.005)
-              .order("id", { ascending: false })
+              .order("created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
               .limit(200);
             if (dedupErr) dedupCheckFailed = true;
             return data ?? [];
@@ -318,8 +337,9 @@ const dup = await findSemanticDuplicate(
               .eq("receiver_id", user.id)
               .eq("direction", "incoming")
               .ilike("invoice_number", escapeLikeValue(invoiceNumber))
-              .order("id", { ascending: false })
-              .limit(50);
+              .order("created_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+              .limit(200);
             if (dedupErr) dedupCheckFailed = true;
             return data ?? [];
           },
@@ -369,9 +389,12 @@ const dup = await findSemanticDuplicate(
 
   // [BOEK-011] Resolve correct folder via BOEK-033's function
   // ctx='user' — manual upload, user is logged in (RLS session active)
+  // [DATE-ONE-SOURCE] Dezelfde genormaliseerde datum als de rij zelf. De RUWE AI-string ("15-03-2026")
+  // is voor resolveImportTarget een Invalid Date, waarna het bestand onder "Geïmporteerde bestanden"
+  // belandt terwijl de factuur in maart staat — intake had deze fix al.
   const folderId = await resolveImportTarget(
     user.id,
-    verification.invoice_date ?? null,
+    invoiceDate,
     "facturen",
     "user"
   );
@@ -454,7 +477,9 @@ const dup = await findSemanticDuplicate(
       // payment term even when printed on the invoice — absent from Vandaag's
       // date-sorted "Te betalen" list. Same derivation as intake + email-sync.
       due_date: deriveDueDate(invoiceDate, verification.due_date ?? null, verification.payment_term_days ?? null),
-      invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
+      // [BON-NUMMER] Leeg blijft leeg — een verzonnen documentkenmerk landt als factuurnummer in
+      // het wettelijke inkoopboek terwijl het audit-spoor null zegt. Intake verwijderde dit al.
+      invoice_number: verification.invoice_number || null,
       total_ex_btw: verification.total_ex_btw ?? 0,
       btw_amount: verification.btw_amount ?? 0,
       total_inc_btw: verification.total_inc_btw ?? verification.amount ?? 0,

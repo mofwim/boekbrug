@@ -44,6 +44,7 @@ import { attachmentRefusal, attachmentRefusalText, safeAttachmentName } from '@/
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from '@/lib/storage-path'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
+import { ublAttachmentForInvoice } from '@/lib/ubl-for-email'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
 // [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum — laatste kans vóór het nummer.
@@ -864,6 +865,14 @@ export async function POST(request: NextRequest) {
       // Best-effort — delivery continues regardless
     }
 
+    // ── 13b. [E-FACTUUR-MEE] De e-factuur (UBL) als tweede bijlage, best-effort ──
+    // Het nummer is al vastgelegd, dus de herlezing hieronder ziet de definitieve factuur — en
+    // buildInvoiceUbl is dezelfde generator als /api/export/ubl en het kwartaalpakket, dus de
+    // klant leest exact het bestand in dat de boekhouder later ook ziet. Kan hij niet gebouwd
+    // worden (profiel zonder KVK, open migratie), dan gaat de mail zonder XML — de PDF is het
+    // wettelijke stuk en wacht op niets.
+    const ublBijlage = await ublAttachmentForInvoice(supabase, invoiceId)
+
     // ── 14. Send e-mail WITH the PDF attached ──────────────────
     // convertOnly previously skipped the e-mail — [FACTUUR-A] it no longer
     // does: the conversion mints a NEW legal factuur (new number) and
@@ -882,6 +891,8 @@ export async function POST(request: NextRequest) {
         dueDate: invoice.due_date ?? '',
         invoiceDate: invoice.invoice_date ?? undefined,
         pdfBuffer,
+        // [E-FACTUUR-MEE] Naast de PDF, als hij gebouwd kon worden.
+        ublAttachment: ublBijlage,
         isCreditnota: finalType === 'creditnota',
         // [HERSTEL] The mail says this is the corrected version replacing the earlier one.
         isCorrected: correctedDelivery,

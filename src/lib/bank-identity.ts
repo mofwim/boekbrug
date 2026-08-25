@@ -299,7 +299,20 @@ export function suggestIdentity(
   memoryCategory?: string | null,
   similar?: SimilarMemoryHit | null,
 ): IdentitySuggestion {
-  if (memoryCategory) return { category: memoryCategory as Category, source: 'memory', confident: true };
+  if (memoryCategory) {
+    // [TEKEN-EERST] Het geheugen onthoudt de tegenpartij, niet de RICHTING — en een naam kan
+    // beide kanten op bewegen: een leverancier die terugstort, een klant die je terugbetaalt.
+    // Een 'omzet'-herinnering blind op een AFSCHRIJVING toepassen boekt omzet += een negatief
+    // bedrag: stilletjes verlaagde omzet, en omdat het bedrag negatief is wekt het ook de
+    // omzet-zonder-tarief-melding niet. Spreekt het teken de herinnering tegen, dan is dit een
+    // ANDERE beweging dan de onthouden: toon de suggestie wel, maar nooit zelfverzekerd — de
+    // eigenaar bevestigt.
+    const memorySignOk =
+      (memoryCategory === 'omzet' && amount > 0) ||
+      (memoryCategory === 'kosten' && amount < 0) ||
+      (memoryCategory !== 'omzet' && memoryCategory !== 'kosten');
+    return { category: memoryCategory as Category, source: 'memory', confident: memorySignOk };
+  }
   const id = classifyBankTransaction(counterpartName, description, amount);
   if (id !== 'unknown') return { category: id, source: 'ai', confident: true };
   // A look-alike counterpart: pre-select its category, but NEVER confident (owner confirms).

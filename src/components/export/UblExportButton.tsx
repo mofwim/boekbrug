@@ -47,18 +47,19 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
   // (Mirrors the route's INCOMING_NOT_SUPPORTED guard; this just hides the dead action.)
   if (direction === 'incoming') return null
 
-  async function handleExport() {
+  // [SI-UBL] Beide varianten door dezelfde route; peppol=1 vraagt het BIS 3.0-document.
+  async function handleExport(peppol = false) {
     setState('loading')
     setError('')
     try {
-      const res = await fetch(`/api/export/ubl?invoiceId=${encodeURIComponent(invoiceId)}`)
+      const res = await fetch(`/api/export/ubl?invoiceId=${encodeURIComponent(invoiceId)}${peppol ? '&peppol=1' : ''}`)
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
         throw new Error(failureText(res.status, json, t('ublx.mislukt')))
       }
       const blob = await res.blob()
       const safePart = (invoiceNumber ?? 'factuur').replace(/[^a-zA-Z0-9_-]/g, '_')
-      triggerDownload(blob, `boekbrug-factuur-${safePart}-ubl.xml`)
+      triggerDownload(blob, `boekbrug-factuur-${safePart}${peppol ? '-peppol' : ''}-ubl.xml`)
       setState('done')
       setTimeout(() => setState('idle'), 3000)
     } catch (err) {
@@ -74,14 +75,24 @@ export function UblExportButton({ invoiceId, invoiceNumber, status, invoiceType,
 
   return (
     <div className="flex flex-col items-start">
-      <button
-        onClick={handleExport}
-        disabled={state === 'loading'}
-        title={t('ublx.tip')}
-        className="text-sm text-[#1967D2] hover:text-[#1967d2] px-3 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
-      >
-        {label}
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => handleExport(false)}
+          disabled={state === 'loading'}
+          title={t('ublx.tip')}
+          className="text-sm text-[#1967D2] hover:text-[#1967d2] px-3 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
+        >
+          {label}
+        </button>
+        <button
+          onClick={() => handleExport(true)}
+          disabled={state === 'loading'}
+          title={t('ublx.peppol.tip')}
+          className="text-xs text-[#5F6368] hover:text-[#1967d2] px-2 py-1.5 rounded-xl hover:bg-[#E8F0FE] transition-colors disabled:opacity-50"
+        >
+          {t('ublx.peppol.knop')}
+        </button>
+      </div>
       {state === 'error' && error && (
         <p className="text-xs text-red-500 mt-1 max-w-xs">{error}</p>
       )}

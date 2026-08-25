@@ -74,6 +74,9 @@ export type MatchSignal =
   // [BIJNA-BEDRAG] Not the amount, but close to it, on a counterparty this payment identifies —
   // see the block in scorePair. Listed for the owner to allocate; never enough to book.
   | "near_amount"
+  // [DEELBETALING] Smaller than the open amount, from an account that identifies the invoice —
+  // an instalment candidate. Listed for the owner to choose; never enough to book.
+  | "partial_amount"
   // [GEHEUGEN] The owner has confirmed a payment from this counterpart against this party before.
   // Their own answer, read back — see match-memory.ts.
   | "memory";
@@ -785,9 +788,33 @@ export function scorePair(
         `€${nearDiff.toFixed(2)} ${Math.abs(tx.amount) < Math.abs(amountTarget ?? 0) ? "minder" : "meer"} dan het openstaande bedrag — controleer of dit deze factuur is`,
       );
     }
+    // [DEELBETALING] A real instalment: the payment is SMALLER than the open amount by more than
+    // the near-band, from a counterpart whose ACCOUNT identifies the invoice (the invoice's own
+    // IBAN, the registry's, or the owner's remembered pay-intent). €300 against €500 open is not
+    // "near" — it is a partial payment, and it used to score 0.35 and vanish below the listing
+    // floor, so the bank screen offered NOTHING and the owner's only remaining tool was
+    // attach-invoice: minting a second invoice for a bill already in the books. Account identity
+    // is required and name resemblance is deliberately NOT enough here: with the amount matching
+    // nothing, the name is the exact coincidence this file spends its length guarding against.
+    // Never auto-booked — 0.55 stays below the booking bar; confirm applies LEAST(paid, open), so
+    // a chosen instalment settles partially and the invoice stays open for the rest, which is
+    // exactly what already worked when the reference was printed.
+    const partialOk =
+      !amtOk && !nearOk &&
+      (ibanOk || supplierIbanOk || rememberedOk) &&
+      Math.abs(tx.amount) > 0.005 &&
+      amountTarget != null &&
+      Math.abs(tx.amount) < Math.abs(amountTarget) - (opts.amountEpsilon ?? 0.05);
+    if (partialOk) {
+      confidence += 0.35;
+      signals.push("partial_amount");
+      reasons.push(
+        `€${Math.abs(tx.amount).toFixed(2)} van €${Math.abs(amountTarget).toFixed(2)} openstaand — mogelijk een deelbetaling; kies zelf`,
+      );
+    }
     // 0.55: above the listing floor (0.5), below the booking bar (0.7), and below every exact
     // match in the hierarchy above. A difference is precisely what a person has to look at.
-    if (!amtOk) confidence = Math.min(confidence, nearOk ? 0.55 : 0.35);
+    if (!amtOk) confidence = Math.min(confidence, nearOk || partialOk ? 0.55 : 0.35);
     // [BANK-IDENTITY-OUTRANKS] A pair with NO identity signal (no printed number, no matching
     // IBAN) is capped strictly BELOW the reference+amount score (0.97). Before this cap,
     // amount (0.5) + date (≤0.25) + name (≤0.3) could sum to a full 1.0 — so a COINCIDENCE

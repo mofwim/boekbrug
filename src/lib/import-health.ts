@@ -159,6 +159,16 @@ export interface FieldConfidence {
   // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
   // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
   _btw_derived?: { read?: number | null; used?: number | null }
+  // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
+  // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
+  // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
+  // that tax is a real cost but never voorbelasting, and the change was ours — a human confirms,
+  // and it can never auto-book. `read` is the amount that had been misread as BTW.
+  _assurantiebelasting?: { read?: number | null }
+  // [EX-INCL-FIX] The base was rewritten from incl − btw because the printed "Subtotaal" equalled
+  // the gross while a real BTW stood beside it (an impossible pair). The repaired amounts add up
+  // by construction, so nothing else would mention it — and the base is what books as kosten.
+  _ex_corrected?: { read?: number | null; used?: number | null }
   // [BTW-SPLIT] The per-rate summary block as PRINTED — one row per rate, grondslag on the left,
   // btw on the right. It is the only independent witness a MIXED-RATE invoice has: with two rates
   // in play, btw/excl can legally be anything between them, so the rate check self-disables and
@@ -536,6 +546,33 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       typeof used === 'number'
         ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
         : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
+
+  // [EX-INCL-FIX] The base is OUR subtraction (incl − btw), not the document's own figure — the
+  // printed subtotal contradicted itself. Same rule as every derived figure: a human confirms it
+  // before it books.
+  if (fc?._ex_corrected) {
+    flags.arithmetic = true
+    const used = fc._ex_corrected.used
+    reasons.push(
+      typeof used === 'number'
+        ? `het bedrag excl. BTW op de factuur was gelijk aan het totaal terwijl er BTW op staat — we hebben ${formatEuro(used)} afgeleid uit totaal min BTW; controleer dit bedrag`
+        : 'het bedrag excl. BTW op de factuur sprak zichzelf tegen — we hebben het afgeleid uit totaal min BTW; controleer dit bedrag'
+    )
+  }
+
+  // [ASSURANTIE] The document carries assurantiebelasting, not BTW. We removed it from the
+  // deductible column (it is never voorbelasting) and folded it into the cost. Always a human
+  // check: the amount is a real cost, but whether this document is a bookable cost at all — a
+  // premium is usually paid on a separate nota — is a question only the owner can answer.
+  if (fc?._assurantiebelasting) {
+    flags.arithmetic = true
+    const read = fc._assurantiebelasting.read
+    reasons.push(
+      typeof read === 'number'
+        ? `dit is assurantiebelasting (${formatEuro(read)}), geen BTW — die mag je niet als voorbelasting aftrekken; we hebben hem uit de BTW gehaald, controleer dit`
+        : 'dit is assurantiebelasting, geen BTW — die mag je niet als voorbelasting aftrekken; we hebben hem uit de BTW gehaald, controleer dit'
     )
   }
 

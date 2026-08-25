@@ -75,23 +75,11 @@ import { createNotification } from '@/lib/notifications'
 import { fairUseHold, fairUseHoldMonth, fairUseHoldNotice } from '@/lib/fair-use-hold'
 import { looksLikeBankStatementFile, type BankStatementNameKind } from '@/lib/detect-file'
 
-// Legal suffixes / entity noise stripped when comparing two vendor names for the
-// duplicate check, so "Atapack B.V." ≡ "Atapack" ≡ "atapack  bv". Deliberately small
-// and conservative — only universally-safe suffixes, never real name words.
-const VENDOR_SUFFIX_NOISE = new Set([
-  'bv', 'nv', 'vof', 'cv', 'ltd', 'gmbh', 'bvba', 'holding', 'maatschap', 'inc', 'llc',
-])
-
-/** A comparison key for a vendor name: lowercased, legal suffixes + punctuation
- *  stripped, collapsed. Pure. Empty string when there's nothing usable. */
-export function vendorCoreKey(name: string | null | undefined): string {
-  const tokens = normalizeVendor(name)
-    .replace(/\./g, '')          // collapse dotted acronyms first: "b.v." → "bv"
-    .replace(/[^a-z0-9\s]/g, ' ') // other punctuation → separator
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && !VENDOR_SUFFIX_NOISE.has(t))
-  return tokens.join(' ')
-}
+// [ÉÉN-LEVERANCIERSSLEUTEL] The comparison key lives in safecore.ts now — this file held a
+// byte-identical copy of the noise set, and two lists that agree today drift the day one is
+// edited. Re-exported here because this module's own callers and tests import it from here.
+import { vendorCoreKey } from '@/lib/safecore'
+export { vendorCoreKey }
 
 /** True ONLY when both vendors are reliable AND their core keys differ — i.e. these
  *  are genuinely DIFFERENT suppliers (who might each issue the same invoice number for
@@ -3697,9 +3685,14 @@ export async function syncUserEmails(
             // above intends) — a parsed vendor with `%`/`_` must not act as a wildcard.
             if (supplier?.id) {
               contentQuery = contentQuery.eq('supplier_id', supplier.id)
-            } else {
-              contentQuery = contentQuery.ilike('client_name', escapeLikeValue((classification.vendor ?? '').trim()))
             }
+            // [DEDUP-VENDOR-NORM] Geen .ilike op client_name meer voor legacy rijen zonder
+            // supplier_id. PostgREST vertaalt een * in de WAARDE naar % vóór escapeLikeValue er
+            // iets aan kan doen (safecore.ts documenteert de meting), dus elke acquirer-naam
+            // ("SUMUP *CAFE", "SQ *KAPSALON") werd een wildcard-match op willekeurige rijen — en
+            // deze tier BLOKKEERT, dus de uitkomst was een gemiste crediteur zonder dat iemand
+            // keek. De naam wordt hieronder in CODE vergeleken (normalizeVendor-gelijkheid),
+            // precies zoals intake het via pickDedupMatch doet.
           }
 
           // Date filter: applied when we have a real date. For the vendor tier
@@ -3715,9 +3708,17 @@ export async function syncUserEmails(
           // [DEDUP-WINDOW] Number tier compares the number normalized in code (no in-query
           // .eq), so order deterministically and use a wide cap — the match must never fall
           // outside the window for a shop with many same-total invoices. Vendor tier stays 1.
-          const { data: existingByContent } = await contentQuery
+          // [DEDUP-RECENCY] created_at DESC, nullsFirst:false — invoices.id is een uuid, dus
+          // "aflopend op id" is een willekeurige volgorde en de echte dubbel kon buiten het
+          // venster vallen bij veelvoorkomende totalen. Zelfde volgorde als intake, om dezelfde
+          // reden. En de LEESFOUT wordt gelezen: check 0 en A zetten dedupCheckFailed al bij een
+          // mislukte query, alleen deze — de check die de e-mail-plus-handmatig dubbel vangt —
+          // liet hem vallen, waardoor "niet kunnen kijken" als "geen dubbel" doorging.
+          const { data: existingByContent, error: contentErr } = await contentQuery
+            .order('created_at', { ascending: false, nullsFirst: false })
             .order('id', { ascending: false })
-            .limit(tier.kind === 'number' ? 200 : 1)
+            .limit(200)
+          if (contentErr) dedupCheckFailed = true
 
           const original =
             tier.kind === 'number'
@@ -3732,7 +3733,20 @@ export async function syncUserEmails(
                       ? true
                       : !vendorsAreDifferent(classification.vendor, c.client_name)),
                 ) ?? null
-              : (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
+              : supplier?.id
+                // Vendor tier, canonical supplier: the query already pinned supplier_id — the
+                // newest hit is the duplicate.
+                ? (existingByContent && existingByContent.length > 0 ? existingByContent[0] : null)
+                // [DEDUP-VENDOR-NORM] Vendor tier, legacy rows: the name match happens HERE, as a
+                // literal normalized equality — wat de oude .ilike BEDOELDE, zonder dat een * in
+                // de naam er een wildcard van maakt. Strikte gelijkheid, want deze tier blokkeert:
+                // "niet aantoonbaar verschillend" zou hier elke rij met hetzelfde totaal laten
+                // blokkeren, en dat is de fout in de dure richting.
+                : (existingByContent ?? []).find(
+                    (c) =>
+                      normalizeVendor(classification.vendor ?? '') !== '' &&
+                      normalizeVendor(c.client_name ?? '') === normalizeVendor(classification.vendor ?? ''),
+                  ) ?? null
 
           if (original) {
 

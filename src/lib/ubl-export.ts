@@ -4,7 +4,9 @@
 //
 // Standard: UBL 2.1 (urn:oasis:names:specification:ubl:schema:xsd:Invoice-2)
 // Accepted by Dutch accounting software (Exact Online, Snelstart, Twinfield, Yuki).
-// NOT SI-UBL / Peppol BIS (no CustomizationID) — deliberately lenient for import use.
+// The DEFAULT document is NOT SI-UBL / Peppol BIS (no CustomizationID) — deliberately lenient
+// for import use, unchanged since it shipped. [SI-UBL] UblBuildOptions.peppol asks the same
+// builder for the Peppol BIS 3.0 identity of the same invoice — see the option's doc comment.
 //
 // Design rules:
 //  - Pure function: takes RAW data (not display-formatted rows), returns an XML string.
@@ -124,7 +126,11 @@ export type UblErrorCode =
   | "SUPPLIER_MISSING_NAME"
   | "NO_LINES"
   | "MISSING_INVOICE_NUMBER"
-  | "MISSING_INVOICE_DATE";
+  | "MISSING_INVOICE_DATE"
+  // [SI-UBL] Peppol routes on the buyer's electronic address (BT-49). Without any — this app
+  // can offer their BTW number (EAS 9944) and nothing else — a BIS document has no destination,
+  // and a file that LOOKS deliverable but is not is worse than a refusal that says why.
+  | "CLIENT_MISSING_PEPPOL_ADDRESS";
 
 export class UblValidationError extends Error {
   code: UblErrorCode;
@@ -189,10 +195,15 @@ export function buyerCountryCode(clientVatNumber: string | null | undefined): st
   return shape.country === "EL" ? "GR" : shape.country;
 }
 
-/** Format a quantity: up to a few decimals, dot decimal, no trailing-zero noise. */
+/** Format a quantity: up to six decimals, dot decimal, no trailing-zero noise. */
 function qty(n: number): string {
-  // UBL accepts decimals; keep it simple and stable.
-  return String(round2(n));
+  // [R120] Zes decimalen, niet twee. De validator rekent met de GEDRUKTE aantal-waarde:
+  // een regel 0,333 x 100 als "0.33" afdrukken laat hem 33,00 uitrekenen tegenover een
+  // LineExtensionAmount van 33,30 — PEPPOL-EN16931-R120, bestand geweigerd. UBL accepteert
+  // decimalen ruimhartig; de precisie moet dus bij het aantal blijven, en de takkeuze in de
+  // Price-sectie rekent met dezelfde gedrukte waarde zodat document en beslissing nooit
+  // van elkaar kunnen afwijken.
+  return String(Number(n.toFixed(6)));
 }
 
 /**
@@ -435,6 +446,17 @@ export interface UblBuildOptions {
    * case and the behaviour of every caller before this option existed.
    */
   korActive?: boolean;
+  /**
+   * [SI-UBL] Peppol BIS Billing 3.0 mode. The default document stays exactly what it was —
+   * "bewust soepel", built to IMPORT into Exact/SnelStart/Twinfield/Yuki, no CustomizationID.
+   * With peppol:true the SAME document carries the BIS identity and the fields an access point
+   * validates: CustomizationID + ProfileID (and no UBLVersionID — BIS files do not carry one),
+   * EndpointID on both parties (supplier: KVK, EAS 0106; buyer: BTW-nummer, EAS 9944),
+   * a BuyerReference (PEPPOL-EN16931-R003), and a refusal when the buyer has no electronic
+   * address at all. Sending over the network still needs an access-point contract — this makes
+   * the FILE ready, it does not transmit it.
+   */
+  peppol?: boolean;
 }
 
 export interface UblBuildResult {
@@ -456,6 +478,10 @@ export function buildInvoiceUbl(
   const check = validateUblInputs(header, lines, supplier);
   if (!check.ok) {
     throw new UblValidationError(check.code, `UBL export blocked: ${check.code}`);
+  }
+  // [SI-UBL] The buyer's electronic address is the routing key of a Peppol document.
+  if (opts?.peppol && !header.client_btw_number?.trim()) {
+    throw new UblValidationError("CLIENT_MISSING_PEPPOL_ADDRESS", "UBL export blocked: CLIENT_MISSING_PEPPOL_ADDRESS");
   }
 
   // [E-FACTUUR-VERLEGD] One question, asked once, for the whole document — and asked of the same
@@ -537,8 +563,35 @@ export function buildInvoiceUbl(
   for (const a of kortingUitkomst.allowances) allowanceByRate.set(a.rate, a.amount);
   const allowanceTotal = kortingUitkomst.discount_ex_btw;
 
-  const groups = rawGroups.map((g) => {
-    const off = allowanceByRate.get(g.rate) ?? 0;
+  // [KORTING-PER-GROEP] applyDiscount aggregates per RATE, but the tax groups are keyed by
+  // (rate, CATEGORY) — at rate 0 a Z-group and an E-group (vrijgesteld) can coexist. Handing
+  // every group at rate r the full rate-r allowance subtracts it once per group while
+  // taxExclusive subtracts it once in total, so Σ TaxableAmount ≠ TaxExclusiveAmount and the
+  // access point refuses the file (BR-CO-13). Distribute the rate's allowance over that rate's
+  // groups instead: proportional to their share, remainder on the last so the parts sum to the
+  // allowance to the cent — the same idiom applyDiscount itself uses one layer up. Only groups
+  // pointing the same way as the allowance take part (its sign filter, mirrored), so a negative
+  // return-line group never receives a "discount" that reads as a surcharge in the XML.
+  const offByGroup = new Map<number, number>();
+  for (const [rate, amount] of allowanceByRate) {
+    const idx = rawGroups
+      .map((g, i) => ({ g, i }))
+      .filter(({ g }) => g.rate === rate && Math.sign(g.taxable) === Math.sign(amount) && g.taxable !== 0)
+      .sort((a, b) => Math.abs(b.g.taxable) - Math.abs(a.g.taxable));
+    if (idx.length === 0) continue;
+    const base = idx.reduce((sum, { g }) => sum + Math.abs(g.taxable), 0);
+    let assigned = 0;
+    for (let k = 0; k < idx.length; k++) {
+      const part = k === idx.length - 1
+        ? round2(amount - assigned)
+        : round2((amount * Math.abs(idx[k].g.taxable)) / base);
+      assigned = round2(assigned + part);
+      if (part !== 0) offByGroup.set(idx[k].i, part);
+    }
+  }
+
+  const groups = rawGroups.map((g, i) => {
+    const off = offByGroup.get(i) ?? 0;
     if (off === 0) return g;
     const taxable = round2(g.taxable - off);
     return { ...g, taxable, tax: round2((taxable * g.rate) / 100) };
@@ -584,18 +637,33 @@ export function buildInvoiceUbl(
   });
 
   // ── Header fields (order matters in UBL 2.1) ──
-  root.ele(NS.cbc, "UBLVersionID").txt("2.1");
+  // [SI-UBL] BIS mode swaps the version tag for the BIS identity pair; the schema puts
+  // CustomizationID and ProfileID exactly here, before ID. Everything else in this file is
+  // shared between the two modes — one builder, so the lenient file and the Peppol file can
+  // never disagree about a single amount.
+  if (opts?.peppol) {
+    root.ele(NS.cbc, "CustomizationID").txt("urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0");
+    root.ele(NS.cbc, "ProfileID").txt("urn:fdc:peppol.eu:2017:poacc:billing:01:1.0");
+  } else {
+    root.ele(NS.cbc, "UBLVersionID").txt("2.1");
+  }
   root.ele(NS.cbc, "ID").txt(header.invoice_number!.trim());
   root.ele(NS.cbc, "IssueDate").txt(issueDate);
   if (dueDate) root.ele(NS.cbc, "DueDate").txt(dueDate);
   // The code keeps its meaning; only the element it lives in follows the document type.
   root.ele(NS.cbc, isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode").txt(invoiceTypeCode(header.invoice_type));
   root.ele(NS.cbc, "DocumentCurrencyCode").txt(EUR);
+  // [SI-UBL] PEPPOL-EN16931-R003: a buyer reference or order reference must be present. This app
+  // stores no separate buyer reference, so the invoice number stands in — the buyer's package
+  // shows it verbatim, which is also the reference a Dutch customer actually quotes when paying.
+  if (opts?.peppol) root.ele(NS.cbc, "BuyerReference").txt(header.invoice_number!.trim());
 
   // ── AccountingSupplierParty (the ZZP'er) ──
   const supParty = root
     .ele(NS.cac, "AccountingSupplierParty")
     .ele(NS.cac, "Party");
+  // [SI-UBL] EndpointID sits FIRST inside Party by schema order. Supplier: KVK, EAS 0106.
+  if (opts?.peppol) supParty.ele(NS.cbc, "EndpointID", { schemeID: "0106" }).txt(supplier.kvk_number!.trim());
   supParty.ele(NS.cac, "PartyName").ele(NS.cbc, "Name").txt(sName);
   const supAddr = supParty.ele(NS.cac, "PostalAddress");
   if (supplier.address?.trim()) supAddr.ele(NS.cbc, "StreetName").txt(supplier.address.trim());
@@ -615,6 +683,10 @@ export function buildInvoiceUbl(
   const cusParty = root
     .ele(NS.cac, "AccountingCustomerParty")
     .ele(NS.cac, "Party");
+  // [SI-UBL] Buyer electronic address (BT-49): their BTW-nummer under EAS 9944 (NL:VAT) — the
+  // one identifier this app holds for a business customer. Guarded above: peppol mode refused
+  // the document already when it is absent.
+  if (opts?.peppol) cusParty.ele(NS.cbc, "EndpointID", { schemeID: "9944" }).txt(header.client_btw_number!.trim());
   cusParty
     .ele(NS.cac, "PartyName")
     .ele(NS.cbc, "Name")
@@ -651,6 +723,11 @@ export function buildInvoiceUbl(
     const cusTax = cusParty.ele(NS.cac, "PartyTaxScheme");
     cusTax.ele(NS.cbc, "CompanyID").txt(header.client_btw_number.trim());
     cusTax.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
+  }
+  // [SI-UBL] BT-44 (buyer name) lives in PartyLegalEntity/RegistrationName under BIS — the
+  // PartyName above is not where a BIS validator looks for it.
+  if (opts?.peppol) {
+    cusParty.ele(NS.cac, "PartyLegalEntity").ele(NS.cbc, "RegistrationName").txt(header.client_name?.trim() || "Onbekend");
   }
 
   // ── PaymentMeans (IBAN) — optional, before TaxTotal ──
@@ -854,7 +931,9 @@ export function buildInvoiceUbl(
     // Zonder korting is dit letterlijk `ex` en staat hier exact de test die er altijd stond.
     const teReproduceren = round2(ex + kortingBedrag);
     const price = line.ele(NS.cac, "Price");
-    if (round2(aantal * stuksprijs) === teReproduceren) {
+    // [R120] Beslis met het aantal ZOALS HET WORDT AFGEDRUKT — de validator kent alleen dat.
+    const aantalGedrukt = Number(qty(aantal));
+    if (round2(aantalGedrukt * stuksprijs) === teReproduceren) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(teReproduceren)));

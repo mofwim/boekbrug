@@ -13,6 +13,8 @@ import type { ClientSummary, ClientReadiness } from '../accountant.types'
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
+// [SERVER-ZIN] Een machinecode is geen zin — de route spreekt soms code, soms Nederlands.
+import { failureText } from '@/lib/server-message'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest, fact-only client summary. No "Klaar"/"ready" verdict — the
@@ -65,6 +67,14 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [inviteSuccess, setInviteSuccess] = useState(false)
+  // [BULK-UITNODIGEN] Een kantoor dat zijn bestand overzet nodigt tientallen klanten in één
+  // zitting uit. De lijst loopt adres voor adres door DEZELFDE route als de losse knop —
+  // rolcontrole, formaatcontrole, dubbele-uitnodiging-check en daglimiet gelden dus per adres,
+  // en één weigering kost nooit de rest van de lijst.
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkText, setBulkText] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResults, setBulkResults] = useState<Array<{ email: string; ok: boolean; message?: string }>>([])
 
   // Confirm unlink dialog state
   const [unlinkTarget, setUnlinkTarget] = useState<ClientSummary | null>(null)
@@ -105,6 +115,37 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
     } finally {
       setInviteLoading(false)
     }
+  }
+
+  // ─── [BULK-UITNODIGEN] Meerdere klanten in één keer ────────────────────────
+  async function handleBulkInvite() {
+    // Scheidingstekens zoals mensen lijsten plakken: nieuwe regels, komma's, puntkomma's,
+    // spaties uit een spreadsheetkolom. Dubbele adressen één keer.
+    const parsed = [...new Set(
+      bulkText.split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.includes('@')),
+    )].slice(0, 200)
+    if (parsed.length === 0 || bulkBusy) return
+    setBulkBusy(true)
+    setBulkResults([])
+    const results: Array<{ email: string; ok: boolean; message?: string }> = []
+    for (const email of parsed) {
+      try {
+        const res = await fetch('/api/invite/client', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientEmail: email }),
+        })
+        const json = await res.json().catch(() => ({}))
+        results.push(res.ok
+          ? { email, ok: true }
+          : { email, ok: false, message: failureText(res.status, json, 'Versturen mislukt.') })
+      } catch {
+        results.push({ email, ok: false, message: 'Netwerkfout.' })
+      }
+      // Tussenstand per adres — bij een lange lijst ziet het kantoor de voortgang lopen.
+      setBulkResults([...results])
+    }
+    setBulkBusy(false)
   }
 
   // ─── Unlink ─────────────────────────────────────────────
@@ -198,6 +239,52 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
               <p style={{ fontSize: 13, color: M3.success, margin: 0, fontWeight: 500 }}>
                 ✓ Uitnodiging verstuurd.
               </p>
+            )}
+
+            {/* ── [BULK-UITNODIGEN] ── */}
+            <button
+              onClick={() => setBulkOpen((v) => !v)}
+              style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, fontWeight: 500, color: '#1A73E8', cursor: 'pointer', textAlign: 'start', fontFamily: 'inherit' }}
+            >
+              {bulkOpen ? '▾' : '▸'} Meerdere klanten tegelijk uitnodigen
+            </button>
+            {bulkOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
+                  Plak een lijst e-mailadressen (één per regel, of gescheiden door komma&apos;s).
+                  Elk adres krijgt dezelfde uitnodiging als hierboven; per adres zie je of het lukte.
+                </p>
+                <textarea
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  rows={5}
+                  placeholder={'klant1@bedrijf.nl\nklant2@bedrijf.nl\nklant3@bedrijf.nl'}
+                  style={{ fontSize: 13.5, padding: '8px 12px', border: '1px solid #dadce0', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                />
+                <div>
+                  <button
+                    onClick={handleBulkInvite}
+                    disabled={bulkBusy || !bulkText.includes('@')}
+                    style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (bulkBusy || !bulkText.includes('@')) ? 0.5 : 1, minHeight: 36 }}
+                  >
+                    {bulkBusy ? `Versturen... (${bulkResults.length})` : 'Verstuur alle uitnodigingen'}
+                  </button>
+                </div>
+                {bulkResults.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>
+                      {bulkResults.filter((r) => r.ok).length} verstuurd
+                      {bulkResults.some((r) => !r.ok) ? ` · ${bulkResults.filter((r) => !r.ok).length} niet verstuurd` : ''}
+                      {bulkBusy ? ' — bezig…' : ''}
+                    </p>
+                    {bulkResults.filter((r) => !r.ok).map((r) => (
+                      <p key={r.email} style={{ fontSize: 12.5, color: M3.error, margin: 0 }}>
+                        ✗ {r.email} — {r.message}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

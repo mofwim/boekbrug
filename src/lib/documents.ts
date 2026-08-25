@@ -3,6 +3,7 @@
 // Upload → Supabase Storage, metadata → documents table
 // Server-only — nooit importeren in Client Components
 
+import { trashedDuplicateCleared } from "./trashed-dedup";
 import { randomUUID } from "crypto";
 import { createServerSupabaseClient } from "./supabase-server";
 import { inferDocType } from "./documents-utils";
@@ -145,13 +146,20 @@ export async function uploadDocument(
     // [BRIDGE-EXTRACT] Fetch enough to tell the user WHERE the file already is.
     const { data: existingDoc } = await supabase
       .from("documents")
-      .select("id, file_name, folder_id")
+      .select("id, file_name, folder_id, trashed")
       .eq("user_id", userId)
       .eq("content_hash", contentHash)
       .limit(1)
       .maybeSingle();
 
-    if (existingDoc) {
+    // [DUP-TRASHED] Een rij in de prullenbak houdt zijn content_hash vast, en deze poort las de
+    // kolom niet eens — dus een weggegooid bestand blokkeerde zijn eigen her-upload voorgoed, met
+    // een melding die wees naar een map waar het niet meer staat. trashed-dedup.ts somt de
+    // deuren op die dit al deelden; uploadDocument was de vijfde, en de gemiste. Zelfde helper,
+    // zelfde regel: alleen een AANTOONBAAR weggegooide rij geeft de sleutel vrij.
+    if (existingDoc && (await trashedDuplicateCleared(supabase, userId, existingDoc))) {
+      // De sleutel is vrij; de upload loopt verder als een vers bestand.
+    } else if (existingDoc) {
       // [BRIDGE-EXTRACT] Full folder path (root→leaf) — folders nest, so the leaf
       // name alone ("Facturen") is ambiguous. Walk parent_id up the chain.
       const folderPath = await buildFolderBreadcrumb(

@@ -53,8 +53,16 @@ export async function POST(req: NextRequest) {
     pipeline,
   });
 
+  // [VREEMD-BESTAND] Geweigerd met reden — niets geboekt, geen dekking geclaimd.
+  if (result.refused) {
+    return NextResponse.json({ error: result.refused, refused: true }, { status: 422 });
+  }
+
   return NextResponse.json({
-    ok: true,
+    // [BANK-INSERT-LUID] Niet ok wanneer de transactie-insert zelf faalde — het bestand staat er,
+    // de regels niet, en "ok" zou dat verschil wegpoetsen. parseWarnings draagt de uitleg.
+    ok: !result.insertFailed,
+    insertFailed: result.insertFailed,
     format: result.format,
     accountIban: result.accountIban,
     parsed: result.parsed,

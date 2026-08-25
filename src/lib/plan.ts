@@ -48,6 +48,21 @@ function euroLabel(amount: number): string {
  * Het enige betaalde maandplan voor de ondernemer. Nodig zodra iemand structureel boven het
  * eerlijk gebruik uitkomt — nooit eerder, en nooit automatisch.
  */
+/**
+ * [PROEFMAAND] De eerste maand Plus is gratis — één keer, voor wie nog nooit een abonnement had.
+ *
+ * Waarom een proefmaand op PLUS en geen tijdslot op het product zelf: het gratis plan IS het
+ * product (zie decidePlan stap 5), dus "probeer de app een maand gratis" is hier al waar zonder
+ * enige wijziging. Wat een advertentie nodig heeft is de sterkere belofte — een maand de RUIME
+ * grenzen proberen — en die kan veilig, omdat aflopen hier terugvalt naar gratis en nooit naar
+ * een slot. Een boekhoudapp die na dag 30 de administratie gijzelt is precies wat wij niet zijn.
+ *
+ * Ná de proefmaand int Stripe het gewone maandbedrag; opzeggen binnen de maand kost niets.
+ * De toestand die Stripe daarbij stuurt ('trialing') wordt al jaren als lopend abonnement
+ * genormaliseerd (normalizeStripeStatus) — deze feature zet dus alleen de kraan open die er al was.
+ */
+export const PLUS_TRIAL_DAYS = 30;
+
 export const PLUS = {
   id: "plus",
   name: "BoekBrug Plus",
@@ -58,6 +73,8 @@ export const PLUS = {
   btwNote: "incl. btw",
   /** Maandelijks opzegbaar, per direct. Geen opzegtermijn. */
   cancelNote: "maandelijks opzegbaar",
+  /** [PROEFMAAND] Eén zin, overal dezelfde: wie hem leest weet wat hij kost en wanneer. */
+  trialNote: "de eerste maand gratis — opzeggen binnen die maand kost niets",
 } as const;
 
 /** Het archiefproduct. Loopt door nadat de klant is vertrokken — zie bewaarkluis.ts. */

@@ -31,6 +31,7 @@ import { logAuditAction, getClientIP } from '@/lib/audit'
 // [FACTUUR-A] unified numbering + legal delivery — June 2026
 import { generateInvoiceNumber } from '@/lib/invoice-numbering'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
+import { ublAttachmentForInvoice } from '@/lib/ubl-for-email'
 import { sendInvoiceToClient } from '@/lib/email'
 import * as Sentry from '@sentry/nextjs'
 // [ACTING-FOR] Omgebouwd in plaats van dichtgezet. Een verkoper die zich vergiste in een VERSTUURDE
@@ -376,6 +377,15 @@ export async function POST(request: NextRequest) {
         (typeof insertError?.message === 'string' &&
           /duplicate key value|unique constraint|exceeds original invoice/i.test(insertError.message))
       if (raceLost) {
+        // [TRUST-NUMBER] Het gemunte nummer is verbruikt en het document is er niet — een echt
+        // gat in de doorlopende reeks (Art. 35). De send-route meldt precies dit al aan Sentry;
+        // deze route deed het stil, en een gat waarvan niemand weet is een gat dat de
+        // [DOORLOPEND]-controle later als raadsel aan de eigenaar voorlegt.
+        console.warn('[TRUST-NUMBER] Creditnota race lost — minted number unused (gap)', { original_invoice_id })
+        Sentry.captureMessage('creditnota race: minted number unused (sequence gap)', {
+          level: 'warning',
+          extra: { original_invoice_id },
+        })
         return NextResponse.json(
           { error: 'Er is inmiddels een andere creditnota op deze factuur gemaakt — kijk even wat er nog openstaat en probeer het opnieuw.' },
           { status: 409 }
@@ -534,6 +544,9 @@ export async function POST(request: NextRequest) {
             dueDate: creditnota.due_date ?? '',
             invoiceDate: creditnota.invoice_date ?? undefined,
             pdfBuffer,
+            // [E-FACTUUR-MEE] De creditnota als UBL 381 naast de PDF — zelfde generator als de
+            // factuurmail, best-effort, nooit een blokkade voor de bezorging.
+            ublAttachment: await ublAttachmentForInvoice(supabase, creditnota.id),
             isCreditnota: true,
           })
         } catch (deliveryErr) {

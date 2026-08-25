@@ -387,3 +387,20 @@ test("[DEEL-CREDIT-CUMULATIEF] the LONGEST matching description wins", () => {
   assert.equal(checkCreditSelection(lijkend, [{ id: "w2", quantity: 1 }], al), "quantity_exceeds_line");
   assert.equal(checkCreditSelection(lijkend, [{ id: "w1", quantity: 1 }], al), null);
 });
+
+test("[EMMER-SLEUTEL] twee identieke regels delen ook BINNEN één selectie hun emmer", () => {
+  // A en B zijn inhoudelijk dezelfde regel (zelfde tekst/prijs/tarief/eenheid), samen geleverd: 2.
+  // Het plafond is per emmer; de teller binnen één selectie liep per id — dus A:1 + B:2 kreeg
+  // voor B een verse teller tegen hetzelfde gedeelde plafond en er werden 3 eenheden uit een
+  // emmer van 2 teruggenomen. BTW teruggevraagd waar niets tegenover staat, op een genummerd
+  // document. Het scherm kan dit niet sturen; de losse aanroep wél.
+  const dubbel = [
+    { id: "a", description: "Doos appels", quantity: 1, unit_price: 1000, btw_rate: 9, line_total: 1000, unit: "stuks" },
+    { id: "b", description: "Doos appels", quantity: 1, unit_price: 1000, btw_rate: 9, line_total: 1000, unit: "stuks" },
+    { id: "c", description: "Iets anders", quantity: 1, unit_price: 1000, btw_rate: 21, line_total: 1000, unit: "stuks" },
+  ];
+  assert.equal(checkCreditSelection(dubbel, [{ id: "a", quantity: 1 }, { id: "b", quantity: 2 }]), "quantity_exceeds_line");
+  // De legitieme volle emmer blijft gewoon kunnen: samen precies wat er geleverd is.
+  assert.equal(checkCreditSelection(dubbel, [{ id: "a", quantity: 1 }, { id: "b", quantity: 1 }]), null);
+});
+
