@@ -167,7 +167,7 @@ export async function GET(req: NextRequest) {
         description: b.description,
         category: b.category,
         linkedInvoiceDirection: b.invoice_id ? linkedDirection.get(b.invoice_id) ?? null : null,
-        posSettlement: toResultBankTx(b).posSettlement,
+        posSettlement: toResultBankTx(b).posSettlement === true,
       })),
       cash: cashRows.map((c) => ({
         id: c.id,
