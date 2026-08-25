@@ -14943,3 +14943,50 @@ test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carrie
   assert.match(bank, /document\.addEventListener\('visibilitychange', onVisible\)/,
     "a tab left open re-asks the matcher instead of re-offering a settled invoice");
 });
+
+test("[PULS] money recorded with nobody present is TOLD, and the morning mail is quiet by default", () => {
+  // ── The Mollie bell: [JET-GAP0]'s own doctrine applied to the sixth entry point ──
+  // The webhook books a payment while the owner sleeps; every other automatic booking already
+  // rings the bell, and this one moved money in silence. The bell goes through the ONE writer
+  // (service-role inside, push fan-out included) and sits AFTER the row is stamped 'paid', so a
+  // failed courtesy can never turn a delivered payment into a Mollie retry loop.
+  const hook = code("src/app/api/mollie/webhook/route.ts");
+  assert.match(hook, /createNotification\(\{\s*\n\s*userId: link\.user_id,/, "the bell rings through the one notification writer");
+  assert.match(hook, /type: 'payment',/, "…as a payment");
+  assert.match(hook, /link: `\/dashboard\/invoice\/\$\{link\.invoice_id\}`,/, "…and it opens the invoice it is about");
+  const paidStampAt = hook.indexOf(".update({ status: 'paid', paid_at: verdict.paidAt");
+  const bellAt = hook.indexOf("createNotification({");
+  assert.ok(paidStampAt > 0 && bellAt > paidStampAt, "the booking is finished before the courtesy is attempted");
+
+  // ── [OCHTEND] The restraint rule lives in the pure module, where a fixture can prove it ──
+  const digest = code("src/lib/ochtend-digest.ts");
+  assert.match(digest, /if \(betalingen\.length === 0 && inkomend === 0\) return null;/,
+    "a quiet day says NOTHING — an empty digest teaches the reader to delete unread");
+  assert.match(digest, /p\.amount > 0/, "a zero or garbage amount is not money that came in");
+
+  // ── The cron fetches, the module decides — and the fetch respects the authorities ──
+  const cron = code("src/app/api/cron/ochtend/route.ts");
+  assert.match(cron, /timingSafeEqualStr\(auth, `Bearer \$\{secret\}`\)/, "iterates every owner — never publicly callable");
+  assert.match(cron, /amsterdamMidnightUtc\(gisteren\)/, "[TZ] yesterday is the OWNER's day, bounded on the Amsterdam clock");
+  assert.match(cron, /effectiveDirection\(inv, link\.user_id\) !== "outgoing"/,
+    "a settle of an incoming invoice is the owner paying a bill — real, but not this mail's news");
+  assert.match(cron, /if \(p\.role === "accountant"\)/, "the accountant's morning is [DAGSTART] — two messages about one desk is noise");
+  assert.match(cron, /if \(p\.ochtend_mail === false\)/, "a courtesy that cannot be declined is not a courtesy");
+  assert.match(cron, /isMissingColumn\(eerste\.error\.message, eerste\.error\.code\)/,
+    "[DEPLOY-SAFE] the opt-out column may arrive after the deploy, in either order");
+  assert.match(cron, /planOchtendMail\(\{/, "the speak-or-stay-quiet decision is the module's, never the route's");
+
+  // ── The schedule exists, and the heartbeat knows the job ──
+  const vercel = readFileSync("vercel.json", "utf8");
+  assert.match(vercel, /"\/api\/cron\/ochtend"/, "the cron is scheduled — a morning mail that never runs is a silent feature");
+  const beat = code("src/lib/cron-heartbeat.ts");
+  assert.match(beat, /ochtend: 24,/, "…and watched: if it stops, the daily return moment vanishes without a sound");
+
+  // ── Delivery: through the chokepoint, never critical, and the owner can turn it off ──
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /deliverEmail\(__sendResult, \{ label: 'ochtend-digest', critical: false \}\)/,
+    "a failed digest is a missed courtesy, not a broken operation");
+  const instellingen = code("src/app/dashboard/settings/page.tsx");
+  assert.match(instellingen, /\.update\(\{ ochtend_mail: ochtendMail \}\)/, "the off switch exists");
+  assert.match(instellingen, /t\('inst\.ochtendMail'\)/, "…and is on the screen, in the vocabulary");
+});

@@ -39,7 +39,9 @@ import { reportHandledFailure } from '@/lib/report-handled'
 // praktijk +00:00). Een kale slice(0,10) dateert een betaling van 00:30 Amsterdam op de dag
 // ervóór, en onder het kasstelsel is dat een BTW-kwartaal dat al ingediend kan zijn — precies
 // het faalpatroon dat format-nl.ts:91 beschrijft. Dus: de Amsterdamse dag van dat moment.
-import { amsterdamToday } from '@/lib/format-nl'
+import { amsterdamToday, formatEuroNL } from '@/lib/format-nl'
+// [PULS] The bell for automatically recorded money — the same writer every auto-booking uses.
+import { createNotification } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
 
@@ -224,5 +226,35 @@ export async function POST(req: NextRequest) {
     .update({ status: 'paid', paid_at: verdict.paidAt, marked_at: new Date().toISOString(), ...(overpayNote ? { last_error: overpayNote } : {}) })
     .eq('id', link.id)
     .eq('user_id', link.user_id)
+
+  // [PULS] The bell, per [JET-GAP0]'s own doctrine: money was recorded with nobody present, so
+  // the owner is TOLD — bell + push, the same channel every automatic booking already uses. This
+  // is the one notification a freelancer never tires of. Best-effort: the booking above is done
+  // and a failed courtesy may never turn a delivered payment into a Mollie retry loop.
+  try {
+    const { data: betaaldeFactuur } = await pipeline
+      .from('invoices')
+      .select('invoice_number')
+      .eq('id', link.invoice_id)
+      .maybeSingle()
+    const bedrag = applied != null && Number.isFinite(applied) && applied > 0
+      ? applied
+      : Number(link.amount_value)
+    const nummer = betaaldeFactuur?.invoice_number ? ` ${betaaldeFactuur.invoice_number}` : ''
+    const melding = await createNotification({
+      userId: link.user_id,
+      title: `${formatEuroNL(bedrag)} betaald via iDEAL`,
+      body: `Factuur${nummer} is zojuist via iDEAL betaald en op betaald gezet.` +
+        (overpayNote ? ' Let op: een deel was meer dan er open stond — zie de betaalpagina-kaart.' : ''),
+      type: 'payment',
+      link: `/dashboard/invoice/${link.invoice_id}`,
+    })
+    if (!melding.ok) {
+      console.error('[PULS] Mollie payment notification insert failed', { rowId, error: melding.error })
+    }
+  } catch (e) {
+    console.error('[PULS] Mollie payment notification failed', { rowId, error: e instanceof Error ? e.message : String(e) })
+  }
+
   return NextResponse.json({ ok: true })
 }

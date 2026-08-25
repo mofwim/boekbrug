@@ -289,6 +289,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('mollie.sql', 'policy', 'mollie_connections_select_own', 'mollie_connections', 'public'),
   ('mollie.sql', 'table', 'mollie_connections', null, 'public'),
   ('mollie.sql', 'table', 'mollie_payment_links', null, 'public'),
+  ('ochtend_mail.sql', 'column', 'ochtend_mail', 'profiles', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_responded_at', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response_name', 'invoices', 'public'),
@@ -416,7 +417,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 113 migraties
+-- NIET VAST TE STELLEN — 9 van de 114 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

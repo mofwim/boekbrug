@@ -31,6 +31,11 @@ export const CRON_JOBS = {
   // Een run zonder berichten is dus de gezonde normaaltoestand, niet een storing; wat hier bewaakt
   // wordt is dat de run zelf gebeurde.
   "accountant-daily": 24,
+  // [OCHTEND] De ochtendmail aan de ondernemer. Dagelijks en met opzet meestal STIL — hij spreekt
+  // alleen over gisteren gebeurde feiten (binnengekomen betalingen, aangekomen inkomende
+  // facturen), dus een run zonder mails is de gezonde normaaltoestand. Bewaakt wordt dat de run
+  // zelf gebeurde: valt hij stil, dan verdwijnt het dagelijkse terugkeermoment geruisloos.
+  ochtend: 24,
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

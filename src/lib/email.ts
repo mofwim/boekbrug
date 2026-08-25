@@ -92,6 +92,27 @@ async function deliverEmail(
 }
 
 
+// ── [OCHTEND] The owner's morning line — composed by ochtend-digest.ts, delivered here ─────────
+// Never critical: a failed digest is a missed courtesy, not a broken operation. The plain-text
+// twin comes from the [MAIL-TEKST] chokepoint like every other sender.
+export async function sendOchtendMail({
+  toEmail,
+  subject,
+  html,
+}: {
+  toEmail: string
+  subject: string
+  html: string
+}) {
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html,
+  })
+  return deliverEmail(__sendResult, { label: 'ochtend-digest', critical: false })
+}
+
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
   toEmail,
