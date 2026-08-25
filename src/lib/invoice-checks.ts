@@ -37,6 +37,7 @@
 // existing ones concluded.
 
 import { classifyImportHealth, type HealthInput, type FieldConfidence } from '@/lib/import-health'
+import { formatEuroNL } from '@/lib/format-nl'
 import { creditStance, payableAsDebt } from '@/lib/creditnota-signal'
 import { classifyBtwSplit, btwSplitCorroborated, btwSplitDetail } from '@/lib/btw-split'
 
@@ -123,11 +124,27 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   // green tick for a check that mostly cannot run (a photo has no text to search), and this
   // checklist does not hand out ticks it has not earned.
   if (health.flags.notOnDocument) {
+    // [ANDER-TOTAAL] The card's warning already names the witness's own totals block when there is
+    // one; this row said only "ga de factuur maar halen". Same evidence, same sentence quality:
+    // name WHO looked (the document's own text, or a second read of a scan — those are different
+    // strengths and the owner may not be told they are the same), and when the witness saw a block
+    // that adds up, put it on the screen so the check is a glance instead of a search.
+    const grounding = (inv.field_confidence as {
+      _grounding?: { source?: string; alternative?: { ex: number; btw: number; inc: number } }
+    } | null)?._grounding
+    const viaOcr = grounding?.source === 'ocr'
+    const alt = grounding?.alternative
+    const witness = viaOcr
+      ? 'onze tweede, blinde leesbeurt van deze scan vond het bedrag dat wij lazen niet terug'
+      : 'het bedrag dat wij lazen staat niet in de tekst van dit document'
+    const wijzer = alt
+      ? ` — op het document staat wél ${formatEuroNL(alt.ex)} + ${formatEuroNL(alt.btw)} btw = ${formatEuroNL(alt.inc)}; vergelijk dat even met de factuur`
+      : ' — vergelijk het even met de factuur'
     out.push({
       id: 'total-on-document',
       label: 'Totaalbedrag teruggevonden op het document',
       outcome: 'flagged',
-      detail: 'het bedrag dat wij lazen staat niet in de tekst van dit document — vergelijk het even met de factuur',
+      detail: `${witness}${wijzer}`,
     })
   }
 

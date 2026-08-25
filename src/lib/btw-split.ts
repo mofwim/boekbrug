@@ -80,6 +80,18 @@ export type BtwSplitVerdict =
    * 21% of 1.123,62 is 235,96. The row disagreed with its own rate by € 134,83 and nothing looked.
    */
   | { kind: 'row-inconsistent'; rate: number; rows: readonly BtwSplitRow[]; offenders: readonly BtwSplitRow[] }
+  /**
+   * [RIJ-VERKEERD-ETIKET] The BALKIP/BAL shape, settled instead of merely flagged: ONE non-zero
+   * row whose amounts equal what we stored, whose btw fits exactly one OTHER legal rate, under a
+   * label that fits nothing. GROOTHANDEL M.H. BAL 264242 is the case: the reader returned
+   * "21% over 697,09 = 62,74", 21% of 697,09 is 146,39 — but 62,74 is 9% of 697,09 to the cent.
+   * The invoice is fine and the booked amounts are fine; only the reader's rate label is wrong.
+   * Telling the owner "kijk even welk tarief er op de factuur staat" sent them searching for a
+   * problem the arithmetic had already solved. The amounts carry the same two-constraint
+   * corroboration that earns 'single-rate' its tick, so this is a pass — with the relabel said
+   * out loud, never silently.
+   */
+  | { kind: 'row-mislabeled'; rate: number; claimed: number; rows: readonly BtwSplitRow[] }
   /** A blend, and the per-rate block we read adds up to what we stored. */
   | { kind: 'blend-verified'; rate: number; rows: readonly BtwSplitRow[] }
   /** A blend, and nothing to check it against. The rate axis could not run. */
@@ -177,7 +189,31 @@ export function classifyBtwSplit(input: {
       const expected = Math.abs(r.base) * (r.rate / 100)
       return Math.abs(Math.abs(r.btw) - expected) > rateTolerance(r.base)
     })
-    if (offenders.length > 0) return { kind: 'row-inconsistent', rate, rows, offenders }
+    if (offenders.length > 0) {
+      // [RIJ-VERKEERD-ETIKET] Before flagging, ask whether the arithmetic already settles it.
+      // Strict on purpose — ALL of:
+      //   · exactly one offending row, and it is the only non-zero row in the block (the standard
+      //     Dutch block prints its other rates as 0-over-0, which never offend);
+      //   · that row's amounts are OUR stored pair (same base, same btw) — so relabeling the row
+      //     is a statement about the same two numbers the booking carries, not about a third;
+      //   · its btw fits exactly ONE legal rate, and not the one on its label.
+      // Anything looser stays 'row-inconsistent': a genuine mixed block with one bad row, or a
+      // row that fits no rate at all, is a real question for the owner.
+      const nonZero = rows.filter((r) => Math.abs(r.base) > 0.005 || Math.abs(r.btw) > SUM_TOLERANCE)
+      if (offenders.length === 1 && nonZero.length === 1 && offenders[0] === nonZero[0]) {
+        const r0 = offenders[0]
+        const rowIsStoredPair =
+          Math.abs(Math.abs(r0.base) - Math.abs(ex)) <= SUM_TOLERANCE &&
+          Math.abs(Math.abs(r0.btw) - Math.abs(btw)) <= SUM_TOLERANCE
+        const fits = NL_RATES.filter(
+          (r) => Math.abs(Math.abs(r0.btw) - Math.abs(r0.base) * (r / 100)) <= rateTolerance(r0.base),
+        )
+        if (rowIsStoredPair && fits.length === 1 && fits[0] !== r0.rate) {
+          return { kind: 'row-mislabeled', rate: fits[0], claimed: r0.rate, rows }
+        }
+      }
+      return { kind: 'row-inconsistent', rate, rows, offenders }
+    }
 
     const rowsBase = round2(rows.reduce((s, r) => s + r.base, 0))
     const rowsBtw = round2(rows.reduce((s, r) => s + r.btw, 0))
@@ -210,7 +246,9 @@ export function classifyBtwSplit(input: {
  * callers. `blend-unverified` is deliberately NOT a pass: nothing was compared.
  */
 export function btwSplitCorroborated(v: BtwSplitVerdict): boolean {
-  return v.kind === 'single-rate' || v.kind === 'blend-verified'
+  // [RIJ-VERKEERD-ETIKET] counts: the amounts passed the same two constraints 'single-rate' earns
+  // its tick on — only the reader's rate label was wrong, and the detail line says so out loud.
+  return v.kind === 'single-rate' || v.kind === 'blend-verified' || v.kind === 'row-mislabeled'
 }
 
 /** € 1.234,56 — the same notation as the screen. */
@@ -240,6 +278,14 @@ export function btwSplitDetail(v: BtwSplitVerdict, storedBtw?: number | null): s
         `Kijk even welk tarief er op de factuur staat`
       )
     }
+    case 'row-mislabeled':
+      // The relabel is said out loud, never silent: the tick is about the AMOUNTS, and the owner
+      // deserves to know the printed label was read differently — it is their one-glance check.
+      return (
+        `${v.rate}% — de uitsplitsing is als ${v.claimed}% gelezen, maar de bedragen passen ` +
+        `precies bij ${v.rate}%. De geboekte bedragen kloppen; alleen het tarief-etiket was ` +
+        `vermoedelijk misgelezen`
+      )
     case 'blend-unverified':
       // The Enka state, said out loud. Never a tick: a blend can be any value between the rates,
       // so the amount was compared with nothing at all.

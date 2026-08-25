@@ -171,19 +171,65 @@ test('[BTW-SPLIT] junk rows are ignored rather than treated as a read block', ()
 // 21% of 1.123,62 is 235,96. The row disagreed with its own rate by € 134,83, and the one constraint
 // that would have caught it — base × rate = btw, free, printed right there — was never asked.
 
-test("[RIJ-KLOPT-NIET] a rate taken from the wrong row no longer earns a tick", () => {
+test("[RIJ-VERKEERD-ETIKET] a rate taken from the wrong row is settled by the arithmetic, out loud", () => {
+  // The BALKIP shape, upgraded from flag to verdict: 101,13 is 9% of 1.123,62 to the cent, and no
+  // other legal rate fits. The amounts pass the same two constraints 'single-rate' earns its tick
+  // on — only the reader's label was wrong. Sending the owner to "kijk welk tarief er op de
+  // factuur staat" made them search for a problem the arithmetic had already solved (GROOTHANDEL
+  // M.H. BAL 264242 is the reported case: "21% over 697,09 = 62,74", which is exactly 9%).
   const v = classifyBtwSplit({
     totalExBtw: 1123.62,
     btwAmount: 101.13,
     rows: [{ rate: 21, base: 1123.62, btw: 101.13 }],
   });
-  assert.equal(v.kind, "row-inconsistent");
-  assert.equal(btwSplitCorroborated(v), false, "the column sums agree and it is still not evidence");
+  assert.equal(v.kind, "row-mislabeled");
+  assert.equal(btwSplitCorroborated(v), true, "the amounts corroborate at exactly one legal rate");
+  if (v.kind === "row-mislabeled") {
+    assert.equal(v.rate, 9, "the rate the amounts actually fit");
+    assert.equal(v.claimed, 21, "the rate the row claimed");
+  }
   const detail = btwSplitDetail(v, 101.13);
+  assert.match(detail!, /9%/, "names the fitting rate");
+  assert.match(detail!, /21%/, "and the misread label — the tick is never silent about the relabel");
+  assert.match(detail!, /misgelezen/, "says what probably happened");
+});
+
+test("[RIJ-VERKEERD-ETIKET] the reported BAL invoice, number for number", () => {
+  const v = classifyBtwSplit({
+    totalExBtw: 697.09,
+    btwAmount: 62.74,
+    rows: [{ rate: 21, base: 697.09, btw: 62.74 }],
+  });
+  assert.equal(v.kind, "row-mislabeled");
+  assert.equal(btwSplitCorroborated(v), true);
+});
+
+test("[RIJ-KLOPT-NIET] a row whose btw fits NO legal rate is still flagged with both numbers", () => {
+  // The relabel is strict: it only speaks when exactly one legal rate fits. 50,00 over 697,09 is
+  // 7,2% — no Dutch rate — so this stays the real question it always was.
+  const v = classifyBtwSplit({
+    totalExBtw: 697.09,
+    btwAmount: 50.0,
+    rows: [{ rate: 21, base: 697.09, btw: 50.0 }],
+  });
+  assert.equal(v.kind, "row-inconsistent");
+  assert.equal(btwSplitCorroborated(v), false);
+  const detail = btwSplitDetail(v, 50.0);
   assert.match(detail!, /21%/, "the rate the row claims");
-  assert.match(detail!, /€\s?1\.123,62/, "over what");
-  assert.match(detail!, /€\s?235,96/, "what that rate would actually produce");
-  assert.match(detail!, /€\s?101,13/, "and what is printed instead");
+  assert.match(detail!, /€\s?697,09/, "over what");
+  assert.match(detail!, /€\s?146,39/, "what that rate would actually produce");
+  assert.match(detail!, /€\s?50,00/, "and what is printed instead");
+});
+
+test("[RIJ-VERKEERD-ETIKET] a row that is not our stored pair may not be relabeled", () => {
+  // The relabel is a statement about the SAME two numbers the booking carries. A row whose amounts
+  // differ from what we stored is a different disagreement — the owner gets the full question.
+  const v = classifyBtwSplit({
+    totalExBtw: 1000,
+    btwAmount: 90,
+    rows: [{ rate: 21, base: 697.09, btw: 62.74 }],
+  });
+  assert.equal(v.kind, "row-inconsistent");
 });
 
 test("[RIJ-KLOPT-NIET] the block as the invoice actually prints it is still verified", () => {
