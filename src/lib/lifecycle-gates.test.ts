@@ -6638,7 +6638,9 @@ test("[STATUS] the word for an invoice's state is written once", () => {
 // and messaging surfaces have their own service-role queries and were not read.
 
 test("[RLS-UIT] every service-role query on the money line is scoped to one owner", () => {
-  const ROOTS = ["src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email"];
+  // [MOLLIE] api/mollie erbij: de webhook leest en muteert de geldlijn met service_role, en een
+  // map die buiten dit veld valt is precies waar een ongescopete query ongezien blijft.
+  const ROOTS = ["src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email", "src/app/api/mollie"];
   const walk = (dir: string): string[] => {
     const out: string[] = [];
     if (!existsSync(dir)) return out;
@@ -6765,6 +6767,15 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
       must: ".eq('bundle_id', bundle.id)",
       why: "bundle.id comes from pay_bundles found by .eq('token', token) — the token is the " +
         "credential, and this only expands it to the invoice ids it covers",
+    },
+    {
+      file: "src/app/api/mollie/webhook/route.ts", table: "mollie_payment_links",
+      // Gepind op de select: het excerpt dat deze poort vergelijkt is afgekapt vóór de .eq().
+      must: ".select('id, user_id, invoice_id, link_id, amount_value, status')",
+      why: "the webhook's row lookup. rowId comes from the webhook-URL WE registered at Mollie " +
+        "(a uuid minted by our own insert), the row carries its user_id, and every downstream " +
+        "read and write is scoped to link.user_id from that row. The doorbell can only make us " +
+        "LOOK at our own row — booking still verifies against Mollie with the owner's key",
     },
     {
       file: "src/app/api/invoice/pay-toggle/route.ts", table: "bank_tx_invoices", must: ".upsert(",
@@ -14705,6 +14716,40 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
     "the booking goes through apply_manual_payment with the link row as idempotency key");
   assert.match(hook, /p_method: 'bank'/,
     "iDEAL money is bank money — 'ideal' would violate bank_tx_invoices_method_check");
+
+  // [MOLLIE-TRIAGE] The audit's worst finding: a bare msg.includes('already') treated three RPC
+  // REFUSALS (booking did NOT happen, money DID arrive) as a benign replay and stamped the row
+  // paid in silence. A real replay raises nothing (duplicate=true) — so the triage must name the
+  // exact refusal texts, read the RPC's return record, and alarm instead of shrugging.
+  assert.match(hook, /msg\.includes\('already fully paid'\) \|\| msg\.includes\('already covered'\)/,
+    "the terminal branch names the EXACT refusal texts — a bare 'already' swallows the scoped-key refusal too");
+  assert.doesNotMatch(hook, /msg\.includes\('already'\)[^f]/,
+    "…and the bare substring may not come back");
+  assert.match(hook, /const \{ data: applyRows, error: payErr \}/,
+    "the RPC's return record is READ — LEAST() clamping an overpayment is an event, not a footnote");
+  assert.match(hook, /applied < Number\(link\.amount_value\) - 0\.005/,
+    "…and a clamped overpayment is detected (the customer is owed a refund)");
+  assert.match(hook, /amsterdamToday\(new Date\(verdict\.paidAt\)\)/,
+    "the pay date is the AMSTERDAM day of Mollie's paidAt — a UTC slice books new-year's-night into a filed quarter");
+  assert.doesNotMatch(hook, /paidAt\.slice\(0, 10\)/, "…so the naive slice is gone");
+  assert.ok((hook.match(/reportHandledFailure\(/g) ?? []).length >= 6,
+    "every dead-end (no connection, verify failed, refusal, clamp, transient) reaches a human via the alarm channel");
+  assert.match(hook, /setMollieConnectionError\(/,
+    "…and the sentence the owner actually sees (MollieCard.lastError) now has a writer");
+
+  // [MOLLIE-C7]/[MOLLIE-C8] A stranded placeholder row may never brick iDEAL on an invoice, and
+  // the loser of a same-moment double click gets the winner's URL, not a 503.
+  const idealRoute = code("src/app/api/pay/[token]/ideal/route.ts");
+  assert.match(idealRoute, /existingRow\.checkout_url === '' \|\| existingRow\.link_id\.startsWith\('pending-'\)/,
+    "a placeholder row is cleaned up, never reused as { url: '' }");
+  assert.match(idealRoute, /code\?: string \} \| null\)\?\.code === '23505'/,
+    "the unique-index loser re-reads the winner's link");
+
+  // [MOLLIE-C9] The payout hold is bounded in time and scoped to Mollie — one iDEAL payment in
+  // August must not un-code every CCV settlement forever.
+  const autoCat = code("src/lib/bank-auto-categorize.ts");
+  assert.match(autoCat, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
+  assert.match(autoCat, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
 
   // The pure refusal directions: a wrong amount REFUSES (never clamps, never marks), and a
   // €0/negative ask never becomes a link.

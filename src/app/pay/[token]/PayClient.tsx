@@ -7,7 +7,7 @@
 // that BoekBrug does not process the payment — the customer pays from their own bank.
 // No money moves through us.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 // [SERVER-ZIN] Een machinecode is geen zin — ook niet voor de betalende klant van de klant.
 import { failureText } from '@/lib/server-message'
 
@@ -50,6 +50,7 @@ export default function PayClient({ token }: { token: string }) {
   // [MOLLIE] De klant komt terug van iDEAL vóórdat de webhook verwerkt kan zijn — dan is
   // "betaal nu" tonen verwarrend. De ?ideal=terug-hint overbrugt die seconden eerlijk.
   const [idealBusy, setIdealBusy] = useState(false)
+  const idealBusyRef = useRef(false)
   const [idealError, setIdealError] = useState('')
   const [terugVanIdeal, setTerugVanIdeal] = useState(false)
 
@@ -64,7 +65,10 @@ export default function PayClient({ token }: { token: string }) {
   }, [])
 
   async function startIdeal() {
-    if (idealBusy) return
+    // Ref, niet alleen state: twee klikken binnen één frame lezen allebei idealBusy=false uit
+    // dezelfde render-closure. De ref sluit dat venster; de state blijft voor de knoptekst.
+    if (idealBusy || idealBusyRef.current) return
+    idealBusyRef.current = true
     setIdealBusy(true)
     setIdealError('')
     try {
@@ -72,12 +76,14 @@ export default function PayClient({ token }: { token: string }) {
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json?.url) {
         setIdealError(failureText(res.status, json, 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens hieronder.'))
+        idealBusyRef.current = false
         setIdealBusy(false)
         return
       }
       window.location.href = json.url
     } catch {
       setIdealError('Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens hieronder.')
+      idealBusyRef.current = false
       setIdealBusy(false)
     }
   }

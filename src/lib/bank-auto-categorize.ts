@@ -17,7 +17,7 @@
 import { round2 } from "./invoice-totals";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
-import { counterpartKey, suggestIdentity, isPosPayoutDescription } from "./bank-identity";
+import { counterpartKey, suggestIdentity } from "./bank-identity";
 
 export interface AutoCategorized {
   transactionId: string;
@@ -160,19 +160,27 @@ export async function applyLearnedBankCategories(args: {
   // through. Owners WITHOUT Mollie links keep today's behaviour untouched.
   // Fail-open like the guard above, same reason — and 42P01 (mollie.sql not applied) simply
   // means no links, so no hold.
+  // [MOLLIE-C9] "Recent" is afgedwongen, niet beweerd: één betaalde link van augustus mag niet
+  // voor de rest van het leven van dit account de codering onderdrukken. 45 dagen dekt de
+  // langste Mollie-uitbetaalcadans ruim. En de tekst-test is MOLLIE-specifiek — de brede
+  // PSP-regex (isPosPayoutDescription) zou bij een retail-eigenaar met een CCV-terminal élke
+  // dagelijkse CCV-afrekening voorgoed ongecodeerd laten om één iDEAL-betaling ooit.
   let hasRecentMolliePayout = false;
   try {
+    const cutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: mollieLinks } = await (pipeline as any)
       .from("mollie_payment_links")
       .select("id")
       .eq("user_id", userId)
       .eq("status", "paid")
+      .gte("paid_at", cutoff)
       .limit(1);
     hasRecentMolliePayout = Array.isArray(mollieLinks) && mollieLinks.length > 0;
   } catch { /* no table, no links, no hold */ }
+  const MOLLIE_RE = /\bmollie\b/i;
   const molliePayoutHold = (t: { amount: number | null; counterpart_name: string | null; description: string | null }): boolean =>
-    hasRecentMolliePayout && (t.amount ?? 0) > 0 && isPosPayoutDescription(t.description, t.counterpart_name);
+    hasRecentMolliePayout && (t.amount ?? 0) > 0 && MOLLIE_RE.test(`${t.counterpart_name ?? ""} ${t.description ?? ""}`);
 
   const applied: AutoCategorized[] = [];
   for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }[]) {
