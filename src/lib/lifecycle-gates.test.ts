@@ -7816,6 +7816,27 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[INTAKE-CLAIM] the semantic-duplicate race has its database backstop", () => {
+  // findSemanticDuplicate is read-then-insert and the camera uploads three files in parallel —
+  // the same paper photographed twice passed the SELECT in both requests and booked twice. The
+  // backstop is a claim row under a UNIQUE index; the KEY stays computed in code by the same one
+  // authority the gate uses (SQL never recomputes it — that would be the third authority).
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /from\("intake_claims"\)[\s\S]{0,80}\.insert\(\{ user_id: user\.id, claim_key: claimKey \}\)/, "the claim is taken before the invoice insert");
+  assert.match(intake, /nr:\$\{nrKey\}/, "…keyed on the normalized number when there is one");
+  assert.match(intake, /vendorCoreKey\(v\.vendor \?\? ""\)/, "…and the one vendor-key authority otherwise");
+  assert.match(intake, /ageMs < 120_000/, "a fresh claim refuses; a stale one is taken over, never honoured");
+  assert.match(intake, /!== "42P01"/, "a missing table degrades to today's behaviour — never a blocked upload");
+  assert.match(intake, /if \(!force\) \{/, "a deliberate force-add skips the claim it would trip over");
+  // The claim comes AFTER the semantic gate (which produces the rich 409 with the match), and
+  // BEFORE any storage/insert.
+  const gateAt = intake.indexOf("findSemanticDuplicate(");
+  const claimAt = intake.indexOf('from("intake_claims")');
+  assert.ok(gateAt > 0 && claimAt > gateAt, "gate first, claim second");
+  // And the migration is registered where the operator checks what is applied.
+  assert.match(code("docs/WELKE_MIGRATIES_STAAN_ER.sql"), /'intake_claims\.sql', 'table', 'intake_claims'/, "the checker knows the migration");
+});
+
 test("[ÉÉN-LEVERANCIERSSLEUTEL] the vendor key has one authority, and old keys heal instead of splitting", () => {
   // The noise set existed twice, byte-identical; the day it needed the Univé fix there were two
   // lists to fix. One declaration now, in safecore — and a second one anywhere in src is the

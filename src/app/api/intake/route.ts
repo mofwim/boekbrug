@@ -18,6 +18,7 @@
 // A bank statement is never run through the invoice extractor. SAFECORE Rule 1
 // (arithmetic) still applies on the invoice/receipt write path.
 
+import { round2 } from "@/lib/invoice-totals"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
@@ -80,7 +81,7 @@ import { runBankAutoConfirm } from "@/lib/bank-auto-confirm"
 import { maybeImageToPdf } from "@/lib/image-to-pdf"
 // [SAFECORE Rule 2] semantic duplicate detection — same graded logic as the
 // email path, so the camera/file path also blocks "same invoice, different file".
-import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate } from "@/lib/safecore"
+import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDuplicate, normalizeInvoiceNumber, vendorCoreKey } from "@/lib/safecore"
 // [DUP-TRASHED] De uitzondering op de byte-hash-poort voor een bestand dat de eigenaar zelf heeft
 // weggegooid. Gedeeld met /api/email/upload, /api/bank/attach-invoice en de mailsync — vier kopieën
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
@@ -692,6 +693,75 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 }
       )
+    }
+
+    // ── [INTAKE-CLAIM] The database backstop for the WINDOW the gate above cannot see ─────────
+    //
+    // findSemanticDuplicate is read-then-insert, and the camera surface uploads three files in
+    // parallel: the same paper photographed twice (different bytes, so the byte-hash index is
+    // blind) can pass the SELECT in both requests before either has inserted — both land, both
+    // can auto-advance, cost and voorbelasting booked twice. The claim closes that window with a
+    // UNIQUE (user_id, claim_key) index; the KEY is computed here, by the same one authority
+    // (normalizeInvoiceNumber / vendorCoreKey) the gate itself uses — SQL never recomputes it.
+    //
+    //   · force=true skips the claim: the owner explicitly said "add anyway", and a claim from
+    //     the row he is duplicating on purpose would refuse exactly what he just confirmed;
+    //   · no usable key (no number, no reliable vendor+total) → no claim. Unidentifiable twice-
+    //     uploaded junk is the review queue's problem, not worth refusing real documents over;
+    //   · a claim older than two minutes is STALE (its request is long dead) — taken over, not
+    //     honoured, so a crash between claim and insert never wedges a supplier's invoices;
+    //   · [DEPLOY-SAFE] a missing table (intake_claims.sql not applied yet) degrades to today's
+    //     behaviour: no backstop, never a blocked upload.
+    if (!force) {
+      const claimTotal = v.total_inc_btw ?? v.amount ?? null
+      const nrKey = normalizeInvoiceNumber(v.invoice_number ?? "")
+      const vdKey = vendorCoreKey(v.vendor ?? "")
+      const claimKey =
+        nrKey && claimTotal != null
+          ? `nr:${nrKey}|${round2(claimTotal)}`
+          : vdKey && claimTotal != null
+            ? `vd:${vdKey}|${round2(claimTotal)}|${v.invoice_date ?? ""}`
+            : null
+      if (claimKey) {
+        // intake_claims komt uit intake_claims.sql (met de hand toegepast) en staat niet in de
+        // gegenereerde typen — zelfde ontspannen client als planForUser, om dezelfde reden.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const claimPipe = createPipelineClient() as any
+        const { error: claimErr } = await claimPipe
+          .from("intake_claims")
+          .insert({ user_id: user.id, claim_key: claimKey })
+        if (claimErr && (claimErr as { code?: string }).code === "23505") {
+          // Someone holds this claim. Honour it only while it is FRESH.
+          const { data: holder } = await claimPipe
+            .from("intake_claims")
+            .select("id, created_at")
+            .eq("user_id", user.id)
+            .eq("claim_key", claimKey)
+            .maybeSingle()
+          const ageMs = holder?.created_at ? Date.now() - Date.parse(holder.created_at) : Infinity
+          if (holder && ageMs < 120_000) {
+            return NextResponse.json(
+              {
+                error:
+                  "Ditzelfde document wordt op dit moment al verwerkt (een dubbele upload of dubbelklik). Wacht een paar seconden en kijk in je overzicht — staat het er dan niet, probeer het opnieuw.",
+                duplicate: true,
+                inFlight: true,
+              },
+              { status: 409 },
+            )
+          }
+          if (holder) {
+            // Stale — take it over so a crashed request never wedges this supplier's invoices.
+            await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id).catch(() => {})
+          }
+        } else if (claimErr && (claimErr as { code?: string }).code !== "42P01") {
+          // Any other failure: log, proceed. The backstop must never refuse real uploads over
+          // its own hiccup — the semantic gate above already ran.
+          console.error("[INTAKE-CLAIM] claim insert failed (proceeding without backstop)", { error: claimErr.message })
+        }
+        // Opportunistic hygiene: sweep this user's stale claims so the table stays tiny.
+        await claimPipe.from("intake_claims").delete().eq("user_id", user.id).lt("created_at", new Date(Date.now() - 3_600_000).toISOString()).catch(() => {})
+      }
     }
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
 

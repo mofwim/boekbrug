@@ -222,6 +222,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('feedback.sql', 'table', 'feedback', null, 'public'),
   ('folders_accountant_read.sql', 'policy', 'folders_accountant_read', 'folders', 'public'),
   ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', 'invitations', 'public'),
+  ('intake_claims.sql', 'table', 'intake_claims', null, 'public'),
+  ('intake_claims.sql', 'index', 'uq_intake_claims_user_key', null, 'public'),
   ('invoice_accountant_write_guard.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
   ('invoice_accountant_write_guard.sql', 'function', 'prevent_verwerkt_invoice_changes', null, 'public'),
   ('invoice_archive_reason.sql', 'column', 'archive_reason', 'invoices', 'public'),
