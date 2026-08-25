@@ -17,7 +17,7 @@
 import { round2 } from "./invoice-totals";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
-import { counterpartKey, suggestIdentity } from "./bank-identity";
+import { counterpartKey, suggestIdentity, isPosPayoutDescription } from "./bank-identity";
 
 export interface AutoCategorized {
   transactionId: string;
@@ -149,6 +149,31 @@ export async function applyLearnedBankCategories(args: {
   const paidExplains = (txAmount: number, txDate: string | null): boolean =>
     paidInvoiceExplainsLine(paidRows, txAmount, txDate);
 
+  // ── [MOLLIE-UITBETALING] Does this owner receive iDEAL money through their own Mollie? ──────
+  //
+  // A Mollie payout credit is the BATCHED, FEE-REDUCED sum of payments whose invoices the
+  // webhook already marked paid — so [DUBBEL-GEDEKT]'s cent-exact amount match can never catch
+  // it (the fee shifts every amount). For an owner with recent webhook-paid links, an
+  // auto-written category on a Mollie-named credit is therefore a double booking waiting for a
+  // click. Those lines stay uncategorized: the owner codes them consciously (usually as the
+  // settlement of already-booked invoices), the human channel this app routes every ambiguity
+  // through. Owners WITHOUT Mollie links keep today's behaviour untouched.
+  // Fail-open like the guard above, same reason — and 42P01 (mollie.sql not applied) simply
+  // means no links, so no hold.
+  let hasRecentMolliePayout = false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: mollieLinks } = await (pipeline as any)
+      .from("mollie_payment_links")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("status", "paid")
+      .limit(1);
+    hasRecentMolliePayout = Array.isArray(mollieLinks) && mollieLinks.length > 0;
+  } catch { /* no table, no links, no hold */ }
+  const molliePayoutHold = (t: { amount: number | null; counterpart_name: string | null; description: string | null }): boolean =>
+    hasRecentMolliePayout && (t.amount ?? 0) > 0 && isPosPayoutDescription(t.description, t.counterpart_name);
+
   const applied: AutoCategorized[] = [];
   for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }[]) {
     const key = counterpartKey(t.counterpart_name);
@@ -158,6 +183,9 @@ export async function applyLearnedBankCategories(args: {
     // [DUBBEL-GEDEKT] A P&L category over money a paid invoice already explains is a double
     // booking, not a coding. The human links it instead.
     if ((s.category === "kosten" || s.category === "omzet") && paidExplains(t.amount ?? 0, t.date)) continue;
+    // [MOLLIE-UITBETALING] A PSP payout at an owner whose invoices Mollie already settled: the
+    // money is (largely) booked. Leave the line for the human, never pre-fill it.
+    if (molliePayoutHold(t)) continue;
 
     const { data, error } = await pipeline
       .from("bank_transactions")

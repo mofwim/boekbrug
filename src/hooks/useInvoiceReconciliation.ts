@@ -18,7 +18,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 
-export type ConfirmMatchResult = 'ok' | 'navigate' | 'error'
+// [CIRKEL] 'navigate' carries the transaction id when the map has one, so the caller can land
+// ON THE LINE (/dashboard/bank/verdelen/{txId}) instead of on top of a quarter-filtered list
+// that may not even contain it. txId null = no pending match known → the bare bank page.
+export type ConfirmMatchResult = 'ok' | 'error' | { navigate: true; txId: string | null }
 
 // [MATCH-BUTTON] `applyMap` lets a caller that ALREADY holds a fresh map install it directly —
 // POST /api/reconcile/run returns the map from the same builder this hook fetches, so re-fetching
@@ -29,8 +32,13 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
   confirmMatch: (invoiceId: string) => Promise<ConfirmMatchResult>
   refetch: () => void
   applyMap: (map: Record<string, InvoiceRecon>) => void
+  /** [CIRKEL] Ambiguous matches waiting on the bank page — the count was in the SAME response
+   *  this hook already fetched and was discarded; a standing line beats a post-run sheet that
+   *  vanishes on close. */
+  pendingMatchCount: number
 } {
   const [byInvoice, setByInvoice] = useState<Record<string, InvoiceRecon>>({})
+  const [pendingMatchCount, setPendingMatchCount] = useState(0)
   const [loaded, setLoaded] = useState(false)
   const [reloadTick, setReloadTick] = useState(0)
 
@@ -43,6 +51,7 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
         if (!res.ok) return
         const json = await res.json()
         if (!cancelled && json?.byInvoice) setByInvoice(json.byInvoice as Record<string, InvoiceRecon>)
+        if (!cancelled && typeof json?.pendingMatchCount === 'number') setPendingMatchCount(json.pendingMatchCount)
       } catch {
         // Silent: no badges is an acceptable degraded state, never a broken list.
       } finally {
@@ -63,8 +72,10 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
 
   const confirmMatch = useCallback(async (invoiceId: string): Promise<ConfirmMatchResult> => {
     const pending = byInvoice[invoiceId]?.pendingMatch
-    // No confident match, or an amount-only one → the owner must decide on the bank page.
-    if (!pending || !pending.safe) return 'navigate'
+    // No confident match, or an amount-only one → the owner must decide on the bank page —
+    // and lands on the specific LINE when we know which one ([CIRKEL]: the id was always in
+    // this variable and was thrown away one line later).
+    if (!pending || !pending.safe) return { navigate: true, txId: pending?.transactionId ?? null }
     try {
       const res = await fetch('/api/bank/confirm', {
         method: 'POST',
@@ -89,5 +100,5 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
     }
   }, [byInvoice])
 
-  return { byInvoice, loaded, confirmMatch, refetch, applyMap }
+  return { byInvoice, loaded, confirmMatch, refetch, applyMap, pendingMatchCount }
 }

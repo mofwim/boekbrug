@@ -31,8 +31,11 @@ export async function GET() {
   const pipeline = createPipelineClient();
 
   try {
-    const { byInvoice } = await buildInvoiceReconciliationMap({ pipeline, userId: user.id });
-    return NextResponse.json({ ok: true, byInvoice });
+    // [CIRKEL] The builder computes these counts anyway; sending them lets the invoice screens
+    // show a STANDING "N betalingen wachten op de bankpagina" line instead of a post-run sheet
+    // that vanishes on close.
+    const { byInvoice, pendingTransactions, pendingMatchCount } = await buildInvoiceReconciliationMap({ pipeline, userId: user.id });
+    return NextResponse.json({ ok: true, byInvoice, pendingTransactions, pendingMatchCount });
   } catch (e) {
     return NextResponse.json(
       { error: "reconciliation_failed", detail: e instanceof Error ? e.message : String(e) },

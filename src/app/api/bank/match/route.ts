@@ -341,6 +341,15 @@ export async function GET() {
       })
       .map((r) => (r as { id: string }).id),
   );
+  // The ONE evidence bar for "this debit is explained by that invoice", shared by the paid pass
+  // and the [CIRKEL] queued pass so the two can never drift: a quoted reference or the vendor's
+  // IBAN plus the amount — or, for a kassabon (which has neither), the shop name, the exact
+  // amount and the day agreeing. [BON-AUTO]: three independent axes are the only evidence this
+  // document class can produce; that is identification, not a weaker guess.
+  const strongExplain = (sig: string[], isReceipt: boolean): boolean =>
+    ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) ||
+    (isReceipt && sig.includes("counterpart") && sig.includes("amount") && sig.includes("date"));
+
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0) {
     const paidAsCandidates = (paidInvRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
@@ -348,18 +357,46 @@ export async function GET() {
     for (const m of explainResult.matches) {
       const id = m.transaction.transactionId;
       if (!id || !m.best) continue;
-      const sig = m.best.signals;
-      if ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) paidExplained.add(id);
-      // [BON-AUTO] For a kassabon, the identity that exists is the SHOP NAME, the exact amount and
-      // the day — the bank line for a card purchase carries the counterpart and nothing else. Three
-      // independent axes agreeing is not weaker evidence than a reference; it is the only evidence
-      // this document class can produce. Display-only, exactly like the rule above: this hides a
-      // false alarm, it never books, re-pays or links anything.
-      else if (
-        receiptIds.has(m.best.invoiceId) &&
-        sig.includes("counterpart") && sig.includes("amount") && sig.includes("date")
-      ) {
-        paidExplained.add(id);
+      if (strongExplain(m.best.signals, receiptIds.has(m.best.invoiceId))) paidExplained.add(id);
+    }
+  }
+
+  // [CIRKEL] The SAME rescue for invoices still sitting in the verify queue ('processing'). The
+  // matcher rightly excludes them from bookable candidates (an unverified amount must not book),
+  // so their debit fell to outcome 'none' and the missing-invoice banner then told the owner to
+  // "toevoegen of ophalen" — to upload a document the app is ALREADY HOLDING one tap away from
+  // verified. That is the circle breaking loudest: the bank page sending the owner to re-create
+  // what the incoming page has. Explain-only, exactly like the paid pass: a strong hit names the
+  // queued invoice so the UI can link STRAIGHT to its verify step; nothing books, nothing pays.
+  const queuedExplained = new Map<string, { invoiceId: string; invoiceNumber: string | null }>();
+  {
+    const queuedRows = await fetchAllRows((from, to) =>
+      pipeline
+        .from("invoices")
+        .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .eq("status", "processing")
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if ((queuedRows ?? []).length > 0) {
+      const queuedReceiptIds = new Set(
+        (queuedRows ?? [])
+          .filter((r) => {
+            const fc = (r as { field_confidence?: unknown }).field_confidence;
+            return !!fc && typeof fc === "object" && (fc as { _intake_kind?: unknown })._intake_kind === "receipt";
+          })
+          .map((r) => (r as { id: string }).id),
+      );
+      const queuedAsCandidates = (queuedRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
+      const queuedResult = matchTransactions(transactions, queuedAsCandidates);
+      for (const m of queuedResult.matches) {
+        const id = m.transaction.transactionId;
+        if (!id || !m.best) continue;
+        if (strongExplain(m.best.signals, queuedReceiptIds.has(m.best.invoiceId))) {
+          const inv = (queuedRows ?? []).find((r) => (r as { id: string }).id === m.best!.invoiceId) as { id: string; invoice_number: string | null } | undefined;
+          if (inv) queuedExplained.set(id, { invoiceId: inv.id, invoiceNumber: inv.invoice_number });
+        }
       }
     }
   }
@@ -428,6 +465,9 @@ export async function GET() {
       appliedAmount: isLinked ? (appliedByTx.get(txId!) ?? null) : null,
       // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
       explainedByPaid: txId != null && paidExplained.has(txId),
+      // [CIRKEL] This debit matches an invoice still in the verify queue → not missing either; the
+      // UI links straight to its verify step instead of asking the owner to upload it again.
+      explainedByQueued: txId != null ? queuedExplained.get(txId) ?? null : null,
       // [BANK-SUM-SUGGEST] Unique same-supplier sum tie (or null). Suggestion only — see above.
       sumMatch,
     };

@@ -122,6 +122,10 @@ interface Candidate {
   // Absent on candidates the batch-reconcile path builds → callers fall back to `amount`.
   amountPaid?: number
   remaining?: number
+  // [CIRKEL] Whose invoice this is. The matcher always sent it (bank-matching.ts clientName);
+  // this interface dropped it at the type boundary, so "kies de juiste factuur" was a choice
+  // between bare numbers and dates.
+  clientName?: string | null
 }
 interface Suggestion {
   transactionId: string
@@ -153,6 +157,9 @@ interface Suggestion {
   appliedAmount?: number | null
   // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
   explainedByPaid?: boolean
+  // [CIRKEL] This debit matches an invoice STILL IN THE VERIFY QUEUE — the document exists, one
+  // tap from verified. The card links straight to it instead of asking for a re-upload.
+  explainedByQueued?: { invoiceId: string; invoiceNumber: string | null } | null
   // [BANK-AMOUNT-ONLY] 'amount_only' when this line was auto-booked on amount+counterpart only
   // (no printed number/IBAN) → the Gekoppeld card shows a "controleer" flag. null otherwise.
   matchReason?: string | null
@@ -317,7 +324,13 @@ export default function BankClient() {
     Number.isInteger(quarterParam) && quarterParam >= 1 && quarterParam <= 4
       ? `${yearParam}-Q${quarterParam}`
       : null
-  const [quarterSel, setQuarterSel] = useState<string>(linkedQuarter ?? 'auto')
+  // [CIRKEL] ?quarter=all pins the all-quarters view. A cross-page jump ("bekijk bank" from the
+  // match sheet) counts its pending work across ALL quarters, so landing it on 'auto' — the last
+  // completed quarter — could show an empty list about a real count. 'all' can never be empty
+  // about work that exists.
+  const [quarterSel, setQuarterSel] = useState<string>(
+    searchParams.get('quarter') === 'all' ? 'all' : linkedQuarter ?? 'auto'
+  )
   // [BANK-IGNORE] Ignored transactions (status 'not_found'), loaded lazily when
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
@@ -489,6 +502,16 @@ export default function BankClient() {
     autoRanRef.current = true
     void (async () => { await autoConfirm() })()
   }, [data, autoRunning, autoConfirm])
+
+  // [CIRKEL] A tab left open here while the owner pays on Crediteuren kept offering the
+  // settled invoice until a manual reload — every in-page action re-runs the matcher, only
+  // cross-page mutations didn't. Re-run when the tab becomes visible again; the matcher is
+  // read-only, so the worst case of an extra run is a fresh answer.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') void runMatch() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [runMatch])
 
   // [BANK-PERSIST] Initial load — show stored pending transactions on refresh.
   useEffect(() => {
@@ -1288,7 +1311,7 @@ export default function BankClient() {
   // [BANK-PAID-EXPLAINED] Exclude a debit that matches an already-PAID invoice (marked paid by hand
   // in Crediteuren): the invoice exists and its voorbelasting is already claimed, so flagging it as a
   // "missende inkoopfactuur" is a false alarm the owner can never clear.
-  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0 && !s.explainedByPaid)
+  const missingPurchaseDebits = noMatch.filter((s) => s.amount < 0 && !s.explainedByPaid && !s.explainedByQueued)
   const confirmedList = (data?.suggestions ?? []).filter((s) => isDone(s)).filter(inQ).sort(byDateDesc)
   // [BANK-QUARTER] Ignored tab, filtered to the selected quarter too.
   const ignoredInQ = (ignoredList ?? []).filter(inQ)
@@ -3044,10 +3067,30 @@ function TxCard({
             </>
           ) : (
             <>
-              <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
-                {t('bank.fout.geenFactuur')}
-              </div>
+              {s.explainedByQueued ? (
+                /* [CIRKEL] The invoice is already in the app, waiting to be verified — the one
+                   answer that stops the owner from uploading it a second time. */
+                <div style={{ borderRadius: 10, background: '#E8F0FE', padding: '10px 12px' }}>
+                  <div style={{ fontSize: 12.5, color: '#174EA6', display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.5 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>inventory</span>
+                    {s.explainedByQueued.invoiceNumber
+                      ? t('bank.inWachtrij', { number: s.explainedByQueued.invoiceNumber })
+                      : t('bank.inWachtrijZonderNummer')}
+                  </div>
+                  <Link
+                    href={`/dashboard/incoming?focus=${encodeURIComponent(s.explainedByQueued.invoiceId)}`}
+                    style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 17 }}>task_alt</span>
+                    {t('bank.verifieerEerst')}
+                  </Link>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
+                  {t('bank.fout.geenFactuur')}
+                </div>
+              )}
               {/* [BANK-ATTACH] Attach the document(s) for this payment. Shown on
                   BOTH debit (expense → inkoopfactuur) and credit (income/refund →
                   verkoopfactuur) — income also has documents worth linking (a
@@ -3305,6 +3348,9 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
         <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginInlineEnd: 4 }}>task_alt</span>}
           {t('bank.factuurNummer', { number: cand.invoiceNumber ?? '—' })}
+          {/* [CIRKEL] The supplier, right beside the number — the fact a person actually
+              recognizes when choosing between same-looking candidates. */}
+          {cand.clientName && <span style={{ fontWeight: 400, color: emphasis ? M3.success : '#5F6368' }}> · {cand.clientName}</span>}
         </span>
         {/* [BANK-CHOICE-CLARITY] The amount, on the right — the first thing to compare
             when picking between candidates. Green + check when it equals the debit. */}

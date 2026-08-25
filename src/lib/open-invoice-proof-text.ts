@@ -121,6 +121,8 @@ export function describeHit(
 /** One invoice we call open, with the payment that looks like it. */
 export interface ProofPanelRow {
   invoiceId: string
+  /** [CIRKEL] The bank line this question is about — null on legacy hits; then no jump renders. */
+  transactionId: string | null
   /**
    * [BEWIJS-BEANTWOORDEN] The identity of this QUESTION — the invoice and the payment together,
    * not the invoice alone. Answering it silences this pairing; any other payment that ever looks
@@ -171,6 +173,8 @@ export interface OpenInvoiceProofPanel {
   hiddenAction: string
   /** The label on a row's answer control — "Ja, staat nog open". */
   answerLabel: string
+  /** [CIRKEL] "Bekijk in bank" — rendered only on rows that carry a transactionId. */
+  bankLabel: string
   /** What that control is, for a screen reader, where "Ja" on its own says nothing. */
   answerAria: string
   /**
@@ -202,7 +206,7 @@ export function buildProofPanel(
     return {
       alarm: false, failed: true, lead: t('bewijs.leesFout'), rows: [], bounded: null, incoming: [], dir,
       hiddenCount: 0, hidden: null, hiddenAction: t('bewijs.ack.toonWeer'),
-      answerLabel: t('bewijs.ack.knop'), answerAria: t('bewijs.ack.knopAria'),
+      answerLabel: t('bewijs.ack.knop'), bankLabel: t('bewijs.bank.knop'), answerAria: t('bewijs.ack.knopAria'),
       answerNote: t('bewijs.ack.uitleg'),
     }
   }
@@ -224,6 +228,7 @@ export function buildProofPanel(
     const bewijs = describeHit(h, proof.direction, locale)
     return {
       invoiceId: h.invoiceId,
+      transactionId: h.transaction.transactionId ?? null,
       ackKey: hitKey(h),
       title: `${wie} — ${t('bewijs.regel.open', { bedrag: EUR.format(h.openAmount) })}`,
       question: outgoing
@@ -254,6 +259,7 @@ export function buildProofPanel(
       : weg.length === 1 ? t('bewijs.ack.verborgen.een') : t('bewijs.ack.verborgen.meer', { count: weg.length }),
     hiddenAction: t('bewijs.ack.toonWeer'),
     answerLabel: t('bewijs.ack.knop'),
+    bankLabel: t('bewijs.bank.knop'),
     answerAria: t('bewijs.ack.knopAria'),
     answerNote: t('bewijs.ack.uitleg'),
   }

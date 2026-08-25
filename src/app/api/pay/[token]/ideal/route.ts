@@ -1,0 +1,168 @@
+// src/app/api/pay/[token]/ideal/route.ts
+// [MOLLIE] POST — de klant drukt op "Betaal met iDEAL" op de publieke betaalpagina.
+//
+// LAZY, met opzet: de Mollie-betaallink ontstaat pas op deze klik, nooit bij het versturen van
+// de factuur. Dat houdt de wettelijke bezorging volledig los van Mollie, en het betekent dat de
+// link altijd het OPEN bedrag van dít moment vraagt — dezelfde openAmount-waarheid als de QR en
+// het betaalverzoek (toPublicPayView), nooit een eigen som. Is er sinds een eerdere klik een
+// deelbetaling of creditering geweest, dan is de oude link 'stale' (linkIsStale) en wordt hij
+// vervangen (status 'superseded'), niet stilzwijgend hergebruikt.
+//
+// Faalrichting: elke twijfel antwoordt 404/409 met een Nederlandse zin — er wordt dan géén link
+// aangemaakt. Een klant zonder iDEAL-knop kan altijd nog gewoon overmaken (de pagina toont IBAN
+// en QR); een verkeerd bedrag in een betaallink is de onherstelbare kant.
+
+import { NextRequest, NextResponse } from 'next/server'
+import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { toPublicPayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
+import { creditedOnInvoice } from '@/lib/credited-invoices'
+import { getMollieConnection } from '@/lib/mollie-connection'
+import { createMolliePaymentLink, mollieAmountValue, linkIsStale } from '@/lib/mollie'
+import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { SITE_URL } from '@/lib/site'
+
+export const dynamic = 'force-dynamic'
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  const { token } = await params
+  if (!UUID_RE.test(token)) {
+    return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  }
+
+  // Strakker dan de leespagina, en NIET failOpen: deze route maakt iets aan bij een externe
+  // partij. Een database-blip mag een lezing doorlaten, geen aanmaak.
+  const limit = await checkRateLimitByKey({
+    bucketKey: `pay-ideal:${token}`,
+    endpoint: '/api/pay/ideal',
+    ...RATE_LIMITS.PUBLIC_PAY,
+  })
+  if (!limit.allowed) return rateLimitResponse(limit)
+
+  const pipeline = createPipelineClient()
+  // mollie_payment_links staat niet in de gegenereerde typen (mollie.sql wordt met de hand
+  // toegepast) — zelfde ontspannen client als intake_claims, alleen voor die tabel.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const linkPipe = createPipelineClient() as any
+
+  // Zelfde leesketen als GET /api/pay/[token]: factuur → creditering → toPublicPayView.
+  // De autoriteiten (creditedOnInvoice, toPublicPayView) zijn gedeeld; alleen de lijm staat hier.
+  const { data: invoice, error: invoiceErr } = await pipeline
+    .from('invoices')
+    .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
+    .eq('pay_token', token)
+    .maybeSingle()
+  if (invoiceErr || !invoice) {
+    return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  }
+  const invoiceId = (invoice as { id: string }).id
+  const ownerId = (invoice as { sender_id: string }).sender_id
+
+  const credited = await creditedOnInvoice(pipeline as never, invoiceId)
+  if (credited === null) {
+    return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  }
+
+  const { data: owner } = await pipeline
+    .from('profiles')
+    .select('iban, company_name, full_name')
+    .eq('id', ownerId)
+    .single()
+  const view = toPublicPayView(
+    { ...(invoice as BetaalverzoekInvoice), credited_inc_btw: credited },
+    owner ?? { iban: null, company_name: null, full_name: null }
+  )
+  if (!view) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+  if (view.alreadyPaid) {
+    return NextResponse.json({ error: 'Deze factuur is al betaald.' }, { status: 409 })
+  }
+
+  const amountValue = mollieAmountValue(view.amount)
+  if (!amountValue) {
+    return NextResponse.json({ error: 'Er staat geen bedrag open op deze factuur.' }, { status: 409 })
+  }
+
+  const connection = await getMollieConnection(ownerId)
+  if (!connection) {
+    // De knop hoort dan al niet zichtbaar te zijn (idealAvailable=false) — maar een oude tab
+    // kan hem nog tonen. Zeg het gewoon.
+    return NextResponse.json({ error: 'Online betalen is voor deze factuur niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 409 })
+  }
+
+  // Bestaande open link: hergebruiken zolang het bedrag nog klopt, anders vervangen.
+  // [DEPLOY-SAFE] Een 42P01 (mollie.sql nog niet toegepast) antwoordt "niet beschikbaar" —
+  // nooit een halve boeking.
+  const { data: existing, error: linkErr } = await linkPipe
+    .from('mollie_payment_links')
+    .select('id, link_id, checkout_url, amount_value, status')
+    .eq('user_id', ownerId)
+    .eq('invoice_id', invoiceId)
+    .eq('status', 'open')
+    .maybeSingle()
+  if (linkErr) {
+    return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
+  }
+  const existingRow = existing as { id: string; link_id: string; checkout_url: string; amount_value: string; status: string } | null
+  if (existingRow && !linkIsStale(existingRow.amount_value, view.amount)) {
+    return NextResponse.json({ url: existingRow.checkout_url })
+  }
+  if (existingRow) {
+    await linkPipe
+      .from('mollie_payment_links')
+      .update({ status: 'superseded' })
+      .eq('id', existingRow.id)
+      .eq('user_id', ownerId)
+  }
+
+  // Nieuwe rij EERST (met een placeholder-linkid), zodat de webhook-URL het rij-id kan dragen
+  // vóórdat Mollie hem te zien krijgt; daarna de echte link erin. Mislukt Mollie, dan wordt de
+  // rij weer opgeruimd — er blijft nooit een open rij zonder echte link staan.
+  const { data: inserted, error: insErr } = await linkPipe
+    .from('mollie_payment_links')
+    .insert({
+      user_id: ownerId,
+      invoice_id: invoiceId,
+      link_id: `pending-${crypto.randomUUID()}`,
+      checkout_url: '',
+      amount_value: amountValue,
+      status: 'open',
+    })
+    .select('id')
+    .single()
+  if (insErr || !inserted) {
+    return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
+  }
+  const rowId = (inserted as { id: string }).id
+
+  const created = await createMolliePaymentLink(connection.apiKey, {
+    amountValue,
+    description: `Factuur ${view.invoiceNumber ?? invoiceId}`,
+    // Terug naar de betaalpagina zelf: na verwerking zegt die "al betaald"; de ?ideal=terug
+    // hint laat de pagina intussen "we verwerken je betaling" tonen.
+    redirectUrl: `${SITE_URL}/pay/${token}?ideal=terug`,
+    webhookUrl: `${SITE_URL}/api/mollie/webhook?link=${rowId}`,
+  })
+  if ('error' in created) {
+    await linkPipe.from('mollie_payment_links').delete().eq('id', rowId).eq('user_id', ownerId)
+    console.error('[MOLLIE] link aanmaken mislukt', { invoiceId, error: created.error })
+    return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
+  }
+
+  const { error: updErr } = await linkPipe
+    .from('mollie_payment_links')
+    .update({ link_id: created.id, checkout_url: created.checkoutUrl })
+    .eq('id', rowId)
+    .eq('user_id', ownerId)
+  if (updErr) {
+    // De link bestaat bij Mollie maar onze rij kent hem niet → de webhook zou hem nooit kunnen
+    // verifiëren. Niet uitdelen.
+    console.error('[MOLLIE] linkrij bijwerken mislukt', { invoiceId, rowId, error: updErr.message })
+    return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
+  }
+
+  return NextResponse.json({ url: created.checkoutUrl })
+}

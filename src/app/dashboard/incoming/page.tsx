@@ -218,7 +218,9 @@ export default async function IncomingPage() {
       .eq("status", "paid")
       .order("invoice_date", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(50),
+      // [CIRKEL] Was 50 while the received list gets 500 — the "Bevestigd" tab silently
+      // truncated paid history at 50 with no disclosure. 200 matches manage's own window.
+      .limit(200),
 
     // Alle mappen van de eigenaar — nodig om straks de volledige paden op te bouwen. Hij hangt
     // NIET van de documenten af (die koppeling gaat de andere kant op), dus hij mag hier mee.

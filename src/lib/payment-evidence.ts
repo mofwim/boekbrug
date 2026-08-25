@@ -258,6 +258,12 @@ export interface PaymentEvidenceLine {
   tone: 'bank' | 'hand' | 'geen' | 'onbekend'
   /** Carried here so the words and the layout can never render out of step. */
   dir: 'ltr' | 'rtl'
+  /**
+   * [CIRKEL] The bank line behind a bank-proven claim, so the words can be a LINK to the place
+   * where the claim can be checked (/dashboard/bank/verdelen/{txId}). Null for hand/none/unknown
+   * — a tick with no bank row has nowhere to jump to, and a dead link would borrow authority.
+   */
+  txId: string | null
 }
 
 /**
@@ -287,7 +293,7 @@ export function buildPaymentEvidenceLine(
   const dir = localeDir(locale)
 
   if (ev.kind === 'unknown' || ev.kind === 'none') {
-    return { text: describePayment(ev, direction, locale), entries: [], warning: null, tone, dir }
+    return { text: describePayment(ev, direction, locale), entries: [], warning: null, tone, dir, txId: null }
   }
 
   // ── The instalments, when there is more than one ──
@@ -321,7 +327,11 @@ export function buildPaymentEvidenceLine(
     }
   }
 
-  return { text, entries, warning, tone, dir }
+  // [CIRKEL] The first bank-backed link's transaction — the line the sentence is ABOUT.
+  const txId = tone === 'bank'
+    ? ev.links.find((l) => l.transactionId)?.transactionId ?? null
+    : null
+  return { text, entries, warning, tone, dir, txId }
 }
 
 /**
