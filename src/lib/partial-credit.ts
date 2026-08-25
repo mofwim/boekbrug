@@ -259,11 +259,21 @@ export function checkCreditSelection(
 
     // [DEEL-CREDIT-CUMULATIEF] Het plafond is wat er NOG over is van deze regel, niet wat er ooit
     // op stond. Zonder eerdere creditnota's zijn die twee hetzelfde getal.
+    //
+    // [EMMER-SLEUTEL] De teller telt per EMMER (lineKey), niet per regel-id. Het plafond
+    // (remainingForKey) is per emmer — alles wat de regels met dezelfde inhoud samen hebben — en
+    // creditedQuantitiesByLine deelt eerdere creditnota's ook per emmer uit. Alleen deze teller
+    // liep per id, dus twee identieke regels A en B (samen geleverd: 2) accepteerden een selectie
+    // A:1 + B:2: elk id kreeg een verse teller tegen hetzelfde gedeelde plafond, en de creditnota
+    // nam 3 eenheden terug uit een emmer van 2 — btw teruggevraagd waar niets tegenover staat,
+    // op een genummerd document. Het scherm klemt per regel en kan dit niet sturen; deze functie
+    // is er juist voor de aanroep die niet in de hand wordt gehouden.
+    const k = lineKey(bron.description ?? "", bron.unit_price, bron.btw_rate, bron.unit);
     const eerder = alreadyCredited?.get(String(s.id)) ?? 0;
-    const alGevraagd = inDezeSelectie.get(String(s.id)) ?? 0;
+    const alGevraagd = inDezeSelectie.get(k) ?? 0;
     const overGebleven = remainingForKey(lines, bron, eerder + alGevraagd);
     if (Math.abs(gevraagd) > overGebleven + 1e-9) return "quantity_exceeds_line";
-    inDezeSelectie.set(String(s.id), alGevraagd + Math.abs(gevraagd));
+    inDezeSelectie.set(k, alGevraagd + Math.abs(gevraagd));
     if (Math.abs(gevraagd) > 0) anything = true;
   }
   return anything ? null : "nothing_selected";

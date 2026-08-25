@@ -189,10 +189,15 @@ export function buyerCountryCode(clientVatNumber: string | null | undefined): st
   return shape.country === "EL" ? "GR" : shape.country;
 }
 
-/** Format a quantity: up to a few decimals, dot decimal, no trailing-zero noise. */
+/** Format a quantity: up to six decimals, dot decimal, no trailing-zero noise. */
 function qty(n: number): string {
-  // UBL accepts decimals; keep it simple and stable.
-  return String(round2(n));
+  // [R120] Zes decimalen, niet twee. De validator rekent met de GEDRUKTE aantal-waarde:
+  // een regel 0,333 x 100 als "0.33" afdrukken laat hem 33,00 uitrekenen tegenover een
+  // LineExtensionAmount van 33,30 — PEPPOL-EN16931-R120, bestand geweigerd. UBL accepteert
+  // decimalen ruimhartig; de precisie moet dus bij het aantal blijven, en de takkeuze in de
+  // Price-sectie rekent met dezelfde gedrukte waarde zodat document en beslissing nooit
+  // van elkaar kunnen afwijken.
+  return String(Number(n.toFixed(6)));
 }
 
 /**
@@ -537,8 +542,35 @@ export function buildInvoiceUbl(
   for (const a of kortingUitkomst.allowances) allowanceByRate.set(a.rate, a.amount);
   const allowanceTotal = kortingUitkomst.discount_ex_btw;
 
-  const groups = rawGroups.map((g) => {
-    const off = allowanceByRate.get(g.rate) ?? 0;
+  // [KORTING-PER-GROEP] applyDiscount aggregates per RATE, but the tax groups are keyed by
+  // (rate, CATEGORY) — at rate 0 a Z-group and an E-group (vrijgesteld) can coexist. Handing
+  // every group at rate r the full rate-r allowance subtracts it once per group while
+  // taxExclusive subtracts it once in total, so Σ TaxableAmount ≠ TaxExclusiveAmount and the
+  // access point refuses the file (BR-CO-13). Distribute the rate's allowance over that rate's
+  // groups instead: proportional to their share, remainder on the last so the parts sum to the
+  // allowance to the cent — the same idiom applyDiscount itself uses one layer up. Only groups
+  // pointing the same way as the allowance take part (its sign filter, mirrored), so a negative
+  // return-line group never receives a "discount" that reads as a surcharge in the XML.
+  const offByGroup = new Map<number, number>();
+  for (const [rate, amount] of allowanceByRate) {
+    const idx = rawGroups
+      .map((g, i) => ({ g, i }))
+      .filter(({ g }) => g.rate === rate && Math.sign(g.taxable) === Math.sign(amount) && g.taxable !== 0)
+      .sort((a, b) => Math.abs(b.g.taxable) - Math.abs(a.g.taxable));
+    if (idx.length === 0) continue;
+    const base = idx.reduce((sum, { g }) => sum + Math.abs(g.taxable), 0);
+    let assigned = 0;
+    for (let k = 0; k < idx.length; k++) {
+      const part = k === idx.length - 1
+        ? round2(amount - assigned)
+        : round2((amount * Math.abs(idx[k].g.taxable)) / base);
+      assigned = round2(assigned + part);
+      if (part !== 0) offByGroup.set(idx[k].i, part);
+    }
+  }
+
+  const groups = rawGroups.map((g, i) => {
+    const off = offByGroup.get(i) ?? 0;
     if (off === 0) return g;
     const taxable = round2(g.taxable - off);
     return { ...g, taxable, tax: round2((taxable * g.rate) / 100) };
@@ -854,7 +886,9 @@ export function buildInvoiceUbl(
     // Zonder korting is dit letterlijk `ex` en staat hier exact de test die er altijd stond.
     const teReproduceren = round2(ex + kortingBedrag);
     const price = line.ele(NS.cac, "Price");
-    if (round2(aantal * stuksprijs) === teReproduceren) {
+    // [R120] Beslis met het aantal ZOALS HET WORDT AFGEDRUKT — de validator kent alleen dat.
+    const aantalGedrukt = Number(qty(aantal));
+    if (round2(aantalGedrukt * stuksprijs) === teReproduceren) {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(stuksprijs));
     } else {
       price.ele(NS.cbc, "PriceAmount", { currencyID: EUR }).txt(money(Math.abs(teReproduceren)));

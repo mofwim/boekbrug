@@ -37,7 +37,13 @@ import type { UblInvoiceHeader, UblInvoiceLine } from "./ubl-export";
  * array join gives PostgREST's types a `GenericStringError` (BOEK-014).
  */
 export const UBL_INVOICE_SELECT =
-  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number" as const;
+  // [KORTING-KOP] discount_type/discount_value zijn de korting op DOCUMENTniveau. buildInvoiceUbl
+  // leest ze al van de header sinds [REGEL-KORTING] — en geen enkele aanroeper selecteerde of
+  // mapte ze, dus `korting` was altijd null en elke e-factuur met een documentkorting factureerde
+  // het ONGEKORTE bedrag: opgeslagen/PDF zeiden 2.070, de XML zei 2.300. Beide kolommen bestaan
+  // in elke uitrol (gegenereerde typen), dus horen ze in de basis-select, niet achter de
+  // 42703-terugval van de regelkolommen.
+  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number, discount_type, discount_value" as const;
 
 /**
  * The line columns, including the OPTIONAL group.
@@ -95,6 +101,8 @@ export type UblInvoiceRow = {
   client_postal_code: string | null;
   client_city: string | null;
   client_btw_number: string | null;
+  discount_type: string | null;
+  discount_value: number | null;
 };
 
 /** One `invoice_lines` row. The optional group is optional here too — see the SELECT above. */
@@ -135,6 +143,9 @@ export function ublHeaderFrom(
     client_postal_code: row.client_postal_code,
     client_city: row.client_city,
     client_btw_number: row.client_btw_number,
+    // [KORTING-KOP] De documentkorting, eindelijk aan de generator gegeven die haar leest.
+    discount_type: row.discount_type ?? null,
+    discount_value: row.discount_value ?? null,
     ...((extra ?? {}) as Record<string, string | null>),
   };
 }

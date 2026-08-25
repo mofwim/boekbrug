@@ -376,6 +376,15 @@ export async function POST(request: NextRequest) {
         (typeof insertError?.message === 'string' &&
           /duplicate key value|unique constraint|exceeds original invoice/i.test(insertError.message))
       if (raceLost) {
+        // [TRUST-NUMBER] Het gemunte nummer is verbruikt en het document is er niet — een echt
+        // gat in de doorlopende reeks (Art. 35). De send-route meldt precies dit al aan Sentry;
+        // deze route deed het stil, en een gat waarvan niemand weet is een gat dat de
+        // [DOORLOPEND]-controle later als raadsel aan de eigenaar voorlegt.
+        console.warn('[TRUST-NUMBER] Creditnota race lost — minted number unused (gap)', { original_invoice_id })
+        Sentry.captureMessage('creditnota race: minted number unused (sequence gap)', {
+          level: 'warning',
+          extra: { original_invoice_id },
+        })
         return NextResponse.json(
           { error: 'Er is inmiddels een andere creditnota op deze factuur gemaakt — kijk even wat er nog openstaat en probeer het opnieuw.' },
           { status: 409 }

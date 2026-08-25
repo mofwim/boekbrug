@@ -4153,9 +4153,10 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   // Every column the line actually holds — a SELECT is the whole boundary here.
   assert.match(
     page,
-    /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment'\)/,
+    /\.select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, discount_type, discount_value'\)/,
     "the quote's lines must be read in full: a column not selected is a column silently dropped " +
-      "between what the customer accepted and what they are billed",
+      "between what the customer accepted and what they are billed — the line DISCOUNT was " +
+      "exactly such a column for a whole release",
   );
   // Scoped to the conversion block. `unit: l.unit ?? null` appears three times in this file — the
   // two submit-path mappings are the others — so an unscoped assertion stayed green with the
@@ -4164,7 +4165,7 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   const convEnd = page.indexOf("setLinesLoading(false)", convStart);
   assert.ok(convStart > 0 && convEnd > convStart, "the from_offerte load block was found");
   const conv = page.slice(convStart, convEnd);
-  assert.ok(conv.length < 1800, `the slice must be that block alone — it is ${conv.length} chars`);
+  assert.ok(conv.length < 2600, `the slice must be that block alone — it is ${conv.length} chars`);
   assert.match(conv, /unit:\s+l\.unit \?\? null,/, "…and the unit must reach the new line");
   assert.match(
     conv, /vat_treatment: l\.vat_treatment === 'exempt' \? 'exempt' : null,/,
@@ -7813,6 +7814,46 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   // The page is static: nothing from the request may be interpolated into the HTML. `zin` is one
   // of the route's own literals; a query param in the template is reflected XSS on a money door.
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
+});
+
+test("[KORTING-KETEN] the discount chain reaches every surface that bills the customer", () => {
+  // The audit found the outgoing chain consistent everywhere EXCEPT where it left the app:
+  // the e-factuur billed the undiscounted amount (columns read by the generator, selected by
+  // nobody) and the offerte conversion lost the line discounts the customer said yes to. Each
+  // wiring below is invisible to tsc — a missing column in a select literal type-checks fine.
+  const inputs = code("src/lib/ubl-inputs.ts");
+  assert.match(inputs, /client_btw_number, discount_type, discount_value" as const/, "the header select carries the document discount");
+  assert.match(inputs, /discount_type: row\.discount_type \?\? null/, "…and the mapper hands it to the generator");
+  assert.match(
+    code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,400}discount_type, discount_value"/,
+    "the closing package's own select carries it too",
+  );
+
+  // The per-group distribution: two tax groups at one rate may never EACH subtract the whole
+  // rate allowance (BR-CO-13 — the access point refuses the file).
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /offByGroup/, "the allowance is distributed per group");
+  assert.doesNotMatch(
+    ubl, /const off = allowanceByRate\.get\(g\.rate\)/,
+    "…and no group reads the undivided rate allowance any more",
+  );
+
+  // The offerte conversion carries BOTH discount levels.
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(page, /select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, discount_type, discount_value'\)/, "quote lines load their discounts");
+  const convert = page.slice(page.indexOf("client_extra_line4: clientExtra4,"), page.indexOf("client_extra_line4: clientExtra4,") + 1200);
+  assert.match(convert, /discount_type: discountType/, "the convert path sends the document discount");
+
+  // The partial-credit accumulator counts per bucket, like the ceiling it feeds.
+  assert.match(
+    code("src/lib/partial-credit.ts"), /inDezeSelectie\.get\(k\)/,
+    "the in-selection counter shares the bucket key",
+  );
+
+  // Quantities print with the precision the validator recomputes with, and the Price branch
+  // decides with the PRINTED value.
+  assert.match(ubl, /n\.toFixed\(6\)/, "six-decimal quantities");
+  assert.match(ubl, /round2\(aantalGedrukt \* stuksprijs\)/, "the branch decides with the printed quantity");
 });
 
 test("[POORT-SYMMETRIE] every fix from the incoming-pipeline audit stays wired", () => {

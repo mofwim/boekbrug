@@ -32,6 +32,7 @@ const row = (over: Partial<UblInvoiceRow> = {}): UblInvoiceRow => ({
   invoice_type: "factuur", total_ex_btw: 90, btw_amount: 18.9, total_inc_btw: 108.9,
   client_name: "Klant B.V.", client_address: "Straat 1", client_postal_code: "1000 AA",
   client_city: "Amsterdam", client_btw_number: "NL001234567B01",
+  discount_type: null, discount_value: null,
   ...over,
 });
 
@@ -175,3 +176,42 @@ test("[E-FACTUUR] both callers go through this module, neither maps rows itself"
   const route = readFileSync("src/app/api/export/ubl/route.ts", "utf8");
   assert.doesNotMatch(route, /const (INVOICE|LINES|PROFILE)_SELECT\s*=/, "the route defines its own SELECT again");
 });
+
+test("[KORTING-KOP] the document discount reaches the e-factuur — the customer is billed what was agreed", () => {
+  // The auditor's own numbers: € 1.000 @21% + € 1.000 @9%, document discount 10%. Stored, editor
+  // and PDF all said € 2.070,00 — and the XML said € 2.300,00, because the discount columns were
+  // read by the generator and selected by nobody. € 230 too much, on the one document a machine
+  // books without a human reading it.
+  const xml = xmlFor(
+    [
+      { description: "A", quantity: 1, unit_price: 1000, btw_rate: 21, line_total: 1000 },
+      { description: "B", quantity: 1, unit_price: 1000, btw_rate: 9, line_total: 1000 },
+    ],
+    { discount_type: "percent", discount_value: 10, total_ex_btw: 1800, btw_amount: 270, total_inc_btw: 2070 },
+  );
+  assert.match(xml, /<cac:AllowanceCharge>/, "the discount exists in the file");
+  assert.match(xml, /<cbc:AllowanceTotalAmount currencyID="EUR">200.00<\/cbc:AllowanceTotalAmount>/);
+  assert.match(xml, /<cbc:PayableAmount currencyID="EUR">2070.00<\/cbc:PayableAmount>/, "billed = agreed");
+  assert.doesNotMatch(xml, /<cbc:PayableAmount currencyID="EUR">2300.00<\/cbc:PayableAmount>/);
+});
+
+test("[KORTING-PER-GROEP] two tax groups at one rate never each subtract the whole rate allowance", () => {
+  // Rate 0 can carry TWO groups — a plain 0% line (category Z) and a vrijgestelde line
+  // (category E). The allowance is computed per RATE; handing every group the full rate-0
+  // allowance subtracts it twice while TaxExclusiveAmount subtracts it once — BR-CO-13, and the
+  // access point refuses the file. Latent until the discount columns arrived; live the moment
+  // they did.
+  const xml = xmlFor(
+    [
+      { description: "Nul", quantity: 1, unit_price: 600, btw_rate: 0, line_total: 600 },
+      { description: "Vrijgesteld", quantity: 1, unit_price: 400, btw_rate: 0, line_total: 400, vat_treatment: "exempt" },
+    ],
+    { discount_type: "percent", discount_value: 10, total_ex_btw: 900, btw_amount: 0, total_inc_btw: 900 },
+  );
+  const taxables = [...xml.matchAll(/<cbc:TaxableAmount currencyID="EUR">(-?[\d.]+)<\/cbc:TaxableAmount>/g)].map((m) => Number(m[1]));
+  const sum = Math.round(taxables.reduce((a, b) => a + b, 0) * 100) / 100;
+  const exclusive = Number(/<cbc:TaxExclusiveAmount currencyID="EUR">(-?[\d.]+)</.exec(xml)?.[1]);
+  assert.equal(sum, exclusive, `BR-CO-13: som van TaxableAmounts (${sum}) moet gelijk zijn aan TaxExclusiveAmount (${exclusive})`);
+  assert.equal(exclusive, 900, "€ 1.000 min 10% korting");
+});
+
