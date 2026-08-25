@@ -1921,6 +1921,17 @@ export const MESSAGES = {
   'ss.laatstDoorgestuurd': { nl: 'Laatst doorgestuurd op {time}.', ar: 'آخر إرسال في {time}.', en: 'Last forwarded on {time}.' },
   'ss.zonderNummer': { nl: 'Zonder nummer', ar: 'بدون رقم', en: 'Without a number' },
 
+  // [MOLLIE] Instellingenkaart: iDEAL-betaallinks via het eigen Mollie-account van de eigenaar.
+  'mollie.titel': { nl: 'iDEAL-betalingen (Mollie)', ar: 'مدفوعات iDEAL ‏(Mollie)', en: 'iDEAL payments (Mollie)' },
+  'mollie.uitleg': { nl: 'Koppel je eigen Mollie-account en je klanten krijgen een "Betaal met iDEAL"-knop op de betaalpagina van elke factuur. Het geld gaat rechtstreeks naar jouw Mollie-account; een betaalde factuur wordt automatisch als betaald gemarkeerd.', ar: 'اربط حساب Mollie الخاص بك ليحصل عملاؤك على زر «ادفع عبر iDEAL» في صفحة الدفع لكل فاتورة. يذهب المال مباشرة إلى حساب Mollie الخاص بك، وتُعلَّم الفاتورة المدفوعة تلقائياً كمدفوعة.', en: 'Connect your own Mollie account and your customers get a "Pay with iDEAL" button on every invoice payment page. The money goes straight to your Mollie account; a paid invoice is marked paid automatically.' },
+  'mollie.sleutel': { nl: 'Mollie API-sleutel', ar: 'مفتاح Mollie API', en: 'Mollie API key' },
+  'mollie.sleutelHint': { nl: 'Te vinden in je Mollie-dashboard onder Developers → API-sleutels (live_…).', ar: 'تجده في لوحة Mollie تحت Developers ← API-keys ‏(live_…).', en: 'Found in your Mollie dashboard under Developers → API keys (live_…).' },
+  'mollie.koppel': { nl: 'Koppelen', ar: 'اربط', en: 'Connect' },
+  'mollie.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
+  'mollie.gekoppeld': { nl: 'Gekoppeld sinds {date}. Klanten zien de iDEAL-knop op de betaalpagina.', ar: 'مرتبط منذ {date}. يرى العملاء زر iDEAL في صفحة الدفع.', en: 'Connected since {date}. Customers see the iDEAL button on the payment page.' },
+  'mollie.ontkoppel': { nl: 'Ontkoppelen', ar: 'افصل', en: 'Disconnect' },
+  'mollie.mislukt': { nl: 'Koppelen is niet gelukt.', ar: 'لم ينجح الربط.', en: 'Connecting failed.' },
+
   // Bestanden shared components (tree, cards, upload, preview, bulk bar).
   'bst.uitklappen': { nl: 'Uitklappen', ar: 'توسيع', en: 'Expand' },
   'bst.naamWijzigen': { nl: 'Naam wijzigen', ar: 'إعادة التسمية', en: 'Rename' },

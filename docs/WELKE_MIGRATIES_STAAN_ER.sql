@@ -221,9 +221,9 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('feedback.sql', 'policy', 'feedback_select_own', 'feedback', 'public'),
   ('feedback.sql', 'table', 'feedback', null, 'public'),
   ('folders_accountant_read.sql', 'policy', 'folders_accountant_read', 'folders', 'public'),
-  ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', 'invitations', 'public'),
-  ('intake_claims.sql', 'table', 'intake_claims', null, 'public'),
   ('intake_claims.sql', 'index', 'uq_intake_claims_user_key', null, 'public'),
+  ('intake_claims.sql', 'table', 'intake_claims', null, 'public'),
+  ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', 'invitations', 'public'),
   ('invoice_accountant_write_guard.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
   ('invoice_accountant_write_guard.sql', 'function', 'prevent_verwerkt_invoice_changes', null, 'public'),
   ('invoice_archive_reason.sql', 'column', 'archive_reason', 'invoices', 'public'),
@@ -284,6 +284,11 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('ledger_daily.sql', 'policy', 'ledger_daily_insert_own', 'ledger_daily', 'public'),
   ('ledger_daily.sql', 'policy', 'ledger_daily_select_own', 'ledger_daily', 'public'),
   ('ledger_daily.sql', 'policy', 'ledger_daily_update_own', 'ledger_daily', 'public'),
+  ('mollie.sql', 'index', 'mollie_payment_links_open_uidx', null, 'public'),
+  ('mollie.sql', 'index', 'mollie_payment_links_user_created_idx', null, 'public'),
+  ('mollie.sql', 'policy', 'mollie_connections_select_own', 'mollie_connections', 'public'),
+  ('mollie.sql', 'table', 'mollie_connections', null, 'public'),
+  ('mollie.sql', 'table', 'mollie_payment_links', null, 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_responded_at', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response_name', 'invoices', 'public'),
@@ -411,7 +416,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 111 migraties
+-- NIET VAST TE STELLEN — 9 van de 113 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

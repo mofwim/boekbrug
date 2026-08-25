@@ -12,7 +12,9 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { toPublicPayView, toPublicBundlePayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 // [DEEL-CREDIT] Coverage, not presence — see the header of credited-invoices.ts.
-import { creditedTotalsFrom, fullyCreditedIdsFrom } from '@/lib/credited-invoices'
+import { creditedTotalsFrom, fullyCreditedIdsFrom, creditedOnInvoice } from '@/lib/credited-invoices'
+// [MOLLIE] Alleen de META-vraag (is er een koppeling?) — nooit de sleutel zelf op dit pad.
+import { getMollieConnectionMeta } from '@/lib/mollie-connection'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 
@@ -76,7 +78,7 @@ export async function GET(
   // withdraw it: the rest is genuinely still owed, and hiding the page would leave the customer
   // no way to pay it and the owner no way to be paid. So the page stays live and asks for the
   // REMAINDER — the reduction is threaded into the amount below, where openAmount subtracts it.
-  const credited = await creditedOn(pipeline, (invoice as { id: string }).id)
+  const credited = await creditedOnInvoice(pipeline as never, (invoice as { id: string }).id)
   if (credited === null) {
     // Fail CLOSED, exactly as before: a lookup that failed must never let the page ask for the
     // full amount on an invoice that may have been credited.
@@ -101,34 +103,17 @@ export async function GET(
   // null = not payable (draft, wrong type, missing IBAN). 404 — no existence leak.
   if (!view) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
 
-  return NextResponse.json(view)
+  // [MOLLIE] Mag de pagina een iDEAL-knop tonen? Eén boolean, geen geheimen: de knop verschijnt
+  // alleen als de eigenaar zijn eigen Mollie-account koppelde, en de link zelf wordt pas
+  // aangemaakt als de klant er echt op drukt (POST /api/pay/[token]/ideal).
+  const idealAvailable = !view.alreadyPaid
+    && (await getMollieConnectionMeta((invoice as { sender_id: string }).sender_id))?.status === 'active'
+
+  return NextResponse.json({ ...view, idealAvailable })
 }
 
-// [CREDITNOTA-NO-CHASE] How much has been credited back on this invoice? Fail CLOSED: a lookup
-// that errors returns null and the caller hides the page, because the failure mode on the other
-// side is a customer transferring money that is not owed.
-//
-// [DEEL-CREDIT] It answers with an AMOUNT rather than yes/no. The question the page has to settle
-// is no longer "was this withdrawn" but "how much of it is still owed", and those give different
-// answers the moment a credit can be a part: yes/no would hide the page over a EUR 50 credit on a
-// EUR 500 invoice and leave the remaining EUR 450 unpayable.
-async function creditedOn(
-  pipeline: ReturnType<typeof createPipelineClient>,
-  invoiceId: string
-): Promise<number | null> {
-  const { data, error } = await pipeline
-    .from('invoices')
-    .select('total_inc_btw')
-    .eq('original_invoice_id', invoiceId)
-    .eq('invoice_type', 'creditnota')
-  if (error) return null
-  return creditedTotalsFrom(
-    ((data ?? []) as { total_inc_btw: number | null }[]).map((r) => ({
-      original_invoice_id: invoiceId,
-      total_inc_btw: r.total_inc_btw,
-    })),
-  ).get(invoiceId) ?? 0
-}
+// [CREDITNOTA-NO-CHASE]/[DEEL-CREDIT] creditedOn is verhuisd naar credited-invoices.ts
+// (creditedOnInvoice), zodat de iDEAL-route en deze pagina één 'gecrediteerd'-waarheid delen.
 
 // [BUNDEL-BETAALVERZOEK] Resolve a bundle token → the combined public view
 // (per-invoice lines + one sum + one QR). toPublicBundlePayView is the single

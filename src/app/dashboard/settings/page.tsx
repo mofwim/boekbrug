@@ -11,6 +11,7 @@ import { PushNotificationCard } from '@/components/settings/PushNotificationCard
 import { LanguageCard } from '@/components/settings/LanguageCard'
 // [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
 import { SnelStartCard } from '@/components/settings/SnelStartCard'
+import { MollieCard } from '@/components/settings/MollieCard'
 // [FACTUUR-B] numbering extraction (client-side live preview)
 import { previewInvoiceStart, reasonToDutch } from '@/lib/invoice-template'
 // [BRIDGE-POLISH 3a-3] formal validation for KVK / BTW / IBAN
@@ -763,6 +764,9 @@ export default function SettingsPage() {
 
         {/* [SNELSTART] Boekhoudkoppeling — self-hides when the server has no API key */}
         <SnelStartCard />
+
+        {/* [MOLLIE] iDEAL-betaallinks via het eigen Mollie-account van de eigenaar. */}
+        <MollieCard />
 
         {/* [BEVEILIGING] Verificatie in twee stappen stond hier, en staat nu op een eigen scherm.
             Eén plek om hem aan te zetten, en die plek staat naast het antwoord op de vraag die er

@@ -243,3 +243,41 @@ export function moneyDirection(row: {
   // XOR: a creditnota reverses the flow its document direction implies.
   return documentIsOutgoing === credit ? "incoming" : "outgoing";
 }
+
+/**
+ * [CREDITNOTA-NO-CHASE]/[DEEL-CREDIT] How much has been credited back on ONE invoice — the
+ * shared read behind every public payment surface. Fail CLOSED: a lookup that errors returns
+ * null and the caller must hide/refuse, because the failure mode on the other side is a real
+ * customer transferring money that is no longer owed. Answers an AMOUNT, not yes/no: a partial
+ * credit leaves a remainder that is genuinely still owed.
+ *
+ * Lives here (not in a route file) so /api/pay/[token] and the iDEAL flow can never drift
+ * apart about what "credited" means for the same invoice.
+ */
+export async function creditedOnInvoice(
+  pipeline: {
+    from: (t: string) => {
+      select: (s: string) => {
+        eq: (c: string, v: string) => {
+          eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: unknown }>;
+        };
+      };
+    };
+  },
+  invoiceId: string,
+): Promise<number | null> {
+  const { data, error } = await pipeline
+    .from("invoices")
+    .select("total_inc_btw")
+    .eq("original_invoice_id", invoiceId)
+    .eq("invoice_type", "creditnota");
+  if (error) return null;
+  return (
+    creditedTotalsFrom(
+      ((data ?? []) as { total_inc_btw: number | null }[]).map((r) => ({
+        original_invoice_id: invoiceId,
+        total_inc_btw: r.total_inc_btw,
+      })),
+    ).get(invoiceId) ?? 0
+  );
+}

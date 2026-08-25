@@ -6745,14 +6745,12 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
         "already answered 404 for an invoice that is not the caller's — so `id` is provably theirs " +
         "by the time this runs. Scoped by provenance, not by a filter",
     },
-    {
-      file: "src/app/api/pay/[token]/route.ts", table: "invoices",
-      must: ".eq('original_invoice_id', invoiceId)",
-      why: "creditedOn(): invoiceId comes from the invoice found BY pay_token, which is itself the " +
-        "credential. Returns how much was credited back, and treats its own read error as null — " +
-        "the fail-closed direction, since the other side is a customer transferring " +
-        "money that is not owed",
-    },
+    // creditedOn() stond hier als uitzondering en is met [MOLLIE] verhuisd naar
+    // credited-invoices.ts (creditedOnInvoice), zodat de iDEAL-route dezelfde
+    // 'gecrediteerd'-waarheid deelt. De query zelf is ongewijzigd (invoiceId komt uit de
+    // factuur die BY pay_token gevonden is — het token is de credential; leesfout → null,
+    // fail-closed); hij staat nu buiten het scanveld van deze poort, dus de uitzondering
+    // vervalt in plaats van te verwijzen naar een regel die hier niet meer staat.
     {
       file: "src/app/api/pay/[token]/route.ts", table: "pay_bundle_invoices",
       must: ".eq('bundle_id', bundle.id)",
@@ -14679,4 +14677,66 @@ test("[SI-UBL] the Peppol identity is an addition on the one builder, never a se
   assert.match(knop, /handleExport\(true\)/, "the Peppol variant is clickable, not only a URL trick");
   const spec = readFileSync("src/lib/ubl-conformance.test.ts", "utf8");
   assert.match(spec, /byte-identical to what it always was/, "…and the no-drift proof exists");
+});
+
+test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authenticated re-fetch", () => {
+  // A Mollie webhook carries no signature, so the entire security model is ONE rule: the POST
+  // body is a doorbell, and the only evidence is what WE fetch from Mollie by OUR stored pl_-id
+  // with the owner's key. The webhook must therefore never read its own request body at all —
+  // the moment someone "optimizes" by trusting the posted status, an unauthenticated POST can
+  // silence a dunning run.
+  const hook = code("src/app/api/mollie/webhook/route.ts");
+  assert.doesNotMatch(hook, /req\.(json|text|formData)\(/,
+    "the webhook read its request body — the doorbell became evidence");
+  assert.match(hook, /getMolliePaymentLink\(connection\.apiKey, link\.link_id\)/,
+    "verification fetches OUR stored link id with the owner's key");
+  assert.match(hook, /linkVerdict\(fetched, \{ linkId: link\.link_id, amountValue: link\.amount_value \}\)/,
+    "…and the pure verdict compares it against what we recorded");
+  assert.match(hook, /p_client_key: link\.id/,
+    "the booking goes through apply_manual_payment with the link row as idempotency key");
+  assert.match(hook, /p_method: 'bank'/,
+    "iDEAL money is bank money — 'ideal' would violate bank_tx_invoices_method_check");
+
+  // The pure refusal directions: a wrong amount REFUSES (never clamps, never marks), and a
+  // €0/negative ask never becomes a link.
+  const pure = code("src/lib/mollie.ts");
+  assert.match(pure, /if \(fetched\.amount\.value !== stored\.amountValue\) \{/, "amount mismatch refuses");
+  assert.match(pure, /if \(r <= 0\) return null;/, "a non-positive ask is refused at the amount formatter");
+
+  // The customer-side route asks the SAME amount authority as the QR (toPublicPayView), and a
+  // link whose ask no longer equals the open amount is superseded, never silently reused.
+  const ideal = code("src/app/api/pay/[token]/ideal/route.ts");
+  assert.match(ideal, /const view = toPublicPayView\(/, "the open amount comes from the one payment-page authority");
+  assert.match(ideal, /mollieAmountValue\(view\.amount\)/, "…and is formatted by the one formatter");
+  assert.match(ideal, /linkIsStale\(existingRow\.amount_value, view\.amount\)/, "staleness is CHECKED before reuse");
+  assert.match(ideal, /\.update\(\{ status: 'superseded' \}\)/, "…and a moved amount retires the old link");
+
+  // The key lives behind one door. Any second reader of the secret-id column is the leak.
+  const walkTs = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walkTs(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const readers = walkTs("src")
+    .filter((f) => readFileSync(f, "utf8").includes("api_key_secret_id"))
+    .filter((f) => !f.endsWith("lifecycle-gates.test.ts"))
+    .sort();
+  assert.deepEqual(readers, ["src/lib/mollie-connection.ts"],
+    "mollie-connection.ts is the ONLY file that may touch the Vault reference");
+
+  // Both surfaces: the pay page shows the button only when available and unpaid; the settings
+  // card is mounted; and the payout hold keeps auto-categorize away from Mollie credits at
+  // owners whose invoices the webhook already settled.
+  const pay = code("src/app/pay/[token]/PayClient.tsx");
+  assert.match(pay, /view\.idealAvailable && !view\.alreadyPaid/, "the button never shows on a settled invoice");
+  assert.match(pay, /fetch\(`\/api\/pay\/\$\{token\}\/ideal`, \{ method: 'POST' \}\)/, "…and creates lazily on click");
+  const settings = code("src/app/dashboard/settings/page.tsx");
+  assert.match(settings, /<MollieCard \/>/, "the owner can actually connect a key");
+  const auto = code("src/lib/bank-auto-categorize.ts");
+  assert.match(auto, /if \(molliePayoutHold\(t\)\) continue;/,
+    "[MOLLIE-UITBETALING] a fee-reduced payout is never pre-coded into a second omzet");
 });

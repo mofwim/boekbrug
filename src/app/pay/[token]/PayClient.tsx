@@ -8,6 +8,8 @@
 // No money moves through us.
 
 import { useEffect, useState } from 'react'
+// [SERVER-ZIN] Een machinecode is geen zin — ook niet voor de betalende klant van de klant.
+import { failureText } from '@/lib/server-message'
 
 interface PayItem {
   invoiceNumber: string | null
@@ -27,6 +29,8 @@ interface PayView {
   dueDate: string | null
   epcPayload: string
   alreadyPaid: boolean
+  // [MOLLIE] De eigenaar koppelde zijn eigen Mollie-account — dan mag hier een iDEAL-knop staan.
+  idealAvailable?: boolean
   // [BUNDEL-BETAALVERZOEK] present when the link covers several invoices —
   // one line per factuur, one sum, one QR.
   items?: PayItem[]
@@ -43,6 +47,36 @@ export default function PayClient({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
   const [qr, setQr] = useState('')
   const [copied, setCopied] = useState('')
+  // [MOLLIE] De klant komt terug van iDEAL vóórdat de webhook verwerkt kan zijn — dan is
+  // "betaal nu" tonen verwarrend. De ?ideal=terug-hint overbrugt die seconden eerlijk.
+  const [idealBusy, setIdealBusy] = useState(false)
+  const [idealError, setIdealError] = useState('')
+  const [terugVanIdeal, setTerugVanIdeal] = useState(false)
+
+  useEffect(() => {
+    try {
+      setTerugVanIdeal(new URLSearchParams(window.location.search).get('ideal') === 'terug')
+    } catch { /* zonder window geen hint — de pagina blijft gewoon werken */ }
+  }, [])
+
+  async function startIdeal() {
+    if (idealBusy) return
+    setIdealBusy(true)
+    setIdealError('')
+    try {
+      const res = await fetch(`/api/pay/${token}/ideal`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.url) {
+        setIdealError(failureText(res.status, json, 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens hieronder.'))
+        setIdealBusy(false)
+        return
+      }
+      window.location.href = json.url
+    } catch {
+      setIdealError('Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens hieronder.')
+      setIdealBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -90,6 +124,12 @@ export default function PayClient({ token }: { token: string }) {
 
         {!loading && view && (
           <>
+            {terugVanIdeal && !view.alreadyPaid && (
+              <div style={{ background: '#e8f0fe', border: '1px solid #c6dafc', color: '#1a56b8', borderRadius: 14, padding: '12px 16px', marginBottom: 14, fontSize: 14, lineHeight: 1.5, textAlign: 'center' }}>
+                Betaling gedaan via iDEAL? De verwerking kan een minuutje duren — deze pagina zegt daarna dat de factuur betaald is. Betaal in dat geval niet nogmaals.
+              </div>
+            )}
+
             {view.alreadyPaid && (
               <div style={{ background: '#e6f4ea', border: '1px solid #b7e0c3', color: '#137333', borderRadius: 14, padding: '12px 16px', marginBottom: 14, fontSize: 14.5, fontWeight: 600, textAlign: 'center' }}>
                 {view.items && view.items.length > 1
@@ -123,6 +163,20 @@ export default function PayClient({ token }: { token: string }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {view.idealAvailable && !view.alreadyPaid && (
+                <div style={{ textAlign: 'center', margin: '16px 0 2px' }}>
+                  <button
+                    onClick={startIdeal}
+                    disabled={idealBusy}
+                    style={{ width: '100%', background: '#1a73e8', color: '#fff', border: 'none', borderRadius: 12, padding: '13px 18px', fontSize: 15.5, fontWeight: 700, cursor: 'pointer', opacity: idealBusy ? 0.6 : 1 }}
+                  >
+                    {idealBusy ? 'Even geduld…' : 'Betaal met iDEAL'}
+                  </button>
+                  {idealError && <div style={{ fontSize: 12.5, color: '#b3261e', marginTop: 8, lineHeight: 1.5 }}>{idealError}</div>}
+                  <div style={{ fontSize: 12, color: '#5f6368', marginTop: 8 }}>Je betaalt via het Mollie-account van {view.beneficiaryName} — niet aan BoekBrug.</div>
                 </div>
               )}
 
