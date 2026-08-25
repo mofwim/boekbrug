@@ -54,9 +54,13 @@ export default function PayClient({ token }: { token: string }) {
   const [terugVanIdeal, setTerugVanIdeal] = useState(false)
 
   useEffect(() => {
-    try {
-      setTerugVanIdeal(new URLSearchParams(window.location.search).get('ideal') === 'terug')
-    } catch { /* zonder window geen hint — de pagina blijft gewoon werken */ }
+    // Async-IIFE zoals elders in dit repo: de set gebeurt in een microtask, niet synchroon in
+    // het effect (react-hooks/set-state-in-effect).
+    void (async () => {
+      try {
+        setTerugVanIdeal(new URLSearchParams(window.location.search).get('ideal') === 'terug')
+      } catch { /* zonder window geen hint — de pagina blijft gewoon werken */ }
+    })()
   }, [])
 
   async function startIdeal() {
