@@ -214,6 +214,7 @@ export async function sendInvoiceToClient({
   senderEmail,
   isCorrected = false,
   extraAttachment,
+  ublAttachment,
 }: {
   toEmail: string
   clientName: string
@@ -256,6 +257,12 @@ export async function sendInvoiceToClient({
    * kop van invoice-attachment.ts. Hier komt dus alleen nog een bestand binnen dat mee mag.
    */
   extraAttachment?: { filename: string; content: Buffer } | null
+  /**
+   * [E-FACTUUR-MEE] De e-factuur (UBL-XML) naast de PDF, als hij gebouwd kon worden. Zakelijke
+   * klanten lezen hem rechtstreeks in hun boekhoudpakket in; wie hem niet kent, leest de PDF
+   * zoals altijd. Best-effort aangeleverd door de verstuurroute — nooit een blokkade.
+   */
+  ublAttachment?: { filename: string; content: Buffer } | null
 }) {
   const docLabel = isCreditnota ? 'Creditnota' : 'Factuur'
   const numberLabel = isCreditnota ? 'Creditnotanummer' : 'Factuurnummer'
@@ -278,6 +285,12 @@ export async function sendInvoiceToClient({
     : extraAttachment
       ? `<p style="color: #555;"><strong>${escapeHtml(extraAttachment.filename)}</strong> is bijgevoegd.</p>`
       : ''
+
+  // [E-FACTUUR-MEE] Eén zin, alleen als de e-factuur er echt bij zit: een zakelijke klant weet
+  // dan dat het XML-bestand geen bijvangst is maar de factuur zelf, klaar voor zijn pakket.
+  const eFactuurRegel = ublAttachment
+    ? `<p style="color: #555;">Ook bijgevoegd: een e-factuur (UBL) die je boekhoudpakket direct kan inlezen.</p>`
+    : ''
 
   // [TRUST-DELIVERY] Resend's SDK resolves to { data, error } and does NOT throw on
   // an API-level rejection (invalid recipient, unverified domain, rate-limit,
@@ -317,6 +330,7 @@ export async function sendInvoiceToClient({
           ${dueDateRow}
         </div>
         ${attachmentLine}
+        ${eFactuurRegel}
         ${contactRegel}
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
@@ -330,10 +344,13 @@ export async function sendInvoiceToClient({
     //
     // De factuur-PDF staat vooraan. De klant opent de eerste bijlage, en dat hoort het document
     // te zijn waar de mail over gaat.
-    ...(pdfBuffer || extraAttachment
+    // [E-FACTUUR-MEE] De e-factuur direct na de PDF: eerst het document waar de mail over gaat,
+    // dan de machineleesbare tweeling ervan, dan pas het eigen bestand van de ondernemer.
+    ...(pdfBuffer || extraAttachment || ublAttachment
       ? {
           attachments: [
             ...(pdfBuffer ? [{ filename: `${invoiceNumber}.pdf`, content: pdfBuffer }] : []),
+            ...(ublAttachment ? [ublAttachment] : []),
             ...(extraAttachment ? [extraAttachment] : []),
           ],
         }

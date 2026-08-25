@@ -14610,3 +14610,27 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.doesNotMatch(publiek, /Nee, geen van beide/, "the old XAF/RGS denial would contradict the shipped export");
   assert.match(publiek, /Vraagposten in plaats van gegokt/, "…and the stated limit stays on the page");
 });
+
+test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence never blocks delivery", () => {
+  // The helper is a second CALLER of the one row-to-generator mapping, not a second mapping —
+  // that distinction is the whole [E-FACTUUR] scar (twice a hand-written copy dropped a selected
+  // column and the file stayed valid while a korting or vrijstelling silently vanished).
+  const helper = code("src/lib/ubl-for-email.ts");
+  assert.match(helper, /ublHeaderFrom\(inv/, "the shared header mapping is CALLED");
+  assert.match(helper, /ublLinesFrom\(\(lineRows/, "…and the shared lines mapping");
+  assert.match(helper, /buildInvoiceUbl\(header, lines/, "…into the one generator");
+  assert.match(helper, /isUnknownColumn\(eersteLezing\.error, "unit"\)/, "the open-migration fallback rides along");
+  const catchBlock = helper.slice(helper.lastIndexOf("catch (err)"));
+  assert.match(catchBlock, /return null;/, "every failure answers null — the mail pipeline steps aside, it never throws");
+
+  // Both senders attach it; the PDF stays first (the legal document is the first thing opened).
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(supabase, invoiceId\)/, "the send route builds it");
+  assert.match(send, /ublAttachment: ublBijlage/, "…and hands it to the mail");
+  const credit = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(supabase, creditnota\.id\)/, "the creditnota mail carries its UBL 381 twin");
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{invoiceNumber\}\.pdf`, content: pdfBuffer \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[ublAttachment\] : \[\]\)/,
+    "PDF first, then the UBL — the customer opens the document the mail is about");
+  assert.match(mail, /const eFactuurRegel = ublAttachment\s*\n?\s*\?/, "the body names the XML only when it is really there");
+});

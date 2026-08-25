@@ -31,6 +31,7 @@ import { logAuditAction, getClientIP } from '@/lib/audit'
 // [FACTUUR-A] unified numbering + legal delivery — June 2026
 import { generateInvoiceNumber } from '@/lib/invoice-numbering'
 import { renderInvoicePdf } from '@/lib/invoice-pdf-server'
+import { ublAttachmentForInvoice } from '@/lib/ubl-for-email'
 import { sendInvoiceToClient } from '@/lib/email'
 import * as Sentry from '@sentry/nextjs'
 // [ACTING-FOR] Omgebouwd in plaats van dichtgezet. Een verkoper die zich vergiste in een VERSTUURDE
@@ -543,6 +544,9 @@ export async function POST(request: NextRequest) {
             dueDate: creditnota.due_date ?? '',
             invoiceDate: creditnota.invoice_date ?? undefined,
             pdfBuffer,
+            // [E-FACTUUR-MEE] De creditnota als UBL 381 naast de PDF — zelfde generator als de
+            // factuurmail, best-effort, nooit een blokkade voor de bezorging.
+            ublAttachment: await ublAttachmentForInvoice(supabase, creditnota.id),
             isCreditnota: true,
           })
         } catch (deliveryErr) {
