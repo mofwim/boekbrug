@@ -14634,3 +14634,21 @@ test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence nev
     "PDF first, then the UBL — the customer opens the document the mail is about");
   assert.match(mail, /const eFactuurRegel = ublAttachment\s*\n?\s*\?/, "the body names the XML only when it is really there");
 });
+
+test("[BULK-UITNODIGEN] the bulk list walks the SAME door as the single button, one address at a time", () => {
+  // The safety of this feature is that there is no second invite pathway: the role check, the
+  // format check, the duplicate-invite check and the day limit all live in /api/invite/client,
+  // and the bulk loop calls it per address. A dedicated bulk route would re-earn each of those
+  // rails or silently lack one.
+  const scherm = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(scherm, /for \(const email of parsed\) \{/, "sequential per-address loop");
+  assert.match(scherm, /await fetch\('\/api\/invite\/client', \{\s*\n\s*method: 'POST'/, "…through the one invite route");
+  assert.match(scherm, /failureText\(res\.status, json, 'Versturen mislukt\.'\)/, "a refusal is a sentence ([SERVER-ZIN]), kept per address");
+  assert.match(scherm, /\.slice\(0, 200\)/, "the list is bounded to what the day limit can carry");
+  assert.match(scherm, /setBulkResults\(\[\.\.\.results\]\)/, "progress shows per address, not only at the end");
+
+  // The day limit must match the sitting this exists for: 20/day stopped an office at a tenth
+  // of its bestand.
+  const limits = code("src/lib/rate-limit.ts");
+  assert.match(limits, /ACCOUNTANT_INVITE:\s*\{ maxRequests: 200, windowMinutes: 1440 \}/, "200/day carries an office onboarding");
+});
