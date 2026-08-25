@@ -165,6 +165,10 @@ export interface FieldConfidence {
   // that tax is a real cost but never voorbelasting, and the change was ours — a human confirms,
   // and it can never auto-book. `read` is the amount that had been misread as BTW.
   _assurantiebelasting?: { read?: number | null }
+  // [EX-INCL-FIX] The base was rewritten from incl − btw because the printed "Subtotaal" equalled
+  // the gross while a real BTW stood beside it (an impossible pair). The repaired amounts add up
+  // by construction, so nothing else would mention it — and the base is what books as kosten.
+  _ex_corrected?: { read?: number | null; used?: number | null }
   // [BTW-SPLIT] The per-rate summary block as PRINTED — one row per rate, grondslag on the left,
   // btw on the right. It is the only independent witness a MIXED-RATE invoice has: with two rates
   // in play, btw/excl can legally be anything between them, so the rate check self-disables and
@@ -542,6 +546,19 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       typeof used === 'number'
         ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
         : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
+
+  // [EX-INCL-FIX] The base is OUR subtraction (incl − btw), not the document's own figure — the
+  // printed subtotal contradicted itself. Same rule as every derived figure: a human confirms it
+  // before it books.
+  if (fc?._ex_corrected) {
+    flags.arithmetic = true
+    const used = fc._ex_corrected.used
+    reasons.push(
+      typeof used === 'number'
+        ? `het bedrag excl. BTW op de factuur was gelijk aan het totaal terwijl er BTW op staat — we hebben ${formatEuro(used)} afgeleid uit totaal min BTW; controleer dit bedrag`
+        : 'het bedrag excl. BTW op de factuur sprak zichzelf tegen — we hebben het afgeleid uit totaal min BTW; controleer dit bedrag'
     )
   }
 

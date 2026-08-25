@@ -131,6 +131,18 @@ console.log('\n— [BTW-SUM-FIX] a DERIVED BTW is never presented as clean (it i
   check('note without an amount still warns', noAmount.level === 'needs-review' && noAmount.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r)))
 }
 
+console.log('\n— [EX-INCL-FIX] een herschreven grondslag boekt nooit zonder mens —')
+{
+  // Na de reparatie klopt 333.06 + 69.94 = 403 per constructie — elke andere as zwijgt.
+  const fixed = classifyImportHealth(inv({
+    total_ex_btw: 333.06, btw_amount: 69.94, total_inc_btw: 403,
+    field_confidence: { _ex_corrected: { read: 403, used: 333.06 } },
+  }))
+  check('herschreven ex → needs-review', fixed.level === 'needs-review' && fixed.flags.arithmetic === true)
+  check('de reden noemt het afgeleide bedrag', fixed.reasons.some((r) => /afgeleid uit totaal min BTW/.test(r) && r.includes('333,06')))
+  check('dezelfde bedragen zonder de notitie blijven clean', classifyImportHealth(inv({ total_ex_btw: 333.06, btw_amount: 69.94, total_inc_btw: 403 })).level === 'clean')
+}
+
 console.log('\n— [ASSURANTIE] assurantiebelasting is geen aftrekbare BTW —')
 {
   // After stripAssurantiebelastingBtw: the € 41,01 IPT has been folded into the cost (ex = incl,

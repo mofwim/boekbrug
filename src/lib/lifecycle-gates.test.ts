@@ -7815,6 +7815,91 @@ test("[PAKKET-DEUR] a refused download answers in the language of its caller", (
   assert.doesNotMatch(route, /\$\{[^}]*searchParams[^}]*\}/, "no request data inside the HTML template");
 });
 
+test("[POORT-SYMMETRIE] every fix from the incoming-pipeline audit stays wired", () => {
+  // One audit, eight wirings, none visible to tsc or the build. Each line pins a CALL or a
+  // FILTER, not a name — the [STRIPPER-BLIND] lesson.
+  const ai = code("src/lib/ai.ts");
+  // Zero-BTW at the source: the queue may never call "klaar" what auto-advance refuses.
+  assert.match(ai, /zeroBtw && parsed\.btw_rate !== 0/, "a zero-btw read without an explicit 0% rate is held");
+  // A rewritten base leaves a trace, like every sibling repair.
+  assert.match(ai, /_ex_corrected: \{ read: exBefore, used: parsed\.total_ex_btw \}/, "fixExInclConfusion marks its rewrite");
+
+  const health = code("src/lib/import-health.ts");
+  const exBlock = /if \(fc\?\._ex_corrected\)\s*\{([\s\S]*?)\n  \}/.exec(health)?.[1] ?? "";
+  assert.match(exBlock, /flags\.arithmetic = true/, "…and health holds the row for it");
+
+  // A gross the app derived was never grounded — it does not book unattended.
+  assert.match(code("src/lib/auto-advance.ts"), /_total_derived === "total"/, "the derived-gross refusal exists");
+
+  // The kasstelsel settlement fetch excludes what the accrual engine excludes.
+  const kas = code("src/lib/kas-payment-events-fetch.ts");
+  assert.match(kas, /EXCLUDED = new Set\(\["draft", "processing", "archived"\]\)/, "the exclusion set exists");
+  assert.match(kas, /!EXCLUDED\.has\(i\.status \?\? ""\) && \(isSettled\(i\) \|\| linkedIds\.has\(i\.id\)\)/, "…and filters the settled set");
+
+  // /api/bank/allocate refuses what every other booking door refuses.
+  assert.match(
+    code("src/app/api/bank/allocate/route.ts"),
+    /\["draft", "archived", "processing"\]\.includes\(r\.status \?\? ""\)/,
+    "allocate checks invoice status before booking",
+  );
+
+  // The amounts edit door mirrors SAFECORE: no base, no impossible rate, no stale verdict.
+  const amounts = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(amounts, /code: "no_base"/, "ex 0 with btw is refused");
+  assert.match(amounts, /code: "impossible_rate"/, "a >21% implied rate is refused");
+  assert.match(amounts, /delete cleaned\._safecore/, "a stale _safecore is cleared when amounts change");
+
+  // The e-mail dedup reads its own error, orders by time, and never ilikes a vendor name.
+  const email = code("src/lib/email-integration.ts");
+  assert.match(email, /if \(contentErr\) dedupCheckFailed = true/, "a failed duplicate read is not 'no duplicate'");
+  const checkB = email.slice(email.indexOf("existingByContent"));
+  assert.doesNotMatch(email, /ilike\('client_name'/, "no wildcard-vulnerable vendor match remains (email)");
+  assert.doesNotMatch(
+    code("src/app/api/bank/attach-invoice/route.ts"), /ilike\("client_name"/,
+    "no wildcard-vulnerable vendor match remains (attach)",
+  );
+  assert.ok(checkB.includes("created_at"), "check B orders by time, not by uuid");
+});
+
+test("[ATTACH-REKENT] the attach-invoice door obeys the same money rules as every other door", () => {
+  // Two independent audits named this one route as the worst door in the app: it booked an
+  // AI-read document straight to 'paid' with no arithmetic gate, minted the invoice total from
+  // the BANK amount, fabricated an UPLOAD- invoice number, used the bank date as the invoice
+  // date (wrong BTW quarter under the factuurstelsel), and never read how much of the bank line
+  // was already applied elsewhere. Each fix below is wiring that tsc and the build cannot see.
+  const route = code("src/app/api/bank/attach-invoice/route.ts");
+
+  // 1. The identity gate exists and its fallback is the conservative one.
+  assert.match(route, /Math\.abs\(totalExBtw \+ btwAmount - totalIncBtw\) <= 0\.02/, "ex + btw = incl is checked");
+  assert.match(route, /splitDropped = true/, "…and a failing split is dropped, not booked");
+
+  // 2. The document decides the invoice_date; the bank date is the fallback.
+  assert.match(
+    route, /normalizeToIso\(verification\.invoice_date\) \?\?\s*normalizeToIso\(tx\.date\)/,
+    "the document's own date decides the BTW quarter",
+  );
+
+  // 3. No fabricated document identifiers, anywhere in the file.
+  assert.doesNotMatch(route, /UPLOAD-\$\{/, "a minted UPLOAD- number is a record contradicting its own audit trail");
+
+  // 4. The line's remaining budget is read before anything is written, and the applied amount
+  //    is capped by it. Σ amount_applied over one transaction may never exceed what moved.
+  assert.match(route, /from\("bank_tx_invoices"\)[\s\S]{0,200}\.eq\("transaction_id", transactionId\)/, "prior links are read");
+  assert.match(route, /const appliedNow = Math\.min\(Math\.abs\(totalIncBtw\), budgetLeft\)/, "…and cap the application");
+  assert.match(route, /\[invoice\.id\]: appliedNow,/, "…which is what the link row records");
+
+  // 5. 'paid' only when actually covered; partial coverage says so.
+  assert.match(route, /fullySettled \? "paid" : "received"/, "status tells the truth about coverage");
+
+  // 6. The outgoing refusal also catches a split the gate itself dropped — otherwise the
+  //    conservative fallback (gross at 0%) walks a sale past the refusal it sits above.
+  assert.match(route, /direction === "outgoing" &&\s*\n?\s*\(splitDropped \|\|/, "outgoing refuses on a dropped split");
+
+  // 7. Every fallback is flagged for a human: the amount-confidence channel that
+  //    classifyImportHealth already turns into needs-review.
+  assert.match(route, /splitDropped \|\| amountWarning \|\| !fullySettled/, "fallbacks mark the row for review");
+});
+
 test("[ASSURANTIE] insurance premium tax never reaches the deductible BTW column", () => {
   // A real Univé policy prints "Inclusief € 41,01 assurantiebelasting". That tax looks exactly like
   // BTW and is the one Dutch tax that may never be reclaimed as voorbelasting. Reading it into

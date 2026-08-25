@@ -146,10 +146,32 @@ export async function POST(req: NextRequest) {
   const ids = rawLines.map((l) => l.invoiceId);
   const { data: invRows, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, direction, invoice_type, total_inc_btw, amount_paid, invoice_number, accountant_status")
+    .select("id, direction, invoice_type, total_inc_btw, amount_paid, invoice_number, accountant_status, status")
     .in("id", ids)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
   if (invErr) return NextResponse.json({ error: "invoice_read_failed" }, { status: 500 });
+
+  // [STATUS-GUARD] The same exclusion every other booking door applies (bank-matching.ts
+  // EXCLUDED_STATUSES, with the reason spelled out there): a 'processing' row is an UNVERIFIED
+  // read — paying it promotes it out of the verify queue with no way back; an 'archived' row is
+  // an invoice /supersede just took out of the books — paying it revives the duplicate; 'draft'
+  // is not a debt; 'paid' has nothing left to receive. The screen filters these out of its
+  // picker, but a screen filter is not a guard: this route accepts ids. The RPC behind it
+  // refuses only 'paid', so without this check the other three walked through.
+  const ineligible = (invRows ?? []).find((r) => ["draft", "archived", "processing"].includes(r.status ?? ""));
+  if (ineligible) {
+    return NextResponse.json(
+      {
+        error: "invoice_not_bookable",
+        invoiceNumber: ineligible.invoice_number,
+        detail:
+          ineligible.status === "processing"
+            ? "Deze factuur staat nog in de controlewachtrij. Bevestig hem eerst; daarna kun je er een betaling aan toewijzen."
+            : "Deze factuur is geen open post meer en kan geen betaling ontvangen.",
+      },
+      { status: 409 },
+    );
+  }
 
   const invoices: PlanInvoice[] = (invRows ?? []).map((r) => ({
     id: r.id,

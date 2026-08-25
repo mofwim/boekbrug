@@ -33,7 +33,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 import { gateFairUseForRead } from "@/lib/fair-use-gate";
 // [E-FACTUUR-XML] Een Peppol-factuur aan een bankregel hangen — zelfde lezer als elke andere deur.
 import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
-import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber } from "@/lib/safecore";
+import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber, normalizeVendor } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { readingPromptHint } from "@/lib/reading-memory";
@@ -276,37 +276,73 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Money side: the BANK is the source of truth for the paid amount/date.
+  // Money side: the BANK is the source of truth for the paid amount and the PAYMENT date.
   const bankAmount = Math.abs(tx.amount ?? 0);
   // [DATE-ISO-SAFE / I6] Tolerant + never-throw for either source (a DD-MM-YYYY threw a 500).
   // [TZ] The last resort is the owner's day, not the server's. This value is written to
   // invoices.invoice_date, which is what puts the purchase in a BTW-quarter — so on the night a
   // quarter turns, a UTC fallback books it in the quarter that just closed.
+  //
+  // [FACTUURDATUM] The DOCUMENT's own date comes first, the bank date is the fallback — this was
+  // the other way around, and the order is not a taste question. Under the factuurstelsel the
+  // invoice_date decides the BTW quarter, and a 28-12 invoice paid on 03-01 was being declared in
+  // Q1 instead of Q4 on every invoice attached through this door: the document's printed date was
+  // read, returned by the AI, and then used only when the bank line somehow had no date — which a
+  // bank line always has. The payment date keeps the bank's date below, where it belongs.
   const invoiceDate =
-    normalizeToIso(tx.date) ??
     normalizeToIso(verification.invoice_date) ??
+    normalizeToIso(tx.date) ??
     amsterdamToday();
 
-  // Prefer the AI total when it agrees with the bank; otherwise trust the bank
-  // amount (what actually moved) and flag a warning for the owner to verify.
+  // [DOC-TOTAAL] The DOCUMENT is the truth about what was billed; the bank is the truth about
+  // what moved. This used to be "prefer the AI total only when it agrees with the bank, otherwise
+  // trust the bank amount" — and that rule contradicted this route's own [BANK-ATTACH-MULTI]
+  // design a few steps down, which exists precisely because ONE payment covers SEVERAL invoices.
+  // Attach an €800 supplier PDF to a €2.265 batch payment and the old rule minted an invoice for
+  // €2.265 — a total nobody ever billed, €1.465 of over-stated kosten sitting on a document that
+  // says €800. Now the invoice keeps the document's total, the [BANK-BUDGET] block below applies
+  // only what the line still has, and the rest of the payment stays visible for the other
+  // invoices it belongs to. The bank amount is the fallback only when no total could be read at
+  // all — and that row is flagged for review, because its money figure came from a bank line
+  // rather than from any document.
   const aiTotal = verification.total_inc_btw ?? verification.amount ?? null;
   const amountAgrees =
     aiTotal != null && Math.abs(aiTotal - bankAmount) <= AMOUNT_TOLERANCE;
-  const totalIncBtw = amountAgrees ? aiTotal! : bankAmount;
-  // Keep the AI's BTW split only if the totals agree (otherwise it's unreliable).
+  const totalIncBtw = aiTotal ?? bankAmount;
+  const totalFromBank = aiTotal == null;
+
   // [SILENT-LOSS FIX] The NET (total_ex_btw) must NEVER fall to 0 while a real bank payment
-  // moved: the engine books cost/revenue from total_ex_btw (financial-result.ts), and this row
-  // is created 'paid' with its bank line simultaneously carrying invoice_id (excluded from the
-  // bank leg). If the AI gives no split (a rent/receipt with no separable BTW — the exact case
-  // the comment above allows) or the totals disagree, we book the FULL GROSS as net cost with
+  // moved: the engine books cost/revenue from total_ex_btw (financial-result.ts). If the AI gives
+  // no split (a rent/receipt with no separable BTW), we book the FULL GROSS as net cost with
   // €0 BTW (the engine's "no voorbelasting without a document" rule) so the cost is counted, not
-  // silently dropped from kosten/resultaat. BTW alone stays 0 when the AI can't find it.
-  const totalExBtw = amountAgrees ? (verification.total_ex_btw ?? totalIncBtw) : totalIncBtw;
-  // BTW may only be non-zero when we actually KEPT the AI's split. On any gross fallback (ex ?? gross,
-  // or the disagree branch) it stays 0 — so total_ex_btw can never end up = gross WHILE btw != 0 (an
-  // over-stated deductible base). [ADV-REVIEW residual: btw gated on the split being present.]
-  const btwAmount = amountAgrees && verification.total_ex_btw != null ? (verification.btw_amount ?? 0) : 0;
-  const amountWarning = aiTotal != null && !amountAgrees;
+  // silently dropped from kosten/resultaat.
+  let totalExBtw = verification.total_ex_btw ?? totalIncBtw;
+  // BTW may only be non-zero when we actually KEPT the AI's split — so total_ex_btw can never end
+  // up = gross WHILE btw != 0 (an over-stated deductible base).
+  let btwAmount = verification.total_ex_btw != null ? (verification.btw_amount ?? 0) : 0;
+
+  // [ATTACH-REKENT] This door was the one ingestion path with no arithmetic gate at all.
+  // Nothing ever asked whether ex + btw = incl — so a read of ex 121 / btw 21 / incl 121 (the
+  // subtotal mis-labelled) sailed through when the bank moved 121, and the engine booked kosten
+  // 121 PLUS voorbelasting 21 out of a 121 payment. SAFECORE refuses exactly this on every other
+  // door; here the row lands 'paid' and is immediately in the aangifte. Same rule as everywhere:
+  // keep the split only when the identity holds against the DOCUMENT total and the implied rate
+  // is a possible Dutch one; otherwise the conservative gross-as-net fallback this route already
+  // trusts (cost counted, no voorbelasting claimed) — and the row is flagged for review below,
+  // never silently repaired. Note the identity is tested against the document's own total, not
+  // against the bank: a batch payment legitimately disagrees with the document while the
+  // document's split is perfectly sound.
+  let splitDropped = false;
+  if (btwAmount !== 0 || totalExBtw !== totalIncBtw) {
+    const identityHolds = Math.abs(totalExBtw + btwAmount - totalIncBtw) <= 0.02;
+    const impliedRate = Math.abs(totalExBtw) > 0.005 ? Math.abs(btwAmount / totalExBtw) * 100 : (btwAmount === 0 ? 0 : 999);
+    if (!identityHolds || impliedRate > 21.5) {
+      totalExBtw = totalIncBtw;
+      btwAmount = 0;
+      splitDropped = true;
+    }
+  }
+  const amountWarning = (aiTotal != null && !amountAgrees) || totalFromBank;
 
   // [OUTGOING-BTW TRUTH] A bank CREDIT is booked as omzet from total_ex_btw. The gross-as-net fallback
   // above is SAFE only for an incoming COST (understating our own VAT reclaim to 0 is conservative).
@@ -316,9 +352,12 @@ export async function POST(req: NextRequest) {
   // outgoing document whose BTW we can't trust: only proceed with a reliable split, otherwise refuse
   // and let the owner add the sale/creditnota manually with the correct rate. No file/insert yet →
   // nothing to roll back. The bank credit stays visible in "Geen factuur" so it is never lost.
+  // [ATTACH-REKENT] …and a split the identity gate just dropped is by definition not a reliable
+  // split, so it refuses here too — otherwise the gate's own conservative fallback (gross at 0%)
+  // would walk an outgoing sale past this exact refusal.
   if (
     direction === "outgoing" &&
-    !(amountAgrees && verification.total_ex_btw != null && verification.btw_amount != null)
+    (splitDropped || !(amountAgrees && verification.total_ex_btw != null && verification.btw_amount != null))
   ) {
     return NextResponse.json(
       {
@@ -358,23 +397,31 @@ export async function POST(req: NextRequest) {
         .eq("direction", direction)
         .eq(direction === "outgoing" ? "sender_id" : "receiver_id", user.id)
         .eq("total_inc_btw", q.total);
-      // [LIKE-ESCAPE] escapeLikeValue, as the three sibling ingestion paths already do. A raw
-      // value here is a PATTERN, not a string: a vendor written "A_B" or "50% Korting" turns `_`
-      // and `%` into wildcards and matches a DIFFERENT supplier's invoice — and this is the
-      // duplicate gate, so the wrong match silently blocks a legitimate bill as "already added".
-      if (q.tier === "vendor" && q.vendor) query = query.ilike("client_name", escapeLikeValue(q.vendor));
+      // [DEDUP-VENDOR-NORM] Geen .ilike op de naam meer. escapeLikeValue vangt `%` en `_`,
+      // maar PostgREST vertaalt een `*` in de waarde naar `%` vóórdat de escape iets kan doen
+      // (safecore.ts documenteert de meting) — en acquirer-namen als "SUMUP *CAFE" zijn gewone
+      // kassabon-werkelijkheid. Deze tier BLOKKEERT, dus de wildcard-match hield een echte bon
+      // buiten de boeken. De naam wordt hieronder in code vergeleken, als letterlijke
+      // genormaliseerde gelijkheid — wat de ilike bedoelde.
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
       // [DEDUP-READ-HONEST] A dropped error here defeats the whole gate: supabase-js answers a
       // failed read with { data: null, error }, so `data ?? []` turned "we could not look" into
       // "there is no duplicate" — and this route books straight to 'paid', so the cost and the
       // voorbelasting are then claimed twice. Throw; the gate below refuses rather than guesses.
-      const { data, error } = await query.order("id", { ascending: false }).limit(200);
+      // [DEDUP-RECENCY] created_at DESC, nullsFirst:false — a uuid order is a random order, and
+      // the real duplicate must never fall outside the window on a common total.
+      const { data, error } = await query
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .limit(200);
       if (error) throw new Error(error.message);
       const rows = data ?? [];
       const hit =
         q.tier === "number" && q.invoiceNumber
           ? rows.find((r) => normalizeInvoiceNumber(r.invoice_number) === normalizeInvoiceNumber(q.invoiceNumber))
-          : rows[0];
+          : q.tier === "vendor" && q.vendor
+            ? rows.find((r) => normalizeVendor(r.client_name ?? "") === normalizeVendor(q.vendor ?? "") && normalizeVendor(q.vendor ?? "") !== "")
+            : rows[0];
       return hit ? { id: hit.id, invoice_number: hit.invoice_number, client_name: hit.client_name } : null;
     };
     // Probe TWICE so an OCR-total drift between the two reads of the same bill can't hide a
@@ -541,6 +588,46 @@ export async function POST(req: NextRequest) {
   //      outgoing (income) : sender_id = user, receiver_id = null  (a sale/refund)
   //    service_role required (incoming RLS expects sender_id = auth.uid(), which
   //    is null here). payment_method 'bank' + marked_paid_at mirror api/bank/confirm.
+  // [BANK-BUDGET] What does this bank line still have left to give?
+  //
+  // Every other booking door derives available = |tx| − Σ(other links) before it writes
+  // (bank_confirm_atomic.sql, allocate_bank_payment.sql, book_bank_batch) — this route read
+  // nothing, so a €1.000 line with €600 already applied through /api/bank/confirm accepted an
+  // attachment for the full €1.000 and Σ amount_applied became €1.600 on a €1.000 line. The
+  // over-application alarm lives in /api/bank/confirm and never runs here, so nothing noticed.
+  //
+  // Fail CLOSED on a failed read: not knowing the budget is not permission to overdraw it.
+  const { data: priorLinks, error: priorErr } = await pipeline
+    .from("bank_tx_invoices")
+    .select("amount_applied")
+    .eq("transaction_id", transactionId);
+  if (priorErr) {
+    return NextResponse.json(
+      { error: "We konden niet controleren hoeveel van deze betaling al is toegewezen. Probeer het zo opnieuw." },
+      { status: 503 },
+    );
+  }
+  const alreadyApplied = (priorLinks ?? []).reduce(
+    (sum, l) => sum + Math.abs(Number((l as { amount_applied: number | null }).amount_applied) || 0),
+    0,
+  );
+  const budgetLeft = Math.max(0, bankAmount - alreadyApplied);
+  if (budgetLeft <= 0.005) {
+    return NextResponse.json(
+      {
+        error:
+          "Deze betaling is al volledig aan facturen toegewezen. Koppel dit bestand aan een andere betaling, of maak eerst een koppeling ongedaan.",
+      },
+      { status: 409 },
+    );
+  }
+  // The invoice keeps ITS OWN total (the document is the truth about what was billed); only the
+  // APPLIED amount is capped by what the line still has. A document bigger than the remaining
+  // budget is then genuinely partially paid — and says so, instead of claiming 'paid' with money
+  // the line never had.
+  const appliedNow = Math.min(Math.abs(totalIncBtw), budgetLeft);
+  const fullySettled = appliedNow + 0.005 >= Math.abs(totalIncBtw);
+
   const isOutgoing = direction === "outgoing";
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
@@ -548,7 +635,11 @@ export async function POST(req: NextRequest) {
       sender_id: isOutgoing ? user.id : null,
       receiver_id: isOutgoing ? null : user.id,
       direction,
-      status: "paid", // attached to a real, visible bank payment
+      // Attached to a real, visible bank payment — maar alleen "paid" wanneer het resterende
+      // budget van de bankregel het document ook echt dekt. Zie [BANK-BUDGET] hierboven.
+      // (Geen apostrof in dit commentaar: de [BRON-VOCABULAIRE]-scanner volgt quotes door de
+      // object-body heen en een ongepaarde apostrof slokte de source-regel hieronder op.)
+      status: fullySettled ? "paid" : "received",
       payment_method: "bank",
       marked_paid_at: new Date().toISOString(),
       // [PARTIAL-PAY] The MONEY side of 'paid', written here rather than left to a reversal.
@@ -565,12 +656,16 @@ export async function POST(req: NextRequest) {
       // Set to the invoice's own total, which is exactly what this route writes on the link row a
       // few dozen lines down — same number, same reason, and now they agree from the first moment
       // instead of only after a reversal.
-      amount_paid: Math.abs(totalIncBtw),
+      amount_paid: appliedNow,
       payment_date: normalizeToIso(tx.date) ?? invoiceDate,
       source: "upload",
       client_name: verification.vendor || (isOutgoing ? "Onbekende klant" : "Onbekende afzender"),
       invoice_date: invoiceDate,
-      invoice_number: verification.invoice_number || `UPLOAD-${Date.now()}`,
+      // [BON-NUMMER] Leeg blijft leeg. Both sibling doors removed the fabricated
+      // `UPLOAD-${Date.now()}` for the same reason spelled out in intake: a VERZONNEN
+      // documentkenmerk lands as factuurnummer on a purchase row in the legal inkoopboek,
+      // and the audit trail then contradicts the record. Null is the honest value.
+      invoice_number: verification.invoice_number || null,
       total_ex_btw: totalExBtw,
       btw_amount: btwAmount,
       total_inc_btw: totalIncBtw,
@@ -578,7 +673,13 @@ export async function POST(req: NextRequest) {
       document_id: documentId,
       vendor_iban: verification.vendor_iban ?? null,
       payment_reference: verification.payment_reference ?? null,
-      field_confidence: verification.field_confidence ?? null,
+      // [ATTACH-REKENT] A dropped split, a bank/document total disagreement, or partial
+      // coverage all mean a human must look. amount < 0.7 is the existing channel:
+      // classifyImportHealth turns it into needs-review on every list this row appears on.
+      field_confidence:
+        splitDropped || amountWarning || !fullySettled
+          ? { ...(verification.field_confidence ?? {}), amount: Math.min(verification.field_confidence?.amount ?? 1, 0.4) }
+          : (verification.field_confidence ?? null),
     })
     .select("id")
     .single();
@@ -649,7 +750,10 @@ export async function POST(req: NextRequest) {
   // amount_paid 0 and re-open at its full total. The invoice is created fully settled by this
   // transaction, so the applied amount is its own total.
   await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
-    [invoice.id]: Math.abs(totalIncBtw),
+    // [BANK-BUDGET] The applied amount is what the LINE gave, which is not always the invoice's
+    // total: on partial coverage the invoice stays open for the remainder, and Σ amount_applied
+    // over this transaction can never exceed the money that actually moved.
+    [invoice.id]: appliedNow,
   });
 
   // 11. Notification (non-blocking) — service_role by rule.

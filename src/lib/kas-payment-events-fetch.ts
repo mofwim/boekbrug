@@ -98,7 +98,15 @@ export async function fetchSettlementEvents(
     .catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
   const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
 
-  const settled = invRows.filter((i) => isSettled(i) || linkedIds.has(i.id));
+  // [STATUS-GUARD] The same exclusion the accrual engine applies (financial-result.ts
+  // INCOMING_OK and its outgoing mirror): a 'draft' is not a document, a 'processing' row is an
+  // unverified read, and an 'archived' row is an invoice /supersede took out of the books.
+  // Without this line the two VAT schemes disagreed about the same row — an archived duplicate
+  // with a leftover amount_paid or a stray bank link was excluded from every accrual total and
+  // still counted here, reaching the concept-aangifte, readiness and the closing package. A
+  // settlement is only money the moment the document behind it is real and current.
+  const EXCLUDED = new Set(["draft", "processing", "archived"]);
+  const settled = invRows.filter((i) => !EXCLUDED.has(i.status ?? "") && (isSettled(i) || linkedIds.has(i.id)));
   if (settled.length === 0) return { events: [], priorByInvoice: new Map(), undatedPaidCount: 0, estimatedCount: 0 };
 
   const headers = new Map<string, HeaderWithPaid>();

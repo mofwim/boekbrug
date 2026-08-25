@@ -571,6 +571,8 @@ export interface VerifyInvoiceResult {
     // [ASSURANTIE] Set when assurantiebelasting was stripped from the deductible BTW. Keeps the
     // document in the verify queue (never auto-booked) and drives the owner-facing reason.
     _assurantiebelasting?: { read: number | null };
+    // [EX-INCL-FIX] Set when the base was recovered from incl − btw (a mislabelled "Subtotaal").
+    _ex_corrected?: { read: number | null; used: number | null };
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
@@ -2371,9 +2373,23 @@ Return JSON only.`;
     }
     // [EX-INCL-FIX] Recover a base that a mislabelled "Subtotaal" set equal to the incl total
     // while a real BTW is printed (impossible). Trusts incl + btw → ex = incl − btw.
-    parsed.total_ex_btw = fixExInclConfusion(
-      parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
-    );
+    {
+      const exBefore = parsed.total_ex_btw;
+      parsed.total_ex_btw = fixExInclConfusion(
+        parsed.total_ex_btw, parsed.btw_amount, parsed.total_inc_btw,
+      );
+      // [EX-INCL-FIX zichtbaar] Every sibling repair leaves a trace (_btw_derived,
+      // _assurantiebelasting, _total_derived) precisely so a human confirms our arithmetic before
+      // it books — this one rewrote the base, made the identity hold by construction, and left
+      // nothing. The number that becomes kosten was our subtraction; say so, and let
+      // classifyImportHealth hold the row like its siblings.
+      if (exBefore !== undefined && parsed.total_ex_btw !== undefined && exBefore !== parsed.total_ex_btw) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _ex_corrected: { read: exBefore, used: parsed.total_ex_btw },
+        };
+      }
+    }
 
     // [BTW-SUM-FIX] Recover a BTW total mis-summed from a MIXED-RATE summary block, using the two
     // figures the reader did NOT have to compute (printed excl + printed paid total). Runs AFTER
@@ -2483,6 +2499,26 @@ Return JSON only.`;
       if (printed !== null && parsed.total_inc_btw !== undefined &&
           Math.abs(Math.abs(printed) - Math.abs(parsed.total_inc_btw)) > 0.02) {
         parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _total_printed: printed };
+      }
+    }
+
+    // [BTW-GATE aan de bron] auto-advance refuses a materially-priced invoice whose read btw is 0
+    // without an explicit 0% rate — a 21% invoice misread as ex==incl books with its voorbelasting
+    // silently zeroed. But that refusal lived ONLY in the machine's own gate: the verify queue
+    // computed health from the stored row (which keeps no rate), called the same invoice "klaar",
+    // and offered it to the bulk-confirm tap. The machine politely declined what the screen was
+    // inviting the human to do in one tap. Mirror the rule at the source, in the channel health
+    // already reads: a low amount confidence (< 0.7) holds the row for review on every list.
+    // A genuine 0%/vrijgesteld read (btw_rate === 0) stays clean, exactly as in auto-advance.
+    {
+      const gross = parsed.total_inc_btw ?? parsed.amount;
+      const materially = typeof gross === 'number' && Math.abs(gross) >= 0.005;
+      const zeroBtw = typeof parsed.btw_amount === 'number' && Math.abs(parsed.btw_amount) < 0.005;
+      if (parsed.is_invoice === true && materially && zeroBtw && parsed.btw_rate !== 0) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          amount: Math.min(parsed.field_confidence?.amount ?? 1, 0.4),
+        };
       }
     }
 

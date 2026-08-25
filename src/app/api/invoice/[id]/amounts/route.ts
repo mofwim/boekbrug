@@ -176,6 +176,34 @@ export async function PATCH(
     );
   }
 
+  // GUARD 4b — [SAFECORE-SPIEGEL] the two SAFECORE rules the identity alone cannot see. This
+  // route edits a BOOKED invoice, and the identity is satisfiable by amounts SAFECORE would have
+  // refused at import:
+  //   · ex 0 · btw 21 · incl 21 holds exactly (0 + 21 = 21) and is the [NO-BASE] case — a € 21
+  //     voorbelasting claim on a purchase with no taxable base at all;
+  //   · ex 100 · btw 79 · incl 179 holds exactly and implies a 79% rate no Dutch invoice can
+  //     carry, singly or blended (the ceiling is 21%).
+  // The import door refuses both; an edit door that accepts them is the same defect one screen
+  // later. Magnitudes, so a creditnota (all negative) is judged by the same ceiling.
+  if (hasAmounts && Math.abs(btw) > 0.005) {
+    if (Math.abs(exBtw) < 0.005) {
+      return NextResponse.json(
+        { error: "BTW zonder grondslag kan niet: een bedrag excl. BTW van € 0 met BTW erop bestaat op geen enkele factuur.", code: "no_base" },
+        { status: 400 },
+      );
+    }
+    const impliedRate = Math.abs(btw / exBtw) * 100;
+    if (impliedRate > 21.5) {
+      return NextResponse.json(
+        {
+          error: `Deze bedragen impliceren een BTW-tarief van ${Math.round(impliedRate)}% — het hoogste Nederlandse tarief is 21%. Controleer welk bedrag verkeerd is ingevuld.`,
+          code: "impossible_rate",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   // [FULL-CORRECTION] The fields the ACCOUNTANT reads. A misread supplier name or invoice number
   // moves no money and still makes the books wrong where it counts: the number is what the
   // duplicate gate, the bank matcher and the accountant's own cross-check all key on, and the date
@@ -209,7 +237,7 @@ export async function PATCH(
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
     // [SUPPLIER-ALIAS] supplier_id + vendor_iban ride along: they are what says WHICH company a
     // corrected name belongs to, and without one of them a rename is one name pointing at another.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban")
+    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
     .eq("id", id)
     .maybeSingle();
 
@@ -321,6 +349,20 @@ export async function PATCH(
     patch.total_ex_btw = signed.totalExBtw;
     patch.btw_amount = signed.btwAmount;
     patch.total_inc_btw = signed.totalIncBtw;
+    // [SAFECORE-SPIEGEL] The stored _safecore verdict describes the amounts that are being
+    // REPLACED. Leaving it standing means every later reader of field_confidence (health, the
+    // queue, the checklist) grades the new figures with the old read's verdict — stale either
+    // way, as a false alarm or a false all-clear. The human just asserted these amounts, which
+    // outranks any machine verdict about their predecessors; the other per-field scores stay,
+    // because vendor/nummer/datum were not what changed here.
+    {
+      const fc = (invoice as { field_confidence?: Record<string, unknown> | null }).field_confidence;
+      if (fc && typeof fc === "object" && "_safecore" in fc) {
+        const cleaned = { ...fc };
+        delete cleaned._safecore;
+        (patch as Record<string, unknown>).field_confidence = cleaned;
+      }
+    }
   }
   // [FULL-CORRECTION] Applied only where the value really differs, so a form that posts every
   // field cannot manufacture a change out of one the owner never touched. Trimmed comparison, the
