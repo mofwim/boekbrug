@@ -38,6 +38,10 @@
 
 import { classifyImportHealth, type HealthInput, type FieldConfidence } from '@/lib/import-health'
 import { formatEuroNL } from '@/lib/format-nl'
+// [STATIEGELD-GAT] The deposit line the reader dropped — see statiegeld.ts.
+import { depositGapText, type DepositGap } from '@/lib/statiegeld'
+// [LEVERANCIER-ID] The two mechanical identity checks — see vendor-identity.ts.
+import { checkVendorIban, checkVendorBtw } from '@/lib/vendor-identity'
 import { creditStance, payableAsDebt } from '@/lib/creditnota-signal'
 import { classifyBtwSplit, btwSplitCorroborated, btwSplitDetail } from '@/lib/btw-split'
 
@@ -48,7 +52,7 @@ export type CheckOutcome =
 
 export interface InvoiceCheck {
   /** Stable id for keys and tests. */
-  id: 'arithmetic' | 'total-on-document' | 'btw-split' | 'duplicate' | 'iban' | 'single-invoice' | 'date' | 'number' | 'kind'
+  id: 'arithmetic' | 'total-on-document' | 'btw-split' | 'duplicate' | 'iban' | 'iban-vorm' | 'btw-nummer' | 'single-invoice' | 'date' | 'number' | 'kind'
   /** What was checked. Dutch — this is what the owner reads (AGENTS.md). */
   label: string
   outcome: CheckOutcome
@@ -80,6 +84,9 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   const health = classifyImportHealth(inv)
   const sc = safecore(inv.field_confidence)
   const out: InvoiceCheck[] = []
+  // [STATIEGELD-GAT] What the import found back on the paper for a breakdown that comes up short.
+  // Read, never re-derived: the search needs the document's characters and this module is pure.
+  const deposit = (inv.field_confidence as { _statiegeld?: DepositGap } | null)?._statiegeld ?? null
 
   // ── 1. The arithmetic ──
   //
@@ -104,8 +111,16 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     // The SAME condition as the outcome above. Keying the detail on flags.arithmetic while the
     // outcome is keyed on the narrower question put a green tick over the sentence "excl. + btw
     // komt niet uit op het totaal" — a row contradicting itself, which is worse than either half.
+    // [STATIEGELD-GAT] …and when the paper explains the difference, say what it says. "excl. + btw
+    // komt niet uit op het totaal" is true and unusable: the owner sees three numbers, knows one
+    // is short, and gets to hunt for the missing line. On a drinks wholesaler's invoice that line
+    // is almost always the deposit, and the reader dropping it is the ordinary failure — reported
+    // on Elegance Brands 2026080832, where the missing € 176,40 stood printed one line above the
+    // total as "Totaal Statiegeld". Detected at import against the document's own characters
+    // (statiegeld.ts), so this row names the amount, the word on the paper, and the base it
+    // becomes — and the verify screen offers it as one tap.
     detail: health.flags.arithmetic && !health.flags.notOnDocument
-      ? 'excl. + btw komt niet uit op het totaal'
+      ? (deposit ? depositGapText(deposit) : 'excl. + btw komt niet uit op het totaal')
       : totalDerived === 'total'
         ? 'het totaal stond niet los op de factuur — wij hebben het uit excl. + btw berekend'
         : totalDerived === 'excl'
@@ -213,6 +228,55 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       : !ibanPrinted ? 'er staat geen rekeningnummer op deze factuur'
       : 'ongewijzigd ten opzichte van eerdere facturen',
   })
+
+  // ── 4b. Is that account number a possible IBAN at all? ──
+  //
+  // [LEVERANCIER-ID] The row above answers the FRAUD question (did this supplier's number change).
+  // This one answers a different failure with a different cause: one character read wrong, or
+  // printed wrong. An IBAN carries its own mod-97 checksum for exactly that, and the reader stores
+  // what it finds WITHOUT running it — its own comment defers the check to "QR-prepare time", which
+  // is after the owner has already decided to pay. Here it runs at the moment they decide.
+  //
+  // Only when something was printed: the row above already says "er staat geen rekeningnummer op
+  // deze factuur", and a second row repeating it is noise rather than honesty (the same rule
+  // btw-split follows for 'no-basis').
+  const ibanShape = checkVendorIban(inv.vendor_iban)
+  if (ibanShape !== 'absent') {
+    out.push({
+      id: 'iban-vorm',
+      label: 'Rekeningnummer klopt als IBAN',
+      outcome: ibanShape === 'ok' ? 'passed' : 'flagged',
+      detail: ibanShape === 'ok'
+        ? 'de controlecijfers kloppen'
+        : 'de controlecijfers van dit rekeningnummer kloppen niet — er is een teken misgelezen of ' +
+          'verkeerd afgedrukt. Vergelijk het met de factuur vóór je betaalt',
+    })
+  }
+
+  // ── 4c. The supplier's btw number ──
+  //
+  // [BTW-NUMMER-GELEZEN] A legal requirement, not a courtesy: art. 35a Wet OB puts the supplier's
+  // btw-identificatienummer on a factuur, and without a valid one the voorbelasting on this cost is
+  // refusable. The reader keeps a well-formed NL id as a supplier key and drops everything else —
+  // right for a key, and it silently swallowed the malformed case, which is the only case worth
+  // saying anything about. ai.ts now keeps what was printed; vendor-identity.ts judges it.
+  //
+  // Absent → no row, and that is a deliberate limit: this app cannot tell "the invoice printed
+  // none" (a finding) from "we could not read it" (a gap), and a permanent grey row on every
+  // historical invoice is how grey stops being read.
+  const btwPrinted = (inv.field_confidence as { _vendor_btw_printed?: string } | null)?._vendor_btw_printed
+  const btwShape = checkVendorBtw(btwPrinted)
+  if (btwShape !== 'absent') {
+    out.push({
+      id: 'btw-nummer',
+      label: 'Btw-nummer van deze leverancier',
+      outcome: btwShape === 'ok' ? 'passed' : 'flagged',
+      detail: btwShape === 'ok'
+        ? `${btwPrinted} — geldige vorm`
+        : `"${btwPrinted}" heeft niet de vorm van een geldig btw-nummer. Vraag de leverancier om ` +
+          'een juiste factuur — zonder geldig btw-nummer kan de belastingdienst de voorbelasting weigeren',
+    })
+  }
 
   // ── 5. One invoice, or several in one file ──
   // Same split as the IBAN row above, and for the same reason: health.flags.multipleInvoices is

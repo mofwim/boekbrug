@@ -33,9 +33,12 @@ function outcome(inv: CheckInput, id: string): CheckOutcome {
 
 test('[CHECKLIST] a clean invoice says what was checked instead of saying nothing', () => {
   const checks = invoiceChecks(clean())
-  assert.equal(checks.length, 8, 'all eight axes are reported')
-  assert.equal(checksPassed(checks), 8, 'and on a clean invoice every one of them passed')
-  assert.match(checksSummary(checks), /Alle 8 controles gedaan/, 'the summary may claim completeness ONLY here')
+  // Nine since [LEVERANCIER-ID]: the eight original axes plus the IBAN checksum, which appears
+  // because the fixture prints an account number. The btw-number row stays away — the fixture
+  // carries no read btw id, and a row about a number nobody printed is a permanent grey nothing.
+  assert.equal(checks.length, 9, 'all nine axes are reported')
+  assert.equal(checksPassed(checks), 9, 'and on a clean invoice every one of them passed')
+  assert.match(checksSummary(checks), /Alle 9 controles gedaan/, 'the summary may claim completeness ONLY here')
   for (const c of checks) {
     assert.ok(c.label.length > 5, `${c.id} has no label`)
     assert.doesNotMatch(c.label, /[a-z]+_[a-z]+/, `${c.id} leaks a field name into the owner's text: "${c.label}"`)
@@ -84,7 +87,7 @@ test('[CHECKLIST] the summary never claims completeness it does not have', () =>
   const summary = checksSummary(partial)
   assert.doesNotMatch(summary, /Alle \d+ controles/, 'a skipped check must break the "all done" claim')
   assert.match(summary, /konden we niet nagaan/, 'and it must say so, not just stay quieter')
-  assert.match(summary, /7 van de 8/, 'with the real numbers')
+  assert.match(summary, /8 van de 9/, 'with the real numbers')
 })
 
 test('[CHECKLIST] a flagged invoice leads with the thing to look at', () => {
@@ -120,8 +123,8 @@ test('[CHECKLIST] a kassabon is not asked for an invoice number', () => {
   // unanswerable question on every bon. Same reasoning classifyImportHealth uses.
   const bon = invoiceChecks(clean({ invoice_number: null, field_confidence: { _intake_kind: 'receipt' } }))
   assert.equal(bon.find((c) => c.id === 'number'), undefined, 'the row is absent, not "not-checked"')
-  assert.equal(bon.length, 7)
-  assert.match(checksSummary(bon), /Alle 7 controles gedaan/, 'and the count follows the list it describes')
+  assert.equal(bon.length, 8)
+  assert.match(checksSummary(bon), /Alle 8 controles gedaan/, 'and the count follows the list it describes')
 })
 
 test('[CHECKLIST] the invoice that showed seven green ticks over a wrong btw', () => {
@@ -290,4 +293,76 @@ test('[ANDER-TOTAAL] a text witness without an alternative keeps the plain sente
   assert.ok(row)
   assert.match(row!.detail!, /tekst van dit document/)
   assert.doesNotMatch(row!.detail!, /wél/, 'no invented alternative when the witness saw none')
+})
+
+// ── [LEVERANCIER-ID] + [STATIEGELD-GAT] The three rows added after the owner's report ─────────
+
+test('[LEVERANCIER-ID] an account number whose checksum fails is flagged, not merely stored', () => {
+  // One digit off the fixture's real IBAN. The reader stores what it reads WITHOUT the mod-97
+  // check ("future validation at QR-prepare time"), so this reached the pay screen looking
+  // ordinary. It is a different failure from the change-check above it: no malice, just a
+  // character read or printed wrong — and the money goes nowhere.
+  const row = invoiceChecks(clean({ vendor_iban: 'NL66RABO0171136276' })).find((c) => c.id === 'iban-vorm')
+  assert.ok(row, 'the row exists when an account number is printed')
+  assert.equal(row!.outcome, 'flagged')
+  assert.match(row!.detail!, /controlecijfers/)
+  assert.match(row!.detail!, /vóór je betaalt/, 'it says WHEN to act — before the money moves')
+})
+
+test('[LEVERANCIER-ID] no account number on the invoice: no second row about it', () => {
+  // The change-check already says "er staat geen rekeningnummer op deze factuur". Repeating that
+  // in a second grey row is noise, and grey that is always there stops being read.
+  const checks = invoiceChecks(clean({ vendor_iban: null }))
+  assert.equal(checks.find((c) => c.id === 'iban-vorm'), undefined)
+  assert.equal(outcome(clean({ vendor_iban: null }), 'iban'), 'not-checked')
+})
+
+test('[BTW-NUMMER-GELEZEN] a malformed btw number is named, with the consequence attached', () => {
+  // Ten digits where nine belong. The reader drops such a value as a supplier KEY — correct — and
+  // that drop used to be the end of it: the one case worth telling the owner about was the one
+  // that vanished. art. 35a Wet OB requires a valid number; without it the voorbelasting on this
+  // cost is refusable, so the sentence says that rather than "controleer even".
+  const row = invoiceChecks(clean({
+    field_confidence: { _vendor_btw_printed: 'NL8522448721B01' } as unknown as CheckInput['field_confidence'],
+  })).find((c) => c.id === 'btw-nummer')
+  assert.ok(row)
+  assert.equal(row!.outcome, 'flagged')
+  assert.match(row!.detail!, /NL8522448721B01/, 'quotes what is printed, so the owner can compare')
+  assert.match(row!.detail!, /voorbelasting/, 'and names what it costs')
+})
+
+test('[BTW-NUMMER-GELEZEN] a valid NL id passes; a Belgian supplier is not a false alarm', () => {
+  const nl = invoiceChecks(clean({
+    field_confidence: { _vendor_btw_printed: 'NL852244872B01' } as unknown as CheckInput['field_confidence'],
+  })).find((c) => c.id === 'btw-nummer')
+  assert.equal(nl?.outcome, 'passed')
+  const be = invoiceChecks(clean({
+    field_confidence: { _vendor_btw_printed: 'BE0123456789' } as unknown as CheckInput['field_confidence'],
+  })).find((c) => c.id === 'btw-nummer')
+  assert.equal(be?.outcome, 'passed', 'per-country rules are not encoded — a valid EU number must not flag')
+})
+
+test('[STATIEGELD-GAT] the arithmetic row explains the gap when the paper explains it', () => {
+  // Elegance Brands 2026080832: 835,30 + 75,22 under a printed total of 1.086,92. The import found
+  // the missing 176,40 beside the word "Statiegeld", so this row stops saying "komt niet uit" and
+  // starts saying what to do — including the figure the base becomes.
+  const row = invoiceChecks(clean({
+    total_ex_btw: 835.3, btw_amount: 75.22, total_inc_btw: 1086.92,
+    field_confidence: {
+      _statiegeld: { gap: 176.4, label: 'Statiegeld', correctedExcl: 1011.7 },
+    } as unknown as CheckInput['field_confidence'],
+  })).find((c) => c.id === 'arithmetic')
+  assert.ok(row)
+  assert.equal(row!.outcome, 'flagged', 'still a flag — the amounts as stored do not add up')
+  assert.match(row!.detail!, /€\s?176,40/)
+  assert.match(row!.detail!, /Statiegeld/)
+  assert.match(row!.detail!, /€\s?1\.011,70/, 'and the base the one tap would produce')
+})
+
+test('[STATIEGELD-GAT] a gap the paper does NOT explain keeps the blunt sentence', () => {
+  const row = invoiceChecks(clean({
+    total_ex_btw: 835.3, btw_amount: 75.22, total_inc_btw: 1086.92, field_confidence: null,
+  })).find((c) => c.id === 'arithmetic')
+  assert.equal(row?.outcome, 'flagged')
+  assert.match(row!.detail!, /komt niet uit op het totaal/, 'nothing may be invented in its place')
 })

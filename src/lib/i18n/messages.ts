@@ -466,6 +466,14 @@ export const MESSAGES = {
   'ink.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'ink.opheffen': { nl: 'Opheffen', ar: 'إلغاء التجاهل', en: 'Undo' },
 
+  // [STATIEGELD-GAT] De knop die het gevonden verschil in het bedrag excl. btw zet. Het WOORD komt
+  // van de factuur zelf ({woord}: statiegeld, emballage, fust…) — de eigenaar herkent zijn eigen
+  // papier sneller aan het woord dat erop staat dan aan het onze.
+  'ink.statiegeld.meetellen': {
+    nl: '{bedrag} {woord} meetellen in het bedrag excl. btw',
+    ar: 'احتساب {bedrag} ({woord}) ضمن المبلغ بدون ضريبة',
+    en: 'Count {bedrag} {woord} into the amount excl. VAT',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },

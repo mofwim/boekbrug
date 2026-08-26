@@ -15174,3 +15174,59 @@ test("[LEES] a file the app cannot read SAYS SO, and everything it read stays co
   const csvSpec = readFileSync("src/lib/bank-csv.test.ts", "utf8");
   assert.match(csvSpec, /unrecognised Af\/Bij flag is SAID/, "the odd-flag test exists");
 });
+
+test("[STATIEGELD-GAT] het statiegeld dat de lezer liet vallen, wordt teruggevonden en aangeboden", () => {
+  // GEMELD: "het lukt de app niet om statiegeld te verwerken". Elegance Brands 2026080832 bleef
+  // hangen op "excl. + btw komt niet uit op het totaal", terwijl het ontbrekende bedrag één regel
+  // hoger op het papier stond als "Totaal Statiegeld". De prompt schrijft dit geval uitgebreid
+  // voor (STATIEGELD / EMBALLAGE in ai.ts) en het model laat het tóch vallen — dus hoort er een
+  // mechanisch vangnet onder, want bij een drankengroothandel is dit geen randgeval.
+  const mod = code("src/lib/statiegeld.ts");
+  // 1. Eén matcher voor "staat dit hele getal er". Een eigen kopie hier zou opnieuw "176,40"
+  //    binnen "1.176,40" vinden — de duizend-eurofout waar amount-grounding.ts voor bestaat.
+  assert.match(mod, /import \{ amountOccurrences \} from '\.\/amount-grounding'/,
+    "statiegeld.ts schrijft zijn eigen getalmatcher — dat is de tweede spelling die altijd afwijkt");
+  assert.doesNotMatch(mod, /indexOf\(/, "…en zoekt dus zelf niet in de tekst");
+  // 2. Het zwijgt zonder bewijs. Een verschil dat het papier niet verklaart moet onverklaard
+  //    blijven; "wij denken dat dit statiegeld is" over een misgelezen totaal is erger dan de
+  //    botte melding die het vervangt.
+  assert.match(mod, /if \(!t\) return null/, "zonder document mag er niets beweerd worden");
+
+  // 3. De import zoekt het op DEZELFDE tekst waar de bedragen tegen zijn gecontroleerd — dus ook
+  //    op de blinde transcriptie van een foto, wanneer die de getuige werd.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /witnessText = transcribed;/, "de OCR-getuige wordt niet doorgegeven");
+  assert.match(ai, /detectDepositGap\(\{[\s\S]{0,220}text: witnessText,/,
+    "de statiegeldzoektocht draait niet op de getuige die werkelijk sprak");
+  assert.match(ai, /_statiegeld = deposit;/, "de vondst wordt niet bewaard");
+
+  // 4. En het scherm biedt hem met één tik aan: het rekenwerk staat vast (de optelling bepaalt het
+  //    bedrag, het papier het woord), dus er valt alleen nog te bevestigen.
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(scherm, /applyTriplet\(setExcl\(triplet, clampAmount\(round2\(exBtw \+ depositGap\.gap\)\)\)\)/,
+    "de knop telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(scherm, /depositGap && Math\.abs\(round2\(totalIncBtw - exBtw - btwAmount\)\) > 0\.02/,
+    "de knop verdwijnt niet zodra de bedragen kloppen — hij bestaat alleen zolang er een gat is");
+});
+
+test("[BTW-NUMMER-GELEZEN] het gedrukte btw-nummer wordt bewaard vóór de sleutelfilter het weggooit", () => {
+  // De filter zelf is goed: een verminkte of buitenlandse waarde mag nooit een leverancierSLEUTEL
+  // worden. Maar hij vernietigde ook het enige bewijs dát er een btw-nummer op stond — en art. 35a
+  // Wet OB eist er een. Het verminkte geval, precies het geval dat het vertellen waard is, was het
+  // enige dat geruisloos verdween.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_btw_printed = btw;");
+  const filter = ai.indexOf("parsed.vendor_btw = /^NL\\d{9}B\\d{2}$/.test(btw)");
+  assert.ok(bewaar > 0, "het gedrukte nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of het wordt pas bewaard nadat de filter het al weggooide");
+
+  // De twee controles lezen mechanisch, zonder model: de IBAN via de gedeelde mod-97 (die ook de
+  // betaal-QR bewaakt), het btw-nummer op vorm. Een eigen mod-97 hier zou een tweede antwoord op
+  // dezelfde vraag zijn.
+  const id = code("src/lib/vendor-identity.ts");
+  assert.match(id, /import \{ isValidIban, normalizeIban \} from '\.\/epc-qr'/,
+    "vendor-identity schrijft zijn eigen IBAN-controle — één rekenregel, één plek");
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /if \(ibanShape !== 'absent'\)/, "de IBAN-vormrij verschijnt ook zonder nummer");
+  assert.match(checks, /if \(btwShape !== 'absent'\)/, "de btw-rij verschijnt ook zonder nummer");
+});

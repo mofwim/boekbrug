@@ -1,36 +1,109 @@
-// [STATIEGELD] Pure node test — run: npx tsx src/lib/statiegeld.test.ts
-// Locks the reconciliation for deposit (statiegeld/emballage) invoices. The fix is that the
-// extractor returns total_ex_btw INCLUSIVE of the 0%-BTW statiegeld base, so
-// total_ex_btw + btw_amount = total_inc_btw holds and the arithmetic gate stops raising a
-// false "excl + BTW ≠ totaal" on a perfectly correct drinks-wholesale invoice.
-import { evaluateArithmetic } from "./safecore";
+// [STATIEGELD-GAT] Pure node test — run: npx tsx --test src/lib/statiegeld.test.ts
+//
+// The invoice is real: Elegance Brands 2026080832, reported by the owner because the app could do
+// nothing with it. Every number below is off that paper. What must hold in both directions:
+// the deposit that IS printed gets found, and a difference the paper does not explain stays
+// unexplained — a wrong "this is deposit" over a misread total is worse than the blunt message it
+// would replace.
 
-let passed = 0, failed = 0;
-function check(name: string, cond: boolean) {
-  if (cond) { passed++; console.log(`  ✓ ${name}`); }
-  else { failed++; console.log(`  ✗ ${name}`); }
-}
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
 
-// Real Elegance Brands invoice: goods 2219.10 @ 9% (BTW 199.74) + statiegeld 145.80 @ 0%,
-// printed total 2564.64.
-console.log("\n— a statiegeld invoice reconciles when ex INCLUDES the 0% deposit base —");
-{
-  const v = evaluateArithmetic({ totalExBtw: 2364.90, btwAmount: 199.74, totalIncBtw: 2564.64 });
-  check("no arithmetic flag (2364.90 + 199.74 = 2564.64)", v.ok === true);
-}
+import { detectDepositGap, depositGapText } from './statiegeld'
 
-console.log("\n— the OLD goods-only ex was the bug: it trips the sum check —");
-{
-  const v = evaluateArithmetic({ totalExBtw: 2219.10, btwAmount: 199.74, totalIncBtw: 2564.64 });
-  check("goods-only ex → sum_mismatch (this is what the fix removes)", v.ok === false && (v.flags ?? []).includes("sum_mismatch"));
-}
+// The totals block as the PDF prints it.
+const ELEGANCE = `
+  Subtotaal            € 835,30
+  BTW 9%               € 75,22
+  Totaal Statiegeld    € 176,40
+  Totaal               € 1.086,92
+`
 
-console.log("\n— a genuine mismatch (not explained by a deposit) still flags —");
-{
-  // total is LESS than ex+btw — a real inconsistency, must never be masked.
-  const v = evaluateArithmetic({ totalExBtw: 1000, btwAmount: 210, totalIncBtw: 900 });
-  check("total below ex+BTW still flags", v.ok === false && (v.flags ?? []).includes("sum_mismatch"));
-}
+test('[STATIEGELD-GAT] the Elegance invoice: the missing 176,40 is found on the paper', () => {
+  const d = detectDepositGap({
+    totalExBtw: 835.3,
+    btwAmount: 75.22,
+    totalIncBtw: 1086.92,
+    text: ELEGANCE,
+  })
+  assert.ok(d, 'the deposit line was not found')
+  assert.equal(d!.gap, 176.4)
+  assert.equal(d!.correctedExcl, 1011.7, 'the base the owner is agreeing to')
+  assert.match(d!.label, /Statiegeld/i)
 
-console.log(`\n${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+  const zin = depositGapText(d!)
+  assert.match(zin, /€\s?176,40/, 'names the difference')
+  assert.match(zin, /€\s?1\.011,70/, 'and the figure the base becomes')
+  assert.match(zin, /geen btw/, 'and says the btw does not move — that is why this is safe')
+})
+
+test('[STATIEGELD-GAT] a breakdown that already adds up says nothing', () => {
+  assert.equal(
+    detectDepositGap({ totalExBtw: 1011.7, btwAmount: 75.22, totalIncBtw: 1086.92, text: ELEGANCE }),
+    null,
+  )
+})
+
+test('[STATIEGELD-GAT] an unexplained difference stays unexplained', () => {
+  // Same three amounts, a document that says nothing about deposits. The identity still fails —
+  // and this module refuses to name a cause it cannot see. That refusal is the whole safety.
+  const d = detectDepositGap({
+    totalExBtw: 835.3,
+    btwAmount: 75.22,
+    totalIncBtw: 1086.92,
+    text: 'Subtotaal 835,30\nBTW 9% 75,22\nVerzendkosten 176,40 excl.\nTotaal 1.086,92',
+  })
+  assert.equal(d, null, 'shipping is not a deposit — nothing here may vouch for the gap')
+})
+
+test('[STATIEGELD-GAT] a returned deposit moves the base DOWN, and says so', () => {
+  // "Retour container 408,00" printed positive under a return heading; the arithmetic gives the
+  // sign. Goods 2.000,00 + 420,00 btw − 408,00 returned = 2.012,00 paid.
+  const d = detectDepositGap({
+    totalExBtw: 2000,
+    btwAmount: 420,
+    totalIncBtw: 2012,
+    text: 'Goederen 2.000,00\nBTW 21% 420,00\nRetouremballage 408,00\nTe voldoen 2.012,00',
+  })
+  assert.ok(d)
+  assert.equal(d!.gap, -408)
+  assert.equal(d!.correctedExcl, 1592)
+  assert.match(depositGapText(d!), /eraf/, 'a return lowers the base and the sentence says which way')
+})
+
+test('[STATIEGELD-GAT] a supplier NAME containing "borg" never vouches for an amount', () => {
+  // `borg` is matched as a whole word for exactly this: "Borgman Dranken B.V." beside a difference
+  // it has nothing to do with would otherwise read as evidence.
+  const d = detectDepositGap({
+    totalExBtw: 100,
+    btwAmount: 21,
+    totalIncBtw: 171,
+    text: 'Borgman Dranken B.V.  50,00 administratiekosten\nTotaal 171,00',
+  })
+  assert.equal(d, null)
+})
+
+test('[STATIEGELD-GAT] the amount must be the WHOLE number, not a slice of a bigger one', () => {
+  // 176,40 inside 1.176,40 beside the deposit word: the shared matcher in amount-grounding refuses
+  // it, which is the thousand-euro error that module exists to prevent.
+  const d = detectDepositGap({
+    totalExBtw: 835.3,
+    btwAmount: 75.22,
+    totalIncBtw: 1086.92,
+    text: 'Statiegeld totaal 1.176,40\nTotaal 1.086,92',
+  })
+  assert.equal(d, null)
+})
+
+test('[STATIEGELD-GAT] without a document there is nothing to corroborate with', () => {
+  // A photo with no transcription. The gap is real; the explanation is not available. Silence.
+  assert.equal(
+    detectDepositGap({ totalExBtw: 835.3, btwAmount: 75.22, totalIncBtw: 1086.92, text: null }),
+    null,
+  )
+  assert.equal(
+    detectDepositGap({ totalExBtw: 835.3, btwAmount: null, totalIncBtw: 1086.92, text: ELEGANCE }),
+    null,
+    'an unread btw leaves no identity to reason from',
+  )
+})

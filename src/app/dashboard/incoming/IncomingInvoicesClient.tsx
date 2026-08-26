@@ -44,6 +44,8 @@ import { describeUploadFailure } from "@/lib/upload-failure";
 import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from "@/lib/parse-nl";
+// [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
+import { type DepositGap } from "@/lib/statiegeld";
 // [CENT] Cent rounding comes from invoice-totals.round2 — one definition for the whole app.
 import { round2 } from "@/lib/invoice-totals";
 // [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
@@ -1049,6 +1051,10 @@ export function ConfirmPaidModal({
   const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
 
+  // [STATIEGELD-GAT] Wat de import op het papier terugvond voor een optelling die tekortkomt.
+  // Alleen gelezen — het zoeken gebeurt op de tekst van het document, bij de import (statiegeld.ts).
+  const depositGap = (invoice.field_confidence as { _statiegeld?: DepositGap } | null)?._statiegeld ?? null;
+
   // [KOMMA-INVOER] What the owner SEES while typing, next to what the triplet HOLDS — the same
   // pairing [DATE-NL] uses above, for the same reason: a display derived from the parsed number
   // eats the keystroke that has not become a number yet. These fields were <input type="number">,
@@ -1382,6 +1388,34 @@ export function ConfirmPaidModal({
                   </span>
                 )}
               </div>
+              {/* [STATIEGELD-GAT] Eén tik, want het rekenwerk is al gedaan.
+                  GEMELD: "het lukt de app niet om statiegeld te verwerken". De factuur van Elegance
+                  Brands bleef hangen op "excl. + btw komt niet uit op het totaal", terwijl het
+                  ontbrekende bedrag één regel hoger op het papier stond als "Totaal Statiegeld".
+                  Het verschil ligt vast door de optelling, en het woord ernaast is door de import
+                  op het document zelf teruggevonden (statiegeld.ts) — dus valt er niets meer uit
+                  te rekenen, alleen nog te bevestigen. De btw beweegt niet mee: over statiegeld
+                  wordt er geen gerekend, en dat is precies waarom dit veilig aan te bieden is.
+                  Verdwijnt zodra de bedragen kloppen — de knop bestaat alleen zolang er een gat is. */}
+              {depositGap && Math.abs(round2(totalIncBtw - exBtw - btwAmount)) > 0.02 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editing) setEditing(true);
+                    applyTriplet(setExcl(triplet, clampAmount(round2(exBtw + depositGap.gap))));
+                  }}
+                  style={{
+                    marginTop: 10, width: "100%", minHeight: 44, borderRadius: 12, border: "1px solid #1a73e8",
+                    background: "#e8f0fe", color: "#1a4fa0", fontSize: 13.5, fontWeight: 600,
+                    cursor: "pointer", fontFamily: "inherit", padding: "10px 12px", lineHeight: 1.4,
+                  }}
+                >
+                  {t('ink.statiegeld.meetellen', {
+                    bedrag: formatAmount(Math.abs(depositGap.gap)),
+                    woord: depositGap.label,
+                  })}
+                </button>
+              )}
               {editing && (
                 <div style={{ fontSize: 12, color: "#5f6368", lineHeight: 1.4, marginTop: 8 }}>
                   {t('corr.bedragUitleg')} {t('corr.statiegeld')}
