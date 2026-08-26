@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { buildIbJaarOverzicht } from "@/lib/ib-jaar";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -26,6 +27,12 @@ export async function GET(req: NextRequest) {
   if (!Number.isInteger(year) || year < 2020 || year > 2100) {
     return NextResponse.json({ error: "Ongeldig jaar" }, { status: 400 });
   }
+
+  // [DIEP-3] A SCREEN read, not an export: the jaar screen fetches this on every mount and
+  // toggle, all on the viewer's one bucket — the export ceiling 429'd the 61st client-year an
+  // accountant opened (day-end audit). Screen-sized ceiling instead.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "ib-jaar", ...RATE_LIMITS.YEAR_SCREEN });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   const owner = await resolveQuarterOwner(supabase, user.id, req.nextUrl.searchParams.get("clientId"));
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });

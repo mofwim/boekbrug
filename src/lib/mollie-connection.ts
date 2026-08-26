@@ -175,3 +175,21 @@ export async function deleteMollieConnection(userId: string): Promise<boolean> {
   }
   return true;
 }
+
+/**
+ * [MOLLIE-ALARM] Zet een aandachtszin op de koppeling — de enige regel die MollieCard aan de
+ * eigenaar toont. De audit vond dat de kaart `lastError` al rendert terwijl NIETS hem ooit
+ * schreef: elke "spoor op de rij" ging naar een tabel zonder lezer. Dit is de schrijver.
+ * Best-effort: het alarm zelf (reportHandledFailure) is de primaire melding; deze zin is de
+ * kopie die de eigenaar in zijn eigen scherm ziet.
+ */
+export async function setMollieConnectionError(userId: string, message: string): Promise<void> {
+  const supabase = createPipelineClient();
+  const { error } = await supabase
+    .from("mollie_connections")
+    .update({ last_error: message.slice(0, 500) })
+    .eq("user_id", userId);
+  if (error && !/42P01|relation .* does not exist/i.test(error.message ?? "")) {
+    console.error("[MOLLIE] last_error schrijven mislukt", { userId, error });
+  }
+}

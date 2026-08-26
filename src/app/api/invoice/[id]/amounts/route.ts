@@ -101,7 +101,9 @@ export async function GET(
   // not exist, while it sits on the screen behind the dialog, is the wrong answer to a hiccup.
   const { data: invoice, error } = await supabase
     .from("invoices")
-    .select("id, invoice_number, client_name, invoice_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid")
+    // [LEES-CORRECTIE] due_date/vendor_iban/payment_reference ride along so the editor can
+    // prefill the three fields that used to be write-only for the pipeline.
+    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid")
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
@@ -223,7 +225,33 @@ export async function PATCH(
     return NextResponse.json({ error: "Vul een geldige factuurdatum in (jjjj-mm-dd)." }, { status: 400 });
   }
 
-  if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit) {
+  // [LEES-CORRECTIE] The three fields the pipeline extracted but NO screen could ever fix — the
+  // day-mapping audit's list. Each moves something real: due_date schedules the "Vandaag" screen
+  // and the reminders, vendor_iban feeds the IBAN-change fraud check and the amount+IBAN match
+  // tier, payment_reference is what the owner types into their bank. An owner correcting them is
+  // the AUTHORITY here; empty string means "wis dit veld".
+  const rawDue = typeof body.due_date === "string" ? body.due_date.trim() : null;
+  if (rawDue !== null && rawDue !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(rawDue)) {
+    return NextResponse.json({ error: "Vul een geldige vervaldatum in (jjjj-mm-dd)." }, { status: 400 });
+  }
+  const nextDue = rawDue === null ? null : (rawDue === "" ? "" : rawDue);
+  const rawIban = typeof body.vendor_iban === "string" ? body.vendor_iban : null;
+  let nextIban: string | null = null;
+  if (rawIban !== null) {
+    const genormaliseerd = rawIban.replace(/[\s.\-]/g, "").toUpperCase();
+    if (genormaliseerd !== "" && !/^[A-Z]{2}\d{2}[A-Z0-9]{4,30}$/.test(genormaliseerd)) {
+      return NextResponse.json({ error: "Dit is geen geldige IBAN-vorm. Controleer het rekeningnummer." }, { status: 400 });
+    }
+    nextIban = genormaliseerd;
+  }
+  const rawRef = typeof body.payment_reference === "string" ? body.payment_reference.trim() : null;
+  if (rawRef !== null && rawRef.length > 140) {
+    return NextResponse.json({ error: "Een betaalkenmerk is nooit langer dan 140 tekens." }, { status: 400 });
+  }
+  const nextRef = rawRef;
+
+  if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit
+      && nextDue === null && nextIban === null && nextRef === null) {
     return NextResponse.json({ error: "Er is niets gewijzigd." }, { status: 400 });
   }
 
@@ -237,7 +265,7 @@ export async function PATCH(
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
     // [SUPPLIER-ALIAS] supplier_id + vendor_iban ride along: they are what says WHICH company a
     // corrected name belongs to, and without one of them a rename is one name pointing at another.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
+    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, due_date, payment_reference, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
     .eq("id", id)
     .maybeSingle();
 
@@ -370,6 +398,11 @@ export async function PATCH(
   if (nextNumber !== null && nextNumber !== (invoice.invoice_number ?? "").trim()) patch.invoice_number = nextNumber;
   if (nextVendor !== null && nextVendor !== (invoice.client_name ?? "").trim()) patch.client_name = nextVendor;
   if (nextDate !== null && nextDate !== (invoice.invoice_date ?? "")) patch.invoice_date = nextDate;
+  // [LEES-CORRECTIE] Same differs-only rule; empty string clears to NULL.
+  const inv2 = invoice as unknown as { due_date?: string | null; payment_reference?: string | null; vendor_iban?: string | null };
+  if (nextDue !== null && nextDue !== (inv2.due_date ?? "")) (patch as Record<string, unknown>).due_date = nextDue === "" ? null : nextDue;
+  if (nextIban !== null && nextIban !== (inv2.vendor_iban ?? "")) (patch as Record<string, unknown>).vendor_iban = nextIban === "" ? null : nextIban;
+  if (nextRef !== null && nextRef !== (inv2.payment_reference ?? "")) (patch as Record<string, unknown>).payment_reference = nextRef === "" ? null : nextRef;
   // [KIND-CORRECTION] Same one-way rule as the queue's confirm route: 'factuur' → 'creditnota'
   // only. That is the direction the reader structurally under-sees (a positively printed credit
   // note is never recognised, see HUNT-F2 in ai.ts) and the direction that takes money OFF the

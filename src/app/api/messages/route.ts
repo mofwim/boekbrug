@@ -7,6 +7,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { createNotification } from '@/lib/notifications'
 import { sendMessageNotification } from '@/lib/email'
 import { appUrl } from "@/lib/app-origin"
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -119,6 +120,10 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await request.json()
+
+    // [DIEP-3] Bounded like its siblings — the day-end audit found this one uncapped.
+    const limited = await checkRateLimit({ userId: user.id, endpoint: 'messages-send', ...RATE_LIMITS.MESSAGE_SEND });
+    if (!limited.allowed) return rateLimitResponse(limited);
     const { receiver_id, content } = body
 
     if (!receiver_id || !content?.trim()) {

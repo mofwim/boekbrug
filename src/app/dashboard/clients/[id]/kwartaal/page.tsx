@@ -132,6 +132,9 @@ export default function KwartaalPage() {
   const [client, setClient] = useState<ProfileRow | null>(null)
   const [invoices, setInvoices] = useState<KwartaalInvoice[]>([])
   const [loading, setLoading] = useState(true)
+  // [NO-SILENT-EMPTY] Een mislukte lezing mag nooit 'Geen facturen' worden — dat is een uitspraak
+  // over andermans administratie die een leesfout niet mag doen.
+  const [loadError, setLoadError] = useState(false)
   // [TRUST-ACCOUNTANT] The quarter tiles must show the SAME reconciled, turnover-aware
   // figures as the owner's /klaar, the Brug hub and the ZIP — not an invoices-only
   // client-side sum (which, for a retail/cash client, is a fraction of the real omzet
@@ -165,33 +168,59 @@ export default function KwartaalPage() {
         .from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
 
-      // [BRIDGE-A] Two queries — outgoing + incoming — merged, then split by section
-      // Outgoing: sent (Debiteuren) + paid (Voldaan). 'voldaan' removed — never a DB value.
-      const { data: outgoing } = await supabase
-        .from('invoices')
-        .select('*, invoice_lines(*), invoice_type, replaced_by_number')
-        .eq('sender_id', clientId)
-        .eq('direction', 'outgoing')
-        .in('status', ['sent', 'paid'])
-        .gte('invoice_date', dateStart)
-        .lte('invoice_date', dateEnd)
+      // [BRIDGE-A] Two queries — outgoing + incoming — merged, then split by section.
+      // [VOL-GELEZEN] Gepagineerd: een detailhandelskwartaal met >1000 facturen werd stil
+      // afgekapt, en "Facturen (N)" beloofde volledigheid over een half beeld. Fouten GEBONDEN:
+      // een RLS-weigering werd 'Geen facturen in Q{n}' — de verkeerdste conclusie die er is.
+      setLoadError(false)
+      const paged = async (build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>) => {
+        const out: unknown[] = []
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await build(from, from + 999)
+          if (error) throw new Error(error.message)
+          out.push(...(data ?? []))
+          if ((data ?? []).length < 1000) return out
+        }
+      }
+      let outgoing: unknown[] = []
+      let incoming: unknown[] = []
+      try {
+        // Outgoing: sent (Debiteuren) + paid (Voldaan). 'voldaan' removed — never a DB value.
+        outgoing = await paged((from, to) => supabase
+          .from('invoices')
+          .select('*, invoice_lines(*), invoice_type, replaced_by_number')
+          .eq('sender_id', clientId)
+          .eq('direction', 'outgoing')
+          .in('status', ['sent', 'paid'])
+          .gte('invoice_date', dateStart)
+          .lte('invoice_date', dateEnd)
+          .order('id', { ascending: true })
+          .range(from, to))
 
-      // Incoming: received (Crediteuren) + paid (Voldaan).
-      const { data: incoming } = await supabase
-        .from('invoices')
-        .select('*, invoice_lines(*), invoice_type, replaced_by_number')
-        .eq('receiver_id', clientId)
-        .eq('direction', 'incoming')
-        .in('status', ['received', 'paid'])
-        .gte('invoice_date', dateStart)
-        .lte('invoice_date', dateEnd)
+        // Incoming: received (Crediteuren) + paid (Voldaan).
+        incoming = await paged((from, to) => supabase
+          .from('invoices')
+          .select('*, invoice_lines(*), invoice_type, replaced_by_number')
+          .eq('receiver_id', clientId)
+          .eq('direction', 'incoming')
+          .in('status', ['received', 'paid'])
+          .gte('invoice_date', dateStart)
+          .lte('invoice_date', dateEnd)
+          .order('id', { ascending: true })
+          .range(from, to))
+      } catch {
+        setLoadError(true)
+        setInvoices([])
+        setLoading(false)
+        return
+      }
 
       // [FIN-4-ROWS] NULL-direction rows this client owns are counted by the
       // reconciled tiles (which infer direction from ownership) but were absent
       // from the two typed queries above, so "tile total ≠ sum of visible rows".
       // Fetch them by ownership, infer direction the same way, and keep only the
       // (direction, status) combos the sections show — so the list matches the tiles.
-      const { data: nullDir } = await supabase
+      const { data: nullDir, error: nullDirErr } = await supabase
         .from('invoices')
         .select('*, invoice_lines(*), invoice_type, replaced_by_number')
         .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
@@ -199,6 +228,12 @@ export default function KwartaalPage() {
         .in('status', ['sent', 'received', 'paid'])
         .gte('invoice_date', dateStart)
         .lte('invoice_date', dateEnd)
+      if (nullDirErr) {
+        setLoadError(true)
+        setInvoices([])
+        setLoading(false)
+        return
+      }
 
       const inferred = (nullDir ?? [])
         .map((inv) => {
@@ -500,7 +535,19 @@ export default function KwartaalPage() {
             </div>
           )}
 
-          {sorted.length === 0 ? (
+          {loadError ? (
+            <div style={{ textAlign: 'center', padding: '48px 0' }}>
+              <p style={{ fontSize: 14, color: '#C5221F', margin: '0 0 12px' }}>
+                We konden de facturen van dit kwartaal nu niet ophalen — dit zegt niets over de administratie zelf.
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid #DADCE0', background: '#FFF', color: '#1A73E8', fontSize: 14, cursor: 'pointer' }}
+              >
+                Opnieuw proberen
+              </button>
+            </div>
+          ) : sorted.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
               Geen facturen in Q{q} {year}
             </p>

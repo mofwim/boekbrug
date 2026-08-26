@@ -1735,10 +1735,28 @@ test("[BON-AUTO] a cash-settled bon reaches the kasboek, and a card one clears i
     /strongExplain = \(sig[\s\S]{0,260}?isReceipt && sig\.includes\("counterpart"\) && sig\.includes\("amount"\) && sig\.includes\("date"\)/,
     "a paid kassabon must be able to explain its own bank line",
   );
+  // [CIRKEL-BEST-TIE] The passes now ask through explainHit (best OR a strong candidate — a
+  // near-tie nulls `best` and must still explain); the bon question rides in the closure.
   assert.match(
     matchRoute,
-    /strongExplain\(m\.best\.signals, receiptIds\.has\(m\.best\.invoiceId\)\)/,
+    /explainHit\(m as never, \(invId\) => receiptIds\.has\(invId\)\)/,
     "…and the paid pass must ASK the shared bar that bon question",
+  );
+  assert.match(
+    matchRoute,
+    /\(m\.candidates \?\? \[\]\)\.find\(\(cand\) => strongExplain\(cand\.signals/,
+    "a near-tie (best === null) still explains — candidates are scanned",
+  );
+  // [CIRKEL-VERWERKT] and [CIRKEL-PERF]: the explain candidates clear the accountant lock
+  // (isEligible refuses 'verwerkt' first), and the O(n·m) passes run over the unexplained
+  // debits only — never over every transaction again.
+  assert.ok(
+    (matchRoute.match(/accountant_status: null/g) ?? []).length >= 2,
+    "both explain passes clear accountant_status on their candidates",
+  );
+  assert.ok(
+    (matchRoute.match(/matchTransactions\(\[\.\.\.unexplained\]/g) ?? []).length === 2,
+    "both explain passes score the unexplained set, not the full transaction list",
   );
 });
 
@@ -1884,8 +1902,8 @@ test("[E-FACTUUR] the supplier's own figures are read, and they outrank the read
   // everyone from 2028, so this arrives now and will only arrive more.
   const ai = code("src/lib/ai.ts");
   assert.match(
-    ai, /extractEmbeddedInvoiceXml\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
-    "the reader must look inside the PDF for it",
+    ai, /extractEmbeddedInvoiceXmlDetailed\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
+    "the reader must look inside the PDF for it — via the DETAILED extractor since [LEES], so a sealed attachment is a reported fact",
   );
   assert.match(
     ai, /_einvoice = \{[\s\S]{0,160}?contradicts: eInvoiceContradicts\(eInvoice, parsed\.total_inc_btw\)/,
@@ -4424,7 +4442,8 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
   const plain = [...mail.matchAll(/from: 'BoekBrug <noreply@boekbrug\.nl>'/g)].length;
-  assert.equal(plain, 12, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
+  // 13 sinds [OCHTEND]: de ochtendmail schrijft aan de EIGENAAR, dus BoekBrug is de juiste afzender.
+  assert.equal(plain, 13, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
 
   // The name is never interpolated raw. It is typed by a user and lands in a header that reaches
   // strangers: a newline is header injection, and an @ or a bracket lets a display name pose as
@@ -4674,10 +4693,13 @@ test("[E-FACTUUR-VERLEGD] one predicate answers 'is this verlegd', for both docu
   // All three places that emit a category must carry it. An AllowanceCharge left at Z would be the
   // only Z on an AE document, and BR-Z-08 then demands a Z subtotal that does not exist — the
   // access point refuses the whole invoice over a discount line.
+  // [KOR-E] Every site now routes through catFor()/groupByRate(…, korDoc) so the KOR mapping and
+  // the verlegd fact reach the three category emitters identically — one place disagreeing is the
+  // exact defect this gate exists for, in either direction.
   for (const site of [
-    /groupByRate\(effLines, docReverseCharged\)/,
-    /taxCategoryId\(rate, lineVatKind\(l, docReverseCharged\)\)/,
-    /taxCategoryId\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
+    /groupByRate\(effLines, docReverseCharged, korDoc\)/,
+    /catFor\(rate, lineVatKind\(l, docReverseCharged\)\)/,
+    /catFor\(a\.rate, docReverseCharged \? "reverse_charge" : undefined\)/,
   ]) {
     assert.match(ubl, site, `every category in the XML must read docReverseCharged: ${site}`);
   }
@@ -6649,7 +6671,15 @@ test("[STATUS] the word for an invoice's state is written once", () => {
 // and messaging surfaces have their own service-role queries and were not read.
 
 test("[RLS-UIT] every service-role query on the money line is scoped to one owner", () => {
-  const ROOTS = ["src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email"];
+  // [MOLLIE] api/mollie erbij: de webhook leest en muteert de geldlijn met service_role, en een
+  // map die buiten dit veld valt is precies waar een ongescopete query ongezien blijft.
+  // [DIEP-3] Widened by the day-end audit: seven money-bearing service-role directories sat
+  // outside this list, so nothing enforced their owner-scoping for the NEXT edit.
+  const ROOTS = [
+    "src/app/api/invoice", "src/app/api/pay", "src/app/api/documents", "src/app/api/email", "src/app/api/mollie",
+    "src/app/api/intake", "src/app/api/aangifte", "src/app/api/readiness", "src/app/api/result",
+    "src/app/api/accountant", "src/app/api/btw", "src/app/api/snelstart",
+  ];
   const walk = (dir: string): string[] => {
     const out: string[] = [];
     if (!existsSync(dir)) return out;
@@ -6733,6 +6763,54 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
       why: "reads the invoice by id, then refuses with 403 unless sender_id or receiver_id is the " +
         "caller — the guard is in code, before the update, not in the query",
     },
+    // ── [DIEP-3] The seven widened roots — each flag read and cleared by hand ──
+    {
+      file: "src/app/api/intake/route.ts", table: "intake_claims",
+      must: '.update({ created_at: new Date().toISOString() }).eq("id", holder.id)',
+      why: "heartbeat takeover of a STALE claim; holder.id was read in this same request for this " +
+        "supplier's own pipeline, and taking over a crashed claim is the intended semantics",
+    },
+    {
+      file: "src/app/api/accountant/invoice-mandate/route.ts", table: "profiles",
+      must: ".select('full_name, company_name')",
+      why: "display name of the counterparty the session user is granting a mandate TO — a name, " +
+        "chosen by the granter, nothing else leaves",
+    },
+    {
+      file: "src/app/api/accountant/invoice-mandate/route.ts", table: "accountant_invoice_mandates",
+      must: ".insert({ zzper_id: user.id",
+      why: "a self-grant: zzper_id is the session user, hard-coded in the insert",
+    },
+    {
+      file: "src/app/api/accountant/invoice-mandate/route.ts", table: "accountant_invoice_mandates",
+      must: ".select('id, zzper_id, accountant_id, kind')",
+      why: "the .or() names user.id on both sides AND the rows are re-filtered in code " +
+        "(m.zzper_id === user.id || m.accountant_id === user.id) before any use",
+    },
+    {
+      file: "src/app/api/accountant/invoice-mandate/route.ts", table: "accountant_invoice_mandates",
+      // The gate matches `must` against its TRUNCATED excerpt — 'user.id' falls off the end.
+      must: ".update({ revoked_at: new Date().toISOString(), revoked_by: user",
+      why: "revokes only ids from `doelen`, the list already filtered in code to rows where the " +
+        "session user is a party",
+    },
+    {
+      file: "src/app/api/accountant/unlink-by-client/route.ts", table: "profiles",
+      must: ".eq('id', accountantId).single()",
+      why: "accountantId comes from validLinks — links whose zzper is the session user — and only " +
+        "a display name + address for the unlink courtesy mail leaves",
+    },
+    {
+      file: "src/app/api/accountant/vraag-machtiging/route.ts", table: "profiles",
+      must: ".eq('id', klantId)",
+      why: "the klant's name+email for a request mail, after the route proved the accountant↔klant " +
+        "link above the read",
+    },
+    {
+      file: "src/app/api/accountant/vraag-stukken/route.ts", table: "profiles",
+      must: ".eq('id', klantId)",
+      why: "same shape as vraag-machtiging: link proven first, then a name+email read for the mail",
+    },
     {
       file: "src/app/api/invoice/draft/route.ts", table: "invoice_lines", must: ".insert(",
       why: "inserts lines against factuur.id, the invoice this same request just created; the id " +
@@ -6776,6 +6854,15 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
       must: ".eq('bundle_id', bundle.id)",
       why: "bundle.id comes from pay_bundles found by .eq('token', token) — the token is the " +
         "credential, and this only expands it to the invoice ids it covers",
+    },
+    {
+      file: "src/app/api/mollie/webhook/route.ts", table: "mollie_payment_links",
+      // Gepind op de select: het excerpt dat deze poort vergelijkt is afgekapt vóór de .eq().
+      must: ".select('id, user_id, invoice_id, link_id, amount_value, status')",
+      why: "the webhook's row lookup. rowId comes from the webhook-URL WE registered at Mollie " +
+        "(a uuid minted by our own insert), the row carries its user_id, and every downstream " +
+        "read and write is scoped to link.user_id from that row. The doorbell can only make us " +
+        "LOOK at our own row — booking still verifies against Mollie with the owner's key",
     },
     {
       file: "src/app/api/invoice/pay-toggle/route.ts", table: "bank_tx_invoices", must: ".upsert(",
@@ -7243,6 +7330,22 @@ test("[NUMMER-JAAR] nothing on the numbering line reads the year off the server 
     );
     assert.match(src, /amsterdamYear\(/, `${f}: must take the year from the owner's clock`);
   }
+});
+
+test("[NUMBER-READ-VISIBLE] the template read sees the owner's row even when a member sends", () => {
+  // A verkoop-member or mandated accountant mints in the OWNER's series, but profiles RLS shows
+  // their session no owner row: resolveFormat answered data:null/error:null and silently numbered
+  // from the DEFAULT scheme — the wrong shape drawn from the wrong COUNTER, so the owner's own
+  // next invoice continues a series a stranger started. The read therefore travels on its own
+  // client; the allocation RPC stays on the session client because next_invoice_seq() refuses
+  // auth.uid() IS NULL unconditionally, and that refusal is load-bearing.
+  const lib = code("src/lib/invoice-numbering.ts");
+  assert.match(lib, /readClient: SupabaseClient<any> = supabase/, "the read client is its own parameter, defaulting to the session");
+  assert.match(lib, /resolveFormat\(readClient, userId, type\)/, "…and the template read uses IT");
+  assert.match(lib, /supabase\.rpc\('next_invoice_seq'/, "…while the mint stays on the session client");
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /await generateInvoiceNumber\(\s*\n\s*supabase, ownerId, numberType,\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*\)/,
+    "the send route hands the acting-aware read client");
 });
 
 test("[NUMMER-JAAR] the allocator and the lock derive the counter key the same way", () => {
@@ -7988,10 +8091,10 @@ test("[KORTING-KETEN] the discount chain reaches every surface that bills the cu
   // nobody) and the offerte conversion lost the line discounts the customer said yes to. Each
   // wiring below is invisible to tsc — a missing column in a select literal type-checks fine.
   const inputs = code("src/lib/ubl-inputs.ts");
-  assert.match(inputs, /client_btw_number, discount_type, discount_value" as const/, "the header select carries the document discount");
+  assert.match(inputs, /client_btw_number, discount_type, discount_value, original_invoice_id" as const/, "the header select carries the document discount");
   assert.match(inputs, /discount_type: row\.discount_type \?\? null/, "…and the mapper hands it to the generator");
   assert.match(
-    code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,400}discount_type, discount_value"/,
+    code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,700}discount_type, discount_value, original_invoice_id"/,
     "the closing package's own select carries it too",
   );
 
@@ -8404,10 +8507,13 @@ test("[SERVER-ZIN] no screen renders a route's error straight", () => {
   // The offence is RENDERING the error, not reading it. A site that compares the code and maps it
   // to a sentence — `showToast(json?.error === 'lookup_failed' ? '…' : '…')` — is doing exactly the
   // right thing, and the first version of this gate flagged one of those.
-  const RAW = /(showToast|setError|setMessage|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+  // [DIEP-2] The first regex named two setter names, and a screen whose state is called
+  // setBulkError or setSaveError walked straight past it — thirteen live sites did. The sink is
+  // any setter whose NAME says it renders an error or message, plus the two non-setter sinks.
+  const RAW = /(showToast|set[A-Za-z]*(?:Error|Message|Fout)|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
 
   const offenders: string[] = [];
-  for (const f of walk("src/app").concat(walk("src/components"))) {
+  for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
     if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
     const src = code(f); // comments stripped — a note about the old shape must not count
     for (const m of src.matchAll(RAW)) {
@@ -9715,7 +9821,7 @@ test("[FACTUUR-BIJLAGE] the attachment is resolved BEFORE a number is minted", (
   // dat de ondernemer er bewust bij zette, of afbreken met een nummer dat al weg is.
   const send = code("src/app/api/invoice/send/route.ts");
   const bijlageAt = send.indexOf("const bijlageId =");
-  const nummerAt = send.indexOf("generateInvoiceNumber(supabase");
+  const nummerAt = send.indexOf("await generateInvoiceNumber(");
   assert.ok(bijlageAt > 0, "the send route must resolve the attachment");
   assert.ok(nummerAt > 0);
   assert.ok(bijlageAt < nummerAt,
@@ -9746,7 +9852,7 @@ test("[FACTUUR-BIJLAGE] the invoice PDF stays the first attachment", () => {
   // De klant opent de eerste bijlage, en dat hoort het document te zijn waar de mail over gaat.
   const email = code("src/lib/email.ts");
   const block = email.slice(email.indexOf("...(pdfBuffer || extraAttachment"));
-  const pdfAt = block.indexOf("filename: `${invoiceNumber}.pdf`");
+  const pdfAt = block.indexOf("filename: `${safeFileName(invoiceNumber)}.pdf`");
   const extraAt = block.indexOf("extraAttachment ? [extraAttachment]");
   assert.ok(pdfAt > 0 && extraAt > 0 && pdfAt < extraAt, "the legal document comes first");
 });
@@ -14626,6 +14732,24 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.doesNotMatch(pure, /rgs: "B[A-Za-z]+"[^\n]*Kruisposten/,
     "an unverified account carries NO RGS code — a wrong code misfiles an administration");
 
+  // [XAF-KAS] The audit's cash findings, pinned as shapes. A settle is recognized by invoice_id in
+  // the INVOICE id space (the old documentId guard compared two id spaces that never meet and was
+  // dead on every row); cost booking is an ALLOW-list of exactly the two categories the result
+  // engine books, so prive/transfer/tax/fee can never inflate the W-side again.
+  assert.match(pure, /row\.invoiceId && purchaseIds\.has\(row\.invoiceId\)/,
+    "a cash settle of a purchase invoice is matched in the invoice id space");
+  assert.match(pure, /row\.category === "kosten" \|\| row\.category === "salaris"/,
+    "cost booking is an allow-list — mirroring CASH_CATEGORIES in the result engine");
+  assert.match(pure, /const restC = totalC - salesC;/,
+    "[FIN-5] a Z-day remainder above tolerance still books its revenue on 8020");
+  assert.match(pure, /el\("endDate", input\.endDate\)/,
+    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31");
+  assert.match(pure, /: "<companyIdent\/>"/,
+    "companyIdent is a REQUIRED child of company in XAF 3.2 — empty element when KvK is absent, never omitted");
+  const xafSpec = readFileSync("src/lib/xaf-export.test.ts", "utf8");
+  assert.match(xafSpec, /\[XAF-DIFF\]/,
+    "the differential test against computeResult exists — the two engines may never drift apart in silence");
+
   // The route restates no attribution rule: the authorities are CALLED.
   const route = code("src/app/api/xaf/route.ts");
   assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization");
@@ -14634,6 +14758,11 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.match(route, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
   assert.match(route, /buildXafFile\(input\)/, "the pure module is CALLED, not merely exported");
   assert.match(route, /status: 503/, "a failed read refuses — a partial auditfile is a wrong administration");
+  assert.match(route, /`\$\{year\}-12-31` < vandaag \? `\$\{year\}-12-31` : vandaag/,
+    "[XAF-PERIODE] the declared period ends today for the running year — a file may not declare days that have not happened");
+  assert.match(route, /invoice_id/, "the cash select carries invoice_id — the settle branch is fed, not starved");
+  assert.match(route, /kor_active/, "the KOR flag reaches the file's own honesty notes");
+  assert.match(route, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
 
   // Both doors, or the person who actually files never finds it.
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
@@ -14660,14 +14789,17 @@ test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence nev
   assert.match(catchBlock, /return null;/, "every failure answers null — the mail pipeline steps aside, it never throws");
 
   // Both senders attach it; the PDF stays first (the legal document is the first thing opened).
+  // [ACTING-FOR] Both call sites hand the ACTING-AWARE client: a member's session sees none of
+  // the owner's rows, and the mail then silently left without its XML on exactly the invoices an
+  // office sends. The route proved authorization before this point.
   const send = code("src/app/api/invoice/send/route.ts");
-  assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(supabase, invoiceId\)/, "the send route builds it");
+  assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*invoiceId,\s*\n\s*\)/, "the send route builds it, through the acting-aware client");
   assert.match(send, /ublAttachment: ublBijlage/, "…and hands it to the mail");
   const credit = code("src/app/api/invoice/creditnota/route.ts");
-  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(supabase, creditnota\.id\)/, "the creditnota mail carries its UBL 381 twin");
+  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*creditnota\.id,\s*\n\s*\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
   const mail = code("src/lib/email.ts");
-  assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{invoiceNumber\}\.pdf`, content: pdfBuffer \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[ublAttachment\] : \[\]\)/,
-    "PDF first, then the UBL — the customer opens the document the mail is about");
+  assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{safeFileName\(invoiceNumber\)\}\.pdf`, content: pdfBuffer, contentType: 'application\/pdf' \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[\{ \.\.\.ublAttachment, contentType: 'application\/xml' \}\] : \[\]\)/,
+    "PDF first, then the UBL — the customer opens the document the mail is about; names are filename-safe and both parts declare their MIME type");
   assert.match(mail, /const eFactuurRegel = ublAttachment\s*\n?\s*\?/, "the body names the XML only when it is really there");
 });
 
@@ -14701,8 +14833,19 @@ test("[SI-UBL] the Peppol identity is an addition on the one builder, never a se
     "the BIS customization string is the real one");
   assert.match(gen, /if \(opts\?\.peppol\) supParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "0106" \}\)/,
     "supplier endpoint: KVK under EAS 0106");
-  assert.match(gen, /if \(opts\?\.peppol\) cusParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: "9944" \}\)/,
-    "buyer endpoint: BTW-nummer under EAS 9944");
+  // [SI-UBL-EAS] The buyer's scheme is looked up from their VAT country, never hardcoded: 9944
+  // means NL:VAT specifically, and a DE number under it is an unresolvable address that
+  // "delivers" fine. Unmapped countries refuse with their own code instead of guessing.
+  // [SI-UBL-EAS-COHERENT] One judge for the buyer's country (classifyVatNumber — the same one the
+  // Country element uses) and a NORMALIZED participant value: the day-end audit found the raw
+  // 2-char prefix accepting what the country logic rejected, and "DE 123.456.789" shipped as an
+  // address that can never match the registered "9930:de123456789".
+  assert.match(gen, /if \(opts\?\.peppol\) cusParty\.ele\(NS\.cbc, "EndpointID", \{ schemeID: buyerPeppol!\.eas \}\)\.txt\(buyerPeppol!\.value\)/,
+    "buyer endpoint: the EAS code of the buyer's own country, with the normalized value");
+  assert.match(gen, /NL: "9944",\s*\n\s*DE: "9930",/, "…from the verified EAS table");
+  assert.match(gen, /const shape = classifyVatNumber\(btwNumber\);/,
+    "…judged by the ONE classifier, so the address and the Country element can never disagree");
+  assert.match(gen, /if \(opts\?\.peppol && !buyerPeppol\) \{/, "…and an unmapped or malformed VAT number refuses the Peppol variant");
   assert.match(gen, /\} else \{\s*\n\s*root\.ele\(NS\.cbc, "UBLVersionID"\)\.txt\("2\.1"\);/,
     "the default document keeps its version tag — existing importers rely on the old shape");
 
@@ -14734,6 +14877,40 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
     "the booking goes through apply_manual_payment with the link row as idempotency key");
   assert.match(hook, /p_method: 'bank'/,
     "iDEAL money is bank money — 'ideal' would violate bank_tx_invoices_method_check");
+
+  // [MOLLIE-TRIAGE] The audit's worst finding: a bare msg.includes('already') treated three RPC
+  // REFUSALS (booking did NOT happen, money DID arrive) as a benign replay and stamped the row
+  // paid in silence. A real replay raises nothing (duplicate=true) — so the triage must name the
+  // exact refusal texts, read the RPC's return record, and alarm instead of shrugging.
+  assert.match(hook, /msg\.includes\('already fully paid'\) \|\| msg\.includes\('already covered'\)/,
+    "the terminal branch names the EXACT refusal texts — a bare 'already' swallows the scoped-key refusal too");
+  assert.doesNotMatch(hook, /msg\.includes\('already'\)[^f]/,
+    "…and the bare substring may not come back");
+  assert.match(hook, /const \{ data: applyRows, error: payErr \}/,
+    "the RPC's return record is READ — LEAST() clamping an overpayment is an event, not a footnote");
+  assert.match(hook, /applied < Number\(link\.amount_value\) - 0\.005/,
+    "…and a clamped overpayment is detected (the customer is owed a refund)");
+  assert.match(hook, /amsterdamToday\(new Date\(verdict\.paidAt\)\)/,
+    "the pay date is the AMSTERDAM day of Mollie's paidAt — a UTC slice books new-year's-night into a filed quarter");
+  assert.doesNotMatch(hook, /paidAt\.slice\(0, 10\)/, "…so the naive slice is gone");
+  assert.ok((hook.match(/reportHandledFailure\(/g) ?? []).length >= 6,
+    "every dead-end (no connection, verify failed, refusal, clamp, transient) reaches a human via the alarm channel");
+  assert.match(hook, /setMollieConnectionError\(/,
+    "…and the sentence the owner actually sees (MollieCard.lastError) now has a writer");
+
+  // [MOLLIE-C7]/[MOLLIE-C8] A stranded placeholder row may never brick iDEAL on an invoice, and
+  // the loser of a same-moment double click gets the winner's URL, not a 503.
+  const idealRoute = code("src/app/api/pay/[token]/ideal/route.ts");
+  assert.match(idealRoute, /existingRow\.checkout_url === '' \|\| existingRow\.link_id\.startsWith\('pending-'\)/,
+    "a placeholder row is cleaned up, never reused as { url: '' }");
+  assert.match(idealRoute, /code\?: string \} \| null\)\?\.code === '23505'/,
+    "the unique-index loser re-reads the winner's link");
+
+  // [MOLLIE-C9] The payout hold is bounded in time and scoped to Mollie — one iDEAL payment in
+  // August must not un-code every CCV settlement forever.
+  const autoCat = code("src/lib/bank-auto-categorize.ts");
+  assert.match(autoCat, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
+  assert.match(autoCat, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
 
   // The pure refusal directions: a wrong amount REFUSES (never clamps, never marks), and a
   // €0/negative ask never becomes a link.
@@ -14798,6 +14975,23 @@ test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carrie
   assert.match(bank, /!s\.explainedByPaid && !s\.explainedByQueued\)/, "the missing-invoice banner excludes both explanations");
   assert.match(bank, /\/dashboard\/incoming\?focus=\$\{encodeURIComponent\(s\.explainedByQueued\.invoiceId\)\}/,
     "…and the card links to the invoice's own verify step");
+
+  // [CIRKEL-C2-PRUNE] The merge that keeps a manual pick across refreshes may only keep a pick
+  // that still EXISTS in that line's fresh candidates. The blind `{ ...pre, ...prev }` survived a
+  // just-booked invoice id: the card rendered the fresh best while the confirm button posted the
+  // stale id — booking a different invoice than the screen showed (day-end audit, HIGH).
+  assert.match(bank, /if \(kept && s\.candidates\.some\(\(c\) => c\.invoiceId === kept\)\) next\[s\.transactionId\] = kept/,
+    "a kept pick is verified against the fresh candidate list, per line");
+  assert.doesNotMatch(bank, /setSelected\(\(prev\) => \(\{ \.\.\.pre, \.\.\.prev \}\)\)/,
+    "…and the blind merge shape may not return");
+
+  // [CIRKEL-BEWIJS] A booked line SHOWS itself instead of redirecting the evidence link into a
+  // pile of hundreds — the payment-evidence link under every "Betaald" points here.
+  const verdeelPage = code("src/app/dashboard/bank/verdelen/[txId]/page.tsx");
+  assert.match(verdeelPage, /geboekt=\{\{ status: txStatus === 'ignored' \? 'ignored' : 'matched', settled \}\}/,
+    "a non-pending transaction renders the read-only evidence panel");
+  assert.doesNotMatch(verdeelPage, /if \(\(tx as \{ status\?: string \| null \}\)\.status !== 'pending'\) redirect\(/,
+    "…never a bare redirect to the generic done list");
 
   // 2. The ambiguous-match jump lands on the LINE, not on a quarter that may not contain it.
   const hook = code("src/hooks/useInvoiceReconciliation.ts");
@@ -14864,4 +15058,119 @@ test("[OFFERTE-VERSTUREN-NIEUW] het opstelscherm verstuurt de offerte door dezel
   //    de mention-in-plaats-van-bedrading die dit bestand overal elders ook weigert.
   assert.match(nieuw, /\{offerteSent\.message && \(/,
     "de routezin bereikt het scherm niet — de eigenaar hoort dat er nog géén factuur bestaat");
+});
+
+test("[PULS] money recorded with nobody present is TOLD, and the morning mail is quiet by default", () => {
+  // ── The Mollie bell: [JET-GAP0]'s own doctrine applied to the sixth entry point ──
+  // The webhook books a payment while the owner sleeps; every other automatic booking already
+  // rings the bell, and this one moved money in silence. The bell goes through the ONE writer
+  // (service-role inside, push fan-out included) and sits AFTER the row is stamped 'paid', so a
+  // failed courtesy can never turn a delivered payment into a Mollie retry loop.
+  const hook = code("src/app/api/mollie/webhook/route.ts");
+  assert.match(hook, /createNotification\(\{\s*\n\s*userId: link\.user_id,/, "the bell rings through the one notification writer");
+  assert.match(hook, /type: 'payment',/, "…as a payment");
+  assert.match(hook, /link: `\/dashboard\/invoice\/\$\{link\.invoice_id\}`,/, "…and it opens the invoice it is about");
+  // Anchored on the SUCCESS-path stamp (its overpayNote spread is unique to it) — the first
+  // 'paid' stamp in the file is the triage branch, and anchoring there made this pin vacuous:
+  // the bell could move above the success stamp and the assertion still held (day-end audit).
+  const paidStampAt = hook.indexOf("...(overpayNote ? { last_error: overpayNote } : {})");
+  const bellAt = hook.indexOf("createNotification({");
+  assert.ok(paidStampAt > 0 && bellAt > paidStampAt, "the booking is finished before the courtesy is attempted");
+  // [MOLLIE-REPLAY] One payment, one bell — and a phone that never claims more than the books.
+  assert.match(hook, /const wasReplay = rpcRow\?\.duplicate === true/, "the RPC's duplicate flag is READ");
+  assert.match(hook, /if \(!wasReplay\) try \{/, "…and a replayed delivery does not ring twice");
+  assert.match(hook, /invoiceFullyPaid\s*\n?\s*\? `Factuur\$\{nummer\} is zojuist via iDEAL betaald en op betaald gezet\.`/,
+    "…and 'op betaald gezet' is said only when is_paid says so");
+  assert.match(hook, /if \(stampErr\) \{/, "a failed paid-stamp answers 503 so Mollie retries into duplicate=true, never into a second bell");
+
+  // ── [OCHTEND] The restraint rule lives in the pure module, where a fixture can prove it ──
+  const digest = code("src/lib/ochtend-digest.ts");
+  assert.match(digest, /if \(betalingen\.length === 0 && inkomend === 0\) return null;/,
+    "a quiet day says NOTHING — an empty digest teaches the reader to delete unread");
+  assert.match(digest, /p\.amount > 0/, "a zero or garbage amount is not money that came in");
+
+  // ── The cron fetches, the module decides — and the fetch respects the authorities ──
+  const cron = code("src/app/api/cron/ochtend/route.ts");
+  assert.match(cron, /timingSafeEqualStr\(auth, `Bearer \$\{secret\}`\)/, "iterates every owner — never publicly callable");
+  assert.match(cron, /amsterdamMidnightUtc\(gisteren\)/, "[TZ] yesterday is the OWNER's day, bounded on the Amsterdam clock");
+  assert.match(cron, /effectiveDirection\(inv, link\.user_id\) !== "outgoing"/,
+    "a settle of an incoming invoice is the owner paying a bill — real, but not this mail's news");
+  assert.match(cron, /if \(p\.role === "accountant"\)/, "the accountant's morning is [DAGSTART] — two messages about one desk is noise");
+  assert.match(cron, /if \(p\.ochtend_mail === false\)/, "a courtesy that cannot be declined is not a courtesy");
+  assert.match(cron, /if \(!isMissingColumn\(msg\)\) throw e;/,
+    "[DEPLOY-SAFE] the opt-out column may arrive after the deploy, in either order");
+  assert.match(cron, /inv\.invoice_type === "creditnota" \|\| \(inv\.total_inc_btw \?\? 0\) < 0/,
+    "[OCHTEND-CREDIT] a settled creditnota is a refund the owner PAID — never 'binnengekomen'");
+  assert.match(cron, /alreadyRan: true/,
+    "[OCHTEND-EENMAAL] a second firing on one day delivers nothing — at most one morning per day");
+  assert.doesNotMatch(cron, /\.select\("id, email, role, ochtend_mail"\)\.in\("id", userIds\)/,
+    "the profiles read is chunked+paginated — a bare .in() 414s or silently truncates at scale");
+  assert.match(cron, /planOchtendMail\(\{/, "the speak-or-stay-quiet decision is the module's, never the route's");
+
+  // ── The schedule exists, and the heartbeat knows the job ──
+  const vercel = readFileSync("vercel.json", "utf8");
+  assert.match(vercel, /"\/api\/cron\/ochtend"/, "the cron is scheduled — a morning mail that never runs is a silent feature");
+  const beat = code("src/lib/cron-heartbeat.ts");
+  assert.match(beat, /ochtend: 24,/, "…and watched: if it stops, the daily return moment vanishes without a sound");
+
+  // ── Delivery: through the chokepoint, never critical, and the owner can turn it off ──
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /deliverEmail\(__sendResult, \{ label: 'ochtend-digest', critical: false \}\)/,
+    "a failed digest is a missed courtesy, not a broken operation");
+  const instellingen = code("src/app/dashboard/settings/page.tsx");
+  assert.match(instellingen, /\.update\(\{ ochtend_mail: ochtendMail \}\)/, "the off switch exists");
+  assert.match(instellingen, /t\('inst\.ochtendMail'\)/, "…and is on the screen, in the vocabulary");
+});
+
+test("[LEES] a file the app cannot read SAYS SO, and everything it read stays correctable", () => {
+  // The mandate behind this gate: the reading system may be wrong about nothing — so where it
+  // cannot know, it says "ik weet het niet" to the OWNER (never only to a server log), and every
+  // field it extracted has a door the owner can correct it through.
+
+  // 1. A bank parser crash is a NAMED warning, not an empty-looking import.
+  const ingest = code("src/lib/bank-ingest.ts");
+  assert.match(ingest, /Het bestand kon niet als bankafschrift worden gelezen/,
+    "a parser exception reaches the owner as a sentence — 'geen transacties' over a crash reads as 'your file was empty'");
+
+  // 2. The vanishing-attachment failure ALARMS: a mail attachment that lands in neither
+  //    bestanden nor the skipped panel is an invoice that silently never happened.
+  const mailSync = code("src/lib/email-integration.ts");
+  assert.match(mailSync, /message: 'unreadable e-mail attachment could not be SAVED — it now exists nowhere the owner can see',/,
+    "the save failure reaches the alarm channel");
+  assert.match(mailSync, /message: 'skip-registry upsert failed — an unread attachment is missing from the skipped panel',/,
+    "…and so does the registry half");
+  // 2b. "We cannot read .xlsx" was half-true — the upload door CAN. The skip line names the door.
+  assert.match(mailSync, /lezen we niet automatisch uit e-mail — upload hem via Uploaden/,
+    "a format another door reads points at that door");
+
+  // 3. A sealed Factur-X is reported PRESENT: the supplier attached their own figures and we
+  //    could not open them — "no e-invoice" would be a lie the review screen repeats.
+  const einv = code("src/lib/e-invoice.ts");
+  assert.match(einv, /unreadablePresent: boolean/, "the detailed extractor carries the fact");
+  assert.match(einv, /return \{ content: null, unreadable: true \}/, "…detected at the stream that will not inflate");
+  const lees = code("src/lib/ai.ts");
+  assert.match(lees, /_einvoice = \{ unreadable: true \};/, "…and stored on the invoice's evidence blob");
+
+  // 4. An unrecognised Af/Bij flag: the direction guess stays (refusing a file over one odd flag
+  //    is worse) but it is SAID, per file, with a count.
+  const csv = code("src/lib/bank-csv.ts");
+  assert.match(csv, /Af\/Bij-vlag die we niet herkennen/, "the guessed direction is named in parseErrors");
+
+  // 5. [LEES-CORRECTIE] The three pipeline-written fields that had NO edit surface: due_date
+  //    (schedules Vandaag + reminders), vendor_iban (fraud check + match tier), and the
+  //    payment reference. The route validates and clears-on-empty; the modal renders them.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /Vul een geldige vervaldatum in/, "due_date is validated, not pasted");
+  assert.match(route, /Dit is geen geldige IBAN-vorm/, "…and a corrected IBAN must at least be one");
+  assert.match(route, /\.due_date = nextDue === "" \? null : nextDue;/, "empty string clears, per the contract");
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /t\('corr\.vervaldatum'\)/, "the due date is on the form");
+  assert.match(modal, /t\('corr\.iban'\)/, "…and the IBAN");
+  assert.match(modal, /t\('corr\.kenmerk'\)/, "…and the payment reference");
+
+  // 6. The proofs exist: the sealed-attachment fixture and the odd-flag fixture both bite.
+  const einvSpec = readFileSync("src/lib/e-invoice.test.ts", "utf8");
+  assert.match(einvSpec, /\[LEES\] a factur-x\.xml that will not inflate/, "the sealed-Factur-X test exists");
+  const csvSpec = readFileSync("src/lib/bank-csv.test.ts", "utf8");
+  assert.match(csvSpec, /unrecognised Af\/Bij flag is SAID/, "the odd-flag test exists");
 });

@@ -25,6 +25,7 @@ import {
   UBL_PROFILE_SELECT,
   ublHeaderFrom,
   ublLinesFrom,
+  originalInvoiceRef,
   type UblInvoiceRow,
   type UblLineRow,
 } from "./ubl-inputs";
@@ -79,14 +80,20 @@ export async function ublAttachmentForInvoice(
     if (profErr || !profileRow) return null;
 
     // [KLANT-EXTRA] Separately and failably read, like the export route: an open migration
-    // costs the three client lines, not the attachment.
-    const { data: extraRow } = await supabase
+    // costs the three client lines, not the attachment. But ONLY that error is benign — any
+    // other failure here means the invoice may carry client lines we did not read, and a valid
+    // XML missing content it should have is worse than no XML: the customer's package would
+    // book it as complete. So a real read error withdraws the attachment.
+    const { data: extraRow, error: extraErr } = await supabase
       .from("invoices")
       .select(CLIENT_EXTRA_LINE_COLUMNS.join(", "))
       .eq("id", invoiceId)
       .maybeSingle();
+    if (extraErr && !CLIENT_EXTRA_LINE_COLUMNS.some((c) => isUnknownColumn(extraErr, c))) return null;
 
-    const header = ublHeaderFrom(inv, (extraRow ?? null) as Record<string, string | null> | null);
+    // [CREDIT-REF] BG-3 for a creditnota mail — best-effort, a failed read costs the reference.
+    const origRef = await originalInvoiceRef(supabase, inv);
+    const header = ublHeaderFrom(inv, (extraRow ?? null) as Record<string, string | null> | null, origRef);
     const lines = ublLinesFrom((lineRows ?? []) as unknown as UblLineRow[]);
     const { xml } = buildInvoiceUbl(header, lines, profileRow as unknown as UblSupplier, {
       korActive: !!(profileRow as { kor_active?: boolean | null }).kor_active,

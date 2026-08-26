@@ -103,28 +103,46 @@ const EMBEDDED_XML_NAMES = [
 ]
 
 /**
+ * [LEES] The detailed answer: the XML, and whether a KNOWN e-invoice attachment existed that we
+ * could not decompress. That second fact used to vanish — "no XML" and "an e-invoice is present
+ * but unreadable" looked identical, and the second one is a claim about the document the review
+ * screen should get to see.
+ */
+export interface EmbeddedXmlResult {
+  xml: string | null
+  /** A filespec under a STANDARD e-invoice name existed but its stream would not inflate. */
+  unreadablePresent: boolean
+}
+
+export function extractEmbeddedInvoiceXmlDetailed(pdfBytes: Buffer): Promise<EmbeddedXmlResult> {
+  return extractEmbedded(pdfBytes).catch(() => ({ xml: null, unreadablePresent: false }))
+}
+
+/**
  * The invoice XML carried inside a PDF, or null when there is none.
  *
  * Never throws: this runs on untrusted mail inside the sync loop, and a malformed PDF must leave
  * the import exactly as it was rather than take the batch down.
  */
 export function extractEmbeddedInvoiceXml(pdfBytes: Buffer): Promise<string | null> {
-  return extractEmbedded(pdfBytes).catch(() => null)
+  return extractEmbeddedInvoiceXmlDetailed(pdfBytes).then((r) => r.xml)
 }
 
-async function extractEmbedded(pdfBytes: Buffer): Promise<string | null> {
+async function extractEmbedded(pdfBytes: Buffer): Promise<EmbeddedXmlResult> {
   // updateMetadata:false — we only read. throwOnInvalidObject stays off so a slightly broken but
   // readable PDF still gives up its attachment.
   const doc = await PDFDocument.load(pdfBytes, { updateMetadata: false })
+  const geen: EmbeddedXmlResult = { xml: null, unreadablePresent: false }
   const names = doc.catalog.lookup(PDFName.of('Names'), PDFDict)
-  if (!names) return null
+  if (!names) return geen
   const embedded = names.lookup(PDFName.of('EmbeddedFiles'), PDFDict)
-  if (!embedded) return null
+  if (!embedded) return geen
   const list = embedded.lookup(PDFName.of('Names'), PDFArray)
-  if (!list) return null
+  if (!list) return geen
 
   // The array alternates name, filespec, name, filespec…
   let fallback: string | null = null
+  let unreadablePresent = false
   for (let i = 0; i + 1 < list.size(); i += 2) {
     const rawName = list.lookup(i)
     const name =
@@ -133,31 +151,38 @@ async function extractEmbedded(pdfBytes: Buffer): Promise<string | null> {
         : String(rawName ?? '')
     const spec = list.lookup(i + 1, PDFDict)
     if (!spec) continue
-    const content = readFileSpec(spec)
-    if (!content) continue
-    if (EMBEDDED_XML_NAMES.includes(name.toLowerCase().trim())) return content
+    const gelezen = readFileSpec(spec)
+    const isKnownName = EMBEDDED_XML_NAMES.includes(name.toLowerCase().trim())
+    if (!gelezen.content) {
+      // [LEES] A factur-x.xml that will not inflate is not "no XML" — it is an e-invoice we
+      // could not read, and the review screen should get to say so. Only STANDARD names count:
+      // a random broken attachment makes no claim about the invoice.
+      if (isKnownName && gelezen.unreadable) unreadablePresent = true
+      continue
+    }
+    if (isKnownName) return { xml: gelezen.content, unreadablePresent }
     // A .xml attachment under a name nobody standardised is still worth a look — but only after
     // every known name has been ruled out, so a real factur-x.xml always wins.
-    if (fallback === null && /\.xml$/i.test(name) && looksLikeInvoiceXml(content)) fallback = content
+    if (fallback === null && /\.xml$/i.test(name) && looksLikeInvoiceXml(gelezen.content)) fallback = gelezen.content
   }
-  return fallback
+  return { xml: fallback, unreadablePresent }
 }
 
-function readFileSpec(spec: PDFDict): string | null {
+function readFileSpec(spec: PDFDict): { content: string | null; unreadable: boolean } {
   const ef = spec.lookup(PDFName.of('EF'), PDFDict)
-  if (!ef) return null
+  if (!ef) return { content: null, unreadable: false }
   const stream = ef.lookup(PDFName.of('F')) ?? ef.lookup(PDFName.of('UF'))
-  if (!(stream instanceof PDFRawStream)) return null
+  if (!(stream instanceof PDFRawStream)) return { content: null, unreadable: false }
   const raw = Buffer.from(stream.getContents())
   const filter = String(stream.dict.get(PDFName.of('Filter')) ?? '')
   try {
     // FlateDecode is what every producer uses; an uncompressed attachment is legal too.
     const bytes = filter.includes('FlateDecode') ? zlib.inflateSync(raw) : raw
-    return stripBom(bytes.toString('utf8'))
+    return { content: stripBom(bytes.toString('utf8')), unreadable: false }
   } catch {
-    // A stream we cannot inflate is not evidence about the invoice. Fall through as "no XML",
-    // which leaves the ordinary reading path exactly as it was.
-    return null
+    // A stream we cannot inflate is not evidence about the invoice — but its PRESENCE is a fact
+    // the caller may report ([LEES]); the reading path itself stays exactly as it was.
+    return { content: null, unreadable: true }
   }
 }
 

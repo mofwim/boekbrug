@@ -221,7 +221,9 @@ export function InvoiceTable(props: InvoiceTableProps) {
                   // the bank page to review; router.refresh() picks up the new paid status.
                   const r = await confirmMatch(id)
                   if (r === 'ok') router.refresh()
-                  else if (r !== 'error') router.push('/dashboard/bank')
+                  // [CIRKEL-C5] Het derde aanroeppunt dat bij de eerste ronde werd gemist: ook
+                  // hier landt de sprong op de LIJN als het transactie-id bekend is.
+                  else if (typeof r === 'object' && r.navigate) router.push(r.txId ? `/dashboard/bank/verdelen/${r.txId}` : '/dashboard/bank')
                 } : undefined}
               />
             ))}

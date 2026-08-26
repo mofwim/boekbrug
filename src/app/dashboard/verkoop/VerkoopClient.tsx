@@ -53,6 +53,7 @@ export default function VerkoopClient({
   bedrijf,
   nu,
   gecrediteerd,
+  laadFout = false,
 }: {
   facturen: SalesInvoice[]
   bedrijf: string
@@ -64,6 +65,8 @@ export default function VerkoopClient({
    * summarise() vraagt. Afwezig = niets gecrediteerd, en dan is elk bedrag exact wat het was.
    */
   gecrediteerd?: Record<string, number>
+  /** [NO-SILENT-EMPTY] De hoofdlezing is mislukt — het bord mag dan geen € 0,00 beweren. */
+  laadFout?: boolean
 }) {
   // [TAAL] `vert`, niet `t`: dit bestand noemt zijn totalen al `t`.
   const vert = translator(useLocale())
@@ -122,6 +125,14 @@ export default function VerkoopClient({
         <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
           {vert('vk.maken')}
         </h1>
+
+        {/* [NO-SILENT-EMPTY] Een mislukte lezing is geen leeg bord: zonder deze regel stond er
+            "€ 0,00 staat open" over facturen die er wél zijn. */}
+        {laadFout && (
+          <p style={{ fontSize: 13.5, color: '#B3261E', margin: '0 0 14px', lineHeight: 1.5 }}>
+            {vert('vk.laadFout')}
+          </p>
+        )}
 
         {/* [ACTING-FOR] De belangrijkste zin op dit scherm. Iemand die facturen uitgeeft onder het
             BTW-nummer van een ander hoort dat te WETEN, en niet te moeten afleiden. */}

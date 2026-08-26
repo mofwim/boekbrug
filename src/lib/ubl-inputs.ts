@@ -30,6 +30,8 @@
 //
 // So the mapping lives here, once, with a test that walks the whole optional group.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import type { UblInvoiceHeader, UblInvoiceLine } from "./ubl-export";
 
 /**
@@ -43,7 +45,9 @@ export const UBL_INVOICE_SELECT =
   // het ONGEKORTE bedrag: opgeslagen/PDF zeiden 2.070, de XML zei 2.300. Beide kolommen bestaan
   // in elke uitrol (gegenereerde typen), dus horen ze in de basis-select, niet achter de
   // 42703-terugval van de regelkolommen.
-  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number, discount_type, discount_value" as const;
+  // [CREDIT-REF] original_invoice_id is niet voor de kop zelf — het is de sleutel waarmee
+  // originalInvoiceRef() hieronder de BillingReference van een creditnota ophaalt (BG-3).
+  "id, sender_id, direction, invoice_number, invoice_date, due_date, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, client_address, client_postal_code, client_city, client_btw_number, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * The line columns, including the OPTIONAL group.
@@ -103,7 +107,35 @@ export type UblInvoiceRow = {
   client_btw_number: string | null;
   discount_type: string | null;
   discount_value: number | null;
+  // [CREDIT-REF] The key originalInvoiceRef() resolves — never header content itself.
+  original_invoice_id?: string | null;
 };
+
+/** What a creditnota's BillingReference (BG-3) carries, resolved from original_invoice_id. */
+export type UblOriginalRef = {
+  original_invoice_number: string | null;
+  original_invoice_date: string | null;
+};
+
+/**
+ * [CREDIT-REF] Resolve the invoice a creditnota corrects, best-effort. A booking system pairs a
+ * credit note to its original by this reference; without it the credit lands as an orphan someone
+ * matches by hand. Best-effort ON PURPOSE: a failed read here costs the reference, never the
+ * document — the creditnota itself is complete and valid without BG-3.
+ */
+export async function originalInvoiceRef(
+  supabase: SupabaseClient,
+  row: Pick<UblInvoiceRow, "invoice_type" | "original_invoice_id">,
+): Promise<UblOriginalRef | null> {
+  if (row.invoice_type !== "creditnota" || !row.original_invoice_id) return null;
+  const { data } = await supabase
+    .from("invoices")
+    .select("invoice_number, invoice_date")
+    .eq("id", row.original_invoice_id)
+    .maybeSingle();
+  if (!data?.invoice_number) return null;
+  return { original_invoice_number: data.invoice_number, original_invoice_date: data.invoice_date ?? null };
+}
 
 /** One `invoice_lines` row. The optional group is optional here too — see the SELECT above. */
 export type UblLineRow = {
@@ -129,8 +161,11 @@ export type UblLineRow = {
 export function ublHeaderFrom(
   row: UblInvoiceRow,
   extra?: Record<string, string | null> | null,
+  // [CREDIT-REF] From originalInvoiceRef() — its own failable read, like `extra`.
+  originalRef?: UblOriginalRef | null,
 ): UblInvoiceHeader {
   return {
+    ...(originalRef ?? {}),
     invoice_number: row.invoice_number,
     invoice_date: row.invoice_date,
     due_date: row.due_date,

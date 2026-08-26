@@ -32,6 +32,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { daysLate } from '@/lib/accountant-debtors'
 import { outstandingAmount, type SalesInvoice } from '@/lib/sales-overview'
 import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from '@/lib/credited-invoices'
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 
 /** Minimal shape of the session client — the same relaxed form the screens use. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -200,14 +201,19 @@ async function sumOverdue(
 ): Promise<{ count: number; total: number; worst: number } | null> {
   if (clientIds.length === 0) return { count: 0, total: 0, worst: 0 }
   try {
-    const { data, error } = await pipeline
-      .from('invoices')
-      .select('id, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
-      .in('sender_id', clientIds)
-      .eq('direction', 'outgoing')
-      .in('status', ['sent', 'overdue', 'partial'])
-      .limit(2000)
-    if (error) return null
+    // [VOL-GELEZEN] gepagineerd — .limit(2000) leek ruim maar PostgREST kapt elk antwoord stil
+    // op ~1000 rijen, dus het eurototaal op het kantoor-startscherm was boven de duizend open
+    // facturen stil te laag ÉN de creditnota-paring liep over een half beeld (dagslot-audit).
+    const data = await fetchAllRowsForIds<Record<string, unknown>, string>(
+      clientIds,
+      (chunk, from, to) => pipeline
+        .from('invoices')
+        .select('id, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
+        .in('sender_id', chunk)
+        .eq('direction', 'outgoing')
+        .in('status', ['sent', 'overdue', 'partial'])
+        .order('id', { ascending: true }).range(from, to),
+    )
 
     const all = (data ?? []) as unknown as Array<
       SalesInvoice & { invoice_type?: string | null; original_invoice_id?: string | null }

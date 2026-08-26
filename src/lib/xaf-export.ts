@@ -129,8 +129,12 @@ export interface XafCashLine {
   amount: number;
   category: string | null;
   btwRate: number | null;
-  /** Linked bon/factuur id, when the cost is documented ([CASH-COST-VAT]). */
+  /** Linked bon/receipt DOCUMENT id, when the cost is documented ([CASH-COST-VAT]). */
   documentId: string | null;
+  /** [XAF-KAS] The INVOICE this cash row settles (cash-settle writes it, category 'betaling').
+   *  The old guard compared documentId against invoice ids — two id spaces that never meet, so
+   *  the settle branch was dead and every cash payment of an invoice booked a second gross cost. */
+  invoiceId: string | null;
   /** entry_date falls on a Z-covered day — the till already booked these takings. */
   coveredByTurnover: boolean;
 }
@@ -140,12 +144,22 @@ export interface XafTurnoverDay {
   base0: number; base9: number; base21: number;
   btw9: number; btw21: number;
   pinAmount: number; cashAmount: number; otherAmount: number;
+  /** [FIN-5] The printed day total. A Z-day whose per-rate split did not import (bases 0, total
+   *  set) is still REVENUE — the engine recovers the remainder; so does this file now. */
+  totalIncl: number | null;
 }
 
 export interface XafInput {
   year: number;
   /** ISO date the file is generated (passed in — this module holds no clock). */
   dateCreated: string;
+  /** [XAF-PERIODE] Last day the file may claim. The header used to declare 01-01..12-31
+   *  unconditionally, so a May download told the importer "periods 6-12 are empty" as a fact
+   *  about the administration. Clamped to today by the route. */
+  endDate: string;
+  /** [XAF-REGIME] Honest limits of this projection (KOR, verlegd/vrijgesteld not split out) —
+   *  emitted as LET OP comments; a wrong account is worse than a stated caveat. */
+  regimeNotes: string[];
   company: XafCompany;
   sales: XafSalesInvoice[];
   purchases: XafPurchaseInvoice[];
@@ -286,73 +300,142 @@ function buildBank(tx: XafBankLine): { lines: Line[] } | { reason: string } {
   };
 }
 
-function buildCash(row: XafCashLine, purchaseIds: ReadonlySet<string>): { lines: Line[] } | { reason: string } | { witness: true } {
+function buildCash(
+  row: XafCashLine,
+  purchaseIds: ReadonlySet<string>,
+  salesIds: ReadonlySet<string>,
+): { lines: Line[] } | { reason: string } | { witness: true } {
   if (!row.date) return { reason: "geen datum" };
   const amtC = cents(row.amount);
   if (amtC === 0) return { reason: "bedrag nul" };
   const docRef = row.id;
-  if (row.direction === "in") {
-    if (row.category === "omzet" && row.coveredByTurnover) return { witness: true };
-    if (row.category === "omzet") {
-      if (row.btwRate === 21 || row.btwRate === 9) {
-        // Gross entered, split ex/btw the way the engine does: ex = gross / (1 + rate).
-        const exC = Math.round(amtC / (1 + row.btwRate / 100));
-        const btwC = amtC - exC;
-        return {
-          lines: [
-            { accID: ACC.kas, debitC: amtC, desc: "Contante verkoop", docRef },
-            { accID: omzetAccountFor(row.btwRate), debitC: -exC, desc: `Omzet ${row.btwRate}%`, docRef, vat: { rate: row.btwRate, amountDebitC: -btwC } },
-            { accID: ACC.btwTeBetalen, debitC: -btwC, desc: "BTW over contante omzet", docRef },
-          ],
-        };
-      }
-      // Rated 0, or no rate at all: full amount as omzet, NO BTW invented — the same honesty as
-      // cashOmzetZonderBtw ("surfaced, never guessed").
+
+  // [XAF-KAS · BETALING] A cash settlement of an invoice clears the SUB-ADMINISTRATION — the
+  // cost/omzet and its BTW already booked through the invoice journal, and a second entry here
+  // was the audit's biggest find: €221 of kosten for one €121 bill, crediteuren never clearing.
+  // cash-settle writes these rows with invoice_id set (category 'betaling'); the guard is on
+  // that id, in the INVOICE id space — the old documentId check compared against a space it
+  // could never match and was dead code certified by a lying fixture.
+  if (row.invoiceId && purchaseIds.has(row.invoiceId)) {
+    // outgoing money settles a purchase: D 1600, C 1000. direction 'out' ⇒ amtC>0 by data shape,
+    // but the SIGN carries the truth either way.
+    return {
+      lines: [
+        { accID: ACC.crediteuren, debitC: row.direction === "out" ? amtC : -amtC, desc: "Contante betaling inkoopfactuur", docRef },
+        { accID: ACC.kas, debitC: row.direction === "out" ? -amtC : amtC, desc: "Contante betaling inkoopfactuur", docRef },
+      ],
+    };
+  }
+  if (row.invoiceId && salesIds.has(row.invoiceId)) {
+    // incoming money settles a sale: D 1000, C 1300 — debiteuren clears.
+    return {
+      lines: [
+        { accID: ACC.kas, debitC: row.direction === "in" ? amtC : -amtC, desc: "Contante ontvangst verkoopfactuur", docRef },
+        { accID: ACC.debiteuren, debitC: row.direction === "in" ? -amtC : amtC, desc: "Contante ontvangst verkoopfactuur", docRef },
+      ],
+    };
+  }
+  if (row.category === "betaling") {
+    // A settlement whose invoice is outside this year (or unknown): still a sub-administration
+    // movement, never a cost — route it by direction to 1600/1300 so the ledger's story stays
+    // "money settled a bill", with the open counterpart visible instead of a phantom cost.
+    return row.direction === "out"
+      ? { lines: [
+          { accID: ACC.crediteuren, debitC: amtC, desc: "Contante betaling (factuur buiten dit jaar)", docRef },
+          { accID: ACC.kas, debitC: -amtC, desc: "Contante betaling (factuur buiten dit jaar)", docRef },
+        ] }
+      : { lines: [
+          { accID: ACC.kas, debitC: amtC, desc: "Contante ontvangst (factuur buiten dit jaar)", docRef },
+          { accID: ACC.debiteuren, debitC: -amtC, desc: "Contante ontvangst (factuur buiten dit jaar)", docRef },
+        ] };
+  }
+
+  // [XAF-KAS · GETUIGE] The covered-day rule is DIRECTION-AGNOSTIC, as in the engine: a till
+  // refund rung on a Z-day is inside that day's net figure too.
+  if (row.category === "omzet" && row.coveredByTurnover) return { witness: true };
+
+  if (row.category === "omzet") {
+    // sign follows direction: 'in' books omzet, 'out' is a REFUND — negative omzet and negative
+    // BTW, exactly as the engine books it. Booking a refund as kosten overstated result by the
+    // gross twice over.
+    const sign = row.direction === "in" ? 1 : -1;
+    if (row.btwRate === 21 || row.btwRate === 9) {
+      const exC = Math.round(amtC / (1 + row.btwRate / 100));
+      const btwC = amtC - exC;
       return {
         lines: [
-          { accID: ACC.kas, debitC: amtC, desc: "Contante verkoop", docRef },
-          { accID: omzetAccountFor(0), debitC: -amtC, desc: row.btwRate === 0 ? "Omzet 0%" : "Omzet zonder btw-tarief — tarief alsnog vastleggen", docRef },
+          { accID: ACC.kas, debitC: sign * amtC, desc: sign > 0 ? "Contante verkoop" : "Contante terugbetaling verkoop", docRef },
+          { accID: omzetAccountFor(row.btwRate), debitC: sign * -exC, desc: `Omzet ${row.btwRate}%${sign < 0 ? " (terugbetaling)" : ""}`, docRef, vat: { rate: row.btwRate, amountDebitC: sign * -btwC } },
+          { accID: ACC.btwTeBetalen, debitC: sign * -btwC, desc: "BTW over contante omzet", docRef },
         ],
       };
     }
     return {
       lines: [
-        { accID: ACC.kas, debitC: amtC, desc: row.category ?? "Kasstorting", docRef },
-        { accID: ACC.vraagposten, debitC: -amtC, desc: `Kas in${row.category ? ` [${row.category}]` : ""}`, docRef },
+        { accID: ACC.kas, debitC: sign * amtC, desc: sign > 0 ? "Contante verkoop" : "Contante terugbetaling verkoop", docRef },
+        { accID: omzetAccountFor(0), debitC: sign * -amtC, desc: row.btwRate === 0 ? "Omzet 0%" : "Omzet zonder btw-tarief — tarief alsnog vastleggen", docRef },
       ],
     };
   }
-  // direction === "out"
-  if (row.documentId && purchaseIds.has(row.documentId)) {
-    // Cash payment of a purchase invoice that is itself in the inkoopboek: settle the crediteur —
-    // its cost and voorbelasting already booked through the invoice, a second claim here would
-    // double it.
+
+  // [XAF-KAS · SOORTEN] The category vocabulary is cash.ts's CASH_CATEGORIES, and the engine
+  // books exactly kosten/salaris as cost and EXCLUDES prive/transfer/tax/fee. "Any category is a
+  // cost" turned a privé-opname into a deductible expense and a bank deposit into €500 of lost
+  // profit. Mirror the engine: an allow-list, transfer to the bank counterpart, the rest a NAMED
+  // question.
+  if (row.category === "kosten" || row.category === "salaris") {
+    if (row.direction === "in") {
+      // a supplier refunding in cash: negative cost, mirroring the engine's sign.
+      return {
+        lines: [
+          { accID: ACC.kas, debitC: amtC, desc: "Contante terugontvangst kosten", docRef },
+          { accID: ACC.kosten, debitC: -amtC, desc: `${row.category} (terugontvangst)`, docRef },
+        ],
+      };
+    }
+    if (row.documentId && (row.btwRate === 21 || row.btwRate === 9)) {
+      // Documented cash cost ([CASH-COST-VAT]): the bon carries the BTW, so voorbelasting may book.
+      const exC = Math.round(amtC / (1 + row.btwRate / 100));
+      const btwC = amtC - exC;
+      return {
+        lines: [
+          { accID: ACC.kosten, debitC: exC, desc: row.category, docRef },
+          { accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting (bon)", docRef },
+          { accID: ACC.kas, debitC: -amtC, desc: row.category, docRef },
+        ],
+      };
+    }
+    // Undocumented: GROSS, no voorbelasting (iron rule 3).
     return {
       lines: [
-        { accID: ACC.crediteuren, debitC: amtC, desc: "Contante betaling inkoopfactuur", docRef },
-        { accID: ACC.kas, debitC: -amtC, desc: "Contante betaling inkoopfactuur", docRef },
+        { accID: ACC.kosten, debitC: amtC, desc: row.category, docRef },
+        { accID: ACC.kas, debitC: -amtC, desc: row.category, docRef },
       ],
     };
   }
-  if (row.documentId && (row.btwRate === 21 || row.btwRate === 9)) {
-    // Documented cash cost ([CASH-COST-VAT]): the bon carries the BTW, so voorbelasting may book.
-    const exC = Math.round(amtC / (1 + row.btwRate / 100));
-    const btwC = amtC - exC;
-    return {
-      lines: [
-        { accID: ACC.kosten, debitC: exC, desc: row.category ?? "Contante kosten", docRef },
-        { accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting (bon)", docRef },
-        { accID: ACC.kas, debitC: -amtC, desc: row.category ?? "Contante kosten", docRef },
-      ],
-    };
+  if (row.category === "transfer") {
+    // Drawer ↔ bank, via 2100 (kruis-/vraagposten) — NOT via 1100 directly. The bank journal
+    // books the SAME movement's statement line as 1100 against 2100 (an unlinked, non-POS line),
+    // so booking 1100 here too counted the deposit on the bank account twice and left a phantom
+    // residual on 2100. Through 2100 on this side, the two 2100 legs cancel and 1100 moves
+    // exactly once — the classic kruisposten shape. (Day-end audit: the old comment CLAIMED the
+    // cancel while booking the account that made it impossible.)
+    return row.direction === "out"
+      ? { lines: [
+          { accID: ACC.vraagposten, debitC: amtC, desc: "Kasstorting naar bank (kruispost)", docRef },
+          { accID: ACC.kas, debitC: -amtC, desc: "Kasstorting naar bank", docRef },
+        ] }
+      : { lines: [
+          { accID: ACC.kas, debitC: amtC, desc: "Kasopname van bank", docRef },
+          { accID: ACC.vraagposten, debitC: -amtC, desc: "Kasopname van bank (kruispost)", docRef },
+        ] };
   }
-  // Undocumented cash out: GROSS, no voorbelasting (iron rule 3). A category still books it as
-  // cost; without even a category it is a vraagpost.
-  const target = row.category ? ACC.kosten : ACC.vraagposten;
+  // prive / tax / fee / unknown: a movement the P&L must NOT absorb. Named on vraagposten.
+  const sign = row.direction === "in" ? 1 : -1;
   return {
     lines: [
-      { accID: target, debitC: amtC, desc: row.category ?? "Kas uit — onbenoemd", docRef },
-      { accID: ACC.kas, debitC: -amtC, desc: row.category ?? "Kas uit — onbenoemd", docRef },
+      { accID: ACC.kas, debitC: sign * amtC, desc: row.category ?? (sign > 0 ? "Kasstorting" : "Kas uit — onbenoemd"), docRef },
+      { accID: ACC.vraagposten, debitC: sign * -amtC, desc: `Kas ${row.direction}${row.category ? ` [${row.category}]` : ""}`, docRef },
     ],
   };
 }
@@ -361,9 +444,18 @@ function buildTurnoverDay(t: XafTurnoverDay): { lines: Line[] } | { reason: stri
   const docRef = `Z-${t.date}`;
   const base0C = cents(t.base0), base9C = cents(t.base9), base21C = cents(t.base21);
   const btw9C = cents(t.btw9), btw21C = cents(t.btw21);
-  const salesC = base0C + base9C + base21C + btw9C + btw21C;
-  if (salesC === 0) return { reason: "lege dag" };
+  let salesC = base0C + base9C + base21C + btw9C + btw21C;
+  // [FIN-5] A Z-day whose per-rate split did not import (bases empty, printed total set) is
+  // still REVENUE — the engine recovers exactly this remainder, and a day the file silently
+  // dropped left turnover in neither journal, visible only inside an XML comment.
+  const totalC = cents(t.totalIncl ?? 0);
+  const restC = totalC - salesC;
+  if (salesC === 0 && totalC === 0) return { reason: "lege dag" };
   const lines: Line[] = [];
+  if (restC > Math.max(10, Math.round(Math.abs(totalC) * 0.001))) {
+    lines.push({ accID: omzetAccountFor(0), debitC: -restC, desc: "Dagomzet zonder geimporteerd tarief — tarief alsnog vastleggen", docRef });
+    salesC += restC;
+  }
   if (base21C !== 0) lines.push({ accID: omzetAccountFor(21), debitC: -base21C, desc: "Dagomzet 21%", docRef, vat: { rate: 21, amountDebitC: -btw21C } });
   if (base9C !== 0) lines.push({ accID: omzetAccountFor(9), debitC: -base9C, desc: "Dagomzet 9%", docRef, vat: { rate: 9, amountDebitC: -btw9C } });
   if (base0C !== 0) lines.push({ accID: omzetAccountFor(0), debitC: -base0C, desc: "Dagomzet 0%", docRef });
@@ -383,7 +475,11 @@ function buildTurnoverDay(t: XafTurnoverDay): { lines: Line[] } | { reason: stri
 // ── XML ──────────────────────────────────────────────────────────────────────────────────────────
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  // C0-stuurtekens eerst: een 0x1F uit een MT940-omschrijving maakt het bestand ONparseerbaar,
+  // niet slechts ongeldig.
+  return s
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 function el(name: string, content: string): string {
@@ -436,11 +532,12 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     push("INK", inv.invoiceDate ?? "", `Inkoopfactuur ${inv.invoiceNumber ?? inv.id}`, buildPurchase(inv, supId.get(name)!), "inkoop", inv.id);
   }
   const purchaseIds: ReadonlySet<string> = new Set(input.purchases.map((p) => p.id));
+  const salesIds: ReadonlySet<string> = new Set(input.sales.map((p) => p.id));
   for (const tx of input.bank) {
     push("BNK", tx.date ?? "", (tx.description ?? "Bankmutatie").slice(0, 100), buildBank(tx), "bank", tx.id);
   }
   for (const row of input.cash) {
-    const built = buildCash(row, purchaseIds);
+    const built = buildCash(row, purchaseIds, salesIds);
     if ("witness" in built) { turnoverWitnessCount++; continue; }
     push("KAS", row.date ?? "", row.direction === "in" ? "Kas in" : "Kas uit", built, "kas", row.id);
   }
@@ -468,17 +565,24 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   out.push("<header>");
   out.push(el("fiscalYear", String(year)));
   out.push(el("startDate", `${year}-01-01`));
-  out.push(el("endDate", `${year}-12-31`));
+  // [XAF-PERIODE] Never declare days that have not happened: "periods 6-12 empty" read as a fact
+  // about the administration. The route clamps endDate to today.
+  out.push(el("endDate", input.endDate));
   out.push(el("curCode", "EUR"));
   out.push(el("dateCreated", input.dateCreated));
   out.push(el("softwareDesc", "BoekBrug"));
   out.push(el("softwareVersion", "1.0"));
   out.push("</header>");
   out.push("<company>");
-  if (input.company.kvkNumber) out.push(el("companyIdent", esc(input.company.kvkNumber)));
+  // companyIdent is een VERPLICHT kind van company in XAF 3.2 — leeg element als de KvK ontbreekt,
+  // nooit weggelaten (dan valideert het bestand niet en strandt de import als geheel).
+  out.push(input.company.kvkNumber ? el("companyIdent", esc(input.company.kvkNumber)) : "<companyIdent/>");
   out.push(el("companyName", esc(input.company.name)));
   out.push(el("taxRegistrationCountry", "NL"));
-  if (input.company.btwNumber) out.push(el("taxRegIdent", esc(input.company.btwNumber)));
+  // taxRegIdent heeft GEEN minOccurs="0" in het 3.2-schema — een onderneming zonder BTW-nummer
+  // (KOR-starter) kreeg een bestand dat als geheel niet valideerde. Leeg element, nooit weggelaten
+  // — dezelfde regel als companyIdent hierboven, en per xmllint tegen het officiële XSD bevestigd.
+  out.push(input.company.btwNumber ? el("taxRegIdent", esc(input.company.btwNumber)) : "<taxRegIdent/>");
   if (input.company.address || input.company.city) {
     out.push("<streetAddress>");
     if (input.company.address) out.push(el("streetname", esc(input.company.address)));
@@ -517,7 +621,13 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</vatCodes>");
   out.push("<periods>");
-  for (let m = 1; m <= 12; m++) {
+  // [XAF-PERIODE] Through today's month — AND through the latest month any entry actually names.
+  // invoice_date is owner-entered, so a post-dated September invoice exists in an August file;
+  // its periodNumber must be a DECLARED period or the file contradicts itself (schema-silently:
+  // the XSD does not cross-check, so only an importer would trip over it).
+  const lastEntryMonth = entries.reduce((mx, e) => Math.max(mx, monthOf(e.date) || 0), 0);
+  const lastMonth = Math.max(monthOf(input.endDate) || 12, lastEntryMonth) || 12;
+  for (let m = 1; m <= lastMonth; m++) {
     const last = new Date(Date.UTC(year, m, 0)).getUTCDate();
     out.push("<period>");
     out.push(el("periodNumber", String(m)));
@@ -559,7 +669,9 @@ export function buildXafFile(input: XafInput): XafBuildResult {
           out.push(el("vatID", l.vat.rate === 21 ? "V21" : l.vat.rate === 9 ? "V9" : "V0"));
           out.push(el("vatPerc", `${l.vat.rate}.00`));
           out.push(el("vatAmnt", eur(Math.abs(l.vat.amountDebitC))));
-          out.push(el("vatAmntTp", l.vat.amountDebitC >= 0 ? "D" : "C"));
+          // Een 0%-regel draagt vatAmnt 0.00 met amountDebitC = -0, en -0 >= 0 is true — dan
+          // stond er D tussen louter C-zusters. Nul volgt de kant van de REGEL.
+          out.push(el("vatAmntTp", (l.vat.amountDebitC === 0 ? l.debitC : l.vat.amountDebitC) >= 0 ? "D" : "C"));
           out.push("</vat>");
         }
         out.push("</trLine>");
@@ -570,6 +682,9 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</transactions>");
   out.push("</company>");
+  for (const note of input.regimeNotes) {
+    out.push(`<!-- BoekBrug LET OP: ${esc(note)} -->`);
+  }
   if (skipped.length > 0) {
     const listed = skipped.slice(0, 50).map((s) => `${s.source}:${s.id} (${s.reason})`).join("; ");
     out.push(`<!-- BoekBrug: ${skipped.length} regel(s) niet opgenomen - ${esc(listed)}${skipped.length > 50 ? "; ..." : ""} -->`);

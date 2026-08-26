@@ -48,6 +48,10 @@ export interface CorrectableInvoice {
   invoice_number: string | null
   client_name: string | null
   invoice_date: string | null
+  /** [LEES-CORRECTIE] The three pipeline-written fields that had no edit surface anywhere. */
+  due_date?: string | null
+  vendor_iban?: string | null
+  payment_reference?: string | null
   invoice_type?: string | null
   total_ex_btw: number | null
   btw_amount: number | null
@@ -112,6 +116,9 @@ export default function InvoiceCorrectionModal({
   const [number, setNumber] = useState(invoice.invoice_number ?? '')
   const [vendor, setVendor] = useState(invoice.client_name ?? '')
   const [date, setDate] = useState(invoice.invoice_date ?? '')
+  const [dueDate, setDueDate] = useState(invoice.due_date ?? '')
+  const [iban, setIban] = useState(invoice.vendor_iban ?? '')
+  const [kenmerk, setKenmerk] = useState(invoice.payment_reference ?? '')
   // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
   const [credit, setCredit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -133,6 +140,10 @@ export default function InvoiceCorrectionModal({
     if (number.trim() !== (invoice.invoice_number ?? '').trim()) body.invoice_number = number.trim()
     if (vendor.trim() !== (invoice.client_name ?? '').trim()) body.client_name = vendor.trim()
     if (date !== (invoice.invoice_date ?? '')) body.invoice_date = date
+    // [LEES-CORRECTIE] Empty string means "wis dit veld" — the route clears to NULL.
+    if (dueDate !== (invoice.due_date ?? '')) body.due_date = dueDate
+    if (iban.trim() !== (invoice.vendor_iban ?? '')) body.vendor_iban = iban.trim()
+    if (kenmerk.trim() !== (invoice.payment_reference ?? '')) body.payment_reference = kenmerk.trim()
     if (credit) body.is_credit_note = true
 
     if (Object.keys(body).length === 0) {
@@ -240,6 +251,12 @@ export default function InvoiceCorrectionModal({
         {field(t('corr.leverancier'), vendor, setVendor)}
         {field(t('corr.factuurnummer'), number, setNumber)}
         {field(t('corr.factuurdatum'), date, setDate, 'date')}
+        {/* [LEES-CORRECTIE] due date schedules Vandaag + reminders; the IBAN feeds the
+            fraud check and the bank-match tier; the kenmerk is what the owner types into
+            their bank. All three were pipeline-written and uncorrectable. */}
+        {field(t('corr.vervaldatum'), dueDate, setDueDate, 'date')}
+        {field(t('corr.iban'), iban, setIban)}
+        {field(t('corr.kenmerk'), kenmerk, setKenmerk)}
 
         <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
 

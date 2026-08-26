@@ -27,6 +27,7 @@ import { COLUMN } from '@/lib/design/tokens';
 import { cleanVatNote, MAX_NOTE_LENGTH } from '@/lib/vat-statement'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 export default function SettingsPage() {
   const t = translator(useLocale())
@@ -74,6 +75,8 @@ export default function SettingsPage() {
   // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
   // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
   const [remindersEnabled, setRemindersEnabled] = useState(false)
+  // [OCHTEND] The morning digest mail — on unless the owner said otherwise (missing column = on).
+  const [ochtendMail, setOchtendMail] = useState(true)
   const [reminderOffsetsText, setReminderOffsetsText] = useState('14, 30')
 
   // حالة دعوة المحاسب
@@ -151,6 +154,7 @@ export default function SettingsPage() {
         setVatStatementNote((data as { vat_statement_note?: string | null }).vat_statement_note ?? '')
         setVatExemptSince(data.vat_exempt_since ?? null)
         setRemindersEnabled(!!data.reminders_enabled)
+        setOchtendMail((data as { ochtend_mail?: boolean | null }).ochtend_mail !== false)
         setReminderOffsetsText(
           (Array.isArray(data.reminder_offsets) && data.reminder_offsets.length > 0
             ? data.reminder_offsets
@@ -270,6 +274,16 @@ export default function SettingsPage() {
         .eq('id', user.id)
       if (remErr) {
         console.warn('[REMINDERS] reminder-preferences save skipped (migration applied?)', remErr.message)
+      }
+
+      // [OCHTEND] Same shape, same reason: before ochtend_mail.sql this column does not exist,
+      // and bundling it would brick the whole profile save.
+      const { error: ochtendErr } = await supabase
+        .from('profiles')
+        .update({ ochtend_mail: ochtendMail })
+        .eq('id', user.id)
+      if (ochtendErr) {
+        console.warn('[OCHTEND] morning-mail preference save skipped (migration applied?)', ochtendErr.message)
       }
 
       // [VRIJGESTELD] Separate + best-effort for exactly the reason spelled out above: before
@@ -436,7 +450,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/account/export', { method: 'POST' })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || t('kluis.exportMislukt'))
+        setDelError(failureText(res.status, data, t('kluis.exportMislukt')))
         return
       }
       const blob = await res.blob()
@@ -470,7 +484,7 @@ export default function SettingsPage() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setDelError(data.error || t('act.verwijderenMislukt'))
+        setDelError(failureText(res.status, data, t('act.verwijderenMislukt')))
         return
       }
       await supabase.auth.signOut()
@@ -745,6 +759,26 @@ export default function SettingsPage() {
                 </span>
               </div>
             )}
+          </div>
+
+          {/* [OCHTEND] De ochtendmail — één mail per dag, en alleen op dagen dat er iets gebeurde. */}
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={ochtendMail}
+                onChange={e => setOchtendMail(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  {t('inst.ochtendMail')}
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  {t('inst.ochtendMailUitleg')}
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* زر الحفظ */}

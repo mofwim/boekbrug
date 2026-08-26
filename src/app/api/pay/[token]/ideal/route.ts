@@ -107,10 +107,15 @@ export async function POST(
     return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
   }
   const existingRow = existing as { id: string; link_id: string; checkout_url: string; amount_value: string; status: string } | null
-  if (existingRow && !linkIsStale(existingRow.amount_value, view.amount)) {
+  // [MOLLIE-C7] Een placeholder-rij (aanmaak halverwege gestrand: pending-linkid, lege URL) mag
+  // NOOIT worden hergebruikt — hij gaf { url: '' } met een 200 terug en blokkeerde iDEAL op deze
+  // factuur voorgoed, want de unieke open-index hield elke nieuwe aanmaak tegen. Zo'n rij wordt
+  // hier opgeruimd en de aanmaak begint opnieuw.
+  if (existingRow && (existingRow.checkout_url === '' || existingRow.link_id.startsWith('pending-'))) {
+    await linkPipe.from('mollie_payment_links').delete().eq('id', existingRow.id).eq('user_id', ownerId)
+  } else if (existingRow && !linkIsStale(existingRow.amount_value, view.amount)) {
     return NextResponse.json({ url: existingRow.checkout_url })
-  }
-  if (existingRow) {
+  } else if (existingRow) {
     await linkPipe
       .from('mollie_payment_links')
       .update({ status: 'superseded' })
@@ -134,6 +139,21 @@ export async function POST(
     .select('id')
     .single()
   if (insErr || !inserted) {
+    // [MOLLIE-C8] 23505 = twee klanten/tabbladen klikten tegelijk en de ander won de unieke
+    // open-index. Er BESTAAT dan een perfect bruikbare link — geef die terug in plaats van een
+    // 503 tegen iemand die net besloot te betalen. (Lege checkout_url = de winnaar is zelf nog
+    // bezig; dan is even opnieuw proberen het eerlijke antwoord.)
+    if ((insErr as { code?: string } | null)?.code === '23505') {
+      const { data: winner } = await linkPipe
+        .from('mollie_payment_links')
+        .select('checkout_url')
+        .eq('user_id', ownerId)
+        .eq('invoice_id', invoiceId)
+        .eq('status', 'open')
+        .maybeSingle()
+      const url = (winner as { checkout_url?: string } | null)?.checkout_url
+      if (url) return NextResponse.json({ url })
+    }
     return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
   }
   const rowId = (inserted as { id: string }).id
@@ -159,7 +179,9 @@ export async function POST(
     .eq('user_id', ownerId)
   if (updErr) {
     // De link bestaat bij Mollie maar onze rij kent hem niet → de webhook zou hem nooit kunnen
-    // verifiëren. Niet uitdelen.
+    // verifiëren. Niet uitdelen — en de placeholder-rij WEG, anders bezet hij de unieke
+    // open-index voorgoed (de kop belooft: nooit een open rij zonder echte link).
+    await linkPipe.from('mollie_payment_links').delete().eq('id', rowId).eq('user_id', ownerId)
     console.error('[MOLLIE] linkrij bijwerken mislukt', { invoiceId, rowId, error: updErr.message })
     return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
   }

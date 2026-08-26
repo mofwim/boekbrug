@@ -24,6 +24,7 @@ import { buildDebtorBoard, type DebtorInput } from '@/lib/accountant-debtors'
 // gecrediteerd paar moeten samen uit de vorderingenlijst (src/lib/credited-invoices.ts).
 import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from '@/lib/credited-invoices'
 import AccountantDebiteuren from '@/modules/accountant/pages/AccountantDebiteuren'
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 
 export const dynamic = 'force-dynamic'
 
@@ -118,16 +119,21 @@ export default async function AccountantDebiteurenPage() {
   // ── Data, met service_role en expliciet beperkt tot die klanten ────────────
   const pipeline = createPipelineClient()
 
-  const [{ data: facturen }, { data: profielen }] = await Promise.all([
-    pipeline
-      .from('invoices')
-      .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused, invoice_type, original_invoice_id')
-      .in('sender_id', klantIds)
-      .eq('direction', 'outgoing')
-      // Alleen wat nog geld kan opleveren. 'draft' is geen schuld, 'paid' en 'archived' evenmin —
-      // buildDebtorBoard gooit ze er ook uit, maar niet ophalen is goedkoper dan wegfilteren.
-      .in('status', ['sent', 'overdue', 'partial'])
-      .limit(2000),
+  // [VOL-GELEZEN] gepagineerd — .limit(2000) werd stil ~1000, en de nabellijst miste dan juist
+  // de OUDSTE vorderingen (geen .order, dus wélke duizend was onbepaald). Dagslot-audit.
+  const [facturen, { data: profielen }] = await Promise.all([
+    fetchAllRowsForIds<Record<string, unknown>, string>(
+      klantIds,
+      (chunk, from, to) => pipeline
+        .from('invoices')
+        .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, sender_id, created_by, reminders_paused, invoice_type, original_invoice_id')
+        .in('sender_id', chunk)
+        .eq('direction', 'outgoing')
+        // Alleen wat nog geld kan opleveren. 'draft' is geen schuld, 'paid' en 'archived' evenmin —
+        // buildDebtorBoard gooit ze er ook uit, maar niet ophalen is goedkoper dan wegfilteren.
+        .in('status', ['sent', 'overdue', 'partial'])
+        .order('id', { ascending: true }).range(from, to),
+    ),
     pipeline.from('profiles').select('id, full_name, company_name').in('id', klantIds),
   ])
 

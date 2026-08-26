@@ -13,6 +13,7 @@
 // niet". De klant houdt een echte offerte vast; hem wegsturen kost de ondernemer de opdracht.
 
 import { useEffect, useState } from 'react'
+import { failureText } from '@/lib/server-message'
 
 interface QuoteLine {
   description: string
@@ -56,7 +57,7 @@ export default function OfferteClient({ token }: { token: string }) {
         const data = await res.json().catch(() => ({}))
         if (afgebroken) return
         if (!res.ok) {
-          setLaadFout(data?.error || 'Onbekende offertelink')
+          setLaadFout(failureText(res.status, data, 'Onbekende offertelink'))
         } else {
           setView(data as QuoteView)
         }
@@ -80,7 +81,7 @@ export default function OfferteClient({ token }: { token: string }) {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setAntwoordFout(data?.error || 'Het versturen lukte niet. Probeer het zo nog eens.')
+        setAntwoordFout(failureText(res.status, data, 'Het versturen lukte niet. Probeer het zo nog eens.'))
         setVersturen(null)
         return
       }

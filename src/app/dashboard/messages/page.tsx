@@ -10,6 +10,7 @@ import { COLUMN } from '@/lib/design/tokens';
 // [TAAL] The screen speaks the owner's language.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 // Eén gesprek in de lijst: samengesteld uit berichten + de naam van de tegenpartij.
 interface Conversation {
@@ -60,7 +61,7 @@ export default function MessagesPage() {
         if (res.status === 401) { router.push('/login'); return }
         const data = await res.json().catch(() => null)
         if (!res.ok) {
-          setLoadError(data?.error || t('ber.ophaalFout'))
+          setLoadError(failureText(res.status, data, t('ber.ophaalFout')))
           return
         }
         setConversations(data?.conversations ?? [])

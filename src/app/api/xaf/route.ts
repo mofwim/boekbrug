@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { isVerifiedForPackage, effectiveDirection } from "@/lib/closing-package";
 import { toResultBankTx } from "@/lib/financial-result";
@@ -37,6 +38,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Ongeldig jaar" }, { status: 400 });
   }
 
+  // [DIEP-2] Year-scale read path — bounded like every other heavy surface.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "xaf-export", ...RATE_LIMITS.HEAVY_EXPORT });
+  if (!limited.allowed) return rateLimitResponse(limited);
+
   const owner = await resolveQuarterOwner(supabase, user.id, req.nextUrl.searchParams.get("clientId"));
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const pipeline = createPipelineClient();
@@ -48,7 +53,7 @@ export async function GET(req: NextRequest) {
     // ── Company ──
     const { data: profile, error: profErr } = await pipeline
       .from("profiles")
-      .select("company_name, full_name, kvk_number, btw_number, address, postal_code, city")
+      .select("company_name, full_name, kvk_number, btw_number, address, postal_code, city, kor_active")
       .eq("id", ownerId)
       .maybeSingle();
     if (profErr) throw new Error(`profiel: ${profErr.message}`);
@@ -100,9 +105,10 @@ export async function GET(req: NextRequest) {
     const cashRows = await fetchAllRows<{
       id: string; direction: string | null; amount: number | null; category: string | null;
       btw_rate: number | null; entry_date: string | null; document_id: string | null;
+      invoice_id: string | null;
     }>((from, to) => liveCash.only(pipeline
       .from("cash_entries")
-      .select("id, direction, amount, category, btw_rate, entry_date, document_id")
+      .select("id, direction, amount, category, btw_rate, entry_date, document_id, invoice_id")
       .eq("user_id", ownerId)
       .gte("entry_date", start)
       .lte("entry_date", end))
@@ -131,9 +137,24 @@ export async function GET(req: NextRequest) {
         .map((t) => t.turnover_date),
     );
 
+    // [XAF-PERIODE] The file may not declare days that have not happened.
+    const vandaag = amsterdamToday();
+    const endDate = `${year}-12-31` < vandaag ? `${year}-12-31` : vandaag;
+
+    // [XAF-REGIME] The honest limits, said inside the file: under KOR there is no right of
+    // deduction (the 1400 lines then need the accountant's judgement), and 0%-omzet is not split
+    // into verlegd/vrijgesteld/export here — the aangifte screen is where that split lives.
+    const regimeNotes: string[] = [];
+    if ((profile as { kor_active?: boolean | null } | null)?.kor_active) {
+      regimeNotes.push("Deze onderneming valt onder de KOR: er bestaat geen recht op aftrek van voorbelasting. Beoordeel de 1400-regels in dit bestand voordat je ze overneemt.");
+    }
+    regimeNotes.push("Omzet op rekening 8020 is 0%/verlegd/vrijgesteld ZONDER onderscheid — de BTW-aangifte in BoekBrug draagt de rubriekverdeling.");
+
     const input: XafInput = {
       year,
-      dateCreated: amsterdamToday(),
+      dateCreated: vandaag,
+      endDate,
+      regimeNotes,
       company: {
         name: profile?.company_name || profile?.full_name || "Onbekende onderneming",
         kvkNumber: profile?.kvk_number ?? null,
@@ -177,6 +198,7 @@ export async function GET(req: NextRequest) {
         category: c.category,
         btwRate: c.btw_rate,
         documentId: c.document_id,
+        invoiceId: c.invoice_id,
         coveredByTurnover: c.category === "omzet" && c.entry_date != null && coveredDates.has(c.entry_date),
       })),
       turnover: turnoverRows.map((t) => ({
@@ -184,6 +206,7 @@ export async function GET(req: NextRequest) {
         base0: t.base_0 ?? 0, base9: t.base_9 ?? 0, base21: t.base_21 ?? 0,
         btw9: t.btw_9 ?? 0, btw21: t.btw_21 ?? 0,
         pinAmount: t.pin_amount ?? 0, cashAmount: t.cash_amount ?? 0, otherAmount: t.other_amount ?? 0,
+        totalIncl: t.total_incl,
       })),
     };
 

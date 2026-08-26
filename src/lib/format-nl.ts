@@ -136,3 +136,29 @@ export function amsterdamToday(now: Date = new Date()): string {
 export function amsterdamYear(now: Date = new Date()): number {
   return Number(amsterdamToday(now).slice(0, 4))
 }
+
+/**
+ * The UTC instant at which a given Amsterdam calendar day BEGINS.
+ *
+ * [TZ] For a cron that asks "what happened yesterday", the day boundary is the owner's midnight,
+ * not the server's: a payment booked at 23:30 Amsterdam time belongs to that evening's day, while
+ * in UTC it may already sit in tomorrow. Comparing timestamptz columns against `${date}T00:00:00Z`
+ * would shift every boundary by one or two hours — exactly the rows booked around midnight, which
+ * are the ones a morning summary is about.
+ *
+ * Amsterdam is UTC+1 or UTC+2. The winter offset is guessed first and verified against the one
+ * clock (amsterdamToday): if that instant already falls on the NEXT Amsterdam day's side — the
+ * local formatter shows 01:00 — the real offset was +02:00. DST transitions happen at 02:00/03:00
+ * local, never at midnight, so the check is exact for every date.
+ */
+export function amsterdamMidnightUtc(dateIso: string): Date {
+  const winterGuess = new Date(`${dateIso}T00:00:00+01:00`)
+  const localHour = Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Amsterdam',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(winterGuess),
+  )
+  return localHour === 1 ? new Date(`${dateIso}T00:00:00+02:00`) : winterGuess
+}

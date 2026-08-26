@@ -128,12 +128,28 @@ export async function POST(
   let token = invoice.pay_token as string | null
   if (!token) {
     token = crypto.randomUUID()
-    const { error: upErr } = await supabase
+    // [TOKEN-RACE] .is('pay_token', null) maakt dit een compare-and-swap: twee gelijktijdige
+    // POSTs muntten allebei een uuid en de verliezer gaf de klant een link die nergens meer op
+    // uitkwam (404 op /pay). Verliest deze schrijf, dan is er al een token — teruglezen en DAT
+    // teruggeven, zodat elke ronde dezelfde levende link oplevert.
+    const { data: won, error: upErr } = await supabase
       .from('invoices')
       .update({ pay_token: token })
       .eq('id', id)
       .eq('sender_id', ownerId)
+      .is('pay_token', null)
+      .select('id')
     if (upErr) return NextResponse.json({ error: 'Betaallink aanmaken mislukt' }, { status: 500 })
+    if (!won || won.length === 0) {
+      const { data: herlezen } = await supabase
+        .from('invoices')
+        .select('pay_token')
+        .eq('id', id)
+        .eq('sender_id', ownerId)
+        .maybeSingle()
+      if (!herlezen?.pay_token) return NextResponse.json({ error: 'Betaallink aanmaken mislukt' }, { status: 500 })
+      token = herlezen.pay_token as string
+    }
   }
 
   return NextResponse.json({

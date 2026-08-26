@@ -52,6 +52,7 @@ import { statusChip } from '@/lib/invoice-status'
 import { clientExtraLines } from '@/lib/client-extra-lines'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const NL_NUMBER = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 // [TZ] timeZone PINNED. This formats invoice_date / due_date / payment_date — all DATE-ONLY
@@ -222,7 +223,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || t('detail.fout.opnieuwVersturen'))
+      setSendError(failureText(res.status, data, t('detail.fout.opnieuwVersturen')))
       setResending(false)
       return
     }
@@ -375,7 +376,7 @@ export default function InvoiceDetailPage() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
-      setSendError(data.error || t('bewerk.fout.verzenden'))
+      setSendError(failureText(res.status, data, t('bewerk.fout.verzenden')))
       setSending(false)
       return
     }
@@ -425,7 +426,7 @@ export default function InvoiceDetailPage() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setCreditError(data.error || t('detail.fout.creditnota'))
+        setCreditError(failureText(res.status, data, t('detail.fout.creditnota')))
         setCreatingCredit(false)
         return
       }

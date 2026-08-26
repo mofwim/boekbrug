@@ -49,10 +49,74 @@ export interface VerdeelFactuur extends PlanInvoice {
   open: number
 }
 
+/** [CIRKEL-BEWIJS] Een al geboekte of genegeerde regel, als leesbaar bewijs in plaats van redirect. */
+export interface GeboekteRegel {
+  status: 'matched' | 'ignored'
+  settled: Array<{ id: string; invoiceNumber: string | null; partyName: string | null; amount: number }>
+}
+
 interface Props {
   transactie: VerdeelTransactie
   /** Alleen facturen in de JUISTE richting en met een openstaand bedrag. */
   facturen: VerdeelFactuur[]
+}
+
+/**
+ * [CIRKEL-BEWIJS] Het leespaneel voor een regel die NIET meer pending is. De betaalbewijs-link
+ * onder elke "Betaald" wijst hierheen — een redirect naar de algemene lijst maakte van
+ * "controleer deze claim" een "zoek het zelf maar op" met honderden regels. Dit paneel IS het
+ * bewijs: de bankregel, en precies wat erop geboekt is. Een EIGEN component (geen vroege return
+ * in VerdeelClient), omdat een return vóór hooks de rules-of-hooks breekt.
+ */
+export function GeboektPaneel({ transactie, geboekt }: { transactie: VerdeelTransactie; geboekt: GeboekteRegel }) {
+  const t = translator(useLocale())
+  return (
+    <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
+        {t(geboekt.status === 'ignored' ? 'verd.geboekt.titelGenegeerd' : 'verd.geboekt.titel')}
+      </h1>
+      <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: R.lg, boxShadow: EL1, padding: 20 }}>
+        <p style={{ margin: '0 0 4px', color: M3.onSurface, fontWeight: 600 }}>
+          {formatEuroNL(Math.abs(transactie.amount))}
+          {transactie.counterpartName ? ` · ${transactie.counterpartName}` : ''}
+        </p>
+        <p style={{ margin: '0 0 14px', color: M3.onSurfaceVariant, fontSize: 14, lineHeight: 1.6 }}>
+          {transactie.date ? formatDateNL(transactie.date) : ''}
+          {transactie.description ? ` — ${transactie.description}` : ''}
+        </p>
+        {geboekt.status === 'ignored' ? (
+          <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
+            {t('verd.geboekt.genegeerdUitleg')}
+          </p>
+        ) : (
+          <>
+            <p style={{ margin: '0 0 8px', color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
+              {t('verd.geboekt.uitleg')}
+            </p>
+            {geboekt.settled.map((s) => (
+              <p key={s.id} style={{ margin: '0 0 6px', fontSize: 14.5 }}>
+                <a href={`/dashboard/invoice/${s.id}`} style={{ color: M3.primary, textDecoration: 'underline' }}>
+                  {s.invoiceNumber ?? t('verd.geboekt.zonderNummer')}
+                </a>
+                <span style={{ color: M3.onSurfaceVariant }}>
+                  {s.partyName ? ` · ${s.partyName}` : ''} — {formatEuroNL(s.amount)}
+                </span>
+              </p>
+            ))}
+          </>
+        )}
+        <a
+          href="/dashboard/bank?tab=done&quarter=all"
+          style={{
+            display: 'inline-block', marginTop: 12, padding: '10px 20px', borderRadius: R.full,
+            background: M3.primary, color: M3.onPrimary, textDecoration: 'none', fontSize: 15, fontWeight: 500,
+          }}
+        >
+          {t('verd.terugBank')}
+        </a>
+      </div>
+    </main>
+  )
 }
 
 export default function VerdeelClient({ transactie, facturen }: Props) {

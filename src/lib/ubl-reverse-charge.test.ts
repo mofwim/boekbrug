@@ -143,7 +143,11 @@ test("[E-FACTUUR-VERLEGD] under KOR nothing is verlegd", () => {
   // KOR charges no BTW for a reason that has nothing to do with the buyer. Claiming verlegging
   // here would be a statement about a regime the owner is not in — and the PDF already refuses to
   // print it, so the XML has to refuse too.
-  assert.deepEqual(lineCategories(build(PLAIN_LINE, {}, { korActive: true })), ["Z"]);
+  //
+  // [KOR-E] The category is E, not the Z this test used to pin: a KOR supply is VRIJGESTELD
+  // (art. 25 Wet OB), and Z would claim a zero RATE applies — a different legal fact. What this
+  // test guards is unchanged: whatever the category is, it is never AE.
+  assert.deepEqual(lineCategories(build(PLAIN_LINE, {}, { korActive: true })), ["E"]);
   assert.deepEqual(lineCategories(build(PLAIN_LINE, {}, { korActive: false })), ["AE"]);
 });
 

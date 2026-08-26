@@ -546,7 +546,12 @@ export async function POST(request: NextRequest) {
             pdfBuffer,
             // [E-FACTUUR-MEE] De creditnota als UBL 381 naast de PDF — zelfde generator als de
             // factuurmail, best-effort, nooit een blokkade voor de bezorging.
-            ublAttachment: await ublAttachmentForInvoice(supabase, creditnota.id),
+            // [ACTING-FOR] Acting-aware client: de sessie van een medewerker ziet de rijen van de
+            // eigenaar niet, en de creditnota van een kantoor vertrok dan stil zonder XML.
+            ublAttachment: await ublAttachmentForInvoice(
+              isActingForOther(acting) ? createPipelineClient() : supabase,
+              creditnota.id,
+            ),
             isCreditnota: true,
           })
         } catch (deliveryErr) {

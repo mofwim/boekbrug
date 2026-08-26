@@ -63,10 +63,23 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
 
   const refetch = useCallback(() => setReloadTick((t) => t + 1), [])
 
+  // [CIRKEL-P2] The bank page re-asks its matcher on tab return; the invoice side of the circle
+  // must not stay the stale half. Read-only fetch, silent on failure — same contract as mount.
+  useEffect(() => {
+    if (!enabled) return
+    const onVisible = () => { if (document.visibilityState === 'visible') setReloadTick((t) => t + 1) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [enabled])
+
   // Replace the whole map (not a merge): the run's map is the complete post-engine truth, and a
   // merge would keep stale "betaling gevonden" chips for matches the run just booked or invalidated.
   const applyMap = useCallback((map: Record<string, InvoiceRecon>) => {
     setByInvoice(map)
+    // [CIRKEL-C4] The standing line's whole point is being CURRENT: after a run booked
+    // everything, "4 betalingen wachten" pointing at an empty tab is worse than the sheet that
+    // at least disappeared. The map is the truth the count derives from — derive it.
+    setPendingMatchCount(Object.values(map).filter((r) => r.pendingMatch).length)
     setLoaded(true)
   }, [])
 
@@ -88,12 +101,14 @@ export function useInvoiceReconciliation(enabled: boolean = true): {
         const err = await res.json().catch(() => ({}))
         if (res.status === 409 && err?.error === 'invoice_already_paid') {
           setByInvoice((m) => ({ ...m, [invoiceId]: { linked: true, pendingMatch: null } }))
+          setPendingMatchCount((n) => Math.max(0, n - 1))
           return 'ok'
         }
         return 'error'
       }
       // Optimistic: the payment is now in the statement for this invoice.
       setByInvoice((m) => ({ ...m, [invoiceId]: { linked: true, pendingMatch: null } }))
+      setPendingMatchCount((n) => Math.max(0, n - 1))
       return 'ok'
     } catch {
       return 'error'

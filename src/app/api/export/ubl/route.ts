@@ -36,6 +36,7 @@ import {
   UBL_LINES_SELECT_MINIMAL,
   UBL_PROFILE_SELECT,
   ublHeaderFrom,
+  originalInvoiceRef,
   ublLinesFrom,
   type UblInvoiceRow,
   type UblLineRow,
@@ -46,6 +47,7 @@ import { isUnknownColumn } from "@/lib/created-by";
 // noemt zijn kolommen expliciet, en die mag niet falen op een database waar de migratie nog
 // open staat. Zelfde vorm als de terugkerende-facturen-cron.
 import { CLIENT_EXTRA_LINE_COLUMNS } from "@/lib/client-extra-lines";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 
 
@@ -75,6 +77,10 @@ function dutchError(code: UblErrorCode, isOwner: boolean): string {
       // [SI-UBL] Peppol routes on het BTW-nummer van de klant (EAS 9944) — zonder dat nummer
       // heeft een BIS-document geen bestemming.
       return "Voor een Peppol-versie is het BTW-nummer van de klant nodig. Vul dat in op de factuur en probeer opnieuw.";
+    case "CLIENT_PEPPOL_EAS_UNSUPPORTED":
+      // [SI-UBL-EAS] Een adres met een verkeerd schema komt aan de andere kant nooit aan — dan
+      // liever eerlijk weigeren met het land erbij.
+      return "Het BTW-nummer van deze klant komt uit een land waarvoor we het Peppol-adresschema nog niet ondersteunen. De gewone UBL-export werkt wel.";
   }
 }
 
@@ -92,6 +98,11 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [DIEP-3] One invoice per call — a per-action ceiling, not the year-scale one: handing a
+  // quarter to a boekhoudpakket goes invoice-by-invoice and legitimately reaches hundreds.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "ubl-export", ...RATE_LIMITS.UBL_SINGLE });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   const invoiceId = req.nextUrl.searchParams.get("invoiceId");
   // [SI-UBL] De Peppol-variant van hetzelfde document — zie UblBuildOptions.peppol.
@@ -221,6 +232,16 @@ export async function GET(req: NextRequest) {
         "supabase/migrations/client_extra_lines.sql toe",
       { invoiceId },
     );
+  } else if (extraErr) {
+    // [KLANT-EXTRA] Alleen de open-migratie-fout is onschuldig. Elke andere leesfout betekent dat
+    // de factuur klantregels KAN dragen die we niet hebben gelezen — en een geldig bestand waarin
+    // inhoud ontbreekt is erger dan een weigering: het pakket van de ontvanger boekt het als
+    // compleet. Zelfde regel als de mailroute (ubl-for-email.ts), zodat de twee paden niet twee
+    // verschillende bestanden van één factuur maken.
+    return NextResponse.json(
+      { error: "We konden de factuur nu niet volledig lezen. Probeer het zo opnieuw." },
+      { status: 503 },
+    );
   }
 
   // ── Map DB rows → pure generator inputs ──
@@ -230,7 +251,9 @@ export async function GET(req: NextRequest) {
   // `discount_value` (elke regelkorting was onzichtbaar in de e-factuur, dus BG-27 werd nooit
   // geschreven en er stond een stuksprijs op die niemand had afgesproken). Beide keren bleef het
   // bestand geldig en werd het niets zichtbaars — dat is precies waarom dit één plek moet zijn.
-  const header = ublHeaderFrom(inv as unknown as UblInvoiceRow, (extraRow ?? null) as Record<string, string | null> | null);
+  // [CREDIT-REF] BG-3 for a creditnota — its own best-effort read, like the extra lines above.
+  const origRef = await originalInvoiceRef(supabase, inv as unknown as UblInvoiceRow);
+  const header = ublHeaderFrom(inv as unknown as UblInvoiceRow, (extraRow ?? null) as Record<string, string | null> | null, origRef);
   const lines = ublLinesFrom((lineRows ?? []) as unknown as UblLineRow[]);
 
   const supplier: UblSupplier = profileRow as unknown as UblSupplier;

@@ -25,6 +25,7 @@ import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { boardTotals, type DebtorGroup, type DebtorRow } from '@/lib/accountant-debtors'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
+import { failureText } from '@/lib/server-message'
 
 /** Eén rij, met het extra veld dat de pagina meegeeft om de grijze knop te kunnen uitleggen. */
 export interface SchermRij extends DebtorRow {
@@ -81,7 +82,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
         body: JSON.stringify({ namens_klant_id: klantId }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'De herinnering kon niet worden verstuurd.')
+      if (!res.ok) throw new Error(failureText(res.status, data, 'De herinnering kon niet worden verstuurd.'))
       setKlaar((k) => ({ ...k, [id]: 'Herinnering verstuurd' }))
       // Ververs de server-data: het spoor is veranderd, dus de volgende beurt van deze rij ook.
       router.refresh()

@@ -21,6 +21,7 @@ import { M3, R, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
+import { failureText } from '@/lib/server-message'
 
 // [BRIDGE-HUB] Per-client readiness summary (Layer 1). Mirrors the server type
 // in page.tsx — kept inline to avoid a cross-file import of a server module.
@@ -184,7 +185,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       const res = await fetch(`/api/closing-package?clientId=${encodeURIComponent(clientId)}&year=${year}&quarter=${quarter}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({} as { error?: string }))
-        setPkgError(j?.error ?? t('brug.fout.pakket'))
+        setPkgError(failureText(res.status, j, t('brug.fout.pakket')))
         return
       }
       const blob = await res.blob()
@@ -646,7 +647,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
         // The previous (truthful) status stays; the route's own sentence explains why.
         const j = await res.json().catch(() => ({} as { error?: string }))
         setSaveError(
-          (j?.error ?? t('brug.fout.opslaan')) +
+          failureText(res.status, j, t('brug.fout.opslaan')) +
           (next === 'vraag' && vraagText ? ` ${t('brug.fout.vraagOpnieuw')}` : ''),
         )
       }

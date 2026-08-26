@@ -754,3 +754,130 @@ test("[CREDITNOTA-DOCUMENT] a pro forma is still an Invoice — only a creditnot
   assert.match(xml, /^<\?xml[^>]*\?>\s*<Invoice/);
   assert.match(xml, /<cbc:InvoiceTypeCode>325</);
 });
+
+test("[SI-UBL-EAS] the buyer's electronic address carries the EAS code of ITS OWN country", () => {
+  // 9944 means NL:VAT specifically. A German VAT number under 9944 is an address on the wrong
+  // street: the file validates, "delivers", and resolves to nothing.
+  const de = buildInvoiceUbl(header({ client_btw_number: "DE811907980" }), [line()], supplier, { peppol: true });
+  assert.match(de.xml, /<cbc:EndpointID schemeID="9930">DE811907980</, "a DE buyer routes under DE:VAT (9930)");
+  assert.doesNotMatch(de.xml, /schemeID="9944">DE/, "…and never under NL:VAT");
+  const nl = buildInvoiceUbl(header(), [line()], supplier, { peppol: true });
+  assert.match(nl.xml, /<cbc:EndpointID schemeID="9944">NL001234567B01</, "an NL buyer keeps 9944");
+});
+
+test("[SI-UBL-EAS] a VAT country outside the verified table refuses the Peppol variant, with its own code", () => {
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "XX99999999" }), [line()], supplier, { peppol: true }),
+    (err: unknown) => err instanceof Error && "code" in (err as object) &&
+      (err as unknown as { code: string }).code === "CLIENT_PEPPOL_EAS_UNSUPPORTED",
+    "guessing a scheme fails silently after delivery succeeds — refusal is the only honest answer",
+  );
+  // The lenient default document is untouched by the refusal: same buyer, no peppol flag.
+  const { xml } = buildInvoiceUbl(header({ client_btw_number: "XX99999999" }), [line()], supplier);
+  assert.match(xml, /<cbc:UBLVersionID>2\.1</, "the ordinary export still serves this customer");
+});
+
+test("[CREDIT-VERVALDATUM] a creditnota carries its due date as PaymentDueDate — CreditNote-2 has no cbc:DueDate", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-1", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ quantity: -2, unit_price: 50, line_total: -100 })], supplier,
+  );
+  assert.doesNotMatch(xml, /<cbc:DueDate>/, "cbc:DueDate does not exist in the CreditNote-2 schema — writing it invalidates the file");
+  assert.match(xml, /<cbc:PaymentMeansCode>30<\/cbc:PaymentMeansCode>\s*<cbc:PaymentDueDate>2026-09-02</,
+    "BT-9 travels in PaymentMeans, directly after the means code");
+  // And the ordinary invoice keeps its DueDate exactly where it was.
+  const factuur = buildInvoiceUbl(header(), [line()], supplier);
+  assert.match(factuur.xml, /<cbc:DueDate>2026-09-02</, "Invoice-2 keeps the header element");
+  assert.doesNotMatch(factuur.xml, /<cbc:PaymentDueDate>/, "…and gains no second copy");
+});
+
+test("[CREDIT-REF] a creditnota that knows its original names it in BillingReference (BG-3)", () => {
+  const { xml } = buildInvoiceUbl(
+    header({
+      invoice_type: "creditnota", invoice_number: "CR-2", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121,
+      original_invoice_number: "20260046", original_invoice_date: "2026-08-03",
+    }),
+    [line({ quantity: -2, unit_price: 50, line_total: -100 })], supplier,
+  );
+  assert.match(xml, /<cac:BillingReference>\s*<cac:InvoiceDocumentReference>\s*<cbc:ID>20260046<\/cbc:ID>\s*<cbc:IssueDate>2026-08-03</,
+    "the booking system pairs the credit to its original by exactly this reference");
+  // Without the reference the document is what it always was — best-effort, never a refusal.
+  const zonder = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-3", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ quantity: -2, unit_price: 50, line_total: -100 })], supplier,
+  );
+  assert.doesNotMatch(zonder.xml, /BillingReference/, "no reference invented when none is known");
+});
+
+test("[KOR-E] under the KOR a 0% supply is VRIJGESTELD (E, art. 25) — never zero-rated Z", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 100, btw_amount: 0, total_inc_btw: 100, client_btw_number: null }),
+    [line({ btw_rate: 0, unit_price: 50, line_total: 100 })], supplier,
+    { korActive: true },
+  );
+  assert.doesNotMatch(xml, /<cbc:ID>Z<\/cbc:ID>/, "Z claims a zero RATE applies — a different legal fact than the KOR");
+  assert.match(xml, /<cbc:ID>E<\/cbc:ID>/, "the supply is exempt");
+  assert.match(xml, /kleineondernemersregeling \(artikel 25 Wet OB 1968\)/, "…for the KOR's own article, not art. 11");
+  // Without KOR the same document keeps its genuine Z — nothing else may move.
+  const zonderKor = buildInvoiceUbl(
+    header({ total_ex_btw: 100, btw_amount: 0, total_inc_btw: 100, client_btw_number: null }),
+    [line({ btw_rate: 0, unit_price: 50, line_total: 100 })], supplier,
+  );
+  assert.match(zonderKor.xml, /<cbc:ID>Z<\/cbc:ID>/, "a genuine 0% supply stays Z");
+});
+
+test("[SI-UBL-EAS-COHERENT] the address and the Country element are judged by one classifier", () => {
+  // A malformed DE number: the country logic calls it eu_suspect, so the address logic may not
+  // hand it an EAS scheme — one document, one claim about the buyer.
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "DE12345" }), [line()], supplier, { peppol: true }),
+    /CLIENT_PEPPOL_EAS_UNSUPPORTED/,
+    "a number the country classifier rejects gets no electronic address",
+  );
+  // Post-Brexit GB: not an EU VAT shape, so no Peppol address — before, it got 9932 next to Country=NL.
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "GB123456789" }), [line()], supplier, { peppol: true }),
+    /CLIENT_PEPPOL_EAS_UNSUPPORTED/,
+  );
+  // The value that ships is NORMALIZED: spaces and dots can never match a registered participant.
+  const de = buildInvoiceUbl(header({ client_btw_number: "DE 811.907.980" }), [line()], supplier, { peppol: true });
+  assert.match(de.xml, /<cbc:EndpointID schemeID="9930">DE811907980</, "the participant value is the normalized number");
+});
+
+test("[KOR-E] a KOR owner with an art.-11 line gets ONE E breakdown per rate — BR-E-08 sums ALL E lines", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 200, btw_amount: 0, total_inc_btw: 200, client_btw_number: null }),
+    [
+      line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100, vat_treatment: "exempt" } as never),
+      line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100 }),
+    ],
+    supplier, { korActive: true },
+  );
+  const subtotals = [...xml.matchAll(/<cac:TaxSubtotal>/g)].length;
+  assert.equal(subtotals, 1, "two E groups at one rate each fail BR-E-08 — merged, the sum is right");
+  assert.match(xml, /<cbc:TaxableAmount currencyID="EUR">200\.00</, "…and it covers ALL exempt lines");
+  assert.match(xml, /kleineondernemersregeling/, "the merged group claims the regime that covers the whole enterprise");
+});
+
+test("[KORTING-CATEGORIE] a document discount over exempt lines carries category E, not a phantom Z", () => {
+  const { xml } = buildInvoiceUbl(
+    header({
+      total_ex_btw: 90, btw_amount: 0, total_inc_btw: 90, client_btw_number: null,
+      discount_type: "amount", discount_value: 10,
+    }),
+    [line({ btw_rate: 0, unit_price: 100, quantity: 1, line_total: 100, vat_treatment: "exempt" } as never)],
+    supplier,
+  );
+  const ac = /<cac:AllowanceCharge>[\s\S]*?<\/cac:AllowanceCharge>/.exec(xml)?.[0] ?? "";
+  assert.match(ac, /<cbc:ID>E<\/cbc:ID>/, "the allowance names the category of the group it reduces");
+  assert.doesNotMatch(xml, /<cbc:ID>Z<\/cbc:ID>/, "no Z anywhere — BR-Z-01 would demand a Z breakdown that does not exist");
+});
+
+test("[CREDIT-VERVALDATUM] a creditnota without an IBAN says out loud that the due date is not in the file", () => {
+  const { warnings } = buildInvoiceUbl(
+    header({ invoice_type: "creditnota", invoice_number: "CR-9", total_ex_btw: -100, btw_amount: -21, total_inc_btw: -121 }),
+    [line({ quantity: -2, unit_price: 50, line_total: -100 })],
+    { ...supplier, iban: null },
+  );
+  assert.ok(warnings.some((w) => /due date/.test(w)), "a dropped legal date is a fact, and warnings is where facts go");
+});

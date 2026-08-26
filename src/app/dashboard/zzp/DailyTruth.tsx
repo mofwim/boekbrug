@@ -190,10 +190,16 @@ export default function DailyTruth() {
           <div style={{ display: 'flex', gap: 10 }}>
             {/* [NAV-FROM] ?from=home — this card sits on the dashboard, so Terug must come back
                 here and not to the verification list the owner skipped. */}
+            {/* [TAAL] enkel/meer als eigen sleutels — `subject + 's'` schreef "3 factuurs" op
+                het startscherm, fout in élke taal inclusief het Nederlands zelf. */}
             <MoneyCard label={t('waarheid.teBetalen')} bucket={toPay} emptyText={t('waarheid.nietsTeBetalen')}
-              subject="inkoopfactuur" onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
+              subjectEnkel={t('waarheid.inkoop.enkel')} subjectMeer={t('waarheid.inkoop.meer')}
+              overDatum={(n) => t('waarheid.overDatum', { n })}
+              onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
             <MoneyCard label={t('waarheid.teOntvangen')} bucket={toReceive} emptyText={t('waarheid.nietsOpenKort')}
-              subject="factuur" onClick={() => router.push('/dashboard/facturen')} />
+              subjectEnkel={t('waarheid.factuur.enkel')} subjectMeer={t('waarheid.factuur.meer')}
+              overDatum={(n) => t('waarheid.overDatum', { n })}
+              onClick={() => router.push('/dashboard/facturen')} />
           </div>
           {/* [BETALINGSVERSCHIL] Onder 'Te ontvangen', want dat is het getal dat het vertekent.
               Een klant maakt EUR 995 over op een factuur van EUR 1.000 omdat zijn bank er EUR 5
@@ -320,8 +326,9 @@ export default function DailyTruth() {
 }
 
 // A single money fact: exact stored total + count, or a calm empty state.
-function MoneyCard({ label, bucket, emptyText, subject, onClick }: {
-  label: string; bucket: Bucket; emptyText: string; subject: string; onClick: () => void
+function MoneyCard({ label, bucket, emptyText, subjectEnkel, subjectMeer, overDatum, onClick }: {
+  label: string; bucket: Bucket; emptyText: string
+  subjectEnkel: string; subjectMeer: string; overDatum: (n: number) => string; onClick: () => void
 }) {
   const has = bucket.count > 0
   return (
@@ -344,8 +351,8 @@ function MoneyCard({ label, bucket, emptyText, subject, onClick }: {
             {eur.format(bucket.total)}
           </div>
           <div style={{ fontSize: 11.5, color: '#3c4043', marginTop: 2 }}>
-            {bucket.count} {bucket.count === 1 ? subject : `${subject}s`}
-            {bucket.overdue > 0 ? ` · ${bucket.overdue} over datum` : ''}
+            {bucket.count} {bucket.count === 1 ? subjectEnkel : subjectMeer}
+            {bucket.overdue > 0 ? ` · ${overDatum(bucket.overdue)}` : ''}
           </div>
         </>
       ) : (

@@ -581,7 +581,13 @@ export async function POST(request: NextRequest) {
       // weigert onvoorwaardelijk zodra auth.uid() NULL is, dus service_role kan hier niet in de
       // plaats treden. De wacht in die functie is verbreed met precies één uitzondering — een
       // actieve verkoopkoppeling — en verder niets. Zie company_members_sales_role.sql.
-      const generated = await generateInvoiceNumber(supabase, ownerId, numberType)
+      // [NUMBER-READ-VISIBLE] Het TEMPLATE-lezen krijgt wél de acting-aware client: de sessie van
+      // een medewerker ziet de profiles-rij van de eigenaar niet, en het stille antwoord daarop was
+      // het VERKEERDE nummerschema uit de VERKEERDE teller — zie invoice-numbering.ts.
+      const generated = await generateInvoiceNumber(
+        supabase, ownerId, numberType,
+        isActingForOther(acting) ? createPipelineClient() : supabase,
+      )
       if (!generated) {
         // No number, so nothing was issued — give the month's credit back.
         await gate?.release()
@@ -871,7 +877,14 @@ export async function POST(request: NextRequest) {
     // klant leest exact het bestand in dat de boekhouder later ook ziet. Kan hij niet gebouwd
     // worden (profiel zonder KVK, open migratie), dan gaat de mail zonder XML — de PDF is het
     // wettelijke stuk en wacht op niets.
-    const ublBijlage = await ublAttachmentForInvoice(supabase, invoiceId)
+    // [ACTING-FOR] Met de acting-aware client: de sessie van een medewerker of gemachtigde
+    // accountant ziet de factuurregels en het profiel van de EIGENAAR niet, en elk van die
+    // leesbeurten antwoordt dan null — de mail vertrok stil zonder XML, precies op de facturen
+    // die een kantoor verstuurt. De route heeft de bevoegdheid al bewezen vóór dit punt.
+    const ublBijlage = await ublAttachmentForInvoice(
+      isActingForOther(acting) ? createPipelineClient() : supabase,
+      invoiceId,
+    )
 
     // ── 14. Send e-mail WITH the PDF attached ──────────────────
     // convertOnly previously skipped the e-mail — [FACTUUR-A] it no longer

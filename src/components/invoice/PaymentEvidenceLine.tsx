@@ -52,6 +52,10 @@ export default function PaymentEvidenceLine({ line }: { line: EvidenceLine | nul
       {line.txId ? (
         <Link
           href={`/dashboard/bank/verdelen/${line.txId}`}
+          // [CIRKEL-C1] Beide gastheren zijn klikbare rijen (expand/select) — zonder stop zou één
+          // tik navigeren ÉN de rij togglen, in selectiemodus zelfs een onzichtbare selectie
+          // achterlaten. Elke andere interactieve dochter in die rijen stopt al.
+          onClick={(e) => e.stopPropagation()}
           style={{ ...base, color: TONE[line.tone], textDecoration: 'underline', textDecorationColor: '#B7DFC9', textUnderlineOffset: 2 }}
         >
           {line.text}

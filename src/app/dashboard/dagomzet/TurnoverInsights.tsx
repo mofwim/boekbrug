@@ -10,6 +10,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { M3, FONT_NUM } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const pct = (x: number) => `${Math.round(x * 100)}%`
@@ -83,7 +84,7 @@ export default function TurnoverInsights() {
       const res = await fetch(`/api/turnover/import?date=${encodeURIComponent(date)}`, { method: 'DELETE' })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
-        setDeleteError(j.error || t('dz.fout.verwijderenDag'))
+        setDeleteError(failureText(res.status, j, t('dz.fout.verwijderenDag')))
         return
       }
       setPendingDelete(null)

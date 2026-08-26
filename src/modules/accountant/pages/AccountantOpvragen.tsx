@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { MAX_ITEMS, MAX_EXTRA, buildDocumentRequest } from '@/lib/document-request'
+import { failureText } from '@/lib/server-message'
 
 export interface OpvraagKlant {
   id: string
@@ -140,7 +141,7 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
         }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'Versturen mislukt.')
+      if (!res.ok) throw new Error(failureText(res.status, data, 'Versturen mislukt.'))
       setStatus({ sleutel, verstuurd: true })
       setExtra('')
     } catch (e) {

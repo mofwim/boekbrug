@@ -73,7 +73,7 @@ const canRequestPayment =
     try {
       const res = await fetch(`/api/invoice/${invoiceId}/betaalverzoek`, { method: 'POST' })
       const data = await res.json()
-      if (!res.ok) { setBvError(data.error || t('act.bvMislukt')); setBvLoading(false); return }
+      if (!res.ok) { setBvError(failureText(res.status, data, t('act.bvMislukt'))); setBvLoading(false); return }
       setBv(data)
       setBvLoading(false)
       try {

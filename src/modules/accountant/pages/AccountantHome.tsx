@@ -302,6 +302,15 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             nul is hier nooit stilzwijgend: een nul omdat er niets is en een nul
             omdat niemand je gemachtigd heeft zijn twee heel verschillende
             dingen, en de regel eronder zegt welke van de twee het is. */}
+        {/* [NO-SILENT-EMPTY] complete:false betekent "we WETEN het niet", niet "er is niets" —
+            de sectie helemaal verbergen was precies het valse sein-veilig waar dat veld tegen
+            bestaat. Dus: een eerlijke regel in plaats van stilte. */}
+        {workQueues && !workQueues.complete && (
+          <p style={{ fontSize: 12.5, color: '#B3261E', margin: '0 0 8px' }}>
+            We konden je werkvoorraad nu niet volledig lezen — de blokken hieronder kunnen
+            onvolledig zijn. Ververs de pagina om het opnieuw te proberen.
+          </p>
+        )}
         {workQueues && workQueues.complete && (workQueues.mandatedForInvoices > 0 || workQueues.mandatedForConfirm > 0) && (
           <div>
             <SectionLabel>Wat er op jou ligt</SectionLabel>

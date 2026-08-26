@@ -33,6 +33,8 @@ test("elke cron uit vercel.json staat in het register, en andersom", () => {
   assert.equal(CRON_JOBS["bank-sync"], 24);
   // [DAGSTART] Het ochtendbericht aan de boekhouder — dagelijks, en met opzet vaak stil.
   assert.equal(CRON_JOBS["accountant-daily"], 24);
+  // [OCHTEND] De ochtendmail aan de ondernemer — dagelijks, en meestal stil by design.
+  assert.equal(CRON_JOBS["ochtend"], 24);
 });
 
 test("een verse geslaagde run is gewoon goed", () => {
@@ -90,6 +92,8 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
       // gewoon vers. Dat hij vaak GEEN bericht stuurt is geen storing — bewaakt wordt dat de run
       // zelf gebeurde, niet dat er iets uit kwam.
       "accountant-daily": run(2),
+      // [OCHTEND] Zelfde vorm: dagelijks, vaak zonder mails, en dat is de gezonde toestand.
+      ochtend: run(2),
     },
     NU,
   );

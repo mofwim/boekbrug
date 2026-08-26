@@ -110,6 +110,9 @@ function ZzpView({ role }: { role: Role }) {
   // read it" — and the second one puts the file button back on screen, where one tap replaces a
   // frozen snapshot. Kept apart, so an unreadable state disables the button instead of inviting it.
   const [filedUnknown, setFiledUnknown] = useState(false);
+  // [NO-SILENT-EMPTY] A failed /api/quarterly read rendered NOTHING below the mode buttons —
+  // no message, no retry. The tick re-runs the load effect.
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -157,7 +160,7 @@ function ZzpView({ role }: { role: Role }) {
         }
       } catch { /* leave recon null → the owner sees "…", never a wrong number */ }
     })();
-  }, [quarter, year, mode]);
+  }, [quarter, year, mode, retryTick]);
 
   // [TRUTH-FILED] Load whether this quarter is marked ingediend + any divergence since.
   useEffect(() => {
@@ -338,6 +341,18 @@ function ZzpView({ role }: { role: Role }) {
       </div>
 
       {loading && <ZzpSkeleton />}
+
+      {!loading && !data && (
+        <div className="text-center py-16 px-6">
+          <p className="text-sm text-red-700 mb-4">{t('kw.laadFout')}</p>
+          <button
+            onClick={() => setRetryTick((n) => n + 1)}
+            className="px-4 py-2.5 border rounded-xl text-sm font-medium text-primary"
+          >
+            {t('kw.opnieuw')}
+          </button>
+        </div>
+      )}
 
       {!loading && data && (
         <>
@@ -569,6 +584,7 @@ function AccountantView({ role }: { role: Role }) {
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsError, setClientsError] = useState(false);
   const [packaging, setPackaging] = useState(false); // [CLOSING-PACKAGE]
   // [TRUST-ACCOUNTANT] The RECONCILED figures (invoices + bank + cash + turnover) — the
   // same source as the owner's screens, the closing package and clients/[id]/kwartaal. The
@@ -591,15 +607,21 @@ function AccountantView({ role }: { role: Role }) {
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("clientId")
         : null;
+    // [NO-SILENT-EMPTY] r.ok gecontroleerd en gevangen: een 500 werd als {error}-object in
+    // `clients` gezet (scherm permanent leeg), en een netwerkfout toonde een boekhouder MET
+    // klanten de uitnodig-lege-staat. Een leesfout is geen uitspraak over het klantenbestand.
     fetch("/api/quarterly/clients")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d) => {
-        setClients(d ?? []);
-        if (d?.length > 0) {
-          const match = urlClientId && d.some((c: Client) => c.id === urlClientId);
-          setSelectedClientId(match ? urlClientId! : d[0].id);
+        const lijst = Array.isArray(d) ? d : [];
+        setClients(lijst);
+        setClientsError(false);
+        if (lijst.length > 0) {
+          const match = urlClientId && lijst.some((c: Client) => c.id === urlClientId);
+          setSelectedClientId(match ? urlClientId! : lijst[0].id);
         }
       })
+      .catch(() => setClientsError(true))
       .finally(() => setClientsLoading(false));
   }, []);
 
@@ -691,6 +713,20 @@ function AccountantView({ role }: { role: Role }) {
     } finally {
       setPackaging(false);
     }
+  }
+
+  if (!clientsLoading && clientsError) {
+    return (
+      <div className="text-center py-20 px-6">
+        <p className="text-sm text-red-700 mb-4">{t('kw.klantenLaadFout')}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2.5 border rounded-xl text-sm font-medium text-primary"
+        >
+          {t('kw.opnieuw')}
+        </button>
+      </div>
+    );
   }
 
   if (!clientsLoading && clients.length === 0) {

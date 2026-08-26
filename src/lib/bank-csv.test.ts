@@ -196,5 +196,20 @@ console.log("\n— [CSV-PREAMBLE] Knab: banner line + CreditDebet sign column �
   check("Knab: the own rekening does not leak into the counterpart", r.transactions[0]?.counterpartIban !== "NL12KNAB0123456789");
 }
 
+console.log("\n— [LEES] an unrecognised Af/Bij flag is SAID, never silently guessed —");
+{
+  const csv = [
+    '"Datum";"Naam";"Rekening";"Tegenrekening";"Code";"Af Bij";"Bedrag (EUR)";"Mededelingen"',
+    '"20260801";"Sligro";"NL01INGB0001";"NL02RABO0002";"GT";"Onbekend";"250,00";"levering"',
+    '"20260802";"Klant BV";"NL01INGB0001";"NL03ABNA0003";"GT";"Bij";"100,00";"factuur 44"',
+  ].join("\n");
+  const r = parseBankCsv(csv);
+  check("both rows still import (refusing a file over one odd flag is worse)", r.transactions.length === 2);
+  check("…but the guessed direction is named in the warnings",
+    r.parseErrors.some((e) => /Af\/Bij-vlag die we niet herkennen/.test(e)));
+  const zonder = parseBankCsv(csv.replace('"Onbekend"', '"Af"'));
+  check("a recognised flag produces NO warning", !zonder.parseErrors.some((e) => /herkennen/.test(e)));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

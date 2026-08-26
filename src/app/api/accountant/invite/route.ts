@@ -3,12 +3,17 @@
 
 import { type NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Niet ingelogd.' }, { status: 401 })
+
+  // [DIEP-3] Bounded like its siblings — the day-end audit found this one uncapped.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: 'accountant-invite-legacy', ...RATE_LIMITS.ACCOUNTANT_INVITE });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   const body = await req.json() as { email?: string }
   const email = (body.email ?? '').trim().toLowerCase()

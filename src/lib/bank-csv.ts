@@ -374,6 +374,11 @@ export function parseBankCsv(content: string): ParseResult {
   const transactions: BankTransaction[] = [];
   let ownIban: string | null = null;
   let dropped = 0;
+  // [LEES] A row whose Af/Bij flag EXISTS but says something we do not recognise gets its
+  // direction from the amount's own sign — a guess, and on an unsigned-amount bank a wrong one
+  // turns money OUT into money IN. Guessing silently was the defect; the guess stays (refusing
+  // the whole file over one odd flag is worse) but it is now SAID.
+  let onbeslisteVlag = 0;
 
   for (let r = headerIdx + 1; r < matrix.length; r++) {
     const row = matrix[r];
@@ -382,7 +387,13 @@ export function parseBankCsv(content: string): ParseResult {
       if (/^[A-Z]{2}\d{2}[A-Z0-9]{4,}$/.test(v)) ownIban = v;
     }
     const tx = rowToTransaction(row, map, currency);
-    if (tx) transactions.push(tx);
+    if (tx) {
+      transactions.push(tx);
+      if (map.sign >= 0) {
+        const f = cell(row, map.sign).toLowerCase().trim();
+        if (f !== "" && !/^(af|debet|debit|d|-)$/.test(f) && !/^(bij|credit|c|\+)$/.test(f)) onbeslisteVlag++;
+      }
+    }
     else dropped++;
   }
 
@@ -390,6 +401,11 @@ export function parseBankCsv(content: string): ParseResult {
     errors.push("CSV bevatte geen leesbare transacties (geen geldige datum/bedrag-rijen).");
   } else if (dropped > 0) {
     errors.push(`${dropped} CSV-rij(en) overgeslagen — geen geldige datum of bedrag.`);
+  }
+  if (onbeslisteVlag > 0) {
+    errors.push(
+      `${onbeslisteVlag} rij(en) hadden een Af/Bij-vlag die we niet herkennen — de richting is daar uit het bedrag zelf gelezen. Controleer die regels even.`,
+    );
   }
 
   return { format: "CSV", accountIban: ownIban, accountName: null, currency, transactions, parseErrors: errors };

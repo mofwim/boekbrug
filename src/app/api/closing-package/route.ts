@@ -27,6 +27,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { buildClosingPackageZip, type Quarter } from "@/lib/closing-package";
 import { logAuditAction } from "@/lib/audit";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 function safe(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -65,6 +66,11 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return refuse(req, 401, "Je bent niet (meer) ingelogd. Log opnieuw in en haal het pakket dan op.");
   }
+
+  // [DIEP-2] A quarter package is dozens of reads and a ZIP in one GET — bounded like the
+  // other year-scale paths.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "closing-package", ...RATE_LIMITS.HEAVY_EXPORT });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   // ── Params ──
   const now = new Date();

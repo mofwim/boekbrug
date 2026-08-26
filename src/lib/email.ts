@@ -27,6 +27,13 @@ function rawResend(): Resend {
   return _resend
 }
 
+// [BIJLAGE-NAAM] A custom numbering template may put a '/' in the number ("045/2026" is a
+// documented shape) — legal on the document, illegal in a filename. MIME agents disagree on what
+// a slash in an attachment name means, and disagreement here surfaces as a mail without its PDF.
+function safeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_')
+}
+
 // [MAIL-TEKST] Every send goes through this wrapper, and the wrapper adds the text/plain part
 // that none of the fifteen senders had. HTML-only mail is one of the oldest spam heuristics
 // (SpamAssassin's MIME_HTML_ONLY), and this product's sending domain is young — the invoice mail
@@ -84,6 +91,27 @@ async function deliverEmail(
   return false
 }
 
+
+// ── [OCHTEND] The owner's morning line — composed by ochtend-digest.ts, delivered here ─────────
+// Never critical: a failed digest is a missed courtesy, not a broken operation. The plain-text
+// twin comes from the [MAIL-TEKST] chokepoint like every other sender.
+export async function sendOchtendMail({
+  toEmail,
+  subject,
+  html,
+}: {
+  toEmail: string
+  subject: string
+  html: string
+}) {
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmail,
+    subject,
+    html,
+  })
+  return deliverEmail(__sendResult, { label: 'ochtend-digest', critical: false })
+}
 
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
@@ -306,6 +334,28 @@ export async function sendInvoiceToClient({
   const contactRegel = antwoordAdres
     ? `<p style="color: #555;">Vragen over deze ${docLabel.toLowerCase()}? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
     : ''
+  // [BEZORGING] De platte-teksttweeling. Een mail met alléén HTML scoort structureel slechter
+  // bij spamfilters (Gmail/Outlook wegen de aanwezigheid van een text/plain-deel mee), en dit
+  // zijn precies de mails die een klant MOET ontvangen. Zelfde feiten, geen opmaak.
+  const tekstDeel = [
+    `Beste ${clientName},`,
+    '',
+    isCorrected
+      ? `Je hebt een gecorrigeerde factuur ontvangen van ${zzperName}. Deze versie vervangt de eerdere factuur met nummer ${invoiceNumber}; de eerdere versie is vervallen.`
+      : `Je hebt een ${docLabel.toLowerCase()} ontvangen van ${zzperName}.`,
+    '',
+    `${numberLabel}: ${invoiceNumber}`,
+    `Bedrag: ${formatEuroNL(totalInc)}`,
+    ...(invoiceDate ? [`Factuurdatum: ${formatDateNL(invoiceDate)}`] : []),
+    ...(dueDate ? [`Vervaldatum: ${formatDateNL(dueDate)}`] : []),
+    '',
+    pdfBuffer ? `De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.` : '',
+    ublAttachment ? 'Ook bijgevoegd: een e-factuur (UBL) voor je boekhoudpakket.' : '',
+    antwoordAdres ? `Vragen? Antwoord op deze mail of mail ${antwoordAdres}.` : '',
+    '',
+    'BoekBrug — De brug tussen jou en je boekhouder',
+  ].filter((r, i, a) => r !== '' || a[i - 1] !== '').join('\n')
+
   const { error: sendError } = await getResend().emails.send({
     from: customerMailFrom(zzperName),
     to: toEmail,
@@ -314,6 +364,7 @@ export async function sendInvoiceToClient({
     subject: isCorrected
       ? `Gecorrigeerde factuur ${invoiceNumber} van ${zzperName}`
       : `${docLabel} ${invoiceNumber} van ${zzperName}`,
+    text: tekstDeel,
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
         <h2 style="color: #202124;">${isCorrected ? 'Gecorrigeerde factuur ontvangen' : isCreditnota ? 'Creditnota ontvangen' : 'Nieuwe factuur ontvangen'}</h2>
@@ -349,8 +400,8 @@ export async function sendInvoiceToClient({
     ...(pdfBuffer || extraAttachment || ublAttachment
       ? {
           attachments: [
-            ...(pdfBuffer ? [{ filename: `${invoiceNumber}.pdf`, content: pdfBuffer }] : []),
-            ...(ublAttachment ? [ublAttachment] : []),
+            ...(pdfBuffer ? [{ filename: `${safeFileName(invoiceNumber)}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] : []),
+            ...(ublAttachment ? [{ ...ublAttachment, contentType: 'application/xml' }] : []),
             ...(extraAttachment ? [extraAttachment] : []),
           ],
         }
@@ -672,8 +723,9 @@ export async function sendInvoiceReminder({
       ? {
           attachments: [
             {
-              filename: `${invoiceNumber}.pdf`,
+              filename: `${safeFileName(invoiceNumber)}.pdf`,
               content: pdfBuffer,
+              contentType: 'application/pdf',
             },
           ],
         }

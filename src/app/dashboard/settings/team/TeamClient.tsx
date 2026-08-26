@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { FONT, M3, R } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 interface Lid {
   id: string
@@ -85,7 +86,7 @@ export default function TeamClient() {
         body: JSON.stringify({ email }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) { setFout(json?.error || t('team.uitnodigenMislukt')); return }
+      if (!res.ok) { setFout(failureText(res.status, json, t('team.uitnodigenMislukt'))); return }
       setGelukt(t('inst.uitnodigingVerstuurd', { email }))
       setEmail('')
       await laad()

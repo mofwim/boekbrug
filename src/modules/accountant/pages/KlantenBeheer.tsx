@@ -75,6 +75,8 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
   const [bulkText, setBulkText] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkResults, setBulkResults] = useState<Array<{ email: string; ok: boolean; message?: string }>>([])
+  // [GEEN-STILLE-KAP] Hoeveel geplakte adressen BUITEN de 200 vielen — 0 betekent: niets gekapt.
+  const [bulkOverflow, setBulkOverflow] = useState(0)
 
   // Confirm unlink dialog state
   const [unlinkTarget, setUnlinkTarget] = useState<ClientSummary | null>(null)
@@ -105,7 +107,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       })
       const json = await res.json()
       if (!res.ok) {
-        setInviteError(json.error ?? 'Versturen mislukt.')
+        setInviteError(failureText(res.status, json, 'Versturen mislukt.'))
       } else {
         setInviteSuccess(true)
         setInviteEmail('')
@@ -121,12 +123,16 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
   async function handleBulkInvite() {
     // Scheidingstekens zoals mensen lijsten plakken: nieuwe regels, komma's, puntkomma's,
     // spaties uit een spreadsheetkolom. Dubbele adressen één keer.
-    const parsed = [...new Set(
+    const alleAdressen = [...new Set(
       bulkText.split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => s.includes('@')),
-    )].slice(0, 200)
+    )]
+    const parsed = alleAdressen.slice(0, 200)
     if (parsed.length === 0 || bulkBusy) return
     setBulkBusy(true)
     setBulkResults([])
+    // [GEEN-STILLE-KAP] Wie 250 adressen plakt, moet HOREN dat er 200 gingen — anders concludeert
+    // het kantoor dat iedereen is uitgenodigd, en de laatste 50 wachten voor altijd.
+    setBulkOverflow(alleAdressen.length > 200 ? alleAdressen.length - 200 : 0)
     const results: Array<{ email: string; ok: boolean; message?: string }> = []
     for (const email of parsed) {
       try {
@@ -144,6 +150,10 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       }
       // Tussenstand per adres — bij een lange lijst ziet het kantoor de voortgang lopen.
       setBulkResults([...results])
+      // [BULK-TEMPO] Adem tussen twee adressen: elke uitnodiging is een Resend-mail, en een
+      // strakke lus van 200 loopt tegen diens rate limit — dan faalt de STAART van de lijst,
+      // precies het deel waarvan niemand het resultaat nog naleest.
+      if (results.length < parsed.length) await new Promise((r) => setTimeout(r, 600))
     }
     setBulkBusy(false)
   }
@@ -163,7 +173,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       })
       const json = await res.json()
       if (!res.ok) {
-        setUnlinkError(json.error ?? 'Verwijderen mislukt.')
+        setUnlinkError(failureText(res.status, json, 'Verwijderen mislukt.'))
       } else {
         setClients(prev => prev.filter(c => c.id !== unlinkTarget.id))
         setUnlinkTarget(null)
@@ -270,6 +280,14 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                     {bulkBusy ? `Versturen... (${bulkResults.length})` : 'Verstuur alle uitnodigingen'}
                   </button>
                 </div>
+                {/* [GEEN-STILLE-KAP] De adressen boven de 200 zijn NIET verstuurd, en dat moet er
+                    staan — anders leest het kantoor "klaar" en wachten de laatste vijftig eeuwig. */}
+                {bulkOverflow > 0 && (
+                  <p style={{ fontSize: 12.5, color: '#7C5800', margin: 0 }}>
+                    Je plakte meer dan 200 adressen: de eerste 200 zijn verstuurd, de laatste {bulkOverflow} niet.
+                    Plak die morgen opnieuw — de daglimiet is 200 uitnodigingen.
+                  </p>
+                )}
                 {bulkResults.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>

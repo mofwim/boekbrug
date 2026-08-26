@@ -12,6 +12,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { buildAccountExportZip } from "@/lib/account-export";
 import { sendAccountExportSummary } from "@/lib/email";
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
 type Built = Awaited<ReturnType<typeof buildAccountExportZip>>;
 
@@ -23,6 +24,10 @@ export async function POST(_req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
   }
+
+  // [DIEP-3] Bounded like its siblings — the day-end audit found this one uncapped.
+  const limited = await checkRateLimit({ userId: user.id, endpoint: "account-export", ...RATE_LIMITS.HEAVY_EXPORT });
+  if (!limited.allowed) return rateLimitResponse(limited);
 
   // Build the ZIP via service_role; buildAccountExportZip scopes every query
   // to this user.id (service_role bypasses RLS — handoff lesson 3).

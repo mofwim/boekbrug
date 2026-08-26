@@ -318,7 +318,18 @@ export async function GET() {
   // invoices (as explain-only candidates: status forced 'received' so isEligible admits them, and
   // amount_paid zeroed so the remaining-aware amount targets the full total). A strong hit
   // (reference/iban + amount) means the debit is explained. Display-only — nothing is re-paid.
-  const paidInvRows = await fetchAllRows((from, to) =>
+  // [CIRKEL-PERF] Both explain passes exist for ONE consumer: the 'Geen factuur' card and its
+  // missing-invoice banner, which only ever read explainedByPaid/Queued on outcome 'none' debits
+  // (BankClient noMatch filter + the none-card). Scoring every explain candidate against ALL
+  // transactions ran the O(n·m) matcher over thousands of already-matched lines for nothing —
+  // measured ~9s alone on 3000 tx × 1500 paid invoices, on a route the tab-return refresh now
+  // calls repeatedly. The unexplained set is a handful of lines on a healthy account.
+  const unexplained = result.matches
+    .filter((m) => m.outcome === "none" && (m.transaction.amount ?? 0) < 0 && m.transaction.transactionId)
+    .map((m) => m.transaction);
+
+  // …and the paid sweep itself is skipped when there is nothing to explain.
+  const paidInvRows = unexplained.length === 0 ? [] : await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
       // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
@@ -350,14 +361,30 @@ export async function GET() {
     ((sig.includes("reference") || sig.includes("iban")) && sig.includes("amount")) ||
     (isReceipt && sig.includes("counterpart") && sig.includes("amount") && sig.includes("date"));
 
+  // [CIRKEL-BEST-TIE] An explain pass scans CANDIDATES, not only m.best: the greedy 1:1 pass
+  // nulls `best` on a near-tie (two same-amount invoices from one supplier — the duplicate-rent
+  // shape), and the explain question is display-only, so a strong tie explains just as well.
+  const explainHit = (
+    m: { best: { signals: string[]; invoiceId: string } | null; candidates: Array<{ signals: string[]; invoiceId: string }> },
+    isReceipt: (id: string) => boolean,
+  ): { invoiceId: string } | null => {
+    if (m.best && strongExplain(m.best.signals, isReceipt(m.best.invoiceId))) return { invoiceId: m.best.invoiceId };
+    const c = (m.candidates ?? []).find((cand) => strongExplain(cand.signals, isReceipt(cand.invoiceId)));
+    return c ? { invoiceId: c.invoiceId } : null;
+  };
+
   const paidExplained = new Set<string>();
-  if ((paidInvRows ?? []).length > 0) {
-    const paidAsCandidates = (paidInvRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
-    const explainResult = matchTransactions(transactions, paidAsCandidates);
+  if ((paidInvRows ?? []).length > 0 && unexplained.length > 0) {
+    // [CIRKEL-VERWERKT] accountant_status must be CLEARED on the explain-only candidates:
+    // isEligible refuses 'verwerkt' rows first, so an accountant locking a quarter's paid
+    // invoices re-opened every one of their debits as a false "missende inkoopfactuur" — the
+    // exact alarm this pass exists to kill.
+    const paidAsCandidates = (paidInvRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0, accountant_status: null }));
+    const explainResult = matchTransactions([...unexplained], paidAsCandidates);
     for (const m of explainResult.matches) {
       const id = m.transaction.transactionId;
-      if (!id || !m.best) continue;
-      if (strongExplain(m.best.signals, receiptIds.has(m.best.invoiceId))) paidExplained.add(id);
+      if (!id) continue;
+      if (explainHit(m as never, (invId) => receiptIds.has(invId))) paidExplained.add(id);
     }
   }
 
@@ -369,7 +396,7 @@ export async function GET() {
   // what the incoming page has. Explain-only, exactly like the paid pass: a strong hit names the
   // queued invoice so the UI can link STRAIGHT to its verify step; nothing books, nothing pays.
   const queuedExplained = new Map<string, { invoiceId: string; invoiceNumber: string | null }>();
-  {
+  if (unexplained.length > 0) {
     const queuedRows = await fetchAllRows((from, to) =>
       pipeline
         .from("invoices")
@@ -388,13 +415,15 @@ export async function GET() {
           })
           .map((r) => (r as { id: string }).id),
       );
-      const queuedAsCandidates = (queuedRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0 }));
-      const queuedResult = matchTransactions(transactions, queuedAsCandidates);
+      const queuedAsCandidates = (queuedRows as InvoiceForMatching[]).map((r) => ({ ...r, status: "received", amount_paid: 0, accountant_status: null }));
+      const queuedResult = matchTransactions([...unexplained], queuedAsCandidates);
+      const byId = new Map((queuedRows ?? []).map((r) => [(r as { id: string }).id, r as { id: string; invoice_number: string | null }]));
       for (const m of queuedResult.matches) {
         const id = m.transaction.transactionId;
-        if (!id || !m.best) continue;
-        if (strongExplain(m.best.signals, queuedReceiptIds.has(m.best.invoiceId))) {
-          const inv = (queuedRows ?? []).find((r) => (r as { id: string }).id === m.best!.invoiceId) as { id: string; invoice_number: string | null } | undefined;
+        if (!id) continue;
+        const hit = explainHit(m as never, (invId) => queuedReceiptIds.has(invId));
+        if (hit) {
+          const inv = byId.get(hit.invoiceId);
           if (inv) queuedExplained.set(id, { invoiceId: inv.id, invoiceNumber: inv.invoice_number });
         }
       }

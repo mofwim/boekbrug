@@ -1275,5 +1275,33 @@ console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is
     !(groter.candidates?.[0]?.signals ?? []).includes("partial_amount"));
 }
 
+
+// ── [CIRKEL-EXPLAIN] The two shapes the match route's explain passes stand on ────────────────────
+// The route re-scores 'none' debits against paid/queued invoices to say "this bill exists, stop
+// asking for an upload". Two ways that silently broke: (1) isEligible refuses 'verwerkt' FIRST,
+// so an accountant locking a quarter re-opened every explained debit — the pass must clear
+// accountant_status on its candidates; (2) the greedy 1:1 pass nulls `best` on a near-tie (two
+// same-amount invoices, one supplier — duplicate rent), so an explain that only reads `best`
+// fails on exactly the shape that motivated it. Candidates must carry the evidence instead.
+{
+  const debit = tx({ transactionId: "t-verw", amount: -500, date: "2026-05-02", reference: "factuur 26100077" });
+  const locked = inv({ id: "i-verw", invoice_number: "26100077", total_inc_btw: 500, direction: "incoming", status: "received", accountant_status: "verwerkt" });
+  const asLocked = matchTransactions([debit] as never, [locked] as never).matches[0];
+  check("[CIRKEL-EXPLAIN] a 'verwerkt' candidate is invisible to the matcher (the trap)",
+    asLocked.outcome === "none" && !asLocked.best);
+  const cleared = matchTransactions([debit] as never, [{ ...locked, accountant_status: null }] as never).matches[0];
+  const clearedSig = cleared.best?.signals ?? cleared.candidates?.[0]?.signals ?? [];
+  check("[CIRKEL-EXPLAIN] clearing accountant_status restores the reference+amount evidence",
+    clearedSig.includes("reference") && clearedSig.includes("amount"));
+
+  const twin = tx({ transactionId: "t-twin", amount: -800, date: "2026-05-03", reference: "huur mei" });
+  const a = inv({ id: "i-a", invoice_number: "H-100", total_inc_btw: 800, direction: "incoming", status: "received", client_name: "Verhuurder BV" });
+  const b = inv({ id: "i-b", invoice_number: "H-101", total_inc_btw: 800, direction: "incoming", status: "received", client_name: "Verhuurder BV" });
+  const tie = matchTransactions([twin] as never, [a, b] as never).matches[0];
+  check("[CIRKEL-EXPLAIN] a same-amount near-tie yields no best…", !tie.best);
+  check("[CIRKEL-EXPLAIN] …but its candidates still carry the amount evidence the explain pass scans",
+    (tie.candidates ?? []).some((c) => (c.signals ?? []).includes("amount")));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

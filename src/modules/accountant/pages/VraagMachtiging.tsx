@@ -17,6 +17,7 @@
 
 import { useState } from 'react'
 import { M3, R } from '@/lib/design/tokens'
+import { failureText } from '@/lib/server-message'
 
 export interface KoppelKlant {
   id: string
@@ -51,7 +52,7 @@ export default function VraagMachtiging({ klanten, kind }: Props) {
         body: JSON.stringify({ clientId: klant.id, kind }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error || 'Vragen mislukt.')
+      if (!res.ok) throw new Error(failureText(res.status, data, 'Vragen mislukt.'))
       setGedaan((g) => [...g, klant.id])
     } catch (e) {
       setFout(e instanceof Error ? e.message : 'Er ging iets mis.')
