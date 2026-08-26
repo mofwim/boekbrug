@@ -18,6 +18,7 @@ import { deriveDueDate, findSemanticDuplicate, normalizeInvoiceNumber, normalize
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect";
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory";
+import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [DUP-ARCHIVED] Dezelfde eerlijke melding als /api/intake — deze route blijft bereikbaar
 // (back-compat), dus hij mag niet iets anders beweren over dezelfde situatie.
@@ -196,6 +197,9 @@ export async function POST(req: NextRequest) {
       receiverKvk: me?.kvk_number || null,
       receiverBtw: me?.btw_number || null,
       receiverIban: me?.iban || null,
+      // [EIGEN-NUMMER] Recognise the owner's own outgoing invoice by its number, even when the
+      // reader mis-assigned the parties (the case the identity fields above cannot catch).
+      lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
       throwOnTransient: true,
     });
   } catch (aiErr) {

@@ -95,6 +95,9 @@ const styles = StyleSheet.create({
   },
   partyName: { fontSize: 11, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
   partyText: { fontSize: 10, color: '#3c4043', marginBottom: 1 },
+  // [EIGEN-MARKER] The role label above each party block. Small and grey on purpose: it is not
+  // content, it is a caption saying which of the two names is the customer and which the sender.
+  partyLabel: { fontSize: 8, color: '#5f6368', letterSpacing: 0.5, marginBottom: 2 },
 
   // Heading + meta
   heading: { fontSize: 18, fontFamily: 'Helvetica-Bold', marginBottom: 10 },
@@ -394,6 +397,14 @@ export function InvoicePDF({
         <View style={styles.topRow}>
           {/* Klant — Art. 35a sub c: name AND address of the customer */}
           <View style={styles.klantBlock}>
+            {/* [EIGEN-MARKER] The paper names its own roles. Two name blocks side by side read
+                fine to a human, but the measured incident (Kiwi, €394,99) shows what a MACHINE
+                does with them: the owner's own invoice came back through the mail sync and the
+                reader named the CUSTOMER as the supplier, so the own-document guard matched
+                nothing. One word above each block ends the ambiguity for every reader of this
+                document — the customer's software, an accountant's OCR, and our own intake when
+                the invoice is re-imported. Dutch, like everything on this paper (AGENTS.md). */}
+            <Text style={styles.partyLabel}>KLANT</Text>
             <Text style={styles.partyName}>{invoice.client_name || '—'}</Text>
             {/* [KLANT-EXTRA] The owner's own lines, directly under the name and above the street:
                 "t.a.v. mevrouw Jansen", a department, a purchase-order reference the customer's
@@ -415,6 +426,8 @@ export function InvoicePDF({
 
           {/* Afzender — Art. 35a sub a/b: name+address, BTW-id, KVK */}
           <View style={styles.afzenderBlock}>
+            {/* [EIGEN-MARKER] See the klant block — the other half of the same sentence. */}
+            <Text style={styles.partyLabel}>AFZENDER</Text>
             <Text style={styles.partyName}>{afzenderName || '—'}</Text>
             <Text style={styles.partyText}>{profile.address || '—'}</Text>
             <Text style={styles.partyText}>

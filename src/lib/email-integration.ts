@@ -38,6 +38,7 @@ import {
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from '@/lib/possible-duplicate-collect'
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from '@/lib/reading-memory'
+import { makeOwnInvoiceLookup } from '@/lib/own-invoice-lookup'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 // [MULTI-INVOICE] / [ONE-INVOICE-UNVERIFIED] The same two questions /api/intake asks before it
@@ -1858,6 +1859,10 @@ export async function classifyAttachment(
     receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
     // [READING-MEMORY] Rendered once by the caller — see the sync run and the re-read route.
     readingHint?: string | null
+    // [EIGEN-NUMMER] Own-outgoing-invoice lookup by number, bound to the caller's client.
+    lookupOwnInvoice?: (invoiceNumber: string) => Promise<{
+      invoiceNumber?: string | null; totalIncBtw?: number | null; clientName?: string | null
+    } | null>
   }
 ): Promise<AttachmentClassification> {
   // [E-FACTUUR-XML] A Peppol invoice arriving as XML is read by verifyInvoiceFromPdf itself, with
@@ -1878,6 +1883,7 @@ export async function classifyAttachment(
     receiverBtw: opts?.receiverBtw,
     receiverIban: opts?.receiverIban,
     readingHint: opts?.readingHint,
+    lookupOwnInvoice: opts?.lookupOwnInvoice,
   })
 
   // ── [EIGEN-FACTUUR] Is this the owner's OWN invoice, mailed back to them? ──
@@ -2353,6 +2359,8 @@ export async function syncUserEmails(
   const receiverKvk = profile?.kvk_number || null
   const receiverBtw = profile?.btw_number || null
   const receiverIban = profile?.iban || null
+  // [EIGEN-NUMMER] Bound to the pipeline client, ownership in the query (sender_id = this user).
+  const lookupOwnInvoice = makeOwnInvoiceLookup(supabase, userId)
 
   // [BOEK-011] Sync start boundary.
   //
@@ -3170,7 +3178,7 @@ export async function syncUserEmails(
           attachment.mimeType,
           attachment.filename,
           receiverName,
-          { receiverKvk, receiverBtw, receiverIban, readingHint }
+          { receiverKvk, receiverBtw, receiverIban, readingHint, lookupOwnInvoice }
         )
         return { attachment, classification, classifyFailed: false }
       } catch (err) {

@@ -4348,6 +4348,9 @@ export default function IncomingManageClient({
       {correctFor && (
         <InvoiceCorrectionModal
           invoice={correctFor}
+          btwRows={Array.isArray(correctFor.field_confidence?._btw_rows)
+            ? (correctFor.field_confidence._btw_rows as { rate: number; base: number; btw: number }[])
+            : null}
           readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
           onClose={() => setCorrectFor(null)}
           onMessage={showToast}
@@ -4363,6 +4366,11 @@ export default function IncomingManageClient({
                 ...(data.invoice_number != null ? { invoice_number: data.invoice_number } : {}),
                 ...(data.client_name != null ? { client_name: data.client_name } : {}),
                 ...(data.invoice_date != null ? { invoice_date: data.invoice_date } : {}),
+                // [SPLIT-CORRECTIE] De checklist leest de specificatie live uit deze rij — zonder
+                // dit bleef hij vergelijken met de regels die de eigenaar net verving.
+                ...(data.btw_rows !== null && data.btw_rows !== undefined
+                  ? { field_confidence: { ...(i.field_confidence ?? {}), _btw_rows: data.btw_rows.length > 0 ? data.btw_rows : undefined } }
+                  : {}),
               }
             : i))}
         />

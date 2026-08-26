@@ -612,3 +612,33 @@ test("[OCR-LEESBAAR] the document is one page with a real text layer", async () 
   const content = await (await doc.getPage(1)).getTextContent();
   assert.ok(content.items.length > 20, `only ${content.items.length} text items — this reads as a scan`);
 });
+
+// ── [EIGEN-MARKER] The paper names its own roles ────────────────────────────────────────────────
+//
+// Two unlabeled name blocks side by side read fine to a human and terribly to a machine: the
+// owner's own invoice came back through the mail sync and the reader named the CUSTOMER as the
+// supplier (Kiwi, EUR 394,99), which defeated the own-document identity guard entirely. One small
+// caption above each block — KLANT, AFZENDER — ends that ambiguity for every reader of the
+// document, including our own intake when the invoice is re-imported.
+test("[EIGEN-MARKER] both party blocks carry their role caption", async () => {
+  const invoice = { ...QUOTE, invoice_type: "standard", invoice_number: "2026-0042" };
+  const text = await pdfText(await renderInvoicePdf(invoice, LINES, PROFILE));
+  assert.match(text, /KLANT/, "the customer block must say it holds the customer");
+  assert.match(text, /AFZENDER/, "the sender block must say it holds the sender");
+  // The captions must sit with the right names: KLANT before the customer's name, AFZENDER
+  // before the sender's — swapped captions would be worse than none.
+  assert.ok(
+    text.indexOf("KLANT") < text.indexOf("Stichting Contour de Twern"),
+    "KLANT captions the customer's name",
+  );
+  assert.ok(
+    text.indexOf("AFZENDER") < text.indexOf("Kiwi Food Market"),
+    "AFZENDER captions the sender's name",
+  );
+})
+
+test("[EIGEN-MARKER] the offerte carries the same captions", async () => {
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.match(text, /KLANT/);
+  assert.match(text, /AFZENDER/);
+})
