@@ -593,6 +593,11 @@ function NewInvoicePageContent() {
   const taal = useLocale()
   const t = translator(taal)
   const [sentNotice, setSentNotice] = useState<InvoiceSentNotice | null>(null)
+  // [OFFERTE-VERSTUREN-NIEUW] De bevestiging nadat een offerte vanaf DIT scherm is gemaild. De
+  // message komt van de route zelf ([SERVER-ZIN]-conventie: de server spreekt Nederlands tegen de
+  // eigenaar) — die zin zegt ook dat er nog GEEN factuur bestaat, en dat mag hier niet verloren
+  // gaan: het is precies het misverstand dat deze aparte deur bestaat om te voorkomen.
+  const [offerteSent, setOfferteSent] = useState<{ id: string; message: string } | null>(null)
   const [sentInvoiceId, setSentInvoiceId] = useState<string | null>(null)
   useCloseOnBack(!!showSendConfirm, () => setShowSendConfirm(false))
 
@@ -1414,6 +1419,37 @@ function NewInvoicePageContent() {
       }
     }
 
+    // [OFFERTE-VERSTUREN-NIEUW] GEVRAAGD: de offerte ook vanaf het opstelscherm kunnen versturen,
+    // niet alleen vanaf de lijst. Zelfde deur als daar — /api/invoice/[id]/send-offerte, die geen
+    // nummer kán slaan (zie de kop van die route) — dus /api/invoice/send blijft hierboven voor
+    // een offerte uitgesloten, en dat blijft de [OFFERTE-VERSTUREN]-gate bewaken. Geen
+    // bevestigingsdialoog, dezelfde afweging als op de lijst: er wordt geen nummer verbruikt en
+    // niets is onomkeerbaar aan een aanbod. Faalt het mailen, dan STAAT het concept al — de
+    // navigatie naar de detailpagina is dan het herstel, precies zoals de factuurtak hierboven.
+    if (mode === 'sent' && invoiceType === 'offerte') {
+      try {
+        const res = await fetch(`/api/invoice/${invoice.id}/send-offerte`, { method: 'POST' })
+        const result = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setError(typeof result?.error === 'string' && result.error ? result.error : t('nieuw.fout.versturen'))
+          setLoading(false)
+          router.replace(`/dashboard/invoice/${invoice.id}`)
+          return
+        }
+        setOfferteSent({
+          id: invoice.id,
+          message: typeof result?.message === 'string' ? result.message : '',
+        })
+        setLoading(false)
+        return
+      } catch {
+        setError(t('nieuw.fout.versturen'))
+        setLoading(false)
+        router.replace(`/dashboard/invoice/${invoice.id}`)
+        return
+      }
+    }
+
     // [BOEK-031] replace naar detail pagina — Navigation Strategy — May 2026
     router.replace(`/dashboard/invoice/${invoice.id}`)
   }
@@ -2164,22 +2200,18 @@ function NewInvoicePageContent() {
                     handleSubmit('sent')
                   }
                 }} disabled={loading || linesLoading} style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: loading || linesLoading ? '#9AA0A6' : cfg.primaryBtn, color: 'white', fontSize: 16, fontWeight: 600, cursor: loading || linesLoading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                  {linesLoading ? t('nieuw.actie.laden') : loading ? t('nieuw.actie.bezig') : invoiceType === 'factuur' ? `✉ ${t('nieuw.actie.versturen')}` : invoiceType === 'offerte' ? `📋 ${t('nieuw.actie.offerteOpslaan')}` /* saves only — never /api/invoice/send, see handleSubmit */ : `↩ ${t('lijst.versturen')}`}
+                  {linesLoading ? t('nieuw.actie.laden') : loading ? t('nieuw.actie.bezig') : invoiceType === 'factuur' ? `✉ ${t('nieuw.actie.versturen')}` : invoiceType === 'offerte' ? `✉ ${t('nieuw.actie.offerteVersturen')}` /* via send-offerte — never /api/invoice/send, see handleSubmit */ : `↩ ${t('lijst.versturen')}`}
                 </button>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  {/* [OFFERTE-EEN-KNOP] Voor een OFFERTE deed deze knop letterlijk hetzelfde als de
-                      grote knop erboven. `mode` wordt in handleSubmit precies één keer gelezen —
-                      `if (mode === 'sent' && invoiceType !== 'offerte')` — en die voorwaarde sluit
-                      de offerte uit, dus beide paden schreven hetzelfde concept weg en navigeerden
-                      naar dezelfde pagina. Twee knoppen, waarvan één als hoofdactie opgemaakt, met
-                      geen enkel verschil: de ondernemer kan alleen maar denken dat hij iets mist.
-                      Een factuur en een creditnota houden hem — daar is het verschil echt
-                      (versturen versus als concept bewaren). */}
-                  {invoiceType !== 'offerte' && (
+                  {/* [OFFERTE-EEN-KNOP] Deze knop was voor een offerte verdwenen omdat hij toen
+                      letterlijk hetzelfde deed als de hoofdknop (beide sloegen alleen op). Sinds
+                      [OFFERTE-VERSTUREN-NIEUW] is het verschil echt, voor alle drie de soorten:
+                      de hoofdknop verstuurt (factuur via /api/invoice/send, offerte via
+                      send-offerte), deze bewaart alleen. Voor de offerte houdt hij zijn oude
+                      naam — "Offerte opslaan" is precies wat hij doet. */}
                   <button onClick={() => handleSubmit('draft')} disabled={loading} style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: cfg.activeBg, color: cfg.activeColor, fontSize: 14, fontWeight: 500, cursor: loading ? 'not-allowed' : 'pointer', transition: 'all 0.15s cubic-bezier(0.4,0,0.2,1)' }}>
-                    {invoiceType === 'factuur' ? t('nieuw.actie.concept') : t('nieuw.actie.concept')}
+                    {invoiceType === 'offerte' ? `📋 ${t('nieuw.actie.offerteOpslaan')}` : t('nieuw.actie.concept')}
                   </button>
-                  )}
                   {/* [PDF-VOORBEELD] Het document zien vóór het onomkeerbaar is. Alleen wanneer er
                       iets te tonen is: zonder afzendergegevens of zonder regels zou het voorbeeld
                       een lege pagina zijn, en een knop die een leeg vel oplevert is erger dan geen
@@ -2248,6 +2280,26 @@ function NewInvoicePageContent() {
           // datums staan er nog, en die een tweede keer versturen is precies wat niet mag.
           onNew={() => { window.location.href = '/dashboard/invoice/new' }}
         />
+      )}
+
+      {/* [OFFERTE-VERSTUREN-NIEUW] Na afloop: de offerte is gemaild. De zin komt van de route en
+          zegt óók dat er nog geen factuur bestaat — die maak je pas als de klant akkoord is. Een
+          scherm dat vanzelf wegnavigeert zou die zin opeten ([VERSTUURD] leerde dat al). */}
+      {offerteSent && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <div className="sheet-scroll" style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 420, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>📨 {t('nieuw.offerte.verstuurdTitel')}</h2>
+            {offerteSent.message && (
+              <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>{offerteSent.message}</p>
+            )}
+            <button
+              onClick={() => router.replace(`/dashboard/invoice/${offerteSent.id}`)}
+              style={{ width: '100%', minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}
+            >
+              {t('nieuw.offerte.naarDetail')}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* [FACTUUR-A] Send confirmation — centered modal (house convention) */}
