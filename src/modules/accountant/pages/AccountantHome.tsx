@@ -32,6 +32,9 @@ import type { NotificationRow } from '@/types/rows'
 // were below the contrast floor for text.
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 import DashboardTools from '@/components/tools/DashboardTools'
+// [TAAL] This screen holds no language of its own: every sentence comes from messages.ts.
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -92,16 +95,19 @@ interface Props {
 // Helpers
 // ─────────────────────────────────────────────────────────
 
+/** [TAAL] The greeting is a KEY, not a sentence — the words come from messages.ts. */
+type SalutationKey = 'bh.home.groet.ochtend' | 'bh.home.groet.middag' | 'bh.home.groet.avond'
+
 /**
  * Hydration-safe greeting.
  * Time-based salutation differs between server (UTC) and client (local timezone),
  * which causes React error #418. Return null initially, compute after mount.
  */
-function timeSalutation(): string {
+function timeSalutation(): SalutationKey {
   const hour = new Date().getHours()
-  if (hour < 12) return 'Goedemorgen'
-  if (hour < 18) return 'Goedemiddag'
-  return 'Goedenavond'
+  if (hour < 12) return 'bh.home.groet.ochtend'
+  if (hour < 18) return 'bh.home.groet.middag'
+  return 'bh.home.groet.avond'
 }
 
 // ─────────────────────────────────────────────────────────
@@ -113,6 +119,8 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
   // honest facts: overview = provable counts (open questions / missing bank), todos
   // = concrete actionable items from getTodoFeed. No "ready" verdict is shown, so
   // the BRIDGE-NOTIF "placeholder counts are a lie" concern no longer applies.
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   const supabase = createClient()
 
@@ -122,7 +130,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
   const [unreadMessages] = useState(initialUnread)
 
   // ── Time-based greeting (computed after mount to avoid hydration mismatch) ──
-  const [salutation, setSalutation] = useState<string | null>(null)
+  const [salutation, setSalutation] = useState<SalutationKey | null>(null)
 
   // ── Last client shortcut (localStorage) ──
   const [lastClientId, setLastClientId] = useState<string | null>(null)
@@ -219,14 +227,14 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
       if (!res.ok) {
         // Zeg wat er aan de hand is. 429 is het enige geval waarin wachten wél helpt.
         setAiResult({
-          subject: res.status === 429 ? 'Even te veel aanvragen' : 'Het lukte niet',
-          body: json?.error ?? 'Probeer het zo opnieuw.',
+          subject: res.status === 429 ? t('bh.home.ai.teVeel') : t('bh.home.ai.mislukt'),
+          body: json?.error ?? t('bh.home.ai.probeerStraks'),
         })
         return
       }
       setAiResult(json)
     } catch {
-      setAiResult({ subject: 'Geen verbinding', body: 'Controleer je internet en probeer opnieuw.' })
+      setAiResult({ subject: t('bh.home.ai.geenVerbinding'), body: t('bh.home.ai.checkInternet') })
     } finally {
       setAiLoading(false)
     }
@@ -265,10 +273,10 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         {/* ── Greeting (eyebrow + first name — same shape as the ZZP home) ── */}
         <div>
           <p style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, fontWeight: 500, letterSpacing: 0.2, textTransform: 'uppercase' }}>
-            {salutation ?? 'Hallo'}
+            {t(salutation ?? 'bh.home.groet.hallo')}
           </p>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: '#202124', margin: 0, letterSpacing: -0.5 }}>
-            {profile.full_name ? profile.full_name.split(' ')[0] : 'daar'} 👋
+            {profile.full_name ? profile.full_name.split(' ')[0] : t('bh.home.groet.daar')} 👋
           </h1>
         </div>
 
@@ -285,8 +293,8 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         >
           <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>checklist</span>
           <span style={{ flex: 1 }}>
-            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>Aangifte &amp; status</span>
-            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>BTW-deadline, klaar-status en herinneren per klant</span>
+            <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>{t('bh.home.aangifte.titel')}</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{t('bh.home.aangifte.uitleg')}</span>
           </span>
           <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
         </button>
@@ -307,13 +315,12 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             bestaat. Dus: een eerlijke regel in plaats van stilte. */}
         {workQueues && !workQueues.complete && (
           <p style={{ fontSize: 12.5, color: '#B3261E', margin: '0 0 8px' }}>
-            We konden je werkvoorraad nu niet volledig lezen — de blokken hieronder kunnen
-            onvolledig zijn. Ververs de pagina om het opnieuw te proberen.
+            {t('bh.home.werkvoorraad.onvolledig')}
           </p>
         )}
         {workQueues && workQueues.complete && (workQueues.mandatedForInvoices > 0 || workQueues.mandatedForConfirm > 0) && (
           <div>
-            <SectionLabel>Wat er op jou ligt</SectionLabel>
+            <SectionLabel>{t('bh.home.werkvoorraad.kop')}</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <button
                 onClick={() => router.push('/dashboard/accountant/bevestigen')}
@@ -326,14 +333,14 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                   {workQueues.toConfirm}
                 </p>
                 <p style={{ fontSize: 12.5, color: '#202124', margin: '2px 0 0', fontWeight: 500 }}>
-                  Te bevestigen
+                  {t('bh.home.bevestigen.label')}
                 </p>
                 <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0', lineHeight: 1.4 }}>
                   {workQueues.mandatedForConfirm === 0
-                    ? 'Nog niemand machtigde je hiervoor'
+                    ? t('bh.home.geenMachtiging')
                     : workQueues.toConfirm === 0
-                      ? 'Niets houdt een kwartaal tegen'
-                      : 'Houdt een kwartaal tegen'}
+                      ? t('bh.home.bevestigen.niets')
+                      : t('bh.home.bevestigen.blokkeert')}
                 </p>
               </button>
 
@@ -350,14 +357,17 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                     : '0'}
                 </p>
                 <p style={{ fontSize: 12.5, color: '#202124', margin: '2px 0 0', fontWeight: 500 }}>
-                  Te laat
+                  {t('bh.home.telaat.label')}
                 </p>
                 <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0', lineHeight: 1.4 }}>
                   {workQueues.mandatedForInvoices === 0
-                    ? 'Nog niemand machtigde je hiervoor'
+                    ? t('bh.home.geenMachtiging')
                     : workQueues.overdueCount === 0
-                      ? 'Niets te laat'
-                      : `${workQueues.overdueCount} ${workQueues.overdueCount === 1 ? 'factuur' : 'facturen'} · oudste ${workQueues.worstDaysLate} dagen`}
+                      ? t('bh.home.telaat.niets')
+                      : t(workQueues.overdueCount === 1 ? 'bh.home.telaat.een' : 'bh.home.telaat.meer', {
+                          aantal: workQueues.overdueCount,
+                          dagen: workQueues.worstDaysLate,
+                        })}
                 </p>
               </button>
             </div>
@@ -368,16 +378,16 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             Same 3-tile snapshot pattern as the ZZP home. ── */}
         {clients.length > 0 && (
           <div>
-            <SectionLabel>Overzicht</SectionLabel>
+            <SectionLabel>{t('bh.home.overzicht.kop')}</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-              {[
-                { n: overview.total_clients, label: 'Klanten', color: '#202124' },
-                { n: overview.clients_with_open_questions, label: 'Open vraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
-                { n: overview.clients_missing_bank, label: 'Zonder bank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
-              ].map(s => (
-                <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
+              {([
+                { n: overview.total_clients, labelKey: 'bh.home.overzicht.klanten', color: '#202124' },
+                { n: overview.clients_with_open_questions, labelKey: 'bh.home.overzicht.openVraag', color: overview.clients_with_open_questions > 0 ? '#C5221F' : '#5F6368' },
+                { n: overview.clients_missing_bank, labelKey: 'bh.home.overzicht.zonderBank', color: overview.clients_missing_bank > 0 ? '#EA8600' : '#5F6368' },
+              ] as const).map(s => (
+                <div key={s.labelKey} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
                   <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
-                  <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
+                  <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{t(s.labelKey)}</p>
                 </div>
               ))}
             </div>
@@ -397,22 +407,23 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             background: '#FCE8E6', border: '1px solid #F5C6C2',
           }}>
             <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: '0 0 2px' }}>
-              We konden je takenlijst nu niet ophalen
+              {t('bh.home.todo.onleesbaar.titel')}
             </p>
             <p style={{ fontSize: 12.5, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>
-              Dit betekent niet dat er niets te doen is — alleen dat wij het even niet konden lezen.
+              {t('bh.home.todo.onleesbaar.uitleg')}
             </p>
           </div>
         )}
         {todos.length > 0 && (
           <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
-              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Te doen</h2>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('bh.home.todo.kop')}</h2>
             </div>
-            {todos.map((t, idx) => (
+            {/* [TAAL] `todo`, niet `t`: de vertaler heet hier `t`. */}
+            {todos.map((todo, idx) => (
               <button
-                key={`${t.client_id}-${t.type}`}
-                onClick={() => router.push(`/dashboard/clients/${t.client_id}`)}
+                key={`${todo.client_id}-${todo.type}`}
+                onClick={() => router.push(`/dashboard/clients/${todo.client_id}`)}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 12,
                   padding: '12px 16px', background: 'none', border: 'none',
@@ -420,8 +431,8 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                   cursor: 'pointer', textAlign: 'start', minHeight: 48,
                 }}
               >
-                <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[t.type] ?? '•'}</span>
-                <span style={{ flex: 1, fontSize: 13, color: '#202124' }}>{t.description}</span>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{TODO_ICON[todo.type] ?? '•'}</span>
+                <span style={{ flex: 1, fontSize: 13, color: '#202124' }}>{todo.description}</span>
                 <span className="icon-dir" style={{ color: '#1A73E8', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>→</span>
               </button>
             ))}
@@ -431,7 +442,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         {/* ── 4. Mijn klanten ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Mijn klanten</h2>
+            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('bh.home.klanten.kop')}</h2>
             <button
               onClick={() => router.push('/dashboard/clients/beheer')}
               style={{
@@ -441,7 +452,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 cursor: 'pointer',
               }}
             >
-              + Klant
+              {t('bh.home.klanten.nieuw')}
             </button>
           </div>
 
@@ -451,12 +462,12 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               <input
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
-                placeholder="Zoek klant op naam of e-mail…"
-                aria-label="Klanten zoeken"
+                placeholder={t('bh.home.klanten.zoekPlaceholder')}
+                aria-label={t('bh.home.klanten.zoekLabel')}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
               />
               {clientSearch && (
-                <button onClick={() => setClientSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setClientSearch('')} aria-label={t('bh.home.klanten.wissen')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -473,11 +484,10 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             <div style={{ padding: '28px 16px', textAlign: 'center' }}>
               <span className="material-symbols-outlined" style={{ color: '#B3261E', fontSize: 24 }}>error_outline</span>
               <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '8px 0 4px' }}>
-                We konden je klantenlijst nu niet ophalen
+                {t('bh.home.klanten.onleesbaar.titel')}
               </p>
               <p style={{ fontSize: 12.5, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>
-                Dit zegt niets over je klanten — alleen dat wij ze even niet konden lezen. Ververs
-                de pagina; blijft dit staan, laat het ons weten.
+                {t('bh.home.klanten.onleesbaar.uitleg')}
               </p>
             </div>
           ) : clients.length === 0 ? (
@@ -496,12 +506,12 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               }}>
                 <span className="material-symbols-outlined" style={{ color: '#1A73E8', fontSize: 24 }}>person_add</span>
               </span>
-              <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>Voeg je eerste klant toe</span>
-              <span style={{ fontSize: 12.5, color: '#5F6368' }}>Nodig een klant uit of koppel een bestaande</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>{t('bh.home.klanten.eerste.titel')}</span>
+              <span style={{ fontSize: 12.5, color: '#5F6368' }}>{t('bh.home.klanten.eerste.uitleg')}</span>
             </button>
           ) : shownClients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
-              Geen klanten gevonden voor &ldquo;{clientSearch.trim()}&rdquo;
+              {t('bh.home.klanten.geenResultaat', { zoekterm: clientSearch.trim() })}
             </p>
           ) : (
             <div>
@@ -553,30 +563,30 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             ZZP home's "Mijn administratie"). Surfaces the tools directly instead of
             routing through a separate werkplek menu. ── */}
         <div>
-          <SectionLabel>Werkplek</SectionLabel>
+          <SectionLabel>{t('bh.home.werkplek.kop')}</SectionLabel>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-            <ToolTile icon="people" tint="#34A853" label="Beheren" onClick={() => router.push('/dashboard/clients/beheer')} />
-            <ToolTile icon="bar_chart" tint="#E37400" label="Kwartaal" onClick={() => router.push('/dashboard/quarterly')} />
-            <ToolTile icon="account_tree" tint="#1967D2" label="Brug" onClick={() => router.push('/dashboard/brug')} />
+            <ToolTile icon="people" tint="#34A853" label={t('bh.home.tegel.beheren')} onClick={() => router.push('/dashboard/clients/beheer')} />
+            <ToolTile icon="bar_chart" tint="#E37400" label={t('bh.home.tegel.kwartaal')} onClick={() => router.push('/dashboard/quarterly')} />
+            <ToolTile icon="account_tree" tint="#1967D2" label={t('bh.home.tegel.brug')} onClick={() => router.push('/dashboard/brug')} />
             {/* [EIGEN-BOEKEN-LABEL] "Mijn", niet "Facturen". Deze tegel gaat naar /dashboard/facturen,
                 en dat scherm leest `sender_id = user.id`: het zijn de facturen van het KANTOOR zelf.
                 Tussen Beheren, Kwartaal en Brug — die alle drie over klanten gaan — en pal naast
                 "Factureren", dat wél namens een klant gaat, las "Facturen" als "de facturen van
                 mijn klanten". Eén woord verschil tussen twee administraties is precies het soort
                 verwarring dat dit scherm zich niet kan veroorloven. */}
-            <ToolTile icon="description" tint="#00897B" label="Mijn facturen" onClick={() => router.push('/dashboard/facturen')} />
+            <ToolTile icon="description" tint="#00897B" label={t('bh.home.tegel.mijnFacturen')} onClick={() => router.push('/dashboard/facturen')} />
             {/* [MANDAAT] Altijd zichtbaar, ook zonder machtiging: het scherm erachter legt dan uit
                 dat de klant het zelf moet aanzetten. Een tegel die pas verschijnt als iemand hem
                 al niet meer nodig heeft, vertelt niemand dat de functie bestaat. */}
-            <ToolTile icon="edit_note" tint="#C5221F" label="Factureren" onClick={() => router.push('/dashboard/accountant/factuur')} />
+            <ToolTile icon="edit_note" tint="#C5221F" label={t('bh.home.tegel.factureren')} onClick={() => router.push('/dashboard/accountant/factuur')} />
             {/* [DEBITEUREN] Waar staat het geld stil, over alle gemachtigde klanten heen. */}
-            <ToolTile icon="schedule_send" tint="#E37400" label="Openstaand" onClick={() => router.push('/dashboard/accountant/debiteuren')} />
+            <ToolTile icon="schedule_send" tint="#E37400" label={t('bh.home.tegel.openstaand')} onClick={() => router.push('/dashboard/accountant/debiteuren')} />
             {/* [OPVRAGEN] De ontbrekende stukken opvragen — geen mandaat nodig, alleen een koppeling. */}
-            <ToolTile icon="forward_to_inbox" tint="#1967D2" label="Opvragen" onClick={() => router.push('/dashboard/accountant/opvragen')} />
+            <ToolTile icon="forward_to_inbox" tint="#1967D2" label={t('bh.home.tegel.opvragen')} onClick={() => router.push('/dashboard/accountant/opvragen')} />
             {/* [BEVESTIGEN] De stukken die het kwartaal van een klant tegenhouden. */}
-            <ToolTile icon="fact_check" tint="#188038" label="Bevestigen" onClick={() => router.push('/dashboard/accountant/bevestigen')} />
-            <ToolTile icon="folder_open" tint="#5F6368" label="Bestanden" onClick={() => router.push('/dashboard/bestanden')} />
-            <ToolTile icon="settings" tint="#7B1FA2" label="Instellingen" onClick={() => router.push('/dashboard/settings')} />
+            <ToolTile icon="fact_check" tint="#188038" label={t('bh.home.tegel.bevestigen')} onClick={() => router.push('/dashboard/accountant/bevestigen')} />
+            <ToolTile icon="folder_open" tint="#5F6368" label={t('bh.home.tegel.bestanden')} onClick={() => router.push('/dashboard/bestanden')} />
+            <ToolTile icon="settings" tint="#7B1FA2" label={t('bh.home.tegel.instellingen')} onClick={() => router.push('/dashboard/settings')} />
           </div>
         </div>
 
@@ -593,7 +603,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
           >
             <div>
               <p style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 2px' }}>
-                Ga verder waar je gebleven bent
+                {t('bh.home.verder.kop')}
               </p>
               <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{lastClientName}</p>
             </div>
@@ -612,9 +622,9 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         >
           <div>
             <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 2px' }}>
-              AI Assistent
+              {t('bh.home.ai.eyebrow')}
             </p>
-            <p style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Samen werken met AI ✨</p>
+            <p style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{t('bh.home.ai.titel')}</p>
           </div>
           <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14 }}>{showAiPanel ? '▲' : '▼'}</span>
         </button>
@@ -622,13 +632,13 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         {showAiPanel && (
           <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>
-              Schrijf wat je wilt doen — de AI stelt het voor je op.
+              {t('bh.home.ai.uitleg')}
             </p>
             <textarea
               value={aiPrompt}
               onChange={e => setAiPrompt(e.target.value)}
               rows={3}
-              placeholder="bijv. bereid BTW aangifte voor klant Jansen BV..."
+              placeholder={t('bh.home.ai.placeholder')}
               style={{ width: '100%', fontSize: 14, padding: '8px 12px', border: '1px solid #dadce0', borderRadius: 8, backgroundColor: '#F8F9FA', color: '#202124', resize: 'none', boxSizing: 'border-box' }}
             />
             <button
@@ -636,20 +646,20 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               disabled={aiLoading || !aiPrompt.trim()}
               style={{ backgroundColor: '#202124', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (aiLoading || !aiPrompt.trim()) ? 0.4 : 1 }}
             >
-              {aiLoading ? 'AI werkt...' : 'Genereer ✨'}
+              {aiLoading ? t('bh.home.ai.bezig') : t('bh.home.ai.genereer')}
             </button>
             {aiResult && (
               <div style={{ backgroundColor: '#F8F9FA', border: '1px solid #E0E0E0', borderRadius: 8, padding: 12, fontSize: 13, color: '#202124' }}>
-                <p style={{ fontWeight: 600, margin: '0 0 8px' }}>Onderwerp: {aiResult.subject}</p>
+                <p style={{ fontWeight: 600, margin: '0 0 8px' }}>{t('bh.home.ai.onderwerp', { onderwerp: aiResult.subject })}</p>
                 <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: '0 0 12px' }}>{aiResult.body}</p>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => navigator.clipboard?.writeText(aiResult.body)}
                     style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-                    Kopiëren
+                    {t('bh.home.ai.kopieren')}
                   </button>
                   <button onClick={() => { setAiResult(null); setAiPrompt('') }}
                     style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #dadce0', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-                    Opnieuw
+                    {t('bh.home.ai.opnieuw')}
                   </button>
                 </div>
               </div>

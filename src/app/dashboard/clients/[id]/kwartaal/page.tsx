@@ -21,6 +21,8 @@ import { useToast } from '@/components/ui/Toast'
 import { EL1, M3, R, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -36,10 +38,11 @@ type KwartaalInvoice = Pick<InvoiceRow,
 // ─────────────────────────────────────────────────────────
 
 // [BOEK-028] Not Found removed — 3 actions only
+// [TAAL] `value` is the STORED accountant_status — never translated. Only the label is.
 const ACCOUNTANT_ACTIONS = [
-  { value: 'verwerkt',       label: 'Verwerkt',        bg: '#E6F4EA', color: '#137333', rowBg: '#F2FAF4' },
-  { value: 'in_behandeling', label: 'In behandeling',  bg: '#FEF7E0', color: '#EA8600', rowBg: '#FEFCF0' },
-  { value: 'vraag',          label: 'Vraag',           bg: '#E8F0FE', color: '#1967D2', rowBg: '#F0F4FF' },
+  { value: 'verwerkt',       labelKey: 'bh.kwt.actie.verwerkt',      bg: '#E6F4EA', color: '#137333', rowBg: '#F2FAF4' },
+  { value: 'in_behandeling', labelKey: 'bh.kwt.actie.inBehandeling', bg: '#FEF7E0', color: '#EA8600', rowBg: '#FEFCF0' },
+  { value: 'vraag',          labelKey: 'bh.kwt.actie.vraag',         bg: '#E8F0FE', color: '#1967D2', rowBg: '#F0F4FF' },
 ] as const
 
 type ActionValue = 'verwerkt' | 'in_behandeling' | 'vraag'
@@ -79,11 +82,11 @@ function getBtwRate(inv: KwartaalInvoice): number {
 
 // [BRIDGE-A] Accounting split — section definitions (accountant terminology)
 const SECTIONS = [
-  { key: 'debiteuren',  title: 'Debiteuren',  sub: 'verzonden — nog te ontvangen',
+  { key: 'debiteuren',  titleKey: 'bh.kwt.sectie.debiteuren',  subKey: 'bh.kwt.sectie.debiteurenSub',
     filter: (i: KwartaalInvoice) => i.direction === 'outgoing' && i.status === 'sent' },
-  { key: 'crediteuren', title: 'Crediteuren', sub: 'ontvangen — nog te betalen',
+  { key: 'crediteuren', titleKey: 'bh.kwt.sectie.crediteuren', subKey: 'bh.kwt.sectie.crediteurenSub',
     filter: (i: KwartaalInvoice) => i.direction === 'incoming' && i.status === 'received' },
-  { key: 'voldaan',     title: 'Voldaan',     sub: 'betaald',
+  { key: 'voldaan',     titleKey: 'bh.kwt.sectie.voldaan',     subKey: 'bh.kwt.sectie.voldaanSub',
     filter: (i: KwartaalInvoice) => i.status === 'paid' },
 ] as const
 
@@ -97,13 +100,14 @@ function isVerlopen(inv: KwartaalInvoice): boolean {
 // ─────────────────────────────────────────────────────────
 
 function ActionBadge({ value }: { value: string | null }) {
+  const t = translator(useLocale())
   const a = ACCOUNTANT_ACTIONS.find(x => x.value === value)
   if (!a) return (
     <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, backgroundColor: "#F1F3F4", color: "#5F6368" }}>—</span>
   )
   return (
     <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, fontWeight: 500, backgroundColor: a.bg, color: a.color }}>
-      {a.label}
+      {t(a.labelKey)}
     </span>
   )
 }
@@ -113,6 +117,8 @@ function ActionBadge({ value }: { value: string | null }) {
 // ─────────────────────────────────────────────────────────
 
 export default function KwartaalPage() {
+  const locale = useLocale()
+  const t = translator(locale)
   const dialog = useDialog()
   const toast = useToast()
   const router       = useRouter()
@@ -345,7 +351,7 @@ export default function KwartaalPage() {
       // set slid back to its old value and nothing said why. On a screen whose
       // whole job is asserting what has been checked, a status that undoes
       // itself without a word is the one thing that must never happen.
-      toast('Status niet opgeslagen — probeer het opnieuw.', { tone: 'error' })
+      toast(t('bh.kwt.statusNietOpgeslagen'), { tone: 'error' })
     } else if (action === 'verwerkt' || action === 'vraag') {
       // [READINESS-P3] Close the trust loop with the client — for BOTH 'verwerkt'
       // AND 'vraag'. Previously only 'verwerkt' notified, so a 'vraag' silently
@@ -354,7 +360,9 @@ export default function KwartaalPage() {
       // profile id; the route verifies the accountant↔client link + writes via
       // service_role.
       const inv = invoices.find(x => x.id === invoiceId)
-      const nrLabel = inv?.invoice_number ? `factuur ${inv.invoice_number}` : 'een factuur'
+      // The notification below is written into the CLIENT's own app, in the client's language —
+      // not the accountant's. It stays Dutch, like every other stored notification.
+      const nrLabel = inv?.invoice_number ? `factuur ${inv.invoice_number}` : 'een factuur' // [TAAL-DB]
       const party = typeof inv?.client_name === 'string' && inv.client_name.trim()
         ? ` (${inv.client_name.trim()})`
         : ''
@@ -369,27 +377,30 @@ export default function KwartaalPage() {
         const amount = typeof inv?.total_inc_btw === 'number' && inv.total_inc_btw > 0
           ? ` · ${new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(inv.total_inc_btw)}`
           : ''
-        title = 'Factuur verwerkt'
-        body = `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.`
+        title = 'Factuur verwerkt' // [TAAL-DB] stored notification — the client's screen, not this one
+        body = `Je boekhouder heeft ${nrLabel}${party}${amount} verwerkt.` // [TAAL-DB]
       } else {
         // 'vraag' — capture an optional free-text question to send to the client.
         // This text lands on the client's own screen as a notification, so it is
         // written in the app's dialog: a textarea with the 200-character limit
         // shown as you type, rather than a one-line browser prompt that silently
         // truncated whatever did not fit.
+        const uitleg = inv?.invoice_number
+          ? t('bh.kwt.vraag.uitleg', { nummer: inv.invoice_number, partij: party })
+          : t('bh.kwt.vraag.uitlegZonderNummer', { partij: party })
         const q = (await dialog.prompt({
-          title: 'Vraag aan de klant',
-          message: `Je klant krijgt dit te zien bij ${nrLabel}${party}. Laat je het leeg, dan melden we alleen dát je een vraag hebt.`,
-          placeholder: 'Waar gaat deze factuur over?',
+          title: t('bh.kwt.vraag.titel'),
+          message: uitleg,
+          placeholder: t('bh.kwt.vraag.placeholder'),
           multiline: true,
           maxLength: 200,
-          confirmLabel: 'Vraag versturen',
+          confirmLabel: t('bh.kwt.vraag.versturen'),
           required: false,
         }))?.trim()
-        title = 'Vraag van je boekhouder'
+        title = 'Vraag van je boekhouder' // [TAAL-DB] stored notification — the client's screen
         body = q
           ? q.slice(0, 200)
-          : `Je boekhouder heeft een vraag over ${nrLabel}${party}.`
+          : `Je boekhouder heeft een vraag over ${nrLabel}${party}.` // [TAAL-DB]
       }
       try {
         await fetch('/api/notifications/notify-client', {
@@ -407,22 +418,24 @@ export default function KwartaalPage() {
   // the loading return) so hook order stays stable.
   useSubPageHeader(
     {
-      title: `Q${q} ${year}${client ? ` — ${client.company_name || client.full_name}` : ''}`,
+      title: client
+        ? t('bh.kwt.kop.metKlant', { q, jaar: year, klant: client.company_name || client.full_name || '' })
+        : t('bh.kwt.kop', { q, jaar: year }),
       actions: (
         <button
           onClick={() => setSortAsc(p => !p)}
           style={{ fontSize: 13, fontWeight: 500, color: '#1A73E8', backgroundColor: '#E8F0FE', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          {sortAsc ? 'Oudste ↑' : 'Nieuwste ↓'}
+          {sortAsc ? t('bh.kwt.sorteerOudste') : t('bh.kwt.sorteerNieuwste')}
         </button>
       ),
     },
-    [q, year, client?.company_name, client?.full_name, sortAsc]
+    [q, year, client?.company_name, client?.full_name, sortAsc, locale]
   )
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center"
       style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
+      <p style={{ fontSize: 14, color: '#5F6368' }}>{t('bh.kwt.laden')}</p>
     </div>
   )
 
@@ -438,7 +451,7 @@ export default function KwartaalPage() {
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 16px', backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, cursor: 'pointer', transition: 'background 0.1s ease', width: '100%' }}
         >
           <span className="text-xl">📂</span>
-          <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>Documenten — bekijk in Brug</span>
+          <span className="text-xs font-semibold" style={{ color: '#ff6b00', fontSize: 13 }}>{t('bh.kwt.documenten')}</span>
           <span className="icon-dir" style={{ color: '#1A73E8', fontWeight: 600 }}>→</span>
         </button>
 
@@ -452,7 +465,7 @@ export default function KwartaalPage() {
             try {
               const qp = new URLSearchParams({ year: String(year), quarter: String(q), clientId })
               const res = await fetch(`/api/closing-package?${qp}`)
-              if (!res.ok) { setPackageError('Pakket genereren mislukt — probeer opnieuw.'); return }
+              if (!res.ok) { setPackageError(t('bh.kwt.pakketMislukt')); return }
               const blob = await res.blob()
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a')
@@ -461,7 +474,7 @@ export default function KwartaalPage() {
               a.click()
               URL.revokeObjectURL(url)
             } catch {
-              setPackageError('Pakket genereren mislukt — probeer opnieuw.')
+              setPackageError(t('bh.kwt.pakketMislukt'))
             } finally {
               setPackaging(false)
             }
@@ -471,7 +484,7 @@ export default function KwartaalPage() {
         >
           <span className="text-xl">📦</span>
           <span className="text-xs font-semibold" style={{ color: packaging ? '#5F6368' : '#FFFFFF', fontSize: 13 }}>
-            {packaging ? 'Kwartaalpakket genereren…' : 'Download kwartaalpakket (ZIP)'}
+            {packaging ? t('bh.kwt.pakketBezig') : t('bh.kwt.pakketDownload')}
           </span>
         </button>
         {packageError && (
@@ -496,9 +509,9 @@ export default function KwartaalPage() {
           {[
             // [TRUST-ACCOUNTANT] Reconciled, turnover-aware figures (same as the ZIP +
             // owner). While they load, show "…" rather than a wrong invoices-only sum.
-            { label: 'Omzet (excl. BTW)',  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: M3.success },
-            { label: 'Kosten (excl. BTW)', value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: M3.error },
-            { label: 'BTW te betalen (5g)', value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
+            { label: t('bh.kwt.omzet'),  value: recon ? NL_NUMBER.format(recon.omzet) : '…',  color: M3.success },
+            { label: t('bh.kwt.kosten'), value: recon ? NL_NUMBER.format(recon.kosten) : '…', color: M3.error },
+            { label: t('bh.kwt.btwSaldo'), value: recon ? NL_NUMBER.format(recon.saldo) : '…', color: '#7b1fa2' },
           ].map(s => (
             <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: 12, textAlign: 'center' }}>
               <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{s.label}</p>
@@ -512,7 +525,7 @@ export default function KwartaalPage() {
 
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>
-              Facturen
+              {t('bh.kwt.facturen')}
               <span style={{ fontSize: 14, fontWeight: 400, marginInlineStart: 6, color: '#5F6368' }}>
                 ({invoices.length})
               </span>
@@ -525,12 +538,12 @@ export default function KwartaalPage() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Zoek op factuurnummer, klant of bedrag…"
-                aria-label="Facturen zoeken"
+                placeholder={t('bh.kwt.zoekPlaceholder')}
+                aria-label={t('bh.kwt.zoekAria')}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '9px 34px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 14, outline: 'none', color: '#202124', fontFamily: "'Roboto', sans-serif" }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label={t('bh.kwt.wissen')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 24, top: '50%', transform: 'translateY(-50%)', width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -538,22 +551,22 @@ export default function KwartaalPage() {
           {loadError ? (
             <div style={{ textAlign: 'center', padding: '48px 0' }}>
               <p style={{ fontSize: 14, color: '#C5221F', margin: '0 0 12px' }}>
-                We konden de facturen van dit kwartaal nu niet ophalen — dit zegt niets over de administratie zelf.
+                {t('bh.kwt.leesfout')}
               </p>
               <button
                 onClick={() => window.location.reload()}
                 style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid #DADCE0', background: '#FFF', color: '#1A73E8', fontSize: 14, cursor: 'pointer' }}
               >
-                Opnieuw proberen
+                {t('bh.kwt.opnieuw')}
               </button>
             </div>
           ) : sorted.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
-              Geen facturen in Q{q} {year}
+              {t('bh.kwt.geenFacturen', { q, jaar: year })}
             </p>
           ) : shown.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', textAlign: 'center', padding: '48px 0' }}>
-              Geen facturen gevonden voor &ldquo;{rawKw}&rdquo;
+              {t('bh.kwt.geenGevonden', { zoek: rawKw })}
             </p>
           ) : (
             <div style={{ borderTop: '1px solid #E0E0E0' }}>
@@ -564,8 +577,8 @@ export default function KwartaalPage() {
                 return (
                   <div key={section.key}>
                     <div style={{ padding: '10px 16px', backgroundColor: '#F8F9FA', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                      <h3 style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>{section.title}</h3>
-                      <span style={{ fontSize: 12, color: '#5F6368' }}>({rows.length}) · {section.sub}</span>
+                      <h3 style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>{t(section.titleKey)}</h3>
+                      <span style={{ fontSize: 12, color: '#5F6368' }}>({rows.length}) · {t(section.subKey)}</span>
                     </div>
                     {rows.map(invoice => {
                 const amount      = getAmount(invoice)
@@ -606,19 +619,19 @@ export default function KwartaalPage() {
                                 backgroundColor: isOutgoing ? '#E6F4EA' : '#FCE8E6',
                                 color: isOutgoing ? '#137333' : '#C5221F',
                               }}>
-                              {isOutgoing ? 'Uitg.' : 'Ink.'}
+                              {isOutgoing ? t('bh.kwt.uitgaand') : t('bh.kwt.inkomend')}
                             </span>
                             {/* [BRIDGE-A] Verlopen — computed, display-only */}
                             {isVerlopen(invoice) && (
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0"
                                 style={{ backgroundColor: '#F9DEDC', color: '#B3261E' }}>
-                                Verlopen
+                                {t('bh.kwt.verlopen')}
                               </span>
                             )}
                             {invoice.invoice_type === 'creditnota' && (
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                                 style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FCE8E6', color: '#C5221F', fontWeight: 500 }}>
-                                Creditnota
+                                {t('bh.kwt.creditnota')}
                               </span>
                             )}
                           </div>
@@ -629,7 +642,7 @@ export default function KwartaalPage() {
                             )}
                             {fmt(invoice.invoice_date)}
                             {invoice.marked_paid_at && (
-                              <span> · betaald {fmt(invoice.marked_paid_at)}</span>
+                              <span> · {t('bh.kwt.betaaldOp', { datum: fmt(invoice.marked_paid_at) })}</span>
                             )}
                           </p>
                         </div>
@@ -656,7 +669,7 @@ export default function KwartaalPage() {
 
                           {/* [BOEK-006] Status actions — 3 states + neutral, one tap */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
-                            <span style={{ fontSize: 12, color: '#5F6368', fontWeight: 500 }}>Status</span>
+                            <span style={{ fontSize: 12, color: '#5F6368', fontWeight: 500 }}>{t('bh.kwt.statusLabel')}</span>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                               {ACCOUNTANT_ACTIONS.map(a => {
                                 const active = invoice.accountant_status === a.value
@@ -670,7 +683,7 @@ export default function KwartaalPage() {
                                       border: active ? `1px solid ${a.color}` : '1px solid #E0E0E0',
                                       cursor: 'pointer',
                                     }}>
-                                    {a.label}
+                                    {t(a.labelKey)}
                                   </button>
                                 )
                               })}
@@ -684,7 +697,7 @@ export default function KwartaalPage() {
                                   border: !invoice.accountant_status ? '1px solid #5f6368' : '1px solid #E0E0E0',
                                   cursor: 'pointer',
                                 }}>
-                                Niet verwerkt
+                                {t('bh.kwt.nietVerwerkt')}
                               </button>
                             </div>
                           </div>
@@ -692,7 +705,7 @@ export default function KwartaalPage() {
                           {/* Client info */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: '1px solid #E0E0E0' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                              <span style={{ color: '#5F6368' }}>Aan</span>
+                              <span style={{ color: '#5F6368' }}>{t('bh.kwt.aan')}</span>
                               <span style={{ fontWeight: 500, textAlign: 'end', color: '#202124' }}>
                                 {invoice.client_name || '—'}
                               </span>
@@ -708,7 +721,7 @@ export default function KwartaalPage() {
                             {/* [BOEK-028] replaced_by_number — shown on creditnota — May 2026 */}
                             {invoice.invoice_type === 'creditnota' && invoice.replaced_by_number && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                                <span style={{ color: '#5F6368' }}>Vervangt</span>
+                                <span style={{ color: '#5F6368' }}>{t('bh.kwt.vervangt')}</span>
                                 <span className="font-medium" style={{ color: M3.error }}>
                                   {invoice.replaced_by_number}
                                 </span>
@@ -719,15 +732,15 @@ export default function KwartaalPage() {
                           {/* Amounts — sign follows direction */}
                           {[
                             {
-                              label: 'Excl. BTW',
+                              label: t('bh.kwt.exclBtw'),
                               value: isOutgoing ? (invoice.total_ex_btw ?? 0) : -(invoice.total_ex_btw ?? 0),
                             },
                             {
-                              label: `BTW ${getBtwRate(invoice)}%`,
+                              label: t('bh.kwt.btwTarief', { tarief: getBtwRate(invoice) }),
                               value: isOutgoing ? (invoice.btw_amount ?? 0) : -(invoice.btw_amount ?? 0),
                             },
                             {
-                              label: 'Incl. BTW',
+                              label: t('bh.kwt.inclBtw'),
                               value: amount,
                             },
                           ].map(row => (
@@ -745,7 +758,7 @@ export default function KwartaalPage() {
                             <button
                               onClick={() => router.push(`/dashboard/invoice/${invoice.id}?from=client&clientId=${clientId}&q=${q}&year=${year}`)}
                               style={{ width: '100%', padding: '8px 16px', borderRadius: 8, backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer' }}>
-                              Openen →
+                              {t('bh.kwt.openen')} →
                             </button>
                           </div>
                         </div>

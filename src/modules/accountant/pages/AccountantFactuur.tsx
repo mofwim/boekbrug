@@ -21,6 +21,8 @@
 import { useMemo, useState } from 'react'
 // [TZ] One clock for every door — see the note at amsterdamToday().
 import { amsterdamToday } from '@/lib/format-nl'
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { UNITS, DEFAULT_UNIT_CODE, unitLabel } from '@/lib/units'
@@ -74,6 +76,8 @@ function euro(n: number): string {
 }
 
 export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = null }: Props) {
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   // [KLANT-VOORAF] Wie er is aangewezen wint van "de enige die er is" — beide zijn een beginwaarde,
   // en de aanwijzing is de meest recente handeling van de boekhouder.
@@ -117,10 +121,10 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
 
   async function verstuur() {
     setFout(null)
-    if (!klant) return setFout('Kies eerst voor welke klant je factureert.')
-    if (!naam.trim()) return setFout('Vul in aan wie de factuur gericht is.')
+    if (!klant) return setFout(t('bh.fact.foutKiesKlant'))
+    if (!naam.trim()) return setFout(t('bh.fact.foutOntvanger'))
     const bruikbaar = regels.filter((r) => r.description.trim() && naarGetal(r.unit_price) !== 0)
-    if (bruikbaar.length === 0) return setFout('Vul minstens één regel in met een omschrijving en een bedrag.')
+    if (bruikbaar.length === 0) return setFout(t('bh.fact.foutRegel'))
 
     setBezig(true)
     try {
@@ -149,7 +153,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const conceptData = await concept.json().catch(() => ({}))
       if (!concept.ok || !conceptData?.invoiceId) {
-        throw new Error(conceptData?.error || 'Het concept kon niet worden aangemaakt.')
+        throw new Error(conceptData?.error || t('bh.fact.foutConcept'))
       }
 
       // Stap 2 — uitgeven. Hier valt het nummer uit de reeks van de KLANT (art. 35), krijgt hij
@@ -161,15 +165,12 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const verzondenData = await verzonden.json().catch(() => ({}))
       if (!verzonden.ok) {
-        throw new Error(
-          verzondenData?.error ||
-            'Het concept staat klaar, maar versturen lukte niet. Probeer het opnieuw vanaf de factuur zelf.',
-        )
+        throw new Error(verzondenData?.error || t('bh.fact.foutVersturen'))
       }
 
       router.push(`/dashboard/invoice/${conceptData.invoiceId}`)
     } catch (e) {
-      setFout(e instanceof Error ? e.message : 'Er ging iets mis. Probeer het opnieuw.')
+      setFout(e instanceof Error ? e.message : t('bh.fact.foutOnbekend'))
       setBezig(false)
     }
   }
@@ -179,7 +180,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Factureren namens een klant
+          {t('bh.fact.titel')}
         </h1>
         <div
           style={{
@@ -191,17 +192,16 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
           }}
         >
           <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
-            Nog geen enkele klant heeft je hiervoor gemachtigd.
+            {t('bh.fact.geenMachtiging')}
           </p>
+          {/* The nav path stays as the client's screen writes it — a translated path points at a
+              word that is nowhere in that interface. Hence one whole sentence, no <strong> split:
+              a sentence cut around markup does not survive another word order. */}
           <p style={{ margin: '0 0 12px', color: M3.onSurfaceVariant, lineHeight: 1.6, fontSize: 14.5 }}>
-            Facturen maken namens iemand is iets anders dan zijn administratie inzien. Je klant zet
-            het zelf aan bij <strong>Instellingen → Mijn boekhouder</strong>. Hij kan het daar ook
-            weer uitzetten, wanneer hij wil.
+            {t('bh.fact.geenMachtigingUitleg')}
           </p>
           <p style={{ margin: 0, color: M3.mutedText, lineHeight: 1.6, fontSize: 13.5 }}>
-            De factuur komt daarna op zijn naam, in zijn nummerreeks en onder zijn BTW-nummer — hij
-            blijft er zelf verantwoordelijk voor (art. 35a Wet OB). Daarom vraagt de app het hem, en
-            niet jou.
+            {t('bh.fact.geenMachtigingWet')}
           </p>
           <VraagMachtiging klanten={gekoppeld} kind="facturen" />
         </div>
@@ -229,10 +229,10 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
   return (
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 4px' }}>
-        Factureren namens een klant
+        {t('bh.fact.titel')}
       </h1>
       <p style={{ margin: '0 0 20px', color: M3.onSurfaceVariant, fontSize: 14.5 }}>
-        De factuur gaat uit op naam van je klant, niet op die van jou.
+        {t('bh.fact.ondertitel')}
       </p>
 
       {/* ── Namens wie ─────────────────────────────────────────────────────── */}
@@ -246,14 +246,14 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
           marginBottom: 16,
         }}
       >
-        <label style={label} htmlFor="namens">Namens welke klant?</label>
+        <label style={label} htmlFor="namens">{t('bh.fact.namensLabel')}</label>
         <select
           id="namens"
           value={klantId}
           onChange={(e) => setKlantId(e.target.value)}
           style={veld}
         >
-          <option value="">Kies een klant…</option>
+          <option value="">{t('bh.fact.kiesKlantOptie')}</option>
           {klanten.map((k) => (
             <option key={k.id} value={k.id}>{k.naam}</option>
           ))}
@@ -274,9 +274,12 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
               color: M3.onPrimaryContainer,
             }}
           >
-            Deze factuur komt op naam van <strong>{klant.naam}</strong>, met zijn nummerreeks
-            {klant.btwNummer ? ` en BTW-nummer ${klant.btwNummer}` : ''}. Hij krijgt bericht zodra
-            hij verstuurd is, en kan de machtiging op elk moment zelf intrekken.
+            {/* The three sentences stay whole, one key each. Cutting them around the <strong> that
+                used to hold the name would leave a fragment that no other word order can carry —
+                and these are the sentences that may never come apart. */}
+            {klant.btwNummer
+              ? t('bh.fact.mandaatBtw', { naam: klant.naam, btw: klant.btwNummer })
+              : t('bh.fact.mandaat', { naam: klant.naam })}
           </div>
         )}
       </section>
@@ -293,38 +296,38 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
         }}
       >
         <h2 style={{ fontSize: 15, fontWeight: 500, color: M3.onSurface, margin: '0 0 14px' }}>
-          Aan wie stuurt {klant ? klant.naam : 'je klant'} deze factuur?
+          {t('bh.fact.aanWie', { naam: klant ? klant.naam : t('bh.fact.jeKlant') })}
         </h2>
         <div style={{ display: 'grid', gap: 12 }}>
           <div>
-            <label style={label} htmlFor="ontvanger">Naam</label>
+            <label style={label} htmlFor="ontvanger">{t('bh.fact.labelNaam')}</label>
             <input id="ontvanger" style={veld} value={naam} onChange={(e) => setNaam(e.target.value)} />
           </div>
           <div>
-            <label style={label} htmlFor="ontvanger-mail">E-mailadres</label>
+            <label style={label} htmlFor="ontvanger-mail">{t('bh.fact.labelEmail')}</label>
             <input id="ontvanger-mail" type="email" style={veld} value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
-            <label style={label} htmlFor="ontvanger-adres">Adres</label>
+            <label style={label} htmlFor="ontvanger-adres">{t('bh.fact.labelAdres')}</label>
             <input id="ontvanger-adres" style={veld} value={adres} onChange={(e) => setAdres(e.target.value)} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
             <div>
-              <label style={label} htmlFor="ontvanger-pc">Postcode</label>
+              <label style={label} htmlFor="ontvanger-pc">{t('bh.fact.labelPostcode')}</label>
               <input id="ontvanger-pc" style={veld} value={postcode} onChange={(e) => setPostcode(e.target.value)} />
             </div>
             <div>
-              <label style={label} htmlFor="ontvanger-plaats">Plaats</label>
+              <label style={label} htmlFor="ontvanger-plaats">{t('bh.fact.labelPlaats')}</label>
               <input id="ontvanger-plaats" style={veld} value={plaats} onChange={(e) => setPlaats(e.target.value)} />
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label style={label} htmlFor="ontvanger-btw">BTW-nummer (optioneel)</label>
+              <label style={label} htmlFor="ontvanger-btw">{t('bh.fact.labelBtw')}</label>
               <input id="ontvanger-btw" style={veld} value={btwNummer} onChange={(e) => setBtwNummer(e.target.value)} />
             </div>
             <div>
-              <label style={label} htmlFor="factuurdatum">Factuurdatum</label>
+              <label style={label} htmlFor="factuurdatum">{t('bh.fact.labelDatum')}</label>
               <input id="factuurdatum" type="date" style={veld} value={factuurdatum} onChange={(e) => setFactuurdatum(e.target.value)} />
             </div>
           </div>
@@ -343,7 +346,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
         }}
       >
         <h2 style={{ fontSize: 15, fontWeight: 500, color: M3.onSurface, margin: '0 0 14px' }}>
-          Wat is er geleverd?
+          {t('bh.fact.watGeleverd')}
         </h2>
         {regels.map((r, i) => (
           <div
@@ -358,8 +361,8 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
           >
             <input
               style={veld}
-              placeholder="Omschrijving"
-              aria-label={`Omschrijving regel ${i + 1}`}
+              placeholder={t('bh.fact.phOmschrijving')}
+              aria-label={t('bh.fact.ariaOmschrijving', { n: i + 1 })}
               value={r.description}
               onChange={(e) => pasRegelAan(i, 'description', e.target.value)}
             />
@@ -367,14 +370,14 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
               <input
                 style={veld}
                 inputMode="decimal"
-                placeholder="Aantal"
-                aria-label={`Aantal regel ${i + 1}`}
+                placeholder={t('bh.fact.phAantal')}
+                aria-label={t('bh.fact.ariaAantal', { n: i + 1 })}
                 value={r.quantity}
                 onChange={(e) => pasRegelAan(i, 'quantity', e.target.value)}
               />
               <select
                 style={veld}
-                aria-label={`Eenheid regel ${i + 1}`}
+                aria-label={t('bh.fact.ariaEenheid', { n: i + 1 })}
                 value={r.unit}
                 onChange={(e) => pasRegelAan(i, 'unit', e.target.value)}
               >
@@ -385,19 +388,20 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
               <input
                 style={veld}
                 inputMode="decimal"
-                placeholder="Prijs"
-                aria-label={`Prijs regel ${i + 1}`}
+                placeholder={t('bh.fact.phPrijs')}
+                aria-label={t('bh.fact.ariaPrijs', { n: i + 1 })}
                 value={r.unit_price}
                 onChange={(e) => pasRegelAan(i, 'unit_price', e.target.value)}
               />
               <select
                 style={veld}
-                aria-label={`BTW regel ${i + 1}`}
+                aria-label={t('bh.fact.ariaBtw', { n: i + 1 })}
                 value={r.btw_rate}
                 onChange={(e) => pasRegelAan(i, 'btw_rate', Number(e.target.value))}
               >
-                {BTW_TARIEVEN.map((t) => (
-                  <option key={t} value={t}>{t}% BTW</option>
+                {/* Renamed from `t` — the translator owns that name in this component now. */}
+                {BTW_TARIEVEN.map((tarief) => (
+                  <option key={tarief} value={tarief}>{t('bh.fact.btwTarief', { tarief })}</option>
                 ))}
               </select>
             </div>
@@ -415,7 +419,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
             padding: 0,
           }}
         >
-          + Regel erbij
+          {t('bh.fact.regelErbij')}
         </button>
       </section>
 
@@ -430,10 +434,10 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: M3.onSurfaceVariant }}>
-          <span>Subtotaal</span><span>{euro(totalen.ex)}</span>
+          <span>{t('bh.fact.subtotaal')}</span><span>{euro(totalen.ex)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: M3.onSurfaceVariant, marginTop: 6 }}>
-          <span>BTW</span><span>{euro(totalen.btw)}</span>
+          <span>{t('bh.fact.btw')}</span><span>{euro(totalen.btw)}</span>
         </div>
         <div
           style={{
@@ -447,7 +451,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
             borderTop: `1px solid ${M3.outlineVariant}`,
           }}
         >
-          <span>Totaal</span><span>{euro(totalen.inc)}</span>
+          <span>{t('bh.fact.totaal')}</span><span>{euro(totalen.inc)}</span>
         </div>
 
         {fout && (
@@ -485,14 +489,13 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
           }}
         >
           {bezig
-            ? 'Bezig met versturen…'
+            ? t('bh.fact.bezig')
             : klant
-              ? `Verstuur namens ${klant.naam}`
-              : 'Kies eerst een klant'}
+              ? t('bh.fact.verstuurNamens', { naam: klant.naam })
+              : t('bh.fact.kiesEerst')}
         </button>
         <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: M3.mutedText, lineHeight: 1.5 }}>
-          Versturen geeft het factuurnummer uit. Dat kan niet ongedaan gemaakt worden — een
-          uitgegeven nummer blijft uitgegeven (art. 35 Wet OB). Corrigeren gaat met een creditnota.
+          {t('bh.fact.nummerWaarschuwing')}
         </p>
       </section>
     </main>

@@ -18,6 +18,10 @@
 import { useState } from 'react'
 import { M3, R } from '@/lib/design/tokens'
 import { failureText } from '@/lib/server-message'
+// [TAAL] This widget holds no language of its own: every sentence comes from messages.ts. What the
+// CLIENT then receives is written by the route, not here — that message is not interface.
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 export interface KoppelKlant {
   id: string
@@ -31,6 +35,9 @@ interface Props {
 }
 
 export default function VraagMachtiging({ klanten, kind }: Props) {
+  // Before the early return below: the hook count may not depend on how many clients there are.
+  const locale = useLocale()
+  const t = translator(locale)
   const [klantId, setKlantId] = useState(klanten.length === 1 ? klanten[0].id : '')
   const [bezig, setBezig] = useState(false)
   const [gedaan, setGedaan] = useState<string[]>([])
@@ -52,10 +59,10 @@ export default function VraagMachtiging({ klanten, kind }: Props) {
         body: JSON.stringify({ clientId: klant.id, kind }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(failureText(res.status, data, 'Vragen mislukt.'))
+      if (!res.ok) throw new Error(failureText(res.status, data, t('bh.macht.fout.mislukt')))
       setGedaan((g) => [...g, klant.id])
     } catch (e) {
-      setFout(e instanceof Error ? e.message : 'Er ging iets mis.')
+      setFout(e instanceof Error ? e.message : t('bh.macht.fout.algemeen'))
     } finally {
       setBezig(false)
     }
@@ -76,21 +83,20 @@ export default function VraagMachtiging({ klanten, kind }: Props) {
   return (
     <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${M3.outlineVariant}` }}>
       <p style={{ margin: '0 0 10px', fontSize: 14, color: M3.onSurface, fontWeight: 500 }}>
-        Vraag het je klant
+        {t('bh.macht.kop')}
       </p>
       <p style={{ margin: '0 0 12px', fontSize: 13, color: M3.mutedText, lineHeight: 1.6 }}>
-        Hij krijgt een bericht met wat je vraagt, wat je daarmee wél en niet kunt, en een link naar
-        de knop. Beslissen doet hij zelf.
+        {t('bh.macht.uitleg')}
       </p>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <select
           value={klantId}
           onChange={(e) => setKlantId(e.target.value)}
-          aria-label="Klant om te vragen"
+          aria-label={t('bh.macht.kiesLabel')}
           style={veld}
         >
-          <option value="">Kies een klant…</option>
+          <option value="">{t('bh.macht.kiesPlaceholder')}</option>
           {klanten.map((k) => (
             <option key={k.id} value={k.id}>{k.naam}</option>
           ))}
@@ -110,13 +116,13 @@ export default function VraagMachtiging({ klanten, kind }: Props) {
             cursor: bezig || !klant || alGevraagd ? 'default' : 'pointer',
           }}
         >
-          {alGevraagd ? 'Gevraagd' : bezig ? 'Bezig…' : 'Vraag toestemming'}
+          {alGevraagd ? t('bh.macht.knop.gevraagd') : bezig ? t('bh.macht.knop.bezig') : t('bh.macht.knop.vraag')}
         </button>
       </div>
 
       {alGevraagd && (
         <p style={{ margin: '10px 0 0', fontSize: 13, color: M3.success }}>
-          Gevraagd. Zodra hij het aanzet, staat deze pagina vol.
+          {t('bh.macht.gevraagdMelding')}
         </p>
       )}
       {fout && (
@@ -125,8 +131,7 @@ export default function VraagMachtiging({ klanten, kind }: Props) {
         </p>
       )}
       <p style={{ margin: '10px 0 0', fontSize: 12, color: M3.mutedText, lineHeight: 1.5 }}>
-        Eén keer vragen is vragen. Wil je sneller antwoord, bel dan even — daar is geen knop voor,
-        en dat is met opzet.
+        {t('bh.macht.voet')}
       </p>
     </div>
   )

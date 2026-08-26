@@ -75,11 +75,24 @@ The `[TAAL]` gates in `lifecycle-gates.test.ts` enforce the mechanical half of t
 stays importable, every key used exists, every key declared is rendered, and the translated panel
 carries no Dutch of its own.
 
-**The accountant module (`src/modules/accountant/`) is deliberately Dutch-only.** Its user is the
-boekhouder — a Dutch professional reading Dutch administraties under Dutch law. The owner's
-language setting describes the OWNER, and applying it to the accountant's screens would translate
-an interface for someone who never chose a language. If a non-Dutch accountant ever becomes a real
-audience, that is a product decision first and a translation second.
+**The accountant module (`src/modules/accountant/`) is translated too — and that is a reversal.**
+It used to be deliberately Dutch-only, on the argument that the boekhouder is a Dutch professional
+reading Dutch administraties under Dutch law, and that the owner's language setting describes the
+OWNER. The note ended: *"If a non-Dutch accountant ever becomes a real audience, that is a product
+decision first and a translation second."* That decision has been made — the first accountants
+using this product read Arabic — so the module is translated, and the two halves of the old
+argument are settled like this:
+
+- **The accountant has their own language setting, not the owner's.** They are a logged-in user
+  with a profile of their own, so `preferred_language` on THEIR row is what their screens follow.
+  Nothing an owner picks reaches an accountant's interface, which was the real objection.
+- **What they read is still Dutch where the law reads it.** The administratie, the invoice, the
+  e-factuur, the auditfile and every amount stay exactly what they were. A translated button above
+  a Dutch document is not a translated document — see the never-translated list above, which the
+  accountant module obeys in full.
+
+Accountant screens therefore follow the same rule as every other screen: Dutch is the source
+language, keys live in `messages.ts`, and a component holds no language of its own.
 
 # More than one session works on this repo
 

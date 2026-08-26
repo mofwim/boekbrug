@@ -26,6 +26,9 @@ import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { boardTotals, type DebtorGroup, type DebtorRow } from '@/lib/accountant-debtors'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 import { failureText } from '@/lib/server-message'
+// [TAAL] This screen holds no language of its own: every sentence comes from messages.ts.
+import { translator, type Translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 /** Eén rij, met het extra veld dat de pagina meegeeft om de grijze knop te kunnen uitleggen. */
 export interface SchermRij extends DebtorRow {
@@ -48,12 +51,14 @@ function euro(n: number): string {
   return `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function dagenZin(d: number): string {
-  if (d <= 0) return 'vandaag vervallen'
-  if (d === 1) return '1 dag te laat'
-  if (d < 60) return `${d} dagen te laat`
+// [TAAL] The wording is a key per branch, so the translator is handed in — a module-level helper
+// cannot call a hook, and the decision itself is about the number, not about the language.
+function dagenZin(d: number, t: Translator): string {
+  if (d <= 0) return t('bh.deb.dagen.vandaag')
+  if (d === 1) return t('bh.deb.dagen.een')
+  if (d < 60) return t('bh.deb.dagen.dagen', { dagen: d })
   const maanden = Math.floor(d / 30)
-  return `${maanden} maanden te laat`
+  return t('bh.deb.dagen.maanden', { maanden })
 }
 
 /** Hoe erger, hoe roder. Alleen als signaal — het getal ernaast is de waarheid. */
@@ -64,6 +69,8 @@ function kleurVoor(dagen: number): string {
 }
 
 export default function AccountantDebiteuren({ groepen, geenMandaat = false, gekoppeld = [] }: Props) {
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   const [bezig, setBezig] = useState<string | null>(null)
   const [klaar, setKlaar] = useState<Record<string, string>>({})
@@ -82,12 +89,12 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
         body: JSON.stringify({ namens_klant_id: klantId }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(failureText(res.status, data, 'De herinnering kon niet worden verstuurd.'))
-      setKlaar((k) => ({ ...k, [id]: 'Herinnering verstuurd' }))
+      if (!res.ok) throw new Error(failureText(res.status, data, t('bh.deb.fout.herinneringMislukt')))
+      setKlaar((k) => ({ ...k, [id]: t('bh.deb.status.verstuurd') }))
       // Ververs de server-data: het spoor is veranderd, dus de volgende beurt van deze rij ook.
       router.refresh()
     } catch (e) {
-      setFout((f) => ({ ...f, [id]: e instanceof Error ? e.message : 'Er ging iets mis.' }))
+      setFout((f) => ({ ...f, [id]: e instanceof Error ? e.message : t('bh.deb.fout.algemeen') }))
     } finally {
       setBezig(null)
     }
@@ -105,16 +112,22 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Openstaande facturen
+          {t('bh.deb.titel')}
         </h1>
         <div style={{ ...kaart, padding: 20 }}>
           <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
-            Nog geen enkele klant heeft je gemachtigd om namens hem te herinneren.
+            {t('bh.deb.geenMandaat.kop')}
           </p>
           <p style={{ margin: 0, color: M3.onSurfaceVariant, lineHeight: 1.6, fontSize: 14.5 }}>
-            Meekijken in een administratie is iets anders dan mailen naar de klanten van je klant.
-            Je klant zet het zelf aan bij <strong>Instellingen → Jouw boekhouder</strong>, met
-            dezelfde machtiging waarmee je ook namens hem kunt factureren.
+            {/* The nav item is named as it is written on screen, in every language — an owner
+                hunting for a translated word finds nothing in the interface. */}
+            {t('bh.deb.geenMandaat.uitleg1')}{' '}
+            {/* Het pad staat er zoals het op het scherm van de KLANT staat. Dat is een bewuste
+                uitzondering op "een zin noemt de knop zoals hij geschreven staat": die knop staat
+                hier op het scherm van een ANDER, van wie wij de taal niet weten. Nederlands is dan
+                het enige antwoord dat niemand naar een woord stuurt dat nergens staat. */}
+            <strong>{'Instellingen → Jouw boekhouder'}</strong>{/* [TAAL-DB] */}
+            {t('bh.deb.geenMandaat.uitleg2')}
           </p>
           <VraagMachtiging klanten={gekoppeld} kind="facturen" />
         </div>
@@ -127,11 +140,11 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Openstaande facturen
+          {t('bh.deb.titel')}
         </h1>
         <div style={{ ...kaart, padding: 20 }}>
           <p style={{ margin: 0, color: M3.onSurface, lineHeight: 1.6 }}>
-            Niets te laat. Bij geen van je gemachtigde klanten staat een vervallen factuur open.
+            {t('bh.deb.leeg.allesBetaald')}
           </p>
         </div>
       </main>
@@ -141,10 +154,10 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
   return (
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 4px' }}>
-        Openstaande facturen
+        {t('bh.deb.titel')}
       </h1>
       <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5 }}>
-        Oudste schuld bovenaan — niet het grootste bedrag.
+        {t('bh.deb.ondertitel')}
       </p>
 
       {/* ── De ene regel bovenaan ────────────────────────────────────────── */}
@@ -152,15 +165,24 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
         <p style={{ margin: 0, fontSize: 26, fontWeight: 500, color: M3.onSurface }}>
           {euro(totalen.outstanding)}
         </p>
+        {/* [TAAL] One key per count combination: a noun that has to agree with a number is not a
+            parameter — Arabic and Turkish inflect around it. */}
         <p style={{ margin: '4px 0 0', fontSize: 14, color: M3.onSurfaceVariant }}>
-          te laat · {totalen.invoices} {totalen.invoices === 1 ? 'factuur' : 'facturen'} bij{' '}
-          {totalen.clients} {totalen.clients === 1 ? 'klant' : 'klanten'}
+          {totalen.invoices === 1
+            ? totalen.clients === 1
+              ? t('bh.deb.totaal.enkelEnkel', { facturen: totalen.invoices, klanten: totalen.clients })
+              : t('bh.deb.totaal.enkelMeer', { facturen: totalen.invoices, klanten: totalen.clients })
+            : totalen.clients === 1
+              ? t('bh.deb.totaal.meerEnkel', { facturen: totalen.invoices, klanten: totalen.clients })
+              : t('bh.deb.totaal.meerMeer', { facturen: totalen.invoices, klanten: totalen.clients })}
         </p>
         <p style={{ margin: '10px 0 0', fontSize: 13.5, color: M3.mutedText, lineHeight: 1.6 }}>
           {totalen.remindable === 0
-            ? 'Vandaag kun je er geen enkele herinneren — per factuur staat hieronder waarom.'
-            : `${totalen.remindable} ${totalen.remindable === 1 ? 'kan' : 'kunnen'} vandaag een herinnering krijgen.`}{' '}
-          De mail gaat uit op naam van je klant, en hij krijgt van elke herinnering bericht.
+            ? t('bh.deb.totaal.geenHerinnerbaar')
+            : totalen.remindable === 1
+              ? t('bh.deb.totaal.herinnerbaarEen', { aantal: totalen.remindable })
+              : t('bh.deb.totaal.herinnerbaarMeer', { aantal: totalen.remindable })}{' '}
+          {t('bh.deb.totaal.namensKlant')}
         </p>
       </section>
 
@@ -176,7 +198,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
             </span>
           </div>
           <p style={{ margin: '2px 0 14px', fontSize: 12.5, color: kleurVoor(groep.worstDaysLate) }}>
-            oudste: {dagenZin(groep.worstDaysLate)}
+            {t('bh.deb.groep.oudste')} {dagenZin(groep.worstDaysLate, t)}
           </p>
 
           {groep.rows.map((rij) => {
@@ -197,12 +219,16 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
               >
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontSize: 14.5, color: M3.onSurface }}>
-                    {rij.invoice.client_name || 'Onbekende afnemer'}
+                    {rij.invoice.client_name || t('bh.deb.rij.onbekendeAfnemer')}
                   </p>
                   <p style={{ margin: '2px 0 0', fontSize: 12.5, color: kleurVoor(rij.daysLate) }}>
-                    {rij.invoice.invoice_number || '—'} · {dagenZin(rij.daysLate)}
+                    {rij.invoice.invoice_number || '—'} · {dagenZin(rij.daysLate, t)}
                     {(rij.invoice.reminder_count ?? 0) > 0 &&
-                      ` · ${rij.invoice.reminder_count} ${rij.invoice.reminder_count === 1 ? 'herinnering' : 'herinneringen'} verstuurd`}
+                      ` · ${
+                        rij.invoice.reminder_count === 1
+                          ? t('bh.deb.rij.herinneringEen', { aantal: 1 })
+                          : t('bh.deb.rij.herinneringMeer', { aantal: rij.invoice.reminder_count ?? 0 })
+                      }`}
                   </p>
                   {/* De reden waarom er geen knop staat. Nooit een grijze knop zonder zin. */}
                   {!rij.verdict.allowed && (
@@ -241,7 +267,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
                         opacity: bezig === id ? 0.5 : 1,
                       }}
                     >
-                      {bezig === id ? 'Bezig…' : 'Herinner'}
+                      {bezig === id ? t('bh.deb.knop.bezig') : t('bh.deb.knop.herinner')}
                     </button>
                   )}
                 </div>
@@ -252,8 +278,7 @@ export default function AccountantDebiteuren({ groepen, geenMandaat = false, gek
       ))}
 
       <p style={{ fontSize: 12.5, color: M3.mutedText, lineHeight: 1.6, margin: '4px 0 0' }}>
-        Na drie herinneringen stopt deze knop. Wat daarna komt — een aanmaning of incasso — heeft
-        gevolgen die de ondernemer zelf moet willen (art. 6:96 BW), en is dus geen knop hier.
+        {t('bh.deb.voet')}
       </p>
     </main>
   )
