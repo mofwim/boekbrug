@@ -102,11 +102,14 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
       if (cr.ok && !currentFolderId) {
         const result = await cr.json() as { folderId: string | null; confidence?: number; type: string };
         if (result.folderId && result.type !== "unknown" && (result.confidence ?? 1) >= 0.7) {
-          await fetch(`/api/bestanden?id=${json.id}`, {
+          const pr = await fetch(`/api/bestanden?id=${json.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ folder_id: result.folderId }),
           });
+          // [LEES] Faalt het indelen, dan blijft het bestand gewoon in de hoofdmap staan — de
+          // veilige kant (zichtbaar, niet zoek). Alleen benoemen, nooit blokkeren.
+          if (!pr.ok) console.warn("[BESTANDEN] auto-indeling mislukt — bestand blijft in de hoofdmap");
         }
       }
     } catch { /* AI failed silently */ }

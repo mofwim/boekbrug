@@ -11,10 +11,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } from 'pdf-lib'
 
 import {
-  extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, looksLikeInvoiceXml,
+  extractEmbeddedInvoiceXml,
+  extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, looksLikeInvoiceXml,
   eInvoiceSettlesAmounts,
 } from './e-invoice'
 
@@ -507,4 +508,40 @@ test('[E-FACTUUR-BESLECHT] een creditnota beslecht niets, ook met perfecte XML',
   const basis = { totalIncBtw: 33.87, totalExBtw: 31.07, btwAmount: 2.8, syntax: 'ubl', contradicts: false }
   assert.equal(eInvoiceSettlesAmounts({ _einvoice: basis }), true, 'een gewone factuur beslecht wel')
   assert.equal(eInvoiceSettlesAmounts({ _einvoice: { ...basis, isCreditNote: true } }), false)
+})
+
+test('[LEES] a factur-x.xml that will not inflate is REPORTED present, never silently "no XML"', async () => {
+  // Build a real PDF with a real attachment, then reload it and corrupt the embedded stream's
+  // bytes while its dict still claims FlateDecode — exactly what a truncated upload or a broken
+  // producer ships. The supplier DID attach their own figures; "no e-invoice" would be a lie.
+  const doc = await PDFDocument.create()
+  doc.addPage()
+  await doc.attach(Buffer.from(cii({ inc: '100.00', ex: '90.00', btw: '10.00' }), 'utf8'), 'factur-x.xml', { mimeType: 'text/xml' })
+  const goed = Buffer.from(await doc.save())
+
+  const herladen = await PDFDocument.load(goed, { updateMetadata: false })
+  const names = herladen.catalog.lookup(PDFName.of('Names'), PDFDict)!
+  const embedded = names.lookup(PDFName.of('EmbeddedFiles'), PDFDict)!
+  const list = embedded.lookup(PDFName.of('Names'), PDFArray)!
+  const spec = list.lookup(1, PDFDict)!
+  const ef = spec.lookup(PDFName.of('EF'), PDFDict)!
+  const stream = (ef.lookup(PDFName.of('F')) ?? ef.lookup(PDFName.of('UF'))) as PDFRawStream
+  stream.dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'))
+  ;(stream as unknown as { contents: Uint8Array }).contents = new Uint8Array([1, 2, 3, 4])
+  const kapot = Buffer.from(await herladen.save())
+
+  const detailed = await extractEmbeddedInvoiceXmlDetailed(kapot)
+  assert.equal(detailed.xml, null, 'the sealed attachment yields no XML')
+  assert.equal(detailed.unreadablePresent, true, '…but its PRESENCE is a fact the review screen gets to see')
+
+  // And the ordinary cases stay exactly what they were: a healthy Factur-X reads, a plain PDF
+  // answers no-and-nothing-hidden.
+  const gezond = await extractEmbeddedInvoiceXmlDetailed(goed)
+  assert.ok(gezond.xml, 'the healthy twin still reads')
+  assert.equal(gezond.unreadablePresent, false)
+  const plain = await PDFDocument.create()
+  plain.addPage()
+  const leeg = await extractEmbeddedInvoiceXmlDetailed(Buffer.from(await plain.save()))
+  assert.equal(leeg.xml, null)
+  assert.equal(leeg.unreadablePresent, false)
 })

@@ -88,7 +88,7 @@ import { groundMoneyFields } from './amount-grounding';
 import { groundVendorName } from './vendor-grounding';
 // [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
 // factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
-import { extractEmbeddedInvoiceXml, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
+import { extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
 // [DOCCHECK] The sharper check on the same text — see document-verify.ts.
 import { verifyDocument } from './document-verify';
 // [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
@@ -2024,8 +2024,14 @@ Return JSON only.`;
       // the arithmetic would be perfect, the figure printed, and its placement exactly right.
       let eInvoice: ReturnType<typeof parseEInvoice> = null;
       if (mimeType === 'application/pdf') {
-        const xml = await extractEmbeddedInvoiceXml(Buffer.from(cleanBase64(fileBase64), 'base64'));
-        if (xml) eInvoice = parseEInvoice(xml);
+        const embedded = await extractEmbeddedInvoiceXmlDetailed(Buffer.from(cleanBase64(fileBase64), 'base64'));
+        if (embedded.xml) eInvoice = parseEInvoice(embedded.xml);
+        // [LEES] A factur-x.xml that would not decompress is NOT "no e-invoice" — the supplier
+        // shipped their own figures and we could not open them. The reading proceeds exactly as
+        // before, but the review surface gets to say that the best witness exists and is sealed.
+        if (!eInvoice && embedded.unreadablePresent) {
+          (parsed.field_confidence as unknown as Record<string, unknown>)._einvoice = { unreadable: true };
+        }
       }
       if (eInvoice) {
         (parsed.field_confidence as unknown as Record<string, unknown>)._einvoice = {

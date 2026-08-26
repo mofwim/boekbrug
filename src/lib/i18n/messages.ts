@@ -1412,6 +1412,9 @@ export const MESSAGES = {
   'corr.leverancier': { nl: 'Leverancier', ar: 'المورّد', en: 'Supplier' },
   'corr.factuurnummer': { nl: 'Factuurnummer', ar: 'رقم الفاتورة', en: 'Invoice number' },
   'corr.factuurdatum': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
+  'corr.vervaldatum': { nl: 'Vervaldatum', ar: 'تاريخ الاستحقاق', en: 'Due date' },
+  'corr.iban': { nl: 'IBAN van de leverancier', ar: 'IBAN المورّد', en: "Supplier's IBAN" },
+  'corr.kenmerk': { nl: 'Betaalkenmerk', ar: 'مرجع الدفع', en: 'Payment reference' },
   'corr.bedragUitleg': {
     nl: 'Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief rekent zichzelf uit.',
     ar: 'انقل الإجمالي ومبلغ btw كما هما مكتوبان أسفل الفاتورة — المبلغ بدون الضريبة يُحسب تلقائياً.',

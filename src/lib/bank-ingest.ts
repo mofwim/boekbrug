@@ -97,8 +97,18 @@ export async function importBankStatement(args: {
     const content = buffer.toString("utf8");
     try {
       parsed = parseBankFile(content, filename);
-    } catch {
-      parsed = null; // unparseable format — still stored as passthrough below
+    } catch (e) {
+      // [LEES] Named, never mute: the caller used to report "geen transacties gelezen" with no
+      // reason, which reads as "your file was empty" over what was actually a parser crash. The
+      // file is still stored as passthrough below — nothing is lost — but the owner hears WHY.
+      parsed = null;
+      extraWarnings.push(
+        "Het bestand kon niet als bankafschrift worden gelezen (het formaat brak tijdens het lezen). " +
+        "Het is wel bewaard bij je bestanden.",
+      );
+      console.error("[BANK-INGEST] parseBankFile threw", {
+        filename, error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 

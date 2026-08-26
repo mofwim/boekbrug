@@ -1902,8 +1902,8 @@ test("[E-FACTUUR] the supplier's own figures are read, and they outrank the read
   // everyone from 2028, so this arrives now and will only arrive more.
   const ai = code("src/lib/ai.ts");
   assert.match(
-    ai, /extractEmbeddedInvoiceXml\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
-    "the reader must look inside the PDF for it",
+    ai, /extractEmbeddedInvoiceXmlDetailed\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
+    "the reader must look inside the PDF for it — via the DETAILED extractor since [LEES], so a sealed attachment is a reported fact",
   );
   assert.match(
     ai, /_einvoice = \{[\s\S]{0,160}?contradicts: eInvoiceContradicts\(eInvoice, parsed\.total_inc_btw\)/,
@@ -15082,4 +15082,57 @@ test("[PULS] money recorded with nobody present is TOLD, and the morning mail is
   const instellingen = code("src/app/dashboard/settings/page.tsx");
   assert.match(instellingen, /\.update\(\{ ochtend_mail: ochtendMail \}\)/, "the off switch exists");
   assert.match(instellingen, /t\('inst\.ochtendMail'\)/, "…and is on the screen, in the vocabulary");
+});
+
+test("[LEES] a file the app cannot read SAYS SO, and everything it read stays correctable", () => {
+  // The mandate behind this gate: the reading system may be wrong about nothing — so where it
+  // cannot know, it says "ik weet het niet" to the OWNER (never only to a server log), and every
+  // field it extracted has a door the owner can correct it through.
+
+  // 1. A bank parser crash is a NAMED warning, not an empty-looking import.
+  const ingest = code("src/lib/bank-ingest.ts");
+  assert.match(ingest, /Het bestand kon niet als bankafschrift worden gelezen/,
+    "a parser exception reaches the owner as a sentence — 'geen transacties' over a crash reads as 'your file was empty'");
+
+  // 2. The vanishing-attachment failure ALARMS: a mail attachment that lands in neither
+  //    bestanden nor the skipped panel is an invoice that silently never happened.
+  const mailSync = code("src/lib/email-integration.ts");
+  assert.match(mailSync, /message: 'unreadable e-mail attachment could not be SAVED — it now exists nowhere the owner can see',/,
+    "the save failure reaches the alarm channel");
+  assert.match(mailSync, /message: 'skip-registry upsert failed — an unread attachment is missing from the skipped panel',/,
+    "…and so does the registry half");
+  // 2b. "We cannot read .xlsx" was half-true — the upload door CAN. The skip line names the door.
+  assert.match(mailSync, /lezen we niet automatisch uit e-mail — upload hem via Uploaden/,
+    "a format another door reads points at that door");
+
+  // 3. A sealed Factur-X is reported PRESENT: the supplier attached their own figures and we
+  //    could not open them — "no e-invoice" would be a lie the review screen repeats.
+  const einv = code("src/lib/e-invoice.ts");
+  assert.match(einv, /unreadablePresent: boolean/, "the detailed extractor carries the fact");
+  assert.match(einv, /return \{ content: null, unreadable: true \}/, "…detected at the stream that will not inflate");
+  const lees = code("src/lib/ai.ts");
+  assert.match(lees, /_einvoice = \{ unreadable: true \};/, "…and stored on the invoice's evidence blob");
+
+  // 4. An unrecognised Af/Bij flag: the direction guess stays (refusing a file over one odd flag
+  //    is worse) but it is SAID, per file, with a count.
+  const csv = code("src/lib/bank-csv.ts");
+  assert.match(csv, /Af\/Bij-vlag die we niet herkennen/, "the guessed direction is named in parseErrors");
+
+  // 5. [LEES-CORRECTIE] The three pipeline-written fields that had NO edit surface: due_date
+  //    (schedules Vandaag + reminders), vendor_iban (fraud check + match tier), and the
+  //    payment reference. The route validates and clears-on-empty; the modal renders them.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /Vul een geldige vervaldatum in/, "due_date is validated, not pasted");
+  assert.match(route, /Dit is geen geldige IBAN-vorm/, "…and a corrected IBAN must at least be one");
+  assert.match(route, /\.due_date = nextDue === "" \? null : nextDue;/, "empty string clears, per the contract");
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /t\('corr\.vervaldatum'\)/, "the due date is on the form");
+  assert.match(modal, /t\('corr\.iban'\)/, "…and the IBAN");
+  assert.match(modal, /t\('corr\.kenmerk'\)/, "…and the payment reference");
+
+  // 6. The proofs exist: the sealed-attachment fixture and the odd-flag fixture both bite.
+  const einvSpec = readFileSync("src/lib/e-invoice.test.ts", "utf8");
+  assert.match(einvSpec, /\[LEES\] a factur-x\.xml that will not inflate/, "the sealed-Factur-X test exists");
+  const csvSpec = readFileSync("src/lib/bank-csv.test.ts", "utf8");
+  assert.match(csvSpec, /unrecognised Af\/Bij flag is SAID/, "the odd-flag test exists");
 });

@@ -96,6 +96,8 @@ export function vendorsAreDifferent(a: string | null | undefined, b: string | nu
 import type { Database } from '@/types/database.types'
 // [TZ] The owner's day, not the server's — see amsterdamToday().
 import { amsterdamToday } from '@/lib/format-nl'
+// [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
+import { reportHandledFailure } from '@/lib/report-handled'
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -2222,6 +2224,13 @@ export function unreadableFormatReason(filename: string): string | null {
   // niemand vooruit.
   if (!ext) return null
   if (SILENT_MAIL_FORMATS.has(ext)) return null
+  // [LEES] "Wij kunnen dit niet lezen" was maar half waar: een .xlsx/.csv lezen we WÉL — alleen
+  // niet via de mail-poort (de upload-deur herkent dagomzet, kasboek en grootboek). "Ik weet het
+  // niet" mag; "ik weet het niet" terwijl een andere deur het wél weet, moet die deur noemen.
+  if (/^(xlsx|xls|csv)$/.test(ext)) {
+    return `.${ext} lezen we niet automatisch uit e-mail — upload hem via Uploaden, dan herkennen ` +
+      'we een dagomzet-, kasboek- of grootboekbestand wél'
+  }
   return `.${ext} kunnen wij niet automatisch lezen — is dit een factuur, bewaar hem dan als PDF ` +
     'of maak er een foto van en voeg die toe bij Uploaden'
 }
@@ -3055,7 +3064,15 @@ export async function syncUserEmails(
         }
       }
     } catch (e) {
+      // [LEES] This is the failure that makes an attachment exist NOWHERE: not in bestanden, not
+      // in the skipped panel — an invoice that silently never happened. console.error alone was
+      // the definition of the silent shelf; the alarm channel exists for exactly this.
       console.error('[BOEK-011] could-not-read save failed', e)
+      reportHandledFailure({
+        tag: 'LEES', severity: 'data-integrity',
+        message: 'unreadable e-mail attachment could not be SAVED — it now exists nowhere the owner can see',
+        context: { userId, filename: att.filename, error: e instanceof Error ? e.message : String(e) },
+      })
     }
     // NB: the skip upsert is inside its OWN try/catch — this function must NEVER throw (its callers
     // run inside the PHASE-2 try/catch, and a throw here would double-count the attempt and abort
@@ -3074,6 +3091,13 @@ export async function syncUserEmails(
         )
     } catch (e) {
       console.error('[BOEK-011] skip-registry upsert failed (non-fatal)', e)
+      // [LEES] Same shelf, other half: without the registry row the skipped panel says
+      // "Niets overgeslagen" over a real unread file.
+      reportHandledFailure({
+        tag: 'LEES', severity: 'data-integrity',
+        message: 'skip-registry upsert failed — an unread attachment is missing from the skipped panel',
+        context: { userId, filename: att.filename, error: e instanceof Error ? e.message : String(e) },
+      })
     }
   }
 
