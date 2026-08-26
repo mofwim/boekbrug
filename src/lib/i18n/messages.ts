@@ -74,6 +74,56 @@ export const MESSAGES = {
   'nav.clients': { nl: 'Klanten', ar: 'العملاء', en: 'Clients' },
   'nav.quarter': { nl: 'Kwartaal', ar: 'الربع', en: 'Quarter' },
 
+  // ─── [KADER] De naam van het scherm, in de balk die om ELK scherm heen staat ────────────────
+  //
+  // DashboardChrome hield deze namen als kale Nederlandse tekst, met een goede reden erbij: het is
+  // de eerste-verf-naam, en een scherm dat zijn eigen titel aanmeldt wint ervan. Alleen geldt dat
+  // laatste niet voor elk scherm — en waar het niet geldt, staat de naam er niet even, maar altijd.
+  // Een Arabische eigenaar las dus een vertaald scherm in een Nederlandse lijst, op elke pagina.
+  //
+  // De namen staan hier in dezelfde volgorde als in dat bestand, zodat de twee naast elkaar te
+  // lezen zijn. Ze blijven bewust KORT: het is een balk, geen zin.
+  'chrome.vandaag': { nl: 'Vandaag', ar: 'اليوم', en: 'Today' },
+  'chrome.brug': { nl: 'Brug', ar: 'الجسر', en: 'Bridge' },
+  'chrome.kas': { nl: 'Kas', ar: 'الصندوق', en: 'Cash' },
+  'chrome.aangifte': { nl: 'Aangifte', ar: 'الإقرار الضريبي', en: 'Tax return' },
+  'chrome.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
+  'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
+  'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
+  'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  'chrome.kluis': { nl: 'Kluis', ar: 'الخزنة', en: 'Vault' },
+  'chrome.logboek': { nl: 'Logboek', ar: 'سجل النشاط', en: 'Activity log' },
+  'chrome.beveiliging': { nl: 'Beveiliging', ar: 'الأمان', en: 'Security' },
+  // De vragen die de BOEKHOUDER aan de ondernemer stelt — vandaar "van je boekhouder".
+  'chrome.vragen': { nl: 'Vragen van je boekhouder', ar: 'أسئلة من محاسبك', en: 'Questions from your accountant' },
+  'chrome.klaar': { nl: 'Ben ik klaar?', ar: 'هل أنا جاهز؟', en: 'Am I ready?' },
+  'chrome.kwartaaloverzicht': { nl: 'Kwartaaloverzicht', ar: 'ملخّص الربع', en: 'Quarter overview' },
+  'chrome.waarheid': { nl: 'Waarheid', ar: 'الحقيقة', en: 'Truth' },
+  'chrome.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
+  'chrome.categoriseren': { nl: 'Wat is dit?', ar: 'ما هذا؟', en: 'What is this?' },
+  'chrome.instellingen': { nl: 'Instellingen', ar: 'الإعدادات', en: 'Settings' },
+  'chrome.facturering': { nl: 'Facturering', ar: 'إعداد الفواتير', en: 'Invoicing' },
+  'chrome.berichten': { nl: 'Berichten', ar: 'الرسائل', en: 'Messages' },
+  'chrome.werkplek': { nl: 'Mijn werkplek', ar: 'مساحة عملي', en: 'My workspace' },
+  'chrome.klantToevoegen': { nl: 'Klant toevoegen', ar: 'إضافة عميل', en: 'Add client' },
+  'chrome.klantenBeheren': { nl: 'Klanten beheren', ar: 'إدارة العملاء', en: 'Manage clients' },
+  'chrome.agenda': { nl: 'Aangifte & status', ar: 'الإقرار والحالة', en: 'Return & status' },
+  'chrome.factuurNamens': { nl: 'Factuur namens klant', ar: 'فاتورة نيابةً عن عميل', en: 'Invoice on behalf of a client' },
+  'chrome.openstaand': { nl: 'Openstaande facturen', ar: 'الفواتير غير المسدَّدة', en: 'Outstanding invoices' },
+  'chrome.opvragen': { nl: 'Stukken opvragen', ar: 'طلب المستندات', en: 'Request documents' },
+  'chrome.bevestigen': { nl: 'Bevestigen', ar: 'التأكيد', en: 'Confirm' },
+  // "Mijn", omdat de boekhouder hiernaast ook de facturen van zijn KLANTEN ziet.
+  'chrome.mijnFacturen': { nl: 'Mijn facturen', ar: 'فواتيري', en: 'My invoices' },
+  'chrome.mijnKlanten': { nl: 'Mijn klanten', ar: 'عملائي', en: 'My clients' },
+  'chrome.inkoopfacturen': { nl: 'Inkoopfacturen', ar: 'فواتير المشتريات', en: 'Purchase invoices' },
+  'chrome.inkomend': { nl: 'Inkomend', ar: 'الوارد', en: 'Incoming' },
+  'chrome.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
+  'chrome.factuurBewerken': { nl: 'Factuur bewerken', ar: 'تعديل الفاتورة', en: 'Edit invoice' },
+  'chrome.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },
+  'chrome.klant': { nl: 'Klant', ar: 'عميل', en: 'Client' },
+  'chrome.gesprek': { nl: 'Gesprek', ar: 'محادثة', en: 'Conversation' },
+  'chrome.kwartaal': { nl: 'Kwartaal', ar: 'الربع', en: 'Quarter' },
+
   // ─── [NIEUW] Het scherm waar een factuur gemaakt wordt ──────────────────────────────────────
   //
   // De meest gebruikte schermvulling van de app, en de eerste hele PAGINA in de catalogus. De

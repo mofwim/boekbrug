@@ -16,6 +16,14 @@
 // If the preference ever needs to follow an owner across devices, this file is the one place that
 // changes — every screen asks it, nothing reads the cookie directly.
 //
+// [TAAL-VOLGT-MEE] It needed to. An owner who reads Arabic sets it once, opens the app on their
+// phone, and is back in Dutch — with the switch itself two screens deep in Instellingen, in
+// Dutch. The three reasons above all still hold, so the cookie stays exactly what it was: the
+// fast, session-free, first-paint answer. What is added sits BESIDE it — profiles.preferred_language
+// as the durable record of the choice, restored into the cookie on a device that has none
+// (LocaleRestore.tsx). A device where the owner DID choose keeps that choice; the account only
+// speaks where nothing was said yet, which is the case this fixes and the only one.
+//
 // WHY NOT navigator.language. An Arab shop owner's phone very often IS set to Arabic, so guessing
 // from it would translate the app for exactly the right people with no effort at all. It is still
 // wrong today: the translation is partial, and a screen that is half Arabic and half Dutch WITHOUT
@@ -38,6 +46,23 @@ export function readLocaleCookie(cookieHeader?: string | null): Locale {
   const hit = raw.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${LOCALE_COOKIE}=`))
   const value = hit ? decodeURIComponent(hit.slice(LOCALE_COOKIE.length + 1)) : null
   return isLocale(value) ? value : DEFAULT_LOCALE
+}
+
+/**
+ * [TAAL-VOLGT-MEE] Is there a stored choice ON THIS DEVICE at all?
+ *
+ * readLocaleCookie() cannot answer this: it resolves an absent cookie to Dutch, which is right for
+ * rendering and wrong for deciding. "No cookie" and "chose Dutch" must stay apart, or restoring the
+ * account's language would overrule an owner who deliberately picked Dutch on this device.
+ */
+export function hasLocaleCookie(): boolean {
+  if (typeof document === 'undefined') return false
+  return document.cookie
+    .split(';')
+    .some((c) => {
+      const v = c.trim()
+      return v.startsWith(`${LOCALE_COOKIE}=`) && isLocale(decodeURIComponent(v.slice(LOCALE_COOKIE.length + 1)))
+    })
 }
 
 // The cookie is external mutable state, so React has an API for exactly this — see useLocale.

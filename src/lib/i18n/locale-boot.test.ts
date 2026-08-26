@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 
 import { LOCALE_BOOT_SCRIPT, PREFIXED_LOCALES, RTL_LOCALES } from './locale-boot'
 import { DEFAULT_LOCALE, LOCALES, LOCALE_META, localePrefix } from './locale'
-import { LOCALE_COOKIE } from './use-locale'
+import { hasLocaleCookie, LOCALE_COOKIE, readLocaleCookie } from './use-locale'
 
 /**
  * Run the boot script the way a browser would, over a document and a location that have only
@@ -172,4 +172,43 @@ test('[TAAL] it cannot throw when the location is missing or strange', () => {
       { get pathname(): string { throw new Error('no location') } },
     )
   })
+})
+
+// ── [TAAL-VOLGT-MEE] "No cookie" and "chose Dutch" are different answers ────────────────────────
+//
+// The account only speaks into silence: a device that was never told which language the owner
+// reads gets the one their account remembers, and a device where they DID choose keeps that
+// choice. That rule stands entirely on hasLocaleCookie() being able to tell those two apart —
+// readLocaleCookie() cannot, because it resolves an absent cookie to Dutch, which is right for
+// rendering and would here overrule an owner who deliberately picked Dutch on this device.
+
+test('[TAAL-VOLGT-MEE] an absent cookie is not the same as a Dutch one', () => {
+  const g = globalThis as { document?: { cookie: string } }
+  const before = g.document
+  try {
+    g.document = { cookie: '' }
+    assert.equal(hasLocaleCookie(), false, 'nothing stored')
+    assert.equal(readLocaleCookie(), DEFAULT_LOCALE, '…and reading it still renders Dutch')
+
+    g.document = { cookie: `${LOCALE_COOKIE}=nl` }
+    assert.equal(hasLocaleCookie(), true, 'Dutch chosen ON PURPOSE must not read as silence')
+
+    g.document = { cookie: `${LOCALE_COOKIE}=ar` }
+    assert.equal(hasLocaleCookie(), true)
+
+    // Other cookies alone are still silence — and a cookie whose value is not a language of this
+    // app is silence too, or a stale/garbled value would permanently block the account's answer.
+    g.document = { cookie: 'sb-access-token=abc; other=1' }
+    assert.equal(hasLocaleCookie(), false)
+    g.document = { cookie: `${LOCALE_COOKIE}=klingon` }
+    assert.equal(hasLocaleCookie(), false, 'an unusable value is not a choice')
+
+    // It must find the cookie when it is not the first one on the header.
+    g.document = { cookie: `other=1; ${LOCALE_COOKIE}=ar; more=2` }
+    assert.equal(hasLocaleCookie(), true)
+    assert.equal(readLocaleCookie(), 'ar')
+  } finally {
+    if (before === undefined) delete g.document
+    else g.document = before
+  }
 })

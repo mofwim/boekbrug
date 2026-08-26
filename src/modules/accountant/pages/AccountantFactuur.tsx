@@ -45,6 +45,12 @@ interface Props {
   klanten: GemachtigdeKlant[]
   /** [VRAAG-MACHTIGING] De GEKOPPELDE klanten — om te kunnen vragen wat er nog niet is. */
   gekoppeld?: KoppelKlant[]
+  /**
+   * [KLANT-VOORAF] De klant die de boekhouder al aanwees op de klantpagina. De server heeft hem
+   * al getoetst aan de machtigingenlijst; hier is het alleen nog de beginwaarde van de keuze,
+   * die hij gewoon kan wijzigen.
+   */
+  vooraf?: string | null
 }
 
 const BTW_TARIEVEN = [21, 9, 0] as const
@@ -67,9 +73,11 @@ function euro(n: number): string {
   return `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export default function AccountantFactuur({ klanten, gekoppeld = [] }: Props) {
+export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = null }: Props) {
   const router = useRouter()
-  const [klantId, setKlantId] = useState<string>(klanten.length === 1 ? klanten[0].id : '')
+  // [KLANT-VOORAF] Wie er is aangewezen wint van "de enige die er is" — beide zijn een beginwaarde,
+  // en de aanwijzing is de meest recente handeling van de boekhouder.
+  const [klantId, setKlantId] = useState<string>(vooraf ?? (klanten.length === 1 ? klanten[0].id : ''))
   const [naam, setNaam] = useState('')
   const [email, setEmail] = useState('')
   const [adres, setAdres] = useState('')

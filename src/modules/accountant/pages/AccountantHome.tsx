@@ -558,7 +558,13 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             <ToolTile icon="people" tint="#34A853" label="Beheren" onClick={() => router.push('/dashboard/clients/beheer')} />
             <ToolTile icon="bar_chart" tint="#E37400" label="Kwartaal" onClick={() => router.push('/dashboard/quarterly')} />
             <ToolTile icon="account_tree" tint="#1967D2" label="Brug" onClick={() => router.push('/dashboard/brug')} />
-            <ToolTile icon="description" tint="#00897B" label="Facturen" onClick={() => router.push('/dashboard/facturen')} />
+            {/* [EIGEN-BOEKEN-LABEL] "Mijn", niet "Facturen". Deze tegel gaat naar /dashboard/facturen,
+                en dat scherm leest `sender_id = user.id`: het zijn de facturen van het KANTOOR zelf.
+                Tussen Beheren, Kwartaal en Brug — die alle drie over klanten gaan — en pal naast
+                "Factureren", dat wél namens een klant gaat, las "Facturen" als "de facturen van
+                mijn klanten". Eén woord verschil tussen twee administraties is precies het soort
+                verwarring dat dit scherm zich niet kan veroorloven. */}
+            <ToolTile icon="description" tint="#00897B" label="Mijn facturen" onClick={() => router.push('/dashboard/facturen')} />
             {/* [MANDAAT] Altijd zichtbaar, ook zonder machtiging: het scherm erachter legt dan uit
                 dat de klant het zelf moet aanzetten. Een tegel die pas verschijnt als iemand hem
                 al niet meer nodig heeft, vertelt niemand dat de functie bestaat. */}
