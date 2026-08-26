@@ -193,3 +193,40 @@ test("a prefix without a boundary is how guards silently grow too wide", () => {
 test("without a user nothing passes silently", () => {
   assert.throws(() => resolveActingFor("", link(), NOW), /ACTING-FOR/);
 });
+
+// ── [CREDIT-NAMENS] What a mandated accountant may credit ──────────────────────────────────────
+//
+// A creditnota is an ISSUING act: it mints a number from the client's own series, irreversibly
+// (art. 35), and it moves money in the direction the tax office pays back. So it is answered by
+// the same rule that answers sending, and NOT by the wider one that answers reminding — see the
+// two headers in acting-for.ts. These tests exist because the route now accepts namens_klant_id,
+// and the moment a door opens it needs its own record of where the wall still stands.
+test("[CREDIT-NAMENS] a boekhouder may credit the invoice they issued themselves", () => {
+  const boekhouder = { ownerId: BOSS, actorId: MEMBER, role: "boekhouder" as const };
+  const doorHem = { sender_id: BOSS, created_by: MEMBER };
+  assert.equal(canAccessInvoice(boekhouder, doorHem), true);
+});
+
+test("[CREDIT-NAMENS] …and may NOT credit one the client made themselves", () => {
+  // The gap this deliberately leaves open. A mandate is permission to write invoices in someone's
+  // name, never permission to reach into the ones they wrote — the client credits their own, or
+  // asks. Widening this would let a third party lower another company's turnover and reclaim its
+  // BTW on a document that company never touched.
+  const boekhouder = { ownerId: BOSS, actorId: MEMBER, role: "boekhouder" as const };
+  assert.equal(canAccessInvoice(boekhouder, { sender_id: BOSS, created_by: BOSS }), false);
+  assert.equal(canAccessInvoice(boekhouder, { sender_id: BOSS, created_by: null }), false,
+    "an invoice from before created_by existed is not evidence that the accountant made it");
+});
+
+test("[CREDIT-NAMENS] and never anything outside that client's administration", () => {
+  const boekhouder = { ownerId: BOSS, actorId: MEMBER, role: "boekhouder" as const };
+  assert.equal(canAccessInvoice(boekhouder, { sender_id: STRANGER, created_by: MEMBER }), false,
+    "their own typing in someone else's books is still someone else's books");
+});
+
+test("[CREDIT-NAMENS] the owner keeps crediting everything of their own", () => {
+  const eigenaar = { ownerId: BOSS, actorId: BOSS, role: "eigenaar" as const };
+  assert.equal(canAccessInvoice(eigenaar, { sender_id: BOSS, created_by: MEMBER }), true,
+    "including what their accountant or their sales member issued for them");
+  assert.equal(canAccessInvoice(eigenaar, { sender_id: BOSS, created_by: null }), true);
+});

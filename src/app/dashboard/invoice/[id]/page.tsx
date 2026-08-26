@@ -418,6 +418,9 @@ export default function InvoiceDetailPage() {
         body: JSON.stringify({
           original_invoice_id: invoiceId,
           reason: creditReason.trim(),
+          // [CREDIT-NAMENS] Namens wie, als dit niet je eigen administratie is. De route gelooft
+          // dit niet op zijn woord: hij haalt er de machtiging bij en weigert zonder.
+          ...(isOwner ? {} : { namens_klant_id: invoice?.sender_id ?? undefined }),
           // [DEEL-CREDIT] Alleen meesturen als er ECHT een deel is gekozen. Laat het veld weg en
           // de route doet precies wat hij altijd deed: de hele factuur. Zo is "alles crediteren"
           // niet een selectie die toevallig alles bevat, maar letterlijk hetzelfde verzoek.
@@ -477,9 +480,24 @@ export default function InvoiceDetailPage() {
   const creditPast = creditPreview.totalIncBtw <= nogTeCrediteren + 0.005
   const creditLeeg = creditPartial && (creditSelection?.length ?? 0) === 0
 
+  // [CREDIT-NAMENS] De boekhouder corrigeert wat HIJ heeft uitgereikt, en verder niets.
+  //
+  // Hier stond "nooit de boekhouder", en dat was één regel te breed. Een gemachtigde boekhouder
+  // maakt facturen op naam van zijn klant en verstuurt ze; ging er één fout, dan lag de enige
+  // wettelijke weg terug bij de klant — bij precies de ondernemer die zijn facturatie uit handen
+  // had gegeven. De grens die WEL klopt is dezelfde die canAccessInvoice() al trekt: eigen werk.
+  // Een factuur die de klant zelf maakte blijft van de klant, en dat is geen tekortkoming maar de
+  // betekenis van het mandaat (zie canSendInvoice in acting-for.ts).
+  //
+  // Dit scherm is optimistisch, zoals elk scherm hier: de route toetst rol, koppeling, soort en
+  // intrekking opnieuw, en de database bewaakt het plafond. Een ingetrokken machtiging levert dus
+  // geen creditnota op — de knop staat er nog, het antwoord is 403.
+  const eigenUitgifteAlsBoekhouder =
+    !!invoice && !isOwner && !!viewerProfile?.id && invoice.created_by === viewerProfile.id
+
   const canCreateCreditnota =
     invoice &&
-    isOwner && // [ACC-INVOICE-DETAIL] creditnota is an owner-only action, never the accountant
+    (isOwner || eigenUitgifteAlsBoekhouder) &&
     invoice.invoice_type !== 'creditnota' &&
     invoice.direction !== 'incoming' && // [ACC-INVOICE-VIEW] creditnota only on own outgoing invoices
     !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&

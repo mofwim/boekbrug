@@ -6926,6 +6926,47 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
         "invisible to this gate until the chain splitter stopped letting it borrow the next " +
         "statement's filter",
     },
+
+    // ── [CREDIT-NAMENS] De creditnota die een gemachtigde boekhouder namens zijn klant uitreikt ──
+    //
+    // Drie lezingen op invoice_lines. Die tabel HEEFT geen eigenaarskolom — een regel hoort bij een
+    // factuur, en de factuur hoort bij iemand. De afscherming zit daarom een stap eerder, en die
+    // stap staat in dezelfde functie, een paar regels hoger, met de eigenaar er letterlijk in.
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: "[UNIT] '*' zodat elke kolom meekomt",
+      why:
+        "The lines of the invoice being credited. Its id came from a read one screen up that " +
+        "carries .eq('sender_id', ownerId) AND is then put through canAccessInvoice(), so by the " +
+        "time this runs the parent is proven to belong to this administration. invoice_lines has " +
+        "no tenant column of its own to add",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: "'*' om dezelfde reden als hierboven",
+      why:
+        "The lines of EARLIER creditnota's on the same invoice, read to see how much of each line " +
+        "is already given back. The ids come from `eerdereIds`, built from a read that carries " +
+        ".eq('sender_id', ownerId) — a list of this owner's own creditnota's, never a request field",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: ".insert( creditLinesFor(keuze.lines, creditnota.id, reason)",
+      why:
+        "The mirrored lines of the creditnota this request just inserted. They are keyed to " +
+        "creditnota.id, a local const from the insert two statements up whose row carries " +
+        "sender_id: ownerId — so these rows cannot land under another administration than the " +
+        "one the insert was already allowed to write in",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: ".eq('invoice_id', creditnota.id)",
+      why:
+        "Reading back the lines just written, to render the PDF. creditnota.id is a local const " +
+        "from this request's own insert — never a request field — and that row carries " +
+        "sender_id: ownerId. The generic 'own new row' pass only covers .eq('id', …); this is the " +
+        "same argument one column over",
+    },
   ];
 
   const unreviewed = offenders.filter(
@@ -10267,6 +10308,86 @@ test("[TAAL-VOLGT-MEE] the account remembers the language and speaks only into s
     layout, /select\('id, email, role, preferred_language'\)/,
     "folding it into the main profile read would let a missing column remove the navigation",
   );
+});
+
+// ── [CREDIT-NAMENS] The accountant corrects what they issued — and only that ────────────────────
+//
+// A mandated accountant could CREATE an invoice in a client's name and SEND it, but not correct
+// it: this route only knew getActingFor(), so the one lawful way back lay with the client. For an
+// entrepreneur who has handed their invoicing to their bookkeeper entirely, that read: the mistake
+// is the bookkeeper's, the repair has to come from you.
+//
+// What this gate mostly guards is what was NOT widened. canAccessInvoice() is untouched, so the
+// accountant reaches only their own issuance (created_by) — the same rule canSendInvoice() writes
+// out, for the same reason. The client's own invoices stay the client's.
+test("[CREDIT-NAMENS] a mandated accountant may credit their own issuance, through the mandate", () => {
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+
+  // The mandate is re-asked on every call — role, link, kind and revocation — by the same function
+  // the draft and send routes use. Naming a client you have no mandate for is a 403, not a 500.
+  assert.match(route, /getActingForClient\(namensKlantId\) : await getActingFor\(\)/,
+    "a named client goes through the mandate check; no name is the request it always was");
+  assert.match(route, /geen toestemming om namens deze klant te crediteren/);
+
+  // The wall. If this line ever loosens, a third party can lower another company's turnover and
+  // reclaim its BTW on a document that company never touched.
+  assert.match(route, /if \(!canAccessInvoice\(acting, original\)\)/,
+    "the per-invoice check stays, and stays the narrow one");
+
+  // [RLS-UIT] The accountant's session cannot see the client's rows, so the reads and writes run
+  // on service_role — with the owner in the query, which is what the RLS-UIT gate above enforces
+  // query by query.
+  assert.match(route, /const db = boekhouder \? createPipelineClient\(\) : supabase/);
+  assert.match(route, /\.eq\('id', original_invoice_id\)\s*\n\s*\.eq\('sender_id', ownerId\)/,
+    "the invoice being credited is fetched inside one administration, not merely by id");
+
+  // The number still comes from the CLIENT's series on the CLIENT's counter — that is the whole
+  // point of art. 35 lid 1, and next_invoice_seq refuses a caller without a live mandate.
+  // [NUMBER-READ-VISIBLE] Minted on the SESSION client (next_invoice_seq refuses auth.uid() IS
+  // NULL unconditionally), but the TEMPLATE is read with `db` — it lives on the client's profile,
+  // which an accountant's session cannot see. Without the fourth argument resolveFormat() returns
+  // nothing and the numberer refuses outright, so the whole feature would fail for the only role
+  // it was built for.
+  assert.match(route, /generateInvoiceNumber\(supabase, ownerId, 'creditnota', db\)/,
+    "session client for the allocation, acting-aware client for the scheme it allocates in");
+
+  // The client is told. The invoicing screen promises exactly this for an invoice; a creditnota is
+  // the one that LOWERS their turnover, so silence there would be worse.
+  assert.match(route, /if \(isActingForOther\(acting\)\) \{[\s\S]{0,400}?createNotification\(/,
+    "acting for someone else means telling them");
+  // …and the trail says on whose behalf, or it records an act by someone who does not appear in
+  // the administration it happened in.
+  assert.match(route, /namens_klant_id: acting\.ownerId/);
+  assert.match(route, /acting_role: acting\.role/);
+
+  // The screen offers it for own issuance only, and hands the route the client it is acting for.
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(
+    scherm,
+    /const eigenUitgifteAlsBoekhouder =\s*\n\s*!!invoice && !isOwner && !!viewerProfile\?\.id && invoice\.created_by === viewerProfile\.id/,
+    "the button appears for an invoice the accountant issued themselves, never for the client's",
+  );
+  assert.match(scherm, /\(isOwner \|\| eigenUitgifteAlsBoekhouder\)/);
+  assert.match(scherm, /\.\.\.\(isOwner \? \{\} : \{ namens_klant_id: invoice\?\.sender_id \?\? undefined \}\)/);
+
+  // The database was NOT changed for any of this, and that is a claim worth pinning: the mandate
+  // migration already let a mandated caller draw a number of type 'creditnota', both accountant
+  // write-guards fire BEFORE UPDATE only, and the ceiling that matters does not look at who is
+  // writing. If someone later "fixes" that ceiling by keying it on auth.uid(), a service-role
+  // insert would walk straight past it.
+  // code() strips JS comments; SQL comments start with `--`, so the raw file is stripped here.
+  // Without that, an `auth.uid()` mentioned in a comment would satisfy the doesNotMatch below by
+  // accident — the exact shape of vacuous pass this file keeps closing.
+  const sqlBody = (f: string) =>
+    readFileSync(f, "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const plafond = sqlBody("supabase/migrations/creditnota_partial.sql");
+  assert.match(plafond, /BEFORE INSERT OR UPDATE OF total_inc_btw/,
+    "the over-credit ceiling must fire on INSERT, whoever is inserting");
+  assert.doesNotMatch(plafond, /auth\.uid\(\)/,
+    "…and must not depend on the caller, or service_role would pass it by construction");
+  const mandaat = sqlBody("supabase/migrations/accountant_invoice_mandate.sql");
+  assert.match(mandaat, /p_type NOT IN \('factuur','creditnota','pro_forma'\)/,
+    "next_invoice_seq already knew this type — no migration rides along with this change");
 });
 
 // ── [BOEKHOUDER-EIGEN-BOEKEN] "Voor deze klant" may never open the accountant's OWN books ───────
@@ -14992,7 +15113,11 @@ test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence nev
   assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*invoiceId,\s*\n\s*\)/, "the send route builds it, through the acting-aware client");
   assert.match(send, /ublAttachment: ublBijlage/, "…and hands it to the mail");
   const credit = code("src/app/api/invoice/creditnota/route.ts");
-  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*creditnota\.id,\s*\n\s*\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
+  // [CREDIT-NAMENS] The ternary is now a named const — `db`, which is the pipeline exactly when
+  // the caller is acting for someone else and the session cannot see their rows. Same claim, one
+  // name instead of four repetitions of it; the const's own definition is pinned below.
+  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(db, creditnota\.id\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
+  assert.match(credit, /const db = boekhouder \? createPipelineClient\(\) : supabase/, "…and that client is the acting-aware one");
   const mail = code("src/lib/email.ts");
   assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{safeFileName\(invoiceNumber\)\}\.pdf`, content: pdfBuffer, contentType: 'application\/pdf' \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[\{ \.\.\.ublAttachment, contentType: 'application\/xml' \}\] : \[\]\)/,
     "PDF first, then the UBL — the customer opens the document the mail is about; names are filename-safe and both parts declare their MIME type");
