@@ -25,6 +25,7 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at this supplier.
 import { readingPromptHint } from "@/lib/reading-memory";
+import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [SEC-STORAGE-PATH] Normalise a stored value AND decide whose bytes it names — one tested place.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
@@ -273,6 +274,9 @@ export async function POST(
       receiverBtw,
       receiverIban,
       readingHint,
+      // [EIGEN-NUMMER] Recognise the owner's own outgoing invoice by its number, even when the
+      // reader mis-assigned the parties (the case the identity fields above cannot catch).
+      lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
     });
 
   let c: Awaited<ReturnType<typeof classifyAttachment>>;

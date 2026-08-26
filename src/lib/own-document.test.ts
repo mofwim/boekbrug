@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { looksLikeOwnDocument, ownDocumentNotice, normalizeCompanyName } from './own-document'
+import { looksLikeOwnDocument, matchesOwnInvoiceNumber, ownDocumentNotice, normalizeCompanyName } from './own-document'
 
 /** Kiwi Food Market, from the profile — the real one from the reported case. */
 const me = {
@@ -113,4 +113,88 @@ test('[EIGEN-FACTUUR] a sole trader with no company name falls back to their own
   const zzp = { companyName: null, fullName: 'Jan de Vries', kvkNumber: null, btwNumber: null, iban: null }
   assert.equal(looksLikeOwnDocument({ vendorName: 'Jan de Vries' }, zzp).certainty, 'likely')
   assert.equal(looksLikeOwnDocument({ vendorName: 'Jan de Vries Hoveniers' }, zzp).isOwn, false)
+})
+
+// ── [EIGEN-NUMMER] Recognised by the number the app itself issued ───────────────────────────────
+
+test('[EIGEN-NUMMER] the role-confusion case: the reader named the CLIENT as the vendor', () => {
+  // The measured miss. On Kiwi's own invoice the reader returned vendor = "Stichting Contour de
+  // Twern" — the customer — so the identity guard had nothing of the owner to match. The stored
+  // row for the same number knows who the client is, and that is exactly who the "vendor" is.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '20260004', totalIncBtw: 394.99, vendorName: 'Stichting Contour de Twern' },
+    { invoiceNumber: '20260004', totalIncBtw: 394.99, clientName: 'Stichting Contour de Twern' },
+  )
+  assert.equal(v.isOwn, true)
+  assert.equal(v.certainty, 'certain')
+  assert.match(ownDocumentNotice(v)!, /factuurnummer 20260004/)
+  assert.match(ownDocumentNotice(v)!, /NIET als inkoopfactuur geboekt/)
+})
+
+test('[EIGEN-NUMMER] number plus amount is enough, whatever name the reader saw', () => {
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '20260005', totalIncBtw: 121.0, vendorName: 'Onleesbaar BV' },
+    { invoiceNumber: '20260005', totalIncBtw: 121.0, clientName: 'Stichting Contour de Twern' },
+  )
+  assert.equal(v.isOwn, true)
+  assert.equal(v.certainty, 'certain')
+})
+
+test('[EIGEN-NUMMER] the number ALONE is a coincidence, not a verdict', () => {
+  // Half the country numbers its invoices "20260001, 20260002, …" — a real supplier invoice can
+  // share a number with an own outgoing one. Different amount, different party → a real cost that
+  // must be booked; skipping it would lose the cost AND the voorbelasting.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '20260005', totalIncBtw: 88.5, vendorName: 'Bakkerij Saada' },
+    { invoiceNumber: '20260005', totalIncBtw: 121.0, clientName: 'Stichting Contour de Twern' },
+  )
+  assert.equal(v.isOwn, false)
+})
+
+test('[EIGEN-NUMMER] a creditnota matches on its absolute amount', () => {
+  // The stored creditnota is negative; the reader reports what the paper says, usually positive.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: 'CN20260002', totalIncBtw: 50.0, vendorName: 'Stichting Contour de Twern' },
+    { invoiceNumber: 'CN20260002', totalIncBtw: -50.0, clientName: 'Andere Klant' },
+  )
+  assert.equal(v.isOwn, true, 'amount corroborates through the sign')
+})
+
+test('[EIGEN-NUMMER] different or junk numbers never match', () => {
+  const own = { invoiceNumber: '20260005', totalIncBtw: 121.0, clientName: 'Stichting' }
+  assert.equal(matchesOwnInvoiceNumber({ invoiceNumber: '20260006', totalIncBtw: 121.0, vendorName: 'Stichting' }, own).isOwn, false)
+  assert.equal(matchesOwnInvoiceNumber({ invoiceNumber: null, totalIncBtw: 121.0, vendorName: 'Stichting' }, own).isOwn, false)
+  // A sloppy lookup handing back a row for a DIFFERENT number may not manufacture a verdict.
+  assert.equal(matchesOwnInvoiceNumber({ invoiceNumber: '7', totalIncBtw: 121.0, vendorName: 'Stichting' }, { ...own, invoiceNumber: '7' }).isOwn, false, 'too short to be an invoice number')
+})
+
+test('[EIGEN-NUMMER] formatting differences in the number do not break the match', () => {
+  // "2026-0005" on the paper, "20260005" in the row: same number, written by different hands.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '2026-0005', totalIncBtw: 121.0, vendorName: 'X' },
+    { invoiceNumber: '20260005', totalIncBtw: 121.0, clientName: 'Y' },
+  )
+  assert.equal(v.isOwn, true)
+})
+
+test('[EIGEN-NUMMER] a zero-total own row cannot corroborate by amount', () => {
+  // An own row storing 0 (a voided draft) matching a document reading 0 proves nothing about
+  // identity — 0 == 0 for every empty read. Name is then the only way in.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '20260009', totalIncBtw: 0, vendorName: 'Onbekend' },
+    { invoiceNumber: '20260009', totalIncBtw: 0, clientName: 'Iemand Anders' },
+  )
+  assert.equal(v.isOwn, false)
+})
+
+test('[EIGEN-NUMMER] role confusion WITHOUT the amount agreeing is likely, with the way back in', () => {
+  // A customer who also supplies you can collide on a number. The verdict stands (the roles say
+  // own work), but as `likely` — whose notice tells the owner how to overrule it.
+  const v = matchesOwnInvoiceNumber(
+    { invoiceNumber: '20260004', totalIncBtw: 88.5, vendorName: 'Stichting Contour de Twern' },
+    { invoiceNumber: '20260004', totalIncBtw: 394.99, clientName: 'Stichting Contour de Twern' },
+  )
+  assert.equal(v.isOwn, true)
+  assert.equal(v.certainty, 'likely')
+  assert.match(ownDocumentNotice(v)!, /alsnog inlezen/, 'the notice offers the override')
 })

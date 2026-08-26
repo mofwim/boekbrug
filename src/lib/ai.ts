@@ -93,7 +93,7 @@ import { extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, 
 import { verifyDocument } from './document-verify';
 // [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
 // reader, one line before the receiver-identity backstop erases the evidence — see there.
-import { looksLikeOwnDocument, ownDocumentNotice } from './own-document';
+import { looksLikeOwnDocument, matchesOwnInvoiceNumber, ownDocumentNotice } from './own-document';
 import { round2 } from './invoice-totals';
 // [MIN-REGEL] What a reading means by a quantity and a price — a negative quantity is a credit
 // line, not an unreadable one, and the minus may never sit in the price. See read-line.ts.
@@ -1363,6 +1363,12 @@ export async function verifyInvoiceFromPdf(
     throwOnTransient?: boolean; model?: string; preferRawPdf?: boolean
     receiverKvk?: string | null; receiverBtw?: string | null; receiverIban?: string | null
     readingHint?: string | null
+    // [EIGEN-NUMMER] Find the owner's OWN outgoing invoice by number (own-invoice-lookup.ts).
+    // The reader stays free of database imports; each door binds the callback to its own client.
+    // Absent → only the identity guard runs, exactly as before.
+    lookupOwnInvoice?: (invoiceNumber: string) => Promise<{
+      invoiceNumber?: string | null; totalIncBtw?: number | null; clientName?: string | null
+    } | null>
   }
 ): Promise<VerifyInvoiceResult> {
   const FALLBACK: VerifyInvoiceResult = {
@@ -2209,6 +2215,37 @@ Return JSON only.`;
         confidence: 0,
         reason: ownDocumentNotice(eigenStuk) ?? 'Dit lijkt je eigen verkoopfactuur.',
       };
+    }
+
+    // ── [EIGEN-NUMMER] Recognised by the number the app itself issued ──
+    //
+    // The identity guard above needs the reader to have named the OWNER as the vendor — and the
+    // measured miss (Kiwi, €394,99) is the case where it named the CUSTOMER instead, so nothing
+    // matched. But the app wrote that document: it knows the number, the client and the total it
+    // printed. If the extracted number is one of the owner's own outgoing invoices AND the stored
+    // row corroborates (same total, or the "vendor" is that row's client — the role-confusion
+    // signature exactly), this is our own work coming back, whatever the reader thought the roles
+    // were. A lookup failure answers null and the reading continues: this layer may only ADD
+    // recognition, never take a real supplier invoice down with a database hiccup.
+    if (!eigenStuk.isOwn && parsed.invoice_number && opts?.lookupOwnInvoice) {
+      const ownRow = await opts.lookupOwnInvoice(parsed.invoice_number).catch(() => null);
+      if (ownRow) {
+        const byNumber = matchesOwnInvoiceNumber(
+          {
+            invoiceNumber: parsed.invoice_number,
+            totalIncBtw: parsed.total_inc_btw ?? parsed.amount ?? null,
+            vendorName: parsed.vendor ?? null,
+          },
+          ownRow,
+        );
+        if (byNumber.isOwn) {
+          return {
+            is_invoice: false,
+            confidence: 0,
+            reason: ownDocumentNotice(byNumber) ?? 'Dit is je eigen verkoopfactuur.',
+          };
+        }
+      }
     }
 
     if (myKvk && parsed.vendor_kvk === myKvk) parsed.vendor_kvk = undefined;

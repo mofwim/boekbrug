@@ -4591,6 +4591,56 @@ test("[EIGEN-FACTUUR] every door that reads a document asks it", () => {
   }
 });
 
+// ── [EIGEN-NUMMER] Recognised by the number the app itself issued ───────────────────────────────
+//
+// The identity guard above needs the reader to have named the OWNER as the vendor — and the
+// measured miss is the case where it named the CUSTOMER instead (role confusion), so nothing
+// matched. The app WROTE the document: it knows the number, the client and the total it printed.
+// Every door therefore hands the reader a lookup into the owner's own outgoing invoices, and the
+// pure matcher (own-document.ts) accepts the number only WITH corroboration — same total, or the
+// "vendor" being that row's client — because bare numbers collide across businesses.
+test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => {
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /matchesOwnInvoiceNumber\(/, "the reader must ask the pure matcher");
+  assert.match(
+    ai, /lookupOwnInvoice\(parsed\.invoice_number\)\.catch\(\(\) => null\)/,
+    "a lookup failure answers null — it may never take a real supplier invoice down",
+  );
+  for (const [door, call] of [
+    ["src/app/api/intake/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
+    ["src/app/api/email/upload/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
+    ["src/app/api/bank/attach-invoice/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
+    ["src/app/api/documents/[id]/read-as-invoice/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
+    ["src/app/api/email/reimport/[id]/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
+    ["src/lib/email-integration.ts", /makeOwnInvoiceLookup\(supabase, userId\)/],
+  ] as const) {
+    assert.match(code(door), call, `${door} must bind the own-invoice lookup to its own client`);
+  }
+  // The sync builds the callback once and must actually pass it into the classifier.
+  assert.match(
+    code("src/lib/email-integration.ts"),
+    /receiverIban, readingHint, lookupOwnInvoice \}/,
+    "the sync's classifyAttachment call must carry the lookup",
+  );
+  // [RLS-UIT] The sync door runs service-role, so ownership lives in the QUERY.
+  const lookup = code("src/lib/own-invoice-lookup.ts");
+  assert.match(lookup, /\.eq\("sender_id", userId\)/, "ownership is filtered explicitly");
+  assert.match(lookup, /\.eq\("direction", "outgoing"\)/, "only the owner's OUTGOING invoices count");
+});
+
+// ── [EIGEN-MARKER] The paper names its own roles ────────────────────────────────────────────────
+//
+// Two unlabeled name blocks read fine to a human and terribly to a machine: on the owner's own
+// re-imported invoice the reader named the CUSTOMER as the supplier. One caption above each block
+// ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
+// intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
+// invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+test("[EIGEN-MARKER] the generated PDF captions its party blocks", () => {
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /partyLabel\}>KLANT</, "the customer block must carry its caption");
+  assert.match(pdf, /partyLabel\}>AFZENDER</, "the sender block must carry its caption");
+});
+
 // ─── [PRIJS-KOLOM] The price column must multiply out to the total beside it ────────────────────
 //
 // invoice_lines.unit_price holds the EXACT price on purpose: someone selling at "EUR 0,90 all-in"

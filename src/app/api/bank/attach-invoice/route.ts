@@ -37,6 +37,7 @@ import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber, normaliz
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { readingPromptHint } from "@/lib/reading-memory";
+import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 // [DECLARED-INVOICE] Invoice numbers the payment names, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
@@ -237,6 +238,9 @@ export async function POST(req: NextRequest) {
       // [READING-MEMORY] Fields only, never amounts — see readingPromptHint. This path books
       // straight to 'paid', so a better first read is worth more here than anywhere else.
       readingHint: readingPromptHint(await loadReadingMemory(supabase, user.id)),
+      // [EIGEN-NUMMER] This door passes no receiver identity, so the number is the ONLY way it
+      // can recognise the owner's own outgoing invoice being attached as an "expense" proof.
+      lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
     });
   } catch (aiErr) {
     await gate.release();

@@ -89,6 +89,7 @@ import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory"
+import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup"
 import { loadReadingMemory } from "@/lib/reading-memory-source"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -451,6 +452,9 @@ export async function POST(req: NextRequest) {
       receiverKvk: me?.kvk_number || null,
       receiverBtw: me?.btw_number || null,
       receiverIban: me?.iban || null,
+      // [EIGEN-NUMMER] Recognise the owner's own outgoing invoice by its number, even when the
+      // reader mis-assigned the parties (the case the identity fields above cannot catch).
+      lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
     })
   } catch (aiErr) {
     console.error("[AI-CONFIG-SAFE] intake AI read failed — filing nothing, asking for retry", aiErr)

@@ -140,6 +140,75 @@ export function looksLikeOwnDocument(doc: ReadSupplier, me: OwnIdentity): OwnDoc
   return { isOwn: false, certainty: "no", reasons: [] };
 }
 
+// ── [EIGEN-NUMMER] The invoice number the app itself issued ──
+//
+// The identity guard above inspects the extracted VENDOR fields — and the measured miss is
+// exactly the case where the reader assigned the roles wrong: on the owner's own invoice it named
+// the CUSTOMER (Stichting Contour de Twern) as the vendor, so nothing the owner is matched
+// anything the reader returned, and the guard never saw the owner at all.
+//
+// But the app WROTE this document. It knows the invoice number it issued, the client it billed
+// and the total it printed — so intake can recognise its own work without trusting the reader's
+// role assignment. The number ALONE is not proof: half the country numbers its invoices
+// "20260001, 20260002, …", so a real supplier invoice can collide with an own number. The number
+// plus ONE corroborating fact from the same stored row is:
+//
+//   · the same total, to the cent-ish — a stranger's invoice sharing both number AND amount is
+//     not a coincidence that occurs;
+//   · or the "vendor" the reader saw is the CLIENT on the own invoice — which is precisely the
+//     role-confusion signature that defeats the identity guard.
+
+/** The owner's own stored outgoing invoice, as the lookup found it by number. */
+export interface OwnOutgoingInvoiceRef {
+  invoiceNumber?: string | null;
+  totalIncBtw?: number | null;
+  clientName?: string | null;
+}
+
+/**
+ * Is this "purchase invoice" the owner's own outgoing invoice, recognised by its NUMBER?
+ *
+ * `own` is the row the caller already looked up BY this document's extracted number, so the
+ * numbers should match by construction — it is still re-verified here so the function stands on
+ * its own and a sloppy lookup cannot manufacture a verdict.
+ */
+export function matchesOwnInvoiceNumber(
+  read: { invoiceNumber?: string | null; totalIncBtw?: number | null; vendorName?: string | null },
+  own: OwnOutgoingInvoiceRef,
+): OwnDocumentVerdict {
+  const readNr = compact(read.invoiceNumber);
+  const ownNr = compact(own.invoiceNumber);
+  // Under 3 characters is not an invoice number, it is a digit that happens to be on a page.
+  if (readNr.length < 3 || readNr !== ownNr) return { isOwn: false, certainty: "no", reasons: [] };
+
+  const readTotal = Number(read.totalIncBtw);
+  const ownTotal = Number(own.totalIncBtw);
+  // Absolute values: the reader reports a positive amount even when the stored creditnota is
+  // negative — the money is the same money.
+  const amountMatch =
+    Number.isFinite(readTotal) && Number.isFinite(ownTotal) && ownTotal !== 0 &&
+    Math.abs(Math.abs(readTotal) - Math.abs(ownTotal)) <= 0.02;
+
+  const readVendor = normalizeCompanyName(read.vendorName);
+  const ownClient = normalizeCompanyName(own.clientName);
+  const roleConfusion = readVendor.length >= 3 && readVendor === ownClient;
+
+  if (!amountMatch && !roleConfusion) return { isOwn: false, certainty: "no", reasons: [] };
+
+  const reasons = [
+    `factuurnummer ${String(own.invoiceNumber).trim()} is het nummer van je eigen verkoopfactuur` +
+      (own.clientName ? ` aan ${String(own.clientName).trim()}` : ""),
+  ];
+  if (amountMatch) reasons.push("het totaalbedrag is hetzelfde als op die factuur");
+  if (roleConfusion) {
+    reasons.push(`de "leverancier" op dit stuk (${String(read.vendorName).trim()}) is de klant op die factuur`);
+  }
+  // Same asymmetry as the identity guard: number + the same money is a fact; number + a matching
+  // NAME without the money agreeing is `likely` — a customer who also supplies you can collide on
+  // a number, and the likely-notice offers the owner the way back in ("alsnog inlezen").
+  return { isOwn: true, certainty: amountMatch ? "certain" : "likely", reasons };
+}
+
 /**
  * What the owner reads about it. Dutch, because it lands on their screen.
  *

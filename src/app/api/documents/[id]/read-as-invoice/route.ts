@@ -37,6 +37,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { gateFairUseForRead } from "@/lib/fair-use-gate";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
+import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 import { decideFromAi } from "@/lib/intake-router";
 import { sniffReadableMime } from "@/lib/detect-file";
 import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
@@ -141,6 +142,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         receiverKvk: me?.kvk_number?.trim() || null,
         receiverBtw: me?.btw_number?.trim() || null,
         receiverIban: me?.iban?.trim() || null,
+        // [EIGEN-NUMMER] Recognise the owner's own outgoing invoice by its number, even when the
+        // reader mis-assigned the parties (the case the identity fields above cannot catch).
+        lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
       });
   } catch (e) {
     // [FAIR-USE] A failure is not a reading. Give the document back before answering.
