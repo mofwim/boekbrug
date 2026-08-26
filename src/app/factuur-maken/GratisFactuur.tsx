@@ -267,7 +267,20 @@ const s = {
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
-export default function GratisFactuur({ initialVak = '' }: { initialVak?: string } = {}) {
+/**
+ * [VAK-SLOT] `belowTool` is long-form copy that a SERVER component renders and hands in.
+ *
+ * It could have been imported here and switched on `initialVak`, and that would have been worse
+ * twice over: prose written for a crawler would ship in the client bundle of a page whose whole
+ * problem was weight, and every vakpagina would carry the text of all the others. The server
+ * builds only its own, and this component never learns what is in it.
+ *
+ * It lands directly above <ToolsCrossLinks/> because <PublicFooter/> is rendered INSIDE this
+ * component — anything a page appends after <GratisFactuur/> would sit underneath the footer.
+ */
+export default function GratisFactuur(
+  { initialVak = '', belowTool }: { initialVak?: string; belowTool?: React.ReactNode } = {},
+) {
   const [hydrated, setHydrated] = useState(false)
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
   // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
@@ -543,7 +556,14 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
   return (
     <div style={s.page}>
       <div style={s.wrap}>
-        <h1 style={s.h1}>Gratis factuur maken</h1>
+        {/* [EEN-H1] Op /factuur-maken IS "Gratis factuur maken" de kop van de pagina. Op
+            /factuur-maken/<vak> is dat de kop van de vakpagina hierboven ("Factuur maken voor
+            loodgieter"), en stond deze regel er als TWEEDE h1 onder — twee koppen die allebei
+            claimen waar de pagina over gaat, terwijl de bezoeker op de eerste geklikt heeft.
+            Daar is het de kop van dít blok, de generator zelf, en dus een h2. */}
+        {initialVak === ''
+          ? <h1 style={s.h1}>Gratis factuur maken</h1>
+          : <h2 style={s.h1}>Gratis factuur maken</h2>}
         {/* [SEO-INTRO] Twee inleidingen, en het onderscheid is `initialVak` — de ROUTE, niet de
             keuzelijst. Een bezoeker die hierboven zijn vak kiest verandert `vak`, en als die de
             tekst zou sturen verdween de inleiding onder zijn handen.
@@ -1003,6 +1023,8 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
             ))}
           </div>
         )}
+
+        {belowTool}
 
         <ToolsCrossLinks currentSlug="/factuur-maken" />
         <KennisbankLinks tool="/factuur-maken" />
