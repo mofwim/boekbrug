@@ -27,11 +27,11 @@ import { M3, R, EL1, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // overlay sluit, en zonder dit verlaat die tik de hele pagina — inclusief de plek in de stapel.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [BULK-BEVESTIG] Wat samen bevestigd mag worden, en wat één voor één blijft — zie bulk-confirm.ts.
-import {
-  planBulkConfirm, bulkConfirmable, bulkConfirmTitle, bulkConfirmWarnings, bulkConfirmResultText,
-} from '@/lib/bulk-confirm'
+import { planBulkConfirm, bulkConfirmable, type BulkConfirmPlan } from '@/lib/bulk-confirm'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
 import { failureText } from '@/lib/server-message'
+import { translator, type Translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 export interface TeBevestigen {
   id: string
@@ -59,15 +59,19 @@ function euro(n: number | null): string {
   return `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function datumNl(iso: string | null): string {
-  if (!iso) return 'datum onbekend'
+// The date itself stays Dutch-formatted; only the "no date" line is a sentence, so the translator
+// travels in as a parameter — a module-level helper cannot call a hook.
+function datumNl(iso: string | null, t: Translator): string {
+  if (!iso) return t('bh.bev.rij.datumOnbekend')
   const d = new Date(iso)
   return Number.isNaN(d.getTime())
-    ? 'datum onbekend'
+    ? t('bh.bev.rij.datumOnbekend')
     : d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 export default function AccountantBevestigen({ rijen, geenMandaat = false, gekoppeld = [] }: Props) {
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   const [bezig, setBezig] = useState<string | null>(null)
   const [klaar, setKlaar] = useState<Record<string, boolean>>({})
@@ -89,6 +93,45 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
   useCloseOnBack(bulkVraag, () => setBulkVraag(false))
 
   const bulkPlan = planBulkConfirm(rijen, geselecteerd)
+
+  // [TAAL] bulk-confirm.ts decides WHICH rows may go together — that part is pure and stays there.
+  // The sentences about that plan are rendered here instead, because a module holds no language of
+  // its own and a Dutch string from a helper would land underneath an Arabic interface. Same
+  // branches, same numbers: the exclusion is still named, and a half-succeeded run still says both.
+  function bulkConfirmTitle(plan: BulkConfirmPlan): string {
+    const aantal = plan.eligible.length
+    const bedrag = euro(plan.total)
+    if (aantal === 1) return t('bh.bev.bulk.titelEen', { bedrag })
+    return plan.clientCount > 1
+      ? t('bh.bev.bulk.titelMeerKlanten', { aantal, klanten: plan.clientCount, bedrag })
+      : t('bh.bev.bulk.titelMeer', { aantal, bedrag })
+  }
+
+  function bulkConfirmWarnings(plan: BulkConfirmPlan): string[] {
+    const out: string[] = []
+    if (plan.refused.length > 0) {
+      out.push(plan.refused.length === 1
+        ? t('bh.bev.bulk.blijftEen')
+        : t('bh.bev.bulk.blijftMeer', { aantal: plan.refused.length }))
+    }
+    out.push(t('bh.bev.bulk.lezing'))
+    if (plan.clientCount > 1) {
+      out.push(t('bh.bev.bulk.klanten', { klanten: plan.clientCount }))
+    }
+    return out
+  }
+
+  function bulkConfirmResultText(gelukt: number, mislukt: number): string {
+    if (mislukt === 0) {
+      return gelukt === 1 ? t('bh.bev.bulk.resultEen') : t('bh.bev.bulk.resultMeer', { aantal: gelukt })
+    }
+    if (gelukt === 0) {
+      return mislukt === 1
+        ? t('bh.bev.bulk.resultGeenEen')
+        : t('bh.bev.bulk.resultGeenMeer', { aantal: mislukt })
+    }
+    return t('bh.bev.bulk.resultDeels', { gelukt, mislukt })
+  }
 
   async function bevestigSelectie() {
     setBulkBezig(true)
@@ -140,13 +183,13 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
         body: JSON.stringify({ clientId: rij.clientId, invoiceId: rij.id, question: tekst }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(failureText(res.status, data, 'De vraag kon niet worden verstuurd.'))
+      if (!res.ok) throw new Error(failureText(res.status, data, t('bh.bev.vraag.mislukt')))
       setGevraagd((g) => ({ ...g, [rij.id]: true }))
       setVraagVoor(null)
       setVraagTekst('')
       router.refresh()
     } catch (e) {
-      setVraagFout(e instanceof Error ? e.message : 'Er ging iets mis.')
+      setVraagFout(e instanceof Error ? e.message : t('bh.bev.fout.algemeen'))
     } finally {
       setVraagBezig(false)
     }
@@ -162,11 +205,11 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
         body: JSON.stringify({ clientId: rij.clientId, invoiceId: rij.id }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(failureText(res.status, data, 'Bevestigen mislukt.'))
+      if (!res.ok) throw new Error(failureText(res.status, data, t('bh.bev.fout.bevestigen')))
       setKlaar((k) => ({ ...k, [rij.id]: true }))
       router.refresh()
     } catch (e) {
-      setFout((f) => ({ ...f, [rij.id]: e instanceof Error ? e.message : 'Er ging iets mis.' }))
+      setFout((f) => ({ ...f, [rij.id]: e instanceof Error ? e.message : t('bh.bev.fout.algemeen') }))
     } finally {
       setBezig(null)
     }
@@ -185,20 +228,20 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Bevestigen
+          {t('bh.bev.titel')}
         </h1>
         <div style={kaart}>
           <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
-            Nog geen enkele klant heeft je gemachtigd om zijn inkoopfacturen te bevestigen.
+            {t('bh.bev.geenMandaat.kop')}
           </p>
           <p style={{ margin: '0 0 12px', color: M3.onSurfaceVariant, lineHeight: 1.6, fontSize: 14.5 }}>
-            Dit is een andere machtiging dan die om te factureren — een klant kan er één geven en de
-            ander niet. Hij zet het zelf aan bij <strong>Instellingen → Jouw boekhouder</strong>.
+            {t('bh.bev.geenMandaat.anders')} {t('bh.bev.geenMandaat.zetAan')}{' '}
+            {/* The path is named as it is WRITTEN in the nav, in every language — otherwise the
+                accountant hunts for a word that is nowhere in the interface. */}
+            <strong>{t('bh.bev.geenMandaat.plek')}</strong>.
           </p>
           <p style={{ margin: 0, color: M3.mutedText, lineHeight: 1.6, fontSize: 13.5 }}>
-            Waarom het uitmaakt: zolang een inkoopfactuur onbevestigd is, valt hij buiten het
-            kwartaalpakket en blijft het kwartaal op &quot;niet klaar&quot; staan. Zonder deze
-            machtiging kan alleen je klant dat slot openen.
+            {t('bh.bev.geenMandaat.waarom')}
           </p>
           <VraagMachtiging klanten={gekoppeld} kind="bevestigen" />
         </div>
@@ -212,11 +255,11 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Bevestigen
+          {t('bh.bev.titel')}
         </h1>
         <div style={kaart}>
           <p style={{ margin: 0, color: M3.onSurface, lineHeight: 1.6 }}>
-            Er staat niets te wachten. Bij je gemachtigde klanten is elke inkoopfactuur bevestigd.
+            {t('bh.bev.leeg')}
           </p>
         </div>
       </main>
@@ -226,21 +269,19 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
   return (
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 4px' }}>
-        Bevestigen
+        {t('bh.bev.titel')}
       </h1>
       <p style={{ margin: '0 0 16px', color: M3.onSurfaceVariant, fontSize: 14.5 }}>
-        Deze stukken houden een kwartaal tegen — bevestig wat klopt.
+        {t('bh.bev.subtitel')}
       </p>
 
       <section style={{ ...kaart, paddingTop: 16, paddingBottom: 16 }}>
         <p style={{ margin: 0, fontSize: 26, fontWeight: 500, color: M3.onSurface }}>{open.length}</p>
         <p style={{ margin: '4px 0 0', fontSize: 14, color: M3.onSurfaceVariant }}>
-          {open.length === 1 ? 'stuk wacht op bevestiging' : 'stukken wachten op bevestiging'}
+          {open.length === 1 ? t('bh.bev.wacht.een') : t('bh.bev.wacht.meer')}
         </p>
         <p style={{ margin: '10px 0 0', fontSize: 13, color: M3.mutedText, lineHeight: 1.6 }}>
-          Je bevestigt de lezing, je verandert er niets aan. Klopt een bedrag niet, bevestig dan
-          niet en vraag het na bij je klant. Bij elke bevestiging komt jouw naam te staan en krijgt
-          hij bericht — de verantwoordelijkheid blijft bij hem (art. 52 AWR).
+          {t('bh.bev.uitleg')}
         </p>
       </section>
 
@@ -250,7 +291,9 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
       {geselecteerd.size > 0 && (
         <section style={{ ...kaart, position: 'sticky', top: 8, zIndex: 20, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 14, color: M3.onSurface, fontWeight: 500 }}>
-            {bulkPlan.eligible.length === 1 ? '1 factuur geselecteerd' : `${bulkPlan.eligible.length} facturen geselecteerd`}
+            {bulkPlan.eligible.length === 1
+              ? t('bh.bev.sel.een')
+              : t('bh.bev.sel.meer', { aantal: bulkPlan.eligible.length })}
           </span>
           <span style={{ fontSize: 13, color: M3.onSurfaceVariant }}>{euro(bulkPlan.total)}</span>
           <div style={{ flex: 1 }} />
@@ -258,14 +301,14 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
             onClick={() => setGeselecteerd(new Set())}
             style={{ padding: '8px 14px', border: `1px solid ${M3.outline}`, borderRadius: R.full, fontSize: 13.5, background: M3.surface, color: M3.onSurfaceVariant, cursor: 'pointer' }}
           >
-            Wis selectie
+            {t('bh.bev.sel.wis')}
           </button>
           <button
             onClick={() => setBulkVraag(true)}
             disabled={bulkPlan.eligible.length === 0}
             style={{ padding: '8px 16px', border: 'none', borderRadius: R.full, fontSize: 13.5, fontWeight: 500, background: M3.primary, color: M3.onPrimary, cursor: 'pointer' }}
           >
-            Bevestigen
+            {t('bh.bev.actie.bevestigen')}
           </button>
         </section>
       )}
@@ -296,17 +339,17 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                     if (n.has(rij.id)) n.delete(rij.id); else n.add(rij.id)
                     return n
                   })}
-                  aria-label={`Selecteer ${rij.leverancier || 'factuur'} voor bevestigen`}
+                  aria-label={t('bh.bev.rij.selecteer', { leverancier: rij.leverancier || t('bh.bev.rij.factuur') })}
                   style={{ width: 18, height: 18, marginTop: 3, accentColor: M3.primary, cursor: 'pointer', flexShrink: 0 }}
                 />
               )}
               <div style={{ minWidth: 0 }}>
                 <p style={{ margin: 0, fontSize: 12.5, color: M3.mutedText }}>{rij.clientNaam}</p>
                 <p style={{ margin: '2px 0 0', fontSize: 15.5, color: M3.onSurface, fontWeight: 500 }}>
-                  {rij.leverancier || 'Onbekende leverancier'}
+                  {rij.leverancier || t('bh.bev.rij.onbekendeLeverancier')}
                 </p>
                 <p style={{ margin: '2px 0 0', fontSize: 12.5, color: M3.onSurfaceVariant }}>
-                  {rij.factuurnummer || 'zonder nummer'} · {datumNl(rij.datum)}
+                  {rij.factuurnummer || t('bh.bev.rij.zonderNummer')} · {datumNl(rij.datum, t)}
                 </p>
               </div>
               <div style={{ textAlign: 'end', flexShrink: 0 }}>
@@ -314,7 +357,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   {euro(rij.totaalInc)}
                 </p>
                 <p style={{ margin: '2px 0 0', fontSize: 12, color: M3.mutedText }}>
-                  waarvan {euro(rij.btw)} btw
+                  {t('bh.bev.rij.waarvanBtw', { bedrag: euro(rij.btw) })}
                 </p>
               </div>
             </div>
@@ -334,8 +377,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   color: M3.warning,
                 }}
               >
-                Dit konden wij niet zeker lezen: {rij.twijfels.join(' · ')}. Controleer het aan het
-                document zelf voor je bevestigt.
+                {t('bh.bev.rij.twijfels', { twijfels: rij.twijfels.join(' · ') })}
               </div>
             )}
 
@@ -373,7 +415,9 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   cursor: bezig === rij.id || isKlaar ? 'default' : 'pointer',
                 }}
               >
-                {isKlaar ? 'Bevestigd' : bezig === rij.id ? 'Bezig…' : 'Bevestigen'}
+                {isKlaar
+                  ? t('bh.bev.actie.bevestigd')
+                  : bezig === rij.id ? t('bh.bev.actie.bezig') : t('bh.bev.actie.bevestigen')}
               </button>
               {/* [FACTUURVRAAG] Was een kale link naar /opvragen: die navigeert wég van de factuur
                   naar een kwartaalscherm voor ontbrekende STUKKEN, en neemt niets mee — niet de
@@ -387,7 +431,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   padding: '9px 16px', borderRadius: R.full, fontSize: 14,
                   background: M3.warnContainer ?? M3.surfaceVariant, color: M3.onSurfaceVariant,
                 }}>
-                  Vraag verstuurd
+                  {t('bh.bev.rij.vraagVerstuurd')}
                 </span>
               )}
               {!isKlaar && !gevraagd[rij.id] && (
@@ -403,7 +447,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                     cursor: 'pointer',
                   }}
                 >
-                  Klopt niet — vraag stellen
+                  {t('bh.bev.rij.kloptNiet')}
                 </button>
               )}
             </div>
@@ -438,14 +482,14 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                 disabled={bulkBezig}
                 style={{ padding: '9px 16px', border: `1px solid ${M3.outline}`, borderRadius: R.full, fontSize: 14, background: M3.surface, color: M3.onSurfaceVariant, cursor: bulkBezig ? 'default' : 'pointer' }}
               >
-                Annuleren
+                {t('bh.bev.actie.annuleren')}
               </button>
               <button
                 onClick={() => void bevestigSelectie()}
                 disabled={bulkBezig}
                 style={{ padding: '9px 18px', border: 'none', borderRadius: R.full, fontSize: 14, fontWeight: 500, background: M3.primary, color: M3.onPrimary, cursor: bulkBezig ? 'default' : 'pointer' }}
               >
-                {bulkBezig ? 'Bezig…' : 'Ja, bevestigen'}
+                {bulkBezig ? t('bh.bev.actie.bezig') : t('bh.bev.bulk.ja')}
               </button>
             </div>
           </div>
@@ -476,20 +520,20 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
             }}
           >
             <div style={{ fontSize: 17, fontWeight: 600, color: M3.onSurface }}>
-              Vraag over deze factuur
+              {t('bh.bev.vraag.kop')}
             </div>
             <div style={{ fontSize: 13, color: M3.onSurfaceVariant, marginTop: 4, marginBottom: 14 }}>
               {vraagVoor.leverancier}
-              {vraagVoor.factuurnummer ? ` · factuur ${vraagVoor.factuurnummer}` : ''}
+              {vraagVoor.factuurnummer ? ` · ${t('bh.bev.vraag.factuurnummer', { nummer: vraagVoor.factuurnummer })}` : ''}
               {` · ${euro(vraagVoor.totaalInc)}`}
-              {` — gaat naar ${vraagVoor.clientNaam}`}
+              {` — ${t('bh.bev.vraag.gaatNaar', { klant: vraagVoor.clientNaam })}`}
             </div>
             <textarea
               value={vraagTekst}
               onChange={(e) => setVraagTekst(e.target.value.slice(0, 500))}
               rows={4}
               autoFocus
-              placeholder="Bijvoorbeeld: is dit zakelijk of privé? Of: klopt het btw-bedrag hier?"
+              placeholder={t('bh.bev.vraag.placeholder')}
               style={{
                 width: '100%', boxSizing: 'border-box', padding: '10px 12px',
                 border: `1px solid ${M3.outline}`, borderRadius: R.md,
@@ -497,7 +541,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
               }}
             />
             <div style={{ fontSize: 12, color: M3.onSurfaceVariant, marginTop: 6 }}>
-              {vraagTekst.trim().length}/500 · je klant krijgt een melding en kan hier antwoorden
+              {vraagTekst.trim().length}/500 · {t('bh.bev.vraag.melding')}
             </div>
             {vraagFout && (
               <div style={{ fontSize: 13, color: M3.error, marginTop: 10 }}>{vraagFout}</div>
@@ -512,7 +556,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   cursor: vraagBezig ? 'default' : 'pointer',
                 }}
               >
-                Annuleren
+                {t('bh.bev.actie.annuleren')}
               </button>
               <button
                 onClick={() => void stelVraag()}
@@ -524,7 +568,7 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
                   cursor: vraagBezig || vraagTekst.trim().length === 0 ? 'default' : 'pointer',
                 }}
               >
-                {vraagBezig ? 'Bezig…' : 'Vraag versturen'}
+                {vraagBezig ? t('bh.bev.actie.bezig') : t('bh.bev.vraag.versturen')}
               </button>
             </div>
           </div>

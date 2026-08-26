@@ -6983,6 +6983,21 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
   // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
   // part a list of keys cannot do.
   const SCREENS = [
+    // [BOEKHOUDER] The accountant's own screens. They were exempt from this sweep for as long as
+    // the module was Dutch-only; that policy is reversed (AGENTS.md), so they are held to the same
+    // rule as every other screen. What stays Dutch here is marked [TAAL-DB] on its own line and is
+    // always the same kind of thing: text that is SENT to someone else — a notification stored for
+    // the client, a message body, a nav label quoted as the other person's screen writes it.
+    "src/modules/accountant/pages/AccountantHome.tsx",
+    "src/modules/accountant/pages/AccountantWerkboard.tsx",
+    "src/modules/accountant/pages/AccountantFactuur.tsx",
+    "src/modules/accountant/pages/AccountantBevestigen.tsx",
+    "src/modules/accountant/pages/AccountantDebiteuren.tsx",
+    "src/modules/accountant/pages/AccountantOpvragen.tsx",
+    "src/modules/accountant/pages/KlantenBeheer.tsx",
+    "src/modules/accountant/pages/VraagMachtiging.tsx",
+    "src/app/dashboard/clients/[id]/page.tsx",
+    "src/app/dashboard/clients/[id]/kwartaal/page.tsx",
     "src/app/dashboard/invoice/new/page.tsx",
     "src/app/dashboard/facturen/FacturenClient.tsx",
     "src/app/dashboard/invoice/[id]/page.tsx",
@@ -10294,8 +10309,13 @@ test("[BOEKHOUDER-EIGEN-BOEKEN] the accountant's client page invoices THROUGH th
   // confusion in miniature.
   assert.match(
     code("src/modules/accountant/pages/AccountantHome.tsx"),
-    /label="Mijn facturen"/,
+    /label=\{t\('bh\.home\.tegel\.mijnFacturen'\)\}/,
     "the tile pointing at the accountant's own invoices must say they are their own",
+  );
+  // …and the word behind that key must still be the possessive one, in the source language.
+  assert.match(
+    code("src/lib/i18n/messages.ts"), /'bh\.home\.tegel\.mijnFacturen': \{ nl: 'Mijn facturen'/,
+    "a key may not rename its way out of saying whose invoices these are",
   );
 });
 
@@ -14095,14 +14115,22 @@ test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () =>
   assert.match(code("src/app/dashboard/clients/beheer/page.tsx"),
     /clientsUnreadable=\{clientsUnreadable\}/, "the flag is passed, not merely destructured");
 
-  // [TAAL] The accountant module is deliberately Dutch-only (AGENTS.md): its user is a Dutch
-  // professional reading Dutch administraties under Dutch law, and the owner's language setting
-  // describes the OWNER. So these sentences are Dutch on purpose and are NOT a catalogue miss.
-  assert.match(home, /We konden je klantenlijst nu niet ophalen/);
-  assert.match(home, /We konden je takenlijst nu niet ophalen/);
+  // [TAAL] These four sentences used to be pinned as Dutch literals, with the reason attached:
+  // the accountant module was deliberately Dutch-only. That policy is reversed — the first
+  // accountants on this product read Arabic, and they have a profile and a language of their own
+  // (AGENTS.md). The CLAIM this gate makes is unchanged and is what matters: a failed read says
+  // it failed, and says it is about our reading rather than about the practice. Anchored on the
+  // keys, because that is now where the sentences live.
+  assert.match(home, /t\('bh\.home\.klanten\.onleesbaar\.titel'\)/);
+  assert.match(home, /t\('bh\.home\.todo\.onleesbaar\.titel'\)/);
   // …and each says the same thing: this is about our reading, not about your practice.
-  assert.match(home, /Dit zegt niets over je klanten/);
-  assert.match(home, /Dit betekent niet dat er niets te doen is/);
+  assert.match(home, /t\('bh\.home\.klanten\.onleesbaar\.uitleg'\)/);
+  assert.match(home, /t\('bh\.home\.todo\.onleesbaar\.uitleg'\)/);
+  // The sentences themselves must still SAY that — a key renaming its way out of the promise is
+  // exactly what pinning the literal used to prevent, so the claim moves to the catalogue.
+  const cat = code("src/lib/i18n/messages.ts");
+  assert.match(cat, /'bh\.home\.klanten\.onleesbaar\.uitleg':[^\n]*Dit zegt niets over je klanten/);
+  assert.match(cat, /'bh\.home\.todo\.onleesbaar\.uitleg':[^\n]*Dit betekent niet dat er niets te doen is/);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -14979,7 +15007,10 @@ test("[BULK-UITNODIGEN] the bulk list walks the SAME door as the single button, 
   const scherm = code("src/modules/accountant/pages/KlantenBeheer.tsx");
   assert.match(scherm, /for \(const email of parsed\) \{/, "sequential per-address loop");
   assert.match(scherm, /await fetch\('\/api\/invite\/client', \{\s*\n\s*method: 'POST'/, "…through the one invite route");
-  assert.match(scherm, /failureText\(res\.status, json, 'Versturen mislukt\.'\)/, "a refusal is a sentence ([SERVER-ZIN]), kept per address");
+  // [TAAL] Anchored on the key, not the Dutch sentence — the screen now takes its words from the
+  // catalogue. The rule is untouched: the SERVER's prose wins, and a bare code is replaced by a
+  // sentence rather than shown.
+  assert.match(scherm, /failureText\(res\.status, json, t\('bh\.klant\.invite\.failed'\)\)/, "a refusal is a sentence ([SERVER-ZIN]), kept per address");
   assert.match(scherm, /\.slice\(0, 200\)/, "the list is bounded to what the day limit can carry");
   assert.match(scherm, /setBulkResults\(\[\.\.\.results\]\)/, "progress shows per address, not only at the end");
 

@@ -18,6 +18,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { EL1, FONT, M3, R, COLUMN } from '@/lib/design/tokens'
+import { translator, type Translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 import { rowMatchesQuery } from '@/lib/search'
 import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
@@ -29,11 +31,19 @@ import {
 
 // Same semantic colours as the owner's readiness screen (STATUS_META) so a client
 // sees the identical green/amber/red the accountant sees.
-const STATUS_META: Record<BoardStatus, { label: string; color: string; bg: string; dot: string }> = {
-  ready:     { label: 'Klaar',       color: '#137333', bg: '#CEEAD6', dot: '🟢' },
-  almost:    { label: 'Bijna klaar', color: '#7C5800', bg: '#FEE8C4', dot: '🟡' },
-  attention: { label: 'Nog niet',    color: '#B3261E', bg: '#F9DEDC', dot: '🔴' },
+const STATUS_META: Record<BoardStatus, { color: string; bg: string; dot: string }> = {
+  ready:     { color: '#137333', bg: '#CEEAD6', dot: '🟢' },
+  almost:    { color: '#7C5800', bg: '#FEE8C4', dot: '🟡' },
+  attention: { color: '#B3261E', bg: '#F9DEDC', dot: '🔴' },
 }
+
+// The word beside the dot. A key per status, not a Dutch label on the colour table — the colour
+// is the same in every language and the word is not.
+const STATUS_LABEL_KEY = {
+  ready:     'bh.werk.status.ready',
+  almost:    'bh.werk.status.almost',
+  attention: 'bh.werk.status.attention',
+} as const satisfies Record<BoardStatus, string>
 
 const MAX_PARALLEL = 4
 const NL_MONTHS = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december']
@@ -47,22 +57,31 @@ function deadlineColor(days: number): string {
   if (days <= 14) return '#B26A00'
   return '#1A73E8'
 }
-function countdownLabel(days: number): string {
-  if (days < 0) return `${Math.abs(days)} ${Math.abs(days) === 1 ? 'dag' : 'dagen'} verlopen`
-  if (days === 0) return 'Deadline is vandaag'
-  return `Nog ${days} ${days === 1 ? 'dag' : 'dagen'}`
+function countdownLabel(t: Translator, days: number): string {
+  if (days < 0) {
+    const n = Math.abs(days)
+    return t(n === 1 ? 'bh.werk.countdown.verlopenEen' : 'bh.werk.countdown.verlopenMeer', { n })
+  }
+  if (days === 0) return t('bh.werk.countdown.vandaag')
+  return t(days === 1 ? 'bh.werk.countdown.nogEen' : 'bh.werk.countdown.nogMeer', { n: days })
 }
 
 // [WERKBOARD-NUDGE] The reminder the client receives — states the quarter and how
 // many things are still missing, and points at their own "Ben ik klaar?" screen
 // where every gap is listed with a fix-link. Honest and specific, never a guilt trip.
+//
+// [TAAL] Dutch, and NOT through the translator — deliberately. This text is not read by the
+// accountant looking at this board; it is stored and delivered to the CLIENT, like the invoice
+// mail. Binding it to the accountant's language setting would send an Arabic notification to a
+// Dutch owner because their bookkeeper reads Arabic. The confirm panel shows it verbatim, which
+// is the point: what is previewed is exactly what is sent.
 function nudgeMessage(quarterLabel: string, missingCount?: number): { title: string; body: string } {
   const what = missingCount && missingCount > 0
     ? `nog ${missingCount} ${missingCount === 1 ? 'ding' : 'dingen'}`
     : 'nog een paar dingen'
   return {
-    title: 'Herinnering van je boekhouder',
-    body: `Voor ${quarterLabel} mist je boekhouder ${what} om je administratie af te ronden. Kijk op "Ben ik klaar?" wat er nog nodig is.`,
+    title: 'Herinnering van je boekhouder', // [TAAL-DB] Gaat naar de KLANT, in diens taal — niet in die van de boekhouder.
+    body: `Voor ${quarterLabel} mist je boekhouder ${what} om je administratie af te ronden. Kijk op "Ben ik klaar?" wat er nog nodig is.`, // [TAAL-DB] Berichttekst voor de klant; "Ben ik klaar?" is de naam van diens eigen scherm.
   }
 }
 
@@ -75,6 +94,8 @@ interface Props {
 }
 
 export default function AccountantWerkboard({ clients, year: initYear, quarter: initQuarter }: Props) {
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   const currentYear = new Date().getFullYear()
 
@@ -92,15 +113,15 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
       actions: (
         <button
           onClick={() => setReloadKey(k => k + 1)}
-          title="Vernieuwen"
+          title={t('bh.werk.vernieuwen')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
         >
           <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
-          Vernieuwen
+          {t('bh.werk.vernieuwen')}
         </button>
       ),
     },
-    [],
+    [t],
   )
   const [rows, setRows] = useState<BoardRow[]>(
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
@@ -246,12 +267,12 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ fontSize: 13, fontWeight: 600, color: '#5F6368', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              BTW-aangifte {quarterLabel}
+              {t('bh.werk.hero.btwAangifte', { kwartaal: quarterLabel })}
             </p>
             <p style={{ fontSize: 28, fontWeight: 700, color: heroColor, margin: '0 0 4px', lineHeight: 1.1 }}>
-              {countdownLabel(days)}
+              {countdownLabel(t, days)}
             </p>
-            <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>Uiterlijk {formatDutchDate(deadline)}</p>
+            <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>{t('bh.werk.hero.uiterlijk', { datum: formatDutchDate(deadline) })}</p>
           </div>
           <span style={{ fontSize: 40, flexShrink: 0 }}>🗓️</span>
         </div>
@@ -270,11 +291,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
             )
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
-            <button onClick={() => setYear(y => Math.max(2000, y - 1))} title="Vorig jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: '#1A73E8' }}>
+            <button onClick={() => setYear(y => Math.max(2000, y - 1))} title={t('bh.werk.jaar.vorig')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: '#1A73E8' }}>
               <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', minWidth: 40, textAlign: 'center' }}>{year}</span>
-            <button onClick={() => setYear(y => Math.min(y + 1, currentYear))} disabled={year >= currentYear} title="Volgend jaar" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= currentYear ? 'default' : 'pointer', color: year >= currentYear ? '#E0E0E0' : '#1A73E8', opacity: year >= currentYear ? 0.5 : 1 }}>
+            <button onClick={() => setYear(y => Math.min(y + 1, currentYear))} disabled={year >= currentYear} title={t('bh.werk.jaar.volgend')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= currentYear ? 'default' : 'pointer', color: year >= currentYear ? '#E0E0E0' : '#1A73E8', opacity: year >= currentYear ? 0.5 : 1 }}>
               <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
             </button>
           </div>
@@ -284,11 +305,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         {clients.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
             {[
-              { n: summary.ready, label: 'Klaar', color: summary.ready > 0 ? '#137333' : '#5F6368' },
-              { n: summary.almost, label: 'Bijna', color: summary.almost > 0 ? '#7C5800' : '#5F6368' },
-              { n: summary.attention, label: 'Nog niet', color: summary.attention > 0 ? '#B3261E' : '#5F6368' },
+              { id: 'ready', n: summary.ready, label: t('bh.werk.telling.klaar'), color: summary.ready > 0 ? '#137333' : '#5F6368' },
+              { id: 'almost', n: summary.almost, label: t('bh.werk.telling.bijna'), color: summary.almost > 0 ? '#7C5800' : '#5F6368' },
+              { id: 'attention', n: summary.attention, label: t('bh.werk.telling.nogNiet'), color: summary.attention > 0 ? '#B3261E' : '#5F6368' },
             ].map(s => (
-              <div key={s.label} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
+              <div key={s.id} style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '12px 8px', textAlign: 'center' }}>
                 <p style={{ fontSize: 22, fontWeight: 700, color: s.color, margin: 0 }}>{s.n}</p>
                 <p style={{ fontSize: 11, color: '#5F6368', margin: '2px 0 0' }}>{s.label}</p>
               </div>
@@ -299,21 +320,21 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         {/* ── Filter ── */}
         {clients.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => setOnlyAction(false)} style={tabStyle(!onlyAction)}>Alle klanten</button>
+            <button onClick={() => setOnlyAction(false)} style={tabStyle(!onlyAction)}>{t('bh.werk.filter.alle')}</button>
             <button onClick={() => setOnlyAction(true)} style={tabStyle(onlyAction)}>
-              Actie nodig{summary.actionNeeded > 0 ? ` (${summary.actionNeeded})` : ''}
+              {t('bh.werk.filter.actie')}{summary.actionNeeded > 0 ? ` (${summary.actionNeeded})` : ''}
             </button>
             <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" strokeWidth="2" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)' }}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" strokeLinecap="round" /></svg>
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Zoek klant…"
-                aria-label="Klanten zoeken"
+                placeholder={t('bh.werk.zoek.placeholder')}
+                aria-label={t('bh.werk.zoek.aria')}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 30px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124', background: '#FFFFFF' }}
               />
               {query && (
-                <button onClick={() => setQuery('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setQuery('')} aria-label={t('bh.werk.zoek.wissen')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
             {/* [HERTIKKEN] De machineleesbare CSV over ALLE klanten van dit kwartaal.
@@ -323,7 +344,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
               href={`/api/export?year=${year}&quarter=${quarter}&accountant=true`}
               style={{ fontSize: 12.5, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 8, padding: '6px 12px', whiteSpace: 'nowrap' }}
             >
-              ⬇︎ Alle klanten (CSV)
+              ⬇︎ {t('bh.werk.csv')}
             </a>
           </div>
         )}
@@ -331,14 +352,17 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         {/* ── Client board ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           {clients.length === 0 ? (
-            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>Nog geen klanten gekoppeld</p>
+            <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>{t('bh.werk.leeg.geenKlanten')}</p>
           ) : visible.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
-              {query.trim() ? `Geen klanten gevonden voor “${query.trim()}”` : 'Alle klanten zijn klaar 🎉'}
+              {query.trim()
+                ? t('bh.werk.leeg.geenTreffer', { zoekterm: query.trim() })
+                : t('bh.werk.leeg.allemaalKlaar')}
             </p>
           ) : (
             visible.map((row, idx) => {
               const meta = row.state === 'ok' && row.status ? STATUS_META[row.status] : null
+              const statusLabel = row.state === 'ok' && row.status ? t(STATUS_LABEL_KEY[row.status]) : ''
               const canNudge = row.state === 'ok' && row.status !== 'ready'
               const nState = nudge[row.id] ?? 'idle'
               const last = idx === visible.length - 1
@@ -352,15 +376,15 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                     >
                       <span style={{ fontSize: 14, fontWeight: 500, color: '#202124', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</span>
                       <span style={{ fontSize: 12, color: '#5F6368', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {row.state === 'loading' && 'Controleren…'}
+                        {row.state === 'loading' && t('bh.werk.rij.controleren')}
                         {row.state === 'error' && (row.errorReason === 'unlinked'
-                          ? 'Koppeling verbroken'
-                          : 'Kon status niet laden')}
+                          ? t('bh.werk.rij.koppelingVerbroken')
+                          : t('bh.werk.rij.statusOnbekend'))}
                         {row.state === 'ok' && (
                           <>
-                            {row.score}% compleet
-                            {(row.missingCount ?? 0) > 0 && ` · ${row.missingCount} ontbreekt`}
-                            {(row.riskCount ?? 0) > 0 && ` · ${row.riskCount} nakijken`}
+                            {t('bh.werk.rij.compleet', { score: row.score ?? '' })}
+                            {(row.missingCount ?? 0) > 0 && ` · ${t('bh.werk.rij.ontbreekt', { n: row.missingCount ?? 0 })}`}
+                            {(row.riskCount ?? 0) > 0 && ` · ${t('bh.werk.rij.nakijken', { n: row.riskCount ?? 0 })}`}
                           </>
                         )}
                       </span>
@@ -372,19 +396,19 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                         onClick={() => setNudge(prev => ({ ...prev, [row.id]: nState === 'confirm' ? 'idle' : 'confirm' }))}
                         style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', background: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}
                       >
-                        Herinner
+                        {t('bh.werk.herinner')}
                       </button>
                     )}
-                    {nState === 'sending' && <span style={{ flexShrink: 0, fontSize: 12, color: '#5F6368' }}>Versturen…</span>}
-                    {nState === 'sent' && <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#137333' }}>✓ Verstuurd</span>}
+                    {nState === 'sending' && <span style={{ flexShrink: 0, fontSize: 12, color: '#5F6368' }}>{t('bh.werk.versturen')}</span>}
+                    {nState === 'sent' && <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#137333' }}>✓ {t('bh.werk.verstuurd')}</span>}
                     {nState === 'error' && (
-                      <button onClick={() => setNudge(prev => ({ ...prev, [row.id]: 'confirm' }))} style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer' }}>Mislukt · opnieuw</button>
+                      <button onClick={() => setNudge(prev => ({ ...prev, [row.id]: 'confirm' }))} style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer' }}>{t('bh.werk.mislukt')}</button>
                     )}
 
                     {/* Status chip */}
                     {row.state === 'loading' && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: '#5F6368', backgroundColor: '#F1F3F4', padding: '3px 8px', borderRadius: 6 }}>…</span>}
                     {row.state === 'error' && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: '#5F6368', backgroundColor: '#F1F3F4', padding: '3px 8px', borderRadius: 6 }}>—</span>}
-                    {meta && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: meta.color, backgroundColor: meta.bg, padding: '3px 8px', borderRadius: 6, whiteSpace: 'nowrap' }}>{meta.dot} {meta.label}</span>}
+                    {meta && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, color: meta.color, backgroundColor: meta.bg, padding: '3px 8px', borderRadius: 6, whiteSpace: 'nowrap' }}>{meta.dot} {statusLabel}</span>}
                   </div>
 
                   {/* [REDEN + PAKKET] De twee dingen waarvoor de boekhouder anders het bord
@@ -404,7 +428,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                         </span>
                       ))}
                       {(row.missingTitles?.length ?? 0) > 3 && (
-                        <span style={{ fontSize: 11.5, color: '#5F6368' }}>+{(row.missingTitles?.length ?? 0) - 3} meer</span>
+                        <span style={{ fontSize: 11.5, color: '#5F6368' }}>{t('bh.werk.meer', { n: (row.missingTitles?.length ?? 0) - 3 })}</span>
                       )}
 
                       {/* Het pakket, rechtstreeks. /api/closing-package is al dubbelpad-
@@ -415,7 +439,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                         href={`/api/closing-package?year=${year}&quarter=${quarter}&clientId=${encodeURIComponent(row.id)}`}
                         style={{ marginInlineStart: 'auto', flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
                       >
-                        ⬇︎ Pakket
+                        ⬇︎ {t('bh.werk.pakket')}
                       </a>
                       {/* [IB-JAAR] Het jaar van deze klant, geordend voor de IB-aangifte — dezelfde
                           dubbelpad-route; het scherm geeft clientId alleen door. */}
@@ -423,7 +447,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                         href={`/dashboard/jaar?clientId=${encodeURIComponent(row.id)}`}
                         style={{ flexShrink: 0, fontSize: 12, fontWeight: 600, color: '#1A73E8', textDecoration: 'none', border: '1px solid #E0E0E0', borderRadius: 6, padding: '5px 10px' }}
                       >
-                        Jaar
+                        {t('bh.werk.jaarKnop')}
                       </a>
                       {/* [XAF] Het jaar als XML Auditfile Financieel 3.2 — het bestand dat het
                           eigen pakket van het kantoor importeert. Zelfde dubbelpad-route. */}
@@ -455,10 +479,10 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
                         <p style={{ fontSize: 12, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>{nudgeMessage(quarterLabel, row.missingCount).body}</p>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => sendNudge(row)} style={{ fontSize: 13, fontWeight: 600, color: '#fff', backgroundColor: '#1A73E8', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>Verstuur herinnering</button>
-                        <button onClick={() => setNudge(prev => ({ ...prev, [row.id]: 'idle' }))} style={{ fontSize: 13, fontWeight: 600, color: '#5F6368', backgroundColor: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>Annuleren</button>
+                        <button onClick={() => sendNudge(row)} style={{ fontSize: 13, fontWeight: 600, color: '#fff', backgroundColor: '#1A73E8', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>{t('bh.werk.verstuurHerinnering')}</button>
+                        <button onClick={() => setNudge(prev => ({ ...prev, [row.id]: 'idle' }))} style={{ fontSize: 13, fontWeight: 600, color: '#5F6368', backgroundColor: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>{t('bh.werk.annuleren')}</button>
                       </div>
-                      <p style={{ fontSize: 11, color: '#80868b', margin: 0 }}>De klant krijgt dit als melding in de app (geen e-mail).</p>
+                      <p style={{ fontSize: 11, color: '#80868b', margin: 0 }}>{t('bh.werk.melding')}</p>
                     </div>
                   )}
                 </div>
@@ -468,8 +492,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
         </div>
 
         <p style={{ fontSize: 11, color: '#80868b', margin: '0 4px', lineHeight: 1.5 }}>
-          Zelfde score en verdict als de klant ziet op &ldquo;Ben ik klaar?&rdquo;. &ldquo;Herinner&rdquo;
-          stuurt een melding in de app naar de klant — je bevestigt per klant.
+          {t('bh.werk.voetnoot')}
         </p>
 
       </main>

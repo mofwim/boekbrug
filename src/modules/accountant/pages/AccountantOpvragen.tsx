@@ -24,6 +24,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { MAX_ITEMS, MAX_EXTRA, buildDocumentRequest } from '@/lib/document-request'
 import { failureText } from '@/lib/server-message'
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 export interface OpvraagKlant {
   id: string
@@ -43,6 +45,10 @@ interface Props {
 }
 
 export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
+  // [TAAL] The bookkeeper's own interface follows their language; the MESSAGE built below stays
+  // Dutch, because it is read by the client and not by whoever composes it.
+  const locale = useLocale()
+  const t = translator(locale)
   const [klantId, setKlantId] = useState(klanten.length === 1 ? klanten[0].id : '')
   const [periode, setPeriode] = useState(kwartalen[0] ? `${kwartalen[0].year}-${kwartalen[0].quarter}` : '')
   const [extra, setExtra] = useState('')
@@ -87,7 +93,7 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
       .then((r) => r.json())
       .then((d) => {
         if (afgebroken) return
-        if (!d?.ok || !d?.report) throw new Error(d?.error || 'Kon het kwartaal niet lezen.')
+        if (!d?.ok || !d?.report) throw new Error(d?.error || t('bh.opvr.fout.lezen'))
         const missing: MissingItem[] = Array.isArray(d.report.missing) ? d.report.missing : []
         setGeladen({ sleutel, items: missing })
         // Standaard alles aangevinkt: de boekhouder haalt weg wat hij al weet, in plaats van
@@ -99,12 +105,12 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
       .catch((e) => {
         if (afgebroken) return
         setGeladen({ sleutel, items: [] })
-        setStatus({ sleutel, fout: e instanceof Error ? e.message : 'Kon het kwartaal niet lezen.' })
+        setStatus({ sleutel, fout: e instanceof Error ? e.message : t('bh.opvr.fout.lezen') })
       })
     return () => {
       afgebroken = true
     }
-  }, [sleutel, klantId, kwartaal])
+  }, [sleutel, klantId, kwartaal, t])
 
   const geselecteerd = useMemo(
     () => (gaten ?? []).filter((g) => gekozen[g.title]),
@@ -120,7 +126,7 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
       quarterLabel: kwartaal.label,
       // Alleen voor het voorbeeld. De server ondertekent met de ECHTE naam uit het profiel en
       // negeert wat de browser hier ook maar stuurt.
-      accountantName: 'Je naam',
+      accountantName: 'Je naam', // [TAAL-DB] Valt in de BERICHTtekst voor de klant, niet op dit scherm.
       extra,
     })
   }, [geselecteerd, kwartaal, extra])
@@ -141,11 +147,11 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
         }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(failureText(res.status, data, 'Versturen mislukt.'))
+      if (!res.ok) throw new Error(failureText(res.status, data, t('bh.opvr.fout.versturen')))
       setStatus({ sleutel, verstuurd: true })
       setExtra('')
     } catch (e) {
-      setStatus({ sleutel, fout: e instanceof Error ? e.message : 'Er ging iets mis.' })
+      setStatus({ sleutel, fout: e instanceof Error ? e.message : t('bh.opvr.fout.algemeen') })
     } finally {
       setBezig(false)
     }
@@ -175,11 +181,11 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-          Stukken opvragen
+          {t('bh.opvr.titel')}
         </h1>
         <div style={kaart}>
           <p style={{ margin: 0, color: M3.onSurface, lineHeight: 1.6 }}>
-            Je hebt nog geen gekoppelde klanten. Nodig er een uit bij <strong>Klanten beheren</strong>.
+            {t('bh.opvr.geenKlanten')} <strong>{t('chrome.klantenBeheren')}</strong>.
           </p>
         </div>
       </main>
@@ -189,26 +195,26 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
   return (
     <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
       <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 4px' }}>
-        Stukken opvragen
+        {t('bh.opvr.titel')}
       </h1>
       <p style={{ margin: '0 0 20px', color: M3.onSurfaceVariant, fontSize: 14.5 }}>
-        Eén bericht met precies wat er nog mist — in zijn inbox en in zijn mail.
+        {t('bh.opvr.intro')}
       </p>
 
       {/* ── Wie en welk kwartaal ─────────────────────────────────────────── */}
       <section style={kaart}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
           <div>
-            <label style={label} htmlFor="klant">Klant</label>
+            <label style={label} htmlFor="klant">{t('bh.opvr.klant')}</label>
             <select id="klant" style={veld} value={klantId} onChange={(e) => setKlantId(e.target.value)}>
-              <option value="">Kies een klant…</option>
+              <option value="">{t('bh.opvr.kiesKlant')}</option>
               {klanten.map((k) => (
                 <option key={k.id} value={k.id}>{k.naam}</option>
               ))}
             </select>
           </div>
           <div>
-            <label style={label} htmlFor="kwartaal">Kwartaal</label>
+            <label style={label} htmlFor="kwartaal">{t('bh.opvr.kwartaal')}</label>
             <select id="kwartaal" style={veld} value={periode} onChange={(e) => setPeriode(e.target.value)}>
               {kwartalen.map((q) => (
                 <option key={`${q.year}-${q.quarter}`} value={`${q.year}-${q.quarter}`}>{q.label}</option>
@@ -222,16 +228,14 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
       {klantId && (
         <section style={kaart}>
           <h2 style={{ fontSize: 15, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
-            Wat BoekBrug mist in {kwartaal?.label}
+            {t('bh.opvr.mistIn', { kwartaal: kwartaal?.label ?? '' })}
           </h2>
 
-          {laden && <p style={{ margin: 0, color: M3.mutedText, fontSize: 14 }}>Bezig met lezen…</p>}
+          {laden && <p style={{ margin: 0, color: M3.mutedText, fontSize: 14 }}>{t('bh.opvr.laden')}</p>}
 
           {!laden && gaten && gaten.length === 0 && (
             <p style={{ margin: 0, color: M3.onSurfaceVariant, fontSize: 14.5, lineHeight: 1.6 }}>
-              BoekBrug ziet geen gaten in dit kwartaal. Dat betekent niet dat het compleet is — een
-              bon die nooit is geüpload is voor ons onzichtbaar. Je kunt hieronder alsnog zelf iets
-              vragen.
+              {t('bh.opvr.geenGaten')}
             </p>
           )}
 
@@ -266,8 +270,7 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
                 </label>
               ))}
               <p style={{ margin: '12px 0 0', fontSize: 12.5, color: M3.mutedText, lineHeight: 1.6 }}>
-                Haal weg wat je al weet — een bon die onderweg is, of een gat dat jouw eigen werk is.
-                Meer dan {MAX_ITEMS} punten in één bericht leest niemand.
+                {t('bh.opvr.vinkUitleg', { max: MAX_ITEMS })}
               </p>
             </>
           )}
@@ -277,20 +280,24 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
       {/* ── Eigen zin + versturen ────────────────────────────────────────── */}
       {klantId && !laden && (
         <section style={kaart}>
-          <label style={label} htmlFor="extra">Je eigen zin erbij (optioneel)</label>
+          <label style={label} htmlFor="extra">{t('bh.opvr.eigenZin')}</label>
           <textarea
             id="extra"
             rows={3}
             maxLength={MAX_EXTRA}
             value={extra}
             onChange={(e) => setExtra(e.target.value)}
-            placeholder="Bijvoorbeeld: de betaling van Jansen is binnen, top."
+            // [TAAL] Dutch on purpose, in both directions: what is typed here goes into the message
+            // the CLIENT reads, so the example has to be in the language that message is written in.
+            placeholder="Bijvoorbeeld: de betaling van Jansen is binnen, top." // [TAAL-DB]
             style={{ ...veld, resize: 'vertical', fontFamily: 'inherit' }}
           />
 
           {voorbeeld?.ok && (
             <>
-              <p style={{ ...label, marginTop: 16 }}>Dit krijgt {klant?.naam ?? 'je klant'} te zien</p>
+              <p style={{ ...label, marginTop: 16 }}>
+                {t('bh.opvr.voorbeeldKop', { naam: klant?.naam ?? t('bh.opvr.jeKlant') })}
+              </p>
               <pre
                 style={{
                   margin: 0,
@@ -336,7 +343,7 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
 
           {verstuurd && (
             <p style={{ marginTop: 14, marginBottom: 0, fontSize: 14, color: M3.success }}>
-              Verstuurd. Het staat in zijn inbox en is per mail gegaan.
+              {t('bh.opvr.verstuurd')}
             </p>
           )}
 
@@ -357,11 +364,12 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
               cursor: bezig || !voorbeeld?.ok ? 'default' : 'pointer',
             }}
           >
-            {bezig ? 'Bezig met versturen…' : `Verstuur naar ${klant?.naam ?? 'je klant'}`}
+            {bezig
+              ? t('bh.opvr.bezig')
+              : t('bh.opvr.verstuurNaar', { naam: klant?.naam ?? t('bh.opvr.jeKlant') })}
           </button>
           <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: M3.mutedText, lineHeight: 1.5 }}>
-            Het bericht staat op jouw naam en komt in dezelfde inbox als je gewone berichten. Hij
-            kan er direct op antwoorden.
+            {t('bh.opvr.voet')}
           </p>
         </section>
       )}

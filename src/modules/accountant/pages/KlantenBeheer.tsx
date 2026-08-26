@@ -15,6 +15,9 @@ import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [SERVER-ZIN] Een machinecode is geen zin — de route spreekt soms code, soms Nederlands.
 import { failureText } from '@/lib/server-message'
+// [TAAL] This screen holds no language of its own: every sentence comes from the catalogue.
+import { translator, type Translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] Honest, fact-only client summary. No "Klaar"/"ready" verdict — the
@@ -30,9 +33,15 @@ function attentionColor(r: ClientReadiness): string {
   return '#DADCE0'                                              // nothing pending (neutral)
 }
 
-function readinessLine(r: ClientReadiness): string {
-  if (r.sharedInvoices === 0) return 'Geen facturen dit kwartaal'
-  return `${r.processedInvoices}/${r.sharedInvoices} verwerkt · Bank ${r.hasBankData ? '✓' : '—'}`
+// [TAAL] The translator travels in — a module-level helper cannot call a hook, and a sentence
+// built out here would be the one string on this screen that never gets translated.
+function readinessLine(t: Translator, r: ClientReadiness): string {
+  if (r.sharedInvoices === 0) return t('bh.klant.readiness.none')
+  return t('bh.klant.readiness.processed', {
+    done: r.processedInvoices,
+    total: r.sharedInvoices,
+    bank: r.hasBankData ? '✓' : '—',
+  })
 }
 
 // ─────────────────────────────────────────────────────────
@@ -54,6 +63,8 @@ interface Props {
 // ─────────────────────────────────────────────────────────
 
 export default function KlantenBeheer({ initialClients, clientsUnreadable }: Props) {
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
@@ -107,13 +118,13 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       })
       const json = await res.json()
       if (!res.ok) {
-        setInviteError(failureText(res.status, json, 'Versturen mislukt.'))
+        setInviteError(failureText(res.status, json, t('bh.klant.invite.failed')))
       } else {
         setInviteSuccess(true)
         setInviteEmail('')
       }
     } catch {
-      setInviteError('Netwerkfout. Probeer het opnieuw.')
+      setInviteError(t('bh.klant.error.network'))
     } finally {
       setInviteLoading(false)
     }
@@ -144,9 +155,9 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
         const json = await res.json().catch(() => ({}))
         results.push(res.ok
           ? { email, ok: true }
-          : { email, ok: false, message: failureText(res.status, json, 'Versturen mislukt.') })
+          : { email, ok: false, message: failureText(res.status, json, t('bh.klant.invite.failed')) })
       } catch {
-        results.push({ email, ok: false, message: 'Netwerkfout.' })
+        results.push({ email, ok: false, message: t('bh.klant.error.networkShort') })
       }
       // Tussenstand per adres — bij een lange lijst ziet het kantoor de voortgang lopen.
       setBulkResults([...results])
@@ -173,13 +184,13 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       })
       const json = await res.json()
       if (!res.ok) {
-        setUnlinkError(failureText(res.status, json, 'Verwijderen mislukt.'))
+        setUnlinkError(failureText(res.status, json, t('bh.klant.unlink.failed')))
       } else {
         setClients(prev => prev.filter(c => c.id !== unlinkTarget.id))
         setUnlinkTarget(null)
       }
     } catch {
-      setUnlinkError('Netwerkfout. Probeer het opnieuw.')
+      setUnlinkError(t('bh.klant.error.network'))
     } finally {
       setUnlinkLoading(false)
     }
@@ -197,11 +208,11 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
         {/* ── Invite block ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Klant uitnodigen</h2>
+            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('bh.klant.invite.title')}</h2>
           </div>
           <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
-              Vul het e-mailadres van je klant in. Ze ontvangen een uitnodiging om BoekBrug te gebruiken.
+              {t('bh.klant.invite.intro')}
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
@@ -238,7 +249,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                   minHeight: 36,
                 }}
               >
-                {inviteLoading ? 'Versturen...' : 'Nodig uit'}
+                {inviteLoading ? t('bh.klant.invite.sending') : t('bh.klant.invite.send')}
               </button>
             </div>
 
@@ -247,7 +258,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
             )}
             {inviteSuccess && (
               <p style={{ fontSize: 13, color: M3.success, margin: 0, fontWeight: 500 }}>
-                ✓ Uitnodiging verstuurd.
+                {t('bh.klant.invite.sent')}
               </p>
             )}
 
@@ -256,13 +267,12 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
               onClick={() => setBulkOpen((v) => !v)}
               style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, fontWeight: 500, color: '#1A73E8', cursor: 'pointer', textAlign: 'start', fontFamily: 'inherit' }}
             >
-              {bulkOpen ? '▾' : '▸'} Meerdere klanten tegelijk uitnodigen
+              {bulkOpen ? '▾' : '▸'} {t('bh.klant.bulk.toggle')}
             </button>
             {bulkOpen && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <p style={{ fontSize: 13, color: '#5F6368', margin: 0 }}>
-                  Plak een lijst e-mailadressen (één per regel, of gescheiden door komma&apos;s).
-                  Elk adres krijgt dezelfde uitnodiging als hierboven; per adres zie je of het lukte.
+                  {t('bh.klant.bulk.intro')}
                 </p>
                 <textarea
                   value={bulkText}
@@ -277,23 +287,24 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                     disabled={bulkBusy || !bulkText.includes('@')}
                     style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 14, fontWeight: 500, cursor: 'pointer', opacity: (bulkBusy || !bulkText.includes('@')) ? 0.5 : 1, minHeight: 36 }}
                   >
-                    {bulkBusy ? `Versturen... (${bulkResults.length})` : 'Verstuur alle uitnodigingen'}
+                    {bulkBusy
+                      ? t('bh.klant.bulk.sending', { count: bulkResults.length })
+                      : t('bh.klant.bulk.send')}
                   </button>
                 </div>
                 {/* [GEEN-STILLE-KAP] De adressen boven de 200 zijn NIET verstuurd, en dat moet er
                     staan — anders leest het kantoor "klaar" en wachten de laatste vijftig eeuwig. */}
                 {bulkOverflow > 0 && (
                   <p style={{ fontSize: 12.5, color: '#7C5800', margin: 0 }}>
-                    Je plakte meer dan 200 adressen: de eerste 200 zijn verstuurd, de laatste {bulkOverflow} niet.
-                    Plak die morgen opnieuw — de daglimiet is 200 uitnodigingen.
+                    {t('bh.klant.bulk.overflow', { count: bulkOverflow })}
                   </p>
                 )}
                 {bulkResults.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0 }}>
-                      {bulkResults.filter((r) => r.ok).length} verstuurd
-                      {bulkResults.some((r) => !r.ok) ? ` · ${bulkResults.filter((r) => !r.ok).length} niet verstuurd` : ''}
-                      {bulkBusy ? ' — bezig…' : ''}
+                      {t('bh.klant.bulk.sentCount', { count: bulkResults.filter((r) => r.ok).length })}
+                      {bulkResults.some((r) => !r.ok) ? ` · ${t('bh.klant.bulk.failedCount', { count: bulkResults.filter((r) => !r.ok).length })}` : ''}
+                      {bulkBusy ? ` — ${t('bh.klant.bulk.busy')}` : ''}
                     </p>
                     {bulkResults.filter((r) => !r.ok).map((r) => (
                       <p key={r.email} style={{ fontSize: 12.5, color: M3.error, margin: 0 }}>
@@ -310,7 +321,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
         {/* ── Client list ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>Gekoppelde klanten</h2>
+            <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('bh.klant.list.title')}</h2>
           </div>
 
           {clients.length > 0 && (
@@ -319,12 +330,12 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Zoek klant op naam of e-mail…"
-                aria-label="Klanten zoeken"
+                placeholder={t('bh.klant.search.placeholder')}
+                aria-label={t('bh.klant.search.aria')}
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 32px', borderRadius: 8, border: '1px solid #E0E0E0', fontSize: 13.5, outline: 'none', color: '#202124' }}
               />
               {search && (
-                <button onClick={() => setSearch('')} aria-label="Wissen" className="tap-44" style={{ position: 'absolute', insetInlineEnd: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
+                <button onClick={() => setSearch('')} aria-label={t('bh.klant.search.clear')} className="tap-44" style={{ position: 'absolute', insetInlineEnd: 23, top: '50%', transform: 'translateY(-50%)', width: 19, height: 19, borderRadius: '50%', border: 'none', background: '#E0E0E0', color: '#5F6368', cursor: 'pointer', fontSize: 12, lineHeight: 1 }}>×</button>
               )}
             </div>
           )}
@@ -334,16 +345,16 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                mandates. A read that failed cannot make it, and on the screen where links are
                managed it would read as "your mandates are gone". */
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0, lineHeight: 1.55 }}>
-              We konden je klantenlijst nu niet ophalen.<br />
-              Dit zegt niets over je koppelingen — alleen dat wij ze even niet konden lezen.
+              {t('bh.klant.unreadable.line1')}<br />
+              {t('bh.klant.unreadable.line2')}
             </p>
           ) : clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
-              Nog geen klanten gekoppeld
+              {t('bh.klant.list.empty')}
             </p>
           ) : shownClients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
-              Geen klanten gevonden voor &ldquo;{search.trim()}&rdquo;
+              {t('bh.klant.list.noMatch', { query: search.trim() })}
             </p>
           ) : (
             <div>
@@ -380,14 +391,14 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
 
                   {/* [READINESS] honest facts, not a verdict */}
                   <span style={{ fontSize: 11, color: '#5F6368', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                    {readinessLine(client.readiness)}
+                    {readinessLine(t, client.readiness)}
                   </span>
                   {client.readiness.openQuestions > 0 && (
                     <span style={{
                       fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4, flexShrink: 0,
                       backgroundColor: '#FCE8E6', color: '#C5221F',
                     }}>
-                      {client.readiness.openQuestions} vraag
+                      {t('bh.klant.openQuestions', { count: client.readiness.openQuestions })}
                     </span>
                   )}
 
@@ -409,7 +420,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                     onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#FCE8E6')}
                     onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
                   >
-                    Ontkoppelen
+                    {t('bh.klant.unlink.action')}
                   </button>
                 </div>
               ))}
@@ -439,11 +450,12 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
             onClick={e => e.stopPropagation()}
           >
             <h3 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: '0 0 8px' }}>
-              Klant ontkoppelen
+              {t('bh.klant.unlink.title')}
             </h3>
+            {/* [TAAL] One sentence, one key: the name is a parameter, but where it stands in the
+                sentence is not — so the emphasis around it cannot travel with it. */}
             <p style={{ fontSize: 14, color: '#5F6368', margin: '0 0 20px', lineHeight: 1.5 }}>
-              Weet je zeker dat je <strong>{unlinkTarget.company_name ?? unlinkTarget.full_name}</strong> wilt ontkoppelen?
-              Je verliest toegang tot hun gegevens.
+              {t('bh.klant.unlink.confirm', { name: unlinkTarget.company_name ?? unlinkTarget.full_name ?? '' })}
             </p>
 
             {unlinkError && (
@@ -461,7 +473,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                   cursor: 'pointer', minHeight: 36,
                 }}
               >
-                Annuleren
+                {t('bh.klant.cancel')}
               </button>
               <button
                 onClick={handleUnlink}
@@ -473,7 +485,7 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
                   cursor: 'pointer', opacity: unlinkLoading ? 0.6 : 1, minHeight: 36,
                 }}
               >
-                {unlinkLoading ? 'Verwijderen...' : 'Ontkoppelen'}
+                {unlinkLoading ? t('bh.klant.unlink.busy') : t('bh.klant.unlink.action')}
               </button>
             </div>
           </div>
