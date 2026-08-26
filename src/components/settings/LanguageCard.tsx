@@ -14,6 +14,7 @@
 // Each language's name is written in that language, never translated: someone looking for their
 // own language scans for the shape of their own script.
 
+import { createClient } from '@/lib/supabase'
 import { LOCALES, LOCALE_META, type Locale } from '@/lib/i18n/locale'
 import { useLocale, writeLocaleCookie } from '@/lib/i18n/use-locale'
 
@@ -44,6 +45,33 @@ export function LanguageCard() {
 
   const uitleg = UITLEG[locale]
 
+  /**
+   * [TAAL-VOLGT-MEE] Switch here, and remember it on the ACCOUNT as well as on this device.
+   *
+   * The cookie is written first and unconditionally: it is what every open screen reads, so the
+   * language must change the instant the button is pressed, offline included. The account write
+   * follows and is allowed to fail — a preference that did not reach the server costs the owner
+   * nothing today; it only means the next new device starts in Dutch again, exactly as it did
+   * before this existed. Failing loudly over that would be worse than the gap it reports.
+   *
+   * [DEPLOY-SAFE] preferred_language may not exist on every deployment yet, and an unknown column
+   * is a normal error here rather than an exception — hence one quiet catch around both cases.
+   */
+  async function kies(l: Locale) {
+    writeLocaleCookie(l)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      // The generated types predate this column on some branches — the same relaxed cast every
+      // open-migration column in this codebase uses.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from('profiles').update({ preferred_language: l }).eq('id', user.id)
+    } catch {
+      /* the device knows; the account will learn next time */
+    }
+  }
+
   return (
     <div
       dir={LOCALE_META[locale].dir}
@@ -69,7 +97,7 @@ export function LanguageCard() {
           return (
             <button
               key={l}
-              onClick={() => writeLocaleCookie(l)}
+              onClick={() => { void kies(l) }}
               aria-pressed={actief}
               lang={l}
               dir={LOCALE_META[l].dir}

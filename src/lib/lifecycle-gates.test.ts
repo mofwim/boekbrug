@@ -7050,6 +7050,11 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx",
     "src/app/dashboard/bank/BankConnectPanel.tsx",
     "src/components/settings/SnelStartCard.tsx",
+    // [KADER] The bar around every screen. It held its titles as plain Dutch on the argument that
+    // they were only the first-paint fallback — true for a screen that registers its own title,
+    // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
+    // back in one entry at a time.
+    "src/components/nav/DashboardChrome.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -10181,6 +10186,117 @@ test("[MANDAAT-SOORT] an invoicing mandate is read as one, and only one", () => 
     "the fallback is the query this function used before");
   // Any OTHER read failure must stay null: "we could not read the mandate" is not "no mandate".
   assert.match(fn, /let mandateRow = \(mandate as MandateRow \| null\) \?\? null;/);
+});
+
+// ── [ARABISCH-LETTER] The Arabic face is loaded, so it must actually be worn ────────────────────
+//
+// Noto Sans Arabic was loaded in the root layout and applied on exactly three marketing pages. On
+// every screen where the owner manages money it fell through to whatever the device happens to
+// have — a different face, height and rhythm per phone, which is the disorder the font was added
+// to prevent, moved to the screens that matter more.
+test("[ARABISCH-LETTER] the Arabic font reaches the whole screen, form fields included", () => {
+  const css = code("src/app/globals.css");
+  assert.match(
+    css, /html\[lang="ar"\] body \{\s*font-family: var\(--font-arabic\)/,
+    "the Arabic face must apply to the document, not to three marketing pages",
+  );
+  // The input rules in this file set their own font with !important, so they need their own
+  // equally hard rule — otherwise an owner types a name in one face and reads it back in another.
+  assert.match(
+    css, /html\[lang="ar"\] input,[\s\S]{0,80}font-family: var\(--font-arabic\)[^;]*!important/,
+    "form fields override font-family with !important and must be overridden back",
+  );
+  // The hook is `lang`, not `dir`: a future RTL language with a different script must stay free to
+  // pick its own face.
+  assert.doesNotMatch(
+    css, /\[dir="rtl"\][^{]*\{\s*font-family: var\(--font-arabic\)/,
+    "direction is not a script — key the font on the language",
+  );
+  // The variable has to exist to be used.
+  assert.match(code("src/app/layout.tsx"), /variable: "--font-arabic"/);
+});
+
+// ── [TAAL-VOLGT-MEE] The language follows the owner, without overruling them ────────────────────
+//
+// The cookie is per-device and stays the fast first-paint answer. An owner who reads Arabic set it
+// once, opened the app on their phone, and was back in Dutch — with the switch two screens deep,
+// in Dutch. The account now remembers the choice and hands it to a device that has none.
+test("[TAAL-VOLGT-MEE] the account remembers the language and speaks only into silence", () => {
+  // The switch stores it in both places, and the device first: the language must change instantly
+  // and offline, and only then be reported to the account.
+  const kaart = code("src/components/settings/LanguageCard.tsx");
+  assert.match(kaart, /writeLocaleCookie\(l\)/, "the device is told first");
+  assert.match(
+    kaart, /update\(\{ preferred_language: l \}\)/,
+    "…and the account is told too, or the choice dies with the browser profile",
+  );
+  assert.ok(
+    kaart.indexOf("writeLocaleCookie(l)") < kaart.indexOf("preferred_language: l"),
+    "a failed account write may never stop the screen from changing language",
+  );
+
+  // Restoring happens ONLY when this device has no choice of its own. Overruling a stated choice
+  // would flip the language back under someone who just changed it.
+  const herstel = code("src/components/i18n/LocaleRestore.tsx");
+  assert.match(herstel, /if \(hasLocaleCookie\(\)\) return/, "a device that chose keeps its choice");
+  assert.match(herstel, /writeLocaleCookie\(accountLocale\)/);
+  assert.match(herstel, /if \(!isLocale\(accountLocale\)\) return/, "an unusable stored value is ignored");
+
+  // And it must be mounted, on the layout every dashboard screen sits inside.
+  const layout = code("src/app/dashboard/layout.tsx");
+  assert.match(layout, /<LocaleRestore accountLocale=\{accountLocale\} \/>/);
+  // [DEPLOY-SAFE] Read apart from the profile select, like `vak` beside it — a column that is not
+  // there yet may cost a nicety, never the whole dashboard shell.
+  assert.match(layout, /select\('preferred_language'\)/);
+  assert.doesNotMatch(
+    layout, /select\('id, email, role, preferred_language'\)/,
+    "folding it into the main profile read would let a missing column remove the navigation",
+  );
+});
+
+// ── [BOEKHOUDER-EIGEN-BOEKEN] "Voor deze klant" may never open the accountant's OWN books ───────
+//
+// The client page carried a button reading "+ Factuur opstellen voor deze klant" that pushed
+// /dashboard/invoice/new?clientId=<id>. Two failures on one line, and the second is the money one:
+//
+//   1. That screen reads `client_id`, not `clientId` — and `client_id` there means a CUSTOMER of
+//      the entrepreneur, not the entrepreneur. The parameter was dead on arrival.
+//   2. What remained was the accountant's own empty invoice screen under a promise about someone
+//      else. An accountant who believes the label and types the invoice puts it in THEIR OWN
+//      administration: their turnover, a number out of their own doorlopende reeks (art. 35), and
+//      their BTW-aangifte. Nothing on the screen contradicts it, because as an own invoice it is
+//      perfectly valid — which is exactly why nobody would catch it.
+//
+// The right screen already exists and states whose books it is in at every step. Without a
+// mandate it lands on the ask-for-one explanation, which is an honest "not yet" instead of an
+// invoice filed against the wrong company.
+test("[BOEKHOUDER-EIGEN-BOEKEN] the accountant's client page invoices THROUGH the mandated screen", () => {
+  const klantPagina = code("src/app/dashboard/clients/[id]/page.tsx");
+  assert.match(
+    klantPagina, /router\.push\(`\/dashboard\/accountant\/factuur\?klant=\$\{clientId\}`\)/,
+    "invoicing for a client must go to the screen that knows whose books it is writing in",
+  );
+  assert.doesNotMatch(
+    klantPagina, /\/dashboard\/invoice\/new\?clientId=/,
+    "the owner's own new-invoice screen is not a place to invoice for someone else",
+  );
+
+  // The URL is a wish, never a permission: the server keeps the preselection only when that id is
+  // in the mandate list it just built itself.
+  const scherm = code("src/app/dashboard/accountant/factuur/page.tsx");
+  assert.match(
+    scherm, /klanten\.some\(\(k\) => k\.id === gevraagdeKlant\)/,
+    "a client id from the URL must be checked against the mandated clients before it is shown",
+  );
+  assert.match(scherm, /vooraf=\{vooraf\}/, "…and only then handed to the screen");
+
+  // A tile that says "Facturen" between client tools, but shows the office's own, is the same
+  // confusion in miniature.
+  assert.match(
+    code("src/modules/accountant/pages/AccountantHome.tsx"),
+    /label="Mijn facturen"/,
+    "the tile pointing at the accountant's own invoices must say they are their own",
+  );
 });
 
 test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is attributed first", () => {
@@ -14758,7 +14874,9 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   // And the screen must exist on both doors. A year overview only the owner can reach misses the
   // person who actually files the aangifte.
   const chrome = code("src/components/nav/DashboardChrome.tsx");
-  assert.match(chrome, /\["\/dashboard\/jaar", "Jaaroverzicht"\]/, "the owner's nav carries the entry");
+  // [KADER] The registry holds message KEYS since the bar became translatable — the entry is what
+  // this gate is about, and it is still here; only the word moved to the catalogue.
+  assert.match(chrome, /\["\/dashboard\/jaar", "chrome\.jaaroverzicht"\]/, "the owner's nav carries the entry");
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
   assert.match(board, /\/dashboard\/jaar\?clientId=\$\{encodeURIComponent\(row\.id\)\}/, "the werkboard links per client");
   const client = code("src/app/dashboard/jaar/JaarClient.tsx");

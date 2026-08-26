@@ -13,6 +13,7 @@ import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
 import { getSessionUser } from '@/lib/session-user'
 import { isActingForOther } from '@/lib/acting-for'
+import LocaleRestore from '@/components/i18n/LocaleRestore'
 
 export default async function DashboardLayout({
   children,
@@ -67,6 +68,10 @@ export default async function DashboardLayout({
   // Unknown trade → false → the invoice-shaped bar everyone has had until now, so nothing changes
   // for anyone who has not told us a trade.
   let counterTrade = false
+  // [TAAL-VOLGT-MEE] The language the owner chose, as their ACCOUNT remembers it. Read here for the
+  // same reason and in the same shape as `vak` above: apart from the profile select, in a try, so a
+  // deployment where the column is not there yet loses a nicety instead of the whole dashboard.
+  let accountLocale: string | null = null
   if (profile) {
     try {
       const { data: vakRow } = await supabase
@@ -75,12 +80,22 @@ export default async function DashboardLayout({
     } catch {
       /* no column yet → the bar everyone has always had */
     }
+    try {
+      const { data: taalRow } = await supabase
+        .from('profiles').select('preferred_language').eq('id', profile.id).maybeSingle()
+      accountLocale = (taalRow as { preferred_language?: string | null } | null)?.preferred_language ?? null
+    } catch {
+      /* no column yet → the cookie is the only answer, exactly as before */
+    }
   }
 
   const isMedewerker = !!acting && isActingForOther(acting)
 
   return (
     <>
+      {/* [TAAL-VOLGT-MEE] Renders nothing. On a device that has never been told which language the
+          owner reads, it hands over the one their account remembers — see the component. */}
+      {profile && <LocaleRestore accountLocale={accountLocale} />}
       {profile && (
         // [BOEK-SENTRY] user context available on every /dashboard/* page
         <SentryUserProvider

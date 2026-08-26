@@ -226,8 +226,24 @@ export default function ClientDetailPage() {
         </div>
 
         {/* Factuur opstellen */}
+        {/* [BOEKHOUDER-EIGEN-BOEKEN] Deze knop wees naar /dashboard/invoice/new?clientId=… en dat
+            is het scherm van de boekhouder ZELF. Twee dingen gingen daar mis, en het tweede is het
+            ernstige:
+
+              1. `clientId` werd daar niet eens gelezen — dat scherm kent `client_id`, en dat
+                 betekent er bovendien iets anders (een KLANT van de ondernemer, niet de
+                 ondernemer). De parameter viel dus stil op de grond.
+              2. Wat overbleef was een leeg eigen factuurscherm met "voor deze klant" als belofte.
+                 Wie die belofte gelooft en gaat typen, zet de factuur van zijn klant in ZIJN
+                 EIGEN boeken: zijn omzet, zijn nummerreeks, zijn BTW-aangifte. Niets in het
+                 scherm spreekt dat tegen, want als eigen factuur klopt hij helemaal.
+
+            Het juiste scherm bestaat al: /dashboard/accountant/factuur toont bij elke stap namens
+            wie er gefactureerd wordt, en weigert zonder machtiging. Heeft deze klant er geen
+            gegeven, dan komt de boekhouder daar op de vraag-de-machtiging-uitleg uit — een eerlijk
+            "dit mag nog niet" in plaats van een factuur in de verkeerde administratie. */}
         <button
-          onClick={() => router.push(`/dashboard/invoice/new?clientId=${clientId}`)}
+          onClick={() => router.push(`/dashboard/accountant/factuur?klant=${clientId}`)}
           style={{
             width: '100%', padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
             backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 14, fontWeight: 500,

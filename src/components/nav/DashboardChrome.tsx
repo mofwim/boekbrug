@@ -24,100 +24,106 @@ import { usePathname } from "next/navigation";
 import SubPageHeader from "./SubPageHeader";
 import { useSubPageHeaderConfig } from "./SubPageHeaderContext";
 import type { Role } from "@/lib/navigation";
+// [KADER] The bar wraps EVERY screen, so its names are the one piece of Dutch an owner reading
+// another language could never get away from. The map holds KEYS now; the words live in the
+// catalogue and are looked up at render, in the owner's own language.
+import { translator } from "@/lib/i18n/t";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 // Exact route → fixed page title (static, migrated pages).
-const STATIC_TITLES = new Map<string, string>([
-  ["/dashboard/vandaag", "Vandaag"],
-  ["/dashboard/brug", "Brug"],
-  ["/dashboard/kas", "Kas"],
-  ["/dashboard/aangifte", "Aangifte"],
-  ["/dashboard/dagomzet", "Dagomzet"],
-  ["/dashboard/upload", "Uploaden"],
+const STATIC_TITLES = new Map<string, MessageKey>([
+  ["/dashboard/vandaag", "chrome.vandaag"],
+  ["/dashboard/brug", "chrome.brug"],
+  ["/dashboard/kas", "chrome.kas"],
+  ["/dashboard/aangifte", "chrome.aangifte"],
+  ["/dashboard/dagomzet", "chrome.dagomzet"],
+  ["/dashboard/upload", "chrome.uploaden"],
   // [RESULT→WAARHEID] /dashboard/resultaat is a server redirect to /dashboard/waarheid, so this
   // chrome never renders for it — the title entry would be dead config. See that page's header.
-  ["/dashboard/artikelen", "Artikelen"],
+  ["/dashboard/artikelen", "chrome.artikelen"],
   // [IB-JAAR] First-paint label; the page itself registers its translated title.
-  ["/dashboard/jaar", "Jaaroverzicht"],
-  ["/dashboard/kluis", "Kluis"],
+  ["/dashboard/jaar", "chrome.jaaroverzicht"],
+  ["/dashboard/kluis", "chrome.kluis"],
   // [LOGBOEK] Plain Dutch, like every other entry in this map — this registry is not translated.
   // It is the FIRST-PAINT label only: a page that registers a title through useSubPageHeader wins
   // over this map (see the resolution order at the top of the file), so the log screen can present
   // t('log.titel') in the owner's own language without ever flashing a bar with no name on it.
   // Without an entry here at all the bar renders NOTHING — a real screen with no back button and
   // no heading, the failure already documented for settings/facturering below.
-  ["/dashboard/logboek", "Logboek"],
+  ["/dashboard/logboek", "chrome.logboek"],
   // [BEVEILIGING] Same reasoning as the log entry above: without a line here the sub-page bar
   // renders nothing — a real screen with no name and no way back.
-  ["/dashboard/beveiliging", "Beveiliging"],
+  ["/dashboard/beveiliging", "chrome.beveiliging"],
   // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.
-  ["/dashboard/vragen", "Vragen van je boekhouder"],
-  ["/dashboard/klaar", "Ben ik klaar?"],
-  ["/dashboard/quarterly", "Kwartaaloverzicht"],
-  ["/dashboard/waarheid", "Waarheid"],
-  ["/dashboard/bank", "Bank"],
-  ["/dashboard/bank/categoriseren", "Wat is dit?"],
-  ["/dashboard/settings", "Instellingen"],
+  ["/dashboard/vragen", "chrome.vragen"],
+  ["/dashboard/klaar", "chrome.klaar"],
+  ["/dashboard/quarterly", "chrome.kwartaaloverzicht"],
+  ["/dashboard/waarheid", "chrome.waarheid"],
+  ["/dashboard/bank", "chrome.bank"],
+  ["/dashboard/bank/categoriseren", "chrome.categoriseren"],
+  ["/dashboard/settings", "chrome.instellingen"],
   // [NAV] Without this entry the bar rendered nothing here — see the parent rule
   // for facturering in src/lib/navigation.ts.
-  ["/dashboard/settings/facturering", "Facturering"],
-  ["/dashboard/messages", "Berichten"],
-  ["/dashboard/werkplek", "Mijn werkplek"],
-  ["/dashboard/clients/invite", "Klant toevoegen"],
-  ["/dashboard/clients/beheer", "Klanten beheren"],
+  ["/dashboard/settings/facturering", "chrome.facturering"],
+  ["/dashboard/messages", "chrome.berichten"],
+  ["/dashboard/werkplek", "chrome.werkplek"],
+  ["/dashboard/clients/invite", "chrome.klantToevoegen"],
+  ["/dashboard/clients/beheer", "chrome.klantenBeheren"],
   // [ROLE-PARITY] /dashboard/accountant/werkplek now redirects to the home (its
   // tools live there as a tile grid), so it no longer needs a sub-page title.
   // The board registers its refresh button via useSubPageHeader; this is its title.
-  ["/dashboard/accountant/agenda", "Aangifte & status"],
+  ["/dashboard/accountant/agenda", "chrome.agenda"],
   // [MANDAAT] Factureren namens een klant die daarvoor gemachtigd heeft.
-  ["/dashboard/accountant/factuur", "Factuur namens klant"],
+  ["/dashboard/accountant/factuur", "chrome.factuurNamens"],
   // [DEBITEUREN] De chase-lijst over alle gemachtigde klanten heen.
-  ["/dashboard/accountant/debiteuren", "Openstaande facturen"],
+  ["/dashboard/accountant/debiteuren", "chrome.openstaand"],
   // [OPVRAGEN] Eén bericht met precies wat er nog mist in een kwartaal.
-  ["/dashboard/accountant/opvragen", "Stukken opvragen"],
+  ["/dashboard/accountant/opvragen", "chrome.opvragen"],
   // [BEVESTIGEN] De stapel die het kwartaal van een klant tegenhoudt.
-  ["/dashboard/accountant/bevestigen", "Bevestigen"],
+  ["/dashboard/accountant/bevestigen", "chrome.bevestigen"],
   // HAS-ACTIONS pages: the shared bar gives back + title; the page keeps its own
   // search/filter/sort controls as a secondary sticky toolbar offset below it.
-  ["/dashboard/facturen", "Mijn facturen"],
-  ["/dashboard/klanten", "Mijn klanten"],
-  ["/dashboard/incoming/manage", "Inkoopfacturen"],
-  ["/dashboard/incoming", "Inkomend"],
+  ["/dashboard/facturen", "chrome.mijnFacturen"],
+  ["/dashboard/klanten", "chrome.mijnKlanten"],
+  ["/dashboard/incoming/manage", "chrome.inkoopfacturen"],
+  ["/dashboard/incoming", "chrome.inkomend"],
   // Base label; the page overrides it via useSubPageHeader with the concrete
   // type (Nieuwe factuur / Nieuwe offerte / Creditnota) once mounted.
-  ["/dashboard/invoice/new", "Nieuwe factuur"],
+  ["/dashboard/invoice/new", "chrome.nieuweFactuur"],
 ]);
 
 // Base label for a dynamic route TEMPLATE — shown until the page registers a
 // concrete title via useSubPageHeader(). Ordered; first match wins. A template
 // is added here in the same change that removes that page's bespoke bar, so the
 // shared bar never stacks on an existing one.
-const PATTERN_TITLES: ReadonlyArray<[RegExp, string]> = [
+const PATTERN_TITLES: ReadonlyArray<[RegExp, MessageKey]> = [
   // Invoice edit — page registers "Factuur bewerken · {number}". Listed before
   // the /invoice/[^/]+ pattern so the /edit child isn't swallowed by it.
-  [/^\/dashboard\/invoice\/[^/]+\/edit$/, "Factuur bewerken"],
+  [/^\/dashboard\/invoice\/[^/]+\/edit$/, "chrome.factuurBewerken"],
   // Invoice detail — the page keeps its own context toolbar (number/badge/status/
   // actions/PDF) below the shared bar, so the shared title stays generic "Factuur".
   // Excludes /invoice/new (a distinct create page, migrated separately) so it
   // isn't matched here while it still renders its own bar.
-  [/^\/dashboard\/invoice\/(?!new$)[^/]+$/, "Factuur"],
+  [/^\/dashboard\/invoice\/(?!new$)[^/]+$/, "chrome.factuur"],
   // ZZP client detail — the page registers the client name via useSubPageHeader.
-  [/^\/dashboard\/klanten\/[^/]+$/, "Klant"],
+  [/^\/dashboard\/klanten\/[^/]+$/, "chrome.klant"],
   // Conversation — the page registers the partner's name via useSubPageHeader;
   // this base label shows on first paint. The /dashboard/messages LIST is an exact
   // STATIC key ("Berichten"), resolved before patterns, so it is unaffected.
-  [/^\/dashboard\/messages\/[^/]+$/, "Gesprek"],
+  [/^\/dashboard\/messages\/[^/]+$/, "chrome.gesprek"],
   // Accountant client quarter — registers "Q{q} {year} — {client}" + sort action.
   // Listed before the client-detail pattern below (more specific path first).
-  [/^\/dashboard\/clients\/[^/]+\/kwartaal$/, "Kwartaal"],
+  [/^\/dashboard\/clients\/[^/]+\/kwartaal$/, "chrome.kwartaal"],
   // Accountant client detail — registers client name + Ontkoppelen action.
   // NB: /dashboard/clients/beheer and /clients/invite are in STATIC_TITLES, which
   // is resolved BEFORE patterns, so this never overrides those fixed labels.
-  [/^\/dashboard\/clients\/[^/]+$/, "Klant"],
+  [/^\/dashboard\/clients\/[^/]+$/, "chrome.klant"],
 ];
 
-function patternTitle(pathname: string): string | undefined {
-  for (const [re, label] of PATTERN_TITLES) {
-    if (re.test(pathname)) return label;
+function patternTitle(pathname: string): MessageKey | undefined {
+  for (const [re, key] of PATTERN_TITLES) {
+    if (re.test(pathname)) return key;
   }
   return undefined;
 }
@@ -125,9 +131,16 @@ function patternTitle(pathname: string): string | undefined {
 export default function DashboardChrome({ role }: { role: Role | null }) {
   const pathname = usePathname();
   const ctx = useSubPageHeaderConfig();
+  // [KADER] Hooks run before any early return — a bar that renders nothing on this route must not
+  // change how many hooks this component called, or React unmounts the whole tree on navigation.
+  const locale = useLocale();
+  const t = translator(locale);
   if (!pathname) return null;
 
-  const title = ctx?.title ?? STATIC_TITLES.get(pathname) ?? patternTitle(pathname);
+  // A page that registered its own title already speaks the owner's language; the registry is the
+  // first-paint fallback, and now it does too.
+  const key = STATIC_TITLES.get(pathname) ?? patternTitle(pathname);
+  const title = ctx?.title ?? (key ? t(key) : undefined);
   if (!title) return null;
 
   return <SubPageHeader title={title} role={role} actions={ctx?.actions} />;
