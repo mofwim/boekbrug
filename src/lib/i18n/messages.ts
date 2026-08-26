@@ -1415,6 +1415,9 @@ export const MESSAGES = {
   'corr.vervaldatum': { nl: 'Vervaldatum', ar: 'تاريخ الاستحقاق', en: 'Due date' },
   'corr.iban': { nl: 'IBAN van de leverancier', ar: 'IBAN المورّد', en: "Supplier's IBAN" },
   'corr.kenmerk': { nl: 'Betaalkenmerk', ar: 'مرجع الدفع', en: 'Payment reference' },
+  'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة BTW كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
+  'corr.grondslag': { nl: 'Grondslag', ar: 'الأساس', en: 'Base' },
+  'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ BTW', en: 'BTW amount' },
   'corr.bedragUitleg': {
     nl: 'Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief rekent zichzelf uit.',
     ar: 'انقل الإجمالي ومبلغ btw كما هما مكتوبان أسفل الفاتورة — المبلغ بدون الضريبة يُحسب تلقائياً.',

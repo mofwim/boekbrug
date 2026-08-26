@@ -15135,4 +15135,17 @@ test("[LEES] a file the app cannot read SAYS SO, and everything it read stays co
   assert.match(einvSpec, /\[LEES\] a factur-x\.xml that will not inflate/, "the sealed-Factur-X test exists");
   const csvSpec = readFileSync("src/lib/bank-csv.test.ts", "utf8");
   assert.match(csvSpec, /unrecognised Af\/Bij flag is SAID/, "the odd-flag test exists");
+
+  // 7. [SPLIT-CORRECTIE] The per-rate BTW split — the last AI-read field without a door — is
+  //    editable, and NOT freely: the pure validator refuses a split that contradicts the invoice
+  //    it claims to specify, signed, against the FINAL totals of the same request.
+  assert.match(route, /const verdict = validateBtwRows\(rawBtwRows, \{ totalExBtw: signed\.totalExBtw, btwAmount: signed\.btwAmount \}\)/,
+    "the split is validated against the SIGNED final totals — a credit's split must be negative like its totals");
+  assert.match(route, /if \(!verdict\.ok\) return NextResponse\.json\(\{ error: verdict\.reason, code: "btw_rows_invalid" \}/,
+    "…and a contradiction refuses with the validator's own sentence");
+  const splitLib = code("src/lib/btw-rows-correction.ts");
+  assert.match(splitLib, /const expected = r2\(base \* \(rate \/ 100\)\);/, "each row's own arithmetic is the first test");
+  assert.match(modal, /t\('corr\.splitUitleg'\)/, "the split section is on the form");
+  const splitSpec = readFileSync("src/lib/btw-rows-correction.test.ts", "utf8");
+  assert.match(splitSpec, /CREDIT-SIGN.*creditnota's split is negative/, "…and the signed-credit proof exists");
 });

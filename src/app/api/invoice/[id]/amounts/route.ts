@@ -61,6 +61,8 @@ import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
 import { correctedFields } from "@/lib/reading-memory";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
+// [SPLIT-CORRECTIE] The owner's per-rate split, validated against the final totals.
+import { validateBtwRows } from "@/lib/btw-rows-correction";
 // [SUPPLETIE] The one door to "did this touch a quarter that is already at the Belastingdienst?"
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { filedQuarterImpacts, describeFiledQuarterImpact, stampDivergence } from "@/lib/filed-quarter";
@@ -103,7 +105,7 @@ export async function GET(
     .from("invoices")
     // [LEES-CORRECTIE] due_date/vendor_iban/payment_reference ride along so the editor can
     // prefill the three fields that used to be write-only for the pipeline.
-    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid")
+    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid, field_confidence")
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
@@ -125,9 +127,14 @@ export async function GET(
     invoice.status === "received" &&
     !hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid });
 
+  // [SPLIT-CORRECTIE] Only the split leaves this route — the rest of field_confidence is the
+  // machine's testimony (grounding, safecore, e-invoice witness) and stays server-side.
+  const fc = (invoice as { field_confidence?: { _btw_rows?: unknown } | null }).field_confidence;
+  const { field_confidence: _weg, ...invoiceZonderFc } = invoice as Record<string, unknown>;
   return NextResponse.json({
     ok: true,
-    invoice,
+    invoice: invoiceZonderFc,
+    btwRows: Array.isArray(fc?._btw_rows) ? fc._btw_rows : null,
     editable,
     reason: editable
       ? null
@@ -250,8 +257,13 @@ export async function PATCH(
   }
   const nextRef = rawRef;
 
+  // [SPLIT-CORRECTIE] The per-rate BTW split — the last AI-read field without a door. Parsed
+  // here, VALIDATED further down against the FINAL totals (they may be edited in this same
+  // request), because a split that contradicts the invoice it specifies is worse than none.
+  const rawBtwRows = "btw_rows" in body ? body.btw_rows : null;
+
   if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit
-      && nextDue === null && nextIban === null && nextRef === null) {
+      && nextDue === null && nextIban === null && nextRef === null && rawBtwRows === null) {
     return NextResponse.json({ error: "Er is niets gewijzigd." }, { status: 400 });
   }
 
@@ -367,6 +379,18 @@ export async function PATCH(
     ? asCreditAmounts({ totalExBtw: baseEx, btwAmount: baseBtw, totalIncBtw: baseIncl })
     : { totalExBtw: baseEx, btwAmount: baseBtw, totalIncBtw: baseIncl, flipped: false };
 
+  // [SPLIT-CORRECTIE] Validated against the SIGNED final totals — the ones being written when
+  // amounts ride in the same request, the stored ones otherwise. [CREDIT-SIGN] rides along for
+  // free: a creditnota's totals are negative here, so only a negative split passes.
+  let nextBtwRows: import("@/lib/btw-rows-correction").BtwRow[] | null = null;
+  let clearBtwRows = false;
+  if (rawBtwRows !== null) {
+    const verdict = validateBtwRows(rawBtwRows, { totalExBtw: signed.totalExBtw, btwAmount: signed.btwAmount });
+    if (!verdict.ok) return NextResponse.json({ error: verdict.reason, code: "btw_rows_invalid" }, { status: 400 });
+    if (verdict.rows.length === 0) clearBtwRows = true;
+    else nextBtwRows = verdict.rows;
+  }
+
   const patch: InvoiceUpdate = { updated_at: new Date().toISOString() };
   // Only when amounts were actually sent — see [FULL-CORRECTION] above. Writing them back
   // unchanged would be harmless for the money and dishonest in the audit trail.
@@ -391,6 +415,17 @@ export async function PATCH(
         (patch as Record<string, unknown>).field_confidence = cleaned;
       }
     }
+  }
+  // [SPLIT-CORRECTIE] The owner's split replaces the read's — or clears it. Merged over whatever
+  // field_confidence the patch already carries (the _safecore cleanup above), never over a stale
+  // copy, so the two edits compose in one request.
+  if (nextBtwRows !== null || clearBtwRows) {
+    const basisFc = ((patch as Record<string, unknown>).field_confidence as Record<string, unknown> | undefined)
+      ?? { ...(((invoice as { field_confidence?: Record<string, unknown> | null }).field_confidence) ?? {}) };
+    if (clearBtwRows) delete basisFc._btw_rows;
+    else basisFc._btw_rows = nextBtwRows;
+    // The owner ASSERTED this split — a remembered machine mismatch about the old one is stale.
+    (patch as Record<string, unknown>).field_confidence = basisFc;
   }
   // [FULL-CORRECTION] Applied only where the value really differs, so a form that posts every
   // field cannot manufacture a change out of one the owner never touched. Trimmed comparison, the
@@ -589,5 +624,8 @@ export async function PATCH(
     btw_amount: signed.btwAmount,
     total_inc_btw: signed.totalIncBtw,
     invoice_type: patch.invoice_type ?? invoice.invoice_type,
+    // [SPLIT-CORRECTIE] The split as it now stands, so the caller's row (whose checklist reads
+    // it) updates without a reload. null = untouched in this request; [] = cleared.
+    btw_rows: clearBtwRows ? [] : nextBtwRows,
   });
 }

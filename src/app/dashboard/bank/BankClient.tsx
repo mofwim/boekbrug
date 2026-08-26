@@ -38,7 +38,7 @@ import { M3, R, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // so "1.465,41" means the same thing here as on the pay screen.
 import { parseAmountInput } from '@/lib/partial-payment'
 // [FULL-CORRECTION] The correction editor, shared with the pay screen.
-import InvoiceCorrectionModal, { type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
+import InvoiceCorrectionModal, { type BtwSplitRow, type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
@@ -286,6 +286,8 @@ export default function BankClient() {
   // fetched. A bank card carries only what a MATCH needs — number, gross total, date — so the
   // breakdown is fetched when the dialog opens rather than loaded onto every candidate in the list.
   const [correctFor, setCorrectFor] = useState<CorrectableInvoice | null>(null)
+  // [SPLIT-CORRECTIE] De specificatie hoort bij dezelfde GET; het bewijsblob zelf blijft server-side.
+  const [correctBtwRows, setCorrectBtwRows] = useState<BtwSplitRow[] | null>(null)
   // [DECLARED-INVOICE] Busy while the missing invoice named in the payment is being read.
   const [addingMissing, setAddingMissing] = useState(false)
   const missingFileRef = useRef<HTMLInputElement | null>(null)
@@ -1084,6 +1086,7 @@ export default function BankClient() {
         showToast(String(json.reason ?? t('bank.fout.nietCorrigeren')))
         return
       }
+      setCorrectBtwRows(Array.isArray(json.btwRows) ? (json.btwRows as BtwSplitRow[]) : null)
       setCorrectFor(json.invoice as CorrectableInvoice)
     } catch {
       showToast(t('bank.fout.factuurOphalen'))
@@ -2126,6 +2129,7 @@ export default function BankClient() {
       {correctFor && (
         <InvoiceCorrectionModal
           invoice={correctFor}
+          btwRows={correctBtwRows}
           onClose={() => setCorrectFor(null)}
           onMessage={showToast}
           // The corrected amounts change what this payment can settle, so the match is recomputed

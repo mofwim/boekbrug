@@ -58,6 +58,13 @@ export interface CorrectableInvoice {
   total_inc_btw: number | null
 }
 
+/** [SPLIT-CORRECTIE] One rate row of the paper's own BTW specification. */
+export interface BtwSplitRow {
+  rate: number
+  base: number
+  btw: number
+}
+
 /** What the server confirms it stored. The caller updates its own row from THIS, never optimistically. */
 export interface CorrectionResult {
   /**
@@ -70,6 +77,8 @@ export interface CorrectionResult {
    * suppletie, aangifte, kwartaal — are the Dutch ones.
    */
   suppletie?: string[]
+  /** [SPLIT-CORRECTIE] The split as now stored; null = untouched, [] = cleared. */
+  btw_rows?: BtwSplitRow[] | null
   total_ex_btw: number
   btw_amount: number
   total_inc_btw: number
@@ -85,6 +94,7 @@ export default function InvoiceCorrectionModal({
   onClose,
   onSaved,
   onMessage,
+ btwRows,
 }: {
   invoice: CorrectableInvoice
   /** [READING-MEMORY] What this owner keeps correcting at THIS supplier, or nothing. */
@@ -93,6 +103,8 @@ export default function InvoiceCorrectionModal({
   onSaved: (result: CorrectionResult) => void
   /** Each screen has its own snackbar; the editor does not reach for one. */
   onMessage: (text: string) => void
+  /** [SPLIT-CORRECTIE] The stored per-rate split, for prefill. Absent = geen specificatie. */
+  btwRows?: BtwSplitRow[] | null
 }) {
   const t = translator(useLocale())
   const dialog = useDialog()
@@ -119,6 +131,15 @@ export default function InvoiceCorrectionModal({
   const [dueDate, setDueDate] = useState(invoice.due_date ?? '')
   const [iban, setIban] = useState(invoice.vendor_iban ?? '')
   const [kenmerk, setKenmerk] = useState(invoice.payment_reference ?? '')
+  // [SPLIT-CORRECTIE] The paper's own specification: one row per rate, as TEXT (comma decimals
+  // like every Dutch invoice). Prefilled from what stands; empty everywhere = clear it.
+  const splitStart = (rate: number) => {
+    const r = (btwRows ?? []).find((x) => x.rate === rate)
+    return { base: r ? String(r.base).replace('.', ',') : '', btw: r ? String(r.btw).replace('.', ',') : '' }
+  }
+  const [split, setSplit] = useState<Record<number, { base: string; btw: string }>>({
+    21: splitStart(21), 9: splitStart(9), 0: splitStart(0),
+  })
   // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
   const [credit, setCredit] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -144,6 +165,20 @@ export default function InvoiceCorrectionModal({
     if (dueDate !== (invoice.due_date ?? '')) body.due_date = dueDate
     if (iban.trim() !== (invoice.vendor_iban ?? '')) body.vendor_iban = iban.trim()
     if (kenmerk.trim() !== (invoice.payment_reference ?? '')) body.payment_reference = kenmerk.trim()
+    // [SPLIT-CORRECTIE] Sent only when the typed rows differ from what stood. Rows with both
+    // fields empty do not exist; everything empty = [] = wis de specificatie. Parsing is
+    // comma-tolerant; the SERVER validates the arithmetic and refuses with the exact numbers.
+    {
+      const num = (v: string) => Number(v.trim().replace(/\./g, '').replace(',', '.'))
+      const typed = [21, 9, 0]
+        .map((rate) => ({ rate, b: split[rate].base.trim(), w: split[rate].btw.trim() }))
+        .filter((r) => r.b !== '' || r.w !== '')
+        .map((r) => ({ rate: r.rate, base: num(r.b || '0'), btw: num(r.w || '0') }))
+      const stond = (btwRows ?? []).map((r) => ({ rate: r.rate, base: r.base, btw: r.btw }))
+        .sort((a, b2) => b2.rate - a.rate)
+      const nu = [...typed].sort((a, b2) => b2.rate - a.rate)
+      if (JSON.stringify(nu) !== JSON.stringify(stond)) body.btw_rows = typed
+    }
     if (credit) body.is_credit_note = true
 
     if (Object.keys(body).length === 0) {
@@ -257,6 +292,31 @@ export default function InvoiceCorrectionModal({
         {field(t('corr.vervaldatum'), dueDate, setDueDate, 'date')}
         {field(t('corr.iban'), iban, setIban)}
         {field(t('corr.kenmerk'), kenmerk, setKenmerk)}
+
+        {/* [SPLIT-CORRECTIE] De specificatie zoals die op het papier staat — één regel per tarief.
+            De server rekent na en weigert met de exacte getallen wanneer het niet optelt; leeg
+            overal betekent: wis de specificatie. */}
+        <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
+        <p style={{ fontSize: 13, color: '#5F6368', margin: '0 0 10px', lineHeight: 1.45 }}>
+          {t('corr.splitUitleg')}
+        </p>
+        {[21, 9, 0].map((rate) => (
+          <div key={rate} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ width: 44, fontSize: 13.5, fontWeight: 600, color: '#3c4043', flexShrink: 0 }}>{rate}%</span>
+            <input
+              type="text" inputMode="decimal" placeholder={t('corr.grondslag')}
+              value={split[rate].base}
+              onChange={(e) => setSplit((p) => ({ ...p, [rate]: { ...p[rate], base: e.target.value } }))}
+              style={{ flex: 1, minWidth: 0, padding: '9px 10px', fontSize: 14, borderRadius: 10, border: '1px solid #d1d1d6', outline: 'none', color: '#202124', fontFamily: FONT }}
+            />
+            <input
+              type="text" inputMode="decimal" placeholder={t('corr.btwBedrag')}
+              value={split[rate].btw}
+              onChange={(e) => setSplit((p) => ({ ...p, [rate]: { ...p[rate], btw: e.target.value } }))}
+              style={{ flex: 1, minWidth: 0, padding: '9px 10px', fontSize: 14, borderRadius: 10, border: '1px solid #d1d1d6', outline: 'none', color: '#202124', fontFamily: FONT }}
+            />
+          </div>
+        ))}
 
         <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
 
