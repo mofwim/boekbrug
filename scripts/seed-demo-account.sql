@@ -55,6 +55,18 @@ begin
      where id = demo_id;
   end if;
 
+  -- GoTrue refuses a password sign-in for a user with no email identity, and inserting into
+  -- auth.users does not create one — the account exists, the hash matches, and the login still
+  -- comes back "Invalid login credentials". auth.identities.email is a generated column, so it is
+  -- set through identity_data rather than named in the insert.
+  insert into auth.identities (id, provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+  select gen_random_uuid(), demo_id::text, demo_id,
+         jsonb_build_object('sub', demo_id::text, 'email', 'demo@boekbrug.nl',
+                            'email_verified', true, 'phone_verified', false),
+         'email', now(), now(), now()
+   where not exists (
+     select 1 from auth.identities where user_id = demo_id and provider = 'email');
+
   -- The demo company. onboarding_done matters: without it the middleware sends every
   -- /dashboard/* request to /onboarding and the screenshots are all of the wizard.
   insert into public.profiles (id, email) values (demo_id, 'demo@boekbrug.nl')
