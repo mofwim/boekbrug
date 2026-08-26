@@ -15488,3 +15488,33 @@ test("[REKENING-GELEZEN] een onleesbaar rekeningnummer heet niet 'er staat er ge
     "de vormcontrole kijkt niet naar wat er wél gelezen is");
   assert.match(checks, /niet goed lezen/, "de wijzigingscontrole beweert nog steeds dat er niets stond");
 });
+
+test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de bedragen", () => {
+  // reimport-carry.ts schrijft zijn eigen waarschuwing boven die lijst: wie er een nieuwe soort
+  // verklaring bij zet en de lijst vergeet, laat hem bij een mislukte herlezing verdampen terwijl
+  // de bedragen die hij verklaart gewoon blijven staan. Dat is precies wat er gebeurde: het gat
+  // van € 176,40 bleef, de uitleg en de één-tik-oplossing waren na één druk op "Opnieuw inlezen"
+  // weg, en de controlelijst viel terug op het botte "komt niet uit op het totaal".
+  const carry = code("src/lib/reimport-carry.ts");
+  const lijst = carry.slice(
+    carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
+    carry.indexOf("const RELATION_KEYS"),
+  );
+  assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
+  assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");
+});
+
+test("[READING-MEMORY] het leesgeheugen bereikt ELKE oproepplek van dezelfde editor", () => {
+  // Dezelfde klasse als de statiegeld-knop hierboven, op een tweede soort hulp. De betaalpagina
+  // rendert de zin server-side en geeft hem aan de editor mee; /bank opende diezelfde editor en gaf
+  // niets — dus stond "bij deze leverancier corrigeer je meestal het bedrag" op het ene scherm en
+  // niet op het andere, over één factuur. Er zijn precies twee oproepplekken; beide moeten voeden.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /readingHint: readingHintFor\(invoice\.client_name, await loadReadingMemory\(/,
+    "de route rekent de zin niet uit voor het scherm dat hem zelf niet kan maken");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /readingHint=\{correctHint\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectHint\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /readingHint=\{readingHints\[/, "de betaalpagina voedt de prop niet meer");
+});
