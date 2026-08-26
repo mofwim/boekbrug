@@ -1534,6 +1534,13 @@ export const MESSAGES = {
     ar: ' — مال يعود لك. علّم هذا الخيار إذا كُتب على الوثيقة «Creditnota» أو كان الإجمالي في الأسفل سالباً. تُحفظ المبالغ حينها بالسالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدل أن تُضاف. لا حاجة لكتابة إشارة السالب بنفسك — وإن كانت موجودة فتبقى.',
     en: ' — money owed to you. Tick this when the document says “Creditnota” or the bottom total is negative. The amounts are then stored as negatives: it comes off your open balance and its VAT is subtracted instead of added. You never need to type a minus sign — if one is already there, it stays.',
   },
+  // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
+  // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
+  'corr.statiegeld.meetellen': {
+    nl: 'Statiegeld meetellen in het bedrag excl. btw',
+    ar: 'احتساب التأمين (statiegeld) ضمن المبلغ بدون ضريبة',
+    en: 'Count the deposit into the amount excl. VAT',
+  },
   'corr.statiegeld': {
     nl: 'Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.',
     ar: 'هل على الفاتورة statiegeld (رهن عبوات) أو مرتجعات؟ يجب أن تُحسب ضمن المبلغ بدون الضريبة، بإشارتها الصحيحة.',

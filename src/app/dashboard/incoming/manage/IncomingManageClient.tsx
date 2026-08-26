@@ -68,6 +68,8 @@ import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 // [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
 import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
+// [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
+import { type DepositGap } from '@/lib/statiegeld'
 // [DOC-INLINE] The paper and our reading of it, on one screen — see the component's header for why
 // leaving the app to look at a pdf was the trust problem and not a convenience one.
 import InvoiceDocumentSheet from '@/components/invoice/InvoiceDocumentSheet'
@@ -4351,6 +4353,7 @@ export default function IncomingManageClient({
           btwRows={Array.isArray(correctFor.field_confidence?._btw_rows)
             ? (correctFor.field_confidence._btw_rows as { rate: number; base: number; btw: number }[])
             : null}
+          depositGap={(correctFor.field_confidence as { _statiegeld?: DepositGap } | null)?._statiegeld ?? null}
           readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
           onClose={() => setCorrectFor(null)}
           onMessage={showToast}

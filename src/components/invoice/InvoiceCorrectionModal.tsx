@@ -24,6 +24,8 @@ import { useState } from 'react'
 import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from '@/lib/parse-nl'
+// [STATIEGELD-GAT] The deposit the reader dropped, found back on the paper — see statiegeld.ts.
+import { depositGapText, type DepositGap } from '@/lib/statiegeld'
 // [CENT] Cent rounding comes from invoice-totals.round2 — one definition for the whole app.
 import { round2 } from '@/lib/invoice-totals'
 // [SUPPLETIE] A duty with a legal clock on it is not a toast — see the block at the save below.
@@ -95,6 +97,7 @@ export default function InvoiceCorrectionModal({
   onSaved,
   onMessage,
  btwRows,
+  depositGap,
 }: {
   invoice: CorrectableInvoice
   /** [READING-MEMORY] What this owner keeps correcting at THIS supplier, or nothing. */
@@ -105,6 +108,17 @@ export default function InvoiceCorrectionModal({
   onMessage: (text: string) => void
   /** [SPLIT-CORRECTIE] The stored per-rate split, for prefill. Absent = geen specificatie. */
   btwRows?: BtwSplitRow[] | null
+  /**
+   * [STATIEGELD-GAT] The deposit line the import found back on the paper for a breakdown that
+   * comes up short, when there is one.
+   *
+   * It exists here for the reason this whole component exists: the SAME invoice is corrected from
+   * more than one screen, and a help that lives on only one of them is a screen telling the owner
+   * the amounts are simply wrong while the other screen hands them the answer. The confirm queue
+   * had this one tap; the pay screen and the bank screen — where the owner is looking at the
+   * payment with the paper beside them — did not.
+   */
+  depositGap?: DepositGap | null
 }) {
   const t = translator(useLocale())
   const dialog = useDialog()
@@ -342,6 +356,33 @@ export default function InvoiceCorrectionModal({
             />
           </div>
         ))}
+
+        {/* [STATIEGELD-GAT] One tap, because the arithmetic is already done. The difference is
+            fixed by the identity and the word beside it was found on the document itself at import
+            — so there is nothing left to work out, only to confirm. The btw does not move: no btw
+            is charged over a deposit, which is exactly why this is safe to offer. Disappears the
+            moment the amounts add up; the button exists only while there is a gap. */}
+        {depositGap && Math.abs(round2(amounts.incl - amounts.ex - amounts.btw)) > 0.02 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setAmounts(setExcl(amounts, round2(amounts.ex + depositGap.gap)))}
+              style={{
+                width: '100%', minHeight: 44, borderRadius: 12, border: '1px solid #1a73e8',
+                background: '#e8f0fe', color: '#1a4fa0', fontSize: 13.5, fontWeight: 600,
+                cursor: 'pointer', fontFamily: FONT, padding: '10px 12px', lineHeight: 1.4,
+                marginBottom: 10,
+              }}
+            >
+              {t('corr.statiegeld.meetellen')}
+            </button>
+            {/* The sentence the checklist row uses, from the same module — two spellings of one
+                explanation drift, and this one names the figure the base becomes. */}
+            <p style={{ fontSize: 12, color: '#5F6368', lineHeight: 1.45, margin: '0 0 12px' }}>
+              {depositGapText(depositGap)}
+            </p>
+          </>
+        )}
 
         {/* [KIND-CORRECTION] The one-way declaration. Without it a net-negative invoice cannot be
             entered at all, and a credit note keeps counting as a debt. */}

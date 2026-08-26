@@ -213,6 +213,10 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   // true for BOTH cases, because the verify queue is right to want a human on either. Here they
   // are the two different things this file exists to keep apart, and collapsing them is precisely
   // the tick that would lie.
+  // [REKENING-GELEZEN] What the paper printed, when the reader could not make an account number
+  // of it at all. Without this the row below is silent and the row above says "er staat geen
+  // rekeningnummer op deze factuur" — a false statement about a page that carries one.
+  const ibanPrintedRaw = (inv.field_confidence as { _vendor_iban_printed?: string } | null)?._vendor_iban_printed
   const ibanPrinted = ((inv.vendor_iban ?? '').trim().length >= 15)
   const ibanChanged = sc.iban_changed === true
   out.push({
@@ -225,7 +229,12 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     detail: ibanChanged
       ? `stond eerder op ${sc.iban_changed_from ?? 'een ander nummer'} — bel de leverancier op een nummer dat je zelf opzoekt`
       : sc.iban_check_unavailable ? 'we konden dit niet nagaan'
-      : !ibanPrinted ? 'er staat geen rekeningnummer op deze factuur'
+      : !ibanPrinted
+        // [REKENING-GELEZEN] Only when NOTHING was read. When the reader saw something it could
+        // not use, saying "er staat er geen" is a claim about the paper we cannot make.
+        ? (ibanPrintedRaw
+            ? 'wij konden het rekeningnummer op deze factuur niet goed lezen — daardoor is er niets om mee te vergelijken'
+            : 'er staat geen rekeningnummer op deze factuur')
       : 'ongewijzigd ten opzichte van eerdere facturen',
   })
 
@@ -240,7 +249,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   // Only when something was printed: the row above already says "er staat geen rekeningnummer op
   // deze factuur", and a second row repeating it is noise rather than honesty (the same rule
   // btw-split follows for 'no-basis').
-  const ibanShape = checkVendorIban(inv.vendor_iban)
+  const ibanShape = checkVendorIban(inv.vendor_iban || ibanPrintedRaw)
   if (ibanShape !== 'absent') {
     out.push({
       id: 'iban-vorm',
@@ -248,8 +257,13 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       outcome: ibanShape === 'ok' ? 'passed' : 'flagged',
       detail: ibanShape === 'ok'
         ? 'de controlecijfers kloppen'
-        : 'de controlecijfers van dit rekeningnummer kloppen niet — er is een teken misgelezen of ' +
-          'verkeerd afgedrukt. Vergelijk het met de factuur vóór je betaalt',
+        : ibanPrintedRaw && !inv.vendor_iban
+          // Read, but not as an account number. A different sentence from a failed checksum: there
+          // is nothing to compare digit by digit, the reading itself did not land.
+          ? `wij lazen "${ibanPrintedRaw}" — daar is geen bruikbaar rekeningnummer van te maken. ` +
+            'Neem het over van de factuur vóór je betaalt'
+          : 'de controlecijfers van dit rekeningnummer kloppen niet — er is een teken misgelezen of ' +
+            'verkeerd afgedrukt. Vergelijk het met de factuur vóór je betaalt',
     })
   }
 

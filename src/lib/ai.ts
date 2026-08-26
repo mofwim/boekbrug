@@ -2176,8 +2176,16 @@ Return JSON only.`;
     // dropped to avoid persisting junk (a real IBAN is ≥15 chars).
     if (typeof parsed.vendor_iban === 'string') {
       const iban = parsed.vendor_iban.replace(/\s+/g, '').toUpperCase();
-      parsed.vendor_iban =
-        iban.length >= 15 && /^[A-Z0-9]+$/.test(iban) ? iban : undefined;
+      const usable = iban.length >= 15 && /^[A-Z0-9]+$/.test(iban);
+      // [REKENING-GELEZEN] Same lesson as the btw number one block down: the drop is right, and
+      // it destroyed the only evidence that this invoice printed an account number at all. The
+      // checklist then told the owner "er staat geen rekeningnummer op deze factuur" about a page
+      // that plainly carries one — which is not a gap in our looking, it is a false statement
+      // about their paper, on the axis where being wrong costs them the payment.
+      if (iban && !usable) {
+        (parsed.field_confidence as unknown as Record<string, unknown>)._vendor_iban_printed = iban;
+      }
+      parsed.vendor_iban = usable ? iban : undefined;
     } else {
       parsed.vendor_iban = undefined;
     }

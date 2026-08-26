@@ -366,3 +366,31 @@ test('[STATIEGELD-GAT] a gap the paper does NOT explain keeps the blunt sentence
   assert.equal(row?.outcome, 'flagged')
   assert.match(row!.detail!, /komt niet uit op het totaal/, 'nothing may be invented in its place')
 })
+
+test('[REKENING-GELEZEN] an unreadable account number is said out loud, never as "none printed"', () => {
+  // Same class as the btw number: the reader canonicalises what it finds and DROPS what it cannot
+  // use, and that drop destroyed the only evidence the invoice printed one at all. The checklist
+  // then told the owner "er staat geen rekeningnummer op deze factuur" about a page that plainly
+  // carries one — a false statement about their paper, on the axis where being wrong costs the
+  // payment.
+  const inv = clean({
+    vendor_iban: null,
+    field_confidence: { _vendor_iban_printed: 'NL20ABNA04582' } as unknown as CheckInput['field_confidence'],
+  })
+  const shape = invoiceChecks(inv).find((c) => c.id === 'iban-vorm')
+  assert.ok(shape, 'the row appears — something WAS printed')
+  assert.equal(shape!.outcome, 'flagged')
+  assert.match(shape!.detail!, /NL20ABNA04582/, 'quotes what was read, so the owner can compare')
+  assert.match(shape!.detail!, /geen bruikbaar rekeningnummer/)
+
+  const change = invoiceChecks(inv).find((c) => c.id === 'iban')
+  assert.equal(change?.outcome, 'not-checked')
+  assert.match(change!.detail!, /niet goed lezen/, 'the change-check stops claiming none was printed')
+  assert.doesNotMatch(change!.detail!, /er staat geen rekeningnummer/)
+})
+
+test('[REKENING-GELEZEN] a page that really prints none keeps the old, true sentence', () => {
+  const change = invoiceChecks(clean({ vendor_iban: null, field_confidence: null }))
+    .find((c) => c.id === 'iban')
+  assert.match(change!.detail!, /er staat geen rekeningnummer op deze factuur/)
+})

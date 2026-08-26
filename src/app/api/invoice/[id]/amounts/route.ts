@@ -129,12 +129,19 @@ export async function GET(
 
   // [SPLIT-CORRECTIE] Only the split leaves this route — the rest of field_confidence is the
   // machine's testimony (grounding, safecore, e-invoice witness) and stays server-side.
-  const fc = (invoice as { field_confidence?: { _btw_rows?: unknown } | null }).field_confidence;
+  const fc = (invoice as {
+    field_confidence?: { _btw_rows?: unknown; _statiegeld?: unknown } | null
+  }).field_confidence;
   const { field_confidence: _weg, ...invoiceZonderFc } = invoice as Record<string, unknown>;
   return NextResponse.json({
     ok: true,
     invoice: invoiceZonderFc,
     btwRows: Array.isArray(fc?._btw_rows) ? fc._btw_rows : null,
+    // [STATIEGELD-GAT] The deposit line the import found back on the paper, when the breakdown
+    // comes up short. Same rule as the split above: not the whole testimony, only the one fact the
+    // editor can act on — and it must reach BOTH editors, or the same invoice gets help on the
+    // verify screen and none on the screen where the owner is about to pay it.
+    depositGap: fc?._statiegeld ?? null,
     editable,
     reason: editable
       ? null

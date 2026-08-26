@@ -15449,3 +15449,42 @@ test("[LEVERANCIER-VASTLEGGEN] wat de eigenaar over een leverancier vastlegt, wo
   // en dat is precies de mededeling die een verdwijnende toast opeet.
   assert.match(blad, /setPinned\(r\.message \?\? /, "de uitkomst verdwijnt zonder iets te zeggen");
 });
+
+test("[STATIEGELD-GAT] dezelfde hulp op ELK scherm dat dezelfde bedragen corrigeert", () => {
+  // De klasse, niet het geval: de bevestigwachtrij kreeg de één-tik-oplossing en de gedeelde
+  // correctie-modal — die op de betaalpagina én op /bank dezelfde drie bedragen bewerkt — kreeg
+  // niets. Dan zegt het ene scherm "de bedragen kloppen niet" terwijl het andere het antwoord
+  // aanreikt, over dezelfde factuur. De kop van dat bestand schrijft precies dat voor: twee
+  // editors voor dezelfde getallen lopen uiteen, en dit is de geldlijn.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /setAmounts\(setExcl\(amounts, round2\(amounts\.ex \+ depositGap\.gap\)\)\)/,
+    "de correctie-modal telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(modal, /depositGapText\(depositGap\)/,
+    "…en legt niet uit waarom, met dezelfde zin als de controlelijst");
+
+  // Beide oproepplekken voeden hem, anders is de prop een dode letter. De bankpagina krijgt hem
+  // van de route (het scherm heeft field_confidence niet), de betaalpagina uit de rij zelf.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /depositGap: fc\?\._statiegeld \?\? null/, "de route geeft de vondst niet door");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /depositGap=\{correctDeposit\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectDeposit\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /depositGap=\{\(correctFor\.field_confidence as/, "de betaalpagina voedt de prop niet");
+});
+
+test("[REKENING-GELEZEN] een onleesbaar rekeningnummer heet niet 'er staat er geen'", () => {
+  // Dezelfde vorm als [BTW-NUMMER-GELEZEN]: de opschoning gooit weg wat ze niet kan gebruiken, en
+  // daarmee het enige bewijs dat er iets STOND. De controlelijst zei dan iets ONWAARS over het
+  // papier van de eigenaar, op de as waar fout zijn de betaling kost.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_iban_printed = iban;");
+  const filter = ai.indexOf("parsed.vendor_iban = usable ? iban : undefined;");
+  assert.ok(bewaar > 0, "het gelezen nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of pas nadat de filter het al weggooide");
+
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /checkVendorIban\(inv\.vendor_iban \|\| ibanPrintedRaw\)/,
+    "de vormcontrole kijkt niet naar wat er wél gelezen is");
+  assert.match(checks, /niet goed lezen/, "de wijzigingscontrole beweert nog steeds dat er niets stond");
+});

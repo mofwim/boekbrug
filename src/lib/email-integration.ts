@@ -1828,6 +1828,14 @@ export interface AttachmentClassification {
     _btw_rows?: { rate: number; base: number; btw: number }[]
     _total_printed?: number | null
     _total_derived?: 'total' | 'excl'
+    // [STATIEGELD-GAT] / [BTW-NUMMER-GELEZEN] / [REKENING-GELEZEN] Declared for the reason the
+    // block above gives: these are set by the reader and spread into field_confidence unchanged,
+    // so leaving them off the type would say they are gone while at runtime they are not — and the
+    // next person to read this block would not know the checklist and the verify screen depend on
+    // them.
+    _statiegeld?: { gap: number; label: string; correctedExcl: number }
+    _vendor_btw_printed?: string
+    _vendor_iban_printed?: string
     /**
      * [E-FACTUUR-XML] The supplier's own structured figures, when the document carried them.
      * Declared rather than cast in: a type that hides a key the database already holds pushes
