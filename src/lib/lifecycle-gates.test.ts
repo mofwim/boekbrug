@@ -3584,27 +3584,38 @@ test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered do
 // `if (mode === 'sent' && invoiceType !== 'offerte')`, and that condition excludes the offerte —
 // so both paths wrote the same draft and navigated to the same page. An owner facing two buttons
 // with no difference can only assume they are missing something.
-test("[OFFERTE-EEN-KNOP] the offerte screen offers one save, because there is only one action", () => {
+test("[OFFERTE-EEN-KNOP] the offerte's two buttons exist because they now genuinely differ", () => {
+  // This gate used to enforce ONE button — the second did literally the same save — and named its
+  // own retirement condition: "if a second use of `mode` appears, the two buttons may differ again
+  // and this test should be reconsidered rather than silently kept." That happened:
+  // [OFFERTE-VERSTUREN-NIEUW] gave the primary button a real send (through the door that cannot
+  // mint), so the pair is legitimate again. What must now stay true is the DIFFERENCE:
   const page = code("src/app/dashboard/invoice/new/page.tsx");
 
-  // The premise: `mode` still branches only there. If a second use appears, the two buttons may
-  // differ again and this test should be reconsidered rather than silently kept.
   const body = page.slice(page.indexOf("async function handleSubmit(mode:"), page.indexOf("// ─── Derived ───"));
   assert.ok(body.length > 500, "the handleSubmit slice is real");
+  // `mode` branches exactly three times: the signature, the minting-route exclusion, and the
+  // offerte-send branch. A fourth use is a new path nobody gated — reconsider, never ignore.
   assert.equal(
-    [...body.matchAll(/\bmode\b/g)].length, 2,
-    "`mode` appears once in the signature and once in the send condition. A third use means the " +
-      "two buttons can differ again — check whether the offerte still has only one action",
+    [...body.matchAll(/\bmode\b/g)].length, 3,
+    "`mode` appears in the signature, the minting exclusion, and the offerte-send branch. " +
+      "Another use means a new path this gate has never seen",
   );
   assert.match(
     body, /if \(mode === 'sent' && invoiceType !== 'offerte'\)/,
-    "an offerte still never goes through the send route — that route mints a factuur number",
+    "an offerte still never goes through /api/invoice/send — that route mints a factuur number",
+  );
+  assert.match(
+    body, /if \(mode === 'sent' && invoiceType === 'offerte'\)/,
+    "…its send goes through its own branch (send-offerte), which is what makes the primary " +
+      "button a real send instead of a dressed-up save",
   );
 
-  // So: no second button for an offerte.
+  // And the secondary button is save-ONLY, for every type — that is the difference that makes
+  // two buttons honest. It exists unconditionally now (the offerte pair differs for real).
   assert.match(
-    page, /\{invoiceType !== 'offerte' && \(\s*<button onClick=\{\(\) => handleSubmit\('draft'\)\}/,
-    "the secondary save is hidden for an offerte, where it did the same as the primary one",
+    page, /<button onClick=\{\(\) => handleSubmit\('draft'\)\}/,
+    "the save-only secondary button is gone",
   );
 });
 
@@ -14826,4 +14837,31 @@ test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carrie
   assert.match(manage, /\{bankPending > 0 && \(/, "…and stands on manage instead of vanishing with the sheet");
   assert.match(bank, /document\.addEventListener\('visibilitychange', onVisible\)/,
     "a tab left open re-asks the matcher instead of re-offering a settled invoice");
+});
+
+test("[OFFERTE-VERSTUREN-NIEUW] het opstelscherm verstuurt de offerte door dezelfde niet-muntende deur", () => {
+  // GEVRAAGD: "offerte versturen" ook in het offertescherm zelf — tot nu toe kon dat alleen vanaf
+  // de lijst. De hoofdknop van het opstelscherm slaat het concept op en mailt het dan langs
+  // /api/invoice/[id]/send-offerte, de deur die geen nummer kán slaan (de gate hierboven bewaakt
+  // die eigenschap). Waar dit op moet blijven letten: dat de MUNTENDE deur voor een offerte
+  // gesloten blijft — het historische lek waarbij een offerte factuurnummer 007-2026 verbruikte.
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+
+  // 1. De verstuurtak bestaat en gebruikt de niet-muntende route, met het net-opgeslagen id.
+  assert.match(nieuw, /if \(mode === 'sent' && invoiceType === 'offerte'\) \{[\s\S]{0,300}send-offerte/,
+    "de offerte-verstuurtak op het opstelscherm is weg — de knop slaat dan stil alleen op");
+  // 2. …en de muntende deur blijft uitgesloten. Deze twee voorwaarden zijn elkaars spiegel;
+  //    versoepelt iemand de tweede, dan staat een offerte één tak van een factuurnummer af.
+  assert.match(nieuw, /if \(mode === 'sent' && invoiceType !== 'offerte'\) \{/,
+    "de uitsluiting van /api/invoice/send voor een offerte is losgelaten");
+  // 3. De knoppen zeggen wat ze doen: hoofdknop verstuurt, de opslaan-alleen-weg blijft bestaan.
+  assert.match(nieuw, /nieuw\.actie\.offerteVersturen/, "de hoofdknop heet geen versturen meer");
+  assert.match(nieuw, /nieuw\.actie\.offerteOpslaan/, "de opslaan-alleen-knop is verdwenen");
+  // 4. De zin van de route — "er is nog geen factuur" — bereikt de eigenaar via het paneel, dat
+  //    niet vanzelf wegnavigeert ([VERSTUURD] leerde dat een verdwijnend scherm geen melding is).
+  //    Gepind op het GUARD-EN-RENDER-paar, niet op de blote naam: de eigen negatieve controle
+  //    bewees dat `{false && (` de regel doodde terwijl de naam als tekst bleef staan — precies
+  //    de mention-in-plaats-van-bedrading die dit bestand overal elders ook weigert.
+  assert.match(nieuw, /\{offerteSent\.message && \(/,
+    "de routezin bereikt het scherm niet — de eigenaar hoort dat er nog géén factuur bestaat");
 });
