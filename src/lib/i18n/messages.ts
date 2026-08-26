@@ -174,6 +174,11 @@ export const MESSAGES = {
 
   'nieuw.actie.versturen': { nl: 'Opslaan en versturen', ar: 'حفظ وإرسال', en: 'Save and send' },
   'nieuw.actie.offerteOpslaan': { nl: 'Offerte opslaan', ar: 'حفظ عرض السعر', en: 'Save quote' },
+  // [OFFERTE-VERSTUREN-NIEUW] De hoofdknop op het opstelscherm: opslaan én meteen als offerte naar
+  // de klant mailen, langs de deur die geen nummer kán slaan (/api/invoice/[id]/send-offerte).
+  'nieuw.actie.offerteVersturen': { nl: 'Offerte versturen', ar: 'إرسال عرض السعر', en: 'Send quote' },
+  'nieuw.offerte.verstuurdTitel': { nl: 'Offerte verstuurd', ar: 'أُرسل عرض السعر', en: 'Quote sent' },
+  'nieuw.offerte.naarDetail': { nl: 'Naar de offerte', ar: 'إلى عرض السعر', en: 'To the quote' },
   'nieuw.actie.concept': { nl: 'Opslaan als concept', ar: 'حفظ كمسودة', en: 'Save as draft' },
   'nieuw.actie.bezig': { nl: 'Bezig...', ar: 'جارٍ العمل...', en: 'Working...' },
   'nieuw.actie.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
