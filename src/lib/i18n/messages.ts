@@ -474,6 +474,45 @@ export const MESSAGES = {
     ar: 'احتساب {bedrag} ({woord}) ضمن المبلغ بدون ضريبة',
     en: 'Count {bedrag} {woord} into the amount excl. VAT',
   },
+  // [LEVERANCIER-VASTLEGGEN] Eén keer opschrijven wie deze leverancier is, in plaats van elke
+  // maand dezelfde misgelezen naam verbeteren. De zinnen noemen het GEVOLG ("dan herkent de app
+  // hem"), want dat is wat de eigenaar ervan merkt — niet het mechanisme eronder.
+  'lev.knop': { nl: 'Leverancier', ar: 'المورّد', en: 'Supplier' },
+  'lev.titel': { nl: 'Wie is deze leverancier?', ar: 'مَن هذا المورّد؟', en: 'Who is this supplier?' },
+  'lev.uitleg': {
+    nl: 'Wat je hier vastlegt, gebruikt de app ook bij de volgende factuur van dit bedrijf — dan hoeft er niets meer geraden te worden.',
+    ar: 'ما تُثبِّته هنا يستخدمه التطبيق أيضاً مع الفاتورة التالية من هذه الشركة — فلا يبقى شيء للتخمين.',
+    en: 'What you set here is what the app uses on the next invoice from this company — nothing left to guess.',
+  },
+  'lev.naam': { nl: 'Naam van het bedrijf', ar: 'اسم الشركة', en: 'Company name' },
+  'lev.naam.hint': {
+    nl: 'Zoals het bedrijf zichzelf noemt — meestal onderaan de factuur, bij de KVK- en btw-gegevens.',
+    ar: 'كما تُسمّي الشركة نفسها — غالباً أسفل الفاتورة، عند بيانات KVK والضريبة.',
+    en: 'As the company calls itself — usually at the foot of the invoice, beside the KVK and VAT details.',
+  },
+  'lev.iban': { nl: 'Rekeningnummer (IBAN)', ar: 'رقم الحساب (IBAN)', en: 'Account number (IBAN)' },
+  'lev.iban.hint': {
+    nl: 'Hiermee controleert de app of een volgende factuur ineens een ander rekeningnummer draagt. Leeg laten mag.',
+    ar: 'به يفحص التطبيق ما إذا كانت فاتورة تالية تحمل رقم حساب مختلفاً فجأة. يمكن تركه فارغاً.',
+    en: 'This is what the app compares a later invoice against when the account number suddenly differs. May be left empty.',
+  },
+  'lev.kvk': { nl: 'KVK-nummer', ar: 'رقم KVK', en: 'KVK number' },
+  'lev.kvk.hint': { nl: '8 cijfers. Leeg laten mag.', ar: '٨ أرقام. يمكن تركه فارغاً.', en: '8 digits. May be left empty.' },
+  'lev.btw': { nl: 'Btw-nummer', ar: 'رقم الضريبة', en: 'VAT number' },
+  'lev.btw.hint': {
+    nl: 'Staat verplicht op een factuur (art. 35a). Leeg laten mag.',
+    ar: 'إلزامي على الفاتورة (المادة 35a). يمكن تركه فارغاً.',
+    en: 'Legally required on an invoice (art. 35a). May be left empty.',
+  },
+  'lev.opslaan': { nl: 'Vastleggen', ar: 'تثبيت', en: 'Save' },
+  'lev.bezig': { nl: 'Bezig met opslaan...', ar: 'جارٍ الحفظ...', en: 'Saving...' },
+  'lev.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
+  'lev.opgeslagen': { nl: 'Leverancier vastgelegd', ar: 'تم تثبيت المورّد', en: 'Supplier saved' },
+  'lev.fout.opslaan': {
+    nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
+    ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
+    en: 'The supplier could not be saved. Try again in a moment.',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },

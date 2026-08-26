@@ -15293,3 +15293,41 @@ test("[BTW-NUMMER-GELEZEN] het gedrukte btw-nummer wordt bewaard vóór de sleut
   assert.match(checks, /if \(ibanShape !== 'absent'\)/, "de IBAN-vormrij verschijnt ook zonder nummer");
   assert.match(checks, /if \(btwShape !== 'absent'\)/, "de btw-rij verschijnt ook zonder nummer");
 });
+
+test("[LEVERANCIER-VASTLEGGEN] wat de eigenaar over een leverancier vastlegt, wordt ook onthouden", () => {
+  // GEVRAAGD: de leverancier zelf kunnen bijwerken vanaf de incoming-pagina, en die correctie moet
+  // blijven gelden — anders leest de app volgende maand hetzelfde papier weer verkeerd. Gemeld op
+  // een factuur waarvan het leverancierveld een PRODUCTLIJN las ("Silifke / Hocaoglu") terwijl de
+  // afzender OZ&ER FOOD B.V. is.
+  const route = code("src/app/api/invoice/[id]/supplier/route.ts");
+
+  // 1. Het formulier wordt door dezelfde pure regel gekeurd als het scherm, en een afkeuring
+  //    schrijft NIETS. Een misgetypt IBAN hier laat de fraudecontrole bij elke echte factuur van
+  //    deze leverancier alarm slaan — waarna de eigenaar leert die waarschuwing weg te klikken.
+  assert.match(route, /const plan = planSupplierPin\(body\)/, "de route keurt het formulier niet");
+  assert.match(route, /if \(!plan\.ok\) \{[\s\S]{0,160}status: 400/, "een afkeuring mag niets schrijven");
+
+  // 2. Het ONTHOUDEN loopt via de bestaande aliasmodule — die weet wanneer leren een bewering zou
+  //    zijn die de app niet kan doen (een naam die naar een naam wijst, een spelling die al van een
+  //    ándere leverancier is). Een tweede manier om hetzelfde te onthouden zou daarvan afwijken.
+  assert.match(route, /await learnSupplierAlias\(supabase, ownerId, \{/,
+    "de route onthoudt de spelling niet — dan is dit een formulier zonder geheugen");
+  assert.match(route, /printedName: invoice\.client_name/,
+    "…en dan nog met de verkeerde sleutel: de MISGELEZEN naam is wat volgende maand terugkomt");
+
+  // 3. De factuur en zijn broertjes dragen daarna dezelfde naam, gekoppeld op supplier_id — nooit
+  //    op naam. client_name is in deze app een identiteitssleutel (IBAN-wijziging, incasso, het
+  //    creditnota-signaal, het leesgeheugen); twee spellingen splitsen de geschiedenis van één
+  //    bedrijf in tweeën.
+  assert.match(route, /\.eq\('supplier_id', supplierId\)/, "broertjes worden op naam gezocht — dat is juist de gok");
+  assert.doesNotMatch(route, /ilike\(/, "een naamvergelijking hoort hier niet");
+
+  // 4. De deur staat in de voet van het documentblad: de plek waar de eigenaar het papier vóór
+  //    zich heeft. Beide incoming-schermen tonen dat blad, dus de deur bestaat één keer.
+  const blad = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(blad, /onClick=\{\(\) => setPinning\(true\)\}/, "de knop is weg");
+  assert.match(blad, /<SupplierPinModal/, "…of het formulier hangt er niet meer aan");
+  // En de zin die de server teruggeeft blijft STAAN. Hij gaat over wat er volgende maand gebeurt,
+  // en dat is precies de mededeling die een verdwijnende toast opeet.
+  assert.match(blad, /setPinned\(r\.message \?\? /, "de uitkomst verdwijnt zonder iets te zeggen");
+});
