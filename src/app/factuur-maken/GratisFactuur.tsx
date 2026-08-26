@@ -33,6 +33,7 @@ import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
 import { vakOpties, vakBySlug, vakRegelsVoorFormulier, regelsNaVakwissel } from '@/lib/vak-sjablonen'
+import { INVOICE_TOOL_FAQ } from '@/lib/invoice-tool-faq'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts. The public tool gets it
 // too: a wrong invoice date here becomes a wrong quarter the moment the invoice is real.
 import DateFieldNL from '@/components/ui/DateFieldNL'
@@ -543,9 +544,30 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
     <div style={s.page}>
       <div style={s.wrap}>
         <h1 style={s.h1}>Gratis factuur maken</h1>
-        <p style={s.sub}>
-          Vul in, download je PDF. Geen account nodig — je gegevens blijven in je browser.
-        </p>
+        {/* [SEO-INTRO] Twee inleidingen, en het onderscheid is `initialVak` — de ROUTE, niet de
+            keuzelijst. Een bezoeker die hierboven zijn vak kiest verandert `vak`, en als die de
+            tekst zou sturen verdween de inleiding onder zijn handen.
+            Op /factuur-maken staat de volledige tekst: dit is de pagina die op "gratis factuur
+            maken" gevonden moet worden en een zoekmachine krijgt hier zinnen in plaats van alleen
+            formuliervelden. Op /factuur-maken/<vak> blijft de korte regel staan — die pagina heeft
+            haar eigen kop en haar eigen BTW-uitleg in de server-component, en dezelfde alinea er
+            tien keer onder plakken is precies de dubbele inhoud die [VAK-PAGINAS] vermijdt. */}
+        {initialVak === '' ? (
+          <>
+            <p style={{ ...s.sub, marginBottom: 12 }}>
+              Maak snel en gratis een professionele factuur als PDF. Vul je gegevens en die van je
+              klant in, voeg je werkzaamheden toe en download je factuur direct.
+            </p>
+            <p style={s.sub}>
+              Geen account nodig en geen kosten. Je gegevens blijven in je browser zolang je geen
+              account maakt.
+            </p>
+          </>
+        ) : (
+          <p style={s.sub}>
+            Vul in, download je PDF. Geen account nodig — je gegevens blijven in je browser.
+          </p>
+        )}
 
         {/* ── Documentgegevens ── */}
         <div style={s.card}>
@@ -878,6 +900,31 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
           </p>
         )}
 
+        {/* [SEO-TEKST] Beschrijft wat de tool hierboven zojuist gedaan heeft, in gewone zinnen.
+            Dat is de reden dat hij ONDER het formulier staat en niet erboven: wie is komen
+            factureren is dan klaar, en wie via Google binnenkomt vindt hier de woorden die bij
+            zijn zoekopdracht horen. Alleen op de generieke pagina — zie [SEO-INTRO]. */}
+        {initialVak === '' && (
+          <div style={{ ...s.card, marginTop: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 10px' }}>
+              Gratis een factuur maken als ZZP’er
+            </h2>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: '0 0 10px', lineHeight: 1.6 }}>
+              Werk je als ZZP’er, freelancer of kleine ondernemer? Met BoekBrug maak je eenvoudig
+              een professionele factuur die je als PDF kunt downloaden.
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: '0 0 10px', lineHeight: 1.6 }}>
+              Je hoeft geen account aan te maken en je betaalt niets. Vul je bedrijfsgegevens, de
+              gegevens van je klant en de factuurregels in. BoekBrug berekent automatisch het
+              BTW-bedrag en het totaal.
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: 0, lineHeight: 1.6 }}>
+              Wil je je facturen later bewaren, versturen en bijhouden? Dan kun je gratis een
+              BoekBrug-account maken.
+            </p>
+          </div>
+        )}
+
         {/* ── Peak-intent register CTA (only real features) ──
             [FUNNEL-OVERDRACHT] Deze knop beloofde "bewaar je facturen" en leverde een leeg
             formulier: de gegevens stonden in localStorage maar werden na registratie nergens
@@ -933,6 +980,29 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
               ))}
           </div>
         </div>
+
+        {/* [FACTUUR-FAQ] Dezelfde vragen die de server-shell als FAQPage-markup meestuurt, uit
+            dezelfde module — zie src/lib/invoice-tool-faq.ts. Ze stonden tot nu toe alléén in de
+            JSON-LD, en markup zonder zichtbare vraag telt niet mee; dit blok maakt de markup waar.
+            Niet op de vakpagina's: die hebben hun eigen vraag ("welk BTW-tarief geldt voor …?"),
+            en die is daar het antwoord waarvoor de bezoeker gekomen is. */}
+        {initialVak === '' && (
+          <div style={{ ...s.card, marginTop: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>
+              Veelgestelde vragen over gratis facturen maken
+            </h2>
+            {INVOICE_TOOL_FAQ.map((item) => (
+              <div key={item.q} style={{ marginBottom: 14 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '0 0 4px' }}>
+                  {item.q}
+                </h3>
+                <p style={{ fontSize: 14, color: '#5f6368', margin: 0, lineHeight: 1.6 }}>
+                  {item.a}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
 
         <ToolsCrossLinks currentSlug="/factuur-maken" />
         <KennisbankLinks tool="/factuur-maken" />

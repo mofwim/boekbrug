@@ -9,11 +9,15 @@ import type { Metadata } from 'next'
 import GratisFactuur from './GratisFactuur'
 import PublicHeader from '@/components/public-header'
 import { absoluteUrl } from '@/lib/site'
+import { INVOICE_TOOL_FAQ } from '@/lib/invoice-tool-faq'
 
 export const metadata: Metadata = {
-  title: 'Factuur maken — gratis factuur als PDF | BoekBrug',
+  // The searched phrase first and the title short enough to survive Google's truncation. The
+  // previous one led with "Factuur maken —", which spent the most-weighted position on a word
+  // the phrase already contains.
+  title: 'Gratis factuur maken als PDF | BoekBrug',
   description:
-    'Maak gratis een nette factuur die klopt met de Nederlandse regels. Vul in, download als PDF. Geen account nodig — je gegevens blijven in je browser.',
+    'Gratis een professionele factuur maken als PDF. Voor ZZP’ers en kleine ondernemers. Geen account nodig. Vul in, download en klaar.',
   keywords: ['factuur maken', 'gratis factuur', 'factuur pdf', 'factuur voorbeeld', 'zzp factuur'],
   alternates: { canonical: '/factuur-maken' },
   openGraph: {
@@ -23,20 +27,11 @@ export const metadata: Metadata = {
   },
 }
 
-const faq = [
-  {
-    q: 'Kan ik gratis een factuur maken?',
-    a: 'Ja. Vul je gegevens in en download je factuur als PDF. Je hebt geen account nodig en er zijn geen kosten.',
-  },
-  {
-    q: 'Klopt de factuur met de Nederlandse regels?',
-    a: 'De factuur bevat de vaste onderdelen: je gegevens, de klant, een factuurnummer, de datum, de BTW per tarief en het totaal.',
-  },
-  {
-    q: 'Blijven mijn gegevens privé?',
-    a: 'Ja. Je gegevens blijven in je eigen browser. Wil je je facturen bewaren en versturen? Maak dan een gratis BoekBrug-account.',
-  },
-]
+// [FACTUUR-FAQ] Imported, never copied. These same questions are RENDERED by <GratisFactuur/>
+// below; Google only honours FAQ markup whose questions are visible on the page, so a second
+// literal here would be a violation the moment either side is edited. It already was one: this
+// file used to declare three questions that appeared nowhere on the page.
+const faq = INVOICE_TOOL_FAQ
 
 const jsonLd = {
   '@context': 'https://schema.org',
