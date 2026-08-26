@@ -120,14 +120,39 @@ Generate icon + feature graphic: `node scripts/generate-store-assets.mjs`.
 Frame phone screenshots too by passing their paths:
 `node scripts/generate-store-assets.mjs shot1.jpg shot2.jpg ...`.
 
-### Screenshots to capture (from the live app on your phone)
-Take 3–5 clean screenshots (the URL bar is gone now) and I can frame them in the
-same style. Best pages to show:
-1. Dashboard / "Ben ik klaar?" (quarter progress) — the money shot.
-2. Een factuur maken (create invoice).
-3. Een bon scannen (camera capture / result).
-4. Bank matching.
-5. "Download voor de boekhouder" (the ZIP hand-off).
+### Screenshots to capture
+
+`node scripts/capture-screenshots.mjs` drives a browser over a running build and
+writes 1080×1920 PNGs into `store-assets/shots/` — the size Play wants, with no
+resampling. Run `npx next build && npx next start -p 3000` first.
+
+Without credentials it captures the public pages only. The five the listing needs
+are all behind login, so point it at the demo tenant:
+
+```bash
+SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=… node scripts/capture-screenshots.mjs
+```
+
+**Never point it at a real tenant.** A store screenshot is a public page, and a
+real administratie puts a business's suppliers, IBANs and bank descriptions on it.
+`scripts/seed-demo-account.sql` creates a tenant of invented data for exactly this
+— the same account Play Console needs under *App content → App access* (§3), so it
+is one thing to maintain rather than two. Redacting a real tenant by hand is not
+the cheaper option: black bars read as evasion on a finance app's store page, and
+one missed name is permanent.
+
+The five screens, in the order the CAPTIONS array in `generate-store-assets.mjs`
+expects them:
+1. `/dashboard/klaar` — "Ben ik klaar?" (quarter progress) — the money shot.
+2. `/dashboard/upload` — een bon scannen.
+3. `/dashboard/aangifte` — BTW.
+4. `/dashboard/brug` — klaar voor je boekhouder.
+5. `/dashboard/bank` — bank matching.
+
+A note for anyone running this from a sandboxed CI box: the login happens in the
+BROWSER, so the browser — not just the server — needs to reach the Supabase host.
+An egress proxy that refuses CONNECT to it fails the login step while every public
+page still captures fine.
 
 ---
 
