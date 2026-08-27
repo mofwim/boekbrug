@@ -38,7 +38,11 @@ import * as Sentry from '@sentry/nextjs'
 // factuur heeft maar één wettelijke weg terug: een creditnota. Zonder deze route zou hij bij een
 // typefout in een bedrag moeten wachten op zijn baas, terwijl de klant al een verkeerde factuur
 // heeft. Het nummer komt uit de reeks van de EIGENAAR — dat is de hele reden dat dit zo loopt.
-import { getActingFor } from '@/lib/acting-for-server'
+// [CREDIT-NAMENS] En dezelfde weg terug voor de BOEKHOUDER, met het mandaat als de sleutel. Zie
+// de kop van deze route voor wat hij daarmee wel en niet mag.
+import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
+// [CREDIT-NAMENS] De klant hoort het te weten van een correctie op zijn eigen naam.
+import { createNotification } from '@/lib/notifications'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder terugval faalt de creditnota, en dat
 // is de enige wettelijke weg terug bij een fout in een verstuurde factuur.
@@ -62,6 +66,34 @@ import {
 } from '@/lib/partial-credit'
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
 
+// ── [CREDIT-NAMENS] De boekhouder corrigeert wat hij zelf heeft uitgereikt ──────────────────────
+//
+// Een gemachtigde boekhouder kon een factuur MAKEN op naam van zijn klant en hem VERSTUREN, maar
+// hem niet corrigeren: deze route kende alleen getActingFor(), dus namens_klant_id bestond hier
+// niet en de enige wettelijke weg terug lag bij de klant. Voor een ondernemer die zijn facturatie
+// volledig bij zijn boekhouder heeft liggen, betekende dat: de fout is van de boekhouder, de
+// reparatie moet van de klant komen.
+//
+// WAT ER NIET IS VERBREED, EN DAT IS HET BELANGRIJKSTE
+// canAccessInvoice() blijft precies wat het was. Een boekhouder crediteert alleen facturen die
+// HIJ heeft uitgereikt (created_by), nooit die van de klant zelf — dezelfde regel die
+// canSendInvoice() al uitschrijft, en om dezelfde reden: een mandaat is toestemming om facturen
+// op iemands naam te SCHRIJVEN, geen toestemming om aan de zijne te komen. Het gat dat de
+// eigenaar voelde zit volledig binnen die grens: de facturen die hij bedoelt zijn juist de
+// facturen die zijn boekhouder heeft gemaakt.
+//
+// WAAROM ER GEEN MIGRATIE BIJ HOORT
+// next_invoice_seq() liet een gemachtigde al nummers trekken van soort 'creditnota' — die functie
+// is destijds algemeen geschreven, niet alleen voor facturen. De twee boekhouderstriggers op
+// invoices staan op BEFORE UPDATE en raken een INSERT dus niet. En het plafond dat er wél toe
+// doet, assert_credit_within_original(), kijkt niet naar auth.uid(): het vergrendelt het
+// origineel en telt, ongeacht wie er schrijft. Deze route wint er dus geen enkele bevoegdheid bij
+// in de database — ze gebruikt de bevoegdheid die de klant al had gegeven.
+//
+// [RLS-UIT] Leest en schrijft de boekhouder mee, dan kan dat niet via zijn sessie: RLS toont hem
+// de regels van zijn klant niet (invoice_lines_select_accountant eist 'paid', en 'overdue' is niet
+// eens gedeeld). Dus service_role, met de eigenaar in de QUERY — zie `db` hieronder.
+
 // [CREDITNOTA-PDF] Same storage bucket the send route and the closing package
 // use. A creditnota's PDF MUST be stored here and its path written to
 // invoices.pdf_url, or the correction document is missing from the accountant's
@@ -69,11 +101,6 @@ import { creditedTotalsFrom } from '@/lib/credited-invoices'
 const PDF_BUCKET = 'documents'
 
 export async function POST(request: NextRequest) {
-  // [ACTING-FOR] Wie handelt hier, namens wie? Voor een eigenaar verandert er niets.
-  const acting = await getActingFor()
-  if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const ownerId = invoiceOwnerId(acting)
-
   try {
     const supabase = await createServerSupabaseClient()
 
@@ -82,6 +109,28 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { original_invoice_id, reason } = body
+
+    // [CREDIT-NAMENS] Namens wie? Precies zoals /api/invoice/draft en /send het vragen: staat er
+    // een klant genoemd, dan is de machtiging de sleutel en wordt zij hier opnieuw getoetst —
+    // rol, koppeling, soort en intrekking, alle vier, bij elke aanroep. Staat er niets, dan is dit
+    // letterlijk het verzoek van hiervoor.
+    const namensKlantId =
+      typeof body?.namens_klant_id === 'string' && body.namens_klant_id ? body.namens_klant_id : null
+    const acting = namensKlantId ? await getActingForClient(namensKlantId) : await getActingFor()
+    if (!acting) {
+      return namensKlantId
+        ? NextResponse.json({ error: 'Je hebt geen toestemming om namens deze klant te crediteren' }, { status: 403 })
+        : NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const ownerId = invoiceOwnerId(acting)
+
+    // [RLS-UIT] De lees- en schrijfclient. Voor de eigenaar en de verkoopmedewerker verandert er
+    // niets: hun sessie ziet deze rijen. Voor de boekhouder ziet zij ze niet, dus daar gaat het
+    // langs service_role — en dan staat de afscherming in de query, niet in het beleid. Elke
+    // `db`-lezing hieronder draagt daarom de eigenaar bij zich, of staat als REVIEWED in de
+    // [RLS-UIT]-poort met de reden erbij.
+    const boekhouder = acting.role === 'boekhouder'
+    const db = boekhouder ? createPipelineClient() : supabase
     // [DEEL-CREDIT] Optioneel, en dat is de hele migratiestrategie: laat een client hem weg, dan
     // is dit letterlijk het verzoek van hiervoor — de HELE factuur — en komt er tot op de cent
     // uit wat er altijd uitkwam.
@@ -103,10 +152,14 @@ export async function POST(request: NextRequest) {
 
     // [BOEK-031] Haal de originele factuur op — verificatie eigenaar
     // [FACTUUR-A] select('*') — delivery_date + full address block needed
-    const { data: originalData, error: fetchError } = await supabase
+    // [RLS-UIT] `sender_id` staat er nu ook bij. Met RLS uit zegt `.eq('id', …)` niets over van
+    // WIE die rij is; canAccessInvoice() hieronder weigert een vreemde factuur nog steeds, maar de
+    // afscherming hoort in de query te staan en niet alleen in de regel erna.
+    const { data: originalData, error: fetchError } = await db
       .from('invoices')
       .select('*')
       .eq('id', original_invoice_id)
+      .eq('sender_id', ownerId)
       .single()
 
     if (fetchError || !originalData) {
@@ -161,7 +214,7 @@ export async function POST(request: NextRequest) {
     // route mints a creditnota number — Art. 35, forward-only, "once committed, no rollback". A
     // duplicate created here does not just double the credit, it burns a number in the legal
     // sequence to do it. So the refusal has to come BEFORE the number, which is where it now is.
-    const { data: existingCreditnotas, error: existingErr } = await supabase
+    const { data: existingCreditnotas, error: existingErr } = await db
       .from('invoices')
       .select('id, invoice_number, total_inc_btw')
       .eq('sender_id', ownerId)
@@ -185,7 +238,7 @@ export async function POST(request: NextRequest) {
     //
     // Dit staat VÓÓR het nummer, en dat is dezelfde les als bij de oude dubbelcheck: een creditnota
     // die hier wordt geweigerd heeft nog geen nummer verbruikt. Art. 35 kent geen weg terug.
-    const { data: originalLines, error: linesErr } = await supabase
+    const { data: originalLines, error: linesErr } = await db
       .from('invoice_lines')
       // [UNIT] '*' zodat elke kolom meekomt zonder tweede lijst; de INSERT typt hieronder over.
       .select('*')
@@ -220,7 +273,7 @@ export async function POST(request: NextRequest) {
     const eerdereIds = (existingCreditnotas ?? []).map((c) => (c as { id: string }).id)
     let alGecrediteerdPerRegel = new Map<string, number>()
     if (eerdereIds.length > 0) {
-      const { data: eerdereRegels, error: eerdereErr } = await supabase
+      const { data: eerdereRegels, error: eerdereErr } = await db
         .from('invoice_lines')
         // '*' om dezelfde reden als hierboven: elke kolom mee, zonder een tweede lijst die kan gaan
         // afwijken van wat de spiegel schrijft.
@@ -291,7 +344,14 @@ export async function POST(request: NextRequest) {
     // [ACTING-FOR] ownerId, met de SESSIE-client. Eén doorlopende reeks per bedrijf (Art. 35), en
     // next_invoice_seq() weigert onvoorwaardelijk als auth.uid() NULL is — service_role kan hier
     // dus niet in de plaats treden. Zie company_members_sales_role.sql.
-    const creditnotaNumber = await generateInvoiceNumber(supabase, ownerId, 'creditnota')
+    // [NUMBER-READ-VISIBLE] Het nummer wordt getrokken met de SESSIE-client — next_invoice_seq()
+    // weigert onvoorwaardelijk als auth.uid() NULL is, dus service_role kan hier niet in de plaats
+    // treden. Maar het SJABLOON staat op het profiel van de klant, en dat leest de sessie van een
+    // boekhouder niet. Zonder de vierde parameter geeft resolveFormat() dan niets terug en weigert
+    // generateInvoiceNumber() te nummeren ("never number from an unknown scheme") — de creditnota
+    // zou voor een boekhouder dus niet fout genummerd worden, maar helemaal niet lukken. Zelfde
+    // reparatie, zelfde reden als in de send-route.
+    const creditnotaNumber = await generateInvoiceNumber(supabase, ownerId, 'creditnota', db)
     if (!creditnotaNumber) {
       return NextResponse.json({ error: 'Kon creditnotanummer niet genereren' }, { status: 500 })
     }
@@ -304,9 +364,8 @@ export async function POST(request: NextRequest) {
     // source:'created' restored (was swallowed by an inline comment).
     const { data: creditnota, error: insertError } = // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await writeWithTrail<any>(
-      (spoor) => supabase
+      (spoor) => db
       .from('invoices')
-
       .insert({
         sender_id: ownerId,
         ...spoor,
@@ -399,7 +458,7 @@ export async function POST(request: NextRequest) {
     // ze belandt de correctie op een ander bureau dan de factuur — bij precies de klant die de
     // factuur zonder die regels niet kon verwerken.
     await copyExtraLinesOnto(
-      (fields) => supabase.from('invoices').update(fields as never).eq('id', creditnota.id),
+      (fields) => db.from('invoices').update(fields as never).eq('id', creditnota.id),
       original,
       { original: original_invoice_id, creditnota: creditnota.id },
     )
@@ -416,7 +475,7 @@ export async function POST(request: NextRequest) {
       // and the exemption flag, whose absence puts the correction in a different rubriek than the
       // invoice it undoes), and which are hardened. It sat here as an object literal inside a
       // .map(), where none of it could be checked without a database.
-      await supabase.from('invoice_lines').insert(
+      await db.from('invoice_lines').insert(
         creditLinesFor(keuze.lines, creditnota.id, reason) as never,
       )
     }
@@ -439,6 +498,10 @@ export async function POST(request: NextRequest) {
         credited_inc_btw: keuze.totalIncBtw,
         already_credited_before: alGecrediteerd,
         credited_line_count: keuze.lines.length,
+        // [CREDIT-NAMENS] Namens wie, en in welke rol. Zonder deze twee staat er in het spoor een
+        // handeling van iemand die in de administratie waarin zij plaatsvond niet voorkomt.
+        namens_klant_id: acting.ownerId,
+        acting_role: acting.role,
       },
       ipAddress: getClientIP(request),
     })
@@ -455,13 +518,13 @@ export async function POST(request: NextRequest) {
 
     // [ACTING-FOR] Het profiel van de VERKOPER staat op de creditnota — dat is de eigenaar. Voor een
     // medewerker is die rij via RLS onleesbaar, dus dan langs service_role.
-    const { data: profile } = await (isActingForOther(acting) ? createPipelineClient() : supabase)
+    const { data: profile } = await db
       .from('profiles')
       .select('*')
       .eq('id', ownerId)
       .single()
 
-    const { data: creditLines } = await supabase
+    const { data: creditLines } = await db
       .from('invoice_lines')
       .select('*')
       .eq('invoice_id', creditnota.id)
@@ -501,11 +564,11 @@ export async function POST(request: NextRequest) {
         // storage.objects, dus een overschrijving kan niet slagen. Hier is dat sowieso nooit aan
         // de orde — creditnotaNumber komt vers uit de reeks, dus het pad is per definitie nieuw —
         // maar `upsert: true` suggereerde een mogelijkheid die niet bestaat.
-        const { error: uploadError } = await supabase.storage
+        const { error: uploadError } = await (boekhouder ? createPipelineClient() : supabase).storage
           .from(PDF_BUCKET)
           .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
         if (!uploadError) {
-          await supabase
+          await db
             .from('invoices')
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .update({ pdf_url: pdfPath, updated_at: new Date().toISOString() } as any)
@@ -548,10 +611,7 @@ export async function POST(request: NextRequest) {
             // factuurmail, best-effort, nooit een blokkade voor de bezorging.
             // [ACTING-FOR] Acting-aware client: de sessie van een medewerker ziet de rijen van de
             // eigenaar niet, en de creditnota van een kantoor vertrok dan stil zonder XML.
-            ublAttachment: await ublAttachmentForInvoice(
-              isActingForOther(acting) ? createPipelineClient() : supabase,
-              creditnota.id,
-            ),
+            ublAttachment: await ublAttachmentForInvoice(db, creditnota.id),
             isCreditnota: true,
           })
         } catch (deliveryErr) {
@@ -584,6 +644,27 @@ export async function POST(request: NextRequest) {
       })
     } catch (autoErr) {
       console.error('[BANK-CIRCLE-SEND] post-creditnota auto-confirm failed (non-fatal)', { creditnota_id: creditnota.id, autoErr })
+    }
+
+    // ── [CREDIT-NAMENS] De klant hoort het te weten ──
+    //
+    // Het scherm waar de boekhouder factureert belooft het met zoveel woorden: de klant krijgt
+    // bericht zodra er op zijn naam iets de deur uit gaat. Een creditnota is dat ook — sterker
+    // nog, het is de enige van de twee die zijn omzet VERLAAGT en zijn btw terugvraagt. Stil
+    // blijven zou betekenen dat de ondernemer zijn eigen kwartaal ziet veranderen zonder dat er
+    // iemand iets heeft gezegd.
+    //
+    // Best-effort en met opzet ná de creditnota: het document bestaat, het nummer is verbruikt, en
+    // een mislukte melding mag daar niets aan veranderen. Het spoor hierboven staat er sowieso.
+    if (isActingForOther(acting)) {
+      await createNotification({
+        userId: ownerId,
+        // [TAAL-DB] Staat op het scherm van de KLANT, in diens taal — niet in die van de boekhouder.
+        title: 'Creditnota op jouw naam',
+        body: `Je boekhouder heeft creditnota ${creditnotaNumber} gemaakt op factuur ${original.invoice_number ?? ''}.`.trim(),
+        type: 'invoice',
+        link: `/dashboard/invoice/${creditnota.id}`,
+      })
     }
 
     return NextResponse.json({

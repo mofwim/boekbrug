@@ -19,28 +19,33 @@ const EN_TOOLS = new Set([
   '/btw-aangifte-berekenen',
 ])
 
+// [WAT-HET-DOET] The body used to say the invoices, receipts and VAT are kept "in one place" and
+// added up per quarter. True, and it describes a filing cabinet — so a reader of the free surface
+// reasonably concluded the product has no automation at all. It says what actually happens now:
+// the documents are read (ai.ts) and late customers are chased (/api/cron/reminders). The bank
+// connection is deliberately left out until its credentials are live — see ToolPage.tsx.
 const COPY: Record<Locale, { heading: string; body: string; register: string; reassure: string }> = {
   nl: {
     heading: 'Doe het meteen goed — gratis',
-    body: 'Of houd je facturen, bonnetjes en btw bij op één plek in BoekBrug. Automatisch per kwartaal opgeteld en klaar voor je aangifte en je boekhouder.',
+    body: 'Of laat BoekBrug het werk doen: je bonnetjes en inkoopfacturen worden vanzelf uitgelezen, je klanten krijgen vanzelf een herinnering als ze te laat zijn, en je btw wordt per kwartaal opgeteld — klaar voor je aangifte en je boekhouder.',
     register: 'Gratis account maken',
     reassure: 'Gratis account, in een minuut geregeld. Je data blijft van jou.',
   },
   en: {
     heading: 'Get it right from the start — free',
-    body: 'Or keep your invoices, receipts and VAT in one place in BoekBrug. Added up per quarter automatically and ready for your tax return and your accountant.',
+    body: 'Or let BoekBrug do the work: your receipts and purchase invoices are read for you, your customers are reminded automatically when they are late, and your VAT is added up per quarter — ready for your tax return and your accountant.',
     register: 'Create a free account',
     reassure: 'Free account, set up in a minute. Your data stays yours.',
   },
   ar: {
     heading: 'ابدأ بشكل صحيح — مجاناً',
-    body: 'أو احتفظ بفواتيرك وإيصالاتك وضريبة القيمة المضافة في مكان واحد داخل BoekBrug. تُجمَع تلقائياً كل ربع سنة وجاهزة لإقرارك ولمحاسبك.',
+    body: 'أو دع BoekBrug يقوم بالعمل: يقرأ إيصالاتك وفواتير مشترياتك تلقائياً، ويذكّر عملاءك من تلقاء نفسه عندما يتأخرون في الدفع، ويجمع ضريبتك كل ربع سنة — جاهزة لإقرارك ولمحاسبك.',
     register: 'أنشئ حساباً مجانياً',
     reassure: 'حساب مجاني، يُجهَّز في دقيقة. بياناتك تبقى لك.',
   },
   tr: {
     heading: 'Baştan doğru yapın — ücretsiz',
-    body: 'Ya da faturalarınızı, fişlerinizi ve KDV’nizi BoekBrug’da tek yerde tutun. Üç ayda bir otomatik toplanır; beyannameniz ve muhasebeciniz için hazır.',
+    body: 'Ya da işi BoekBrug yapsın: fişleriniz ve alış faturalarınız otomatik okunur, geciken müşterilerinize kendiliğinden hatırlatma gider ve KDV’niz üç ayda bir toplanır — beyannameniz ve muhasebeciniz için hazır.',
     register: 'Ücretsiz hesap oluştur',
     reassure: 'Ücretsiz hesap, bir dakikada kurulur. Verileriniz sizin kalır.',
   },
