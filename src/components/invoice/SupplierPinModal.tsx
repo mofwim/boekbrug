@@ -1,34 +1,34 @@
 'use client'
 
 // src/components/invoice/SupplierPinModal.tsx
-// [LEVERANCIER-VASTLEGGEN] Wie is deze leverancier, één keer opgeschreven.
+// [LEVERANCIER-VASTLEGGEN] Who this supplier is, written down once.
 //
-// ── WAAROM DIT SCHERM BESTAAT ──
+// ── WHY THIS SCREEN EXISTS ──
 //
-// GEMELD op een factuur waar het leverancierveld "Silifke / Hocaoglu" las — een PRODUCTLIJN
-// bovenaan de pagina — terwijl het bedrijf dat hem stuurt OZ&ER FOOD B.V. is, verderop genoemd
-// naast zijn KVK, zijn btw-nummer en zijn IBAN. Volgende maand ziet dat papier er precies zo uit,
-// dus maakt de lezer precies dezelfde fout, en verbetert de eigenaar hem opnieuw. Eindeloos.
+// Reported on an invoice whose leverancier field read "Silifke / Hocaoglu" — a PRODUCT LINE
+// printed at the top of the page — while the company sending it is OZ&ER FOOD B.V., named further
+// down beside its KVK, its btw number and its IBAN. Next month's paper looks exactly the same, so
+// the reader makes exactly the same mistake and the owner corrects it again. Endlessly.
 //
-// De naam op één factuur corrigeren leerde de app al iets (supplier-alias.ts: "leest een papier
-// zó, dan is het díe leverancier"). Wat nergens een deur had is de rest van de identiteit — het
-// rekeningnummer, de KVK, het btw-nummer. Die horen bij de LEVERANCIER, ze zijn waar de volgende
-// factuur op wordt herkend, en alleen de import kon ze tot nu toe schrijven.
+// Correcting the NAME on one invoice already taught the app something (supplier-alias.ts: "when a
+// paper reads like this, it is that supplier"). What had no door anywhere is the rest of the
+// identity — the account number, the KVK, the btw number. Those belong to the SUPPLIER, they are
+// what next month's invoice is recognised on, and until now only the import could write them.
 //
-// ── WAT DIT SCHERM NIET DOET ──
+// ── WHAT THIS SCREEN DOES NOT DO ──
 //
-// Het rekent niets uit en het beslist niets. De server keurt hetzelfde formulier nog een keer
-// (supplier-pin.ts, gedeeld), want een verkeerd IBAN hier is geen slordigheid: het is precies het
-// nummer waartegen de app de factuur van volgende maand vergelijkt, en een fout nummer laat die
-// controle bij élke echte factuur alarm slaan — waarna de eigenaar leert het weg te klikken.
+// It computes nothing and decides nothing. The server judges the same form again (supplier-pin.ts,
+// shared), because a wrong IBAN here is not untidiness: it is exactly the number the app compares
+// next month's invoice against, and a wrong one makes that check cry wolf on EVERY genuine invoice
+// — after which the owner learns to click the warning away.
 //
-// [TAAL] De woorden komen binnen als props: dit onderdeel heeft geen eigen taal.
+// [TAAL] The words arrive as props: this component holds no language of its own.
 
 import { useState } from 'react'
 import { M3, R } from '@/lib/design/tokens'
-// [BACK-CLOSES] De systeem-terugknop sluit wat er openstaat.
+// [BACK-CLOSES] The system back button closes whatever is open.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
-// [BLAD-ACHTERGROND] Een blad dat de terugknop overneemt, zet de pagina erachter stil.
+// [BLAD-ACHTERGROND] A sheet that takes over the back button freezes the page behind it.
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -48,7 +48,7 @@ export default function SupplierPinModal({
 }: {
   invoice: SupplierPinInvoice
   onClose: () => void
-  /** De naam zoals hij nu vaststaat, plus de zin die de server erover te zeggen had. */
+  /** The name as it now stands, plus whatever sentence the server had to say about it. */
   onSaved: (result: { name: string; message: string | null }) => void
 }) {
   const t = translator(useLocale())
@@ -60,8 +60,8 @@ export default function SupplierPinModal({
   const [kvk, setKvk] = useState('')
   const [btw, setBtw] = useState('')
   const [saving, setSaving] = useState(false)
-  // [NO-SILENT-EMPTY] De server zegt WELK veld niet klopte; dat veld kleurt, en de zin staat
-  // eronder. Een formulier dat alleen "ongeldig" zegt, laat de eigenaar zoeken.
+  // [NO-SILENT-EMPTY] The server says WHICH field was wrong; that field is coloured and the
+  // sentence sits under it. A form that only says "ongeldig" leaves the owner hunting.
   const [error, setError] = useState<{ field: string | null; text: string } | null>(null)
 
   const save = async () => {
