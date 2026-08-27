@@ -1536,6 +1536,23 @@ export const MESSAGES = {
   },
   // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
   // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
+  // [KENMERK-VAN-WIE] Waar het kenmerk vandaan komt, en waarom het geen invulveld is. GEVRAAGD
+  // naar aanleiding van het termijnbetalen: "kan ik er 'eerste deel' bij schrijven?"
+  'kenmerk.vanLeverancier': {
+    nl: 'Dit kenmerk staat op de factuur van de leverancier — daarmee vindt hij jouw betaling terug. Verander het niet zelf.',
+    ar: 'هذا المرجع مكتوب على فاتورة المورّد — به يتعرّف على دفعتك. لا تغيّره بنفسك.',
+    en: "This reference comes from the supplier's invoice — it is how they find your payment. Do not change it yourself.",
+  },
+  'kenmerk.corrigeer': {
+    nl: 'Staat het er verkeerd? Corrigeer het op de factuur',
+    ar: 'هل هو مكتوب خطأً؟ صحّحه على الفاتورة',
+    en: 'Wrong on the invoice? Correct it there',
+  },
+  'kenmerk.naBetaling': {
+    nl: 'Er staat al een betaling op deze factuur, dus corrigeren kan pas als je die op de Bank-pagina ontkoppelt.',
+    ar: 'توجد دفعة مسجّلة على هذه الفاتورة، لذا لا يمكن التصحيح إلا بعد فكّ ارتباطها من صفحة البنك.',
+    en: 'A payment is already booked on this invoice, so correcting it needs that payment unlinked on the Bank page first.',
+  },
   // [DEEL-BETALEN] Een factuur in termijnen betalen. GEMELD op Enka Horeca B.V. (€ 3.819,82):
   // "ik wil deze betalen, maar voorlopig maar een deel."
   'deel.label': {

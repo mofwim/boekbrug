@@ -4061,6 +4061,7 @@ export default function IncomingManageClient({
             if (inv) requestPay(inv)
           }}
           onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
+          onCorrectKenmerk={() => { const inv = prepareCtx; setPrepareCtx(null); if (inv) openCorrection(inv) }}
         />
       )}
 
@@ -4820,11 +4821,14 @@ function PreparePaymentSheet({
   onClose,
   onConfirmPaid,
   onCopied,
+  onCorrectKenmerk,
 }: {
   inv: IncomingRow
   onClose: () => void
   onConfirmPaid: () => void
   onCopied: (what: string) => void
+  /** [KENMERK-VAN-WIE] Opens the correction editor on this invoice — see the Kenmerk row below. */
+  onCorrectKenmerk: () => void
 }) {
   const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -4841,6 +4845,10 @@ function PreparePaymentSheet({
   // A creditnota keeps the old behaviour: the sign is preserved so EPC refuses it, and the field
   // below never appears (planPartPayment answers on the sign — see pay-part.ts).
   const openNow = payableOpenAmount(inv)
+  // [KENMERK-VAN-WIE] Exactly the condition the correction route itself applies (status +
+  // hasSettledMoney), so this sheet never points at a door the server holds shut.
+  const kenmerkCorrigeerbaar =
+    inv.status === 'received' && Math.max(0, Number(inv.amount_paid ?? 0)) <= 0.005
   const isCredit = (inv.total_inc_btw ?? 0) < 0
   const [payDraft, setPayDraft] = useState(() => defaultPartPayInput(inv))
   const partPlan = planPartPayment(inv, payDraft)
@@ -4968,6 +4976,36 @@ function PreparePaymentSheet({
               </div>
             )}
             {reference && <CopyRow label={t('inkoop.kenmerk')} value={reference} raw={reference} onCopy={copy} />}
+            {/* [KENMERK-VAN-WIE] Waarom dit GEEN invulveld is, terwijl het bedrag erboven dat wel
+                werd. Het bedrag is jouw beslissing; dit kenmerk is de instructie van de
+                LEVERANCIER — het is waarmee hij jouw betaling terugvindt. Zelf "eerste deel"
+                invullen helpt jou niet en kan hem jouw geld onvindbaar maken: payment-reference.ts
+                hangt daar een gemeten factuur aan, die om beide nummers vroeg en rente rekende over
+                een betaling die hij niet kon thuisbrengen. De EPC-regel kapt bovendien stil af op
+                140 tekens, dus meegetypte woorden duwen het factuurnummer er zonder melding af.
+
+                Verkeerd overgenomen? Dan hoort de correctie op de FACTUUR, waar hij bewaard blijft
+                en elke volgende termijn hem meekrijgt. Twee plekken om één feit te wijzigen is
+                precies hoe die twee gaan verschillen. */}
+            {reference && (
+              <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '6px 2px 0' }}>
+                {t('kenmerk.vanLeverancier')}{' '}
+                {kenmerkCorrigeerbaar ? (
+                  <button
+                    type="button"
+                    onClick={onCorrectKenmerk}
+                    style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#1a73e8', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    {t('kenmerk.corrigeer')}
+                  </button>
+                ) : (
+                  // [NO-SILENT-EMPTY] Zodra er geld op deze factuur staat weigert de correctieroute
+                  // de HELE patch, ook een wijziging die geen geld is. Hier tóch een link tonen zou
+                  // de eigenaar naar een dichte deur sturen.
+                  <span>{t('kenmerk.naBetaling')}</span>
+                )}
+              </p>
+            )}
             <CopyRow label={t('inkoop.naam')} value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
           </>
         ) : (
