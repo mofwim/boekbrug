@@ -15994,8 +15994,11 @@ test("[KENMERK-VAN-WIE] het kenmerk is geen invulveld, en de uitweg klopt met wa
   // De uitweg mag alleen verschijnen als de SERVER hem ook openhoudt. De correctieroute weigert de
   // hele patch zodra er geld op de factuur staat (GUARD 3, hasSettledMoney) — ook een wijziging die
   // geen geld is. Een link tonen die dan stukloopt, stuurt de eigenaar naar een dichte deur.
-  assert.match(blad, /const kenmerkCorrigeerbaar =\s*\n\s*inv\.status === 'received' && Math\.max\(0, Number\(inv\.amount_paid \?\? 0\)\) <= 0\.005/,
-    "de voorwaarde staat niet meer gelijk aan die van de correctieroute");
+  // De VOORWAARDE zelf wordt gepind door [KENMERK-NA-BETALING], samen met de kant van de route —
+  // want daar hoort de bewering thuis dat scherm en server het eens zijn. Hier alleen dat het
+  // scherm er ÉÉN heeft, en dat hij op de status van de factuur rust.
+  assert.match(blad, /const kenmerkCorrigeerbaar = inv\.status === 'received'/,
+    "het scherm beslist niet meer op de status van de factuur of het kenmerk te corrigeren valt");
   assert.match(blad, /kenmerkCorrigeerbaar \? \(/, "de link verschijnt onvoorwaardelijk");
   assert.match(blad, /t\('kenmerk\.naBetaling'\)/,
     "als corrigeren niet kan, hoort de eigenaar te lezen waarom en wat hem wél verder helpt");
@@ -16043,4 +16046,36 @@ test("[BETAALNOTITIE] de eigen tekst komt ACHTER het kenmerk, en QR, kopieerrege
     "de grens wordt niet op de eindtekst gemeten");
   assert.doesNotMatch(regel, /\.slice\(0, EPC_REMITTANCE_MAX\)/,
     "de notitie wordt stil afgekapt in plaats van geweigerd");
+});
+
+test("[KENMERK-NA-BETALING] een afgeboekte betaling bevriest het geld, niet het kenmerk", () => {
+  // De termijnbetaling maakte dit bereikbaar: de eerste termijn landt, de bank bevestigt hem, en
+  // vanaf dat moment stond het betaalkenmerk vast — terwijl de tweede en derde termijn het nog
+  // moeten dragen. Las de lezer die referentie verkeerd, dan ging élke volgende betaling fout en
+  // was de enige uitweg het ontkoppelen van een betaling die helemaal klopt.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+
+  // De uitzondering hangt aan de gedeelde regel, niet aan een lijstje ter plekke.
+  assert.match(route, /import \{ isMoneyFreeCorrection \} from "@\/lib\/correction-scope"/,
+    "de route bedenkt zelf welke velden geld raken");
+  assert.match(route, /hasSettledMoney\(\{ status: invoice\.status, amount_paid: invoice\.amount_paid \}\) &&\s*\n\s*!isMoneyFreeCorrection\(body\)/,
+    "de poort is weer blanket, of laat meer door dan de regel toestaat");
+
+  // En het is een ALLOWLIST. Een veld dat morgen aan deze route wordt toegevoegd hoort default
+  // geweigerd te worden zolang er geld op de factuur staat, niet stilzwijgend mee te glippen.
+  const regel = code("src/lib/correction-scope.ts");
+  assert.match(regel, /MONEY_FREE_CORRECTION_FIELDS: readonly string\[\] = \["payment_reference"\]/,
+    "de lijst is gegroeid of van vorm veranderd — lees eerst waarom elk ander veld er NIET in staat");
+  assert.match(regel, /keys\.every\(\(k\) => MONEY_FREE_CORRECTION_FIELDS\.includes\(k\)\)/,
+    "de controle is geen allowlist meer");
+  assert.match(regel, /if \(keys\.length === 0\) return false/,
+    "een leeg verzoek glipt door de poort");
+
+  // Het scherm mag dit alleen aanbieden waar de server het ook toestaat — anders wijst het naar
+  // een dichte deur, wat [KENMERK-VAN-WIE] nu juist kwam repareren.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(blad, /const kenmerkCorrigeerbaar = inv\.status === 'received'/,
+    "het scherm en de route zijn het oneens over wanneer het kenmerk nog te corrigeren is");
+  assert.match(route, /const referenceEditable = invoice\.status === "received"/,
+    "de GET zegt niet apart dat het kenmerk nog open staat");
 });

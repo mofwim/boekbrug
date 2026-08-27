@@ -1565,9 +1565,9 @@ export const MESSAGES = {
     en: 'Wrong on the invoice? Correct it there',
   },
   'kenmerk.naBetaling': {
-    nl: 'Er staat al een betaling op deze factuur, dus corrigeren kan pas als je die op de Bank-pagina ontkoppelt.',
-    ar: 'توجد دفعة مسجّلة على هذه الفاتورة، لذا لا يمكن التصحيح إلا بعد فكّ ارتباطها من صفحة البنك.',
-    en: 'A payment is already booked on this invoice, so correcting it needs that payment unlinked on the Bank page first.',
+    nl: 'Deze factuur staat niet meer op te betalen, dus het kenmerk kan hier niet meer worden gecorrigeerd.',
+    ar: 'لم تعد هذه الفاتورة قيد الدفع، لذا لا يمكن تصحيح المرجع هنا.',
+    en: 'This invoice is no longer awaiting payment, so the reference can no longer be corrected here.',
   },
   // [DEEL-BETALEN] Een factuur in termijnen betalen. GEMELD op Enka Horeca B.V. (€ 3.819,82):
   // "ik wil deze betalen, maar voorlopig maar een deel."

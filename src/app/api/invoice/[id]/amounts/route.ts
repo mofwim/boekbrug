@@ -55,6 +55,8 @@ import { requireOwner } from "@/lib/owner-only";
 // [AMOUNT-CORRECTION] One predicate for "this invoice already holds money" — shared with the
 // archive and ignore routes.
 import { hasSettledMoney } from "@/lib/invoice-removal";
+// [KENMERK-NA-BETALING] Which corrections survive settled money — one allowlist, testable.
+import { isMoneyFreeCorrection } from "@/lib/correction-scope";
 // [AMOUNT-TRIPLET] The same tolerance the arithmetic gate uses, so screen and server agree.
 import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
 // [READING-MEMORY] Which fields the human changed about the reader's answer, and — for the GET —
@@ -128,6 +130,10 @@ export async function GET(
   const editable =
     invoice.status === "received" &&
     !hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid });
+  // [KENMERK-NA-BETALING] The betaalkenmerk outlives a booked payment — see the guard in PATCH.
+  // Reported separately so a screen can offer that one correction without pretending the amounts
+  // are open, which is the misleading half of a single yes/no.
+  const referenceEditable = invoice.status === "received";
 
   // [SPLIT-CORRECTIE] Only the split leaves this route — the rest of field_confidence is the
   // machine's testimony (grounding, safecore, e-invoice witness) and stays server-side.
@@ -151,6 +157,7 @@ export async function GET(
     // and answers an empty map, so a hiccup in the audit read costs the hint and never the dialog.
     readingHint: readingHintFor(invoice.client_name, await loadReadingMemory(supabase, user.id)),
     editable,
+    referenceEditable,
     reason: editable
       ? null
       : invoice.status === "paid"
@@ -325,7 +332,20 @@ export async function PATCH(
 
   // GUARD 3 — no money booked against it. A partly paid invoice sits in 'received' too, so the
   // status check above does not cover this.
-  if (hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid })) {
+  //
+  // [KENMERK-NA-BETALING] …with ONE exception, and paying in instalments is what made it matter.
+  // This guard was blanket: the first termijn lands, the bank confirms it, and from that moment the
+  // betaalkenmerk is frozen — while the second and third instalment still have to carry it. If the
+  // reader misread that reference, every remaining payment goes out wrong and the only way back was
+  // to unlink a payment that is perfectly correct.
+  //
+  // So a request that asks for NOTHING BUT money-free corrections is let through. Which fields
+  // those are, and why each of the others is not, lives in correction-scope.ts — an allowlist, so
+  // a field added to this route tomorrow is refused by default rather than slipping through.
+  if (
+    hasSettledMoney({ status: invoice.status, amount_paid: invoice.amount_paid }) &&
+    !isMoneyFreeCorrection(body)
+  ) {
     return NextResponse.json(
       { error: "Er is al een bedrag afgeboekt op deze factuur — ontkoppel die betaling eerst op de Bank-pagina.", code: "money_settled" },
       { status: 409 },

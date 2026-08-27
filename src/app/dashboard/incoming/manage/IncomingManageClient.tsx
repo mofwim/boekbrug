@@ -4847,10 +4847,12 @@ function PreparePaymentSheet({
   // A creditnota keeps the old behaviour: the sign is preserved so EPC refuses it, and the field
   // below never appears (planPartPayment answers on the sign — see pay-part.ts).
   const openNow = payableOpenAmount(inv)
-  // [KENMERK-VAN-WIE] Exactly the condition the correction route itself applies (status +
-  // hasSettledMoney), so this sheet never points at a door the server holds shut.
-  const kenmerkCorrigeerbaar =
-    inv.status === 'received' && Math.max(0, Number(inv.amount_paid ?? 0)) <= 0.005
+  // [KENMERK-VAN-WIE] Exactly the condition the correction route applies to THIS field, so the
+  // sheet never points at a door the server holds shut.
+  // [KENMERK-NA-BETALING] Een afgeboekte betaling telt hier niet meer mee: het kenmerk is geen
+  // geld, en tijdens een termijnbetaling is het juist het veld dat nog moet kloppen. De route laat
+  // een correctie die verder niets aanraakt daarom door (correction-scope.ts).
+  const kenmerkCorrigeerbaar = inv.status === 'received' 
   const isCredit = (inv.total_inc_btw ?? 0) < 0
   const [payDraft, setPayDraft] = useState(() => defaultPartPayInput(inv))
   const partPlan = planPartPayment(inv, payDraft)
