@@ -14030,7 +14030,7 @@ test("[KENMERK-BEIDE] a payment quotes both identifiers, from one rule", () => {
   // drifted apart in the first place — the QR used ?? and the bundle used ||.
   const sheet = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   const bundle = code("src/lib/bundel-betaling.ts");
-  assert.match(sheet, /const reference = paymentReferenceFor\(inv\)/);
+  assert.match(sheet, /const referenceBase = paymentReferenceFor\(inv\)/);
   assert.match(bundle, /const refOf = \(inv: BundelBetalingInvoice\) => paymentReferenceFor\(inv\);/);
   for (const [name, src] of [["the QR sheet", sheet], ["the bundle", bundle]] as const) {
     assert.doesNotMatch(src, /payment_reference \?\? inv\.invoice_number|payment_reference \|\| inv\.invoice_number/,
@@ -15913,7 +15913,9 @@ test("[DEEL-BETALEN] het bedrag dat je kiest is het bedrag dat de QR draagt", ()
   // HET GEVAARLIJKE GEVAL: de QR wordt in een effect gebouwd. Staat `amount` niet in de
   // afhankelijkheden, dan blijft het plaatje op het openingsbedrag staan terwijl de kopieerregel
   // eronder het nieuwe toont — twee getallen voor één betaling, en de bankapp leest de QR.
-  assert.match(blad, /\}, \[inv\.id, amount\]\)/,
+  // Op de INHOUD van de lijst, niet op de exacte tekst: er mag later iets bij komen (de
+  // betaalnotitie deed dat), maar `amount` moet erin blijven staan.
+  assert.match(blad, /\}, \[inv\.id, amount(,[^\]]*)?\]\)/,
     "de QR volgt het gekozen bedrag niet — hij blijft op het bedrag staan waarmee het blad opende");
 
   // Geweigerd bedrag → de QR valt terug op het volledige openstaande bedrag, nooit op een half
@@ -16002,4 +16004,43 @@ test("[KENMERK-VAN-WIE] het kenmerk is geen invulveld, en de uitweg klopt met wa
   // volgende termijn hem mee.
   assert.match(blad, /onCorrectKenmerk=\{\(\) => \{ const inv = prepareCtx; setPrepareCtx\(null\); if \(inv\) openCorrection\(inv\) \}\}/,
     "de knop opent de correctie-editor niet op deze factuur");
+});
+
+test("[BETAALNOTITIE] de eigen tekst komt ACHTER het kenmerk, en QR, kopieerregel en voorbeeld dragen één waarde", () => {
+  // Het vervolg op [KENMERK-VAN-WIE]: geen invulbaar kenmerk, wél een eigen tekst ernaast. Het
+  // verschil is de hele veiligheid — het kenmerk van de leverancier wordt nooit vervangen, alleen
+  // aangevuld, en de 140-tekengrens wordt op de EINDTEKST gemeten in plaats van er stil af te kappen.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // De regel woont in pay-note.ts. Het blad rekent niets uit.
+  assert.match(blad, /import \{ planPayNote \} from '@\/lib\/pay-note'/, "het blad bedenkt de regel zelf");
+  assert.match(blad, /const notePlan = planPayNote\(referenceBase, noteDraft\)/, "er wordt niets gepland");
+
+  // ÉÉN waarde. Als de QR de notitie draagt en de kopieerregel niet, verstuurt wie kopieert iets
+  // anders dan wie scant — over dezelfde betaling. Zo is `reference` hier de uitkomst van het plan,
+  // en alles wat het gebruikt volgt vanzelf.
+  assert.match(blad, /const reference = notePlan\.remittance/,
+    "de kopieerregel en de QR lezen niet dezelfde eindtekst");
+  assert.match(blad, /\}, \[inv\.id, amount, reference\]\)/,
+    "de QR volgt de notitie niet — hij blijft op de tekst staan waarmee het blad opende");
+
+  // Geweigerd = niets toegepast. pay-note.ts geeft dan de kale referentie terug, dus er kan geen
+  // half afgekapte tekst in een QR belanden.
+  assert.match(blad, /notePlan\.error \? \(/, "een te lange tekst wordt niet gemeld");
+  assert.match(blad, /t\('notitie\.ruimte', \{ n: String\(notePlan\.budget - notePlan\.note\.length\) \}\)/,
+    "de eigenaar ziet niet hoeveel ruimte er nog is");
+
+  // En waar het NIET mag, zegt het scherm waarom in plaats van het veld stil weg te laten.
+  assert.match(blad, /notePlan\.allowed \? \(/, "het veld verschijnt onvoorwaardelijk");
+  assert.match(blad, /\{notePlan\.blocked\}/, "een verborgen veld zonder reden");
+
+  // De reden zelf staat in de regel, niet in het scherm: een gestructureerd kenmerk wordt op zichzelf
+  // gematcht, dus daar mag niets naast.
+  const regel = code("src/lib/pay-note.ts");
+  assert.match(regel, /structuredReferences\(ref\)\.length > 0/,
+    "een gestructureerd kenmerk krijgt weer passagiers mee");
+  assert.match(regel, /EPC_REMITTANCE_MAX - ref\.length - NOTE_SEPARATOR\.length/,
+    "de grens wordt niet op de eindtekst gemeten");
+  assert.doesNotMatch(regel, /\.slice\(0, EPC_REMITTANCE_MAX\)/,
+    "de notitie wordt stil afgekapt in plaats van geweigerd");
 });
