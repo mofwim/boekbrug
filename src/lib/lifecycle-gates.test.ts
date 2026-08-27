@@ -15894,3 +15894,42 @@ test("[NIET-LOSGELATEN] werk dat na het antwoord nog moet gebeuren, wordt afgewa
       `${pad}: void laat het werk alsnog los`);
   }
 });
+
+test("[DEEL-BETALEN] het bedrag dat je kiest is het bedrag dat de QR draagt", () => {
+  // GEMELD op Enka Horeca B.V. (€ 3.819,82): "ik wil deze betalen, maar voorlopig maar een deel."
+  // Het betaalblad rekende één getal uit — het volledige openstaande bedrag — en zette dat in de
+  // QR, in de kopieerregels en dus in de overboeking. Wie een deel wilde overmaken moest de app
+  // verlaten en de gegevens met de hand overtikken, precies het moment waarop een betaling
+  // onplaatsbaar wordt.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // De regel woont in pay-part.ts, niet hier. Twee betaalbladen, en er komen er meer.
+  assert.match(blad, /import \{ planPartPayment, defaultPartPayInput, payableOpenAmount \} from '@\/lib\/pay-part'/,
+    "het blad bedenkt de regel zelf in plaats van hem te gebruiken");
+  assert.match(blad, /const partPlan = planPartPayment\(inv, payDraft\)/, "er wordt niets gepland");
+  assert.match(blad, /partPlan\.ok\s*\n?\s*\?\s*partPlan\.plan\.amount/,
+    "het gekozen bedrag bereikt de QR niet");
+
+  // HET GEVAARLIJKE GEVAL: de QR wordt in een effect gebouwd. Staat `amount` niet in de
+  // afhankelijkheden, dan blijft het plaatje op het openingsbedrag staan terwijl de kopieerregel
+  // eronder het nieuwe toont — twee getallen voor één betaling, en de bankapp leest de QR.
+  assert.match(blad, /\}, \[inv\.id, amount\]\)/,
+    "de QR volgt het gekozen bedrag niet — hij blijft op het bedrag staan waarmee het blad opende");
+
+  // Geweigerd bedrag → de QR valt terug op het volledige openstaande bedrag, nooit op een half
+  // getypt getal. Er ligt dus nooit een QR klaar die niemand heeft gekozen.
+  // Op de TAK, niet op de naam: `openNow` staat ook in de zichtbaarheidstest hieronder, dus een
+  // regel die alleen het woord zoekt blijft groen terwijl de terugval iets anders wordt.
+  assert.match(blad, /\?\s*partPlan\.plan\.amount\s*\n\s*:\s*openNow/,
+    "een geweigerd bedrag laat de QR op iets ongekozen staan in plaats van op het volledige openstaande bedrag");
+
+  // En het veld verschijnt niet op een creditnota: daar valt niets te betalen.
+  assert.match(blad, /\{!isCredit && openNow > 0\.005 && \(/,
+    "het veld biedt een handeling aan op een document waar niets te betalen valt");
+
+  // De zin die de eigenaar leest noemt het RESTBEDRAG en wat er daarna gebeurt — anders is
+  // "deels betaald" een toestand waar niemand om vroeg.
+  const cat = code("src/lib/i18n/messages.ts");
+  assert.match(cat, /'deel\.rest':[\s\S]{0,120}?Daarna blijft \{bedrag\} openstaan/,
+    "de eigenaar hoort niet wat er na deze termijn nog openstaat");
+});
