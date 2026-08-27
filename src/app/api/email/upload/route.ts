@@ -4,6 +4,8 @@
 // Claude verifies → if real invoice → stored in Storage + documents + invoices
 
 import { NextRequest, NextResponse } from "next/server";
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [BOEK-011 + BOEK-SECURITY] invoice insert needs service_role to bypass
 // invoices_zzp_insert RLS — that policy expects sender_id = auth.uid(),
@@ -33,6 +35,15 @@ import { escapeLikeValue } from "@/lib/sanitize";
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 
 export async function POST(req: NextRequest) {
+  return withCrashNet(
+    "UPLOAD",
+    "Er ging iets mis bij het verwerken van dit bestand. Het is NIET opgeslagen — probeer het zo " +
+      "meteen opnieuw. Blijft dit gebeuren, laat het ons weten: wij zien de fout aan onze kant.",
+    () => runUpload(req),
+  )
+}
+
+async function runUpload(req: NextRequest) {
   const supabase = await createServerSupabaseClient();
 
   const {

@@ -15799,20 +15799,43 @@ test("[BOUWSEL-GEEN-BELOFTE] geen .catch() op een Supabase-bouwsel — dat is de
     "het overnemen van een verlopen claim is verdwenen in plaats van gerepareerd");
 });
 
-test("[INTAKE-CRASH] een worp in de intake wordt een antwoord, geen HTML van het platform", () => {
-  // 1350 regels, vijf bestemmingen, een AI-aanroep — en geen enkele try/catch om het geheel. Een
-  // worp werd daardoor geen ANTWOORD: hij ontsnapte naar het platform, dat met een HTML-foutpagina
-  // antwoordt. De client kon er geen reden uit lezen (describeUploadFailure's laatste redmiddel) en
-  // de eigenaar las "onverwacht antwoord (HTTP 500)" — over een factuur die hij net had gefotografeerd.
-  const intake = code("src/app/api/intake/route.ts");
-  assert.match(intake, /export async function POST\(req: NextRequest\) \{\s*\n\s*try \{\s*\n\s*return await runIntake\(req\)/,
-    "de deur heeft geen vangnet meer onder zich");
-  assert.match(intake, /catch \(e\) \{[\s\S]{0,400}?console\.error\("\[INTAKE-CRASH\]"?/,
-    "…of de reden wordt niet vastgelegd waar wij hem terugvinden");
-  // Het antwoord moet JSON zijn MET een zin: dat is precies wat het platform niet kon geven.
-  const staart = intake.slice(intake.indexOf("[INTAKE-CRASH]"), intake.indexOf("async function runIntake"));
-  assert.match(staart, /NextResponse\.json\(/, "de crash geeft geen JSON terug");
-  assert.match(staart, /status: 500/, "…en niet als 500");
-  assert.match(staart, /NIET opgeslagen/,
-    "de zin moet zeggen dat er niets is bewaard — anders zoekt de eigenaar naar een factuur die er niet is");
+test("[DEUR-VANGNET] elke deur waar een document binnenkomt heeft hetzelfde vangnet", () => {
+  // DE STORING, veralgemeend. /api/intake gooide een TypeError één regel vóór het iets opsloeg, en
+  // de crash was niet de hele schade — de STILTE was het. De route had geen try/catch om zijn body,
+  // dus de worp werd geen ANTWOORD: hij ontsnapte naar het platform, dat met HTML antwoordt. De
+  // client kan daar geen reden uit lezen en viel terug op describeUploadFailure's laatste redmiddel:
+  // "de server gaf een onverwacht antwoord (HTTP 500)". Niemand hoorde wat er was gebeurd — de
+  // eigenaar niet, en wij niet, want er werd ook niets gelogd.
+  //
+  // Vijf deuren nemen een document van een mens aan. Ze delen de storing precies, en een vangnet
+  // dat bij één deur hangt is een vangnet dat de andere vier niet hebben — dezelfde les die ai.ts
+  // al opschreef over de eigen-factuur-controle die maar aan één van de vijf deuren hing.
+  const DEUREN: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "INTAKE"],
+    ["src/app/api/email/upload/route.ts", "UPLOAD"],
+    ["src/app/api/bank/attach-invoice/route.ts", "BANK-ATTACH"],
+    ["src/app/api/email/reimport/[id]/route.ts", "REIMPORT"],
+    ["src/app/api/tools/scan-invoice/route.ts", "SCAN-TOOL"],
+  ];
+  for (const [pad, tag] of DEUREN) {
+    const src = code(pad);
+    assert.match(src, /import \{ withCrashNet \} from ["']@\/lib\/route-crash-net["']/,
+      `${pad} haalt het vangnet niet binnen`);
+    assert.match(src, new RegExp(`withCrashNet\\(\\s*\n?\\s*["']${tag.replace("-", "-")}["']`),
+      `${pad} hangt niet onder het vangnet, of niet onder zijn eigen naam`);
+    // De ZIN moet zeggen wat er met het document is gebeurd. Een vangnet dat "er ging iets mis"
+    // zegt over een bestand dat misschien wél is opgeslagen, is de melding waarna iemand ophoudt
+    // met de app te vertrouwen.
+    const zin = src.slice(src.indexOf("withCrashNet("), src.indexOf("withCrashNet(") + 700);
+    assert.match(zin, /NIET opgeslagen|NIET gewijzigd|niets van jou bewaard|niets aan gewijzigd/,
+      `${pad} zegt niet wat er met het document van de eigenaar is gebeurd`);
+  }
+
+  // En het vangnet zelf: het logt met een vindbare tag, het antwoordt in JSON met een 500, en het
+  // laat Next's eigen besturingsworpen (redirect/notFound) ONGEMOEID — die vangen zou een werkende
+  // doorverwijzing in deze foutmelding veranderen.
+  const net = code("src/lib/route-crash-net.ts");
+  assert.match(net, /unstable_rethrow\(e\)/, "het vangnet slikt een redirect() op");
+  assert.match(net, /console\.error\(`\[\$\{tag\}-CRASH\]/, "de reden wordt niet vastgelegd waar wij hem terugvinden");
+  assert.match(net, /NextResponse\.json\(\{ error: sentence \}, \{ status: 500 \}\)/, "het antwoord is geen JSON met een zin");
 });

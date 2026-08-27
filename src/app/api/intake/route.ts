@@ -21,6 +21,8 @@
 import { round2 } from "@/lib/invoice-totals"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
 import { createNotification } from "@/lib/notifications"
@@ -152,23 +154,12 @@ type IntakeSource = (typeof INTAKE_SOURCES)[number]
  * would collide with every other session working in this file, for zero behaviour.
  */
 export async function POST(req: NextRequest) {
-  try {
-    return await runIntake(req)
-  } catch (e) {
-    // The reason, kept where we can find it. The owner gets a sentence; the stack stays here.
-    console.error("[INTAKE-CRASH] the intake route threw before it could answer", {
-      error: e instanceof Error ? e.message : String(e),
-      stack: e instanceof Error ? e.stack : undefined,
-    })
-    return NextResponse.json(
-      {
-        error:
-          "Er ging iets mis bij het verwerken van dit bestand. Het is NIET opgeslagen — maak de foto " +
-          "opnieuw of probeer het zo meteen. Blijft dit gebeuren, laat het ons weten: wij zien de fout aan onze kant.",
-      },
-      { status: 500 },
-    )
-  }
+  return withCrashNet(
+    "INTAKE",
+    "Er ging iets mis bij het verwerken van dit bestand. Het is NIET opgeslagen — maak de foto " +
+      "opnieuw of probeer het zo meteen. Blijft dit gebeuren, laat het ons weten: wij zien de fout aan onze kant.",
+    () => runIntake(req),
+  )
 }
 
 async function runIntake(req: NextRequest) {
