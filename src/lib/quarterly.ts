@@ -73,11 +73,12 @@ export function quarterEndDate(year: number, q: 1 | 2 | 3 | 4): string {
   return `${year}-${String(month).padStart(2, "0")}-${lastDay}`;
 }
 
-/** Get the quarter (1-4) for a given date string */
-export function getQuarter(date: string): 1 | 2 | 3 | 4 {
-  const month = new Date(date).getMonth();
-  return (Math.floor(month / 3) + 1) as 1 | 2 | 3 | 4;
-}
+// [KWARTAAL-VAST] getQuarter() stond hier: `new Date(date).getMonth()`, een tweede afleiding van
+// het kwartaal naast quarter.ts — en de zwakste van de twee, want de lokale getter leest een
+// datum-zonder-tijd in de tijdzone van wie hem uitvoert. Hij had geen enkele aanroeper, en dat is
+// precies wat hem gevaarlijk maakte: dode code die er gezaghebbend uitziet, klaar om ooit gebruikt
+// te worden voor het getal waar de aangifte op rust. Eén feit, één definitie — quarterKeyOf() in
+// quarter.ts leest de maand uit de tekst zelf en kan dus niet verschuiven.
 
 // [BOEK-013] Build simplified ZZP summary — 4 numbers only
 // mode='paid'  → outgoing:paid only + incoming:paid only

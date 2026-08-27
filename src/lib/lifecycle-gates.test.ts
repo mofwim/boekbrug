@@ -15933,3 +15933,44 @@ test("[DEEL-BETALEN] het bedrag dat je kiest is het bedrag dat de QR draagt", ()
   assert.match(cat, /'deel\.rest':[\s\S]{0,120}?Daarna blijft \{bedrag\} openstaan/,
     "de eigenaar hoort niet wat er na deze termijn nog openstaat");
 });
+
+test("[KWARTAAL-VAST] een datum zonder tijd wordt nergens in een lokale tijdzone gelezen", () => {
+  // `new Date("2026-01-01")` is middernacht UTC. Lees dat met .getFullYear()/.getMonth() en je
+  // krijgt het antwoord van de tijdzone waarin het toevallig draait: ten westen van UTC wordt
+  // 1 januari 31 december, en het stuk belandt in het jaar- én kwartaalmapje van het VORIGE jaar.
+  // Dat het vandaag goed gaat is een eigenschap van de omgeving (server = UTC), niet van de code.
+  //
+  // De canonieke afleiding doet het al goed: quarterKeyOf() in quarter.ts leest de maand met een
+  // regex uit de tekst zelf en heeft geen Date-object nodig.
+  const PLEKKEN = [
+    ["src/lib/bestanden.ts", "de map waar een stuk in wordt gearchiveerd"],
+    ["src/app/api/bestanden/classify/route.ts", "het jaar/kwartaal waarin een stuk wordt ingedeeld"],
+    ["src/app/api/invoice/[id]/document/route.ts", "het jaar waaronder een document hangt"],
+  ];
+  for (const [pad, wat] of PLEKKEN) {
+    const src = code(pad);
+    // Alleen waar een GELEZEN datum wordt ontleed. `new Date()` ZONDER argument is "nu", en daar
+    // is lokaal-versus-UTC een echte keuze (amsterdamYearQuarter) in plaats van een fout.
+    //
+    // Twee vormen, want de eerste versie van deze poort miste juist de vorm die in de code stond:
+    // de getter hangt meestal niet aan `new Date(...)` zelf maar aan de variabele ernaast.
+    for (const m of src.matchAll(/new Date\(\s*[^)\s][^)]*\)\s*\.\s*get(FullYear|Month|Date)\b/g)) {
+      assert.fail(`${pad}: ${wat} wordt uit een lokale getter gelezen — gebruik getUTC* (${m[0]})`);
+    }
+    for (const m of src.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new Date\(\s*[^)\s][^)]*\)/g)) {
+      const naam = m[1];
+      const lokaal = new RegExp(`\\b${naam}\\s*\\.\\s*get(FullYear|Month|Date)\\b`);
+      assert.doesNotMatch(src, lokaal,
+        `${pad}: ${wat} leest \`${naam}\` met een lokale getter — gebruik getUTC*`);
+    }
+  }
+
+  // En het kwartaal heeft één afleiding. De tweede — getQuarter() in quarterly.ts, zonder één
+  // aanroeper — is weg: dode code die er gezaghebbend uitziet is precies wat ooit wordt gebruikt
+  // voor het getal waar de aangifte op rust.
+  const quarterly = code("src/lib/quarterly.ts");
+  assert.doesNotMatch(quarterly, /export function getQuarter\b/,
+    "er staat weer een tweede kwartaalafleiding naast quarter.ts");
+  assert.match(code("src/lib/quarter.ts"), /const m = \/\^\(\\d\{4\}\)-\(\\d\{2\}\)\/\.exec\(iso\)/,
+    "quarterKeyOf leest de maand niet meer uit de tekst zelf");
+});
