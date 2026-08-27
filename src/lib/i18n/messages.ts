@@ -1536,6 +1536,23 @@ export const MESSAGES = {
   },
   // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
   // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
+  // [DEEL-BETALEN] Een factuur in termijnen betalen. GEMELD op Enka Horeca B.V. (€ 3.819,82):
+  // "ik wil deze betalen, maar voorlopig maar een deel."
+  'deel.label': {
+    nl: 'Hoeveel betaal je nu?',
+    ar: 'كم ستدفع الآن؟',
+    en: 'How much are you paying now?',
+  },
+  'deel.rest': {
+    nl: 'Daarna blijft {bedrag} openstaan. Zodra je bank de betaling doorgeeft, rekent de app het bij op deze factuur.',
+    ar: 'بعدها يبقى {bedrag} مستحقاً. حالما يُبلّغ بنكك عن الدفعة، يحتسبها التطبيق على هذه الفاتورة.',
+    en: 'After that {bedrag} stays open. As soon as your bank reports the payment, the app books it against this invoice.',
+  },
+  'deel.alles': {
+    nl: 'Hiermee is de factuur helemaal betaald.',
+    ar: 'بهذا تُدفع الفاتورة بالكامل.',
+    en: 'This pays the invoice in full.',
+  },
   'corr.statiegeld.meetellen': {
     nl: 'Statiegeld meetellen in het bedrag excl. btw',
     ar: 'احتساب التأمين (statiegeld) ضمن المبلغ بدون ضريبة',

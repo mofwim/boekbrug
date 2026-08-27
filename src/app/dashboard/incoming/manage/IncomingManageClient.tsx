@@ -53,6 +53,8 @@ import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { paymentReferenceFor } from '@/lib/payment-reference'
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
+// [DEEL-BETALEN] Hoeveel betaal ik NU van deze factuur — de regel, niet het scherm.
+import { planPartPayment, defaultPartPayInput, payableOpenAmount } from '@/lib/pay-part'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
@@ -4831,14 +4833,22 @@ function PreparePaymentSheet({
   // [PARTIAL-PAY] The QR must request the REMAINING openstaand, never the full
   // total: a €1.000 invoice with a €400 bank-confirmed instalment would
   // otherwise pre-fill €1.000 in the owner's bank app → €600 over-payment.
-  // Same remainder rule as the "Deels betaald · €X open" chip on the card;
-  // sign preserved (a negative creditnota stays negative → EPC refuses it).
-  const amount = (() => {
-    const total = inv.total_inc_btw ?? 0
-    const paid = Math.max(0, inv.amount_paid ?? 0)
-    if (paid <= 0.005) return total
-    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid)
-  })()
+  //
+  // [DEEL-BETALEN] …and that remainder is now the STARTING point, not the only option. Reported
+  // on Enka Horeca B.V. (€ 3.819,82): "I want to pay this one, but only part of it for now."
+  // Whoever pays in full types nothing and gets exactly what they got before.
+  //
+  // A creditnota keeps the old behaviour: the sign is preserved so EPC refuses it, and the field
+  // below never appears (planPartPayment answers on the sign — see pay-part.ts).
+  const openNow = payableOpenAmount(inv)
+  const isCredit = (inv.total_inc_btw ?? 0) < 0
+  const [payDraft, setPayDraft] = useState(() => defaultPartPayInput(inv))
+  const partPlan = planPartPayment(inv, payDraft)
+  const amount = isCredit
+    ? (inv.total_inc_btw ?? 0)
+    : partPlan.ok
+      ? partPlan.plan.amount
+      : openNow
   // [KENMERK-BEIDE] Reference: the betalingskenmerk AND the invoice number, because a creditor
   // routinely asks for both and quoting one is what makes a payment unallocatable. This line used
   // to be `payment_reference ?? invoice_number`, so the moment a kenmerk existed the document's
@@ -4873,8 +4883,11 @@ function PreparePaymentSheet({
     }
     gen()
     return () => { cancelled = true }
+    // [DEEL-BETALEN] `amount` hoort in deze lijst. Zonder dat bleef de QR op het bedrag staan
+    // waarmee het blad opende, terwijl de kopieerregel eronder het nieuwe bedrag toonde — twee
+    // getallen voor één betaling, en de bankapp leest de QR.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inv.id])
+  }, [inv.id, amount])
 
   async function copy(value: string, label: string) {
     try {
@@ -4913,6 +4926,47 @@ function PreparePaymentSheet({
             {/* Copy rows */}
             <CopyRow label="IBAN" value={ibanDisplay} raw={(inv.vendor_iban ?? '')} onCopy={copy} />
             <CopyRow label={t('inkoop.bedrag')} value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+            {/* [DEEL-BETALEN] Hoeveel gaat er NU weg. Alleen bij een gewone factuur met iets open:
+                op een creditnota valt niets te betalen, en het veld zou daar een handeling
+                aanbieden die niet bestaat.
+
+                Het veld staat ONDER het bedrag dat de QR draagt, met opzet: wat je scant en wat je
+                overmaakt is hetzelfde getal, en dat moet je kunnen zien zonder te scrollen. */}
+            {!isCredit && openNow > 0.005 && (
+              <div style={{ marginTop: 10, padding: '12px 14px', background: '#F8F9FA', borderRadius: 14 }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#5F6368', marginBottom: 6 }}>
+                  {t('deel.label')}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={payDraft}
+                  onChange={(e) => setPayDraft(e.target.value)}
+                  aria-label={t('deel.label')}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 16,
+                    borderRadius: 10, border: `1px solid ${partPlan.ok ? '#d1d1d6' : M3.error}`,
+                    outline: 'none', color: '#202124', fontFamily: FONT, background: '#fff',
+                  }}
+                />
+                {/* [NO-SILENT-EMPTY] Een geweigerd bedrag zegt WAAROM, en bij te veel overmaken ook
+                    wat het kost. De QR blijft ondertussen op het volledige openstaande bedrag staan,
+                    dus er ligt nooit een QR klaar die niemand heeft gekozen. */}
+                {!partPlan.ok ? (
+                  <p style={{ fontSize: 12.5, color: M3.error, lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {partPlan.error}
+                  </p>
+                ) : partPlan.plan.settlesAll ? (
+                  <p style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('deel.alles')}
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 12.5, color: '#1a4fa0', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('deel.rest', { bedrag: fmtEur(partPlan.plan.remaining) })}
+                  </p>
+                )}
+              </div>
+            )}
             {reference && <CopyRow label={t('inkoop.kenmerk')} value={reference} raw={reference} onCopy={copy} />}
             <CopyRow label={t('inkoop.naam')} value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
           </>
