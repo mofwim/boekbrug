@@ -75,11 +75,20 @@ export default function InvoiceDocumentSheet({
   invoice,
   onClose,
   onCorrect,
+  onReplaceFile,
 }: {
   invoice: DocumentSheetInvoice
   onClose: () => void
   /** "Klopt niet?" — hands the owner straight to the correction they just decided they need. */
   onCorrect: (() => void) | null
+  /**
+   * [BETER-EXEMPLAAR] "Vervang bestand" — a BETTER COPY of the same paper, when there is one.
+   *
+   * Null hides it, and the pay screen passes null for an invoice whose document slot is still
+   * empty: there the existing "voeg toe" flow applies and offering a replacement would name an
+   * act that does not exist yet.
+   */
+  onReplaceFile: (() => void) | null
 }) {
   const t = translator(useLocale())
   const [doc, setDoc] = useState<DocState>({ phase: 'loading' })
@@ -367,6 +376,19 @@ export default function InvoiceDocumentSheet({
                 style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
               >
                 {t('dsh.kloptNiet')}
+              </button>
+            )}
+            {/* [BETER-EXEMPLAAR] Een BETER exemplaar van hetzelfde papier — de haastige foto vervangen
+                door de echte pdf. Nadrukkelijk niet voor een leverancier die de factuur opnieuw
+                uitgeeft met andere bedragen: dat zijn twee documenten en daar heeft de app
+                "Deze vervangt factuur X" voor. Het oude bestand wordt niet weggegooid; het blijft in
+                Mijn bestanden staan en het spoor noemt allebei. */}
+            {onReplaceFile && (
+              <button
+                onClick={() => { onClose(); onReplaceFile() }}
+                style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+              >
+                {t('dsh.vervangBestand')}
               </button>
             )}
             {doc.phase === 'ready' && (
