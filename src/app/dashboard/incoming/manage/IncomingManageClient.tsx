@@ -55,6 +55,8 @@ import { paymentReferenceFor } from '@/lib/payment-reference'
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
 // [DEEL-BETALEN] Hoeveel betaal ik NU van deze factuur — de regel, niet het scherm.
 import { planPartPayment, defaultPartPayInput, payableOpenAmount } from '@/lib/pay-part'
+// [BETAALNOTITIE] Een eigen tekst ACHTER het kenmerk van de leverancier — nooit in plaats ervan.
+import { planPayNote } from '@/lib/pay-note'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
@@ -4863,7 +4865,13 @@ function PreparePaymentSheet({
   // own number was dropped from the QR, the copy row and the transfer. See payment-reference.ts
   // for the invoice this was measured on — it asks for both in its own words and charges interest
   // on a payment it cannot place.
-  const reference = paymentReferenceFor(inv)
+  const referenceBase = paymentReferenceFor(inv)
+  // [BETAALNOTITIE] De notitie hoort bij DEZE betaling, niet bij de factuur — hij wordt nergens
+  // opgeslagen. `remittance` is het ENE getal dat de QR, de kopieerregel en de voorbeeldregel
+  // allemaal moeten dragen; drie plekken met een eigen versie is precies hoe ze gaan verschillen.
+  const [noteDraft, setNoteDraft] = useState('')
+  const notePlan = planPayNote(referenceBase, noteDraft)
+  const reference = notePlan.remittance
   const ibanOk = isValidIban(inv.vendor_iban)
   const ibanDisplay = (inv.vendor_iban ?? '').replace(/(.{4})/g, '$1 ').trim()
 
@@ -4895,7 +4903,8 @@ function PreparePaymentSheet({
     // waarmee het blad opende, terwijl de kopieerregel eronder het nieuwe bedrag toonde — twee
     // getallen voor één betaling, en de bankapp leest de QR.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inv.id, amount])
+    // [BETAALNOTITIE] …en `reference` erbij, om dezelfde reden: de QR is wat de bankapp leest.
+  }, [inv.id, amount, reference])
 
   async function copy(value: string, label: string) {
     try {
@@ -5004,6 +5013,42 @@ function PreparePaymentSheet({
                   // de eigenaar naar een dichte deur sturen.
                   <span>{t('kenmerk.naBetaling')}</span>
                 )}
+              </p>
+            )}
+            {/* [BETAALNOTITIE] De eigen tekst van de eigenaar, ACHTER het kenmerk. Verschijnt niet
+                bij een gestructureerd kenmerk (daar wordt op de code alleen gematcht) en niet als
+                het kenmerk de omschrijving al vult — in beide gevallen zegt het scherm waarom, in
+                plaats van het veld stil weg te laten. */}
+            {notePlan.allowed ? (
+              <div style={{ marginTop: 10, padding: '12px 14px', background: '#F8F9FA', borderRadius: 14 }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#5F6368', marginBottom: 6 }}>
+                  {t('notitie.label')}
+                </label>
+                <input
+                  type="text"
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder={t('notitie.voorbeeld')}
+                  aria-label={t('notitie.label')}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15,
+                    borderRadius: 10, border: `1px solid ${notePlan.error ? M3.error : '#d1d1d6'}`,
+                    outline: 'none', color: '#202124', fontFamily: FONT, background: '#fff',
+                  }}
+                />
+                {notePlan.error ? (
+                  <p style={{ fontSize: 12.5, color: M3.error, lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {notePlan.error}
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('notitie.ruimte', { n: String(notePlan.budget - notePlan.note.length) })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '8px 2px 0' }}>
+                {notePlan.blocked}
               </p>
             )}
             <CopyRow label={t('inkoop.naam')} value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />

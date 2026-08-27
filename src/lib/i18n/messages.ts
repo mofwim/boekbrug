@@ -1536,6 +1536,22 @@ export const MESSAGES = {
   },
   // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
   // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
+  // [BETAALNOTITIE] Een eigen tekst ACHTER het kenmerk, voor deze ene betaling.
+  'notitie.label': {
+    nl: 'Eigen tekst erbij (optioneel)',
+    ar: 'نص خاص بك (اختياري)',
+    en: 'Add your own text (optional)',
+  },
+  'notitie.voorbeeld': {
+    nl: 'Bijv. termijn 1 van 2',
+    ar: 'مثال: القسط 1 من 2',
+    en: 'e.g. termijn 1 van 2',
+  },
+  'notitie.ruimte': {
+    nl: 'Komt achter het kenmerk te staan. Nog {n} tekens ruimte.',
+    ar: 'يُكتب بعد المرجع. يتبقّى {n} حرفاً.',
+    en: 'Goes after the reference. {n} characters left.',
+  },
   // [KENMERK-VAN-WIE] Waar het kenmerk vandaan komt, en waarom het geen invulveld is. GEVRAAGD
   // naar aanleiding van het termijnbetalen: "kan ik er 'eerste deel' bij schrijven?"
   'kenmerk.vanLeverancier': {
