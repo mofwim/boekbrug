@@ -13,6 +13,8 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [VERVANG-OVERAL] Eén regel voor "is er een gemarkeerde tweeling?" — gedeeld met de betaalpagina.
+import { supersedeTargetOf } from "@/lib/supersede-target";
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -1976,15 +1978,12 @@ export function InvoiceCard({
     // because the row moved one tab over — that was the difference between one tap and a trip
     // to another screen. Only the Genegeerd tab is excluded: an archived row answers nothing.
     if (mode === "ignored" || !invoice.health.flags.possibleDuplicate) return null;
-    const fc = invoice.field_confidence as { _safecore?: Record<string, unknown> } | null;
-    const s = fc?._safecore;
-    if (!s || typeof s.possible_duplicate_id !== "string" || s.possible_duplicate_id.length === 0) {
-      return null;
-    }
-    const of = typeof s.possible_duplicate_of === "string" ? s.possible_duplicate_of.trim() : "";
+    // [VERVANG-OVERAL] The flag itself is read by one shared rule, because the pay screen now asks
+    // the same question of the same rows. Whether to OFFER the shortcut stays here — that is the
+    // tab logic, which belongs to this screen and to no other.
     // [TAAL] Only the invoice NUMBER is data; every sentence that mentions the other invoice has
     // its own with/without-number variant in the catalogue (a noun is not a parameter).
-    return { number: of || null };
+    return supersedeTargetOf(invoice.field_confidence);
   })();
 
   // [MULTI-INVOICE] "Nee, dit is één factuur" — the owner's answer to a suspicion.
