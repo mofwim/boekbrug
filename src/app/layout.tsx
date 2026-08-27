@@ -29,6 +29,26 @@ const notoArabic = Noto_Sans_Arabic({
   subsets: ["arabic"],
   weight: ["400", "500", "700"],
   display: "swap",
+  // [FONT-PRIORITEIT] Geen preload voor dit bestand. Het weegt 162 kB en wordt op een
+  // Nederlandse pagina nooit gebruikt om iets te tekenen.
+  //
+  // WAT ER GEMETEN IS, EN WAT NIET. De variabele hangt aan <html> in de root-layout zodat /ar/*
+  // hem kan gebruiken; daardoor zette next/font er een <link rel="preload" as="font"> bij op élke
+  // pagina. Chromium bevestigt dat die bytes nergens heen gaan: `document.fonts` kent alleen
+  // Roboto 400/500/700 als geladen, geen enkel element lost op naar Noto Sans Arabic, en
+  // CSS.getPlatformFontsForNode ziet het lettertype niet in de beschildering van <body>.
+  //
+  // Zonder de preload is de link weg (geverifieerd: nul `as="font"` in de HTML). Het bestand
+  // wordt daarna nog steeds opgehaald — die tweede oorzaak is niet gevonden en dit lost hem niet
+  // op. Wat dit wél verandert is de PRIORITEIT: een preload vecht op High om bandbreedte tijdens
+  // precies het venster waarin de CSS en de eerste JS binnen moeten komen. Dat is de winst, en
+  // het is een kleinere winst dan 162 kB — wie hier later komt moet niet denken dat het gewicht
+  // verdwenen is.
+  //
+  // Voor de Arabische bladzijden verandert er niets: de @font-face blijft in de stylesheet, ze
+  // halen hun acht fontbestanden nog gewoon op, en display:"swap" laat de lezer ondertussen in
+  // de fallback lezen in plaats van naar niets te kijken.
+  preload: false,
 });
 
 export const metadata: Metadata = {
