@@ -36,6 +36,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
 // [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
+// [VERVANG-OVERAL] …en het antwoord erop, dat tot nu toe alleen in de controlewachtrij stond.
+import { supersedeTargetOf } from '@/lib/supersede-target'
 import { findPayableDuplicates, duplicateWarningText } from '@/lib/duplicate-payable'
 // [BULK-UNDO] What un-paying in bulk actually touches — said before it happens.
 import { planBulkUndo, bulkUndoWarnings, bulkUndoTitle, type UndoPlan } from '@/lib/bulk-undo-pay'
@@ -540,6 +542,8 @@ export default function IncomingManageClient({
   const showToast = useToast()
   // [SUPPLETIE] A duty with a legal clock is acknowledged, not faded — see bookAsCreditnota.
   const dialog = useDialog()
+  // [VERVANG-OVERAL] Eén vervanging tegelijk — twee tikken zouden twee archiveringen aanvragen.
+  const [superseding, setSuperseding] = useState(false)
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -1833,6 +1837,45 @@ export default function IncomingManageClient({
       return
     }
     showToast(t(DEDUCTION_TOAST[value]))
+  }
+
+  // [VERVANG-OVERAL] "Deze vervangt factuur X", op het scherm waar de eigenaar het paar VINDT.
+  //
+  // duplicate-payable.ts schreef zelf op dat dit het tweede moment is: beide kopieën bevestigd,
+  // naast elkaar, allebei meegeteld in het totaal bovenaan. De waarschuwing kwam daarheen, de
+  // handeling bleef in de controlewachtrij achter — dezelfde "hulp op één scherm"-vorm die deze
+  // week al drie keer is rechtgezet.
+  //
+  // De kop van dat bestand zegt dat het NIET mag kiezen welke van de twee klopt, en dat blijft
+  // staan: dit kiest niets. Het is de eigenaar die zegt welke vervalt, met dezelfde bevestiging en
+  // dezelfde serverweigeringen (afgeboekt geld, een boekhoudersslot) als in de wachtrij. Het
+  // verschil tussen de app die gokt en de eigenaar die beslist, is precies dit scherm.
+  async function supersedeFromPay(inv: IncomingRow, target: { number: string | null }) {
+    if (superseding) return
+    const ok = await dialog.confirm({
+      title: target.number ? t('ink.vervang.vraagMetNr', { nr: target.number }) : t('ink.vervang.vraagZonderNr'),
+      message: target.number ? t('ink.vervang.uitlegMetNr', { nr: target.number }) : t('ink.vervang.uitlegZonderNr'),
+      confirmLabel: t('ink.vervang.bevestig'),
+    })
+    if (!ok) return
+    setSuperseding(true)
+    try {
+      const res = await fetch(`/api/invoice/${inv.id}/supersede`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // De server stelde dezelfde vragen aan verser data — toon ZIJN antwoord, niet het onze.
+        await dialog.alert({ title: t('ink.vervang.kanNiet'), message: data?.detail || t('ink.vervang.mislukt') })
+        return
+      }
+      showToast(data?.archivedNumber
+        ? t('ink.vervang.genegeerdMetNr', { nr: data.archivedNumber })
+        : t('ink.vervang.genegeerdZonderNr'))
+      router.refresh()
+    } catch {
+      await dialog.alert({ title: t('inkoop.geenVerbinding'), message: t('ink.vervang.foutVerbinding') })
+    } finally {
+      setSuperseding(false)
+    }
   }
 
   async function markPrepared(inv: IncomingRow) {
@@ -3271,9 +3314,33 @@ export default function IncomingManageClient({
                       correct copy was the one our reader had got wrong. Removing a row here would
                       be guessing with a bill. */}
                   {duplicate && (
-                    <p style={{ fontSize: 12.5, color: '#7C5800', background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px', margin: 0, lineHeight: 1.45 }}>
-                      {duplicateWarningText(duplicate, inv.invoice_number)}
-                    </p>
+                    <div style={{ background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px' }}>
+                      <p style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.45 }}>
+                        {duplicateWarningText(duplicate, inv.invoice_number)}
+                      </p>
+                      {/* [VERVANG-OVERAL] De handeling bij de waarschuwing. Alleen waar de server
+                          bij het inlezen zélf een tweeling aanwees: het doel wordt daar gelezen en
+                          nooit uit dit scherm meegestuurd, zodat geen enkele knop een archivering
+                          ergens anders op kan richten. */}
+                      {(() => {
+                        const target = supersedeTargetOf(inv.field_confidence)
+                        if (!target) return null
+                        return (
+                          <button
+                            type="button"
+                            disabled={superseding}
+                            onClick={(e) => { e.stopPropagation(); void supersedeFromPay(inv, target) }}
+                            style={{
+                              marginTop: 8, padding: '8px 12px', borderRadius: R.full, border: '1px solid #7C5800',
+                              background: 'transparent', color: '#7C5800', fontSize: 12.5, fontWeight: 600,
+                              cursor: superseding ? 'default' : 'pointer', fontFamily: FONT,
+                            }}
+                          >
+                            {target.number ? t('ink.vervang.knopMetNr', { nr: target.number }) : t('ink.vervang.knopZonderNr')}
+                          </button>
+                        )
+                      })()}
+                    </div>
                   )}
 
                   {/* Inline expand */}

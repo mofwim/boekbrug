@@ -16079,3 +16079,37 @@ test("[KENMERK-NA-BETALING] een afgeboekte betaling bevriest het geld, niet het 
   assert.match(route, /const referenceEditable = invoice\.status === "received"/,
     "de GET zegt niet apart dat het kenmerk nog open staat");
 });
+
+test("[VERVANG-OVERAL] 'Deze vervangt factuur X' staat op ELK scherm dat het paar toont", () => {
+  // duplicate-payable.ts schreef zelf op dat het TWEEDE moment het gevaarlijke is: beide kopieën
+  // bevestigd, naast elkaar op de betaalpagina, allebei meegeteld in het totaal bovenaan. De
+  // waarschuwing kwam daarheen; de handeling bleef in de controlewachtrij achter. Dezelfde vorm
+  // als de statiegeld-tik en het leesgeheugen: hulp op één scherm is geen hulp.
+  const rule = code("src/lib/supersede-target.ts");
+  const queue = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const pay = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Eén regel, twee schermen. Twee keer hetzelfde jsonb-pad uitlezen is hoe ze gaan verschillen
+  // over welke facturen vervangen mogen worden.
+  for (const [src, waar] of [[queue, "de controlewachtrij"], [pay, "de betaalpagina"]] as const) {
+    assert.match(src, /supersedeTargetOf\(/, `${waar} leest de tweeling-vlag zelf uit`);
+    assert.match(src, /from ['"]@\/lib\/supersede-target['"]/, `${waar} gebruikt de gedeelde regel niet`);
+  }
+
+  // De betaalpagina moet er ook echt iets mee DOEN — een geïmporteerde regel zonder knop is de
+  // dode letter die deze poort moet zien.
+  assert.match(pay, /await fetch\(`\/api\/invoice\/\$\{inv\.id\}\/supersede`, \{ method: 'POST' \}\)/,
+    "de betaalpagina biedt de vervanging niet aan");
+  assert.match(pay, /t\('ink\.vervang\.knopMetNr', \{ nr: target\.number \}\)/,
+    "de knop noemt de andere factuur niet");
+  // Met dezelfde bevestiging als de wachtrij: dit archiveert een factuur.
+  assert.match(pay, /dialog\.confirm\(\{[\s\S]{0,300}?ink\.vervang\.vraagMetNr/,
+    "er wordt gearchiveerd zonder dat de eigenaar het bevestigt");
+
+  // HET DOEL BLIJFT SERVER-SIDE. De route leest de tweeling uit de vlag die hij zelf schreef,
+  // precies zodat geen enkel scherm een archivering ergens anders op kan richten.
+  assert.doesNotMatch(rule, /possible_duplicate_id.*return|id,\s*number/,
+    "de gedeelde regel geeft het id van de tweeling aan het scherm terug");
+  assert.doesNotMatch(pay, /body: JSON\.stringify\([\s\S]{0,120}?supersede/,
+    "de betaalpagina stuurt een doel mee naar de vervangroute");
+});
