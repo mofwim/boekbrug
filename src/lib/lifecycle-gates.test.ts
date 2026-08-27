@@ -2013,9 +2013,12 @@ test("[MAILTEKST] a body-only invoice is found, stored as a document, and never 
 
   // Never auto-booked. "Is this a purchase invoice at all" is the one question the mechanical
   // filter cannot settle, and getting it wrong invents a cost with a voorbelasting claim on it.
+  // [ZELF-EERST] One branch now precedes it — the owner's own "show me everything" switch. That
+  // does not weaken this claim: that branch is also a refusal, so the body case is still decided
+  // before any QUALITY consideration, which is what "before every other consideration" meant.
   assert.match(
-    src, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
-    "a body-rendered invoice must be refused before every other consideration",
+    src, /: attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice must be refused before every quality consideration",
   );
   // The owner is told what they are looking at before they confirm it.
   assert.match(
@@ -4635,6 +4638,48 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [ZELF-EERST] Nothing books itself until the owner says so ───────────────────────────────────
+//
+// The auto-advance bar is high, but it answers the machine's question ("how careful am I?") and
+// not the new owner's ("how do I find out?"). The only way anyone learns to trust a reader is to
+// check its work for a while — so the owner holds a switch, and OFF means every read waits in the
+// verify queue, the cleanest one included. What this gate holds is the WIRING: a switch that one
+// door obeys and the other forgets is worse than none, because the owner tested the door that
+// listens and trusts the one that does not.
+test("[ZELF-EERST] both auto-booking doors ask the owner's permission first", () => {
+  // The helper carries the fail matrix: missing column (pre-migration) answers TRUE — today's
+  // behavior, [DEPLOY-SAFE] — and any OTHER failure answers FALSE, because wrongly waiting costs
+  // one tap while wrongly auto-booking overrides a stated choice about money.
+  const helper = code("src/lib/auto-boeken.ts");
+  assert.match(helper, /return isMissingColumn\(error\.message/, "missing column = the old world, unchanged");
+  assert.match(helper, /catch \{\s*return false;?\s*\}/, "any other failure waits for the human");
+  assert.match(helper, /auto_boeken\?: boolean \| null \} \| null\)\?\.auto_boeken !== false/,
+    "null (row without the column filled) reads as ON — the default the migration declares");
+
+  // Both doors, each with its own reason string so "waiting because you asked" never shows up as
+  // "the read was weak" in the audit trail or the queue.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /const magAutoBoeken = await autoBoekenAllowed\(supabase, user\.id\)/);
+  assert.match(intake, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "asked BEFORE every quality signal");
+  assert.match(intake, /reason: "owner_reviews_everything"/);
+
+  const sync = code("src/lib/email-integration.ts");
+  assert.match(sync, /const magAutoBoeken = await autoBoekenAllowed\(supabase, userId\)/);
+  assert.match(sync, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "the mail door asks the same question first");
+  assert.match(sync, /reason: 'owner_reviews_everything'/);
+
+  // The switch exists where the owner can reach it, saved in its own isolated write so a missing
+  // column cannot brick the whole profile save (the ochtend_mail precedent).
+  const scherm = code("src/app/dashboard/settings/page.tsx");
+  assert.match(scherm, /update\(\{ auto_boeken: autoBoeken \}\)/);
+  assert.match(scherm, /t\('inst\.autoBoeken'\)/, "…and speaks from the catalogue, not in hard-coded Dutch");
+
+  // The migration defaults TRUE: today's behavior for everyone who never touches the switch.
+  const sql = readFileSync("supabase/migrations/auto_boeken.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS auto_boeken boolean NOT NULL DEFAULT true/);
+});
+
 test("[EIGEN-MARKER] the generated PDF captions its party blocks", () => {
   const pdf = code("src/lib/invoice-pdf.tsx");
   assert.match(pdf, /partyLabel\}>KLANT</, "the customer block must carry its caption");

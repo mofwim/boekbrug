@@ -90,6 +90,8 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory"
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup"
+// [ZELF-EERST] The owner's grip on the autopilot — see the helper for the fail matrix.
+import { autoBoekenAllowed } from "@/lib/auto-boeken"
 import { loadReadingMemory } from "@/lib/reading-memory-source"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -1200,8 +1202,17 @@ export async function POST(req: NextRequest) {
   // The safety bar itself is UNCHANGED. A bon still has to clear grounding, placement, the printed
   // BTW split, the arithmetic, the dedup and the health classifier exactly like any other invoice —
   // settling only decides the STATUS it lands in, never whether the read may be trusted.
-  const autoAdv =
-    (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
+  // [ZELF-EERST] Asked FIRST, because it is not a quality signal but a permission: the owner who
+  // says "show me everything" gets everything, including the reads that would have cleared every
+  // bar. One flag covers both landings — the invoice that would book as 'received' and the bon
+  // that would settle as paid — since both are the app acting without a tap.
+  const magAutoBoeken = await autoBoekenAllowed(supabase, user.id)
+  const autoAdv = !magAutoBoeken
+    ? // Its own reason string, ahead of every quality check: "waiting because you asked to see
+      // everything" must never read as "the read was weak" — the audit row and the queue both
+      // show this reason, and an owner testing the app deserves to see their own switch working.
+      { advance: false as const, reason: "owner_reviews_everything" }
+    : (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
     (!decision.suggestPaid || settlePlan.settle) && !multiInvoice && !oneInvoiceUnverified
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,
