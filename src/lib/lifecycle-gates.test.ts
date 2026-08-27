@@ -15974,3 +15974,32 @@ test("[KWARTAAL-VAST] een datum zonder tijd wordt nergens in een lokale tijdzone
   assert.match(code("src/lib/quarter.ts"), /const m = \/\^\(\\d\{4\}\)-\(\\d\{2\}\)\/\.exec\(iso\)/,
     "quarterKeyOf leest de maand niet meer uit de tekst zelf");
 });
+
+test("[KENMERK-VAN-WIE] het kenmerk is geen invulveld, en de uitweg klopt met wat de server toestaat", () => {
+  // GEVRAAGD bij het termijnbetalen: "kan ik er 'eerste deel' bij schrijven?" Nee — en het
+  // verschil met het bedrag erboven is de hele reden. Het bedrag is de beslissing van de eigenaar;
+  // dit kenmerk is de instructie van de LEVERANCIER, waarmee híj de betaling terugvindt. Zelf iets
+  // meetypen helpt de eigenaar niet en kan zijn geld onvindbaar maken — payment-reference.ts hangt
+  // daar een gemeten factuur aan die om beide nummers vroeg en rente rekende over een betaling die
+  // hij niet kon plaatsen. De EPC-regel kapt bovendien stil af op 140 tekens.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Het blijft een KOPIEERREGEL, geen input. Dit is de eigenlijke bewering van deze poort.
+  const kenmerkBlok = blad.slice(blad.indexOf("[KENMERK-VAN-WIE] Waarom dit GEEN invulveld"), blad.indexOf("[KENMERK-VAN-WIE] Waarom dit GEEN invulveld") + 2200);
+  assert.doesNotMatch(kenmerkBlok, /<input/, "het kenmerk is een invulveld geworden");
+  assert.match(blad, /t\('kenmerk\.vanLeverancier'\)/, "er staat niet bij van wie dit kenmerk is");
+
+  // De uitweg mag alleen verschijnen als de SERVER hem ook openhoudt. De correctieroute weigert de
+  // hele patch zodra er geld op de factuur staat (GUARD 3, hasSettledMoney) — ook een wijziging die
+  // geen geld is. Een link tonen die dan stukloopt, stuurt de eigenaar naar een dichte deur.
+  assert.match(blad, /const kenmerkCorrigeerbaar =\s*\n\s*inv\.status === 'received' && Math\.max\(0, Number\(inv\.amount_paid \?\? 0\)\) <= 0\.005/,
+    "de voorwaarde staat niet meer gelijk aan die van de correctieroute");
+  assert.match(blad, /kenmerkCorrigeerbaar \? \(/, "de link verschijnt onvoorwaardelijk");
+  assert.match(blad, /t\('kenmerk\.naBetaling'\)/,
+    "als corrigeren niet kan, hoort de eigenaar te lezen waarom en wat hem wél verder helpt");
+
+  // En de correctie gebeurt op de FACTUUR, niet hier: daar blijft hij bewaard en krijgt elke
+  // volgende termijn hem mee.
+  assert.match(blad, /onCorrectKenmerk=\{\(\) => \{ const inv = prepareCtx; setPrepareCtx\(null\); if \(inv\) openCorrection\(inv\) \}\}/,
+    "de knop opent de correctie-editor niet op deze factuur");
+});
