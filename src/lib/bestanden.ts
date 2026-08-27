@@ -798,9 +798,15 @@ export async function resolveImportTarget(
     return ensureImportedFolder(userId, ctx);
   }
 
+  // [KWARTAAL-VAST] UTC-getters, niet de lokale. `new Date("2026-01-01")` is middernacht UTC, en
+  // .getFullYear()/.getMonth() lezen dat in de tijdzone van wie het uitvoert: ten westen van UTC
+  // wordt 1 januari dan 31 december, en het stuk komt in het jaar- én kwartaalmapje van het
+  // VORIGE jaar te staan — waar de boekhouder het niet zoekt. Vandaag draait dit alleen
+  // server-side (UTC), dus het gaat nu goed; dat is een eigenschap van de omgeving, niet van de
+  // code. De canonieke afleiding doet het al zo (quarter.ts leest de maand uit de tekst zelf).
   const d = new Date(invoiceDate);
-  const year = d.getFullYear();
-  const month = d.getMonth() + 1;
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth() + 1;
 
   // Invalid / out-of-range date → fallback
   // (matches BoekBrug_AI_Pipeline_Architecture.md: date outside 2020-2030 → null)

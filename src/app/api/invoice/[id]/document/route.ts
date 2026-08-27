@@ -194,7 +194,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         file_type: mime,
         doc_type: "factuur",
         folder_id: folderId,
-        year: inv.invoice_date ? new Date(inv.invoice_date).getFullYear() : null,
+        year: inv.invoice_date ? new Date(inv.invoice_date).getUTCFullYear() : null,
         source: "upload",
         // Deliberately NOT ai_processed: nothing read this file. Claiming otherwise would put a
         // document in the books carrying an extraction that never happened.
