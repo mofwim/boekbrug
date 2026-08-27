@@ -1499,6 +1499,27 @@ export const MESSAGES = {
     ar: 'تعذّر فتح الملف — تحقق من اتصالك',
     en: 'Could not open the file — check your connection',
   },
+  // [BETER-EXEMPLAAR] Een beter exemplaar van HETZELFDE papier — niet een herziene factuur.
+  'dsh.vervangBestand': {
+    nl: 'Beter exemplaar',
+    ar: 'نسخة أفضل',
+    en: 'Better copy',
+  },
+  'dsh.vervang.vraag': {
+    nl: 'Bestand vervangen door een beter exemplaar?',
+    ar: 'استبدال الملف بنسخة أفضل؟',
+    en: 'Replace the file with a better copy?',
+  },
+  'dsh.vervang.uitleg': {
+    nl: 'Alleen als dit hetzelfde papier is — bijvoorbeeld een scherpe pdf in plaats van je snelle foto. De bedragen blijven staan zoals ze zijn; het bestand wordt niet gelezen. Het oude bestand blijft bewaard in Mijn bestanden. Heeft de leverancier de factuur opnieuw uitgegeven met ANDERE bedragen? Gebruik dan "Deze vervangt factuur X" — dat zijn twee documenten.',
+    ar: 'فقط إذا كان هذا هو الورق نفسه — مثلاً ملف pdf واضح بدل صورتك السريعة. تبقى المبالغ كما هي؛ لا يُقرأ الملف. يبقى الملف القديم محفوظاً في «ملفاتي». هل أعاد المورّد إصدار الفاتورة بمبالغ مختلفة؟ استخدم عندئذٍ «هذه تحلّ محل الفاتورة X» — فتلك وثيقتان.',
+    en: 'Only if this is the same paper — a sharp pdf instead of your quick photo, say. The amounts stay exactly as they are; the file is not read. The old file is kept in Mijn bestanden. Did the supplier reissue the invoice with DIFFERENT amounts? Use "Deze vervangt factuur X" instead — those are two documents.',
+  },
+  'dsh.vervang.gelukt': {
+    nl: 'Bestand vervangen. Het oude staat nog in Mijn bestanden.',
+    ar: 'استُبدل الملف. لا يزال القديم في «ملفاتي».',
+    en: 'File replaced. The old one is still in Mijn bestanden.',
+  },
   'dsh.kloptNiet': { nl: 'Klopt niet — corrigeren', ar: 'غير صحيح — صحّحه', en: 'Not right — correct it' },
   'dsh.nieuwTabblad': { nl: 'Openen in nieuw tabblad', ar: 'فتح في تبويب جديد', en: 'Open in a new tab' },
   'dsh.factuurAlt': { nl: 'Factuur {number}', ar: 'الفاتورة {number}', en: 'Invoice {number}' },
@@ -11073,6 +11094,7 @@ export const MESSAGES = {
   'log.bank.unlinked': { nl: 'Koppeling tussen bank en factuur ongedaan gemaakt', en: 'Bank-to-invoice match undone', ar: 'أُلغي ربط بين البنك وفاتورة' },
   'log.bank.match_checked': { nl: 'Automatische koppeling nagekeken en akkoord bevonden', en: 'Automatic match reviewed and accepted', ar: 'روجع ربط تلقائي وقُبل' },
   'log.invoice.document_attached': { nl: 'Origineel document aan een factuur gehangen', en: 'Original document attached to an invoice', ar: 'أُرفق مستند أصلي بفاتورة' },
+  'log.invoice.document_replaced': { nl: 'Document van een factuur vervangen door een beter exemplaar (het oude blijft bewaard)', en: 'An invoice document was replaced by a better copy (the old one is kept)', ar: 'استُبدل مستند فاتورة بنسخة أفضل (تُحفظ القديمة)' },
   'log.accountant.invoice_question': { nl: 'Je boekhouder heeft een vraag gesteld over een factuur', en: 'Your bookkeeper asked a question about an invoice', ar: 'طرح محاسبك سؤالاً عن فاتورة' },
   'log.bank.ignored': { nl: 'Bankregel opzijgezet', en: 'Bank line set aside', ar: 'نُحّي سطر بنكي جانباً' },
   'log.bank.restored': { nl: 'Bankregel teruggehaald', en: 'Bank line taken back', ar: 'أُعيد سطر بنكي' },

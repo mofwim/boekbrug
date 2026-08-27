@@ -544,6 +544,10 @@ export default function IncomingManageClient({
   const dialog = useDialog()
   // [VERVANG-OVERAL] Eén vervanging tegelijk — twee tikken zouden twee archiveringen aanvragen.
   const [superseding, setSuperseding] = useState(false)
+  // [BETER-EXEMPLAAR] Welke factuur een beter exemplaar krijgt. Het blad sluit zichzelf voordat het
+  // dit aanroept, dus de rij wordt hier vastgehouden en niet uit docCtx gelezen.
+  const [replaceFor, setReplaceFor] = useState<IncomingRow | null>(null)
+  const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -1218,7 +1222,10 @@ export default function IncomingManageClient({
   // finds. This invoice already exists and its figures are confirmed, so the route stores the file
   // and links it — nothing else. The distinction is the whole safety of the feature, and it is why
   // this handler has no "we read it again, check the amounts" branch: there is nothing to check.
-  const attachOriginal = async (inv: IncomingRow, file: File) => {
+  // [BETER-EXEMPLAAR] …and the same door swaps in a BETTER COPY of the same paper when the owner
+  // says so. Deliberately the same handler: one upload path, one set of refusals. `replace` is
+  // never inferred — the route treats an occupied slot as a refusal unless it is asked outright.
+  const attachOriginal = async (inv: IncomingRow, file: File, replace = false) => {
     if (attachingId) return
     setAttachingId(inv.id)
     try {
@@ -1227,6 +1234,7 @@ export default function IncomingManageClient({
       const { response: res } = await sendWithFit(file, (f) => {
         const body = new FormData()
         body.append('file', f)
+        if (replace) body.append('replace', 'true')
         return fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
       })
       const json = await res.json().catch(() => ({}))
@@ -1235,6 +1243,9 @@ export default function IncomingManageClient({
         const err = String(json?.error ?? '')
         showToast(
           err === 'heeft_al_een_origineel' ? t('ink.origineel.alAanwezig')
+          // [BETER-EXEMPLAAR] De boekhouder heeft dit stuk al gecontroleerd; de zin van de server
+          // noemt hem, want hij is de enige die dit verder kan brengen.
+          : err === 'verwerkt' ? String(json?.detail ?? t('ink.origineel.mislukt'))
           : err === 'bestandstype_niet_ondersteund' ? t('ink.origineel.bestandstype')
           : err === 'bestand_te_groot' ? t('ink.origineel.teGroot')
           : err === 'not_found' ? t('ink.origineel.bestaatNiet')
@@ -1242,7 +1253,7 @@ export default function IncomingManageClient({
         )
         return
       }
-      showToast(t('inkoop.origineelToegevoegd'))
+      showToast(replace ? t('dsh.vervang.gelukt') : t('inkoop.origineelToegevoegd'))
       router.refresh()
     } catch {
       showToast(t('inkoop.fout.toevoegen'))
@@ -4278,6 +4289,31 @@ export default function IncomingManageClient({
         )
       })()}
 
+      {/* [BETER-EXEMPLAAR] Eén verborgen kiezer voor het hele scherm. De bevestiging komt NA het
+          kiezen en vóór het versturen: pas dan weet de eigenaar welk bestand hij vervangt, en de
+          zin die hij leest is de enige plek waar het onderscheid met een herziene factuur staat —
+          hetzelfde papier, beter exemplaar, tegenover twee documenten. */}
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept=".pdf,image/*"
+        style={{ display: 'none' }}
+        onChange={async (e) => {
+          const f = e.target.files?.[0] ?? null
+          e.target.value = ''
+          const row = replaceFor
+          setReplaceFor(null)
+          if (!f || !row) return
+          const ok = await dialog.confirm({
+            title: t('dsh.vervang.vraag'),
+            message: t('dsh.vervang.uitleg'),
+            confirmLabel: t('dsh.vervangBestand'),
+          })
+          if (!ok) return
+          void attachOriginal(row, f, true)
+        }}
+      />
+
       {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
       {/* [DOC-INLINE] The document, our reading of it, and the seven checks — see the component. */}
       {docCtx && (
@@ -4300,6 +4336,11 @@ export default function IncomingManageClient({
           onClose={() => setDocCtx(null)}
           // The whole loop in one place: see the paper, see our numbers, fix it in one tap.
           onCorrect={() => setCorrectFor(docCtx)}
+          // [BETER-EXEMPLAAR] Alleen waar er al iets hangt: een lege plek heeft zijn eigen knop
+          // ("voeg toe") en "vervangen" zou daar een handeling noemen die niet bestaat.
+          onReplaceFile={docCtx.document_id
+            ? () => { const row = docCtx; setReplaceFor(row); replaceInputRef.current?.click() }
+            : null}
         />
       )}
 

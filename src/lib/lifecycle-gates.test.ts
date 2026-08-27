@@ -965,10 +965,24 @@ test("[ORIGINEEL] it adds evidence and never touches a figure", () => {
     "the invoice write must be the two evidence pointers and nothing else — any money or status " +
       "field here means this route can change a figure the owner already confirmed",
   );
-  // And it must not refuse an accountant-locked invoice: the lock protects the figures they booked,
-  // this changes none of them, and refusing would refuse precisely the invoice they asked about.
+  // And it must not refuse an accountant-locked invoice when it is FILLING an empty slot: the lock
+  // protects the figures they booked, filling changes none of them, and refusing would refuse
+  // precisely the invoice they asked about.
+  //
+  // [BETER-EXEMPLAAR] The route also REPLACES now, and there the lock DOES apply — replacing
+  // changes which document backs a figure the accountant already checked and signed off. So this
+  // claim moved to where the distinction lives: document-replace.ts answers "fill" and returns
+  // BEFORE it ever looks at the lock, and the route keeps no lock of its own.
+  const slotRule = code("src/lib/document-replace.ts");
+  const fillAt = slotRule.indexOf('return { ok: true, mode: "fill" }');
+  const lockAt = slotRule.indexOf('=== "verwerkt"');
+  assert.ok(
+    fillAt > 0 && lockAt > 0 && fillAt < lockAt,
+    "filling an empty slot now passes through the accountant lock — it would refuse exactly the " +
+      "invoice the accountant asked the original for",
+  );
   assert.doesNotMatch(
-    route, /accountant_status/,
+    route, /["']verwerkt["']/,
     "the 'verwerkt' lock was applied here — it would block exactly the invoice the accountant " +
       "requested the original for, which is the case this whole route exists to serve",
   );
@@ -16112,4 +16126,46 @@ test("[VERVANG-OVERAL] 'Deze vervangt factuur X' staat op ELK scherm dat het paa
     "de gedeelde regel geeft het id van de tweeling aan het scherm terug");
   assert.doesNotMatch(pay, /body: JSON\.stringify\([\s\S]{0,120}?supersede/,
     "de betaalpagina stuurt een doel mee naar de vervangroute");
+});
+
+test("[BETER-EXEMPLAAR] een beter exemplaar vervangt de foto, en gooit het oude nooit weg", () => {
+  // GEVRAAGD: de bedragen zijn te corrigeren, het bestand eronder niet — dus bleef de haastige
+  // foto staan onder cijfers die inmiddels kloppen, en dat is de kopie die de boekhouder opent.
+  //
+  // De route weigerde vervangen met een goede reden, in zijn eigen woorden: het gooit bewijs weg
+  // dat de bewaarplicht zegt te bewaren. Die reden gaat over WEGGOOIEN, niet over vervangen — dus
+  // gooit deze weg niets: de oude documenten-rij blijft staan, alleen de wijzer verschuift.
+  const rule = code("src/lib/document-replace.ts");
+  const route = code("src/app/api/invoice/[id]/document/route.ts");
+
+  // Vervangen wordt nooit AFGELEID. Een bezette plek blijft een weigering tenzij er expliciet om
+  // gevraagd is — anders vervangt een scherm dat niets vroeg het bewijs van een geboekte factuur.
+  assert.match(rule, /if \(!input\.replaceRequested\)/, "vervangen wordt afgeleid in plaats van gevraagd");
+  assert.match(route, /replaceRequested: form\.get\("replace"\) === "true"/,
+    "de route leest de uitgesproken bedoeling niet");
+
+  // Het oude bestand wordt NIET verwijderd — nergens in deze route.
+  assert.doesNotMatch(route, /\.from\("documents"\)[\s\S]{0,120}?\.delete\(\)/,
+    "de route verwijdert de oude documenten-rij — precies wat de bewaarplicht verbiedt");
+  assert.match(rule, /previousDocumentId: current/, "het oude id gaat niet mee naar het spoor");
+
+  // Compare-and-set op WAT ER STOND, niet op null: anders wint een gelijktijdige wijziging stil.
+  assert.match(route, /\.eq\("document_id", slot\.previousDocumentId\)/,
+    "de vervanging overschrijft een wijzer die intussen verschoven kan zijn");
+
+  // Het slot van de boekhouder blokkeert een RUIL en nooit het vullen van een lege plek — dat
+  // laatste voegt bewijs toe aan een geboekt cijfer, het eerste verandert welk stuk eronder ligt.
+  assert.match(rule, /accountantStatus \?\? ""\) === "verwerkt"/, "het boekhoudersslot is weg");
+  assert.match(rule, /if \(!current\) return \{ ok: true, mode: "fill" \}/,
+    "een lege plek loopt niet meer langs het slot heen");
+
+  // En het spoor noemt het als een eigen handeling, met een leesbaar label in drie talen.
+  assert.match(code("src/lib/audit.ts"), /'invoice\.document_replaced'/, "de ruil heeft geen eigen actie");
+  assert.match(code("src/lib/logboek.ts"), /log\.invoice\.document_replaced/, "…en staat niet in het logboek");
+  assert.match(code("src/lib/i18n/messages.ts"), /'log\.invoice\.document_replaced':/, "…zonder leesbare zin");
+
+  // De zin die de eigenaar leest is de ENIGE plek waar het onderscheid met een herziene factuur
+  // staat. Zonder dat verwisselt iemand dit met "Deze vervangt factuur X" en verdwijnt een versie.
+  assert.match(code("src/lib/i18n/messages.ts"), /'dsh\.vervang\.uitleg':[\s\S]{0,400}?Deze vervangt factuur X/,
+    "de uitleg wijst niet naar het andere geval — twee documenten in plaats van één beter exemplaar");
 });

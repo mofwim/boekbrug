@@ -2218,6 +2218,11 @@ export function InvoiceCard({
           onClose={() => setShowDoc(false)}
           // The queue's own correction door is the verify modal, which is what onEdit opens.
           onCorrect={() => { setShowDoc(false); onEdit(); }}
+          // [BETER-EXEMPLAAR] Bewust niet hier. In de controlewachtrij staan de bedragen nog niet
+          // vast, en dan is "opnieuw inlezen" het juiste antwoord op een slechte foto: dat LEEST
+          // het nieuwe papier. Vervangen leest met opzet niets, wat pas veilig én nuttig is als de
+          // cijfers al bevestigd zijn — en dat is de betaalpagina.
+          onReplaceFile={null}
         />
       )}
 

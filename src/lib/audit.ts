@@ -89,6 +89,7 @@ export type AuditAction =
   // "when did the proof for this line arrive, and was it before or after the aangifte" has no
   // other way to know.
   | 'invoice.document_attached'       // ← [ORIGINEEL] an original was attached to an existing invoice
+  | 'invoice.document_replaced'       // ← [BETER-EXEMPLAAR] a better copy of the SAME paper replaced it; the old row is KEPT
   // [FACTUURVRAAG] The accountant asked their client about ONE invoice. Its own action because it
   // is the only accountant write that is a QUESTION rather than an assertion about the books — and
   // because a status that says 'vraag' with no record of who asked, when, or about which client's
