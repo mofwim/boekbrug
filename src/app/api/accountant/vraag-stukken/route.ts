@@ -149,7 +149,13 @@ export async function POST(request: NextRequest) {
       .maybeSingle()
 
     if (klantProfiel?.email) {
-      sendMessageNotification({
+      // [NIET-LOSGELATEN] Afgewacht, niet losgelaten. Dit draait serverless: zodra het antwoord
+      // terug is mag de instantie bevriezen of verdwijnen, en een belofte die dan nog loopt
+      // wordt gewoon afgekapt. Losgelaten kon deze mail dus stilzwijgend nooit vertrekken
+      // terwijl de route ok teruggaf — precies de vorm die dit product nergens accepteert.
+      // De .catch blijft: een mislukte mail mag het verzoek zelf niet ongedaan maken, want het
+      // bericht IN de app is al aangemaakt en dat is de bron van waarheid.
+      await sendMessageNotification({
         toEmail: klantProfiel.email,
         receiverName: klantProfiel.full_name || 'Ondernemer',
         senderName: mijnNaam,

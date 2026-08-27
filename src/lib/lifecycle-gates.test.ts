@@ -15839,3 +15839,58 @@ test("[DEUR-VANGNET] elke deur waar een document binnenkomt heeft hetzelfde vang
   assert.match(net, /console\.error\(`\[\$\{tag\}-CRASH\]/, "de reden wordt niet vastgelegd waar wij hem terugvinden");
   assert.match(net, /NextResponse\.json\(\{ error: sentence \}, \{ status: 500 \}\)/, "het antwoord is geen JSON met een zin");
 });
+
+test("[VOL-GELEZEN] de opslagmeter telt ALLE bestanden, niet de eerste duizend", () => {
+  // Twee plekken tellen file_size op over de bestanden van één eigenaar, en geen van beide was
+  // gepagineerd. PostgREST kapt elk antwoord stil af op ~1000 rijen — geen fout, geen vlag — dus
+  // bij meer dan duizend bestanden telde de som alleen de eerste duizend.
+  //
+  // Te LAAG is hier de gevaarlijke kant. De grens wordt dan nooit bereikt, de eigenaar hoort dat
+  // hij ruim zit, en de meter op zijn scherm bevestigt het. Wie elke dag bonnetjes fotografeert is
+  // die duizend binnen een paar maanden voorbij. Op /bestanden viel bovendien het AANTAL in
+  // dezelfde limiet: 3.000 bestanden lazen als "1.000".
+  //
+  // Eén integer-kolom per rij, dus alle pagina's ophalen kost bijna niets; een aggregaat in de
+  // database zou een migratie vragen die deze meting niet waard is.
+  for (const pad of ["src/app/api/bestanden/route.ts", "src/lib/fair-use-usage.ts"]) {
+    const src = code(pad);
+    const som = src.indexOf("file_size ?? 0") >= 0
+      ? src.indexOf("file_size ?? 0")
+      : src.indexOf("Number(d.file_size)");
+    assert.ok(som > 0, `${pad}: de optelling van file_size is verplaatst of hernoemd`);
+    // De lezing die ERVOOR staat moet door de pager lopen. Op de naam van de aanroep, niet op de
+    // import: een bestand dat fetchAllRows importeert en er dan één select naast legt, is precies
+    // het geval dat deze poort moet zien.
+    const lezing = src.slice(Math.max(0, som - 900), som);
+    assert.match(lezing, /fetchAllRows<\{ file_size: number \| null \}>\(/,
+      `${pad}: de bestanden worden ongepagineerd gelezen — voorbij ~1000 stuks staat de meter stil te laag`);
+    assert.match(lezing, /\.range\(from, to\)/, `${pad}: zonder .range() paginéért fetchAllRows niets`);
+    assert.match(lezing, /\.order\("id", \{ ascending: true \}\)/,
+      `${pad}: zonder stabiele volgorde levert paginering dubbele en ontbrekende rijen`);
+  }
+});
+
+test("[NIET-LOSGELATEN] werk dat na het antwoord nog moet gebeuren, wordt afgewacht", () => {
+  // Serverless: zodra het antwoord terug is mag de instantie bevriezen of verdwijnen, en een
+  // belofte die dan nog loopt wordt afgekapt. Er is in deze codebase geen after()/waitUntil, dus
+  // er is niets dat zulk werk levend houdt — losgelaten betekent hier echt "misschien nooit".
+  //
+  // Vier plekken lieten los. Twee ervan verstuurden de mail waarin een boekhouder zijn klant om
+  // een machtiging of om stukken vraagt: de route gaf ok terug en de mail kon stilzwijgend nooit
+  // vertrekken. Twee legden vast dat een boekhouder een pakket of export had gedownload — en de
+  // toelichting bij die code zegt zélf dat het verschil met een gedeelde map pas bestaat als dat
+  // aantoonbaar is, wat `void` juist optioneel maakte.
+  const AFGEWACHT: Array<[string, RegExp, string]> = [
+    ["src/app/api/accountant/vraag-machtiging/route.ts", /await sendMessageNotification\(\{/, "de machtigingsmail"],
+    ["src/app/api/accountant/vraag-stukken/route.ts", /await sendMessageNotification\(\{/, "de opvraagmail"],
+    ["src/app/api/closing-package/route.ts", /await logAuditAction\(\{/, "het spoor van een gedownload pakket"],
+    ["src/app/api/export/route.ts", /await logAuditAction\(\{/, "het spoor van een gedownloade export"],
+  ];
+  for (const [pad, patroon, wat] of AFGEWACHT) {
+    const src = code(pad);
+    assert.match(src, patroon, `${wat} wordt losgelaten in plaats van afgewacht (${pad})`);
+    // En niet met een `void` ervoor teruggezet: dat is dezelfde fout in een andere spelling.
+    assert.doesNotMatch(src, /void (logAuditAction|sendMessageNotification)\(/,
+      `${pad}: void laat het werk alsnog los`);
+  }
+});
