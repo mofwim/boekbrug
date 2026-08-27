@@ -15674,3 +15674,145 @@ test("[READING-MEMORY] het leesgeheugen bereikt ELKE oproepplek van dezelfde edi
   const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   assert.match(manage, /readingHint=\{readingHints\[/, "de betaalpagina voedt de prop niet meer");
 });
+
+test("[BOUWSEL-GEEN-BELOFTE] geen .catch() op een Supabase-bouwsel — dat is de crash, niet het vangnet", () => {
+  // DE STORING: één foto van een factuur gaf "de server gaf een onverwacht antwoord (HTTP 500)" en
+  // er werd niets bewaard. De oorzaak stond in een opruimregel in /api/intake:
+  //
+  //   await claimPipe.from("intake_claims").delete().eq(...).lt(...).catch(() => {})
+  //
+  // Een Supabase-bouwsel is een THENABLE, geen Promise: het heeft `then` en verder niets, dus
+  // `.catch` is undefined en die aanroep gooit een TypeError vóórdat de query wordt verstuurd.
+  // `as any` op de client hield tsc erbuiten. Bewezen in thenable-not-promise.test.ts — daar wordt
+  // het aan de échte bibliotheek gevraagd, niet aan een type.
+  //
+  // Deze poort is de klasse, niet het geval: overal in src, in élke route.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  // WELKE `.catch` telt? Alleen die rechtstreeks op een postgrest-bouwsel hangt. Twee vormen die
+  // er in de tekst op lijken en het NIET zijn, en die dus geen vals alarm mogen geven:
+  //
+  //   · `supabase.storage.from('documents').remove([p]).catch(…)` — storage-js is géén postgrest.
+  //     Zijn methodes zijn `async`, dus dat is een échte Promise en `.catch` bestaat er wél;
+  //   · `fetchAllRows((from, to) => supabase.from(…).range(from, to)).catch(() => [])` — de
+  //     `.catch` hangt aan de WRAPPER, een gewone async functie, niet aan het bouwsel erin.
+  //
+  // Daarom geen regex over de regel maar een echte lezing: loop vanaf `.catch(` terug over een
+  // gebalanceerde uitdrukking, en kijk waar die keten BEGINT. Begint hij bij `iets.from(` of
+  // `iets.rpc(` — dan is het een bouwsel. Begint hij bij `naam(` — dan is het een functie-uitkomst.
+  // Commentaar eerst weg, mét respect voor strings: een `//` binnen "https://…" is geen commentaar,
+  // en een keten die met een toelichtingsregel begint las anders als commentaar in plaats van als
+  // bouwsel — precies de reden dat een eerdere versie van deze poort de tweede kapotte regel MISTE.
+  const stripComments = (src: string): string => {
+    let out = "";
+    let i = 0;
+    let quote: string | null = null;
+    while (i < src.length) {
+      const c = src[i];
+      if (quote) {
+        if (c === "\\") { out += "  "; i += 2; continue; }
+        if (c === quote) quote = null;
+        out += c; i++; continue;
+      }
+      if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
+      if (c === "/" && src[i + 1] === "/") {
+        while (i < src.length && src[i] !== "\n") { out += " "; i++; }
+        continue;
+      }
+      if (c === "/" && src[i + 1] === "*") {
+        while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) { out += src[i] === "\n" ? "\n" : " "; i++; }
+        out += "  "; i += 2; continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  };
+
+  const receiverOf = (src: string, dot: number): string => {
+    let depth = 0;
+    let j = dot - 1;
+    for (; j >= 0; j--) {
+      const c = src[j];
+      if (c === ")" || c === "]" || c === "}") { depth++; continue; }
+      if (c === "(" || c === "[" || c === "{") {
+        if (depth === 0) break; // deze haak opent een OMHULLENDE aanroep — hier houdt de keten op
+        depth--;
+        continue;
+      }
+      if (depth !== 0) continue;
+      if (c === ";" || c === "," || c === "=" || c === "&" || c === "|" || c === "?" || c === ":") break;
+      // Dit bestand zet geen puntkomma's, dus een REGELEINDE is de statement-grens. Een keten mag er
+      // wél overheen lopen: `await pipeline\n  .from(…)\n  .eq(…)` is één uitdrukking. Het verschil
+      // is wat er tot nu toe verzameld is — begint dat met een punt (of is het nog leeg), dan gaat
+      // de keten verder naar boven; begint het met een woord, dan stond de kop op deze regel.
+      if (c === "\n") {
+        const soFar = src.slice(j + 1, dot).trim();
+        if (soFar === "" || soFar.startsWith(".")) continue;
+        break;
+      }
+    }
+    // `await`, `return`, `void` horen bij de STATEMENT, niet bij de keten. Laat je ze staan, dan
+    // begint de uitdrukking met een woord en herkent geen enkele regel het bouwsel er nog in.
+    return src.slice(j + 1, dot).trim().replace(/^(await|return|void)\s+/, "").trim();
+  };
+
+  // `client.from(` / `client.schema('x').from(` / `client.rpc(` — en niets ertussen. Een
+  // storage-keten valt hier vanzelf buiten, want die leest als `supabase.storage.from(`, en een
+  // wrapper leest als `fetchAllRows(`.
+  const IS_BUILDER = /^[A-Za-z_$][\w$]*(\s*\.\s*schema\s*\([^)]*\))?\s*\.\s*(from|rpc)\s*\(/;
+
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    if (file.endsWith("lifecycle-gates.test.ts")) continue;
+    // Het bewijsbestand NOEMT de vorm met opzet, om hem te laten gooien.
+    if (file.endsWith("thenable-not-promise.test.ts")) continue;
+    const src = stripComments(code(file));
+    for (const m of src.matchAll(/\.\s*(catch|finally)\s*\(/g)) {
+      const recv = receiverOf(src, m.index!);
+      if (!IS_BUILDER.test(recv)) continue;
+      if (recv.includes(".storage.")) continue;
+      const line = src.slice(0, m.index!).split("\n").length;
+      offenders.push(`${file}:${line}  ${recv.replace(/\s+/g, " ").slice(0, 110)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "een .catch()/.finally() op een Supabase-bouwsel gooit een TypeError in plaats van iets te vangen:\n" +
+      offenders.join("\n"),
+  );
+
+  // En de twee regels die het waren, staan er nu in hun genezen vorm — anders zou het hierboven
+  // ook groen zijn als de hele opruiming was weggehaald in plaats van gerepareerd.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /try \{\s*\n\s*await claimPipe\s*\n?\s*\.?from\("intake_claims"\)\s*\n?\s*\.?delete\(\)/,
+    "de opruimveeg staat niet meer in een try — of hij is helemaal verdwenen");
+  assert.match(intake, /await claimPipe\.from\("intake_claims"\)\.update\(\{ created_at/,
+    "het overnemen van een verlopen claim is verdwenen in plaats van gerepareerd");
+});
+
+test("[INTAKE-CRASH] een worp in de intake wordt een antwoord, geen HTML van het platform", () => {
+  // 1350 regels, vijf bestemmingen, een AI-aanroep — en geen enkele try/catch om het geheel. Een
+  // worp werd daardoor geen ANTWOORD: hij ontsnapte naar het platform, dat met een HTML-foutpagina
+  // antwoordt. De client kon er geen reden uit lezen (describeUploadFailure's laatste redmiddel) en
+  // de eigenaar las "onverwacht antwoord (HTTP 500)" — over een factuur die hij net had gefotografeerd.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /export async function POST\(req: NextRequest\) \{\s*\n\s*try \{\s*\n\s*return await runIntake\(req\)/,
+    "de deur heeft geen vangnet meer onder zich");
+  assert.match(intake, /catch \(e\) \{[\s\S]{0,400}?console\.error\("\[INTAKE-CRASH\]"?/,
+    "…of de reden wordt niet vastgelegd waar wij hem terugvinden");
+  // Het antwoord moet JSON zijn MET een zin: dat is precies wat het platform niet kon geven.
+  const staart = intake.slice(intake.indexOf("[INTAKE-CRASH]"), intake.indexOf("async function runIntake"));
+  assert.match(staart, /NextResponse\.json\(/, "de crash geeft geen JSON terug");
+  assert.match(staart, /status: 500/, "…en niet als 500");
+  assert.match(staart, /NIET opgeslagen/,
+    "de zin moet zeggen dat er niets is bewaard — anders zoekt de eigenaar naar een factuur die er niet is");
+});
