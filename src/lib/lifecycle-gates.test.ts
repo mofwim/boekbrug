@@ -15511,3 +15511,331 @@ test("[LEES] a file the app cannot read SAYS SO, and everything it read stays co
   const splitSpec = readFileSync("src/lib/btw-rows-correction.test.ts", "utf8");
   assert.match(splitSpec, /CREDIT-SIGN.*creditnota's split is negative/, "…and the signed-credit proof exists");
 });
+
+test("[STATIEGELD-GAT] het statiegeld dat de lezer liet vallen, wordt teruggevonden en aangeboden", () => {
+  // GEMELD: "het lukt de app niet om statiegeld te verwerken". Elegance Brands 2026080832 bleef
+  // hangen op "excl. + btw komt niet uit op het totaal", terwijl het ontbrekende bedrag één regel
+  // hoger op het papier stond als "Totaal Statiegeld". De prompt schrijft dit geval uitgebreid
+  // voor (STATIEGELD / EMBALLAGE in ai.ts) en het model laat het tóch vallen — dus hoort er een
+  // mechanisch vangnet onder, want bij een drankengroothandel is dit geen randgeval.
+  const mod = code("src/lib/statiegeld.ts");
+  // 1. Eén matcher voor "staat dit hele getal er". Een eigen kopie hier zou opnieuw "176,40"
+  //    binnen "1.176,40" vinden — de duizend-eurofout waar amount-grounding.ts voor bestaat.
+  assert.match(mod, /import \{ amountOccurrences \} from '\.\/amount-grounding'/,
+    "statiegeld.ts schrijft zijn eigen getalmatcher — dat is de tweede spelling die altijd afwijkt");
+  assert.doesNotMatch(mod, /indexOf\(/, "…en zoekt dus zelf niet in de tekst");
+  // 2. Het zwijgt zonder bewijs. Een verschil dat het papier niet verklaart moet onverklaard
+  //    blijven; "wij denken dat dit statiegeld is" over een misgelezen totaal is erger dan de
+  //    botte melding die het vervangt.
+  assert.match(mod, /if \(!t\) return null/, "zonder document mag er niets beweerd worden");
+
+  // 3. De import zoekt het op DEZELFDE tekst waar de bedragen tegen zijn gecontroleerd — dus ook
+  //    op de blinde transcriptie van een foto, wanneer die de getuige werd.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /witnessText = transcribed;/, "de OCR-getuige wordt niet doorgegeven");
+  assert.match(ai, /detectDepositGap\(\{[\s\S]{0,220}text: witnessText,/,
+    "de statiegeldzoektocht draait niet op de getuige die werkelijk sprak");
+  assert.match(ai, /_statiegeld = deposit;/, "de vondst wordt niet bewaard");
+
+  // 4. En het scherm biedt hem met één tik aan: het rekenwerk staat vast (de optelling bepaalt het
+  //    bedrag, het papier het woord), dus er valt alleen nog te bevestigen.
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(scherm, /applyTriplet\(setExcl\(triplet, clampAmount\(round2\(exBtw \+ depositGap\.gap\)\)\)\)/,
+    "de knop telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(scherm, /depositGap && Math\.abs\(round2\(totalIncBtw - exBtw - btwAmount\)\) > 0\.02/,
+    "de knop verdwijnt niet zodra de bedragen kloppen — hij bestaat alleen zolang er een gat is");
+});
+
+test("[BTW-NUMMER-GELEZEN] het gedrukte btw-nummer wordt bewaard vóór de sleutelfilter het weggooit", () => {
+  // De filter zelf is goed: een verminkte of buitenlandse waarde mag nooit een leverancierSLEUTEL
+  // worden. Maar hij vernietigde ook het enige bewijs dát er een btw-nummer op stond — en art. 35a
+  // Wet OB eist er een. Het verminkte geval, precies het geval dat het vertellen waard is, was het
+  // enige dat geruisloos verdween.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_btw_printed = btw;");
+  const filter = ai.indexOf("parsed.vendor_btw = /^NL\\d{9}B\\d{2}$/.test(btw)");
+  assert.ok(bewaar > 0, "het gedrukte nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of het wordt pas bewaard nadat de filter het al weggooide");
+
+  // De twee controles lezen mechanisch, zonder model: de IBAN via de gedeelde mod-97 (die ook de
+  // betaal-QR bewaakt), het btw-nummer op vorm. Een eigen mod-97 hier zou een tweede antwoord op
+  // dezelfde vraag zijn.
+  const id = code("src/lib/vendor-identity.ts");
+  assert.match(id, /import \{ isValidIban, normalizeIban \} from '\.\/epc-qr'/,
+    "vendor-identity schrijft zijn eigen IBAN-controle — één rekenregel, één plek");
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /if \(ibanShape !== 'absent'\)/, "de IBAN-vormrij verschijnt ook zonder nummer");
+  assert.match(checks, /if \(btwShape !== 'absent'\)/, "de btw-rij verschijnt ook zonder nummer");
+});
+
+test("[LEVERANCIER-VASTLEGGEN] wat de eigenaar over een leverancier vastlegt, wordt ook onthouden", () => {
+  // GEVRAAGD: de leverancier zelf kunnen bijwerken vanaf de incoming-pagina, en die correctie moet
+  // blijven gelden — anders leest de app volgende maand hetzelfde papier weer verkeerd. Gemeld op
+  // een factuur waarvan het leverancierveld een PRODUCTLIJN las ("Silifke / Hocaoglu") terwijl de
+  // afzender OZ&ER FOOD B.V. is.
+  const route = code("src/app/api/invoice/[id]/supplier/route.ts");
+
+  // 1. Het formulier wordt door dezelfde pure regel gekeurd als het scherm, en een afkeuring
+  //    schrijft NIETS. Een misgetypt IBAN hier laat de fraudecontrole bij elke echte factuur van
+  //    deze leverancier alarm slaan — waarna de eigenaar leert die waarschuwing weg te klikken.
+  assert.match(route, /const plan = planSupplierPin\(body\)/, "de route keurt het formulier niet");
+  assert.match(route, /if \(!plan\.ok\) \{[\s\S]{0,160}status: 400/, "een afkeuring mag niets schrijven");
+
+  // 2. Het ONTHOUDEN loopt via de bestaande aliasmodule — die weet wanneer leren een bewering zou
+  //    zijn die de app niet kan doen (een naam die naar een naam wijst, een spelling die al van een
+  //    ándere leverancier is). Een tweede manier om hetzelfde te onthouden zou daarvan afwijken.
+  assert.match(route, /await learnSupplierAlias\(supabase, ownerId, \{/,
+    "de route onthoudt de spelling niet — dan is dit een formulier zonder geheugen");
+  assert.match(route, /printedName: invoice\.client_name/,
+    "…en dan nog met de verkeerde sleutel: de MISGELEZEN naam is wat volgende maand terugkomt");
+
+  // 3. De factuur en zijn broertjes dragen daarna dezelfde naam, gekoppeld op supplier_id — nooit
+  //    op naam. client_name is in deze app een identiteitssleutel (IBAN-wijziging, incasso, het
+  //    creditnota-signaal, het leesgeheugen); twee spellingen splitsen de geschiedenis van één
+  //    bedrijf in tweeën.
+  assert.match(route, /\.eq\('supplier_id', supplierId\)/, "broertjes worden op naam gezocht — dat is juist de gok");
+  assert.doesNotMatch(route, /ilike\(/, "een naamvergelijking hoort hier niet");
+
+  // 4. De deur staat in de voet van het documentblad: de plek waar de eigenaar het papier vóór
+  //    zich heeft. Beide incoming-schermen tonen dat blad, dus de deur bestaat één keer.
+  const blad = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(blad, /onClick=\{\(\) => setPinning\(true\)\}/, "de knop is weg");
+  assert.match(blad, /<SupplierPinModal/, "…of het formulier hangt er niet meer aan");
+  // En de zin die de server teruggeeft blijft STAAN. Hij gaat over wat er volgende maand gebeurt,
+  // en dat is precies de mededeling die een verdwijnende toast opeet.
+  assert.match(blad, /setPinned\(r\.message \?\? /, "de uitkomst verdwijnt zonder iets te zeggen");
+});
+
+test("[STATIEGELD-GAT] dezelfde hulp op ELK scherm dat dezelfde bedragen corrigeert", () => {
+  // De klasse, niet het geval: de bevestigwachtrij kreeg de één-tik-oplossing en de gedeelde
+  // correctie-modal — die op de betaalpagina én op /bank dezelfde drie bedragen bewerkt — kreeg
+  // niets. Dan zegt het ene scherm "de bedragen kloppen niet" terwijl het andere het antwoord
+  // aanreikt, over dezelfde factuur. De kop van dat bestand schrijft precies dat voor: twee
+  // editors voor dezelfde getallen lopen uiteen, en dit is de geldlijn.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /setAmounts\(setExcl\(amounts, round2\(amounts\.ex \+ depositGap\.gap\)\)\)/,
+    "de correctie-modal telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(modal, /depositGapText\(depositGap\)/,
+    "…en legt niet uit waarom, met dezelfde zin als de controlelijst");
+
+  // Beide oproepplekken voeden hem, anders is de prop een dode letter. De bankpagina krijgt hem
+  // van de route (het scherm heeft field_confidence niet), de betaalpagina uit de rij zelf.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /depositGap: fc\?\._statiegeld \?\? null/, "de route geeft de vondst niet door");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /depositGap=\{correctDeposit\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectDeposit\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /depositGap=\{\(correctFor\.field_confidence as/, "de betaalpagina voedt de prop niet");
+});
+
+test("[REKENING-GELEZEN] een onleesbaar rekeningnummer heet niet 'er staat er geen'", () => {
+  // Dezelfde vorm als [BTW-NUMMER-GELEZEN]: de opschoning gooit weg wat ze niet kan gebruiken, en
+  // daarmee het enige bewijs dat er iets STOND. De controlelijst zei dan iets ONWAARS over het
+  // papier van de eigenaar, op de as waar fout zijn de betaling kost.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_iban_printed = iban;");
+  const filter = ai.indexOf("parsed.vendor_iban = usable ? iban : undefined;");
+  assert.ok(bewaar > 0, "het gelezen nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of pas nadat de filter het al weggooide");
+
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /checkVendorIban\(inv\.vendor_iban \|\| ibanPrintedRaw\)/,
+    "de vormcontrole kijkt niet naar wat er wél gelezen is");
+  assert.match(checks, /niet goed lezen/, "de wijzigingscontrole beweert nog steeds dat er niets stond");
+});
+
+test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de bedragen", () => {
+  // reimport-carry.ts schrijft zijn eigen waarschuwing boven die lijst: wie er een nieuwe soort
+  // verklaring bij zet en de lijst vergeet, laat hem bij een mislukte herlezing verdampen terwijl
+  // de bedragen die hij verklaart gewoon blijven staan. Dat is precies wat er gebeurde: het gat
+  // van € 176,40 bleef, de uitleg en de één-tik-oplossing waren na één druk op "Opnieuw inlezen"
+  // weg, en de controlelijst viel terug op het botte "komt niet uit op het totaal".
+  const carry = code("src/lib/reimport-carry.ts");
+  const lijst = carry.slice(
+    carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
+    carry.indexOf("const RELATION_KEYS"),
+  );
+  assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
+  assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");
+});
+
+test("[READING-MEMORY] het leesgeheugen bereikt ELKE oproepplek van dezelfde editor", () => {
+  // Dezelfde klasse als de statiegeld-knop hierboven, op een tweede soort hulp. De betaalpagina
+  // rendert de zin server-side en geeft hem aan de editor mee; /bank opende diezelfde editor en gaf
+  // niets — dus stond "bij deze leverancier corrigeer je meestal het bedrag" op het ene scherm en
+  // niet op het andere, over één factuur. Er zijn precies twee oproepplekken; beide moeten voeden.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /readingHint: readingHintFor\(invoice\.client_name, await loadReadingMemory\(/,
+    "de route rekent de zin niet uit voor het scherm dat hem zelf niet kan maken");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /readingHint=\{correctHint\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectHint\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /readingHint=\{readingHints\[/, "de betaalpagina voedt de prop niet meer");
+});
+
+test("[BOUWSEL-GEEN-BELOFTE] geen .catch() op een Supabase-bouwsel — dat is de crash, niet het vangnet", () => {
+  // DE STORING: één foto van een factuur gaf "de server gaf een onverwacht antwoord (HTTP 500)" en
+  // er werd niets bewaard. De oorzaak stond in een opruimregel in /api/intake:
+  //
+  //   await claimPipe.from("intake_claims").delete().eq(...).lt(...).catch(() => {})
+  //
+  // Een Supabase-bouwsel is een THENABLE, geen Promise: het heeft `then` en verder niets, dus
+  // `.catch` is undefined en die aanroep gooit een TypeError vóórdat de query wordt verstuurd.
+  // `as any` op de client hield tsc erbuiten. Bewezen in thenable-not-promise.test.ts — daar wordt
+  // het aan de échte bibliotheek gevraagd, niet aan een type.
+  //
+  // Deze poort is de klasse, niet het geval: overal in src, in élke route.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  // WELKE `.catch` telt? Alleen die rechtstreeks op een postgrest-bouwsel hangt. Twee vormen die
+  // er in de tekst op lijken en het NIET zijn, en die dus geen vals alarm mogen geven:
+  //
+  //   · `supabase.storage.from('documents').remove([p]).catch(…)` — storage-js is géén postgrest.
+  //     Zijn methodes zijn `async`, dus dat is een échte Promise en `.catch` bestaat er wél;
+  //   · `fetchAllRows((from, to) => supabase.from(…).range(from, to)).catch(() => [])` — de
+  //     `.catch` hangt aan de WRAPPER, een gewone async functie, niet aan het bouwsel erin.
+  //
+  // Daarom geen regex over de regel maar een echte lezing: loop vanaf `.catch(` terug over een
+  // gebalanceerde uitdrukking, en kijk waar die keten BEGINT. Begint hij bij `iets.from(` of
+  // `iets.rpc(` — dan is het een bouwsel. Begint hij bij `naam(` — dan is het een functie-uitkomst.
+  // Commentaar eerst weg, mét respect voor strings: een `//` binnen "https://…" is geen commentaar,
+  // en een keten die met een toelichtingsregel begint las anders als commentaar in plaats van als
+  // bouwsel — precies de reden dat een eerdere versie van deze poort de tweede kapotte regel MISTE.
+  const stripComments = (src: string): string => {
+    let out = "";
+    let i = 0;
+    let quote: string | null = null;
+    while (i < src.length) {
+      const c = src[i];
+      if (quote) {
+        if (c === "\\") { out += "  "; i += 2; continue; }
+        if (c === quote) quote = null;
+        out += c; i++; continue;
+      }
+      if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
+      if (c === "/" && src[i + 1] === "/") {
+        while (i < src.length && src[i] !== "\n") { out += " "; i++; }
+        continue;
+      }
+      if (c === "/" && src[i + 1] === "*") {
+        while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) { out += src[i] === "\n" ? "\n" : " "; i++; }
+        out += "  "; i += 2; continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  };
+
+  const receiverOf = (src: string, dot: number): string => {
+    let depth = 0;
+    let j = dot - 1;
+    for (; j >= 0; j--) {
+      const c = src[j];
+      if (c === ")" || c === "]" || c === "}") { depth++; continue; }
+      if (c === "(" || c === "[" || c === "{") {
+        if (depth === 0) break; // deze haak opent een OMHULLENDE aanroep — hier houdt de keten op
+        depth--;
+        continue;
+      }
+      if (depth !== 0) continue;
+      if (c === ";" || c === "," || c === "=" || c === "&" || c === "|" || c === "?" || c === ":") break;
+      // Dit bestand zet geen puntkomma's, dus een REGELEINDE is de statement-grens. Een keten mag er
+      // wél overheen lopen: `await pipeline\n  .from(…)\n  .eq(…)` is één uitdrukking. Het verschil
+      // is wat er tot nu toe verzameld is — begint dat met een punt (of is het nog leeg), dan gaat
+      // de keten verder naar boven; begint het met een woord, dan stond de kop op deze regel.
+      if (c === "\n") {
+        const soFar = src.slice(j + 1, dot).trim();
+        if (soFar === "" || soFar.startsWith(".")) continue;
+        break;
+      }
+    }
+    // `await`, `return`, `void` horen bij de STATEMENT, niet bij de keten. Laat je ze staan, dan
+    // begint de uitdrukking met een woord en herkent geen enkele regel het bouwsel er nog in.
+    return src.slice(j + 1, dot).trim().replace(/^(await|return|void)\s+/, "").trim();
+  };
+
+  // `client.from(` / `client.schema('x').from(` / `client.rpc(` — en niets ertussen. Een
+  // storage-keten valt hier vanzelf buiten, want die leest als `supabase.storage.from(`, en een
+  // wrapper leest als `fetchAllRows(`.
+  const IS_BUILDER = /^[A-Za-z_$][\w$]*(\s*\.\s*schema\s*\([^)]*\))?\s*\.\s*(from|rpc)\s*\(/;
+
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    if (file.endsWith("lifecycle-gates.test.ts")) continue;
+    // Het bewijsbestand NOEMT de vorm met opzet, om hem te laten gooien.
+    if (file.endsWith("thenable-not-promise.test.ts")) continue;
+    const src = stripComments(code(file));
+    for (const m of src.matchAll(/\.\s*(catch|finally)\s*\(/g)) {
+      const recv = receiverOf(src, m.index!);
+      if (!IS_BUILDER.test(recv)) continue;
+      if (recv.includes(".storage.")) continue;
+      const line = src.slice(0, m.index!).split("\n").length;
+      offenders.push(`${file}:${line}  ${recv.replace(/\s+/g, " ").slice(0, 110)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "een .catch()/.finally() op een Supabase-bouwsel gooit een TypeError in plaats van iets te vangen:\n" +
+      offenders.join("\n"),
+  );
+
+  // En de twee regels die het waren, staan er nu in hun genezen vorm — anders zou het hierboven
+  // ook groen zijn als de hele opruiming was weggehaald in plaats van gerepareerd.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /try \{\s*\n\s*await claimPipe\s*\n?\s*\.?from\("intake_claims"\)\s*\n?\s*\.?delete\(\)/,
+    "de opruimveeg staat niet meer in een try — of hij is helemaal verdwenen");
+  assert.match(intake, /await claimPipe\.from\("intake_claims"\)\.update\(\{ created_at/,
+    "het overnemen van een verlopen claim is verdwenen in plaats van gerepareerd");
+});
+
+test("[DEUR-VANGNET] elke deur waar een document binnenkomt heeft hetzelfde vangnet", () => {
+  // DE STORING, veralgemeend. /api/intake gooide een TypeError één regel vóór het iets opsloeg, en
+  // de crash was niet de hele schade — de STILTE was het. De route had geen try/catch om zijn body,
+  // dus de worp werd geen ANTWOORD: hij ontsnapte naar het platform, dat met HTML antwoordt. De
+  // client kan daar geen reden uit lezen en viel terug op describeUploadFailure's laatste redmiddel:
+  // "de server gaf een onverwacht antwoord (HTTP 500)". Niemand hoorde wat er was gebeurd — de
+  // eigenaar niet, en wij niet, want er werd ook niets gelogd.
+  //
+  // Vijf deuren nemen een document van een mens aan. Ze delen de storing precies, en een vangnet
+  // dat bij één deur hangt is een vangnet dat de andere vier niet hebben — dezelfde les die ai.ts
+  // al opschreef over de eigen-factuur-controle die maar aan één van de vijf deuren hing.
+  const DEUREN: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "INTAKE"],
+    ["src/app/api/email/upload/route.ts", "UPLOAD"],
+    ["src/app/api/bank/attach-invoice/route.ts", "BANK-ATTACH"],
+    ["src/app/api/email/reimport/[id]/route.ts", "REIMPORT"],
+    ["src/app/api/tools/scan-invoice/route.ts", "SCAN-TOOL"],
+  ];
+  for (const [pad, tag] of DEUREN) {
+    const src = code(pad);
+    assert.match(src, /import \{ withCrashNet \} from ["']@\/lib\/route-crash-net["']/,
+      `${pad} haalt het vangnet niet binnen`);
+    assert.match(src, new RegExp(`withCrashNet\\(\\s*\n?\\s*["']${tag.replace("-", "-")}["']`),
+      `${pad} hangt niet onder het vangnet, of niet onder zijn eigen naam`);
+    // De ZIN moet zeggen wat er met het document is gebeurd. Een vangnet dat "er ging iets mis"
+    // zegt over een bestand dat misschien wél is opgeslagen, is de melding waarna iemand ophoudt
+    // met de app te vertrouwen.
+    const zin = src.slice(src.indexOf("withCrashNet("), src.indexOf("withCrashNet(") + 700);
+    assert.match(zin, /NIET opgeslagen|NIET gewijzigd|niets van jou bewaard|niets aan gewijzigd/,
+      `${pad} zegt niet wat er met het document van de eigenaar is gebeurd`);
+  }
+
+  // En het vangnet zelf: het logt met een vindbare tag, het antwoordt in JSON met een 500, en het
+  // laat Next's eigen besturingsworpen (redirect/notFound) ONGEMOEID — die vangen zou een werkende
+  // doorverwijzing in deze foutmelding veranderen.
+  const net = code("src/lib/route-crash-net.ts");
+  assert.match(net, /unstable_rethrow\(e\)/, "het vangnet slikt een redirect() op");
+  assert.match(net, /console\.error\(`\[\$\{tag\}-CRASH\]/, "de reden wordt niet vastgelegd waar wij hem terugvinden");
+  assert.match(net, /NextResponse\.json\(\{ error: sentence \}, \{ status: 500 \}\)/, "het antwoord is geen JSON met een zin");
+});

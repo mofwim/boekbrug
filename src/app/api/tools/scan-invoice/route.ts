@@ -20,6 +20,8 @@
 // while the small output-token ceiling caps the worst case per request.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from '@/lib/route-crash-net'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, BUDGET_EXHAUSTED_MESSAGE } from '@/lib/ai-budget'
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from '@/lib/ai-model'
@@ -149,6 +151,15 @@ function safeParseJSON(raw: string): Record<string, unknown> | null {
 }
 
 export async function POST(req: NextRequest) {
+  return withCrashNet(
+    "SCAN-TOOL",
+    "Er ging iets mis bij het lezen van dit bestand. Er is niets van jou bewaard — probeer het zo " +
+      "meteen opnieuw.",
+    () => runScan(req),
+  )
+}
+
+async function runScan(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
     // Fail loudly-but-safely: never leak the config detail to the client.
     console.error('[SCAN-TOOL] ANTHROPIC_API_KEY is not set')

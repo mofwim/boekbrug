@@ -48,6 +48,9 @@ import { previewKind, noPageNotice, fileOpenHref, type PreviewKind } from '@/lib
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [LEVERANCIER-VASTLEGGEN] Eén keer opschrijven wie deze leverancier is — zie SupplierPinModal.
+import SupplierPinModal from '@/components/invoice/SupplierPinModal'
+
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
 export interface DocumentSheetInvoice extends CheckInput {
@@ -86,6 +89,11 @@ export default function InvoiceDocumentSheet({
   // way back the fix would trade one trap for another, and on a phone there is no pointer-leave to
   // fall back on.
   const [paging, setPaging] = useState(false)
+  // [LEVERANCIER-VASTLEGGEN] Het leveranciersformulier, geopend vanuit de voet van dit blad — de
+  // plek waar de eigenaar het papier vóór zich heeft en dus kan zien hoe het bedrijf zichzelf
+  // noemt. Beide incoming-schermen tonen dit blad, dus de deur bestaat maar één keer.
+  const [pinning, setPinning] = useState(false)
+  const [pinned, setPinned] = useState<string | null>(null)
 
   useEffect(() => {
     // Cancel-guarded: the sheet can be closed and reopened on another row before this resolves,
@@ -347,6 +355,12 @@ export default function InvoiceDocumentSheet({
             past. The two ways out of a sheet are chrome, not content; their reachability may not
             depend on how tall the document happens to be. */}
         <div style={{ display: 'flex', gap: 8, padding: '10px 16px 0', borderTop: `1px solid ${M3.outlineVariant}` }}>
+            <button
+              onClick={() => setPinning(true)}
+              style={{ flex: 1, padding: '11px 14px', borderRadius: R.full, border: `1px solid ${M3.surfaceVariant}`, background: '#fff', color: M3.primary, fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
+            >
+              {t('lev.knop')}
+            </button>
             {onCorrect && (
               <button
                 onClick={() => { onClose(); onCorrect() }}
@@ -367,7 +381,23 @@ export default function InvoiceDocumentSheet({
               </a>
             )}
         </div>
+        {/* [LEVERANCIER-VASTLEGGEN] Wat de server erover te zeggen had, blijft staan: het gaat over
+            wat er VOLGENDE maand gebeurt, en dat is precies de zin die een verdwijnende toast
+            opeet. */}
+        {pinned && (
+          <p style={{ fontSize: 12.5, color: '#137333', margin: '8px 16px 0', lineHeight: 1.45 }}>{pinned}</p>
+        )}
       </div>
+      {pinning && (
+        <SupplierPinModal
+          invoice={{ id: invoice.id, client_name: invoice.client_name, vendor_iban: invoice.vendor_iban ?? null }}
+          onClose={() => setPinning(false)}
+          onSaved={(r) => {
+            setPinning(false)
+            setPinned(r.message ?? `${t('lev.opgeslagen')}: ${r.name}`)
+          }}
+        />
+      )}
     </div>
   )
   if (typeof document === 'undefined') return sheet

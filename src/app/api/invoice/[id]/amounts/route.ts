@@ -57,8 +57,10 @@ import { requireOwner } from "@/lib/owner-only";
 import { hasSettledMoney } from "@/lib/invoice-removal";
 // [AMOUNT-TRIPLET] The same tolerance the arithmetic gate uses, so screen and server agree.
 import { SUM_TOLERANCE } from "@/lib/btw-reconcile";
-// [READING-MEMORY] Which fields the human changed about the reader's answer.
-import { correctedFields } from "@/lib/reading-memory";
+// [READING-MEMORY] Which fields the human changed about the reader's answer, and — for the GET —
+// the sentence that says what this owner keeps fixing at THIS supplier.
+import { correctedFields, readingHintFor } from "@/lib/reading-memory";
+import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
 // [SPLIT-CORRECTIE] The owner's per-rate split, validated against the final totals.
@@ -129,12 +131,25 @@ export async function GET(
 
   // [SPLIT-CORRECTIE] Only the split leaves this route — the rest of field_confidence is the
   // machine's testimony (grounding, safecore, e-invoice witness) and stays server-side.
-  const fc = (invoice as { field_confidence?: { _btw_rows?: unknown } | null }).field_confidence;
+  const fc = (invoice as {
+    field_confidence?: { _btw_rows?: unknown; _statiegeld?: unknown } | null
+  }).field_confidence;
   const { field_confidence: _weg, ...invoiceZonderFc } = invoice as Record<string, unknown>;
   return NextResponse.json({
     ok: true,
     invoice: invoiceZonderFc,
     btwRows: Array.isArray(fc?._btw_rows) ? fc._btw_rows : null,
+    // [STATIEGELD-GAT] The deposit line the import found back on the paper, when the breakdown
+    // comes up short. Same rule as the split above: not the whole testimony, only the one fact the
+    // editor can act on — and it must reach BOTH editors, or the same invoice gets help on the
+    // verify screen and none on the screen where the owner is about to pay it.
+    depositGap: fc?._statiegeld ?? null,
+    // [READING-MEMORY] Same rule as the deposit above, on a second kind of help. The pay screen
+    // renders this hint server-side and hands it to the editor; /bank opens the SAME editor and
+    // handed it nothing, so "bij deze leverancier corrigeer je meestal het bedrag" appeared on one
+    // screen and not on the other, over one invoice. loadReadingMemory swallows its own failures
+    // and answers an empty map, so a hiccup in the audit read costs the hint and never the dialog.
+    readingHint: readingHintFor(invoice.client_name, await loadReadingMemory(supabase, user.id)),
     editable,
     reason: editable
       ? null

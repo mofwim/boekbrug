@@ -162,11 +162,18 @@ function hasCents(needle: string): boolean {
   return /[.,]\d{2}$/.test(needle)
 }
 
-function occursWhole(haystack: string, needle: string): boolean {
-  let from = 0
+/**
+ * Where does `needle` occur as a WHOLE number, at or after `from`? −1 when nowhere.
+ *
+ * The index matters to callers who need to look at what SURROUNDS the number rather than merely
+ * whether it is there — [STATIEGELD-GAT] asks whether a deposit label stands beside the amount.
+ * Exposing the position instead of copying this matcher keeps ONE definition of "this is the whole
+ * number and not a slice of a bigger one", which is the entire reason this module exists.
+ */
+function findWhole(haystack: string, needle: string, from = 0): number {
   for (;;) {
     const i = haystack.indexOf(needle, from)
-    if (i === -1) return false
+    if (i === -1) return -1
     const before = haystack[i - 1] ?? ''
     const beforeTwo = haystack[i - 2] ?? ''
     const after = haystack[i + needle.length] ?? ''
@@ -192,9 +199,40 @@ function occursWhole(haystack: string, needle: string): boolean {
     // there rejected "2.265,41" whenever another amount followed it on the same line.
     const groupedAfter = !hasCents(needle) && SEP.test(after) && /[0-9]/.test(afterTwo)
 
-    if (!digitBefore && !groupedBefore && !digitAfter && !groupedAfter) return true
+    if (!digitBefore && !groupedBefore && !digitAfter && !groupedAfter) return i
     from = i + 1
   }
+}
+
+function occursWhole(haystack: string, needle: string): boolean {
+  return findWhole(haystack, needle) !== -1
+}
+
+/**
+ * Every position where `amount` occurs in `text` as a whole number, in any of its printed forms.
+ *
+ * For callers that must read the CONTEXT of the number rather than its presence. Empty when the
+ * text is empty, the amount is not finite, or it is too small to mean anything — the same three
+ * refusals groundAmount makes, so the two can never disagree about what "occurs" means.
+ */
+export function amountOccurrences(
+  amount: number | null | undefined,
+  text: string | null | undefined,
+): number[] {
+  const t = (text ?? '').trim()
+  if (t.length === 0) return []
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return []
+  if (Math.abs(amount) < MIN_MEANINGFUL) return []
+  const out: number[] = []
+  for (const v of variants(amount)) {
+    for (let from = 0; ; ) {
+      const i = findWhole(t, v, from)
+      if (i === -1) break
+      out.push(i)
+      from = i + 1
+    }
+  }
+  return out.sort((a, b) => a - b)
 }
 
 /**
