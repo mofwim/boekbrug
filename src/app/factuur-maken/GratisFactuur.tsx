@@ -33,6 +33,9 @@ import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
 import { vakOpties, vakBySlug, vakRegelsVoorFormulier, regelsNaVakwissel } from '@/lib/vak-sjablonen'
+import { parseVak, VAK_PARAM } from '@/lib/vak-profile'
+import { trackFunnel, FUNNEL_EVENTS } from '@/lib/funnel-events'
+import { rememberAttribution } from '@/lib/campaign-attribution'
 import { INVOICE_TOOL_FAQ } from '@/lib/invoice-tool-faq'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts. The public tool gets it
 // too: a wrong invoice date here becomes a wrong quarter the moment the invoice is real.
@@ -282,6 +285,39 @@ export default function GratisFactuur(
   { initialVak = '', belowTool }: { initialVak?: string; belowTool?: React.ReactNode } = {},
 ) {
   const [hydrated, setHydrated] = useState(false)
+
+  // ── [VAK-BRUG] + [FUNNEL-METING] ────────────────────────────────────────────
+  // Het vak zoals de ROUTE het kent. `initialVak` en niet `vak`: de keuzelijst in het formulier
+  // verandert de factuurregels, maar zegt niets over waar de bezoeker vandaan kwam. parseVak()
+  // laat alleen een bestaande slug door, dus een hernoemd of verzonnen vak valt hier stil weg.
+  const herkomstVak = parseVak(initialVak)
+
+  // De registratielink, mét het vak eraan. Zonder vak blijft het exact de oude kale /register,
+  // zodat de generieke pagina onveranderd werkt — het vak is een verbetering van het pad, nooit
+  // een voorwaarde ervoor.
+  const ctaHref = herkomstVak
+    ? `/register?${VAK_PARAM}=${encodeURIComponent(herkomstVak)}`
+    : '/register'
+
+  // De campagne van dit bezoek, gelezen bij binnenkomst en bewaard tot de registratie. Zie
+  // campaign-attribution.ts: first touch wint, zeven dagen houdbaar.
+  const herkomst = useRef<{ source: string; medium: string; campaign: string } | null>(null)
+
+  // Één keer per bezoek, niet één keer per render — vandaar de refs. Een teller die meeloopt met
+  // elke toetsaanslag meet de tikker, niet de trechter.
+  const gemeld = useRef({ pageView: false, created: false, handoff: false })
+
+  function meldHandoff() {
+    if (gemeld.current.handoff) return
+    gemeld.current.handoff = true
+    trackFunnel(FUNNEL_EVENTS.handoffCreated, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }
+
+  function handleCtaClick() {
+    trackFunnel(FUNNEL_EVENTS.ctaClick, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }
+
+
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
   // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
   // lazy initializer yields the SAME value on server and client — no effect,
@@ -492,8 +528,21 @@ export default function GratisFactuur(
       })),
       invoiceDate,
       deliveryDate,
+      // [VAK-BRUG] Het vak reist mee in de overdracht, niet alleen in de link. Wie de CTA
+      // overslaat en later zelf naar /register loopt — of de bevestigingsmail in een ander
+      // tabblad opent — heeft geen querystring meer; dan is dit de enige plek waar nog staat
+      // welk beroep hij ons verteld had.
+      vak: herkomstVak,
     }))
-  }, [hydrated, sender, client, lines, invoiceDate, deliveryDate])
+    // [FUNNEL-METING] Alleen melden als er ook echt iets bewaard IS. Iemand die de pagina opent
+    // en meteen wegklikt heeft geen overdracht aangemaakt, en dat als conversiestap tellen zou
+    // de trechter breder maken dan hij is.
+    if (client.client_name.trim() || numericLines.some((l) => l.line_total !== 0)) meldHandoff()
+    // meldHandoff staat bewust niet in de deps: hij bewaakt zichzelf met gemeld.current en heeft
+    // geen state die kan verouderen. Meesturen zou de lijst laten meebewegen met een functie die
+    // elke render opnieuw ontstaat, en dan draait dit effect voor niets.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, sender, client, lines, invoiceDate, deliveryDate, herkomstVak, numericLines])
 
   // [VAK-SJABLONEN] Regels van een beroep erbij zetten. Ingevulde regels blijven staan; wat het
   // VORIGE sjabloon onaangeraakt heeft achtergelaten gaat weg.
@@ -517,6 +566,27 @@ export default function GratisFactuur(
     (sender.company_name.trim() || sender.full_name.trim()) &&
     client.client_name.trim() &&
     numericLines.some((l) => l.line_total !== 0)
+
+  useEffect(() => {
+    if (!hydrated || gemeld.current.pageView) return
+    gemeld.current.pageView = true
+    try {
+      herkomst.current = rememberAttribution(localStorage, window.location.search)
+    } catch {
+      /* storage geblokkeerd — het bezoek telt nog steeds mee, alleen zonder campagne */
+    }
+    trackFunnel(FUNNEL_EVENTS.pageView, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }, [hydrated, herkomstVak])
+
+  // "Aangemaakt" is het moment waarop er een echte factuur STAAT: een tegenpartij en een regel met
+  // een bedrag. Dat is dezelfde drempel als de downloadknop, want een leeg formulier dat iemand
+  // opende en verliet is geen aangemaakte factuur — en juist het verschil tussen dit event en
+  // pageView vertelt of mensen de tool begrijpen.
+  useEffect(() => {
+    if (!hydrated || gemeld.current.created || !canDownload) return
+    gemeld.current.created = true
+    trackFunnel(FUNNEL_EVENTS.created, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }, [hydrated, canDownload, herkomstVak])
 
   const setS = (k: keyof Sender) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSender((p) => ({ ...p, [k]: e.target.value }))
@@ -549,6 +619,10 @@ export default function GratisFactuur(
       /* storage blocked — the advance below still works for this session */
     }
     setInvoiceNumber((n) => nextInvoiceNumber(n))
+    // [FUNNEL-METING] Het echte moment: er ligt nu een factuur op zijn schijf. Het verschil
+    // tussen dit event en invoice_cta_click is de vraag waar deze hele fase over gaat — of
+    // iemand die waarde kreeg ook doorloopt naar een account.
+    trackFunnel(FUNNEL_EVENTS.pdfDownload, { vak: herkomstVak, ...(herkomst.current ?? {}) })
   }
 
   const fileName = `${invoiceNumber || 'concept'}.pdf`
@@ -959,7 +1033,20 @@ export default function GratisFactuur(
             Maak een gratis account — <strong>deze factuur gaat mee</strong>. Je bedrijfsgegevens,
             je klant en je regels staan er straks al in; je hoeft niets opnieuw in te tikken.
           </div>
-          <Link href="/register" style={s.btnPrimary}>
+          {/* [VAK-BRUG] De brug had geen oprit. /register LEEST ?vak= al, vak-profile.ts is
+              getest, en profile_vak.sql zet het door naar profiles.vak — maar geen enkele link in
+              de app zette de parameter ooit, en op het registratieformulier staat geen keuzelijst.
+              Een loodgieter die via /factuur-maken/loodgieter binnenkwam registreerde dus als
+              "onbekend vak", precies de situatie die de kop van vak-profile.ts beschrijft.
+
+              De bron is `initialVak`, de ROUTE — niet `vak`, de keuzelijst in het formulier. Wie
+              op de generieke pagina een vak aanklikt heeft dat niet aan óns verteld maar aan zijn
+              factuurregels; die keuze reist mee in de overdracht en hoort niet als
+              herkomst-attributie te tellen.
+
+              parseVak() zeeft: alleen een slug die in VAKKEN bestaat komt in de URL terecht, dus
+              een verzonnen of hernoemd vak wordt hier stil weggelaten in plaats van doorgegeven. */}
+          <Link href={ctaHref} style={s.btnPrimary} onClick={handleCtaClick}>
             Gratis account maken
           </Link>
           <div style={{ fontSize: 12, color: '#5f6368', marginTop: 12 }}>

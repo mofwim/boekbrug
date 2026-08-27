@@ -13,6 +13,8 @@ import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
 import { ROLE_PARAM, parseRole } from '@/lib/register-intent'
 import { EMAIL_REGEX } from '@/lib/validation'
 import { VAK_PARAM, parseVak } from '@/lib/vak-profile'
+import { trackFunnel, FUNNEL_EVENTS } from '@/lib/funnel-events'
+import { readAttribution } from '@/lib/campaign-attribution'
 import {
   PURPOSE_PARAM,
   landingPath,
@@ -81,7 +83,37 @@ function RegisterContent() {
   // dat hij een account maakte, precies wanneer het het meest waard is: zijn prijslijst begint
   // leeg en de Kassa opent op "je prijslijst is nog leeg". Onbekend → null, en dat is de normale
   // toestand van elk bestaand account. Zie vak-profile.ts.
-  const vak = parseVak(searchParams.get(VAK_PARAM))
+  const vakUitUrl = parseVak(searchParams.get(VAK_PARAM))
+
+  // [VAK-BRUG] De querystring is de eerste bron, niet de enige. Wie de CTA overslaat, of wie zijn
+  // bevestigingsmail in een ander tabblad opent, komt hier zonder ?vak= binnen terwijl hij zijn
+  // beroep wél gekozen had — dan staat het nog in de overdracht. parseVak() opnieuw, want wat uit
+  // opslag komt is net zo min te vertrouwen als wat uit een URL komt.
+  const [vakUitOverdracht, setVakUitOverdracht] = useState<string | null>(null)
+  useEffect(() => {
+    if (vakUitUrl) return
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setVakUitOverdracht(parseVak(readHandoff(localStorage)?.vak))
+    } catch {
+      /* geblokkeerde opslag — dan blijft het vak onbekend, en dat is de normale toestand */
+    }
+  }, [vakUitUrl])
+
+  const vak = vakUitUrl ?? vakUitOverdracht
+
+  /**
+   * [HERKOMST] De campagne van dit bezoek, als er een was. Gelezen bij het event en niet in state
+   * gezet: dit is nooit iets dat het scherm laat zien, alleen iets dat de meting vergezelt.
+   */
+  function campagne(): { source?: string; medium?: string; campaign?: string } {
+    try {
+      const h = readAttribution(localStorage)
+      return h ? { source: h.source, medium: h.medium, campaign: h.campaign } : {}
+    } catch {
+      return {}
+    }
+  }
   const copy = purposeCopy(purpose)
 
   // Welke stap er te zien is. Op het archiefpad is dat altijd stap 2, wat er ook in `step`
@@ -244,6 +276,11 @@ function RegisterContent() {
     // eerder was gelukt.
     if (loading || googleLoading) return
 
+    // [FUNNEL-METING] Geteld ná de dubbel-verstuurwacht en vóór de veldvalidatie: dit is de
+    // POGING. Het verschil met register_completed is precies de vraag "hoeveel mensen wilden wel
+    // maar kwamen er niet doorheen", en die vraag verdwijnt als we pas bij succes zouden meten.
+    trackFunnel(FUNNEL_EVENTS.registerStarted, { vak, ...campagne() })
+
     // Client-side check before we call Supabase, with simple field messages.
     const errs: { name?: string; email?: string; password?: string } = {}
     if (!fullName.trim()) errs.name = 'Vul je naam in'
@@ -368,6 +405,10 @@ function RegisterContent() {
     // redirect to /dashboard that would just bounce back to /login.
     const { data: sessionData } = await getBrowserClient().auth.getSession()
     if (!sessionData.session) {
+      // [FUNNEL-METING] Het account BESTAAT nu; alleen de bevestiging staat nog open. Hier tellen
+      // en niet na de mail, want de bevestigingsklik landt op een andere route in een ander
+      // tabblad — daar meten zou een deel van de geslaagde registraties structureel missen.
+      trackFunnel(FUNNEL_EVENTS.registerCompleted, { vak, ...campagne() })
       setEmailSent(true)
       setLoading(false)
       return
@@ -425,6 +466,11 @@ function RegisterContent() {
     // `router.push(decodeURIComponent(redirectUrl))`, wat volgens de documentatie van deze router
     // uitdrukkelijk een XSS-gat is (een `javascript:`-URL wordt UITGEVOERD op onze eigen pagina) —
     // en dat precies op het moment dat er net een verse sessie is aangemaakt.
+    // [FUNNEL-METING] Het tweede geslaagde pad: bevestiging staat uit, er is meteen een sessie.
+    // Beide uitgangen tellen hetzelfde event, want voor de trechter zijn het dezelfde uitkomst —
+    // er is een account. Alleen hier tellen zou elke registratie missen die op een
+    // bevestigingsmail wacht, en dat is in productie juist de normale route.
+    trackFunnel(FUNNEL_EVENTS.registerCompleted, { vak, ...campagne() })
     router.push(safeRedirect(searchParams.get('redirect'), landingPath(purpose)))
   }
 
