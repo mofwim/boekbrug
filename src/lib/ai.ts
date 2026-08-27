@@ -82,6 +82,8 @@ import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, AI_BUDGET_EXHAUSTED_ER
 import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 // [GEGROND] The independent witness on a money field — see amount-grounding.ts.
 import { groundMoneyFields } from './amount-grounding';
+// [STATIEGELD-GAT] The deposit line the reader dropped, found back on the paper — see statiegeld.ts.
+import { detectDepositGap } from './statiegeld';
 // [GEGROND-NAAM] The same independent witness, for the supplier NAME — the one field on an
 // incoming invoice that had no check at all. See the header of that file for the read that
 // showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
@@ -2017,6 +2019,10 @@ Return JSON only.`;
         btwAmount: parsed.btw_amount,
       };
       let grounding = groundMoneyFields(amounts, statementText, 'text');
+      // [STATIEGELD-GAT] Which witness ended up speaking — the document's own characters, or the
+      // blind transcription below. The deposit search needs the SAME text the grounding used, and
+      // tracking it here is cheaper than re-deciding which one it was afterwards.
+      let witnessText: string | null = statementText;
 
       // [E-FACTUUR] Before any of the reading checks: does this PDF carry the invoice a SECOND
       // time, as structured XML the supplier produced? Factur-X and ZUGFeRD are ordinary-looking
@@ -2068,10 +2074,36 @@ Return JSON only.`;
         Number.isFinite(parsed.total_inc_btw)
       ) {
         const transcribed = await transcribeAmountsForGrounding(fileBase64, mimeType, model ?? CLAUDE_MODEL);
-        if (transcribed) grounding = groundMoneyFields(amounts, transcribed, 'ocr');
+        if (transcribed) {
+          grounding = groundMoneyFields(amounts, transcribed, 'ocr');
+          witnessText = transcribed;
+        }
       }
 
       (parsed.field_confidence as unknown as Record<string, unknown>)._grounding = grounding;
+
+      // [STATIEGELD-GAT] The deposit line the reader dropped, found back on the paper.
+      //
+      // The prompt spells this case out at length (STATIEGELD / EMBALLAGE above) and the model
+      // still drops it — reported on Elegance Brands 2026080832, where Subtotaal 835,30 + BTW
+      // 75,22 sat under a printed Totaal of 1.086,92 and the missing 176,40 stood one line above
+      // it, labelled "Totaal Statiegeld". A rule the reader is ASKED to follow needs a mechanical
+      // net underneath it, because on a drinks wholesaler's invoice this is not an edge case.
+      //
+      // Stored, never applied: the arithmetic fixes the amount and the paper names it, but what
+      // gets booked as cost is the owner's to confirm — one tap on the verify screen. See
+      // statiegeld.ts for why folding it into the base leaves the btw untouched.
+      {
+        const deposit = detectDepositGap({
+          totalExBtw: parsed.total_ex_btw,
+          btwAmount: parsed.btw_amount,
+          totalIncBtw: parsed.total_inc_btw,
+          text: witnessText,
+        });
+        if (deposit) {
+          (parsed.field_confidence as unknown as Record<string, unknown>)._statiegeld = deposit;
+        }
+      }
 
       // [GEGROND-NAAM] And the same question about the NAME, on the same characters. Grounded
       // against `statementText` only — never against an OCR transcription, because that
@@ -2144,8 +2176,16 @@ Return JSON only.`;
     // dropped to avoid persisting junk (a real IBAN is ≥15 chars).
     if (typeof parsed.vendor_iban === 'string') {
       const iban = parsed.vendor_iban.replace(/\s+/g, '').toUpperCase();
-      parsed.vendor_iban =
-        iban.length >= 15 && /^[A-Z0-9]+$/.test(iban) ? iban : undefined;
+      const usable = iban.length >= 15 && /^[A-Z0-9]+$/.test(iban);
+      // [REKENING-GELEZEN] Same lesson as the btw number one block down: the drop is right, and
+      // it destroyed the only evidence that this invoice printed an account number at all. The
+      // checklist then told the owner "er staat geen rekeningnummer op deze factuur" about a page
+      // that plainly carries one — which is not a gap in our looking, it is a false statement
+      // about their paper, on the axis where being wrong costs them the payment.
+      if (iban && !usable) {
+        (parsed.field_confidence as unknown as Record<string, unknown>)._vendor_iban_printed = iban;
+      }
+      parsed.vendor_iban = usable ? iban : undefined;
     } else {
       parsed.vendor_iban = undefined;
     }
@@ -2160,6 +2200,18 @@ Return JSON only.`;
     // (NL + 9 digits + B + 2 digits). A foreign/short/garbled value → undefined (not a key).
     if (typeof parsed.vendor_btw === 'string') {
       const btw = parsed.vendor_btw.replace(/\s+/g, '').toUpperCase();
+      // [BTW-NUMMER-GELEZEN] Keep what was PRINTED before the identity filter throws it away.
+      //
+      // The drop below is right on its own terms — a garbled or foreign value must never become a
+      // supplier KEY. But it also destroys the only evidence that this invoice printed a btw
+      // number at all, and art. 35a Wet OB requires one on a real factuur: without it the
+      // voorbelasting on this cost is refusable. So the malformed case, which is exactly the case
+      // worth telling the owner about, was the one case that vanished silently.
+      //
+      // Stored, judged later (vendor-identity.ts). Nothing downstream reads this as a key.
+      if (btw) {
+        (parsed.field_confidence as unknown as Record<string, unknown>)._vendor_btw_printed = btw;
+      }
       parsed.vendor_btw = /^NL\d{9}B\d{2}$/.test(btw) ? btw : undefined;
     } else {
       parsed.vendor_btw = undefined;

@@ -3,6 +3,8 @@
 // [BOEK-033] Smart structure: is_system + folder_type in select
 
 import { NextRequest, NextResponse } from "next/server";
+// [VOL-GELEZEN] PostgREST kapt stil af op ~1000 rijen — zie supabase-paginate.ts.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { searchBestanden, searchFolders, ensureSharedFolder } from "@/lib/bestanden";
 import type { Database } from "@/types/database.types";
@@ -32,13 +34,25 @@ export async function GET(req: NextRequest) {
   // [BESTANDEN-SMART] Powers the sidebar storage meter. Sums file_size over the
   // owner's non-trashed documents — a single indexed scan (documents_user_created).
   if (stats) {
-    const { data, error } = await supabase
-      .from("documents").select("file_size")
-      .eq("user_id", user.id).eq("trashed", false);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    const rows = data ?? [];
-    const bytes = rows.reduce((sum, d) => sum + (d.file_size ?? 0), 0);
-    return NextResponse.json({ count: rows.length, bytes });
+    // [VOL-GELEZEN] Gepagineerd. PostgREST kapt elk antwoord stil af op ~1000 rijen, en hier
+    // vielen BEIDE getallen daarin: een eigenaar met 3.000 bestanden zag "1.000 bestanden" en de
+    // opgetelde omvang van alleen die eerste duizend. Geen foutmelding, geen vlag — de meter
+    // stond gewoon te laag, en te laag stelt gerust. De index waar de opmerking hieronder het
+    // over had bestond wel; de rijlimiet was een andere grens.
+    try {
+      const rows = await fetchAllRows<{ file_size: number | null }>((from, to) =>
+        supabase
+          .from("documents").select("id, file_size")
+          .eq("user_id", user.id).eq("trashed", false)
+          .order("id", { ascending: true }).range(from, to),
+      );
+      const bytes = rows.reduce((sum, d) => sum + (d.file_size ?? 0), 0);
+      return NextResponse.json({ count: rows.length, bytes });
+    } catch (e) {
+      // [NO-SILENT-EMPTY] fetchAllRows THROWS on a failed page — a half-read total is worse than
+      // none, because nothing on the meter says it is half.
+      return NextResponse.json({ error: e instanceof Error ? e.message : "stats_failed" }, { status: 500 });
+    }
   }
 
   // ── Smart views: recent / starred / shared ──

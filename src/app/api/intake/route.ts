@@ -21,6 +21,8 @@
 import { round2 } from "@/lib/invoice-totals"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
 import { createNotification } from "@/lib/notifications"
@@ -135,7 +137,34 @@ export const maxDuration = 120
 const INTAKE_SOURCES = ["camera", "upload"] as const
 type IntakeSource = (typeof INTAKE_SOURCES)[number]
 
+/**
+ * [BOUWSEL-GEEN-BELOFTE] The one door, with a net under it.
+ *
+ * Everything below runs unguarded: 1350 lines, five destinations, a dozen tables and an AI call,
+ * and not one try/catch around the whole. A throw anywhere in there did not become an answer — it
+ * escaped to the platform, which replies with an HTML error page. The owner's screen then read
+ * "de server gaf een onverwacht antwoord (HTTP 500) — probeer het opnieuw", because the client
+ * could not even parse a reason out of it (describeUploadFailure's last resort, upload-failure.ts).
+ *
+ * That is how a one-word mistake in an opportunistic cleanup line took down photographing an
+ * invoice altogether, and told nobody what happened: no JSON, no sentence, nothing in our logs
+ * that pointed at the line. This wrapper does not make a crash harmless — nothing was written, and
+ * the owner still has to take the photo again — but it makes it VISIBLE: named in the server log
+ * with its stack, and answered in the owner's language instead of by the platform.
+ *
+ * Deliberately a wrapper and not a try/catch around the body: re-indenting the whole function
+ * would collide with every other session working in this file, for zero behaviour.
+ */
 export async function POST(req: NextRequest) {
+  return withCrashNet(
+    "INTAKE",
+    "Er ging iets mis bij het verwerken van dit bestand. Het is NIET opgeslagen — maak de foto " +
+      "opnieuw of probeer het zo meteen. Blijft dit gebeuren, laat het ons weten: wij zien de fout aan onze kant.",
+    () => runIntake(req),
+  )
+}
+
+async function runIntake(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
   const {
     data: { user },
@@ -758,7 +787,11 @@ export async function POST(req: NextRequest) {
           }
           if (holder) {
             // Stale — take it over so a crashed request never wedges this supplier's invoices.
-            await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id).catch(() => {})
+            // [BOUWSEL-GEEN-BELOFTE] try/catch, not `.catch()` — see the sweep below for why the
+            // difference is not cosmetic.
+            try {
+              await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id)
+            } catch { /* hygiene: never let taking over a dead claim refuse a real upload */ }
           }
         } else if (claimErr && (claimErr as { code?: string }).code !== "42P01") {
           // Any other failure: log, proceed. The backstop must never refuse real uploads over
@@ -766,7 +799,25 @@ export async function POST(req: NextRequest) {
           console.error("[INTAKE-CLAIM] claim insert failed (proceeding without backstop)", { error: claimErr.message })
         }
         // Opportunistic hygiene: sweep this user's stale claims so the table stays tiny.
-        await claimPipe.from("intake_claims").delete().eq("user_id", user.id).lt("created_at", new Date(Date.now() - 3_600_000).toISOString()).catch(() => {})
+        //
+        // [BOUWSEL-GEEN-BELOFTE] This line said `.catch(() => {})` and that was not a safety net —
+        // it was the crash. A Supabase query builder is a THENABLE, not a Promise: it implements
+        // `then` and nothing else, so `.catch` is `undefined` and calling it throws a TypeError
+        // before the query is ever sent. `as any` on claimPipe (needed because intake_claims is
+        // not in the generated types) is what let it past the compiler.
+        //
+        // It sits on the main road: every photographed invoice or receipt that is not a hard
+        // duplicate and yields a claim key passes here, BEFORE the document and the invoice are
+        // written. So the owner photographed a real invoice, waited through the AI read, and got
+        // "de server gaf een onverwacht antwoord (HTTP 500)" with nothing stored — the throw
+        // escaped to the platform, which answers HTML, so even the reason was lost on the way out.
+        try {
+          await claimPipe
+            .from("intake_claims")
+            .delete()
+            .eq("user_id", user.id)
+            .lt("created_at", new Date(Date.now() - 3_600_000).toISOString())
+        } catch { /* hygiene only — a full table is untidy, a refused invoice is damage */ }
       }
     }
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.

@@ -17,6 +17,8 @@
 // The re-read result never leaves the owner's account and never marks anything paid/shared.
 
 import { NextRequest, NextResponse } from "next/server";
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { classifyAttachment } from "@/lib/email-integration";
@@ -115,6 +117,18 @@ function refuseRead(
 }
 
 export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  return withCrashNet(
+    "REIMPORT",
+    "Er ging iets mis bij het opnieuw inlezen. De factuur staat er nog precies zoals hij stond — " +
+      "er is niets aan gewijzigd. Probeer het zo meteen opnieuw.",
+    () => runReimport(req, ctx),
+  )
+}
+
+async function runReimport(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {

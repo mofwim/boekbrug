@@ -39,6 +39,8 @@ import { M3, R, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 import { parseAmountInput } from '@/lib/partial-payment'
 // [FULL-CORRECTION] The correction editor, shared with the pay screen.
 import InvoiceCorrectionModal, { type BtwSplitRow, type CorrectableInvoice } from '@/components/invoice/InvoiceCorrectionModal'
+// [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
+import { type DepositGap } from '@/lib/statiegeld'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
@@ -288,6 +290,11 @@ export default function BankClient() {
   const [correctFor, setCorrectFor] = useState<CorrectableInvoice | null>(null)
   // [SPLIT-CORRECTIE] De specificatie hoort bij dezelfde GET; het bewijsblob zelf blijft server-side.
   const [correctBtwRows, setCorrectBtwRows] = useState<BtwSplitRow[] | null>(null)
+  // [STATIEGELD-GAT] Wat de import op het papier terugvond voor een optelling die tekortkomt.
+  const [correctDeposit, setCorrectDeposit] = useState<DepositGap | null>(null)
+  // [READING-MEMORY] Wat deze eigenaar bij DEZE leverancier steeds verbetert. De betaalpagina gaf
+  // dat al mee aan dezelfde editor; dit scherm gaf niets.
+  const [correctHint, setCorrectHint] = useState<string | null>(null)
   // [DECLARED-INVOICE] Busy while the missing invoice named in the payment is being read.
   const [addingMissing, setAddingMissing] = useState(false)
   const missingFileRef = useRef<HTMLInputElement | null>(null)
@@ -1087,6 +1094,8 @@ export default function BankClient() {
         return
       }
       setCorrectBtwRows(Array.isArray(json.btwRows) ? (json.btwRows as BtwSplitRow[]) : null)
+      setCorrectDeposit((json.depositGap as DepositGap | null) ?? null)
+      setCorrectHint(typeof json.readingHint === 'string' ? json.readingHint : null)
       setCorrectFor(json.invoice as CorrectableInvoice)
     } catch {
       showToast(t('bank.fout.factuurOphalen'))
@@ -2130,6 +2139,8 @@ export default function BankClient() {
         <InvoiceCorrectionModal
           invoice={correctFor}
           btwRows={correctBtwRows}
+          depositGap={correctDeposit}
+          readingHint={correctHint}
           onClose={() => setCorrectFor(null)}
           onMessage={showToast}
           // The corrected amounts change what this payment can settle, so the match is recomputed

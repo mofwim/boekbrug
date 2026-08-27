@@ -39,6 +39,14 @@ const AMOUNT_EXPLAINING_KEYS: readonly string[] = [
   "_btw_rows",        // [BTW-SPLIT]   de btw-specificatie zoals die op het papier staat
   "_total_printed",   // [PRINTED-TOTAL] het gedrukte te-betalen totaal, dat afwijkt van het onze
   "_total_derived",   // [PRINTED-TOTAL] wij hebben één van de drie bedragen zelf uitgerekend
+  // [STATIEGELD-GAT] Precies het geval waar de regel hierboven voor is geschreven, en het werd bij
+  // het toevoegen van de sleutel vergeten. Deze verklaart het GAT in de opgeslagen bedragen: "het
+  // verschil van € 176,40 staat op de factuur als Statiegeld". Blijven die bedragen staan, dan
+  // staat het gat er ook nog — maar de verklaring én de één-tik-oplossing waren na één druk op
+  // "Opnieuw inlezen" weg, en de controlelijst viel terug op het botte "excl. + btw komt niet uit
+  // op het totaal". De knop die het lezen moest verbeteren maakte de factuur dan minder begrijpelijk
+  // dan ervoor.
+  "_statiegeld",
 ];
 
 /**

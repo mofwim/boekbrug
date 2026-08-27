@@ -13,6 +13,8 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+// [VERVANG-OVERAL] Eén regel voor "is er een gemarkeerde tweeling?" — gedeeld met de betaalpagina.
+import { supersedeTargetOf } from "@/lib/supersede-target";
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -44,6 +46,8 @@ import { describeUploadFailure } from "@/lib/upload-failure";
 import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from "@/lib/parse-nl";
+// [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
+import { type DepositGap } from "@/lib/statiegeld";
 // [CENT] Cent rounding comes from invoice-totals.round2 — one definition for the whole app.
 import { round2 } from "@/lib/invoice-totals";
 // [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
@@ -1049,6 +1053,10 @@ export function ConfirmPaidModal({
   const isCredit = invoice.invoice_type === "creditnota" || declaredCredit;
   const clampAmount = (raw: number) => (isCredit ? raw : Math.max(0, raw));
 
+  // [STATIEGELD-GAT] Wat de import op het papier terugvond voor een optelling die tekortkomt.
+  // Alleen gelezen — het zoeken gebeurt op de tekst van het document, bij de import (statiegeld.ts).
+  const depositGap = (invoice.field_confidence as { _statiegeld?: DepositGap } | null)?._statiegeld ?? null;
+
   // [KOMMA-INVOER] What the owner SEES while typing, next to what the triplet HOLDS — the same
   // pairing [DATE-NL] uses above, for the same reason: a display derived from the parsed number
   // eats the keystroke that has not become a number yet. These fields were <input type="number">,
@@ -1382,6 +1390,34 @@ export function ConfirmPaidModal({
                   </span>
                 )}
               </div>
+              {/* [STATIEGELD-GAT] Eén tik, want het rekenwerk is al gedaan.
+                  GEMELD: "het lukt de app niet om statiegeld te verwerken". De factuur van Elegance
+                  Brands bleef hangen op "excl. + btw komt niet uit op het totaal", terwijl het
+                  ontbrekende bedrag één regel hoger op het papier stond als "Totaal Statiegeld".
+                  Het verschil ligt vast door de optelling, en het woord ernaast is door de import
+                  op het document zelf teruggevonden (statiegeld.ts) — dus valt er niets meer uit
+                  te rekenen, alleen nog te bevestigen. De btw beweegt niet mee: over statiegeld
+                  wordt er geen gerekend, en dat is precies waarom dit veilig aan te bieden is.
+                  Verdwijnt zodra de bedragen kloppen — de knop bestaat alleen zolang er een gat is. */}
+              {depositGap && Math.abs(round2(totalIncBtw - exBtw - btwAmount)) > 0.02 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editing) setEditing(true);
+                    applyTriplet(setExcl(triplet, clampAmount(round2(exBtw + depositGap.gap))));
+                  }}
+                  style={{
+                    marginTop: 10, width: "100%", minHeight: 44, borderRadius: 12, border: "1px solid #1a73e8",
+                    background: "#e8f0fe", color: "#1a4fa0", fontSize: 13.5, fontWeight: 600,
+                    cursor: "pointer", fontFamily: "inherit", padding: "10px 12px", lineHeight: 1.4,
+                  }}
+                >
+                  {t('ink.statiegeld.meetellen', {
+                    bedrag: formatAmount(Math.abs(depositGap.gap)),
+                    woord: depositGap.label,
+                  })}
+                </button>
+              )}
               {editing && (
                 <div style={{ fontSize: 12, color: "#5f6368", lineHeight: 1.4, marginTop: 8 }}>
                   {t('corr.bedragUitleg')} {t('corr.statiegeld')}
@@ -1942,15 +1978,12 @@ export function InvoiceCard({
     // because the row moved one tab over — that was the difference between one tap and a trip
     // to another screen. Only the Genegeerd tab is excluded: an archived row answers nothing.
     if (mode === "ignored" || !invoice.health.flags.possibleDuplicate) return null;
-    const fc = invoice.field_confidence as { _safecore?: Record<string, unknown> } | null;
-    const s = fc?._safecore;
-    if (!s || typeof s.possible_duplicate_id !== "string" || s.possible_duplicate_id.length === 0) {
-      return null;
-    }
-    const of = typeof s.possible_duplicate_of === "string" ? s.possible_duplicate_of.trim() : "";
+    // [VERVANG-OVERAL] The flag itself is read by one shared rule, because the pay screen now asks
+    // the same question of the same rows. Whether to OFFER the shortcut stays here — that is the
+    // tab logic, which belongs to this screen and to no other.
     // [TAAL] Only the invoice NUMBER is data; every sentence that mentions the other invoice has
     // its own with/without-number variant in the catalogue (a noun is not a parameter).
-    return { number: of || null };
+    return supersedeTargetOf(invoice.field_confidence);
   })();
 
   // [MULTI-INVOICE] "Nee, dit is één factuur" — the owner's answer to a suspicion.
@@ -2185,6 +2218,11 @@ export function InvoiceCard({
           onClose={() => setShowDoc(false)}
           // The queue's own correction door is the verify modal, which is what onEdit opens.
           onCorrect={() => { setShowDoc(false); onEdit(); }}
+          // [BETER-EXEMPLAAR] Bewust niet hier. In de controlewachtrij staan de bedragen nog niet
+          // vast, en dan is "opnieuw inlezen" het juiste antwoord op een slechte foto: dat LEEST
+          // het nieuwe papier. Vervangen leest met opzet niets, wat pas veilig én nuttig is als de
+          // cijfers al bevestigd zijn — en dat is de betaalpagina.
+          onReplaceFile={null}
         />
       )}
 

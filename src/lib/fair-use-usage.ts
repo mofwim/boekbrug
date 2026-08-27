@@ -27,6 +27,8 @@
 // ai-budget.ts, die geen database nodig heeft om te weigeren.
 
 import { createPipelineClient } from "./supabase-pipeline";
+// [VOL-GELEZEN] PostgREST kapt stil af op ~1000 rijen — zie supabase-paginate.ts.
+import { fetchAllRows } from "./supabase-paginate";
 import {
   FAIR_USE_LIMITS,
   fairUseLimit,
@@ -268,16 +270,26 @@ export async function measureUsage(
 
   // 2. Opslag — GEMETEN, niet geteld. Prullenbak telt niet mee: wie opruimt hoort dat
   //    meteen terug te zien, anders voelt opruimen zinloos.
+  //  [VOL-GELEZEN] Gepagineerd, en dat is hier geen netheid maar de meting zelf. PostgREST kapt
+  //  elk antwoord stil af op ~1000 rijen — geen fout, geen vlag — dus telde deze som bij een
+  //  eigenaar met meer dan duizend bestanden alleen de EERSTE duizend op. De uitkomst is dan te
+  //  laag, en te laag is precies de gevaarlijke kant: de grens wordt nooit bereikt, de eigenaar
+  //  krijgt te horen dat hij ruim zit, en de meter op zijn scherm bevestigt dat. Wie elke dag
+  //  bonnetjes fotografeert is die duizend binnen een paar maanden voorbij.
+  //
+  //  Eén integer-kolom per rij, dus het ophalen van alle pagina's kost bijna niets — en een
+  //  aggregaat in de database zou een migratie vragen die deze meting niet waard is.
   try {
-    const { data } = await client
-      .from("documents")
-      .select("file_size")
-      .eq("user_id", userId)
-      .or("trashed.is.null,trashed.eq.false");
-    const bytes = ((data ?? []) as Array<{ file_size: number | null }>).reduce(
-      (sum, d) => sum + (Number(d.file_size) || 0),
-      0,
+    const rows = await fetchAllRows<{ file_size: number | null }>((from, to) =>
+      client
+        .from("documents")
+        .select("id, file_size")
+        .eq("user_id", userId)
+        .or("trashed.is.null,trashed.eq.false")
+        .order("id", { ascending: true })
+        .range(from, to),
     );
+    const bytes = rows.reduce((sum, d) => sum + (Number(d.file_size) || 0), 0);
     usage.storageMb = Math.round(bytes / (1024 * 1024));
   } catch {
     /* niet te meten → laat weg */

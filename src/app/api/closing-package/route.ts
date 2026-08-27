@@ -120,7 +120,12 @@ export async function GET(req: NextRequest) {
     //
     // Best effort en NA de autorisatie: een logfout mag een geautoriseerde download nooit
     // tegenhouden, en een geweigerde poging hoort hier niet als "opgehaald" te landen.
-    void logAuditAction({
+    // [NIET-LOSGELATEN] Afgewacht. De toelichting hierboven zegt zelf waarom: het verschil met
+    // een gedeelde map bestaat pas als de download AANTOONBAAR is. Serverless mag een losgelaten
+    // belofte afkappen zodra het bestand is verstuurd, dus `void` maakte juist dat bewijs
+    // optioneel. logAuditAction vangt zijn eigen fouten af en gooit niet, dus afwachten kost een
+    // insert en kan de download nooit tegenhouden.
+    await logAuditAction({
       userId: user.id,
       action: 'accountant.package_downloaded',
       entityType: 'quarter',

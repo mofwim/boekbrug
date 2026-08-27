@@ -29,10 +29,14 @@
 // lock exists to protect the figures they booked, and this changes none of them. Refusing here
 // would refuse precisely the invoice the accountant asked about — the whole point of the feature.
 //
-// Replacing an existing document is a different act with a different risk (it discards evidence),
-// so it is refused: this route only ever fills an empty slot.
+// Replacing an existing document was refused here because it discards evidence. [BETER-EXEMPLAAR]
+// now allows it as an explicit, separate act that discards NOTHING: the previous documents row
+// stays exactly where it is, and only the pointer moves. See document-replace.ts for the rule,
+// including why the accountant's lock blocks a swap while it never blocked filling an empty slot.
 
 import { NextRequest, NextResponse } from "next/server";
+// [BETER-EXEMPLAAR] Fill an empty slot, or deliberately swap in a better copy of the same paper.
+import { planDocumentSlot } from "@/lib/document-replace";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveImportTarget } from "@/lib/bestanden";
@@ -98,7 +102,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // the owner their invoice does not exist, on the one screen that just told them it does.
   const { data: invRow, error: invErr } = await pipeline
     .from("invoices")
-    .select("id, sender_id, receiver_id, invoice_number, invoice_date, document_id, pdf_url, direction")
+    .select("id, sender_id, receiver_id, invoice_number, invoice_date, document_id, pdf_url, direction, accountant_status")
     .eq("id", id)
     .maybeSingle();
   if (invErr) {
@@ -111,6 +115,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     id: string; sender_id: string | null; receiver_id: string | null;
     invoice_number: string | null; invoice_date: string | null;
     document_id: string | null; pdf_url: string | null; direction: string | null;
+    accountant_status?: string | null;
   };
   if (inv.sender_id !== user.id && inv.receiver_id !== user.id) {
     // Same answer as a missing row: whether someone else's invoice exists is not ours to disclose.
@@ -140,10 +145,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       { status: 400 },
     );
   }
-  // Only ever fill an EMPTY slot. Replacing is a different act — it discards evidence that the
-  // seven-year retention says we keep — and it needs its own deliberate flow, not this one.
-  if (inv.document_id) {
-    return NextResponse.json({ error: "heeft_al_een_origineel" }, { status: 409 });
+  // [BETER-EXEMPLAAR] Fill, or swap — and swapping only when the owner explicitly said so. The
+  // rule and its reasoning live in document-replace.ts, where a test can reach them.
+  const slot = planDocumentSlot({
+    currentDocumentId: inv.document_id,
+    replaceRequested: form.get("replace") === "true",
+    accountantStatus: inv.accountant_status ?? null,
+  });
+  if (!slot.ok) {
+    return NextResponse.json({ error: slot.code, detail: slot.error }, { status: 409 });
   }
 
   const contentHash = computeContentHash(buffer);
@@ -194,7 +204,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         file_type: mime,
         doc_type: "factuur",
         folder_id: folderId,
-        year: inv.invoice_date ? new Date(inv.invoice_date).getFullYear() : null,
+        year: inv.invoice_date ? new Date(inv.invoice_date).getUTCFullYear() : null,
         source: "upload",
         // Deliberately NOT ai_processed: nothing read this file. Claiming otherwise would put a
         // document in the books carrying an extraction that never happened.
@@ -216,12 +226,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // The only write on the invoice, and it is deliberately narrow: the two evidence pointers and
   // nothing else. `.is("document_id", null)` makes it a compare-and-set, so two tabs attaching at
   // once cannot leave the second file linked to nothing.
-  const { data: linked, error: linkErr } = await pipeline
+  // [BETER-EXEMPLAAR] The compare-and-set targets what we DECIDED on: null for an empty slot, the
+  // exact previous id for a swap. Either way a concurrent change loses honestly instead of
+  // overwriting a pointer that moved while this upload was in flight.
+  const write = pipeline
     .from("invoices")
     .update({ document_id: documentId, pdf_url: storagePath })
-    .eq("id", id)
-    .is("document_id", null)
-    .select("id");
+    .eq("id", id);
+  const { data: linked, error: linkErr } = await (slot.mode === "replace"
+    ? write.eq("document_id", slot.previousDocumentId)
+    : write.is("document_id", null)
+  ).select("id");
   if (linkErr || !linked || linked.length === 0) {
     console.error("[ORIGINEEL] linking the document to the invoice failed", {
       userId: user.id, id, documentId, error: linkErr?.message ?? "no rows (a concurrent attach won)",
@@ -233,11 +248,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   await logAuditAction({
     userId: user.id,
-    action: "invoice.document_attached",
+    // [BETER-EXEMPLAAR] A swap is its own act in the trail. The previous id rides along in
+    // newValue below, so a year later it is clear WHICH document the accountant's check referred
+    // to — and that it is still there.
+    action: slot.mode === "replace" ? "invoice.document_replaced" : "invoice.document_attached",
     entityType: "invoice",
     entityId: id,
     newValue: {
       document_id: documentId,
+      ...(slot.mode === "replace" ? { previous_document_id: slot.previousDocumentId, kept: true } : {}),
       invoice_number: inv.invoice_number,
       file_name: file.name,
       reused_existing_file: !!existingDoc,

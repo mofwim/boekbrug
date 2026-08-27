@@ -516,6 +516,53 @@ export const MESSAGES = {
   'ink.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'ink.opheffen': { nl: 'Opheffen', ar: 'إلغاء التجاهل', en: 'Undo' },
 
+  // [STATIEGELD-GAT] De knop die het gevonden verschil in het bedrag excl. btw zet. Het WOORD komt
+  // van de factuur zelf ({woord}: statiegeld, emballage, fust…) — de eigenaar herkent zijn eigen
+  // papier sneller aan het woord dat erop staat dan aan het onze.
+  'ink.statiegeld.meetellen': {
+    nl: '{bedrag} {woord} meetellen in het bedrag excl. btw',
+    ar: 'احتساب {bedrag} ({woord}) ضمن المبلغ بدون ضريبة',
+    en: 'Count {bedrag} {woord} into the amount excl. VAT',
+  },
+  // [LEVERANCIER-VASTLEGGEN] Eén keer opschrijven wie deze leverancier is, in plaats van elke
+  // maand dezelfde misgelezen naam verbeteren. De zinnen noemen het GEVOLG ("dan herkent de app
+  // hem"), want dat is wat de eigenaar ervan merkt — niet het mechanisme eronder.
+  'lev.knop': { nl: 'Leverancier', ar: 'المورّد', en: 'Supplier' },
+  'lev.titel': { nl: 'Wie is deze leverancier?', ar: 'مَن هذا المورّد؟', en: 'Who is this supplier?' },
+  'lev.uitleg': {
+    nl: 'Wat je hier vastlegt, gebruikt de app ook bij de volgende factuur van dit bedrijf — dan hoeft er niets meer geraden te worden.',
+    ar: 'ما تُثبِّته هنا يستخدمه التطبيق أيضاً مع الفاتورة التالية من هذه الشركة — فلا يبقى شيء للتخمين.',
+    en: 'What you set here is what the app uses on the next invoice from this company — nothing left to guess.',
+  },
+  'lev.naam': { nl: 'Naam van het bedrijf', ar: 'اسم الشركة', en: 'Company name' },
+  'lev.naam.hint': {
+    nl: 'Zoals het bedrijf zichzelf noemt — meestal onderaan de factuur, bij de KVK- en btw-gegevens.',
+    ar: 'كما تُسمّي الشركة نفسها — غالباً أسفل الفاتورة، عند بيانات KVK والضريبة.',
+    en: 'As the company calls itself — usually at the foot of the invoice, beside the KVK and VAT details.',
+  },
+  'lev.iban': { nl: 'Rekeningnummer (IBAN)', ar: 'رقم الحساب (IBAN)', en: 'Account number (IBAN)' },
+  'lev.iban.hint': {
+    nl: 'Hiermee controleert de app of een volgende factuur ineens een ander rekeningnummer draagt. Leeg laten mag.',
+    ar: 'به يفحص التطبيق ما إذا كانت فاتورة تالية تحمل رقم حساب مختلفاً فجأة. يمكن تركه فارغاً.',
+    en: 'This is what the app compares a later invoice against when the account number suddenly differs. May be left empty.',
+  },
+  'lev.kvk': { nl: 'KVK-nummer', ar: 'رقم KVK', en: 'KVK number' },
+  'lev.kvk.hint': { nl: '8 cijfers. Leeg laten mag.', ar: '٨ أرقام. يمكن تركه فارغاً.', en: '8 digits. May be left empty.' },
+  'lev.btw': { nl: 'Btw-nummer', ar: 'رقم الضريبة', en: 'VAT number' },
+  'lev.btw.hint': {
+    nl: 'Staat verplicht op een factuur (art. 35a). Leeg laten mag.',
+    ar: 'إلزامي على الفاتورة (المادة 35a). يمكن تركه فارغاً.',
+    en: 'Legally required on an invoice (art. 35a). May be left empty.',
+  },
+  'lev.opslaan': { nl: 'Vastleggen', ar: 'تثبيت', en: 'Save' },
+  'lev.bezig': { nl: 'Bezig met opslaan...', ar: 'جارٍ الحفظ...', en: 'Saving...' },
+  'lev.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
+  'lev.opgeslagen': { nl: 'Leverancier vastgelegd', ar: 'تم تثبيت المورّد', en: 'Supplier saved' },
+  'lev.fout.opslaan': {
+    nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
+    ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
+    en: 'The supplier could not be saved. Try again in a moment.',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },
@@ -1456,6 +1503,27 @@ export const MESSAGES = {
     ar: 'تعذّر فتح الملف — تحقق من اتصالك',
     en: 'Could not open the file — check your connection',
   },
+  // [BETER-EXEMPLAAR] Een beter exemplaar van HETZELFDE papier — niet een herziene factuur.
+  'dsh.vervangBestand': {
+    nl: 'Beter exemplaar',
+    ar: 'نسخة أفضل',
+    en: 'Better copy',
+  },
+  'dsh.vervang.vraag': {
+    nl: 'Bestand vervangen door een beter exemplaar?',
+    ar: 'استبدال الملف بنسخة أفضل؟',
+    en: 'Replace the file with a better copy?',
+  },
+  'dsh.vervang.uitleg': {
+    nl: 'Alleen als dit hetzelfde papier is — bijvoorbeeld een scherpe pdf in plaats van je snelle foto. De bedragen blijven staan zoals ze zijn; het bestand wordt niet gelezen. Het oude bestand blijft bewaard in Mijn bestanden. Heeft de leverancier de factuur opnieuw uitgegeven met ANDERE bedragen? Gebruik dan "Deze vervangt factuur X" — dat zijn twee documenten.',
+    ar: 'فقط إذا كان هذا هو الورق نفسه — مثلاً ملف pdf واضح بدل صورتك السريعة. تبقى المبالغ كما هي؛ لا يُقرأ الملف. يبقى الملف القديم محفوظاً في «ملفاتي». هل أعاد المورّد إصدار الفاتورة بمبالغ مختلفة؟ استخدم عندئذٍ «هذه تحلّ محل الفاتورة X» — فتلك وثيقتان.',
+    en: 'Only if this is the same paper — a sharp pdf instead of your quick photo, say. The amounts stay exactly as they are; the file is not read. The old file is kept in Mijn bestanden. Did the supplier reissue the invoice with DIFFERENT amounts? Use "Deze vervangt factuur X" instead — those are two documents.',
+  },
+  'dsh.vervang.gelukt': {
+    nl: 'Bestand vervangen. Het oude staat nog in Mijn bestanden.',
+    ar: 'استُبدل الملف. لا يزال القديم في «ملفاتي».',
+    en: 'File replaced. The old one is still in Mijn bestanden.',
+  },
   'dsh.kloptNiet': { nl: 'Klopt niet — corrigeren', ar: 'غير صحيح — صحّحه', en: 'Not right — correct it' },
   'dsh.nieuwTabblad': { nl: 'Openen in nieuw tabblad', ar: 'فتح في تبويب جديد', en: 'Open in a new tab' },
   'dsh.factuurAlt': { nl: 'Factuur {number}', ar: 'الفاتورة {number}', en: 'Invoice {number}' },
@@ -1490,6 +1558,63 @@ export const MESSAGES = {
     nl: ' — geld dat jou toekomt. Vink dit aan als er “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen — staat er al een, dan blijft die staan.',
     ar: ' — مال يعود لك. علّم هذا الخيار إذا كُتب على الوثيقة «Creditnota» أو كان الإجمالي في الأسفل سالباً. تُحفظ المبالغ حينها بالسالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدل أن تُضاف. لا حاجة لكتابة إشارة السالب بنفسك — وإن كانت موجودة فتبقى.',
     en: ' — money owed to you. Tick this when the document says “Creditnota” or the bottom total is negative. The amounts are then stored as negatives: it comes off your open balance and its VAT is subtracted instead of added. You never need to type a minus sign — if one is already there, it stays.',
+  },
+  // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
+  // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
+  // [BETAALNOTITIE] Een eigen tekst ACHTER het kenmerk, voor deze ene betaling.
+  'notitie.label': {
+    nl: 'Eigen tekst erbij (optioneel)',
+    ar: 'نص خاص بك (اختياري)',
+    en: 'Add your own text (optional)',
+  },
+  'notitie.voorbeeld': {
+    nl: 'Bijv. termijn 1 van 2',
+    ar: 'مثال: القسط 1 من 2',
+    en: 'e.g. termijn 1 van 2',
+  },
+  'notitie.ruimte': {
+    nl: 'Komt achter het kenmerk te staan. Nog {n} tekens ruimte.',
+    ar: 'يُكتب بعد المرجع. يتبقّى {n} حرفاً.',
+    en: 'Goes after the reference. {n} characters left.',
+  },
+  // [KENMERK-VAN-WIE] Waar het kenmerk vandaan komt, en waarom het geen invulveld is. GEVRAAGD
+  // naar aanleiding van het termijnbetalen: "kan ik er 'eerste deel' bij schrijven?"
+  'kenmerk.vanLeverancier': {
+    nl: 'Dit kenmerk staat op de factuur van de leverancier — daarmee vindt hij jouw betaling terug. Verander het niet zelf.',
+    ar: 'هذا المرجع مكتوب على فاتورة المورّد — به يتعرّف على دفعتك. لا تغيّره بنفسك.',
+    en: "This reference comes from the supplier's invoice — it is how they find your payment. Do not change it yourself.",
+  },
+  'kenmerk.corrigeer': {
+    nl: 'Staat het er verkeerd? Corrigeer het op de factuur',
+    ar: 'هل هو مكتوب خطأً؟ صحّحه على الفاتورة',
+    en: 'Wrong on the invoice? Correct it there',
+  },
+  'kenmerk.naBetaling': {
+    nl: 'Deze factuur staat niet meer op te betalen, dus het kenmerk kan hier niet meer worden gecorrigeerd.',
+    ar: 'لم تعد هذه الفاتورة قيد الدفع، لذا لا يمكن تصحيح المرجع هنا.',
+    en: 'This invoice is no longer awaiting payment, so the reference can no longer be corrected here.',
+  },
+  // [DEEL-BETALEN] Een factuur in termijnen betalen. GEMELD op Enka Horeca B.V. (€ 3.819,82):
+  // "ik wil deze betalen, maar voorlopig maar een deel."
+  'deel.label': {
+    nl: 'Hoeveel betaal je nu?',
+    ar: 'كم ستدفع الآن؟',
+    en: 'How much are you paying now?',
+  },
+  'deel.rest': {
+    nl: 'Daarna blijft {bedrag} openstaan. Zodra je bank de betaling doorgeeft, rekent de app het bij op deze factuur.',
+    ar: 'بعدها يبقى {bedrag} مستحقاً. حالما يُبلّغ بنكك عن الدفعة، يحتسبها التطبيق على هذه الفاتورة.',
+    en: 'After that {bedrag} stays open. As soon as your bank reports the payment, the app books it against this invoice.',
+  },
+  'deel.alles': {
+    nl: 'Hiermee is de factuur helemaal betaald.',
+    ar: 'بهذا تُدفع الفاتورة بالكامل.',
+    en: 'This pays the invoice in full.',
+  },
+  'corr.statiegeld.meetellen': {
+    nl: 'Statiegeld meetellen in het bedrag excl. btw',
+    ar: 'احتساب التأمين (statiegeld) ضمن المبلغ بدون ضريبة',
+    en: 'Count the deposit into the amount excl. VAT',
   },
   'corr.statiegeld': {
     nl: 'Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.',
@@ -10973,6 +11098,7 @@ export const MESSAGES = {
   'log.bank.unlinked': { nl: 'Koppeling tussen bank en factuur ongedaan gemaakt', en: 'Bank-to-invoice match undone', ar: 'أُلغي ربط بين البنك وفاتورة' },
   'log.bank.match_checked': { nl: 'Automatische koppeling nagekeken en akkoord bevonden', en: 'Automatic match reviewed and accepted', ar: 'روجع ربط تلقائي وقُبل' },
   'log.invoice.document_attached': { nl: 'Origineel document aan een factuur gehangen', en: 'Original document attached to an invoice', ar: 'أُرفق مستند أصلي بفاتورة' },
+  'log.invoice.document_replaced': { nl: 'Document van een factuur vervangen door een beter exemplaar (het oude blijft bewaard)', en: 'An invoice document was replaced by a better copy (the old one is kept)', ar: 'استُبدل مستند فاتورة بنسخة أفضل (تُحفظ القديمة)' },
   'log.accountant.invoice_question': { nl: 'Je boekhouder heeft een vraag gesteld over een factuur', en: 'Your bookkeeper asked a question about an invoice', ar: 'طرح محاسبك سؤالاً عن فاتورة' },
   'log.bank.ignored': { nl: 'Bankregel opzijgezet', en: 'Bank line set aside', ar: 'نُحّي سطر بنكي جانباً' },
   'log.bank.restored': { nl: 'Bankregel teruggehaald', en: 'Bank line taken back', ar: 'أُعيد سطر بنكي' },
