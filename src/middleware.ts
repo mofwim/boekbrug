@@ -292,5 +292,10 @@ export const config = {
   // server log to say why. They are static files like the icons above, so they
   // belong here rather than in PUBLIC_PATHS — a middleware invocation per cmap
   // is also a bill nobody wants.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|icons/|pdfjs/|\\.well-known/|sw.js|offline.html|opengraph-image|twitter-image).*)"],
+  // [LLMS-TXT] /llms.txt is the third crawler-facing text file, beside robots.txt and sitemap.xml,
+  // and it was missing from this list for its whole first day. The route built, the gates were
+  // green, and the file answered 200 — with the LOGIN PAGE in it, because the guard redirected an
+  // unauthenticated fetch and Next served /login under the requested URL. A file whose only reader
+  // is a crawler is exactly the file where that is invisible: nothing on any screen changes.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|llms\\.txt|manifest.webmanifest|icons/|pdfjs/|\\.well-known/|sw.js|offline.html|opengraph-image|twitter-image).*)"],
 };
