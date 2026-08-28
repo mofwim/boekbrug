@@ -16397,3 +16397,41 @@ test("[KOPPELING-ONBEKEND] een mislukte koppelingslezing maakt het budget nooit 
   assert.match(confirm, /if \(linkReadErr\) \{\s*\n\s*appliedElsewhereKnown = false;/,
     "de confirm-deur is losser geworden in plaats van de allocate-deur strenger");
 });
+
+test("[BULK-PDF] meerdere facturen in één keer meenemen, en de bundelregel staat nu op de knop", () => {
+  // GEVRAAGD: "ik wil facturen als pdf downloaden, maar ik moet elke factuur openen, de pdf openen
+  // en op opslaan drukken." De selectie bestond al (het gebundelde betaalverzoek); wat ontbrak was
+  // de weg naar buiten.
+  const route = code("src/app/api/invoice/bulk-pdf/route.ts");
+  const lijst = code("src/app/dashboard/facturen/FacturenClient.tsx");
+
+  // HET OPGESLAGEN BESTAND WINT. Een verstuurde factuur heeft al een pdf, en dát is het document
+  // dat de klant kreeg. Opnieuw tekenen zou een document opleveren dat er alleen maar UITZIET als
+  // het origineel — een logo dat sindsdien veranderde, een adres dat sindsdien is verbeterd — en
+  // dat als origineel meegeven. Tekenen is dus alleen de terugval.
+  const opgeslagen = route.indexOf('.download(stored)');
+  const tekenen = route.indexOf('renderInvoicePdf(');
+  assert.ok(opgeslagen > 0 && tekenen > 0 && opgeslagen < tekenen,
+    "de route tekent de factuur opnieuw vóór hij het opgeslagen bestand probeert");
+
+  // Een INKOOPfactuur wordt nooit door ons getekend: dat zou het papierwerk van de leverancier
+  // verzinnen. Ontbreekt het, dan wordt het gemeld.
+  assert.match(route, /if \(direction === "incoming"\) \{\s*\n\s*missing\.push\(/,
+    "we tekenen de factuur van een leverancier zelf — dat is papierwerk verzinnen");
+
+  // Eigendom in de WHERE, niet als filter achteraf: de ids komen van een client.
+  assert.match(route, /\.eq\(ownerColumn, ownerId\)/, "eigendom wordt niet in de query afgedwongen");
+
+  // Wat er niet in zat, met NAAM. Een korte zip ziet er compleet uit.
+  assert.match(route, /"X-Bulk-Missing-Names"/, "wat ontbreekt wordt alleen geteld, niet genoemd");
+  assert.match(lijst, /t\('lijst\.download\.deels', \{ namen \}\)/, "het scherm zwijgt over wat ontbrak");
+
+  // [BULK-PDF] De bundelregel stond in de SELECTIE (een niet-bundelbare rij was niet aan te
+  // tikken). Nu alles selecteerbaar is, moet de knop hem zelf stellen — anders is de bewaking
+  // verdwenen met de rij die hem droeg.
+  assert.match(lijst, /bundelbaar: isBundelbaar\(inv\)/, "de selectie onthoudt niet meer wat bundelbaar is");
+  assert.match(lijst, /const allBundelbaar = selectedList\.length > 0 && selectedList\.every\(r => r\.bundelbaar\)/,
+    "de bundelvoorwaarde is nergens meer uitgesproken");
+  assert.match(lijst, /disabled=\{selectedList\.length < 2 \|\| !sameClient \|\| !allBundelbaar \|\| bundleLoading\}/,
+    "het betaalverzoek accepteert weer rijen die het niet aankan");
+});

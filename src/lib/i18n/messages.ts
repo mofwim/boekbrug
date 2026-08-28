@@ -8125,6 +8125,22 @@ export const MESSAGES = {
     ar: 'هل دُفعت؟',
     en: 'Paid?',
   },
+  // [BULK-PDF] Meerdere facturen in één keer meenemen.
+  'lijst.downloadPdf': {
+    nl: 'Download pdf',
+    ar: 'تنزيل PDF',
+    en: 'Download pdf',
+  },
+  'lijst.download.mislukt': {
+    nl: 'Downloaden lukte niet. Probeer het zo meteen opnieuw.',
+    ar: 'لم ينجح التنزيل. أعد المحاولة بعد قليل.',
+    en: 'The download did not work. Try again in a moment.',
+  },
+  'lijst.download.deels': {
+    nl: 'Van deze facturen zat geen document in de download: {namen}.',
+    ar: 'لم تُدرج مستندات هذه الفواتير في التنزيل: {namen}.',
+    en: 'No document was included for these invoices: {namen}.',
+  },
   'lijst.betaalverzoek': {
     nl: 'Betaalverzoek',
     ar: 'طلب دفع',
