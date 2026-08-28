@@ -207,7 +207,10 @@ export default function UrenClient({
       // een pagina zonder kolom. De render-gate ving dat; zie tokens.ts voor de ladder.
       maxWidth: COLUMN.work, margin: '0 auto', fontFamily: FONT, padding: '16px 16px 96px',
     }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, margin: '0 0 4px', textAlign: 'start' }}>{t('uren.titel')}</h1>
+      {/* [DEUR] De naam van het scherm staat in de gedeelde balk (chrome.uren in DashboardChrome),
+          precies zoals bij Kas en Artikelen — twee koppen boven elkaar is wat je krijgt als je er
+          één toevoegt zonder de andere weg te halen. De ondertitel blijft: die zegt iets wat de
+          balk niet kan zeggen. */}
       <p style={{ fontSize: 14, color: M3.neutral, margin: '0 0 16px', textAlign: 'start' }}>{t('uren.subtitel')}</p>
 
       {/* [NO-SILENT-EMPTY] A read that failed says so. "Je hebt niets openstaan" on a broken

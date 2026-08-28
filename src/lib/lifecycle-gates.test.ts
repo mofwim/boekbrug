@@ -14583,9 +14583,20 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
   // …en elke sleutel die is verklaard wordt ook ergens GEBRUIKT. Een sleutel die nergens wordt
   // gerenderd is een zin die iemand heeft laten vertalen en die niemand ooit ziet.
   const verklaard = Object.keys(MESSAGES).filter((k) => k.startsWith("uren."));
-  const overal = ui + readFileSync("src/app/dashboard/uren/page.tsx", "utf8");
+  // [DEUR] DashboardChrome telt mee, en dat is geen versoepeling. `uren.titel` staat sinds de
+  // deur-wijziging in de gedeelde balk in plaats van in een <h1> op de pagina zelf — de balk die
+  // dit scherm daarvóór helemaal niet kreeg. De sleutel wordt dus wél gerenderd, alleen niet meer
+  // door dit bestand, en de vraag die deze regel stelt ("ziet iemand deze zin ooit?") blijft
+  // precies dezelfde.
+  const overal = ui
+    + readFileSync("src/app/dashboard/uren/page.tsx", "utf8")
+    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
   for (const key of verklaard) {
-    assert.ok(overal.includes(`'${key}'`), `${key} wordt ergens gerenderd`);
+    // Beide aanhalingstekens: dit bestand schrijft ze enkel, DashboardChrome dubbel.
+    assert.ok(
+      overal.includes(`'${key}'`) || overal.includes(`"${key}"`),
+      `${key} wordt ergens gerenderd`,
+    );
   }
 
   // De structurele helft: GEEN Nederlandse tekst als los JSX-tekstknooppunt. Eén hard-gecodeerde
@@ -16604,5 +16615,68 @@ test("[KASSA-DIALOOG] no money decision is asked in a browser box", () => {
   assert.deepEqual(
     offenders, [],
     `use the app's dialog (useDialog) instead:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[DEUR] every dashboard screen resolves a name, so the bar has something to render", () => {
+  // DashboardChrome renders NOTHING when a route resolves no title — `if (!title) return null` —
+  // and its own comments say so twice, next to the two screens where that was found. It kept
+  // happening anyway: Kassa, Voertuigen, Team, Uren and bank/verdelen were each written after
+  // those comments and each shipped without a line in the map. On a phone the bottom bar hides the
+  // damage; above 640px there is no bottom bar, so those screens had no name and no way back.
+  //
+  // The rule is not "every route needs a title" — a few screens legitimately carry their own
+  // chrome, and a redirect never renders. It is "a route is on the map, registers its own title,
+  // or is on the list below with a reason".
+  const chrome = readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
+  const statics = new Set(
+    [...chrome.matchAll(/\["(\/dashboard[^"]*)",\s*"[\w.]+"\]/g)].map((m) => m[1]),
+  );
+  const patterns = [...chrome.matchAll(/\[(\/\^[^,]+?\/),\s*"[\w.]+"\]/g)]
+    .map((m) => new RegExp(m[1].slice(1, -1)));
+  // The maps are read out of source, so a refactor that renames or reshapes them would leave this
+  // gate asserting over two empty collections — passing vacuously on exactly the day it matters.
+  // This file's own header calls that its defect class; these two lines are the guard against it.
+  assert.ok(statics.size >= 25, `the STATIC_TITLES parse found only ${statics.size} entries`);
+  assert.ok(patterns.length >= 5, `the PATTERN_TITLES parse found only ${patterns.length} entries`);
+
+  /** Screens that carry their own chrome, or never render at all. Each with the reason. */
+  const EXEMPT = new Map([
+    ["/dashboard", "the owner's home — DashboardHeader, not the sub-page bar"],
+    ["/dashboard/accountant", "the accountant's home — same header"],
+    ["/dashboard/bestanden", "draws its own file-manager header (breadcrumbs, not a back button)"],
+    ["/dashboard/zoeken", "draws its own BackLink above the results"],
+    ["/dashboard/verkoop", "the medewerker board: the dashboard layout hides all chrome for a sales member on purpose"],
+    ["/dashboard/beheer", "operator-only, behind a notFound() gate"],
+    ["/dashboard/resultaat", "redirect to /dashboard/waarheid — never renders"],
+    ["/dashboard/documents", "redirect to bestanden/brug — never renders"],
+    ["/dashboard/accountant/status", "redirect to the agenda — never renders"],
+    ["/dashboard/accountant/werkplek", "redirect to the accountant home — never renders"],
+    ["/dashboard/clients/invite", "redirect to clients/beheer — never renders"],
+  ]);
+
+  const bare: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (e !== "page.tsx") continue;
+      const route = `/${dir.replace("src/app/", "")}`;
+      if (EXEMPT.has(route)) continue;
+      if (statics.has(route) || patterns.some((re) => re.test(route))) continue;
+      // A page may register its own title through useSubPageHeader — from page.tsx itself or from
+      // the client component beside it, which is where every migrated screen does it.
+      const beside = readdirSync(dir)
+        .filter((f) => /\.tsx?$/.test(f))
+        .some((f) => readFileSync(`${dir}/${f}`, "utf8").includes("useSubPageHeader("));
+      if (beside) continue;
+      bare.push(route);
+    }
+  };
+  walk("src/app/dashboard");
+
+  assert.deepEqual(
+    bare, [],
+    `these render no title, so the shared bar renders nothing — no name, no way back:\n  ${bare.join("\n  ")}`,
   );
 });

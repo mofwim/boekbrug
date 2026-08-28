@@ -281,6 +281,17 @@ export function ZzpDashboard(
                 onClick={() => router.push('/dashboard/dagomzet')} />
               <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
+              {/* [UREN-DEUR] Het urenscherm had NUL inkomende links — niet hier, niet op de
+                  werkplek, niet in de onderbalk. Het was gebouwd, vertaald, getest en door de
+                  render-gate gehaald, en alleen bereikbaar door het pad zelf in te tikken. Voor een
+                  zzp'er die per uur factureert is dat het archetypische scherm, en het stond achter
+                  een deur die niemand had opgehangen.
+
+                  Hier, in het administratieraster, want dat is wat het is: een registratiescherm,
+                  precies zoals Kas en Dagomzet. De uitbreidingsregel in de kop van dit bestand zegt
+                  hetzelfde ("add a record screen → add one <AdminTile> to the administratie grid"). */}
+              <AdminTile icon="schedule" tint="#455A64" label={t('start.tegel.uren')}
+                onClick={() => router.push('/dashboard/uren')} />
               {/* [VOERTUIG] Only for a trade that works on cars. A barber shown a vehicle register
                   learns that this app guesses about him; a monteur without one has nowhere to put
                   the only thing he actually thinks in. Unknown trade → absent, exactly as before. */}
@@ -317,6 +328,16 @@ export function ZzpDashboard(
               <MiniCard icon="receipt_long" tint="#455A64"
                 label={t('start.conceptBtw')} sub="1a/1b/5a/5b"
                 onClick={() => router.push('/dashboard/aangifte')} />
+              {/* [IB-JAAR-DEUR] Het jaaroverzicht is expliciet tweezijdig gebouwd — een boekhouder
+                  opent het jaar van een klant via ?clientId, en zónder die parameter is het het
+                  EIGEN jaar van de ondernemer (zie JaarClient). Alleen: de enige link in de hele
+                  app stond op het werkbord van de boekhouder. De cijfers voor je eigen IB-aangifte
+                  en je auditfile waren daarmee bereikbaar voor iedereen behalve degene van wie ze
+                  zijn. Hier, naast de concept-BTW, want dat is dezelfde vraag over een andere
+                  periode. */}
+              <MiniCard icon="date_range" tint="#0B57D0"
+                label={t('start.jaar')} sub={t('start.jaar.sub')}
+                onClick={() => router.push('/dashboard/jaar')} />
             </div>
           </section>
 

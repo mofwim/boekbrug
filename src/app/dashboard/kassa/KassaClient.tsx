@@ -235,11 +235,12 @@ export default function KassaClient() {
 
   return (
     <div style={{ ...COLUMN, display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 16px 96px' }}>
+      {/* [DEUR] De titel staat nu in de gedeelde balk (chrome.kassa), die dit scherm eerder
+          helemaal niet kreeg: geen naam, geen weg terug. Op de telefoon ving de onderbalk dat op,
+          op een groter scherm — waar die balk niet bestaat — was er geen uitgang. De uitleg blijft
+          staan; alleen de dubbele kop is weg. */}
       <header>
-        <h1 style={{ fontFamily: FONT, fontSize: 22, fontWeight: 700, margin: 0, color: M3.onSurface }}>
-          {t('kassa.titel')}
-        </h1>
-        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
+        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>
           {t('kassa.uitleg')}
         </p>
       </header>

@@ -91,6 +91,10 @@ export const MESSAGES = {
   'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
   'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
   'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  // [DEUR] Kassa, Voertuigen, Team en Uren staan óók in deze balk — maar met hun eigen
+  // schermtitel (kassa.titel, vtg.titel, team.titel, uren.titel) en niet met een tweede
+  // chrome.*-sleutel ernaast. Eén scherm, één naam: twee sleutels met hetzelfde woord erin is
+  // precies hoe een balk en een pagina na een halfjaar anders gaan heten. Zie DashboardChrome.
   'chrome.kluis': { nl: 'Kluis', ar: 'الخزنة', en: 'Vault' },
   'chrome.logboek': { nl: 'Logboek', ar: 'سجل النشاط', en: 'Activity log' },
   'chrome.beveiliging': { nl: 'Beveiliging', ar: 'الأمان', en: 'Security' },
@@ -410,6 +414,18 @@ export const MESSAGES = {
   'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار BTW', en: 'Draft BTW return' },
   'start.tegel.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
   'start.tegel.artikelen': { nl: 'Artikelen', ar: 'الأصناف', en: 'Articles' },
+  // [UREN-DEUR] De tegel die er nooit was. Zie ZzpDashboard voor waarom hij in het
+  // administratieraster hoort en niet ergens anders.
+  'start.tegel.uren': { nl: 'Uren', ar: 'الساعات', en: 'Hours' },
+  // [IB-JAAR-DEUR] Het eigen jaar van de ondernemer, naast de concept-BTW. De ondertitel noemt
+  // allebei de dingen die het scherm oplevert — een label alleen zegt niet waarom je er heen zou
+  // gaan, en "jaaroverzicht" kan alles betekenen.
+  'start.jaar': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  'start.jaar.sub': {
+    nl: 'Cijfers voor je IB-aangifte en je auditfile',
+    ar: 'أرقام إقرار الدخل وملف التدقيق',
+    en: 'Figures for your income-tax return and your audit file',
+  },
   'start.tegel.team': { nl: 'Team', ar: 'الفريق', en: 'Team' },
   'start.tegel.werkplek': { nl: 'Mijn werkplek', ar: 'مكتبي', en: 'My workspace' },
   'start.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },

@@ -104,11 +104,10 @@ export default function VoertuigenClient() {
 
   return (
     <div style={{ ...COLUMN, display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 16px 96px' }}>
+      {/* [DEUR] Zie KassaClient: de naam hoort in de gedeelde balk (chrome.voertuigen), de uitleg
+          hier. */}
       <header>
-        <h1 style={{ fontFamily: FONT, fontSize: 22, fontWeight: 700, margin: 0, color: M3.onSurface }}>
-          {t('vtg.titel')}
-        </h1>
-        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
+        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>
           {t('vtg.uitleg')}
         </p>
       </header>
