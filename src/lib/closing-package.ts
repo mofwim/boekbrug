@@ -1569,24 +1569,62 @@ export async function summarizeClosingPackage(args: {
     else missingPdf.push(inv.invoice_number ?? inv.id);
   }
 
+  // [IN-CHUNK] Not a bare `.in()`, and not a read whose error is thrown away. Both ceilings of a
+  // bare id list apply here — the ~1000-row response cap, and a request line that outgrows the
+  // proxy's header buffer past a few hundred ids. The second one is why this read was worse than
+  // truncated: supabase-js reports a 414 as an ordinary `error`, and the old code destructured
+  // only `data`, so a FAILED lookup became an empty map. Every purchase invoice in the quarter
+  // then fell through to `missingPdf` below and the owner read "137 facturen zonder PDF" for a
+  // quarter whose bills were all present — on the one screen he consults before handing over.
+  //
+  // [NO-SILENT-EMPTY] So the failure is carried instead of swallowed. An invoice we could not
+  // look up is neither counted as documented nor accused of missing its document; it is counted
+  // as unknown and warned about. The evidence count then UNDER-reports, which is the safe
+  // direction (readiness can never go falsely green on a quarter it failed to read), and the
+  // warning at the bottom of this function says why the number is low.
   const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
   let docUrlById = new Map<string, boolean>();
+  let evidenceChecked = true;
   if (incomingDocIds.length > 0) {
-    // [SEC-STORAGE-PATH] Scoped to the owner, like the bankafschrift query below and unlike
-    // these two reads before it. invoices.document_id is ordinary text on a row the owner may
-    // write, and `supabase` here is service_role — so an id pointing at another tenant's
-    // document was read by id and its bytes shipped inside this owner's quarter ZIP.
-    const { data: docs } = await supabase
-      .from("documents")
-      .select("id, file_url")
-      .eq("user_id", ownerId)
-      .in("id", incomingDocIds);
-    const rows = (docs ?? []) as unknown as Array<{ id: string; file_url: string | null }>;
-    docUrlById = new Map(rows.map((d) => [d.id, !!d.file_url]));
+    try {
+      // [SEC-STORAGE-PATH] Scoped to the owner, like the bankafschrift query below and unlike
+      // these two reads before it. invoices.document_id is ordinary text on a row the owner may
+      // write, and `supabase` here is service_role — so an id pointing at another tenant's
+      // document was read by id and its bytes shipped inside this owner's quarter ZIP.
+      const rows = await fetchAllRowsForIds<{ id: string; file_url: string | null }, string>(
+        incomingDocIds,
+        (chunk, from, to) =>
+          supabase
+            .from("documents")
+            .select("id, file_url")
+            .eq("user_id", ownerId)
+            .in("id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to),
+      );
+      docUrlById = new Map(rows.map((d) => [d.id, !!d.file_url]));
+    } catch (e) {
+      evidenceChecked = false;
+      console.error("[NO-SILENT-EMPTY] purchase-invoice evidence check failed — the package says so", {
+        ownerId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
+  // How many incoming invoices we could not judge. Stays 0 whenever the read succeeded.
+  let evidenceUnknown = 0;
   for (const inv of incoming) {
-    const has = inv.document_id ? docUrlById.get(inv.document_id) === true : false;
-    if (has) withPdf++;
+    // No linked document at all is a fact we hold without reading anything — a failed lookup
+    // does not make it uncertain, so this one keeps saying "zonder PDF" either way.
+    if (!inv.document_id) {
+      missingPdf.push(inv.invoice_number ?? inv.id);
+      continue;
+    }
+    if (!evidenceChecked) {
+      evidenceUnknown++;
+      continue;
+    }
+    if (docUrlById.get(inv.document_id) === true) withPdf++;
     else missingPdf.push(inv.invoice_number ?? inv.id);
   }
 
@@ -1663,6 +1701,19 @@ export async function summarizeClosingPackage(args: {
         missingPdf.length === 1
           ? `1 factuur zonder PDF (${missingPdf[0]}).`
           : `${missingPdf.length} facturen zonder PDF.`,
+    });
+  }
+  // [NO-SILENT-EMPTY] "We could not look" is not "there are none", and it is not "they are
+  // missing" either. Without this line the failed evidence read above would show up only as a
+  // quietly lower "met PDF" number, which reads exactly like a quarter that is genuinely short
+  // of bonnen — sending the owner hunting for documents that are already in his own dossier.
+  if (evidenceUnknown > 0) {
+    warnings.push({
+      code: "evidence_unchecked",
+      message:
+        evidenceUnknown === 1
+          ? "Van 1 inkoopfactuur konden we de bijlage niet controleren. Het aantal facturen met PDF is daardoor te laag — probeer het opnieuw."
+          : `Van ${evidenceUnknown} inkoopfacturen konden we de bijlage niet controleren. Het aantal facturen met PDF is daardoor te laag — probeer het opnieuw.`,
     });
   }
   // [DATE-GAP] Verified invoices with no date never enter any quarter — warn, don't lose.
@@ -1820,22 +1871,34 @@ export async function buildClosingPackageZip(args: {
     }
   }
 
+  // [IN-CHUNK] The same two silent ceilings as the preview's evidence read — and here they decide
+  // what is IN the ZIP, not what a number says about it. A 414 on this line used to come back as
+  // an ordinary `error`, `docs` was null, and the accountant received a quarter containing every
+  // sales invoice and not one purchase invoice, with nothing anywhere saying so. Chunked and
+  // paged, this now returns every row or throws.
+  //
+  // Deliberately NOT caught, unlike the e-facturen read forty lines below. That one is an
+  // ADDITION to a package that is complete without it; these ARE the package. Both callers of
+  // this builder already answer a throw with "opnieuw proberen kan direct", so a failure costs
+  // the owner one retry — where swallowing it costs him a quarter filed without its bills.
   const incomingDocIds = incoming.map((i) => i.document_id).filter((x): x is string => !!x);
   if (incomingDocIds.length > 0) {
     // [SEC-STORAGE-PATH] Scoped to the owner, like the bankafschrift query below and unlike
     // these two reads before it. invoices.document_id is ordinary text on a row the owner may
     // write, and `supabase` here is service_role — so an id pointing at another tenant's
     // document was read by id and its bytes shipped inside this owner's quarter ZIP.
-    const { data: docs } = await supabase
-      .from("documents")
-      .select("id, file_url, file_name")
-      .eq("user_id", ownerId)
-      .in("id", incomingDocIds);
-    const docRows = (docs ?? []) as unknown as Array<{
-      id: string;
-      file_url: string | null;
-      file_name: string | null;
-    }>;
+    const docRows = await fetchAllRowsForIds<
+      { id: string; file_url: string | null; file_name: string | null },
+      string
+    >(incomingDocIds, (chunk, from, to) =>
+      supabase
+        .from("documents")
+        .select("id, file_url, file_name")
+        .eq("user_id", ownerId)
+        .in("id", chunk)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     const docById = new Map(docRows.map((d) => [d.id, d]));
     for (const inv of incoming) {
       const d = inv.document_id ? docById.get(inv.document_id) : null;
@@ -1941,9 +2004,12 @@ export async function buildClosingPackageZip(args: {
         if (r.id) ublRowById.set(r.id, r);
       }
 
-      // [CREDIT-REF] BG-3 for the package's creditnotas, one failable batch read. A quarter's
-      // creditnotas are a handful, so a single .in() carries them; a failed read costs the
-      // reference, never the package — same best-effort contract as originalInvoiceRef.
+      // [CREDIT-REF] BG-3 for the package's creditnotas, one failable batch read. A failed read
+      // costs the reference, never the package — same best-effort contract as originalInvoiceRef.
+      //
+      // [IN-CHUNK] "A quarter's creditnotas are a handful" was the old reason for a bare `.in()`,
+      // and it is an assumption about the data rather than a property of it: a webshop quarter of
+      // returns is not a handful. Chunked and paged costs nothing and removes the assumption.
       const origRefById = new Map<string, { original_invoice_number: string | null; original_invoice_date: string | null }>();
       try {
         const origIds = [...new Set(
@@ -1952,11 +2018,23 @@ export async function buildClosingPackageZip(args: {
             .map((r) => r.original_invoice_id as string),
         )];
         if (origIds.length > 0) {
-          const { data: origRows } = await supabase
-            .from("invoices")
-            .select("id, invoice_number, invoice_date")
-            .in("id", origIds);
-          const byId = new Map((origRows ?? []).map((o) => [o.id as string, o]));
+          const origRows = await fetchAllRowsForIds<
+            { id: string; invoice_number: string | null; invoice_date: string | null },
+            string
+          >(origIds, (chunk, from, to) =>
+            supabase
+              // [SEC-STORAGE-PATH] Scoped to the owner, for the same reason the documents reads
+              // above are. original_invoice_id is ordinary text on a row the owner may write, and
+              // `supabase` here is service_role — so an id pointing at another tenant's invoice
+              // put THAT invoice's number and date into this owner's e-factuur BillingReference.
+              .from("invoices")
+              .select("id, invoice_number, invoice_date")
+              .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
+              .in("id", chunk)
+              .order("id", { ascending: true })
+              .range(from, to),
+          );
+          const byId = new Map(origRows.map((o) => [o.id as string, o]));
           for (const r of ublRowById.values()) {
             const o = r.original_invoice_id ? byId.get(r.original_invoice_id) : null;
             if (o?.invoice_number) {

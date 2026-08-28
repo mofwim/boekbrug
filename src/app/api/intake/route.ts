@@ -99,7 +99,7 @@ import { loadReadingMemory } from "@/lib/reading-memory-source"
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
 // [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer → needs-review (en dus nooit auto-boeken).
-import { detectIbanChange } from "@/lib/iban-change"
+import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -1192,28 +1192,23 @@ async function runIntake(req: NextRequest) {
   // auto-advance check: een gewisseld IBAN maakt de health needs-review, en daarmee kan deze
   // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
   // doorgestuurde vervalste factuur komt net zo goed via dit pad binnen als via de mailsync.
-  {
-    const ibanChange = await detectIbanChange(supabase, user.id, {
-      name: v.vendor,
-      kvk: v.vendor_kvk ?? null,
-      iban: v.vendor_iban ?? null,
-    })
-    if (ibanChange.status === 'unavailable') {
-      // [IBAN-CHECK-HONEST] The check could not run. Say so on the card instead of letting the
-      // invoice look verified — this is the flag that stands between the owner and a payment
-      // redirected to a fraudster's account.
-      fieldConfidence._safecore = {
-        ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
-        iban_check_unavailable: true,
-      }
-    } else if (ibanChange.change) {
-      fieldConfidence._safecore = {
-        ...((fieldConfidence._safecore as Record<string, unknown> | undefined) ?? {}),
-        iban_changed: true,
-        iban_changed_from: ibanChange.change.from,
-        iban_changed_to: ibanChange.change.to,
-      }
-    }
+  //
+  // [LEVERANCIER-INTAKE] Eén stap voor allebei: de IBAN-controle EN de leverancier, in die
+  // volgorde. Gemeten in productie: dit pad schreef wel vendor_iban op de factuur maar liet
+  // supplier_id leeg, terwijl de e-mailwegen dat wel invulden — de leverancier van een factuur
+  // hing dus af van de deur waardoor hij binnenkwam. De volgorde staat in intake-supplier.ts en
+  // mag niet om: het oplossen kan een rij aanmaken op precies het nummer dat we hier verdacht
+  // vinden, en dan beantwoordt de controle zichzelf.
+  const leverancier = await resolveSupplierAtIntake(pipeline, user.id, {
+    name: v.vendor,
+    kvk: v.vendor_kvk ?? null,
+    iban: v.vendor_iban ?? null,
+    btw: v.vendor_btw ?? null,
+  })
+  // Alleen schrijven als er iets te melden is: een leeg _safecore zetten waar er geen stond, maakt
+  // van "niets aan de hand" een waarheidswaarde die elders truthy is.
+  if (Object.keys(leverancier.safecore).length > 0) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, leverancier.safecore)
   }
 
   // [BON-AUTO] Mag deze bon zichzelf afboeken? Een kassabon bestáát omdat er aan de kassa is
@@ -1326,7 +1321,10 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       // [AUTO-ADVANCE] clean+confident → 'received' (booked, unpaid, reversible); else the queue.
       status: autoAdv.advance ? "received" : "processing",
       source,
-      client_name: v.vendor || "Onbekende afzender",
+      // [LEVERANCIER-INTAKE] De leverancier zoals de registratie hem kent, met de gelezen naam als
+      // terugval — dezelfde regel als op de e-mailwegen, zodat één bedrijf één rij blijft.
+      supplier_id: leverancier.supplierId,
+      client_name: leverancier.supplierName || v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
       // backbone of the "Vandaag" screen; null is honest when nothing is stated.
@@ -1830,6 +1828,21 @@ async function handleUblInvoice(
     if (merged?._safecore) fieldConfidence._safecore = merged._safecore
   }
 
+  // [LEVERANCIER-INTAKE] Ook een e-factuur heeft een leverancier. Dit pad schreef vendor_iban wel
+  // en supplier_id niet, en een Peppol-XML is net zo goed door te sturen als een PDF — dus loopt
+  // hij langs dezelfde twee stappen in dezelfde volgorde: eerst de IBAN-controle, dan de
+  // registratie. De XML draagt geen KVK of btw-nummer, dus die gaan als null mee; de naam en het
+  // rekeningnummer zijn wat dit document over zijn afzender zegt.
+  const leverancier = await resolveSupplierAtIntake(pipeline, userId, {
+    name: v.supplierName,
+    iban: v.vendorIban ?? null,
+    kvk: null,
+    btw: null,
+  })
+  if (Object.keys(leverancier.safecore).length > 0) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, leverancier.safecore)
+  }
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
@@ -1838,7 +1851,8 @@ async function handleUblInvoice(
       direction: "incoming",
       status: "processing", // always human-verified — a machine-read path stays gated (no auto-advance)
       source: "upload",
-      client_name: v.supplierName || "Onbekende afzender",
+      supplier_id: leverancier.supplierId,
+      client_name: leverancier.supplierName || v.supplierName || "Onbekende afzender",
       invoice_date: v.invoiceDate,
       due_date: v.dueDate,
       // [BON-NUMMER] Leeg blijft leeg — dezelfde regel als het camerapad hierboven, dat zijn

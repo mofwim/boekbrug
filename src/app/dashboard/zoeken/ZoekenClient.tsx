@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSearch } from "@/hooks/useSearch";
-import { flattenGroups, EMPTY_GROUP, type SearchResult, type SearchResultGroup, type SearchTarget } from "@/lib/search";
+import { flattenGroups, EMPTY_GROUP, anyTruncated, type SearchResult, type SearchResultGroup, type SearchTarget } from "@/lib/search";
 import { M3, FONT, COLUMN } from "@/lib/design/tokens";
 import { BackLink } from "@/components/ui/BackLink";
 import type { Role } from "@/lib/navigation";
@@ -233,6 +233,16 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
     : tab === "kas" ? { ...EMPTY_GROUP, cashEntries: groups.cashEntries }
     : groups;
   const shownCount = flattenGroups(shown).length;
+  // [ZOEK-EERLIJK] Was anything held back in what is CURRENTLY on screen? On a type chip only that
+  // group counts — saying "there is more" while looking at facturen, because the bank list was cut,
+  // sends the owner refining a query that was never the problem.
+  const cutOff =
+    tab === "all" ? anyTruncated(groups.truncated)
+    : tab === "invoices" ? Boolean(groups.truncated?.invoices)
+    : tab === "documents" ? Boolean(groups.truncated?.documents)
+    : tab === "clients" ? Boolean(groups.truncated?.clients)
+    : tab === "bank" ? Boolean(groups.truncated?.bankTransactions)
+    : Boolean(groups.truncated?.cashEntries);
 
   return (
     <div style={{ minHeight: "100vh", background: M3.bg, fontFamily: FONT }}>
@@ -319,6 +329,18 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
             </div>
           ) : (
             <>
+              {/* [ZOEK-EERLIJK] Above the list, not below it: a warning under a screen's worth of
+                  results is a warning nobody scrolls to. It says what to DO — a search that only
+                  reports a problem leaves the owner exactly where they were. */}
+              {cutOff && (
+                <div role="status" style={{
+                  padding: "10px 12px", borderRadius: 10, marginBottom: 12, fontSize: 13,
+                  background: "#FFF8E1", borderInlineStart: `3px solid ${M3.warning ?? "#EA8600"}`,
+                  color: "#5f4200", lineHeight: 1.45, textAlign: "start",
+                }}>
+                  {t('zoek.afgekapt')}
+                </div>
+              )}
               <Section label={t('zoek.cat.facturen')} items={shown.invoices} query={trimmed} onOpen={open} />
               <Section label={t('zoek.cat.bestanden')} items={shown.documents} query={trimmed} onOpen={open} />
               <Section label={t('zoek.cat.klanten')} items={shown.clients} query={trimmed} onOpen={open} />

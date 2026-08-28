@@ -26,6 +26,37 @@ export interface SearchResultGroup {
   clients: SearchResult[];
   bankTransactions: SearchResult[];
   cashEntries: SearchResult[];
+  /**
+   * [ZOEK-EERLIJK] Which groups hold back more than they show.
+   *
+   * Every source takes the N most RECENT matches and only THEN ranks them by relevance. So a
+   * match from two years ago is not merely ranked low — it never reaches the ranking at all, and
+   * the screen used to present the survivors as if they were everything.
+   *
+   * That is the one thing a search may not do. Gmail, Drive and Outlook all cut their lists too;
+   * what they never do is pretend the list is complete. An owner who searches a supplier they have
+   * used for years and sees eight invoices concludes there are eight.
+   */
+  truncated?: SearchTruncation;
+}
+
+/** Per group: true when the database had more rows than the cap allowed through. */
+export interface SearchTruncation {
+  invoices: boolean;
+  documents: boolean;
+  clients: boolean;
+  bankTransactions: boolean;
+  cashEntries: boolean;
+}
+
+/** Nothing held back — the shape callers start from. */
+export const NO_TRUNCATION: SearchTruncation = {
+  invoices: false, documents: false, clients: false, bankTransactions: false, cashEntries: false,
+};
+
+/** Did any group hold something back? */
+export function anyTruncated(t: SearchTruncation | undefined): boolean {
+  return Boolean(t && (t.invoices || t.documents || t.clients || t.bankTransactions || t.cashEntries));
 }
 
 // ─── [BOEK-012] Pure helpers — safe to import in any component ────────────────
