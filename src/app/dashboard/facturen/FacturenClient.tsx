@@ -275,9 +275,9 @@ export default function FacturenClient({
   const selectedSum = selectedList.reduce((s, r) => s + r.amount, 0)
   // ONE customer pays the bundle — the button explains itself when clients mix.
   const sameClient = new Set(selectedList.map(r => r.client.trim().toLowerCase())).size <= 1
-  // [BULK-PDF] Wat het betaalverzoek aankan, nu als eigen voorwaarde. Tot hier hing deze regel aan
-  // de selectie zelf (een niet-bundelbare rij was niet aan te tikken); sinds downloaden van álles
-  // mag, moet de knop hem zelf stellen.
+  // [BULK-PDF] What the betaalverzoek can handle, now stated as its own condition. Until here this
+  // rule hung on the SELECTION itself (a non-bundelbaar row simply could not be ticked); now that
+  // downloading is allowed for anything, the button has to state it.
   const allBundelbaar = selectedList.length > 0 && selectedList.every(r => r.bundelbaar)
 
   // The row fields the bundle selection reads — a subset of both the infinite
@@ -389,11 +389,11 @@ export default function FacturenClient({
     ['sent', 'overdue', 'processing'].includes(inv.status) &&
     !isVolledigGecrediteerd(inv)
 
-  // [BULK-PDF] De geselecteerde facturen als pdf meenemen. Eén factuur komt als pdf terug, meer
-  // als zip — nooit een archief om één bestand uit te pakken.
+  // [BULK-PDF] Take the selected invoices away as pdf. One invoice comes back as the pdf itself,
+  // more as a zip — nobody should unpack an archive for a single file.
   //
-  // Wat er NIET in zat wordt met naam gemeld, niet geteld: "3 van de 8 ontbreken" is een getal
-  // waar niemand iets mee kan, en een korte zip ziet er compleet uit.
+  // What could NOT be included is reported by name, never counted: "3 of the 8 are missing" is a
+  // number nobody can act on, and a short archive looks complete when you open it.
   const [downloading, setDownloading] = useState(false)
   async function downloadSelectedPdf() {
     if (downloading || selectedList.length === 0) return
@@ -1445,11 +1445,11 @@ export default function FacturenClient({
                     style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: 'pointer', transition: 'background 0.4s ease' }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
-                    {/* [BULK-PDF] Elke rij is nu selecteerbaar. Downloaden kan van álles — ook van
-                        een betaalde factuur of een creditnota — en het betaalverzoek weigert
-                        voortaan op de KNOP wat het eerst via de selectie weigerde. Dat is dezelfde
-                        regel, maar uitgesproken: een bewaking die alleen bestaat doordat een rij
-                        niet aan te tikken is, is precies het soort dat later per ongeluk verdwijnt. */}
+                    {/* [BULK-PDF] Every row is selectable now. Downloading must work for anything —
+                        a paid invoice, a creditnota — so the betaalverzoek refuses on the BUTTON
+                        what it used to refuse through the selection. Same rule, said out loud: a
+                        guard that exists only because a row cannot be ticked is exactly the kind
+                        that disappears later without anyone noticing. */}
                     {selectMode && (
                       <span className="material-symbols-outlined" style={{ fontSize: 22, color: selected[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
@@ -1946,10 +1946,10 @@ export default function FacturenClient({
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
               {bundleLoading ? t('lijst.bezig') : t('lijst.betaalverzoek')}
             </button>
-            {/* [BULK-PDF] Naast het betaalverzoek, met een lossere voorwaarde: downloaden kan van
-                élke selectie — ook één factuur, ook een betaalde, ook een creditnota. Het
-                betaalverzoek stelt zijn eigen eisen (twee stuks, dezelfde klant, bundelbaar) en
-                die staan nu op de knop hierboven in plaats van in de selectie. */}
+            {/* [BULK-PDF] Beside the betaalverzoek, with a looser condition: downloading works for
+                ANY selection — a single invoice, a paid one, a creditnota. The betaalverzoek states
+                its own demands (two or more, one customer, bundelbaar) and those now sit on the
+                button above instead of inside the selection. */}
             <button
               onClick={downloadSelectedPdf}
               disabled={selectedList.length === 0 || downloading}

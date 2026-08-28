@@ -16398,40 +16398,91 @@ test("[KOPPELING-ONBEKEND] een mislukte koppelingslezing maakt het budget nooit 
     "de confirm-deur is losser geworden in plaats van de allocate-deur strenger");
 });
 
-test("[BULK-PDF] meerdere facturen in één keer meenemen, en de bundelregel staat nu op de knop", () => {
-  // GEVRAAGD: "ik wil facturen als pdf downloaden, maar ik moet elke factuur openen, de pdf openen
-  // en op opslaan drukken." De selectie bestond al (het gebundelde betaalverzoek); wat ontbrak was
-  // de weg naar buiten.
+test("[BULK-PDF] several invoices taken away at once, and the bundle rule now sits on the button", () => {
+  // REPORTED: "I want to download invoices as pdf, but I have to open each one, open the pdf and
+  // press save." The selection already existed (the bundled betaalverzoek); what was missing was
+  // the way out.
   const route = code("src/app/api/invoice/bulk-pdf/route.ts");
-  const lijst = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
 
-  // HET OPGESLAGEN BESTAND WINT. Een verstuurde factuur heeft al een pdf, en dát is het document
-  // dat de klant kreeg. Opnieuw tekenen zou een document opleveren dat er alleen maar UITZIET als
-  // het origineel — een logo dat sindsdien veranderde, een adres dat sindsdien is verbeterd — en
-  // dat als origineel meegeven. Tekenen is dus alleen de terugval.
-  const opgeslagen = route.indexOf('.download(stored)');
-  const tekenen = route.indexOf('renderInvoicePdf(');
-  assert.ok(opgeslagen > 0 && tekenen > 0 && opgeslagen < tekenen,
-    "de route tekent de factuur opnieuw vóór hij het opgeslagen bestand probeert");
+  // THE STORED FILE WINS. A sent invoice already has a pdf, and THAT is the document the customer
+  // received. Re-drawing it would produce something that merely LOOKS like the original — a logo
+  // since changed, an address since corrected — and hand it over as the original. Rendering is
+  // only ever the fallback.
+  const storedAt = route.indexOf('.download(stored)');
+  const renderAt = route.indexOf('renderInvoicePdf(');
+  assert.ok(storedAt > 0 && renderAt > 0 && storedAt < renderAt,
+    "the route re-renders the invoice before it tries the stored file");
 
-  // Een INKOOPfactuur wordt nooit door ons getekend: dat zou het papierwerk van de leverancier
-  // verzinnen. Ontbreekt het, dan wordt het gemeld.
+  // A PURCHASE invoice is never drawn by us: that would be manufacturing the supplier's paperwork.
+  // A missing one is reported instead.
   assert.match(route, /if \(direction === "incoming"\) \{\s*\n\s*missing\.push\(/,
-    "we tekenen de factuur van een leverancier zelf — dat is papierwerk verzinnen");
+    "we draw a supplier's invoice ourselves — that is manufacturing their paperwork");
 
-  // Eigendom in de WHERE, niet als filter achteraf: de ids komen van een client.
-  assert.match(route, /\.eq\(ownerColumn, ownerId\)/, "eigendom wordt niet in de query afgedwongen");
+  // Ownership in the WHERE, not as a filter applied afterwards: the ids come from a client.
+  assert.match(route, /\.eq\(ownerColumn, ownerId\)/, "ownership is not enforced in the query");
 
-  // Wat er niet in zat, met NAAM. Een korte zip ziet er compleet uit.
-  assert.match(route, /"X-Bulk-Missing-Names"/, "wat ontbreekt wordt alleen geteld, niet genoemd");
-  assert.match(lijst, /t\('lijst\.download\.deels', \{ namen \}\)/, "het scherm zwijgt over wat ontbrak");
+  // What was not included, by NAME. A short archive looks complete when you open it.
+  assert.match(route, /"X-Bulk-Missing-Names"/, "what is missing is only counted, never named");
+  assert.match(list, /t\('lijst\.download\.deels', \{ namen \}\)/, "the screen says nothing about what was left out");
 
-  // [BULK-PDF] De bundelregel stond in de SELECTIE (een niet-bundelbare rij was niet aan te
-  // tikken). Nu alles selecteerbaar is, moet de knop hem zelf stellen — anders is de bewaking
-  // verdwenen met de rij die hem droeg.
-  assert.match(lijst, /bundelbaar: isBundelbaar\(inv\)/, "de selectie onthoudt niet meer wat bundelbaar is");
-  assert.match(lijst, /const allBundelbaar = selectedList\.length > 0 && selectedList\.every\(r => r\.bundelbaar\)/,
-    "de bundelvoorwaarde is nergens meer uitgesproken");
-  assert.match(lijst, /disabled=\{selectedList\.length < 2 \|\| !sameClient \|\| !allBundelbaar \|\| bundleLoading\}/,
-    "het betaalverzoek accepteert weer rijen die het niet aankan");
+  // [BULK-PDF] The bundle rule used to live in the SELECTION (a non-bundelbaar row could not be
+  // ticked). Now that everything is selectable the button has to state it itself — otherwise the
+  // guard vanished together with the row that carried it.
+  assert.match(list, /bundelbaar: isBundelbaar\(inv\)/, "the selection no longer remembers what is bundelbaar");
+  assert.match(list, /const allBundelbaar = selectedList\.length > 0 && selectedList\.every\(r => r\.bundelbaar\)/,
+    "the bundle condition is stated nowhere any more");
+  assert.match(list, /disabled=\{selectedList\.length < 2 \|\| !sameClient \|\| !allBundelbaar \|\| bundleLoading\}/,
+    "the betaalverzoek accepts rows it cannot handle again");
+});
+
+
+test("[PLAIN-TEXT-SOURCE] no source file is binary to git", () => {
+  // FOUND while reviewing the bulk-pdf change: `git diff --stat` reported a brand-new TypeScript
+  // file as "Bin 0 -> 4496 bytes". Three source files carried a raw control byte — a NUL typed
+  // straight into a regex class or a template literal instead of written as an escape.
+  //
+  // It compiles, every gate passes, and the app behaves identically. What breaks is everything
+  // AROUND the code: git treats the file as binary, so there is no readable diff, no reviewable
+  // change, and — the part that actually costs — a conflict in it is all-or-nothing instead of
+  // line by line. AGENTS.md opens with "more than one session works on this repo"; an unmergeable
+  // file is a direct tax on that.
+  //
+  // An escape is byte-identical at runtime, so this gate never asks anyone to change behaviour.
+  // It asks them to spell the byte instead of typing it.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    if (!existsSync(dir)) return out;
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|css|md|sql)$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const file of [...walk("src"), ...walk("tests"), ...walk("supabase")]) {
+    const bytes = readFileSync(file);
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      // Tab, newline and carriage return are the only control bytes text legitimately holds.
+      if (b === 0x09 || b === 0x0a || b === 0x0d) continue;
+      if (b < 0x20 || b === 0x7f) {
+        const line = bytes.subarray(0, i).toString("utf8").split("\n").length;
+        const hex = b.toString(16).padStart(2, "0");
+        offenders.push(`${file}:${line} carries a raw 0x${hex} byte`);
+        break; // one report per file is enough to act on
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    "these files are binary to git — write the byte as an escape (" +
+      "\\u0000" +
+      ") instead of typing it:\n" +
+      offenders.join("\n"),
+  );
 });
