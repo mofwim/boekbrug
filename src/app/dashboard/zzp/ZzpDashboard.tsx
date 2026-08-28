@@ -179,7 +179,7 @@ export function ZzpDashboard(
               boxShadow: EL1, marginBottom: 18,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7a4f00' }}>help</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#7a4f00' }} aria-hidden>help</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 15.5, fontWeight: 700, color: '#5a3e00' }}>
                 {vragenBannerTekst(vragenCount)}
@@ -188,7 +188,7 @@ export function ZzpDashboard(
                 {t('start.vraag')}
               </span>
             </span>
-            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#7a4f00' }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#7a4f00' }} aria-hidden>chevron_right</span>
           </button>
         )}
 
@@ -210,12 +210,12 @@ export function ZzpDashboard(
             boxShadow: EL1, margin: '20px 0 8px',
           }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>fact_check</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }} aria-hidden>fact_check</span>
           <span style={{ flex: 1 }}>
             <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>{t('start.klaar')}</span>
             <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{t('start.waarheid.sub')}</span>
           </span>
-          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }} aria-hidden>chevron_right</span>
         </button>
 
         {/* [DASH-SIMPLIFY] Grouped home — same destinations as before, now in four
@@ -281,6 +281,17 @@ export function ZzpDashboard(
                 onClick={() => router.push('/dashboard/dagomzet')} />
               <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
+              {/* [UREN-DEUR] Het urenscherm had NUL inkomende links — niet hier, niet op de
+                  werkplek, niet in de onderbalk. Het was gebouwd, vertaald, getest en door de
+                  render-gate gehaald, en alleen bereikbaar door het pad zelf in te tikken. Voor een
+                  zzp'er die per uur factureert is dat het archetypische scherm, en het stond achter
+                  een deur die niemand had opgehangen.
+
+                  Hier, in het administratieraster, want dat is wat het is: een registratiescherm,
+                  precies zoals Kas en Dagomzet. De uitbreidingsregel in de kop van dit bestand zegt
+                  hetzelfde ("add a record screen → add one <AdminTile> to the administratie grid"). */}
+              <AdminTile icon="schedule" tint="#455A64" label={t('start.tegel.uren')}
+                onClick={() => router.push('/dashboard/uren')} />
               {/* [VOERTUIG] Only for a trade that works on cars. A barber shown a vehicle register
                   learns that this app guesses about him; a monteur without one has nowhere to put
                   the only thing he actually thinks in. Unknown trade → absent, exactly as before. */}
@@ -317,6 +328,16 @@ export function ZzpDashboard(
               <MiniCard icon="receipt_long" tint="#455A64"
                 label={t('start.conceptBtw')} sub="1a/1b/5a/5b"
                 onClick={() => router.push('/dashboard/aangifte')} />
+              {/* [IB-JAAR-DEUR] Het jaaroverzicht is expliciet tweezijdig gebouwd — een boekhouder
+                  opent het jaar van een klant via ?clientId, en zónder die parameter is het het
+                  EIGEN jaar van de ondernemer (zie JaarClient). Alleen: de enige link in de hele
+                  app stond op het werkbord van de boekhouder. De cijfers voor je eigen IB-aangifte
+                  en je auditfile waren daarmee bereikbaar voor iedereen behalve degene van wie ze
+                  zijn. Hier, naast de concept-BTW, want dat is dezelfde vraag over een andere
+                  periode. */}
+              <MiniCard icon="date_range" tint="#0B57D0"
+                label={t('start.jaar')} sub={t('start.jaar.sub')}
+                onClick={() => router.push('/dashboard/jaar')} />
             </div>
           </section>
 
@@ -392,13 +413,13 @@ function ActionCard({ icon, iconBg, iconColor, label, sub, onClick, active, acti
         background: iconBg, display: 'flex', alignItems: 'center',
         justifyContent: 'center', flexShrink: 0,
       }}>
-        <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }}>{icon}</span>
+        <span className="material-symbols-outlined" style={{ color: iconColor, fontSize: 24 }} aria-hidden>{icon}</span>
       </div>
       <div style={{ flex: 1 }}>
         <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 2 }}>{label}</p>
         <p style={{ fontSize: 13, color: '#5F6368' }}>{sub}</p>
       </div>
-      <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+      <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }} aria-hidden>chevron_right</span>
     </button>
   )
 }
@@ -442,7 +463,7 @@ function AdminTile({ icon, tint, label, badge, onClick }: {
         position: 'relative', width: 46, height: 46, borderRadius: R.md,
         background: tint, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }}>{icon}</span>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }} aria-hidden>{icon}</span>
         {badge != null && badge > 0 && (
           <span style={{
             position: 'absolute', top: -5, right: -5, background: '#B3261E', color: '#fff',
@@ -479,7 +500,7 @@ function MiniCard({ icon, tint, label, sub, onClick }: {
         width: 38, height: 38, borderRadius: R.sm, background: tint,
         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
       }}>
-        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 20 }}>{icon}</span>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 20 }} aria-hidden>{icon}</span>
       </div>
       <div style={{ minWidth: 0 }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#202124', margin: 0, lineHeight: 1.2 }}>{label}</p>
@@ -512,7 +533,7 @@ function Fab({ onClick }: { onClick: () => void }) {
         transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
       }}
     >
-      <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>add</span>
       {t('start.nieuweFactuur')}
     </button>
   )

@@ -91,6 +91,10 @@ export const MESSAGES = {
   'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
   'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
   'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  // [DEUR] Kassa, Voertuigen, Team en Uren staan óók in deze balk — maar met hun eigen
+  // schermtitel (kassa.titel, vtg.titel, team.titel, uren.titel) en niet met een tweede
+  // chrome.*-sleutel ernaast. Eén scherm, één naam: twee sleutels met hetzelfde woord erin is
+  // precies hoe een balk en een pagina na een halfjaar anders gaan heten. Zie DashboardChrome.
   'chrome.kluis': { nl: 'Kluis', ar: 'الخزنة', en: 'Vault' },
   'chrome.logboek': { nl: 'Logboek', ar: 'سجل النشاط', en: 'Activity log' },
   'chrome.beveiliging': { nl: 'Beveiliging', ar: 'الأمان', en: 'Security' },
@@ -410,6 +414,18 @@ export const MESSAGES = {
   'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار BTW', en: 'Draft BTW return' },
   'start.tegel.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
   'start.tegel.artikelen': { nl: 'Artikelen', ar: 'الأصناف', en: 'Articles' },
+  // [UREN-DEUR] De tegel die er nooit was. Zie ZzpDashboard voor waarom hij in het
+  // administratieraster hoort en niet ergens anders.
+  'start.tegel.uren': { nl: 'Uren', ar: 'الساعات', en: 'Hours' },
+  // [IB-JAAR-DEUR] Het eigen jaar van de ondernemer, naast de concept-BTW. De ondertitel noemt
+  // allebei de dingen die het scherm oplevert — een label alleen zegt niet waarom je er heen zou
+  // gaan, en "jaaroverzicht" kan alles betekenen.
+  'start.jaar': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  'start.jaar.sub': {
+    nl: 'Cijfers voor je IB-aangifte en je auditfile',
+    ar: 'أرقام إقرار الدخل وملف التدقيق',
+    en: 'Figures for your income-tax return and your audit file',
+  },
   'start.tegel.team': { nl: 'Team', ar: 'الفريق', en: 'Team' },
   'start.tegel.werkplek': { nl: 'Mijn werkplek', ar: 'مكتبي', en: 'My workspace' },
   'start.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
@@ -1205,6 +1221,68 @@ export const MESSAGES = {
   'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
   'aang.verschil': { nl: 'Bekijk het verschil op Waarheid', ar: 'اعرض الفرق في «حقيقتك»', en: 'View the difference on Truth' },
   'aang.jeHebt': { nl: 'Je hebt', ar: 'لديك', en: 'You have' },
+  // [ZELF-INDIENEN] De conceptbanner, opgesplitst. De eerste zin geldt altijd; de tweede hangt
+  // ervan af of er een boekhouder gekoppeld is — en die stond er tot nu toe onvoorwaardelijk,
+  // waardoor een ondernemer zónder boekhouder las dat iemand anders zijn aangifte zou indienen.
+  // Twee hele zinnen, geen zin met een gat erin: welke van de twee er staat verandert wie er iets
+  // moet doen, en dat overleeft geen woordvolgorde-substitutie.
+  'aang.concept': {
+    nl: 'Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte.',
+    ar: 'هذه مسودة مبنية على البيانات التي أدخلتها — وليست إقراراً مُقدَّماً.',
+    en: 'This is a DRAFT based on the data you entered — not a filed return.',
+  },
+  'aang.conceptBoekhouder': {
+    nl: 'Je boekhouder controleert en dient in.',
+    ar: 'محاسبك يراجعه ويقدّمه.',
+    en: 'Your accountant checks it and files it.',
+  },
+  'aang.conceptZelf': {
+    nl: 'Je dient hem zelf in bij de Belastingdienst — hieronder staat hoe.',
+    ar: 'أنت تقدّمه بنفسك إلى مصلحة الضرائب — الخطوات في الأسفل.',
+    en: 'You file it yourself with the Belastingdienst — the steps are below.',
+  },
+  // [ZELF-INDIENEN] De laatste meter, in drie stappen. De rubrieknummers staan er letterlijk in
+  // omdat ze letterlijk overgenomen worden: de tabel op ditzelfde scherm draagt dezelfde nummers,
+  // en het formulier van de Belastingdienst ook.
+  'aang.zelf.titel': { nl: 'Zelf indienen — zo doe je dat', ar: 'التقديم بنفسك — إليك الطريقة', en: 'Filing it yourself — how' },
+  'aang.zelf.stap1': {
+    nl: 'Log in op Mijn Belastingdienst Zakelijk via',
+    ar: 'سجّل الدخول إلى Mijn Belastingdienst Zakelijk عبر',
+    en: 'Log in to Mijn Belastingdienst Zakelijk via',
+  },
+  'aang.zelf.stap2': {
+    nl: 'Neem de bedragen hieronder rubriek voor rubriek over — 1a, 1b, 5b en 5g staan er precies zo op het formulier.',
+    ar: 'انقل المبالغ أدناه بنداً بنداً — البنود 1a و1b و5b و5g مكتوبة في النموذج بالطريقة نفسها.',
+    en: 'Copy the amounts below box by box — 1a, 1b, 5b and 5g appear on the form exactly as they do here.',
+  },
+  'aang.zelf.stap3': {
+    nl: 'Verstuur de aangifte daar, en betaal of ontvang het saldo van 5g.',
+    ar: 'أرسل الإقرار هناك، ثم ادفع رصيد 5g أو استلمه.',
+    en: 'Submit the return there, then pay or receive the 5g balance.',
+  },
+  'aang.zelf.markeer': {
+    nl: 'Klaar? Markeer dit kwartaal als ingediend',
+    ar: 'انتهيت؟ علّم هذا الربع كمُقدَّم',
+    en: 'Done? Mark this quarter as filed',
+  },
+  // [DEADLINE] Drie hele zinnen, want ze zeggen drie verschillende dingen tegen iemand die moet
+  // handelen. "nog 0 dagen" en "vandaag" zijn hetzelfde feit en maar één ervan zet iemand in
+  // beweging, dus vandaag heeft zijn eigen zin.
+  'aang.deadline.nog': {
+    nl: 'Indienen vóór {datum} — nog {dagen} dagen.',
+    ar: 'يجب التقديم قبل {datum} — بقي {dagen} يوماً.',
+    en: 'File before {datum} — {dagen} days left.',
+  },
+  'aang.deadline.vandaag': {
+    nl: 'Vandaag is de laatste dag om dit kwartaal in te dienen.',
+    ar: 'اليوم آخر يوم لتقديم هذا الربع.',
+    en: 'Today is the last day to file this quarter.',
+  },
+  'aang.deadline.voorbij': {
+    nl: 'De uiterste datum ({datum}) is voorbij en dit kwartaal staat nog niet als ingediend.',
+    ar: 'انقضى الموعد النهائي ({datum}) وهذا الربع غير مُسجَّل كمُقدَّم بعد.',
+    en: 'The deadline ({datum}) has passed and this quarter is not marked as filed.',
+  },
 
   // ─── [CONCEPTEN] De wachtrij met klaargezette e-mails ───────────────────────────────────────
 
@@ -1445,6 +1523,24 @@ export const MESSAGES = {
     ar: 'هذه الفاتورة تتبع جدول التذكيرات الخاص بك (انظر الإعدادات).',
     en: 'This invoice follows your reminder schedule (see Settings).',
   },
+  // [HERIN-WAARHEID] De stand die dit paneel nooit kende. `herin.actief` hierboven werd getoond
+  // ongeacht profiles.reminders_enabled, en die schakelaar staat standaard uit — dus de zin
+  // "volgt je herinneringsschema" was voor vrijwel iedereen onwaar. Deze zegt wat er werkelijk
+  // gebeurt (namelijk niets) en noemt in dezelfde adem de knop die het aanzet, zoals hij in de
+  // navigatie geschreven staat.
+  'herin.uit': {
+    nl: 'Automatische herinneringen staan uit — deze factuur wordt niet vanzelf opgevolgd.',
+    ar: 'التذكيرات التلقائية متوقفة — لن تتم متابعة هذه الفاتورة تلقائياً.',
+    en: 'Automatic reminders are off — this invoice will not be chased on its own.',
+  },
+  'herin.aanzetten': { nl: 'Aanzetten bij Instellingen', ar: 'تفعيلها من الإعدادات', en: 'Turn on in Settings' },
+  // [NO-SILENT-EMPTY] Een mislukte lezing mag hier nooit lezen als "staat aan". Dat is precies de
+  // bewering die dit paneel jarenlang verkeerd deed.
+  'herin.onbekend': {
+    nl: 'We konden niet nakijken of automatische herinneringen aanstaan.',
+    ar: 'لم نتمكّن من التحقّق ممّا إذا كانت التذكيرات التلقائية مفعّلة.',
+    en: 'We could not check whether automatic reminders are on.',
+  },
   'herin.hervatten': { nl: 'Hervatten', ar: 'استئناف', en: 'Resume' },
   'herin.pauzeren': { nl: 'Pauzeren', ar: 'إيقاف مؤقت', en: 'Pause' },
   'herin.verstuurd': { nl: 'Verstuurd', ar: 'التذكيرات المُرسَلة', en: 'Sent' },
@@ -1545,6 +1641,24 @@ export const MESSAGES = {
   'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة BTW كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
   'corr.grondslag': { nl: 'Grondslag', ar: 'الأساس', en: 'Base' },
   'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ BTW', en: 'BTW amount' },
+  // [BTW-TARIEF] Eén tik in plaats van hoofdrekenen. Het TARIEF wordt gevraagd, nooit geraden:
+  // uit een bedrag exclusief valt geen tarief af te leiden, en een geraden btw is een geraden
+  // voorbelasting. Elke zin een eigen sleutel — een getal is een parameter, een woord niet.
+  'corr.tarief.vraag': {
+    nl: 'Btw ontbreekt. Welk tarief staat er op de factuur?',
+    en: 'The VAT is missing. Which rate does the invoice show?',
+    ar: 'مبلغ الضريبة ناقص. ما النسبة المذكورة في الفاتورة؟',
+  },
+  'corr.tarief.knop': {
+    nl: '{tarief}% — btw wordt {btw}',
+    en: '{tarief}% — VAT becomes {btw}',
+    ar: '{tarief}٪ — تصبح الضريبة {btw}',
+  },
+  'corr.tarief.uitleg': {
+    nl: 'Wij rekenen het tarief niet zelf uit: hetzelfde bedrag kan 9% of 21% dragen, en een geraden btw is een geraden voorbelasting. Klopt het niet? Tik het bedrag gewoon over.',
+    en: 'We do not work the rate out ourselves: the same amount can carry 9% or 21%, and a guessed VAT is a guessed input tax. Not right? Just type the amount over it.',
+    ar: 'لا نحسب النسبة من تلقائنا: المبلغ نفسه قد يحمل ٩٪ أو ٢١٪، وضريبة مخمَّنة تعني ضريبة مدخلات مخمَّنة. غير صحيح؟ اكتب المبلغ فوقه ببساطة.',
+  },
   'corr.bedragUitleg': {
     nl: 'Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief rekent zichzelf uit.',
     ar: 'انقل الإجمالي ومبلغ btw كما هما مكتوبان أسفل الفاتورة — المبلغ بدون الضريبة يُحسب تلقائياً.',
@@ -4633,6 +4747,19 @@ export const MESSAGES = {
     ar: 'كل الفترات',
     en: 'All periods',
   },
+  // [TAAL] De rest van het periodemenu. Deze woorden stonden als Nederlandse strings in
+  // invoice-period.ts — een pure module die het menu vult boven een volledig vertaald scherm, dus
+  // een Arabische eigenaar zag zijn hele lijst in het Arabisch met dit ene menu in het Nederlands.
+  // De sleutel hierboven bestond al en werd nooit bereikt: het menu vond altijd eerst het woord.
+  //
+  // Eén sleutel per keuze en geen zin met {periode} erin: "deze maand" en "dit kwartaal" krijgen
+  // in het Arabisch een ander aanwijzend woord, en in het Turks een ander achtervoegsel.
+  'ink.periode.dezeMaand': { nl: 'Deze maand', ar: 'هذا الشهر', en: 'This month' },
+  'ink.periode.vorigeMaand': { nl: 'Vorige maand', ar: 'الشهر الماضي', en: 'Last month' },
+  'ink.periode.ditKwartaal': { nl: 'Dit kwartaal', ar: 'هذا الربع', en: 'This quarter' },
+  'ink.periode.vorigKwartaal': { nl: 'Vorig kwartaal', ar: 'الربع الماضي', en: 'Last quarter' },
+  'ink.periode.ditJaar': { nl: 'Dit jaar', ar: 'هذه السنة', en: 'This year' },
+  'ink.periode.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة الماضية', en: 'Last year' },
   'ink.anderePeriodes': {
     nl: 'Je hebt er {facturen} in andere periodes.',
     ar: 'لديك {facturen} في فترات أخرى.',
@@ -8125,6 +8252,22 @@ export const MESSAGES = {
     ar: 'هل دُفعت؟',
     en: 'Paid?',
   },
+  // [BULK-PDF] Meerdere facturen in één keer meenemen.
+  'lijst.downloadPdf': {
+    nl: 'Download pdf',
+    ar: 'تنزيل PDF',
+    en: 'Download pdf',
+  },
+  'lijst.download.mislukt': {
+    nl: 'Downloaden lukte niet. Probeer het zo meteen opnieuw.',
+    ar: 'لم ينجح التنزيل. أعد المحاولة بعد قليل.',
+    en: 'The download did not work. Try again in a moment.',
+  },
+  'lijst.download.deels': {
+    nl: 'Van deze facturen zat geen document in de download: {namen}.',
+    ar: 'لم تُدرج مستندات هذه الفواتير في التنزيل: {namen}.',
+    en: 'No document was included for these invoices: {namen}.',
+  },
   'lijst.betaalverzoek': {
     nl: 'Betaalverzoek',
     ar: 'طلب دفع',
@@ -11171,6 +11314,12 @@ export const MESSAGES = {
   'log.member.joined': { nl: 'Medewerker toegetreden', en: 'Team member joined', ar: 'انضمّ موظف' },
   'log.member.revoked': { nl: 'Toegang van een medewerker ingetrokken', en: 'Team member\'s access withdrawn', ar: 'سُحب وصول موظف' },
   'log.retention.warning_sent': { nl: 'Waarschuwing over de bewaartermijn verstuurd', en: 'Retention warning sent', ar: 'أُرسل تحذير بشأن مدة الحفظ' },
+  // [PAKKET-LINK] Dezelfde drie feiten, maar voor de deel-link naar een boekhouder ZONDER account.
+  // Apart van de regel hieronder omdat er geen ingelogde boekhouder achter zit: dit is het spoor
+  // van de EIGENAAR — naar wie hij zijn boeken stuurde, wanneer, en of ze zijn opgehaald.
+  'log.package.link_shared': { nl: 'Je hebt het kwartaalpakket naar je boekhouder gestuurd', en: 'You sent the quarterly package to your bookkeeper', ar: 'أرسلت حزمة الربع إلى محاسبك' },
+  'log.package.link_downloaded': { nl: 'Je boekhouder heeft het kwartaalpakket via je link opgehaald', en: 'Your bookkeeper collected the quarterly package through your link', ar: 'حمّل محاسبك حزمة الربع عبر رابطك' },
+  'log.package.link_revoked': { nl: 'Je hebt de deel-link naar je boekhouder ingetrokken', en: 'You withdrew the share link to your bookkeeper', ar: 'سحبت رابط المشاركة المُرسل إلى محاسبك' },
   'log.accountant.package_downloaded': { nl: 'Je boekhouder heeft het kwartaalpakket gedownload', en: 'Your bookkeeper downloaded the quarterly package', ar: 'نزّل محاسبك حزمة الربع' },
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
@@ -11597,6 +11746,17 @@ export const MESSAGES = {
     en: 'Void this whole ticket?',
     ar: 'إلغاء هذه الفاتورة بالكامل؟',
   },
+  // [KASSA-DIALOOG] Wat er gebeurt, in het scherm van de app zelf. De vraag hierboven stond in een
+  // window.confirm: één regel in de chrome van het besturingssysteem, met in een geïnstalleerde PWA
+  // de herkomst-URL erboven — precies op het moment dat een geldapp er het minst betrouwbaar uitziet.
+  // En een balie-eigenaar tikt dat weg met een klant voor zich. De regels zijn een harde delete
+  // (api/till/sale DELETE), dus dit zegt allebei: het verdwijnt, en het staat nog in je logboek.
+  'kassa.terugdraaienUitleg': {
+    nl: 'De regels gaan uit de omzet van vandaag. Terugdraaien kan niet ongedaan worden gemaakt — wat erop stond blijft wel in je logboek staan.',
+    en: 'The lines leave today’s takings. Voiding cannot be undone — what was on the ticket stays in your log.',
+    ar: 'ستخرج البنود من مبيعات اليوم. لا يمكن التراجع عن الإلغاء — لكن ما كان على الفاتورة يبقى في سجلك.',
+  },
+  'kassa.terugdraaienKnop': { nl: 'Terugdraaien', en: 'Void ticket', ar: 'إلغاء الفاتورة' },
   // One sentence per payment method — a noun inside a sentence is not a parameter.
   'kassa.betaaldPin': { nl: 'Met pin betaald', en: 'Paid by card', ar: 'مدفوعة بالبطاقة' },
   'kassa.betaaldContant': { nl: 'Contant betaald', en: 'Paid in cash', ar: 'مدفوعة نقداً' },
@@ -11655,6 +11815,14 @@ export const MESSAGES = {
   },
   'vtg.verwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
   'vtg.verwijderenVraag': { nl: 'Dit voertuig verwijderen?', en: 'Remove this vehicle?', ar: 'إزالة هذه المركبة؟' },
+  // [KASSA-DIALOOG] Zie de uitleg bij kassa.terugdraaienUitleg: dezelfde reden, dezelfde vervanging.
+  // Het voertuig draagt de APK-herinnering, en die verdwijnt mee — dat is het gevolg dat niemand
+  // opmerkt tot de keuring te laat is.
+  'vtg.verwijderenUitleg': {
+    nl: 'Het voertuig verdwijnt uit je administratie, samen met de APK-herinnering die eraan hangt.',
+    en: 'The vehicle leaves your administration, along with the APK reminder attached to it.',
+    ar: 'ستختفي المركبة من إدارتك، ومعها تذكير الـ APK المرتبط بها.',
+  },
   // One whole sentence per state — never one template with the state substituted in.
   'vtg.status.expired': { nl: 'APK is verlopen', en: 'The APK has expired', ar: 'انتهى الـ APK' },
   'vtg.status.due': { nl: 'APK verloopt binnenkort', en: 'The APK expires soon', ar: 'ينتهي الـ APK قريباً' },
@@ -11779,6 +11947,72 @@ export const MESSAGES = {
   // zegt de tekst dat — een totaal dat stil een uur zonder tarief weglaat is een getal dat de
   // ondernemer niet kan narekenen tegen de lijst ernaast.
 
+  // [URENCRITERIUM] Het urencriterium terwijl er nog iets aan te doen is. Elke stand heeft een
+  // EIGEN zin: "Een {woord} haal je niet" werkt in het Nederlands en breekt Arabische congruentie
+  // en Turkse klinkerharmonie. Getallen zijn wél parameters — die verbuigen niet.
+  'uren.criterium.titel': { nl: 'Urencriterium', en: 'Hour criterion', ar: 'معيار الساعات' },
+  'uren.criterium.voortgang': {
+    nl: '{uren} van de 1.225 uur geregistreerd in {jaar}',
+    en: '{uren} of the 1,225 hours registered in {jaar}',
+    ar: 'تم تسجيل {uren} من أصل 1.225 ساعة في {jaar}',
+  },
+  'uren.criterium.onbekend': {
+    nl: 'We konden je uren nu niet lezen — het urencriterium is niet beoordeeld.',
+    en: 'We could not read your hours just now — the hour criterion has not been assessed.',
+    ar: 'تعذّرت قراءة ساعاتك الآن — لم يُقيَّم معيار الساعات.',
+  },
+  'uren.criterium.gehaald': {
+    nl: 'Je hebt het urencriterium gehaald. Blijf je uren gewoon bijhouden — de Belastingdienst mag erom vragen.',
+    en: 'You have met the hour criterion. Keep registering your hours — the Belastingdienst may ask to see them.',
+    ar: 'لقد استوفيت معيار الساعات. واصل تسجيل ساعاتك — قد تطلبها مصلحة الضرائب.',
+  },
+  'uren.criterium.tevroeg': {
+    nl: 'Het jaar is nog te jong om te zeggen waar dit uitkomt. Vanaf hier is dat gemiddeld {perweek} uur per week.',
+    en: 'The year is too young to say where this lands. From here that is {perweek} hours a week on average.',
+    ar: 'ما زال العام في بدايته لتحديد النتيجة. من الآن فصاعداً يعني ذلك {perweek} ساعة أسبوعياً في المتوسط.',
+  },
+  'uren.criterium.opkoers': {
+    nl: 'Op dit tempo kom je dit jaar uit op ongeveer {verwacht} uur. Dat is boven de 1.225.',
+    en: 'At this pace you will reach about {verwacht} hours this year. That is above the 1,225.',
+    ar: 'بهذه الوتيرة ستصل إلى نحو {verwacht} ساعة هذا العام، أي فوق 1.225.',
+  },
+  'uren.criterium.achter': {
+    nl: 'Op dit tempo kom je uit op ongeveer {verwacht} uur — onder de 1.225. Je hebt nog {resterend} uur te gaan in {dagen} dagen: gemiddeld {perweek} uur per week.',
+    en: 'At this pace you will reach about {verwacht} hours — below the 1,225. You have {resterend} hours to go in {dagen} days: {perweek} hours a week on average.',
+    ar: 'بهذه الوتيرة ستصل إلى نحو {verwacht} ساعة — أي أقل من 1.225. أمامك {resterend} ساعة خلال {dagen} يوماً: بمعدل {perweek} ساعة أسبوعياً.',
+  },
+  'uren.criterium.kritiek': {
+    nl: 'Je hebt nog {resterend} uur te gaan in {dagen} dagen. Dat is gemiddeld {perweek} uur per week — meer dan een volle werkweek. Houd er rekening mee dat de zelfstandigenaftrek dit jaar kan vervallen.',
+    en: 'You have {resterend} hours to go in {dagen} days. That is {perweek} hours a week — more than a full working week. Take into account that the zelfstandigenaftrek may lapse this year.',
+    ar: 'أمامك {resterend} ساعة خلال {dagen} يوماً، أي {perweek} ساعة أسبوعياً — أكثر من أسبوع عمل كامل. ضع في حسبانك أن خصم العمل الحر قد يسقط هذا العام.',
+  },
+  'uren.criterium.onhaalbaar': {
+    nl: 'Er zijn niet genoeg dagen meer over om dit jaar aan 1.225 uur te komen. Bespreek met je boekhouder wat dat betekent voor de zelfstandigenaftrek.',
+    en: 'There are not enough days left to reach 1,225 hours this year. Discuss with your accountant what that means for the zelfstandigenaftrek.',
+    ar: 'لم تعد الأيام المتبقية كافية لبلوغ 1.225 ساعة هذا العام. ناقش مع محاسبك أثر ذلك على خصم العمل الحر.',
+  },
+  'uren.criterium.afgeslotengehaald': {
+    nl: 'In {jaar} haalde je het urencriterium op basis van je registratie.',
+    en: 'In {jaar} you met the hour criterion based on your registration.',
+    ar: 'في {jaar} استوفيت معيار الساعات بناءً على تسجيلك.',
+  },
+  'uren.criterium.afgeslotengemist': {
+    nl: 'In {jaar} bleef je registratie onder de 1.225 uur. Werkte je meer, dan telt alleen wat je alsnog vastlegt.',
+    en: 'In {jaar} your registration stayed below 1,225 hours. If you worked more, only what you still record counts.',
+    ar: 'في {jaar} بقي تسجيلك دون 1.225 ساعة. إن كنت قد عملت أكثر، فلا يُحتسب إلا ما تُوثّقه.',
+  },
+  // De twee dingen die ondernemers het vaakst verkeerd aannemen. Ze staan er ALTIJD bij, ook als
+  // het criterium gehaald is: wie het dit jaar haalde neemt volgend jaar dezelfde aanname mee.
+  'uren.criterium.tellenmee': {
+    nl: 'Ook uren die je niet factureert tellen mee: administratie, offertes, acquisitie, reistijd en scholing. Dit scherm is gemaakt om te factureren, dus die uren vergeet je makkelijk.',
+    en: 'Hours you do not invoice count too: administration, quotes, acquisition, travel and training. This screen is built for invoicing, so those hours are easy to forget.',
+    ar: 'تُحتسب أيضاً الساعات غير المفوترة: الإدارة وعروض الأسعار واستقطاب العملاء ووقت التنقل والتدريب. صُمِّمت هذه الشاشة للفوترة، لذا يسهل نسيان تلك الساعات.',
+  },
+  'uren.criterium.geendeeljaar': {
+    nl: 'Startte je dit jaar? Dan geldt dezelfde 1.225 uur — er wordt niet naar rato gerekend.',
+    en: 'Did you start this year? The same 1,225 hours apply — there is no pro-rata.',
+    ar: 'هل بدأت هذا العام؟ ينطبق العدد نفسه 1.225 ساعة — لا يوجد احتساب تناسبي.',
+  },
   'uren.titel': { nl: 'Uren', en: 'Hours', ar: 'الساعات' },
   'uren.subtitel': {
     nl: 'Schrijf op wat je gewerkt hebt. Wat er nog niet op een factuur staat, zet je hier in één keer om.',
@@ -11888,6 +12122,18 @@ export const MESSAGES = {
   // Stap 5 van de wizard, voor wie al gekoppeld binnenkwam (via de uitnodiging van zijn kantoor).
   'onb.kantoor.titel': { nl: 'Je boekhouder staat al klaar', ar: 'محاسبك جاهز بالفعل', en: 'Your accountant is already set' },
   'onb.kantoor.uitleg': { nl: 'Je bent gekoppeld aan {naam}. Alles wat je verstuurt, ontvangt of als betaald markeert, kan hij aan het eind van het kwartaal in één keer ophalen — je concepten blijven van jou alleen.', ar: 'أنت مرتبط بـ {naam}. كل ما ترسله أو تستقبله أو تعلّمه كمدفوع يمكنه جمعه دفعة واحدة في نهاية الربع — ومسوّداتك تبقى لك وحدك.', en: 'You are linked to {naam}. Everything you send, receive or mark as paid can be collected in one go at quarter end — your drafts stay yours alone.' },
+  // ─── [PAKKET-LINK] Het kwartaal versturen naar een boekhouder zonder account ────────────────
+  'klr.deel.knop': { nl: 'Of stuur het naar je boekhouder', ar: 'أو أرسله إلى محاسبك', en: 'Or send it to your accountant' },
+  'klr.deel.uitleg': { nl: 'Wij mailen hem een downloadlink. Hij heeft géén account nodig — de link werkt 30 dagen en je kunt hem altijd intrekken.', ar: 'نرسل له رابط تنزيل بالبريد. لا يحتاج حساباً — الرابط يعمل 30 يوماً ويمكنك سحبه في أي وقت.', en: 'We e-mail him a download link. He needs no account — the link works for 30 days and you can withdraw it at any time.' },
+  'klr.deel.adresLabel': { nl: 'E-mailadres van je boekhouder', ar: 'البريد الإلكتروني لمحاسبك', en: 'Your accountant\'s e-mail address' },
+  'klr.deel.notitieLabel': { nl: 'Eigen bericht (optioneel)', ar: 'رسالة منك (اختيارية)', en: 'Your own message (optional)' },
+  'klr.deel.notitiePlaceholder': { nl: 'Bijvoorbeeld: de bon van de verzekering komt nog na.', ar: 'مثلاً: إيصال التأمين سيصل لاحقاً.', en: 'For example: the insurance receipt is still to come.' },
+  'klr.deel.versturen': { nl: 'Versturen', ar: 'إرسال', en: 'Send' },
+  'klr.deel.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
+  'klr.deel.verstuurd': { nl: '✓ Verstuurd naar {email}. Je ziet hier straks of hij het pakket heeft opgehaald.', ar: '✓ أُرسل إلى {email}. سترى هنا لاحقاً إن كان قد حمّل الحزمة.', en: '✓ Sent to {email}. You will see here whether he collected the package.' },
+  'klr.deel.fout': { nl: 'Versturen mislukt. Er is niets verstuurd — probeer het opnieuw.', ar: 'فشل الإرسال. لم يُرسل شيء — حاول مرة أخرى.', en: 'Sending failed. Nothing was sent — please try again.' },
+  'klr.deel.offline': { nl: 'Geen verbinding. Er is niets verstuurd.', ar: 'لا يوجد اتصال. لم يُرسل شيء.', en: 'No connection. Nothing was sent.' },
+
   // ─── [PROEFDOSSIER] Het voorbeelddossier — de bewijsplek vóór de eerste klant ───────────────
   'bh.home.klanten.eerste.voorbeeld': { nl: 'Eerst zien hoe een gevuld klantdossier eruitziet →', ar: 'شاهد أولاً كيف يبدو ملف عميل ممتلئ ←', en: 'First see what a filled client file looks like →' },
   'bh.demo.banner.titel': { nl: 'Voorbeeld — fictieve cijfers', ar: 'مثال — أرقام خيالية', en: 'Example — fictional figures' },
@@ -12303,6 +12549,201 @@ export const MESSAGES = {
   'bh.det.kiesKwartaal': { nl: 'Selecteer een kwartaal', ar: 'اختر ربعًا', en: 'Select a quarter' },
   'bh.det.huidig': { nl: 'huidig', ar: 'الحالي', en: 'current' },
   'bh.det.factuurOpstellen': { nl: 'Factuur opstellen voor deze klant', ar: 'إنشاء فاتورة لهذا العميل', en: 'Create an invoice for this client' },
+
+  // ── [TAAL-POORT] Inloggen en registreren ────────────────────────────────────────────────────
+  //
+  // De schermen waar de vertaling brak. Een Arabische lezer las een volledig Arabisch blogartikel
+  // op /ar/blog, drukte op "أنشئ حساباً مجانياً" — en kwam op twee schermen die 100% Nederlands
+  // waren: nul catalogus-imports in beide bestanden. Precies op de deur, en precies bij de mensen
+  // die het product als eerste accountants gebruiken.
+  //
+  // De foutmeldingen komen uit auth-errors.ts. Die module beslist WELKE fout het is (de moeilijke,
+  // pure helft, met een zorgvuldig gekozen volgorde) en geeft een sleutel terug; de woorden staan
+  // hier. Zo hoeft die beslisboom nooit vertaald te worden.
+  'auth.bevestigEerst': {
+    nl: 'Je moet eerst je e-mail bevestigen.',
+    ar: 'عليك تأكيد بريدك الإلكتروني أولاً.',
+    en: 'You need to confirm your e-mail first.',
+  },
+  'auth.teVeelPogingen': {
+    nl: 'Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw.',
+    ar: 'محاولات كثيرة متتالية — انتظر دقيقة ثم أعد المحاولة.',
+    en: 'Too many attempts in a row — wait a minute and try again.',
+  },
+  'auth.teVeelAanvragen': {
+    nl: 'Te veel aanvragen achter elkaar — wacht een minuut en probeer opnieuw.',
+    ar: 'طلبات كثيرة متتالية — انتظر دقيقة ثم أعد المحاولة.',
+    en: 'Too many requests in a row — wait a minute and try again.',
+  },
+  'auth.geblokkeerd': {
+    nl: 'Dit account is geblokkeerd. Neem contact op via de website.',
+    ar: 'هذا الحساب محظور. تواصل معنا عبر الموقع.',
+    en: 'This account is blocked. Get in touch through the website.',
+  },
+  'auth.onjuist': {
+    nl: 'E-mail of wachtwoord is onjuist',
+    ar: 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+    en: 'E-mail or password is incorrect',
+  },
+  'auth.inlogMislukt': {
+    nl: 'Inloggen lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر تسجيل الدخول — أعد المحاولة بعد قليل.',
+    en: 'Signing in did not work — try again in a moment.',
+  },
+  'auth.wachtwoordZwak': {
+    nl: 'Dit wachtwoord is te zwak — kies er een die langer is.',
+    ar: 'كلمة المرور هذه ضعيفة — اختر كلمة أطول.',
+    en: 'This password is too weak — pick a longer one.',
+  },
+  'auth.wachtwoordZelfde': {
+    nl: 'Dit is je huidige wachtwoord — kies een ander.',
+    ar: 'هذه كلمة مرورك الحالية — اختر غيرها.',
+    en: 'That is your current password — pick a different one.',
+  },
+  'auth.linkVerlopen': {
+    nl: 'Deze herstellink is verlopen of al gebruikt. Vraag een nieuwe aan.',
+    ar: 'انتهت صلاحية رابط الاستعادة أو تم استخدامه. اطلب رابطاً جديداً.',
+    en: 'This recovery link has expired or was already used. Request a new one.',
+  },
+  'auth.opslaanMislukt': {
+    nl: 'Opslaan lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر الحفظ — أعد المحاولة بعد قليل.',
+    en: 'Saving did not work — try again in a moment.',
+  },
+  'auth.versturenMislukt': {
+    nl: 'Versturen lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر الإرسال — أعد المحاولة بعد قليل.',
+    en: 'Sending did not work — try again in a moment.',
+  },
+  'auth.googleAfgebroken': {
+    nl: 'Het inloggen met Google is onderweg afgebroken. Probeer het opnieuw.',
+    ar: 'توقّف تسجيل الدخول عبر Google في منتصف الطريق. أعد المحاولة.',
+    en: 'Signing in with Google was interrupted. Try again.',
+  },
+  'auth.googleMislukt': {
+    nl: 'Inloggen met Google lukte niet. Probeer het opnieuw of gebruik je e-mailadres.',
+    ar: 'تعذّر تسجيل الدخول عبر Google. أعد المحاولة أو استخدم بريدك الإلكتروني.',
+    en: 'Signing in with Google did not work. Try again or use your e-mail address.',
+  },
+  'auth.googleFout': {
+    nl: 'Google login mislukt — probeer opnieuw',
+    ar: 'فشل تسجيل الدخول عبر Google — أعد المحاولة',
+    en: 'Google sign-in failed — try again',
+  },
+
+  // Het inlogscherm zelf.
+  'auth.slogan': {
+    nl: 'De brug tussen jou en je boekhouder',
+    ar: 'الجسر بينك وبين محاسبك',
+    en: 'The bridge between you and your bookkeeper',
+  },
+  'auth.metGoogle': { nl: 'Inloggen met Google', ar: 'تسجيل الدخول عبر Google', en: 'Sign in with Google' },
+  'auth.verbinden': { nl: 'Bezig met verbinden...', ar: 'جارٍ الاتصال...', en: 'Connecting...' },
+  'auth.of': { nl: 'of', ar: 'أو', en: 'or' },
+  'auth.email': { nl: 'E-mailadres', ar: 'البريد الإلكتروني', en: 'E-mail address' },
+  'auth.wachtwoord': { nl: 'Wachtwoord', ar: 'كلمة المرور', en: 'Password' },
+  'auth.wachtwoordVergeten': { nl: 'Wachtwoord vergeten?', ar: 'نسيت كلمة المرور؟', en: 'Forgot your password?' },
+  'auth.inloggen': { nl: 'Inloggen', ar: 'تسجيل الدخول', en: 'Sign in' },
+  'auth.bezig': { nl: 'Bezig...', ar: 'جارٍ...', en: 'Working...' },
+  'auth.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'auth.nieuwAccount': { nl: 'Nieuw account aanmaken', ar: 'إنشاء حساب جديد', en: 'Create a new account' },
+  'auth.mailOpnieuw': { nl: 'Stuur de mail opnieuw', ar: 'أعد إرسال الرسالة', en: 'Send the e-mail again' },
+  'auth.mailVersturen': { nl: 'Bezig met versturen...', ar: 'جارٍ الإرسال...', en: 'Sending...' },
+  'auth.mailOpnieuwGestuurd': {
+    nl: 'We hebben de mail opnieuw gestuurd.',
+    ar: 'أعدنا إرسال الرسالة.',
+    en: 'We have sent the e-mail again.',
+  },
+  // De taalkeuze op de deur zelf. De namen van de talen blijven in hun eigen schrift — wie zijn
+  // taal zoekt, zoekt de vorm van zijn eigen letters, niet een vertaling ervan.
+  'auth.taal': { nl: 'Taal', ar: 'اللغة', en: 'Language' },
+
+  // Het registratiescherm. Zelfde reden als de sleutels hierboven: dit is de deur.
+  'reg.wieBenJij': { nl: 'Wie ben jij?', ar: 'من أنت؟', en: 'Who are you?' },
+  'reg.zzper': { nl: 'ZZP’er', ar: 'صاحب عمل حر', en: 'Freelancer' },
+  'reg.zzperUitleg': {
+    nl: 'Ik stuur en ontvang facturen',
+    ar: 'أُرسل الفواتير وأستلمها',
+    en: 'I send and receive invoices',
+  },
+  'reg.boekhouder': { nl: 'Boekhouder', ar: 'محاسب', en: 'Bookkeeper' },
+  'reg.boekhouderUitleg': {
+    nl: 'Ik beheer facturen van mijn klanten',
+    ar: 'أدير فواتير عملائي',
+    en: 'I manage my clients’ invoices',
+  },
+  'reg.metGoogle': { nl: 'Doorgaan met Google', ar: 'المتابعة عبر Google', en: 'Continue with Google' },
+  'reg.ofMetEmail': { nl: 'of met e-mail', ar: 'أو بالبريد الإلكتروني', en: 'or with e-mail' },
+  'reg.naam': { nl: 'Volledige naam', ar: 'الاسم الكامل', en: 'Full name' },
+  'reg.naamVoorbeeld': { nl: 'Jan de Vries', ar: 'Jan de Vries', en: 'Jan de Vries' },
+  'reg.bedrijf': { nl: 'Bedrijfsnaam (optioneel)', ar: 'اسم الشركة (اختياري)', en: 'Company name (optional)' },
+  'reg.bedrijfVoorbeeld': { nl: 'Jouw Bedrijf BV', ar: 'Jouw Bedrijf BV', en: 'Jouw Bedrijf BV' },
+  'reg.kvk': { nl: 'KVK-nummer (optioneel)', ar: 'رقم KVK (اختياري)', en: 'KVK number (optional)' },
+  'reg.btw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم BTW (اختياري)', en: 'BTW number (optional)' },
+  'reg.laterInvullen': { nl: 'Kun je later invullen.', ar: 'يمكنك إدخاله لاحقاً.', en: 'You can fill this in later.' },
+  // De akkoordregel, in stukken die elk een hele zin of een hele knopnaam zijn — de twee links
+  // staan er middenin, en een taal met een andere woordvolgorde zet ze op een andere plek.
+  'reg.akkoordVoor': { nl: 'Als je een account maakt, ga je akkoord met onze', ar: 'بإنشائك حساباً فإنك توافق على', en: 'By creating an account you agree to our' },
+  'reg.akkoordTussen': { nl: 'en de', ar: 'و', en: 'and the' },
+  'reg.voorwaarden': { nl: 'Voorwaarden', ar: 'الشروط', en: 'Terms' },
+  'reg.privacy': { nl: 'Privacyverklaring', ar: 'بيان الخصوصية', en: 'Privacy statement' },
+  'reg.alAccount': { nl: 'Al een account?', ar: 'لديك حساب بالفعل؟', en: 'Already have an account?' },
+  'reg.emailBezet': {
+    nl: 'Dit e-mailadres is al geregistreerd.',
+    ar: 'هذا البريد الإلكتروني مُسجَّل بالفعل.',
+    en: 'This e-mail address is already registered.',
+  },
+  // De veldcontroles vóór de server. Elk veld zijn eigen zin.
+  'reg.vulNaam': { nl: 'Vul je naam in', ar: 'أدخل اسمك', en: 'Enter your name' },
+  'reg.vulEmail': { nl: 'Vul je e-mailadres in', ar: 'أدخل بريدك الإلكتروني', en: 'Enter your e-mail address' },
+  'reg.emailKloptNiet': { nl: 'Dit e-mailadres klopt niet', ar: 'هذا البريد الإلكتروني غير صحيح', en: 'That e-mail address is not valid' },
+  // [WACHTWOORD-EIS] De eis stond alleen in deze foutmelding, dus je las hem pas nadat je hem had
+  // overtreden. Dezelfde zin staat nu ook als hint ONDER het veld, vóór de eerste poging.
+  'reg.wachtwoordKort': {
+    nl: 'Kies een wachtwoord van minstens 6 tekens',
+    ar: 'اختر كلمة مرور من 6 أحرف على الأقل',
+    en: 'Choose a password of at least 6 characters',
+  },
+  'reg.wachtwoordEis': {
+    nl: 'Minstens 6 tekens.',
+    ar: '6 أحرف على الأقل.',
+    en: 'At least 6 characters.',
+  },
+  'reg.wachtwoordZwakServer': {
+    nl: 'Dit wachtwoord is te zwak — kies een langer wachtwoord',
+    ar: 'كلمة المرور هذه ضعيفة — اختر كلمة أطول',
+    en: 'This password is too weak — choose a longer one',
+  },
+  'reg.teVeelPogingen': {
+    nl: 'Te veel pogingen achter elkaar — wacht even en probeer opnieuw',
+    ar: 'محاولات كثيرة متتالية — انتظر قليلاً ثم أعد المحاولة',
+    en: 'Too many attempts in a row — wait a moment and try again',
+  },
+  'reg.emailUit': {
+    nl: 'Registreren met e-mail staat tijdelijk uit — probeer het met Google',
+    ar: 'التسجيل بالبريد الإلكتروني متوقف مؤقتاً — جرّب عبر Google',
+    en: 'Registering with e-mail is temporarily off — try Google instead',
+  },
+  'reg.mislukt': { nl: 'Registratie mislukt — probeer opnieuw', ar: 'فشل التسجيل — أعد المحاولة', en: 'Registration failed — try again' },
+  'reg.googleFout': { nl: 'Google registratie mislukt — probeer opnieuw', ar: 'فشل التسجيل عبر Google — أعد المحاولة', en: 'Google registration failed — try again' },
+  // Het bevestigingsscherm.
+  'reg.controleerMail': { nl: 'Controleer je e-mail', ar: 'تحقّق من بريدك الإلكتروني', en: 'Check your e-mail' },
+  'reg.linkGestuurd': {
+    nl: 'We hebben een bevestigingslink gestuurd naar {email}. Klik op de link om je account te activeren.',
+    ar: 'أرسلنا رابط تأكيد إلى {email}. اضغط على الرابط لتفعيل حسابك.',
+    en: 'We have sent a confirmation link to {email}. Click it to activate your account.',
+  },
+  'reg.factuurBewaardKop': { nl: 'Je factuur is bewaard.', ar: 'تم حفظ فاتورتك.', en: 'Your invoice has been saved.' },
+  'reg.factuurBewaard': {
+    nl: 'Zodra je je account activeert staat hij klaar — je bedrijfsgegevens, je klant en je regels. Je hoeft niets opnieuw in te tikken.',
+    ar: 'بمجرد تفعيل حسابك ستجدها جاهزة — بيانات شركتك وعميلك وبنودك. لن تحتاج إلى إعادة كتابة شيء.',
+    en: 'It is waiting the moment you activate your account — your company details, your client and your lines. You will not have to retype anything.',
+  },
+  'reg.naarInloggen': { nl: 'Naar inloggen', ar: 'إلى تسجيل الدخول', en: 'To sign in' },
+  // De knop die het account aanmaakt. Twee, want er zijn twee soorten bezoekers — zie
+  // purposeCopy in account-purpose.ts, dat de sleutel kiest.
+  'reg.ctaGratis': { nl: 'Gratis beginnen', ar: 'ابدأ مجاناً', en: 'Start for free' },
+  'reg.ctaArchief': { nl: 'Archief aanmaken', ar: 'إنشاء الأرشيف', en: 'Create archive' },
 
 } satisfies Record<string, Message>
 

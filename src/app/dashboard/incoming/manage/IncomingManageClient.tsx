@@ -1019,7 +1019,9 @@ export default function IncomingManageClient({
   // [PERIODE] Het venster van de gekozen periode, tegen de AMSTERDAMSE dag (todayIso hieronder komt
   // van amsterdamToday) — nooit tegen de klok van het apparaat, want dan zou een telefoon in een
   // andere tijdzone rond middernacht een andere maand tonen dan de rest van de app.
-  const periodWindow = resolveInvoicePeriod(period, todayIso)
+  // [TAAL] …en in de taal van de eigenaar, want dit label bevat een maandnaam ("juli 2026"). Die
+  // stond als vaste Nederlandse lijst in de module en reisde zo mee tot boven een Arabisch scherm.
+  const periodWindow = resolveInvoicePeriod(period, todayIso, taal)
 
   // ── [INVOICE-SCAN] What is standing wrong in the books, over the WHOLE list ──
   // Computed over `invoices`, never over the filtered view: the credit-note signal needs every
@@ -2160,7 +2162,7 @@ export default function IncomingManageClient({
                 display: 'flex', alignItems: 'center', gap: 6,
                 boxShadow: selectMode ? 'none' : EL1,
               }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                 {selectMode ? 'close' : 'checklist'}
               </span>
               {selectMode ? t('ink.klaar') : t('ink.meerdereBetalen')}
@@ -2176,7 +2178,7 @@ export default function IncomingManageClient({
                   borderRadius: R.full, background: '#fff', border: `1px solid ${M3.surfaceVariant}`,
                   fontSize: 13, fontWeight: 600, fontFamily: FONT, color: '#3c4043', cursor: 'pointer',
                 }}>
-                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }} aria-hidden>undo</span>
                 {t('inkoop.meerdereAnnuleren')}
               </button>
             )}
@@ -2221,7 +2223,7 @@ export default function IncomingManageClient({
             <span
               className="material-symbols-outlined"
               style={{ fontSize: 18, animation: matchBusy ? 'spin 1s linear infinite' : undefined }}
-            >
+              aria-hidden>
               {matchBusy ? 'refresh' : 'link'}
             </span>
             {matchBusy ? t('ink.bezigMatchen') : t('ink.matchenMetBank')}
@@ -2257,7 +2259,7 @@ export default function IncomingManageClient({
             <span
               className="material-symbols-outlined"
               style={{ fontSize: 18, animation: auditBusy ? 'spin 1s linear infinite' : undefined }}
-            >
+              aria-hidden>
               {auditBusy ? 'refresh' : 'rule'}
             </span>
             {auditBusy ? t('ink.bezigNarekenen') : t('ink.rekenBoekenNa')}
@@ -2276,13 +2278,13 @@ export default function IncomingManageClient({
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: period === 'all' ? '#F1F3F4' : M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }}>date_range</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }} aria-hidden>date_range</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {INVOICE_PERIODS.find(p => p.id === period)?.label ?? t('ink.allePeriodes')}
+                  {t(INVOICE_PERIODS.find(p => p.id === period)?.label ?? 'ink.allePeriodes')}
                   {periodWindow.label ? ` · ${periodWindow.label}` : ''}
                 </span>
               </span>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }} aria-hidden>
                 {showPeriodMenu ? 'expand_less' : 'expand_more'}
               </span>
             </button>
@@ -2291,14 +2293,14 @@ export default function IncomingManageClient({
                 {INVOICE_PERIODS.map(p => {
                   // De concrete periode naast de keuze ("Vorige maand · juni 2026"), zodat niemand
                   // hoeft te raden welke maanden hij te zien krijgt.
-                  const win = resolveInvoicePeriod(p.id, todayIso)
+                  const win = resolveInvoicePeriod(p.id, todayIso, taal)
                   return (
                     <button
                       key={p.id}
                       onClick={() => { setPeriod(p.id); setShowPeriodMenu(false) }}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: period === p.id ? 600 : 400, background: period === p.id ? M3.primaryContainer : '#fff', color: period === p.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
-                      <span>{p.label}</span>
+                      <span>{t(p.label)}</span>
                       {win.label && (
                         <span style={{ fontSize: 12, color: period === p.id ? M3.onPrimaryContainer : '#80868B', fontFamily: FONT_NUM, flexShrink: 0 }}>{win.label}</span>
                       )}
@@ -2322,7 +2324,7 @@ export default function IncomingManageClient({
                 <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {filterLabel(filter)} · {tabCount(filter)}
                 </span>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer, flexShrink: 0 }} aria-hidden>
                   {showFilterMenu ? 'expand_less' : 'expand_more'}
                 </span>
               </button>
@@ -2354,12 +2356,12 @@ export default function IncomingManageClient({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>swap_vert</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>swap_vert</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {SORTS.find(s => s.id === sortBy)?.label ?? t('inkoop.sorteren')}
                   </span>
                 </span>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>
                   {showSortMenu ? 'expand_less' : 'expand_more'}
                 </span>
               </button>
@@ -2410,7 +2412,7 @@ export default function IncomingManageClient({
             href="/dashboard/bank?tab=confirm&quarter=all"
             style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '10px 14px', borderRadius: R.md, background: '#E8F0FE', textDecoration: 'none', fontFamily: FONT }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#174EA6', flexShrink: 0 }}>account_balance</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#174EA6', flexShrink: 0 }} aria-hidden>account_balance</span>
             <span style={{ fontSize: 13, fontWeight: 600, color: '#174EA6', lineHeight: 1.4 }}>
               {bankPending === 1 ? t('ink.bankWachtEen') : t('ink.bankWacht', { count: bankPending })}
             </span>
@@ -2419,7 +2421,7 @@ export default function IncomingManageClient({
 
         {loadIncomplete && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5C6C0', background: '#FCE8E6', fontFamily: FONT }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }} aria-hidden>error</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: '#B3261E', margin: 0, lineHeight: 1.4 }}>
                 {/* [TAAL] `readFailed` holds the server's own Dutch source names — data, shown as-is. */}
@@ -2444,7 +2446,7 @@ export default function IncomingManageClient({
             are standing here with a Betalen button, and paying one sends the money twice. */}
         {incassoUnknown && (
           <div role="status" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F7DFA5', background: M3.warningContainer, fontFamily: FONT }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#7C5800', flexShrink: 0, marginTop: 1 }}>sync_problem</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#7C5800', flexShrink: 0, marginTop: 1 }} aria-hidden>sync_problem</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
                 {t('inkoop.fout.incassoOphalen')}
@@ -2484,7 +2486,7 @@ export default function IncomingManageClient({
               className="material-symbols-outlined"
               aria-label={showAdvies ? t('ink.advies.dicht') : t('ink.advies.open')}
               style={{ fontSize: 18, flexShrink: 0 }}
-            >
+              aria-hidden>
               {showAdvies ? 'expand_less' : 'expand_more'}
             </span>
           </button>
@@ -2500,7 +2502,7 @@ export default function IncomingManageClient({
         {scan.total > 0 && (
           <div role="status" style={{ marginBottom: 10, padding: '12px 14px', borderRadius: R.md, border: '1px solid #F5D9A8', background: M3.warningContainer, fontFamily: FONT }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', flexShrink: 0, marginTop: 1 }}>fact_check</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', flexShrink: 0, marginTop: 1 }} aria-hidden>fact_check</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p style={{ fontSize: 13, fontWeight: 700, color: '#7C5800', margin: 0, lineHeight: 1.4 }}>
                   {scan.total === 1 ? t('ink.scan.kloptNietEen') : t('ink.scan.kloppenNiet', { n: scan.total })}
@@ -2559,7 +2561,7 @@ export default function IncomingManageClient({
             onClick={() => { setFilter('auto'); setShowFilterMenu(false) }}
             style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginBottom: 10, padding: '10px 14px', borderRadius: R.md, border: '1px solid #D2E3FC', background: '#E8F0FE', color: '#1A73E8', cursor: 'pointer', fontFamily: FONT, fontSize: 13, fontWeight: 600, textAlign: 'start' }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>auto_awesome</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>auto_awesome</span>
             {autoCount === 1 ? t('ink.autoNudgeEen') : t('ink.autoNudge', { n: autoCount })}
           </button>
         )}
@@ -2685,7 +2687,7 @@ export default function IncomingManageClient({
             // [PERIODE] Ook dit is een claim: "Geen inkoopfacturen" terwijl je er twaalf hebt en er
             // alleen geen in juni vallen. Zeg wat er aan de hand is, en bied de weg terug.
             <div style={{ textAlign: 'center', padding: '48px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>date_range</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }} aria-hidden>date_range</span>
               <p style={{ fontSize: 15.5, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>
                 {t('ink.geenInPeriode', { period: periodWindow.label ?? '' })}
               </p>
@@ -2850,7 +2852,7 @@ export default function IncomingManageClient({
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
                     {selectMode && selectableInMode(inv) && (
-                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selectedIds[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selectedIds[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }} aria-hidden>
                         {selectedIds[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
@@ -2935,7 +2937,7 @@ export default function IncomingManageClient({
                             title={t('ink.xqUitleg', { booked: xq.bookedQuarterLabel, paid: xq.paidQuarterLabel })}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>event_available</span>
                             {t('ink.betaaldIn', { quarter: xq.paidQuarterLabel })}
                           </span>
                         )}
@@ -2946,7 +2948,7 @@ export default function IncomingManageClient({
                             title={t('ink.autoVerifiedUitleg')}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#E8F0FE', color: '#1A73E8', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>auto_awesome</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>auto_awesome</span>
                             {t('inkoop.automatisch')}
                           </span>
                         )}
@@ -2970,7 +2972,7 @@ export default function IncomingManageClient({
                               })()}
                               style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>receipt_long</span>
                               {t('inkoop.bonAfgerekend')}
                             </span>
                           )
@@ -2986,7 +2988,7 @@ export default function IncomingManageClient({
                               title={t('inkoop.eFactuurUitleg', { syntax: e.syntax })}
                               style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.successContainer, color: '#137333', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: 13 }}>verified</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>verified</span>
                               {t('inkoop.cijfersLeverancier')}
                             </span>
                           )
@@ -3001,7 +3003,7 @@ export default function IncomingManageClient({
                             A UI marker — NOT a paid state. */}
                         {isPrepared && (
                           <span style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>schedule</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>schedule</span>
                             {t('inkoop.voorbereid')}
                           </span>
                         )}
@@ -3144,7 +3146,7 @@ export default function IncomingManageClient({
                             title={inv.due_date ? t('ink.vervalIncasso', { date: fmtDateSmart(inv.due_date, thisYear) }) : t('ink.autoIncasso')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, borderRadius: R.full, padding: '1px 8px', background: M3.surfaceVariant, color: '#5F6368', display: 'inline-flex', alignItems: 'center', gap: 3 }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>sync_alt</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }} aria-hidden>sync_alt</span>
                             {incassoLabel(incasso, inv.due_date ? fmtDateSmart(inv.due_date, thisYear) : null)}
                           </span>
                         )}
@@ -3264,7 +3266,7 @@ export default function IncomingManageClient({
                             display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
                           }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
                             : t('ink.credit.afhandelenKnop')}
                         </button>
                       )}
@@ -3285,9 +3287,9 @@ export default function IncomingManageClient({
                             display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
                           }}>
                           {processingId === inv.id || checkingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
                             : isPrepared
-                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>task_alt</span> {t('inkoop.hebJeBetaald')}</>
+                              ? <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>task_alt</span> {t('inkoop.hebJeBetaald')}</>
                               : t('inkoop.hebJeBetaald')}
                         </button>
                       )}
@@ -3302,8 +3304,8 @@ export default function IncomingManageClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.successContainer, color: '#137333', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> {t('lijst.betaald')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>check_circle</span> {t('lijst.betaald')}</>}
                         </button>
                       )}
                     </div>
@@ -3448,7 +3450,7 @@ export default function IncomingManageClient({
                               fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
                             }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                               {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
                             </span>
                             {rereadingId === inv.id ? t('ink.opnieuwBezig') : t('ink.opnieuwInlezenKnop')}
@@ -3488,7 +3490,7 @@ export default function IncomingManageClient({
                                 if (f) void attachOriginal(inv, f)
                               }}
                             />
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                               {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
                             </span>
                             {attachingId === inv.id ? t('ink.bezigToevoegen') : t('ink.origineelToevoegen')}
@@ -3507,7 +3509,7 @@ export default function IncomingManageClient({
                             onClick={e => { e.stopPropagation(); openMovePayment(inv) }}
                             disabled={moveLoadingId === inv.id}
                             style={{ fontSize: 13, color: M3.primary, background: '#fff', border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full, padding: '8px 16px', cursor: moveLoadingId === inv.id ? 'default' : 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                               {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
                             </span>
                             {moveLoadingId === inv.id ? t('ink.bezig') : t('inkoop.betalingVerplaatsen')}
@@ -3526,7 +3528,7 @@ export default function IncomingManageClient({
                             // On CR0301267 it offered € 33,87 to a supplier who owed it back.
                             onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
                             style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
                             {t('inkoop.betalen')}
                           </button>
                         )}
@@ -3534,7 +3536,7 @@ export default function IncomingManageClient({
                           <button
                             onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
                             style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                               picture_as_pdf
                             </span>
                             {t('ink.bekijkPdf')}
@@ -3616,7 +3618,7 @@ export default function IncomingManageClient({
                                 }}
                               >
                                 {incassoBusy === inv.id && (
-                                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: isIncassoRow(inv) ? M3.primary : '#FFFFFF' }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: isIncassoRow(inv) ? M3.primary : '#FFFFFF' }} aria-hidden>
                                     hourglass_empty
                                   </span>
                                 )}
@@ -3651,7 +3653,7 @@ export default function IncomingManageClient({
                     onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 19 }} aria-hidden>delete</span>
                   </button>
                 )}
                 </div>
@@ -3691,7 +3693,7 @@ export default function IncomingManageClient({
                 color: undoPlan.eligible.length > 0 && !bundleBusy ? '#7C5800' : '#9AA0A6',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>undo</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }} aria-hidden>undo</span>
               {bundleBusy ? t('ink.bezig') : t('ink.terugdraaien')}
             </button>
           </div>
@@ -3730,7 +3732,7 @@ export default function IncomingManageClient({
                 color: bundleBuilt?.ok && !bundleBusy ? '#fff' : '#9AA0A6',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
               {bundleBusy ? t('ink.bezig') : t('inkoop.betalen')}
             </button>
           </div>
@@ -4153,7 +4155,7 @@ export default function IncomingManageClient({
         >
           <div className="sheet-scroll" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.warning }}>warning</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.warning }} aria-hidden>warning</span>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('inkoop.mogelijkBetaald')}</h3>
             </div>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>
@@ -4179,7 +4181,7 @@ export default function IncomingManageClient({
                   onClick={() => viewOriginal(dupWarn.match.id)}
                   style={{ width: '100%', padding: '12px', borderRadius: R.full, background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   {t('inkoop.bekijkBetaalde')}
-                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>arrow_forward</span>
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }} aria-hidden>arrow_forward</span>
                 </button>
               )}
               <button
@@ -4237,7 +4239,7 @@ export default function IncomingManageClient({
               style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)', fontFamily: FONT }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 24, color: settled ? '#0B8043' : M3.warning }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 24, color: settled ? '#0B8043' : M3.warning }} aria-hidden>
                   {settled ? 'check_circle' : 'warning'}
                 </span>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: M3.onSurface, margin: 0 }}>
@@ -4563,7 +4565,7 @@ function BottomSheet({ title, body, warning, notice, confirmLabel, confirmBg, on
 
         {warning && (
           <div style={{ background: '#FEF7E0', borderRadius: 12, padding: '12px 14px', marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }}>warning</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }} aria-hidden>warning</span>
             <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.5, margin: 0 }}>{warning}</p>
           </div>
         )}
@@ -4601,7 +4603,7 @@ function BottomSheet({ title, body, warning, notice, confirmLabel, confirmBg, on
                 invoice on "Te betalen" for the rest, with the pay-QR asking only that rest. */}
             {noOpenBalance && (
               <div style={{ background: '#FCE8E6', borderRadius: 12, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }} aria-hidden>error</span>
                 <p style={{ fontSize: 12.5, color: '#B3261E', lineHeight: 1.5, margin: 0 }}>
                   {t('ink.geenBedragOpFactuur')}
                 </p>
@@ -4642,7 +4644,7 @@ function BottomSheet({ title, body, warning, notice, confirmLabel, confirmBg, on
                 onClick={() => { if (!entry || entry.valid) paymentChoice('bank', paymentDate, entry?.amount ?? null) }}
                 disabled={!!entry && !entry.valid}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>account_balance</span>
                 {t('lijst.bank')}
               </button>
               {/* [MANUAL-PARTIAL-PAY] Contant is disabled for a PARTIAL amount, on purpose.
@@ -4656,7 +4658,7 @@ function BottomSheet({ title, body, warning, notice, confirmLabel, confirmBg, on
                 onClick={() => { if (canPayCash) paymentChoice('kas', paymentDate, entry?.amount ?? null) }}
                 disabled={!canPayCash}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>payments</span>
                 {t('lijst.contant')}
               </button>
             </div>
@@ -4738,7 +4740,7 @@ function MatchResultSheet({ result, onClose, onOpenBank, supplierOf }: {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 28, padding: '28px 24px 24px', width: '100%', maxWidth: 420, maxHeight: '86vh', overflowY: 'auto', boxShadow: '0 24px 48px rgba(0,0,0,0.24)', fontFamily: FONT }}>
         {/* Both glyphs are in the layout.tsx icon subset — see the button's note. */}
-        <span className="material-symbols-outlined" style={{ fontSize: 40, color: bookedCount > 0 ? M3.success : M3.primary, display: 'block', textAlign: 'center', marginBottom: 8 }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 40, color: bookedCount > 0 ? M3.success : M3.primary, display: 'block', textAlign: 'center', marginBottom: 8 }} aria-hidden>
           {bookedCount > 0 ? 'task_alt' : 'link'}
         </span>
         <p style={{ fontSize: 20, fontWeight: 700, color: M3.onSurface, marginBottom: 16, textAlign: 'center', letterSpacing: -0.3 }}>{title}</p>
@@ -4880,7 +4882,7 @@ function ResultLine({ icon, text, tone }: { icon: string; text: string; tone: 'g
   const bg    = tone === 'good' ? M3.successContainer : tone === 'warn' ? '#FFF3E0' : tone === 'error' ? M3.errorContainer : M3.surfaceVariant
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: R.md, background: bg }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }} aria-hidden>{icon}</span>
       <p style={{ fontSize: 13, color, lineHeight: 1.45, margin: 0, fontWeight: 500 }}>{text}</p>
     </div>
   )
@@ -4890,7 +4892,7 @@ function EmptyState() {
   const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }} aria-hidden>receipt_long</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('inkoop.leeg')}</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>{t('inkoop.leeg.sub')}</p>
     </div>
@@ -4905,7 +4907,7 @@ function LoadFailedState({ onRetry }: { onRetry: () => void }) {
   const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 48, color: M3.error, display: 'block', marginBottom: 12 }}>error</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 48, color: M3.error, display: 'block', marginBottom: 12 }} aria-hidden>error</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('inkoop.fout.ophalen')}</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT, lineHeight: 1.5, maxWidth: 380, margin: '0 auto' }}>
         {t('ink.betekentNietLeeg')}
@@ -5045,7 +5047,7 @@ function PreparePaymentSheet({
                 <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
               ) : (
                 <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9AA0A6' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 32 }}>hourglass_empty</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 32 }} aria-hidden>hourglass_empty</span>
                 </div>
               )}
             </div>
@@ -5288,7 +5290,7 @@ function BundelBetalenSheet({
             <div style={{ fontSize: 13, color: M3.error, textAlign: 'center', padding: 20 }}>{qrError}</div>
           ) : (
             <div style={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9AA0A6' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 32 }}>hourglass_empty</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 32 }} aria-hidden>hourglass_empty</span>
             </div>
           )}
         </div>
@@ -5331,7 +5333,7 @@ function CopyRow({ label, value, raw, onCopy }: {
         onClick={() => onCopy(raw, label)}
         aria-label={t('ink.kopieerLabel', { label })}
         style={{ background: M3.primaryContainer, border: 'none', borderRadius: R.full, width: 36, height: 36, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.primary }}>content_copy</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.primary }} aria-hidden>content_copy</span>
       </button>
     </div>
   )

@@ -22,9 +22,12 @@
 // Pure: the route reads, this arranges. Tested in ib-jaar.test.ts.
 
 import { round2 } from "./invoice-totals";
+import { URENCRITERIUM_HOURS } from "./urencriterium";
 
-/** The urencriterium for zelfstandigenaftrek — 1.225 uur, a stable statutory number. */
-export const URENCRITERIUM_HOURS = 1225;
+// The threshold lives in urencriterium.ts, which is where the criterion is now assessed DURING the
+// year as well as after it. Re-exported so every existing importer keeps its one authority for the
+// number — two modules each declaring 1.225 is how they come to disagree.
+export { URENCRITERIUM_HOURS };
 
 export interface IbJaarInput {
   year: number;

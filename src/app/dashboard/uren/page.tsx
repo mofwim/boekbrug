@@ -17,6 +17,11 @@ import { redirect } from 'next/navigation'
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getSessionUser } from '@/lib/session-user'
+import { fetchAllRows } from '@/lib/supabase-paginate'
+// [TZ] De kalender van de ondernemer, nooit de UTC-dag van de server: op 1 januari om 00:30
+// Amsterdam is het op een UTC-server nog 31 december, en dan telt dit het verkeerde jaar.
+import { amsterdamToday } from '@/lib/format-nl'
+import { assessUrencriterium, type UrencriteriumStatus } from '@/lib/urencriterium'
 import type { TimeEntry } from '@/lib/uren'
 import UrenClient, { type UrenClientCard } from './UrenClient'
 
@@ -48,9 +53,42 @@ export default async function UrenPage() {
   }
 
   const entries = (entriesRes.data ?? []) as TimeEntry[]
+
+  // [URENCRITERIUM] Het jaartotaal wordt APART gelezen, niet uit `entries` opgeteld. Die lijst
+  // stopt bij 1000 rijen, en een afgekapte som telt te weinig uren — precies de kant die de
+  // ondernemer ten onrechte vertelt dat hij het niet gaat halen. fetchAllRows pagineert door.
+  //
+  // [NO-SILENT-EMPTY] Een leesfout wordt null en nooit 0: "we konden niet kijken" en "je hebt
+  // niets gewerkt" zijn tegengestelde antwoorden, en op dit ene getal hangt de zelfstandigenaftrek.
+  const today = amsterdamToday()
+  const year = Number(today.slice(0, 4))
+  const hoursThisYear = await fetchAllRows<{ hours: number | null }>((lo, hi) =>
+    supabase
+      .from('time_entries')
+      .select('hours')
+      .gte('worked_on', `${year}-01-01`)
+      .lte('worked_on', `${year}-12-31`)
+      .order('id', { ascending: true })
+      .range(lo, hi),
+  )
+    .then((rows) => rows.reduce((sum, r) => sum + (Number(r.hours) || 0), 0))
+    .catch((e) => {
+      console.error('[URENCRITERIUM] jaartotaal uren lezen mislukt', {
+        year, error: e instanceof Error ? e.message : String(e),
+      })
+      return null
+    })
+  const urencriterium: UrencriteriumStatus = assessUrencriterium({ hoursSoFar: hoursThisYear, today, year })
   // Een klantenlijst die niet laadt is hinderlijk maar niet gevaarlijk: de keuzelijst is dan leeg
   // en "geen klant" blijft werken. De UREN zijn het enige waarvan een leesfout gemeld moet worden.
   const clients = (clientsRes.data ?? []) as UrenClientCard[]
 
-  return <UrenClient initialEntries={entries} clients={clients} loadFailed={Boolean(entriesRes.error)} />
+  return (
+    <UrenClient
+      initialEntries={entries}
+      clients={clients}
+      loadFailed={Boolean(entriesRes.error)}
+      urencriterium={urencriterium}
+    />
+  )
 }

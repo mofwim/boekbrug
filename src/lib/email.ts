@@ -9,6 +9,9 @@ import { offerteSubject, offerteEmailHtml } from './offerte-send'
 // [M2] De escaper woont in een eigen bestand sinds de offertetekst puur moest worden — zie de kop
 // van escape-html.ts. Zelfde functie, zelfde gedrag, alleen niet meer hier gedeclareerd.
 import { escapeHtml } from './escape-html'
+// [BETAALBLOK] De betaalinstructies die in de factuur- en herinneringsmail horen. Puur, en
+// gedeeld door allebei die mails, zodat een klant nooit twee verschillende betaalgegevens leest.
+import type { PayBlock } from './pay-block'
 // [AFZENDERNAAM] Mail naar de KLANT VAN DE ONDERNEMER draagt zijn bedrijfsnaam, niet die van ons.
 // Alleen deze drie (factuur, herinnering, offerte) gaan naar een derde; de overige twaalf schrijven
 // aan de ondernemer zelf, zijn boekhouder of een genodigde, en daar is BoekBrug de juiste afzender.
@@ -252,6 +255,7 @@ export async function sendInvoiceToClient({
   isCorrected = false,
   extraAttachment,
   ublAttachment,
+  payBlock,
 }: {
   toEmail: string
   clientName: string
@@ -259,6 +263,15 @@ export async function sendInvoiceToClient({
   invoiceNumber: string
   totalInc: number
   dueDate: string
+  /**
+   * [BETAALBLOK] Hoe de klant kan betalen — de betaallink, het IBAN, het kenmerk. Zie
+   * src/lib/pay-block.ts voor waarom deze mail dat tot nu toe NIET bevatte, en waarom dat de
+   * duurste stilte in het product was.
+   *
+   * Optioneel, en null is een echt antwoord: een ondernemer zonder IBAN en zonder betaalpagina
+   * krijgt exact de mail die hij altijd al kreeg.
+   */
+  payBlock?: PayBlock | null
   /** ISO date — shown as Factuurdatum when provided */
   invoiceDate?: string
   /** Rendered invoice PDF — attached when provided */
@@ -358,6 +371,9 @@ export async function sendInvoiceToClient({
     ...(invoiceDate ? [`Factuurdatum: ${formatDateNL(invoiceDate)}`] : []),
     ...(dueDate ? [`Vervaldatum: ${formatDateNL(dueDate)}`] : []),
     '',
+    // [BETAALBLOK] Hoe je betaalt, in de mail zelf. Stond alleen in de PDF-bijlage, en een QR-code
+    // in een bijlage kan niet gescand worden door de telefoon die hem toont.
+    ...(payBlock ? [...payBlock.textLines, ''] : []),
     pdfBuffer ? `De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.` : '',
     ublAttachment ? 'Ook bijgevoegd: een e-factuur (UBL) voor je boekhoudpakket.' : '',
     antwoordAdres ? `Vragen? Antwoord op deze mail of mail ${antwoordAdres}.` : '',
@@ -389,6 +405,7 @@ export async function sendInvoiceToClient({
           ${invoiceDateRow}
           ${dueDateRow}
         </div>
+        ${payBlock?.html ?? ''}
         ${attachmentLine}
         ${eFactuurRegel}
         ${contactRegel}
@@ -639,6 +656,7 @@ export async function sendInvoiceReminder({
   wik,
   pdfBuffer,
   senderEmail,
+  payBlock,
 }: {
   toEmail: string
   clientName: string
@@ -646,6 +664,15 @@ export async function sendInvoiceReminder({
   invoiceNumber: string
   /** Amount STILL owed (from openstaandOf) — never the full total. */
   openstaand: number
+  /**
+   * [BETAALBLOK] Waar het geld heen moet. Elke herinneringstrap ging uit zonder één betaalgegeven
+   * — ook de laatste, de wettelijke aanmaning die incassokosten aankondigt. Een brief die kosten
+   * noemt en niet zegt waarheen over te maken levert een telefoontje op, geen betaling.
+   *
+   * Het bedrag hierin is het OPENSTAANDE bedrag, niet het oorspronkelijke totaal: de aanroeper
+   * geeft dezelfde `openstaand` mee die hierboven in de mail staat.
+   */
+  payBlock?: PayBlock | null
   /** ISO due date — shown as the (passed) vervaldatum. */
   dueDate: string
   /** Firmer wording for a later tier (e.g. day 30). Wording only — no money change. */
@@ -700,6 +727,11 @@ export async function sendInvoiceReminder({
   const contactRegel = antwoordAdres
     ? `<p style="color: #555;">Vragen over deze factuur? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
     : ''
+  // [BETAALBLOK] Het betaalblok staat in de HTML na `wikBlock`. Dat is geen willekeurige plek: bij
+  // een vriendelijke herinnering is wikBlock leeg, dus staat het pal onder de bedragen; bij de
+  // laatste aanmaning staat het onder de zin die de gevolgen noemt. In allebei de gevallen is het
+  // het laatste wat de klant leest vóór hem gevraagd wordt iets te doen.
+  //
   // [GEEN-UNSUBSCRIBE] Deliberately NO List-Unsubscribe header on a payment reminder, and the
   // absence is a decision worth recording: Gmail's one-click-unsubscribe requirement targets
   // PROMOTIONAL bulk mail, and a dunning message about an existing debt is transactional. Adding
@@ -722,6 +754,7 @@ export async function sendInvoiceReminder({
           <p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>
         </div>
         ${wikBlock}
+        ${payBlock?.html ?? ''}
         ${attachmentLine}
         <p style="color: #5f6368; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
         ${contactRegel}
@@ -803,6 +836,93 @@ export async function sendPaymentFailedEmail({
     `,
   })
   await deliverEmail(__sendResult, { label: 'payment-failed', critical: false })
+}
+
+// ── [PAKKET-LINK] Dezelfde levering, aan een boekhouder ZONDER account ───────────────────────
+//
+// De mail hierboven gaat naar een GEKOPPELDE boekhouder en linkt naar een route die inloggen
+// eist. Dit is dezelfde levering voor het meest voorkomende Nederlandse geval: het kantoor dat
+// al tien jaar op Exact of Twinfield draait en zich nooit ergens registreert. De link draagt een
+// token en werkt zonder account.
+//
+// De ondernemer stuurt hem zelf, dus de toon is die van ZIJN mail — hij levert zijn stukken aan,
+// wij zijn het gereedschap. Vandaar ook de reply-to op zijn eigen adres: een boekhouder die iets
+// terugvraagt hoort bij zijn klant uit te komen, niet bij ons.
+//
+// En dit is de enige mail in het product die een niet-gebruiker over BoekBrug vertelt zonder er
+// reclame van te maken: één zin onderaan, feitelijk, want wat hem overtuigt is het pakket dat hij
+// zojuist opende — niet de zin eronder.
+export async function sendQuarterPackageLink({
+  toEmail,
+  clientName,
+  clientEmail,
+  quarterLabel,
+  outgoingCount,
+  incomingCount,
+  downloadUrl,
+  validDays,
+  note,
+}: {
+  toEmail: string
+  clientName: string
+  /** Het adres van de ONDERNEMER — reply-to, zodat een vraag bij hem uitkomt. */
+  clientEmail: string | null
+  quarterLabel: string
+  outgoingCount: number
+  incomingCount: number
+  downloadUrl: string
+  validDays: number
+  /** Een eigen zin van de ondernemer, optioneel. */
+  note: string | null
+}) {
+  const notitie = note && note.trim()
+    ? `<div style="background:#F1F3F4; border-radius:10px; padding:14px 16px; margin:18px 0; color:#3C4043; font-size:14.5px; line-height:1.6; white-space:pre-wrap;">${escapeHtml(note.trim())}</div>`
+    : ''
+
+  // [AFZENDERNAAM] De vierde mail die namens de ondernemer aan een DERDE schrijft. Dezelfde
+  // redenering als bij de factuur, de herinnering en de offerte: de ontvanger heeft geen relatie
+  // met "BoekBrug", en een boekhouder scant zijn inbox op KLANTNAAM. "Bakkerij Jansen via
+  // BoekBrug" is herkenbaar; "BoekBrug" is een onbekende afzender met andermans boekhouding erin.
+  const antwoordAdres = clientEmail
+  const __sendResult = await getResend().emails.send({
+    from: customerMailFrom(clientName),
+    to: toEmail,
+    // [ANTWOORD-ADRES] Antwoorden gaat naar de ondernemer, niet naar ons: hij levert aan.
+    ...(antwoordAdres ? { replyTo: antwoordAdres } : {}),
+    // Klantnaam vooraan: een kantoor scant op naam, niet op product.
+    subject: `${escapeHtml(clientName)} — administratie ${quarterLabel}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 520px; margin: 0 auto; padding: 32px;">
+        <h2 style="color:#202124; font-size:20px; margin:0 0 4px;">Administratie ${escapeHtml(quarterLabel)}</h2>
+        <p style="color:#5f6368; font-size:15px; margin:0 0 20px;">van ${escapeHtml(clientName)}</p>
+
+        <p style="color:#555; font-size:15px; line-height:1.6;">
+          Hierbij de administratie over ${escapeHtml(quarterLabel)}:
+          <strong>${outgoingCount} verkoopfactuur${outgoingCount === 1 ? '' : 'en'}</strong> en
+          <strong>${incomingCount} inkoopfactuur${incomingCount === 1 ? '' : 'en'}</strong>,
+          geordend per kwartaal met de bijlagen erbij. Het pakket bevat de PDF's, een CSV-overzicht
+          en het XAF 3.2-auditbestand — te importeren in je eigen pakket.
+        </p>
+
+        ${notitie}
+
+        <a href="${downloadUrl}"
+           style="display:inline-block; margin:8px 0; padding:12px 22px; background:#1A73E8; color:#fff; border-radius:8px; text-decoration:none; font-weight:600; font-size:15px;">
+          Download het kwartaalpakket
+        </a>
+
+        <p style="color:#5f6368; font-size:13.5px; line-height:1.6; margin-top:18px;">
+          Je hebt hiervoor geen account nodig. De link werkt ${validDays} dagen; daarna kan je klant
+          een nieuwe sturen.
+        </p>
+        <p style="color:#9aa0a6; font-size:12.5px; line-height:1.6; margin-top:24px;">
+          Samengesteld met BoekBrug — je klant houdt zijn administratie daar bij en levert hem
+          hiermee in één keer aan.
+        </p>
+      </div>
+    `,
+  })
+  return deliverEmail(__sendResult, { label: 'quarter-package-link', critical: false })
 }
 
 // ── [BRUG] De mail die het hele product waarmaakt ────────────────────────────

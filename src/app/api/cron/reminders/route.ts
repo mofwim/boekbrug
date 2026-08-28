@@ -56,6 +56,8 @@ import { reportHandledFailure } from "@/lib/report-handled"
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path"
 // [HERINNER-BEWIJS] Before chasing a customer, ask the bank whether they already paid. Same
 // engine and same rule as the panel on the sales list — see the block inside the owner loop.
+// [BETAALBLOK] De betaalgegevens die elke herinnering hoort te dragen — zie src/lib/pay-block.ts.
+import { payBlockForInvoice } from "@/lib/pay-link";
 import { collectOpenInvoiceProof } from "@/lib/open-invoice-proof-collect";
 import { describeHit } from "@/lib/open-invoice-proof-text";
 
@@ -82,6 +84,8 @@ type OwnerProfile = {
   company_name: string | null;
   email: string | null;
   full_name: string | null;
+  /** [BETAALBLOK] The account the reminder asks the customer to transfer to. */
+  iban: string | null;
 };
 
 type CandidateInvoice = {
@@ -98,6 +102,9 @@ type CandidateInvoice = {
   status: string | null;
   /** [WIK] Present → a business debtor; absent → treated as a consumer (the stricter regime). */
   client_btw_number: string | null;
+  /** [BETAALBLOK] Reused when the invoice already has a pay link; minted on first reminder. */
+  pay_token: string | null;
+  payment_reference: string | null;
 };
 
 export async function GET(req: NextRequest) {
@@ -159,7 +166,10 @@ export async function GET(req: NextRequest) {
         .from("profiles")
         // [ANTWOORD-ADRES] `email` erbij — zie de herinneringsroute. Deze cron stuurt de meeste
         // herinneringen van het hele product; een antwoord daarop hoort bij de ondernemer.
-        .select("id, reminder_offsets, company_name, full_name, email")
+        // [BETAALBLOK] `iban` erbij: elke herinneringstrap ging uit zonder één betaalgegeven, ook
+        // de laatste — de wettelijke aanmaning die incassokosten aankondigt. Zonder dit veld is er
+        // geen begunstigde en dus geen betaalblok.
+        .select("id, reminder_offsets, company_name, full_name, email, iban")
         .eq("reminders_enabled", true)
         .order("id", { ascending: true })
         .range(from, to),
@@ -195,7 +205,9 @@ export async function GET(req: NextRequest) {
       .select(
         // [WIK] client_btw_number decides consumer vs business — which decides whether the final
         // reminder must be the statutory fourteen-day aanmaning.
-        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status, client_btw_number",
+        // [BETAALBLOK] pay_token + payment_reference: de betaallink hergebruiken als hij al
+        // bestaat, en het kenmerk noemen waarop de ondernemer afletter.
+        "id, sender_id, client_name, client_email, invoice_number, due_date, total_inc_btw, amount_paid, pdf_url, invoice_type, status, client_btw_number, pay_token, payment_reference",
       )
       .in("sender_id", chunk)
       .eq("direction", "outgoing")
@@ -593,6 +605,34 @@ export async function GET(req: NextRequest) {
             })
           : null;
         if (wik) aangemaand.add(debiteur);
+        // [BETAALBLOK] Waar het geld heen moet — tot nu toe stond dat in geen enkele herinnering.
+        // Een aanmaning die incassokosten aankondigt en niet zegt waarheen over te maken levert
+        // een telefoontje op, geen betaling. `openstaand` is hier al berekend en is precies het
+        // bedrag dat boven in de mail staat, dus het blok kan nooit een ander bedrag noemen dan de
+        // regel erboven. Faalt dit (geen IBAN, leesfout), dan is het blok null en gaat de
+        // herinnering uit zoals hij altijd al ging.
+        const payBlok = await payBlockForInvoice(pipeline, {
+          invoice: {
+            id: inv.id,
+            direction: "outgoing",
+            invoice_type: inv.invoice_type,
+            status: inv.status,
+            invoice_number: inv.invoice_number,
+            payment_reference: inv.payment_reference,
+            total_inc_btw: inv.total_inc_btw,
+            amount_paid: inv.amount_paid,
+            client_name: inv.client_name,
+            pay_token: inv.pay_token,
+            due_date: inv.due_date,
+          },
+          owner: {
+            iban: owner.iban,
+            company_name: owner.company_name,
+            full_name: owner.full_name,
+          },
+          ownerId,
+          openstaand,
+        });
         const delivery = await sendInvoiceReminder({
           toEmail: inv.client_email as string, // guaranteed non-empty by reminderTierDue
           clientName: inv.client_name?.trim() || "klant",
@@ -604,6 +644,7 @@ export async function GET(req: NextRequest) {
           firm: offsets.length > 1 && tier === maxTier,
           wik,
           pdfBuffer,
+          payBlock: payBlok,
         });
         // [REMINDER-TRUTH] A Resend rejection does not throw — it comes back as an error on the
         // send result. Until now that was logged and forgotten: the claimed tier stayed 'sent',

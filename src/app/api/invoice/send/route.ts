@@ -60,6 +60,8 @@ import { logAuditAction, getClientIP } from '@/lib/audit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, isActingForOther, canSendInvoice } from '@/lib/acting-for'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
+// [BETAALBLOK] De betaalgegevens die in de mail horen — zie stap 13c en src/lib/pay-block.ts.
+import { payBlockForInvoice } from '@/lib/pay-link'
 import * as Sentry from '@sentry/nextjs'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
@@ -886,6 +888,45 @@ export async function POST(request: NextRequest) {
       invoiceId,
     )
 
+    // ── 13c. [BETAALBLOK] Hoe de klant kan betalen ─────────────
+    // Deze mail vroeg om geld en gaf geen enkele manier om het over te maken: het IBAN, het
+    // kenmerk en de scan-QR stonden uitsluitend IN de PDF-bijlage — en een QR-code in een bijlage
+    // kan niet gescand worden door de telefoon die hem toont. Ondertussen bestond /pay/[token] al:
+    // een afgemaakte publieke pagina met bedrag, kenmerk, QR en (bij gekoppelde Mollie) iDEAL,
+    // bereikbaar voor niemand tenzij de ondernemer zélf op "Betaalverzoek" drukte en de link
+    // doorstuurde. Hier worden die twee eindelijk verbonden.
+    //
+    // Best-effort en nooit blokkerend: null (geen IBAN, een creditnota, al betaald) levert exact
+    // de mail op die deze klant altijd al kreeg. De acting-aware client, om dezelfde reden als bij
+    // de UBL hierboven: een medewerker leest de profielrij van de eigenaar niet, en zonder dat
+    // profiel is er geen IBAN en dus geen blok.
+    const payBlok = await payBlockForInvoice(
+      isActingForOther(acting) ? createPipelineClient() : supabase,
+      {
+        invoice: {
+          id: invoiceId,
+          direction: 'outgoing',
+          invoice_type: finalType,
+          // De status IS op dit punt al 'sent' in de database; de lokale `invoice` is de rij van
+          // vóór het commit. De letterlijke waarde is wat buildBetaalverzoek moet zien.
+          status: 'sent',
+          invoice_number: finalNumber,
+          payment_reference: invoice.payment_reference ?? null,
+          total_inc_btw: finalTotalInc,
+          amount_paid: invoice.amount_paid ?? 0,
+          client_name: invoice.client_name,
+          pay_token: (invoice as { pay_token?: string | null }).pay_token ?? null,
+          due_date: invoice.due_date ?? null,
+        },
+        owner: {
+          iban: profile?.iban ?? null,
+          company_name: profile?.company_name ?? null,
+          full_name: profile?.full_name ?? null,
+        },
+        ownerId,
+      },
+    )
+
     // ── 14. Send e-mail WITH the PDF attached ──────────────────
     // convertOnly previously skipped the e-mail — [FACTUUR-A] it no longer
     // does: the conversion mints a NEW legal factuur (new number) and
@@ -913,6 +954,8 @@ export async function POST(request: NextRequest) {
         // wordt bij registratie uit auth.users gevuld). Zonder dit komt een antwoord van de klant
         // bij noreply@ terecht.
         senderEmail: profile?.email ?? null,
+        // [BETAALBLOK] Zie stap 13c. Null → de mail zoals hij altijd was.
+        payBlock: payBlok,
       })
     } catch (emailErr) {
       emailFailed = true

@@ -88,6 +88,10 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
       recurring: run(2),
       "retention-purge": run(10),
       "quarter-close": run(24 * 30),
+      // [DEADLINE] De laatste-week-herinnering vóór de BTW-deadline. Zelfde ritme als
+      // quarter-close hierboven — vier keer per jaar — dus een run van een maand oud is voor deze
+      // twee de gezonde toestand en niet een stilte om alarm over te slaan.
+      "btw-deadline": run(24 * 30),
       // [DAGSTART] Het ochtendbericht aan de boekhouder. Dagelijks; een run van twee uur oud is
       // gewoon vers. Dat hij vaak GEEN bericht stuurt is geen storing — bewaakt wordt dat de run
       // zelf gebeurde, niet dat er iets uit kwam.

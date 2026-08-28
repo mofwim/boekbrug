@@ -43,7 +43,7 @@ import { sendWithFit } from "@/lib/upload-fit";
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
-import { setExcl, setBtw, setIncl } from "@/lib/amount-triplet";
+import { setExcl, setBtw, setIncl, splitByRate, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from "@/lib/amount-triplet";
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from "@/lib/parse-nl";
 // [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
@@ -1069,8 +1069,12 @@ export function ConfirmPaidModal({
   // unrounded — see amount-triplet.ts). Without the rounding, a derived field paints the float
   // tail: 1160,68 − 95,54 held as 1065.1399999999999 would show as "1065,1399999999999".
   const [amountDraft, setAmountDraft] = useState<{ field: "ex" | "btw" | "incl"; text: string } | null>(null);
+  // [NUL-IS-GEEN-INVOER] The display rule lives in amount-triplet.ts, because this exact line was
+  // ALSO in InvoiceCorrectionModal — and a rendering rule written twice is one that gets fixed
+  // once. A held 0 now shows as an empty box with a placeholder beside it, so the caret no longer
+  // lands after a "0" the owner has to delete before typing.
   const amountShown = (field: "ex" | "btw" | "incl", held: number) =>
-    amountDraft?.field === field ? amountDraft.text : String(round2(held)).replace(".", ",");
+    amountFieldText(held, amountDraft, field);
   const typeAmount = (field: "ex" | "btw" | "incl", text: string) => {
     setAmountDraft({ field, text });
     const n = clampAmount(parseAmountNL(text));
@@ -1317,6 +1321,10 @@ export function ConfirmPaidModal({
                     value={amountShown("ex", exBtw)}
                     onChange={(e) => typeAmount("ex", e.target.value)}
                     onBlur={() => setAmountDraft(null)}
+                    // [NUL-IS-GEEN-INVOER] Tapping the field selects what is in it, so the
+                    // first keystroke REPLACES the amount instead of appending to it.
+                    onFocus={(e) => e.currentTarget.select()}
+                    placeholder={AMOUNT_PLACEHOLDER}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
@@ -1340,6 +1348,10 @@ export function ConfirmPaidModal({
                     value={amountShown("btw", btwAmount)}
                     onChange={(e) => typeAmount("btw", e.target.value)}
                     onBlur={() => setAmountDraft(null)}
+                    // [NUL-IS-GEEN-INVOER] Tapping the field selects what is in it, so the
+                    // first keystroke REPLACES the amount instead of appending to it.
+                    onFocus={(e) => e.currentTarget.select()}
+                    placeholder={AMOUNT_PLACEHOLDER}
                     style={{
                       width: 110, padding: "6px 10px", fontSize: 16,
                       borderRadius: 8,
@@ -1377,6 +1389,10 @@ export function ConfirmPaidModal({
                     value={amountShown("incl", totalIncBtw)}
                     onChange={(e) => typeAmount("incl", e.target.value)}
                     onBlur={() => setAmountDraft(null)}
+                    // [NUL-IS-GEEN-INVOER] Tapping the field selects what is in it, so the
+                    // first keystroke REPLACES the amount instead of appending to it.
+                    onFocus={(e) => e.currentTarget.select()}
+                    placeholder={AMOUNT_PLACEHOLDER}
                     aria-label={t('ink.totaalUitleg')}
                     style={{
                       width: 130, padding: "8px 10px", fontSize: 18, fontWeight: 700,
@@ -1390,6 +1406,45 @@ export function ConfirmPaidModal({
                   </span>
                 )}
               </div>
+              {/* [BTW-TARIEF] GEMELD: "als ik het bedrag zonder btw typ moet de btw automatisch
+                  berekend worden". Dat kán niet uit dat bedrag: € 679,33 is tegelijk een 9%- en een
+                  21%-factuur totdat iemand zegt welke. Een geraden btw is een geraden voorbelasting,
+                  en dat is de richting die je met de Belastingdienst corrigeert.
+
+                  Dus vragen we het tarief in plaats van het te raden, en splitsen we vanuit het
+                  TOTAAL — hetzelfde argument als setIncl: dat is het best leesbare getal op het
+                  papier. De knop bestaat alleen zolang er een totaal is zónder btw; zodra er btw
+                  staat verdwijnt hij, want dan is er niets te herstellen. */}
+              {editing && Math.abs(totalIncBtw) > 0.005 && Math.abs(btwAmount) < 0.005 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 6, lineHeight: 1.4 }}>
+                    {t('corr.tarief.vraag')}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {NL_BTW_RATES.map((tarief) => (
+                      <button
+                        key={tarief}
+                        type="button"
+                        onClick={() => applyTriplet(splitByRate(totalIncBtw, tarief))}
+                        style={{
+                          flex: 1, minHeight: 44, borderRadius: 12, border: "1px solid #1a73e8",
+                          background: "#e8f0fe", color: "#1a4fa0", fontSize: 13.5, fontWeight: 600,
+                          cursor: "pointer", fontFamily: "inherit", padding: "10px 8px", lineHeight: 1.35,
+                        }}
+                      >
+                        {t('corr.tarief.knop', {
+                          tarief,
+                          btw: formatAmount(Math.abs(splitByRate(totalIncBtw, tarief).btw)),
+                        })}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#80868b", marginTop: 6, lineHeight: 1.4 }}>
+                    {t('corr.tarief.uitleg')}
+                  </div>
+                </div>
+              )}
+
               {/* [STATIEGELD-GAT] Eén tik, want het rekenwerk is al gedaan.
                   GEMELD: "het lukt de app niet om statiegeld te verwerken". De factuur van Elegance
                   Brands bleef hangen op "excl. + btw komt niet uit op het totaal", terwijl het
@@ -4189,7 +4244,7 @@ export default function IncomingInvoicesClient({
             not have to be learned twice. */}
         {loadIncomplete && (
           <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "12px 14px", borderRadius: 12, border: "1px solid #F5C6C0", background: "#FCE8E6" }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }} aria-hidden>error</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: "#B3261E", margin: 0, lineHeight: 1.4 }}>
                 {/* [TAAL] readFailed holds the server's own Dutch source names — data, shown as-is. */}

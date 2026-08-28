@@ -264,7 +264,7 @@ export default function FacturenClient({
   // facturen of the same klant. Selected rows are kept as OBJECTS (not just ids)
   // so the selection survives filter/search changes that drop rows from view.
   const [selectMode, setSelectMode] = useState(false)
-  const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number }>>({})
+  const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number; bundelbaar: boolean }>>({})
   const [bundle, setBundle] = useState<{ url: string; amount: number; reference: string; count: number; iban: string } | null>(null)
   useCloseOnBack(!!bundle, () => setBundle(null))
   const [bundleLoading, setBundleLoading] = useState(false)
@@ -275,6 +275,10 @@ export default function FacturenClient({
   const selectedSum = selectedList.reduce((s, r) => s + r.amount, 0)
   // ONE customer pays the bundle — the button explains itself when clients mix.
   const sameClient = new Set(selectedList.map(r => r.client.trim().toLowerCase())).size <= 1
+  // [BULK-PDF] What the betaalverzoek can handle, now stated as its own condition. Until here this
+  // rule hung on the SELECTION itself (a non-bundelbaar row simply could not be ticked); now that
+  // downloading is allowed for anything, the button has to state it.
+  const allBundelbaar = selectedList.length > 0 && selectedList.every(r => r.bundelbaar)
 
   // The row fields the bundle selection reads — a subset of both the infinite
   // list's InvoiceRow and the server-search rows.
@@ -385,6 +389,47 @@ export default function FacturenClient({
     ['sent', 'overdue', 'processing'].includes(inv.status) &&
     !isVolledigGecrediteerd(inv)
 
+  // [BULK-PDF] Take the selected invoices away as pdf. One invoice comes back as the pdf itself,
+  // more as a zip — nobody should unpack an archive for a single file.
+  //
+  // What could NOT be included is reported by name, never counted: "3 of the 8 are missing" is a
+  // number nobody can act on, and a short archive looks complete when you open it.
+  const [downloading, setDownloading] = useState(false)
+  async function downloadSelectedPdf() {
+    if (downloading || selectedList.length === 0) return
+    setDownloading(true)
+    try {
+      const res = await fetch('/api/invoice/bulk-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedList.map(r => r.id), direction: 'outgoing' }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        showToast(typeof json?.error === 'string' ? json.error : t('lijst.download.mislukt'))
+        return
+      }
+      const blob = await res.blob()
+      const naam = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1]
+        ?? 'facturen.zip'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = naam
+      a.click()
+      URL.revokeObjectURL(url)
+      const ontbreekt = Number(res.headers.get('X-Bulk-Missing') ?? '0')
+      if (ontbreekt > 0) {
+        const namen = decodeURIComponent(res.headers.get('X-Bulk-Missing-Names') ?? '')
+        showToast(t('lijst.download.deels', { namen }))
+      }
+    } catch {
+      showToast(t('lijst.download.mislukt'))
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   function toggleSelect(inv: BundelRow) {
     setSelected(prev => {
       const next = { ...prev }
@@ -393,6 +438,10 @@ export default function FacturenClient({
         id: inv.id,
         number: inv.invoice_number ?? '',
         client: inv.client_name ?? '',
+        // [BULK-PDF] Whether this row may join a bundled betaalverzoek, recorded at the moment it
+        // is ticked. Same reason as everything else on this object: the selection has to survive a
+        // filter change, and by then the row itself is no longer there to ask again.
+        bundelbaar: isBundelbaar(inv),
         // [PARTIAL-PAY] The OPEN amount, not the full total — this is what the bundle's
         // QR asks the customer (buildBundelBetaalverzoek sums the open amounts). Showing
         // the full total here made the owner read one number and the customer pay another.
@@ -1121,18 +1170,18 @@ export default function FacturenClient({
                   facturen of één klant and mint one payment link for the sum. */}
               <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
                 style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>checklist</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>checklist</span>
                 {selectMode ? t('lijst.klaar') : t('lijst.selecteer')}
               </button>
               {/* Sort */}
               <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
                 style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
                 {sort === 'desc' ? t('lijst.nieuwste') : t('lijst.oudste')}
               </button>
               {/* Refresh */}
               <button onClick={refresh} aria-label={t('lijst.vernieuwen')} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }}>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }} aria-hidden>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
               </button>
             </div>
           </div>
@@ -1141,7 +1190,7 @@ export default function FacturenClient({
               [SMART-FILTER] …and the amount: the server query below also matches
               total_inc_btw, so the placeholder names "bedrag" too. */}
           <div style={{ position: 'relative', marginBottom: 10 }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }} aria-hidden>search</span>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -1155,7 +1204,7 @@ export default function FacturenClient({
                 aria-label={t('lijst.zoek.wissen')}
                 style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>close</span>
               </button>
             )}
           </div>
@@ -1174,7 +1223,7 @@ export default function FacturenClient({
               <span style={{ fontSize: 13, fontWeight: 600, color: M3.onPrimaryContainer }}>
                 {t(FILTERS.find(f => f.id === filter)?.key ?? 'filter.all')}
               </span>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onPrimaryContainer }} aria-hidden>
                 {showFilterMenu ? 'expand_less' : 'expand_more'}
               </span>
             </button>
@@ -1239,7 +1288,7 @@ export default function FacturenClient({
             padding: '11px 13px', borderRadius: R.md, fontFamily: FONT,
             border: '1px solid #F5C6C0', background: '#FCE8E6',
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }} aria-hidden>error</span>
             <p style={{ fontSize: 12.5, color: '#8C1D18', margin: 0, lineHeight: 1.5 }}>
               {t('credit.leesFout')}
             </p>
@@ -1272,14 +1321,14 @@ export default function FacturenClient({
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%', marginBottom: showHerhaal ? 8 : 14, padding: '9px 14px', borderRadius: R.md, border: '1px solid #E8EAED', background: '#fff', color: '#5F6368', cursor: 'pointer', fontFamily: FONT, fontSize: 12.5, fontWeight: 500, textAlign: 'start' }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16, color: actief > 0 ? '#137333' : '#80868B', flexShrink: 0 }}>autorenew</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: actief > 0 ? '#137333' : '#80868B', flexShrink: 0 }} aria-hidden>autorenew</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{regel}</span>
               </span>
               <span
                 className="material-symbols-outlined"
                 aria-label={showHerhaal ? t('lijst.herhaal.verberg') : t('lijst.herhaal.toon')}
                 style={{ fontSize: 18, flexShrink: 0 }}
-              >
+                aria-hidden>
                 {showHerhaal ? 'expand_less' : 'expand_more'}
               </span>
             </button>
@@ -1288,7 +1337,7 @@ export default function FacturenClient({
         {!searching && showHerhaal && scheduleList.length > 0 && (
           <div style={{ background: '#fff', borderRadius: R.md, border: '1px solid #E8EAED', padding: '14px 16px', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }}>autorenew</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#137333' }} aria-hidden>autorenew</span>
               <span style={{ fontSize: 13, fontWeight: 700, color: M3.onSurface, fontFamily: FONT }}>
                 {t('lijst.herhalen')}
               </span>
@@ -1389,15 +1438,20 @@ export default function FacturenClient({
                   <div
                     className="inv-row"
                     onClick={() => selectMode
-                      ? (isBundelbaar(inv) && toggleSelect(inv))
+                      ? toggleSelect(inv)
                       : setExpandedId(expanded ? null : inv.id)}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
-                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: 'pointer', transition: 'background 0.4s ease' }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
-                    {selectMode && isBundelbaar(inv) && (
-                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selected[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
+                    {/* [BULK-PDF] Every row is selectable now. Downloading must work for anything —
+                        a paid invoice, a creditnota — so the betaalverzoek refuses on the BUTTON
+                        what it used to refuse through the selection. Same rule, said out loud: a
+                        guard that exists only because a row cannot be ticked is exactly the kind
+                        that disappears later without anyone noticing. */}
+                    {selectMode && (
+                      <span className="material-symbols-outlined" style={{ fontSize: 22, color: selected[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }} aria-hidden>
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
                     )}
@@ -1447,7 +1501,7 @@ export default function FacturenClient({
                             title={t('lijst.kwartaal.uitleg', { booked: xq.bookedQuarterLabel, paid: xq.paidQuarterLabel })}
                             style={{ fontSize: 11, fontWeight: 500, borderRadius: R.full, padding: '2px 10px', background: '#FFF3E0', color: '#B26A00', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event_available</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>event_available</span>
                             {t('lijst.betaaldIn', { quarter: xq.paidQuarterLabel })}
                           </span>
                         )}
@@ -1561,8 +1615,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {t('lijst.versturen')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>send</span> {t('lijst.versturen')}</>}
                         </button>
                       )}
 
@@ -1580,8 +1634,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primary, color: '#fff', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {inv.status === 'sent' ? t('lijst.offerte.opnieuw') : t('lijst.offerte.versturen')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>send</span> {inv.status === 'sent' ? t('lijst.offerte.opnieuw') : t('lijst.offerte.versturen')}</>}
                         </button>
                       )}
 
@@ -1606,8 +1660,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>send</span> {t('lijst.omzetten')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>send</span> {t('lijst.omzetten')}</>}
                         </button>
                       )}
 
@@ -1621,8 +1675,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined icon-dir" style={{ fontSize: 14 }}>forward_to_inbox</span> {t('lijst.opnieuwVersturen')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined icon-dir" style={{ fontSize: 14 }} aria-hidden>forward_to_inbox</span> {t('lijst.opnieuwVersturen')}</>}
                         </button>
                       )}
 
@@ -1643,7 +1697,7 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.surfaceVariant, color: '#5f6368', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
                             : t('lijst.betaaldVraag')}
                         </button>
                       )}
@@ -1658,8 +1712,8 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.successContainer, color: '#137333', display: 'flex', alignItems: 'center', gap: 4, transition: 'all 0.15s' }}>
                           {processingId === inv.id
-                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }}>hourglass_empty</span>
-                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }}>check_circle</span> {t('lijst.betaald')}</>}
+                            ? <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>hourglass_empty</span>
+                            : <><span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>check_circle</span> {t('lijst.betaald')}</>}
                         </button>
                       )}
 
@@ -1749,7 +1803,7 @@ export default function FacturenClient({
                         onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
                         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 19 }}>delete</span>
+                        <span className="material-symbols-outlined" style={{ fontSize: 19 }} aria-hidden>delete</span>
                       </button>
                     )}
                   </div>
@@ -1774,7 +1828,7 @@ export default function FacturenClient({
                           <button
                             onClick={e => { e.stopPropagation(); handleRemoveRequest(inv as RemovalInvoice & { id: string }) }}
                             style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>delete</span>
                             {t('lijst.verwijderen')}
                           </button>
                         )}
@@ -1801,7 +1855,7 @@ export default function FacturenClient({
                                 })
                               }}
                               style={{ fontSize: 13, color: sc && sc.active ? '#137333' : M3.onPrimaryContainer, background: sc && sc.active ? M3.successContainer : M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>autorenew</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>autorenew</span>
                               {label}
                             </button>
                           )
@@ -1810,7 +1864,7 @@ export default function FacturenClient({
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {t('lijst.openen')}
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>open_in_new</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>open_in_new</span>
                         </button>
                       </div>
                     </div>
@@ -1881,7 +1935,7 @@ export default function FacturenClient({
             </div>
             <button
               onClick={createBundle}
-              disabled={selectedList.length < 2 || !sameClient || bundleLoading}
+              disabled={selectedList.length < 2 || !sameClient || !allBundelbaar || bundleLoading}
               style={{
                 flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
                 fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
@@ -1889,8 +1943,27 @@ export default function FacturenClient({
                 color: (selectedList.length >= 2 && sameClient && !bundleLoading) ? '#fff' : '#9AA0A6',
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
               {bundleLoading ? t('lijst.bezig') : t('lijst.betaalverzoek')}
+            </button>
+            {/* [BULK-PDF] Beside the betaalverzoek, with a looser condition: downloading works for
+                ANY selection — a single invoice, a paid one, a creditnota. The betaalverzoek states
+                its own demands (two or more, one customer, bundelbaar) and those now sit on the
+                button above instead of inside the selection. */}
+            <button
+              onClick={downloadSelectedPdf}
+              disabled={selectedList.length === 0 || downloading}
+              style={{
+                flexShrink: 0, borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                cursor: selectedList.length === 0 || downloading ? 'default' : 'pointer',
+                border: `1px solid ${selectedList.length > 0 && !downloading ? M3.primary : M3.surfaceVariant}`,
+                background: '#fff',
+                color: selectedList.length > 0 && !downloading ? M3.primary : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>download</span>
+              {downloading ? t('lijst.bezig') : t('lijst.downloadPdf')}
             </button>
           </div>
         </div>
@@ -1915,7 +1988,7 @@ export default function FacturenClient({
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>add</span>
         {t('lijst.nieuw')}
       </button>}
 
@@ -2318,7 +2391,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
         {/* [BOEK-029] Optional warning box */}
         {warning && (
           <div style={{ background: '#FEF7E0', borderRadius: 12, padding: '12px 14px', marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }}>warning</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#EA8600', flexShrink: 0, marginTop: 1 }} aria-hidden>warning</span>
             <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.5, margin: 0 }}>{warning}</p>
           </div>
         )}
@@ -2384,7 +2457,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 disabled={!!entry && !entry.valid}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: (!entry || entry.valid) ? confirmBg : M3.surfaceVariant, color: (!entry || entry.valid) ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: (!entry || entry.valid) ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>account_balance</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>account_balance</span>
                 {t('lijst.bank')}
               </button>
               {/* [CASH-INSTALMENT] Contant accepts a PARTIAL amount now. It used to be refused
@@ -2398,7 +2471,7 @@ function BottomSheet({ title, body, confirmLabel, confirmBg, onConfirm, onCancel
                 disabled={!canPayCash}
                 style={{ flex: 1, padding: '14px', borderRadius: R.full, background: canPayCash ? confirmBg : M3.surfaceVariant, color: canPayCash ? '#fff' : '#70757a', fontSize: 15, fontWeight: 600, border: 'none', cursor: canPayCash ? 'pointer' : 'default', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>payments</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>payments</span>
                 {t('lijst.contant')}
               </button>
             </div>
@@ -2424,7 +2497,7 @@ function EmptyState() {
   const t = translator(useLocale())
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1, marginTop: 8 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>receipt_long</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }} aria-hidden>receipt_long</span>
       <p style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 4, fontFamily: FONT }}>{t('lijst.leeg')}</p>
       <p style={{ fontSize: 14, color: '#5F6368', fontFamily: FONT }}>{t('lijst.leeg.eerste')}</p>
     </div>

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveInvoicePeriod, isInPeriod, INVOICE_PERIODS } from "./invoice-period";
+import { MESSAGES } from "./i18n/messages";
 
 const TODAY = "2026-07-31"; // een donderdag in Q3
 
@@ -87,4 +88,36 @@ test("het menu biedt elke periode precies één keer aan", () => {
   const ids = INVOICE_PERIODS.map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(ids[0], "all", "Alles staat vooraan: dat is het gedrag van vandaag");
+});
+
+test("[TAAL] de maandnaam volgt de taal van de eigenaar, de cijfers nooit", () => {
+  // De maandnamen stonden hier als vaste Nederlandse lijst, en dit label staat boven een volledig
+  // vertaald scherm: "juli 2026" naast een Arabische lijst is niet verkeerd gespeld maar
+  // onvertaald.
+  assert.equal(resolveInvoicePeriod("this-month", "2026-07-14", "nl").label, "juli 2026");
+  assert.equal(resolveInvoicePeriod("this-month", "2026-07-14", "en").label, "July 2026");
+  assert.equal(resolveInvoicePeriod("this-month", "2026-07-14", "ar").label, "يوليو 2026");
+
+  // Het jaartal blijft in élke taal Latijns. Dat is geen toeval maar de -u-nu-latn in locale.ts:
+  // een jaartal en een bedrag moeten hetzelfde lezen als op het bankafschrift ernaast.
+  assert.match(resolveInvoicePeriod("this-month", "2026-07-14", "ar").label, /2026/);
+
+  // Zonder taal blijft alles precies zoals het was — elke bestaande aanroep en elke test hierboven.
+  assert.equal(resolveInvoicePeriod("last-month", "2026-01-09").label, "december 2025");
+
+  // Kwartaal en jaar bevatten geen woord, dus die veranderen in geen enkele taal.
+  assert.equal(resolveInvoicePeriod("this-quarter", "2026-07-14", "ar").label, "Q3 2026");
+  assert.equal(resolveInvoicePeriod("last-year", "2026-07-14", "ar").label, "2025");
+});
+
+test("[TAAL] elke periodekeuze draagt een sleutel die echt bestaat", () => {
+  // De labels zijn sleutels geworden. Een sleutel die niet in de catalogus staat, rendert als de
+  // sleutel zelf op het scherm — 'ink.periode.ditJaar' op een menu-item is erger dan het
+  // Nederlandse woord dat er stond.
+  for (const optie of INVOICE_PERIODS) {
+    assert.ok(optie.label in MESSAGES, `${optie.label} bestaat in messages.ts`);
+    assert.ok(MESSAGES[optie.label].nl, `${optie.label} heeft een Nederlandse bron`);
+  }
+  // En "alles" staat vooraan, want dat is het gedrag van vandaag.
+  assert.equal(INVOICE_PERIODS[0].id, "all");
 });

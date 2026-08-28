@@ -25,8 +25,14 @@ export default function AccepterenClient() {
       if (!res.ok) {
         // 401 = niet ingelogd. Dan is doorsturen naar /login met een terugkeerpad het enige
         // zinnige — anders staat er "Unauthorized" op een scherm dat om een tik vroeg.
+        //
+        // [TERUGKEERPAD] De parameter heet `redirect`, want dat is de ENIGE die /login leest
+        // (login/page.tsx: searchParams.get('redirect')). Hier stond `next`, en die wordt daar
+        // genegeerd: de medewerker logde in, kwam op /dashboard terecht en moest de uitnodiging
+        // opnieuw uit zijn mail opdiepen — precies één keer te vaak om nog te accepteren.
+        // Een gate houdt dit vast: zie [TERUGKEERPAD] in lifecycle-gates.test.ts.
         if (res.status === 401) {
-          router.push(`/login?next=${encodeURIComponent(`/team/accepteren?token=${token}`)}`)
+          router.push(`/login?redirect=${encodeURIComponent(`/team/accepteren?token=${token}`)}`)
           return
         }
         setFout(failureText(res.status, json, 'Accepteren mislukt'))

@@ -131,6 +131,10 @@ const KIND_BY_DOMAIN: Readonly<Record<string, LogboekKind | undefined>> = {
   article: "document",
   // Who may see, and who may act on the owner's behalf.
   accountant: "access",
+  // [PAKKET-LINK] Een deel-link geeft iemand ZONDER account een compleet kwartaal te lezen. Dat
+  // is precies de vraag die deze bak beantwoordt — "wie mag wat zien" — en het is de enige plek
+  // waar de eigenaar dat terugvindt, want de ontvanger heeft geen account om het aan te hangen.
+  package: "access",
   member: "access",
   user: "access",
   email: "access",
@@ -192,6 +196,10 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.accountant.invoice_confirmed", "log.accountant.mandate_requested",
   "log.invoice.reminder_sent", "log.member.invited", "log.member.joined", "log.member.revoked",
   "log.retention.warning_sent", "log.accountant.package_downloaded",
+  // [PAKKET-LINK] De overdracht aan een boekhouder ZONDER account: verstuurd, opgehaald,
+  // ingetrokken. Bij een deel-link is dit spoor de enige plek waar de eigenaar terugziet naar
+  // wie zijn boeken zijn gegaan — de ontvanger heeft geen account om het aan te hangen.
+  "log.package.link_shared", "log.package.link_downloaded", "log.package.link_revoked",
   "log.accountant.export_downloaded", "log.supplier.auto_incasso_on",
   "log.supplier.auto_incasso_off",
   // Level 3 — Files
