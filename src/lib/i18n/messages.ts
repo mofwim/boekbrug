@@ -11795,6 +11795,72 @@ export const MESSAGES = {
   // zegt de tekst dat — een totaal dat stil een uur zonder tarief weglaat is een getal dat de
   // ondernemer niet kan narekenen tegen de lijst ernaast.
 
+  // [URENCRITERIUM] Het urencriterium terwijl er nog iets aan te doen is. Elke stand heeft een
+  // EIGEN zin: "Een {woord} haal je niet" werkt in het Nederlands en breekt Arabische congruentie
+  // en Turkse klinkerharmonie. Getallen zijn wél parameters — die verbuigen niet.
+  'uren.criterium.titel': { nl: 'Urencriterium', en: 'Hour criterion', ar: 'معيار الساعات' },
+  'uren.criterium.voortgang': {
+    nl: '{uren} van de 1.225 uur geregistreerd in {jaar}',
+    en: '{uren} of the 1,225 hours registered in {jaar}',
+    ar: 'تم تسجيل {uren} من أصل 1.225 ساعة في {jaar}',
+  },
+  'uren.criterium.onbekend': {
+    nl: 'We konden je uren nu niet lezen — het urencriterium is niet beoordeeld.',
+    en: 'We could not read your hours just now — the hour criterion has not been assessed.',
+    ar: 'تعذّرت قراءة ساعاتك الآن — لم يُقيَّم معيار الساعات.',
+  },
+  'uren.criterium.gehaald': {
+    nl: 'Je hebt het urencriterium gehaald. Blijf je uren gewoon bijhouden — de Belastingdienst mag erom vragen.',
+    en: 'You have met the hour criterion. Keep registering your hours — the Belastingdienst may ask to see them.',
+    ar: 'لقد استوفيت معيار الساعات. واصل تسجيل ساعاتك — قد تطلبها مصلحة الضرائب.',
+  },
+  'uren.criterium.tevroeg': {
+    nl: 'Het jaar is nog te jong om te zeggen waar dit uitkomt. Vanaf hier is dat gemiddeld {perweek} uur per week.',
+    en: 'The year is too young to say where this lands. From here that is {perweek} hours a week on average.',
+    ar: 'ما زال العام في بدايته لتحديد النتيجة. من الآن فصاعداً يعني ذلك {perweek} ساعة أسبوعياً في المتوسط.',
+  },
+  'uren.criterium.opkoers': {
+    nl: 'Op dit tempo kom je dit jaar uit op ongeveer {verwacht} uur. Dat is boven de 1.225.',
+    en: 'At this pace you will reach about {verwacht} hours this year. That is above the 1,225.',
+    ar: 'بهذه الوتيرة ستصل إلى نحو {verwacht} ساعة هذا العام، أي فوق 1.225.',
+  },
+  'uren.criterium.achter': {
+    nl: 'Op dit tempo kom je uit op ongeveer {verwacht} uur — onder de 1.225. Je hebt nog {resterend} uur te gaan in {dagen} dagen: gemiddeld {perweek} uur per week.',
+    en: 'At this pace you will reach about {verwacht} hours — below the 1,225. You have {resterend} hours to go in {dagen} days: {perweek} hours a week on average.',
+    ar: 'بهذه الوتيرة ستصل إلى نحو {verwacht} ساعة — أي أقل من 1.225. أمامك {resterend} ساعة خلال {dagen} يوماً: بمعدل {perweek} ساعة أسبوعياً.',
+  },
+  'uren.criterium.kritiek': {
+    nl: 'Je hebt nog {resterend} uur te gaan in {dagen} dagen. Dat is gemiddeld {perweek} uur per week — meer dan een volle werkweek. Houd er rekening mee dat de zelfstandigenaftrek dit jaar kan vervallen.',
+    en: 'You have {resterend} hours to go in {dagen} days. That is {perweek} hours a week — more than a full working week. Take into account that the zelfstandigenaftrek may lapse this year.',
+    ar: 'أمامك {resterend} ساعة خلال {dagen} يوماً، أي {perweek} ساعة أسبوعياً — أكثر من أسبوع عمل كامل. ضع في حسبانك أن خصم العمل الحر قد يسقط هذا العام.',
+  },
+  'uren.criterium.onhaalbaar': {
+    nl: 'Er zijn niet genoeg dagen meer over om dit jaar aan 1.225 uur te komen. Bespreek met je boekhouder wat dat betekent voor de zelfstandigenaftrek.',
+    en: 'There are not enough days left to reach 1,225 hours this year. Discuss with your accountant what that means for the zelfstandigenaftrek.',
+    ar: 'لم تعد الأيام المتبقية كافية لبلوغ 1.225 ساعة هذا العام. ناقش مع محاسبك أثر ذلك على خصم العمل الحر.',
+  },
+  'uren.criterium.afgeslotengehaald': {
+    nl: 'In {jaar} haalde je het urencriterium op basis van je registratie.',
+    en: 'In {jaar} you met the hour criterion based on your registration.',
+    ar: 'في {jaar} استوفيت معيار الساعات بناءً على تسجيلك.',
+  },
+  'uren.criterium.afgeslotengemist': {
+    nl: 'In {jaar} bleef je registratie onder de 1.225 uur. Werkte je meer, dan telt alleen wat je alsnog vastlegt.',
+    en: 'In {jaar} your registration stayed below 1,225 hours. If you worked more, only what you still record counts.',
+    ar: 'في {jaar} بقي تسجيلك دون 1.225 ساعة. إن كنت قد عملت أكثر، فلا يُحتسب إلا ما تُوثّقه.',
+  },
+  // De twee dingen die ondernemers het vaakst verkeerd aannemen. Ze staan er ALTIJD bij, ook als
+  // het criterium gehaald is: wie het dit jaar haalde neemt volgend jaar dezelfde aanname mee.
+  'uren.criterium.tellenmee': {
+    nl: 'Ook uren die je niet factureert tellen mee: administratie, offertes, acquisitie, reistijd en scholing. Dit scherm is gemaakt om te factureren, dus die uren vergeet je makkelijk.',
+    en: 'Hours you do not invoice count too: administration, quotes, acquisition, travel and training. This screen is built for invoicing, so those hours are easy to forget.',
+    ar: 'تُحتسب أيضاً الساعات غير المفوترة: الإدارة وعروض الأسعار واستقطاب العملاء ووقت التنقل والتدريب. صُمِّمت هذه الشاشة للفوترة، لذا يسهل نسيان تلك الساعات.',
+  },
+  'uren.criterium.geendeeljaar': {
+    nl: 'Startte je dit jaar? Dan geldt dezelfde 1.225 uur — er wordt niet naar rato gerekend.',
+    en: 'Did you start this year? The same 1,225 hours apply — there is no pro-rata.',
+    ar: 'هل بدأت هذا العام؟ ينطبق العدد نفسه 1.225 ساعة — لا يوجد احتساب تناسبي.',
+  },
   'uren.titel': { nl: 'Uren', en: 'Hours', ar: 'الساعات' },
   'uren.subtitel': {
     nl: 'Schrijf op wat je gewerkt hebt. Wat er nog niet op een factuur staat, zet je hier in één keer om.',
