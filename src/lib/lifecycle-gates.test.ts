@@ -16726,3 +16726,65 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
   const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
   assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
 });
+
+
+test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", () => {
+  // The sibling of [KOLOM-BESTAAT], and the same silent shape: a database function called with an
+  // argument name it does not declare is refused by Postgres, and a caller that fails open turns
+  // that refusal into "everything is fine".
+  //
+  // Most rpc calls ARE protected — supabase-js is typed from database.types.ts, so tsc catches a
+  // wrong name. The exceptions are the calls that cast the client to `any` because the function is
+  // not in the generated types, and those are precisely the money ones: fair_use_consume,
+  // ai_budget_consume, ai_budget_settle, check_rate_limit_key. All four fail OPEN by design — the
+  // right call for a spend guard, and exactly why a typo in one would never surface. The budget
+  // would simply stop being enforced, and the first sign would be the invoice from Anthropic.
+  const signatures = new Map<string, Set<string>>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*returns/gi,
+    )) {
+      // Strip line comments BEFORE splitting on commas. A comment may contain a comma, and
+      // splitting first cuts the parameter list in the wrong place — which made this gate's own
+      // first draft report three live arguments as missing.
+      const params = m[2].split("\n").map((ln) => ln.replace(/--.*/, "")).join("\n");
+      const set = signatures.get(m[1]) ?? new Set<string>();
+      signatures.set(m[1], set);
+      for (const piece of params.split(",")) {
+        const pm = /^\s*(?:in|out|inout)?\s*([a-z_][a-z0-9_]*)\s+\S/i.exec(piece);
+        if (pm) set.add(pm[1]);
+      }
+    }
+  }
+  assert.ok(signatures.size > 20, "the function parser stopped finding functions — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.rpc\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*,\s*\{([^{}]*)\}/g)) {
+      const known = signatures.get(m[1]);
+      // A function defined outside this repo cannot be checked — say nothing rather than guess.
+      if (!known || known.size === 0) continue;
+      const line = src.slice(0, m.index ?? 0).split("\n").length;
+      // Top-level `key:` pairs only. A ternary inside a value (`x ? true : false`) is not one.
+      for (const a of m[2].matchAll(/(?:^|,)\s*([a-z_][a-z0-9_]*)\s*:/g)) {
+        checked += 1;
+        if (!known.has(a[1])) offenders.push(`${file}:${line} — ${m[1]}() has no argument ${a[1]}`);
+      }
+    }
+  }
+  assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
+});
