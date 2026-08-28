@@ -110,6 +110,43 @@ export default function KlaarClient() {
     }
   }
 
+  // ── [PAKKET-LINK] Versturen naar een boekhouder ZONDER account ──
+  //
+  // De knop hierboven geeft de eigenaar een ZIP in handen; daarna moest hij zelf een mail openen
+  // en hem eraan hangen. Dat is precies het handwerk dat dit product wegneemt, teruggegeven op de
+  // laatste meter — en het raakt het meest voorkomende geval: een kantoor dat al jaren op Exact
+  // draait en zich nooit ergens registreert. Deze knop levert de belofte zelf af.
+  const [mailOpen, setMailOpen] = useState(false)
+  const [mailAdres, setMailAdres] = useState('')
+  const [mailNotitie, setMailNotitie] = useState('')
+  const [mailBezig, setMailBezig] = useState(false)
+  const [mailFout, setMailFout] = useState<string | null>(null)
+  const [mailGelukt, setMailGelukt] = useState<string | null>(null)
+
+  async function stuurNaarBoekhouder(y: number, q: number) {
+    const adres = mailAdres.trim().toLowerCase()
+    setMailBezig(true); setMailFout(null); setMailGelukt(null)
+    try {
+      const res = await fetch('/api/closing-package/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: y, quarter: q, email: adres, note: mailNotitie.trim() || undefined }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setMailFout(failureText(res.status, json, t('klr.deel.fout')))
+        return
+      }
+      setMailGelukt(adres)
+      setMailAdres('')
+      setMailNotitie('')
+    } catch {
+      setMailFout(t('klr.deel.offline'))
+    } finally {
+      setMailBezig(false)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -247,9 +284,55 @@ export default function KlaarClient() {
                 {pkgError}
               </div>
             )}
-            <div style={{ fontSize: 12.5, color: M3.neutral, textAlign: 'center', marginBottom: 22, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12.5, color: M3.neutral, textAlign: 'center', marginBottom: 12, lineHeight: 1.5 }}>
               {t('klr.zipUitleg')}
             </div>
+
+            {/* ── [PAKKET-LINK] …of laat ons hem versturen ── */}
+            {!mailOpen ? (
+              <button
+                onClick={() => { setMailOpen(true); setMailGelukt(null) }}
+                style={{ width: '100%', padding: '13px 18px', borderRadius: 14, border: `1.5px solid ${M3.primary}`, background: '#fff', color: M3.primary, fontSize: 14.5, fontWeight: 600, marginBottom: 22, cursor: 'pointer', fontFamily: FONT }}
+              >
+                {t('klr.deel.knop')}
+              </button>
+            ) : (
+              <div style={{ border: '1px solid #E0E0E0', borderRadius: 14, padding: 16, marginBottom: 22, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <p style={{ fontSize: 13.5, color: M3.neutral, margin: 0, lineHeight: 1.55 }}>{t('klr.deel.uitleg')}</p>
+                <input
+                  type="email"
+                  value={mailAdres}
+                  onChange={(e) => { setMailAdres(e.target.value); setMailFout(null) }}
+                  placeholder="boekhouder@kantoor.nl"
+                  dir="ltr"
+                  aria-label={t('klr.deel.adresLabel')}
+                  style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid #DADCE0', fontSize: 14.5, fontFamily: FONT, textAlign: 'start' }}
+                />
+                <textarea
+                  value={mailNotitie}
+                  onChange={(e) => setMailNotitie(e.target.value)}
+                  rows={2}
+                  placeholder={t('klr.deel.notitiePlaceholder')}
+                  aria-label={t('klr.deel.notitieLabel')}
+                  style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid #DADCE0', fontSize: 14, fontFamily: FONT, resize: 'vertical' }}
+                />
+                <button
+                  onClick={() => stuurNaarBoekhouder(year, quarter)}
+                  disabled={mailBezig || !mailAdres.trim()}
+                  style={{ padding: '12px 18px', borderRadius: 12, border: 'none', background: M3.primary, color: '#fff', fontSize: 14.5, fontWeight: 700, cursor: (mailBezig || !mailAdres.trim()) ? 'default' : 'pointer', opacity: (mailBezig || !mailAdres.trim()) ? 0.55 : 1, fontFamily: FONT }}
+                >
+                  {mailBezig ? t('klr.deel.bezig') : t('klr.deel.versturen')}
+                </button>
+                {mailFout && (
+                  <p role="alert" style={{ fontSize: 13, color: M3.error, margin: 0, lineHeight: 1.45 }}>{mailFout}</p>
+                )}
+                {mailGelukt && (
+                  <p style={{ fontSize: 13, color: M3.success, margin: 0, lineHeight: 1.45, fontWeight: 600 }}>
+                    {t('klr.deel.verstuurd', { email: mailGelukt })}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* ── What still needs to happen (missing) ── */}
             {report.missing.length > 0 && (

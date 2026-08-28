@@ -29,12 +29,14 @@ import { useRouter } from 'next/navigation'
 import { M3, R, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 import { localeDir } from '@/lib/i18n/locale'
 import { useToast } from '@/components/ui/Toast'
 import { useDialog } from '@/components/ui/Dialog'
 import { failureText } from '@/lib/server-message'
 // [TZ] De kalender van de ondernemer (Europe/Amsterdam), nooit de UTC-dag van de server.
 import { amsterdamToday } from '@/lib/format-nl'
+import { URENCRITERIUM_HOURS, type UrencriteriumLevel, type UrencriteriumStatus } from '@/lib/urencriterium'
 // [DATE-NL] Een native date-input volgt de taal van de BROWSER voor de volgorde van zijn
 // segmenten, dus een ondernemer op een Engelstalig systeem tikt mm-dd-jjjj in een Nederlands
 // veld. Dit veld typt in dd-mm-jjjj en zegt terug welke datum het begrepen heeft.
@@ -59,13 +61,33 @@ const emptyForm = (): Form => ({
   description: '', hours: '', hourly_rate: '',
 })
 
+/**
+ * [URENCRITERIUM] One sentence per state, never one sentence with the state pasted into it.
+ *
+ * Typed against MessageKey so a key that does not exist is a build error rather than a screen that
+ * renders `uren.criterium.achter` to an owner reading Turkish.
+ */
+const URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey> = {
+  unknown: 'uren.criterium.onbekend',
+  met: 'uren.criterium.gehaald',
+  too_early: 'uren.criterium.tevroeg',
+  on_track: 'uren.criterium.opkoers',
+  behind: 'uren.criterium.achter',
+  critical: 'uren.criterium.kritiek',
+  unreachable: 'uren.criterium.onhaalbaar',
+  closed_met: 'uren.criterium.afgeslotengehaald',
+  closed_missed: 'uren.criterium.afgeslotengemist',
+}
+
 export default function UrenClient({
-  initialEntries, clients, loadFailed = false,
+  initialEntries, clients, loadFailed = false, urencriterium = null,
 }: {
   initialEntries: TimeEntry[]
   clients: UrenClientCard[]
   /** [NO-SILENT-EMPTY] The server could not READ. That is not an empty week. */
   loadFailed?: boolean
+  /** [URENCRITERIUM] Where the year stands against the 1.225 hours. Decided in urencriterium.ts. */
+  urencriterium?: UrencriteriumStatus | null
 }) {
   const router = useRouter()
   const locale = useLocale()
@@ -220,6 +242,56 @@ export default function UrenClient({
           padding: '10px 12px', borderRadius: R.sm, background: '#FFF8E1',
           borderInlineStart: `3px solid ${M3.warning}`, marginBottom: 12, fontSize: 13, textAlign: 'start',
         }}>{t('uren.fout.laden')}</div>
+      )}
+
+      {/* [URENCRITERIUM] Waar het jaar staat tegenover de 1.225 uur, zolang er nog iets aan te
+          doen is. Boven de knoppen: dit is de reden om uren op te schrijven die je niet factureert,
+          en onder de lijst zou niemand het lezen.
+
+          Het onderdeel heeft geen eigen taal en geen eigen rekenwerk — urencriterium.ts bepaalt de
+          stand, messages.ts levert de zin, en elke stand heeft een EIGEN sleutel. */}
+      {urencriterium && (
+        <section style={{
+          padding: '12px 14px', borderRadius: R.sm, marginBottom: 16, fontSize: 13, textAlign: 'start',
+          background: urencriterium.warn ? '#FFF8E1' : '#F1F8F4',
+          borderInlineStart: `3px solid ${urencriterium.warn ? M3.warning : M3.primary}`,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t('uren.criterium.titel')}</div>
+          {/* [NO-SILENT-EMPTY] Bij een mislukte lezing is er geen getal en geen balk — een balk op
+              nul zou zeggen "je hebt niets gewerkt", en dat is niet wat er gebeurd is. */}
+          {urencriterium.hours !== null && (
+            <>
+              <div style={{ color: M3.neutral, marginBottom: 6 }}>
+                {t('uren.criterium.voortgang', {
+                  uren: urencriterium.hours.toLocaleString('nl-NL'),
+                  jaar: urencriterium.year,
+                })}
+              </div>
+              {/* Een balk zegt in één blik wat een zin in drie regels zegt. aria-hidden: de zin
+                  eronder draagt dezelfde informatie voor wie hem niet ziet. */}
+              <div aria-hidden style={{ height: 6, borderRadius: 3, background: '#E0E0E0', marginBottom: 8 }}>
+                <div style={{
+                  height: '100%', borderRadius: 3,
+                  width: `${Math.min(100, Math.round((urencriterium.hours / URENCRITERIUM_HOURS) * 100))}%`,
+                  background: urencriterium.warn ? M3.warning : M3.primary,
+                }} />
+              </div>
+            </>
+          )}
+          <p style={{ margin: '0 0 6px' }}>
+            {t(URENCRITERIUM_SENTENCE[urencriterium.level], {
+              verwacht: (urencriterium.projected ?? 0).toLocaleString('nl-NL'),
+              resterend: urencriterium.remaining.toLocaleString('nl-NL'),
+              dagen: urencriterium.daysLeft,
+              perweek: (urencriterium.neededPerWeek ?? 0).toLocaleString('nl-NL'),
+              jaar: urencriterium.year,
+            })}
+          </p>
+          {/* Staan er ALTIJD bij, ook bij 'gehaald': wie het dit jaar haalde neemt volgend jaar
+              dezelfde aanname mee, en dit zijn de twee die het duurst zijn. */}
+          <p style={{ margin: '0 0 4px', color: M3.neutral }}>{t('uren.criterium.tellenmee')}</p>
+          <p style={{ margin: 0, color: M3.neutral }}>{t('uren.criterium.geendeeljaar')}</p>
+        </section>
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>

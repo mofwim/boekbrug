@@ -4450,11 +4450,13 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
 
   // Exactly three senders write to someone who is not a BoekBrug user.
   const viaOwner = [...mail.matchAll(/from: customerMailFrom\(/g)].length;
-  assert.equal(viaOwner, 3, `factuur, herinnering en offerte — gevonden: ${viaOwner}`);
+  // [PAKKET-LINK] Vier sinds het kwartaalpakket: die mail gaat óók namens de ondernemer naar een
+  // derde — zijn boekhouder — en die scant zijn inbox op klantnaam, niet op productnaam.
+  assert.equal(viaOwner, 4, `factuur, herinnering, offerte en kwartaalpakket — gevonden: ${viaOwner}`);
   // …and every one of them offers a way back. Counted, so adding a fourth customer mail without a
   // reply-to shows up here rather than in a customer's dead reply.
   const replies = [...mail.matchAll(/\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/g)].length;
-  assert.equal(replies, 3, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
+  assert.equal(replies, 4, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
 
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
@@ -4656,6 +4658,89 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PAKKET-LINK] Handing the quarter to an accountant who has no account ──────────────────────
+//
+// The product's central promise — "at quarter end everything is ready for your accountant" — was
+// only DELIVERED when the accountant registered: the quarter-close cron walks accountant_clients,
+// and the download button in that mail points at a route that demands a login. For the most
+// common Dutch case (an office that has run on Exact for ten years and will never sign up
+// anywhere) the promise silently did not apply, and the owner was left downloading a ZIP and
+// attaching it to a mail by hand — the exact handwork this product removes, given back on the
+// last metre.
+//
+// The new path is a public, unauthenticated route that opens a complete quarter of somebody's
+// bookkeeping. Everything below is about keeping that one door narrow.
+test("[PAKKET-LINK] the public package route is opened by the token, and by nothing else", () => {
+  const publiek = code("src/app/api/pakket/route.ts");
+
+  // 1. WHAT IS BUILT COMES FROM THE ROW, NEVER FROM THE URL. This is the whole security model:
+  // a guest holding the token can reach exactly the quarter their client gave them, and no other.
+  assert.match(publiek, /ownerId: share\.user_id/, "the owner comes from the row");
+  assert.doesNotMatch(publiek, /searchParams\.get\("(year|quarter|clientId|ownerId)"\)/,
+    "no URL parameter may steer what is built — the token names the period");
+
+  // 2. FAIL-CLOSED on validity, through the one shared judge (so the screen and the route can
+  // never disagree about whether a link still works).
+  assert.match(publiek, /shareStatus\(share, Date\.now\(\)\) !== "live"/);
+  assert.match(publiek, /if \(!share \|\| shareStatus/, "unknown and dead tokens take the same exit");
+
+  // 3. A read FAILURE is not a dead link. Answering 404 on an unreadable lookup would tell an
+  // accountant their client's link is gone when the truth is that we could not look.
+  assert.match(publiek, /if \(error\) \{[\s\S]{0,300}?weiger\(503/);
+
+  // 4. Bounded, and per TOKEN. Building a package is dozens of reads plus a ZIP — the most
+  // expensive public action in the product. Not failOpen: if the counter cannot be read, the
+  // expensive action does not happen.
+  assert.match(publiek, /bucketKey: `pakket:\$\{token\}`/);
+  assert.doesNotMatch(publiek, /failOpen: true/, "the costliest public path may not fail open");
+
+  // 5. Shape-checked before it ever reaches the database.
+  assert.match(publiek, /\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}/, "a non-uuid never becomes a query");
+
+  // 6. [BEWIJS] The download is recorded — the owner must be able to see that their accountant
+  // collected it, or this handover is no more provable than a shared folder.
+  assert.match(publiek, /last_downloaded_at: new Date\(\)\.toISOString\(\)/);
+  assert.match(publiek, /action: "package\.link_downloaded"/);
+});
+
+test("[PAKKET-LINK] the owner creates, mails and can withdraw the link", () => {
+  const share = code("src/app/api/closing-package/share/route.ts");
+
+  // The token is minted by the DATABASE (gen_random_uuid on the column) — the insert may never
+  // carry one, or a client could choose its own key.
+  assert.doesNotMatch(share, /token:/, "no caller ever supplies a token");
+  assert.match(share, /user_id: user\.id/, "the row is stamped with the session's owner");
+  assert.match(share, /expires_at: shareExpiry\(nu\)/, "every link expires — set from the one constant");
+
+  // Withdrawal is scoped to the owner's own, still-open link, and comes BEFORE the rate limit:
+  // someone who mistyped an address must always be able to withdraw.
+  assert.match(share, /\.eq\("user_id", user\.id\)[\s\S]{0,120}?\.is\("revoked_at", null\)/);
+  assert.ok(
+    share.indexOf("revokeId") < share.indexOf("RATE_LIMITS.HEAVY_EXPORT"),
+    "withdrawing may never be blocked by the sending limit",
+  );
+
+  // [TRUST-INVITE] The mail IS the handover. If it was refused, the link is withdrawn again so no
+  // dead link is left behind claiming to have been sent.
+  assert.match(share, /if \(!bezorgd\) \{[\s\S]{0,400}?revoked_at: new Date\(\)\.toISOString\(\)/);
+
+  // The ZIP is NOT attached: a quarter with attachments runs to tens of megabytes, and a mail
+  // that size either bounces or lands in spam — the opposite of what [BEZORGING] fixed.
+  assert.doesNotMatch(share, /attachments/, "the link does the work, and a link can be withdrawn");
+
+  // The mail reaches a non-user and replies land with the CLIENT, not with us.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /export async function sendQuarterPackageLink/);
+  assert.match(mail, /const antwoordAdres = clientEmail/,
+    "a question about these books belongs with the entrepreneur who sent them");
+  assert.match(mail, /from: customerMailFrom\(clientName\)/,
+    "[AFZENDERNAAM] an accountant scans their inbox on the CLIENT's name, not on ours");
+  assert.match(mail, /Je hebt hiervoor geen account nodig/, "it says the thing that makes it work");
+
+  // And the owner's screen offers it where they already stand.
+  assert.match(code("src/app/dashboard/klaar/KlaarClient.tsx"), /'\/api\/closing-package\/share'/);
+});
+
 // ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
 //
 // The example dossier is the screen a zero-client accountant sees at the exact moment they decide
@@ -15203,7 +15288,12 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   // confident face — and money-out errors are the unrecoverable direction. So the gate refuses
   // the vocabulary of a tax CALCULATION anywhere in the pure module.
   const pure = code("src/lib/ib-jaar.ts");
-  assert.match(pure, /URENCRITERIUM_HOURS = 1225/, "the urencriterium threshold is the Belastingdienst's number");
+  // The threshold is declared ONCE, in urencriterium.ts, and re-exported here. Two modules each
+  // writing 1.225 is how a statutory number comes to have two values in one codebase.
+  assert.match(code("src/lib/urencriterium.ts"), /URENCRITERIUM_HOURS = 1225/,
+    "the urencriterium threshold is the Belastingdienst's number");
+  assert.doesNotMatch(pure, /URENCRITERIUM_HOURS = \d/, "the threshold has a second declaration again");
+  assert.match(pure, /export \{ URENCRITERIUM_HOURS \}/, "the year overview lost its one authority for the number");
   assert.doesNotMatch(
     pure, /te betalen|verschuldigde (inkomsten)?belasting|heffingskorting|schijf/i,
     "the module has started to compute or promise a tax amount — that is a different product and a wrong one",
@@ -16930,4 +17020,245 @@ test("[TAAL-POORT] the door speaks more than one language, and offers the switch
   assert.match(zwitser, /LOCALE_META\[l\]\.label/, "the languages are no longer named in their own script");
   assert.match(zwitser, /lang=\{l\}/, "the language buttons lost their own lang attribute");
   assert.match(zwitser, /aria-pressed=\{actief\}/, "which language is current is only shown in colour");
+});
+
+
+test("[URENCRITERIUM] the hours are read from a column that exists, and judged while the year runs", () => {
+  // ── THE PART THAT WAS DEAD ──
+  //
+  // The year overview asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answered "column does not exist", fetchAllRows threw,
+  // the catch turned it into null, and the screen printed "we konden je urenregistratie niet
+  // lezen" — for every owner, since the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing looked broken, which is the whole lesson: the null branch prints an HONEST sentence,
+  // so the failure wore the face of a temporary hiccup forever. The gate that covered this route
+  // checked that the engine was called and that the null branch existed; it never checked that the
+  // query could return a row.
+  const jaarRoute = code("src/app/api/ib-jaar/route.ts");
+  const urenPage = code("src/app/dashboard/uren/page.tsx");
+  for (const [naam, bron] of [["ib-jaar route", jaarRoute], ["uren page", urenPage]] as const) {
+    assert.match(bron, /from\(["']time_entries["']\)[\s\S]{0,400}?worked_on/,
+      `${naam}: the hours are filtered on a column time_entries does not have`);
+    assert.doesNotMatch(bron, /entry_date/,
+      `${naam}: entry_date belongs to cash_entries — on time_entries it matches nothing, silently`);
+  }
+
+  // ── THE SUM MUST BE COMPLETE ──
+  //
+  // The screen's own entry list stops at 1000 rows. Summing THAT would under-count the year, which
+  // is the direction that wrongly tells an owner they will not make it. The year total is its own
+  // paged read.
+  // Anchored on the CALL that wraps the hours read, not on the name: an `import { fetchAllRows }`
+  // left at the top of the file satisfies a bare /fetchAllRows/ while nothing pages any more.
+  // (This gate's own first draft did exactly that, and the negative control caught it.)
+  assert.match(urenPage, /await fetchAllRows<\{ hours: number \| null \}>\(\(lo, hi\) =>[\s\S]{0,300}?time_entries/,
+    "the year total can be truncated by the 1000-row cap again");
+  assert.match(urenPage, /catch\([\s\S]{0,200}?return null/,
+    "a failed hours read no longer becomes null — it would read as zero hours worked");
+
+  // ── THE RULES THAT DECIDE MONEY ──
+  const pure = code("src/lib/urencriterium.ts");
+  // No pro-rata. A starter who registers in September still needs 1.225 hours that calendar year;
+  // scaling the threshold would report them on track and cost the whole deduction.
+  assert.doesNotMatch(pure, /threshold\s*[*/]|URENCRITERIUM_HOURS\s*[*/]/,
+    "the threshold is being scaled — the urencriterium has no pro-rata for a part year");
+  // A failed read is not a missed criterion.
+  assert.match(pure, /hoursSoFar === null[\s\S]{0,200}?level: "unknown"/,
+    "a failed read no longer answers 'unknown'");
+  // No forecast from a handful of days — a warning that swings daily teaches the owner to ignore
+  // the one that matters in September.
+  assert.match(pure, /daysElapsed < PROJECTION_MIN_DAYS[\s\S]{0,200}?level: "too_early"/,
+    "the year is forecast from too few days again");
+
+  // ── THE SCREEN SAYS THE TWO THINGS THE ARITHMETIC CANNOT ──
+  //
+  // Indirect hours count, and there is no pro-rata. Both are shown for EVERY state, including a
+  // criterion already met: whoever made it this year carries the same assumption into the next.
+  const scherm = code("src/app/dashboard/uren/UrenClient.tsx");
+  assert.match(scherm, /t\('uren\.criterium\.tellenmee'\)/,
+    "the screen no longer says that unbilled hours count — the error this module exists to prevent");
+  assert.match(scherm, /t\('uren\.criterium\.geendeeljaar'\)/,
+    "the screen no longer says that a starter gets no pro-rata");
+  // [TAAL] One key per state. A noun swapped into one shared sentence breaks Arabic agreement.
+  assert.match(scherm, /URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey>/,
+    "the states no longer map to their own sentences");
+  // The component holds no language: the panel renders keys, never a Dutch string of its own.
+  assert.doesNotMatch(scherm.slice(scherm.indexOf("uren.criterium.titel"), scherm.indexOf("uren.criterium.geendeeljaar")),
+    />[^<>{}\n]*[a-z]{4,}\s+[a-z]{4,}[^<>{}\n]*</,
+    "a hard-coded sentence appeared in the urencriterium panel");
+});
+
+
+test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
+  // WHY: /api/ib-jaar asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answers "column does not exist", the caller's catch
+  // turned it into null, and the year screen said "we konden je urenregistratie niet lezen" — for
+  // every owner, from the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing failed loudly, because the null branch prints an HONEST sentence. That is the whole
+  // shape of this class: a query that can never return a row, behind a caller that treats "error"
+  // and "nothing there" as the same answer. Types cannot see it (the column name is a string) and
+  // no gate could, because none compared the two halves.
+  //
+  // This gate compares them: the columns the migrations declare against the columns the app asks
+  // for. It is cheap, mechanical, and would have caught the above on the day it was written.
+
+  const columnsOf = new Map<string, Set<string>>();
+  const declared = new Set<string>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\n\s*\);/gi,
+    )) {
+      const table = m[1];
+      declared.add(table);
+      const set = columnsOf.get(table) ?? new Set<string>();
+      columnsOf.set(table, set);
+      for (const raw of m[2].split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("--")) continue;
+        const c = /^([a-z_][a-z0-9_]*)\s+/.exec(line);
+        if (!c) continue;
+        if (["constraint", "unique", "primary", "foreign", "check", "exclude", "like", "references"].includes(c[1])) continue;
+        set.add(c[1]);
+      }
+    }
+    // One ALTER TABLE may add SEVERAL columns, comma-separated across lines. Reading only the
+    // first is how this parser's own first draft reported two live columns as missing.
+    for (const m of sql.matchAll(/alter\s+table\s+(?:only\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s+([\s\S]*?);/gi)) {
+      const set = columnsOf.get(m[1]) ?? new Set<string>();
+      columnsOf.set(m[1], set);
+      for (const a of m[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) set.add(a[1]);
+    }
+  }
+  assert.ok(declared.size > 20, "the migration parser stopped finding tables — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  const queried = new Set<string>();
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)\s*\.(select|insert|update|delete|upsert)/g)) {
+      queried.add(m[1]);
+    }
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)/g)) {
+      const table = m[1];
+      const known = columnsOf.get(table);
+      if (!declared.has(table) || !known) continue;
+      const line = () => src.slice(0, m.index ?? 0).split("\n").length;
+      // Stop at the next .from(, or the columns of one query get blamed on another table.
+      let chain = src.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 900);
+      const next = chain.indexOf(".from(");
+      if (next !== -1) chain = chain.slice(0, next);
+
+      for (const f of chain.matchAll(
+        /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|order|contains|overlaps)\(\s*['"]([a-z_][a-z0-9_]*)['"]/g,
+      )) {
+        checked += 1;
+        if (!known.has(f[2])) offenders.push(`${file}:${line()} — ${table} has no column ${f[2]} (.${f[1]}())`);
+      }
+      const sel = /^\s*\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
+      // An embed, alias, count or wildcard is a different grammar — skipped rather than guessed at.
+      if (sel && !/[(:!*]/.test(sel[1])) {
+        for (const raw of sel[1].split(",")) {
+          const c = raw.trim();
+          if (!/^[a-z_][a-z0-9_]*$/.test(c)) continue;
+          checked += 1;
+          if (!known.has(c)) offenders.push(`${file}:${line()} — ${table} has no column ${c} (.select())`);
+        }
+      }
+    }
+  }
+
+  assert.ok(checked > 200, `the gate only checked ${checked} column references — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `queries naming a column that does not exist:\n  ${offenders.join("\n  ")}`);
+
+  // ── THE BLIND SPOT, PINNED ──
+  //
+  // These tables were created in Supabase directly and have no CREATE TABLE in this repo, so
+  // nothing above can check a single column on them — including `invoices` and `documents`, the
+  // two the whole product runs on. Pinned rather than ignored: a NEW name appearing here means a
+  // new table shipped without its schema, and the gate should make that a decision rather than a
+  // drift. Moving one out of this list (by adding its migration) is a straight improvement.
+  const UNCHECKABLE = [
+    "accountant_clients", "audit_logs", "bank_transactions", "clients", "deletion_requests",
+    "documents", "draft_queue", "email_connections", "email_skipped_attachments", "folders",
+    "invitations", "invoice_lines", "invoices", "messages", "notifications", "profiles",
+  ];
+  const blind = [...queried].filter((t) => !declared.has(t)).sort();
+  const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
+  assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
+});
+
+
+test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", () => {
+  // The sibling of [KOLOM-BESTAAT], and the same silent shape: a database function called with an
+  // argument name it does not declare is refused by Postgres, and a caller that fails open turns
+  // that refusal into "everything is fine".
+  //
+  // Most rpc calls ARE protected — supabase-js is typed from database.types.ts, so tsc catches a
+  // wrong name. The exceptions are the calls that cast the client to `any` because the function is
+  // not in the generated types, and those are precisely the money ones: fair_use_consume,
+  // ai_budget_consume, ai_budget_settle, check_rate_limit_key. All four fail OPEN by design — the
+  // right call for a spend guard, and exactly why a typo in one would never surface. The budget
+  // would simply stop being enforced, and the first sign would be the invoice from Anthropic.
+  const signatures = new Map<string, Set<string>>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*returns/gi,
+    )) {
+      // Strip line comments BEFORE splitting on commas. A comment may contain a comma, and
+      // splitting first cuts the parameter list in the wrong place — which made this gate's own
+      // first draft report three live arguments as missing.
+      const params = m[2].split("\n").map((ln) => ln.replace(/--.*/, "")).join("\n");
+      const set = signatures.get(m[1]) ?? new Set<string>();
+      signatures.set(m[1], set);
+      for (const piece of params.split(",")) {
+        const pm = /^\s*(?:in|out|inout)?\s*([a-z_][a-z0-9_]*)\s+\S/i.exec(piece);
+        if (pm) set.add(pm[1]);
+      }
+    }
+  }
+  assert.ok(signatures.size > 20, "the function parser stopped finding functions — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.rpc\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*,\s*\{([^{}]*)\}/g)) {
+      const known = signatures.get(m[1]);
+      // A function defined outside this repo cannot be checked — say nothing rather than guess.
+      if (!known || known.size === 0) continue;
+      const line = src.slice(0, m.index ?? 0).split("\n").length;
+      // Top-level `key:` pairs only. A ternary inside a value (`x ? true : false`) is not one.
+      for (const a of m[2].matchAll(/(?:^|,)\s*([a-z_][a-z0-9_]*)\s*:/g)) {
+        checked += 1;
+        if (!known.has(a[1])) offenders.push(`${file}:${line} — ${m[1]}() has no argument ${a[1]}`);
+      }
+    }
+  }
+  assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
 });

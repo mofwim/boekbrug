@@ -297,6 +297,11 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('offerte_akkoord.sql', 'column', 'offerte_token', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'constraint', 'invoices_offerte_response_check', null, 'public'),
   ('offerte_akkoord.sql', 'constraint', 'invoices_offerte_response_paired_check', null, 'public'),
+  ('package_shares.sql', 'index', 'idx_package_shares_user', null, 'public'),
+  ('package_shares.sql', 'policy', 'package_shares_insert_own', 'package_shares', 'public'),
+  ('package_shares.sql', 'policy', 'package_shares_select_own', 'package_shares', 'public'),
+  ('package_shares.sql', 'policy', 'package_shares_update_own', 'package_shares', 'public'),
+  ('package_shares.sql', 'table', 'package_shares', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_bundle', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_invoice', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_token', null, 'public'),
@@ -418,7 +423,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 115 migraties
+-- NIET VAST TE STELLEN — 9 van de 116 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

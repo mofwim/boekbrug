@@ -52,18 +52,32 @@ export async function GET(req: NextRequest) {
   }
 
   // Σ hours in the year. null = could not look — the module says so instead of "not met".
+  //
+  // [UREN-KOLOM] The column is `worked_on`. It read `entry_date` — which belongs to cash_entries,
+  // not to time_entries — so PostgREST answered "column does not exist", fetchAllRows threw, the
+  // catch below turned it into null, and this screen has been saying "we konden je urenregistratie
+  // niet lezen" for every owner since the day it shipped. The urencriterium was never once
+  // assessed. Nothing was wrong on screen: the null branch prints an honest sentence, which is
+  // exactly why nobody went looking.
   const hoursTotal = await fetchAllRows<{ hours: number | null }>((lo, hi) =>
     pipeline
       .from("time_entries")
       .select("hours")
       .eq("user_id", owner.ownerId)
-      .gte("entry_date", start)
-      .lte("entry_date", end)
+      .gte("worked_on", start)
+      .lte("worked_on", end)
       .order("id", { ascending: true })
       .range(lo, hi),
   )
     .then((rows) => rows.reduce((s, r) => s + (Number(r.hours) || 0), 0))
-    .catch(() => null);
+    .catch((e) => {
+      // Logged, not just swallowed. A permanently broken read that renders as a polite sentence is
+      // the quietest kind of failure there is — this is what would have named it in week one.
+      console.error("[UREN-KOLOM] reading the year's hours failed — the urencriterium is not assessed", {
+        userId: owner.ownerId, year, error: e instanceof Error ? e.message : String(e),
+      });
+      return null;
+    });
 
   const overzicht = buildIbJaarOverzicht({
     year,
