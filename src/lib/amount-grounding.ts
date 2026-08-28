@@ -113,11 +113,33 @@ function variants(amount: number): string[] {
     return out
   }
 
-  const wholeForms = new Set<string>([w, grouped('.'), grouped(','), grouped(' '), grouped(' '), grouped(' ')])
+  // [VORM-GEMIST] The apostrophe is a real grouping separator on templates a Dutch owner
+  // receives from Swiss and some German suppliers. Leaving it out cost nothing; keeping it
+  // out costs a false "this total is not on your invoice" on a correct one.
+  const wholeForms = new Set<string>([w, grouped('.'), grouped(','), grouped(' '), grouped(' '), grouped(' '), grouped("'"), grouped('\u2019')])
   const out = new Set<string>()
   for (const wf of wholeForms) {
     out.add(`${wf},${frac}`) // Dutch decimal comma
     out.add(`${wf}.${frac}`) // international decimal point
+    // [VORM-GEMIST] A space between the separator and the cents. Not a way anyone WRITES an
+    // amount — it is how a PDF's text layer hands one over when the glyphs sit in their own
+    // cells, and "1.044, 80" was making the app tell an owner their own printed total was not
+    // on the paper.
+    out.add(`${wf}, ${frac}`)
+    out.add(`${wf}. ${frac}`)
+  }
+  // [VORM-GEMIST] The trailing cent-zero, dropped. "1044.8" is how a transcription and many a
+  // spreadsheet-built invoice render EUR 1.044,80, and it was the likeliest reason for a false
+  // 'absent' — the check that exists to catch a misread was reporting one on a correct read.
+  //
+  // ONLY when the cents END in a zero, so the short form is unambiguous: EUR 1.044,08 has cents
+  // "08", whose short form would be "0" and is never generated. And findWhole still refuses a
+  // match followed by a digit, so "1044.8" cannot confirm a document that says 1044.85.
+  if (cents % 10 === 0) {
+    for (const wf of wholeForms) {
+      out.add(`${wf},${frac[0]}`)
+      out.add(`${wf}.${frac[0]}`)
+    }
   }
   // A whole-euro amount is often printed without decimals at all (“€ 500”), and with a dash for the
   // cents on older Dutch templates (“500,-”).

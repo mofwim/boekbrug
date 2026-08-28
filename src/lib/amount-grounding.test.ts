@@ -234,3 +234,57 @@ test("[GEGROND] the auto-booking vetoes are defined here and in document-verify,
   assert.equal(placementBlocksAutoBooking("unreadable"), false);
   assert.equal(placementBlocksAutoBooking(null), false);
 });
+
+// ─── [VORM-GEMIST] Printed forms the check used to miss, and the ones it must still refuse ──────
+
+test('[VORM-GEMIST] a correct total is found in every way a document prints it', () => {
+  // REPORTED as "why does the app hesitate": GROOTHANDEL M.H. BAL invoice 264336, € 1.044,80,
+  // flagged "het totaalbedrag staat niet letterlijk in de tekst van dit document". The total WAS
+  // on the paper. The check missed the shape it was written in.
+  //
+  // That is the worst direction for this particular warning: it exists to catch a MISREAD, so a
+  // false one teaches the owner that the warning means nothing — and the real one arrives later on
+  // an invoice that is genuinely wrong. The module's own header says as much.
+  const forms = [
+    'TOTAAL Incl.BTW: 1.044,80 EUR',   // Dutch, as printed
+    'TOTAAL Incl.BTW: 1044,80 EUR',    // no grouping
+    'TOTAAL Incl.BTW: 1,044.80 EUR',   // international
+    'TOTAAL Incl.BTW: 1044.80 EUR',
+    'TOTAAL Incl.BTW: 1044.8 EUR',     // the cent-zero dropped — a transcription, a spreadsheet
+    'TOTAAL Incl.BTW: 1.044,8 EUR',
+    'TOTAAL Incl.BTW: 1.044, 80 EUR',  // a PDF text layer with the cents in their own cell
+    "TOTAAL Incl.BTW: 1'044,80 EUR",   // Swiss/German grouping on a supplier's template
+  ]
+  for (const text of forms) {
+    assert.equal(groundAmount(1044.80, text), 'found', `not found in: ${text}`)
+  }
+})
+
+test('[VORM-GEMIST] and none of the new forms confirms an amount the document does not carry', () => {
+  // The whole module is worth nothing if it grew permissive: it exists to catch a total that was
+  // read wrong, and every form added above is a new way to say "found". Each one is checked here
+  // against the number it must NOT match.
+
+  // The short form must not be a prefix of a longer amount.
+  assert.equal(groundAmount(1044.80, 'TOTAAL 1044.85 EUR'), 'absent', '1044,8 confirmed 1044,85')
+  assert.equal(groundAmount(1044.80, 'TOTAAL 1044.88 EUR'), 'absent')
+  assert.equal(groundAmount(1044.80, 'TOTAAL 10448 stuks'), 'absent', 'the short form matched a bare integer')
+  // …nor of a larger one that merely ends the same way.
+  assert.equal(groundAmount(1044.80, 'TOTAAL 21.044,80 EUR'), 'absent', 'confirmed by an amount twenty thousand larger')
+
+  // The short form is generated ONLY when the cents end in zero, so 1.044,08 never shortens to
+  // "1044,0" and can never be confirmed by a document saying 1044,00.
+  assert.equal(groundAmount(1044.08, 'TOTAAL 1044,00 EUR'), 'absent')
+  assert.equal(groundAmount(1044.08, 'TOTAAL 1.044,0 EUR'), 'absent')
+
+  // The spaced form must not span two different numbers on one line.
+  assert.equal(groundAmount(1044.80, 'Aantal 1.044, 12 stuks, 80 dozen'), 'absent')
+
+  // And the one shape still deliberately refused: a number broken across a line break. Matching
+  // there would let two different amounts, one per cell, be read as one.
+  assert.equal(groundAmount(1044.80, 'TOTAAL Incl.BTW: 1.044\n80 EUR'), 'absent')
+
+  // The original guard this module was built on still stands: a smaller amount inside a larger one.
+  assert.equal(groundAmount(871.40, 'TOTAAL 1.871,40 EUR'), 'absent', 'the thousand-euro misread is back')
+  assert.equal(groundAmount(1.00, 'TOTAAL 1.871,40 EUR'), 'absent', 'a bare 1 matched the leading group')
+})
