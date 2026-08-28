@@ -116,6 +116,9 @@ export default function InvoiceEditPage() {
   const [lines, setLines] = useState<InvoiceLine[]>([
     { description: '', quantity: 1, unit_price: 0, btw_rate: 21 }
   ])
+  // [REGELS-GELEZEN] Of de regels van deze factuur ECHT zijn gelezen. Zie de toelichting bij de
+  // lezing zelf: zolang dit false is, mag dit scherm geen bewerkscherm zijn.
+  const [regelsGelezen, setRegelsGelezen] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -142,19 +145,35 @@ export default function InvoiceEditPage() {
       if (profileData) setProfile(profileData)
 
       // جلب الـ lines
-      const { data: linesData } = await supabase
+      const { data: linesData, error: linesFout } = await supabase
         .from('invoice_lines')
         // [VRIJGESTELD-ROUNDTRIP] Dit scherm PUT terug wat het LEEST, en de PUT vervangt alle
         // regels. Wat hier niet wordt gelezen bestaat na het opslaan niet meer — vat_treatment is
         // de vlag waaraan de aangifte vrijgestelde omzet herkent, en [REGEL-KORTING] zou de
         // volgende kolom zijn geweest die van het lijstje viel.
         //
-        // Vandaar '*' en geen opsomming. Een naam in dat lijstje die de database niet kent laat
-        // deze query FALEN, en de fout wordt hier niet gelezen: linesData is dan null, het scherm
-        // houdt zijn ene lege beginregel, en Opslaan vervangt daarmee alle echte regels. Een
-        // kolomlijst die fout kan zijn, staat één tikfout van het leegmaken van een factuur af.
+        // Vandaar '*' en geen opsomming: een naam in dat lijstje die de database niet kent laat
+        // deze query falen. "Een kolomlijst die fout kan zijn, staat één tikfout van het leegmaken
+        // van een factuur af" — dat stond hier, en het klopte.
+        //
+        // [REGELS-GELEZEN] Maar '*' haalt één OORZAAK weg, niet het GEVOLG. Elke andere mislukking
+        // — een time-out, een korte storing, een policy die net verandert — geeft exact dezelfde
+        // uitkomst: linesData null, het scherm houdt zijn ene lege beginregel, en het ziet er in
+        // niets anders uit dan een gewoon bewerkscherm. Eén tik op Opslaan stuurt die ene lege
+        // regel naar de PUT, die begint met `delete().eq('invoice_id', id)` — en de echte regels
+        // bestaan niet meer. Bij een VERZONDEN factuur gaat de gecorrigeerde versie daarna
+        // automatisch naar de klant.
+        //
+        // Dus wordt de fout nu wél gelezen, en een scherm dat zijn eigen regels niet kon lezen is
+        // geen bewerkscherm. Het toont wat er mis is en biedt niets aan om op te slaan.
         .select('*')
         .eq('invoice_id', invoiceId)
+      if (linesFout) {
+        console.error('[REGELS-GELEZEN] factuurregels lezen mislukt — bewerken geweigerd', { invoiceId, linesFout })
+        setLoading(false)
+        return
+      }
+      setRegelsGelezen(true)
 
       // تعبئة الـ state بالبيانات الموجودة
       setInvoiceNumber(invoice.invoice_number)
@@ -447,6 +466,23 @@ export default function InvoiceEditPage() {
   if (loading) return (
     <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center">
       <p className="text-gray-400 text-sm">{t('nieuw.actie.laden')}</p>
+    </div>
+  )
+
+  // [REGELS-GELEZEN] Geladen, maar zonder regels die we hebben kunnen lezen. Dit scherm bewerkt
+  // door VERVANGING, dus het enige veilige aanbod is geen aanbod: geen formulier, geen Opslaan.
+  if (!regelsGelezen) return (
+    <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center px-6">
+      <div className="bg-white rounded-2xl p-6 shadow-sm" style={{ maxWidth: 460 }}>
+        <p className="text-gray-900 text-sm font-medium mb-2">{t('bewerk.regelsFout.kop')}</p>
+        <p className="text-gray-500 text-sm leading-relaxed mb-4">{t('bewerk.regelsFout.uitleg')}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="text-sm font-medium text-gray-900 underline underline-offset-4"
+        >
+          {t('bewerk.regelsFout.opnieuw')}
+        </button>
+      </div>
     </div>
   )
 

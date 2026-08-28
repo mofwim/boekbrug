@@ -503,6 +503,12 @@ export const MESSAGES = {
 
   'bewerk.versturenNaar': { nl: 'Versturen naar {name}?', ar: 'إرسال إلى {name}؟', en: 'Send to {name}?' },
   'bewerk.geldigTot': { nl: 'Deze offerte is geldig tot', ar: 'عرض السعر هذا صالح حتى', en: 'This quote is valid until' },
+  // [REGELS-GELEZEN] Het bewerkscherm vervangt bij het opslaan ALLE regels door wat het toont. Kon
+  // het de bestaande regels niet lezen, dan is een leeg formulier geen leeg formulier maar een
+  // knop die de factuur leegmaakt. Deze drie zinnen vervangen dat scherm.
+  'bewerk.regelsFout.kop': { nl: 'We konden de regels van deze factuur niet laden.', ar: 'تعذّر تحميل بنود هذه الفاتورة.', en: 'We could not load this invoice’s lines.' },
+  'bewerk.regelsFout.uitleg': { nl: 'Bewerken kan daarom nu niet: dit scherm slaat op wat het toont, en het toont ze niet. Aan de factuur is niets veranderd.', ar: 'لذلك لا يمكن التعديل الآن: هذه الشاشة تحفظ ما تعرضه، وهي لا تعرضها. لم يتغيّر شيء في الفاتورة.', en: 'Editing is therefore not possible right now: this screen saves what it shows, and it is not showing them. Nothing about the invoice has changed.' },
+  'bewerk.regelsFout.opnieuw': { nl: 'Opnieuw proberen', ar: 'أعد المحاولة', en: 'Try again' },
   'bewerk.jouwGegevens': { nl: 'Jouw gegevens', ar: 'بياناتك', en: 'Your details' },
   'bewerk.klantgegevens': { nl: 'Klantgegevens', ar: 'بيانات العميل', en: 'Client details' },
   'bewerk.omschrijvingDienst': { nl: 'Omschrijving dienst', ar: 'وصف الخدمة', en: 'Service description' },

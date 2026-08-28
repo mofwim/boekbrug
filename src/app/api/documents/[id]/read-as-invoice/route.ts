@@ -39,6 +39,9 @@ import { gateFairUseForRead } from "@/lib/fair-use-gate";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier";
+// [DEDUP-SOFT] "We konden de dubbelcheck niet uitvoeren" is een ander antwoord dan "hij staat
+// er niet in" — zie possible-duplicate-collect.ts.
+import { markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect";
 import { decideFromAi } from "@/lib/intake-router";
 import { sniffReadableMime } from "@/lib/detect-file";
 import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
@@ -174,6 +177,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // The same semantic gate the upload door applies: this file may have been booked another way in
   // the meantime — by hand, or from a second copy that arrived by post. Booking it again is a
   // double cost and a double voorbelasting claim.
+  // [DEDUP-SOFT] Of de dubbelcheck ÜBERHAUPT heeft kunnen kijken. supabase-js gooit niet: een
+  // mislukte probe geeft `data: null`, en `?? []` maakt daar "geen kandidaat" van — dus precies de
+  // uitkomst "deze factuur staat er nog niet in", op de enige plek waar dat oordeel telt. De
+  // toelichting drie regels hierboven noemt de kosten al bij naam ("a double cost and a double
+  // voorbelasting claim"); zonder deze vlag kon dit pad die kosten stilzwijgend maken.
+  //
+  // /api/intake en /api/email/upload dragen deze vlag allebei al; dit was het derde pad naar
+  // dezelfde tafel en het enige dat hem niet meenam.
+  let dedupCheckFailed = false;
   const dup = await findSemanticDuplicate(
     {
       invoiceNumber: v.invoice_number, vendor: v.vendor,
@@ -184,9 +196,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         .from("invoices").select("id, invoice_number, client_name")
         .eq("receiver_id", user.id).eq("direction", "incoming").eq("total_inc_btw", q.total);
       if (q.dateIso) query = query.eq("invoice_date", q.dateIso);
-      const { data } = await query
+      const { data, error: dedupErr } = await query
         .order("created_at", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false }).limit(200);
+      if (dedupErr) dedupCheckFailed = true;
       return pickDedupMatch(data ?? [], q);
     },
   );
@@ -202,6 +215,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // of this particular document warrants.
   const fieldConfidence = (v.field_confidence ?? {}) as Record<string, unknown>;
   fieldConfidence._tweede_kans = { at: new Date().toISOString(), was: doc.ai_doc_type };
+
+  // [DEDUP-SOFT] Kon de dubbelcheck niet kijken, dan gaat dat mee de rij in. De factuur landt hoe
+  // dan ook in de controlewachtrij, dus er kijkt een mens naar — maar zonder deze vlag ziet die
+  // mens niets dat hem vertelt dat de check niet gedraaid heeft, en "hij stond er niet in" en "we
+  // konden niet kijken" zien er op zijn kaart precies hetzelfde uit.
+  if (dedupCheckFailed) {
+    const gemarkeerd = markDuplicateCheckUnavailable(fieldConfidence) as Record<string, unknown> | null;
+    if (gemarkeerd?._safecore) fieldConfidence._safecore = gemarkeerd._safecore;
+  }
 
   // [LEVERANCIER-INTAKE] Een tweede lezing is een gewone binnenkomst: dezelfde twee stappen in
   // dezelfde volgorde als op de andere paden — eerst kijken of we deze leverancier al onder een

@@ -18086,6 +18086,69 @@ test("[ZOEK-BEGRIJPT] the query's own words narrow the search, and the screen sa
     "a quarter or month without a year is kept, so the search guesses which year it meant");
 });
 
+test("[NO-SILENT-EMPTY] drie lezingen die bij mislukking een verkeerd BEDRAG of een dubbele boeking opleverden", () => {
+  // Dezelfde klasse als de poort hierboven, gevonden door de rest van de app met één vraag langs
+  // te gaan: levert een mislukte lezing hier een FOUT antwoord op, of een eerlijke fout? Bijna
+  // overal was het antwoord "een eerlijke fout" — de bankdeuren weigeren te boeken, de creditnota-
+  // route weigert te crediteren, bank-ingest heeft zelfs zijn eigen 1000-plafond doordacht. Drie
+  // plekken niet.
+
+  // ── 1. Het bewerkscherm maakte de factuur leeg ──────────────────────────────
+  // Dit scherm bewerkt door VERVANGING: de PUT begint met `delete().eq('invoice_id', id)` en zet
+  // terug wat het scherm toont. De regels werden gelezen zonder de fout te lezen, dus bij een
+  // mislukking hield het scherm zijn ene lege beginregel — en zag er verder uit als een gewoon
+  // bewerkscherm. Eén tik op Opslaan en de echte regels bestonden niet meer; bij een VERZONDEN
+  // factuur gaat de "gecorrigeerde" versie daarna automatisch naar de klant.
+  //
+  // Het bestand wist dit half: er staat een lange toelichting waarom er '*' wordt geselecteerd in
+  // plaats van een kolomlijst, want "een kolomlijst die fout kan zijn, staat één tikfout van het
+  // leegmaken van een factuur af". Dat haalt één oorzaak weg. Elke andere mislukking — time-out,
+  // korte storing, een policy die net verandert — gaf exact hetzelfde gevolg.
+  const bewerk = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(bewerk, /const \{ data: linesData, error: linesFout \}/,
+    "de regels worden weer gelezen zonder de fout te lezen");
+  assert.match(bewerk, /if \(linesFout\) \{[\s\S]{0,300}?setLoading\(false\)\s*\n\s*return/,
+    "een mislukte regellezing valt weer door naar het formulier");
+  assert.match(bewerk, /if \(!regelsGelezen\) return \(/,
+    "het scherm biedt weer een formulier aan waarvan het de regels niet kent");
+  // De volgorde is het punt: de weigering staat NA de laad-tak, zodat 'laden' niet als 'stuk' leest.
+  assert.ok(bewerk.indexOf("if (loading) return (") < bewerk.indexOf("if (!regelsGelezen) return ("),
+    "de foutstaat staat vóór de laadstaat — dan flikkert hij tijdens het laden");
+
+  // ── 2. De derde weg naar een dubbele boeking ────────────────────────────────
+  // findSemanticDuplicate krijgt een callback die de invoices-tabel bevraagt. supabase-js gooit
+  // niet: een mislukte probe geeft `data: null` → `?? []` → geen kandidaat → "deze factuur staat
+  // er nog niet in". De route noemt de kosten daar zelf twee regels boven: "a double cost and a
+  // double voorbelasting claim". /api/intake en /api/email/upload dragen de vlag allebei al —
+  // markDuplicateCheckUnavailable bestaat exact hiervoor — en dit derde pad was het enige zonder.
+  const herlezen = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  assert.match(herlezen, /if \(dedupErr\) dedupCheckFailed = true;/,
+    "de dubbelcheck merkt weer niet of hij überhaupt heeft kunnen kijken");
+  assert.match(herlezen, /if \(dedupCheckFailed\) \{[\s\S]{0,260}?markDuplicateCheckUnavailable\(fieldConfidence\)/,
+    "een niet-uitgevoerde dubbelcheck reist weer niet mee de rij in");
+  // Alle drie de paden dragen dezelfde vlag — dat is wat deze regel bewaakt, niet de tekst.
+  for (const pad of ["src/app/api/intake/route.ts", "src/app/api/email/upload/route.ts",
+                     "src/app/api/documents/[id]/read-as-invoice/route.ts"]) {
+    assert.match(code(pad), /markDuplicateCheckUnavailable/,
+      `${pad}: dit pad boekt weer zonder te kunnen zeggen dat de dubbelcheck niet draaide`);
+  }
+
+  // ── 3. "Nog terug te geven" stond te hoog ──────────────────────────────────
+  // alGecrediteerd komt uit linkedCreditnotas. Mislukte die lezing, dan werd hij 0, en dan meldt
+  // het scherm dat de HELE factuur nog terug kan terwijl er al een deel van terug is — en het toont
+  // de bewerkknop op een factuur waar een creditnota naar verwijst, wat de toelichting daar juist
+  // verbiedt. De route en de database bewaken hetzelfde plafond, dus een klik wordt alsnog
+  // geweigerd; wat hier misging is het bedrag dat de eigenaar leest vóór die klik.
+  const detail = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(detail, /const \{ data: creditnota, error: creditFout \}/,
+    "de creditnota-lezing leest haar fout weer niet");
+  assert.match(detail, /if \(creditFout\) \{[\s\S]{0,260}?setCreditnotasGelezen\(false\)/,
+    "een mislukte creditnota-lezing gaat weer door voor 'er is er geen'");
+  assert.match(detail, /nogTeCrediteren > 0 &&[\s\S]{0,300}?creditnotasGelezen/,
+    "crediteren wordt weer aangeboden op een bedrag dat we niet hebben kunnen vaststellen");
+  assert.match(detail, /linkedCreditnotas\.length === 0 &&[\s\S]{0,300}?creditnotasGelezen/,
+    "de bewerkknop van een verzonden factuur verschijnt weer omdat we niet konden kijken");
+});
 
 test("[GEEN-STILLE-KAP] nothing the accountant receives is assembled from a truncated read", () => {
   // A data error is a money error is a tax error. This file builds the quarter that is handed to a
