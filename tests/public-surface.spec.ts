@@ -173,4 +173,43 @@ test.describe('public surface', () => {
     const body = await res.json().catch(() => null);
     expect(body, '/api/health must answer with JSON of its own, never a crash in the middleware').not.toBeNull();
   });
+
+  test('the crawler-facing text files answer with themselves, not with the login page', async ({ request }) => {
+    // [LLMS-TXT] A 200 is not the assertion here, and that is the whole point of this test.
+    //
+    // /llms.txt shipped missing from the middleware matcher. It answered 200 for a full day — with
+    // the LOGIN PAGE as its body, because the guard redirected the unauthenticated fetch and Next
+    // served /login under the requested URL. Status codes said nothing was wrong. The three sweeps
+    // above could not see it either: it is not in PUBLIC_PATHS, not in sitemap.xml and not in the
+    // footer, so it fell in the gap between all of them.
+    //
+    // These three files exist ONLY to be read by a machine. Nothing on any screen changes when one
+    // of them starts serving HTML, so the content type is the only thing that can raise a hand.
+    const files = [
+      { path: '/robots.txt', type: /text\/plain/, must: /^User-Agent:/im },
+      { path: '/sitemap.xml', type: /xml/, must: /<urlset/i },
+      { path: '/llms.txt', type: /text\/plain/, must: /^# BoekBrug/im },
+    ];
+
+    const failures: string[] = [];
+    for (const file of files) {
+      const res = await request.get(file.path, { maxRedirects: 0, failOnStatusCode: false });
+      if (res.status() !== 200) {
+        failures.push(`${file.path} → ${res.status()}`);
+        continue;
+      }
+      const contentType = res.headers()['content-type'] ?? '';
+      if (!file.type.test(contentType)) {
+        failures.push(`${file.path} → served as "${contentType}" (the guard handed back a page)`);
+        continue;
+      }
+      if (!file.must.test(await res.text())) {
+        failures.push(`${file.path} → 200 and the right type, but not its own content`);
+      }
+    }
+    expect(
+      failures,
+      `crawler files that did not answer with themselves: ${failures.join(', ')}`,
+    ).toEqual([]);
+  });
 });
