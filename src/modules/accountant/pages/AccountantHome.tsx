@@ -493,6 +493,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
           ) : clients.length === 0 ? (
             /* [ONBOARDING] First-run empty state — a clear, tappable first action
                for a brand-new accountant instead of a dead line of text. */
+            <div>
             <button
               onClick={() => router.push('/dashboard/clients/beheer')}
               style={{
@@ -509,6 +510,17 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
               <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>{t('bh.home.klanten.eerste.titel')}</span>
               <span style={{ fontSize: 12.5, color: '#5F6368' }}>{t('bh.home.klanten.eerste.uitleg')}</span>
             </button>
+            {/* [PROEFDOSSIER] De bewijsplek vóór de eerste klant. Wie hier staat heeft nul klanten
+                en dus nul reden om ons op ons woord te geloven — het voorbeelddossier laat ZIEN
+                wat een klant straks aanlevert: het kwartaal, de statussen, en de vraag die een
+                vraag bleef. Onder de uitnodigingsknop, want kijken gaat vóór uitnodigen. */}
+            <button
+              onClick={() => router.push('/dashboard/accountant/voorbeeld')}
+              style={{ display: 'block', margin: '0 auto 20px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13.5, fontWeight: 600, color: '#1A73E8', padding: '4px 12px' }}
+            >
+              {t('bh.home.klanten.eerste.voorbeeld')}
+            </button>
+            </div>
           ) : shownClients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>
               {t('bh.home.klanten.geenResultaat', { zoekterm: clientSearch.trim() })}

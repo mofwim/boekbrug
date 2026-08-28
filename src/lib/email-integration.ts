@@ -39,6 +39,8 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from '@/lib/reading-memory'
 import { makeOwnInvoiceLookup } from '@/lib/own-invoice-lookup'
+// [ZELF-EERST] The owner's grip on the autopilot — see the helper for the fail matrix.
+import { autoBoekenAllowed } from '@/lib/auto-boeken'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
 import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
 // [MULTI-INVOICE] / [ONE-INVOICE-UNVERIFIED] The same two questions /api/intake asks before it
@@ -2369,6 +2371,10 @@ export async function syncUserEmails(
   const receiverIban = profile?.iban || null
   // [EIGEN-NUMMER] Bound to the pipeline client, ownership in the query (sender_id = this user).
   const lookupOwnInvoice = makeOwnInvoiceLookup(supabase, userId)
+  // [ZELF-EERST] Once per run, not per attachment: the answer cannot change mid-sync, and a sync
+  // of forty attachments should not ask forty times. [RLS-UIT] service-role client, owner in the
+  // query — the helper filters .eq('id', userId).
+  const magAutoBoeken = await autoBoekenAllowed(supabase, userId)
 
   // [BOEK-011] Sync start boundary.
   //
@@ -4319,7 +4325,11 @@ export async function syncUserEmails(
       // everything carrying a euro amount is not a bill. The mechanical filter is strict, but "is
       // this a purchase invoice at all" is the one question it cannot settle — and getting it wrong
       // creates a cost that never existed, with a voorbelasting claim on it.
-      const autoAdv = attachment.fromBody === true
+      // [ZELF-EERST] The owner's permission comes before every quality signal, with its own reason
+      // string so "waiting because you asked to see everything" never reads as "the read was weak".
+      const autoAdv = !magAutoBoeken
+        ? { advance: false, reason: 'owner_reviews_everything' }
+        : attachment.fromBody === true
         ? { advance: false, reason: 'from_email_body' }
         : !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
         ? shouldAutoAdvanceInvoice({

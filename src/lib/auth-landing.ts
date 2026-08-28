@@ -77,13 +77,29 @@ export function planAfterOAuth(
   const next = safeRedirect(intent.next, "/dashboard");
   const archiefLanding = `${landingPath("archief")}?${PURPOSE_PARAM}=archief`;
 
+  // [UITNODIGING] Een uitnodigingslink wint van de wizard — de tweede keer dat deze les valt.
+  //
+  // De kop van dit bestand beschrijft hoe het archiefpad brak: `next` wees al goed, maar de regel
+  // "elke nieuwe gebruiker naar /onboarding" stond ervóór en won altijd. Precies dezelfde fout
+  // zat op het uitnodigingspad, en daar was hij duurder. De genodigde klant klikt de mail van
+  // zijn BOEKHOUDER, registreert, bevestigt zijn e-mail — en de callback gooide het token weg en
+  // zette hem in een wizard over facturen versturen. De uitnodiging bleef stil op 'pending'
+  // staan; de enige weg terug was zelf de mail opnieuw opzoeken. Voor het kanaal waar het hele
+  // product op leunt (één kantoor nodigt vijftig klanten uit) is dat geen scherpe rand maar een
+  // gebroken hoofdpad: het faalde juist bij NIEUWE gebruikers, en elke genodigde is er een.
+  //
+  // De acceptatiepagina stuurt na de tik zelf door naar /dashboard, waar de middleware een vers
+  // account alsnog de wizard in leidt — de wizard wordt dus niet overgeslagen, hij komt één
+  // stap later. Alleen de acceptatie gaat voor.
+  const isInviteAccept = hasNext && next.startsWith("/invite/accept");
+
   // ── Nog geen profiel ──────────────────────────────────────────────────
   if (!profile) {
     return {
       // [KLUIS] Een archiefaccount heeft geen wizard te doorlopen: die gaat over facturen
       // versturen, bedrijfsgegevens en het koppelen van een mailbox, en deze bezoeker kwam voor
       // geen van drieën.
-      destination: wantsArchief ? (hasNext ? next : archiefLanding) : "/onboarding",
+      destination: wantsArchief ? (hasNext ? next : archiefLanding) : isInviteAccept ? next : "/onboarding",
       profileToCreate: {
         role: chosenRole ?? "zzper",
         onboarding_done: wantsArchief,
@@ -114,7 +130,7 @@ export function planAfterOAuth(
   // pagina die de gebruiker zelf heeft opgevraagd — zichtbaar, en niet als bijwerking van een
   // aanmelding. Zie de toelichting in src/app/dashboard/kluis/page.tsx.
   if (!profile.onboarding_done) {
-    return { destination: "/onboarding", profileToCreate: null, roleUpdate, markArchief: false };
+    return { destination: isInviteAccept ? next : "/onboarding", profileToCreate: null, roleUpdate, markArchief: false };
   }
 
   return { destination: next, profileToCreate: null, roleUpdate, markArchief: false };

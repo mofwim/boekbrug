@@ -62,6 +62,12 @@ interface OnboardingWizardProps {
   roleWasSet?: boolean; // [BOEK-015] P2: true if user already chose role (skip step 2)
   /** [HERVATTEN] De bedrijfsgegevens die al in het profiel staan — zie useState hieronder. */
   initialCompany?: CompanyData;
+  /**
+   * [UITNODIGING] De naam van het kantoor waar deze gebruiker al aan gekoppeld is, of null.
+   * Gevuld wanneer hij via de uitnodiging van zijn boekhouder binnenkwam: stap 5 zegt dan dat
+   * de koppeling er al staat, in plaats van hem te vragen een boekhouder uit te nodigen.
+   */
+  linkedAccountantName?: string | null;
 }
 
 // ── Progress mapping ─────────────────────────────────────
@@ -98,6 +104,7 @@ export function OnboardingWizard({
   initialRole = "zzp",
   roleWasSet = false,
   initialCompany,
+  linkedAccountantName = null,
 }: OnboardingWizardProps) {
   const t = translator(useLocale())
   const firstName = userName.split(" ")[0] || "daar";
@@ -686,11 +693,27 @@ export function OnboardingWizard({
           )}
           {role === "zzp" && step === 4 && <StepGmail gmailConnected={gmailConnected} onNext={handleNext} />}
           {role === "zzp" && step === 5 && (
-            <StepAccountant
-              accountantEmail={accountantEmail}
-              setAccountantEmail={(v) => { setAccountantEmail(v); setInviteError(""); }}
-              error={inviteError}
-            />
+            linkedAccountantName ? (
+              /* [UITNODIGING] Hij kwam binnen via de uitnodiging van zijn kantoor en is al
+                 gekoppeld. De vraag "Heb je een boekhouder?" zou hier een tweede, omgekeerde
+                 uitnodiging uitlokken naar het kantoor waar hij al aan vastzit — in plaats
+                 daarvan bevestigt deze stap wat er zojuist gelukt is. */
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: 40, margin: '0 0 12px' }}>🤝</p>
+                <h2 style={{ fontSize: 20, fontWeight: 700, color: '#202124', margin: '0 0 8px' }}>
+                  {t('onb.kantoor.titel')}
+                </h2>
+                <p style={{ fontSize: 14.5, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
+                  {t('onb.kantoor.uitleg', { naam: linkedAccountantName })}
+                </p>
+              </div>
+            ) : (
+              <StepAccountant
+                accountantEmail={accountantEmail}
+                setAccountantEmail={(v) => { setAccountantEmail(v); setInviteError(""); }}
+                error={inviteError}
+              />
+            )
           )}
           {role === "zzp" && step === 6 && (
             <StepDone

@@ -74,6 +74,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('articles.sql', 'policy', 'articles_update_own', 'articles', 'public'),
   ('audit_logs_client_read.sql', 'function', 'audit_row_is_about_me', null, 'public'),
   ('audit_logs_client_read.sql', 'policy', 'audit_logs_about_me', 'audit_logs', 'public'),
+  ('auto_boeken.sql', 'column', 'auto_boeken', 'profiles', 'public'),
   ('auto_incasso.sql', 'column', 'auto_incasso', 'suppliers', 'public'),
   ('auto_incasso.sql', 'column', 'auto_incasso_since', 'suppliers', 'public'),
   ('auto_incasso.sql', 'index', 'idx_suppliers_auto_incasso', null, 'public'),
@@ -417,7 +418,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 114 migraties
+-- NIET VAST TE STELLEN — 9 van de 115 migraties
 -- =====================================================================
 --
 -- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of

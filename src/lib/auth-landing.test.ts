@@ -115,3 +115,38 @@ test("[SEC-REDIRECT] een vreemde bestemming haalt het nooit — ook niet via het
     );
   }
 });
+
+// ── [UITNODIGING] De uitnodigingslink wint van de wizard ────────────────────────────────────────
+//
+// Tweede keer dezelfde les als het archiefpad in de kop van auth-landing.ts: `next` wees goed,
+// de onboarding-regel stond ervóór en won. Hier was de schade groter — de genodigde klant van
+// een kantoor registreerde, bevestigde zijn mail, en het token verdween: uitnodiging bleef stil
+// 'pending'. Het hoofdpad van het distributiekanaal faalde precies bij nieuwe gebruikers, en
+// elke genodigde is er een.
+
+test("[UITNODIGING] een vers account met een uitnodigingsbestemming gaat EERST accepteren", () => {
+  const next = "/invite/accept?token=abc-123";
+  // Nog geen profiel (e-mailbevestiging maakte het net aan): de uitnodiging gaat voor.
+  assert.equal(planAfterOAuth({ next, role: null, purpose: null }, null).destination, next);
+  // Kaal profiel (trigger was sneller): zelfde antwoord.
+  assert.equal(planAfterOAuth({ next, role: null, purpose: null }, kaal).destination, next);
+  // Halverwege de wizard: de uitnodiging gaat nog steeds voor — de acceptatiepagina stuurt na de
+  // tik zelf naar /dashboard, waar de middleware hem de wizard weer in leidt. Niets slaat over.
+  assert.equal(planAfterOAuth({ next, role: null, purpose: null }, halverwege).destination, next);
+});
+
+test("[UITNODIGING] alleen een ECHTE uitnodigingsbestemming wint — niet een gewone next", () => {
+  // De regel is smal met opzet: elke andere bestemming blijft achter de wizard staan, precies
+  // zoals altijd. Anders wordt "next wint" de nieuwe standaard en is de wizard optioneel
+  // geworden als bijwerking.
+  assert.equal(
+    planAfterOAuth({ next: "/dashboard/facturen", role: null, purpose: null }, kaal).destination,
+    "/onboarding",
+  );
+  // [SEC-REDIRECT] Een vreemde origin blijft geweigerd; de terugval is /dashboard en een vers
+  // account gaat dan gewoon de wizard in.
+  assert.equal(
+    planAfterOAuth({ next: "https://evil.example/invite/accept?token=x", role: null, purpose: null }, kaal).destination,
+    "/onboarding",
+  );
+});

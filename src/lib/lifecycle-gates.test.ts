@@ -2027,9 +2027,12 @@ test("[MAILTEKST] a body-only invoice is found, stored as a document, and never 
 
   // Never auto-booked. "Is this a purchase invoice at all" is the one question the mechanical
   // filter cannot settle, and getting it wrong invents a cost with a voorbelasting claim on it.
+  // [ZELF-EERST] One branch now precedes it — the owner's own "show me everything" switch. That
+  // does not weaken this claim: that branch is also a refusal, so the body case is still decided
+  // before any QUALITY consideration, which is what "before every other consideration" meant.
   assert.match(
-    src, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
-    "a body-rendered invoice must be refused before every other consideration",
+    src, /: attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice must be refused before every quality consideration",
   );
   // The owner is told what they are looking at before they confirm it.
   assert.match(
@@ -4649,6 +4652,166 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
+//
+// The example dossier is the screen a zero-client accountant sees at the exact moment they decide
+// whether the product is real. Three properties keep it honest, and each would erode silently:
+test("[PROEFDOSSIER] the example dossier is pure, derived, announced, and wired", () => {
+  // 1. PURE. The obvious future "improvement" — seeding the example as real rows so more screens
+  // can show it — is the one this codebase must refuse: fictional invoices in real tables are
+  // reachable by every aggregate, export and cron, and one missed filter puts a fictional amount
+  // in something real. So neither the data module nor the screen may touch a database client.
+  const data = code("src/lib/voorbeeld-dossier.ts");
+  const scherm = code("src/modules/accountant/pages/VoorbeeldDossier.tsx");
+  for (const [naam, src] of [["voorbeeld-dossier.ts", data], ["VoorbeeldDossier.tsx", scherm]] as const) {
+    assert.doesNotMatch(src, /supabase|createPipelineClient|createClient|from\(/i,
+      `${naam} must stay pure — the fiction may never have a write path`);
+  }
+
+  // 2. DERIVED, with the honesty rule in the arithmetic: the questioned row counts nowhere.
+  assert.match(data, /import \{ round2 \}/, "[CENT] the one cent-rounder");
+  assert.match(data, /filter\(\(r\) => r\.status === "verwerkt"\)/,
+    "kosten and voorbelasting are computed over CONFIRMED rows only — the pitch is arithmetic");
+  assert.match(scherm, /dossierTotalen\(\)/, "the screen renders the derived totals, never retyped ones");
+  assert.doesNotMatch(scherm, /128[.,]70|202[.,]50|73[.,]80/,
+    "no tile amount is typed into the screen — literals drift from their rows");
+
+  // 3. ANNOUNCED and TRANSLATED. The banner key exists with Dutch source; the fictional name says
+  // what it is. (The rendered behaviour — banner text, derived sums on the page, the question —
+  // is held by tests/render/voorbeeld-dossier.test.tsx.)
+  assert.match(data, /VOORBEELD_KLANT = "Bakkerij Voorbeeld/, "the name itself announces the fiction");
+  assert.match(scherm, /t\('bh\.demo\.banner\.titel'\)/);
+
+  // 4. GUARDED and REACHABLE. Role-guarded like every accountant page, and linked from the one
+  // place a zero-client accountant actually stands — a proof screen nobody can find proves
+  // nothing.
+  const pagina = code("src/app/dashboard/accountant/voorbeeld/page.tsx");
+  assert.match(pagina, /if \(profile\.role !== 'accountant'\) redirect\('\/dashboard'\)/);
+  assert.match(code("src/modules/accountant/pages/AccountantHome.tsx"),
+    /router\.push\('\/dashboard\/accountant\/voorbeeld'\)/,
+    "the empty state offers the proof before the ask");
+});
+
+// ── [UITNODIGING] The invite path is the distribution channel, wired end to end ────────────────
+//
+// One office inviting fifty clients sends fifty people down this exact path, and the audit found
+// it broken at its MAIN case: a fresh registrant confirmed their e-mail and the OAuth callback
+// threw the token away for the onboarding wizard — the invitation silently stayed pending. Around
+// that sat six smaller failures of the same shape: the page knew something and did not say it.
+// The behaviour of the callback rule lives in auth-landing.test.ts; what is held here is the
+// WIRING of everything around it.
+test("[UITNODIGING] the invite journey carries what it knows, at every step", () => {
+  // The callback honors an invite destination before the wizard — narrowly.
+  const landing = code("src/lib/auth-landing.ts");
+  assert.match(landing, /const isInviteAccept = hasNext && next\.startsWith\("\/invite\/accept"\)/);
+  assert.match(landing, /destination: isInviteAccept \? next : "\/onboarding"/,
+    "a fresh account with an invite destination accepts FIRST; onboarding follows via the middleware");
+
+  // The accept page: direction-aware copy, the server's sentence on failure, and a register link
+  // that carries the role and the invited address.
+  const pagina = code("src/app/invite/accept/page.tsx");
+  assert.match(pagina, /info\.invitedBy === 'accountant'/, "the page reads the direction the API always returned");
+  assert.match(pagina, /\? t\('uitn\.vanKantoor', \{ naam: inviterName \}\)\s*\n\s*: t\('uitn\.vanOndernemer'/,
+    "…and the sentence follows it, instead of telling a client they are becoming an accountant");
+  assert.match(pagina, /failureText\(res\.status, json, t\('uitn\.fout\.ongeldig'\)\)/,
+    "the server computes the remedy (wrong address, expired) — the page may not throw it away");
+  assert.match(pagina, /&rol=\$\{fromAccountant \? 'zzper' : 'accountant'\}/,
+    "the register link carries the role, or the invited client can pick Boekhouder and strand in the wrong portal");
+  assert.match(pagina, /&email=\$\{encodeURIComponent\(invitedEmail\)\}/,
+    "…and the invited address, or typing a different one is the default failure");
+  assert.match(pagina, /fetch\('\/api\/invite\/decline'/, "Weigeren writes something at last");
+
+  // Register accepts the carried address — prefilled, validated, still editable.
+  assert.match(code("src/app/register/page.tsx"), /const voorafEmail = searchParams\.get\('email'\)/);
+
+  // The decline and cancel routes close a token for good, each scoped to what its caller may
+  // touch: decline by the mailed token, cancel by id AND the inviting office ([RLS-UIT] — no
+  // UPDATE policy exists, so the filter is the boundary).
+  assert.match(code("src/app/api/invite/decline/route.ts"), /\.update\(\{ status: 'declined' \}\)[\s\S]{0,120}?\.eq\('status', 'pending'\)/);
+  const cancel = code("src/app/api/invite/cancel/route.ts");
+  assert.match(cancel, /\.eq\('zzper_id', user\.id\)/, "an office may only withdraw its own invitations");
+  assert.match(cancel, /\.eq\('status', 'pending'\)/, "…and only ones still open");
+
+  // The duplicate guard counts only a STILL-VALID pending from THIS office. Without either bound
+  // it blocked the channel: office A's stale pending made an address permanently uninvitable for
+  // every office, forever.
+  const invite = code("src/app/api/invite/client/route.ts");
+  assert.match(invite, /\.eq\('zzper_id', user\.id\)[\s\S]{0,120}?\.eq\('status', 'pending'\)[\s\S]{0,60}?\.gte\('created_at', versGrens\)/,
+    "scoped to this office and to the validity window the accept route already enforces");
+
+  // The acceptance tells the party who was WAITING. For an office invitation that is the office —
+  // it used to congratulate the client on accepting an invitation they never sent, and tell the
+  // office nothing.
+  const accept = code("src/app/api/invite/accept/route.ts");
+  assert.match(accept, /if \(invitation\.invited_by === 'accountant'\) \{[\s\S]{0,700}?userId: accountantId/,
+    "the office hears that its client accepted");
+  assert.match(accept, /link: '\/dashboard\/clients\/beheer'/);
+
+  // The office can SEE what it sent: the beheer page reads the open invitations and the screen
+  // renders them with a withdraw button.
+  assert.match(code("src/app/dashboard/clients/beheer/page.tsx"), /openInvites=\{\(openInvites \?\? \[\]\)/);
+  const beheer = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(beheer, /t\('bh\.klant\.uitn\.kop', \{ count: invites\.length \}\)/);
+  assert.match(beheer, /handleCancelInvite\(inv\.id\)/);
+
+  // Onboarding does not ask the freshly linked client to invite the accountant they already have.
+  assert.match(code("src/components/onboarding/OnboardingWizard.tsx"),
+    /linkedAccountantName \? \([\s\S]{0,900}?\) : \(\s*\n\s*<StepAccountant/,
+    "step 5 confirms the existing link instead of soliciting a second, reverse invitation");
+  assert.match(code("src/app/onboarding/page.tsx"), /linkedAccountantName=\{linkedAccountantName\}/);
+
+  // The email says which address the invitation belongs to, and that it expires — the two
+  // sentences that prevent the stranded acceptances the audit measured.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /gebruik daarbij dit e-mailadres[\s\S]{0,120}?escapeHtml\(toEmail\)/);
+  assert.match(mail, /Deze uitnodiging verloopt na 14 dagen\./);
+
+  // One invite screen, not two drifting copies: the old standalone page is a pure redirect.
+  assert.match(code("src/app/dashboard/clients/invite/page.tsx"), /redirect\('\/dashboard\/clients\/beheer'\)/);
+});
+
+// ── [ZELF-EERST] Nothing books itself until the owner says so ───────────────────────────────────
+//
+// The auto-advance bar is high, but it answers the machine's question ("how careful am I?") and
+// not the new owner's ("how do I find out?"). The only way anyone learns to trust a reader is to
+// check its work for a while — so the owner holds a switch, and OFF means every read waits in the
+// verify queue, the cleanest one included. What this gate holds is the WIRING: a switch that one
+// door obeys and the other forgets is worse than none, because the owner tested the door that
+// listens and trusts the one that does not.
+test("[ZELF-EERST] both auto-booking doors ask the owner's permission first", () => {
+  // The helper carries the fail matrix: missing column (pre-migration) answers TRUE — today's
+  // behavior, [DEPLOY-SAFE] — and any OTHER failure answers FALSE, because wrongly waiting costs
+  // one tap while wrongly auto-booking overrides a stated choice about money.
+  const helper = code("src/lib/auto-boeken.ts");
+  assert.match(helper, /return isMissingColumn\(error\.message/, "missing column = the old world, unchanged");
+  assert.match(helper, /catch \{\s*return false;?\s*\}/, "any other failure waits for the human");
+  assert.match(helper, /auto_boeken\?: boolean \| null \} \| null\)\?\.auto_boeken !== false/,
+    "null (row without the column filled) reads as ON — the default the migration declares");
+
+  // Both doors, each with its own reason string so "waiting because you asked" never shows up as
+  // "the read was weak" in the audit trail or the queue.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /const magAutoBoeken = await autoBoekenAllowed\(supabase, user\.id\)/);
+  assert.match(intake, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "asked BEFORE every quality signal");
+  assert.match(intake, /reason: "owner_reviews_everything"/);
+
+  const sync = code("src/lib/email-integration.ts");
+  assert.match(sync, /const magAutoBoeken = await autoBoekenAllowed\(supabase, userId\)/);
+  assert.match(sync, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "the mail door asks the same question first");
+  assert.match(sync, /reason: 'owner_reviews_everything'/);
+
+  // The switch exists where the owner can reach it, saved in its own isolated write so a missing
+  // column cannot brick the whole profile save (the ochtend_mail precedent).
+  const scherm = code("src/app/dashboard/settings/page.tsx");
+  assert.match(scherm, /update\(\{ auto_boeken: autoBoeken \}\)/);
+  assert.match(scherm, /t\('inst\.autoBoeken'\)/, "…and speaks from the catalogue, not in hard-coded Dutch");
+
+  // The migration defaults TRUE: today's behavior for everyone who never touches the switch.
+  const sql = readFileSync("supabase/migrations/auto_boeken.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS auto_boeken boolean NOT NULL DEFAULT true/);
+});
+
 test("[EIGEN-MARKER] the generated PDF captions its party blocks", () => {
   const pdf = code("src/lib/invoice-pdf.tsx");
   assert.match(pdf, /partyLabel\}>KLANT</, "the customer block must carry its caption");
@@ -7043,6 +7206,9 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // rule as every other screen. What stays Dutch here is marked [TAAL-DB] on its own line and is
     // always the same kind of thing: text that is SENT to someone else — a notification stored for
     // the client, a message body, a nav label quoted as the other person's screen writes it.
+    // [UITNODIGING] The page every invited client lands on — public, and translated on purpose:
+    // the invited person has never seen the product and may not read Dutch.
+    "src/app/invite/accept/page.tsx",
     "src/modules/accountant/pages/AccountantHome.tsx",
     "src/modules/accountant/pages/AccountantWerkboard.tsx",
     "src/modules/accountant/pages/AccountantFactuur.tsx",
@@ -7051,6 +7217,7 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/modules/accountant/pages/AccountantOpvragen.tsx",
     "src/modules/accountant/pages/KlantenBeheer.tsx",
     "src/modules/accountant/pages/VraagMachtiging.tsx",
+    "src/modules/accountant/pages/VoorbeeldDossier.tsx",
     "src/app/dashboard/clients/[id]/page.tsx",
     "src/app/dashboard/clients/[id]/kwartaal/page.tsx",
     "src/app/dashboard/invoice/new/page.tsx",
