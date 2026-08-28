@@ -53,6 +53,9 @@ export default async function DashboardLayout({
 
   // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
   // parent/home via src/lib/navigation.ts).
+  // [MEDEWERKER] Een verkoopmedewerker heeft profiles.role = 'zzper' — hij is een gewone
+  // gebruiker die voor iemand anders werkt. Voor de NAVIGATIE is dat wel een eigen geval: zijn
+  // thuis is het verkoopbord. Zie het type Role in navigation.ts.
   const subnavRole = profile?.role === 'accountant' ? 'accountant' : 'zzper'
   // [VAK-BRUG] Does this owner take his money at a counter? Decides which second destination the
   // phone bar carries — see OWNER_COUNTER in BottomNav.tsx.
@@ -109,7 +112,15 @@ export default async function DashboardLayout({
           {children} so a page's useSubPageHeader() registration reaches the bar.
           The bar is placed before {children} so its sticky bar sits at top. */}
       <SubPageHeaderProvider>
-        {profile && !isMedewerker && <DashboardChrome role={subnavRole} />}
+        {/* [MEDEWERKER] De balk rendert nu WEL voor hem, met zijn eigen thuis.
+            Hij werd verborgen om een goede reden — een menu vol links die je terugwerpen is erger
+            dan geen menu — maar er kwam niets voor in de plaats, en deze balk is geen menu: het is
+            de titel van het scherm en de weg terug. Zonder haar opende hij "Nieuwe factuur" en
+            stond vast: die pagina heeft geen eigen terugknop, ze leunt volledig op deze balk. In
+            een geïnstalleerde PWA is er ook geen browserknop. De enige uitweg was de app afsluiten.
+            De onderbalk en de zoekknop blijven verborgen: díe zijn wél menu's, en hun bestemmingen
+            werpen hem terug. */}
+        {profile && <DashboardChrome role={isMedewerker ? 'medewerker' : subnavRole} />}
         {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
             so the last row of a list is not left sitting behind it. */}
         <div className="dash-content">{children}</div>

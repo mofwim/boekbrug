@@ -65,6 +65,34 @@ export async function POST(req: NextRequest) {
     console.error("[BOEK-032] missing Supabase public env for re-auth");
     return NextResponse.json({ error: "Serverfout" }, { status: 500 });
   }
+  // [GEEN-WACHTWOORD] Heeft dit account überhaupt een wachtwoord?
+  //
+  // Registreren met Google is prominent aanwezig op /register, en zo'n account heeft alleen een
+  // google-identiteit — geen wachtwoord, want er is er nooit een gekozen. Hieronder wordt
+  // uitsluitend met een wachtwoord opnieuw ingelogd, dus voor die gebruiker eindigde ELKE poging
+  // in "Verkeerd e-mailadres of wachtwoord": een melding die hem op zoek stuurt naar iets wat niet
+  // bestaat. Hij kon zijn account dus niet zelf opzeggen — terwijl dit product het weggaan
+  // uitdrukkelijk ontwerpt (exporteren vóór verwijderen, zeven jaar bewaren, EXIT_PLAN.md).
+  //
+  // De eis zelf blijft staan: verwijderen is onomkeerbaar en vraagt een verse bewijs van identiteit.
+  // Wat verandert is dat we het juiste ANTWOORD geven — zet eerst een wachtwoord, hier is de weg —
+  // in plaats van een onwaarheid over wat hij intikte.
+  const { data: authUser } = await pipeline.auth.admin.getUserById(user.id);
+  const identiteiten = authUser?.user?.identities ?? [];
+  const heeftWachtwoord = identiteiten.some((i) => i.provider === "email");
+  if (identiteiten.length > 0 && !heeftWachtwoord) {
+    return NextResponse.json(
+      {
+        error:
+          "Je hebt een account zonder wachtwoord (ingelogd via Google). Stel eerst een wachtwoord in — daarna kun je je account hier definitief verwijderen.",
+        // De code, zodat het scherm de knop kan tonen die de wachtwoordlink verstuurt. De zin
+        // hierboven blijft de bron voor wie hem alleen leest.
+        code: "geen_wachtwoord",
+      },
+      { status: 409 },
+    );
+  }
+
   const reauth = createClient(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
