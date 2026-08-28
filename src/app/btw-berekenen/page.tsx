@@ -50,6 +50,17 @@ const faq = [
     q: 'Welke BTW-tarieven zijn er in Nederland?',
     a: 'Het algemene tarief is 21%. Het lage tarief is 9% (bijvoorbeeld voeding, boeken, kappers). En 0% voor sommige goederen en diensten (bijvoorbeeld export binnen de EU).',
   },
+  // [BTW-VRAGEN] Deze twee staan er niet omdat ze goed klinken maar omdat ze gesteld worden: het
+  // zijn de formuleringen waarmee mensen deze pagina in Search Console bereiken. Een vraag die
+  // niemand stelt hoort hier niet, ook niet als ze de tekst langer maakt.
+  {
+    q: 'Wat is de formule om BTW te berekenen?',
+    a: 'BTW erbij: bedrag × 0,21 bij het hoge tarief, of × 0,09 bij het lage. Het totaal inclusief BTW is bedrag × 1,21 (of × 1,09). BTW eruit halen doe je andersom: bedrag inclusief ÷ 1,21 geeft het bedrag exclusief BTW.',
+  },
+  {
+    q: 'Is omzetbelasting hetzelfde als BTW?',
+    a: 'Ja. Omzetbelasting is de officiële naam die de Belastingdienst gebruikt; BTW is de naam die iedereen gebruikt. Een aangifte omzetbelasting gaat dus over dezelfde belasting die je met deze calculator uitrekent.',
+  },
 ]
 
 const jsonLd = {
@@ -116,7 +127,53 @@ export default function BtwBerekenenPage() {
           <p style={p}>
             Wil je de BTW juist <strong>uit</strong> een bedrag inclusief BTW halen? Deel door 1 plus het
             tarief: € 121 ÷ 1,21 = € 100 exclusief BTW, de BTW is dan € 21. De calculator hierboven doet dit
-            live, in beide richtingen.
+            live, in beide richtingen — heen en terug omrekenen kan dus met dezelfde twee velden.
+          </p>
+
+          {/* [BTW-FORMULE] De formule als formule, niet alleen als zin. Wie hem opzoekt wil hem
+              overtikken in een spreadsheet of op papier narekenen, en dan is een regel proza het
+              verkeerde formaat — die moet hij eerst terugvertalen naar wat er gedeeld en
+              vermenigvuldigd wordt. */}
+          <div
+            style={{
+              background: '#f8f9fa',
+              border: '1px solid #e0e0e0',
+              borderRadius: 12,
+              padding: '16px 18px',
+              margin: '0 0 14px',
+              fontSize: 15,
+              lineHeight: 1.9,
+              color: '#202124',
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: 8, fontSize: 14, color: '#5f6368' }}>
+              De formule
+            </strong>
+            BTW erbij: <code>bedrag × tarief</code> — bij 21% dus <code>× 0,21</code>
+            <br />
+            Totaal inclusief: <code>bedrag × 1,21</code>
+            <br />
+            BTW eruit: <code>bedrag ÷ 1,21</code> geeft het bedrag exclusief BTW
+            <br />
+            Bij 9% reken je met <code>0,09</code> en <code>1,09</code>.
+          </div>
+        </section>
+
+        <section style={{ marginTop: 28 }}>
+          {/* [OMZETBELASTING] Dit woord stond nergens op de pagina, en het is niet zomaar een
+              synoniem: het is de term die de Belastingdienst op de formulieren gebruikt terwijl de
+              rest van de wereld "btw" zegt. Een ZZP'er die net zijn eerste aangifte openslaat
+              vraagt zich oprecht af of hij naar iets anders zit te kijken. Die vraag hoort
+              beantwoord te worden, en met één zin is dat gebeurd. */}
+          <h2 style={h2}>BTW of omzetbelasting — is dat hetzelfde?</h2>
+          <p style={p}>
+            Ja. <strong>Omzetbelasting</strong> is de officiële naam die de Belastingdienst gebruikt;{' '}
+            {/* De spatie staat expliciet: bij een regelafbreking direct na </strong> slikt JSX hem
+                op, en dan staat er "BTW(belasting" op het scherm. */}
+            <strong>BTW</strong>{' '}
+            (belasting over de toegevoegde waarde) is hoe vrijwel iedereen het noemt.
+            Staat er op je formulier &ldquo;aangifte omzetbelasting&rdquo;, dan gaat dat over precies de
+            belasting die je hierboven uitrekent. Er is geen tweede heffing die je gemist hebt.
           </p>
         </section>
 
