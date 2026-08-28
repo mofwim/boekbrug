@@ -17610,3 +17610,69 @@ test("[ZOEK-EERLIJK] search never truncates in silence, never limits arbitrarily
   assert.match(inkomend, /if \(!inPending && !inIgnored\) \{[\s\S]{0,200}?t\('ink\.zoek\.nietHier'\)/,
     "a focus id on neither list is silently ignored again — the exact symptom that was reported");
 });
+
+
+test("[ZOEK-BEGRIJPT] the query's own words narrow the search, and the screen says which ones did", () => {
+  // With the cap honest, "there are more results" is only useful if the owner can narrow. And the
+  // thing they most often want to narrow by is already in what they typed: "doyum 2025" means the
+  // 2025 ones. That is what makes Gmail and Drive feel intelligent — not a cleverer ranking, but
+  // understanding the parts of a sentence that are not search terms at all.
+  const pure = code("src/lib/search-query.ts");
+  const route = code("src/app/api/search/route.ts");
+  const scherm = code("src/app/dashboard/zoeken/ZoekenClient.tsx");
+
+  // ── 1. A RECOGNISED WORD IS CONSUMED ──
+  // If "2025" narrows to that year AND stays a search term, the filter changes nothing: every 2025
+  // invoice matches the term anyway. Recognising it has to REMOVE it from the text.
+  assert.match(pure, /text: tokens\.filter\(\(_, i\) => !consumed\.has\(i\)\)\.join\(" "\)/,
+    "recognised words are left in the text, so the filters change nothing");
+  assert.match(route, /const parsed = parseSearchQuery\(q\);/, "the route stopped reading the query");
+  assert.match(route, /const terms = textQ\.length >= 2 \? normalizeQuery\(textQ\) : \[\];/,
+    "the terms come from the whole query again, so a consumed word is still matched as text");
+
+  // ── 2. RANK AND FUZZY ON WHAT IS LEFT ──
+  // Scoring a row against "doyum 2025" once the year is a filter marks every surviving hit as a
+  // partial match, and the fuzzy RPC goes hunting a supplier literally called "doyum 2025".
+  assert.match(route, /const rankQ = textQ \|\| q;/, "ranking fell back to the whole typed query");
+  assert.doesNotMatch(route, /rankRows\(\w+, q,/, "a ranking still scores against the unparsed query");
+  assert.doesNotMatch(route, /safeRpc\("search_\w+_fuzzy", \{ q \}\)/,
+    "a fuzzy lookup still searches for the filter words as if they were a name");
+
+  // ── 3. NARROWING NARROWS ──
+  // Applied as .eq()/.gte()/.lte(), so the filters AND with the text search. A filter that widens
+  // is not a filter.
+  assert.match(route, /if \(range\) b = b\.gte\(dateColumn, range\.start\)\.lte\(dateColumn, range\.end\);/,
+    "the period no longer restricts the query");
+  // "openstaand" is not simply "not paid": an archived or draft invoice owes nothing either.
+  assert.match(route, /b\.in\("status", \["sent", "received", "overdue"\]\)/,
+    "openstaand became 'anything not paid', which counts drafts and archived rows as debt");
+  // Every source that carries a date is narrowed by it — a period that only applies to invoices
+  // would silently answer half the question.
+  for (const [src, col] of [["invoices", "invoice_date"], ["documents", "created_at"],
+                            ["bank_transactions", "date"], ["cash_entries", "entry_date"]] as const) {
+    assert.match(route, new RegExp(`"${col}"`), `${src}: no longer narrowed on ${col}`);
+  }
+
+  // ── 4. AN EMPTY .or() IS NOT "MATCH EVERYTHING" ──
+  // A query that is only filters ("inkoop 2026") has no text to match on, so the text .or() is
+  // left off entirely rather than passed as an empty string, which is a malformed filter.
+  assert.match(route, /const or = textOr\(conditions\);/, "the text filter is built unconditionally again");
+  assert.match(route, /return \(or \? \(qb as any\)\.or\(or\) : qb\) as T;/,
+    "an empty text filter is passed to PostgREST again");
+
+  // ── 5. WHAT WAS UNDERSTOOD IS SHOWN, AND CAN BE UNDONE ──
+  // A query that silently means something other than what was typed is worse than one that ignores
+  // half of it: the results change and nothing explains it.
+  assert.match(route, /recognised: parsed\.recognised/, "the answer no longer says what it understood");
+  assert.match(scherm, /t\('zoek\.begrepen'\)/, "the screen went quiet about what it read as a filter");
+  assert.match(scherm, /w\.toLowerCase\(\) !== r\.token\.toLowerCase\(\)/,
+    "a chip no longer removes its own word from the query — the narrowing cannot be undone");
+
+  // ── 6. THE TWO THINGS IT REFUSES TO GUESS ──
+  // A bare year is far more likely to be part of an invoice number than a period; and a quarter
+  // without a year would silently answer a different question in January.
+  assert.match(pure, /if \(tokens\.length > 1\) \{ filters\.year = Number\(t\)/,
+    "a bare year is treated as a period again, which hides the invoice number being looked for");
+  assert.match(pure, /if \(filters\.year === undefined\) \{[\s\S]{0,400}?delete filters\[k\]/,
+    "a quarter or month without a year is kept, so the search guesses which year it meant");
+});
