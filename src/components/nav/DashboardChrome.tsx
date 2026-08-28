@@ -75,6 +75,8 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   // tools live there as a tile grid), so it no longer needs a sub-page title.
   // The board registers its refresh button via useSubPageHeader; this is its title.
   ["/dashboard/accountant/agenda", "chrome.agenda"],
+  // [PROEFDOSSIER] Het voorbeelddossier — de bewijsplek vóór de eerste klant.
+  ["/dashboard/accountant/voorbeeld", "chrome.voorbeeld"],
   // [MANDAAT] Factureren namens een klant die daarvoor gemachtigd heeft.
   ["/dashboard/accountant/factuur", "chrome.factuurNamens"],
   // [DEBITEUREN] De chase-lijst over alle gemachtigde klanten heen.

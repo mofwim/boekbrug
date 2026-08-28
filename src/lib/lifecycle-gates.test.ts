@@ -4652,6 +4652,46 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
+//
+// The example dossier is the screen a zero-client accountant sees at the exact moment they decide
+// whether the product is real. Three properties keep it honest, and each would erode silently:
+test("[PROEFDOSSIER] the example dossier is pure, derived, announced, and wired", () => {
+  // 1. PURE. The obvious future "improvement" — seeding the example as real rows so more screens
+  // can show it — is the one this codebase must refuse: fictional invoices in real tables are
+  // reachable by every aggregate, export and cron, and one missed filter puts a fictional amount
+  // in something real. So neither the data module nor the screen may touch a database client.
+  const data = code("src/lib/voorbeeld-dossier.ts");
+  const scherm = code("src/modules/accountant/pages/VoorbeeldDossier.tsx");
+  for (const [naam, src] of [["voorbeeld-dossier.ts", data], ["VoorbeeldDossier.tsx", scherm]] as const) {
+    assert.doesNotMatch(src, /supabase|createPipelineClient|createClient|from\(/i,
+      `${naam} must stay pure — the fiction may never have a write path`);
+  }
+
+  // 2. DERIVED, with the honesty rule in the arithmetic: the questioned row counts nowhere.
+  assert.match(data, /import \{ round2 \}/, "[CENT] the one cent-rounder");
+  assert.match(data, /filter\(\(r\) => r\.status === "verwerkt"\)/,
+    "kosten and voorbelasting are computed over CONFIRMED rows only — the pitch is arithmetic");
+  assert.match(scherm, /dossierTotalen\(\)/, "the screen renders the derived totals, never retyped ones");
+  assert.doesNotMatch(scherm, /128[.,]70|202[.,]50|73[.,]80/,
+    "no tile amount is typed into the screen — literals drift from their rows");
+
+  // 3. ANNOUNCED and TRANSLATED. The banner key exists with Dutch source; the fictional name says
+  // what it is. (The rendered behaviour — banner text, derived sums on the page, the question —
+  // is held by tests/render/voorbeeld-dossier.test.tsx.)
+  assert.match(data, /VOORBEELD_KLANT = "Bakkerij Voorbeeld/, "the name itself announces the fiction");
+  assert.match(scherm, /t\('bh\.demo\.banner\.titel'\)/);
+
+  // 4. GUARDED and REACHABLE. Role-guarded like every accountant page, and linked from the one
+  // place a zero-client accountant actually stands — a proof screen nobody can find proves
+  // nothing.
+  const pagina = code("src/app/dashboard/accountant/voorbeeld/page.tsx");
+  assert.match(pagina, /if \(profile\.role !== 'accountant'\) redirect\('\/dashboard'\)/);
+  assert.match(code("src/modules/accountant/pages/AccountantHome.tsx"),
+    /router\.push\('\/dashboard\/accountant\/voorbeeld'\)/,
+    "the empty state offers the proof before the ask");
+});
+
 // ── [UITNODIGING] The invite path is the distribution channel, wired end to end ────────────────
 //
 // One office inviting fifty clients sends fifty people down this exact path, and the audit found
@@ -7177,6 +7217,7 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/modules/accountant/pages/AccountantOpvragen.tsx",
     "src/modules/accountant/pages/KlantenBeheer.tsx",
     "src/modules/accountant/pages/VraagMachtiging.tsx",
+    "src/modules/accountant/pages/VoorbeeldDossier.tsx",
     "src/app/dashboard/clients/[id]/page.tsx",
     "src/app/dashboard/clients/[id]/kwartaal/page.tsx",
     "src/app/dashboard/invoice/new/page.tsx",

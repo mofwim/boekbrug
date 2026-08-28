@@ -107,6 +107,7 @@ export const MESSAGES = {
   'chrome.werkplek': { nl: 'Mijn werkplek', ar: 'مساحة عملي', en: 'My workspace' },
   'chrome.klantenBeheren': { nl: 'Klanten beheren', ar: 'إدارة العملاء', en: 'Manage clients' },
   'chrome.agenda': { nl: 'Aangifte & status', ar: 'الإقرار والحالة', en: 'Return & status' },
+  'chrome.voorbeeld': { nl: 'Voorbeeldklant', ar: 'عميل تجريبي', en: 'Example client' },
   'chrome.factuurNamens': { nl: 'Factuur namens klant', ar: 'فاتورة نيابةً عن عميل', en: 'Invoice on behalf of a client' },
   'chrome.openstaand': { nl: 'Openstaande facturen', ar: 'الفواتير غير المسدَّدة', en: 'Outstanding invoices' },
   'chrome.opvragen': { nl: 'Stukken opvragen', ar: 'طلب المستندات', en: 'Request documents' },
@@ -11887,6 +11888,24 @@ export const MESSAGES = {
   // Stap 5 van de wizard, voor wie al gekoppeld binnenkwam (via de uitnodiging van zijn kantoor).
   'onb.kantoor.titel': { nl: 'Je boekhouder staat al klaar', ar: 'محاسبك جاهز بالفعل', en: 'Your accountant is already set' },
   'onb.kantoor.uitleg': { nl: 'Je bent gekoppeld aan {naam}. Alles wat je verstuurt, ontvangt of als betaald markeert, kan hij aan het eind van het kwartaal in één keer ophalen — je concepten blijven van jou alleen.', ar: 'أنت مرتبط بـ {naam}. كل ما ترسله أو تستقبله أو تعلّمه كمدفوع يمكنه جمعه دفعة واحدة في نهاية الربع — ومسوّداتك تبقى لك وحدك.', en: 'You are linked to {naam}. Everything you send, receive or mark as paid can be collected in one go at quarter end — your drafts stay yours alone.' },
+  // ─── [PROEFDOSSIER] Het voorbeelddossier — de bewijsplek vóór de eerste klant ───────────────
+  'bh.home.klanten.eerste.voorbeeld': { nl: 'Eerst zien hoe een gevuld klantdossier eruitziet →', ar: 'شاهد أولاً كيف يبدو ملف عميل ممتلئ ←', en: 'First see what a filled client file looks like →' },
+  'bh.demo.banner.titel': { nl: 'Voorbeeld — fictieve cijfers', ar: 'مثال — أرقام خيالية', en: 'Example — fictional figures' },
+  'bh.demo.banner.uitleg': { nl: 'Dit is hoe een klantdossier eruitziet als het gevuld is. Niets hierin is echt, en niets hierin wordt opgeslagen — het bestaat alleen om te laten zien wat je klanten straks aanleveren.', ar: 'هكذا يبدو ملف العميل عندما يمتلئ. لا شيء هنا حقيقي، ولا شيء يُحفظ — وُجد فقط ليُريك ما سيسلّمه عملاؤك قريباً.', en: 'This is what a client file looks like when it is filled. Nothing in it is real and nothing is stored — it exists only to show what your clients will deliver.' },
+  'bh.demo.gereedheid': { nl: '{verwerkt} van {totaal} inkoopfacturen verwerkt · Bank ✓ · {vragen} vraag open', ar: '{verwerkt} من {totaal} فواتير مشتريات معالجة · البنك ✓ · {vragen} سؤال مفتوح', en: '{verwerkt} of {totaal} purchase invoices processed · Bank ✓ · {vragen} question open' },
+  'bh.demo.tegel.omzet': { nl: 'Omzet (excl. btw)', ar: 'الإيراد (بدون الضريبة)', en: 'Revenue (excl. VAT)' },
+  'bh.demo.tegel.kosten': { nl: 'Kosten (excl. btw)', ar: 'التكاليف (بدون الضريبة)', en: 'Costs (excl. VAT)' },
+  'bh.demo.tegel.saldo': { nl: 'BTW-saldo (te betalen)', ar: 'رصيد الضريبة (مستحق الدفع)', en: 'VAT balance (payable)' },
+  'bh.demo.verkoop.kop': { nl: 'Verkoop', ar: 'المبيعات', en: 'Sales' },
+  'bh.demo.inkoop.kop': { nl: 'Inkoop', ar: 'المشتريات', en: 'Purchases' },
+  'bh.demo.chip.verwerkt': { nl: '✓ Verwerkt', ar: '✓ معالجة', en: '✓ Processed' },
+  'bh.demo.chip.vraag': { nl: '? Vraag', ar: '؟ سؤال', en: '? Question' },
+  'bh.demo.vraag.teltNietMee': { nl: 'Telt nergens in mee tot de klant antwoordt — geen gok in je voorbelasting.', ar: 'لا تُحتسب في أي شيء حتى يجيب العميل — لا تخمين في ضريبتك المستردة.', en: 'Counts nowhere until the client answers — no guess in your input VAT.' },
+  'bh.demo.eerlijk.kop': { nl: 'Wat wij niet zeker weten, staat als vraag — niet als gok', ar: 'ما لا نعرفه يقيناً يبقى سؤالاً — لا تخميناً', en: 'What we are not sure of stands as a question — not a guess' },
+  'bh.demo.eerlijk.tekst': { nl: 'Kijk naar de tegels: de factuur met de open vraag telt niet mee in de kosten en niet in de voorbelasting. Het dossier dat je ophaalt klopt — of het zegt precies waar het nog niet klopt.', ar: 'انظر إلى الأرقام: الفاتورة ذات السؤال المفتوح لا تُحتسب في التكاليف ولا في الضريبة المستردة. الملف الذي تستلمه صحيح — أو يقول بدقة أين لم يصح بعد.', en: 'Look at the tiles: the invoice with the open question is counted in neither costs nor input VAT. The file you collect is correct — or it says exactly where it is not yet.' },
+  'bh.demo.pakket.tekst': { nl: 'Aan het eind van het kwartaal haal je alles in één keer op: de PDF\'s, een CSV en het XAF 3.2-auditbestand — te importeren in je eigen pakket.', ar: 'في نهاية الربع تجمع كل شيء دفعة واحدة: ملفات PDF وملف CSV وملف تدقيق XAF 3.2 — قابلة للاستيراد في برنامجك.', en: 'At quarter end you collect everything in one go: the PDFs, a CSV and the XAF 3.2 audit file — importable into your own package.' },
+  'bh.demo.cta': { nl: 'Nodig je eerste klant uit', ar: 'ادعُ عميلك الأول', en: 'Invite your first client' },
+
   'uitn.laden': { nl: 'Laden…', ar: 'جارٍ التحميل…', en: 'Loading…' },
   'uitn.titel': { nl: 'Je bent uitgenodigd', ar: 'تمت دعوتك', en: 'You are invited' },
   // Twee richtingen, twee zinnen — zie de kop van invite/accept/page.tsx.
