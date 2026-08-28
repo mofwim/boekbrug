@@ -108,6 +108,166 @@ const NIETS_BEWIJZEND: Record<string, { object: string; reden: string }[]> = {
   ],
 };
 
+/**
+ * De migraties die NIETS aanmaken — en hoe je ze dan tóch vaststelt.
+ *
+ * Negen van de migraties trekken alleen rechten in, gooien iets weg, zetten een stand goed of
+ * verplaatsen data. Er is geen object waarvan het BESTAAN iets bewijst, dus de vingerafdruk-query
+ * hierboven kan er niets over zeggen. Tot nu toe eindigde dat bij een zin: "controleer deze met
+ * het CONTROLE-blok onderaan het migratiebestand zelf."
+ *
+ * Dat is negen bestanden opzoeken, en voor drie ervan stond daar niets. Een verwijzing naar een
+ * blok dat niet bestaat is precies het soort stilte waar dit hele bestand tegen is geschreven.
+ *
+ * Dus staat de vraag hier, per migratie, en wordt zij meegegenereerd als één tweede query. Wat
+ * gemeten wordt is niet het BESTAAN van een object maar de STAND: is de policy weg, is de kolom
+ * weg, staat de bucket privé, is het recht ingetrokken.
+ *
+ * Drie soorten, en het verschil is met opzet zichtbaar:
+ *
+ *   controle    een ja/nee dat een oordeel draagt. TOEGEPAST of OPEN.
+ *   meting      een getal om zelf te lezen. Gebruikt waar een uitkomst óók een andere oorzaak kan
+ *               hebben dan een niet-gedraaide migratie — een oordeel zou daar een vals alarm zijn,
+ *               en een alarm dat soms onterecht afgaat leert iedereen om het weg te klikken.
+ *   geen-spoor  de migratie is later ongedaan gemaakt; er valt niets meer te zien. Dan hoort er
+ *               een waarschuwing bij, want "OPEN" leest als "nog een keer draaien".
+ *
+ * Deze tabel is met de hand geschreven, en dat is de reden dat er een slot op zit: een migratie
+ * zonder vingerafdruk die hier niet in staat, laat de generator vallen. Een nieuwe REVOKE-migratie
+ * kan dus niet stilletjes bij "niet vast te stellen" belanden.
+ */
+type Stand =
+  | { soort: "controle"; vraag: string; sql: string }
+  | { soort: "meting"; vraag: string; waarom: string; sql: string }
+  | { soort: "geen-spoor"; waarom: string };
+
+const GELDFUNCTIES = [
+  "seed_invoice_counter",
+  "next_invoice_seq",
+  "apply_manual_payment",
+  "apply_bank_payment",
+  "allocate_bank_payment",
+  "confirm_bank_payment",
+  "book_bank_batch",
+  "move_invoice_payment",
+  "recompute_invoice_amount_paid",
+  "fair_use_consume",
+  "fair_use_release",
+  "handle_new_user",
+  "assert_credit_within_original",
+];
+/** De zeven die ook `authenticated` niet meer mag aanroepen — die lopen via service_role. */
+const ALLEEN_SERVICE_ROLE = [
+  "seed_invoice_counter",
+  "recompute_invoice_amount_paid",
+  "fair_use_consume",
+  "fair_use_release",
+  "confirm_bank_payment",
+  "handle_new_user",
+  "assert_credit_within_original",
+];
+const lijst = (namen: string[]) => namen.map((n) => `'${n}'`).join(", ");
+
+const STAND_CONTROLE: Record<string, Stand> = {
+  "BRIDGE-D_soft_delete_test_pollution.sql": {
+    soort: "controle",
+    vraag: "de zes testdocumenten staan in de prullenbak",
+    sql: `not exists (
+           select 1 from public.documents
+            where id in ('45a026eb-59bd-4349-ac10-8251b820978e',
+                         '4ba6a60d-f1d9-4bbc-8083-53a1d78b867c',
+                         '8cdccc7b-86c2-4d74-ac54-eb5c416caa06',
+                         'd2f6abf1-866f-4daa-8862-4c1bfee8fd7f',
+                         'e06eaa4e-5f20-4a89-9621-32b821b2bf3f',
+                         'f15a973a-30d1-4404-bff0-6d4eade2c93d')
+              and trashed is not true)`,
+  },
+  "accountant_clients_insert_consent.sql": {
+    soort: "controle",
+    vraag: "de oude insert-policy is weg — een boekhouder koppelt zichzelf niet meer aan een klant",
+    sql: `not exists (select 1 from pg_policies
+                       where schemaname = 'public' and tablename = 'accountant_clients'
+                         and policyname = 'accountant_clients_insert')`,
+  },
+  "accountant_clients_update_consent.sql": {
+    soort: "controle",
+    vraag: "de oude update-policy is weg",
+    sql: `not exists (select 1 from pg_policies
+                       where schemaname = 'public' and tablename = 'accountant_clients'
+                         and policyname = 'accountant_clients_update')`,
+  },
+  "bank_tx_invoices_amount.sql": {
+    soort: "controle",
+    vraag: "de dubbele kolom `amount` is weg en `amount_applied` staat er",
+    sql: `exists (select 1 from information_schema.columns
+                   where table_schema = 'public' and table_name = 'bank_tx_invoices'
+                     and column_name = 'amount_applied')
+          and not exists (select 1 from information_schema.columns
+                           where table_schema = 'public' and table_name = 'bank_tx_invoices'
+                             and column_name = 'amount')`,
+  },
+  "creditnota_one_per_original.sql": {
+    soort: "geen-spoor",
+    waarom:
+      "Deze migratie maakte de unieke index invoices_one_creditnota_per_original — één creditnota " +
+      "per factuur. creditnota_partial.sql heeft die er later met opzet weer afgehaald, want een " +
+      "factuur mag meer dan één DEELcreditnota dragen. Er is dus niets meer van te zien, en dat " +
+      "hoort zo. NIET OPNIEUW DRAAIEN: de index terugzetten breekt de tweede deelcreditnota op " +
+      "elke factuur. Wat er in de plaats van staat is public.assert_credit_within_original(), en " +
+      "die wordt hierboven bij creditnota_partial.sql wél gemeten.",
+  },
+  "function_search_path.sql": {
+    soort: "controle",
+    vraag: "elk van de negen functies heeft een vastgezet search_path",
+    sql: `not exists (
+           select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname in ('prevent_billing_self_grant', 'prevent_accountant_amount_changes',
+                                'prevent_verwerkt_invoice_changes', 'guard_paid_when_verwerkt',
+                                'invoices_search_vector_update', 'documents_search_vector_update',
+                                'set_updated_at', 'touch_updated_at', 'get_accountant_for_zzper')
+              and coalesce(array_to_string(p.proconfig, ','), '') not like '%search_path=%')`,
+  },
+  "rpc_anon_revoke.sql": {
+    soort: "controle",
+    vraag: "geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated",
+    sql: `not exists (
+           select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname in (${lijst(GELDFUNCTIES)})
+              and has_function_privilege('anon', p.oid, 'EXECUTE'))
+          and not exists (
+           select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname in (${lijst(ALLEEN_SERVICE_ROLE)})
+              and has_function_privilege('authenticated', p.oid, 'EXECUTE'))`,
+  },
+  "storage_bucket_hardening.sql": {
+    soort: "controle",
+    vraag: "de documentenbucket staat privé, met een limiet van 25 MB en RLS aan",
+    sql: `exists (select 1 from storage.buckets
+                   where id = 'documents' and public is false
+                     and file_size_limit is not null and file_size_limit <= 26214400)
+          and exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                       where n.nspname = 'storage' and c.relname = 'objects' and c.relrowsecurity)`,
+  },
+  "supplier_backfill.sql": {
+    soort: "meting",
+    vraag: "hoeveel inkoopfacturen mét IBAN nog zonder leverancier staan",
+    waarom:
+      "Dit is geen oordeel, want de app schrijft dezelfde kolom als de backfill. Een inkoopfactuur " +
+      "die vandaag binnenkomt zonder herkende leverancier staat hier morgen ook in — die zegt niets " +
+      "over deze migratie. Nul betekent 'gedraaid én bijgehouden'. Een klein getal met verse datums " +
+      "is nieuwe post, geen mislukte migratie. Alleen een groot getal met datums van vóór de " +
+      "livegang wijst terug naar dit bestand.",
+    sql: `select count(*) as zonder_leverancier, min(created_at) as oudste
+            from public.invoices
+           where direction = 'incoming'
+             and status in ('processing', 'received')
+             and vendor_iban is not null
+             and length(regexp_replace(vendor_iban, '\\s', '', 'g')) >= 15
+             and supplier_id is null`,
+  },
+};
+
 /** SQL-commentaar eraf. Uitgecommentarieerde DDL is geen DDL. */
 function stripSql(sql: string): string {
   return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
@@ -225,8 +385,65 @@ for (const { bestand, sql } of gelezen) {
   }
 }
 
+// ── HET SLOT OP STAND_CONTROLE ───────────────────────────────────────────────
+//
+// Een migratie zonder vingerafdruk MOET hier een antwoord hebben. Anders kan een nieuwe
+// REVOKE- of UPDATE-migratie stilletjes bij "niet vast te stellen" belanden en daar blijven —
+// wat precies de stilte is die dit bestand moet uitsluiten.
+//
+// En andersom: een regel over een migratie die inmiddels wél een object aanmaakt, meet twee keer
+// hetzelfde en gaat de ene keer achterlopen. Ook dat valt hier om.
+{
+  const zonderAntwoord = zonderVingerafdruk.filter((f) => !STAND_CONTROLE[f]);
+  if (zonderAntwoord.length > 0) {
+    throw new Error(
+      "Deze migraties maken niets aan en hebben geen stand-controle in STAND_CONTROLE " +
+        "(scripts/migration-inventory.ts). Schrijf per bestand hoe je vaststelt DAT hij gedraaid " +
+        "heeft — een policy die weg is, een recht dat is ingetrokken, een stand die goed staat:\n  " +
+        zonderAntwoord.join("\n  "),
+    );
+  }
+  const overbodig = Object.keys(STAND_CONTROLE).filter((f) => !zonderVingerafdruk.includes(f));
+  if (overbodig.length > 0) {
+    throw new Error(
+      "Deze bestanden staan in STAND_CONTROLE maar hebben inmiddels een gewone vingerafdruk. " +
+        "Haal ze uit de tabel; twee metingen op hetzelfde gaan uit elkaar lopen:\n  " +
+        overbodig.join("\n  "),
+    );
+  }
+}
+
 const lijnen: string[] = [];
 const zeg = (s = "") => lijnen.push(s);
+/**
+ * Haalt de gemeenschappelijke inspringing van een SQL-blok af en zet er een nieuwe voor in de
+ * plaats. Per regel trimmen zou de structuur van een genest EXISTS plat slaan — en een query die
+ * niemand kan lezen, controleert niemand.
+ */
+function inspringen(sql: string, breedte: number): string[] {
+  const regels = sql.split("\n");
+  // De EERSTE regel staat in de bron direct achter het aanhalingsteken en heeft dus geen
+  // inspringing. Hem meetellen maakt de marge nul, en dan blijft de rest scheef staan.
+  const rest = regels.slice(1).filter((r) => r.trim() !== "");
+  const marge = rest.length === 0 ? 0 : Math.min(...rest.map((r) => r.length - r.trimStart().length));
+  const voor = " ".repeat(breedte);
+  return regels.map((r, i) =>
+    r.trim() === "" ? "" : i === 0 ? voor + r.trim() : voor + r.slice(marge),
+  );
+}
+
+/** Breekt een lange reden af op woordgrenzen, zodat de gegenereerde SQL leesbaar blijft. */
+function wikkel(tekst: string, breedte: number): string[] {
+  const uit: string[] = [];
+  let regel = "";
+  for (const woord of tekst.split(/\s+/)) {
+    if (regel === "") regel = woord;
+    else if (regel.length + 1 + woord.length <= breedte) regel += ` ${woord}`;
+    else { uit.push(regel); regel = woord; }
+  }
+  if (regel !== "") uit.push(regel);
+  return uit;
+}
 
 zeg("-- =====================================================================");
 zeg("-- WELKE MIGRATIES STAAN ER ÉCHT? — één query, het echte antwoord.");
@@ -259,8 +476,19 @@ zeg("--");
 zeg("-- \"TOEGEPAST\" bewijst dat de migratie GEDRAAID heeft, niet dat ze FOUTLOOS liep. Daarvoor is");
 zeg("-- het CONTROLE-blok onderaan het migratiebestand zelf.");
 zeg("--");
+zeg("-- ── TWEE QUERY\'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──");
+zeg("--");
+zeg(`--   DEEL 1  de ${bestanden.length - zonderVingerafdruk.length} migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.`);
+zeg(`--   DEEL 2  de ${zonderVingerafdruk.length} die niets aanmaken — alleen rechten intrekken, iets weggooien of een`);
+zeg("--           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.");
+zeg("--");
+zeg("-- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er");
+zeg("-- buiten: staat de documentenbucket privé, en mag anon de geldfuncties nog aanroepen.");
+zeg("--");
 zeg("-- Leest alleen de catalogus. Verandert niets. Draai hem als service_role in de SQL-editor.");
 zeg("-- =====================================================================");
+zeg();
+zeg("-- ── DEEL 1 ──────────────────────────────────────────────────────────");
 zeg();
 zeg("with probe(bestand, soort, object, tabel, schema) as (values");
 zeg(rijen.join(",\n"));
@@ -297,18 +525,75 @@ zeg("-- GEDEELTELIJK eerst, dan OPEN, dan de rest: de regels waar iets aan te do
 zeg("order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;");
 zeg();
 zeg("-- =====================================================================");
-zeg(`-- NIET VAST TE STELLEN — ${zonderVingerafdruk.length} van de ${bestanden.length} migraties`);
+zeg(`-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: ${zonderVingerafdruk.length} van de ${bestanden.length}`);
 zeg("-- =====================================================================");
 zeg("--");
-zeg("-- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of");
-zeg("-- wijzigen alleen bestaande objecten. Er is dus geen object waarvan het BESTAAN iets");
-zeg("-- bewijst. Ze krijgen met opzet GEEN verzonnen vingerafdruk — een lijst die zwijgt over wat");
-zeg("-- ze niet weet, is precies de lijst waar dit bestand tegen is geschreven.");
+zeg("-- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen");
+zeg("-- data. Er is geen object waarvan het BESTAAN iets bewijst, dus de query hierboven kan er");
+zeg("-- niets over zeggen — ze krijgen met opzet GEEN verzonnen vingerafdruk.");
 zeg("--");
-zeg("-- Controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf.");
+zeg("-- Wat hieronder wordt gemeten is niet het bestaan van een object maar de STAND: is de");
+zeg("-- policy weg, is de kolom weg, staat de bucket privé, is het recht ingetrokken. Draai de");
+zeg("-- query net als de eerste: als service_role, in de SQL-editor. Ze verandert niets.");
 zeg("--");
-for (const f of zonderVingerafdruk) zeg(`--   ${f}`);
+zeg("-- De vragen staan in STAND_CONTROLE in scripts/migration-inventory.ts. Een migratie zonder");
+zeg("-- vingerafdruk die daar niet in staat, laat de generator vallen — ontbreken kan dus niet.");
 zeg("--");
+
+{
+  const controles = zonderVingerafdruk
+    .map((f) => [f, STAND_CONTROLE[f]] as const)
+    .filter((r): r is readonly [string, Extract<Stand, { soort: "controle" }>] => r[1].soort === "controle");
+
+  zeg("with controle(bestand, vraag, toegepast) as (");
+  controles.forEach(([bestand, stand], i) => {
+    const q = (t: string) => `'${t.replace(/'/g, "''")}'`;
+    zeg(`  select ${q(bestand)}::text, ${q(stand.vraag)}::text, (`);
+    for (const regel of inspringen(stand.sql, 4)) zeg(regel);
+    zeg("  )");
+    if (i < controles.length - 1) zeg("  union all");
+  });
+  zeg(")");
+  zeg("select case when toegepast then 'TOEGEPAST' else 'OPEN  <-- KIJK HIER' end as stand,");
+  zeg("       bestand, vraag");
+  zeg("  from controle");
+  zeg(" order by toegepast, bestand;");
+  zeg();
+
+  const metingen = zonderVingerafdruk
+    .map((f) => [f, STAND_CONTROLE[f]] as const)
+    .filter((r): r is readonly [string, Extract<Stand, { soort: "meting" }>] => r[1].soort === "meting");
+  if (metingen.length > 0) {
+    zeg("-- =====================================================================");
+    zeg("-- ZELF LEZEN — geen oordeel, want een uitkomst hier kan ook een andere oorzaak hebben");
+    zeg("-- =====================================================================");
+    for (const [bestand, stand] of metingen) {
+      zeg("--");
+      zeg(`-- ${bestand} — ${stand.vraag}`);
+      for (const r of wikkel(stand.waarom, 96)) zeg(`--   ${r}`);
+      zeg("--");
+      const regels = inspringen(stand.sql, 0);
+      regels[regels.length - 1] += ";";
+      for (const regel of regels) zeg(regel);
+    }
+    zeg();
+  }
+
+  const geenSpoor = zonderVingerafdruk
+    .map((f) => [f, STAND_CONTROLE[f]] as const)
+    .filter((r): r is readonly [string, Extract<Stand, { soort: "geen-spoor" }>] => r[1].soort === "geen-spoor");
+  if (geenSpoor.length > 0) {
+    zeg("-- =====================================================================");
+    zeg("-- NIETS MEER VAN TE ZIEN — en juist daarom NIET opnieuw draaien");
+    zeg("-- =====================================================================");
+    for (const [bestand, stand] of geenSpoor) {
+      zeg("--");
+      zeg(`--   ${bestand}`);
+      for (const r of wikkel(stand.waarom, 94)) zeg(`--     ${r}`);
+    }
+    zeg("--");
+  }
+}
 zeg("-- =====================================================================");
 zeg("-- OBJECTEN DIE LATER ZIJN OPGERUIMD — tellen niet mee in het oordeel");
 zeg("-- =====================================================================");

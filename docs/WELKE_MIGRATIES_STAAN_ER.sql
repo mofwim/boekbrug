@@ -29,8 +29,19 @@
 -- "TOEGEPAST" bewijst dat de migratie GEDRAAID heeft, niet dat ze FOUTLOOS liep. Daarvoor is
 -- het CONTROLE-blok onderaan het migratiebestand zelf.
 --
+-- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
+--
+--   DEEL 1  de 107 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 2  de 9 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
+--
+-- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
+-- buiten: staat de documentenbucket privé, en mag anon de geldfuncties nog aanroepen.
+--
 -- Leest alleen de catalogus. Verandert niets. Draai hem als service_role in de SQL-editor.
 -- =====================================================================
+
+-- ── DEEL 1 ──────────────────────────────────────────────────────────
 
 with probe(bestand, soort, object, tabel, schema) as (values
   ('account_purpose_archief.sql', 'column', 'account_purpose', 'profiles', 'public'),
@@ -423,25 +434,119 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- NIET VAST TE STELLEN — 9 van de 116 migraties
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 116
 -- =====================================================================
 --
--- Deze maken niets aan: ze trekken rechten in, gooien iets weg, zetten commentaar of
--- wijzigen alleen bestaande objecten. Er is dus geen object waarvan het BESTAAN iets
--- bewijst. Ze krijgen met opzet GEEN verzonnen vingerafdruk — een lijst die zwijgt over wat
--- ze niet weet, is precies de lijst waar dit bestand tegen is geschreven.
+-- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
+-- data. Er is geen object waarvan het BESTAAN iets bewijst, dus de query hierboven kan er
+-- niets over zeggen — ze krijgen met opzet GEEN verzonnen vingerafdruk.
 --
--- Controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf.
+-- Wat hieronder wordt gemeten is niet het bestaan van een object maar de STAND: is de
+-- policy weg, is de kolom weg, staat de bucket privé, is het recht ingetrokken. Draai de
+-- query net als de eerste: als service_role, in de SQL-editor. Ze verandert niets.
 --
---   BRIDGE-D_soft_delete_test_pollution.sql
---   accountant_clients_insert_consent.sql
---   accountant_clients_update_consent.sql
---   bank_tx_invoices_amount.sql
+-- De vragen staan in STAND_CONTROLE in scripts/migration-inventory.ts. Een migratie zonder
+-- vingerafdruk die daar niet in staat, laat de generator vallen — ontbreken kan dus niet.
+--
+with controle(bestand, vraag, toegepast) as (
+  select 'BRIDGE-D_soft_delete_test_pollution.sql'::text, 'de zes testdocumenten staan in de prullenbak'::text, (
+    not exists (
+    select 1 from public.documents
+     where id in ('45a026eb-59bd-4349-ac10-8251b820978e',
+                  '4ba6a60d-f1d9-4bbc-8083-53a1d78b867c',
+                  '8cdccc7b-86c2-4d74-ac54-eb5c416caa06',
+                  'd2f6abf1-866f-4daa-8862-4c1bfee8fd7f',
+                  'e06eaa4e-5f20-4a89-9621-32b821b2bf3f',
+                  'f15a973a-30d1-4404-bff0-6d4eade2c93d')
+       and trashed is not true)
+  )
+  union all
+  select 'accountant_clients_insert_consent.sql'::text, 'de oude insert-policy is weg — een boekhouder koppelt zichzelf niet meer aan een klant'::text, (
+    not exists (select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'accountant_clients'
+      and policyname = 'accountant_clients_insert')
+  )
+  union all
+  select 'accountant_clients_update_consent.sql'::text, 'de oude update-policy is weg'::text, (
+    not exists (select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'accountant_clients'
+      and policyname = 'accountant_clients_update')
+  )
+  union all
+  select 'bank_tx_invoices_amount.sql'::text, 'de dubbele kolom `amount` is weg en `amount_applied` staat er'::text, (
+    exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'bank_tx_invoices'
+               and column_name = 'amount_applied')
+    and not exists (select 1 from information_schema.columns
+                     where table_schema = 'public' and table_name = 'bank_tx_invoices'
+                       and column_name = 'amount')
+  )
+  union all
+  select 'function_search_path.sql'::text, 'elk van de negen functies heeft een vastgezet search_path'::text, (
+    not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('prevent_billing_self_grant', 'prevent_accountant_amount_changes',
+                         'prevent_verwerkt_invoice_changes', 'guard_paid_when_verwerkt',
+                         'invoices_search_vector_update', 'documents_search_vector_update',
+                         'set_updated_at', 'touch_updated_at', 'get_accountant_for_zzper')
+       and coalesce(array_to_string(p.proconfig, ','), '') not like '%search_path=%')
+  )
+  union all
+  select 'rpc_anon_revoke.sql'::text, 'geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated'::text, (
+    not exists (
+     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname in ('seed_invoice_counter', 'next_invoice_seq', 'apply_manual_payment', 'apply_bank_payment', 'allocate_bank_payment', 'confirm_bank_payment', 'book_bank_batch', 'move_invoice_payment', 'recompute_invoice_amount_paid', 'fair_use_consume', 'fair_use_release', 'handle_new_user', 'assert_credit_within_original')
+        and has_function_privilege('anon', p.oid, 'EXECUTE'))
+    and not exists (
+     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname in ('seed_invoice_counter', 'recompute_invoice_amount_paid', 'fair_use_consume', 'fair_use_release', 'confirm_bank_payment', 'handle_new_user', 'assert_credit_within_original')
+        and has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+  )
+  union all
+  select 'storage_bucket_hardening.sql'::text, 'de documentenbucket staat privé, met een limiet van 25 MB en RLS aan'::text, (
+    exists (select 1 from storage.buckets
+             where id = 'documents' and public is false
+               and file_size_limit is not null and file_size_limit <= 26214400)
+    and exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                 where n.nspname = 'storage' and c.relname = 'objects' and c.relrowsecurity)
+  )
+)
+select case when toegepast then 'TOEGEPAST' else 'OPEN  <-- KIJK HIER' end as stand,
+       bestand, vraag
+  from controle
+ order by toegepast, bestand;
+
+-- =====================================================================
+-- ZELF LEZEN — geen oordeel, want een uitkomst hier kan ook een andere oorzaak hebben
+-- =====================================================================
+--
+-- supplier_backfill.sql — hoeveel inkoopfacturen mét IBAN nog zonder leverancier staan
+--   Dit is geen oordeel, want de app schrijft dezelfde kolom als de backfill. Een inkoopfactuur die
+--   vandaag binnenkomt zonder herkende leverancier staat hier morgen ook in — die zegt niets over
+--   deze migratie. Nul betekent 'gedraaid én bijgehouden'. Een klein getal met verse datums is
+--   nieuwe post, geen mislukte migratie. Alleen een groot getal met datums van vóór de livegang
+--   wijst terug naar dit bestand.
+--
+select count(*) as zonder_leverancier, min(created_at) as oudste
+ from public.invoices
+where direction = 'incoming'
+  and status in ('processing', 'received')
+  and vendor_iban is not null
+  and length(regexp_replace(vendor_iban, '\s', '', 'g')) >= 15
+  and supplier_id is null;
+
+-- =====================================================================
+-- NIETS MEER VAN TE ZIEN — en juist daarom NIET opnieuw draaien
+-- =====================================================================
+--
 --   creditnota_one_per_original.sql
---   function_search_path.sql
---   rpc_anon_revoke.sql
---   storage_bucket_hardening.sql
---   supplier_backfill.sql
+--     Deze migratie maakte de unieke index invoices_one_creditnota_per_original — één creditnota per
+--     factuur. creditnota_partial.sql heeft die er later met opzet weer afgehaald, want een factuur
+--     mag meer dan één DEELcreditnota dragen. Er is dus niets meer van te zien, en dat hoort zo.
+--     NIET OPNIEUW DRAAIEN: de index terugzetten breekt de tweede deelcreditnota op elke factuur.
+--     Wat er in de plaats van staat is public.assert_credit_within_original(), en die wordt
+--     hierboven bij creditnota_partial.sql wél gemeten.
 --
 -- =====================================================================
 -- OBJECTEN DIE LATER ZIJN OPGERUIMD — tellen niet mee in het oordeel
