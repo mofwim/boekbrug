@@ -15182,7 +15182,12 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   // confident face — and money-out errors are the unrecoverable direction. So the gate refuses
   // the vocabulary of a tax CALCULATION anywhere in the pure module.
   const pure = code("src/lib/ib-jaar.ts");
-  assert.match(pure, /URENCRITERIUM_HOURS = 1225/, "the urencriterium threshold is the Belastingdienst's number");
+  // The threshold is declared ONCE, in urencriterium.ts, and re-exported here. Two modules each
+  // writing 1.225 is how a statutory number comes to have two values in one codebase.
+  assert.match(code("src/lib/urencriterium.ts"), /URENCRITERIUM_HOURS = 1225/,
+    "the urencriterium threshold is the Belastingdienst's number");
+  assert.doesNotMatch(pure, /URENCRITERIUM_HOURS = \d/, "the threshold has a second declaration again");
+  assert.match(pure, /export \{ URENCRITERIUM_HOURS \}/, "the year overview lost its one authority for the number");
   assert.doesNotMatch(
     pure, /te betalen|verschuldigde (inkomsten)?belasting|heffingskorting|schijf/i,
     "the module has started to compute or promise a tax amount — that is a different product and a wrong one",
@@ -16541,4 +16546,71 @@ test("[MANDAAT-INTREKKEN] a failed mandate read may not report a revocation that
     "the counterparty id is no longer checked before it is pasted into a filter");
   assert.match(route, /vraag\.or\(`zzper_id\.eq\.\$\{tegenpartij\},accountant_id\.eq\.\$\{tegenpartij\}`\)/,
     "the filter interpolates something other than the validated id");
+});
+
+
+test("[URENCRITERIUM] the hours are read from a column that exists, and judged while the year runs", () => {
+  // ── THE PART THAT WAS DEAD ──
+  //
+  // The year overview asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answered "column does not exist", fetchAllRows threw,
+  // the catch turned it into null, and the screen printed "we konden je urenregistratie niet
+  // lezen" — for every owner, since the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing looked broken, which is the whole lesson: the null branch prints an HONEST sentence,
+  // so the failure wore the face of a temporary hiccup forever. The gate that covered this route
+  // checked that the engine was called and that the null branch existed; it never checked that the
+  // query could return a row.
+  const jaarRoute = code("src/app/api/ib-jaar/route.ts");
+  const urenPage = code("src/app/dashboard/uren/page.tsx");
+  for (const [naam, bron] of [["ib-jaar route", jaarRoute], ["uren page", urenPage]] as const) {
+    assert.match(bron, /from\(["']time_entries["']\)[\s\S]{0,400}?worked_on/,
+      `${naam}: the hours are filtered on a column time_entries does not have`);
+    assert.doesNotMatch(bron, /entry_date/,
+      `${naam}: entry_date belongs to cash_entries — on time_entries it matches nothing, silently`);
+  }
+
+  // ── THE SUM MUST BE COMPLETE ──
+  //
+  // The screen's own entry list stops at 1000 rows. Summing THAT would under-count the year, which
+  // is the direction that wrongly tells an owner they will not make it. The year total is its own
+  // paged read.
+  // Anchored on the CALL that wraps the hours read, not on the name: an `import { fetchAllRows }`
+  // left at the top of the file satisfies a bare /fetchAllRows/ while nothing pages any more.
+  // (This gate's own first draft did exactly that, and the negative control caught it.)
+  assert.match(urenPage, /await fetchAllRows<\{ hours: number \| null \}>\(\(lo, hi\) =>[\s\S]{0,300}?time_entries/,
+    "the year total can be truncated by the 1000-row cap again");
+  assert.match(urenPage, /catch\([\s\S]{0,200}?return null/,
+    "a failed hours read no longer becomes null — it would read as zero hours worked");
+
+  // ── THE RULES THAT DECIDE MONEY ──
+  const pure = code("src/lib/urencriterium.ts");
+  // No pro-rata. A starter who registers in September still needs 1.225 hours that calendar year;
+  // scaling the threshold would report them on track and cost the whole deduction.
+  assert.doesNotMatch(pure, /threshold\s*[*/]|URENCRITERIUM_HOURS\s*[*/]/,
+    "the threshold is being scaled — the urencriterium has no pro-rata for a part year");
+  // A failed read is not a missed criterion.
+  assert.match(pure, /hoursSoFar === null[\s\S]{0,200}?level: "unknown"/,
+    "a failed read no longer answers 'unknown'");
+  // No forecast from a handful of days — a warning that swings daily teaches the owner to ignore
+  // the one that matters in September.
+  assert.match(pure, /daysElapsed < PROJECTION_MIN_DAYS[\s\S]{0,200}?level: "too_early"/,
+    "the year is forecast from too few days again");
+
+  // ── THE SCREEN SAYS THE TWO THINGS THE ARITHMETIC CANNOT ──
+  //
+  // Indirect hours count, and there is no pro-rata. Both are shown for EVERY state, including a
+  // criterion already met: whoever made it this year carries the same assumption into the next.
+  const scherm = code("src/app/dashboard/uren/UrenClient.tsx");
+  assert.match(scherm, /t\('uren\.criterium\.tellenmee'\)/,
+    "the screen no longer says that unbilled hours count — the error this module exists to prevent");
+  assert.match(scherm, /t\('uren\.criterium\.geendeeljaar'\)/,
+    "the screen no longer says that a starter gets no pro-rata");
+  // [TAAL] One key per state. A noun swapped into one shared sentence breaks Arabic agreement.
+  assert.match(scherm, /URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey>/,
+    "the states no longer map to their own sentences");
+  // The component holds no language: the panel renders keys, never a Dutch string of its own.
+  assert.doesNotMatch(scherm.slice(scherm.indexOf("uren.criterium.titel"), scherm.indexOf("uren.criterium.geendeeljaar")),
+    />[^<>{}\n]*[a-z]{4,}\s+[a-z]{4,}[^<>{}\n]*</,
+    "a hard-coded sentence appeared in the urencriterium panel");
 });

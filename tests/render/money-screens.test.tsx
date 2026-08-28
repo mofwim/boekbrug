@@ -2547,6 +2547,62 @@ test("[DUBBEL-BUNDEL] one unreachable row is never absorbed into a clean set", a
 // [UREN] De urenregistratie — het scherm waar niet-gefactureerd werk zichtbaar wordt.
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+test("[URENCRITERIUM] elke stand van het criterium overleeft een render", async () => {
+  // De takken zitten in de STAND, niet in de rijen: een paneel dat alleen tegen 'op koers' is
+  // aangeroepen dekt de zin die de ondernemer in november leest niet. Alle negen standen, plus de
+  // twee die geen getal hebben (unknown, waar hours null is en de balk niet mag verschijnen).
+  const { default: UrenClient } = await import("../../src/app/dashboard/uren/UrenClient");
+  const { assessUrencriterium } = await import("../../src/lib/urencriterium");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const standen: Array<[string, { hoursSoFar: number | null; today: string; year: number }]> = [
+    ["unknown", { hoursSoFar: null, today: "2026-08-28", year: 2026 }],
+    ["met", { hoursSoFar: 1300, today: "2026-08-28", year: 2026 }],
+    ["too_early", { hoursSoFar: 20, today: "2026-01-10", year: 2026 }],
+    ["on_track", { hoursSoFar: 700, today: "2026-06-30", year: 2026 }],
+    ["behind", { hoursSoFar: 900, today: "2026-09-30", year: 2026 }],
+    ["critical", { hoursSoFar: 500, today: "2026-11-15", year: 2026 }],
+    ["unreachable", { hoursSoFar: 1025, today: "2026-12-29", year: 2026 }],
+    ["closed_met", { hoursSoFar: 1300, today: "2026-08-28", year: 2025 }],
+    ["closed_missed", { hoursSoFar: 900, today: "2026-08-28", year: 2025 }],
+  ];
+
+  for (const [naam, invoer] of standen) {
+    const stand = assessUrencriterium(invoer);
+    assert.equal(stand.level, naam, `de fixture voor ${naam} levert stand ${stand.level} — dan dekt deze render iets anders`);
+
+    const html = renderToStaticMarkup(
+      React.createElement(ToastProvider, null,
+        React.createElement(DialogProvider, null,
+          React.createElement(UrenClient as never, {
+            initialEntries: [] as never,
+            clients: [],
+            urencriterium: stand as never,
+          }),
+        ),
+      ),
+    );
+    const text = textOf(html);
+    assert.match(text, /Urencriterium/, `${naam}: het paneel is er niet`);
+    // Geen enkele stand mag een sleutel op het scherm zetten. Een ontbrekende vertaling valt terug
+    // op Nederlands; een ontbrekende SLEUTEL rendert 'uren.criterium.achter' aan de ondernemer.
+    assert.doesNotMatch(text, /uren\.criterium\./, `${naam}: er staat een sleutel op het scherm`);
+    // De twee zinnen die het rekenwerk niet kan zeggen, staan er bij ELKE stand — ook bij 'gehaald'.
+    assert.match(text, /tellen mee/, `${naam}: de zin over niet-gefactureerde uren ontbreekt`);
+    assert.match(text, /naar rato/, `${naam}: de zin over de starter zonder pro-rata ontbreekt`);
+
+    if (naam === "unknown") {
+      // [NO-SILENT-EMPTY] Geen getal en geen balk: een balk op nul zegt "je hebt niets gewerkt",
+      // en dat is niet wat er gebeurd is.
+      assert.doesNotMatch(text, /van de 1\.225 uur geregistreerd/, "een mislukte lezing toont toch een voortgang");
+    } else {
+      assert.match(text, /van de 1\.225 uur geregistreerd/, `${naam}: de voortgang ontbreekt`);
+    }
+  }
+});
+
+
 /** One recorded stretch of work, in the shape the screen receives it. */
 const uur = (over: Record<string, unknown> = {}) => ({
   id: "u1", client_id: "c1", worked_on: "2026-08-03", description: "Analyse",
