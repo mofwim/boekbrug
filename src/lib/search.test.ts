@@ -2,13 +2,7 @@
 // Covers the shared in-page filter matchers: accent-fold, decimal/thousands
 // amount matching (the "670,09" bug that broke past the comma), and the
 // PostgREST OR-fragment builder for server-backed amount search.
-import {
-  foldText,
-  isAmountQuery,
-  amountMatchesQuery,
-  rowMatchesQuery,
-  amountOrConditions,
-} from "./search";
+import { foldText, isAmountQuery, amountMatchesQuery, rowMatchesQuery, amountOrConditions, anyTruncated, NO_TRUNCATION, EMPTY_GROUP, flattenGroups } from "./search";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -111,5 +105,24 @@ check("unsigned default unchanged (no negative variants)",
 check("digits are injection-safe (only [\\d.] interpolated)",
   amountOrConditions("total_inc_btw", "6%7);drop--").every((c) => /^total_inc_btw::text\.ilike\.[\d.%]+$/.test(c)));
 
+// ─── [ZOEK-EERLIJK] ────────────────────────────────────────────────────────────────────────────
+// Every source takes the N most RECENT matches and ranks only those, so a match from two years ago
+// never reaches the ranking at all. Presenting the survivors as the whole answer is the one thing a
+// search may not do: an owner who searches a supplier they have used for years, sees eight
+// invoices, and concludes there are eight.
+
+console.log("\n— [ZOEK-EERLIJK] a search says when it is holding results back —");
+check("nothing held back reads as nothing held back", anyTruncated(NO_TRUNCATION) === false);
+check("an older response without the field claims nothing", anyTruncated(undefined) === false);
+for (const key of ["invoices", "documents", "clients", "bankTransactions", "cashEntries"] as const) {
+  // Any single group is enough — the notice is about the ANSWER, not about one list.
+  check(`${key} alone raises the notice`, anyTruncated({ ...NO_TRUNCATION, [key]: true }) === true);
+}
+// A group with no results is not a truncated group. Confusing the two would tell the owner to
+// refine a query that already matched nothing.
+check("the empty shape claims nothing was held back", anyTruncated(EMPTY_GROUP.truncated) === false);
+check("…and it really is empty", flattenGroups(EMPTY_GROUP).length === 0);
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+

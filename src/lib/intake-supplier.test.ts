@@ -1,0 +1,116 @@
+// src/lib/intake-supplier.test.ts
+// [LEVERANCIER-INTAKE] The order, the flags, and the promise never to throw.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { ibanChangeSafecore, mergeSafecore, resolveSupplierAtIntake } from "./intake-supplier";
+
+test("[LEVERANCIER-INTAKE] a clean check says nothing, so nothing lands on the invoice", () => {
+  assert.deepEqual(ibanChangeSafecore({ status: "ok", change: null }), {});
+});
+
+test("[LEVERANCIER-INTAKE] a changed account number lands with both numbers", () => {
+  const flags = ibanChangeSafecore({
+    status: "ok",
+    change: { from: "NL91ABNA0417164300", to: "NL02RABO0123456789" },
+  });
+  assert.equal(flags.iban_changed, true);
+  assert.equal(flags.iban_changed_from, "NL91ABNA0417164300");
+  assert.equal(flags.iban_changed_to, "NL02RABO0123456789");
+});
+
+test("[LEVERANCIER-INTAKE] a check that could not run says so — silence would read as clean", () => {
+  assert.deepEqual(ibanChangeSafecore({ status: "unavailable" }), { iban_check_unavailable: true });
+});
+
+test("[LEVERANCIER-INTAKE] merging keeps the flags an earlier step already set", () => {
+  const fc = { _safecore: { possible_duplicate: true, arithmetic_ok: false } };
+  const merged = mergeSafecore(fc, { iban_changed: true });
+  assert.equal(merged.possible_duplicate, true, "a duplicate flag decides whether a human looks");
+  assert.equal(merged.arithmetic_ok, false);
+  assert.equal(merged.iban_changed, true);
+});
+
+test("[LEVERANCIER-INTAKE] merging nothing returns what was already there, not an empty object", () => {
+  const fc = { _safecore: { possible_duplicate: true } };
+  assert.deepEqual(mergeSafecore(fc, {}), { possible_duplicate: true });
+  assert.deepEqual(mergeSafecore({}, {}), {});
+});
+
+// ── The order, proved by watching it ────────────────────────────────────────────
+//
+// The registry is asked for the IBAN AFTER the check has already read it. Reverse the two and a
+// forged number is compared against a row written from that same forged number, which always
+// agrees — the failure this test exists to make impossible.
+
+/**
+ * A stand-in registry that records WHICH of the two steps touched it.
+ *
+ * The two are told apart by what they ask for: the IBAN check selects the single column `iban`
+ * (knownIbanForVendor), while resolution selects the supplier's identity columns. Logging "a read
+ * happened" would not separate them — and a test that cannot separate them passes with the two
+ * steps in either order, which is the one thing this file must never allow.
+ */
+function fakeSupabase(log: string[]) {
+  const maak = () => {
+    let kolommen = "";
+    const q: Record<string, unknown> = {
+      select(cols: string) {
+        kolommen = cols;
+        return q;
+      },
+      eq: () => q,
+      is: () => q,
+      not: () => q,
+      limit: () => q,
+      order: () => q,
+      maybeSingle: async () => {
+        log.push(kolommen.trim() === "iban" ? "check" : "resolve");
+        return { data: null, error: null };
+      },
+      update() {
+        log.push("write");
+        return { eq: async () => ({ data: null, error: null }) };
+      },
+      insert() {
+        log.push("write");
+        return {
+          select: () => ({ single: async () => ({ data: { id: "sup-new", name: "Hano" }, error: null }) }),
+        };
+      },
+    };
+    return q;
+  };
+  return { from: () => maak() };
+}
+
+test("[LEVERANCIER-INTAKE] the account number is checked BEFORE the registry is touched", async () => {
+  const log: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await resolveSupplierAtIntake(fakeSupabase(log) as any, "user-1", {
+    name: "Hano Groothandel",
+    iban: "NL02RABO0123456789",
+  });
+  assert.ok(log.length > 0, "both steps must actually consult the registry, or this proves nothing");
+  assert.equal(log[0], "check",
+    "the IBAN check must be the FIRST thing to touch the registry. Resolution may create a row " +
+    "keyed on the very number under suspicion, and the check would then be answered by that row");
+  assert.ok(!log.slice(0, log.indexOf("check") + 1).includes("write"),
+    "nothing may be written before the check has run");
+});
+
+test("[LEVERANCIER-INTAKE] an unreachable registry costs a supplier, never the invoice", async () => {
+  const exploding = {
+    from() {
+      throw new Error("registry down");
+    },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out = await resolveSupplierAtIntake(exploding as any, "user-1", {
+    name: "Hano",
+    iban: "NL02RABO0123456789",
+  });
+  assert.equal(out.supplierId, null, "no supplier, and the import continues");
+  assert.equal(out.safecore.iban_check_unavailable, true,
+    "…but the failed IBAN check is said out loud, because that one is not enrichment");
+});

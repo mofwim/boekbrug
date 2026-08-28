@@ -38,6 +38,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 import { gateFairUseForRead } from "@/lib/fair-use-gate";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
+import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier";
 import { decideFromAi } from "@/lib/intake-router";
 import { sniffReadableMime } from "@/lib/detect-file";
 import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
@@ -202,17 +203,36 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const fieldConfidence = (v.field_confidence ?? {}) as Record<string, unknown>;
   fieldConfidence._tweede_kans = { at: new Date().toISOString(), was: doc.ai_doc_type };
 
+  // [LEVERANCIER-INTAKE] Een tweede lezing is een gewone binnenkomst: dezelfde twee stappen in
+  // dezelfde volgorde als op de andere paden — eerst kijken of we deze leverancier al onder een
+  // ánder rekeningnummer kennen, dan pas de registratie raadplegen. Zonder de eerste stap zou het
+  // oplossen een rij aanmaken op precies het nummer waar de vraag over ging.
+  //
+  // Dit pad liet supplier_id leeg terwijl het vendor_iban wél opschreef, en het is juist de weg
+  // die een overgeslagen bestand alsnog binnenhaalt — de factuur die het hardst een leverancier
+  // nodig heeft, kreeg er als enige geen.
+  const leverancier = await resolveSupplierAtIntake(pipeline, user.id, {
+    name: v.vendor,
+    iban: v.vendor_iban ?? null,
+    kvk: v.vendor_kvk ?? null,
+    btw: v.vendor_btw ?? null,
+  });
+  if (Object.keys(leverancier.safecore).length > 0) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, leverancier.safecore);
+  }
+
   const { data: invoice, error: insErr } = await pipeline
     .from("invoices")
     .insert({
       sender_id: null, receiver_id: user.id, direction: "incoming", status: "processing",
+      supplier_id: leverancier.supplierId,
       // [TWEEDE-KANS-BRON] "upload", not "reread". invoices.source is a CLOSED vocabulary
       // (created | email | upload | camera) and every other insert in the app writes one of those;
       // this route was the only place inventing a fifth value, so its INSERT was rejected and the
       // route answered 500 — on the only recovery path a skipped file has. The provenance is not
       // lost: the audit row two blocks down records action 'invoice.reread_from_document', which
       // says more precisely what happened than a source value ever did.
-      source: "upload", client_name: v.vendor || "Onbekende afzender",
+      source: "upload", client_name: leverancier.supplierName || v.vendor || "Onbekende afzender",
       invoice_date: invoiceDate,
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number?.trim() || null,
