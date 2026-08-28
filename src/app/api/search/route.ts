@@ -23,8 +23,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
-import { amountOrConditions, foldText } from "@/lib/search";
-import type { SearchResult, SearchResultGroup, SearchTarget } from "@/lib/search";
+import { amountOrConditions, foldText, NO_TRUNCATION } from "@/lib/search";
+import type { SearchResult, SearchResultGroup, SearchTarget, SearchTruncation } from "@/lib/search";
 
 // ─── [SEARCH] Term sanitation ────────────────────────────────────────────────
 // PostgREST .or() uses commas as separators and parentheses as grouping; % and _
@@ -165,7 +165,18 @@ export async function GET(req: NextRequest) {
     ? { invoices: 30, documents: 20, clients: 20, bank: 20, cash: 20 }
     : { invoices: 8, documents: 4, clients: 5, bank: 6, cash: 6 };
 
-  const EMPTY: SearchResultGroup = { invoices: [], documents: [], clients: [], bankTransactions: [], cashEntries: [] };
+  // [ZOEK-EERLIJK] Ask for ONE more row than we will ever show. If it comes back, the database had
+  // more to give and the screen has to say so — the cheapest possible way to turn "this is
+  // everything" into a fact instead of an assumption. It costs one row per source.
+  const PROBE = {
+    invoices: CAP.invoices + 1, documents: CAP.documents + 1, clients: CAP.clients + 1,
+    bank: CAP.bank + 1, cash: CAP.cash + 1,
+  };
+
+  const EMPTY: SearchResultGroup = {
+    invoices: [], documents: [], clients: [], bankTransactions: [], cashEntries: [],
+    truncated: NO_TRUNCATION,
+  };
 
   if (q.length < 2) return NextResponse.json(EMPTY);
 
@@ -189,7 +200,11 @@ export async function GET(req: NextRequest) {
             .from("invoice_lines")
             .select("invoice_id")
             .or(buildOr(["description"], terms))
-            .limit(30)
+            // [ZOEK-EERLIJK] Ordered, because this LIMIT decides which invoices can be found by
+          // their line text at all. Without an order Postgres returns an arbitrary 30, so the
+          // same query could surface a different set of invoices on two consecutive runs.
+          .order("id", { ascending: true })
+          .limit(30)
         )
       : null;
 
@@ -254,7 +269,7 @@ export async function GET(req: NextRequest) {
               .join(",")
           )
           .order("created_at", { ascending: false })
-          .limit(CAP.invoices)
+          .limit(PROBE.invoices)
       : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 2: documents — own, non-trashed
@@ -266,7 +281,7 @@ export async function GET(req: NextRequest) {
           .eq("trashed", false) // [T#3] don't surface soft-deleted files in global search
           .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
           .order("created_at", { ascending: false })
-          .limit(CAP.documents)
+          .limit(PROBE.documents)
       : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 3: clients — accountant: linked profiles; zzp'er: own clients registry
@@ -278,14 +293,16 @@ export async function GET(req: NextRequest) {
               .select("id, full_name, company_name, email, kvk_number, created_at")
               .in("id", senderIds.filter((id) => id !== user.id))
               .or(buildOr(["full_name", "company_name", "email", "kvk_number"], terms))
-              .limit(CAP.clients)
+              .order("full_name", { ascending: true })
+            .limit(PROBE.clients)
           : Promise.resolve({ data: [] as Hit[] })
         : supabase
             .from("clients")
             .select("id, name, email, kvk_number, city, created_at")
             .eq("user_id", user.id)
             .or(buildOr(["name", "email", "kvk_number", "city"], terms))
-            .limit(CAP.clients)
+            .order("name", { ascending: true })
+            .limit(PROBE.clients)
       : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 4: bank transactions — own rows. Amount is SIGNED (debit negative), so the
@@ -304,7 +321,7 @@ export async function GET(req: NextRequest) {
               .join(",")
           )
           .order("date", { ascending: false })
-          .limit(CAP.bank)
+          .limit(PROBE.bank)
       : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 5: cash entries (kasboek) — own rows. category is a key (omzet/kosten/…) so a
@@ -323,7 +340,7 @@ export async function GET(req: NextRequest) {
               .join(",")
           )
           .order("entry_date", { ascending: false })
-          .limit(CAP.cash)
+          .limit(PROBE.cash)
       : Promise.resolve({ data: [] as Hit[] }),
   ]);
 
@@ -367,7 +384,17 @@ export async function GET(req: NextRequest) {
     docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
   }
 
-  const invoices: SearchResult[] = dedup(
+  // [ZOEK-EERLIJK] Cap the group, and REMEMBER that it was capped.
+  //
+  // Measured after ranking and de-duplication, so it counts what the owner would actually have
+  // seen — not what the database happened to return. One row over the cap is enough to know.
+  const truncated: SearchTruncation = { ...NO_TRUNCATION };
+  const takeCapped = <T,>(rows: T[], limit: number, group: keyof SearchTruncation): T[] => {
+    if (rows.length > limit) truncated[group] = true;
+    return rows.slice(0, limit);
+  };
+
+  const invoices: SearchResult[] = takeCapped(dedup(
     rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
       .map((inv) => ({
         type: "invoice" as const,
@@ -392,9 +419,9 @@ export async function GET(req: NextRequest) {
           : `/dashboard/invoice/${inv.id}`,
         createdAt: inv.created_at ?? "",
       }))
-  ).slice(0, CAP.invoices);
+  ), CAP.invoices, "invoices");
 
-  const documents: SearchResult[] = dedup(
+  const documents: SearchResult[] = takeCapped(dedup(
     rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
       .map((doc) => ({
         type: "document" as const,
@@ -408,9 +435,9 @@ export async function GET(req: NextRequest) {
           : `/dashboard/bestanden?focus=${doc.id}`,
         createdAt: doc.created_at ?? "",
       }))
-  ).slice(0, CAP.documents);
+  ), CAP.documents, "documents");
 
-  const clients: SearchResult[] = dedup(
+  const clients: SearchResult[] = takeCapped(dedup(
     rankRows(clientRows, q, (row) =>
       role === "accountant"
         ? [row.full_name, row.company_name, row.email, row.kvk_number]
@@ -438,14 +465,14 @@ export async function GET(req: NextRequest) {
             createdAt: row.created_at ?? "",
           }
     )
-  ).slice(0, CAP.clients);
+  ), CAP.clients, "clients");
 
   // ── Bankmutaties ──────────────────────────────────────────────────────────────
   // Deep-link: seed the bank page's own zoekbalk (?find=) with the most identifying
   // token so the exact line surfaces there (it filters on counterpart/description/
   // IBAN/reference/amount). Fall back to the whole-euro amount when a line has no text.
   const bankRows: Hit[] = (bankRes.data ?? []) as unknown as Hit[];
-  const bankTransactions: SearchResult[] = dedup(
+  const bankTransactions: SearchResult[] = takeCapped(dedup(
     rankRows(bankRows, q, (r) => [r.counterpart_name, r.description, r.reference, r.counterpart_iban])
       .map((r) => {
         const term =
@@ -462,11 +489,11 @@ export async function GET(req: NextRequest) {
           createdAt: r.created_at ?? r.date ?? "",
         };
       })
-  ).slice(0, CAP.bank);
+  ), CAP.bank, "bankTransactions");
 
   // ── Kasboekingen ──────────────────────────────────────────────────────────────
   const cashRows: Hit[] = (cashRes.data ?? []) as unknown as Hit[];
-  const cashEntries: SearchResult[] = dedup(
+  const cashEntries: SearchResult[] = takeCapped(dedup(
     rankRows(cashRows, q, (r) => [r.description, r.category])
       .map((r) => {
         const term =
@@ -482,7 +509,7 @@ export async function GET(req: NextRequest) {
           createdAt: r.created_at ?? r.entry_date ?? "",
         };
       })
-  ).slice(0, CAP.cash);
+  ), CAP.cash, "cashEntries");
 
-  return NextResponse.json({ invoices, documents, clients, bankTransactions, cashEntries });
+  return NextResponse.json({ invoices, documents, clients, bankTransactions, cashEntries, truncated });
 }

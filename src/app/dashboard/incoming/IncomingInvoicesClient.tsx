@@ -3464,9 +3464,32 @@ export default function IncomingInvoicesClient({
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("focus");
     if (!id) return;
-    // Expand + ring on the next tick (never synchronously in the effect body —
-    // avoids a cascading re-render during the effects pass).
+    // [ZOEK-LANDT] Switch to the tab that HOLDS this invoice before trying to scroll to it.
+    //
+    // GEMELD: "ik zocht hem in de zoekbalk en hij opende hem niet, ook zijn plek niet." Precies
+    // dat: de zoekactie vindt een gearchiveerde factuur (het invoices-filter sluit geen enkele
+    // status uit) en linkt naar /incoming?focus=. Dit scherm opent altijd op `pending`, en een
+    // gearchiveerde rij staat in `ignored`. De kaart stond dus niet in de DOM,
+    // getElementById gaf null, landRowUnderChrome deed niets — en er gebeurde NIETS. Geen fout,
+    // geen melding, geen kaart.
+    //
+    // De zoekroute kent dit gat al: haar eigen commentaar zegt dat /incoming?focus= "opened the
+    // verify tab, which neither contains confirmed rows nor switches tabs". Dat werd opgelost voor
+    // BEVESTIGDE rijen, door die naar /incoming/manage te sturen. Voor gearchiveerde rijen geldt
+    // dezelfde zin nog woord voor woord — dit is de andere helft van die oplossing.
+    const inPending = pending.some((i) => i.id === id);
+    const inIgnored = ignoredInvoices.some((i) => i.id === id);
+    // Alles wat state raakt gaat door DEZE ene tick — nooit synchroon in de effect-body. Dat is de
+    // regel die hier al gold voor het uitklappen, en eslint dwingt hem af (cascading renders).
     const applyTimer = setTimeout(() => {
+      // [NO-SILENT-EMPTY] Op geen van beide lijsten: zeg dat. Stil niets doen is precies wat de
+      // eigenaar meemaakte — hij klikt een zoekresultaat, belandt op dit scherm, en er gebeurt
+      // niets. "Hij staat hier niet meer" is een antwoord; stilte is er geen.
+      if (!inPending && !inIgnored) {
+        toast(t('ink.zoek.nietHier'));
+        return;
+      }
+      if (!inPending && inIgnored) setTab("ignored");
       setFocusId(id);
       setExpandedId(id);
     }, 0);
