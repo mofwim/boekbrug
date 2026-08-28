@@ -1336,20 +1336,40 @@ async function sharedDocsForQuarter(
   // [NO-SILENT-EMPTY] Same rule as datelessVerifiedInvoices above. This read decides BOTH what goes
   // into the package and what the package warns about, so a dropped error shipped an accountant a
   // quarter with its shared documents missing and nothing saying they were ever expected.
-  const { data, error } = await supabase
-    .from("documents")
-    .select("file_url, file_name, doc_type, invoice_id, period")
-    .eq("user_id", ownerId)
-    .eq("shared", true)
-    .eq("trashed", false)
-    .is("invoice_id", null);
-  if (error) {
-    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", { ownerId, error: error.message });
-    return { paths: [], outsideCount: 0, checked: false };
-  }
-  const rows = (data ?? []) as Array<{
+  //
+  // [GEEN-STILLE-KAP] And the same is true of a read that is merely TRUNCATED, which is why this
+  // one pages. The query carries no date filter — it cannot: `outsideCount` exists precisely to
+  // count the shared documents that belong to ANOTHER quarter, so the full set has to be read. That
+  // makes it the one read here that grows without bound, and an owner who scans receipts daily
+  // passes a thousand shared documents inside a few years.
+  //
+  // Past that point PostgREST returns 1000 rows and NO error, so both halves of the safety net
+  // fail together and in the same direction: documents belonging to this quarter drop out of the
+  // accountant's ZIP, and `outsideCount` — the warning that exists to catch exactly that — is
+  // short by the same rows. fetchAllRows pages, and throws rather than shortening.
+  let rows: Array<{
     file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
   }>;
+  try {
+    rows = await fetchAllRows<{
+      file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
+    }>((from, to) =>
+      supabase
+        .from("documents")
+        .select("file_url, file_name, doc_type, invoice_id, period")
+        .eq("user_id", ownerId)
+        .eq("shared", true)
+        .eq("trashed", false)
+        .is("invoice_id", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", {
+      ownerId, error: e instanceof Error ? e.message : String(e),
+    });
+    return { paths: [], outsideCount: 0, checked: false };
+  }
   const paths: Array<{ path: string; name: string }> = [];
   let outsideCount = 0;
   for (const d of rows) {
@@ -2829,11 +2849,22 @@ export async function buildClosingPackageZip(args: {
   // "we did not look", which is not the same as "covered" and must never render as one.
   let coverage: ReturnType<typeof coverageOfPeriod> = { accounts: [], complete: false, checked: false };
   try {
-    const { data: periodRows } = await supabase
-      .from("bank_statement_periods")
-      .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
-      .eq("user_id", ownerId)
-      .order("period_start", { ascending: true });
+    // [GEEN-STILLE-KAP] Every statement period this owner ever had — no date filter, because
+    // continuity is a question about the WHOLE run of statements, not about one quarter. Paged for
+    // the same reason as the shared documents: a gap that only exists past row 1000 would read as
+    // "no gap", which is the answer that closes a quarter it should have stopped.
+    const periodRows = await fetchAllRows<{
+      document_id: string; iban: string | null; period_start: string | null; period_end: string | null;
+      opening_balance: number | null; closing_balance: number | null;
+    }>((from, to) =>
+      supabase
+        .from("bank_statement_periods")
+        .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+        .eq("user_id", ownerId)
+        .order("period_start", { ascending: true })
+        .order("document_id", { ascending: true })
+        .range(from, to),
+    );
     const periods: ContinuityStatementPeriod[] = ((periodRows ?? []) as unknown as Array<{
       document_id: string; iban: string | null; period_start: string | null; period_end: string | null;
       opening_balance: number | null; closing_balance: number | null;
