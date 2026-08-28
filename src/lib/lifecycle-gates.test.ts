@@ -17327,3 +17327,70 @@ test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked ra
       `${naam}: the screen no longer says why the rate is asked instead of computed`);
   }
 });
+
+
+test("[ZOEK-EERLIJK] search never truncates in silence, never limits arbitrarily, and always lands", () => {
+  // REPORTED: "I searched for it in the search bar and it did not open it, or open where it is."
+  //
+  // Three separate things, all of which make a search feel untrustworthy, and all of which are
+  // about the same failure: the screen presenting less than it knows without saying so.
+  const route = code("src/app/api/search/route.ts");
+  const scherm = code("src/app/dashboard/zoeken/ZoekenClient.tsx");
+  const inkomend = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const pure = code("src/lib/search.ts");
+
+  // ── 1. THE CAP IS A FACT, NOT A GUESS ──
+  //
+  // Every source takes the N most RECENT matches and only THEN ranks them by relevance, so a match
+  // from two years ago never reaches the ranking at all. Asking for ONE row past the cap turns
+  // "there is more" into something measured — it costs a single row per source.
+  assert.match(route, /const PROBE = \{/, "the probe row is gone — truncation is a guess again");
+  for (const g of ["invoices", "documents", "clients", "bank", "cash"]) {
+    assert.match(route, new RegExp(`${g}: CAP\\.${g} \\+ 1`), `${g}: no longer probes past its cap`);
+    assert.match(route, new RegExp(`\\.limit\\(PROBE\\.${g}\\)`), `${g}: queries the cap again, so it cannot see past it`);
+  }
+  // Measured AFTER ranking and de-duplication — what the owner would actually have seen.
+  assert.match(route, /if \(rows\.length > limit\) truncated\[group\] = true;/,
+    "the cap no longer records that it capped");
+  assert.match(route, /invoices, documents, clients, bankTransactions, cashEntries, truncated/,
+    "the answer no longer carries what it held back");
+
+  // And the screen SAYS it, above the list — a warning under a screen's worth of results is a
+  // warning nobody scrolls to.
+  assert.match(scherm, /t\('zoek\.afgekapt'\)/, "the screen went quiet about what it held back");
+  const noticeAt = scherm.indexOf("zoek.afgekapt");
+  const firstSection = scherm.indexOf("zoek.cat.facturen");
+  assert.ok(noticeAt > 0 && firstSection > 0 && noticeAt < firstSection,
+    "the notice sits below the results, where nobody scrolls to it");
+  // An empty group is not a truncated group: confusing the two would tell the owner to refine a
+  // query that already matched nothing.
+  assert.match(pure, /export function anyTruncated/, "the shared reading of 'was anything held back' is gone");
+
+  // ── 2. A LIMIT WITHOUT AN ORDER RETURNS AN ARBITRARY SUBSET ──
+  //
+  // Not a style point here: these LIMITs decide WHICH rows can be found at all, so an unordered
+  // one makes the same query answer differently on two consecutive runs.
+  const sources = [...route.matchAll(/\.from\(["']([a-z_]+)["']\)/g)];
+  const unordered: string[] = [];
+  for (const m of sources) {
+    let chain = route.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 1400);
+    const next = chain.indexOf(".from(");
+    if (next !== -1) chain = chain.slice(0, next);
+    if (/\.limit\(/.test(chain) && !/\.order\(/.test(chain)) unordered.push(m[1]);
+  }
+  assert.deepEqual(unordered, [], `these search reads limit without ordering, so the rows are arbitrary:\n  ${unordered.join("\n  ")}`);
+
+  // ── 3. A RESULT THAT LEADS NOWHERE ──
+  //
+  // Search returns archived invoices (its invoices query excludes no status) and links them to
+  // /incoming?focus=. That screen opens on `pending`; an archived row lives in `ignored`. The card
+  // was never in the DOM, so getElementById gave null and NOTHING happened — no error, no message.
+  // The search route's own comment describes this gap and it was fixed for CONFIRMED rows only.
+  assert.match(inkomend, /const inIgnored = ignoredInvoices\.some\(\(i\) => i\.id === id\);/,
+    "the landing no longer checks the ignored list");
+  assert.match(inkomend, /if \(!inPending && inIgnored\) setTab\("ignored"\);/,
+    "the landing no longer switches to the tab that holds the row");
+  // [NO-SILENT-EMPTY] And on neither list, it says so rather than doing nothing at all.
+  assert.match(inkomend, /if \(!inPending && !inIgnored\) \{[\s\S]{0,200}?t\('ink\.zoek\.nietHier'\)/,
+    "a focus id on neither list is silently ignored again — the exact symptom that was reported");
+});
