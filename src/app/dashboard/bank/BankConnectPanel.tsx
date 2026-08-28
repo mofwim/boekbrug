@@ -255,7 +255,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
             border: `1px solid ${M3.outline}`, cursor: 'pointer', fontFamily: FONT,
           }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>account_balance</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }} aria-hidden>account_balance</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: M3.onSurface }}>
               {t('bkc.koppelKop')}
@@ -264,7 +264,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
               {t('bkc.koppelSub')}
             </span>
           </span>
-          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.onSurfaceVariant }} aria-hidden>chevron_right</span>
         </button>
       )}
 
@@ -330,7 +330,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 22, color: dead ? '#B3261E' : M3.primary }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: dead ? '#B3261E' : M3.primary }} aria-hidden>
                 account_balance
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>

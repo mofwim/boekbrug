@@ -128,7 +128,7 @@ export default function FeedbackButton() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT,
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>flag</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>flag</span>
       </button>
     )
   }
@@ -210,7 +210,7 @@ export default function FeedbackButton() {
               color: '#0B57D0', border: '1px solid #dadce0', borderRadius: 999, padding: '6px 12px', cursor: 'pointer',
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>image</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>image</span>
             {imageName ? t('fb.andereAfbeelding') : t('fb.afbeeldingToevoegen')}
           </label>
           {imageName && (

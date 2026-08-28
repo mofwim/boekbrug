@@ -16739,3 +16739,63 @@ test("[HERIN-WAARHEID] the reminder panel reads the switch that decides whether 
     "herin.actief is rendered without the global switch being checked first",
   );
 });
+
+test("[ICOON-STIL] the icon font is decoration, and a screen reader is told so", () => {
+  // The app draws its icons with a ligature font: <span class="material-symbols-outlined">link_off</span>
+  // renders a picture and CONTAINS the word "link_off". Without aria-hidden a screen reader reads
+  // that word out loud, so every button announced itself as its own source code — "link_off,
+  // Ontkoppelen", "swap_horiz, Andere factuur", "add, Nieuwe factuur" — on 231 of 243 icons.
+  //
+  // The rule is one line and it holds for every icon, because there is no icon in this app whose
+  // ligature name is the thing to say: where the icon IS the button, the button carries the label.
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (!/\.tsx$/.test(p) || /\.test\.tsx$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      // The opening tag only, up to the first '>' that is not inside a brace or a quote. A style
+      // expression can hold a '>' (color: n > 0 ? …), so a naive scan splits the tag in the wrong
+      // place — which is exactly how the sweep that added these attributes broke two files.
+      for (const m of src.matchAll(/<span\b/g)) {
+        const from = m.index ?? 0;
+        let depth = 0, quote = "", end = -1;
+        for (let i = from + 5; i < src.length; i++) {
+          const c = src[i];
+          if (quote) { if (c === quote) quote = ""; continue; }
+          if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+          if (c === "{") depth++;
+          else if (c === "}") depth--;
+          else if (c === ">" && depth === 0) { end = i; break; }
+        }
+        if (end < 0) continue;
+        const tag = src.slice(from, end + 1);
+        if (!tag.includes("material-symbols-outlined")) continue;
+        if (tag.includes("aria-hidden")) continue;
+        offenders.push(`${p}:${src.slice(0, from).split("\n").length}`);
+      }
+    }
+  };
+  walk("src");
+  assert.deepEqual(
+    offenders, [],
+    `these icons will be read aloud by their ligature name:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[TOETSENBORD] the invoice row opens with a key, not only with a mouse", () => {
+  // The row of every money list in the app — the home, Mijn facturen, the purchase invoices — was
+  // a bare <div onClick>: no tabIndex, no role, no key handler. A keyboard or switch user could
+  // reach the reconciliation badge INSIDE it (that one handled Enter and Space correctly all
+  // along) and could not open the invoice under it.
+  const row = code("src/components/invoice/InvoiceRow.tsx");
+  assert.match(row, /role="button"/, "the row lost its role");
+  assert.match(row, /tabIndex=\{0\}/, "the row is not reachable by keyboard");
+  assert.match(row, /onKeyDown=/, "the row does not respond to a key");
+  // Enter on a button INSIDE the row must not also open the invoice: one keystroke, one action.
+  assert.match(
+    row, /e\.target !== e\.currentTarget/,
+    "a key on a nested control now falls through to the row as well",
+  );
+});

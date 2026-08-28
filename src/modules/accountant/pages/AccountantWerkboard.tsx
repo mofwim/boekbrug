@@ -116,7 +116,7 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
           title={t('bh.werk.vernieuwen')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>refresh</span>
           {t('bh.werk.vernieuwen')}
         </button>
       ),
@@ -292,11 +292,11 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
             <button onClick={() => setYear(y => Math.max(2000, y - 1))} title={t('bh.werk.jaar.vorig')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: '#1A73E8' }}>
-              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#202124', minWidth: 40, textAlign: 'center' }}>{year}</span>
             <button onClick={() => setYear(y => Math.min(y + 1, currentYear))} disabled={year >= currentYear} title={t('bh.werk.jaar.volgend')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= currentYear ? 'default' : 'pointer', color: year >= currentYear ? '#E0E0E0' : '#1A73E8', opacity: year >= currentYear ? 0.5 : 1 }}>
-              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_right</span>
             </button>
           </div>
         </div>

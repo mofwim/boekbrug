@@ -246,14 +246,14 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
             <button
               onClick={() => { setShowForm(p => !p); setError(null) }}
               style={{ background: M3.primaryContainer, color: M3.onPrimaryContainer, border: 'none', borderRadius: R.full, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person_add</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>person_add</span>
               {t('best.nieuw')}
             </button>
           </div>
 
           {/* Material You search bar */}
           <div style={{ position: 'relative' }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }}>search</span>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }} aria-hidden>search</span>
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               aria-label={t('kl.zoek.aria')}
@@ -266,7 +266,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                 onClick={() => setSearch('')}
                 aria-label={t('lijst.zoek.wissen')}
                 style={{ position: 'absolute', insetInlineEnd: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', borderRadius: R.full, padding: 4, cursor: 'pointer', color: '#5F6368', display: 'flex', alignItems: 'center', fontFamily: FONT }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>close</span>
               </button>
             )}
           </div>
@@ -311,7 +311,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
         {/* Client list */}
         {loading ? <SkeletonList /> : filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }}>people</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#C4C7C5', display: 'block', marginBottom: 12 }} aria-hidden>people</span>
             <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 4, fontFamily: FONT }}>
               {search ? t('kl.geenResultaten') : t('kl.leeg')}
             </p>
@@ -345,7 +345,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? t('kld.geenEmail')}</p>
                     </div>
-                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} aria-hidden>chevron_right</span>
                   </div>
 
                   {/* Inline expand */}
@@ -361,23 +361,23 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                         {/* [KLANTEN] Open the mini-CRM detail: history, notes, totals. */}
                         <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/klanten/${client.id}`) }}
                           style={{ fontSize: 13, color: M3.onSurface, background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>person</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>person</span>
                           {t('kl.bekijk')}
                         </button>
                         <button onClick={e => { e.stopPropagation(); handleDelete(client.id) }}
                           style={{ fontSize: 13, color: M3.error, background: M3.errorContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>delete</span>
                           {t('lijst.verwijderen')}
                         </button>
                         {/* [BOEK-029] Edit button */}
                         <button onClick={e => { e.stopPropagation(); handleEdit(client) }}
                           style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 14px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>edit</span>
                           {t('ink.bewerken')}
                         </button>
                         <button onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/new?client_id=${client.id}&client_name=${encodeURIComponent(client.name)}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>add</span>
                           {t('kl.factuur')}
                         </button>
                       </div>
@@ -409,7 +409,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>add</span>
         {t('lijst.nieuw')}
       </button>
       <style>{`

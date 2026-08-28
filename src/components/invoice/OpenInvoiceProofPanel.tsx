@@ -84,7 +84,7 @@ export default function OpenInvoiceProofPanel({
       <span
         className="material-symbols-outlined"
         style={{ fontSize: 18, flexShrink: 0, marginTop: 1, color: alarm ? '#7C5800' : M3.neutral }}
-      >
+        aria-hidden>
         {alarm ? 'price_check' : 'fact_check'}
       </span>
       <div style={{ minWidth: 0, flex: 1 }}>

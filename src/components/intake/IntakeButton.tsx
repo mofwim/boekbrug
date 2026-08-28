@@ -492,7 +492,7 @@ export default function IntakeButton({
           fontFamily: FONT, zIndex: 49,
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>
           {busy ? 'hourglass_empty' : 'add_a_photo'}
         </span>
         {t('int.bonFactuur')}
@@ -509,7 +509,7 @@ export default function IntakeButton({
           fontFamily: FONT, fontSize: 14, fontWeight: 600,
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
           {busy ? 'hourglass_empty' : 'add_a_photo'}
         </span>
         {t('ink.toevoegen')}
@@ -528,7 +528,7 @@ export default function IntakeButton({
         }}
       >
         <div style={{ width: 50, height: 50, borderRadius: R.md, background: M3.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 26 }}>
+          <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 26 }} aria-hidden>
             {busy ? 'hourglass_empty' : 'add_a_photo'}
           </span>
         </div>
@@ -542,7 +542,7 @@ export default function IntakeButton({
               : t('int.maakFotoUpload')}
           </p>
         </div>
-        <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+        <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }} aria-hidden>chevron_right</span>
       </button>
     )
 
@@ -609,7 +609,7 @@ export default function IntakeButton({
                   onClick={() => cameraRef.current?.click()}
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 28 }}>photo_camera</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 28 }} aria-hidden>photo_camera</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{t('int.fotoMaken')}</p>
                     <p style={{ fontSize: 13, opacity: 0.9 }}>{t('int.fotograferen')}</p>
@@ -620,7 +620,7 @@ export default function IntakeButton({
                   onClick={() => fileRef.current?.click()}
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: M3.primaryContainer, color: M3.onPrimaryContainer, borderRadius: R.lg, padding: '18px 16px', border: 'none', cursor: 'pointer', fontFamily: FONT, marginBottom: 12 }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 28 }}>upload_file</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 28 }} aria-hidden>upload_file</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{t('int.bestand')}</p>
                     <p style={{ fontSize: 13, opacity: 0.85 }}>{t('int.pdfBeeld')}</p>
@@ -632,7 +632,7 @@ export default function IntakeButton({
                   onClick={() => setMpMode(true)}
                   style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', background: '#fff', color: M3.onSurface, borderRadius: R.lg, padding: '16px', border: '1.5px solid #DADCE0', cursor: 'pointer', fontFamily: FONT }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }}>description</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 26, color: M3.primary }} aria-hidden>description</span>
                   <div style={{ flex: 1, textAlign: 'start' }}>
                     <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>{t('ink.meerderePaginas')}</p>
                     <p style={{ fontSize: 12.5, color: '#5F6368' }}>{t('int.paginasSamen')}</p>
@@ -707,7 +707,7 @@ export default function IntakeButton({
         >
           <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 24, padding: '28px 24px', width: '100%', maxWidth: 380, boxShadow: '0 12px 40px rgba(0,0,0,0.24)', fontFamily: FONT, textAlign: 'center' }}>
             <div style={{ width: 56, height: 56, borderRadius: R.full, background: '#FEE8C4', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#7C5800' }}>content_copy</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#7C5800' }} aria-hidden>content_copy</span>
             </div>
             <p style={{ fontSize: 18, fontWeight: 700, color: M3.onSurface, marginBottom: 8 }}>
               {/* [DUP-ARCHIVED] Genegeerd is een ándere situatie dan "bestaat al" — de kop zegt welke. */}
@@ -724,7 +724,7 @@ export default function IntakeButton({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: restoring ? 'default' : 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10, opacity: restoring ? 0.6 : 1 }}
               >
                 {restoring ? t('act.bezig') : t('int.terugzettenGenegeerd')}
-                {!restoring && <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>undo</span>}
+                {!restoring && <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }} aria-hidden>undo</span>}
               </button>
             )}
 
@@ -734,7 +734,7 @@ export default function IntakeButton({
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', background: M3.primary, color: '#fff', borderRadius: R.full, padding: '14px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 15, fontWeight: 600, marginBottom: 10 }}
               >
                 {t('int.bestaande')}
-                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }}>arrow_forward</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }} aria-hidden>arrow_forward</span>
               </button>
             )}
             {/* [INTAKE-FORCE] A semantic match can be a false positive (two distinct

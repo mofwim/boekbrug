@@ -1595,7 +1595,7 @@ export default function BankClient() {
             padding: '12px 14px', marginBottom: 16,
           }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#B06000' }}>label_important</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 22, color: '#B06000' }} aria-hidden>label_important</span>
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
               {uncatCount === 1 ? t('bank.uncatEen') : t('bank.uncat', { count: uncatCount })}
@@ -1622,7 +1622,7 @@ export default function BankClient() {
           opacity: busy ? 0.7 : 1, transition: 'all 0.15s',
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 32, color: M3.primary }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 32, color: M3.primary }} aria-hidden>
           {busy ? 'hourglass_empty' : 'upload_file'}
         </span>
         <span style={{ fontSize: 14.5, fontWeight: 600, color: M3.onPrimaryContainer }}>
@@ -1705,7 +1705,7 @@ export default function BankClient() {
                   fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: rematching ? 0.6 : 1,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>
                   {rematching ? 'hourglass_empty' : 'restart_alt'}
                 </span>
                 {rematching ? t('bank.bezig') : t('bank.opnieuwMatchen')}
@@ -1719,7 +1719,7 @@ export default function BankClient() {
                   fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, opacity: refreshingNames ? 0.6 : 1,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>
                   {refreshingNames ? 'hourglass_empty' : 'refresh'}
                 </span>
                 {refreshingNames ? t('bank.bezig') : t('bank.namenBijwerken')}
@@ -1748,7 +1748,7 @@ export default function BankClient() {
           {statements.map((st) => (
             <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f8f9fa' }}>
               <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }}>description</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#9aa0a6', flexShrink: 0 }} aria-hidden>description</span>
                 <span style={{ fontSize: 13, color: '#3c4043', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {st.name}
                 </span>
@@ -1771,7 +1771,7 @@ export default function BankClient() {
                     opacity: deletingStatementId === st.id ? 0.5 : 1,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                     {deletingStatementId === st.id ? 'hourglass_empty' : 'delete'}
                   </span>
                 </button>
@@ -1788,7 +1788,7 @@ export default function BankClient() {
       {safeAutoCount > 0 && (
         <div style={{ marginTop: 18, borderRadius: R.lg, background: M3.primaryContainer, padding: '16px 18px', boxShadow: EL1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>bolt</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }} aria-hidden>bolt</span>
             <div style={{ fontSize: 15, fontWeight: 700, color: M3.onPrimaryContainer }}>
               {autoRunning
                 ? (safeAutoCount === 1 ? t('bank.auto.bezigEen') : t('bank.auto.bezig', { count: safeAutoCount }))
@@ -1810,7 +1810,7 @@ export default function BankClient() {
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>{autoRunning ? 'hourglass_empty' : 'auto_awesome'}</span>
             {autoRunning ? t('bank.bezig') : t('bank.nuAfhandelen')}
           </button>
         </div>
@@ -1837,7 +1837,7 @@ export default function BankClient() {
             fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
             color: autoDoneCount > 0 ? M3.success : '#3c4043',
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
               {autoDoneCount > 0 ? 'task_alt' : 'info'}
             </span>
             {autoDoneCount === 0
@@ -1899,7 +1899,7 @@ export default function BankClient() {
                     color: active ? M3.onPrimaryContainer : '#5F6368',
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{t.icon}</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>{t.icon}</span>
                   {t.label}
                   <span style={{
                     fontSize: 11, fontWeight: 700, padding: '0px 6px', borderRadius: R.full, fontFamily: FONT_NUM,
@@ -1918,7 +1918,7 @@ export default function BankClient() {
           {bankTab === 'none' && missingPurchaseDebits.length > 0 && (
             <div style={{ marginTop: 12, borderRadius: R.lg, background: '#FFF3E0', padding: '14px 16px', boxShadow: EL1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B26A00' }}>receipt_long</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 20, color: '#B26A00' }} aria-hidden>receipt_long</span>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#7A4B00' }}>
                   {missingPurchaseDebits.length === 1 ? t('bank.zonderInkoopEen') : t('bank.zonderInkoop', { count: missingPurchaseDebits.length })}
                 </div>
@@ -1935,7 +1935,7 @@ export default function BankClient() {
                   textDecoration: 'none',
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 17 }}>add</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 17 }} aria-hidden>add</span>
                 {t('bank.toevoegenOfOphalen')}
               </Link>
             </div>
@@ -1961,7 +1961,7 @@ export default function BankClient() {
                 fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>label</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>label</span>
               {t('bank.categorie')} →
             </Link>
           )}
@@ -1972,7 +1972,7 @@ export default function BankClient() {
               <span
                 className="material-symbols-outlined"
                 style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 19, color: '#70757a', pointerEvents: 'none' }}
-              >
+                aria-hidden>
                 search
               </span>
               <input
@@ -1998,7 +1998,7 @@ export default function BankClient() {
                     display: 'flex', alignItems: 'center', padding: 4,
                   }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>close</span>
                 </button>
               )}
             </div>
@@ -2222,7 +2222,7 @@ export default function BankClient() {
               disabled={addingMissing}
               style={{ width: '100%', padding: '13px', borderRadius: 14, background: '#fff', color: M3.primary, border: `1.5px solid ${M3.primary}`, fontWeight: 700, fontSize: 15, cursor: addingMissing ? 'default' : 'pointer', marginBottom: 8, fontFamily: FONT, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 18 }}>upload_file</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>upload_file</span>
               {addingMissing
                 ? t('bank.inlezen')
                 : splitCtx.missingNumbers.length === 1 ? t('bank.voegFactuurToe') : t('bank.voegFacturenToe')}
@@ -2266,7 +2266,7 @@ export default function BankClient() {
         >
           <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.error }}>warning</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.error }} aria-hidden>warning</span>
               <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{t('bank.afschrift.verwijderenVraag')}</h3>
             </div>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 6px' }}>
@@ -2301,8 +2301,8 @@ export default function BankClient() {
                 }}
               >
                 {deletingStatementId
-                  ? <span className="material-symbols-outlined" style={{ fontSize: 18 }}>hourglass_empty</span>
-                  : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>delete</span> {t('lijst.verwijderen')}</>}
+                  ? <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>hourglass_empty</span>
+                  : <><span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>delete</span> {t('lijst.verwijderen')}</>}
               </button>
             </div>
           </div>
@@ -2319,7 +2319,7 @@ export default function BankClient() {
         >
           <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 420, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }}>info</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: M3.primary }} aria-hidden>info</span>
               <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{t('bank.fout.nietUitgelezen')}</h3>
             </div>
             <p style={{ fontSize: 13, color: '#5F6368', lineHeight: 1.5, margin: '0 0 4px', wordBreak: 'break-word' }}>
@@ -2356,7 +2356,7 @@ function Empty({ done }: { done: boolean }) {
   const t = translator(useLocale())
   return (
     <div style={{ marginTop: 28, textAlign: 'center', color: '#9aa0a6' }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 40 }}>{done ? 'done_all' : 'inbox'}</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 40 }} aria-hidden>{done ? 'done_all' : 'inbox'}</span>
       <p style={{ fontSize: 13.5, marginTop: 6 }}>{done ? t('bank.leeg.klaar') : t('bank.leeg.geen')}</p>
     </div>
   )
@@ -2583,7 +2583,7 @@ function TxCard({
             disabled={processing}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px' }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link_off</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>link_off</span>
             {processing ? t('bank.bezig') : t('bank.ontkoppelen')}
           </button>
           {/* [MOVE-PAYMENT] The other answer, and a different question from Ontkoppelen. That one
@@ -2596,7 +2596,7 @@ function TxCard({
               disabled={processing}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: '#70757a', padding: '2px 4px', marginInlineStart: 6 }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>swap_horiz</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>swap_horiz</span>
               {t('bank.andereFactuur')}
             </button>
           )}
@@ -2611,7 +2611,7 @@ function TxCard({
           display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10,
           background: '#FEF7E0', border: '1px solid #FBBC04', borderRadius: R.sm, padding: '8px 10px',
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000', flexShrink: 0 }}>rule</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B06000', flexShrink: 0 }} aria-hidden>rule</span>
           <div style={{ minWidth: 0, flex: 1 }}>
             <span style={{ fontSize: 12, color: '#7A4F00', lineHeight: 1.4 }}>
               {t('bank.automatischOp')} <strong>{t('bank.bedragNaam')}</strong> {t('bank.automatischOpRest')}
@@ -2635,7 +2635,7 @@ function TxCard({
                   cursor: processing ? 'default' : 'pointer', opacity: processing ? 0.6 : 1,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>check</span>
                 {t('bank.kloptGecontroleerd')}
               </button>
             )}
@@ -2673,7 +2673,7 @@ function TxCard({
                 borderRadius: R.full, background: M3.surfaceVariant, color: '#3c4043',
                 fontSize: 11.5, fontWeight: 600, fontFamily: FONT_NUM,
               }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 13 }}>receipt_long</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>receipt_long</span>
                 {refLabel}
               </span>
             )}
@@ -2688,7 +2688,7 @@ function TxCard({
                   borderRadius: R.full, background: '#E8F0FE', color: '#1967D2',
                   fontSize: 11.5, fontWeight: 600, fontFamily: FONT,
                 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>event</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 13 }} aria-hidden>event</span>
                   {period.label}
                 </span>
               ) : null
@@ -2703,7 +2703,7 @@ function TxCard({
                 }}
               >
                 {t('bank.details')}
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>
                   {showDetails ? 'expand_less' : 'expand_more'}
                 </span>
               </button>
@@ -2747,7 +2747,7 @@ function TxCard({
           fontSize: 12, color: '#1F4E8C', lineHeight: 1.5, fontFamily: FONT, border: '1px solid #D6E4FA',
           display: 'flex', alignItems: 'flex-start', gap: 8,
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#1A73E8', flexShrink: 0, marginTop: 1 }}>history</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#1A73E8', flexShrink: 0, marginTop: 1 }} aria-hidden>history</span>
           <span>
             {s.history.topCount === s.history.count
               ? (s.history.count === 1
@@ -2774,7 +2774,7 @@ function TxCard({
           padding: '10px 12px', borderRadius: R.md,
           background: M3.warningContainer, color: '#7C5800', fontSize: 12.5, lineHeight: 1.45,
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>info</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>info</span>
           <span>{missingInvoiceNoticeText(missingNamed)}</span>
         </div>
       )}
@@ -2790,7 +2790,7 @@ function TxCard({
               color: '#5F6368', fontSize: 12.5, fontWeight: 600, marginBottom: 10,
               border: '1px solid #EEE',
             }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>info</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>info</span>
               {t('bank.fout.geenNummers')}
             </div>
           ) : (
@@ -2804,7 +2804,7 @@ function TxCard({
             color: openCount === 0 ? M3.success : M3.onPrimaryContainer,
             fontSize: 12.5, fontWeight: 600, marginBottom: 10,
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
               {openCount === 0 ? 'task_alt' : 'receipt_long'}
             </span>
             {t('bank.slotsBevestigd', { done: slots.length - openCount, total: slots.length })}
@@ -2833,7 +2833,7 @@ function TxCard({
               background: M3.primaryContainer, fontSize: 12.5, lineHeight: 1.5, color: M3.onPrimaryContainer,
             }}>
               <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>calculate</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>calculate</span>
                 {(s.sumMatch.amounts ?? []).some(a => a < 0)
                   ? t('bank.som.kopVerrekend')
                   : t('bank.som.kop', { count: s.sumMatch.invoiceIds.length })}
@@ -2859,7 +2859,7 @@ function TxCard({
                   display: 'inline-flex', alignItems: 'center', gap: 6,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{processing ? 'hourglass_empty' : 'link'}</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>{processing ? 'hourglass_empty' : 'link'}</span>
                 {processing ? t('bank.bezig') : t('bank.som.koppel', { count: s.sumMatch.invoiceIds.length })}
               </button>
             </div>
@@ -2877,7 +2877,7 @@ function TxCard({
               background: batch.status === 'ties' ? M3.successContainer : batch.status === 'mismatch' ? '#FEEFC3' : M3.surfaceVariant,
               color: batch.status === 'ties' ? M3.success : batch.status === 'mismatch' ? '#7A4F00' : '#3c4043',
             }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>
                 {batch.status === 'ties' ? 'verified' : batch.status === 'mismatch' ? 'error' : 'info'}
               </span>
               <span>
@@ -2912,7 +2912,7 @@ function TxCard({
                     display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0 }} aria-hidden>
                       {sl.isConfirmed ? 'check_circle' : sl.cand ? 'pending' : 'upload_file'}
                     </span>
                     {sl.refNum}
@@ -2935,7 +2935,7 @@ function TxCard({
                           fontSize: 12, fontWeight: 600, color: M3.primary, padding: 0,
                         }}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>description</span>
                         {t('bank.bekijkFactuur')}
                       </button>
                     </span>
@@ -2959,7 +2959,7 @@ function TxCard({
                       background: '#fff', color: '#9AA0A6', cursor: 'pointer', padding: 0,
                     }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>close</span>
                   </button>
                 )}
 
@@ -2979,7 +2979,7 @@ function TxCard({
                       cursor: processing ? 'default' : 'pointer', opacity: processing ? 0.6 : 1,
                     }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                       {processing ? 'hourglass_empty' : 'check'}
                     </span>
                     {t('bank.bevestig')}
@@ -3007,7 +3007,7 @@ function TxCard({
                         if (files.length) onAttach(files)
                       }}
                     />
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
                       {processing ? 'hourglass_empty' : 'attach_file'}
                     </span>
                     {t('bank.koppelen')}
@@ -3032,7 +3032,7 @@ function TxCard({
               fontFamily: FONT,
             }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>visibility_off</span>
             {t('bank.negeren')}
           </button>
           {askReason && (
@@ -3084,7 +3084,7 @@ function TxCard({
             /* [BANK-IGNORE] Genegeerd tab — show a restore action, nothing else. */
             <>
               <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>visibility_off</span>
                 {t('bank.genegeerdWeg')}
               </div>
               {/* [BANK-IGNORE-REDEN] Waarom deze regel hier staat. Neutraal grijs: dit is een
@@ -3112,7 +3112,7 @@ function TxCard({
                   fontFamily: FONT, opacity: processing ? 0.6 : 1,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                   {processing ? 'hourglass_empty' : 'undo'}
                 </span>
                 {processing ? t('bank.bezig') : t('bank.terugzetten')}
@@ -3125,7 +3125,7 @@ function TxCard({
                    answer that stops the owner from uploading it a second time. */
                 <div style={{ borderRadius: 10, background: '#E8F0FE', padding: '10px 12px' }}>
                   <div style={{ fontSize: 12.5, color: '#174EA6', display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.5 }}>
-                    <span className="material-symbols-outlined" style={{ fontSize: 16 }}>inventory</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>inventory</span>
                     {s.explainedByQueued.invoiceNumber
                       ? t('bank.inWachtrij', { number: s.explainedByQueued.invoiceNumber })
                       : t('bank.inWachtrijZonderNummer')}
@@ -3134,13 +3134,13 @@ function TxCard({
                     href={`/dashboard/incoming?focus=${encodeURIComponent(s.explainedByQueued.invoiceId)}`}
                     style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 17 }}>task_alt</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 17 }} aria-hidden>task_alt</span>
                     {t('bank.verifieerEerst')}
                   </Link>
                 </div>
               ) : (
                 <div style={{ fontSize: 12.5, color: '#70757a', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>help</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>help</span>
                   {t('bank.fout.geenFactuur')}
                 </div>
               )}
@@ -3169,7 +3169,7 @@ function TxCard({
                     if (files.length) onAttach(files)
                   }}
                 />
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                   {processing ? 'hourglass_empty' : 'attach_file'}
                 </span>
                 {processing
@@ -3198,7 +3198,7 @@ function TxCard({
                   fontSize: 13.5, fontWeight: 600, color: M3.primary, fontFamily: FONT, boxSizing: 'border-box',
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>call_split</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>call_split</span>
                 {t('bank.verdelen')}
               </a>
 
@@ -3214,7 +3214,7 @@ function TxCard({
                   fontFamily: FONT,
                 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>visibility_off</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>visibility_off</span>
                 {t('bank.negeren')}
               </button>
             {askReason && (
@@ -3324,7 +3324,7 @@ function TxCard({
             color: neutral ? M3.onPrimaryContainer : '#7A4F00',
             fontSize: 12.5, fontWeight: 500, lineHeight: 1.45, display: 'flex', gap: 6, alignItems: 'flex-start',
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>
               {neutral ? 'info' : 'warning'}
             </span>
             <span>
@@ -3357,8 +3357,8 @@ function TxCard({
           }}
         >
           {processing
-            ? <span className="material-symbols-outlined" style={{ fontSize: 18 }}>hourglass_empty</span>
-            : <><span className="material-symbols-outlined" style={{ fontSize: 18 }}>check</span> {t('bank.bevestigBetaling')}</>}
+            ? <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>hourglass_empty</span>
+            : <><span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>check</span> {t('bank.bevestigBetaling')}</>}
         </button>
       )}
     </div>
@@ -3399,7 +3399,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
     <div style={{ marginTop: emphasis ? 12 : 0, padding: emphasis ? '10px 12px' : 0, borderRadius: R.md, background: emphasis ? M3.successContainer : 'transparent' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: emphasis ? M3.success : M3.onSurface, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginInlineEnd: 4 }}>task_alt</span>}
+          {emphasis && <span className="material-symbols-outlined" style={{ fontSize: 15, verticalAlign: 'middle', marginInlineEnd: 4 }} aria-hidden>task_alt</span>}
           {t('bank.factuurNummer', { number: cand.invoiceNumber ?? '—' })}
           {/* [CIRKEL] The supplier, right beside the number — the fact a person actually
               recognizes when choosing between same-looking candidates. */}
@@ -3413,7 +3413,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
             color: amountMatches ? M3.success : M3.onSurface,
             display: 'inline-flex', alignItems: 'center', gap: 3,
           }}>
-            {amountMatches && <span className="material-symbols-outlined" style={{ fontSize: 14 }}>check</span>}
+            {amountMatches && <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>check</span>}
             {eur.format(Math.abs(cand.amount))}
           </span>
         )}
@@ -3436,7 +3436,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>description</span>
               {t('bank.bekijkFactuur')}
             </button>
           )}
@@ -3454,7 +3454,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>edit</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>edit</span>
               {t('bank.gegevensCorrigeren')}
             </button>
           )}
@@ -3489,7 +3489,7 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
                 fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
               }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>description</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>description</span>
               {t('bank.bekijkFactuur')}
             </button>
           )}

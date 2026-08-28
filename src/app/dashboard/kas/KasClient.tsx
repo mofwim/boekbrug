@@ -1146,7 +1146,7 @@ function DrawerDipNotice({ tone, heading, period, explanation, reasons, closing,
       border: `1px solid ${blocking ? M3.error : '#FBBC04'}`, borderRadius: 14, padding: '14px 16px',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent }} aria-hidden>
           {blocking ? 'error' : 'warning'}
         </span>
         <div style={{ fontSize: 14.5, fontWeight: 700, color: accent }}>{heading}</div>

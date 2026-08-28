@@ -291,12 +291,12 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
             border: 'none', background: 'linear-gradient(135deg, #1A73E8, #1557B0)', boxShadow: EL1,
           }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }}>checklist</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 30, color: '#fff' }} aria-hidden>checklist</span>
           <span style={{ flex: 1 }}>
             <span style={{ display: 'block', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: -0.2 }}>{t('bh.home.aangifte.titel')}</span>
             <span style={{ display: 'block', fontSize: 12.5, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>{t('bh.home.aangifte.uitleg')}</span>
           </span>
-          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 22, color: 'rgba(255,255,255,0.9)' }} aria-hidden>chevron_right</span>
         </button>
 
         {/* ── [WERKVOORRAAD] Wat er op JOU ligt ──────────────────────────────
@@ -482,7 +482,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                No action offered: there is nothing to fix here, and inviting a client would be a
                second wrong answer on top of the first. */
             <div style={{ padding: '28px 16px', textAlign: 'center' }}>
-              <span className="material-symbols-outlined" style={{ color: '#B3261E', fontSize: 24 }}>error_outline</span>
+              <span className="material-symbols-outlined" style={{ color: '#B3261E', fontSize: 24 }} aria-hidden>error_outline</span>
               <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '8px 0 4px' }}>
                 {t('bh.home.klanten.onleesbaar.titel')}
               </p>
@@ -505,7 +505,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 width: 44, height: 44, borderRadius: '50%', backgroundColor: '#E8F0FE',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <span className="material-symbols-outlined" style={{ color: '#1A73E8', fontSize: 24 }}>person_add</span>
+                <span className="material-symbols-outlined" style={{ color: '#1A73E8', fontSize: 24 }} aria-hidden>person_add</span>
               </span>
               <span style={{ fontSize: 14, fontWeight: 600, color: '#202124' }}>{t('bh.home.klanten.eerste.titel')}</span>
               <span style={{ fontSize: 12.5, color: '#5F6368' }}>{t('bh.home.klanten.eerste.uitleg')}</span>
@@ -732,7 +732,7 @@ function ToolTile({ icon, tint, label, onClick }: {
         width: 46, height: 46, borderRadius: R.md,
         background: tint, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }}>{icon}</span>
+        <span className="material-symbols-outlined" style={{ color: '#fff', fontSize: 24 }} aria-hidden>{icon}</span>
       </div>
       <span style={{ fontSize: 12.5, fontWeight: 600, color: '#202124', textAlign: 'center' }}>{label}</span>
     </button>
