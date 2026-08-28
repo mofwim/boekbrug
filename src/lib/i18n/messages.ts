@@ -11950,6 +11950,20 @@ export const MESSAGES = {
   // [URENCRITERIUM] Het urencriterium terwijl er nog iets aan te doen is. Elke stand heeft een
   // EIGEN zin: "Een {woord} haal je niet" werkt in het Nederlands en breekt Arabische congruentie
   // en Turkse klinkerharmonie. Getallen zijn wél parameters — die verbuigen niet.
+  // [ZOEK-EERLIJK] Elke bron neemt de N NIEUWSTE treffers en rangschikt pas daarna op relevantie.
+  // Een match van twee jaar terug haalt de rangschikking dus niet eens, en het scherm presenteerde
+  // de overlevenden als "alles". Dat is het enige wat een zoekfunctie niet mag doen: wie een
+  // leverancier zoekt die hij jaren gebruikt en acht facturen ziet, concludeert dat het er acht zijn.
+  'ink.zoek.nietHier': {
+    nl: 'Deze factuur staat niet meer op dit scherm — hij is waarschijnlijk al bevestigd. Kijk bij Bevestigde inkoopfacturen.',
+    en: 'This invoice is no longer on this screen — it has probably been confirmed already. Look under confirmed purchase invoices.',
+    ar: 'لم تعد هذه الفاتورة على هذه الشاشة — على الأرجح جرى تأكيدها. راجع فواتير الشراء المؤكَّدة.',
+  },
+  'zoek.afgekapt': {
+    nl: 'Er zijn meer resultaten dan hier passen. Zoek specifieker — met een factuurnummer, een bedrag of een deel van de naam.',
+    en: 'There are more results than fit here. Search more specifically — an invoice number, an amount, or part of the name.',
+    ar: 'النتائج أكثر ممّا يتّسع هنا. ابحث بصورة أدقّ — برقم فاتورة أو مبلغ أو جزء من الاسم.',
+  },
   'uren.criterium.titel': { nl: 'Urencriterium', en: 'Hour criterion', ar: 'معيار الساعات' },
   'uren.criterium.voortgang': {
     nl: '{uren} van de 1.225 uur geregistreerd in {jaar}',

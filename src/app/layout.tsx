@@ -29,6 +29,26 @@ const notoArabic = Noto_Sans_Arabic({
   subsets: ["arabic"],
   weight: ["400", "500", "700"],
   display: "swap",
+  // [FONT-PRIORITEIT] Geen preload voor dit bestand. Het weegt 162 kB en wordt op een
+  // Nederlandse pagina nooit gebruikt om iets te tekenen.
+  //
+  // WAT ER GEMETEN IS, EN WAT NIET. De variabele hangt aan <html> in de root-layout zodat /ar/*
+  // hem kan gebruiken; daardoor zette next/font er een <link rel="preload" as="font"> bij op élke
+  // pagina. Chromium bevestigt dat die bytes nergens heen gaan: `document.fonts` kent alleen
+  // Roboto 400/500/700 als geladen, geen enkel element lost op naar Noto Sans Arabic, en
+  // CSS.getPlatformFontsForNode ziet het lettertype niet in de beschildering van <body>.
+  //
+  // Zonder de preload is de link weg (geverifieerd: nul `as="font"` in de HTML). Het bestand
+  // wordt daarna nog steeds opgehaald — die tweede oorzaak is niet gevonden en dit lost hem niet
+  // op. Wat dit wél verandert is de PRIORITEIT: een preload vecht op High om bandbreedte tijdens
+  // precies het venster waarin de CSS en de eerste JS binnen moeten komen. Dat is de winst, en
+  // het is een kleinere winst dan 162 kB — wie hier later komt moet niet denken dat het gewicht
+  // verdwenen is.
+  //
+  // Voor de Arabische bladzijden verandert er niets: de @font-face blijft in de stylesheet, ze
+  // halen hun acht fontbestanden nog gewoon op, en display:"swap" laat de lezer ondertussen in
+  // de fallback lezen in plaats van naar niets te kijken.
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -47,14 +67,18 @@ export const metadata: Metadata = {
     // [ANDROID/iOS] Home-screen icon when BoekBrug is added to the home screen.
     apple: "/icons/apple-touch-icon.png",
   },
-  // [SEO] Twitter/X card — makes shared links render a large image card on
-  // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
+  // [DEEL-KAART] Het kaartformaat voor X. Alleen dit, en het staat er om één reden.
+  //
+  // WAT HIER NIET WERKT, EN DAT IS GEMETEN. Next leidt twitter:title, twitter:description en
+  // twitter:image af uit de ROOT-metadata, niet uit die van de pagina. Deze regels helemaal
+  // weglaten verandert daar niets aan: met een schone build zonder `twitter`-blok stond er nog
+  // steeds "BoekBrug — Financieel Command Center" met de generieke afbeelding boven een gedeelde
+  // /btw-berekenen. X valt dus NIET terug op og: zolang Next zelf twitter-tags blijft schrijven.
+  //
+  // Daarom zet elke pagina die een eigen deelkaart verdient haar `twitter` zelf — zie de acht
+  // toolpagina's. Wie hier een titel terugzet, overschrijft ze allemaal weer.
   twitter: {
     card: "summary_large_image",
-    title: "BoekBrug — Financieel Command Center",
-    description:
-      "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
-    images: ["/opengraph-image"],
   },
 };
 
