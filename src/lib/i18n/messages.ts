@@ -1461,6 +1461,24 @@ export const MESSAGES = {
     ar: 'هذه الفاتورة تتبع جدول التذكيرات الخاص بك (انظر الإعدادات).',
     en: 'This invoice follows your reminder schedule (see Settings).',
   },
+  // [HERIN-WAARHEID] De stand die dit paneel nooit kende. `herin.actief` hierboven werd getoond
+  // ongeacht profiles.reminders_enabled, en die schakelaar staat standaard uit — dus de zin
+  // "volgt je herinneringsschema" was voor vrijwel iedereen onwaar. Deze zegt wat er werkelijk
+  // gebeurt (namelijk niets) en noemt in dezelfde adem de knop die het aanzet, zoals hij in de
+  // navigatie geschreven staat.
+  'herin.uit': {
+    nl: 'Automatische herinneringen staan uit — deze factuur wordt niet vanzelf opgevolgd.',
+    ar: 'التذكيرات التلقائية متوقفة — لن تتم متابعة هذه الفاتورة تلقائياً.',
+    en: 'Automatic reminders are off — this invoice will not be chased on its own.',
+  },
+  'herin.aanzetten': { nl: 'Aanzetten bij Instellingen', ar: 'تفعيلها من الإعدادات', en: 'Turn on in Settings' },
+  // [NO-SILENT-EMPTY] Een mislukte lezing mag hier nooit lezen als "staat aan". Dat is precies de
+  // bewering die dit paneel jarenlang verkeerd deed.
+  'herin.onbekend': {
+    nl: 'We konden niet nakijken of automatische herinneringen aanstaan.',
+    ar: 'لم نتمكّن من التحقّق ممّا إذا كانت التذكيرات التلقائية مفعّلة.',
+    en: 'We could not check whether automatic reminders are on.',
+  },
   'herin.hervatten': { nl: 'Hervatten', ar: 'استئناف', en: 'Resume' },
   'herin.pauzeren': { nl: 'Pauzeren', ar: 'إيقاف مؤقت', en: 'Pause' },
   'herin.verstuurd': { nl: 'Verstuurd', ar: 'التذكيرات المُرسَلة', en: 'Sent' },

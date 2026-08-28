@@ -4496,9 +4496,13 @@ test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it
     /\.select\('company_name, full_name, email'\)/,
     "the reminder route must READ the address it passes",
   );
+  // Pinned on the COLUMN, not on the whole select literal. The literal grew by one field
+  // ([BETAALBLOK] added `iban`, so a reminder can say where to transfer the money) and this
+  // assertion went red over a change that has nothing to do with the reply address — a gate that
+  // fails on every legitimate neighbour teaches people to loosen it rather than read it.
   assert.match(
     code("src/app/api/cron/reminders/route.ts"),
-    /\.select\("id, reminder_offsets, company_name, full_name, email"\)/,
+    /\.from\("profiles"\)[\s\S]{0,400}?\.select\("[^"]*\bemail\b[^"]*"\)/,
     "…and so must the cron that sends most of them",
   );
 
@@ -16678,5 +16682,60 @@ test("[DEUR] every dashboard screen resolves a name, so the bar has something to
   assert.deepEqual(
     bare, [],
     `these render no title, so the shared bar renders nothing — no name, no way back:\n  ${bare.join("\n  ")}`,
+  );
+});
+
+test("[BETAALBLOK] the mails that ask for money say how to pay it", () => {
+  // The invoice mail stated the amount and the due date and gave the customer no way to transfer
+  // it: the IBAN, the reference and the scan-to-pay QR lived only inside the attached PDF — and a
+  // QR in an attachment cannot be scanned by the phone displaying it. Every reminder tier was
+  // worse: no payment details at all, up to and including the statutory aanmaning that announces
+  // incassokosten. Meanwhile /pay/[token] was finished, secured and tested, and reachable only if
+  // the owner pressed "Betaalverzoek" by hand and forwarded the link themselves.
+  const email = code("src/lib/email.ts");
+
+  // Both bodies render the block, and both plain-text twins carry it too where they exist.
+  assert.match(email, /payBlock\?\.html/, "the mail bodies no longer render the payment block");
+  assert.equal(
+    (email.match(/payBlock\?\.html/g) ?? []).length, 2,
+    "one of the two mails (invoice / reminder) lost its payment block",
+  );
+  assert.match(email, /payBlock\.textLines/, "the plain-text twin lost the payment details");
+
+  // And both senders build one. A block nobody passes is a parameter, not a feature.
+  assert.match(
+    code("src/app/api/invoice/send/route.ts"), /payBlockForInvoice\(/,
+    "the send route stopped building a payment block",
+  );
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /payBlockForInvoice\(/, "the reminder cron stopped building a payment block");
+  // The reminder must ask for what is STILL open — the same figure printed above it in the mail.
+  // Passing the invoice total here would chase a customer for money they already partly paid.
+  assert.match(cron, /openstaand,/, "the reminder's payment block no longer names the open amount");
+  // Its two reads have to carry the fields the block is built from, or it is silently always null.
+  assert.match(cron, /full_name, email, iban/, "the owner read dropped the IBAN");
+  assert.match(cron, /pay_token, payment_reference/, "the invoice read dropped the pay token");
+});
+
+test("[HERIN-WAARHEID] the reminder panel reads the switch that decides whether reminders happen", () => {
+  // The panel told every owner "Deze factuur volgt je herinneringsschema (zie Instellingen)" while
+  // reading only reminders_paused — the pause of this ONE invoice. The GLOBAL switch
+  // (profiles.reminders_enabled) it never read, and that one ships off by design, so the sentence
+  // was untrue for nearly everyone. The owner concludes the app chases their late payers, does not
+  // chase them himself, and finds out weeks later from his bank.
+  const panel = code("src/components/invoice/InvoiceReminders.tsx");
+
+  assert.match(panel, /reminders_enabled/, "the panel is back to not reading the global switch");
+  // Four states, and 'onbekend' is the one that keeps the other three worth believing: a failed
+  // read may never render as "reminders are on", which is exactly the claim this panel got wrong.
+  assert.match(panel, /'laden' \| 'aan' \| 'uit' \| 'onbekend'/, "the panel lost one of its states");
+  assert.match(panel, /herin\.uit/, "the off state no longer says reminders are off");
+  assert.match(panel, /herin\.onbekend/, "a failed read no longer says so");
+  // The reassuring sentence is reachable ONLY from the 'aan' branch.
+  const actiefAt = panel.indexOf("herin.actief");
+  const aanBranch = panel.lastIndexOf("globaal === 'uit'", actiefAt);
+  assert.ok(
+    actiefAt > 0 && aanBranch > 0 && aanBranch < actiefAt,
+    "herin.actief is rendered without the global switch being checked first",
   );
 });
