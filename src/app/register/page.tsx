@@ -45,9 +45,16 @@ function RegisterContent() {
   // zelfverklaring en de bezoeker mag hem veranderen.
   const voorafGekozenRol = parseRole(searchParams.get(ROLE_PARAM))
 
+  // [UITNODIGING] Een uitnodigingslink weet op welk adres de uitnodiging is verstuurd, en de
+  // acceptatie weigert elk ander adres (403, met de remedie erbij). Het adres NIET voorinvullen
+  // maakte "een ander adres typen" dus de standaardfout in plaats van een randgeval. Voorvullen,
+  // niet vastzetten: het veld blijft gewoon bewerkbaar — wie een ander adres wil, kiest dat dan
+  // wetend, en krijgt bij de acceptatie de eerlijke weigering die daarbij hoort.
+  const voorafEmail = searchParams.get('email')
+
   const [step, setStep] = useState(isArchief || voorafGekozenRol ? 2 : 1)
   const [role, setRole] = useState(isArchief ? ARCHIEF_ROLE : (voorafGekozenRol ?? ''))
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(voorafEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(voorafEmail) ? voorafEmail : '')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
   const [companyName, setCompanyName] = useState('')

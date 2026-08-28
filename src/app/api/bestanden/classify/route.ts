@@ -68,10 +68,10 @@ export async function POST(req: NextRequest) {
     // Map AI result to folder path
     const now = new Date();
     const year = classification.date
-      ? new Date(classification.date).getFullYear()
+      ? new Date(classification.date).getUTCFullYear()
       : now.getFullYear();
     const month = classification.date
-      ? new Date(classification.date).getMonth() + 1
+      ? new Date(classification.date).getUTCMonth() + 1
       : now.getMonth() + 1;
     const quarter = monthToQuarter(month);
 

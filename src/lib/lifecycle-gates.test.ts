@@ -965,10 +965,24 @@ test("[ORIGINEEL] it adds evidence and never touches a figure", () => {
     "the invoice write must be the two evidence pointers and nothing else — any money or status " +
       "field here means this route can change a figure the owner already confirmed",
   );
-  // And it must not refuse an accountant-locked invoice: the lock protects the figures they booked,
-  // this changes none of them, and refusing would refuse precisely the invoice they asked about.
+  // And it must not refuse an accountant-locked invoice when it is FILLING an empty slot: the lock
+  // protects the figures they booked, filling changes none of them, and refusing would refuse
+  // precisely the invoice they asked about.
+  //
+  // [BETER-EXEMPLAAR] The route also REPLACES now, and there the lock DOES apply — replacing
+  // changes which document backs a figure the accountant already checked and signed off. So this
+  // claim moved to where the distinction lives: document-replace.ts answers "fill" and returns
+  // BEFORE it ever looks at the lock, and the route keeps no lock of its own.
+  const slotRule = code("src/lib/document-replace.ts");
+  const fillAt = slotRule.indexOf('return { ok: true, mode: "fill" }');
+  const lockAt = slotRule.indexOf('=== "verwerkt"');
+  assert.ok(
+    fillAt > 0 && lockAt > 0 && fillAt < lockAt,
+    "filling an empty slot now passes through the accountant lock — it would refuse exactly the " +
+      "invoice the accountant asked the original for",
+  );
   assert.doesNotMatch(
-    route, /accountant_status/,
+    route, /["']verwerkt["']/,
     "the 'verwerkt' lock was applied here — it would block exactly the invoice the accountant " +
       "requested the original for, which is the case this whole route exists to serve",
   );
@@ -2013,9 +2027,12 @@ test("[MAILTEKST] a body-only invoice is found, stored as a document, and never 
 
   // Never auto-booked. "Is this a purchase invoice at all" is the one question the mechanical
   // filter cannot settle, and getting it wrong invents a cost with a voorbelasting claim on it.
+  // [ZELF-EERST] One branch now precedes it — the owner's own "show me everything" switch. That
+  // does not weaken this claim: that branch is also a refusal, so the body case is still decided
+  // before any QUALITY consideration, which is what "before every other consideration" meant.
   assert.match(
-    src, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
-    "a body-rendered invoice must be refused before every other consideration",
+    src, /: attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice must be refused before every quality consideration",
   );
   // The owner is told what they are looking at before they confirm it.
   assert.match(
@@ -4635,6 +4652,166 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
+//
+// The example dossier is the screen a zero-client accountant sees at the exact moment they decide
+// whether the product is real. Three properties keep it honest, and each would erode silently:
+test("[PROEFDOSSIER] the example dossier is pure, derived, announced, and wired", () => {
+  // 1. PURE. The obvious future "improvement" — seeding the example as real rows so more screens
+  // can show it — is the one this codebase must refuse: fictional invoices in real tables are
+  // reachable by every aggregate, export and cron, and one missed filter puts a fictional amount
+  // in something real. So neither the data module nor the screen may touch a database client.
+  const data = code("src/lib/voorbeeld-dossier.ts");
+  const scherm = code("src/modules/accountant/pages/VoorbeeldDossier.tsx");
+  for (const [naam, src] of [["voorbeeld-dossier.ts", data], ["VoorbeeldDossier.tsx", scherm]] as const) {
+    assert.doesNotMatch(src, /supabase|createPipelineClient|createClient|from\(/i,
+      `${naam} must stay pure — the fiction may never have a write path`);
+  }
+
+  // 2. DERIVED, with the honesty rule in the arithmetic: the questioned row counts nowhere.
+  assert.match(data, /import \{ round2 \}/, "[CENT] the one cent-rounder");
+  assert.match(data, /filter\(\(r\) => r\.status === "verwerkt"\)/,
+    "kosten and voorbelasting are computed over CONFIRMED rows only — the pitch is arithmetic");
+  assert.match(scherm, /dossierTotalen\(\)/, "the screen renders the derived totals, never retyped ones");
+  assert.doesNotMatch(scherm, /128[.,]70|202[.,]50|73[.,]80/,
+    "no tile amount is typed into the screen — literals drift from their rows");
+
+  // 3. ANNOUNCED and TRANSLATED. The banner key exists with Dutch source; the fictional name says
+  // what it is. (The rendered behaviour — banner text, derived sums on the page, the question —
+  // is held by tests/render/voorbeeld-dossier.test.tsx.)
+  assert.match(data, /VOORBEELD_KLANT = "Bakkerij Voorbeeld/, "the name itself announces the fiction");
+  assert.match(scherm, /t\('bh\.demo\.banner\.titel'\)/);
+
+  // 4. GUARDED and REACHABLE. Role-guarded like every accountant page, and linked from the one
+  // place a zero-client accountant actually stands — a proof screen nobody can find proves
+  // nothing.
+  const pagina = code("src/app/dashboard/accountant/voorbeeld/page.tsx");
+  assert.match(pagina, /if \(profile\.role !== 'accountant'\) redirect\('\/dashboard'\)/);
+  assert.match(code("src/modules/accountant/pages/AccountantHome.tsx"),
+    /router\.push\('\/dashboard\/accountant\/voorbeeld'\)/,
+    "the empty state offers the proof before the ask");
+});
+
+// ── [UITNODIGING] The invite path is the distribution channel, wired end to end ────────────────
+//
+// One office inviting fifty clients sends fifty people down this exact path, and the audit found
+// it broken at its MAIN case: a fresh registrant confirmed their e-mail and the OAuth callback
+// threw the token away for the onboarding wizard — the invitation silently stayed pending. Around
+// that sat six smaller failures of the same shape: the page knew something and did not say it.
+// The behaviour of the callback rule lives in auth-landing.test.ts; what is held here is the
+// WIRING of everything around it.
+test("[UITNODIGING] the invite journey carries what it knows, at every step", () => {
+  // The callback honors an invite destination before the wizard — narrowly.
+  const landing = code("src/lib/auth-landing.ts");
+  assert.match(landing, /const isInviteAccept = hasNext && next\.startsWith\("\/invite\/accept"\)/);
+  assert.match(landing, /destination: isInviteAccept \? next : "\/onboarding"/,
+    "a fresh account with an invite destination accepts FIRST; onboarding follows via the middleware");
+
+  // The accept page: direction-aware copy, the server's sentence on failure, and a register link
+  // that carries the role and the invited address.
+  const pagina = code("src/app/invite/accept/page.tsx");
+  assert.match(pagina, /info\.invitedBy === 'accountant'/, "the page reads the direction the API always returned");
+  assert.match(pagina, /\? t\('uitn\.vanKantoor', \{ naam: inviterName \}\)\s*\n\s*: t\('uitn\.vanOndernemer'/,
+    "…and the sentence follows it, instead of telling a client they are becoming an accountant");
+  assert.match(pagina, /failureText\(res\.status, json, t\('uitn\.fout\.ongeldig'\)\)/,
+    "the server computes the remedy (wrong address, expired) — the page may not throw it away");
+  assert.match(pagina, /&rol=\$\{fromAccountant \? 'zzper' : 'accountant'\}/,
+    "the register link carries the role, or the invited client can pick Boekhouder and strand in the wrong portal");
+  assert.match(pagina, /&email=\$\{encodeURIComponent\(invitedEmail\)\}/,
+    "…and the invited address, or typing a different one is the default failure");
+  assert.match(pagina, /fetch\('\/api\/invite\/decline'/, "Weigeren writes something at last");
+
+  // Register accepts the carried address — prefilled, validated, still editable.
+  assert.match(code("src/app/register/page.tsx"), /const voorafEmail = searchParams\.get\('email'\)/);
+
+  // The decline and cancel routes close a token for good, each scoped to what its caller may
+  // touch: decline by the mailed token, cancel by id AND the inviting office ([RLS-UIT] — no
+  // UPDATE policy exists, so the filter is the boundary).
+  assert.match(code("src/app/api/invite/decline/route.ts"), /\.update\(\{ status: 'declined' \}\)[\s\S]{0,120}?\.eq\('status', 'pending'\)/);
+  const cancel = code("src/app/api/invite/cancel/route.ts");
+  assert.match(cancel, /\.eq\('zzper_id', user\.id\)/, "an office may only withdraw its own invitations");
+  assert.match(cancel, /\.eq\('status', 'pending'\)/, "…and only ones still open");
+
+  // The duplicate guard counts only a STILL-VALID pending from THIS office. Without either bound
+  // it blocked the channel: office A's stale pending made an address permanently uninvitable for
+  // every office, forever.
+  const invite = code("src/app/api/invite/client/route.ts");
+  assert.match(invite, /\.eq\('zzper_id', user\.id\)[\s\S]{0,120}?\.eq\('status', 'pending'\)[\s\S]{0,60}?\.gte\('created_at', versGrens\)/,
+    "scoped to this office and to the validity window the accept route already enforces");
+
+  // The acceptance tells the party who was WAITING. For an office invitation that is the office —
+  // it used to congratulate the client on accepting an invitation they never sent, and tell the
+  // office nothing.
+  const accept = code("src/app/api/invite/accept/route.ts");
+  assert.match(accept, /if \(invitation\.invited_by === 'accountant'\) \{[\s\S]{0,700}?userId: accountantId/,
+    "the office hears that its client accepted");
+  assert.match(accept, /link: '\/dashboard\/clients\/beheer'/);
+
+  // The office can SEE what it sent: the beheer page reads the open invitations and the screen
+  // renders them with a withdraw button.
+  assert.match(code("src/app/dashboard/clients/beheer/page.tsx"), /openInvites=\{\(openInvites \?\? \[\]\)/);
+  const beheer = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(beheer, /t\('bh\.klant\.uitn\.kop', \{ count: invites\.length \}\)/);
+  assert.match(beheer, /handleCancelInvite\(inv\.id\)/);
+
+  // Onboarding does not ask the freshly linked client to invite the accountant they already have.
+  assert.match(code("src/components/onboarding/OnboardingWizard.tsx"),
+    /linkedAccountantName \? \([\s\S]{0,900}?\) : \(\s*\n\s*<StepAccountant/,
+    "step 5 confirms the existing link instead of soliciting a second, reverse invitation");
+  assert.match(code("src/app/onboarding/page.tsx"), /linkedAccountantName=\{linkedAccountantName\}/);
+
+  // The email says which address the invitation belongs to, and that it expires — the two
+  // sentences that prevent the stranded acceptances the audit measured.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /gebruik daarbij dit e-mailadres[\s\S]{0,120}?escapeHtml\(toEmail\)/);
+  assert.match(mail, /Deze uitnodiging verloopt na 14 dagen\./);
+
+  // One invite screen, not two drifting copies: the old standalone page is a pure redirect.
+  assert.match(code("src/app/dashboard/clients/invite/page.tsx"), /redirect\('\/dashboard\/clients\/beheer'\)/);
+});
+
+// ── [ZELF-EERST] Nothing books itself until the owner says so ───────────────────────────────────
+//
+// The auto-advance bar is high, but it answers the machine's question ("how careful am I?") and
+// not the new owner's ("how do I find out?"). The only way anyone learns to trust a reader is to
+// check its work for a while — so the owner holds a switch, and OFF means every read waits in the
+// verify queue, the cleanest one included. What this gate holds is the WIRING: a switch that one
+// door obeys and the other forgets is worse than none, because the owner tested the door that
+// listens and trusts the one that does not.
+test("[ZELF-EERST] both auto-booking doors ask the owner's permission first", () => {
+  // The helper carries the fail matrix: missing column (pre-migration) answers TRUE — today's
+  // behavior, [DEPLOY-SAFE] — and any OTHER failure answers FALSE, because wrongly waiting costs
+  // one tap while wrongly auto-booking overrides a stated choice about money.
+  const helper = code("src/lib/auto-boeken.ts");
+  assert.match(helper, /return isMissingColumn\(error\.message/, "missing column = the old world, unchanged");
+  assert.match(helper, /catch \{\s*return false;?\s*\}/, "any other failure waits for the human");
+  assert.match(helper, /auto_boeken\?: boolean \| null \} \| null\)\?\.auto_boeken !== false/,
+    "null (row without the column filled) reads as ON — the default the migration declares");
+
+  // Both doors, each with its own reason string so "waiting because you asked" never shows up as
+  // "the read was weak" in the audit trail or the queue.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /const magAutoBoeken = await autoBoekenAllowed\(supabase, user\.id\)/);
+  assert.match(intake, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "asked BEFORE every quality signal");
+  assert.match(intake, /reason: "owner_reviews_everything"/);
+
+  const sync = code("src/lib/email-integration.ts");
+  assert.match(sync, /const magAutoBoeken = await autoBoekenAllowed\(supabase, userId\)/);
+  assert.match(sync, /const autoAdv = !magAutoBoeken\s*\n?\s*\?/, "the mail door asks the same question first");
+  assert.match(sync, /reason: 'owner_reviews_everything'/);
+
+  // The switch exists where the owner can reach it, saved in its own isolated write so a missing
+  // column cannot brick the whole profile save (the ochtend_mail precedent).
+  const scherm = code("src/app/dashboard/settings/page.tsx");
+  assert.match(scherm, /update\(\{ auto_boeken: autoBoeken \}\)/);
+  assert.match(scherm, /t\('inst\.autoBoeken'\)/, "…and speaks from the catalogue, not in hard-coded Dutch");
+
+  // The migration defaults TRUE: today's behavior for everyone who never touches the switch.
+  const sql = readFileSync("supabase/migrations/auto_boeken.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS auto_boeken boolean NOT NULL DEFAULT true/);
+});
+
 test("[EIGEN-MARKER] the generated PDF captions its party blocks", () => {
   const pdf = code("src/lib/invoice-pdf.tsx");
   assert.match(pdf, /partyLabel\}>KLANT</, "the customer block must carry its caption");
@@ -6926,6 +7103,47 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
         "invisible to this gate until the chain splitter stopped letting it borrow the next " +
         "statement's filter",
     },
+
+    // ── [CREDIT-NAMENS] De creditnota die een gemachtigde boekhouder namens zijn klant uitreikt ──
+    //
+    // Drie lezingen op invoice_lines. Die tabel HEEFT geen eigenaarskolom — een regel hoort bij een
+    // factuur, en de factuur hoort bij iemand. De afscherming zit daarom een stap eerder, en die
+    // stap staat in dezelfde functie, een paar regels hoger, met de eigenaar er letterlijk in.
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: "[UNIT] '*' zodat elke kolom meekomt",
+      why:
+        "The lines of the invoice being credited. Its id came from a read one screen up that " +
+        "carries .eq('sender_id', ownerId) AND is then put through canAccessInvoice(), so by the " +
+        "time this runs the parent is proven to belong to this administration. invoice_lines has " +
+        "no tenant column of its own to add",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: "'*' om dezelfde reden als hierboven",
+      why:
+        "The lines of EARLIER creditnota's on the same invoice, read to see how much of each line " +
+        "is already given back. The ids come from `eerdereIds`, built from a read that carries " +
+        ".eq('sender_id', ownerId) — a list of this owner's own creditnota's, never a request field",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: ".insert( creditLinesFor(keuze.lines, creditnota.id, reason)",
+      why:
+        "The mirrored lines of the creditnota this request just inserted. They are keyed to " +
+        "creditnota.id, a local const from the insert two statements up whose row carries " +
+        "sender_id: ownerId — so these rows cannot land under another administration than the " +
+        "one the insert was already allowed to write in",
+    },
+    {
+      file: "src/app/api/invoice/creditnota/route.ts", table: "invoice_lines",
+      must: ".eq('invoice_id', creditnota.id)",
+      why:
+        "Reading back the lines just written, to render the PDF. creditnota.id is a local const " +
+        "from this request's own insert — never a request field — and that row carries " +
+        "sender_id: ownerId. The generic 'own new row' pass only covers .eq('id', …); this is the " +
+        "same argument one column over",
+    },
   ];
 
   const unreviewed = offenders.filter(
@@ -6983,6 +7201,25 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
   // rendered position, so a NEW hard-coded sentence added next month fails it too. That is the
   // part a list of keys cannot do.
   const SCREENS = [
+    // [BOEKHOUDER] The accountant's own screens. They were exempt from this sweep for as long as
+    // the module was Dutch-only; that policy is reversed (AGENTS.md), so they are held to the same
+    // rule as every other screen. What stays Dutch here is marked [TAAL-DB] on its own line and is
+    // always the same kind of thing: text that is SENT to someone else — a notification stored for
+    // the client, a message body, a nav label quoted as the other person's screen writes it.
+    // [UITNODIGING] The page every invited client lands on — public, and translated on purpose:
+    // the invited person has never seen the product and may not read Dutch.
+    "src/app/invite/accept/page.tsx",
+    "src/modules/accountant/pages/AccountantHome.tsx",
+    "src/modules/accountant/pages/AccountantWerkboard.tsx",
+    "src/modules/accountant/pages/AccountantFactuur.tsx",
+    "src/modules/accountant/pages/AccountantBevestigen.tsx",
+    "src/modules/accountant/pages/AccountantDebiteuren.tsx",
+    "src/modules/accountant/pages/AccountantOpvragen.tsx",
+    "src/modules/accountant/pages/KlantenBeheer.tsx",
+    "src/modules/accountant/pages/VraagMachtiging.tsx",
+    "src/modules/accountant/pages/VoorbeeldDossier.tsx",
+    "src/app/dashboard/clients/[id]/page.tsx",
+    "src/app/dashboard/clients/[id]/kwartaal/page.tsx",
     "src/app/dashboard/invoice/new/page.tsx",
     "src/app/dashboard/facturen/FacturenClient.tsx",
     "src/app/dashboard/invoice/[id]/page.tsx",
@@ -7050,6 +7287,11 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     "src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx",
     "src/app/dashboard/bank/BankConnectPanel.tsx",
     "src/components/settings/SnelStartCard.tsx",
+    // [KADER] The bar around every screen. It held its titles as plain Dutch on the argument that
+    // they were only the first-paint fallback — true for a screen that registers its own title,
+    // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
+    // back in one entry at a time.
+    "src/components/nav/DashboardChrome.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -10181,6 +10423,202 @@ test("[MANDAAT-SOORT] an invoicing mandate is read as one, and only one", () => 
     "the fallback is the query this function used before");
   // Any OTHER read failure must stay null: "we could not read the mandate" is not "no mandate".
   assert.match(fn, /let mandateRow = \(mandate as MandateRow \| null\) \?\? null;/);
+});
+
+// ── [ARABISCH-LETTER] The Arabic face is loaded, so it must actually be worn ────────────────────
+//
+// Noto Sans Arabic was loaded in the root layout and applied on exactly three marketing pages. On
+// every screen where the owner manages money it fell through to whatever the device happens to
+// have — a different face, height and rhythm per phone, which is the disorder the font was added
+// to prevent, moved to the screens that matter more.
+test("[ARABISCH-LETTER] the Arabic font reaches the whole screen, form fields included", () => {
+  const css = code("src/app/globals.css");
+  assert.match(
+    css, /html\[lang="ar"\] body \{\s*font-family: var\(--font-arabic\)/,
+    "the Arabic face must apply to the document, not to three marketing pages",
+  );
+  // The input rules in this file set their own font with !important, so they need their own
+  // equally hard rule — otherwise an owner types a name in one face and reads it back in another.
+  assert.match(
+    css, /html\[lang="ar"\] input,[\s\S]{0,80}font-family: var\(--font-arabic\)[^;]*!important/,
+    "form fields override font-family with !important and must be overridden back",
+  );
+  // The hook is `lang`, not `dir`: a future RTL language with a different script must stay free to
+  // pick its own face.
+  assert.doesNotMatch(
+    css, /\[dir="rtl"\][^{]*\{\s*font-family: var\(--font-arabic\)/,
+    "direction is not a script — key the font on the language",
+  );
+  // The variable has to exist to be used.
+  assert.match(code("src/app/layout.tsx"), /variable: "--font-arabic"/);
+});
+
+// ── [TAAL-VOLGT-MEE] The language follows the owner, without overruling them ────────────────────
+//
+// The cookie is per-device and stays the fast first-paint answer. An owner who reads Arabic set it
+// once, opened the app on their phone, and was back in Dutch — with the switch two screens deep,
+// in Dutch. The account now remembers the choice and hands it to a device that has none.
+test("[TAAL-VOLGT-MEE] the account remembers the language and speaks only into silence", () => {
+  // The switch stores it in both places, and the device first: the language must change instantly
+  // and offline, and only then be reported to the account.
+  const kaart = code("src/components/settings/LanguageCard.tsx");
+  assert.match(kaart, /writeLocaleCookie\(l\)/, "the device is told first");
+  assert.match(
+    kaart, /update\(\{ preferred_language: l \}\)/,
+    "…and the account is told too, or the choice dies with the browser profile",
+  );
+  assert.ok(
+    kaart.indexOf("writeLocaleCookie(l)") < kaart.indexOf("preferred_language: l"),
+    "a failed account write may never stop the screen from changing language",
+  );
+
+  // Restoring happens ONLY when this device has no choice of its own. Overruling a stated choice
+  // would flip the language back under someone who just changed it.
+  const herstel = code("src/components/i18n/LocaleRestore.tsx");
+  assert.match(herstel, /if \(hasLocaleCookie\(\)\) return/, "a device that chose keeps its choice");
+  assert.match(herstel, /writeLocaleCookie\(accountLocale\)/);
+  assert.match(herstel, /if \(!isLocale\(accountLocale\)\) return/, "an unusable stored value is ignored");
+
+  // And it must be mounted, on the layout every dashboard screen sits inside.
+  const layout = code("src/app/dashboard/layout.tsx");
+  assert.match(layout, /<LocaleRestore accountLocale=\{accountLocale\} \/>/);
+  // [DEPLOY-SAFE] Read apart from the profile select, like `vak` beside it — a column that is not
+  // there yet may cost a nicety, never the whole dashboard shell.
+  assert.match(layout, /select\('preferred_language'\)/);
+  assert.doesNotMatch(
+    layout, /select\('id, email, role, preferred_language'\)/,
+    "folding it into the main profile read would let a missing column remove the navigation",
+  );
+});
+
+// ── [CREDIT-NAMENS] The accountant corrects what they issued — and only that ────────────────────
+//
+// A mandated accountant could CREATE an invoice in a client's name and SEND it, but not correct
+// it: this route only knew getActingFor(), so the one lawful way back lay with the client. For an
+// entrepreneur who has handed their invoicing to their bookkeeper entirely, that read: the mistake
+// is the bookkeeper's, the repair has to come from you.
+//
+// What this gate mostly guards is what was NOT widened. canAccessInvoice() is untouched, so the
+// accountant reaches only their own issuance (created_by) — the same rule canSendInvoice() writes
+// out, for the same reason. The client's own invoices stay the client's.
+test("[CREDIT-NAMENS] a mandated accountant may credit their own issuance, through the mandate", () => {
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+
+  // The mandate is re-asked on every call — role, link, kind and revocation — by the same function
+  // the draft and send routes use. Naming a client you have no mandate for is a 403, not a 500.
+  assert.match(route, /getActingForClient\(namensKlantId\) : await getActingFor\(\)/,
+    "a named client goes through the mandate check; no name is the request it always was");
+  assert.match(route, /geen toestemming om namens deze klant te crediteren/);
+
+  // The wall. If this line ever loosens, a third party can lower another company's turnover and
+  // reclaim its BTW on a document that company never touched.
+  assert.match(route, /if \(!canAccessInvoice\(acting, original\)\)/,
+    "the per-invoice check stays, and stays the narrow one");
+
+  // [RLS-UIT] The accountant's session cannot see the client's rows, so the reads and writes run
+  // on service_role — with the owner in the query, which is what the RLS-UIT gate above enforces
+  // query by query.
+  assert.match(route, /const db = boekhouder \? createPipelineClient\(\) : supabase/);
+  assert.match(route, /\.eq\('id', original_invoice_id\)\s*\n\s*\.eq\('sender_id', ownerId\)/,
+    "the invoice being credited is fetched inside one administration, not merely by id");
+
+  // The number still comes from the CLIENT's series on the CLIENT's counter — that is the whole
+  // point of art. 35 lid 1, and next_invoice_seq refuses a caller without a live mandate.
+  // [NUMBER-READ-VISIBLE] Minted on the SESSION client (next_invoice_seq refuses auth.uid() IS
+  // NULL unconditionally), but the TEMPLATE is read with `db` — it lives on the client's profile,
+  // which an accountant's session cannot see. Without the fourth argument resolveFormat() returns
+  // nothing and the numberer refuses outright, so the whole feature would fail for the only role
+  // it was built for.
+  assert.match(route, /generateInvoiceNumber\(supabase, ownerId, 'creditnota', db\)/,
+    "session client for the allocation, acting-aware client for the scheme it allocates in");
+
+  // The client is told. The invoicing screen promises exactly this for an invoice; a creditnota is
+  // the one that LOWERS their turnover, so silence there would be worse.
+  assert.match(route, /if \(isActingForOther\(acting\)\) \{[\s\S]{0,400}?createNotification\(/,
+    "acting for someone else means telling them");
+  // …and the trail says on whose behalf, or it records an act by someone who does not appear in
+  // the administration it happened in.
+  assert.match(route, /namens_klant_id: acting\.ownerId/);
+  assert.match(route, /acting_role: acting\.role/);
+
+  // The screen offers it for own issuance only, and hands the route the client it is acting for.
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(
+    scherm,
+    /const eigenUitgifteAlsBoekhouder =\s*\n\s*!!invoice && !isOwner && !!viewerProfile\?\.id && invoice\.created_by === viewerProfile\.id/,
+    "the button appears for an invoice the accountant issued themselves, never for the client's",
+  );
+  assert.match(scherm, /\(isOwner \|\| eigenUitgifteAlsBoekhouder\)/);
+  assert.match(scherm, /\.\.\.\(isOwner \? \{\} : \{ namens_klant_id: invoice\?\.sender_id \?\? undefined \}\)/);
+
+  // The database was NOT changed for any of this, and that is a claim worth pinning: the mandate
+  // migration already let a mandated caller draw a number of type 'creditnota', both accountant
+  // write-guards fire BEFORE UPDATE only, and the ceiling that matters does not look at who is
+  // writing. If someone later "fixes" that ceiling by keying it on auth.uid(), a service-role
+  // insert would walk straight past it.
+  // code() strips JS comments; SQL comments start with `--`, so the raw file is stripped here.
+  // Without that, an `auth.uid()` mentioned in a comment would satisfy the doesNotMatch below by
+  // accident — the exact shape of vacuous pass this file keeps closing.
+  const sqlBody = (f: string) =>
+    readFileSync(f, "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const plafond = sqlBody("supabase/migrations/creditnota_partial.sql");
+  assert.match(plafond, /BEFORE INSERT OR UPDATE OF total_inc_btw/,
+    "the over-credit ceiling must fire on INSERT, whoever is inserting");
+  assert.doesNotMatch(plafond, /auth\.uid\(\)/,
+    "…and must not depend on the caller, or service_role would pass it by construction");
+  const mandaat = sqlBody("supabase/migrations/accountant_invoice_mandate.sql");
+  assert.match(mandaat, /p_type NOT IN \('factuur','creditnota','pro_forma'\)/,
+    "next_invoice_seq already knew this type — no migration rides along with this change");
+});
+
+// ── [BOEKHOUDER-EIGEN-BOEKEN] "Voor deze klant" may never open the accountant's OWN books ───────
+//
+// The client page carried a button reading "+ Factuur opstellen voor deze klant" that pushed
+// /dashboard/invoice/new?clientId=<id>. Two failures on one line, and the second is the money one:
+//
+//   1. That screen reads `client_id`, not `clientId` — and `client_id` there means a CUSTOMER of
+//      the entrepreneur, not the entrepreneur. The parameter was dead on arrival.
+//   2. What remained was the accountant's own empty invoice screen under a promise about someone
+//      else. An accountant who believes the label and types the invoice puts it in THEIR OWN
+//      administration: their turnover, a number out of their own doorlopende reeks (art. 35), and
+//      their BTW-aangifte. Nothing on the screen contradicts it, because as an own invoice it is
+//      perfectly valid — which is exactly why nobody would catch it.
+//
+// The right screen already exists and states whose books it is in at every step. Without a
+// mandate it lands on the ask-for-one explanation, which is an honest "not yet" instead of an
+// invoice filed against the wrong company.
+test("[BOEKHOUDER-EIGEN-BOEKEN] the accountant's client page invoices THROUGH the mandated screen", () => {
+  const klantPagina = code("src/app/dashboard/clients/[id]/page.tsx");
+  assert.match(
+    klantPagina, /router\.push\(`\/dashboard\/accountant\/factuur\?klant=\$\{clientId\}`\)/,
+    "invoicing for a client must go to the screen that knows whose books it is writing in",
+  );
+  assert.doesNotMatch(
+    klantPagina, /\/dashboard\/invoice\/new\?clientId=/,
+    "the owner's own new-invoice screen is not a place to invoice for someone else",
+  );
+
+  // The URL is a wish, never a permission: the server keeps the preselection only when that id is
+  // in the mandate list it just built itself.
+  const scherm = code("src/app/dashboard/accountant/factuur/page.tsx");
+  assert.match(
+    scherm, /klanten\.some\(\(k\) => k\.id === gevraagdeKlant\)/,
+    "a client id from the URL must be checked against the mandated clients before it is shown",
+  );
+  assert.match(scherm, /vooraf=\{vooraf\}/, "…and only then handed to the screen");
+
+  // A tile that says "Facturen" between client tools, but shows the office's own, is the same
+  // confusion in miniature.
+  assert.match(
+    code("src/modules/accountant/pages/AccountantHome.tsx"),
+    /label=\{t\('bh\.home\.tegel\.mijnFacturen'\)\}/,
+    "the tile pointing at the accountant's own invoices must say they are their own",
+  );
+  // …and the word behind that key must still be the possessive one, in the source language.
+  assert.match(
+    code("src/lib/i18n/messages.ts"), /'bh\.home\.tegel\.mijnFacturen': \{ nl: 'Mijn facturen'/,
+    "a key may not rename its way out of saying whose invoices these are",
+  );
 });
 
 test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is attributed first", () => {
@@ -13773,7 +14211,7 @@ test("[KENMERK-BEIDE] a payment quotes both identifiers, from one rule", () => {
   // drifted apart in the first place — the QR used ?? and the bundle used ||.
   const sheet = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
   const bundle = code("src/lib/bundel-betaling.ts");
-  assert.match(sheet, /const reference = paymentReferenceFor\(inv\)/);
+  assert.match(sheet, /const referenceBase = paymentReferenceFor\(inv\)/);
   assert.match(bundle, /const refOf = \(inv: BundelBetalingInvoice\) => paymentReferenceFor\(inv\);/);
   for (const [name, src] of [["the QR sheet", sheet], ["the bundle", bundle]] as const) {
     assert.doesNotMatch(src, /payment_reference \?\? inv\.invoice_number|payment_reference \|\| inv\.invoice_number/,
@@ -13979,14 +14417,22 @@ test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () =>
   assert.match(code("src/app/dashboard/clients/beheer/page.tsx"),
     /clientsUnreadable=\{clientsUnreadable\}/, "the flag is passed, not merely destructured");
 
-  // [TAAL] The accountant module is deliberately Dutch-only (AGENTS.md): its user is a Dutch
-  // professional reading Dutch administraties under Dutch law, and the owner's language setting
-  // describes the OWNER. So these sentences are Dutch on purpose and are NOT a catalogue miss.
-  assert.match(home, /We konden je klantenlijst nu niet ophalen/);
-  assert.match(home, /We konden je takenlijst nu niet ophalen/);
+  // [TAAL] These four sentences used to be pinned as Dutch literals, with the reason attached:
+  // the accountant module was deliberately Dutch-only. That policy is reversed — the first
+  // accountants on this product read Arabic, and they have a profile and a language of their own
+  // (AGENTS.md). The CLAIM this gate makes is unchanged and is what matters: a failed read says
+  // it failed, and says it is about our reading rather than about the practice. Anchored on the
+  // keys, because that is now where the sentences live.
+  assert.match(home, /t\('bh\.home\.klanten\.onleesbaar\.titel'\)/);
+  assert.match(home, /t\('bh\.home\.todo\.onleesbaar\.titel'\)/);
   // …and each says the same thing: this is about our reading, not about your practice.
-  assert.match(home, /Dit zegt niets over je klanten/);
-  assert.match(home, /Dit betekent niet dat er niets te doen is/);
+  assert.match(home, /t\('bh\.home\.klanten\.onleesbaar\.uitleg'\)/);
+  assert.match(home, /t\('bh\.home\.todo\.onleesbaar\.uitleg'\)/);
+  // The sentences themselves must still SAY that — a key renaming its way out of the promise is
+  // exactly what pinning the literal used to prevent, so the claim moves to the catalogue.
+  const cat = code("src/lib/i18n/messages.ts");
+  assert.match(cat, /'bh\.home\.klanten\.onleesbaar\.uitleg':[^\n]*Dit zegt niets over je klanten/);
+  assert.match(cat, /'bh\.home\.todo\.onleesbaar\.uitleg':[^\n]*Dit betekent niet dat er niets te doen is/);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -14758,7 +15204,9 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   // And the screen must exist on both doors. A year overview only the owner can reach misses the
   // person who actually files the aangifte.
   const chrome = code("src/components/nav/DashboardChrome.tsx");
-  assert.match(chrome, /\["\/dashboard\/jaar", "Jaaroverzicht"\]/, "the owner's nav carries the entry");
+  // [KADER] The registry holds message KEYS since the bar became translatable — the entry is what
+  // this gate is about, and it is still here; only the word moved to the catalogue.
+  assert.match(chrome, /\["\/dashboard\/jaar", "chrome\.jaaroverzicht"\]/, "the owner's nav carries the entry");
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
   assert.match(board, /\/dashboard\/jaar\?clientId=\$\{encodeURIComponent\(row\.id\)\}/, "the werkboard links per client");
   const client = code("src/app/dashboard/jaar/JaarClient.tsx");
@@ -14846,7 +15294,11 @@ test("[E-FACTUUR-MEE] the invoice mail carries the UBL twin, and its absence nev
   assert.match(send, /const ublBijlage = await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*invoiceId,\s*\n\s*\)/, "the send route builds it, through the acting-aware client");
   assert.match(send, /ublAttachment: ublBijlage/, "…and hands it to the mail");
   const credit = code("src/app/api/invoice/creditnota/route.ts");
-  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(\s*\n\s*isActingForOther\(acting\) \? createPipelineClient\(\) : supabase,\s*\n\s*creditnota\.id,\s*\n\s*\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
+  // [CREDIT-NAMENS] The ternary is now a named const — `db`, which is the pipeline exactly when
+  // the caller is acting for someone else and the session cannot see their rows. Same claim, one
+  // name instead of four repetitions of it; the const's own definition is pinned below.
+  assert.match(credit, /ublAttachment: await ublAttachmentForInvoice\(db, creditnota\.id\)/, "the creditnota mail carries its UBL 381 twin, through the acting-aware client");
+  assert.match(credit, /const db = boekhouder \? createPipelineClient\(\) : supabase/, "…and that client is the acting-aware one");
   const mail = code("src/lib/email.ts");
   assert.match(mail, /\.\.\.\(pdfBuffer \? \[\{ filename: `\$\{safeFileName\(invoiceNumber\)\}\.pdf`, content: pdfBuffer, contentType: 'application\/pdf' \}\] : \[\]\),\s*\n\s*\.\.\.\(ublAttachment \? \[\{ \.\.\.ublAttachment, contentType: 'application\/xml' \}\] : \[\]\)/,
     "PDF first, then the UBL — the customer opens the document the mail is about; names are filename-safe and both parts declare their MIME type");
@@ -14861,7 +15313,10 @@ test("[BULK-UITNODIGEN] the bulk list walks the SAME door as the single button, 
   const scherm = code("src/modules/accountant/pages/KlantenBeheer.tsx");
   assert.match(scherm, /for \(const email of parsed\) \{/, "sequential per-address loop");
   assert.match(scherm, /await fetch\('\/api\/invite\/client', \{\s*\n\s*method: 'POST'/, "…through the one invite route");
-  assert.match(scherm, /failureText\(res\.status, json, 'Versturen mislukt\.'\)/, "a refusal is a sentence ([SERVER-ZIN]), kept per address");
+  // [TAAL] Anchored on the key, not the Dutch sentence — the screen now takes its words from the
+  // catalogue. The rule is untouched: the SERVER's prose wins, and a bare code is replaced by a
+  // sentence rather than shown.
+  assert.match(scherm, /failureText\(res\.status, json, t\('bh\.klant\.invite\.failed'\)\)/, "a refusal is a sentence ([SERVER-ZIN]), kept per address");
   assert.match(scherm, /\.slice\(0, 200\)/, "the list is bounded to what the day limit can carry");
   assert.match(scherm, /setBulkResults\(\[\.\.\.results\]\)/, "progress shows per address, not only at the end");
 
@@ -15236,4 +15691,648 @@ test("[LEES] a file the app cannot read SAYS SO, and everything it read stays co
   assert.match(modal, /t\('corr\.splitUitleg'\)/, "the split section is on the form");
   const splitSpec = readFileSync("src/lib/btw-rows-correction.test.ts", "utf8");
   assert.match(splitSpec, /CREDIT-SIGN.*creditnota's split is negative/, "…and the signed-credit proof exists");
+});
+
+test("[STATIEGELD-GAT] het statiegeld dat de lezer liet vallen, wordt teruggevonden en aangeboden", () => {
+  // GEMELD: "het lukt de app niet om statiegeld te verwerken". Elegance Brands 2026080832 bleef
+  // hangen op "excl. + btw komt niet uit op het totaal", terwijl het ontbrekende bedrag één regel
+  // hoger op het papier stond als "Totaal Statiegeld". De prompt schrijft dit geval uitgebreid
+  // voor (STATIEGELD / EMBALLAGE in ai.ts) en het model laat het tóch vallen — dus hoort er een
+  // mechanisch vangnet onder, want bij een drankengroothandel is dit geen randgeval.
+  const mod = code("src/lib/statiegeld.ts");
+  // 1. Eén matcher voor "staat dit hele getal er". Een eigen kopie hier zou opnieuw "176,40"
+  //    binnen "1.176,40" vinden — de duizend-eurofout waar amount-grounding.ts voor bestaat.
+  assert.match(mod, /import \{ amountOccurrences \} from '\.\/amount-grounding'/,
+    "statiegeld.ts schrijft zijn eigen getalmatcher — dat is de tweede spelling die altijd afwijkt");
+  assert.doesNotMatch(mod, /indexOf\(/, "…en zoekt dus zelf niet in de tekst");
+  // 2. Het zwijgt zonder bewijs. Een verschil dat het papier niet verklaart moet onverklaard
+  //    blijven; "wij denken dat dit statiegeld is" over een misgelezen totaal is erger dan de
+  //    botte melding die het vervangt.
+  assert.match(mod, /if \(!t\) return null/, "zonder document mag er niets beweerd worden");
+
+  // 3. De import zoekt het op DEZELFDE tekst waar de bedragen tegen zijn gecontroleerd — dus ook
+  //    op de blinde transcriptie van een foto, wanneer die de getuige werd.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /witnessText = transcribed;/, "de OCR-getuige wordt niet doorgegeven");
+  assert.match(ai, /detectDepositGap\(\{[\s\S]{0,220}text: witnessText,/,
+    "de statiegeldzoektocht draait niet op de getuige die werkelijk sprak");
+  assert.match(ai, /_statiegeld = deposit;/, "de vondst wordt niet bewaard");
+
+  // 4. En het scherm biedt hem met één tik aan: het rekenwerk staat vast (de optelling bepaalt het
+  //    bedrag, het papier het woord), dus er valt alleen nog te bevestigen.
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(scherm, /applyTriplet\(setExcl\(triplet, clampAmount\(round2\(exBtw \+ depositGap\.gap\)\)\)\)/,
+    "de knop telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(scherm, /depositGap && Math\.abs\(round2\(totalIncBtw - exBtw - btwAmount\)\) > 0\.02/,
+    "de knop verdwijnt niet zodra de bedragen kloppen — hij bestaat alleen zolang er een gat is");
+});
+
+test("[BTW-NUMMER-GELEZEN] het gedrukte btw-nummer wordt bewaard vóór de sleutelfilter het weggooit", () => {
+  // De filter zelf is goed: een verminkte of buitenlandse waarde mag nooit een leverancierSLEUTEL
+  // worden. Maar hij vernietigde ook het enige bewijs dát er een btw-nummer op stond — en art. 35a
+  // Wet OB eist er een. Het verminkte geval, precies het geval dat het vertellen waard is, was het
+  // enige dat geruisloos verdween.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_btw_printed = btw;");
+  const filter = ai.indexOf("parsed.vendor_btw = /^NL\\d{9}B\\d{2}$/.test(btw)");
+  assert.ok(bewaar > 0, "het gedrukte nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of het wordt pas bewaard nadat de filter het al weggooide");
+
+  // De twee controles lezen mechanisch, zonder model: de IBAN via de gedeelde mod-97 (die ook de
+  // betaal-QR bewaakt), het btw-nummer op vorm. Een eigen mod-97 hier zou een tweede antwoord op
+  // dezelfde vraag zijn.
+  const id = code("src/lib/vendor-identity.ts");
+  assert.match(id, /import \{ isValidIban, normalizeIban \} from '\.\/epc-qr'/,
+    "vendor-identity schrijft zijn eigen IBAN-controle — één rekenregel, één plek");
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /if \(ibanShape !== 'absent'\)/, "de IBAN-vormrij verschijnt ook zonder nummer");
+  assert.match(checks, /if \(btwShape !== 'absent'\)/, "de btw-rij verschijnt ook zonder nummer");
+});
+
+test("[LEVERANCIER-VASTLEGGEN] wat de eigenaar over een leverancier vastlegt, wordt ook onthouden", () => {
+  // GEVRAAGD: de leverancier zelf kunnen bijwerken vanaf de incoming-pagina, en die correctie moet
+  // blijven gelden — anders leest de app volgende maand hetzelfde papier weer verkeerd. Gemeld op
+  // een factuur waarvan het leverancierveld een PRODUCTLIJN las ("Silifke / Hocaoglu") terwijl de
+  // afzender OZ&ER FOOD B.V. is.
+  const route = code("src/app/api/invoice/[id]/supplier/route.ts");
+
+  // 1. Het formulier wordt door dezelfde pure regel gekeurd als het scherm, en een afkeuring
+  //    schrijft NIETS. Een misgetypt IBAN hier laat de fraudecontrole bij elke echte factuur van
+  //    deze leverancier alarm slaan — waarna de eigenaar leert die waarschuwing weg te klikken.
+  assert.match(route, /const plan = planSupplierPin\(body\)/, "de route keurt het formulier niet");
+  assert.match(route, /if \(!plan\.ok\) \{[\s\S]{0,160}status: 400/, "een afkeuring mag niets schrijven");
+
+  // 2. Het ONTHOUDEN loopt via de bestaande aliasmodule — die weet wanneer leren een bewering zou
+  //    zijn die de app niet kan doen (een naam die naar een naam wijst, een spelling die al van een
+  //    ándere leverancier is). Een tweede manier om hetzelfde te onthouden zou daarvan afwijken.
+  assert.match(route, /await learnSupplierAlias\(supabase, ownerId, \{/,
+    "de route onthoudt de spelling niet — dan is dit een formulier zonder geheugen");
+  assert.match(route, /printedName: invoice\.client_name/,
+    "…en dan nog met de verkeerde sleutel: de MISGELEZEN naam is wat volgende maand terugkomt");
+
+  // 3. De factuur en zijn broertjes dragen daarna dezelfde naam, gekoppeld op supplier_id — nooit
+  //    op naam. client_name is in deze app een identiteitssleutel (IBAN-wijziging, incasso, het
+  //    creditnota-signaal, het leesgeheugen); twee spellingen splitsen de geschiedenis van één
+  //    bedrijf in tweeën.
+  assert.match(route, /\.eq\('supplier_id', supplierId\)/, "broertjes worden op naam gezocht — dat is juist de gok");
+  assert.doesNotMatch(route, /ilike\(/, "een naamvergelijking hoort hier niet");
+
+  // 4. De deur staat in de voet van het documentblad: de plek waar de eigenaar het papier vóór
+  //    zich heeft. Beide incoming-schermen tonen dat blad, dus de deur bestaat één keer.
+  const blad = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+  assert.match(blad, /onClick=\{\(\) => setPinning\(true\)\}/, "de knop is weg");
+  assert.match(blad, /<SupplierPinModal/, "…of het formulier hangt er niet meer aan");
+  // En de zin die de server teruggeeft blijft STAAN. Hij gaat over wat er volgende maand gebeurt,
+  // en dat is precies de mededeling die een verdwijnende toast opeet.
+  assert.match(blad, /setPinned\(r\.message \?\? /, "de uitkomst verdwijnt zonder iets te zeggen");
+});
+
+test("[STATIEGELD-GAT] dezelfde hulp op ELK scherm dat dezelfde bedragen corrigeert", () => {
+  // De klasse, niet het geval: de bevestigwachtrij kreeg de één-tik-oplossing en de gedeelde
+  // correctie-modal — die op de betaalpagina én op /bank dezelfde drie bedragen bewerkt — kreeg
+  // niets. Dan zegt het ene scherm "de bedragen kloppen niet" terwijl het andere het antwoord
+  // aanreikt, over dezelfde factuur. De kop van dat bestand schrijft precies dat voor: twee
+  // editors voor dezelfde getallen lopen uiteen, en dit is de geldlijn.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /setAmounts\(setExcl\(amounts, round2\(amounts\.ex \+ depositGap\.gap\)\)\)/,
+    "de correctie-modal telt het verschil niet bij het bedrag excl. btw op");
+  assert.match(modal, /depositGapText\(depositGap\)/,
+    "…en legt niet uit waarom, met dezelfde zin als de controlelijst");
+
+  // Beide oproepplekken voeden hem, anders is de prop een dode letter. De bankpagina krijgt hem
+  // van de route (het scherm heeft field_confidence niet), de betaalpagina uit de rij zelf.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /depositGap: fc\?\._statiegeld \?\? null/, "de route geeft de vondst niet door");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /depositGap=\{correctDeposit\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectDeposit\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /depositGap=\{\(correctFor\.field_confidence as/, "de betaalpagina voedt de prop niet");
+});
+
+test("[REKENING-GELEZEN] een onleesbaar rekeningnummer heet niet 'er staat er geen'", () => {
+  // Dezelfde vorm als [BTW-NUMMER-GELEZEN]: de opschoning gooit weg wat ze niet kan gebruiken, en
+  // daarmee het enige bewijs dat er iets STOND. De controlelijst zei dan iets ONWAARS over het
+  // papier van de eigenaar, op de as waar fout zijn de betaling kost.
+  const ai = code("src/lib/ai.ts");
+  const bewaar = ai.indexOf("._vendor_iban_printed = iban;");
+  const filter = ai.indexOf("parsed.vendor_iban = usable ? iban : undefined;");
+  assert.ok(bewaar > 0, "het gelezen nummer wordt niet bewaard");
+  assert.ok(filter > 0 && bewaar < filter, "…of pas nadat de filter het al weggooide");
+
+  const checks = code("src/lib/invoice-checks.ts");
+  assert.match(checks, /checkVendorIban\(inv\.vendor_iban \|\| ibanPrintedRaw\)/,
+    "de vormcontrole kijkt niet naar wat er wél gelezen is");
+  assert.match(checks, /niet goed lezen/, "de wijzigingscontrole beweert nog steeds dat er niets stond");
+});
+
+test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de bedragen", () => {
+  // reimport-carry.ts schrijft zijn eigen waarschuwing boven die lijst: wie er een nieuwe soort
+  // verklaring bij zet en de lijst vergeet, laat hem bij een mislukte herlezing verdampen terwijl
+  // de bedragen die hij verklaart gewoon blijven staan. Dat is precies wat er gebeurde: het gat
+  // van € 176,40 bleef, de uitleg en de één-tik-oplossing waren na één druk op "Opnieuw inlezen"
+  // weg, en de controlelijst viel terug op het botte "komt niet uit op het totaal".
+  const carry = code("src/lib/reimport-carry.ts");
+  const lijst = carry.slice(
+    carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
+    carry.indexOf("const RELATION_KEYS"),
+  );
+  assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
+  assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");
+});
+
+test("[READING-MEMORY] het leesgeheugen bereikt ELKE oproepplek van dezelfde editor", () => {
+  // Dezelfde klasse als de statiegeld-knop hierboven, op een tweede soort hulp. De betaalpagina
+  // rendert de zin server-side en geeft hem aan de editor mee; /bank opende diezelfde editor en gaf
+  // niets — dus stond "bij deze leverancier corrigeer je meestal het bedrag" op het ene scherm en
+  // niet op het andere, over één factuur. Er zijn precies twee oproepplekken; beide moeten voeden.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(route, /readingHint: readingHintFor\(invoice\.client_name, await loadReadingMemory\(/,
+    "de route rekent de zin niet uit voor het scherm dat hem zelf niet kan maken");
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /readingHint=\{correctHint\}/, "de bankpagina voedt de prop niet");
+  assert.match(bank, /setCorrectHint\(/, "…en haalt hem dus ook niet op");
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(manage, /readingHint=\{readingHints\[/, "de betaalpagina voedt de prop niet meer");
+});
+
+test("[BOUWSEL-GEEN-BELOFTE] geen .catch() op een Supabase-bouwsel — dat is de crash, niet het vangnet", () => {
+  // DE STORING: één foto van een factuur gaf "de server gaf een onverwacht antwoord (HTTP 500)" en
+  // er werd niets bewaard. De oorzaak stond in een opruimregel in /api/intake:
+  //
+  //   await claimPipe.from("intake_claims").delete().eq(...).lt(...).catch(() => {})
+  //
+  // Een Supabase-bouwsel is een THENABLE, geen Promise: het heeft `then` en verder niets, dus
+  // `.catch` is undefined en die aanroep gooit een TypeError vóórdat de query wordt verstuurd.
+  // `as any` op de client hield tsc erbuiten. Bewezen in thenable-not-promise.test.ts — daar wordt
+  // het aan de échte bibliotheek gevraagd, niet aan een type.
+  //
+  // Deze poort is de klasse, niet het geval: overal in src, in élke route.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  // WELKE `.catch` telt? Alleen die rechtstreeks op een postgrest-bouwsel hangt. Twee vormen die
+  // er in de tekst op lijken en het NIET zijn, en die dus geen vals alarm mogen geven:
+  //
+  //   · `supabase.storage.from('documents').remove([p]).catch(…)` — storage-js is géén postgrest.
+  //     Zijn methodes zijn `async`, dus dat is een échte Promise en `.catch` bestaat er wél;
+  //   · `fetchAllRows((from, to) => supabase.from(…).range(from, to)).catch(() => [])` — de
+  //     `.catch` hangt aan de WRAPPER, een gewone async functie, niet aan het bouwsel erin.
+  //
+  // Daarom geen regex over de regel maar een echte lezing: loop vanaf `.catch(` terug over een
+  // gebalanceerde uitdrukking, en kijk waar die keten BEGINT. Begint hij bij `iets.from(` of
+  // `iets.rpc(` — dan is het een bouwsel. Begint hij bij `naam(` — dan is het een functie-uitkomst.
+  // Commentaar eerst weg, mét respect voor strings: een `//` binnen "https://…" is geen commentaar,
+  // en een keten die met een toelichtingsregel begint las anders als commentaar in plaats van als
+  // bouwsel — precies de reden dat een eerdere versie van deze poort de tweede kapotte regel MISTE.
+  const stripComments = (src: string): string => {
+    let out = "";
+    let i = 0;
+    let quote: string | null = null;
+    while (i < src.length) {
+      const c = src[i];
+      if (quote) {
+        if (c === "\\") { out += "  "; i += 2; continue; }
+        if (c === quote) quote = null;
+        out += c; i++; continue;
+      }
+      if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
+      if (c === "/" && src[i + 1] === "/") {
+        while (i < src.length && src[i] !== "\n") { out += " "; i++; }
+        continue;
+      }
+      if (c === "/" && src[i + 1] === "*") {
+        while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) { out += src[i] === "\n" ? "\n" : " "; i++; }
+        out += "  "; i += 2; continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  };
+
+  const receiverOf = (src: string, dot: number): string => {
+    let depth = 0;
+    let j = dot - 1;
+    for (; j >= 0; j--) {
+      const c = src[j];
+      if (c === ")" || c === "]" || c === "}") { depth++; continue; }
+      if (c === "(" || c === "[" || c === "{") {
+        if (depth === 0) break; // deze haak opent een OMHULLENDE aanroep — hier houdt de keten op
+        depth--;
+        continue;
+      }
+      if (depth !== 0) continue;
+      if (c === ";" || c === "," || c === "=" || c === "&" || c === "|" || c === "?" || c === ":") break;
+      // Dit bestand zet geen puntkomma's, dus een REGELEINDE is de statement-grens. Een keten mag er
+      // wél overheen lopen: `await pipeline\n  .from(…)\n  .eq(…)` is één uitdrukking. Het verschil
+      // is wat er tot nu toe verzameld is — begint dat met een punt (of is het nog leeg), dan gaat
+      // de keten verder naar boven; begint het met een woord, dan stond de kop op deze regel.
+      if (c === "\n") {
+        const soFar = src.slice(j + 1, dot).trim();
+        if (soFar === "" || soFar.startsWith(".")) continue;
+        break;
+      }
+    }
+    // `await`, `return`, `void` horen bij de STATEMENT, niet bij de keten. Laat je ze staan, dan
+    // begint de uitdrukking met een woord en herkent geen enkele regel het bouwsel er nog in.
+    return src.slice(j + 1, dot).trim().replace(/^(await|return|void)\s+/, "").trim();
+  };
+
+  // `client.from(` / `client.schema('x').from(` / `client.rpc(` — en niets ertussen. Een
+  // storage-keten valt hier vanzelf buiten, want die leest als `supabase.storage.from(`, en een
+  // wrapper leest als `fetchAllRows(`.
+  const IS_BUILDER = /^[A-Za-z_$][\w$]*(\s*\.\s*schema\s*\([^)]*\))?\s*\.\s*(from|rpc)\s*\(/;
+
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    if (file.endsWith("lifecycle-gates.test.ts")) continue;
+    // Het bewijsbestand NOEMT de vorm met opzet, om hem te laten gooien.
+    if (file.endsWith("thenable-not-promise.test.ts")) continue;
+    const src = stripComments(code(file));
+    for (const m of src.matchAll(/\.\s*(catch|finally)\s*\(/g)) {
+      const recv = receiverOf(src, m.index!);
+      if (!IS_BUILDER.test(recv)) continue;
+      if (recv.includes(".storage.")) continue;
+      const line = src.slice(0, m.index!).split("\n").length;
+      offenders.push(`${file}:${line}  ${recv.replace(/\s+/g, " ").slice(0, 110)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "een .catch()/.finally() op een Supabase-bouwsel gooit een TypeError in plaats van iets te vangen:\n" +
+      offenders.join("\n"),
+  );
+
+  // En de twee regels die het waren, staan er nu in hun genezen vorm — anders zou het hierboven
+  // ook groen zijn als de hele opruiming was weggehaald in plaats van gerepareerd.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /try \{\s*\n\s*await claimPipe\s*\n?\s*\.?from\("intake_claims"\)\s*\n?\s*\.?delete\(\)/,
+    "de opruimveeg staat niet meer in een try — of hij is helemaal verdwenen");
+  assert.match(intake, /await claimPipe\.from\("intake_claims"\)\.update\(\{ created_at/,
+    "het overnemen van een verlopen claim is verdwenen in plaats van gerepareerd");
+});
+
+test("[DEUR-VANGNET] elke deur waar een document binnenkomt heeft hetzelfde vangnet", () => {
+  // DE STORING, veralgemeend. /api/intake gooide een TypeError één regel vóór het iets opsloeg, en
+  // de crash was niet de hele schade — de STILTE was het. De route had geen try/catch om zijn body,
+  // dus de worp werd geen ANTWOORD: hij ontsnapte naar het platform, dat met HTML antwoordt. De
+  // client kan daar geen reden uit lezen en viel terug op describeUploadFailure's laatste redmiddel:
+  // "de server gaf een onverwacht antwoord (HTTP 500)". Niemand hoorde wat er was gebeurd — de
+  // eigenaar niet, en wij niet, want er werd ook niets gelogd.
+  //
+  // Vijf deuren nemen een document van een mens aan. Ze delen de storing precies, en een vangnet
+  // dat bij één deur hangt is een vangnet dat de andere vier niet hebben — dezelfde les die ai.ts
+  // al opschreef over de eigen-factuur-controle die maar aan één van de vijf deuren hing.
+  const DEUREN: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "INTAKE"],
+    ["src/app/api/email/upload/route.ts", "UPLOAD"],
+    ["src/app/api/bank/attach-invoice/route.ts", "BANK-ATTACH"],
+    ["src/app/api/email/reimport/[id]/route.ts", "REIMPORT"],
+    ["src/app/api/tools/scan-invoice/route.ts", "SCAN-TOOL"],
+  ];
+  for (const [pad, tag] of DEUREN) {
+    const src = code(pad);
+    assert.match(src, /import \{ withCrashNet \} from ["']@\/lib\/route-crash-net["']/,
+      `${pad} haalt het vangnet niet binnen`);
+    assert.match(src, new RegExp(`withCrashNet\\(\\s*\n?\\s*["']${tag.replace("-", "-")}["']`),
+      `${pad} hangt niet onder het vangnet, of niet onder zijn eigen naam`);
+    // De ZIN moet zeggen wat er met het document is gebeurd. Een vangnet dat "er ging iets mis"
+    // zegt over een bestand dat misschien wél is opgeslagen, is de melding waarna iemand ophoudt
+    // met de app te vertrouwen.
+    const zin = src.slice(src.indexOf("withCrashNet("), src.indexOf("withCrashNet(") + 700);
+    assert.match(zin, /NIET opgeslagen|NIET gewijzigd|niets van jou bewaard|niets aan gewijzigd/,
+      `${pad} zegt niet wat er met het document van de eigenaar is gebeurd`);
+  }
+
+  // En het vangnet zelf: het logt met een vindbare tag, het antwoordt in JSON met een 500, en het
+  // laat Next's eigen besturingsworpen (redirect/notFound) ONGEMOEID — die vangen zou een werkende
+  // doorverwijzing in deze foutmelding veranderen.
+  const net = code("src/lib/route-crash-net.ts");
+  assert.match(net, /unstable_rethrow\(e\)/, "het vangnet slikt een redirect() op");
+  assert.match(net, /console\.error\(`\[\$\{tag\}-CRASH\]/, "de reden wordt niet vastgelegd waar wij hem terugvinden");
+  assert.match(net, /NextResponse\.json\(\{ error: sentence \}, \{ status: 500 \}\)/, "het antwoord is geen JSON met een zin");
+});
+
+test("[VOL-GELEZEN] de opslagmeter telt ALLE bestanden, niet de eerste duizend", () => {
+  // Twee plekken tellen file_size op over de bestanden van één eigenaar, en geen van beide was
+  // gepagineerd. PostgREST kapt elk antwoord stil af op ~1000 rijen — geen fout, geen vlag — dus
+  // bij meer dan duizend bestanden telde de som alleen de eerste duizend.
+  //
+  // Te LAAG is hier de gevaarlijke kant. De grens wordt dan nooit bereikt, de eigenaar hoort dat
+  // hij ruim zit, en de meter op zijn scherm bevestigt het. Wie elke dag bonnetjes fotografeert is
+  // die duizend binnen een paar maanden voorbij. Op /bestanden viel bovendien het AANTAL in
+  // dezelfde limiet: 3.000 bestanden lazen als "1.000".
+  //
+  // Eén integer-kolom per rij, dus alle pagina's ophalen kost bijna niets; een aggregaat in de
+  // database zou een migratie vragen die deze meting niet waard is.
+  for (const pad of ["src/app/api/bestanden/route.ts", "src/lib/fair-use-usage.ts"]) {
+    const src = code(pad);
+    const som = src.indexOf("file_size ?? 0") >= 0
+      ? src.indexOf("file_size ?? 0")
+      : src.indexOf("Number(d.file_size)");
+    assert.ok(som > 0, `${pad}: de optelling van file_size is verplaatst of hernoemd`);
+    // De lezing die ERVOOR staat moet door de pager lopen. Op de naam van de aanroep, niet op de
+    // import: een bestand dat fetchAllRows importeert en er dan één select naast legt, is precies
+    // het geval dat deze poort moet zien.
+    const lezing = src.slice(Math.max(0, som - 900), som);
+    assert.match(lezing, /fetchAllRows<\{ file_size: number \| null \}>\(/,
+      `${pad}: de bestanden worden ongepagineerd gelezen — voorbij ~1000 stuks staat de meter stil te laag`);
+    assert.match(lezing, /\.range\(from, to\)/, `${pad}: zonder .range() paginéért fetchAllRows niets`);
+    assert.match(lezing, /\.order\("id", \{ ascending: true \}\)/,
+      `${pad}: zonder stabiele volgorde levert paginering dubbele en ontbrekende rijen`);
+  }
+});
+
+test("[NIET-LOSGELATEN] werk dat na het antwoord nog moet gebeuren, wordt afgewacht", () => {
+  // Serverless: zodra het antwoord terug is mag de instantie bevriezen of verdwijnen, en een
+  // belofte die dan nog loopt wordt afgekapt. Er is in deze codebase geen after()/waitUntil, dus
+  // er is niets dat zulk werk levend houdt — losgelaten betekent hier echt "misschien nooit".
+  //
+  // Vier plekken lieten los. Twee ervan verstuurden de mail waarin een boekhouder zijn klant om
+  // een machtiging of om stukken vraagt: de route gaf ok terug en de mail kon stilzwijgend nooit
+  // vertrekken. Twee legden vast dat een boekhouder een pakket of export had gedownload — en de
+  // toelichting bij die code zegt zélf dat het verschil met een gedeelde map pas bestaat als dat
+  // aantoonbaar is, wat `void` juist optioneel maakte.
+  const AFGEWACHT: Array<[string, RegExp, string]> = [
+    ["src/app/api/accountant/vraag-machtiging/route.ts", /await sendMessageNotification\(\{/, "de machtigingsmail"],
+    ["src/app/api/accountant/vraag-stukken/route.ts", /await sendMessageNotification\(\{/, "de opvraagmail"],
+    ["src/app/api/closing-package/route.ts", /await logAuditAction\(\{/, "het spoor van een gedownload pakket"],
+    ["src/app/api/export/route.ts", /await logAuditAction\(\{/, "het spoor van een gedownloade export"],
+  ];
+  for (const [pad, patroon, wat] of AFGEWACHT) {
+    const src = code(pad);
+    assert.match(src, patroon, `${wat} wordt losgelaten in plaats van afgewacht (${pad})`);
+    // En niet met een `void` ervoor teruggezet: dat is dezelfde fout in een andere spelling.
+    assert.doesNotMatch(src, /void (logAuditAction|sendMessageNotification)\(/,
+      `${pad}: void laat het werk alsnog los`);
+  }
+});
+
+test("[DEEL-BETALEN] het bedrag dat je kiest is het bedrag dat de QR draagt", () => {
+  // GEMELD op Enka Horeca B.V. (€ 3.819,82): "ik wil deze betalen, maar voorlopig maar een deel."
+  // Het betaalblad rekende één getal uit — het volledige openstaande bedrag — en zette dat in de
+  // QR, in de kopieerregels en dus in de overboeking. Wie een deel wilde overmaken moest de app
+  // verlaten en de gegevens met de hand overtikken, precies het moment waarop een betaling
+  // onplaatsbaar wordt.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // De regel woont in pay-part.ts, niet hier. Twee betaalbladen, en er komen er meer.
+  assert.match(blad, /import \{ planPartPayment, defaultPartPayInput, payableOpenAmount \} from '@\/lib\/pay-part'/,
+    "het blad bedenkt de regel zelf in plaats van hem te gebruiken");
+  assert.match(blad, /const partPlan = planPartPayment\(inv, payDraft\)/, "er wordt niets gepland");
+  assert.match(blad, /partPlan\.ok\s*\n?\s*\?\s*partPlan\.plan\.amount/,
+    "het gekozen bedrag bereikt de QR niet");
+
+  // HET GEVAARLIJKE GEVAL: de QR wordt in een effect gebouwd. Staat `amount` niet in de
+  // afhankelijkheden, dan blijft het plaatje op het openingsbedrag staan terwijl de kopieerregel
+  // eronder het nieuwe toont — twee getallen voor één betaling, en de bankapp leest de QR.
+  // Op de INHOUD van de lijst, niet op de exacte tekst: er mag later iets bij komen (de
+  // betaalnotitie deed dat), maar `amount` moet erin blijven staan.
+  assert.match(blad, /\}, \[inv\.id, amount(,[^\]]*)?\]\)/,
+    "de QR volgt het gekozen bedrag niet — hij blijft op het bedrag staan waarmee het blad opende");
+
+  // Geweigerd bedrag → de QR valt terug op het volledige openstaande bedrag, nooit op een half
+  // getypt getal. Er ligt dus nooit een QR klaar die niemand heeft gekozen.
+  // Op de TAK, niet op de naam: `openNow` staat ook in de zichtbaarheidstest hieronder, dus een
+  // regel die alleen het woord zoekt blijft groen terwijl de terugval iets anders wordt.
+  assert.match(blad, /\?\s*partPlan\.plan\.amount\s*\n\s*:\s*openNow/,
+    "een geweigerd bedrag laat de QR op iets ongekozen staan in plaats van op het volledige openstaande bedrag");
+
+  // En het veld verschijnt niet op een creditnota: daar valt niets te betalen.
+  assert.match(blad, /\{!isCredit && openNow > 0\.005 && \(/,
+    "het veld biedt een handeling aan op een document waar niets te betalen valt");
+
+  // De zin die de eigenaar leest noemt het RESTBEDRAG en wat er daarna gebeurt — anders is
+  // "deels betaald" een toestand waar niemand om vroeg.
+  const cat = code("src/lib/i18n/messages.ts");
+  assert.match(cat, /'deel\.rest':[\s\S]{0,120}?Daarna blijft \{bedrag\} openstaan/,
+    "de eigenaar hoort niet wat er na deze termijn nog openstaat");
+});
+
+test("[KWARTAAL-VAST] een datum zonder tijd wordt nergens in een lokale tijdzone gelezen", () => {
+  // `new Date("2026-01-01")` is middernacht UTC. Lees dat met .getFullYear()/.getMonth() en je
+  // krijgt het antwoord van de tijdzone waarin het toevallig draait: ten westen van UTC wordt
+  // 1 januari 31 december, en het stuk belandt in het jaar- én kwartaalmapje van het VORIGE jaar.
+  // Dat het vandaag goed gaat is een eigenschap van de omgeving (server = UTC), niet van de code.
+  //
+  // De canonieke afleiding doet het al goed: quarterKeyOf() in quarter.ts leest de maand met een
+  // regex uit de tekst zelf en heeft geen Date-object nodig.
+  const PLEKKEN = [
+    ["src/lib/bestanden.ts", "de map waar een stuk in wordt gearchiveerd"],
+    ["src/app/api/bestanden/classify/route.ts", "het jaar/kwartaal waarin een stuk wordt ingedeeld"],
+    ["src/app/api/invoice/[id]/document/route.ts", "het jaar waaronder een document hangt"],
+  ];
+  for (const [pad, wat] of PLEKKEN) {
+    const src = code(pad);
+    // Alleen waar een GELEZEN datum wordt ontleed. `new Date()` ZONDER argument is "nu", en daar
+    // is lokaal-versus-UTC een echte keuze (amsterdamYearQuarter) in plaats van een fout.
+    //
+    // Twee vormen, want de eerste versie van deze poort miste juist de vorm die in de code stond:
+    // de getter hangt meestal niet aan `new Date(...)` zelf maar aan de variabele ernaast.
+    for (const m of src.matchAll(/new Date\(\s*[^)\s][^)]*\)\s*\.\s*get(FullYear|Month|Date)\b/g)) {
+      assert.fail(`${pad}: ${wat} wordt uit een lokale getter gelezen — gebruik getUTC* (${m[0]})`);
+    }
+    for (const m of src.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new Date\(\s*[^)\s][^)]*\)/g)) {
+      const naam = m[1];
+      const lokaal = new RegExp(`\\b${naam}\\s*\\.\\s*get(FullYear|Month|Date)\\b`);
+      assert.doesNotMatch(src, lokaal,
+        `${pad}: ${wat} leest \`${naam}\` met een lokale getter — gebruik getUTC*`);
+    }
+  }
+
+  // En het kwartaal heeft één afleiding. De tweede — getQuarter() in quarterly.ts, zonder één
+  // aanroeper — is weg: dode code die er gezaghebbend uitziet is precies wat ooit wordt gebruikt
+  // voor het getal waar de aangifte op rust.
+  const quarterly = code("src/lib/quarterly.ts");
+  assert.doesNotMatch(quarterly, /export function getQuarter\b/,
+    "er staat weer een tweede kwartaalafleiding naast quarter.ts");
+  assert.match(code("src/lib/quarter.ts"), /const m = \/\^\(\\d\{4\}\)-\(\\d\{2\}\)\/\.exec\(iso\)/,
+    "quarterKeyOf leest de maand niet meer uit de tekst zelf");
+});
+
+test("[KENMERK-VAN-WIE] het kenmerk is geen invulveld, en de uitweg klopt met wat de server toestaat", () => {
+  // GEVRAAGD bij het termijnbetalen: "kan ik er 'eerste deel' bij schrijven?" Nee — en het
+  // verschil met het bedrag erboven is de hele reden. Het bedrag is de beslissing van de eigenaar;
+  // dit kenmerk is de instructie van de LEVERANCIER, waarmee híj de betaling terugvindt. Zelf iets
+  // meetypen helpt de eigenaar niet en kan zijn geld onvindbaar maken — payment-reference.ts hangt
+  // daar een gemeten factuur aan die om beide nummers vroeg en rente rekende over een betaling die
+  // hij niet kon plaatsen. De EPC-regel kapt bovendien stil af op 140 tekens.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Het blijft een KOPIEERREGEL, geen input. Dit is de eigenlijke bewering van deze poort.
+  const kenmerkBlok = blad.slice(blad.indexOf("[KENMERK-VAN-WIE] Waarom dit GEEN invulveld"), blad.indexOf("[KENMERK-VAN-WIE] Waarom dit GEEN invulveld") + 2200);
+  assert.doesNotMatch(kenmerkBlok, /<input/, "het kenmerk is een invulveld geworden");
+  assert.match(blad, /t\('kenmerk\.vanLeverancier'\)/, "er staat niet bij van wie dit kenmerk is");
+
+  // De uitweg mag alleen verschijnen als de SERVER hem ook openhoudt. De correctieroute weigert de
+  // hele patch zodra er geld op de factuur staat (GUARD 3, hasSettledMoney) — ook een wijziging die
+  // geen geld is. Een link tonen die dan stukloopt, stuurt de eigenaar naar een dichte deur.
+  // De VOORWAARDE zelf wordt gepind door [KENMERK-NA-BETALING], samen met de kant van de route —
+  // want daar hoort de bewering thuis dat scherm en server het eens zijn. Hier alleen dat het
+  // scherm er ÉÉN heeft, en dat hij op de status van de factuur rust.
+  assert.match(blad, /const kenmerkCorrigeerbaar = inv\.status === 'received'/,
+    "het scherm beslist niet meer op de status van de factuur of het kenmerk te corrigeren valt");
+  assert.match(blad, /kenmerkCorrigeerbaar \? \(/, "de link verschijnt onvoorwaardelijk");
+  assert.match(blad, /t\('kenmerk\.naBetaling'\)/,
+    "als corrigeren niet kan, hoort de eigenaar te lezen waarom en wat hem wél verder helpt");
+
+  // En de correctie gebeurt op de FACTUUR, niet hier: daar blijft hij bewaard en krijgt elke
+  // volgende termijn hem mee.
+  assert.match(blad, /onCorrectKenmerk=\{\(\) => \{ const inv = prepareCtx; setPrepareCtx\(null\); if \(inv\) openCorrection\(inv\) \}\}/,
+    "de knop opent de correctie-editor niet op deze factuur");
+});
+
+test("[BETAALNOTITIE] de eigen tekst komt ACHTER het kenmerk, en QR, kopieerregel en voorbeeld dragen één waarde", () => {
+  // Het vervolg op [KENMERK-VAN-WIE]: geen invulbaar kenmerk, wél een eigen tekst ernaast. Het
+  // verschil is de hele veiligheid — het kenmerk van de leverancier wordt nooit vervangen, alleen
+  // aangevuld, en de 140-tekengrens wordt op de EINDTEKST gemeten in plaats van er stil af te kappen.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // De regel woont in pay-note.ts. Het blad rekent niets uit.
+  assert.match(blad, /import \{ planPayNote \} from '@\/lib\/pay-note'/, "het blad bedenkt de regel zelf");
+  assert.match(blad, /const notePlan = planPayNote\(referenceBase, noteDraft\)/, "er wordt niets gepland");
+
+  // ÉÉN waarde. Als de QR de notitie draagt en de kopieerregel niet, verstuurt wie kopieert iets
+  // anders dan wie scant — over dezelfde betaling. Zo is `reference` hier de uitkomst van het plan,
+  // en alles wat het gebruikt volgt vanzelf.
+  assert.match(blad, /const reference = notePlan\.remittance/,
+    "de kopieerregel en de QR lezen niet dezelfde eindtekst");
+  assert.match(blad, /\}, \[inv\.id, amount, reference\]\)/,
+    "de QR volgt de notitie niet — hij blijft op de tekst staan waarmee het blad opende");
+
+  // Geweigerd = niets toegepast. pay-note.ts geeft dan de kale referentie terug, dus er kan geen
+  // half afgekapte tekst in een QR belanden.
+  assert.match(blad, /notePlan\.error \? \(/, "een te lange tekst wordt niet gemeld");
+  assert.match(blad, /t\('notitie\.ruimte', \{ n: String\(notePlan\.budget - notePlan\.note\.length\) \}\)/,
+    "de eigenaar ziet niet hoeveel ruimte er nog is");
+
+  // En waar het NIET mag, zegt het scherm waarom in plaats van het veld stil weg te laten.
+  assert.match(blad, /notePlan\.allowed \? \(/, "het veld verschijnt onvoorwaardelijk");
+  assert.match(blad, /\{notePlan\.blocked\}/, "een verborgen veld zonder reden");
+
+  // De reden zelf staat in de regel, niet in het scherm: een gestructureerd kenmerk wordt op zichzelf
+  // gematcht, dus daar mag niets naast.
+  const regel = code("src/lib/pay-note.ts");
+  assert.match(regel, /structuredReferences\(ref\)\.length > 0/,
+    "een gestructureerd kenmerk krijgt weer passagiers mee");
+  assert.match(regel, /EPC_REMITTANCE_MAX - ref\.length - NOTE_SEPARATOR\.length/,
+    "de grens wordt niet op de eindtekst gemeten");
+  assert.doesNotMatch(regel, /\.slice\(0, EPC_REMITTANCE_MAX\)/,
+    "de notitie wordt stil afgekapt in plaats van geweigerd");
+});
+
+test("[KENMERK-NA-BETALING] een afgeboekte betaling bevriest het geld, niet het kenmerk", () => {
+  // De termijnbetaling maakte dit bereikbaar: de eerste termijn landt, de bank bevestigt hem, en
+  // vanaf dat moment stond het betaalkenmerk vast — terwijl de tweede en derde termijn het nog
+  // moeten dragen. Las de lezer die referentie verkeerd, dan ging élke volgende betaling fout en
+  // was de enige uitweg het ontkoppelen van een betaling die helemaal klopt.
+  const route = code("src/app/api/invoice/[id]/amounts/route.ts");
+
+  // De uitzondering hangt aan de gedeelde regel, niet aan een lijstje ter plekke.
+  assert.match(route, /import \{ isMoneyFreeCorrection \} from "@\/lib\/correction-scope"/,
+    "de route bedenkt zelf welke velden geld raken");
+  assert.match(route, /hasSettledMoney\(\{ status: invoice\.status, amount_paid: invoice\.amount_paid \}\) &&\s*\n\s*!isMoneyFreeCorrection\(body\)/,
+    "de poort is weer blanket, of laat meer door dan de regel toestaat");
+
+  // En het is een ALLOWLIST. Een veld dat morgen aan deze route wordt toegevoegd hoort default
+  // geweigerd te worden zolang er geld op de factuur staat, niet stilzwijgend mee te glippen.
+  const regel = code("src/lib/correction-scope.ts");
+  assert.match(regel, /MONEY_FREE_CORRECTION_FIELDS: readonly string\[\] = \["payment_reference"\]/,
+    "de lijst is gegroeid of van vorm veranderd — lees eerst waarom elk ander veld er NIET in staat");
+  assert.match(regel, /keys\.every\(\(k\) => MONEY_FREE_CORRECTION_FIELDS\.includes\(k\)\)/,
+    "de controle is geen allowlist meer");
+  assert.match(regel, /if \(keys\.length === 0\) return false/,
+    "een leeg verzoek glipt door de poort");
+
+  // Het scherm mag dit alleen aanbieden waar de server het ook toestaat — anders wijst het naar
+  // een dichte deur, wat [KENMERK-VAN-WIE] nu juist kwam repareren.
+  const blad = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(blad, /const kenmerkCorrigeerbaar = inv\.status === 'received'/,
+    "het scherm en de route zijn het oneens over wanneer het kenmerk nog te corrigeren is");
+  assert.match(route, /const referenceEditable = invoice\.status === "received"/,
+    "de GET zegt niet apart dat het kenmerk nog open staat");
+});
+
+test("[VERVANG-OVERAL] 'Deze vervangt factuur X' staat op ELK scherm dat het paar toont", () => {
+  // duplicate-payable.ts schreef zelf op dat het TWEEDE moment het gevaarlijke is: beide kopieën
+  // bevestigd, naast elkaar op de betaalpagina, allebei meegeteld in het totaal bovenaan. De
+  // waarschuwing kwam daarheen; de handeling bleef in de controlewachtrij achter. Dezelfde vorm
+  // als de statiegeld-tik en het leesgeheugen: hulp op één scherm is geen hulp.
+  const rule = code("src/lib/supersede-target.ts");
+  const queue = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const pay = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // Eén regel, twee schermen. Twee keer hetzelfde jsonb-pad uitlezen is hoe ze gaan verschillen
+  // over welke facturen vervangen mogen worden.
+  for (const [src, waar] of [[queue, "de controlewachtrij"], [pay, "de betaalpagina"]] as const) {
+    assert.match(src, /supersedeTargetOf\(/, `${waar} leest de tweeling-vlag zelf uit`);
+    assert.match(src, /from ['"]@\/lib\/supersede-target['"]/, `${waar} gebruikt de gedeelde regel niet`);
+  }
+
+  // De betaalpagina moet er ook echt iets mee DOEN — een geïmporteerde regel zonder knop is de
+  // dode letter die deze poort moet zien.
+  assert.match(pay, /await fetch\(`\/api\/invoice\/\$\{inv\.id\}\/supersede`, \{ method: 'POST' \}\)/,
+    "de betaalpagina biedt de vervanging niet aan");
+  assert.match(pay, /t\('ink\.vervang\.knopMetNr', \{ nr: target\.number \}\)/,
+    "de knop noemt de andere factuur niet");
+  // Met dezelfde bevestiging als de wachtrij: dit archiveert een factuur.
+  assert.match(pay, /dialog\.confirm\(\{[\s\S]{0,300}?ink\.vervang\.vraagMetNr/,
+    "er wordt gearchiveerd zonder dat de eigenaar het bevestigt");
+
+  // HET DOEL BLIJFT SERVER-SIDE. De route leest de tweeling uit de vlag die hij zelf schreef,
+  // precies zodat geen enkel scherm een archivering ergens anders op kan richten.
+  assert.doesNotMatch(rule, /possible_duplicate_id.*return|id,\s*number/,
+    "de gedeelde regel geeft het id van de tweeling aan het scherm terug");
+  assert.doesNotMatch(pay, /body: JSON\.stringify\([\s\S]{0,120}?supersede/,
+    "de betaalpagina stuurt een doel mee naar de vervangroute");
+});
+
+test("[BETER-EXEMPLAAR] een beter exemplaar vervangt de foto, en gooit het oude nooit weg", () => {
+  // GEVRAAGD: de bedragen zijn te corrigeren, het bestand eronder niet — dus bleef de haastige
+  // foto staan onder cijfers die inmiddels kloppen, en dat is de kopie die de boekhouder opent.
+  //
+  // De route weigerde vervangen met een goede reden, in zijn eigen woorden: het gooit bewijs weg
+  // dat de bewaarplicht zegt te bewaren. Die reden gaat over WEGGOOIEN, niet over vervangen — dus
+  // gooit deze weg niets: de oude documenten-rij blijft staan, alleen de wijzer verschuift.
+  const rule = code("src/lib/document-replace.ts");
+  const route = code("src/app/api/invoice/[id]/document/route.ts");
+
+  // Vervangen wordt nooit AFGELEID. Een bezette plek blijft een weigering tenzij er expliciet om
+  // gevraagd is — anders vervangt een scherm dat niets vroeg het bewijs van een geboekte factuur.
+  assert.match(rule, /if \(!input\.replaceRequested\)/, "vervangen wordt afgeleid in plaats van gevraagd");
+  assert.match(route, /replaceRequested: form\.get\("replace"\) === "true"/,
+    "de route leest de uitgesproken bedoeling niet");
+
+  // Het oude bestand wordt NIET verwijderd — nergens in deze route.
+  assert.doesNotMatch(route, /\.from\("documents"\)[\s\S]{0,120}?\.delete\(\)/,
+    "de route verwijdert de oude documenten-rij — precies wat de bewaarplicht verbiedt");
+  assert.match(rule, /previousDocumentId: current/, "het oude id gaat niet mee naar het spoor");
+
+  // Compare-and-set op WAT ER STOND, niet op null: anders wint een gelijktijdige wijziging stil.
+  assert.match(route, /\.eq\("document_id", slot\.previousDocumentId\)/,
+    "de vervanging overschrijft een wijzer die intussen verschoven kan zijn");
+
+  // Het slot van de boekhouder blokkeert een RUIL en nooit het vullen van een lege plek — dat
+  // laatste voegt bewijs toe aan een geboekt cijfer, het eerste verandert welk stuk eronder ligt.
+  assert.match(rule, /accountantStatus \?\? ""\) === "verwerkt"/, "het boekhoudersslot is weg");
+  assert.match(rule, /if \(!current\) return \{ ok: true, mode: "fill" \}/,
+    "een lege plek loopt niet meer langs het slot heen");
+
+  // En het spoor noemt het als een eigen handeling, met een leesbaar label in drie talen.
+  assert.match(code("src/lib/audit.ts"), /'invoice\.document_replaced'/, "de ruil heeft geen eigen actie");
+  assert.match(code("src/lib/logboek.ts"), /log\.invoice\.document_replaced/, "…en staat niet in het logboek");
+  assert.match(code("src/lib/i18n/messages.ts"), /'log\.invoice\.document_replaced':/, "…zonder leesbare zin");
+
+  // De zin die de eigenaar leest is de ENIGE plek waar het onderscheid met een herziene factuur
+  // staat. Zonder dat verwisselt iemand dit met "Deze vervangt factuur X" en verdwijnt een versie.
+  assert.match(code("src/lib/i18n/messages.ts"), /'dsh\.vervang\.uitleg':[\s\S]{0,400}?Deze vervangt factuur X/,
+    "de uitleg wijst niet naar het andere geval — twee documenten in plaats van één beter exemplaar");
 });

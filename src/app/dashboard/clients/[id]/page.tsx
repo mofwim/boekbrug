@@ -12,10 +12,14 @@ import type { ProfileRow } from '@/types/rows'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
+import { translator } from '@/lib/i18n/t'
+import { useLocale } from '@/lib/i18n/use-locale'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
 export default function ClientDetailPage() {
+  const locale = useLocale()
+  const t = translator(locale)
   const dialog = useDialog()
   const toast = useToast()
   const router = useRouter()
@@ -53,10 +57,13 @@ export default function ClientDetailPage() {
   }, [clientId])
 
   async function removeClient() {
+    const naam = client?.company_name || client?.full_name
     const confirmed = await dialog.confirm({
-      title: 'Klant ontkoppelen?',
-      message: `Je verliest daarmee de toegang tot de administratie van ${client?.company_name || client?.full_name || 'deze klant'}. De klant houdt alles zelf; jullie kunnen later opnieuw koppelen.`,
-      confirmLabel: 'Ontkoppelen',
+      title: t('bh.det.ontkoppelTitel'),
+      message: naam
+        ? t('bh.det.ontkoppelUitleg', { naam })
+        : t('bh.det.ontkoppelUitlegAnoniem'),
+      confirmLabel: t('bh.det.ontkoppelen'),
       danger: true,
     })
     if (!confirmed) return
@@ -72,7 +79,7 @@ export default function ClientDetailPage() {
       router.push('/dashboard')
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || 'Ontkoppelen mislukt', { tone: 'error' })
+      toast(data.error || t('bh.det.ontkoppelMislukt'), { tone: 'error' })
     }
   }
 
@@ -86,16 +93,16 @@ export default function ClientDetailPage() {
         <button
           onClick={removeClient}
           style={{ fontSize: 13, fontWeight: 500, color: M3.error, background: 'none', border: '1px solid #EA4335', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          Ontkoppelen
+          {t('bh.det.ontkoppelen')}
         </button>
       ),
     },
-    [client?.company_name, client?.full_name]
+    [client?.company_name, client?.full_name, locale]
   )
 
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F9FA' }}>
-      <p style={{ fontSize: 14, color: '#5F6368' }}>Laden...</p>
+      <p style={{ fontSize: 14, color: '#5F6368' }}>{t('bh.det.laden')}</p>
     </div>
   )
 
@@ -113,14 +120,14 @@ export default function ClientDetailPage() {
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
             <p style={{ fontSize: 11, fontWeight: 600, color: '#5F6368', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-              Klantgegevens
+              {t('bh.det.klantgegevens')}
             </p>
           </div>
 
           <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
             {/* Naam */}
             <div>
-              <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>Naam</p>
+              <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{t('bh.det.naam')}</p>
               <p style={{ fontSize: 14, fontWeight: 500, color: '#202124', margin: 0 }}>
                 {client?.company_name
                   ? `${client.company_name}${client?.full_name ? ` · ${client.full_name}` : ''}`
@@ -131,10 +138,12 @@ export default function ClientDetailPage() {
             {/* Grid: KVK / BTW / IBAN / Email */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px' }}>
               {[
+                // KVK, BTW and IBAN are Dutch register terms, not words — they stay as they are
+                // in every language (AGENTS.md). Only the e-mail label is a word.
                 { label: 'KVK',    value: client?.kvk_number },
                 { label: 'BTW',    value: client?.btw_number },
                 { label: 'IBAN',   value: client?.iban },
-                { label: 'E-mail', value: client?.email },
+                { label: t('bh.det.email'), value: client?.email },
               ].map(f => (
                 <div key={f.label}>
                   <p style={{ fontSize: 11, color: '#5F6368', marginBottom: 2 }}>{f.label}</p>
@@ -159,7 +168,7 @@ export default function ClientDetailPage() {
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >
-              ✉ Stuur e-mail
+              ✉ {t('bh.det.stuurEmail')}
             </a>
             <button
               onClick={() => router.push(`/dashboard/messages/${clientId}`)}
@@ -172,7 +181,7 @@ export default function ClientDetailPage() {
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#F8F9FA')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >
-              💬 Stuur bericht
+              💬 {t('bh.det.stuurBericht')}
               {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute', top: 8, insetInlineEnd: 12,
@@ -191,8 +200,8 @@ export default function ClientDetailPage() {
         {/* [BOEK-028] Design System — Workspace card + Q buttons — May 2026 */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1 }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #E0E0E0' }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>Working Place</h2>
-            <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>Selecteer een kwartaal</p>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: 0 }}>{t('bh.det.werkplek')}</h2>
+            <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>{t('bh.det.kiesKwartaal')}</p>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, padding: 16 }}>
@@ -217,7 +226,7 @@ export default function ClientDetailPage() {
                   </span>
                   <span style={{ fontSize: 20, fontWeight: 700 }}>Q{q}</span>
                   {isCurrent && (
-                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>huidig</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{t('bh.det.huidig')}</span>
                   )}
                 </button>
               )
@@ -226,8 +235,24 @@ export default function ClientDetailPage() {
         </div>
 
         {/* Factuur opstellen */}
+        {/* [BOEKHOUDER-EIGEN-BOEKEN] Deze knop wees naar /dashboard/invoice/new?clientId=… en dat
+            is het scherm van de boekhouder ZELF. Twee dingen gingen daar mis, en het tweede is het
+            ernstige:
+
+              1. `clientId` werd daar niet eens gelezen — dat scherm kent `client_id`, en dat
+                 betekent er bovendien iets anders (een KLANT van de ondernemer, niet de
+                 ondernemer). De parameter viel dus stil op de grond.
+              2. Wat overbleef was een leeg eigen factuurscherm met "voor deze klant" als belofte.
+                 Wie die belofte gelooft en gaat typen, zet de factuur van zijn klant in ZIJN
+                 EIGEN boeken: zijn omzet, zijn nummerreeks, zijn BTW-aangifte. Niets in het
+                 scherm spreekt dat tegen, want als eigen factuur klopt hij helemaal.
+
+            Het juiste scherm bestaat al: /dashboard/accountant/factuur toont bij elke stap namens
+            wie er gefactureerd wordt, en weigert zonder machtiging. Heeft deze klant er geen
+            gegeven, dan komt de boekhouder daar op de vraag-de-machtiging-uitleg uit — een eerlijk
+            "dit mag nog niet" in plaats van een factuur in de verkeerde administratie. */}
         <button
-          onClick={() => router.push(`/dashboard/invoice/new?clientId=${clientId}`)}
+          onClick={() => router.push(`/dashboard/accountant/factuur?klant=${clientId}`)}
           style={{
             width: '100%', padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
             backgroundColor: '#1A73E8', color: '#FFFFFF', fontSize: 14, fontWeight: 500,
@@ -236,7 +261,7 @@ export default function ClientDetailPage() {
           onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#1557B0')}
           onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#1A73E8')}
         >
-          + Factuur opstellen voor deze klant
+          + {t('bh.det.factuurOpstellen')}
         </button>
 
       </div>

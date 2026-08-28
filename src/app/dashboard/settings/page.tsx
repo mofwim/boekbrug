@@ -77,6 +77,8 @@ export default function SettingsPage() {
   const [remindersEnabled, setRemindersEnabled] = useState(false)
   // [OCHTEND] The morning digest mail — on unless the owner said otherwise (missing column = on).
   const [ochtendMail, setOchtendMail] = useState(true)
+  // [ZELF-EERST] The autopilot switch. Default true = today's behavior for everyone.
+  const [autoBoeken, setAutoBoeken] = useState(true)
   const [reminderOffsetsText, setReminderOffsetsText] = useState('14, 30')
 
   // حالة دعوة المحاسب
@@ -155,6 +157,7 @@ export default function SettingsPage() {
         setVatExemptSince(data.vat_exempt_since ?? null)
         setRemindersEnabled(!!data.reminders_enabled)
         setOchtendMail((data as { ochtend_mail?: boolean | null }).ochtend_mail !== false)
+        setAutoBoeken((data as { auto_boeken?: boolean | null }).auto_boeken !== false)
         setReminderOffsetsText(
           (Array.isArray(data.reminder_offsets) && data.reminder_offsets.length > 0
             ? data.reminder_offsets
@@ -284,6 +287,16 @@ export default function SettingsPage() {
         .eq('id', user.id)
       if (ochtendErr) {
         console.warn('[OCHTEND] morning-mail preference save skipped (migration applied?)', ochtendErr.message)
+      }
+
+      // [ZELF-EERST] Same shape, same reason: before auto_boeken.sql this column does not exist,
+      // and bundling it would brick the whole profile save.
+      const { error: autoBoekenErr } = await supabase
+        .from('profiles')
+        .update({ auto_boeken: autoBoeken })
+        .eq('id', user.id)
+      if (autoBoekenErr) {
+        console.warn('[ZELF-EERST] autopilot preference save skipped (migration applied?)', autoBoekenErr.message)
       }
 
       // [VRIJGESTELD] Separate + best-effort for exactly the reason spelled out above: before
@@ -759,6 +772,27 @@ export default function SettingsPage() {
                 </span>
               </div>
             )}
+          </div>
+
+          {/* [ZELF-EERST] De autopiloot — uit betekent: alles wacht op jouw tik, ook de schoonste
+              lezing. Dit is hoe een eigenaar die het nog niet vertrouwt het mag leren vertrouwen. */}
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoBoeken}
+                onChange={e => setAutoBoeken(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-800">
+                  {t('inst.autoBoeken')}
+                </span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  {t('inst.autoBoekenUitleg')}
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* [OCHTEND] De ochtendmail — één mail per dag, en alleen op dagen dat er iets gebeurde. */}

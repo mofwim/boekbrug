@@ -21,6 +21,8 @@
 import { round2 } from "@/lib/invoice-totals"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
 import { createNotification } from "@/lib/notifications"
@@ -90,6 +92,8 @@ import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUna
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory"
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup"
+// [ZELF-EERST] The owner's grip on the autopilot — see the helper for the fail matrix.
+import { autoBoekenAllowed } from "@/lib/auto-boeken"
 import { loadReadingMemory } from "@/lib/reading-memory-source"
 // [DUP-ARCHIVED] Botst de upload op een factuur die de eigenaar zelf genegeerd heeft? Dan is
 // "die staat er al" waar, maar nutteloos — hij staat in Genegeerd. Zeg dat, en noem terugzetten.
@@ -133,7 +137,34 @@ export const maxDuration = 120
 const INTAKE_SOURCES = ["camera", "upload"] as const
 type IntakeSource = (typeof INTAKE_SOURCES)[number]
 
+/**
+ * [BOUWSEL-GEEN-BELOFTE] The one door, with a net under it.
+ *
+ * Everything below runs unguarded: 1350 lines, five destinations, a dozen tables and an AI call,
+ * and not one try/catch around the whole. A throw anywhere in there did not become an answer — it
+ * escaped to the platform, which replies with an HTML error page. The owner's screen then read
+ * "de server gaf een onverwacht antwoord (HTTP 500) — probeer het opnieuw", because the client
+ * could not even parse a reason out of it (describeUploadFailure's last resort, upload-failure.ts).
+ *
+ * That is how a one-word mistake in an opportunistic cleanup line took down photographing an
+ * invoice altogether, and told nobody what happened: no JSON, no sentence, nothing in our logs
+ * that pointed at the line. This wrapper does not make a crash harmless — nothing was written, and
+ * the owner still has to take the photo again — but it makes it VISIBLE: named in the server log
+ * with its stack, and answered in the owner's language instead of by the platform.
+ *
+ * Deliberately a wrapper and not a try/catch around the body: re-indenting the whole function
+ * would collide with every other session working in this file, for zero behaviour.
+ */
 export async function POST(req: NextRequest) {
+  return withCrashNet(
+    "INTAKE",
+    "Er ging iets mis bij het verwerken van dit bestand. Het is NIET opgeslagen — maak de foto " +
+      "opnieuw of probeer het zo meteen. Blijft dit gebeuren, laat het ons weten: wij zien de fout aan onze kant.",
+    () => runIntake(req),
+  )
+}
+
+async function runIntake(req: NextRequest) {
   const supabase = await createServerSupabaseClient()
   const {
     data: { user },
@@ -756,7 +787,11 @@ export async function POST(req: NextRequest) {
           }
           if (holder) {
             // Stale — take it over so a crashed request never wedges this supplier's invoices.
-            await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id).catch(() => {})
+            // [BOUWSEL-GEEN-BELOFTE] try/catch, not `.catch()` — see the sweep below for why the
+            // difference is not cosmetic.
+            try {
+              await claimPipe.from("intake_claims").update({ created_at: new Date().toISOString() }).eq("id", holder.id)
+            } catch { /* hygiene: never let taking over a dead claim refuse a real upload */ }
           }
         } else if (claimErr && (claimErr as { code?: string }).code !== "42P01") {
           // Any other failure: log, proceed. The backstop must never refuse real uploads over
@@ -764,7 +799,25 @@ export async function POST(req: NextRequest) {
           console.error("[INTAKE-CLAIM] claim insert failed (proceeding without backstop)", { error: claimErr.message })
         }
         // Opportunistic hygiene: sweep this user's stale claims so the table stays tiny.
-        await claimPipe.from("intake_claims").delete().eq("user_id", user.id).lt("created_at", new Date(Date.now() - 3_600_000).toISOString()).catch(() => {})
+        //
+        // [BOUWSEL-GEEN-BELOFTE] This line said `.catch(() => {})` and that was not a safety net —
+        // it was the crash. A Supabase query builder is a THENABLE, not a Promise: it implements
+        // `then` and nothing else, so `.catch` is `undefined` and calling it throws a TypeError
+        // before the query is ever sent. `as any` on claimPipe (needed because intake_claims is
+        // not in the generated types) is what let it past the compiler.
+        //
+        // It sits on the main road: every photographed invoice or receipt that is not a hard
+        // duplicate and yields a claim key passes here, BEFORE the document and the invoice are
+        // written. So the owner photographed a real invoice, waited through the AI read, and got
+        // "de server gaf een onverwacht antwoord (HTTP 500)" with nothing stored — the throw
+        // escaped to the platform, which answers HTML, so even the reason was lost on the way out.
+        try {
+          await claimPipe
+            .from("intake_claims")
+            .delete()
+            .eq("user_id", user.id)
+            .lt("created_at", new Date(Date.now() - 3_600_000).toISOString())
+        } catch { /* hygiene only — a full table is untidy, a refused invoice is damage */ }
       }
     }
     // tier 'none' (un-dedupable) → allow through; the human reviews in the queue.
@@ -1200,8 +1253,17 @@ export async function POST(req: NextRequest) {
   // The safety bar itself is UNCHANGED. A bon still has to clear grounding, placement, the printed
   // BTW split, the arithmetic, the dedup and the health classifier exactly like any other invoice —
   // settling only decides the STATUS it lands in, never whether the read may be trusted.
-  const autoAdv =
-    (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
+  // [ZELF-EERST] Asked FIRST, because it is not a quality signal but a permission: the owner who
+  // says "show me everything" gets everything, including the reads that would have cleared every
+  // bar. One flag covers both landings — the invoice that would book as 'received' and the bon
+  // that would settle as paid — since both are the app acting without a tap.
+  const magAutoBoeken = await autoBoekenAllowed(supabase, user.id)
+  const autoAdv = !magAutoBoeken
+    ? // Its own reason string, ahead of every quality check: "waiting because you asked to see
+      // everything" must never read as "the read was weak" — the audit row and the queue both
+      // show this reason, and an owner testing the app deserves to see their own switch working.
+      { advance: false as const, reason: "owner_reviews_everything" }
+    : (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
     (!decision.suggestPaid || settlePlan.settle) && !multiInvoice && !oneInvoiceUnverified
       ? shouldAutoAdvanceInvoice({
           is_invoice: v.is_invoice,

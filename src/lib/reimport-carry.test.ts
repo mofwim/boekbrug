@@ -157,6 +157,29 @@ test("[BTW-SPLIT] elke verklaring van de OPGESLAGEN bedragen volgt dezelfde rege
   assert.equal(weg?._total_derived, undefined);
 });
 
+test("[STATIEGELD-GAT] de statiegeld-vondst hoort bij het GAT dat blijft staan", () => {
+  // Dezelfde regel, en dit is precies het geval waarvoor de lijst is geschreven. De vondst zegt:
+  // "het verschil van € 176,40 staat op de factuur als Statiegeld". Levert "Opnieuw inlezen" niets
+  // op, dan blijven de bedragen staan — dus staat het gat er nog — maar de verklaring en de
+  // één-tik-oplossing verdwenen, en de controlelijst viel terug op "excl. + btw komt niet uit op
+  // het totaal". De knop maakte de factuur dan minder begrijpelijk dan ervoor.
+  const vondst = { gap: 176.4, label: "Statiegeld", correctedExcl: 1011.7 };
+
+  const behouden = buildReimportFieldConfidence(input({
+    priorFc: { _statiegeld: vondst },
+    freshHasTotal: false,
+    verdict: null,
+  }));
+  assert.deepEqual(behouden?._statiegeld, vondst, "het gat blijft staan, dus zijn verklaring ook");
+
+  // …en bij verse bedragen gaat hij mee weg: die zijn opnieuw gelezen, dus opnieuw beoordeeld.
+  const weg = buildReimportFieldConfidence(input({
+    priorFc: { _statiegeld: vondst },
+    freshHasTotal: true,
+  }));
+  assert.equal(weg?._statiegeld, undefined, "verse bedragen → verse vondst, of geen");
+});
+
 test("de verse AI-zekerheden komen er gewoon bij", () => {
   const fc = buildReimportFieldConfidence(input({
     aiConfidence: { vendor: 0.97, invoice_number: 0.4 },

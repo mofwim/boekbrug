@@ -15,7 +15,13 @@ import AccountantFactuur, { type GemachtigdeKlant } from '@/modules/accountant/p
 
 export const dynamic = 'force-dynamic'
 
-export default async function AccountantFactuurPage() {
+export default async function AccountantFactuurPage({
+  searchParams,
+}: {
+  // [KLANT-VOORAF] Welke klant de boekhouder al aanwees toen hij hierheen liep — de knop op de
+  // klantpagina weet dat, en zonder dit moest hij hem hier opnieuw uit een lijst zoeken.
+  searchParams: Promise<{ klant?: string }>
+}) {
   const supabase = await createServerSupabaseClient()
 
   // [WATERVAL] Memoised per request (session-user.ts) — the dashboard layout above already asked.
@@ -92,5 +98,14 @@ export default async function AccountantFactuurPage() {
       .sort((a, b) => a.naam.localeCompare(b.naam, 'nl'))
   }
 
-  return <AccountantFactuur klanten={klanten} gekoppeld={gekoppeld} />
+  // [KLANT-VOORAF] De aangewezen klant telt alleen als hij in de ZOJUIST OPGEBOUWDE lijst van
+  // gemachtigde klanten staat. De URL is een wens, geen bevoegdheid: een id dat daar niet in staat
+  // wordt genegeerd, en de boekhouder kiest zoals altijd zelf. (Doorlaten zou hier nog steeds geen
+  // factuur opleveren — getActingForClient() weigert bij elke POST opnieuw — maar het scherm zou
+  // dan wel een naam tonen alsof er iets mocht, en dat is precies de verwarring die dit scherm
+  // volgens zijn eigen kop moet uitsluiten.)
+  const { klant: gevraagdeKlant } = await searchParams
+  const vooraf = klanten.some((k) => k.id === gevraagdeKlant) ? gevraagdeKlant! : null
+
+  return <AccountantFactuur klanten={klanten} gekoppeld={gekoppeld} vooraf={vooraf} />
 }

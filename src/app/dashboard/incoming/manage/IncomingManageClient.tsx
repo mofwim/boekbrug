@@ -36,6 +36,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
 // [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
+// [VERVANG-OVERAL] …en het antwoord erop, dat tot nu toe alleen in de controlewachtrij stond.
+import { supersedeTargetOf } from '@/lib/supersede-target'
 import { findPayableDuplicates, duplicateWarningText } from '@/lib/duplicate-payable'
 // [BULK-UNDO] What un-paying in bulk actually touches — said before it happens.
 import { planBulkUndo, bulkUndoWarnings, bulkUndoTitle, type UndoPlan } from '@/lib/bulk-undo-pay'
@@ -53,6 +55,10 @@ import { createClient } from '@/lib/supabase'
 // [PAY-SAFE] EPC QR payload + IBAN validation (pure, client-safe)
 import { paymentReferenceFor } from '@/lib/payment-reference'
 import { buildEpcQrPayload, isValidIban } from '@/lib/epc-qr'
+// [DEEL-BETALEN] Hoeveel betaal ik NU van deze factuur — de regel, niet het scherm.
+import { planPartPayment, defaultPartPayInput, payableOpenAmount } from '@/lib/pay-part'
+// [BETAALNOTITIE] Een eigen tekst ACHTER het kenmerk van de leverancier — nooit in plaats ervan.
+import { planPayNote } from '@/lib/pay-note'
 // [BUNDEL-BETALING] several supplier invoices → ONE prepared transfer (pure, client-safe)
 import { buildBundelBetaling, type BundelBetalingResult } from '@/lib/bundel-betaling'
 // [PARTIAL-PAY] one shared definition of openstaand + the amount-field interpretation
@@ -68,6 +74,8 @@ import { quarterLabelOf } from '@/lib/quarter'
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
 // [FULL-CORRECTION] The correction editor, shared with /dashboard/bank.
 import InvoiceCorrectionModal from '@/components/invoice/InvoiceCorrectionModal'
+// [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
+import { type DepositGap } from '@/lib/statiegeld'
 // [DOC-INLINE] The paper and our reading of it, on one screen — see the component's header for why
 // leaving the app to look at a pdf was the trust problem and not a convenience one.
 import InvoiceDocumentSheet from '@/components/invoice/InvoiceDocumentSheet'
@@ -534,6 +542,12 @@ export default function IncomingManageClient({
   const showToast = useToast()
   // [SUPPLETIE] A duty with a legal clock is acknowledged, not faded — see bookAsCreditnota.
   const dialog = useDialog()
+  // [VERVANG-OVERAL] Eén vervanging tegelijk — twee tikken zouden twee archiveringen aanvragen.
+  const [superseding, setSuperseding] = useState(false)
+  // [BETER-EXEMPLAAR] Welke factuur een beter exemplaar krijgt. Het blad sluit zichzelf voordat het
+  // dit aanroept, dus de rij wordt hier vastgehouden en niet uit docCtx gelezen.
+  const [replaceFor, setReplaceFor] = useState<IncomingRow | null>(null)
+  const replaceInputRef = useRef<HTMLInputElement | null>(null)
   const router   = useRouter()
   const supabase = createClient()
   // [BANK-RECON-BADGE] Per-invoice reconciliation vs the bank statement (fail-soft).
@@ -1208,7 +1222,10 @@ export default function IncomingManageClient({
   // finds. This invoice already exists and its figures are confirmed, so the route stores the file
   // and links it — nothing else. The distinction is the whole safety of the feature, and it is why
   // this handler has no "we read it again, check the amounts" branch: there is nothing to check.
-  const attachOriginal = async (inv: IncomingRow, file: File) => {
+  // [BETER-EXEMPLAAR] …and the same door swaps in a BETTER COPY of the same paper when the owner
+  // says so. Deliberately the same handler: one upload path, one set of refusals. `replace` is
+  // never inferred — the route treats an occupied slot as a refusal unless it is asked outright.
+  const attachOriginal = async (inv: IncomingRow, file: File, replace = false) => {
     if (attachingId) return
     setAttachingId(inv.id)
     try {
@@ -1217,6 +1234,7 @@ export default function IncomingManageClient({
       const { response: res } = await sendWithFit(file, (f) => {
         const body = new FormData()
         body.append('file', f)
+        if (replace) body.append('replace', 'true')
         return fetch(`/api/invoice/${inv.id}/document`, { method: 'POST', body })
       })
       const json = await res.json().catch(() => ({}))
@@ -1225,6 +1243,9 @@ export default function IncomingManageClient({
         const err = String(json?.error ?? '')
         showToast(
           err === 'heeft_al_een_origineel' ? t('ink.origineel.alAanwezig')
+          // [BETER-EXEMPLAAR] De boekhouder heeft dit stuk al gecontroleerd; de zin van de server
+          // noemt hem, want hij is de enige die dit verder kan brengen.
+          : err === 'verwerkt' ? String(json?.detail ?? t('ink.origineel.mislukt'))
           : err === 'bestandstype_niet_ondersteund' ? t('ink.origineel.bestandstype')
           : err === 'bestand_te_groot' ? t('ink.origineel.teGroot')
           : err === 'not_found' ? t('ink.origineel.bestaatNiet')
@@ -1232,7 +1253,7 @@ export default function IncomingManageClient({
         )
         return
       }
-      showToast(t('inkoop.origineelToegevoegd'))
+      showToast(replace ? t('dsh.vervang.gelukt') : t('inkoop.origineelToegevoegd'))
       router.refresh()
     } catch {
       showToast(t('inkoop.fout.toevoegen'))
@@ -1827,6 +1848,45 @@ export default function IncomingManageClient({
       return
     }
     showToast(t(DEDUCTION_TOAST[value]))
+  }
+
+  // [VERVANG-OVERAL] "Deze vervangt factuur X", op het scherm waar de eigenaar het paar VINDT.
+  //
+  // duplicate-payable.ts schreef zelf op dat dit het tweede moment is: beide kopieën bevestigd,
+  // naast elkaar, allebei meegeteld in het totaal bovenaan. De waarschuwing kwam daarheen, de
+  // handeling bleef in de controlewachtrij achter — dezelfde "hulp op één scherm"-vorm die deze
+  // week al drie keer is rechtgezet.
+  //
+  // De kop van dat bestand zegt dat het NIET mag kiezen welke van de twee klopt, en dat blijft
+  // staan: dit kiest niets. Het is de eigenaar die zegt welke vervalt, met dezelfde bevestiging en
+  // dezelfde serverweigeringen (afgeboekt geld, een boekhoudersslot) als in de wachtrij. Het
+  // verschil tussen de app die gokt en de eigenaar die beslist, is precies dit scherm.
+  async function supersedeFromPay(inv: IncomingRow, target: { number: string | null }) {
+    if (superseding) return
+    const ok = await dialog.confirm({
+      title: target.number ? t('ink.vervang.vraagMetNr', { nr: target.number }) : t('ink.vervang.vraagZonderNr'),
+      message: target.number ? t('ink.vervang.uitlegMetNr', { nr: target.number }) : t('ink.vervang.uitlegZonderNr'),
+      confirmLabel: t('ink.vervang.bevestig'),
+    })
+    if (!ok) return
+    setSuperseding(true)
+    try {
+      const res = await fetch(`/api/invoice/${inv.id}/supersede`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // De server stelde dezelfde vragen aan verser data — toon ZIJN antwoord, niet het onze.
+        await dialog.alert({ title: t('ink.vervang.kanNiet'), message: data?.detail || t('ink.vervang.mislukt') })
+        return
+      }
+      showToast(data?.archivedNumber
+        ? t('ink.vervang.genegeerdMetNr', { nr: data.archivedNumber })
+        : t('ink.vervang.genegeerdZonderNr'))
+      router.refresh()
+    } catch {
+      await dialog.alert({ title: t('inkoop.geenVerbinding'), message: t('ink.vervang.foutVerbinding') })
+    } finally {
+      setSuperseding(false)
+    }
   }
 
   async function markPrepared(inv: IncomingRow) {
@@ -3265,9 +3325,33 @@ export default function IncomingManageClient({
                       correct copy was the one our reader had got wrong. Removing a row here would
                       be guessing with a bill. */}
                   {duplicate && (
-                    <p style={{ fontSize: 12.5, color: '#7C5800', background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px', margin: 0, lineHeight: 1.45 }}>
-                      {duplicateWarningText(duplicate, inv.invoice_number)}
-                    </p>
+                    <div style={{ background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px' }}>
+                      <p style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.45 }}>
+                        {duplicateWarningText(duplicate, inv.invoice_number)}
+                      </p>
+                      {/* [VERVANG-OVERAL] De handeling bij de waarschuwing. Alleen waar de server
+                          bij het inlezen zélf een tweeling aanwees: het doel wordt daar gelezen en
+                          nooit uit dit scherm meegestuurd, zodat geen enkele knop een archivering
+                          ergens anders op kan richten. */}
+                      {(() => {
+                        const target = supersedeTargetOf(inv.field_confidence)
+                        if (!target) return null
+                        return (
+                          <button
+                            type="button"
+                            disabled={superseding}
+                            onClick={(e) => { e.stopPropagation(); void supersedeFromPay(inv, target) }}
+                            style={{
+                              marginTop: 8, padding: '8px 12px', borderRadius: R.full, border: '1px solid #7C5800',
+                              background: 'transparent', color: '#7C5800', fontSize: 12.5, fontWeight: 600,
+                              cursor: superseding ? 'default' : 'pointer', fontFamily: FONT,
+                            }}
+                          >
+                            {target.number ? t('ink.vervang.knopMetNr', { nr: target.number }) : t('ink.vervang.knopZonderNr')}
+                          </button>
+                        )
+                      })()}
+                    </div>
                   )}
 
                   {/* Inline expand */}
@@ -4057,6 +4141,7 @@ export default function IncomingManageClient({
             if (inv) requestPay(inv)
           }}
           onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
+          onCorrectKenmerk={() => { const inv = prepareCtx; setPrepareCtx(null); if (inv) openCorrection(inv) }}
         />
       )}
 
@@ -4204,6 +4289,31 @@ export default function IncomingManageClient({
         )
       })()}
 
+      {/* [BETER-EXEMPLAAR] Eén verborgen kiezer voor het hele scherm. De bevestiging komt NA het
+          kiezen en vóór het versturen: pas dan weet de eigenaar welk bestand hij vervangt, en de
+          zin die hij leest is de enige plek waar het onderscheid met een herziene factuur staat —
+          hetzelfde papier, beter exemplaar, tegenover twee documenten. */}
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept=".pdf,image/*"
+        style={{ display: 'none' }}
+        onChange={async (e) => {
+          const f = e.target.files?.[0] ?? null
+          e.target.value = ''
+          const row = replaceFor
+          setReplaceFor(null)
+          if (!f || !row) return
+          const ok = await dialog.confirm({
+            title: t('dsh.vervang.vraag'),
+            message: t('dsh.vervang.uitleg'),
+            confirmLabel: t('dsh.vervangBestand'),
+          })
+          if (!ok) return
+          void attachOriginal(row, f, true)
+        }}
+      />
+
       {/* ── [MATCH-BUTTON] What the run actually did — including what it left alone ── */}
       {/* [DOC-INLINE] The document, our reading of it, and the seven checks — see the component. */}
       {docCtx && (
@@ -4226,6 +4336,11 @@ export default function IncomingManageClient({
           onClose={() => setDocCtx(null)}
           // The whole loop in one place: see the paper, see our numbers, fix it in one tap.
           onCorrect={() => setCorrectFor(docCtx)}
+          // [BETER-EXEMPLAAR] Alleen waar er al iets hangt: een lege plek heeft zijn eigen knop
+          // ("voeg toe") en "vervangen" zou daar een handeling noemen die niet bestaat.
+          onReplaceFile={docCtx.document_id
+            ? () => { const row = docCtx; setReplaceFor(row); replaceInputRef.current?.click() }
+            : null}
         />
       )}
 
@@ -4351,6 +4466,7 @@ export default function IncomingManageClient({
           btwRows={Array.isArray(correctFor.field_confidence?._btw_rows)
             ? (correctFor.field_confidence._btw_rows as { rate: number; base: number; btw: number }[])
             : null}
+          depositGap={(correctFor.field_confidence as { _statiegeld?: DepositGap } | null)?._statiegeld ?? null}
           readingHint={readingHints[(correctFor.client_name ?? '').trim().toLowerCase()]}
           onClose={() => setCorrectFor(null)}
           onMessage={showToast}
@@ -4815,11 +4931,14 @@ function PreparePaymentSheet({
   onClose,
   onConfirmPaid,
   onCopied,
+  onCorrectKenmerk,
 }: {
   inv: IncomingRow
   onClose: () => void
   onConfirmPaid: () => void
   onCopied: (what: string) => void
+  /** [KENMERK-VAN-WIE] Opens the correction editor on this invoice — see the Kenmerk row below. */
+  onCorrectKenmerk: () => void
 }) {
   const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -4828,21 +4947,41 @@ function PreparePaymentSheet({
   // [PARTIAL-PAY] The QR must request the REMAINING openstaand, never the full
   // total: a €1.000 invoice with a €400 bank-confirmed instalment would
   // otherwise pre-fill €1.000 in the owner's bank app → €600 over-payment.
-  // Same remainder rule as the "Deels betaald · €X open" chip on the card;
-  // sign preserved (a negative creditnota stays negative → EPC refuses it).
-  const amount = (() => {
-    const total = inv.total_inc_btw ?? 0
-    const paid = Math.max(0, inv.amount_paid ?? 0)
-    if (paid <= 0.005) return total
-    return (total < 0 ? -1 : 1) * Math.max(0, Math.abs(total) - paid)
-  })()
+  //
+  // [DEEL-BETALEN] …and that remainder is now the STARTING point, not the only option. Reported
+  // on Enka Horeca B.V. (€ 3.819,82): "I want to pay this one, but only part of it for now."
+  // Whoever pays in full types nothing and gets exactly what they got before.
+  //
+  // A creditnota keeps the old behaviour: the sign is preserved so EPC refuses it, and the field
+  // below never appears (planPartPayment answers on the sign — see pay-part.ts).
+  const openNow = payableOpenAmount(inv)
+  // [KENMERK-VAN-WIE] Exactly the condition the correction route applies to THIS field, so the
+  // sheet never points at a door the server holds shut.
+  // [KENMERK-NA-BETALING] Een afgeboekte betaling telt hier niet meer mee: het kenmerk is geen
+  // geld, en tijdens een termijnbetaling is het juist het veld dat nog moet kloppen. De route laat
+  // een correctie die verder niets aanraakt daarom door (correction-scope.ts).
+  const kenmerkCorrigeerbaar = inv.status === 'received' 
+  const isCredit = (inv.total_inc_btw ?? 0) < 0
+  const [payDraft, setPayDraft] = useState(() => defaultPartPayInput(inv))
+  const partPlan = planPartPayment(inv, payDraft)
+  const amount = isCredit
+    ? (inv.total_inc_btw ?? 0)
+    : partPlan.ok
+      ? partPlan.plan.amount
+      : openNow
   // [KENMERK-BEIDE] Reference: the betalingskenmerk AND the invoice number, because a creditor
   // routinely asks for both and quoting one is what makes a payment unallocatable. This line used
   // to be `payment_reference ?? invoice_number`, so the moment a kenmerk existed the document's
   // own number was dropped from the QR, the copy row and the transfer. See payment-reference.ts
   // for the invoice this was measured on — it asks for both in its own words and charges interest
   // on a payment it cannot place.
-  const reference = paymentReferenceFor(inv)
+  const referenceBase = paymentReferenceFor(inv)
+  // [BETAALNOTITIE] De notitie hoort bij DEZE betaling, niet bij de factuur — hij wordt nergens
+  // opgeslagen. `remittance` is het ENE getal dat de QR, de kopieerregel en de voorbeeldregel
+  // allemaal moeten dragen; drie plekken met een eigen versie is precies hoe ze gaan verschillen.
+  const [noteDraft, setNoteDraft] = useState('')
+  const notePlan = planPayNote(referenceBase, noteDraft)
+  const reference = notePlan.remittance
   const ibanOk = isValidIban(inv.vendor_iban)
   const ibanDisplay = (inv.vendor_iban ?? '').replace(/(.{4})/g, '$1 ').trim()
 
@@ -4870,8 +5009,12 @@ function PreparePaymentSheet({
     }
     gen()
     return () => { cancelled = true }
+    // [DEEL-BETALEN] `amount` hoort in deze lijst. Zonder dat bleef de QR op het bedrag staan
+    // waarmee het blad opende, terwijl de kopieerregel eronder het nieuwe bedrag toonde — twee
+    // getallen voor één betaling, en de bankapp leest de QR.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inv.id])
+    // [BETAALNOTITIE] …en `reference` erbij, om dezelfde reden: de QR is wat de bankapp leest.
+  }, [inv.id, amount, reference])
 
   async function copy(value: string, label: string) {
     try {
@@ -4910,7 +5053,114 @@ function PreparePaymentSheet({
             {/* Copy rows */}
             <CopyRow label="IBAN" value={ibanDisplay} raw={(inv.vendor_iban ?? '')} onCopy={copy} />
             <CopyRow label={t('inkoop.bedrag')} value={fmtEur(amount)} raw={amount.toFixed(2)} onCopy={copy} />
+            {/* [DEEL-BETALEN] Hoeveel gaat er NU weg. Alleen bij een gewone factuur met iets open:
+                op een creditnota valt niets te betalen, en het veld zou daar een handeling
+                aanbieden die niet bestaat.
+
+                Het veld staat ONDER het bedrag dat de QR draagt, met opzet: wat je scant en wat je
+                overmaakt is hetzelfde getal, en dat moet je kunnen zien zonder te scrollen. */}
+            {!isCredit && openNow > 0.005 && (
+              <div style={{ marginTop: 10, padding: '12px 14px', background: '#F8F9FA', borderRadius: 14 }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#5F6368', marginBottom: 6 }}>
+                  {t('deel.label')}
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={payDraft}
+                  onChange={(e) => setPayDraft(e.target.value)}
+                  aria-label={t('deel.label')}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 16,
+                    borderRadius: 10, border: `1px solid ${partPlan.ok ? '#d1d1d6' : M3.error}`,
+                    outline: 'none', color: '#202124', fontFamily: FONT, background: '#fff',
+                  }}
+                />
+                {/* [NO-SILENT-EMPTY] Een geweigerd bedrag zegt WAAROM, en bij te veel overmaken ook
+                    wat het kost. De QR blijft ondertussen op het volledige openstaande bedrag staan,
+                    dus er ligt nooit een QR klaar die niemand heeft gekozen. */}
+                {!partPlan.ok ? (
+                  <p style={{ fontSize: 12.5, color: M3.error, lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {partPlan.error}
+                  </p>
+                ) : partPlan.plan.settlesAll ? (
+                  <p style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('deel.alles')}
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 12.5, color: '#1a4fa0', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('deel.rest', { bedrag: fmtEur(partPlan.plan.remaining) })}
+                  </p>
+                )}
+              </div>
+            )}
             {reference && <CopyRow label={t('inkoop.kenmerk')} value={reference} raw={reference} onCopy={copy} />}
+            {/* [KENMERK-VAN-WIE] Waarom dit GEEN invulveld is, terwijl het bedrag erboven dat wel
+                werd. Het bedrag is jouw beslissing; dit kenmerk is de instructie van de
+                LEVERANCIER — het is waarmee hij jouw betaling terugvindt. Zelf "eerste deel"
+                invullen helpt jou niet en kan hem jouw geld onvindbaar maken: payment-reference.ts
+                hangt daar een gemeten factuur aan, die om beide nummers vroeg en rente rekende over
+                een betaling die hij niet kon thuisbrengen. De EPC-regel kapt bovendien stil af op
+                140 tekens, dus meegetypte woorden duwen het factuurnummer er zonder melding af.
+
+                Verkeerd overgenomen? Dan hoort de correctie op de FACTUUR, waar hij bewaard blijft
+                en elke volgende termijn hem meekrijgt. Twee plekken om één feit te wijzigen is
+                precies hoe die twee gaan verschillen. */}
+            {reference && (
+              <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '6px 2px 0' }}>
+                {t('kenmerk.vanLeverancier')}{' '}
+                {kenmerkCorrigeerbaar ? (
+                  <button
+                    type="button"
+                    onClick={onCorrectKenmerk}
+                    style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#1a73e8', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    {t('kenmerk.corrigeer')}
+                  </button>
+                ) : (
+                  // [NO-SILENT-EMPTY] Zodra er geld op deze factuur staat weigert de correctieroute
+                  // de HELE patch, ook een wijziging die geen geld is. Hier tóch een link tonen zou
+                  // de eigenaar naar een dichte deur sturen.
+                  <span>{t('kenmerk.naBetaling')}</span>
+                )}
+              </p>
+            )}
+            {/* [BETAALNOTITIE] De eigen tekst van de eigenaar, ACHTER het kenmerk. Verschijnt niet
+                bij een gestructureerd kenmerk (daar wordt op de code alleen gematcht) en niet als
+                het kenmerk de omschrijving al vult — in beide gevallen zegt het scherm waarom, in
+                plaats van het veld stil weg te laten. */}
+            {notePlan.allowed ? (
+              <div style={{ marginTop: 10, padding: '12px 14px', background: '#F8F9FA', borderRadius: 14 }}>
+                <label style={{ display: 'block', fontSize: 12, color: '#5F6368', marginBottom: 6 }}>
+                  {t('notitie.label')}
+                </label>
+                <input
+                  type="text"
+                  value={noteDraft}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  placeholder={t('notitie.voorbeeld')}
+                  aria-label={t('notitie.label')}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15,
+                    borderRadius: 10, border: `1px solid ${notePlan.error ? M3.error : '#d1d1d6'}`,
+                    outline: 'none', color: '#202124', fontFamily: FONT, background: '#fff',
+                  }}
+                />
+                {notePlan.error ? (
+                  <p style={{ fontSize: 12.5, color: M3.error, lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {notePlan.error}
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '7px 0 0' }}>
+                    {t('notitie.ruimte', { n: String(notePlan.budget - notePlan.note.length) })}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p style={{ fontSize: 11.5, color: '#5F6368', lineHeight: 1.45, margin: '8px 2px 0' }}>
+                {notePlan.blocked}
+              </p>
+            )}
             <CopyRow label={t('inkoop.naam')} value={inv.client_name ?? '—'} raw={inv.client_name ?? ''} onCopy={copy} />
           </>
         ) : (

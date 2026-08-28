@@ -66,13 +66,20 @@ function fakeClient(tables: {
       if (tables.broken?.includes(table)) {
         throw new Error(`tabel ${table} bestaat niet`);
       }
+      // [VOL-GELEZEN] De documents-lezing loopt door fetchAllRows, dus de nabootsing moet ECHT
+      // pagineren: .order().range(from, to) geeft een venster terug, en een korte pagina betekent
+      // "dit was de laatste". Een stub die altijd alles teruggeeft, hoe je hem ook aanroept, zou
+      // groen blijven terwijl de echte query weer bij duizend rijen stopt — dan test hij niets.
       const chain = {
         select: (_cols: string, opts?: { count?: string; head?: boolean }) =>
           opts?.head
             ? { eq: () => Promise.resolve({ count: tables.email_connections ?? 0 }) }
             : chain,
         eq: () => chain,
-        or: () => Promise.resolve({ data: tables.documents ?? [] }),
+        or: () => chain,
+        order: () => chain,
+        range: (from: number, to: number) =>
+          Promise.resolve({ data: (tables.documents ?? []).slice(from, to + 1), error: null }),
         then: (resolve: (v: unknown) => void) =>
           resolve({ data: tables.usage_counters ?? [] }),
       };
@@ -124,6 +131,28 @@ test("een onbereikbare tabel kost niemand een handeling", async () => {
   assert.equal(usage.storageMb, undefined);
   assert.equal(usage.mailboxes, undefined);
   assert.equal(evaluateFairUse(usage).withinLimits, true);
+});
+
+test("[VOL-GELEZEN] voorbij duizend bestanden telt de opslag nog steeds alles", async () => {
+  // DE BUG: measureUsage las documents met één plain select. PostgREST kapt elk antwoord stil af
+  // op ~1000 rijen — geen fout, geen vlag — dus telde de som bij een eigenaar met meer bestanden
+  // alleen de eerste duizend op. Te LAAG is de gevaarlijke kant: de grens wordt nooit bereikt, de
+  // eigenaar hoort dat hij ruim zit, en de meter op zijn scherm bevestigt het.
+  //
+  // 2.500 bestanden van precies 1 MB. Ongepagineerd zou dit 1000 zeggen.
+  const documents = Array.from({ length: 2500 }, () => ({ file_size: 1024 * 1024 }));
+  const usage = await measureUsage(fakeClient({ documents }), "user-1", new Date("2026-07-26T00:00:00.000Z"));
+  assert.equal(usage.storageMb, 2500, "de som stopte bij de eerste pagina");
+});
+
+test("[VOL-GELEZEN] een exact volle laatste pagina eindigt netjes", async () => {
+  // De randgevallen van de pager: precies 1000 (één volle pagina, dan een lege) en precies 2000.
+  // Een pager die op "korte pagina" stopt moet hier één extra ronde doen en niet blijven hangen.
+  for (const n of [1000, 2000]) {
+    const documents = Array.from({ length: n }, () => ({ file_size: 1024 * 1024 }));
+    const usage = await measureUsage(fakeClient({ documents }), "u", new Date("2026-07-26T00:00:00.000Z"));
+    assert.equal(usage.storageMb, n, `${n} bestanden telden niet volledig mee`);
+  }
 });
 
 test("de prullenbak telt niet mee in de opslag", async () => {

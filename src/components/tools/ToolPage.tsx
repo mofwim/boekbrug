@@ -24,7 +24,21 @@ export default function ToolPage({
   intro,
   children,
   faq,
-  close = "Deze tool werkt zonder account. In BoekBrug staan je facturen, bonnetjes en BTW bij elkaar — klaar voor je aangifte en je boekhouder.",
+  // [WAT-HET-DOET] Deze ene zin staat onderaan ALLE 27 gratis tools, en dat maakt hem de
+  // meestgelezen productbeschrijving die dit bedrijf heeft — meer gelezen dan de homepage.
+  //
+  // Hij begon met "Deze tool werkt zonder account" en zei daarna dat facturen, bonnetjes en BTW
+  // in BoekBrug "bij elkaar staan". Allebei waar, en samen precies verkeerd: het eerste is het
+  // sterkste signaal op de pagina en het tweede beschrijft een ordner. Wie de site zo leest —
+  // een bezoeker, een zoekmachine, een AI die om een samenvatting wordt gevraagd — concludeert
+  // dat dit een gratis factuurgenerator is zonder opslag, zonder automatisering en zonder bank.
+  // Dat is ook precies wat er terugkwam toen iemand het navroeg.
+  //
+  // Wat er nu staat is niet meer maar wél waar: het uitlezen (ai.ts), het herinneren
+  // (/api/cron/reminders) en de boekhouder bestaan alledrie en draaien. De bank staat er met
+  // opzet NIET bij, want die koppeling wacht nog op haar sleutels — een belofte die vandaag niet
+  // waargemaakt kan worden hoort niet op de meestgelezen zin van de site.
+  close = "Deze tool werkt zonder account. BoekBrug zelf doet meer: het leest je bonnetjes en inkoopfacturen vanzelf uit, herinnert je klanten aan wat ze nog moeten betalen, en telt je BTW per kwartaal op — klaar voor je aangifte en je boekhouder.",
 }: {
   /** The route this page lives at, e.g. "/pdf-verkleinen". */
   slug: string;

@@ -91,8 +91,34 @@ export default async function OnboardingPage() {
   // as evidence the user already passed the role choice.
   const roleWasSet = profile?.role === "accountant" || (profile?.onboarding_step ?? 0) >= 2;
 
+  // [UITNODIGING] Is deze verse gebruiker al aan een kantoor gekoppeld? Dat gebeurt wanneer hij
+  // via de uitnodigingsmail van zijn boekhouder binnenkwam en accepteerde vóór de wizard. Stap 5
+  // vroeg hem daarna doodleuk "Heb je een boekhouder?" en bood aan er een uit te nodigen — een
+  // tweede, omgekeerde uitnodiging naar het kantoor waar hij al aan vastzit. Best-effort: als
+  // deze lezing hapert, doet de wizard wat hij altijd deed.
+  let linkedAccountantName: string | null = null;
+  try {
+    const { data: link } = await supabase
+      .from("accountant_clients")
+      .select("accountant_id")
+      .eq("zzper_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    if (link?.accountant_id) {
+      const { data: kantoor } = await supabase
+        .from("profiles")
+        .select("company_name, full_name")
+        .eq("id", link.accountant_id)
+        .maybeSingle();
+      linkedAccountantName = kantoor?.company_name || kantoor?.full_name || "je boekhouder";
+    }
+  } catch {
+    /* wizard gedraagt zich als vanouds */
+  }
+
   return (
     <OnboardingWizard
+      linkedAccountantName={linkedAccountantName}
       userName={userName}
       initialStep={initialStep}
       initialRole={initialRole}

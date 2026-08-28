@@ -21,6 +21,8 @@
 // not held in 'processing'. AI prepares the fields; the owner confirms by acting.
 
 import { NextRequest, NextResponse } from "next/server";
+// [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
+import { withCrashNet } from "@/lib/route-crash-net";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
@@ -54,6 +56,15 @@ import { amsterdamToday } from "@/lib/format-nl";
 const AMOUNT_TOLERANCE = 0.02;
 
 export async function POST(req: NextRequest) {
+  return withCrashNet(
+    "BANK-ATTACH",
+    "Er ging iets mis bij het koppelen van dit bestand. De banktransactie is NIET gewijzigd en het " +
+      "bestand is niet opgeslagen — probeer het zo meteen opnieuw.",
+    () => runAttachInvoice(req),
+  )
+}
+
+async function runAttachInvoice(req: NextRequest) {
   // 1. Auth — session client (RLS). The owner acts on their own data.
   const supabase = await createServerSupabaseClient();
   const {

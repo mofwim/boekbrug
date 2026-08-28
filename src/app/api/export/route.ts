@@ -114,7 +114,12 @@ export async function GET(req: NextRequest) {
 
     // [BEWIJS] Ook deze export vastleggen — zie de toelichting in
     // /api/closing-package. Best effort en na de autorisatie.
-    void logAuditAction({
+    // [NIET-LOSGELATEN] Afgewacht. De toelichting hierboven zegt zelf waarom: het verschil met
+    // een gedeelde map bestaat pas als de download AANTOONBAAR is. Serverless mag een losgelaten
+    // belofte afkappen zodra het bestand is verstuurd, dus `void` maakte juist dat bewijs
+    // optioneel. logAuditAction vangt zijn eigen fouten af en gooit niet, dus afwachten kost een
+    // insert en kan de download nooit tegenhouden.
+    await logAuditAction({
       userId: user.id,
       action: 'accountant.export_downloaded',
       entityType: 'quarter',

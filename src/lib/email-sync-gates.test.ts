@@ -187,9 +187,11 @@ test("[BON-EMAIL] a paid suggestion is never auto-booked as an unpaid debt", () 
     "the sync's auto-advance must be held back by a paid suggestion, as the camera path is",
   );
   // And the refusal that now precedes it: mail we assembled into a document never books itself.
+  // [ZELF-EERST] One branch sits before it since the owner got a "show me everything" switch —
+  // also a refusal, so the body case is still decided before any QUALITY consideration.
   assert.match(
-    SYNC, /const autoAdv = attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
-    "a body-rendered invoice is held before any other consideration",
+    SYNC, /: attachment\.fromBody === true\s*\n\s*\? \{ advance: false, reason: 'from_email_body' \}/,
+    "a body-rendered invoice is held before any quality consideration",
   );
 });
 

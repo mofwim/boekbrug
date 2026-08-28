@@ -1733,7 +1733,11 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   assert.match(clean, /Wat wij hebben gelezen/, "our reading is on screen next to the paper");
   assert.match(clean, /26035350/, "…with the number the owner is about to compare");
   assert.match(clean, /281,06/, "…and the total, formatted the Dutch way");
-  assert.match(clean, /Alle 8 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  // Nine since [LEVERANCIER-ID]: the IBAN checksum joined the list, and this fixture prints an
+  // account number. Asserted on the RENDERED count rather than a literal 8, so the panel and the
+  // pure list can never drift apart about how many checks the owner is being promised.
+  assert.match(clean, /Alle 9 controles gedaan/, "a clean invoice says what was checked instead of nothing");
+  assert.match(clean, /Rekeningnummer klopt als IBAN/, "…including the checksum row itself");
   assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
   assert.match(clean, /9% over het hele bedrag/, "including the btw axis, which is a real check here");
 

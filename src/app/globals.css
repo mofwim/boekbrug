@@ -775,6 +775,33 @@ input::placeholder, textarea::placeholder {
   transform: scaleX(-1);
 }
 
+/* ── [ARABISCH-LETTER] Het Arabische lettertype geldt voor het HELE scherm ──────────────────────
+ *
+ * Noto Sans Arabic wordt al geladen (layout.tsx) en stond op precies drie plekken toegepast: het
+ * blog-artikel, de blog-index en /ar/prijzen. Elk dashboardscherm viel dus terug op wat het
+ * apparaat toevallig heeft — en dat is per telefoon een ander lettertype, met een andere hoogte
+ * en een ander ritme. Precies de wanorde waarvoor het lettertype was toegevoegd, alleen dan op
+ * de schermen waar de eigenaar zijn geld beheert in plaats van op de schermen waar hij leest.
+ *
+ * De haak is `lang`, niet `dir`: het opstartscript zet ze samen op <html>, en `lang` zegt WELKE
+ * taal er staat, terwijl `dir` alleen de kant zegt. Zo blijft een toekomstige RTL-taal met een
+ * eigen schrift vrij om haar eigen lettertype te kiezen.
+ *
+ * De Latijnse stack blijft eronder staan: een Arabisch scherm toont ook IBAN's, bedragen en
+ * factuurnummers, en die horen in de letter waarin de rest van het land ze leest. */
+html[lang="ar"] body {
+  font-family: var(--font-arabic), var(--font-sans), system-ui, sans-serif;
+}
+
+/* Formuliervelden zetten hun eigen lettertype met !important (zie de invoer-regels hierboven),
+ * dus die moeten hier apart en even hard worden overschreven — anders typt de eigenaar zijn
+ * bedrijfsnaam in een ander lettertype dan waarin hij hem terugleest. */
+html[lang="ar"] input,
+html[lang="ar"] select,
+html[lang="ar"] textarea {
+  font-family: var(--font-arabic), var(--font-sans), system-ui, sans-serif !important;
+}
+
 /* [SCROLL-VEL] Een dialoog die niet past, verbergt de rest — en niets scrollt.
  *
  * Een overlay is `position: fixed; inset: 0` met `align-items: flex-end` (bottom sheet) of
