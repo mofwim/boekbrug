@@ -24,6 +24,9 @@ import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
 
+/** [MANDAAT-ID] A counterparty is identified by a uuid or not at all — see the DELETE handler. */
+const MANDATE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** Hoe iemand heet in een melding aan de ander. */
 async function naamVan(
   pipeline: ReturnType<typeof createPipelineClient>,
@@ -142,7 +145,14 @@ export async function DELETE(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Niet ingelogd.' }, { status: 401 })
 
   const gevraagd = await req.json().catch(() => null)
-  const tegenpartij = typeof gevraagd?.otherId === 'string' ? gevraagd.otherId : null
+  // [MANDAAT-ID] otherId comes from a client and is interpolated into a PostgREST filter below, on
+  // the SERVICE-ROLE client — the one with no RLS behind it. A value that is not a uuid cannot
+  // identify anybody, so it is refused here rather than pasted into a filter expression.
+  const gevraagdeId = typeof gevraagd?.otherId === 'string' ? gevraagd.otherId.trim() : null
+  const tegenpartij = gevraagdeId && MANDATE_UUID_RE.test(gevraagdeId) ? gevraagdeId : null
+  if (gevraagdeId && !tegenpartij) {
+    return NextResponse.json({ error: 'Onbekende tegenpartij.' }, { status: 400 })
+  }
   // [BEVESTIGEN] Eén soort intrekken mag de andere niet meenemen. Zonder `kind` trekt deze route
   // ALLES in — dat is bruikbaar (de knop "haal alles weg"), maar het mag nooit per ongeluk zijn.
   const soort =
@@ -161,7 +171,20 @@ export async function DELETE(req: NextRequest) {
     vraag = vraag.or(`zzper_id.eq.${tegenpartij},accountant_id.eq.${tegenpartij}`)
   }
   if (soort) vraag = vraag.eq('kind', soort)
-  const { data: mandaten } = await vraag
+  // [NO-SILENT-EMPTY] Read the error. Without this a failed read left `mandaten` undefined, `doelen`
+  // empty, and the route answered `{ ok: true, nietsTeDoen: true }` — "nothing to revoke, you are
+  // already in the state you asked for". On a REVOCATION that is the worst possible lie: the owner
+  // is told the accountant's mandate is gone while it still stands, and nothing anywhere disagrees.
+  const { data: mandaten, error: mandatenErr } = await vraag
+  if (mandatenErr) {
+    console.error('[MANDAAT-INTREKKEN] mandate read failed — refusing to report success', {
+      userId: user.id, message: mandatenErr.message,
+    })
+    return NextResponse.json(
+      { error: 'We konden je machtigingen nu niet ophalen. Er is niets ingetrokken — probeer het zo meteen opnieuw.' },
+      { status: 503 },
+    )
+  }
 
   // De .or() hierboven is een OF over de hele rij, dus een rij tussen twee ANDERE mensen zou er in
   // theorie doorheen kunnen komen. Daarom hier nog een keer expliciet: deze gebruiker moet partij

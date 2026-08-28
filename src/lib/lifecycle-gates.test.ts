@@ -16486,3 +16486,59 @@ test("[PLAIN-TEXT-SOURCE] no source file is binary to git", () => {
       offenders.join("\n"),
   );
 });
+
+
+test("[PARTIAL-PAY-INVARIANT] a failed share read refuses instead of guessing the whole transaction", () => {
+  // The unlink route lowers amount_paid by the share THIS payment applied, read from the link row.
+  // The read fell back to tx.amount when it came back empty, and that fallback was written for one
+  // situation only: a legacy link where amount_applied is NULL and the whole transaction really is
+  // this invoice's payment. A FAILED READ landed in the same branch.
+  //
+  // On a split transaction — €500 divided over two invoices by /api/bank/allocate — the share is
+  // €300 while tx.amount is €500, so a hiccup subtracted the whole line from one invoice and left a
+  // paid invoice reading as unpaid. That is the state that sends a reminder to a customer who
+  // already paid.
+  //
+  // The route states this exact rule a hundred lines further down about the recompute
+  // ("The error is READ, not swallowed") — this is the same rule, on the line above it.
+  const route = code("src/app/api/bank/unlink/route.ts");
+
+  assert.match(route, /const \{ data: linkRow, error: linkErr \} = await pipeline/,
+    "the share read swallows its error again");
+
+  // The refusal has to stand BETWEEN the read and the arithmetic — after it, the wrong number has
+  // already been computed and a guard is decoration.
+  const readAt = route.indexOf("error: linkErr");
+  const refuseAt = route.indexOf("if (linkErr)");
+  const mathAt = route.indexOf("const appliedAmount");
+  assert.ok(readAt > 0 && refuseAt > readAt && mathAt > refuseAt,
+    "the refusal does not sit between reading the share and using it");
+  assert.match(route.slice(refuseAt, mathAt), /status: 503/,
+    "a share that could not be read no longer refuses the unlink");
+});
+
+test("[MANDAAT-INTREKKEN] a failed mandate read may not report a revocation that did not happen", () => {
+  // Revoking is the one direction where a false success is dangerous: the owner is told the
+  // accountant's mandate is gone while it still stands, and nothing anywhere disagrees.
+  //
+  // The read ran on the SERVICE-ROLE client — no RLS behind it — and its error was not destructured,
+  // so a failure left `mandaten` undefined, `doelen` empty, and the route answered
+  // { ok: true, nietsTeDoen: true }: "nothing to revoke, you are already in the state you asked for".
+  const route = code("src/app/api/accountant/invoice-mandate/route.ts");
+
+  assert.match(route, /const \{ data: mandaten, error: mandatenErr \} = await vraag/,
+    "the mandate read swallows its error again");
+  const readAt = route.indexOf("error: mandatenErr");
+  const refuseAt = route.indexOf("if (mandatenErr)");
+  const okAt = route.indexOf("nietsTeDoen: true");
+  assert.ok(readAt > 0 && refuseAt > readAt && refuseAt < okAt,
+    "a failed read can still reach the 'nothing to do' answer");
+
+  // [MANDAAT-ID] otherId is client-controlled and is interpolated into a PostgREST filter on that
+  // same service-role client. Something that is not a uuid identifies nobody, so it never reaches
+  // the filter — the value in the .or() must be the CHECKED one.
+  assert.match(route, /MANDATE_UUID_RE\.test\(gevraagdeId\)/,
+    "the counterparty id is no longer checked before it is pasted into a filter");
+  assert.match(route, /vraag\.or\(`zzper_id\.eq\.\$\{tegenpartij\},accountant_id\.eq\.\$\{tegenpartij\}`\)/,
+    "the filter interpolates something other than the validated id");
+});
