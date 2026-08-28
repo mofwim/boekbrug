@@ -332,6 +332,34 @@ export default function ZoekenClient({ initialQuery, role }: { initialQuery: str
               {/* [ZOEK-EERLIJK] Above the list, not below it: a warning under a screen's worth of
                   results is a warning nobody scrolls to. It says what to DO — a search that only
                   reports a problem leaves the owner exactly where they were. */}
+              {/* [ZOEK-BEGRIJPT] What the search read as a FILTER rather than as text. Shown, and
+                  removable: tapping a chip takes that word back out of the query, so the owner can
+                  always get to the unnarrowed search without retyping it. Without this the results
+                  simply change and nothing says why. */}
+              {(groups.recognised?.length ?? 0) > 0 && (
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                  <span style={{ fontSize: 12.5, color: M3.outline }}>{t('zoek.begrepen')}</span>
+                  {groups.recognised!.map((r) => (
+                    <button
+                      key={`${r.key}-${r.token}`}
+                      type="button"
+                      aria-label={t('zoek.begrepen.weg', { filter: r.label })}
+                      onClick={() => setQuery(
+                        query.split(/\s+/).filter((w) => w.toLowerCase() !== r.token.toLowerCase()).join(" ").trim(),
+                      )}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6, minHeight: 32,
+                        padding: "5px 10px", borderRadius: 999, cursor: "pointer",
+                        border: `1px solid ${M3.outlineVariant}`, background: "#E8F0FE",
+                        color: "#1a4fa0", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
+                      }}
+                    >
+                      {r.label}
+                      <span aria-hidden style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>×</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {cutOff && (
                 <div role="status" style={{
                   padding: "10px 12px", borderRadius: 10, marginBottom: 12, fontSize: 13,

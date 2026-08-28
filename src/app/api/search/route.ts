@@ -24,6 +24,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
 import { amountOrConditions, foldText, NO_TRUNCATION } from "@/lib/search";
+import { parseSearchQuery, filterDateRange } from "@/lib/search-query";
 import type { SearchResult, SearchResultGroup, SearchTarget, SearchTruncation } from "@/lib/search";
 
 // ─── [SEARCH] Term sanitation ────────────────────────────────────────────────
@@ -180,8 +181,22 @@ export async function GET(req: NextRequest) {
 
   if (q.length < 2) return NextResponse.json(EMPTY);
 
-  const terms = normalizeQuery(q);
-  if (terms.length === 0) return NextResponse.json(EMPTY);
+  // [ZOEK-BEGRIJPT] Read the parts of the query that are not search terms — a year, a quarter, a
+  // month, inkoop/verkoop, betaald/openstaand — and take them OUT of the text. Leaving them in
+  // would make the filter pointless: every 2025 invoice matches the term "2025" anyway.
+  //
+  // The rules live in search-query.ts and are tested there. What is recognised travels back to the
+  // screen, because a query that silently means something other than what was typed is worse than
+  // one that ignores half of it: results disappear and nothing says why.
+  const parsed = parseSearchQuery(q);
+  const range = filterDateRange(parsed.filters);
+  const textQ = parsed.text.trim();
+
+  // Only filters, no words left ("inkoop 2026"): that is a legitimate search, and the terms are
+  // simply not what narrows it. Anything else still needs at least one usable term.
+  const terms = textQ.length >= 2 ? normalizeQuery(textQ) : [];
+  const filtersOnly = terms.length === 0 && parsed.recognised.length > 0;
+  if (terms.length === 0 && !filtersOnly) return NextResponse.json(EMPTY);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
@@ -248,38 +263,65 @@ export async function GET(req: NextRequest) {
   // [KAS-ZACHT] A removed cash movement must not be findable: search is how an owner reaches a
   // booking, and a hit that opens a drawer the entry is no longer in is worse than no hit.
   const liveCash = await liveCashEntries(supabase);
+  // [ZOEK-BEGRIJPT] Narrow a source by what the query said, on the date column that source uses.
+  //
+  // Applied as ordinary .eq()/.gte()/.lte(), so the filters AND with the text search rather than
+  // widening it — narrowing that widens is not narrowing.
+  //
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const narrow = <T,>(qb: T, dateColumn: string, opts?: { status?: boolean; direction?: boolean }): T => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let b = qb as any;
+    if (range) b = b.gte(dateColumn, range.start).lte(dateColumn, range.end);
+    if (opts?.direction && parsed.filters.direction) b = b.eq("direction", parsed.filters.direction);
+    if (opts?.status && parsed.filters.paid) {
+      // "betaald" is one status; "openstaand" is every status that still owes money — and an
+      // archived or draft invoice owes nothing, so a plain .neq("status","paid") would be wrong.
+      b = parsed.filters.paid === "paid"
+        ? b.eq("status", "paid")
+        : b.in("status", ["sent", "received", "overdue"]);
+    }
+    return b as T;
+  };
+
+  // A query that is ONLY filters has no text to match on, so the text .or() is left off entirely —
+  // an empty .or() is not "match everything", it is a malformed filter.
+  const textOr = (conditions: Array<string | null>): string | null => {
+    const joined = conditions.filter(Boolean).join(",");
+    return joined.length > 0 ? joined : null;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const withText = <T,>(qb: T, conditions: Array<string | null>): T => {
+    const or = textOr(conditions);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (or ? (qb as any).or(or) : qb) as T;
+  };
+
   const [invoicesRes, docsRes, clientsRes, bankRes, cashRes] = await Promise.all([
 
     // Source 1: invoices — sender OR receiver (received/incoming invoices included)
     target === "all" || target === "invoices"
-      ? supabase
+      ? narrow(withText(supabase
           .from("invoices")
           .select("id, invoice_number, client_name, client_email, status, total_inc_btw, created_at, direction")
           // (sender_id ∈ ids OR receiver_id ∈ ids) — AND-ed with the text .or() below
-          .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`)
-          .or(
-            [
-              buildOr(["invoice_number", "client_name", "client_email"], terms),
-              ...amountOrConditions("total_inc_btw", q),
-              invoiceIdsFromLines.length > 0
-                ? `id.in.(${invoiceIdsFromLines.join(",")})`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(",")
-          )
+          .or(`sender_id.in.(${idList}),receiver_id.in.(${idList})`), [
+            buildOr(["invoice_number", "client_name", "client_email"], terms),
+            ...amountOrConditions("total_inc_btw", textQ || q),
+            invoiceIdsFromLines.length > 0 ? `id.in.(${invoiceIdsFromLines.join(",")})` : null,
+          ]), "invoice_date", { status: true, direction: true })
           .order("created_at", { ascending: false })
           .limit(PROBE.invoices)
       : Promise.resolve({ data: [] as Hit[] }),
 
     // Source 2: documents — own, non-trashed
     target === "all" || target === "documents"
-      ? supabase
+      ? narrow(withText(supabase
           .from("documents")
           .select("id, file_name, doc_type, ai_doc_type, period, year, notes, folder_id, created_at")
           .eq("user_id", user.id)
-          .eq("trashed", false) // [T#3] don't surface soft-deleted files in global search
-          .or(buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms))
+          .eq("trashed", false), // [T#3] don't surface soft-deleted files in global search
+          [buildOr(["file_name", "doc_type", "ai_doc_type", "notes"], terms)]), "created_at")
           .order("created_at", { ascending: false })
           .limit(PROBE.documents)
       : Promise.resolve({ data: [] as Hit[] }),
@@ -308,18 +350,13 @@ export async function GET(req: NextRequest) {
     // Source 4: bank transactions — own rows. Amount is SIGNED (debit negative), so the
     // amount conditions emit both signs. RLS also scopes to the owner (defence in depth).
     target === "all" || target === "bank"
-      ? supabase
+      ? narrow(withText(supabase
           .from("bank_transactions")
           .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, status, created_at")
-          .eq("user_id", user.id)
-          .or(
-            [
-              buildOr(["counterpart_name", "description", "counterpart_iban", "reference"], terms),
-              ...amountOrConditions("amount", q, { signed: true }),
-            ]
-              .filter(Boolean)
-              .join(",")
-          )
+          .eq("user_id", user.id), [
+            buildOr(["counterpart_name", "description", "counterpart_iban", "reference"], terms),
+            ...amountOrConditions("amount", textQ || q, { signed: true }),
+          ]), "date")
           .order("date", { ascending: false })
           .limit(PROBE.bank)
       : Promise.resolve({ data: [] as Hit[] }),
@@ -327,22 +364,22 @@ export async function GET(req: NextRequest) {
     // Source 5: cash entries (kasboek) — own rows. category is a key (omzet/kosten/…) so a
     // "omzet" query still matches; description is the free-text line.
     target === "all" || target === "kas"
-      ? liveCash.only(supabase
+      ? narrow(withText(liveCash.only(supabase
           .from("cash_entries")
           .select("id, entry_date, amount, category, description, direction, created_at")
-          .eq("user_id", user.id))
-          .or(
-            [
-              buildOr(["description", "category"], terms),
-              ...amountOrConditions("amount", q, { signed: true }),
-            ]
-              .filter(Boolean)
-              .join(",")
-          )
+          .eq("user_id", user.id)), [
+            buildOr(["description", "category"], terms),
+            ...amountOrConditions("amount", textQ || q, { signed: true }),
+          ]), "entry_date")
           .order("entry_date", { ascending: false })
           .limit(PROBE.cash)
       : Promise.resolve({ data: [] as Hit[] }),
   ]);
+
+  // [ZOEK-BEGRIJPT] Rank and fuzzy-match on the TEXT that is left, never on the whole typed
+  // query. Scoring a row against "doyum 2025" after the year became a filter would mark every
+  // surviving hit as a partial match, and the fuzzy RPC would hunt a supplier called "doyum 2025".
+  const rankQ = textQ || q;
 
   // ── [SEARCH] Fuzzy augmentation (typo tolerance) when results are sparse ──────
   // safeRpc returns [] if the fuzzy function isn't present (migration not applied)
@@ -371,17 +408,17 @@ export async function GET(req: NextRequest) {
   let invoiceRows: Hit[] = (invoicesRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "invoices") && invoiceRows.length < 3) {
     // RLS scopes the fuzzy rows to what this user may already see.
-    invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q }))];
+    invoiceRows = [...invoiceRows, ...(await safeRpc("search_invoices_fuzzy", { q: rankQ }))];
   }
 
   let clientRows: Hit[] = (clientsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "clients") && role !== "accountant" && clientRows.length < 3) {
-    clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q }))];
+    clientRows = [...clientRows, ...(await safeRpc("search_clients_fuzzy", { q: rankQ }))];
   }
 
   let docRows: Hit[] = (docsRes.data ?? []) as unknown as Hit[];
   if (nameLike && (target === "all" || target === "documents") && docRows.length < 3) {
-    docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q }))];
+    docRows = [...docRows, ...(await safeRpc("search_documents_fuzzy", { q: rankQ }))];
   }
 
   // [ZOEK-EERLIJK] Cap the group, and REMEMBER that it was capped.
@@ -395,7 +432,7 @@ export async function GET(req: NextRequest) {
   };
 
   const invoices: SearchResult[] = takeCapped(dedup(
-    rankRows(invoiceRows, q, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
+    rankRows(invoiceRows, rankQ, (inv) => [inv.invoice_number, inv.client_name, inv.client_email])
       .map((inv) => ({
         type: "invoice" as const,
         id: inv.id,
@@ -422,7 +459,7 @@ export async function GET(req: NextRequest) {
   ), CAP.invoices, "invoices");
 
   const documents: SearchResult[] = takeCapped(dedup(
-    rankRows(docRows, q, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
+    rankRows(docRows, rankQ, (doc) => [doc.file_name, doc.ai_doc_type, doc.doc_type, doc.notes])
       .map((doc) => ({
         type: "document" as const,
         id: doc.id,
@@ -438,7 +475,7 @@ export async function GET(req: NextRequest) {
   ), CAP.documents, "documents");
 
   const clients: SearchResult[] = takeCapped(dedup(
-    rankRows(clientRows, q, (row) =>
+    rankRows(clientRows, rankQ, (row) =>
       role === "accountant"
         ? [row.full_name, row.company_name, row.email, row.kvk_number]
         : [row.name, row.email, row.kvk_number, row.city]
@@ -473,7 +510,7 @@ export async function GET(req: NextRequest) {
   // IBAN/reference/amount). Fall back to the whole-euro amount when a line has no text.
   const bankRows: Hit[] = (bankRes.data ?? []) as unknown as Hit[];
   const bankTransactions: SearchResult[] = takeCapped(dedup(
-    rankRows(bankRows, q, (r) => [r.counterpart_name, r.description, r.reference, r.counterpart_iban])
+    rankRows(bankRows, rankQ, (r) => [r.counterpart_name, r.description, r.reference, r.counterpart_iban])
       .map((r) => {
         const term =
           (r.counterpart_name || r.description || r.reference || "").trim() ||
@@ -494,7 +531,7 @@ export async function GET(req: NextRequest) {
   // ── Kasboekingen ──────────────────────────────────────────────────────────────
   const cashRows: Hit[] = (cashRes.data ?? []) as unknown as Hit[];
   const cashEntries: SearchResult[] = takeCapped(dedup(
-    rankRows(cashRows, q, (r) => [r.description, r.category])
+    rankRows(cashRows, rankQ, (r) => [r.description, r.category])
       .map((r) => {
         const term =
           (r.description || "").trim() ||
@@ -511,5 +548,11 @@ export async function GET(req: NextRequest) {
       })
   ), CAP.cash, "cashEntries");
 
-  return NextResponse.json({ invoices, documents, clients, bankTransactions, cashEntries, truncated });
+  // [ZOEK-BEGRIJPT] What the search UNDERSTOOD travels back, so the screen can show it as chips
+  // the owner can remove. A query that silently means something else is worse than one that
+  // ignores half of it: results vanish and nothing says why.
+  return NextResponse.json({
+    invoices, documents, clients, bankTransactions, cashEntries, truncated,
+    recognised: parsed.recognised,
+  });
 }

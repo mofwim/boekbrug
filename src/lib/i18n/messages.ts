@@ -11959,6 +11959,19 @@ export const MESSAGES = {
     en: 'This invoice is no longer on this screen — it has probably been confirmed already. Look under confirmed purchase invoices.',
     ar: 'لم تعد هذه الفاتورة على هذه الشاشة — على الأرجح جرى تأكيدها. راجع فواتير الشراء المؤكَّدة.',
   },
+  // [ZOEK-BEGRIJPT] Wat de zoekfunctie uit de vraag heeft BEGREPEN, als chips die je weg kunt tikken.
+  // Zonder deze regel verdwijnen er resultaten en zegt niets waarom — dat is erger dan een zoekterm
+  // die genegeerd wordt.
+  'zoek.begrepen': {
+    nl: 'Begrepen als:',
+    en: 'Understood as:',
+    ar: 'فُهم على أنه:',
+  },
+  'zoek.begrepen.weg': {
+    nl: 'Verwijder {filter}',
+    en: 'Remove {filter}',
+    ar: 'إزالة {filter}',
+  },
   'zoek.afgekapt': {
     nl: 'Er zijn meer resultaten dan hier passen. Zoek specifieker — met een factuurnummer, een bedrag of een deel van de naam.',
     en: 'There are more results than fit here. Search more specifically — an invoice number, an amount, or part of the name.',
