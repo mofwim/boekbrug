@@ -4729,6 +4729,19 @@ export const MESSAGES = {
     ar: 'كل الفترات',
     en: 'All periods',
   },
+  // [TAAL] De rest van het periodemenu. Deze woorden stonden als Nederlandse strings in
+  // invoice-period.ts — een pure module die het menu vult boven een volledig vertaald scherm, dus
+  // een Arabische eigenaar zag zijn hele lijst in het Arabisch met dit ene menu in het Nederlands.
+  // De sleutel hierboven bestond al en werd nooit bereikt: het menu vond altijd eerst het woord.
+  //
+  // Eén sleutel per keuze en geen zin met {periode} erin: "deze maand" en "dit kwartaal" krijgen
+  // in het Arabisch een ander aanwijzend woord, en in het Turks een ander achtervoegsel.
+  'ink.periode.dezeMaand': { nl: 'Deze maand', ar: 'هذا الشهر', en: 'This month' },
+  'ink.periode.vorigeMaand': { nl: 'Vorige maand', ar: 'الشهر الماضي', en: 'Last month' },
+  'ink.periode.ditKwartaal': { nl: 'Dit kwartaal', ar: 'هذا الربع', en: 'This quarter' },
+  'ink.periode.vorigKwartaal': { nl: 'Vorig kwartaal', ar: 'الربع الماضي', en: 'Last quarter' },
+  'ink.periode.ditJaar': { nl: 'Dit jaar', ar: 'هذه السنة', en: 'This year' },
+  'ink.periode.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة الماضية', en: 'Last year' },
   'ink.anderePeriodes': {
     nl: 'Je hebt er {facturen} in andere periodes.',
     ar: 'لديك {facturen} في فترات أخرى.',
@@ -12434,6 +12447,201 @@ export const MESSAGES = {
   'bh.det.kiesKwartaal': { nl: 'Selecteer een kwartaal', ar: 'اختر ربعًا', en: 'Select a quarter' },
   'bh.det.huidig': { nl: 'huidig', ar: 'الحالي', en: 'current' },
   'bh.det.factuurOpstellen': { nl: 'Factuur opstellen voor deze klant', ar: 'إنشاء فاتورة لهذا العميل', en: 'Create an invoice for this client' },
+
+  // ── [TAAL-POORT] Inloggen en registreren ────────────────────────────────────────────────────
+  //
+  // De schermen waar de vertaling brak. Een Arabische lezer las een volledig Arabisch blogartikel
+  // op /ar/blog, drukte op "أنشئ حساباً مجانياً" — en kwam op twee schermen die 100% Nederlands
+  // waren: nul catalogus-imports in beide bestanden. Precies op de deur, en precies bij de mensen
+  // die het product als eerste accountants gebruiken.
+  //
+  // De foutmeldingen komen uit auth-errors.ts. Die module beslist WELKE fout het is (de moeilijke,
+  // pure helft, met een zorgvuldig gekozen volgorde) en geeft een sleutel terug; de woorden staan
+  // hier. Zo hoeft die beslisboom nooit vertaald te worden.
+  'auth.bevestigEerst': {
+    nl: 'Je moet eerst je e-mail bevestigen.',
+    ar: 'عليك تأكيد بريدك الإلكتروني أولاً.',
+    en: 'You need to confirm your e-mail first.',
+  },
+  'auth.teVeelPogingen': {
+    nl: 'Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw.',
+    ar: 'محاولات كثيرة متتالية — انتظر دقيقة ثم أعد المحاولة.',
+    en: 'Too many attempts in a row — wait a minute and try again.',
+  },
+  'auth.teVeelAanvragen': {
+    nl: 'Te veel aanvragen achter elkaar — wacht een minuut en probeer opnieuw.',
+    ar: 'طلبات كثيرة متتالية — انتظر دقيقة ثم أعد المحاولة.',
+    en: 'Too many requests in a row — wait a minute and try again.',
+  },
+  'auth.geblokkeerd': {
+    nl: 'Dit account is geblokkeerd. Neem contact op via de website.',
+    ar: 'هذا الحساب محظور. تواصل معنا عبر الموقع.',
+    en: 'This account is blocked. Get in touch through the website.',
+  },
+  'auth.onjuist': {
+    nl: 'E-mail of wachtwoord is onjuist',
+    ar: 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+    en: 'E-mail or password is incorrect',
+  },
+  'auth.inlogMislukt': {
+    nl: 'Inloggen lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر تسجيل الدخول — أعد المحاولة بعد قليل.',
+    en: 'Signing in did not work — try again in a moment.',
+  },
+  'auth.wachtwoordZwak': {
+    nl: 'Dit wachtwoord is te zwak — kies er een die langer is.',
+    ar: 'كلمة المرور هذه ضعيفة — اختر كلمة أطول.',
+    en: 'This password is too weak — pick a longer one.',
+  },
+  'auth.wachtwoordZelfde': {
+    nl: 'Dit is je huidige wachtwoord — kies een ander.',
+    ar: 'هذه كلمة مرورك الحالية — اختر غيرها.',
+    en: 'That is your current password — pick a different one.',
+  },
+  'auth.linkVerlopen': {
+    nl: 'Deze herstellink is verlopen of al gebruikt. Vraag een nieuwe aan.',
+    ar: 'انتهت صلاحية رابط الاستعادة أو تم استخدامه. اطلب رابطاً جديداً.',
+    en: 'This recovery link has expired or was already used. Request a new one.',
+  },
+  'auth.opslaanMislukt': {
+    nl: 'Opslaan lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر الحفظ — أعد المحاولة بعد قليل.',
+    en: 'Saving did not work — try again in a moment.',
+  },
+  'auth.versturenMislukt': {
+    nl: 'Versturen lukte niet — probeer het zo opnieuw.',
+    ar: 'تعذّر الإرسال — أعد المحاولة بعد قليل.',
+    en: 'Sending did not work — try again in a moment.',
+  },
+  'auth.googleAfgebroken': {
+    nl: 'Het inloggen met Google is onderweg afgebroken. Probeer het opnieuw.',
+    ar: 'توقّف تسجيل الدخول عبر Google في منتصف الطريق. أعد المحاولة.',
+    en: 'Signing in with Google was interrupted. Try again.',
+  },
+  'auth.googleMislukt': {
+    nl: 'Inloggen met Google lukte niet. Probeer het opnieuw of gebruik je e-mailadres.',
+    ar: 'تعذّر تسجيل الدخول عبر Google. أعد المحاولة أو استخدم بريدك الإلكتروني.',
+    en: 'Signing in with Google did not work. Try again or use your e-mail address.',
+  },
+  'auth.googleFout': {
+    nl: 'Google login mislukt — probeer opnieuw',
+    ar: 'فشل تسجيل الدخول عبر Google — أعد المحاولة',
+    en: 'Google sign-in failed — try again',
+  },
+
+  // Het inlogscherm zelf.
+  'auth.slogan': {
+    nl: 'De brug tussen jou en je boekhouder',
+    ar: 'الجسر بينك وبين محاسبك',
+    en: 'The bridge between you and your bookkeeper',
+  },
+  'auth.metGoogle': { nl: 'Inloggen met Google', ar: 'تسجيل الدخول عبر Google', en: 'Sign in with Google' },
+  'auth.verbinden': { nl: 'Bezig met verbinden...', ar: 'جارٍ الاتصال...', en: 'Connecting...' },
+  'auth.of': { nl: 'of', ar: 'أو', en: 'or' },
+  'auth.email': { nl: 'E-mailadres', ar: 'البريد الإلكتروني', en: 'E-mail address' },
+  'auth.wachtwoord': { nl: 'Wachtwoord', ar: 'كلمة المرور', en: 'Password' },
+  'auth.wachtwoordVergeten': { nl: 'Wachtwoord vergeten?', ar: 'نسيت كلمة المرور؟', en: 'Forgot your password?' },
+  'auth.inloggen': { nl: 'Inloggen', ar: 'تسجيل الدخول', en: 'Sign in' },
+  'auth.bezig': { nl: 'Bezig...', ar: 'جارٍ...', en: 'Working...' },
+  'auth.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'auth.nieuwAccount': { nl: 'Nieuw account aanmaken', ar: 'إنشاء حساب جديد', en: 'Create a new account' },
+  'auth.mailOpnieuw': { nl: 'Stuur de mail opnieuw', ar: 'أعد إرسال الرسالة', en: 'Send the e-mail again' },
+  'auth.mailVersturen': { nl: 'Bezig met versturen...', ar: 'جارٍ الإرسال...', en: 'Sending...' },
+  'auth.mailOpnieuwGestuurd': {
+    nl: 'We hebben de mail opnieuw gestuurd.',
+    ar: 'أعدنا إرسال الرسالة.',
+    en: 'We have sent the e-mail again.',
+  },
+  // De taalkeuze op de deur zelf. De namen van de talen blijven in hun eigen schrift — wie zijn
+  // taal zoekt, zoekt de vorm van zijn eigen letters, niet een vertaling ervan.
+  'auth.taal': { nl: 'Taal', ar: 'اللغة', en: 'Language' },
+
+  // Het registratiescherm. Zelfde reden als de sleutels hierboven: dit is de deur.
+  'reg.wieBenJij': { nl: 'Wie ben jij?', ar: 'من أنت؟', en: 'Who are you?' },
+  'reg.zzper': { nl: 'ZZP’er', ar: 'صاحب عمل حر', en: 'Freelancer' },
+  'reg.zzperUitleg': {
+    nl: 'Ik stuur en ontvang facturen',
+    ar: 'أُرسل الفواتير وأستلمها',
+    en: 'I send and receive invoices',
+  },
+  'reg.boekhouder': { nl: 'Boekhouder', ar: 'محاسب', en: 'Bookkeeper' },
+  'reg.boekhouderUitleg': {
+    nl: 'Ik beheer facturen van mijn klanten',
+    ar: 'أدير فواتير عملائي',
+    en: 'I manage my clients’ invoices',
+  },
+  'reg.metGoogle': { nl: 'Doorgaan met Google', ar: 'المتابعة عبر Google', en: 'Continue with Google' },
+  'reg.ofMetEmail': { nl: 'of met e-mail', ar: 'أو بالبريد الإلكتروني', en: 'or with e-mail' },
+  'reg.naam': { nl: 'Volledige naam', ar: 'الاسم الكامل', en: 'Full name' },
+  'reg.naamVoorbeeld': { nl: 'Jan de Vries', ar: 'Jan de Vries', en: 'Jan de Vries' },
+  'reg.bedrijf': { nl: 'Bedrijfsnaam (optioneel)', ar: 'اسم الشركة (اختياري)', en: 'Company name (optional)' },
+  'reg.bedrijfVoorbeeld': { nl: 'Jouw Bedrijf BV', ar: 'Jouw Bedrijf BV', en: 'Jouw Bedrijf BV' },
+  'reg.kvk': { nl: 'KVK-nummer (optioneel)', ar: 'رقم KVK (اختياري)', en: 'KVK number (optional)' },
+  'reg.btw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم BTW (اختياري)', en: 'BTW number (optional)' },
+  'reg.laterInvullen': { nl: 'Kun je later invullen.', ar: 'يمكنك إدخاله لاحقاً.', en: 'You can fill this in later.' },
+  // De akkoordregel, in stukken die elk een hele zin of een hele knopnaam zijn — de twee links
+  // staan er middenin, en een taal met een andere woordvolgorde zet ze op een andere plek.
+  'reg.akkoordVoor': { nl: 'Als je een account maakt, ga je akkoord met onze', ar: 'بإنشائك حساباً فإنك توافق على', en: 'By creating an account you agree to our' },
+  'reg.akkoordTussen': { nl: 'en de', ar: 'و', en: 'and the' },
+  'reg.voorwaarden': { nl: 'Voorwaarden', ar: 'الشروط', en: 'Terms' },
+  'reg.privacy': { nl: 'Privacyverklaring', ar: 'بيان الخصوصية', en: 'Privacy statement' },
+  'reg.alAccount': { nl: 'Al een account?', ar: 'لديك حساب بالفعل؟', en: 'Already have an account?' },
+  'reg.emailBezet': {
+    nl: 'Dit e-mailadres is al geregistreerd.',
+    ar: 'هذا البريد الإلكتروني مُسجَّل بالفعل.',
+    en: 'This e-mail address is already registered.',
+  },
+  // De veldcontroles vóór de server. Elk veld zijn eigen zin.
+  'reg.vulNaam': { nl: 'Vul je naam in', ar: 'أدخل اسمك', en: 'Enter your name' },
+  'reg.vulEmail': { nl: 'Vul je e-mailadres in', ar: 'أدخل بريدك الإلكتروني', en: 'Enter your e-mail address' },
+  'reg.emailKloptNiet': { nl: 'Dit e-mailadres klopt niet', ar: 'هذا البريد الإلكتروني غير صحيح', en: 'That e-mail address is not valid' },
+  // [WACHTWOORD-EIS] De eis stond alleen in deze foutmelding, dus je las hem pas nadat je hem had
+  // overtreden. Dezelfde zin staat nu ook als hint ONDER het veld, vóór de eerste poging.
+  'reg.wachtwoordKort': {
+    nl: 'Kies een wachtwoord van minstens 6 tekens',
+    ar: 'اختر كلمة مرور من 6 أحرف على الأقل',
+    en: 'Choose a password of at least 6 characters',
+  },
+  'reg.wachtwoordEis': {
+    nl: 'Minstens 6 tekens.',
+    ar: '6 أحرف على الأقل.',
+    en: 'At least 6 characters.',
+  },
+  'reg.wachtwoordZwakServer': {
+    nl: 'Dit wachtwoord is te zwak — kies een langer wachtwoord',
+    ar: 'كلمة المرور هذه ضعيفة — اختر كلمة أطول',
+    en: 'This password is too weak — choose a longer one',
+  },
+  'reg.teVeelPogingen': {
+    nl: 'Te veel pogingen achter elkaar — wacht even en probeer opnieuw',
+    ar: 'محاولات كثيرة متتالية — انتظر قليلاً ثم أعد المحاولة',
+    en: 'Too many attempts in a row — wait a moment and try again',
+  },
+  'reg.emailUit': {
+    nl: 'Registreren met e-mail staat tijdelijk uit — probeer het met Google',
+    ar: 'التسجيل بالبريد الإلكتروني متوقف مؤقتاً — جرّب عبر Google',
+    en: 'Registering with e-mail is temporarily off — try Google instead',
+  },
+  'reg.mislukt': { nl: 'Registratie mislukt — probeer opnieuw', ar: 'فشل التسجيل — أعد المحاولة', en: 'Registration failed — try again' },
+  'reg.googleFout': { nl: 'Google registratie mislukt — probeer opnieuw', ar: 'فشل التسجيل عبر Google — أعد المحاولة', en: 'Google registration failed — try again' },
+  // Het bevestigingsscherm.
+  'reg.controleerMail': { nl: 'Controleer je e-mail', ar: 'تحقّق من بريدك الإلكتروني', en: 'Check your e-mail' },
+  'reg.linkGestuurd': {
+    nl: 'We hebben een bevestigingslink gestuurd naar {email}. Klik op de link om je account te activeren.',
+    ar: 'أرسلنا رابط تأكيد إلى {email}. اضغط على الرابط لتفعيل حسابك.',
+    en: 'We have sent a confirmation link to {email}. Click it to activate your account.',
+  },
+  'reg.factuurBewaardKop': { nl: 'Je factuur is bewaard.', ar: 'تم حفظ فاتورتك.', en: 'Your invoice has been saved.' },
+  'reg.factuurBewaard': {
+    nl: 'Zodra je je account activeert staat hij klaar — je bedrijfsgegevens, je klant en je regels. Je hoeft niets opnieuw in te tikken.',
+    ar: 'بمجرد تفعيل حسابك ستجدها جاهزة — بيانات شركتك وعميلك وبنودك. لن تحتاج إلى إعادة كتابة شيء.',
+    en: 'It is waiting the moment you activate your account — your company details, your client and your lines. You will not have to retype anything.',
+  },
+  'reg.naarInloggen': { nl: 'Naar inloggen', ar: 'إلى تسجيل الدخول', en: 'To sign in' },
+  // De knop die het account aanmaakt. Twee, want er zijn twee soorten bezoekers — zie
+  // purposeCopy in account-purpose.ts, dat de sleutel kiest.
+  'reg.ctaGratis': { nl: 'Gratis beginnen', ar: 'ابدأ مجاناً', en: 'Start for free' },
+  'reg.ctaArchief': { nl: 'Archief aanmaken', ar: 'إنشاء الأرشيف', en: 'Create archive' },
 
 } satisfies Record<string, Message>
 

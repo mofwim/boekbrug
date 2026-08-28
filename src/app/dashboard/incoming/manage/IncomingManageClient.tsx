@@ -1019,7 +1019,9 @@ export default function IncomingManageClient({
   // [PERIODE] Het venster van de gekozen periode, tegen de AMSTERDAMSE dag (todayIso hieronder komt
   // van amsterdamToday) — nooit tegen de klok van het apparaat, want dan zou een telefoon in een
   // andere tijdzone rond middernacht een andere maand tonen dan de rest van de app.
-  const periodWindow = resolveInvoicePeriod(period, todayIso)
+  // [TAAL] …en in de taal van de eigenaar, want dit label bevat een maandnaam ("juli 2026"). Die
+  // stond als vaste Nederlandse lijst in de module en reisde zo mee tot boven een Arabisch scherm.
+  const periodWindow = resolveInvoicePeriod(period, todayIso, taal)
 
   // ── [INVOICE-SCAN] What is standing wrong in the books, over the WHOLE list ──
   // Computed over `invoices`, never over the filtered view: the credit-note signal needs every
@@ -2278,7 +2280,7 @@ export default function IncomingManageClient({
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, flexShrink: 0 }} aria-hidden>date_range</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: period === 'all' ? '#49454F' : M3.onPrimaryContainer, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {INVOICE_PERIODS.find(p => p.id === period)?.label ?? t('ink.allePeriodes')}
+                  {t(INVOICE_PERIODS.find(p => p.id === period)?.label ?? 'ink.allePeriodes')}
                   {periodWindow.label ? ` · ${periodWindow.label}` : ''}
                 </span>
               </span>
@@ -2291,14 +2293,14 @@ export default function IncomingManageClient({
                 {INVOICE_PERIODS.map(p => {
                   // De concrete periode naast de keuze ("Vorige maand · juni 2026"), zodat niemand
                   // hoeft te raden welke maanden hij te zien krijgt.
-                  const win = resolveInvoicePeriod(p.id, todayIso)
+                  const win = resolveInvoicePeriod(p.id, todayIso, taal)
                   return (
                     <button
                       key={p.id}
                       onClick={() => { setPeriod(p.id); setShowPeriodMenu(false) }}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: period === p.id ? 600 : 400, background: period === p.id ? M3.primaryContainer : '#fff', color: period === p.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
-                      <span>{p.label}</span>
+                      <span>{t(p.label)}</span>
                       {win.label && (
                         <span style={{ fontSize: 12, color: period === p.id ? M3.onPrimaryContainer : '#80868B', fontFamily: FONT_NUM, flexShrink: 0 }}>{win.label}</span>
                       )}

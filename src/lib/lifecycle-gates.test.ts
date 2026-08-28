@@ -7213,6 +7213,12 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // [UITNODIGING] The page every invited client lands on — public, and translated on purpose:
     // the invited person has never seen the product and may not read Dutch.
     "src/app/invite/accept/page.tsx",
+    // [TAAL-POORT] De deur. Deze twee waren 100% Nederlands — nul catalogus-imports in allebei —
+    // terwijl 56 Arabische blogartikelen en /ar/prijzen er rechtstreeks op uitkomen. De sleutel om
+    // uit het Nederlands te komen stond bovendien ACHTER deze schermen, in Instellingen. Nu staan
+    // ze op de lijst, dus een nieuwe Nederlandse zin hier gaat rood.
+    "src/app/login/page.tsx",
+    "src/app/register/page.tsx",
     "src/modules/accountant/pages/AccountantHome.tsx",
     "src/modules/accountant/pages/AccountantWerkboard.tsx",
     "src/modules/accountant/pages/AccountantFactuur.tsx",
@@ -16860,4 +16866,68 @@ test("[DEADLINE] the date is on the screens where the quarter is decided", () =>
     cron.slice(filingsCatch, filingsCatch + 300), /return klaar\(/,
     "a failed filings read now falls through into the notify loop",
   );
+});
+
+test("[BOOT-STUB] the pre-paint script names the cookie, not a client stub", () => {
+  // The bug this holds shut was invisible in every way a bug can be. locale-boot.ts is imported by
+  // the SERVER root layout and interpolates the cookie's NAME into a regex. That name was declared
+  // in use-locale.ts, which carries 'use client' — and Next replaces every export of a client
+  // module reached from the server with a throwing stub. So the script that shipped on every page
+  // contained, literally:
+  //
+  //   document.cookie.match(/(?:^|;\s*)function(){throw Error("Attempted to call LOCALE_COOKIE()…
+  //
+  // …a regex matching no cookie, inside the try/catch that exists to keep this script from
+  // breaking the first line of every page. It swallowed the failure. The URL branch still worked,
+  // which is exactly why nobody caught it: /ar/blog was right, so RTL "worked". Everywhere else —
+  // the whole dashboard, login, register — an owner who chose Arabic got Arabic WORDS (useLocale
+  // reads the cookie perfectly well in the browser) inside a document still stamped lang="nl"
+  // dir="ltr". Right-to-left text in a left-to-right box, announced to a screen reader as Dutch.
+  const boot = readFileSync("src/lib/i18n/locale-boot.ts", "utf8");
+
+  // The name comes from the neutral module. A server file may not reach into the client one for it.
+  assert.doesNotMatch(
+    boot, /from '\.\/use-locale'/,
+    "locale-boot imports from the client module again — its exports arrive here as stubs",
+  );
+  assert.match(boot, /LOCALE_COOKIE[^\n]*from '\.\/locale'/, "the cookie name no longer comes from locale.ts");
+  // Same for the server-side translator, which looked the cookie up by that same stubbed name.
+  assert.doesNotMatch(
+    code("src/lib/i18n/server.ts"), /from '\.\/use-locale'/,
+    "the server translator reads the cookie name off a client export again",
+  );
+  // And the constant is declared where both sides can have it.
+  assert.match(
+    readFileSync("src/lib/i18n/locale.ts", "utf8"),
+    /export const LOCALE_COOKIE = 'boekbrug_taal'/,
+    "the cookie name left the neutral module",
+  );
+
+  // The emitted script itself: the literal name, and no trace of a stub. This is the assertion
+  // that would have gone red on the day the bug was introduced.
+  const { LOCALE_BOOT_SCRIPT } = require("./i18n/locale-boot") as { LOCALE_BOOT_SCRIPT: string };
+  assert.match(LOCALE_BOOT_SCRIPT, /boekbrug_taal=\(\[\^;\]\*\)/, "the script does not read the cookie by name");
+  assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /Attempted to call/, "a client stub is inlined into the script");
+  assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /throw Error/, "a client stub is inlined into the script");
+});
+
+test("[TAAL-POORT] the door speaks more than one language, and offers the switch", () => {
+  // 56 Arabic articles and /ar/prijzen land on /register, and both auth screens were 100% Dutch —
+  // zero catalogue imports in either file. Worse, the ONLY language switch in the product lived
+  // inside Instellingen, behind a login: the setting that lets you escape Dutch was reachable only
+  // in Dutch, and only after you had got through the Dutch screens.
+  for (const screen of ["src/app/login/page.tsx", "src/app/register/page.tsx"]) {
+    const src = code(screen);
+    assert.match(src, /translator\(useLocale\(\)\)/, `${screen} binds no translator`);
+    assert.match(src, /AuthLanguageSwitch/, `${screen} lost the language switch`);
+  }
+  // The switch writes only the cookie — there is no session on these screens by definition.
+  const zwitser = code("src/components/i18n/AuthLanguageSwitch.tsx");
+  assert.match(zwitser, /writeLocaleCookie\(l\)/, "the switch stopped writing the choice");
+  assert.doesNotMatch(zwitser, /supabase|profiles/i, "the logged-out switch may not need a session");
+  // Each language named in its own script, with lang set — otherwise a screen reader pronounces
+  // العربية with Dutch phonetics, to the one person who most needs to find it.
+  assert.match(zwitser, /LOCALE_META\[l\]\.label/, "the languages are no longer named in their own script");
+  assert.match(zwitser, /lang=\{l\}/, "the language buttons lost their own lang attribute");
+  assert.match(zwitser, /aria-pressed=\{actief\}/, "which language is current is only shown in colour");
 });

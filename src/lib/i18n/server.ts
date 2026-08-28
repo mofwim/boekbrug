@@ -13,7 +13,8 @@
 import { cookies } from 'next/headers'
 
 import { resolveLocale, type Locale } from './locale'
-import { LOCALE_COOKIE } from './use-locale'
+// [BOOT-STUB] From locale.ts — see the note there. This file runs on the server.
+import { LOCALE_COOKIE } from './locale'
 import { translator, type Translator } from './t'
 
 /** The owner's language, read from the request. Dutch when they never chose one. */
