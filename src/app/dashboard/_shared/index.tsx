@@ -243,7 +243,18 @@ export function InvoiceTable(props: InvoiceTableProps) {
 // [BOEK-028] Profile dropdown — May 2026
 // [INTEGRATION] Instellingen → /dashboard/settings — May 2026
 
-function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: () => void }) {
+/**
+ * [MEDEWERKER] `links` is optioneel en vervangt de standaardregel (Instellingen).
+ *
+ * Dat is geen algemene flexibiliteit maar één concreet gat: /dashboard/settings staat niet in
+ * SALES_SCREENS, dus voor een verkoopmedewerker was de enige regel in dit menu een deur die
+ * dichtslaat — en eronder stond de enige uitlogknop van de app. Zie MedewerkerHeader.
+ */
+export function ProfileMenu({ profile, onLogout, links }: {
+  profile: HeaderProfile
+  onLogout: () => void
+  links?: { label: string; href: string; icon: string }[]
+}) {
   const t = translator(useLocale())
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
@@ -298,22 +309,25 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
             </p>
           </div>
 
-          {/* Instellingen */}
-          <button
-            onClick={() => { setOpen(false); router.push('/dashboard/settings') }}
-            style={{
-              width: '100%', padding: '10px 16px', textAlign: 'start',
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 14, color: '#202124', fontWeight: 500,
-              borderBottom: '1px solid #F1F3F4',
-              transition: 'background 0.1s ease',
-            }}
-            onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA')}
-            onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginInlineEnd: 8, color: M3.onSurfaceVariant }} aria-hidden>settings</span>
-            {t('kop.instellingen')}
-          </button>
+          {/* Instellingen — of, voor wie daar niet mag komen, zijn eigen regels. */}
+          {(links ?? [{ label: t('kop.instellingen'), href: '/dashboard/settings', icon: 'settings' }]).map(link => (
+            <button
+              key={link.href}
+              onClick={() => { setOpen(false); router.push(link.href) }}
+              style={{
+                width: '100%', padding: '10px 16px', textAlign: 'start',
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 14, color: '#202124', fontWeight: 500,
+                borderBottom: '1px solid #F1F3F4',
+                transition: 'background 0.1s ease',
+              }}
+              onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = '#F8F9FA')}
+              onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent')}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18, verticalAlign: -4, marginInlineEnd: 8, color: M3.onSurfaceVariant }} aria-hidden>{link.icon}</span>
+              {link.label}
+            </button>
+          ))}
 
           {/* Uitloggen */}
           <button
@@ -338,7 +352,7 @@ function ProfileMenu({ profile, onLogout }: { profile: HeaderProfile; onLogout: 
 // ── NotificationsBell ─────────────────────────────────────────────────────────
 // [BOEK-028] Bell with outside click + markAsRead — May 2026
 
-function NotificationsBell({
+export function NotificationsBell({
   notifications, showNotifications, onToggle, onMarkAllRead, loadError,
 }: {
   notifications: NotificationRow[]

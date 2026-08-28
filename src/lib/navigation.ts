@@ -10,7 +10,16 @@
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Role = 'zzper' | 'accountant'
+/**
+ * Wie er kijkt, voor de navigatie.
+ *
+ * [MEDEWERKER] 'medewerker' is nieuw, en het is GEEN nieuwe rol in de database: een
+ * verkoopmedewerker heeft profiles.role = 'zzper' en is gewoon een gebruiker die voor iemand
+ * anders werkt (zie acting-for.ts). Dit type beschrijft alleen wat de NAVIGATIE moet weten, en dat
+ * verschilt wél: zijn thuis is het verkoopbord, niet de home van de eigenaar — die werpt hem
+ * terug. Zonder dit onderscheid wees elke terugknop op zijn schermen naar een deur die dichtslaat.
+ */
+export type Role = 'zzper' | 'accountant' | 'medewerker'
 
 type ParentRule = {
   match: RegExp
@@ -26,7 +35,11 @@ type ParentRule = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getHomePath(role: Role): string {
-  return role === 'accountant' ? '/dashboard/accountant' : '/dashboard'
+  if (role === 'accountant') return '/dashboard/accountant'
+  // [MEDEWERKER] Zijn enige eigen scherm. /dashboard bestaat voor hem niet: de middleware stuurt
+  // hem daar weg (SALES_SCREENS), dus "home" mag daar nooit heen wijzen.
+  if (role === 'medewerker') return '/dashboard/verkoop'
+  return '/dashboard'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +80,10 @@ const PARENT_RULES: ParentRule[] = [
       if (clientId) return `/dashboard/clients/${clientId}`
       const zzpClientId = search?.get('client_id')
       if (zzpClientId) return `/dashboard/klanten/${zzpClientId}`
+      // [MEDEWERKER] Niet /dashboard/facturen: dat scherm staat niet in SALES_SCREENS, dus
+      // "Terug" landde op een pagina die hem meteen terugwerpt naar zijn bord. Eén tik die twee
+      // sprongen doet en op een derde plek eindigt, is erger dan geen tik.
+      if (role === 'medewerker') return '/dashboard/verkoop'
       return role === 'accountant'
         ? '/dashboard/accountant'
         : '/dashboard/facturen'
@@ -93,6 +110,8 @@ const PARENT_RULES: ParentRule[] = [
         }).toString()
         return `/dashboard/clients/${clientId}/kwartaal${qs ? `?${qs}` : ''}`
       }
+      // [MEDEWERKER] Zie de regel hierboven: zijn lijst is het verkoopbord.
+      if (role === 'medewerker') return '/dashboard/verkoop'
       return role === 'accountant' ? '/dashboard/accountant' : '/dashboard/facturen'
     },
   },

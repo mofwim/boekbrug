@@ -12745,6 +12745,33 @@ export const MESSAGES = {
   'reg.ctaGratis': { nl: 'Gratis beginnen', ar: 'ابدأ مجاناً', en: 'Start for free' },
   'reg.ctaArchief': { nl: 'Archief aanmaken', ar: 'إنشاء الأرشيف', en: 'Create archive' },
 
+  // ── [MEDEWERKER] De kop van het verkoopbord ─────────────────────────────────────────────────
+  //
+  // Twee regels in het profielmenu van een verkoopmedewerker. Instellingen staat er niet tussen:
+  // dat scherm mag hij niet openen. Deze twee wél — en er wees tot nu toe geen enkele deur heen.
+  'kop.mijnKlanten': { nl: 'Mijn klanten', ar: 'عملائي', en: 'My clients' },
+  'kop.beveiliging': { nl: 'Beveiliging', ar: 'الأمان', en: 'Security' },
+  // [GEEN-WACHTWOORD] De uitweg voor een account dat via Google is aangemaakt en dus geen
+  // wachtwoord heeft om de verwijdering mee te bevestigen.
+  'inst.stuurWachtwoordLink': {
+    nl: 'Stuur me een link om een wachtwoord in te stellen',
+    ar: 'أرسل لي رابطاً لتعيين كلمة مرور',
+    en: 'Send me a link to set a password',
+  },
+  'inst.wachtwoordLinkGestuurd': {
+    nl: 'Als dit adres bij ons bekend is, staat er een link in je mail. Stel een wachtwoord in en kom hier terug.',
+    ar: 'إن كان هذا العنوان معروفاً لدينا، فستجد رابطاً في بريدك. عيّن كلمة مرور ثم عد إلى هنا.',
+    en: 'If we know this address, there is a link in your mail. Set a password and come back here.',
+  },
+  // [TAAL] De staart van de belangrijkste zin op het verkoopbord. Stond hard-gecodeerd achter een
+  // sleutel, dus de alinea wisselde halverwege van taal — over het feit dat deze gebruiker juist
+  // moet begrijpen: onder wiens naam en BTW-nummer zijn facturen uitgaan.
+  'vk.namensUitleg': {
+    nl: 'Ze gaan uit op hun naam en BTW-nummer, met hun doorlopende factuurnummers. Hieronder staat alleen wat jij zelf hebt gemaakt.',
+    ar: 'تصدر باسمهم ورقم BTW الخاص بهم، وبأرقام فواتيرهم المتسلسلة. وفي الأسفل يظهر ما أنشأتَه أنت فقط.',
+    en: 'They go out under their name and BTW number, in their continuous invoice series. Below is only what you created yourself.',
+  },
+
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

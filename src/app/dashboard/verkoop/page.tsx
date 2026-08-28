@@ -199,7 +199,25 @@ export default async function VerkoopPage() {
 
   // De klok komt van hier: de pagina is force-dynamic, dus de server weet hoe laat het is en
   // client en server komen op dezelfde standen uit. Zie de kop van VerkoopClient.
-  return <VerkoopClient facturen={facturen} bedrijf={bedrijf} nu={readClock()} gecrediteerd={gecrediteerd} laadFout={facturenOnleesbaar} />
+  // [MEDEWERKER] Zijn EIGEN profielrij, voor de kop van dit bord — niet die van de eigenaar.
+  // Zonder deze kop heeft hij geen bel en geen uitlogknop; zie MedewerkerHeader voor wat dat
+  // laatste op een gedeelde baliecomputer betekent. Eigen rij, dus zijn eigen sessie mag hem lezen.
+  const { data: eigenProfiel } = await supabase
+    .from('profiles')
+    .select('id, full_name, company_name, email, role')
+    .eq('id', acting.actorId)
+    .maybeSingle()
+
+  return (
+    <VerkoopClient
+      facturen={facturen}
+      bedrijf={bedrijf}
+      nu={readClock()}
+      gecrediteerd={gecrediteerd}
+      laadFout={facturenOnleesbaar}
+      profiel={eigenProfiel ?? { id: acting.actorId, full_name: null, company_name: null, email: null, role: null }}
+    />
+  )
 }
 
 /**

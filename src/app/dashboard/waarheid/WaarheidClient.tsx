@@ -618,10 +618,18 @@ export default function WaarheidClient() {
               <Stat label={t('wh.overOmzet')} value={eur.format(r.btwVerschuldigd)} sub={t('wh.sub.verschuldigd')} />
               <Stat label={t('wh.overInkopen')} value={eur.format(r.btwVoorbelasting)} sub={t('wh.sub.voorbelasting')} />
             </div>
-            {/* Quarter lens → the aangifte for this exact period is one tap away (same numbers). */}
+            {/* Quarter lens → the aangifte for this exact period is one tap away (same numbers).
+                [EEN-DEUR] En dat is /dashboard/aangifte, niet /dashboard/quarterly. Twee schermen
+                droegen de naam "de aangifte" en ze zijn niet hetzelfde: de correcties uit eerdere
+                ingediende kwartalen (met de knop "Verwerkt in deze aangifte"), de art. 29-blokken
+                en de ICP-opgaaf bestaan alleen op /aangifte — en sinds kort ook de uitleg voor wie
+                zélf indient. Wie via deze link liep, kwam op het scherm zónder dat alles en kon
+                dus indienen zonder de correctie te zien die de app voor déze aangifte had
+                uitgerekend. De kwartaalpagina blijft gewoon bestaan en bereikbaar; wat verandert
+                is waar de zin "naar de aangifte" heen wijst. */}
             {data.quarter && data.year && (
               <Link
-                href={`/dashboard/quarterly?year=${data.year}&quarter=${data.quarter}`}
+                href={`/dashboard/aangifte?year=${data.year}&quarter=${data.quarter}`}
                 style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 14, fontSize: 13.5, fontWeight: 600, color: M.primary, textDecoration: "none" }}
               >
                 {t('wh.naarAangifte')}

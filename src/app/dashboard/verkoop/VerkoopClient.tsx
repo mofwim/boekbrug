@@ -23,6 +23,9 @@ import {
 } from '@/lib/sales-overview'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [MEDEWERKER] De kop met de bel en de uitlogknop die dit scherm — en dus deze gebruiker — niet had.
+import { MedewerkerHeader } from '@/components/nav/MedewerkerHeader'
+import type { HeaderProfile } from '@/app/dashboard/_shared'
 
 const EURO = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string | null) => {
@@ -54,6 +57,7 @@ export default function VerkoopClient({
   nu,
   gecrediteerd,
   laadFout = false,
+  profiel,
 }: {
   facturen: SalesInvoice[]
   bedrijf: string
@@ -67,6 +71,11 @@ export default function VerkoopClient({
   gecrediteerd?: Record<string, number>
   /** [NO-SILENT-EMPTY] De hoofdlezing is mislukt — het bord mag dan geen € 0,00 beweren. */
   laadFout?: boolean
+  /**
+   * [MEDEWERKER] Zijn eigen profiel, voor de kop van dit scherm. Dit is de enige plek in de app
+   * waar hij een bel en een uitlogknop kan krijgen — zie MedewerkerHeader.
+   */
+  profiel: HeaderProfile
 }) {
   // [TAAL] `vert`, niet `t`: dit bestand noemt zijn totalen al `t`.
   const vert = translator(useLocale())
@@ -120,6 +129,7 @@ export default function VerkoopClient({
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
+      <MedewerkerHeader profile={profiel} />
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px 48px' }}>
 
         <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>
@@ -137,9 +147,12 @@ export default function VerkoopClient({
         {/* [ACTING-FOR] De belangrijkste zin op dit scherm. Iemand die facturen uitgeeft onder het
             BTW-nummer van een ander hoort dat te WETEN, en niet te moeten afleiden. */}
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 18px', lineHeight: 1.55 }}>
-          {vert('vk.namens')} <strong style={{ color: M3.onSurface }}>{bedrijf}</strong>. Ze gaan uit
-          op hun naam en BTW-nummer, met hun doorlopende factuurnummers. Hieronder staat alleen wat
-          jij zelf hebt gemaakt.
+          {/* [TAAL] De belangrijkste zin op dit scherm, en hij was half sleutel en half
+              hard-gecodeerd Nederlands: de eerste helft vertaalde mee en de twee zinnen erna niet.
+              In het Arabisch leverde dat één alinea op die halverwege van taal wisselt — over
+              precies het feit dat deze gebruiker moet BEGRIJPEN, namelijk onder wiens BTW-nummer
+              hij factureert. */}
+          {vert('vk.namens')} <strong style={{ color: M3.onSurface }}>{bedrijf}</strong>. {vert('vk.namensUitleg')}
         </p>
 
         {/* Wat er nog binnen moet komen — het getal waar dit werk over gaat. */}
