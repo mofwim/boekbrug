@@ -94,6 +94,11 @@ export default function InvoiceDetailPage() {
   // [DEEL-CREDIT] A LIST. There used to be at most one creditnota per invoice and this held it;
   // now an invoice can be credited in parts, and the query below would have thrown on the second
   // one (maybeSingle → PGRST116) rather than showing it.
+  // [DEEL-CREDIT] Of de creditnota-lezing HEEFT gekeken. Een lege lijst en een mislukte lezing
+  // geven allebei `linkedCreditnotas.length === 0`, en dat verschil is hier geld: alGecrediteerd
+  // wordt dan 0, dus het scherm meldt dat de HELE factuur nog terug kan terwijl er al een deel van
+  // terug is — en het toont de bewerkknop op een factuur waar een creditnota naar verwijst.
+  const [creditnotasGelezen, setCreditnotasGelezen] = useState(true)
   const [linkedCreditnotas, setLinkedCreditnotas] =
     useState<Pick<InvoiceRow, 'id' | 'invoice_number' | 'status' | 'created_at' | 'total_inc_btw'>[]>([])
 
@@ -328,7 +333,7 @@ export default function InvoiceDetailPage() {
       // was ALWAYS null: the "Gecrediteerd via …" banner never appeared and the "Creditnota"
       // button stayed on an already-credited invoice, dead-ending on the server's 409.
       if (CREDITABLE_STATUSES.includes(invoiceData.status) && invoiceData.invoice_type === 'factuur') {
-        const { data: creditnota } = await supabase
+        const { data: creditnota, error: creditFout } = await supabase
           .from('invoices')
           // [DEEL-CREDIT] With the amount, and as a list: what matters is no longer whether one
           // exists but how much of the invoice they cover together.
@@ -337,7 +342,14 @@ export default function InvoiceDetailPage() {
           .eq('invoice_type', 'creditnota')
           .order('created_at', { ascending: true })
 
-        if (creditnota) setLinkedCreditnotas(creditnota)
+        // [NO-SILENT-EMPTY] Mislukt deze lezing, dan weten we niet hoeveel er al terug is — en
+        // "we weten het niet" mag hier niet als "nul" op het scherm komen. De route en de database
+        // bewaken hetzelfde plafond, dus een verkeerde klik wordt alsnog geweigerd; wat dit
+        // voorkomt is het verkeerde BEDRAG dat de eigenaar leest voordat hij klikt.
+        if (creditFout) {
+          console.error('[DEEL-CREDIT] creditnota-lezing mislukt — bedragen niet getoond', { invoiceId, creditFout })
+          setCreditnotasGelezen(false)
+        } else if (creditnota) setLinkedCreditnotas(creditnota)
       }
 
       // [CREDITNOTA-REF] The other direction: when THIS invoice is a creditnota, resolve the
@@ -503,7 +515,10 @@ export default function InvoiceDetailPage() {
     !!invoice.status && CREDITABLE_STATUSES.includes(invoice.status) &&
     // [DEEL-CREDIT] Zolang er nog iets te crediteren valt. Vroeger stond hier "en er is er nog
     // geen" — de aanname dat een creditnota altijd de hele factuur is.
-    nogTeCrediteren > 0
+    nogTeCrediteren > 0 &&
+    // …en zolang we WETEN hoeveel dat is. Zonder de lezing is nogTeCrediteren het volle bedrag,
+    // en dan biedt dit scherm aan om een tweede keer terug te geven wat al terug is.
+    creditnotasGelezen
 
   // [HERSTEL] A sent invoice is fully editable while nothing is attached to it — the market
   // rule, with the locks in invoice-editable.ts. This screen shows the button only for what it
@@ -521,6 +536,10 @@ export default function InvoiceDetailPage() {
     // rewriting the invoice underneath it leaves a correction that corrects something that no
     // longer exists. The PUT route refuses this too (sentEditBlockers); this only hides the button.
     linkedCreditnotas.length === 0 &&
+    // Een mislukte lezing is geen "er is er geen". Deze knop bewerkt een VERZONDEN factuur en
+    // levert de correctie automatisch bij de klant af; hem tonen omdat we niet konden kijken is
+    // precies de volgorde die de toelichting hierboven verbiedt.
+    creditnotasGelezen &&
     !((invoice.amount_paid ?? 0) > 0)
 
   // [ACC-INVOICE-VIEW] Direction is the single source of truth. Only an explicit
