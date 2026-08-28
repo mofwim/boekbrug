@@ -22,6 +22,8 @@
 // laten. Beide, met de code eerst.
 
 /** De vorm van een Supabase AuthError, zonder het type te hoeven importeren. */
+import type { MessageKey } from "./i18n/messages";
+
 export interface RuweAuthFout {
   code?: string;
   status?: number;
@@ -29,8 +31,23 @@ export interface RuweAuthFout {
 }
 
 export interface AuthFout {
-  /** De regel die de gebruiker leest. */
+  /**
+   * De regel die de gebruiker leest, in de BRONTAAL.
+   *
+   * [TAAL] Blijft staan, en is niet overbodig: de wachtwoordschermen renderen hem nog rechtstreeks,
+   * en hij is de bron waaruit de catalogusregel is geschreven. Een scherm dat vertaald is gebruikt
+   * `sleutel` hieronder; een scherm dat dat nog niet is, verandert door deze wijziging niets.
+   */
   tekst: string;
+  /**
+   * [TAAL] Dezelfde zin als sleutel in de catalogus.
+   *
+   * Deze module beslist WELKE fout het is — dat is de moeilijke helft en die is puur. Welke WOORDEN
+   * daarbij horen is de taal van het scherm, en dat kan een module die geen scherm kent niet weten.
+   * Zo hoeft de beslisboom hierboven, met zijn zorgvuldig gekozen volgorde, nooit vertaald te
+   * worden: hij levert een naam, en het scherm zoekt het woord erbij.
+   */
+  sleutel: MessageKey;
   /** Bij welk veld de melding hoort. Ontbreekt hij, dan is het een algemene melding. */
   veld?: "email" | "password";
   /** Het account bestaat, maar de e-mail is nog niet bevestigd — toon de "stuur opnieuw"-knop. */
@@ -65,20 +82,20 @@ export function inlogFout(fout: RuweAuthFout): AuthFout {
   const t = tekstVan(fout);
 
   if (fout.code === "email_not_confirmed" || t.includes("confirm")) {
-    return { tekst: "Je moet eerst je e-mail bevestigen.", bevestigNodig: true };
+    return { tekst: "Je moet eerst je e-mail bevestigen.", sleutel: "auth.bevestigEerst", bevestigNodig: true };
   }
   if (isRatelimiet(fout)) {
-    return { tekst: "Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw." };
+    return { tekst: "Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw.", sleutel: "auth.teVeelPogingen" };
   }
   if (fout.code === "user_banned") {
-    return { tekst: "Dit account is geblokkeerd. Neem contact op via de website." };
+    return { tekst: "Dit account is geblokkeerd. Neem contact op via de website.", sleutel: "auth.geblokkeerd" };
   }
   if (fout.code === "invalid_credentials" || t.includes("invalid login") || t.includes("credentials")) {
-    return { tekst: "E-mail of wachtwoord is onjuist" };
+    return { tekst: "E-mail of wachtwoord is onjuist", sleutel: "auth.onjuist" };
   }
   // Onbekend: NIET "onjuist" zeggen. Dat is een bewering over wat de gebruiker intikte, en die
   // kunnen we hier niet doen — een serverstoring is geen typefout.
-  return { tekst: "Inloggen lukte niet — probeer het zo opnieuw." };
+  return { tekst: "Inloggen lukte niet — probeer het zo opnieuw.", sleutel: "auth.inlogMislukt" };
 }
 
 /**
@@ -94,17 +111,19 @@ export function wachtwoordOpslaanFout(fout: RuweAuthFout): AuthFout {
   if (fout.code === "weak_password" || t.includes("password should be") || t.includes("weak")) {
     return {
       tekst: "Dit wachtwoord is te zwak — kies er een die langer is.",
+      sleutel: "auth.wachtwoordZwak",
       veld: "password",
     };
   }
   if (fout.code === "same_password" || t.includes("should be different")) {
     return {
       tekst: "Dit is je huidige wachtwoord — kies een ander.",
+      sleutel: "auth.wachtwoordZelfde",
       veld: "password",
     };
   }
   if (isRatelimiet(fout)) {
-    return { tekst: "Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw." };
+    return { tekst: "Te veel pogingen achter elkaar — wacht een minuut en probeer opnieuw.", sleutel: "auth.teVeelPogingen" };
   }
   if (
     fout.status === 401 ||
@@ -117,18 +136,19 @@ export function wachtwoordOpslaanFout(fout: RuweAuthFout): AuthFout {
   ) {
     return {
       tekst: "Deze herstellink is verlopen of al gebruikt. Vraag een nieuwe aan.",
+      sleutel: "auth.linkVerlopen",
       linkVerlopen: true,
     };
   }
-  return { tekst: "Opslaan lukte niet — probeer het zo opnieuw." };
+  return { tekst: "Opslaan lukte niet — probeer het zo opnieuw.", sleutel: "auth.opslaanMislukt" };
 }
 
 /** Wat er misging bij het AANVRAGEN van een herstelmail (de eerste stap). */
 export function herstelmailFout(fout: RuweAuthFout): AuthFout {
   if (isRatelimiet(fout)) {
-    return { tekst: "Te veel aanvragen achter elkaar — wacht een minuut en probeer opnieuw." };
+    return { tekst: "Te veel aanvragen achter elkaar — wacht een minuut en probeer opnieuw.", sleutel: "auth.teVeelAanvragen" };
   }
-  return { tekst: "Versturen lukte niet — probeer het zo opnieuw." };
+  return { tekst: "Versturen lukte niet — probeer het zo opnieuw.", sleutel: "auth.versturenMislukt" };
 }
 
 /**
@@ -142,17 +162,19 @@ export function herstelmailFout(fout: RuweAuthFout): AuthFout {
  * NIET op het scherm — een querystring is invoer van buiten, en die hoort niet als melding
  * teruggetoond te worden.
  */
-export function callbackFoutTekst(reden: string | null | undefined): string {
+export function callbackFoutSleutel(reden: string | null | undefined): MessageKey | null {
   switch (reden) {
     case "no_code":
-      return "Het inloggen met Google is onderweg afgebroken. Probeer het opnieuw.";
+      return "auth.googleAfgebroken";
     case "auth_failed":
-      return "Inloggen met Google lukte niet. Probeer het opnieuw of gebruik je e-mailadres.";
+      return "auth.googleMislukt";
     case null:
     case undefined:
     case "":
-      return "";
+      return null;
     default:
-      return "Inloggen lukte niet. Probeer het opnieuw of gebruik je e-mailadres.";
+      // Iets ging mis en we weten niet wat. Dat wordt gezegd — maar in ONZE woorden: de waarde uit
+      // de querystring komt nooit op het scherm, ook niet als naam van een sleutel.
+      return "auth.googleMislukt";
   }
 }

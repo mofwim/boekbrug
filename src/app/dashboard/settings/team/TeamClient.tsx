@@ -120,7 +120,9 @@ export default function TeamClient() {
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px 48px' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: M3.onSurface, margin: '0 0 6px' }}>{t('team.titel')}</h1>
+        {/* [DEUR] De naam staat in de gedeelde balk (chrome.team), met een ouderregel naar
+            Instellingen — dit is een instellingenscherm, en zonder die regel was de weg terug de
+            home geweest. Zie navigation.ts. */}
         <p style={{ fontSize: 14.5, color: M3.neutral, margin: '0 0 20px', lineHeight: 1.6 }}>
           {t('team.introVoor')} <strong>{t('team.introNadruk')}</strong> {t('team.introNa')}
         </p>

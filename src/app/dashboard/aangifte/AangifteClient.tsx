@@ -12,6 +12,9 @@ import { quarterFromParams } from '@/lib/quarter'
 // [TZ] Amsterdam's day/year, never the device's — see format-nl.ts. formatDateNL renders the
 // filing timestamp as DD-MM-YYYY, pinned to the same zone.
 import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
+// [DEADLINE] De datum waarop dit ingediend moet zijn, en hoeveel dagen dat nog is.
+import { deadlineNotice } from '@/lib/btw-deadline-notice'
+import type { QuarterNo } from '@/lib/btw-reservation'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -58,7 +61,19 @@ interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; 
 // trusts. The owner or their accountant places it on the form.
 interface Correction { quarter: string; filedAt: string; btwSaldoDelta: number; carriedSaldo: number; outstanding: number }
 
-export default function AangifteClient() {
+export default function AangifteClient({ hasAccountant = null }: {
+  /**
+   * [ZELF-INDIENEN] Is er een boekhouder aan dit account gekoppeld?
+   *
+   * true → hij controleert en dient in, en de zin die dat zegt klopt.
+   * false → NIEMAND doet dat behalve de eigenaar zelf, en tot nu toe stond er dat zijn boekhouder
+   *   het zou doen — tegen iedereen, onvoorwaardelijk. Zie het paneel verderop.
+   * null → de lezing mislukte. Dan zegt de banner alleen wat hij zeker weet: dit is een concept.
+   *   Wie hem indient is dan een bewering die we niet kunnen doen, en dit is niet het scherm om te
+   *   gokken wie er verantwoordelijk is voor een belastingaangifte.
+   */
+  hasAccountant?: boolean | null
+}) {
   const t = translator(useLocale())
   const sp = useSearchParams()
   // [QUARTER] Honour ?year&quarter (e.g. from the readiness card's link), else default to
@@ -87,6 +102,11 @@ export default function AangifteClient() {
   // (or one with a wrong clock) must not be able to open — or hide — a quarter the rest of the app
   // judges by the Dutch calendar.
   const curYear = Number(amsterdamToday().slice(0, 4))
+  // [DEADLINE] Wanneer dit kwartaal ingediend moet zijn, gezien vanaf vandaag — de Amsterdamse
+  // dag, niet die van het toestel: een deadline is een Nederlandse kalenderdatum. De rekensom
+  // staat in btw-deadline-notice.ts, zodat dit scherm, klaar en de herinneringscron nooit een
+  // andere dag tellen.
+  const deadline = deadlineNotice(year, quarter as QuarterNo, amsterdamToday())
 
   /**
    * [SUPPLETIE-VERREKEND] "Ik heb deze correctie in deze aangifte verwerkt."
@@ -198,11 +218,73 @@ export default function AangifteClient() {
           </div>
         </div>
 
-        {/* Concept banner — this is NOT a filing. */}
+        {/* Concept banner — this is NOT a filing.
+            [ZELF-INDIENEN] De tweede zin zei tegen iedereen "Je boekhouder controleert en dient
+            in", ook tegen de kapster zonder boekhouder. Zij heeft er geen. En geen enkel scherm in
+            de app noemde waar of hoe je het dan wél doet: er staat nergens een verwijzing naar
+            Mijn Belastingdienst Zakelijk, terwijl de rubriekentabel hieronder het formulier van de
+            Belastingdienst letterlijk naspreekt. De hele keten was af op één stap na, en dat was
+            de stap waar het geld daadwerkelijk wordt aangegeven.
+            [TAAL] En de zin staat nu in de catalogus, waar hij hoort — hij was hard-gecodeerd op
+            een scherm dat verder volledig vertaald is. */}
         <div style={{ background: M3.warningContainer, color: M3.warning, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, fontWeight: 600, margin: '10px 0 20px', lineHeight: 1.5 }}>
-          ⚠ Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte.
-          Je boekhouder controleert en dient in.
+          ⚠ {t('aang.concept')}{' '}
+          {hasAccountant === true ? t('aang.conceptBoekhouder')
+            : hasAccountant === false ? t('aang.conceptZelf')
+            : ''}
         </div>
+
+        {/* [DEADLINE] Wanneer dit ingediend moet zijn. Het enige scherm dat de datum ooit noemde
+            was de reserveringskaart op /dashboard/vandaag — niet in de onderbalk, niet in de
+            mobiele kop, en alleen gelinkt vanaf de home als er al iets te laat is. Op het toestel
+            dat deze ondernemers werkelijk vasthouden stond de deadline dus nergens.
+            Alleen voor een kwartaal dat nog NIET is ingediend: voor een ingediend kwartaal staat
+            de banner hierboven al, en die is het echte antwoord. */}
+        {!filed && deadline && (
+          <div style={{
+            background: deadline.state === 'voorbij' ? M3.errorContainer : deadline.state === 'ruim' ? M3.surfaceVariant : M3.warningContainer,
+            color: deadline.state === 'voorbij' ? M3.error : deadline.state === 'ruim' ? M3.onSurface : M3.warning,
+            borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55,
+          }}>
+            <strong style={{ fontWeight: 700 }}>
+              {deadline.state === 'voorbij' ? t('aang.deadline.voorbij', { datum: formatDateNL(deadline.deadline) })
+                : deadline.state === 'vandaag' ? t('aang.deadline.vandaag')
+                : t('aang.deadline.nog', { datum: formatDateNL(deadline.deadline), dagen: deadline.days })}
+            </strong>
+          </div>
+        )}
+
+        {/* [ZELF-INDIENEN] Het paneel dat de laatste meter beschrijft. Alleen voor wie geen
+            boekhouder heeft: wie er wel een heeft krijgt deze instructie niet, want die zou hem
+            aanzetten tot iets wat een ander al doet — en twee mensen die dezelfde aangifte
+            indienen is erger dan geen van beiden.
+            De rubrieknummers staan er letterlijk in omdat ze letterlijk overgenomen moeten worden;
+            de tabel hieronder draagt exact dezelfde nummers. */}
+        {hasAccountant === false && !filed && (
+          <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 12, padding: '14px 16px', margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.6, color: M3.onSurface }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{t('aang.zelf.titel')}</div>
+            <ol style={{ margin: 0, paddingInlineStart: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <li>
+                {t('aang.zelf.stap1')}{' '}
+                <a
+                  href="https://www.belastingdienst.nl/wps/wcm/connect/nl/btw/btw"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: M3.primary, fontWeight: 600 }}
+                >
+                  belastingdienst.nl
+                </a>
+              </li>
+              <li>{t('aang.zelf.stap2')}</li>
+              <li>{t('aang.zelf.stap3')}</li>
+            </ol>
+            <div style={{ marginTop: 8 }}>
+              <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: M3.primary, fontWeight: 700 }}>
+                {t('aang.zelf.markeer')}
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* ── [FILED-QUARTER] Dit kwartaal is al ingediend ────────────────────────────────────
             Alles op deze pagina wordt LIVE herrekend. Voor een kwartaal dat al de deur uit is,

@@ -21,7 +21,8 @@
 // everything is always wrong — which points at every field and therefore at none.
 
 import { useState } from 'react'
-import { setExcl, setBtw, setIncl } from '@/lib/amount-triplet'
+import { formatEuroNL } from '@/lib/format-nl'
+import { setExcl, setBtw, setIncl, splitByRate, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from '@/lib/amount-triplet'
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from '@/lib/parse-nl'
 // [STATIEGELD-GAT] The deposit the reader dropped, found back on the paper — see statiegeld.ts.
@@ -137,8 +138,9 @@ export default function InvoiceCorrectionModal({
   // Display rounds to the cent; the held value stays untouched (amount-triplet is deliberately
   // unrounded) — otherwise a derived field paints the float tail of ni − t.btw on screen.
   const [amountDraft, setAmountDraft] = useState<{ field: 'ex' | 'btw' | 'incl'; text: string } | null>(null)
+  // [NUL-IS-GEEN-INVOER] Same rule as the verify queue, from the same module — see amount-triplet.ts.
   const amountShown = (field: 'ex' | 'btw' | 'incl', held: number) =>
-    amountDraft?.field === field ? amountDraft.text : String(round2(held)).replace('.', ',')
+    amountFieldText(held, amountDraft, field)
   const [number, setNumber] = useState(invoice.invoice_number ?? '')
   const [vendor, setVendor] = useState(invoice.client_name ?? '')
   const [date, setDate] = useState(invoice.invoice_date ?? '')
@@ -351,11 +353,48 @@ export default function InvoiceCorrectionModal({
               value={amountShown(f.key, amounts[f.key])}
               onChange={(e) => { setAmountDraft({ field: f.key, text: e.target.value }); setAmounts(f.apply(amounts, parseAmountNL(e.target.value))) }}
               onBlur={() => setAmountDraft(null)}
+              // [NUL-IS-GEEN-INVOER] Tapping selects, so the first keystroke replaces the amount.
+              onFocus={(e) => e.currentTarget.select()}
+              placeholder={AMOUNT_PLACEHOLDER}
               aria-label={f.label}
               style={{ width: 140, padding: '9px 11px', fontSize: f.strong ? 17 : 15, fontWeight: f.strong ? 700 : 600, borderRadius: 10, border: '1.5px solid #1a73e8', textAlign: 'end', outline: 'none', color: '#202124' }}
             />
           </div>
         ))}
+
+        {/* [BTW-TARIEF] Same offer as the verify queue, same reason: the rate is asked, never
+            inferred — the ex amount alone carries no rate, and a guessed btw is a guessed
+            voorbelasting. Splits from the TOTAL, and only exists while there is a total with no
+            btw beside it. */}
+        {Math.abs(amounts.incl) > 0.005 && Math.abs(amounts.btw) < 0.005 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, color: '#5F6368', marginBottom: 6, lineHeight: 1.4 }}>
+              {t('corr.tarief.vraag')}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {NL_BTW_RATES.map((tarief) => (
+                <button
+                  key={tarief}
+                  type="button"
+                  onClick={() => setAmounts(splitByRate(amounts.incl, tarief))}
+                  style={{
+                    flex: 1, minHeight: 44, borderRadius: 12, border: '1px solid #1a73e8',
+                    background: '#e8f0fe', color: '#1a4fa0', fontSize: 13.5, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: FONT, padding: '10px 8px', lineHeight: 1.35,
+                  }}
+                >
+                  {t('corr.tarief.knop', {
+                    tarief,
+                    btw: formatEuroNL(Math.abs(splitByRate(amounts.incl, tarief).btw)),
+                  })}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#80868B', marginTop: 6, lineHeight: 1.4 }}>
+              {t('corr.tarief.uitleg')}
+            </div>
+          </div>
+        )}
 
         {/* [STATIEGELD-GAT] One tap, because the arithmetic is already done. The difference is
             fixed by the identity and the word beside it was found on the document itself at import

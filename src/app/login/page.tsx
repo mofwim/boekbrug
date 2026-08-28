@@ -8,19 +8,28 @@ import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
-import { callbackFoutTekst, herstelmailFout, inlogFout } from '@/lib/auth-errors'
+import { callbackFoutSleutel, herstelmailFout, inlogFout } from '@/lib/auth-errors'
+// [TAAL-POORT] De deur sprak maar één taal. Zie AuthLanguageSwitch voor waarom dat juist HIER het
+// duurst was: de knop die je uit het Nederlands haalt stond zelf achter het Nederlands.
+import { AuthLanguageSwitch } from '@/components/i18n/AuthLanguageSwitch'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 
 function LoginContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const [error, setError] = useState('')
+  // [TAAL] Deze twee dragen een SLEUTEL, geen zin. Een foutmelding die als Nederlandse string in
+  // de state gaat, is in elke andere taal onbereikbaar geworden op het moment dat hij werd gezet.
+  const [error, setError] = useState<MessageKey | null>(null)
   const [needsConfirm, setNeedsConfirm] = useState(false)
-  const [resendMsg, setResendMsg] = useState('')
+  const [resendMsg, setResendMsg] = useState<MessageKey | null>(null)
   const [resending, setResending] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
+  const t = translator(useLocale())
 
   // De bestemming die de bezoeker meebracht. [SEC-REDIRECT] Alleen een pad op onze eigen origin;
   // al het andere valt terug op /dashboard.
@@ -35,7 +44,7 @@ function LoginContent() {
   //
   // De parameter wordt VERTAALD, niet getoond: een querystring is invoer van buiten, en die hoort
   // niet als melding terug op ons eigen inlogscherm te verschijnen.
-  const callbackFout = callbackFoutTekst(searchParams.get('error'))
+  const callbackFout = callbackFoutSleutel(searchParams.get('error'))
 
   // Wie al een sessie heeft, hoort hier niet naar een inlogformulier te kijken — en al helemaal
   // niet naar de vraag om opnieuw zijn wachtwoord in te tikken. Mét zijn bestemming, zodat een
@@ -66,7 +75,7 @@ function LoginContent() {
   // [Google-OAuth] Google login via Supabase OAuth
   async function handleGoogleLogin() {
     setGoogleLoading(true)
-    setError('')
+    setError(null)
 
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
@@ -92,7 +101,7 @@ function LoginContent() {
 
     if (error) {
       setGoogleLoading(false)
-      setError('Google login mislukt — probeer opnieuw')
+      setError('auth.googleFout')
     }
   }
 
@@ -103,9 +112,9 @@ function LoginContent() {
     if (loading || googleLoading) return
 
     setLoading(true)
-    setError('')
+    setError(null)
     setNeedsConfirm(false)
-    setResendMsg('')
+    setResendMsg(null)
 
     // Hetzelfde adres als op het scherm staat. Zonder trim werd " jan@x.nl " door de server
     // geweigerd en las de gebruiker dat zijn wachtwoord onjuist was.
@@ -125,7 +134,7 @@ function LoginContent() {
         message: error.message,
       })
       if (fout.bevestigNodig) setNeedsConfirm(true)
-      else setError(fout.tekst)
+      else setError(fout.sleutel)
       setLoading(false)
       return
     }
@@ -146,12 +155,12 @@ function LoginContent() {
     // hem juist de mail onthoudt waar hij op wacht.
     if (resending) return
     setResending(true)
-    setResendMsg('')
+    setResendMsg(null)
     const { error } = await getBrowserClient().auth.resend({ type: 'signup', email: email.trim() })
     setResendMsg(
       error
-        ? herstelmailFout({ status: error.status, message: error.message }).tekst
-        : 'We hebben de mail opnieuw gestuurd.'
+        ? herstelmailFout({ status: error.status, message: error.message }).sleutel
+        : 'auth.mailOpnieuwGestuurd'
     )
     setResending(false)
   }
@@ -171,7 +180,12 @@ function LoginContent() {
 
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-gray-900">BoekBrug</h1>
-          <p className="text-gray-500 text-sm mt-1">De brug tussen jou en je boekhouder</p>
+          <p className="text-gray-500 text-sm mt-1">{t('auth.slogan')}</p>
+        </div>
+
+        {/* [TAAL-POORT] Op de deur, niet erachter. */}
+        <div className="mb-6">
+          <AuthLanguageSwitch />
         </div>
 
         {/* [Google-OAuth] Google login button */}
@@ -186,13 +200,13 @@ function LoginContent() {
           ) : (
             <GoogleIcon />
           )}
-          {googleLoading ? 'Bezig met verbinden...' : 'Inloggen met Google'}
+          {googleLoading ? t('auth.verbinden') : t('auth.metGoogle')}
         </button>
 
         {/* Divider */}
         <div className="flex items-center gap-3 mb-6">
           <div className="flex-1 h-px bg-gray-100" />
-          <span className="text-xs text-gray-400">of</span>
+          <span className="text-xs text-gray-400">{t('auth.of')}</span>
           <div className="flex-1 h-px bg-gray-100" />
         </div>
 
@@ -201,7 +215,7 @@ function LoginContent() {
         {callbackFout && (
           <div role="alert" className="flex items-start gap-2.5 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-4">
             <span aria-hidden className="text-amber-500 text-sm mt-0.5 flex-shrink-0">!</span>
-            <p className="text-sm text-amber-700">{callbackFout}</p>
+            <p className="text-sm text-amber-700">{t(callbackFout)}</p>
           </div>
         )}
 
@@ -209,7 +223,7 @@ function LoginContent() {
             "Ga"-toets in plaats van een regeleinde. Stond als bekend punt in UX_REVIEW_2026. */}
         <form onSubmit={e => { e.preventDefault(); handleLogin() }} className="space-y-4">
             <div>
-              <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+              <label htmlFor="login-email" className="block text-sm font-medium text-gray-700 mb-1">{t('auth.email')}</label>
               <input
                 id="login-email"
                 type="email"
@@ -223,7 +237,7 @@ function LoginContent() {
             </div>
 
             <div>
-              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">{t('auth.wachtwoord')}</label>
               <input
                 id="login-password"
                 type="password"
@@ -237,26 +251,26 @@ function LoginContent() {
               />
               <div className="text-end mt-1">
                 <a href="/wachtwoord-vergeten" className="text-sm text-blue-600 hover:underline">
-                  Wachtwoord vergeten?
+                  {t('auth.wachtwoordVergeten')}
                 </a>
               </div>
             </div>
 
-            <ErrorMessage message={error} />
+            <ErrorMessage message={error ? t(error) : ''} />
 
             {/* Unconfirmed e-mail — offer to re-send the confirmation link. */}
             {needsConfirm && (
               <div className="flex flex-col gap-2 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-                <p className="text-sm text-amber-700">Je moet eerst je e-mail bevestigen.</p>
+                <p className="text-sm text-amber-700">{t('auth.bevestigEerst')}</p>
                 <button
                   type="button"
                   onClick={handleResend}
                   disabled={resending}
                   className="self-start text-sm font-medium text-blue-600 hover:underline disabled:opacity-50"
                 >
-                  {resending ? 'Bezig met versturen...' : 'Stuur de mail opnieuw'}
+                  {resending ? t('auth.mailVersturen') : t('auth.mailOpnieuw')}
                 </button>
-                {resendMsg && <p className="text-sm text-amber-700">{resendMsg}</p>}
+                {resendMsg && <p className="text-sm text-amber-700">{t(resendMsg)}</p>}
               </div>
             )}
 
@@ -265,7 +279,7 @@ function LoginContent() {
               disabled={loading || googleLoading}
               className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50"
             >
-              {loading ? 'Bezig...' : 'Inloggen'}
+              {loading ? t('auth.bezig') : t('auth.inloggen')}
             </button>
           </form>
 
@@ -275,7 +289,7 @@ function LoginContent() {
             disabled={loading || googleLoading}
             className="w-full border border-gray-200 text-gray-700 rounded-xl py-2.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 mt-4"
           >
-            Nieuw account aanmaken
+            {t('auth.nieuwAccount')}
           </button>
 
       </div>
@@ -296,10 +310,13 @@ function GoogleIcon() {
 }
 
 export default function LoginPage() {
+  // [TAAL] Ook het wachtscherm. Het is één woord en het duurt een tel, en juist daarom viel het
+  // buiten elke sweep — terwijl het het eerste is wat een bezoeker van /ar/blog hier ziet.
+  const t = translator(useLocale())
   return (
     <Suspense fallback={
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-400 text-sm">Laden...</p>
+        <p className="text-gray-400 text-sm">{t('auth.laden')}</p>
       </div>
     }>
       <LoginContent />

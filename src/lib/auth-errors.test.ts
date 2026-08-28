@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  callbackFoutTekst,
+  callbackFoutSleutel,
   herstelmailFout,
   inlogFout,
   wachtwoordOpslaanFout,
@@ -93,12 +93,15 @@ test("de herstelmail meldt een ratelimiet als ratelimiet", () => {
   assert.match(herstelmailFout({ status: 500 }).tekst, /Versturen/);
 });
 
-test("de callback-reden wordt vertaald, niet doorgegeven", () => {
-  assert.match(callbackFoutTekst("no_code"), /afgebroken/);
-  assert.match(callbackFoutTekst("auth_failed"), /Google/);
-  assert.equal(callbackFoutTekst(null), "");
-  assert.equal(callbackFoutTekst(undefined), "");
-  assert.equal(callbackFoutTekst(""), "");
+test("de callback-reden wordt een SLEUTEL, niet doorgegeven", () => {
+  // [TAAL] De module beslist wélke fout het is; het scherm zoekt het woord erbij. Zo hoeft deze
+  // beslisboom nooit vertaald te worden en staat de zin één keer in de catalogus.
+  assert.equal(callbackFoutSleutel("no_code"), "auth.googleAfgebroken");
+  assert.equal(callbackFoutSleutel("auth_failed"), "auth.googleMislukt");
+  // Geen reden is geen melding — een leeg vak boven een inlogformulier is geen fout.
+  assert.equal(callbackFoutSleutel(null), null);
+  assert.equal(callbackFoutSleutel(undefined), null);
+  assert.equal(callbackFoutSleutel(""), null);
 });
 
 test("wat er verder in die parameter staat, komt niet op het scherm", () => {
@@ -110,8 +113,9 @@ test("wat er verder in die parameter staat, komt niet op het scherm", () => {
     "../../etc/passwd",
     "onzin",
   ]) {
-    const t = callbackFoutTekst(rommel);
-    assert.ok(!t.includes(rommel), `"${rommel}" mag niet worden teruggetoond`);
-    assert.equal(t, "Inloggen lukte niet. Probeer het opnieuw of gebruik je e-mailadres.");
+    const sleutel = callbackFoutSleutel(rommel);
+    // Wat er ook in stond: de uitkomst is een van ONZE sleutels en draagt niets van de invoer mee.
+    assert.equal(sleutel, "auth.googleMislukt");
+    assert.ok(sleutel !== null && !sleutel.includes(rommel), `"${rommel}" mag niet worden teruggetoond`);
   }
 });

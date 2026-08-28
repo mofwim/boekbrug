@@ -225,7 +225,7 @@ export default function InvoiceDocumentSheet({
             onClick={onClose} aria-label={t('dsh.sluiten')}
             style={{ width: 34, height: 34, border: 'none', background: M3.surfaceVariant, borderRadius: R.full, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
           >
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5F6368' }}>close</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5F6368' }} aria-hidden>close</span>
           </button>
         </div>
 
@@ -253,7 +253,7 @@ export default function InvoiceDocumentSheet({
             </p>
             {checks.map((c) => (
               <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 15, color: TICK[c.outcome].color, flexShrink: 0, marginTop: 1 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 15, color: TICK[c.outcome].color, flexShrink: 0, marginTop: 1 }} aria-hidden>
                   {TICK[c.outcome].icon}
                 </span>
                 <span style={{ minWidth: 0 }}>

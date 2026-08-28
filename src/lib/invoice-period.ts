@@ -14,6 +14,9 @@
 // `todayIso` wordt MEEGEGEVEN, nooit hier gelezen: dat houdt de module puur en maakt de randen
 // (januari terug naar december, Q1 terug naar Q4 van vorig jaar) testbaar zonder de klok te zetten.
 
+import type { MessageKey } from "./i18n/messages";
+import { LOCALE_META, resolveLocale } from "./i18n/locale";
+
 export type InvoicePeriod =
   | "all"
   | "this-month"
@@ -25,18 +28,26 @@ export type InvoicePeriod =
 
 export interface PeriodOption {
   id: InvoicePeriod;
-  label: string;
+  /**
+   * [TAAL] Een SLEUTEL uit de catalogus, geen woord.
+   *
+   * Hier stonden de Nederlandse woorden zelf, en dit menu staat boven de inkoopfacturenlijst — een
+   * volledig vertaald scherm. Een Arabische eigenaar las dus "كل الفترات" nergens en "Alle
+   * periodes" wel, midden tussen zijn eigen taal. De sleutel ink.allePeriodes bestond zelfs al en
+   * werd nooit bereikt: het menu vond altijd eerst dit woord.
+   */
+  label: MessageKey;
 }
 
 /** De keuzes zoals ze in het menu staan — "Alles" eerst, want dat is het gedrag van vandaag. */
 export const INVOICE_PERIODS: readonly PeriodOption[] = [
-  { id: "all", label: "Alle periodes" },
-  { id: "this-month", label: "Deze maand" },
-  { id: "last-month", label: "Vorige maand" },
-  { id: "this-quarter", label: "Dit kwartaal" },
-  { id: "last-quarter", label: "Vorig kwartaal" },
-  { id: "this-year", label: "Dit jaar" },
-  { id: "last-year", label: "Vorig jaar" },
+  { id: "all", label: "ink.allePeriodes" },
+  { id: "this-month", label: "ink.periode.dezeMaand" },
+  { id: "last-month", label: "ink.periode.vorigeMaand" },
+  { id: "this-quarter", label: "ink.periode.ditKwartaal" },
+  { id: "last-quarter", label: "ink.periode.vorigKwartaal" },
+  { id: "this-year", label: "ink.periode.ditJaar" },
+  { id: "last-year", label: "ink.periode.vorigJaar" },
 ];
 
 export interface PeriodWindow {
@@ -49,10 +60,24 @@ export interface PeriodWindow {
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const MONTHS = [
-  "januari", "februari", "maart", "april", "mei", "juni",
-  "juli", "augustus", "september", "oktober", "november", "december",
-];
+/**
+ * De maandnaam in de taal van de EIGENAAR.
+ *
+ * [TAAL] Hier stond een vaste Nederlandse lijst, en die reisde mee tot in het label boven de
+ * lijst: een Arabisch scherm dat "yuli 2026" zegt is niet fout gespeld maar onvertaald. Cijfers
+ * blijven overal Latijns — zie de `intl`-tag in locale.ts, waar dat voor het Arabisch met
+ * -u-nu-latn is vastgelegd: een bedrag en een jaartal moeten in elke taal hetzelfde lezen als op
+ * het bankafschrift ernaast.
+ *
+ * Intl en geen tabel per taal: de maandnamen van vier talen met de hand onderhouden is precies het
+ * soort lijst dat na één taal erbij half af blijft.
+ */
+function monthName(month: number, locale: unknown): string {
+  const tag = LOCALE_META[resolveLocale(locale)].intl;
+  // Dag 15: het midden van de maand, dus geen tijdzone kan hem over een grens duwen.
+  return new Intl.DateTimeFormat(tag, { month: "long", timeZone: "UTC" })
+    .format(new Date(Date.UTC(2000, month - 1, 15)));
+}
 
 /** De laatste dag van een maand, zonder Date: schrikkeljaren inbegrepen. */
 function lastDay(year: number, month: number): number {
@@ -60,11 +85,11 @@ function lastDay(year: number, month: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
-function monthWindow(year: number, month: number): PeriodWindow {
+function monthWindow(year: number, month: number, locale: unknown): PeriodWindow {
   return {
     start: `${year}-${pad(month)}-01`,
     end: `${year}-${pad(month)}-${pad(lastDay(year, month))}`,
-    label: `${MONTHS[month - 1]} ${year}`,
+    label: `${monthName(month, locale)} ${year}`,
   };
 }
 
@@ -89,17 +114,26 @@ function yearWindow(year: number): PeriodWindow {
  * ondergrens is iets anders dan een lijst vanaf het jaar 2000, en alleen het eerste kan nooit per
  * ongeluk een oude factuur wegfilteren.
  */
-export function resolveInvoicePeriod(period: InvoicePeriod, todayIso: string): PeriodWindow {
+export function resolveInvoicePeriod(
+  period: InvoicePeriod,
+  todayIso: string,
+  /**
+   * [TAAL] De taal waarin de maandnaam gelezen wordt. Optioneel en standaard Nederlands, zodat
+   * elke bestaande aanroep — en elke test die "juli 2026" verwacht — onveranderd blijft: de
+   * kwartaal- en jaarlabels ("Q3 2026", "2025") bevatten geen woord en veranderen sowieso nooit.
+   */
+  locale: unknown = "nl",
+): PeriodWindow {
   const year = Number(todayIso.slice(0, 4));
   const month = Number(todayIso.slice(5, 7));
   const quarter = Math.floor((month - 1) / 3) + 1;
 
   switch (period) {
     case "this-month":
-      return monthWindow(year, month);
+      return monthWindow(year, month, locale);
     case "last-month":
       // Januari terug is december van vórig jaar — de rand waar dit soort code op stukgaat.
-      return month === 1 ? monthWindow(year - 1, 12) : monthWindow(year, month - 1);
+      return month === 1 ? monthWindow(year - 1, 12, locale) : monthWindow(year, month - 1, locale);
     case "this-quarter":
       return quarterWindow(year, quarter);
     case "last-quarter":

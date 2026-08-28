@@ -7,6 +7,12 @@ import { Suspense, useState, useEffect } from 'react'
 import { getBrowserClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ErrorMessage } from '@/components/ui/Feedback'
+// [TAAL-POORT] Dit scherm was 100% Nederlands — nul catalogus-imports — terwijl het de landing is
+// van 56 Arabische blogartikelen. Zie AuthLanguageSwitch voor de andere helft van die reparatie.
+import { AuthLanguageSwitch } from '@/components/i18n/AuthLanguageSwitch'
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 // [FUNNEL-OVERDRACHT] Zeggen dat de factuur uit de gratis generator bewaard is — zie hieronder.
 import { readHandoff, hasInvoiceContent } from '@/lib/factuur-handoff'
 import { isSafeRedirect, safeRedirect } from '@/lib/safe-redirect'
@@ -60,8 +66,9 @@ function RegisterContent() {
   const [btw, setBtw] = useState('')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; password?: string }>({})
+  // [TAAL] Sleutels, geen zinnen — zie de veldcontrole in handleRegister.
+  const [error, setError] = useState<MessageKey | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<{ name?: MessageKey; email?: MessageKey; password?: MessageKey }>({})
   const [emailTaken, setEmailTaken] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   // [FUNNEL-OVERDRACHT] Staat er een factuur klaar uit de gratis generator? Alleen om het te
@@ -90,6 +97,7 @@ function RegisterContent() {
   // toestand van elk bestaand account. Zie vak-profile.ts.
   const vak = parseVak(searchParams.get(VAK_PARAM))
   const copy = purposeCopy(purpose)
+  const t = translator(useLocale())
 
   // Welke stap er te zien is. Op het archiefpad is dat altijd stap 2, wat er ook in `step`
   // staat — die bezoeker heeft geen rolkeuze, dus stap 1 wordt niet gerenderd.
@@ -187,7 +195,7 @@ function RegisterContent() {
     }
 
     setGoogleLoading(true)
-    setError('')
+    setError(null)
 
     // [Google-OAuth] Auto-reset after 10s in case user cancels or goes back
     const resetTimer = setTimeout(() => setGoogleLoading(false), 10_000)
@@ -236,7 +244,7 @@ function RegisterContent() {
     clearTimeout(resetTimer)
 
     if (error) {
-      setError('Google registratie mislukt — probeer opnieuw')
+      setError('reg.googleFout')
       setGoogleLoading(false)
     }
   }
@@ -252,11 +260,13 @@ function RegisterContent() {
     if (loading || googleLoading) return
 
     // Client-side check before we call Supabase, with simple field messages.
-    const errs: { name?: string; email?: string; password?: string } = {}
-    if (!fullName.trim()) errs.name = 'Vul je naam in'
-    if (!email.trim()) errs.email = 'Vul je e-mailadres in'
-    else if (!EMAIL_REGEX.test(email.trim())) errs.email = 'Dit e-mailadres klopt niet'
-    if (password.length < 6) errs.password = 'Kies een wachtwoord van minstens 6 tekens'
+    // [TAAL] Sleutels, geen zinnen: een melding die als Nederlandse string in de state gaat is in
+    // elke andere taal onbereikbaar op het moment dat hij wordt gezet.
+    const errs: { name?: MessageKey; email?: MessageKey; password?: MessageKey } = {}
+    if (!fullName.trim()) errs.name = 'reg.vulNaam'
+    if (!email.trim()) errs.email = 'reg.vulEmail'
+    else if (!EMAIL_REGEX.test(email.trim())) errs.email = 'reg.emailKloptNiet'
+    if (password.length < 6) errs.password = 'reg.wachtwoordKort'
 
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs)
@@ -273,7 +283,7 @@ function RegisterContent() {
     setFieldErrors({})
     setEmailTaken(false)
     setLoading(true)
-    setError('')
+    setError(null)
 
     // [COHERENCE-REGISTER] Pass the registration fields as signUp metadata so the
     // SECURITY DEFINER handle_new_user trigger writes them into the profile server-side.
@@ -337,22 +347,22 @@ function RegisterContent() {
       } else if (code === 'weak_password' || melding.includes('password')) {
         // De server stelt strengere eisen dan dit formulier kent. Zeg het bij het veld waar het
         // over gaat, niet als algemene fout onderaan.
-        setFieldErrors({ password: 'Dit wachtwoord is te zwak — kies een langer wachtwoord' })
+        setFieldErrors({ password: 'reg.wachtwoordZwakServer' })
       } else if (code === 'over_email_send_rate_limit' || signUpError.status === 429) {
-        setError('Te veel pogingen achter elkaar — wacht even en probeer opnieuw')
+        setError('reg.teVeelPogingen')
       } else if (code === 'signup_disabled' || code === 'email_provider_disabled') {
-        setError('Registreren met e-mail staat tijdelijk uit — probeer het met Google')
+        setError('reg.emailUit')
       } else if (code === 'email_address_invalid' || melding.includes('email')) {
-        setFieldErrors({ email: 'Dit e-mailadres klopt niet' })
+        setFieldErrors({ email: 'reg.emailKloptNiet' })
       } else {
-        setError('Registratie mislukt — probeer opnieuw')
+        setError('reg.mislukt')
       }
       setLoading(false)
       return
     }
 
     if (!data.user) {
-      setError('Registratie mislukt — probeer opnieuw')
+      setError('reg.mislukt')
       setLoading(false)
       return
     }
@@ -442,11 +452,10 @@ function RegisterContent() {
         <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md text-center">
           <div aria-hidden="true" style={{ fontSize: "48px", marginBottom: "16px" }}>📧</div>
           <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#202124", margin: "0 0 8px" }}>
-            Controleer je e-mail
+            {t('reg.controleerMail')}
           </h1>
           <p style={{ fontSize: "15px", color: "#5f6368", margin: "0 0 24px" }}>
-            We hebben een bevestigingslink gestuurd naar <strong>{email}</strong>.
-            Klik op de link om je account te activeren.
+            {t('reg.linkGestuurd', { email })}
           </p>
 
           {/* [FUNNEL-OVERDRACHT] Dit scherm is de stilste plek in de hele trechter: de
@@ -465,9 +474,7 @@ function RegisterContent() {
                 fontSize: "14px", lineHeight: 1.5, textAlign: "start",
               }}
             >
-              <strong>Je factuur is bewaard.</strong> Zodra je je account activeert staat hij
-              klaar — je bedrijfsgegevens, je klant en je regels. Je hoeft niets opnieuw in te
-              tikken.
+              <strong>{t('reg.factuurBewaardKop')}</strong> {t('reg.factuurBewaard')}
             </div>
           )}
 
@@ -483,7 +490,7 @@ function RegisterContent() {
               fontSize: "15px", fontWeight: 600,
             }}
           >
-            Naar inloggen
+            {t('reg.naarInloggen')}
           </a>
         </div>
       </div>
@@ -501,23 +508,28 @@ function RegisterContent() {
           <p className="text-gray-400 text-xs mt-1">{copy.reassurance}</p>
         </div>
 
+        {/* [TAAL-POORT] Op de deur, niet erachter — zie AuthLanguageSwitch. */}
+        <div className="mb-6">
+          <AuthLanguageSwitch />
+        </div>
+
         {/* Stap 1 — Rol kiezen */}
         {zichtbareStap === 1 && (
           <div className="space-y-4">
-            <p className="text-sm font-medium text-gray-700 text-center">Wie ben jij?</p>
+            <p className="text-sm font-medium text-gray-700 text-center">{t('reg.wieBenJij')}</p>
             <button
               onClick={() => { setRole('zzper'); setStep(2) }}
               className="w-full border-2 border-gray-200 rounded-xl p-4 text-start hover:border-blue-500 active:scale-[0.98] transition-all"
             >
-              <p className="font-medium text-gray-900">ZZP&rsquo;er</p>
-              <p className="text-sm text-gray-500">Ik stuur en ontvang facturen</p>
+              <p className="font-medium text-gray-900">{t('reg.zzper')}</p>
+              <p className="text-sm text-gray-500">{t('reg.zzperUitleg')}</p>
             </button>
             <button
               onClick={() => { setRole('accountant'); setStep(2) }}
               className="w-full border-2 border-gray-200 rounded-xl p-4 text-start hover:border-blue-500 active:scale-[0.98] transition-all"
             >
-              <p className="font-medium text-gray-900">Boekhouder</p>
-              <p className="text-sm text-gray-500">Ik beheer facturen van mijn klanten</p>
+              <p className="font-medium text-gray-900">{t('reg.boekhouder')}</p>
+              <p className="text-sm text-gray-500">{t('reg.boekhouderUitleg')}</p>
             </button>
           </div>
         )}
@@ -538,13 +550,13 @@ function RegisterContent() {
               ) : (
                 <GoogleIcon />
               )}
-              {googleLoading ? 'Bezig met verbinden...' : 'Doorgaan met Google'}
+              {googleLoading ? t('auth.verbinden') : t('reg.metGoogle')}
             </button>
 
             {/* Divider */}
             <div className="flex items-center gap-3">
               <div className="flex-1 h-px bg-gray-100" />
-              <span className="text-xs text-gray-400">of met e-mail</span>
+              <span className="text-xs text-gray-400">{t('reg.ofMetEmail')}</span>
               <div className="flex-1 h-px bg-gray-100" />
             </div>
 
@@ -552,52 +564,52 @@ function RegisterContent() {
                 een mobiel toetsenbord een "Ga"-toets toont in plaats van een regeleinde. */}
             <form onSubmit={e => { e.preventDefault(); handleRegister() }} className="space-y-4">
               <div>
-                <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">Volledige naam</label>
+                <label htmlFor="reg-name" className="block text-sm font-medium text-gray-700 mb-1">{t('reg.naam')}</label>
                 <input id="reg-name" type="text" value={fullName} onChange={e => { setFullName(e.target.value); wisFout('name') }}
                   autoComplete="name"
                   aria-describedby={fieldErrors.name ? 'reg-name-fout' : undefined}
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Jan de Vries"
+                  placeholder={t('reg.naamVoorbeeld')}
                   style={{ fontSize: '16px' }} />
-                {fieldErrors.name && <p id="reg-name-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
+                {fieldErrors.name && <p id="reg-name-fout" role="alert" className="text-xs text-red-600 mt-1">{t(fieldErrors.name)}</p>}
               </div>
               <div>
-                <label htmlFor="reg-company" className="block text-sm font-medium text-gray-700 mb-1">Bedrijfsnaam (optioneel)</label>
+                <label htmlFor="reg-company" className="block text-sm font-medium text-gray-700 mb-1">{t('reg.bedrijf')}</label>
                 <input id="reg-company" type="text" value={companyName} onChange={e => setCompanyName(e.target.value)}
                   autoComplete="organization"
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Jouw Bedrijf BV"
+                  placeholder={t('reg.bedrijfVoorbeeld')}
                   style={{ fontSize: '16px' }} />
-                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+                <p className="text-xs text-gray-400 mt-1">{t('reg.laterInvullen')}</p>
               </div>
               <div>
-                <label htmlFor="reg-kvk" className="block text-sm font-medium text-gray-700 mb-1">KVK-nummer (optioneel)</label>
+                <label htmlFor="reg-kvk" className="block text-sm font-medium text-gray-700 mb-1">{t('reg.kvk')}</label>
                 <input id="reg-kvk" type="text" value={kvk} onChange={e => setKvk(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="12345678"
                   style={{ fontSize: '16px' }} />
-                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+                <p className="text-xs text-gray-400 mt-1">{t('reg.laterInvullen')}</p>
               </div>
               <div>
-                <label htmlFor="reg-btw" className="block text-sm font-medium text-gray-700 mb-1">BTW-nummer (optioneel)</label>
+                <label htmlFor="reg-btw" className="block text-sm font-medium text-gray-700 mb-1">{t('reg.btw')}</label>
                 <input id="reg-btw" type="text" value={btw} onChange={e => setBtw(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="NL123456789B01"
                   style={{ fontSize: '16px' }} />
-                <p className="text-xs text-gray-400 mt-1">Kun je later invullen.</p>
+                <p className="text-xs text-gray-400 mt-1">{t('reg.laterInvullen')}</p>
               </div>
               <div>
-                <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">E-mailadres</label>
+                <label htmlFor="reg-email" className="block text-sm font-medium text-gray-700 mb-1">{t('auth.email')}</label>
                 <input id="reg-email" type="email" value={email} onChange={e => { setEmail(e.target.value); wisFout('email') }}
                   autoComplete="email"
                   aria-describedby={fieldErrors.email ? 'reg-email-fout' : undefined}
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="jouw@email.nl"
                   style={{ fontSize: '16px' }} />
-                {fieldErrors.email && <p id="reg-email-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.email}</p>}
+                {fieldErrors.email && <p id="reg-email-fout" role="alert" className="text-xs text-red-600 mt-1">{t(fieldErrors.email)}</p>}
               </div>
               <div>
-                <label htmlFor="reg-password" className="block text-sm font-medium text-gray-700 mb-1">Wachtwoord</label>
+                <label htmlFor="reg-password" className="block text-sm font-medium text-gray-700 mb-1">{t('auth.wachtwoord')}</label>
                 <input
                   id="reg-password"
                   type="password"
@@ -608,40 +620,44 @@ function RegisterContent() {
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="••••••••"
                   style={{ fontSize: '16px' }} />
-                {fieldErrors.password && <p id="reg-password-fout" role="alert" className="text-xs text-red-600 mt-1">{fieldErrors.password}</p>}
+                {fieldErrors.password && <p id="reg-password-fout" role="alert" className="text-xs text-red-600 mt-1">{t(fieldErrors.password)}</p>}
+                {/* [WACHTWOORD-EIS] De eis stond alleen in de foutmelding, dus je las hem pas nadat
+                    je hem had overtreden — en op een formulier dat je één keer in je leven invult
+                    is dat precies het moment waarop iemand denkt dat hij iets fout doet. */}
+                {!fieldErrors.password && <p className="text-xs text-gray-400 mt-1">{t('reg.wachtwoordEis')}</p>}
               </div>
 
-              <ErrorMessage message={error} />
+              <ErrorMessage message={error ? t(error) : ''} />
 
               {/* Duplicate e-mail — clickable link to log in instead. */}
               {emailTaken && (
                 <div className="flex items-start gap-2.5 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
                   <span className="text-red-400 text-sm mt-0.5 flex-shrink-0">✕</span>
                   <p className="text-sm text-red-600">
-                    Dit e-mailadres is al geregistreerd.{' '}
-                    <a href={loginHref} className="font-semibold underline">Inloggen</a>
+                    {t('reg.emailBezet')}{' '}
+                    <a href={loginHref} className="font-semibold underline">{t('auth.inloggen')}</a>
                   </p>
                 </div>
               )}
 
               <button type="submit" disabled={loading || googleLoading || !email || !password}
                 className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50">
-                {loading ? 'Bezig...' : copy.cta}
+                {loading ? t('auth.bezig') : t(copy.ctaSleutel)}
               </button>
             </form>
 
             {/* [AVG] Consent — a reachable link to the terms/privacy at sign-up. */}
             <p className="text-xs text-gray-400 text-center leading-relaxed">
-              Als je een account maakt, ga je akkoord met onze{' '}
-              <a href="/voorwaarden" className="text-blue-600 underline">Voorwaarden</a>{' '}
-              en de{' '}
-              <a href="/privacy" className="text-blue-600 underline">Privacyverklaring</a>.
+              {t('reg.akkoordVoor')}{' '}
+              <a href="/voorwaarden" className="text-blue-600 underline">{t('reg.voorwaarden')}</a>{' '}
+              {t('reg.akkoordTussen')}{' '}
+              <a href="/privacy" className="text-blue-600 underline">{t('reg.privacy')}</a>.
             </p>
 
             {/* Permanent cross-link to login (keeps ?redirect=). */}
             <p className="text-sm text-gray-500 text-center">
-              Al een account?{' '}
-              <a href={loginHref} className="text-blue-600 font-medium underline">Inloggen</a>
+              {t('reg.alAccount')}{' '}
+              <a href={loginHref} className="text-blue-600 font-medium underline">{t('auth.inloggen')}</a>
             </p>
 
             {/* Terug naar de rolkeuze — en alleen als er een rolkeuze IS.

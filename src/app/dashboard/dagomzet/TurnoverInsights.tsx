@@ -268,7 +268,7 @@ export default function TurnoverInsights() {
                     ) : (
                       <button onClick={() => { setPendingDelete(d.date); setDeleteError(null) }} aria-label={t('dz.verwijderDag', { date: d.date })}
                         style={{ border: 'none', background: 'none', color: M3.error, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>delete</span>
+                        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>delete</span>
                       </button>
                     )}
                   </div>

@@ -32,6 +32,10 @@
 // For the potato-wholesaler invoice this means: type total −109.58 and btw 13.42, and the ex
 // amount becomes −123.00 by itself — exactly what the paper says.
 
+// [CENT] Cent rounding has one home. Writing `Math.round(n * 100) / 100` here would be the fifth
+// copy of a fact this repo already had four spellings of — see the gate of the same name.
+import { round2 } from "./invoice-totals";
+
 export type AmountTriplet = {
   /** Amount excluding btw. May be negative (credit note / net return). */
   ex: number;
@@ -83,4 +87,80 @@ export function setIncl(t: AmountTriplet, incl: number | null | undefined): Amou
  */
 export function tripletHolds(t: AmountTriplet): boolean {
   return Math.abs(t.ex + t.btw - t.incl) <= 0.02;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// [BTW-TARIEF] Splitting a total by a rate, and the one thing the screen may not guess
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//
+// REPORTED: "when I type the amount excluding VAT, the VAT should be calculated automatically."
+//
+// It cannot be, and the reason matters: btw = ex × RATE, and the ex amount alone does not carry a
+// rate. € 679,33 is a 9% invoice and a 21% invoice at the same time until somebody says which.
+// Deriving it anyway would put a guessed figure into the aangifte as deductible input tax — money,
+// in the direction that gets corrected with the Belastingdienst rather than the supplier.
+//
+// So the rate is ASKED, never inferred, and the split runs from the TOTAL — for the same reason
+// setIncl exists: the total is the most reliable number on the paper, printed in bold at the
+// bottom, and it is what the bank statement has to match.
+//
+// This does move the btw, which the three functions above deliberately never do. That is the whole
+// point of a button: the owner asked for this rate, on this invoice, once. It is not something the
+// screen does on its own while they are typing.
+
+/** The rates a Dutch invoice can carry. 0% exists too, but it needs no button — btw is already 0. */
+export const NL_BTW_RATES = [9, 21] as const;
+
+export type NlBtwRate = (typeof NL_BTW_RATES)[number];
+
+/**
+ * Split a gross total by a rate.
+ *
+ * The identity is preserved EXACTLY, and that is why btw is the subtraction rather than its own
+ * rounding: rounding both halves independently makes 740,47 at 9% come out as 679,33 + 61,14 on a
+ * good day and one cent short on a bad one, and a cent that exists in no field is precisely what
+ * [CENT] was written about.
+ *
+ * A negative total (a creditnota) splits with both parts negative, which is what a credit note is.
+ */
+export function splitByRate(incl: number | null | undefined, ratePercent: number): AmountTriplet {
+  const total = num(incl);
+  const rate = num(ratePercent);
+  // A rate of 0 (or nonsense) leaves everything in the base — never invents btw.
+  if (!(rate > 0)) return { ex: total, btw: 0, incl: total };
+  const ex = round2(total / (1 + rate / 100));
+  return { ex, btw: total - ex, incl: total };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// [NUL-IS-GEEN-INVOER] What an amount field SHOWS
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//
+// REPORTED: "the zero is written as a value where it should be a placeholder — when I want to
+// type, the zero stays and sometimes it goes wrong."
+//
+// Exactly right, and it was the same line copied into two components. A held 0 was rendered as the
+// character "0", so the caret landed after it and the first keystrokes appended to it: typing
+// 740,47 into an untouched field produced "0740,47". Clearing the box did not help either — on
+// blur it snapped straight back to "0", and touching a NEIGHBOURING field did the same, because
+// the draft moved away with the focus.
+//
+// A held 0 and an empty box are the same value to this app: parseAmountNL("") is 0. So showing
+// nothing is not information lost, it is the honest rendering — and the placeholder beside it says
+// what the field wants without occupying it.
+export const AMOUNT_PLACEHOLDER = "0,00";
+
+/**
+ * The text an amount input shows: the draft while it is being typed in, otherwise the held value —
+ * and nothing at all when that value is zero.
+ */
+export function amountFieldText(
+  held: number,
+  draft: { field: string; text: string } | null,
+  field: string,
+): string {
+  if (draft && draft.field === field) return draft.text;
+  const rounded = round2(held);
+  if (rounded === 0) return "";
+  return String(rounded).replace(".", ",");
 }

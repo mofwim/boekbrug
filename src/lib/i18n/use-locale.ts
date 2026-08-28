@@ -33,9 +33,12 @@
 
 import { useSyncExternalStore } from 'react'
 
-import { DEFAULT_LOCALE, isLocale, LOCALE_META, type Locale } from './locale'
+import { DEFAULT_LOCALE, isLocale, LOCALE_COOKIE, LOCALE_META, type Locale } from './locale'
 
-export const LOCALE_COOKIE = 'boekbrug_taal'
+// [BOOT-STUB] Re-exported, not declared: the name itself lives in locale.ts because the SERVER
+// reads it too (the pre-paint script and the server-side translator), and an export of this
+// 'use client' module reaches the server as a throwing stub. See the note in locale.ts.
+export { LOCALE_COOKIE }
 
 /** One year. A language choice is not a session. */
 const MAX_AGE = 60 * 60 * 24 * 365
