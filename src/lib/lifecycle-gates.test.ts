@@ -11322,6 +11322,58 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[MIGRATIE-JOURNAAL] a migration that creates nothing still gets an answer, not a shrug", () => {
+  // De negen migraties zonder vingerafdruk stonden hiervoor onder een kopje met één zin eronder:
+  // "controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf." Dat is negen
+  // bestanden opzoeken, en voor drie ervan stond daar niets — accountant_clients_insert_consent,
+  // creditnota_one_per_original en supplier_backfill hadden geen CONTROLE-blok.
+  //
+  // Een verwijzing naar een blok dat niet bestaat is dezelfde stilte als een lijst die te weinig
+  // vraagt, en dat is precies wat dit dossier moest uitsluiten. Twee ervan gaan bovendien over de
+  // veiligheid: staat de documentenbucket privé (anders is elke bon met een geraden URL op te
+  // halen), en mag `anon` de geldfuncties nog aanroepen.
+  //
+  // Dus draagt elk van de negen nu een STAND-controle mee in dezelfde gegenereerde lijst.
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const opSchijf = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
+  // Anker op de SECTIEkop, niet op "DEEL 2" — die woorden staan ook in de inleiding bovenaan, en
+  // dan zou dit blok het hele bestand beslaan en overal iets vinden.
+  const kop = sql.indexOf("DEEL 2 — NIET VAST TE STELLEN");
+  assert.ok(kop > 0, "the generated file must carry a second part for the fingerprintless");
+  const deel2 = sql.slice(kop);
+
+  const zonderVingerafdruk = opSchijf.filter((f) => !sql.includes(`  ('${f}'`));
+  assert.ok(zonderVingerafdruk.length > 0, "…or this gate proves nothing");
+
+  for (const f of zonderVingerafdruk) {
+    const geoordeeld = deel2.includes(`select '${f}'::text`);   // ja/nee, TOEGEPAST of OPEN
+    const gemeten = deel2.includes(`-- ${f} —`);                 // een getal om zelf te lezen
+    const geenSpoor = deel2.includes(`--   ${f}\n`);             // later ongedaan gemaakt
+    assert.ok(geoordeeld || gemeten || geenSpoor,
+      `${f} creates nothing AND carries no state check — add it to STAND_CONTROLE in ` +
+      "scripts/migration-inventory.ts and regenerate");
+  }
+
+  // De query moet een oordeel vellen, niet alleen rijen tonen.
+  assert.match(deel2, /with controle\(bestand, vraag, toegepast\) as \(/);
+  assert.match(deel2, /case when toegepast then 'TOEGEPAST' else 'OPEN {2}<-- KIJK HIER' end/);
+
+  // De twee die over de veiligheid gaan, meten de STAND — niet het bestaan van iets.
+  assert.match(deel2, /has_function_privilege\('anon', p\.oid, 'EXECUTE'\)/,
+    "rpc_anon_revoke is only verifiable by asking whether anon may still call the money functions");
+  assert.match(deel2, /where id = 'documents' and public is false/,
+    "a public documents bucket hands every receipt to anyone who guesses a URL — it must be asked");
+  assert.match(deel2, /c\.relname = 'objects' and c\.relrowsecurity/, "…and RLS on storage.objects");
+
+  // En het slot dat dit bij de VOLGENDE migratie afdwingt: de generator valt om als een migratie
+  // zonder vingerafdruk geen antwoord heeft. Zonder dat slot groeit de stilte gewoon weer aan.
+  const gen = readFileSync("scripts/migration-inventory.ts", "utf8");
+  assert.match(gen, /zonderVingerafdruk\.filter\(\(f\) => !STAND_CONTROLE\[f\]\)/,
+    "a new REVOKE-only migration must break the generator, not slip into the silent list");
+  assert.match(gen, /Object\.keys\(STAND_CONTROLE\)\.filter\(\(f\) => !zonderVingerafdruk\.includes\(f\)\)/,
+    "…and a stale entry must break it too, or two measurements drift apart");
+});
+
 test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives in", () => {
   // documents_shared_and_storage_policies.sql zet drie policies op `storage.objects` — daar staan
   // de bestanden. De eerste versie van de generator zocht alles in `public` en noemde die migratie
