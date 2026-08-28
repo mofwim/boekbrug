@@ -15211,8 +15211,14 @@ test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-
     assert.match(src, /parseAmountNL\(/, `${pad}: parseAmountNL is niet aangesloten`);
     // 3. Het kladpaar: het veld toont de toetsaanslagen, en blur zet het terug op wat er
     //    werkelijk wordt vastgehouden.
-    assert.match(src, /amountDraft\?\.field === field \? amountDraft\.text/,
+    // [NUL-IS-GEEN-INVOER] Deze regel stond eerst LETTERLIJK in allebei de componenten, en die
+    // spelling is hier ooit vastgelegd. Ze is verhuisd naar amount-triplet.ts — één weergaveregel
+    // voor twee schermen — dus de gate vraagt nu naar de BEWERING in plaats van naar de spelling:
+    // het veld toont het klad zolang erin getypt wordt, en dat klad komt van de gedeelde lezer.
+    assert.match(src, /amountFieldText\(held, amountDraft, field\)/,
       `${pad}: het kladpaar is weg — het veld toont dan het afgeleide getal en eet de komma`);
+    assert.match(code("src/lib/amount-triplet.ts"), /if \(draft && draft\.field === field\) return draft\.text;/,
+      "de gedeelde lezer laat het klad niet meer winnen — dan eet elk geldveld de komma");
     //    Geteld, niet genoemd: de bevestig-modal heeft DRIE velden en de correctie-modal rendert
     //    zijn ene input drie keer — één overgebleven onBlur mag niet voor allemaal doorgaan.
     const blurs = (src.match(/onBlur=\{\(\) => setAmountDraft\(null\)\}/g) ?? []).length;
@@ -17263,4 +17269,61 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
   }
   assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
+});
+
+
+test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked rather than guessed", () => {
+  // REPORTED, two things about the same form:
+  //   1. "the zero is written as a value where it should be a placeholder — when I want to type,
+  //      the zero stays and sometimes it goes wrong."
+  //   2. "when I type the amount without VAT, the VAT should be calculated automatically."
+  //
+  // The first was exactly right: a held 0 rendered as the character "0", the caret landed after
+  // it, and typing 740,47 into an untouched field produced "0740,47". Clearing did not help —
+  // on blur it snapped back to "0", and so did touching a NEIGHBOURING field, because the draft
+  // moved away with the focus.
+  //
+  // The second cannot be done and must not be faked: btw = ex x RATE, and an ex amount carries no
+  // rate. The same 679,33 is a 9% and a 21% invoice until somebody says which, and a guessed btw
+  // is a guessed voorbelasting — the direction that gets corrected with the Belastingdienst.
+  const pure = code("src/lib/amount-triplet.ts");
+  const queue = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+
+  // ── ONE DEFINITION, because this line was copied into BOTH screens ──
+  // A rendering rule written twice is one that gets fixed once, and the other half keeps the bug.
+  assert.match(pure, /export function amountFieldText\(/, "the display rule left its one home");
+  for (const [naam, bron] of [["queue", queue], ["modal", modal]] as const) {
+    assert.match(bron, /amountFieldText\(held, amountDraft, field\)/,
+      `${naam}: the amount field stopped using the shared display rule`);
+    assert.doesNotMatch(bron, /String\(round2\(held\)\)\.replace/,
+      `${naam}: the old rule is back — a held 0 renders as the character "0" again`);
+    // Tapping selects, so the first keystroke REPLACES rather than appends.
+    assert.match(bron, /onFocus=\{\(e\) => e\.currentTarget\.select\(\)\}/,
+      `${naam}: tapping an amount no longer selects it, so typing appends to what is there`);
+    assert.match(bron, /placeholder=\{AMOUNT_PLACEHOLDER\}/, `${naam}: the placeholder is gone`);
+  }
+
+  // ── THE RATE IS ASKED, NEVER INFERRED ──
+  // splitByRate takes a rate as an ARGUMENT. Nothing anywhere may derive one from the amounts and
+  // feed it in: that is the guess this whole block exists to refuse.
+  assert.match(pure, /export function splitByRate\(incl: number \| null \| undefined, ratePercent: number\)/,
+    "splitByRate no longer takes the rate from its caller");
+  assert.match(pure, /if \(!\(rate > 0\)\) return \{ ex: total, btw: 0, incl: total \}/,
+    "a zero or unreadable rate now invents btw instead of leaving the base alone");
+  // btw is the SUBTRACTION, so the three numbers add up exactly. Rounding both halves loses a cent.
+  assert.match(pure, /return \{ ex, btw: total - ex, incl: total \}/,
+    "the split rounds both halves independently again — that is where the cent goes missing");
+
+  for (const [naam, bron] of [["queue", queue], ["modal", modal]] as const) {
+    assert.match(bron, /NL_BTW_RATES\.map\(\(tarief\) =>/, `${naam}: the rate buttons are gone`);
+    assert.match(bron, /splitByRate\((totalIncBtw|amounts\.incl), tarief\)/,
+      `${naam}: the split no longer runs from the TOTAL — the best-read figure on the paper`);
+    // The offer exists only while there IS a total and NO btw. Once btw is filled there is nothing
+    // to repair, and a button that overwrites a correctly read btw is worse than no button.
+    assert.match(bron, /Math\.abs\((totalIncBtw|amounts\.incl)\) > 0\.005 && Math\.abs\((btwAmount|amounts\.btw)\) < 0\.005/,
+      `${naam}: the rate offer no longer waits for a missing btw — it can overwrite a good one`);
+    assert.match(bron, /t\('corr\.tarief\.uitleg'\)/,
+      `${naam}: the screen no longer says why the rate is asked instead of computed`);
+  }
 });
