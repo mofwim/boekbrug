@@ -20,6 +20,9 @@ export interface SearchResult {
   createdAt: string;
 }
 
+import type { RecognisedFilter } from "./search-query";
+export type { RecognisedFilter } from "./search-query";
+
 export interface SearchResultGroup {
   invoices: SearchResult[];
   documents: SearchResult[];
@@ -38,6 +41,15 @@ export interface SearchResultGroup {
    * used for years and sees eight invoices concludes there are eight.
    */
   truncated?: SearchTruncation;
+  /**
+   * [ZOEK-BEGRIJPT] The parts of the query that were read as filters rather than as text — a year,
+   * a quarter, a month, inkoop/verkoop, betaald/openstaand.
+   *
+   * Sent back so the screen can show them and let the owner take one away. A search that silently
+   * means something other than what was typed is worse than one that ignores half of it: the
+   * results change and nothing explains it.
+   */
+  recognised?: RecognisedFilter[];
 }
 
 /** Per group: true when the database had more rows than the cap allowed through. */
