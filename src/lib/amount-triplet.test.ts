@@ -9,7 +9,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { setExcl, setBtw, setIncl, tripletHolds, type AmountTriplet } from "./amount-triplet";
+import {
+  setExcl, setBtw, setIncl, tripletHolds, splitByRate, amountFieldText, NL_BTW_RATES,
+  type AmountTriplet,
+} from "./amount-triplet";
 
 const empty: AmountTriplet = { ex: 0, btw: 0, incl: 0 };
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -79,4 +82,61 @@ test("a half-typed field pushes no NaN into the arithmetic", () => {
 
 test("zero stays zero — an empty invoice does not quietly become something", () => {
   assert.deepEqual(setIncl(empty, 0), { ex: 0, btw: 0, incl: 0 });
+});
+
+// ─── [BTW-TARIEF] + [NUL-IS-GEEN-INVOER] ───────────────────────────────────────────────────────
+
+test("[BTW-TARIEF] a total splits by the rate the owner picked, to the cent", () => {
+  // The invoice that prompted this: Dutch Sweets Company, € 740,47, no btw read at all.
+  const negen = splitByRate(740.47, 9);
+  assert.equal(negen.ex, 679.33);
+  assert.equal(round2(negen.btw), 61.14);
+  assert.equal(negen.incl, 740.47);
+
+  const eenentwintig = splitByRate(740.47, 21);
+  assert.equal(eenentwintig.ex, 611.96);
+  assert.equal(round2(eenentwintig.btw), 128.51);
+});
+
+test("[BTW-TARIEF] the identity survives the split, on every amount", () => {
+  // Rounding BOTH halves independently is what loses a cent — btw is the subtraction, so the three
+  // numbers add up exactly whatever the total is. [CENT] is about precisely this.
+  for (const bedrag of [0.01, 0.05, 9.99, 12.35, 100, 740.47, 1078.46, 99999.99]) {
+    for (const tarief of NL_BTW_RATES) {
+      const t = splitByRate(bedrag, tarief);
+      assert.ok(tripletHolds(t), `${bedrag} @ ${tarief}% does not add up`);
+      assert.equal(round2(t.ex + t.btw), round2(bedrag), `${bedrag} @ ${tarief}% lost a cent`);
+    }
+  }
+});
+
+test("[BTW-TARIEF] a creditnota splits negative, and a zero rate invents no btw", () => {
+  const credit = splitByRate(-740.47, 9);
+  assert.ok(credit.ex < 0 && credit.btw < 0, "a credit note must split into two negative halves");
+  assert.equal(round2(credit.ex + credit.btw), -740.47);
+
+  // 0%, and anything unreadable, leaves everything in the base. Never a guessed btw.
+  for (const r of [0, -5, NaN]) {
+    const t = splitByRate(500, r);
+    assert.equal(t.btw, 0, `rate ${r} invented btw`);
+    assert.equal(t.ex, 500);
+  }
+});
+
+test("[NUL-IS-GEEN-INVOER] a zero shows as an empty box, not as the character 0", () => {
+  // THE BUG: a held 0 rendered as "0", the caret landed after it, and typing 740,47 into an
+  // untouched field produced "0740,47".
+  assert.equal(amountFieldText(0, null, "btw"), "");
+  assert.equal(amountFieldText(740.47, null, "incl"), "740,47");
+  // Dutch decimal comma, and the float tail never reaches the screen.
+  assert.equal(amountFieldText(1065.1399999999999, null, "ex"), "1065,14");
+
+  // While this field is being typed in, the draft wins — including a half-typed "0," and an
+  // emptied box, which must NOT snap back to "0" under the owner's fingers.
+  assert.equal(amountFieldText(0, { field: "btw", text: "0," }, "btw"), "0,");
+  assert.equal(amountFieldText(740.47, { field: "incl", text: "" }, "incl"), "");
+
+  // A draft belonging to ANOTHER field never leaks into this one — that is how touching a
+  // neighbouring box used to make this one jump back to "0".
+  assert.equal(amountFieldText(0, { field: "incl", text: "74" }, "btw"), "");
 });
