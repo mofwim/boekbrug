@@ -7077,6 +7077,34 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
   // produced no failure at all, because the rollback upsert's entry covered it. A pardon has to
   // name what it pardons.
   const REVIEWED: readonly { file: string; table: string; must: string; why: string }[] = [
+    // ── [BOUNCE] The two queries of the bounce webhook, read and cleared by hand ──
+    //
+    // Scoped by the CUSTOMER's address rather than by one owner, and that is the intent rather
+    // than an omission: the mailbox is dead for everyone who writes to it, so if two owners
+    // happen to invoice the same address, the reminders of both must stop. Nothing crosses
+    // between them — the rows are grouped by sender_id and each owner is notified about their
+    // OWN invoice numbers only, so no figure, name or number of owner A ever reaches owner B.
+    //
+    // The address itself cannot be chosen by an attacker: the body is refused unless it carries a
+    // valid Svix signature over the raw bytes, checked before anything here is read (see the
+    // route, and email-bounce.test.ts for what that verification is worth). What a person CAN do
+    // by owning a dead mailbox is stop us mailing that dead mailbox, which is the feature.
+    {
+      file: "src/app/api/email/webhook/route.ts", table: "invoices",
+      // De must moet in de GENORMALISEERDE statement staan die deze gate opbouwt, en die wordt
+      // afgekapt — de client_email-filter valt er net buiten. De select is even uniek voor deze
+      // ene query, wat is waar `must` voor bedoeld is: één vrijstelling mag nooit een andere
+      // query op dezelfde tabel meedekken.
+      must: ".select('id, invoice_number, sender_id')",
+      why: "a bounce is about an ADDRESS, not an owner: the open invoices to that address stop " +
+        "being chased, and each owner is told about their own numbers only — nothing crosses",
+    },
+    {
+      file: "src/app/api/email/webhook/route.ts", table: "invoices",
+      must: ".update({ reminders_paused: true })",
+      why: "pauses exactly the ids the scoped read above returned, and nothing else — the read is " +
+        "the boundary and it is in the same request",
+    },
     {
       file: "src/app/api/invoice/[id]/document/route.ts", table: "invoices", must: ".from(\"invoices\")",
       why: "reads the invoice by id, then refuses with 403 unless sender_id or receiver_id is the " +
@@ -11292,6 +11320,58 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
     // …en dus NIET als probe, want dan zou hij voor eeuwig 'OPEN' heten.
     assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
   }
+});
+
+test("[MIGRATIE-JOURNAAL] a migration that creates nothing still gets an answer, not a shrug", () => {
+  // De negen migraties zonder vingerafdruk stonden hiervoor onder een kopje met één zin eronder:
+  // "controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf." Dat is negen
+  // bestanden opzoeken, en voor drie ervan stond daar niets — accountant_clients_insert_consent,
+  // creditnota_one_per_original en supplier_backfill hadden geen CONTROLE-blok.
+  //
+  // Een verwijzing naar een blok dat niet bestaat is dezelfde stilte als een lijst die te weinig
+  // vraagt, en dat is precies wat dit dossier moest uitsluiten. Twee ervan gaan bovendien over de
+  // veiligheid: staat de documentenbucket privé (anders is elke bon met een geraden URL op te
+  // halen), en mag `anon` de geldfuncties nog aanroepen.
+  //
+  // Dus draagt elk van de negen nu een STAND-controle mee in dezelfde gegenereerde lijst.
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const opSchijf = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort();
+  // Anker op de SECTIEkop, niet op "DEEL 2" — die woorden staan ook in de inleiding bovenaan, en
+  // dan zou dit blok het hele bestand beslaan en overal iets vinden.
+  const kop = sql.indexOf("DEEL 2 — NIET VAST TE STELLEN");
+  assert.ok(kop > 0, "the generated file must carry a second part for the fingerprintless");
+  const deel2 = sql.slice(kop);
+
+  const zonderVingerafdruk = opSchijf.filter((f) => !sql.includes(`  ('${f}'`));
+  assert.ok(zonderVingerafdruk.length > 0, "…or this gate proves nothing");
+
+  for (const f of zonderVingerafdruk) {
+    const geoordeeld = deel2.includes(`select '${f}'::text`);   // ja/nee, TOEGEPAST of OPEN
+    const gemeten = deel2.includes(`-- ${f} —`);                 // een getal om zelf te lezen
+    const geenSpoor = deel2.includes(`--   ${f}\n`);             // later ongedaan gemaakt
+    assert.ok(geoordeeld || gemeten || geenSpoor,
+      `${f} creates nothing AND carries no state check — add it to STAND_CONTROLE in ` +
+      "scripts/migration-inventory.ts and regenerate");
+  }
+
+  // De query moet een oordeel vellen, niet alleen rijen tonen.
+  assert.match(deel2, /with controle\(bestand, vraag, toegepast\) as \(/);
+  assert.match(deel2, /case when toegepast then 'TOEGEPAST' else 'OPEN {2}<-- KIJK HIER' end/);
+
+  // De twee die over de veiligheid gaan, meten de STAND — niet het bestaan van iets.
+  assert.match(deel2, /has_function_privilege\('anon', p\.oid, 'EXECUTE'\)/,
+    "rpc_anon_revoke is only verifiable by asking whether anon may still call the money functions");
+  assert.match(deel2, /where id = 'documents' and public is false/,
+    "a public documents bucket hands every receipt to anyone who guesses a URL — it must be asked");
+  assert.match(deel2, /c\.relname = 'objects' and c\.relrowsecurity/, "…and RLS on storage.objects");
+
+  // En het slot dat dit bij de VOLGENDE migratie afdwingt: de generator valt om als een migratie
+  // zonder vingerafdruk geen antwoord heeft. Zonder dat slot groeit de stilte gewoon weer aan.
+  const gen = readFileSync("scripts/migration-inventory.ts", "utf8");
+  assert.match(gen, /zonderVingerafdruk\.filter\(\(f\) => !STAND_CONTROLE\[f\]\)/,
+    "a new REVOKE-only migration must break the generator, not slip into the silent list");
+  assert.match(gen, /Object\.keys\(STAND_CONTROLE\)\.filter\(\(f\) => !zonderVingerafdruk\.includes\(f\)\)/,
+    "…and a stale entry must break it too, or two measurements drift apart");
 });
 
 test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives in", () => {
@@ -17269,6 +17349,142 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
   }
   assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
+});
+
+test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {
+  // A whole persona worked in an app with no navigation at all. The layout hides the chrome, the
+  // search and the bottom bar for a verkoopmedewerker — with a good argument, written out in
+  // place: his links bounce him, and a menu full of dead ends makes the app look broken while it
+  // is doing exactly what it should. But nothing replaced them.
+  //
+  // Three consequences, all real: /dashboard/invoice/new has no back button of its own (it relies
+  // entirely on the shared bar), so he opened "Nieuwe factuur" and was stuck — in a standalone PWA
+  // there is not even a browser back button. There was no logout, on what is often a shared
+  // counter machine. And api/invoice/send writes him a notification when a send FAILS, with a link
+  // to his own board — into a bell that lives in DashboardHeader, which renders only on the two
+  // home screens he may never open. The message "your invoice was NOT sent" reached the one person
+  // who could act on it, in a place he could not look.
+  const layout = code("src/app/dashboard/layout.tsx");
+  assert.match(layout, /<DashboardChrome role=\{isMedewerker \? 'medewerker' : subnavRole\}/,
+    "the sub-page bar is hidden from the medewerker again — his screens lose their way back");
+  // The two that stay hidden, and must: those ARE menus, and their destinations bounce him.
+  assert.match(layout, /!isMedewerker && <GlobalSearchLauncher/, "the search was handed to the medewerker");
+  assert.match(layout, /!isMedewerker && <BottomNav/, "the bottom bar was handed to the medewerker");
+
+  // His home is his own board — never /dashboard, which the middleware bounces him from. Without
+  // this every back button on his screens pointed at a door that slams.
+  const nav = code("src/lib/navigation.ts");
+  assert.match(nav, /'zzper' \| 'accountant' \| 'medewerker'/, "navigation forgot the medewerker again");
+  assert.match(nav, /if \(role === 'medewerker'\) return '\/dashboard\/verkoop'/, "his home is not his board");
+  // …and the two invoice rules, which otherwise send him to /dashboard/facturen — a screen that is
+  // not in SALES_SCREENS, so "Terug" became one tap that bounces to a third place.
+  assert.equal(
+    (nav.match(/role === 'medewerker'\) return '\/dashboard\/verkoop'/g) ?? []).length, 3,
+    "an invoice parent rule stopped answering for the medewerker",
+  );
+
+  // The bell and the logout, on the one screen that is his.
+  const kop = code("src/components/nav/MedewerkerHeader.tsx");
+  assert.match(kop, /NotificationsBell/, "the medewerker lost his bell again");
+  assert.match(kop, /signOut\(\)/, "there is no way out of the app for him");
+  assert.match(kop, /\/dashboard\/beveiliging/, "his own security screen has no door again");
+  assert.match(kop, /\/dashboard\/klanten/, "his own clients have no door again");
+  // Not Instellingen: that screen is not in SALES_SCREENS, and it was the only entry in the menu
+  // this component reuses — a door that slams, above the only logout button in the app.
+  assert.doesNotMatch(kop, /\/dashboard\/settings/, "the medewerker menu points at a screen he may not open");
+  assert.match(code("src/app/dashboard/verkoop/VerkoopClient.tsx"), /<MedewerkerHeader/, "his board lost its header");
+});
+
+test("[BOUNCE] a returned e-mail stops the chasing and reaches the owner", () => {
+  // Resend accepts a deliverable-LOOKING wrong address and the message hard-bounces minutes later.
+  // Nothing listened. The invoice stayed "verstuurd", every reminder tier went to the same dead
+  // mailbox — and since those reminders now carry a payment link, a pay page went there too. The
+  // owner found out at non-payment, months on, unable to tell a customer who refuses to pay from
+  // one who never received anything.
+  const route = code("src/app/api/email/webhook/route.ts");
+
+  // Fail-closed, and verified BEFORE anything is read. Without this, anyone who knows the URL can
+  // pause an arbitrary owner's payment reminders with one POST.
+  assert.match(route, /RESEND_WEBHOOK_SECRET/, "the webhook no longer requires a secret");
+  assert.match(route, /webhook_secret_not_configured/, "a missing secret no longer fails closed");
+  const verifyAt = route.indexOf("verifySvixSignature");
+  const parseAt = route.indexOf("JSON.parse(body)");
+  assert.ok(verifyAt > 0 && parseAt > verifyAt, "the body is parsed before the signature is checked");
+  // The raw text, not a re-serialised object: the signature covers bytes.
+  assert.match(route, /await req\.text\(\)/, "the signature is checked over something other than the raw body");
+
+  // What it does with a hard bounce: stop the reminders, tell the owner.
+  assert.match(route, /reminders_paused: true/, "a bounce no longer stops the reminders");
+  assert.match(route, /createNotification\(/, "the owner is no longer told");
+  // A failed lookup may NOT read as "no invoices" — that would drop the bounce silently and the
+  // reminders would keep going. 500 → Resend redelivers.
+  assert.match(route, /lookup_failed/, "a failed lookup now passes for 'nothing found'");
+  // It must NOT touch the invoice status: "verstuurd" is true — it WAS sent. And rolling a sent
+  // invoice back to draft would unpick a legally minted number.
+  assert.doesNotMatch(route, /status: 'draft'|status: "draft"/, "the webhook rewrites the invoice status");
+});
+
+test("[WEIGERING] a refused send says why, on the screen that was refused", () => {
+  // The route validates before it mints a number, so a refusal leaves a draft and nothing legal
+  // has happened. This screen then called setError() and, on the very next line, navigated away —
+  // unmounting the component that was holding the message. The sentence naming exactly what is
+  // missing ("Vul eerst je BTW-nummer… — wettelijk verplicht op een factuur") was written and
+  // never read. The owner landed on a screen he did not recognise, with no explanation, and had to
+  // press send a second time there to hear the reason.
+  const ui = code("src/app/dashboard/invoice/new/page.tsx");
+  const refusal = ui.indexOf("setAfgekeurdConcept(invoice.id)");
+  assert.ok(refusal > 0, "the refusal no longer remembers its draft");
+  // No navigation between showing the error and returning.
+  const blok = ui.slice(refusal - 400, refusal + 200);
+  assert.doesNotMatch(blok, /router\.replace/, "the refusal navigates away again, so its reason is never read");
+  // And a retry cleans up the draft the refusal left, instead of stacking a second one beside it.
+  assert.match(ui, /await fetch\(`\/api\/invoice\/\$\{afgekeurdConcept\}`, \{ method: 'DELETE' \}\)/,
+    "a retry no longer clears the abandoned draft");
+});
+
+test("[GEEN-WACHTWOORD] an account with no password is told how to leave, not that it typed wrong", () => {
+  // Registering with Google is offered prominently, and such an account has only a google
+  // identity — no password, because none was ever chosen. The delete route re-authenticates with
+  // a password and nothing else, so every attempt answered "Verkeerd e-mailadres of wachtwoord":
+  // a message that sends the owner hunting for something that never existed. He could not close
+  // his own account — in a product that designs leaving deliberately (export before delete, seven
+  // year retention, EXIT_PLAN.md).
+  const route = code("src/app/api/account/delete/route.ts");
+  assert.match(route, /getUserById\(user\.id\)/, "the route no longer looks at the account's identities");
+  assert.match(route, /provider === "email"/, "it no longer checks whether a password exists");
+  assert.match(route, /geen_wachtwoord/, "the password-less case lost its own answer");
+  // The check comes BEFORE the password sign-in, or the wrong message wins anyway.
+  const checkAt = route.indexOf("geen_wachtwoord");
+  const signInAt = route.indexOf("signInWithPassword");
+  assert.ok(checkAt > 0 && signInAt > checkAt, "the password re-auth still runs first, so the untrue message wins");
+  // The requirement itself is unchanged: deletion still demands fresh proof of identity.
+  assert.match(route, /signInWithPassword/, "deletion stopped asking for proof of identity");
+
+  // And the screen offers the way forward rather than only naming the problem.
+  const inst = code("src/app/dashboard/settings/page.tsx");
+  assert.match(inst, /resetPasswordForEmail/, "the settings screen no longer offers to set a password");
+  assert.match(inst, /code === 'geen_wachtwoord'/, "the screen no longer recognises the password-less answer");
+});
+
+test("[EEN-DEUR] both sentences that say 'the aangifte' lead to the same screen", () => {
+  // Two screens carried that name and they are not the same thing: the corrections carried over
+  // from earlier FILED quarters (with the "Verwerkt in deze aangifte" button), the art. 29 blocks
+  // and the ICP-opgaaf exist only on /dashboard/aangifte — and now so does the self-file
+  // explanation. An owner who followed waarheid's link filed from the screen without any of it,
+  // and could therefore file without ever seeing the correction the app had computed for that
+  // exact return.
+  for (const screen of [
+    "src/app/dashboard/waarheid/WaarheidClient.tsx",
+    "src/app/dashboard/klaar/KlaarClient.tsx",
+  ]) {
+    const src = code(screen);
+    assert.match(src, /\/dashboard\/aangifte\?year=/, `${screen} no longer links to the canonical aangifte`);
+    assert.doesNotMatch(src, /\/dashboard\/quarterly\?year=/, `${screen} points at the aangifte without the corrections again`);
+  }
+  // The screen those links land on is the one that carries them.
+  const aangifte = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  assert.match(aangifte, /corrections/, "the canonical aangifte lost its corrections block");
+  assert.match(aangifte, /aang\.zelf\.titel/, "…and its self-file panel");
 });
 
 

@@ -539,6 +539,18 @@ function NewInvoicePageContent() {
   const [clients, setClients]               = useState<Client[]>([])
   const [clientSearch, setClientSearch]     = useState(aiClientName)
   const [showDropdown, setShowDropdown]     = useState(false)
+  // [WEIGERING] Het concept dat een GEWEIGERDE verzending achterliet.
+  //
+  // De route valideert vóór ze een nummer slaat, dus bij een weigering bestaat het concept al maar
+  // is er niets wettelijks gebeurd. Tot nu toe navigeerde dit scherm daarna meteen weg — met
+  // `setError()` op de regel ervóór, op een component die op de volgende regel verdwijnt. De zin
+  // die precies vertelt wát er ontbreekt ("Vul eerst je BTW-nummer… — wettelijk verplicht") werd
+  // dus geschreven en nooit gelezen. De ondernemer landde op een scherm dat hij niet kende, zonder
+  // één woord, en moest daar opnieuw op Versturen drukken om te horen waarom.
+  //
+  // Nu blijft hij staan en leest hij het. Dit id onthoudt het achtergelaten concept, zodat een
+  // tweede poging het eerst OPRUIMT in plaats van een tweede concept naast het eerste te zetten.
+  const [afgekeurdConcept, setAfgekeurdConcept] = useState<string | null>(null)
   const [selectedClientId, setSelectedClientId] = useState<string | null>(aiClientId)
   const autocompleteRef                     = useRef<HTMLDivElement>(null)
 
@@ -1275,6 +1287,19 @@ function NewInvoicePageContent() {
     //
     // [FACTUUR-A] Nog steeds altijd als DRAFT met invoice_number = null; de send-route slaat
     // het wettelijke nummer. De browser heeft er nooit een mogen bedenken.
+    // [WEIGERING] Een vorige poging is geweigerd en liet een concept achter. Dat wordt hier
+    // opgeruimd en NIET hergebruikt: het formulier kan intussen zijn aangepast — dat is meestal
+    // juist de reden dat er opnieuw wordt gedrukt — en versturen wat de server nog van de vorige
+    // ronde weet, is precies de fout die dit scherm elders zorgvuldig vermijdt. Best-effort: lukt
+    // het opruimen niet, dan blijft er één concept staan dat de eigenaar zelf kan weggooien, en
+    // dat is beter dan de verzending erop te laten stuklopen.
+    if (afgekeurdConcept) {
+      try {
+        await fetch(`/api/invoice/${afgekeurdConcept}`, { method: 'DELETE' })
+      } catch { /* het concept blijft staan; de verzending gaat door */ }
+      setAfgekeurdConcept(null)
+    }
+
     const draftRes = await fetch('/api/invoice/draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1373,11 +1398,13 @@ function NewInvoicePageContent() {
         const result = await res.json().catch(() => ({}))
 
         if (!res.ok) {
-          // Number was NOT consumed (route validates before minting) — the
-          // draft is safe. Show the error and let the user fix + retry.
+          // Number was NOT consumed (route validates before minting) — the draft is safe. Show the
+          // error and let the user fix + retry, ON THIS SCREEN. De regel eronder deed precies het
+          // omgekeerde: navigeren, waardoor deze melding nooit iemand bereikte. Zie
+          // `afgekeurdConcept` bij de state.
           setError(result.error || t('nieuw.fout.versturen'))
+          setAfgekeurdConcept(invoice.id)
           setLoading(false)
-          router.replace(`/dashboard/invoice/${invoice.id}`)
           return
         }
 

@@ -481,6 +481,23 @@ export default function SettingsPage() {
     }
   }
 
+  // [GEEN-WACHTWOORD] Dit account heeft alleen een Google-identiteit, dus er is geen wachtwoord om
+  // mee te bevestigen. Zie de route: die zei tot nu toe "Verkeerd e-mailadres of wachtwoord" — een
+  // onwaarheid die de eigenaar op zoek stuurt naar iets wat nooit heeft bestaan.
+  const [geenWachtwoord, setGeenWachtwoord] = useState(false)
+  const [linkGestuurd, setLinkGestuurd] = useState(false)
+
+  async function stuurWachtwoordLink() {
+    const adres = (delEmail || profile?.email || '').trim()
+    if (!adres) return
+    // Dezelfde aanroep als /wachtwoord-vergeten. De uitkomst wordt bewust NIET onderscheiden: of
+    // dit adres bestaat, is niets wat een scherm hoort te bevestigen.
+    await supabase.auth.resetPasswordForEmail(adres, {
+      redirectTo: `${window.location.origin}/wachtwoord-herstellen`,
+    })
+    setLinkGestuurd(true)
+  }
+
   // [BOEK-032] تأكيد الحذف بـ email + password — تعطيل لا حذف فيزيائي
   async function confirmDelete() {
     if (!delEmail || !delPassword) {
@@ -497,6 +514,9 @@ export default function SettingsPage() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
+        // [GEEN-WACHTWOORD] Geen foutmelding maar een weg: dit account kán niet met een
+        // wachtwoord bevestigen, dus het scherm biedt aan er een in te stellen.
+        if ((data as { code?: string }).code === 'geen_wachtwoord') setGeenWachtwoord(true)
         setDelError(failureText(res.status, data, t('act.verwijderenMislukt')))
         return
       }
@@ -1121,6 +1141,21 @@ export default function SettingsPage() {
               />
             </div>
             {delError && <p className="text-sm text-red-500">{delError}</p>}
+            {/* [GEEN-WACHTWOORD] De uitweg, op het scherm waar hij vastliep. Zonder deze knop is de
+                enige oplossing er één die nergens staat opgeschreven: uitloggen, naar
+                /wachtwoord-vergeten, een wachtwoord instellen, terugkomen. */}
+            {geenWachtwoord && (
+              linkGestuurd ? (
+                <p className="text-sm text-gray-600">{t('inst.wachtwoordLinkGestuurd')}</p>
+              ) : (
+                <button
+                  onClick={stuurWachtwoordLink}
+                  className="w-full border border-blue-600 text-blue-600 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-50"
+                >
+                  {t('inst.stuurWachtwoordLink')}
+                </button>
+              )
+            )}
             <div className="flex gap-2 pt-1">
               <button
                 onClick={() => setDeleteModalOpen(false)}
