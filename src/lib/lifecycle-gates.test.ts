@@ -11322,6 +11322,82 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[LEVERANCIER-INTAKE] every path that creates an incoming invoice resolves a supplier", () => {
+  // Gemeten in productie op 28-08-2026: vijftien inkoopfacturen droegen een IBAN én geen
+  // supplier_id, en voor vijf ervan bestond een leveranciersrij met precies dat IBAN al. De
+  // informatie was er en de koppeling werd niet gelegd.
+  //
+  // Niet de registratie zat fout — die sleutelt eerst op IBAN en had alle vijf gevonden. Drie van
+  // de vijf paden die een inkoopfactuur aanmaken riepen haar nooit aan: de lezersweg, de
+  // e-factuurweg en de tweede-kansweg schreven vendor_iban op de rij en hielden daar op. De
+  // leverancier van een factuur hing dus af van de deur waardoor hij binnenkwam.
+  //
+  // Er beweegt geen bedrag door dit gat, maar alles wat op de leverancier staat wél: het
+  // leveranciersoverzicht, de cadans die merkt dat een maandfactuur niet kwam, de bankmatch op
+  // leverancier — en de IBAN-controle zelf, die alleen kan waarschuwen over een leverancier
+  // waarvan zij een rij heeft.
+  //
+  // Deze poort leest de INSERT-blokken zelf, niet een lijst met bestandsnamen: een vierde pad
+  // erbij is dan meteen een rode poort in plaats van een stille uitzondering.
+  const bestanden = [
+    "src/app/api/intake/route.ts",
+    "src/app/api/documents/[id]/read-as-invoice/route.ts",
+    "src/app/api/email/upload/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+
+  /** Elk `.insert({ … })`-blok uit een bestand, met gebalanceerde haakjes. */
+  const insertBlokken = (src: string): string[] => {
+    const uit: string[] = [];
+    for (let i = src.indexOf(".insert("); i !== -1; i = src.indexOf(".insert(", i + 1)) {
+      let diepte = 0;
+      let j = i + ".insert".length;
+      for (; j < src.length; j++) {
+        if (src[j] === "(") diepte++;
+        else if (src[j] === ")") {
+          diepte--;
+          if (diepte === 0) break;
+        }
+      }
+      uit.push(src.slice(i, j + 1));
+    }
+    return uit;
+  };
+
+  let gezien = 0;
+  for (const bestand of bestanden) {
+    const src = code(bestand);
+    for (const blok of insertBlokken(src)) {
+      if (!/direction:\s*["']incoming["']/.test(blok)) continue;
+      gezien++;
+      assert.match(blok, /supplier_id:/,
+        `${bestand} creates an incoming invoice without a supplier_id. Resolve one first — see ` +
+        "src/lib/intake-supplier.ts — or the invoice's supplier depends on which door it came in");
+    }
+  }
+  assert.ok(gezien >= 5,
+    `only ${gezien} incoming-invoice inserts found; the scan must be broken, and a gate that ` +
+    "finds nothing passes for the wrong reason");
+
+  // …en de volgorde, want die is het verschil tussen een controle en een schijncontrole: het
+  // oplossen mag een rij aanmaken op het IBAN dat op DEZE factuur staat, dus wie daarna pas vraagt
+  // "kenden we deze leverancier onder een ander nummer?" krijgt zijn eigen zojuist geschreven rij
+  // als antwoord.
+  const stap = code("src/lib/intake-supplier.ts");
+  const iCheck = stap.indexOf("await detectIbanChange");
+  const iResolve = stap.indexOf("await resolveSupplierForImport");
+  assert.ok(iCheck > 0 && iResolve > 0, "both steps must live in the one module that orders them");
+  assert.ok(iCheck < iResolve,
+    "the IBAN check must run BEFORE resolution — reversed, a forged account number is compared " +
+    "against a supplier row created from that same forged number, which always agrees");
+
+  // De drie paden gebruiken die ene stap, en bouwen hem niet elk opnieuw na.
+  for (const bestand of ["src/app/api/intake/route.ts", "src/app/api/documents/[id]/read-as-invoice/route.ts"]) {
+    assert.match(code(bestand), /resolveSupplierAtIntake\(/,
+      `${bestand} must go through the shared step, not re-implement the order`);
+  }
+});
+
 test("[MIGRATIE-JOURNAAL] a migration that creates nothing still gets an answer, not a shrug", () => {
   // De negen migraties zonder vingerafdruk stonden hiervoor onder een kopje met één zin eronder:
   // "controleer deze met het CONTROLE-blok onderaan het migratiebestand zelf." Dat is negen
