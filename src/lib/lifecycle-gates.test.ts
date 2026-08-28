@@ -16799,3 +16799,65 @@ test("[TOETSENBORD] the invoice row opens with a key, not only with a mouse", ()
     "a key on a nested control now falls through to the row as well",
   );
 });
+
+test("[ZELF-INDIENEN] the concept banner does not promise an accountant who does not exist", () => {
+  // "Dit is een CONCEPT … Je boekhouder controleert en dient in." — unconditionally, to every
+  // owner, including the ones who have no boekhouder. For them it was not merely untrue, it was
+  // REASSURINGLY untrue: it describes someone taking over. And no screen anywhere named where or
+  // how you file it yourself — the app had no link to belastingdienst.nl outside its legal texts,
+  // while the rubriek table on this very page mirrors the official form line for line. The whole
+  // chain was finished except the step where the tax actually gets declared.
+  const client = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  const page = code("src/app/dashboard/aangifte/page.tsx");
+
+  // Three states, and the third is the point: a FAILED read is not "no accountant". Treating it as
+  // one would hand an owner who HAS an accountant the instruction to file it himself, next to the
+  // return his accountant is already filing.
+  assert.match(page, /accountant_clients/, "the page no longer looks up whether an accountant is linked");
+  assert.match(page, /hasAccountant: boolean \| null/, "the unknown state is gone");
+  assert.match(client, /hasAccountant === true \? t\('aang\.conceptBoekhouder'\)/,
+    "the accountant sentence is no longer conditional");
+  assert.match(client, /hasAccountant === false \? t\('aang\.conceptZelf'\)/,
+    "the owner without an accountant is not told who files");
+
+  // The panel, and the one link that was missing from the entire product.
+  assert.match(client, /hasAccountant === false && !filed/, "the self-file panel lost its condition");
+  assert.match(client, /belastingdienst\.nl/, "the self-file panel no longer points anywhere");
+  assert.match(client, /aang\.zelf\.stap2/, "the step that copies the rubrieken is gone");
+  assert.match(client, /aang\.zelf\.markeer/, "the way back to 'mark as filed' is gone");
+});
+
+test("[DEADLINE] the date is on the screens where the quarter is decided", () => {
+  // btwDeadline() has computed this correctly since the reservation panel was built, and exactly
+  // one screen ever used it: that panel, which renders only on /dashboard/vandaag — not in the
+  // phone's bottom bar, its top-bar link hidden below 640px, and linked from the home only when
+  // something is ALREADY overdue. So on the device these owners hold, the deadline appeared
+  // nowhere until it had passed.
+  for (const screen of [
+    "src/app/dashboard/aangifte/AangifteClient.tsx",
+    "src/app/dashboard/klaar/KlaarClient.tsx",
+  ]) {
+    const src = code(screen);
+    assert.match(src, /deadlineNotice\(/, `${screen} no longer states the deadline`);
+    // From the shared module, not from a second piece of date arithmetic: three surfaces say this
+    // (both screens and the cron), and two of them counting a different number of days is the
+    // failure that makes all three unbelievable.
+    assert.match(src, /btw-deadline-notice/, `${screen} computes the deadline itself again`);
+    assert.match(src, /aang\.deadline\.vandaag/, `${screen} lost the 'today is the last day' sentence`);
+  }
+
+  // The escalation. Its own route, because quarter-close's file states that firing exactly once
+  // per quarter IS its idempotency — a second schedule there would remove that quietly.
+  const cron = code("src/app/api/cron/btw-deadline/route.ts");
+  assert.match(cron, /deadlineNudgeDue\(/, "the cron no longer guards on the final week");
+  assert.match(cron, /filedOwners\.has\(ownerId\)/, "the cron nudges owners who already filed");
+  // …and a failed filings read must NOT fall through to nudging everyone here. This message says
+  // the deadline is near; sending it to someone who filed weeks ago sends them back to check
+  // whether they imagined doing it.
+  const filingsCatch = cron.indexOf('tags: { cron: "btw-deadline", phase: "filings" }');
+  assert.ok(filingsCatch > 0, "the filings read no longer reports its failure");
+  assert.match(
+    cron.slice(filingsCatch, filingsCatch + 300), /return klaar\(/,
+    "a failed filings read now falls through into the notify loop",
+  );
+});

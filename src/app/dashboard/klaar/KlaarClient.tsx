@@ -16,6 +16,11 @@ import { translator } from '@/lib/i18n/t'
 import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
 import { GeldPaneel } from '@/components/beveiliging/GeldPaneel'
 import { failureText } from '@/lib/server-message'
+// [DEADLINE] De uiterste indieningsdatum en hoeveel dagen dat nog is — zelfde rekensom als de
+// aangiftepagina en de herinneringscron.
+import { deadlineNotice } from '@/lib/btw-deadline-notice'
+import type { QuarterNo } from '@/lib/btw-reservation'
+import { formatDateNL } from '@/lib/format-nl'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -67,6 +72,9 @@ export default function KlaarClient() {
   const todayNl = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const curYear = Number(todayNl.slice(0, 4))
   const curQuarter = Math.floor((Number(todayNl.slice(5, 7)) - 1) / 3) + 1
+  // [DEADLINE] Op dezelfde Amsterdamse dag als de rest van dit scherm — todayNl is er al, en een
+  // tweede bron voor "vandaag" is precies hoe twee regels op één scherm een andere dag tellen.
+  const deadline = deadlineNotice(year, quarter as QuarterNo, todayNl)
   // [QUARTER] Refresh via a bump key so the manual "Vernieuwen" fetch runs through the
   // SAME cancellable effect — clicking refresh then quickly changing quarter can no longer
   // land stale-quarter data (the superseded request's cancelled flag is always set).
@@ -297,6 +305,24 @@ export default function KlaarClient() {
                 {t('klr.conceptAangifte')}
                 <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }} aria-hidden>chevron_right</span>
               </Link>
+              {/* [DEADLINE] Wanneer dit ingediend moet zijn — op het scherm waar de eigenaar
+                  besluit dat het kwartaal af is. Dat besluit werd tot nu toe genomen zonder dat
+                  ergens stond hoeveel tijd er nog was: de enige plek in de app die de datum
+                  noemde was een kaart op /dashboard/vandaag, een scherm dat op de telefoon geen
+                  vaste ingang heeft. De rekensom komt uit btw-deadline-notice.ts, dezelfde die de
+                  aangiftepagina en de herinneringscron gebruiken, zodat de drie nooit een andere
+                  dag tellen. */}
+              <div style={{
+                fontSize: 12.5, marginTop: 6, lineHeight: 1.5,
+                fontWeight: deadline.state === 'ruim' ? 400 : 700,
+                color: deadline.state === 'voorbij' ? M3.error
+                  : deadline.state === 'ruim' ? M3.neutral
+                  : M3.warning,
+              }}>
+                {deadline.state === 'voorbij' ? t('aang.deadline.voorbij', { datum: formatDateNL(deadline.deadline) })
+                  : deadline.state === 'vandaag' ? t('aang.deadline.vandaag')
+                  : t('aang.deadline.nog', { datum: formatDateNL(deadline.deadline), dagen: deadline.days })}
+              </div>
             </div>
 
             {/* ── Honest limits ── */}

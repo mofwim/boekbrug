@@ -1221,6 +1221,68 @@ export const MESSAGES = {
   'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
   'aang.verschil': { nl: 'Bekijk het verschil op Waarheid', ar: 'اعرض الفرق في «حقيقتك»', en: 'View the difference on Truth' },
   'aang.jeHebt': { nl: 'Je hebt', ar: 'لديك', en: 'You have' },
+  // [ZELF-INDIENEN] De conceptbanner, opgesplitst. De eerste zin geldt altijd; de tweede hangt
+  // ervan af of er een boekhouder gekoppeld is — en die stond er tot nu toe onvoorwaardelijk,
+  // waardoor een ondernemer zónder boekhouder las dat iemand anders zijn aangifte zou indienen.
+  // Twee hele zinnen, geen zin met een gat erin: welke van de twee er staat verandert wie er iets
+  // moet doen, en dat overleeft geen woordvolgorde-substitutie.
+  'aang.concept': {
+    nl: 'Dit is een CONCEPT op basis van je ingevoerde gegevens — geen ingediende aangifte.',
+    ar: 'هذه مسودة مبنية على البيانات التي أدخلتها — وليست إقراراً مُقدَّماً.',
+    en: 'This is a DRAFT based on the data you entered — not a filed return.',
+  },
+  'aang.conceptBoekhouder': {
+    nl: 'Je boekhouder controleert en dient in.',
+    ar: 'محاسبك يراجعه ويقدّمه.',
+    en: 'Your accountant checks it and files it.',
+  },
+  'aang.conceptZelf': {
+    nl: 'Je dient hem zelf in bij de Belastingdienst — hieronder staat hoe.',
+    ar: 'أنت تقدّمه بنفسك إلى مصلحة الضرائب — الخطوات في الأسفل.',
+    en: 'You file it yourself with the Belastingdienst — the steps are below.',
+  },
+  // [ZELF-INDIENEN] De laatste meter, in drie stappen. De rubrieknummers staan er letterlijk in
+  // omdat ze letterlijk overgenomen worden: de tabel op ditzelfde scherm draagt dezelfde nummers,
+  // en het formulier van de Belastingdienst ook.
+  'aang.zelf.titel': { nl: 'Zelf indienen — zo doe je dat', ar: 'التقديم بنفسك — إليك الطريقة', en: 'Filing it yourself — how' },
+  'aang.zelf.stap1': {
+    nl: 'Log in op Mijn Belastingdienst Zakelijk via',
+    ar: 'سجّل الدخول إلى Mijn Belastingdienst Zakelijk عبر',
+    en: 'Log in to Mijn Belastingdienst Zakelijk via',
+  },
+  'aang.zelf.stap2': {
+    nl: 'Neem de bedragen hieronder rubriek voor rubriek over — 1a, 1b, 5b en 5g staan er precies zo op het formulier.',
+    ar: 'انقل المبالغ أدناه بنداً بنداً — البنود 1a و1b و5b و5g مكتوبة في النموذج بالطريقة نفسها.',
+    en: 'Copy the amounts below box by box — 1a, 1b, 5b and 5g appear on the form exactly as they do here.',
+  },
+  'aang.zelf.stap3': {
+    nl: 'Verstuur de aangifte daar, en betaal of ontvang het saldo van 5g.',
+    ar: 'أرسل الإقرار هناك، ثم ادفع رصيد 5g أو استلمه.',
+    en: 'Submit the return there, then pay or receive the 5g balance.',
+  },
+  'aang.zelf.markeer': {
+    nl: 'Klaar? Markeer dit kwartaal als ingediend',
+    ar: 'انتهيت؟ علّم هذا الربع كمُقدَّم',
+    en: 'Done? Mark this quarter as filed',
+  },
+  // [DEADLINE] Drie hele zinnen, want ze zeggen drie verschillende dingen tegen iemand die moet
+  // handelen. "nog 0 dagen" en "vandaag" zijn hetzelfde feit en maar één ervan zet iemand in
+  // beweging, dus vandaag heeft zijn eigen zin.
+  'aang.deadline.nog': {
+    nl: 'Indienen vóór {datum} — nog {dagen} dagen.',
+    ar: 'يجب التقديم قبل {datum} — بقي {dagen} يوماً.',
+    en: 'File before {datum} — {dagen} days left.',
+  },
+  'aang.deadline.vandaag': {
+    nl: 'Vandaag is de laatste dag om dit kwartaal in te dienen.',
+    ar: 'اليوم آخر يوم لتقديم هذا الربع.',
+    en: 'Today is the last day to file this quarter.',
+  },
+  'aang.deadline.voorbij': {
+    nl: 'De uiterste datum ({datum}) is voorbij en dit kwartaal staat nog niet als ingediend.',
+    ar: 'انقضى الموعد النهائي ({datum}) وهذا الربع غير مُسجَّل كمُقدَّم بعد.',
+    en: 'The deadline ({datum}) has passed and this quarter is not marked as filed.',
+  },
 
   // ─── [CONCEPTEN] De wachtrij met klaargezette e-mails ───────────────────────────────────────
 
