@@ -26,6 +26,29 @@
 // Belastingdienst — never by the owner's language setting. They stay Dutch. This module is about
 // what the OWNER reads.
 
+/**
+ * The cookie the owner's language choice is kept in.
+ *
+ * [BOOT-STUB] It lives HERE, in the neutral module, and that is not tidiness — it is a bug fix.
+ * It used to be declared in use-locale.ts, which carries 'use client'. locale-boot.ts is imported
+ * by the SERVER root layout and interpolates this name into the pre-paint script, and Next
+ * replaces every export of a client module reached from the server with a throwing stub. So the
+ * emitted script contained, literally:
+ *
+ *   document.cookie.match(/(?:^|;\s*)function(){throw Error("Attempted to call LOCALE_COOKIE()
+ *   from the server but LOCALE_COOKIE is on the client…
+ *
+ * — a regex that matches no cookie, inside a try/catch that swallowed the SyntaxError. So the
+ * cookie branch of the boot script never ran, on any page, since it was written. The URL branch
+ * did, which is why /ar/blog was right and everything else was not: an owner who set Arabic got
+ * Arabic WORDS (useLocale reads the cookie fine in the browser) inside a document still stamped
+ * lang="nl" dir="ltr". Right-to-left text in a left-to-right box, on every screen of the app,
+ * announced to a screen reader as Dutch.
+ *
+ * The same stub reached src/lib/i18n/server.ts, which looked the cookie up by that name.
+ */
+export const LOCALE_COOKIE = 'boekbrug_taal'
+
 /** The languages the app publishes in. Dutch is the source language; the rest are translations. */
 export type Locale = 'nl' | 'en' | 'ar' | 'tr'
 

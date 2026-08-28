@@ -24,6 +24,7 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { failureText } from '@/lib/server-message'
+import { useDialog } from '@/components/ui/Dialog'
 import { parseAmountNL } from '@/lib/parse-nl'
 import { articleGrossPrice, TILL_RATES, type TillMethod } from '@/lib/till-day'
 // [KOR-FACTUUR] The hint the invoice screen shows beside its rate menu — the same sentence here, so
@@ -47,6 +48,7 @@ const EMPTY_TOTALS: DayTotals = { total: 0, pin: 0, cash: 0, other: 0 }
 
 export default function KassaClient() {
   const t = translator(useLocale())
+  const dialog = useDialog()
 
   const [items, setItems] = useState<PriceListItem[]>([])
   const [sales, setSales] = useState<StoredSale[]>([])
@@ -206,7 +208,16 @@ export default function KassaClient() {
 
   async function voidTicket(ticketId: string) {
     if (busy) return
-    if (!window.confirm(t('kassa.terugdraaienVraag'))) return
+    // [KASSA-DIALOOG] De app z'n eigen dialoog, niet die van de browser. Zie kassa.terugdraaienUitleg
+    // in messages.ts voor waarom; hier telt vooral dat de vraag nu ZEGT wat er verdwijnt, aan een
+    // balie waar de eigenaar tikt terwijl er iemand voor hem staat.
+    const ok = await dialog.confirm({
+      title: t('kassa.terugdraaienVraag'),
+      message: t('kassa.terugdraaienUitleg'),
+      confirmLabel: t('kassa.terugdraaienKnop'),
+      danger: true,
+    })
+    if (!ok) return
     setBusy(true)
     setError('')
     try {
@@ -224,11 +235,12 @@ export default function KassaClient() {
 
   return (
     <div style={{ ...COLUMN, display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 16px 96px' }}>
+      {/* [DEUR] De titel staat nu in de gedeelde balk (chrome.kassa), die dit scherm eerder
+          helemaal niet kreeg: geen naam, geen weg terug. Op de telefoon ving de onderbalk dat op,
+          op een groter scherm — waar die balk niet bestaat — was er geen uitgang. De uitleg blijft
+          staan; alleen de dubbele kop is weg. */}
       <header>
-        <h1 style={{ fontFamily: FONT, fontSize: 22, fontWeight: 700, margin: 0, color: M3.onSurface }}>
-          {t('kassa.titel')}
-        </h1>
-        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
+        <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>
           {t('kassa.uitleg')}
         </p>
       </header>

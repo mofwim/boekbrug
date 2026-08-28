@@ -70,13 +70,13 @@ export default function WerkplekClient() {
                 background: item.bg, display: 'flex', alignItems: 'center',
                 justifyContent: 'center', flexShrink: 0,
               }}>
-                <span className="material-symbols-outlined" style={{ color: item.color, fontSize: 26 }}>{item.icon}</span>
+                <span className="material-symbols-outlined" style={{ color: item.color, fontSize: 26 }} aria-hidden>{item.icon}</span>
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontSize: 16, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{t(item.labelKey)}</p>
                 <p style={{ fontSize: 13, color: '#5F6368' }}>{t(item.subKey)}</p>
               </div>
-              <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined icon-dir" style={{ color: '#80868b', fontSize: 20 }} aria-hidden>chevron_right</span>
             </button>
           ))}
         </div>
@@ -99,7 +99,7 @@ export default function WerkplekClient() {
           transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20 }}>add</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>add</span>
         {t('lijst.nieuw')}
       </button>
     </div>

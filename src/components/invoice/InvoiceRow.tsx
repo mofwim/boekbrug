@@ -339,6 +339,26 @@ export function InvoiceRowItem({
   return (
     <div
       onClick={onClick}
+      // [TOETSENBORD] Een rij die opent bij een muisklik en niet bij Enter is geen rij, het is een
+      // muisval. Dit is de rij van élke geldlijst in de app — de home, Mijn facturen, de
+      // inkoopfacturen — en ze was een kale <div onClick>: geen tabIndex, geen rol, geen
+      // toetsafhandeling. Wie met het toetsenbord of een schakelaar werkt kon wél bij de
+      // reconciliatie-badge die ERIN zit (die deed Enter en spatie al goed, zie hierboven) en niet
+      // bij de factuur eronder.
+      //
+      // role="button" en niet een echt <button>: de rij bevat zelf knoppen (betaald zetten,
+      // opnieuw versturen, de badge), en een button in een button is ongeldige HTML die browsers
+      // stilzwijgend uit elkaar trekken.
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        // Alleen als de rij zelf de focus heeft: anders opent Enter op een knop ERIN ook nog eens
+        // de factuur, en dan doet één toetsaanslag twee dingen.
+        if (e.target !== e.currentTarget) return
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onClick()
+      }}
       style={{
         display: 'flex',
         alignItems: 'center',

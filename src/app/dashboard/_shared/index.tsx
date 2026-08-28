@@ -127,6 +127,11 @@ export function InvoiceTable(props: InvoiceTableProps) {
           <button
             onClick={onRefresh}
             disabled={refreshing}
+            // [ICOON-STIL] De enige knop in de app die niets anders bevat dan een icoon, en dat
+            // icoon is aria-hidden — dus zonder label had een schermlezer hier "knop" en verder
+            // niets. `title` alleen is niet genoeg: op touch verschijnt hij nooit, en een
+            // schermlezer mag hem overslaan.
+            aria-label={t('lijst.vernieuwen')}
             title={t('lijst.vernieuwen')}
             style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)' }}
             className="hover:text-gray-500 transition-colors disabled:opacity-40"

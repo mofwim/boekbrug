@@ -289,7 +289,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           title={t('lijst.vernieuwen')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>refresh</span>
           {t('lijst.vernieuwen')}
         </button>
       ),
@@ -358,7 +358,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   <option key={c.id} value={c.id}>{c.label}</option>
                 ))}
               </select>
-              <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineEnd: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }}>expand_more</span>
+              <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineEnd: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: M3.outline, fontSize: 22 }} aria-hidden>expand_more</span>
             </div>
             {/* [PAKKET-STAY] Fetched, not navigated to. This was a plain <a href>, and the route
                 answers every refusal with JSON — so a 403/500 replaced the hub with a page of raw
@@ -370,7 +370,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                 disabled={pkgBusy}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '12px 16px', borderRadius: R.md, border: 'none', background: M3.primary, color: '#fff', fontSize: 14, fontWeight: 600, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, flexShrink: 0, opacity: pkgBusy ? 0.6 : 1 }}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>inventory_2</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>inventory_2</span>
                 {pkgBusy ? t('brug.bezig') : t('brug.downloadKwartaal')}
               </button>
             )}
@@ -422,7 +422,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     title={t('wh.vorigJaar')}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}
                   >
-                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_left</span>
                   </button>
                   <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>
                     {selectedYear}
@@ -433,7 +433,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     title={t('wh.volgendJaar')}
                     style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: R.sm, border: 'none', background: 'none', cursor: selectedYear >= curYear ? 'default' : 'pointer', color: selectedYear >= curYear ? M3.outline : M3.primary, opacity: selectedYear >= curYear ? 0.4 : 1 }}
                   >
-                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
+                    <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_right</span>
                   </button>
                 </div>
               </div>
@@ -446,7 +446,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                     onClick={() => setHubTab(key)}
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: 600, color: hubTab === key ? M3.primary : M3.outline, borderBottom: `2px solid ${hubTab === key ? M3.primary : 'transparent'}`, marginBottom: -1 }}
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: 18 }}>{icon}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>{icon}</span>
                     {t(labelKey)}
                   </button>
                 ))}
@@ -464,7 +464,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
             </>
           ) : (
             <div style={{ textAlign: 'center', padding: '40px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#C4C7C5', display: 'block', marginBottom: 8 }}>groups</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 40, color: '#C4C7C5', display: 'block', marginBottom: 8 }} aria-hidden>groups</span>
               <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>{t('brug.kiesKlant')}</p>
               <p style={{ fontSize: 12.5, color: M3.outline, margin: '4px 0 0' }}>{t('brug.klantenGekoppeld', { count: clientSummaries.length })}</p>
             </div>
@@ -485,7 +485,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
         </button>
         {cwd.map((seg, i) => (
           <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16, color: M3.outline }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16, color: M3.outline }} aria-hidden>chevron_right</span>
             <button
               onClick={() => setCwd(cwd.slice(0, i + 1))}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: i === cwd.length - 1 ? M3.onSurface : M3.primary, fontWeight: i === cwd.length - 1 ? 700 : 600, fontFamily: FONT, padding: '4px 6px', borderRadius: R.sm }}
@@ -502,7 +502,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           onClick={() => setShowHidden(v => !v)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, padding: '6px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`, background: showHidden ? M3.primaryContainer : 'transparent', color: showHidden ? '#041E49' : M3.outline, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
             {showHidden ? 'visibility' : 'visibility_off'}
           </span>
           {t('brug.archief')}
@@ -512,7 +512,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
       {/* [SMART-FILTER] Zoek binnen deze klant/map — plat over alle submappen. */}
       {nodes.length > 0 && (
         <div style={{ position: 'relative', marginBottom: 12 }}>
-          <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }}>search</span>
+          <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: M3.outline }} aria-hidden>search</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -548,7 +548,7 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
           {/* Empty state */}
           {isEmpty && (
             <div style={{ textAlign: 'center', padding: '56px 20px', background: '#fff', borderRadius: R.lg, boxShadow: EL1 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }}>folder_open</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 44, color: '#C4C7C5', display: 'block', marginBottom: 10 }} aria-hidden>folder_open</span>
               <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>{t('brug.leeg')}</p>
             </div>
           )}
@@ -562,10 +562,10 @@ export default function BrugClient({ nodes, role, clientSummaries, docStatus, re
                   onClick={() => setCwd([...cwd, f.name])}
                   style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, border: 'none', background: '#fff', boxShadow: EL1, cursor: 'pointer', fontFamily: FONT, textAlign: 'start', width: '100%' }}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }}>folder</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 24, color: M3.primary }} aria-hidden>folder</span>
                   <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: M3.onSurface }}>{f.name}</span>
                   <span style={{ fontSize: 12, color: M3.outline, fontWeight: 600 }}>{f.count}</span>
-                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.outline }}>chevron_right</span>
+                  <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: M3.outline }} aria-hidden>chevron_right</span>
                 </button>
               ))}
             </div>
@@ -666,7 +666,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
 
   const inner = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: R.lg, background: '#fff', boxShadow: EL1, width: '100%' }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 22, color: node.source === 'invoice' ? M3.success : M3.outline }}>{icon}</span>
+      <span className="material-symbols-outlined" style={{ fontSize: 22, color: node.source === 'invoice' ? M3.success : M3.outline }} aria-hidden>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {/* [BRIDGE-POLISH 3a-1] direction marker (invoices only) */}
@@ -705,7 +705,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
         )}
       </div>
       {node.pdfUrl && (
-        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.primary }}>open_in_new</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.primary }} aria-hidden>open_in_new</span>
       )}
     </div>
   )
@@ -730,7 +730,7 @@ function FileRow({ node, isClient, docStatus, override, onStatusSet }: { node: T
           background: M3.surfaceVariant ?? '#E7E8EC', textDecoration: 'none',
         }}
       >
-        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.primary }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.primary }} aria-hidden>
           folder_open
         </span>
       </a>
@@ -868,7 +868,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {items.map((it, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>error_outline</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }} aria-hidden>error_outline</span>
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: M3.onSurface }}>{it.title}</div>
               {it.detail && <div style={{ fontSize: 12, color: M3.outline, marginTop: 2, lineHeight: 1.5 }}>{it.detail}</div>}
@@ -895,7 +895,7 @@ function OverzichtPanel({ clientId, year, quarter }: { clientId: string; year: n
       {rep.risks.length > 0 && itemList(t('brug.evenControleren'), M3.error, rep.risks)}
       {rep.missing.length === 0 && rep.risks.length === 0 && (
         <div style={{ background: '#CEEAD6', color: '#137333', borderRadius: R.lg, padding: '12px 16px', marginBottom: 12, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>task_alt</span>
           {t('brug.sluitAan')}
         </div>
       )}

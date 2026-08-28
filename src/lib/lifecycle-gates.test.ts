@@ -14,6 +14,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+// [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
+// bug this guards was that the STRING contained a stub, which reading the file could never show.
+import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -4450,11 +4453,13 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
 
   // Exactly three senders write to someone who is not a BoekBrug user.
   const viaOwner = [...mail.matchAll(/from: customerMailFrom\(/g)].length;
-  assert.equal(viaOwner, 3, `factuur, herinnering en offerte — gevonden: ${viaOwner}`);
+  // [PAKKET-LINK] Vier sinds het kwartaalpakket: die mail gaat óók namens de ondernemer naar een
+  // derde — zijn boekhouder — en die scant zijn inbox op klantnaam, niet op productnaam.
+  assert.equal(viaOwner, 4, `factuur, herinnering, offerte en kwartaalpakket — gevonden: ${viaOwner}`);
   // …and every one of them offers a way back. Counted, so adding a fourth customer mail without a
   // reply-to shows up here rather than in a customer's dead reply.
   const replies = [...mail.matchAll(/\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/g)].length;
-  assert.equal(replies, 3, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
+  assert.equal(replies, 4, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
 
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
@@ -4496,9 +4501,13 @@ test("[ANTWOORD-ADRES] every route supplies the address, and reads the column it
     /\.select\('company_name, full_name, email'\)/,
     "the reminder route must READ the address it passes",
   );
+  // Pinned on the COLUMN, not on the whole select literal. The literal grew by one field
+  // ([BETAALBLOK] added `iban`, so a reminder can say where to transfer the money) and this
+  // assertion went red over a change that has nothing to do with the reply address — a gate that
+  // fails on every legitimate neighbour teaches people to loosen it rather than read it.
   assert.match(
     code("src/app/api/cron/reminders/route.ts"),
-    /\.select\("id, reminder_offsets, company_name, full_name, email"\)/,
+    /\.from\("profiles"\)[\s\S]{0,400}?\.select\("[^"]*\bemail\b[^"]*"\)/,
     "…and so must the cron that sends most of them",
   );
 
@@ -4652,6 +4661,89 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PAKKET-LINK] Handing the quarter to an accountant who has no account ──────────────────────
+//
+// The product's central promise — "at quarter end everything is ready for your accountant" — was
+// only DELIVERED when the accountant registered: the quarter-close cron walks accountant_clients,
+// and the download button in that mail points at a route that demands a login. For the most
+// common Dutch case (an office that has run on Exact for ten years and will never sign up
+// anywhere) the promise silently did not apply, and the owner was left downloading a ZIP and
+// attaching it to a mail by hand — the exact handwork this product removes, given back on the
+// last metre.
+//
+// The new path is a public, unauthenticated route that opens a complete quarter of somebody's
+// bookkeeping. Everything below is about keeping that one door narrow.
+test("[PAKKET-LINK] the public package route is opened by the token, and by nothing else", () => {
+  const publiek = code("src/app/api/pakket/route.ts");
+
+  // 1. WHAT IS BUILT COMES FROM THE ROW, NEVER FROM THE URL. This is the whole security model:
+  // a guest holding the token can reach exactly the quarter their client gave them, and no other.
+  assert.match(publiek, /ownerId: share\.user_id/, "the owner comes from the row");
+  assert.doesNotMatch(publiek, /searchParams\.get\("(year|quarter|clientId|ownerId)"\)/,
+    "no URL parameter may steer what is built — the token names the period");
+
+  // 2. FAIL-CLOSED on validity, through the one shared judge (so the screen and the route can
+  // never disagree about whether a link still works).
+  assert.match(publiek, /shareStatus\(share, Date\.now\(\)\) !== "live"/);
+  assert.match(publiek, /if \(!share \|\| shareStatus/, "unknown and dead tokens take the same exit");
+
+  // 3. A read FAILURE is not a dead link. Answering 404 on an unreadable lookup would tell an
+  // accountant their client's link is gone when the truth is that we could not look.
+  assert.match(publiek, /if \(error\) \{[\s\S]{0,300}?weiger\(503/);
+
+  // 4. Bounded, and per TOKEN. Building a package is dozens of reads plus a ZIP — the most
+  // expensive public action in the product. Not failOpen: if the counter cannot be read, the
+  // expensive action does not happen.
+  assert.match(publiek, /bucketKey: `pakket:\$\{token\}`/);
+  assert.doesNotMatch(publiek, /failOpen: true/, "the costliest public path may not fail open");
+
+  // 5. Shape-checked before it ever reaches the database.
+  assert.match(publiek, /\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}/, "a non-uuid never becomes a query");
+
+  // 6. [BEWIJS] The download is recorded — the owner must be able to see that their accountant
+  // collected it, or this handover is no more provable than a shared folder.
+  assert.match(publiek, /last_downloaded_at: new Date\(\)\.toISOString\(\)/);
+  assert.match(publiek, /action: "package\.link_downloaded"/);
+});
+
+test("[PAKKET-LINK] the owner creates, mails and can withdraw the link", () => {
+  const share = code("src/app/api/closing-package/share/route.ts");
+
+  // The token is minted by the DATABASE (gen_random_uuid on the column) — the insert may never
+  // carry one, or a client could choose its own key.
+  assert.doesNotMatch(share, /token:/, "no caller ever supplies a token");
+  assert.match(share, /user_id: user\.id/, "the row is stamped with the session's owner");
+  assert.match(share, /expires_at: shareExpiry\(nu\)/, "every link expires — set from the one constant");
+
+  // Withdrawal is scoped to the owner's own, still-open link, and comes BEFORE the rate limit:
+  // someone who mistyped an address must always be able to withdraw.
+  assert.match(share, /\.eq\("user_id", user\.id\)[\s\S]{0,120}?\.is\("revoked_at", null\)/);
+  assert.ok(
+    share.indexOf("revokeId") < share.indexOf("RATE_LIMITS.HEAVY_EXPORT"),
+    "withdrawing may never be blocked by the sending limit",
+  );
+
+  // [TRUST-INVITE] The mail IS the handover. If it was refused, the link is withdrawn again so no
+  // dead link is left behind claiming to have been sent.
+  assert.match(share, /if \(!bezorgd\) \{[\s\S]{0,400}?revoked_at: new Date\(\)\.toISOString\(\)/);
+
+  // The ZIP is NOT attached: a quarter with attachments runs to tens of megabytes, and a mail
+  // that size either bounces or lands in spam — the opposite of what [BEZORGING] fixed.
+  assert.doesNotMatch(share, /attachments/, "the link does the work, and a link can be withdrawn");
+
+  // The mail reaches a non-user and replies land with the CLIENT, not with us.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /export async function sendQuarterPackageLink/);
+  assert.match(mail, /const antwoordAdres = clientEmail/,
+    "a question about these books belongs with the entrepreneur who sent them");
+  assert.match(mail, /from: customerMailFrom\(clientName\)/,
+    "[AFZENDERNAAM] an accountant scans their inbox on the CLIENT's name, not on ours");
+  assert.match(mail, /Je hebt hiervoor geen account nodig/, "it says the thing that makes it work");
+
+  // And the owner's screen offers it where they already stand.
+  assert.match(code("src/app/dashboard/klaar/KlaarClient.tsx"), /'\/api\/closing-package\/share'/);
+});
+
 // ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
 //
 // The example dossier is the screen a zero-client accountant sees at the exact moment they decide
@@ -7209,6 +7301,12 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // [UITNODIGING] The page every invited client lands on — public, and translated on purpose:
     // the invited person has never seen the product and may not read Dutch.
     "src/app/invite/accept/page.tsx",
+    // [TAAL-POORT] De deur. Deze twee waren 100% Nederlands — nul catalogus-imports in allebei —
+    // terwijl 56 Arabische blogartikelen en /ar/prijzen er rechtstreeks op uitkomen. De sleutel om
+    // uit het Nederlands te komen stond bovendien ACHTER deze schermen, in Instellingen. Nu staan
+    // ze op de lijst, dus een nieuwe Nederlandse zin hier gaat rood.
+    "src/app/login/page.tsx",
+    "src/app/register/page.tsx",
     "src/modules/accountant/pages/AccountantHome.tsx",
     "src/modules/accountant/pages/AccountantWerkboard.tsx",
     "src/modules/accountant/pages/AccountantFactuur.tsx",
@@ -14583,9 +14681,20 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
   // …en elke sleutel die is verklaard wordt ook ergens GEBRUIKT. Een sleutel die nergens wordt
   // gerenderd is een zin die iemand heeft laten vertalen en die niemand ooit ziet.
   const verklaard = Object.keys(MESSAGES).filter((k) => k.startsWith("uren."));
-  const overal = ui + readFileSync("src/app/dashboard/uren/page.tsx", "utf8");
+  // [DEUR] DashboardChrome telt mee, en dat is geen versoepeling. `uren.titel` staat sinds de
+  // deur-wijziging in de gedeelde balk in plaats van in een <h1> op de pagina zelf — de balk die
+  // dit scherm daarvóór helemaal niet kreeg. De sleutel wordt dus wél gerenderd, alleen niet meer
+  // door dit bestand, en de vraag die deze regel stelt ("ziet iemand deze zin ooit?") blijft
+  // precies dezelfde.
+  const overal = ui
+    + readFileSync("src/app/dashboard/uren/page.tsx", "utf8")
+    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
   for (const key of verklaard) {
-    assert.ok(overal.includes(`'${key}'`), `${key} wordt ergens gerenderd`);
+    // Beide aanhalingstekens: dit bestand schrijft ze enkel, DashboardChrome dubbel.
+    assert.ok(
+      overal.includes(`'${key}'`) || overal.includes(`"${key}"`),
+      `${key} wordt ergens gerenderd`,
+    );
   }
 
   // De structurele helft: GEEN Nederlandse tekst als los JSX-tekstknooppunt. Eén hard-gecodeerde
@@ -16552,6 +16661,373 @@ test("[MANDAAT-INTREKKEN] a failed mandate read may not report a revocation that
     "the counterparty id is no longer checked before it is pasted into a filter");
   assert.match(route, /vraag\.or\(`zzper_id\.eq\.\$\{tegenpartij\},accountant_id\.eq\.\$\{tegenpartij\}`\)/,
     "the filter interpolates something other than the validated id");
+});
+
+test("[TERUGKEERPAD] every internal link to /login carries the parameter /login actually reads", () => {
+  // A medewerker is invited, opens the mail logged out, taps accept, gets a 401, and is sent to
+  // /login with the invitation as a return path. The path was handed over as `?next=` — and the
+  // login screen reads `?redirect=` and nothing else. So the parameter was dropped in silence: the
+  // employee logged in, landed on /dashboard, and had to dig the invitation out of their mail
+  // again. Nothing failed, nothing logged, and the one person who could report it is the one who
+  // has never seen the product before.
+  //
+  // The gate is over the SENDERS, because that is where the two halves drift apart: login's own
+  // reader is one line and is asserted below, while the links to it live in five screens that were
+  // each written months apart.
+  const senders = new Set<string>();
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      const src = code(p);
+      // Any /login?<param>= in a link, a router.push or a redirect().
+      for (const m of src.matchAll(/\/login\?(\w+)=/g)) {
+        if (m[1] !== "redirect" && m[1] !== "error") senders.add(`${p}: /login?${m[1]}=`);
+      }
+    }
+  };
+  scan("src");
+  assert.deepEqual(
+    [...senders], [],
+    `these send a return path /login never reads:\n  ${[...senders].join("\n  ")}`,
+  );
+
+  // And the reader itself, so the gate above keeps naming the right parameter.
+  assert.match(
+    code("src/app/login/page.tsx"), /searchParams\.get\('redirect'\)/,
+    "login stopped reading 'redirect' — then the check above is holding the senders to a dead name",
+  );
+});
+
+test("[KASSA-DIALOOG] no money decision is asked in a browser box", () => {
+  // 37 native alert/confirm/prompt calls were replaced with the app's own dialog (see Dialog.tsx).
+  // Two came back afterwards, in screens written after that sweep: voiding a till ticket and
+  // deleting a vehicle. Neither is a small thing to ask in a one-line OS box that shows the origin
+  // URL in a standalone PWA — and the counter one is asked with a customer standing there.
+  //
+  // The systems survived the sweep; the ADHERENCE did not, because nothing made the checklist bite
+  // at merge time. This is that thing.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      // Comments stripped: several files explain the replacement and name the old call.
+      for (const m of code(p).matchAll(/window\.(alert|confirm|prompt)\s*\(/g)) {
+        offenders.push(`${p}: window.${m[1]}()`);
+      }
+    }
+  };
+  scan("src");
+  assert.deepEqual(
+    offenders, [],
+    `use the app's dialog (useDialog) instead:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[DEUR] every dashboard screen resolves a name, so the bar has something to render", () => {
+  // DashboardChrome renders NOTHING when a route resolves no title — `if (!title) return null` —
+  // and its own comments say so twice, next to the two screens where that was found. It kept
+  // happening anyway: Kassa, Voertuigen, Team, Uren and bank/verdelen were each written after
+  // those comments and each shipped without a line in the map. On a phone the bottom bar hides the
+  // damage; above 640px there is no bottom bar, so those screens had no name and no way back.
+  //
+  // The rule is not "every route needs a title" — a few screens legitimately carry their own
+  // chrome, and a redirect never renders. It is "a route is on the map, registers its own title,
+  // or is on the list below with a reason".
+  const chrome = readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
+  const statics = new Set(
+    [...chrome.matchAll(/\["(\/dashboard[^"]*)",\s*"[\w.]+"\]/g)].map((m) => m[1]),
+  );
+  const patterns = [...chrome.matchAll(/\[(\/\^[^,]+?\/),\s*"[\w.]+"\]/g)]
+    .map((m) => new RegExp(m[1].slice(1, -1)));
+  // The maps are read out of source, so a refactor that renames or reshapes them would leave this
+  // gate asserting over two empty collections — passing vacuously on exactly the day it matters.
+  // This file's own header calls that its defect class; these two lines are the guard against it.
+  assert.ok(statics.size >= 25, `the STATIC_TITLES parse found only ${statics.size} entries`);
+  assert.ok(patterns.length >= 5, `the PATTERN_TITLES parse found only ${patterns.length} entries`);
+
+  /** Screens that carry their own chrome, or never render at all. Each with the reason. */
+  const EXEMPT = new Map([
+    ["/dashboard", "the owner's home — DashboardHeader, not the sub-page bar"],
+    ["/dashboard/accountant", "the accountant's home — same header"],
+    ["/dashboard/bestanden", "draws its own file-manager header (breadcrumbs, not a back button)"],
+    ["/dashboard/zoeken", "draws its own BackLink above the results"],
+    ["/dashboard/verkoop", "the medewerker board: the dashboard layout hides all chrome for a sales member on purpose"],
+    ["/dashboard/beheer", "operator-only, behind a notFound() gate"],
+    ["/dashboard/resultaat", "redirect to /dashboard/waarheid — never renders"],
+    ["/dashboard/documents", "redirect to bestanden/brug — never renders"],
+    ["/dashboard/accountant/status", "redirect to the agenda — never renders"],
+    ["/dashboard/accountant/werkplek", "redirect to the accountant home — never renders"],
+    ["/dashboard/clients/invite", "redirect to clients/beheer — never renders"],
+  ]);
+
+  const bare: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (e !== "page.tsx") continue;
+      const route = `/${dir.replace("src/app/", "")}`;
+      if (EXEMPT.has(route)) continue;
+      if (statics.has(route) || patterns.some((re) => re.test(route))) continue;
+      // A page may register its own title through useSubPageHeader — from page.tsx itself or from
+      // the client component beside it, which is where every migrated screen does it.
+      const beside = readdirSync(dir)
+        .filter((f) => /\.tsx?$/.test(f))
+        .some((f) => readFileSync(`${dir}/${f}`, "utf8").includes("useSubPageHeader("));
+      if (beside) continue;
+      bare.push(route);
+    }
+  };
+  walk("src/app/dashboard");
+
+  assert.deepEqual(
+    bare, [],
+    `these render no title, so the shared bar renders nothing — no name, no way back:\n  ${bare.join("\n  ")}`,
+  );
+});
+
+test("[BETAALBLOK] the mails that ask for money say how to pay it", () => {
+  // The invoice mail stated the amount and the due date and gave the customer no way to transfer
+  // it: the IBAN, the reference and the scan-to-pay QR lived only inside the attached PDF — and a
+  // QR in an attachment cannot be scanned by the phone displaying it. Every reminder tier was
+  // worse: no payment details at all, up to and including the statutory aanmaning that announces
+  // incassokosten. Meanwhile /pay/[token] was finished, secured and tested, and reachable only if
+  // the owner pressed "Betaalverzoek" by hand and forwarded the link themselves.
+  const email = code("src/lib/email.ts");
+
+  // Both bodies render the block, and both plain-text twins carry it too where they exist.
+  assert.match(email, /payBlock\?\.html/, "the mail bodies no longer render the payment block");
+  assert.equal(
+    (email.match(/payBlock\?\.html/g) ?? []).length, 2,
+    "one of the two mails (invoice / reminder) lost its payment block",
+  );
+  assert.match(email, /payBlock\.textLines/, "the plain-text twin lost the payment details");
+
+  // And both senders build one. A block nobody passes is a parameter, not a feature.
+  assert.match(
+    code("src/app/api/invoice/send/route.ts"), /payBlockForInvoice\(/,
+    "the send route stopped building a payment block",
+  );
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /payBlockForInvoice\(/, "the reminder cron stopped building a payment block");
+  // The reminder must ask for what is STILL open — the same figure printed above it in the mail.
+  // Passing the invoice total here would chase a customer for money they already partly paid.
+  assert.match(cron, /openstaand,/, "the reminder's payment block no longer names the open amount");
+  // Its two reads have to carry the fields the block is built from, or it is silently always null.
+  assert.match(cron, /full_name, email, iban/, "the owner read dropped the IBAN");
+  assert.match(cron, /pay_token, payment_reference/, "the invoice read dropped the pay token");
+});
+
+test("[HERIN-WAARHEID] the reminder panel reads the switch that decides whether reminders happen", () => {
+  // The panel told every owner "Deze factuur volgt je herinneringsschema (zie Instellingen)" while
+  // reading only reminders_paused — the pause of this ONE invoice. The GLOBAL switch
+  // (profiles.reminders_enabled) it never read, and that one ships off by design, so the sentence
+  // was untrue for nearly everyone. The owner concludes the app chases their late payers, does not
+  // chase them himself, and finds out weeks later from his bank.
+  const panel = code("src/components/invoice/InvoiceReminders.tsx");
+
+  assert.match(panel, /reminders_enabled/, "the panel is back to not reading the global switch");
+  // Four states, and 'onbekend' is the one that keeps the other three worth believing: a failed
+  // read may never render as "reminders are on", which is exactly the claim this panel got wrong.
+  assert.match(panel, /'laden' \| 'aan' \| 'uit' \| 'onbekend'/, "the panel lost one of its states");
+  assert.match(panel, /herin\.uit/, "the off state no longer says reminders are off");
+  assert.match(panel, /herin\.onbekend/, "a failed read no longer says so");
+  // The reassuring sentence is reachable ONLY from the 'aan' branch.
+  const actiefAt = panel.indexOf("herin.actief");
+  const aanBranch = panel.lastIndexOf("globaal === 'uit'", actiefAt);
+  assert.ok(
+    actiefAt > 0 && aanBranch > 0 && aanBranch < actiefAt,
+    "herin.actief is rendered without the global switch being checked first",
+  );
+});
+
+test("[ICOON-STIL] the icon font is decoration, and a screen reader is told so", () => {
+  // The app draws its icons with a ligature font: <span class="material-symbols-outlined">link_off</span>
+  // renders a picture and CONTAINS the word "link_off". Without aria-hidden a screen reader reads
+  // that word out loud, so every button announced itself as its own source code — "link_off,
+  // Ontkoppelen", "swap_horiz, Andere factuur", "add, Nieuwe factuur" — on 231 of 243 icons.
+  //
+  // The rule is one line and it holds for every icon, because there is no icon in this app whose
+  // ligature name is the thing to say: where the icon IS the button, the button carries the label.
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (!/\.tsx$/.test(p) || /\.test\.tsx$/.test(p)) continue;
+      const src = readFileSync(p, "utf8");
+      // The opening tag only, up to the first '>' that is not inside a brace or a quote. A style
+      // expression can hold a '>' (color: n > 0 ? …), so a naive scan splits the tag in the wrong
+      // place — which is exactly how the sweep that added these attributes broke two files.
+      for (const m of src.matchAll(/<span\b/g)) {
+        const from = m.index ?? 0;
+        let depth = 0, quote = "", end = -1;
+        for (let i = from + 5; i < src.length; i++) {
+          const c = src[i];
+          if (quote) { if (c === quote) quote = ""; continue; }
+          if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
+          if (c === "{") depth++;
+          else if (c === "}") depth--;
+          else if (c === ">" && depth === 0) { end = i; break; }
+        }
+        if (end < 0) continue;
+        const tag = src.slice(from, end + 1);
+        if (!tag.includes("material-symbols-outlined")) continue;
+        if (tag.includes("aria-hidden")) continue;
+        offenders.push(`${p}:${src.slice(0, from).split("\n").length}`);
+      }
+    }
+  };
+  walk("src");
+  assert.deepEqual(
+    offenders, [],
+    `these icons will be read aloud by their ligature name:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[TOETSENBORD] the invoice row opens with a key, not only with a mouse", () => {
+  // The row of every money list in the app — the home, Mijn facturen, the purchase invoices — was
+  // a bare <div onClick>: no tabIndex, no role, no key handler. A keyboard or switch user could
+  // reach the reconciliation badge INSIDE it (that one handled Enter and Space correctly all
+  // along) and could not open the invoice under it.
+  const row = code("src/components/invoice/InvoiceRow.tsx");
+  assert.match(row, /role="button"/, "the row lost its role");
+  assert.match(row, /tabIndex=\{0\}/, "the row is not reachable by keyboard");
+  assert.match(row, /onKeyDown=/, "the row does not respond to a key");
+  // Enter on a button INSIDE the row must not also open the invoice: one keystroke, one action.
+  assert.match(
+    row, /e\.target !== e\.currentTarget/,
+    "a key on a nested control now falls through to the row as well",
+  );
+});
+
+test("[ZELF-INDIENEN] the concept banner does not promise an accountant who does not exist", () => {
+  // "Dit is een CONCEPT … Je boekhouder controleert en dient in." — unconditionally, to every
+  // owner, including the ones who have no boekhouder. For them it was not merely untrue, it was
+  // REASSURINGLY untrue: it describes someone taking over. And no screen anywhere named where or
+  // how you file it yourself — the app had no link to belastingdienst.nl outside its legal texts,
+  // while the rubriek table on this very page mirrors the official form line for line. The whole
+  // chain was finished except the step where the tax actually gets declared.
+  const client = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  const page = code("src/app/dashboard/aangifte/page.tsx");
+
+  // Three states, and the third is the point: a FAILED read is not "no accountant". Treating it as
+  // one would hand an owner who HAS an accountant the instruction to file it himself, next to the
+  // return his accountant is already filing.
+  assert.match(page, /accountant_clients/, "the page no longer looks up whether an accountant is linked");
+  assert.match(page, /hasAccountant: boolean \| null/, "the unknown state is gone");
+  assert.match(client, /hasAccountant === true \? t\('aang\.conceptBoekhouder'\)/,
+    "the accountant sentence is no longer conditional");
+  assert.match(client, /hasAccountant === false \? t\('aang\.conceptZelf'\)/,
+    "the owner without an accountant is not told who files");
+
+  // The panel, and the one link that was missing from the entire product.
+  assert.match(client, /hasAccountant === false && !filed/, "the self-file panel lost its condition");
+  assert.match(client, /belastingdienst\.nl/, "the self-file panel no longer points anywhere");
+  assert.match(client, /aang\.zelf\.stap2/, "the step that copies the rubrieken is gone");
+  assert.match(client, /aang\.zelf\.markeer/, "the way back to 'mark as filed' is gone");
+});
+
+test("[DEADLINE] the date is on the screens where the quarter is decided", () => {
+  // btwDeadline() has computed this correctly since the reservation panel was built, and exactly
+  // one screen ever used it: that panel, which renders only on /dashboard/vandaag — not in the
+  // phone's bottom bar, its top-bar link hidden below 640px, and linked from the home only when
+  // something is ALREADY overdue. So on the device these owners hold, the deadline appeared
+  // nowhere until it had passed.
+  for (const screen of [
+    "src/app/dashboard/aangifte/AangifteClient.tsx",
+    "src/app/dashboard/klaar/KlaarClient.tsx",
+  ]) {
+    const src = code(screen);
+    assert.match(src, /deadlineNotice\(/, `${screen} no longer states the deadline`);
+    // From the shared module, not from a second piece of date arithmetic: three surfaces say this
+    // (both screens and the cron), and two of them counting a different number of days is the
+    // failure that makes all three unbelievable.
+    assert.match(src, /btw-deadline-notice/, `${screen} computes the deadline itself again`);
+    assert.match(src, /aang\.deadline\.vandaag/, `${screen} lost the 'today is the last day' sentence`);
+  }
+
+  // The escalation. Its own route, because quarter-close's file states that firing exactly once
+  // per quarter IS its idempotency — a second schedule there would remove that quietly.
+  const cron = code("src/app/api/cron/btw-deadline/route.ts");
+  assert.match(cron, /deadlineNudgeDue\(/, "the cron no longer guards on the final week");
+  assert.match(cron, /filedOwners\.has\(ownerId\)/, "the cron nudges owners who already filed");
+  // …and a failed filings read must NOT fall through to nudging everyone here. This message says
+  // the deadline is near; sending it to someone who filed weeks ago sends them back to check
+  // whether they imagined doing it.
+  const filingsCatch = cron.indexOf('tags: { cron: "btw-deadline", phase: "filings" }');
+  assert.ok(filingsCatch > 0, "the filings read no longer reports its failure");
+  assert.match(
+    cron.slice(filingsCatch, filingsCatch + 300), /return klaar\(/,
+    "a failed filings read now falls through into the notify loop",
+  );
+});
+
+test("[BOOT-STUB] the pre-paint script names the cookie, not a client stub", () => {
+  // The bug this holds shut was invisible in every way a bug can be. locale-boot.ts is imported by
+  // the SERVER root layout and interpolates the cookie's NAME into a regex. That name was declared
+  // in use-locale.ts, which carries 'use client' — and Next replaces every export of a client
+  // module reached from the server with a throwing stub. So the script that shipped on every page
+  // contained, literally:
+  //
+  //   document.cookie.match(/(?:^|;\s*)function(){throw Error("Attempted to call LOCALE_COOKIE()…
+  //
+  // …a regex matching no cookie, inside the try/catch that exists to keep this script from
+  // breaking the first line of every page. It swallowed the failure. The URL branch still worked,
+  // which is exactly why nobody caught it: /ar/blog was right, so RTL "worked". Everywhere else —
+  // the whole dashboard, login, register — an owner who chose Arabic got Arabic WORDS (useLocale
+  // reads the cookie perfectly well in the browser) inside a document still stamped lang="nl"
+  // dir="ltr". Right-to-left text in a left-to-right box, announced to a screen reader as Dutch.
+  const boot = readFileSync("src/lib/i18n/locale-boot.ts", "utf8");
+
+  // The name comes from the neutral module. A server file may not reach into the client one for it.
+  assert.doesNotMatch(
+    boot, /from '\.\/use-locale'/,
+    "locale-boot imports from the client module again — its exports arrive here as stubs",
+  );
+  assert.match(boot, /LOCALE_COOKIE[^\n]*from '\.\/locale'/, "the cookie name no longer comes from locale.ts");
+  // Same for the server-side translator, which looked the cookie up by that same stubbed name.
+  assert.doesNotMatch(
+    code("src/lib/i18n/server.ts"), /from '\.\/use-locale'/,
+    "the server translator reads the cookie name off a client export again",
+  );
+  // And the constant is declared where both sides can have it.
+  assert.match(
+    readFileSync("src/lib/i18n/locale.ts", "utf8"),
+    /export const LOCALE_COOKIE = 'boekbrug_taal'/,
+    "the cookie name left the neutral module",
+  );
+
+  // The emitted script itself: the literal name, and no trace of a stub. This is the assertion
+  // that would have gone red on the day the bug was introduced.
+  assert.match(LOCALE_BOOT_SCRIPT, /boekbrug_taal=\(\[\^;\]\*\)/, "the script does not read the cookie by name");
+  assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /Attempted to call/, "a client stub is inlined into the script");
+  assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /throw Error/, "a client stub is inlined into the script");
+});
+
+test("[TAAL-POORT] the door speaks more than one language, and offers the switch", () => {
+  // 56 Arabic articles and /ar/prijzen land on /register, and both auth screens were 100% Dutch —
+  // zero catalogue imports in either file. Worse, the ONLY language switch in the product lived
+  // inside Instellingen, behind a login: the setting that lets you escape Dutch was reachable only
+  // in Dutch, and only after you had got through the Dutch screens.
+  for (const screen of ["src/app/login/page.tsx", "src/app/register/page.tsx"]) {
+    const src = code(screen);
+    assert.match(src, /translator\(useLocale\(\)\)/, `${screen} binds no translator`);
+    assert.match(src, /AuthLanguageSwitch/, `${screen} lost the language switch`);
+  }
+  // The switch writes only the cookie — there is no session on these screens by definition.
+  const zwitser = code("src/components/i18n/AuthLanguageSwitch.tsx");
+  assert.match(zwitser, /writeLocaleCookie\(l\)/, "the switch stopped writing the choice");
+  assert.doesNotMatch(zwitser, /supabase|profiles/i, "the logged-out switch may not need a session");
+  // Each language named in its own script, with lang set — otherwise a screen reader pronounces
+  // العربية with Dutch phonetics, to the one person who most needs to find it.
+  assert.match(zwitser, /LOCALE_META\[l\]\.label/, "the languages are no longer named in their own script");
+  assert.match(zwitser, /lang=\{l\}/, "the language buttons lost their own lang attribute");
+  assert.match(zwitser, /aria-pressed=\{actief\}/, "which language is current is only shown in colour");
 });
 
 

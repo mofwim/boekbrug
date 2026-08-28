@@ -31,8 +31,10 @@
 // time rather than typed out, and the test below asserts the strings that come out still agree
 // with the vocabulary, which is the only honest way to keep two copies.
 
-import { LOCALE_COOKIE } from './use-locale'
-import { DEFAULT_LOCALE, LOCALES, LOCALE_META, type Locale } from './locale'
+// [BOOT-STUB] From locale.ts, never from use-locale.ts: that module is 'use client', and a client
+// export reached from the server layout is replaced by a throwing stub — which is exactly what
+// used to be interpolated into the regex below. See the note on LOCALE_COOKIE in locale.ts.
+import { DEFAULT_LOCALE, LOCALE_COOKIE, LOCALES, LOCALE_META, type Locale } from './locale'
 
 /** The languages written right to left, derived from the table so it cannot drift by hand. */
 export const RTL_LOCALES: Locale[] = LOCALES.filter((l) => LOCALE_META[l].dir === 'rtl')
