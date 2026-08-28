@@ -1354,9 +1354,19 @@ test("[RENDER-GATE] the sales overview renders", async () => {
         gecrediteerd: { s6: 50 },
         // Server time, passed in rather than read here — the component's own header says why.
         nu: Date.parse("2026-03-15T12:00:00Z"),
+        // [MEDEWERKER] Zijn eigen profiel, voor de kop van dit bord. Die kop draagt de bel waarin
+        // "je factuur is NIET verstuurd" aankomt en de enige uitlogknop die deze gebruiker heeft —
+        // zie MedewerkerHeader. Meegeven, niet weglaten: het scherm moet er hier mét kop worden
+        // gerenderd, want dat is wat de gebruiker ziet.
+        profiel: { id: "u1", full_name: "Sam Verkoop", company_name: null, email: "sam@example.com", role: "zzper" },
       })),
   );
   assert.ok(html.length > 500, "the sales overview rendered its list");
+
+  // [MEDEWERKER] De kop hoort erbij, en dat is geen cosmetiek: zonder haar heeft deze gebruiker
+  // geen bel (waarin "je factuur is niet verstuurd" aankomt) en geen uitlogknop — op wat vaak een
+  // gedeelde baliecomputer is.
+  assert.ok(html.includes("BoekBrug"), "the sales board renders its header");
 
   // Intl puts a NARROW NO-BREAK SPACE after the euro sign, so a literal " " never matches an
   // amount. Normalised here rather than pasted into the assertions, where an invisible character
