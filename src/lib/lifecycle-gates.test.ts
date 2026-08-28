@@ -14,6 +14,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+// [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
+// bug this guards was that the STRING contained a stub, which reading the file could never show.
+import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -16995,7 +16998,6 @@ test("[BOOT-STUB] the pre-paint script names the cookie, not a client stub", () 
 
   // The emitted script itself: the literal name, and no trace of a stub. This is the assertion
   // that would have gone red on the day the bug was introduced.
-  const { LOCALE_BOOT_SCRIPT } = require("./i18n/locale-boot") as { LOCALE_BOOT_SCRIPT: string };
   assert.match(LOCALE_BOOT_SCRIPT, /boekbrug_taal=\(\[\^;\]\*\)/, "the script does not read the cookie by name");
   assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /Attempted to call/, "a client stub is inlined into the script");
   assert.doesNotMatch(LOCALE_BOOT_SCRIPT, /throw Error/, "a client stub is inlined into the script");
