@@ -15267,7 +15267,12 @@ test("[IB-JAAR] the year overview is a projection of the sources, wired end to e
   // confident face — and money-out errors are the unrecoverable direction. So the gate refuses
   // the vocabulary of a tax CALCULATION anywhere in the pure module.
   const pure = code("src/lib/ib-jaar.ts");
-  assert.match(pure, /URENCRITERIUM_HOURS = 1225/, "the urencriterium threshold is the Belastingdienst's number");
+  // The threshold is declared ONCE, in urencriterium.ts, and re-exported here. Two modules each
+  // writing 1.225 is how a statutory number comes to have two values in one codebase.
+  assert.match(code("src/lib/urencriterium.ts"), /URENCRITERIUM_HOURS = 1225/,
+    "the urencriterium threshold is the Belastingdienst's number");
+  assert.doesNotMatch(pure, /URENCRITERIUM_HOURS = \d/, "the threshold has a second declaration again");
+  assert.match(pure, /export \{ URENCRITERIUM_HOURS \}/, "the year overview lost its one authority for the number");
   assert.doesNotMatch(
     pure, /te betalen|verschuldigde (inkomsten)?belasting|heffingskorting|schijf/i,
     "the module has started to compute or promise a tax amount — that is a different product and a wrong one",
@@ -16420,4 +16425,451 @@ test("[BETER-EXEMPLAAR] een beter exemplaar vervangt de foto, en gooit het oude 
   // staat. Zonder dat verwisselt iemand dit met "Deze vervangt factuur X" en verdwijnt een versie.
   assert.match(code("src/lib/i18n/messages.ts"), /'dsh\.vervang\.uitleg':[\s\S]{0,400}?Deze vervangt factuur X/,
     "de uitleg wijst niet naar het andere geval — twee documenten in plaats van één beter exemplaar");
+});
+
+test("[AANGIFTE-GEEN-FACTUUR] een verzonden aangifte is geen inkoopfactuur", () => {
+  // GEMETEN op een echte mail van de boekhouder: "Loonaangifte voor Kiwi Food Market is
+  // verzonden", € 952, met betalingskenmerk, IBAN en uiterste betaaldatum. Die viel al af. Zijn
+  // BROER niet: dezelfde afzender, hetzelfde sjabloon, per kwartaal in plaats van per maand —
+  //
+  //     "Uw aangifte omzetbelasting … is verzonden naar de belastingdienst.
+  //      Totaal generaal: € 1.234,56.  Maak dit bedrag over op onze bankrekening …"
+  //
+  // — kwam er dwars doorheen. "omzetbelasting" is een btw-woord, "€ 1.234,56" een bedrag met
+  // centen, en INVOICE_WORDS matcht op SUBSTRING: "rekening" in "bankrekening" las als een
+  // document dat zichzelf een rekening noemt. TAX_WORDS is wél op woordgrens bewaakt; die
+  // asymmetrie is precies wat het doorliet.
+  //
+  // Het zou de duurste valse positieve zijn die deze filter kan maken: de btw-aangifte zélf als
+  // aftrekbare kostenpost, met voorbelasting geclaimd over het bedrag dat wordt afgedragen. De
+  // bankkant van deze app weet het al beter — bank-identity.ts noemt zo'n betaling 'tax',
+  // "a settlement, not a deductible cost".
+  const src = code("src/lib/email-body-invoice.ts");
+  assert.match(src, /const FILING_WORDS = \[/, "de aangifte-vorm wordt niet herkend");
+  assert.match(src, /const FILED_WITH_AUTHORITY = \[/, "…of niet als een verzonden aangifte");
+
+  // TWEE signalen, nooit één. De eigen factuur van de boekhouder VOOR het doen van de aangifte
+  // noemt die aangifte ook, en dat is een echte kostenpost met echte voorbelasting. Wat zo'n
+  // factuur niet zegt, is dat de aangifte naar de belastingdienst is gestuurd.
+  assert.match(src, /if \(filing && FILED_WITH_AUTHORITY\.some\(/,
+    "één signaal is genoeg geworden — dan weigert dit de factuur van de boekhouder zelf");
+
+  // En de weigering zegt WELKE vorm het was, want die reden reist mee naar het overgeslagen-register.
+  assert.match(src, /NOT\(`tax_filing_notice:\$\{filing\}`\)/,
+    "de reden noemt niet welke aangifte het was");
+});
+
+test("[KOPPELING-ONBEKEND] een mislukte koppelingslezing maakt het budget nooit gróter", () => {
+  // Twee deuren rekenen uit wat een banklijn al heeft weggegeven: /api/bank/confirm en
+  // /api/bank/allocate. Dezelfde som, dezelfde tabel, dezelfde regel — en de allocate-kant liet
+  // de fout van de eerste lezing vallen. Dan is `links` null, `rows` leeg, het hele bewaakte blok
+  // overgeslagen en alreadyAllocated 0: de eigenaar krijgt de VOLLEDIGE lijn opnieuw aangeboden.
+  //
+  // De alinea erboven schrijft de regel zelf twee keer op — een koppeling als nul lezen "would let
+  // the same euros be spent twice", en een te groot budget is "the one direction this sum may never
+  // err in". Drie paden hielden zich eraan (een NULL bedrag, een onleesbare factuur, en de lezing
+  // van de facturen uit het plan, die wél op zijn error controleert). Deze niet.
+  const allocate = code("src/app/api/bank/allocate/route.ts");
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+
+  // De lezing moet zijn fout UITLEZEN en erop weigeren.
+  assert.match(allocate, /const \{ data: links, error: linksErr \} = await/,
+    "de koppelingslezing gooit zijn fout weer weg");
+  assert.match(allocate, /if \(linksErr\) \{[\s\S]{0,400}?status: 503/,
+    "een mislukte lezing leidt niet tot een weigering — het budget wordt dan stil te groot");
+
+  // En de zin zegt WAAROM er niet verdeeld kan worden; "mislukt" alleen laat de eigenaar opnieuw
+  // proberen zonder te weten dat er geld op het spel staat.
+  assert.match(allocate, /kunnen we dit bedrag niet veilig verdelen/,
+    "de weigering noemt niet wat er op het spel staat");
+
+  // De zusterdeur bleef doen wat hij al deed: onbekend = strenger, nooit ruimer.
+  assert.match(confirm, /if \(linkReadErr\) \{\s*\n\s*appliedElsewhereKnown = false;/,
+    "de confirm-deur is losser geworden in plaats van de allocate-deur strenger");
+});
+
+test("[BULK-PDF] several invoices taken away at once, and the bundle rule now sits on the button", () => {
+  // REPORTED: "I want to download invoices as pdf, but I have to open each one, open the pdf and
+  // press save." The selection already existed (the bundled betaalverzoek); what was missing was
+  // the way out.
+  const route = code("src/app/api/invoice/bulk-pdf/route.ts");
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+
+  // THE STORED FILE WINS. A sent invoice already has a pdf, and THAT is the document the customer
+  // received. Re-drawing it would produce something that merely LOOKS like the original — a logo
+  // since changed, an address since corrected — and hand it over as the original. Rendering is
+  // only ever the fallback.
+  const storedAt = route.indexOf('.download(stored)');
+  const renderAt = route.indexOf('renderInvoicePdf(');
+  assert.ok(storedAt > 0 && renderAt > 0 && storedAt < renderAt,
+    "the route re-renders the invoice before it tries the stored file");
+
+  // A PURCHASE invoice is never drawn by us: that would be manufacturing the supplier's paperwork.
+  // A missing one is reported instead.
+  assert.match(route, /if \(direction === "incoming"\) \{\s*\n\s*missing\.push\(/,
+    "we draw a supplier's invoice ourselves — that is manufacturing their paperwork");
+
+  // Ownership in the WHERE, not as a filter applied afterwards: the ids come from a client.
+  assert.match(route, /\.eq\(ownerColumn, ownerId\)/, "ownership is not enforced in the query");
+
+  // What was not included, by NAME. A short archive looks complete when you open it.
+  assert.match(route, /"X-Bulk-Missing-Names"/, "what is missing is only counted, never named");
+  assert.match(list, /t\('lijst\.download\.deels', \{ namen \}\)/, "the screen says nothing about what was left out");
+
+  // [BULK-PDF] The bundle rule used to live in the SELECTION (a non-bundelbaar row could not be
+  // ticked). Now that everything is selectable the button has to state it itself — otherwise the
+  // guard vanished together with the row that carried it.
+  assert.match(list, /bundelbaar: isBundelbaar\(inv\)/, "the selection no longer remembers what is bundelbaar");
+  assert.match(list, /const allBundelbaar = selectedList\.length > 0 && selectedList\.every\(r => r\.bundelbaar\)/,
+    "the bundle condition is stated nowhere any more");
+  assert.match(list, /disabled=\{selectedList\.length < 2 \|\| !sameClient \|\| !allBundelbaar \|\| bundleLoading\}/,
+    "the betaalverzoek accepts rows it cannot handle again");
+});
+
+
+test("[PLAIN-TEXT-SOURCE] no source file is binary to git", () => {
+  // FOUND while reviewing the bulk-pdf change: `git diff --stat` reported a brand-new TypeScript
+  // file as "Bin 0 -> 4496 bytes". Three source files carried a raw control byte — a NUL typed
+  // straight into a regex class or a template literal instead of written as an escape.
+  //
+  // It compiles, every gate passes, and the app behaves identically. What breaks is everything
+  // AROUND the code: git treats the file as binary, so there is no readable diff, no reviewable
+  // change, and — the part that actually costs — a conflict in it is all-or-nothing instead of
+  // line by line. AGENTS.md opens with "more than one session works on this repo"; an unmergeable
+  // file is a direct tax on that.
+  //
+  // An escape is byte-identical at runtime, so this gate never asks anyone to change behaviour.
+  // It asks them to spell the byte instead of typing it.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    if (!existsSync(dir)) return out;
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|css|md|sql)$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const file of [...walk("src"), ...walk("tests"), ...walk("supabase")]) {
+    const bytes = readFileSync(file);
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      // Tab, newline and carriage return are the only control bytes text legitimately holds.
+      if (b === 0x09 || b === 0x0a || b === 0x0d) continue;
+      if (b < 0x20 || b === 0x7f) {
+        const line = bytes.subarray(0, i).toString("utf8").split("\n").length;
+        const hex = b.toString(16).padStart(2, "0");
+        offenders.push(`${file}:${line} carries a raw 0x${hex} byte`);
+        break; // one report per file is enough to act on
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    "these files are binary to git — write the byte as an escape (" +
+      "\\u0000" +
+      ") instead of typing it:\n" +
+      offenders.join("\n"),
+  );
+});
+
+
+test("[PARTIAL-PAY-INVARIANT] a failed share read refuses instead of guessing the whole transaction", () => {
+  // The unlink route lowers amount_paid by the share THIS payment applied, read from the link row.
+  // The read fell back to tx.amount when it came back empty, and that fallback was written for one
+  // situation only: a legacy link where amount_applied is NULL and the whole transaction really is
+  // this invoice's payment. A FAILED READ landed in the same branch.
+  //
+  // On a split transaction — €500 divided over two invoices by /api/bank/allocate — the share is
+  // €300 while tx.amount is €500, so a hiccup subtracted the whole line from one invoice and left a
+  // paid invoice reading as unpaid. That is the state that sends a reminder to a customer who
+  // already paid.
+  //
+  // The route states this exact rule a hundred lines further down about the recompute
+  // ("The error is READ, not swallowed") — this is the same rule, on the line above it.
+  const route = code("src/app/api/bank/unlink/route.ts");
+
+  assert.match(route, /const \{ data: linkRow, error: linkErr \} = await pipeline/,
+    "the share read swallows its error again");
+
+  // The refusal has to stand BETWEEN the read and the arithmetic — after it, the wrong number has
+  // already been computed and a guard is decoration.
+  const readAt = route.indexOf("error: linkErr");
+  const refuseAt = route.indexOf("if (linkErr)");
+  const mathAt = route.indexOf("const appliedAmount");
+  assert.ok(readAt > 0 && refuseAt > readAt && mathAt > refuseAt,
+    "the refusal does not sit between reading the share and using it");
+  assert.match(route.slice(refuseAt, mathAt), /status: 503/,
+    "a share that could not be read no longer refuses the unlink");
+});
+
+test("[MANDAAT-INTREKKEN] a failed mandate read may not report a revocation that did not happen", () => {
+  // Revoking is the one direction where a false success is dangerous: the owner is told the
+  // accountant's mandate is gone while it still stands, and nothing anywhere disagrees.
+  //
+  // The read ran on the SERVICE-ROLE client — no RLS behind it — and its error was not destructured,
+  // so a failure left `mandaten` undefined, `doelen` empty, and the route answered
+  // { ok: true, nietsTeDoen: true }: "nothing to revoke, you are already in the state you asked for".
+  const route = code("src/app/api/accountant/invoice-mandate/route.ts");
+
+  assert.match(route, /const \{ data: mandaten, error: mandatenErr \} = await vraag/,
+    "the mandate read swallows its error again");
+  const readAt = route.indexOf("error: mandatenErr");
+  const refuseAt = route.indexOf("if (mandatenErr)");
+  const okAt = route.indexOf("nietsTeDoen: true");
+  assert.ok(readAt > 0 && refuseAt > readAt && refuseAt < okAt,
+    "a failed read can still reach the 'nothing to do' answer");
+
+  // [MANDAAT-ID] otherId is client-controlled and is interpolated into a PostgREST filter on that
+  // same service-role client. Something that is not a uuid identifies nobody, so it never reaches
+  // the filter — the value in the .or() must be the CHECKED one.
+  assert.match(route, /MANDATE_UUID_RE\.test\(gevraagdeId\)/,
+    "the counterparty id is no longer checked before it is pasted into a filter");
+  assert.match(route, /vraag\.or\(`zzper_id\.eq\.\$\{tegenpartij\},accountant_id\.eq\.\$\{tegenpartij\}`\)/,
+    "the filter interpolates something other than the validated id");
+});
+
+
+test("[URENCRITERIUM] the hours are read from a column that exists, and judged while the year runs", () => {
+  // ── THE PART THAT WAS DEAD ──
+  //
+  // The year overview asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answered "column does not exist", fetchAllRows threw,
+  // the catch turned it into null, and the screen printed "we konden je urenregistratie niet
+  // lezen" — for every owner, since the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing looked broken, which is the whole lesson: the null branch prints an HONEST sentence,
+  // so the failure wore the face of a temporary hiccup forever. The gate that covered this route
+  // checked that the engine was called and that the null branch existed; it never checked that the
+  // query could return a row.
+  const jaarRoute = code("src/app/api/ib-jaar/route.ts");
+  const urenPage = code("src/app/dashboard/uren/page.tsx");
+  for (const [naam, bron] of [["ib-jaar route", jaarRoute], ["uren page", urenPage]] as const) {
+    assert.match(bron, /from\(["']time_entries["']\)[\s\S]{0,400}?worked_on/,
+      `${naam}: the hours are filtered on a column time_entries does not have`);
+    assert.doesNotMatch(bron, /entry_date/,
+      `${naam}: entry_date belongs to cash_entries — on time_entries it matches nothing, silently`);
+  }
+
+  // ── THE SUM MUST BE COMPLETE ──
+  //
+  // The screen's own entry list stops at 1000 rows. Summing THAT would under-count the year, which
+  // is the direction that wrongly tells an owner they will not make it. The year total is its own
+  // paged read.
+  // Anchored on the CALL that wraps the hours read, not on the name: an `import { fetchAllRows }`
+  // left at the top of the file satisfies a bare /fetchAllRows/ while nothing pages any more.
+  // (This gate's own first draft did exactly that, and the negative control caught it.)
+  assert.match(urenPage, /await fetchAllRows<\{ hours: number \| null \}>\(\(lo, hi\) =>[\s\S]{0,300}?time_entries/,
+    "the year total can be truncated by the 1000-row cap again");
+  assert.match(urenPage, /catch\([\s\S]{0,200}?return null/,
+    "a failed hours read no longer becomes null — it would read as zero hours worked");
+
+  // ── THE RULES THAT DECIDE MONEY ──
+  const pure = code("src/lib/urencriterium.ts");
+  // No pro-rata. A starter who registers in September still needs 1.225 hours that calendar year;
+  // scaling the threshold would report them on track and cost the whole deduction.
+  assert.doesNotMatch(pure, /threshold\s*[*/]|URENCRITERIUM_HOURS\s*[*/]/,
+    "the threshold is being scaled — the urencriterium has no pro-rata for a part year");
+  // A failed read is not a missed criterion.
+  assert.match(pure, /hoursSoFar === null[\s\S]{0,200}?level: "unknown"/,
+    "a failed read no longer answers 'unknown'");
+  // No forecast from a handful of days — a warning that swings daily teaches the owner to ignore
+  // the one that matters in September.
+  assert.match(pure, /daysElapsed < PROJECTION_MIN_DAYS[\s\S]{0,200}?level: "too_early"/,
+    "the year is forecast from too few days again");
+
+  // ── THE SCREEN SAYS THE TWO THINGS THE ARITHMETIC CANNOT ──
+  //
+  // Indirect hours count, and there is no pro-rata. Both are shown for EVERY state, including a
+  // criterion already met: whoever made it this year carries the same assumption into the next.
+  const scherm = code("src/app/dashboard/uren/UrenClient.tsx");
+  assert.match(scherm, /t\('uren\.criterium\.tellenmee'\)/,
+    "the screen no longer says that unbilled hours count — the error this module exists to prevent");
+  assert.match(scherm, /t\('uren\.criterium\.geendeeljaar'\)/,
+    "the screen no longer says that a starter gets no pro-rata");
+  // [TAAL] One key per state. A noun swapped into one shared sentence breaks Arabic agreement.
+  assert.match(scherm, /URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey>/,
+    "the states no longer map to their own sentences");
+  // The component holds no language: the panel renders keys, never a Dutch string of its own.
+  assert.doesNotMatch(scherm.slice(scherm.indexOf("uren.criterium.titel"), scherm.indexOf("uren.criterium.geendeeljaar")),
+    />[^<>{}\n]*[a-z]{4,}\s+[a-z]{4,}[^<>{}\n]*</,
+    "a hard-coded sentence appeared in the urencriterium panel");
+});
+
+
+test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
+  // WHY: /api/ib-jaar asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answers "column does not exist", the caller's catch
+  // turned it into null, and the year screen said "we konden je urenregistratie niet lezen" — for
+  // every owner, from the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing failed loudly, because the null branch prints an HONEST sentence. That is the whole
+  // shape of this class: a query that can never return a row, behind a caller that treats "error"
+  // and "nothing there" as the same answer. Types cannot see it (the column name is a string) and
+  // no gate could, because none compared the two halves.
+  //
+  // This gate compares them: the columns the migrations declare against the columns the app asks
+  // for. It is cheap, mechanical, and would have caught the above on the day it was written.
+
+  const columnsOf = new Map<string, Set<string>>();
+  const declared = new Set<string>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\n\s*\);/gi,
+    )) {
+      const table = m[1];
+      declared.add(table);
+      const set = columnsOf.get(table) ?? new Set<string>();
+      columnsOf.set(table, set);
+      for (const raw of m[2].split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("--")) continue;
+        const c = /^([a-z_][a-z0-9_]*)\s+/.exec(line);
+        if (!c) continue;
+        if (["constraint", "unique", "primary", "foreign", "check", "exclude", "like", "references"].includes(c[1])) continue;
+        set.add(c[1]);
+      }
+    }
+    // One ALTER TABLE may add SEVERAL columns, comma-separated across lines. Reading only the
+    // first is how this parser's own first draft reported two live columns as missing.
+    for (const m of sql.matchAll(/alter\s+table\s+(?:only\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s+([\s\S]*?);/gi)) {
+      const set = columnsOf.get(m[1]) ?? new Set<string>();
+      columnsOf.set(m[1], set);
+      for (const a of m[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) set.add(a[1]);
+    }
+  }
+  assert.ok(declared.size > 20, "the migration parser stopped finding tables — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  const queried = new Set<string>();
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)\s*\.(select|insert|update|delete|upsert)/g)) {
+      queried.add(m[1]);
+    }
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)/g)) {
+      const table = m[1];
+      const known = columnsOf.get(table);
+      if (!declared.has(table) || !known) continue;
+      const line = () => src.slice(0, m.index ?? 0).split("\n").length;
+      // Stop at the next .from(, or the columns of one query get blamed on another table.
+      let chain = src.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 900);
+      const next = chain.indexOf(".from(");
+      if (next !== -1) chain = chain.slice(0, next);
+
+      for (const f of chain.matchAll(
+        /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|order|contains|overlaps)\(\s*['"]([a-z_][a-z0-9_]*)['"]/g,
+      )) {
+        checked += 1;
+        if (!known.has(f[2])) offenders.push(`${file}:${line()} — ${table} has no column ${f[2]} (.${f[1]}())`);
+      }
+      const sel = /^\s*\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
+      // An embed, alias, count or wildcard is a different grammar — skipped rather than guessed at.
+      if (sel && !/[(:!*]/.test(sel[1])) {
+        for (const raw of sel[1].split(",")) {
+          const c = raw.trim();
+          if (!/^[a-z_][a-z0-9_]*$/.test(c)) continue;
+          checked += 1;
+          if (!known.has(c)) offenders.push(`${file}:${line()} — ${table} has no column ${c} (.select())`);
+        }
+      }
+    }
+  }
+
+  assert.ok(checked > 200, `the gate only checked ${checked} column references — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `queries naming a column that does not exist:\n  ${offenders.join("\n  ")}`);
+
+  // ── THE BLIND SPOT, PINNED ──
+  //
+  // These tables were created in Supabase directly and have no CREATE TABLE in this repo, so
+  // nothing above can check a single column on them — including `invoices` and `documents`, the
+  // two the whole product runs on. Pinned rather than ignored: a NEW name appearing here means a
+  // new table shipped without its schema, and the gate should make that a decision rather than a
+  // drift. Moving one out of this list (by adding its migration) is a straight improvement.
+  const UNCHECKABLE = [
+    "accountant_clients", "audit_logs", "bank_transactions", "clients", "deletion_requests",
+    "documents", "draft_queue", "email_connections", "email_skipped_attachments", "folders",
+    "invitations", "invoice_lines", "invoices", "messages", "notifications", "profiles",
+  ];
+  const blind = [...queried].filter((t) => !declared.has(t)).sort();
+  const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
+  assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
+});
+
+
+test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", () => {
+  // The sibling of [KOLOM-BESTAAT], and the same silent shape: a database function called with an
+  // argument name it does not declare is refused by Postgres, and a caller that fails open turns
+  // that refusal into "everything is fine".
+  //
+  // Most rpc calls ARE protected — supabase-js is typed from database.types.ts, so tsc catches a
+  // wrong name. The exceptions are the calls that cast the client to `any` because the function is
+  // not in the generated types, and those are precisely the money ones: fair_use_consume,
+  // ai_budget_consume, ai_budget_settle, check_rate_limit_key. All four fail OPEN by design — the
+  // right call for a spend guard, and exactly why a typo in one would never surface. The budget
+  // would simply stop being enforced, and the first sign would be the invoice from Anthropic.
+  const signatures = new Map<string, Set<string>>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*returns/gi,
+    )) {
+      // Strip line comments BEFORE splitting on commas. A comment may contain a comma, and
+      // splitting first cuts the parameter list in the wrong place — which made this gate's own
+      // first draft report three live arguments as missing.
+      const params = m[2].split("\n").map((ln) => ln.replace(/--.*/, "")).join("\n");
+      const set = signatures.get(m[1]) ?? new Set<string>();
+      signatures.set(m[1], set);
+      for (const piece of params.split(",")) {
+        const pm = /^\s*(?:in|out|inout)?\s*([a-z_][a-z0-9_]*)\s+\S/i.exec(piece);
+        if (pm) set.add(pm[1]);
+      }
+    }
+  }
+  assert.ok(signatures.size > 20, "the function parser stopped finding functions — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.rpc\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*,\s*\{([^{}]*)\}/g)) {
+      const known = signatures.get(m[1]);
+      // A function defined outside this repo cannot be checked — say nothing rather than guess.
+      if (!known || known.size === 0) continue;
+      const line = src.slice(0, m.index ?? 0).split("\n").length;
+      // Top-level `key:` pairs only. A ternary inside a value (`x ? true : false`) is not one.
+      for (const a of m[2].matchAll(/(?:^|,)\s*([a-z_][a-z0-9_]*)\s*:/g)) {
+        checked += 1;
+        if (!known.has(a[1])) offenders.push(`${file}:${line} — ${m[1]}() has no argument ${a[1]}`);
+      }
+    }
+  }
+  assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
 });

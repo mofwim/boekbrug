@@ -112,12 +112,35 @@ export async function POST(req: Request) {
   // authoritative; fall back to the tx magnitude for a pre-migration link (amount_applied NULL).
   // Undoing a payment lowers amount_paid by exactly this — so an invoice fully paid by two
   // instalments drops back to "€400 van €1000" when you unlink the second one, not to fully unpaid.
-  const { data: linkRow } = await pipeline
+  //
+  // [PARTIAL-PAY-INVARIANT] The error is READ, not swallowed — the same rule this route states a
+  // hundred lines down about the recompute, which this line quietly broke.
+  //
+  // The fallback exists for ONE situation: a link that predates amount_applied, where the whole
+  // transaction is this invoice's payment and tx.amount is therefore the right number. A FAILED
+  // READ is a different situation entirely, and it was landing in the same branch. On a split
+  // transaction — €500 divided over two invoices by /api/bank/allocate — the share here is €300
+  // and tx.amount is €500, so a hiccup would subtract the whole line from one invoice and leave a
+  // paid invoice reading as unpaid. That is the state that sends a reminder to a customer who
+  // already paid.
+  //
+  // Refusing costs nothing: this read happens BEFORE the detach, so nothing has been written yet
+  // and the owner can retry once the hiccup passes.
+  const { data: linkRow, error: linkErr } = await pipeline
     .from("bank_tx_invoices")
     .select("amount_applied")
     .eq("transaction_id", transactionId)
     .eq("invoice_id", invoiceId)
     .maybeSingle();
+  if (linkErr) {
+    console.error("[PARTIAL-PAY-INVARIANT] could not read the payment share — refusing to unlink", {
+      invoiceId, userId: user.id, transactionId, message: linkErr.message,
+    });
+    return NextResponse.json(
+      { error: "We konden niet nakijken welk deel van deze betaling bij deze factuur hoort. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+      { status: 503 },
+    );
+  }
   const appliedAmount = Math.abs(Number(linkRow?.amount_applied ?? tx.amount ?? 0));
   const priorPaid = Math.max(0, Number(inv.amount_paid ?? 0));
   const newPaid = Math.max(0, priorPaid - appliedAmount);
