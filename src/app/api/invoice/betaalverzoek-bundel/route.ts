@@ -7,6 +7,8 @@
 // sender_id. No money movement — this only creates a shareable /pay link.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import {
   buildBundelBetaalverzoek,
@@ -42,12 +44,29 @@ export async function POST(req: NextRequest) {
   }
 
   // Owner-scoped fetch (RLS + explicit sender_id). Only the fields the logic needs.
-  const { data: invoices } = await supabase
-    .from('invoices')
-    .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
-    .in('id', invoiceIds)
-    .eq('sender_id', user.id)
-  if (!invoices || invoices.length !== invoiceIds.length) {
+  // [IN-CHUNK] Gechunkt. De telling hieronder ving een onvolledige lezing al op, maar met het
+  // verkeerde woord: bij een grote bundel liep de id-lijst de URL over, kwam er niets terug, en
+  // las de eigenaar 'Niet alle facturen gevonden' over facturen die hij zojuist zelf had
+  // aangewezen. De telling blijft staan — ze bewaakt nu alleen nog wat ze hoort te bewaken.
+  let invoices: Array<{
+    id: string; direction: string | null; invoice_type: string | null; status: string | null
+    invoice_number: string | null; payment_reference: string | null; total_inc_btw: number | null
+    amount_paid: number | null; client_name: string | null; pay_token: string | null; due_date: string | null
+  }>
+  try {
+    invoices = await fetchAllRowsForIds(invoiceIds, (chunk, from, to) =>
+      supabase
+        .from('invoices')
+        .select('id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
+        .in('id', chunk)
+        .eq('sender_id', user.id)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+  } catch {
+    return NextResponse.json({ error: 'We konden de facturen niet lezen — probeer het opnieuw.' }, { status: 500 })
+  }
+  if (invoices.length !== invoiceIds.length) {
     return NextResponse.json({ error: 'Niet alle facturen gevonden' }, { status: 404 })
   }
 
@@ -56,17 +75,25 @@ export async function POST(req: NextRequest) {
   // a longer reference) than the link actually asks the customer for — the two sides of the same
   // link disagreeing, with nothing flagging it. Refuse instead of silently trimming: the owner
   // picked those invoices deliberately and must see why one cannot be in the bundle.
-  const { data: creditRows, error: creditErr } = await supabase
-    .from('invoices')
-    // [DEEL-CREDIT] With the amount: only a credit that COVERS an invoice keeps it out.
-    .select('original_invoice_id, total_inc_btw')
-    .eq('sender_id', user.id)
-    .eq('invoice_type', 'creditnota')
-    .in('original_invoice_id', invoiceIds)
-  if (creditErr) {
+  // [IN-CHUNK] Gechunkt. Deze controle houdt een volledig gecrediteerde factuur UIT de bundel, dus
+  // een lezing die stil niets teruggeeft laat er juist een door — en dan vraagt de link de klant
+  // om geld dat hij al terug heeft gekregen. De 500 hieronder was er al en blijft.
+  let creditRowList: { original_invoice_id: string | null; total_inc_btw: number | null }[]
+  try {
+    creditRowList = await fetchAllRowsForIds(invoiceIds, (chunk, from, to) =>
+      supabase
+        .from('invoices')
+        // [DEEL-CREDIT] With the amount: only a credit that COVERS an invoice keeps it out.
+        .select('original_invoice_id, total_inc_btw')
+        .eq('sender_id', user.id)
+        .eq('invoice_type', 'creditnota')
+        .in('original_invoice_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+  } catch {
     return NextResponse.json({ error: 'Controle op creditnota’s mislukt — probeer het opnieuw.' }, { status: 500 })
   }
-  const creditRowList = (creditRows ?? []) as { original_invoice_id: string | null; total_inc_btw: number | null }[]
   const creditedByInvoice = creditedTotalsFrom(creditRowList)
   // [DEEL-CREDIT] A PARTLY credited invoice may join — it still owes the rest, and both sides of
   // the link now agree on that rest because the credit travels into the builder below. Only a

@@ -27,7 +27,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { chunkIds, fetchAllRows } from "@/lib/supabase-paginate";
 // [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
 import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
@@ -112,23 +112,29 @@ export async function POST() {
     // not applied yet the column does not exist and PostgREST refuses the whole update; the
     // reactivation itself must not fail over the note beside it, so retry without it. Mirrors the
     // same fallback in /api/bank/ignore.
-    const applyUpdate = (withReason: boolean) =>
+    // [IN-CHUNK] Per brok. De id-lijst reist in de URL, dus voorbij een paar honderd sneuvelde
+    // deze UPDATE in zijn geheel op een 414 — en dan werd er geen enkele regel heropend terwijl de
+    // eigenaar er honderden had aangewezen. restoredIds telt nog steeds alleen wat de database
+    // daadwerkelijk teruggaf, zodat het getal blijft zeggen wat er echt is veranderd.
+    const applyUpdate = (withReason: boolean, chunk: string[]) =>
       pipeline
         .from("bank_transactions")
         .update((withReason ? { status: "pending", ignore_reason: null } : { status: "pending" }) as never)
         .eq("user_id", user.id)
         .eq("status", "not_found")
-        .in("id", ids)
+        .in("id", chunk)
         .select("id");
 
-    let { data: updated, error: updErr } = await applyUpdate(true);
-    if (updErr && /ignore_reason/i.test(updErr.message)) {
-      ({ data: updated, error: updErr } = await applyUpdate(false));
+    for (const chunk of chunkIds(ids)) {
+      let { data: updated, error: updErr } = await applyUpdate(true, chunk);
+      if (updErr && /ignore_reason/i.test(updErr.message)) {
+        ({ data: updated, error: updErr } = await applyUpdate(false, chunk));
+      }
+      if (updErr) {
+        return NextResponse.json({ error: "restore_failed", detail: updErr.message }, { status: 500 });
+      }
+      restoredIds.push(...(updated ?? []).map((r) => r.id as string));
     }
-    if (updErr) {
-      return NextResponse.json({ error: "restore_failed", detail: updErr.message }, { status: 500 });
-    }
-    restoredIds.push(...(updated ?? []).map((r) => r.id as string));
     restored = restoredIds.length;
   }
 

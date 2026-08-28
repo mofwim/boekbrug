@@ -19,6 +19,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createClient } from "@supabase/supabase-js";
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from "@/lib/storage-path";
+// [IN-CHUNK] Een id-lijst gaat in brokken de URL in — zie supabase-paginate.ts.
+import { chunkIds } from "@/lib/supabase-paginate";
 
 function createServiceRoleClient() {
   return createClient(
@@ -59,11 +61,23 @@ export async function DELETE(_req: NextRequest) {
     // These files were only for AI extraction — not needed after reset
     const serviceSupabase = createServiceRoleClient();
 
-    const { data: docs } = await serviceSupabase
+    // [NO-SILENT-EMPTY] Deze lezing pakte alleen `data` uit, en het gevolg was een LEUGEN in de
+    // andere richting dan gebruikelijk: mislukte ze, dan bleef `docs` null, sloeg het hele blok
+    // hieronder over, en antwoordde de route `{ ok: true }`. De eigenaar kreeg te horen dat zijn
+    // reset gelukt was terwijl zijn onboarding-bestanden er nog stonden — inclusief de foto's van
+    // documenten die hij juist wilde laten verdwijnen.
+    const { data: docs, error: leesFout } = await serviceSupabase
       .from("documents")
       .select("id, file_url")
       .eq("user_id", user.id)
       .ilike("file_name", "onboarding-%");  // files named "onboarding-{timestamp}.ext"
+    if (leesFout) {
+      console.error("[BOEK-015] reset document read failed:", leesFout.message);
+      return NextResponse.json(
+        { error: "We konden je onboarding-bestanden niet opvragen, dus we hebben er niets aan veranderd. Probeer het opnieuw." },
+        { status: 500 },
+      );
+    }
 
     if (docs && docs.length > 0) {
       // [SEC-STORAGE-PATH] These rows are this user's — and file_url is ordinary text on a row
@@ -81,17 +95,24 @@ export async function DELETE(_req: NextRequest) {
       // aborting on error — mirrors the hardened order in deleteDocument. Doing storage
       // first (the old order, with unchecked results) risked dangling rows pointing at
       // removed objects (404 signed URLs) or orphaned objects on a silent failure.
-      const { error: delErr } = await serviceSupabase
-        .from("documents").delete().in("id", ids).eq("user_id", user.id);
-      if (delErr) {
-        console.error("[BOEK-015] reset row delete failed:", delErr);
-        return NextResponse.json({ error: "Reset mislukt" }, { status: 500 });
+      // [IN-CHUNK] Gechunkt. De id-lijst reist in de URL, en voorbij een paar honderd sneuvelt de
+      // hele DELETE op een 414 — één mislukte chunk laat de rest staan, en het is beter dat de
+      // route dat meldt dan dat ze het in één keer probeert en alles laat staan.
+      for (const chunk of chunkIds(ids)) {
+        const { error: delErr } = await serviceSupabase
+          .from("documents").delete().in("id", chunk).eq("user_id", user.id);
+        if (delErr) {
+          console.error("[BOEK-015] reset row delete failed:", delErr);
+          return NextResponse.json({ error: "Reset mislukt" }, { status: 500 });
+        }
       }
 
       // Then remove the storage objects. A failed remove leaves orphans (reclaimable)
-      // but never a dangling row.
-      if (paths.length > 0) {
-        await serviceSupabase.storage.from("documents").remove(paths);
+      // but never a dangling row. Ook hier per brok: storage.remove() krijgt de lijst in de BODY,
+      // maar een lijst van duizenden keys in één aanroep is nog steeds de aanroep die als geheel
+      // faalt — en dan blijft er niets verwijderd in plaats van bijna alles.
+      for (const chunk of chunkIds(paths)) {
+        await serviceSupabase.storage.from("documents").remove(chunk);
       }
     }
 

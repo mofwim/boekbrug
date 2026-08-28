@@ -34,6 +34,8 @@
 // shape; guessing it writes a number into an administration with our name on it.
 
 import { NextRequest, NextResponse } from "next/server";
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { logAuditAction, getClientIP } from "@/lib/audit";
@@ -143,12 +145,25 @@ export async function POST(req: NextRequest) {
     }
     const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>;
     if (rows.length > 0) {
-      const { data: linked } = await pipeline
-        .from("invoices")
-        .select("id, direction, invoice_type, total_inc_btw")
-        .in("id", rows.map((r) => r.invoice_id))
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-      const sum = allocatedOnLine(rows, linked ?? [], Number(tx.amount) || 0);
+      // [IN-CHUNK] Gechunkt. De guard hieronder ving een onvolledige lezing al op — elke niet
+      // gelezen id werd 'unknown' en de route weigerde — dus dit kostte geen verkeerd bedrag maar
+      // een geweigerde boeking. Bij een regel die over veel facturen is verdeeld was de kale
+      // `.in()` zélf de reden dat die weigering kwam.
+      let linked: Array<{ id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null }> = [];
+      try {
+        linked = await fetchAllRowsForIds(rows.map((r) => r.invoice_id), (chunk, from, to) =>
+          pipeline
+            .from("invoices")
+            .select("id, direction, invoice_type, total_inc_btw")
+            .in("id", chunk)
+            .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+      } catch (e) {
+        console.error("[ALLOCATE] gekoppelde facturen lezen mislukt", { txId: tx.id, e });
+      }
+      const sum = allocatedOnLine(rows, linked, Number(tx.amount) || 0);
       // A link whose invoice this user cannot read means the read is incomplete, not that the link
       // gave nothing. Counting it as zero makes the budget too large, which is the one direction
       // this sum may never err in — so the route refuses instead of booking against a number it
@@ -166,12 +181,25 @@ export async function POST(req: NextRequest) {
 
   // ── The invoices the plan names ───────────────────────────────────────────
   const ids = rawLines.map((l) => l.invoiceId);
-  const { data: invRows, error: invErr } = await pipeline
-    .from("invoices")
-    .select("id, direction, invoice_type, total_inc_btw, amount_paid, invoice_number, accountant_status, status")
-    .in("id", ids)
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
-  if (invErr) return NextResponse.json({ error: "invoice_read_failed" }, { status: 500 });
+  // [IN-CHUNK] Gechunkt, en de fout blijft leiden tot 500: dit zijn de facturen waar het plan geld
+  // op wil boeken, dus een halve lezing mag hier nooit als het geheel doorgaan.
+  let invRows: Array<{
+    id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null
+    amount_paid: number | null; invoice_number: string | null; accountant_status: string | null; status: string | null
+  }>;
+  try {
+    invRows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
+      pipeline
+        .from("invoices")
+        .select("id, direction, invoice_type, total_inc_btw, amount_paid, invoice_number, accountant_status, status")
+        .in("id", chunk)
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch {
+    return NextResponse.json({ error: "invoice_read_failed" }, { status: 500 });
+  }
 
   // [STATUS-GUARD] The same exclusion every other booking door applies (bank-matching.ts
   // EXCLUDED_STATUSES, with the reason spelled out there): a 'processing' row is an UNVERIFIED
@@ -180,7 +208,7 @@ export async function POST(req: NextRequest) {
   // is not a debt; 'paid' has nothing left to receive. The screen filters these out of its
   // picker, but a screen filter is not a guard: this route accepts ids. The RPC behind it
   // refuses only 'paid', so without this check the other three walked through.
-  const ineligible = (invRows ?? []).find((r) => ["draft", "archived", "processing"].includes(r.status ?? ""));
+  const ineligible = invRows.find((r) => ["draft", "archived", "processing"].includes(r.status ?? ""));
   if (ineligible) {
     return NextResponse.json(
       {
@@ -195,7 +223,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const invoices: PlanInvoice[] = (invRows ?? []).map((r) => ({
+  const invoices: PlanInvoice[] = invRows.map((r) => ({
     id: r.id,
     direction: r.direction === "outgoing" ? "outgoing" : "incoming",
     invoiceType: r.invoice_type,
@@ -205,7 +233,7 @@ export async function POST(req: NextRequest) {
 
   // [VERWERKT] An invoice the accountant has already processed is closed to new money. The RPC
   // enforces it too; refusing here means the owner learns it BEFORE half the batch is booked.
-  const locked = (invRows ?? []).find((r) => r.accountant_status === "verwerkt");
+  const locked = invRows.find((r) => r.accountant_status === "verwerkt");
   if (locked) {
     return NextResponse.json(
       { error: "verwerkt", invoiceNumber: locked.invoice_number },

@@ -52,7 +52,11 @@ export interface VerdeelFactuur extends PlanInvoice {
 /** [CIRKEL-BEWIJS] Een al geboekte of genegeerde regel, als leesbaar bewijs in plaats van redirect. */
 export interface GeboekteRegel {
   status: 'matched' | 'ignored'
-  settled: Array<{ id: string; invoiceNumber: string | null; partyName: string | null; amount: number }>
+  // [NO-SILENT-EMPTY] `amount: null` = we konden het bedrag niet vaststellen. Het stond hier als
+  // `number`, en de pagina vulde bij een mislukte factuurlezing een 0 in — dus dit bewijsscherm
+  // meldde "€ 0,00 geboekt" op een factuur waar duizenden euro's op stonden. Op precies het scherm
+  // dat de eigenaar opent om te controleren WAT er met zijn betaling is gebeurd.
+  settled: Array<{ id: string; invoiceNumber: string | null; partyName: string | null; amount: number | null }>
 }
 
 interface Props {
@@ -99,7 +103,7 @@ export function GeboektPaneel({ transactie, geboekt }: { transactie: VerdeelTran
                   {s.invoiceNumber ?? t('verd.geboekt.zonderNummer')}
                 </a>
                 <span style={{ color: M3.onSurfaceVariant }}>
-                  {s.partyName ? ` · ${s.partyName}` : ''} — {formatEuroNL(s.amount)}
+                  {s.partyName ? ` · ${s.partyName}` : ''} — {s.amount === null ? t('verd.bedragOnbekend') : formatEuroNL(s.amount)}
                 </span>
               </p>
             ))}

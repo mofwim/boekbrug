@@ -26,6 +26,8 @@
 // invoice ourselves — that would be manufacturing someone else's paperwork.
 
 import { NextRequest, NextResponse } from "next/server";
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import JSZip from "jszip";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 // [ACTING-FOR] An employee downloading for the owner reads the owner's invoices, exactly as their
@@ -67,12 +69,25 @@ export async function POST(req: NextRequest) {
 
   // Ownership is a WHERE, never a filter applied afterwards: the ids come from a client.
   const ownerColumn = direction === "incoming" ? "receiver_id" : "sender_id";
-  const { data: rows, error } = await supabase
-    .from("invoices")
-    .select("id, invoice_number, client_name, pdf_url, direction")
-    .in("id", ids)
-    .eq(ownerColumn, ownerId)
-    .eq("direction", direction);
+  // [IN-CHUNK] Gechunkt. De 503 hieronder was er al en is precies goed — maar bij een selectie van
+  // een paar honderd facturen wás de kale `.in()` de reden dat hij afging, en dat is juist de
+  // download waarvoor de eigenaar de knop indrukt.
+  let rows: Array<{ id: string; invoice_number: string | null; client_name: string | null; pdf_url: string | null; direction: string | null }> | null = null;
+  let error: { message: string } | null = null;
+  try {
+    rows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
+      supabase
+        .from("invoices")
+        .select("id, invoice_number, client_name, pdf_url, direction")
+        .in("id", chunk)
+        .eq(ownerColumn, ownerId)
+        .eq("direction", direction)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    error = { message: e instanceof Error ? e.message : "read failed" };
+  }
   if (error) {
     // [NO-SILENT-EMPTY] A failed read is not "none of these exist". Handing back an empty archive
     // over a hiccup would tell the owner their invoices have no documents.

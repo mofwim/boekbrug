@@ -2045,6 +2045,9 @@ export const MESSAGES = {
   'verd.onbekendeTegenpartij': { nl: 'Onbekende tegenpartij', ar: 'طرف مقابل غير معروف', en: 'Unknown counterparty' },
   'verd.geenOmschrijving': { nl: 'geen omschrijving', ar: 'بلا وصف', en: 'no description' },
   'verd.nogTeVerdelen': { nl: 'Nog te verdelen', ar: 'المتبقي للتوزيع', en: 'Still to split' },
+  // [NO-SILENT-EMPTY] Een bedrag dat we niet konden vaststellen, gezegd als zodanig. Hier stond
+  // een 0, en een 0 op een bewijsscherm is geen ontbrekend getal maar een verkeerd getal.
+  'verd.bedragOnbekend': { nl: 'bedrag niet te lezen', ar: 'تعذّرت قراءة المبلغ', en: 'amount could not be read' },
   'verd.alGekoppeld': {
     nl: '{amount} van deze betaling was al gekoppeld.',
     ar: '{amount} من هذه الدفعة كان مرتبطاً من قبل.',
@@ -12374,6 +12377,12 @@ export const MESSAGES = {
   'bh.bev.actie.bevestigd': { nl: 'Bevestigd', ar: 'تم التأكيد', en: 'Confirmed' },
   'bh.bev.actie.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
   'bh.bev.actie.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
+  // [NO-SILENT-EMPTY] De derde lege staat: niet 'niets te doen' en niet 'geen machtiging', maar
+  // 'we konden het niet lezen'. De zin noemt expliciet wat het NIET betekent, omdat de boekhouder
+  // die twee andere schermen kent en er anders een van invult.
+  'bh.bev.leesfout.kop': { nl: 'We konden je stapel nu niet lezen.', ar: 'تعذّرت قراءة قائمتك الآن.', en: 'We could not read your stack just now.' },
+  'bh.bev.leesfout.uitleg': { nl: 'Dit betekent niet dat er niets wacht, en het betekent niet dat je geen machtiging hebt. Het betekent alleen dat de lezing misging. Ververs de pagina; verandert er niets aan je klanten of hun facturen door.', ar: 'هذا لا يعني أنه لا شيء ينتظر، ولا يعني أنك بلا تفويض. يعني فقط أن القراءة أخفقت. حدّث الصفحة؛ لا يتغيّر شيء لدى عملائك ولا في فواتيرهم بسبب ذلك.', en: 'This does not mean nothing is waiting, and it does not mean you have no authorisation. It only means the read failed. Refresh the page; nothing about your clients or their invoices changes because of it.' },
+  'bh.bev.meer': { nl: 'Dit zijn de oudste 500. Er wachten er nog {aantal} meer.', ar: 'هذه أقدم ٥٠٠. وما زال ينتظر {aantal} غيرها.', en: 'These are the oldest 500. Another {aantal} are still waiting.' },
   'bh.bev.geenMandaat.kop': { nl: 'Nog geen enkele klant heeft je gemachtigd om zijn inkoopfacturen te bevestigen.', ar: 'لم يفوّضك أي عميل بعد لتأكيد فواتير مشترياته.', en: 'No client has authorised you to confirm their purchase invoices yet.' },
   'bh.bev.geenMandaat.anders': { nl: 'Dit is een andere machtiging dan die om te factureren — een klant kan er één geven en de ander niet.', ar: 'هذا تفويض مختلف عن تفويض إصدار الفواتير — قد يمنح العميل أحدهما دون الآخر.', en: 'This is a different authorisation from the one for invoicing — a client can grant one and not the other.' },
   'bh.bev.geenMandaat.zetAan': { nl: 'Hij zet het zelf aan bij', ar: 'وهو يفعّله بنفسه من', en: 'He turns it on himself under' },

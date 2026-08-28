@@ -28,6 +28,8 @@
 // ondernemer stilzetten met één POST.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [IN-CHUNK] Een id-lijst reist in de URL — in brokken, zie supabase-paginate.ts.
+import { chunkIds } from '@/lib/supabase-paginate'
 import * as Sentry from '@sentry/nextjs'
 
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -100,13 +102,18 @@ export async function POST(req: NextRequest) {
     }
 
     const ids = facturen.map((f) => f.id as string)
-    const { error: pauzeFout } = await pipeline
-      .from('invoices')
-      .update({ reminders_paused: true })
-      .in('id', ids)
-    if (pauzeFout) {
-      Sentry.captureException(new Error(pauzeFout.message), { tags: { feature: 'email-bounce', phase: 'pause' } })
-      return NextResponse.json({ error: 'pause_failed' }, { status: 500 })
+    // [IN-CHUNK] Per brok. Eén dood adres met genoeg openstaande facturen liet de id-lijst de URL
+    // overlopen, en dan pauzeerde er GEEN enkele herinnering — dus bleef de app mailen naar een
+    // adres waarvan ze zojuist had vastgesteld dat het niet bestaat.
+    for (const chunk of chunkIds(ids)) {
+      const { error: pauzeFout } = await pipeline
+        .from('invoices')
+        .update({ reminders_paused: true })
+        .in('id', chunk)
+      if (pauzeFout) {
+        Sentry.captureException(new Error(pauzeFout.message), { tags: { feature: 'email-bounce', phase: 'pause' } })
+        return NextResponse.json({ error: 'pause_failed' }, { status: 500 })
+      }
     }
 
     // Eén melding per ondernemer, met de nummers erin. Twee facturen aan hetzelfde dode adres is

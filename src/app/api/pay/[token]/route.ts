@@ -8,6 +8,8 @@
 // existence of a draft/non-payable invoice.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { toPublicPayView, toPublicBundlePayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
@@ -164,13 +166,27 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
   const ids = (links ?? []).map((l) => l.invoice_id)
   if (ids.length === 0) return notFound
 
-  const { data: invoices, error: invoicesErr } = await pipeline
-    .from('invoices')
-    .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
-    .in('id', ids)
-    .eq('sender_id', bundle.user_id)
-  if (invoicesErr) return payUnavailable('bundle invoices lookup failed', { token: tokenTail(token), error: invoicesErr.message })
-  if (!invoices || invoices.length === 0) return notFound
+  // [IN-CHUNK] Gechunkt. Blijft falen als 503 met "probeer opnieuw", nooit als een lager bedrag.
+  let invoices: Array<{
+    id: string; sender_id: string | null; direction: string | null; invoice_type: string | null
+    status: string | null; invoice_number: string | null; payment_reference: string | null
+    total_inc_btw: number | null; amount_paid: number | null; client_name: string | null
+    pay_token: string | null; due_date: string | null
+  }>
+  try {
+    invoices = await fetchAllRowsForIds(ids, (chunk, from, to) =>
+      pipeline
+        .from('invoices')
+        .select('id, sender_id, direction, invoice_type, status, invoice_number, payment_reference, total_inc_btw, amount_paid, client_name, pay_token, due_date')
+        .in('id', chunk)
+        .eq('sender_id', bundle.user_id)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+  } catch (e) {
+    return payUnavailable('bundle invoices lookup failed', { token: tokenTail(token), error: e instanceof Error ? e.message : 'read failed' })
+  }
+  if (invoices.length === 0) return notFound
 
   // [CREDITNOTA-NO-CHASE] Drop any invoice in the bundle the owner has since withdrawn, so the
   // combined amount never asks for money that is no longer owed. Fails CLOSED (the whole page
@@ -183,16 +199,24 @@ async function bundleView(pipeline: ReturnType<typeof createPipelineClient>, tok
   // still owes instead of being dropped whole. (The comment sits ABOVE the chain rather than inside
   // it: [RLS-UIT] matches service-role queries on their own text, and a comment spliced between the
   // links changes that text — the query then reads as a new, unreviewed one.)
-  const { data: creditRows, error: creditErr } = await pipeline
-    .from('invoices')
-    .select('original_invoice_id, total_inc_btw')
-    .eq('invoice_type', 'creditnota')
-    .in('original_invoice_id', ids)
+  // [IN-CHUNK] Gechunkt — de bundel-id-lijst reist in de URL, en die grens gold hier nog wel.
   // Still fails CLOSED — nothing is rendered, so the combined amount can never over-ask. What
   // changes is only what the customer is told: 503 and "try again" instead of "unknown link". Both
   // refuse equally; one of them is true.
-  if (creditErr) return payUnavailable('credited-invoice lookup failed', { token: tokenTail(token), error: creditErr.message })
-  const creditRowList = (creditRows ?? []) as { original_invoice_id: string | null; total_inc_btw: number | null }[]
+  let creditRowList: { original_invoice_id: string | null; total_inc_btw: number | null }[]
+  try {
+    creditRowList = await fetchAllRowsForIds(ids, (chunk, from, to) =>
+      pipeline
+        .from('invoices')
+        .select('original_invoice_id, total_inc_btw')
+        .eq('invoice_type', 'creditnota')
+        .in('original_invoice_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+  } catch (e) {
+    return payUnavailable('credited-invoice lookup failed', { token: tokenTail(token), error: e instanceof Error ? e.message : 'read failed' })
+  }
   const creditedByInvoice = creditedTotalsFrom(creditRowList)
   const volledig = fullyCreditedIdsFrom(
     creditRowList,

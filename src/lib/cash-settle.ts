@@ -26,7 +26,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
 // [PAGINATION] PostgREST truncates at ~1000 rows SILENTLY. Everywhere else that is an
 // understatement; here it feeds a DESTRUCTIVE pass — see the note above the reads below.
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { chunkIds, fetchAllRows } from "@/lib/supabase-paginate";
 // [KAS-STIL] Caught failures that must still reach someone — the same reporter incasso-settle.ts
 // uses for the same class, in the same hourly reconcile. See report-handled.ts.
 import { reportHandledFailure } from "@/lib/report-handled";
@@ -380,11 +380,18 @@ export async function reconcileCashSettlements(supabase: SupabaseClient<any>, us
 
     // Delete the orphaned settlements (their invoice is no longer paid-in-cash) — the reversal.
     if (toDeleteIds.length > 0) {
-      const { error } = await supabase
-        .from("cash_entries")
-        .delete()
-        .eq("user_id", userId)
-        .in("id", toDeleteIds);
+      // [IN-CHUNK] Per brok: de id-lijst reist in de URL, en één 414 liet ALLE verweesde
+      // afrekeningen staan — precies de toestand die het blok hieronder als data-integriteit
+      // rapporteert. De eerste mislukte brok stopt de lus en rapporteert, zoals voorheen.
+      let error: { message: string } | null = null;
+      for (const chunk of chunkIds(toDeleteIds)) {
+        const { error: chunkError } = await supabase
+          .from("cash_entries")
+          .delete()
+          .eq("user_id", userId)
+          .in("id", chunk);
+        if (chunkError) { error = chunkError; break; }
+      }
       if (error) {
         // [KAS-STIL] The other direction: the invoice is no longer paid in cash, the drawer still
         // says it was, and the balance stands LOWER than the money really there.
