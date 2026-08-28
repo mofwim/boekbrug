@@ -68,7 +68,8 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   ["/dashboard/settings/facturering", "chrome.facturering"],
   ["/dashboard/messages", "chrome.berichten"],
   ["/dashboard/werkplek", "chrome.werkplek"],
-  ["/dashboard/clients/invite", "chrome.klantToevoegen"],
+  // [UITNODIGING] /dashboard/clients/invite is nu een pure doorverwijzing naar beheer — een
+  // titel voor een pagina die nooit rendert is dode configuratie.
   ["/dashboard/clients/beheer", "chrome.klantenBeheren"],
   // [ROLE-PARITY] /dashboard/accountant/werkplek now redirects to the home (its
   // tools live there as a tile grid), so it no longer needs a sub-page title.

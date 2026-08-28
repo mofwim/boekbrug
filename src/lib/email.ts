@@ -171,6 +171,15 @@ export async function sendClientInvite({
            style="display:inline-block; background:#1a73e8; color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; margin-top:16px;">
           Uitnodiging accepteren
         </a>
+        <!-- [UITNODIGING] De twee zinnen die elke gestrande acceptatie hadden voorkomen. De
+             acceptatie weigert elk ander adres dan het uitgenodigde (terecht — het token is per
+             mail verstuurd), dus zeg WELK adres het goede is vóór iemand met een ander
+             registreert. En de link verloopt — de teamgenoot-mail zei dat al, deze niet. -->
+        <p style="color: #5f6368; font-size: 13px; margin-top: 16px;">
+          Nog geen account? Je maakt er in een minuut een — gebruik daarbij dit e-mailadres
+          (<strong>${escapeHtml(toEmail)}</strong>), want de uitnodiging hoort daarbij.
+        </p>
+        <p style="color: #5f6368; font-size: 12px;">Deze uitnodiging verloopt na 14 dagen.</p>
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>
       </div>
     `

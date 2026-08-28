@@ -4652,6 +4652,84 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [UITNODIGING] The invite path is the distribution channel, wired end to end ────────────────
+//
+// One office inviting fifty clients sends fifty people down this exact path, and the audit found
+// it broken at its MAIN case: a fresh registrant confirmed their e-mail and the OAuth callback
+// threw the token away for the onboarding wizard — the invitation silently stayed pending. Around
+// that sat six smaller failures of the same shape: the page knew something and did not say it.
+// The behaviour of the callback rule lives in auth-landing.test.ts; what is held here is the
+// WIRING of everything around it.
+test("[UITNODIGING] the invite journey carries what it knows, at every step", () => {
+  // The callback honors an invite destination before the wizard — narrowly.
+  const landing = code("src/lib/auth-landing.ts");
+  assert.match(landing, /const isInviteAccept = hasNext && next\.startsWith\("\/invite\/accept"\)/);
+  assert.match(landing, /destination: isInviteAccept \? next : "\/onboarding"/,
+    "a fresh account with an invite destination accepts FIRST; onboarding follows via the middleware");
+
+  // The accept page: direction-aware copy, the server's sentence on failure, and a register link
+  // that carries the role and the invited address.
+  const pagina = code("src/app/invite/accept/page.tsx");
+  assert.match(pagina, /info\.invitedBy === 'accountant'/, "the page reads the direction the API always returned");
+  assert.match(pagina, /\? t\('uitn\.vanKantoor', \{ naam: inviterName \}\)\s*\n\s*: t\('uitn\.vanOndernemer'/,
+    "…and the sentence follows it, instead of telling a client they are becoming an accountant");
+  assert.match(pagina, /failureText\(res\.status, json, t\('uitn\.fout\.ongeldig'\)\)/,
+    "the server computes the remedy (wrong address, expired) — the page may not throw it away");
+  assert.match(pagina, /&rol=\$\{fromAccountant \? 'zzper' : 'accountant'\}/,
+    "the register link carries the role, or the invited client can pick Boekhouder and strand in the wrong portal");
+  assert.match(pagina, /&email=\$\{encodeURIComponent\(invitedEmail\)\}/,
+    "…and the invited address, or typing a different one is the default failure");
+  assert.match(pagina, /fetch\('\/api\/invite\/decline'/, "Weigeren writes something at last");
+
+  // Register accepts the carried address — prefilled, validated, still editable.
+  assert.match(code("src/app/register/page.tsx"), /const voorafEmail = searchParams\.get\('email'\)/);
+
+  // The decline and cancel routes close a token for good, each scoped to what its caller may
+  // touch: decline by the mailed token, cancel by id AND the inviting office ([RLS-UIT] — no
+  // UPDATE policy exists, so the filter is the boundary).
+  assert.match(code("src/app/api/invite/decline/route.ts"), /\.update\(\{ status: 'declined' \}\)[\s\S]{0,120}?\.eq\('status', 'pending'\)/);
+  const cancel = code("src/app/api/invite/cancel/route.ts");
+  assert.match(cancel, /\.eq\('zzper_id', user\.id\)/, "an office may only withdraw its own invitations");
+  assert.match(cancel, /\.eq\('status', 'pending'\)/, "…and only ones still open");
+
+  // The duplicate guard counts only a STILL-VALID pending from THIS office. Without either bound
+  // it blocked the channel: office A's stale pending made an address permanently uninvitable for
+  // every office, forever.
+  const invite = code("src/app/api/invite/client/route.ts");
+  assert.match(invite, /\.eq\('zzper_id', user\.id\)[\s\S]{0,120}?\.eq\('status', 'pending'\)[\s\S]{0,60}?\.gte\('created_at', versGrens\)/,
+    "scoped to this office and to the validity window the accept route already enforces");
+
+  // The acceptance tells the party who was WAITING. For an office invitation that is the office —
+  // it used to congratulate the client on accepting an invitation they never sent, and tell the
+  // office nothing.
+  const accept = code("src/app/api/invite/accept/route.ts");
+  assert.match(accept, /if \(invitation\.invited_by === 'accountant'\) \{[\s\S]{0,700}?userId: accountantId/,
+    "the office hears that its client accepted");
+  assert.match(accept, /link: '\/dashboard\/clients\/beheer'/);
+
+  // The office can SEE what it sent: the beheer page reads the open invitations and the screen
+  // renders them with a withdraw button.
+  assert.match(code("src/app/dashboard/clients/beheer/page.tsx"), /openInvites=\{\(openInvites \?\? \[\]\)/);
+  const beheer = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(beheer, /t\('bh\.klant\.uitn\.kop', \{ count: invites\.length \}\)/);
+  assert.match(beheer, /handleCancelInvite\(inv\.id\)/);
+
+  // Onboarding does not ask the freshly linked client to invite the accountant they already have.
+  assert.match(code("src/components/onboarding/OnboardingWizard.tsx"),
+    /linkedAccountantName \? \([\s\S]{0,900}?\) : \(\s*\n\s*<StepAccountant/,
+    "step 5 confirms the existing link instead of soliciting a second, reverse invitation");
+  assert.match(code("src/app/onboarding/page.tsx"), /linkedAccountantName=\{linkedAccountantName\}/);
+
+  // The email says which address the invitation belongs to, and that it expires — the two
+  // sentences that prevent the stranded acceptances the audit measured.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /gebruik daarbij dit e-mailadres[\s\S]{0,120}?escapeHtml\(toEmail\)/);
+  assert.match(mail, /Deze uitnodiging verloopt na 14 dagen\./);
+
+  // One invite screen, not two drifting copies: the old standalone page is a pure redirect.
+  assert.match(code("src/app/dashboard/clients/invite/page.tsx"), /redirect\('\/dashboard\/clients\/beheer'\)/);
+});
+
 // ── [ZELF-EERST] Nothing books itself until the owner says so ───────────────────────────────────
 //
 // The auto-advance bar is high, but it answers the machine's question ("how careful am I?") and
@@ -7088,6 +7166,9 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // rule as every other screen. What stays Dutch here is marked [TAAL-DB] on its own line and is
     // always the same kind of thing: text that is SENT to someone else — a notification stored for
     // the client, a message body, a nav label quoted as the other person's screen writes it.
+    // [UITNODIGING] The page every invited client lands on — public, and translated on purpose:
+    // the invited person has never seen the product and may not read Dutch.
+    "src/app/invite/accept/page.tsx",
     "src/modules/accountant/pages/AccountantHome.tsx",
     "src/modules/accountant/pages/AccountantWerkboard.tsx",
     "src/modules/accountant/pages/AccountantFactuur.tsx",

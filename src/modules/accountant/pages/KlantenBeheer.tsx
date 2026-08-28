@@ -48,8 +48,17 @@ function readinessLine(t: Translator, r: ClientReadiness): string {
 // Types
 // ─────────────────────────────────────────────────────────
 
+/** [UITNODIGING] Eén verstuurde, nog openstaande kantoor-uitnodiging. */
+export interface OpenInvite {
+  id: string
+  email: string
+  sentAt: string | null
+}
+
 interface Props {
   initialClients: ClientSummary[]
+  /** [UITNODIGING] De uitnodigingen die de deur uit zijn en waar nog niemand op reageerde. */
+  openInvites?: OpenInvite[]
   /**
    * [BOEKHOUDER-LEEG] true = the list could not be READ. This screen manages the links themselves,
    * so "Nog geen klanten gekoppeld" is a statement about this accountant's mandates — and a failed
@@ -62,12 +71,15 @@ interface Props {
 // Component
 // ─────────────────────────────────────────────────────────
 
-export default function KlantenBeheer({ initialClients, clientsUnreadable }: Props) {
+export default function KlantenBeheer({ initialClients, clientsUnreadable, openInvites = [] }: Props) {
   const locale = useLocale()
   const t = translator(locale)
   const router = useRouter()
 
   const [clients, setClients] = useState<ClientSummary[]>(initialClients)
+  // [UITNODIGING] Lokale kopie zodat versturen en intrekken direct zichtbaar zijn.
+  const [invites, setInvites] = useState<OpenInvite[]>(openInvites)
+  const [cancelBusy, setCancelBusy] = useState<string | null>(null)
   // [SMART-FILTER] Roster search (bedrijfsnaam / naam / e-mail), memoized — unbounded list.
   const [search, setSearch] = useState('')
   const shownClients = useMemo(() => {
@@ -122,12 +134,47 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
       } else {
         setInviteSuccess(true)
         setInviteEmail('')
+        // [UITNODIGING] De verse uitnodiging meteen in het overzicht — geen herlaad nodig.
+        if (json?.invitation?.id) {
+          setInvites((prev) => [json.invitation as OpenInvite, ...prev.filter((i) => i.id !== json.invitation.id)])
+        }
       }
     } catch {
       setInviteError(t('bh.klant.error.network'))
     } finally {
       setInviteLoading(false)
     }
+  }
+
+  // [UITNODIGING] Intrekken: de gemailde link is daarna echt dood (de acceptatie filtert op
+  // 'pending'), en het adres is direct opnieuw uitnodigbaar — de reparatieweg voor een tikfout.
+  async function handleCancelInvite(id: string) {
+    setCancelBusy(id)
+    try {
+      const res = await fetch('/api/invite/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      // Ook een 409 ("staat niet meer open") betekent: weg uit deze lijst.
+      if (res.ok || res.status === 409) setInvites((prev) => prev.filter((i) => i.id !== id))
+    } catch {
+      /* volgende poging of herlaad toont de waarheid */
+    } finally {
+      setCancelBusy(null)
+    }
+  }
+
+  // [UITNODIGING] De klok één keer per mount, buiten de render om (readClock-vorm — zie
+  // /dashboard/accountant): resterende dagen zijn geen live-aftelklok, en de compiler merkt
+  // Date.now() in een render terecht als onzuiver aan.
+  const [nu] = useState(() => new Date().getTime())
+
+  /** Hoeveel dagen een uitnodiging nog geldig is (14 — zelfde grens als de acceptatieroute). */
+  function dagenOver(sentAt: string | null): number {
+    if (!sentAt) return 0
+    const verstreken = (nu - new Date(sentAt).getTime()) / 86400000
+    return Math.max(0, Math.ceil(14 - verstreken))
   }
 
   // ─── [BULK-UITNODIGEN] Meerdere klanten in één keer ────────────────────────
@@ -317,6 +364,41 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable }: Pro
             )}
           </div>
         </div>
+
+        {/* ── [UITNODIGING] Verstuurd, wacht op reactie ──
+            Tot nu toe was het enige spoor van een uitnodiging de fout bij opnieuw proberen.
+            Een kantoor dat er veertig verstuurt, hoort te kunnen zien wat er uitstaat, sinds
+            wanneer, en hoe lang de link nog leeft — en een tikfout hoort intrekbaar te zijn. */}
+        {invites.length > 0 && (
+          <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0' }}>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>
+                {t('bh.klant.uitn.kop', { count: invites.length })}
+              </h2>
+            </div>
+            <div>
+              {invites.map((inv) => (
+                <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid #F1F3F4' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* [TAAL] dir="ltr": een e-mailadres blijft links-naar-rechts, ook in het Arabisch. */}
+                    <p dir="ltr" style={{ fontSize: 13.5, color: '#202124', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'start' }}>{inv.email}</p>
+                    <p style={{ fontSize: 12, color: '#5F6368', margin: '2px 0 0' }}>
+                      {t('bh.klant.uitn.verloopt', { dagen: dagenOver(inv.sentAt) })}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleCancelInvite(inv.id)}
+                    disabled={cancelBusy === inv.id}
+                    className="tap-44"
+                    style={{ border: '1px solid #DADCE0', background: '#fff', color: '#5F6368', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, cursor: 'pointer', opacity: cancelBusy === inv.id ? 0.5 : 1, whiteSpace: 'nowrap' }}
+                  >
+                    {t('bh.klant.uitn.intrekken')}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Client list ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>

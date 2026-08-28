@@ -53,12 +53,23 @@ export async function POST(request: NextRequest) {
     // [CONTROL] block a duplicate pending invite — no DB uniqueness on
     // (accountant_email, invited_by), so a double click would otherwise create
     // duplicate rows AND send duplicate emails.
+    //
+    // [UITNODIGING] Twee grenzen die er niet stonden, en allebei blokkeerden ze het kanaal:
+    //   · VAN WIE — zonder .eq('zzper_id') telde de pending van kantoor A ook voor kantoor B,
+    //     dus wie van boekhouder wisselde kon door de vorige nooit meer worden uitgenodigd.
+    //   · HOE OUD — een uitnodiging verloopt na veertien dagen (accept weigert hem dan), maar de
+    //     rij bleef eeuwig 'pending' en blokkeerde dit adres voorgoed. Een klant die de mail één
+    //     keer miste, was daarmee permanent onbereikbaar — en niemand kon zien waarom.
+    // De grens is nu: alleen een NOG GELDIGE pending van DIT kantoor telt als duplicaat.
+    const versGrens = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
     const { data: existingInvites } = await supabase
       .from('invitations')
       .select('id')
+      .eq('zzper_id', user.id)
       .eq('accountant_email', clientEmail)
       .eq('invited_by', 'accountant')
       .eq('status', 'pending')
+      .gte('created_at', versGrens)
       .limit(1)
     if (existingInvites && existingInvites.length > 0) {
       return NextResponse.json({ error: 'Er is al een uitnodiging verstuurd naar dit adres.' }, { status: 400 })
@@ -110,7 +121,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    return NextResponse.json({ success: true })
+    // [UITNODIGING] Het scherm toont de openstaande uitnodigingen; geef de verse rij terug zodat
+    // hij er direct bij staat in plaats van pas na een herlaad.
+    return NextResponse.json({
+      success: true,
+      invitation: { id: invitation.id, email: clientEmail, sentAt: invitation.created_at ?? null },
+    })
 
   } catch (error) {
     console.error('Invite client error:', error)

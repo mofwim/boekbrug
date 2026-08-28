@@ -105,7 +105,6 @@ export const MESSAGES = {
   'chrome.facturering': { nl: 'Facturering', ar: 'إعداد الفواتير', en: 'Invoicing' },
   'chrome.berichten': { nl: 'Berichten', ar: 'الرسائل', en: 'Messages' },
   'chrome.werkplek': { nl: 'Mijn werkplek', ar: 'مساحة عملي', en: 'My workspace' },
-  'chrome.klantToevoegen': { nl: 'Klant toevoegen', ar: 'إضافة عميل', en: 'Add client' },
   'chrome.klantenBeheren': { nl: 'Klanten beheren', ar: 'إدارة العملاء', en: 'Manage clients' },
   'chrome.agenda': { nl: 'Aangifte & status', ar: 'الإقرار والحالة', en: 'Return & status' },
   'chrome.factuurNamens': { nl: 'Factuur namens klant', ar: 'فاتورة نيابةً عن عميل', en: 'Invoice on behalf of a client' },
@@ -11875,6 +11874,36 @@ export const MESSAGES = {
     ar: 'ستختفي من قائمة ساعاتك. ولن تتمكّن بعدها من فوترة عمل أنجزته فعلاً.',
   },
 
+
+  // ─── [UITNODIGING] De pagina waar een uitnodiging een koppeling wordt ───────────────────────
+  //
+  // De genodigde is meestal een KLANT van een kantoor — iemand die BoekBrug nog nooit zag en er
+  // via de mail van zijn boekhouder binnenkomt. De eerste kantoren lezen Arabisch, dus dit is
+  // een van de weinige publieke pagina's waar de vertaling er vanaf dag één toe doet.
+  // Het kantoor-overzicht van wat er uitstaat (KlantenBeheer).
+  'bh.klant.uitn.kop': { nl: 'Uitgenodigd — wacht op reactie ({count})', ar: 'دعوات بانتظار الرد ({count})', en: 'Invited — awaiting reply ({count})' },
+  'bh.klant.uitn.verloopt': { nl: 'Link nog {dagen} dagen geldig', ar: 'الرابط صالح {dagen} أيام بعد', en: 'Link valid for {dagen} more days' },
+  'bh.klant.uitn.intrekken': { nl: 'Intrekken', ar: 'سحب الدعوة', en: 'Withdraw' },
+  // Stap 5 van de wizard, voor wie al gekoppeld binnenkwam (via de uitnodiging van zijn kantoor).
+  'onb.kantoor.titel': { nl: 'Je boekhouder staat al klaar', ar: 'محاسبك جاهز بالفعل', en: 'Your accountant is already set' },
+  'onb.kantoor.uitleg': { nl: 'Je bent gekoppeld aan {naam}. Alles wat je verstuurt, ontvangt of als betaald markeert, kan hij aan het eind van het kwartaal in één keer ophalen — je concepten blijven van jou alleen.', ar: 'أنت مرتبط بـ {naam}. كل ما ترسله أو تستقبله أو تعلّمه كمدفوع يمكنه جمعه دفعة واحدة في نهاية الربع — ومسوّداتك تبقى لك وحدك.', en: 'You are linked to {naam}. Everything you send, receive or mark as paid can be collected in one go at quarter end — your drafts stay yours alone.' },
+  'uitn.laden': { nl: 'Laden…', ar: 'جارٍ التحميل…', en: 'Loading…' },
+  'uitn.titel': { nl: 'Je bent uitgenodigd', ar: 'تمت دعوتك', en: 'You are invited' },
+  // Twee richtingen, twee zinnen — zie de kop van invite/accept/page.tsx.
+  'uitn.vanKantoor': { nl: '{naam} nodigt je uit om via BoekBrug samen te werken. Jij houdt je administratie bij; je boekhouder haalt op wat hij nodig heeft.', ar: '{naam} يدعوك للعمل معاً عبر BoekBrug. أنت تتابع إدارتك، ومحاسبك يحصل على ما يحتاجه.', en: '{naam} invites you to work together through BoekBrug. You keep your administration; your accountant picks up what they need.' },
+  'uitn.vanOndernemer': { nl: '{naam} wil je toevoegen als boekhouder via BoekBrug.', ar: '{naam} يريد إضافتك محاسباً له عبر BoekBrug.', en: '{naam} wants to add you as their accountant on BoekBrug.' },
+  'uitn.ingelogdAls': { nl: 'Ingelogd als {email}', ar: 'مسجّل الدخول كـ {email}', en: 'Signed in as {email}' },
+  'uitn.accepteren': { nl: 'Uitnodiging accepteren', ar: 'قبول الدعوة', en: 'Accept invitation' },
+  'uitn.weigeren': { nl: 'Weigeren', ar: 'رفض', en: 'Decline' },
+  'uitn.eerstAccount': { nl: 'Maak een account aan (of log in) om de uitnodiging te accepteren.', ar: 'أنشئ حساباً (أو سجّل الدخول) لقبول الدعوة.', en: 'Create an account (or sign in) to accept the invitation.' },
+  'uitn.registreren': { nl: 'Account aanmaken', ar: 'إنشاء حساب', en: 'Create account' },
+  'uitn.inloggen': { nl: 'Inloggen', ar: 'تسجيل الدخول', en: 'Sign in' },
+  'uitn.klaar.titel': { nl: 'Uitnodiging geaccepteerd!', ar: 'تم قبول الدعوة!', en: 'Invitation accepted!' },
+  'uitn.klaar.uitleg': { nl: 'Je wordt doorgestuurd naar je dashboard…', ar: 'يتم تحويلك إلى لوحتك…', en: 'Taking you to your dashboard…' },
+  'uitn.geweigerd.titel': { nl: 'Uitnodiging geweigerd', ar: 'تم رفض الدعوة', en: 'Invitation declined' },
+  'uitn.geweigerd.uitleg': { nl: 'Er is niets gekoppeld. Je kunt dit venster sluiten.', ar: 'لم يُربط أي شيء. يمكنك إغلاق هذه النافذة.', en: 'Nothing was linked. You can close this window.' },
+  'uitn.fout.titel': { nl: 'Dat lukte niet', ar: 'لم ينجح ذلك', en: 'That did not work' },
+  'uitn.fout.ongeldig': { nl: 'Deze uitnodiging is verlopen of al gebruikt. Vraag je boekhouder om een nieuwe.', ar: 'هذه الدعوة منتهية أو استُخدمت من قبل. اطلب من محاسبك دعوة جديدة.', en: 'This invitation has expired or was already used. Ask your accountant for a new one.' },
 
   // ═══ [BOEKHOUDER] De schermen van de boekhouder ═══════════════════════════════════════════════
   //

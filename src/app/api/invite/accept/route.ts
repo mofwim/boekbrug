@@ -141,28 +141,53 @@ if (!invitation) return NextResponse.json({ error: 'Ongeldig' }, { status: 400 }
       console.error('[SEC-INVITE] uitnodiging niet als geaccepteerd kunnen markeren — token blijft leven:', acceptError.message)
     }
 
-    // إشعار ZZP'er بأن المحاسب قبل الدعوة (via service role — bypasses RLS)
+    // [UITNODIGING] Het bericht gaat naar wie WACHTTE — niet naar wie zojuist zelf klikte.
+    //
+    // Dit blok kende maar één richting en stuurde daardoor bij een kantoor-uitnodiging het
+    // bericht naar de KLANT ("X heeft jouw uitnodiging geaccepteerd" — over een uitnodiging die
+    // hij nooit verstuurde), terwijl de boekhouder — de enige die zat te wachten, en het
+    // distributiekanaal van dit product — helemaal niets hoorde. Een kantoor dat vijftig klanten
+    // uitnodigt hoort elke acceptatie binnen zien komen; dat is het moment waarop het portaal
+    // zijn belofte waarmaakt.
     try {
       const pipeline = createPipelineClient()
 
-      const { data: accountantProfile } = await pipeline
-        .from('profiles')
-        .select('full_name, company_name')
-        .eq('id', accountantId)
-        .single()
-
-      const accountantName = accountantProfile?.company_name
-        || accountantProfile?.full_name
-        || invitation.accountant_email
-
-      const melding = await createNotification({
-        userId: zzperId,
-        title: 'Boekhouder heeft uitnodiging geaccepteerd',
-        body: `${accountantName} heeft jouw uitnodiging geaccepteerd en is nu jouw boekhouder.`,
-        type: 'invite',
-        link: '/dashboard/settings',
-      })
-      if (!melding.ok) console.error('[invite/accept] notification failed:', melding.error)
+      if (invitation.invited_by === 'accountant') {
+        // De klant accepteerde — vertel het het kantoor, met de klantnaam erbij.
+        const { data: klantProfiel } = await pipeline
+          .from('profiles')
+          .select('full_name, company_name')
+          .eq('id', zzperId)
+          .single()
+        const klantNaam = klantProfiel?.company_name || klantProfiel?.full_name || user.email || 'Je klant'
+        const melding = await createNotification({
+          userId: accountantId,
+          // [TAAL-DB] Op het scherm van de boekhouder, als opgeslagen berichttekst.
+          title: 'Klant heeft je uitnodiging geaccepteerd',
+          body: `${klantNaam} is nu aan je kantoor gekoppeld.`,
+          type: 'invite',
+          link: '/dashboard/clients/beheer',
+        })
+        if (!melding.ok) console.error('[invite/accept] notification failed:', melding.error)
+      } else {
+        // De boekhouder accepteerde — vertel het de ondernemer, zoals altijd.
+        const { data: accountantProfile } = await pipeline
+          .from('profiles')
+          .select('full_name, company_name')
+          .eq('id', accountantId)
+          .single()
+        const accountantName = accountantProfile?.company_name
+          || accountantProfile?.full_name
+          || invitation.accountant_email
+        const melding = await createNotification({
+          userId: zzperId,
+          title: 'Boekhouder heeft uitnodiging geaccepteerd',
+          body: `${accountantName} heeft jouw uitnodiging geaccepteerd en is nu jouw boekhouder.`,
+          type: 'invite',
+          link: '/dashboard/settings',
+        })
+        if (!melding.ok) console.error('[invite/accept] notification failed:', melding.error)
+      }
     } catch (notifErr) {
       console.error('[invite/accept] notification failed:', notifErr)
       // non-blocking — don't fail the accept
