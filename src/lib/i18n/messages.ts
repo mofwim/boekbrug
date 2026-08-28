@@ -11171,6 +11171,12 @@ export const MESSAGES = {
   'log.member.joined': { nl: 'Medewerker toegetreden', en: 'Team member joined', ar: 'انضمّ موظف' },
   'log.member.revoked': { nl: 'Toegang van een medewerker ingetrokken', en: 'Team member\'s access withdrawn', ar: 'سُحب وصول موظف' },
   'log.retention.warning_sent': { nl: 'Waarschuwing over de bewaartermijn verstuurd', en: 'Retention warning sent', ar: 'أُرسل تحذير بشأن مدة الحفظ' },
+  // [PAKKET-LINK] Dezelfde drie feiten, maar voor de deel-link naar een boekhouder ZONDER account.
+  // Apart van de regel hieronder omdat er geen ingelogde boekhouder achter zit: dit is het spoor
+  // van de EIGENAAR — naar wie hij zijn boeken stuurde, wanneer, en of ze zijn opgehaald.
+  'log.package.link_shared': { nl: 'Je hebt het kwartaalpakket naar je boekhouder gestuurd', en: 'You sent the quarterly package to your bookkeeper', ar: 'أرسلت حزمة الربع إلى محاسبك' },
+  'log.package.link_downloaded': { nl: 'Je boekhouder heeft het kwartaalpakket via je link opgehaald', en: 'Your bookkeeper collected the quarterly package through your link', ar: 'حمّل محاسبك حزمة الربع عبر رابطك' },
+  'log.package.link_revoked': { nl: 'Je hebt de deel-link naar je boekhouder ingetrokken', en: 'You withdrew the share link to your bookkeeper', ar: 'سحبت رابط المشاركة المُرسل إلى محاسبك' },
   'log.accountant.package_downloaded': { nl: 'Je boekhouder heeft het kwartaalpakket gedownload', en: 'Your bookkeeper downloaded the quarterly package', ar: 'نزّل محاسبك حزمة الربع' },
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
@@ -11888,6 +11894,18 @@ export const MESSAGES = {
   // Stap 5 van de wizard, voor wie al gekoppeld binnenkwam (via de uitnodiging van zijn kantoor).
   'onb.kantoor.titel': { nl: 'Je boekhouder staat al klaar', ar: 'محاسبك جاهز بالفعل', en: 'Your accountant is already set' },
   'onb.kantoor.uitleg': { nl: 'Je bent gekoppeld aan {naam}. Alles wat je verstuurt, ontvangt of als betaald markeert, kan hij aan het eind van het kwartaal in één keer ophalen — je concepten blijven van jou alleen.', ar: 'أنت مرتبط بـ {naam}. كل ما ترسله أو تستقبله أو تعلّمه كمدفوع يمكنه جمعه دفعة واحدة في نهاية الربع — ومسوّداتك تبقى لك وحدك.', en: 'You are linked to {naam}. Everything you send, receive or mark as paid can be collected in one go at quarter end — your drafts stay yours alone.' },
+  // ─── [PAKKET-LINK] Het kwartaal versturen naar een boekhouder zonder account ────────────────
+  'klr.deel.knop': { nl: 'Of stuur het naar je boekhouder', ar: 'أو أرسله إلى محاسبك', en: 'Or send it to your accountant' },
+  'klr.deel.uitleg': { nl: 'Wij mailen hem een downloadlink. Hij heeft géén account nodig — de link werkt 30 dagen en je kunt hem altijd intrekken.', ar: 'نرسل له رابط تنزيل بالبريد. لا يحتاج حساباً — الرابط يعمل 30 يوماً ويمكنك سحبه في أي وقت.', en: 'We e-mail him a download link. He needs no account — the link works for 30 days and you can withdraw it at any time.' },
+  'klr.deel.adresLabel': { nl: 'E-mailadres van je boekhouder', ar: 'البريد الإلكتروني لمحاسبك', en: 'Your accountant\'s e-mail address' },
+  'klr.deel.notitieLabel': { nl: 'Eigen bericht (optioneel)', ar: 'رسالة منك (اختيارية)', en: 'Your own message (optional)' },
+  'klr.deel.notitiePlaceholder': { nl: 'Bijvoorbeeld: de bon van de verzekering komt nog na.', ar: 'مثلاً: إيصال التأمين سيصل لاحقاً.', en: 'For example: the insurance receipt is still to come.' },
+  'klr.deel.versturen': { nl: 'Versturen', ar: 'إرسال', en: 'Send' },
+  'klr.deel.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
+  'klr.deel.verstuurd': { nl: '✓ Verstuurd naar {email}. Je ziet hier straks of hij het pakket heeft opgehaald.', ar: '✓ أُرسل إلى {email}. سترى هنا لاحقاً إن كان قد حمّل الحزمة.', en: '✓ Sent to {email}. You will see here whether he collected the package.' },
+  'klr.deel.fout': { nl: 'Versturen mislukt. Er is niets verstuurd — probeer het opnieuw.', ar: 'فشل الإرسال. لم يُرسل شيء — حاول مرة أخرى.', en: 'Sending failed. Nothing was sent — please try again.' },
+  'klr.deel.offline': { nl: 'Geen verbinding. Er is niets verstuurd.', ar: 'لا يوجد اتصال. لم يُرسل شيء.', en: 'No connection. Nothing was sent.' },
+
   // ─── [PROEFDOSSIER] Het voorbeelddossier — de bewijsplek vóór de eerste klant ───────────────
   'bh.home.klanten.eerste.voorbeeld': { nl: 'Eerst zien hoe een gevuld klantdossier eruitziet →', ar: 'شاهد أولاً كيف يبدو ملف عميل ممتلئ ←', en: 'First see what a filled client file looks like →' },
   'bh.demo.banner.titel': { nl: 'Voorbeeld — fictieve cijfers', ar: 'مثال — أرقام خيالية', en: 'Example — fictional figures' },

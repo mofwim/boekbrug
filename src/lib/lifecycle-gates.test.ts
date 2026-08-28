@@ -4450,11 +4450,13 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
 
   // Exactly three senders write to someone who is not a BoekBrug user.
   const viaOwner = [...mail.matchAll(/from: customerMailFrom\(/g)].length;
-  assert.equal(viaOwner, 3, `factuur, herinnering en offerte — gevonden: ${viaOwner}`);
+  // [PAKKET-LINK] Vier sinds het kwartaalpakket: die mail gaat óók namens de ondernemer naar een
+  // derde — zijn boekhouder — en die scant zijn inbox op klantnaam, niet op productnaam.
+  assert.equal(viaOwner, 4, `factuur, herinnering, offerte en kwartaalpakket — gevonden: ${viaOwner}`);
   // …and every one of them offers a way back. Counted, so adding a fourth customer mail without a
   // reply-to shows up here rather than in a customer's dead reply.
   const replies = [...mail.matchAll(/\.\.\.\(antwoordAdres \? \{ replyTo: antwoordAdres \} : \{\}\)/g)].length;
-  assert.equal(replies, 3, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
+  assert.equal(replies, 4, `elke klantmail heeft een antwoordadres — gevonden: ${replies}`);
 
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
@@ -4652,6 +4654,89 @@ test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => 
 // ends the ambiguity for every reader — the customer's software, an accountant's OCR, and our own
 // intake. The BEHAVIOUR (captions on the rendered page, on the right names) is held by
 // invoice-pdf-document.test.ts; held here is that the captions stay in the source at all.
+// ── [PAKKET-LINK] Handing the quarter to an accountant who has no account ──────────────────────
+//
+// The product's central promise — "at quarter end everything is ready for your accountant" — was
+// only DELIVERED when the accountant registered: the quarter-close cron walks accountant_clients,
+// and the download button in that mail points at a route that demands a login. For the most
+// common Dutch case (an office that has run on Exact for ten years and will never sign up
+// anywhere) the promise silently did not apply, and the owner was left downloading a ZIP and
+// attaching it to a mail by hand — the exact handwork this product removes, given back on the
+// last metre.
+//
+// The new path is a public, unauthenticated route that opens a complete quarter of somebody's
+// bookkeeping. Everything below is about keeping that one door narrow.
+test("[PAKKET-LINK] the public package route is opened by the token, and by nothing else", () => {
+  const publiek = code("src/app/api/pakket/route.ts");
+
+  // 1. WHAT IS BUILT COMES FROM THE ROW, NEVER FROM THE URL. This is the whole security model:
+  // a guest holding the token can reach exactly the quarter their client gave them, and no other.
+  assert.match(publiek, /ownerId: share\.user_id/, "the owner comes from the row");
+  assert.doesNotMatch(publiek, /searchParams\.get\("(year|quarter|clientId|ownerId)"\)/,
+    "no URL parameter may steer what is built — the token names the period");
+
+  // 2. FAIL-CLOSED on validity, through the one shared judge (so the screen and the route can
+  // never disagree about whether a link still works).
+  assert.match(publiek, /shareStatus\(share, Date\.now\(\)\) !== "live"/);
+  assert.match(publiek, /if \(!share \|\| shareStatus/, "unknown and dead tokens take the same exit");
+
+  // 3. A read FAILURE is not a dead link. Answering 404 on an unreadable lookup would tell an
+  // accountant their client's link is gone when the truth is that we could not look.
+  assert.match(publiek, /if \(error\) \{[\s\S]{0,300}?weiger\(503/);
+
+  // 4. Bounded, and per TOKEN. Building a package is dozens of reads plus a ZIP — the most
+  // expensive public action in the product. Not failOpen: if the counter cannot be read, the
+  // expensive action does not happen.
+  assert.match(publiek, /bucketKey: `pakket:\$\{token\}`/);
+  assert.doesNotMatch(publiek, /failOpen: true/, "the costliest public path may not fail open");
+
+  // 5. Shape-checked before it ever reaches the database.
+  assert.match(publiek, /\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}/, "a non-uuid never becomes a query");
+
+  // 6. [BEWIJS] The download is recorded — the owner must be able to see that their accountant
+  // collected it, or this handover is no more provable than a shared folder.
+  assert.match(publiek, /last_downloaded_at: new Date\(\)\.toISOString\(\)/);
+  assert.match(publiek, /action: "package\.link_downloaded"/);
+});
+
+test("[PAKKET-LINK] the owner creates, mails and can withdraw the link", () => {
+  const share = code("src/app/api/closing-package/share/route.ts");
+
+  // The token is minted by the DATABASE (gen_random_uuid on the column) — the insert may never
+  // carry one, or a client could choose its own key.
+  assert.doesNotMatch(share, /token:/, "no caller ever supplies a token");
+  assert.match(share, /user_id: user\.id/, "the row is stamped with the session's owner");
+  assert.match(share, /expires_at: shareExpiry\(nu\)/, "every link expires — set from the one constant");
+
+  // Withdrawal is scoped to the owner's own, still-open link, and comes BEFORE the rate limit:
+  // someone who mistyped an address must always be able to withdraw.
+  assert.match(share, /\.eq\("user_id", user\.id\)[\s\S]{0,120}?\.is\("revoked_at", null\)/);
+  assert.ok(
+    share.indexOf("revokeId") < share.indexOf("RATE_LIMITS.HEAVY_EXPORT"),
+    "withdrawing may never be blocked by the sending limit",
+  );
+
+  // [TRUST-INVITE] The mail IS the handover. If it was refused, the link is withdrawn again so no
+  // dead link is left behind claiming to have been sent.
+  assert.match(share, /if \(!bezorgd\) \{[\s\S]{0,400}?revoked_at: new Date\(\)\.toISOString\(\)/);
+
+  // The ZIP is NOT attached: a quarter with attachments runs to tens of megabytes, and a mail
+  // that size either bounces or lands in spam — the opposite of what [BEZORGING] fixed.
+  assert.doesNotMatch(share, /attachments/, "the link does the work, and a link can be withdrawn");
+
+  // The mail reaches a non-user and replies land with the CLIENT, not with us.
+  const mail = code("src/lib/email.ts");
+  assert.match(mail, /export async function sendQuarterPackageLink/);
+  assert.match(mail, /const antwoordAdres = clientEmail/,
+    "a question about these books belongs with the entrepreneur who sent them");
+  assert.match(mail, /from: customerMailFrom\(clientName\)/,
+    "[AFZENDERNAAM] an accountant scans their inbox on the CLIENT's name, not on ours");
+  assert.match(mail, /Je hebt hiervoor geen account nodig/, "it says the thing that makes it work");
+
+  // And the owner's screen offers it where they already stand.
+  assert.match(code("src/app/dashboard/klaar/KlaarClient.tsx"), /'\/api\/closing-package\/share'/);
+});
+
 // ── [PROEFDOSSIER] The proof moment stays fictional, derived, and reachable ────────────────────
 //
 // The example dossier is the screen a zero-client accountant sees at the exact moment they decide

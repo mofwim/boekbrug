@@ -225,6 +225,15 @@ export type AuditAction =
   // plus het kwartaal, en sanitizeForAudit strijkt sowieso alles wat er niet in hoort.
   | 'retention.warning_sent'
   | 'accountant.package_downloaded'   // ← het kwartaalpakket (ZIP) opgehaald
+  // [PAKKET-LINK] Hetzelfde feit, maar opgehaald via een deel-link door een boekhouder ZONDER
+  // account. Apart van de regel hierboven omdat er geen ingelogde gebruiker achter zit: het
+  // token is de credential, en de eigenaar is de enige die het kan terugzien.
+  | 'package.link_downloaded'
+  // [PAKKET-LINK] De ondernemer overhandigde zijn kwartaal, en aan wie. Dit is zijn eigen spoor:
+  // "naar wie heb ik mijn boeken gestuurd, en wanneer" — bij een deel-link de enige plek waar dat
+  // staat, want de ontvanger heeft geen account om het aan te hangen.
+  | 'package.link_shared'
+  | 'package.link_revoked'
   | 'accountant.export_downloaded'    // ← een CSV/UBL-export opgehaald
   // [AUTO-INCASSO] The owner declaring that a supplier collects its own invoices. It belongs at
   // this level because of what follows from it: from that moment the app books that supplier's
