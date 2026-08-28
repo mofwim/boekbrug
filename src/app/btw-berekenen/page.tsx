@@ -27,6 +27,14 @@ export const metadata: Metadata = {
     description: 'Van exclusief naar inclusief BTW of andersom. 21%, 9% of 0%. Gratis en direct.',
     type: 'website',
   },
+  twitter: {
+    // [DEEL-KAART] Dezelfde woorden als openGraph hierboven, want X leest twitter: en negeert
+    // og: zodra Next die tags schrijft — en dat doet het altijd, uit de ROOT-metadata. Zonder
+    // dit blok heet deze pagina op X "BoekBrug — Financieel Command Center".
+    // De afbeelding komt uit opengraph-image.tsx in deze map; die hoeft hier niet genoemd.
+    title: 'BTW berekenen — gratis BTW-calculator',
+    description: 'Van exclusief naar inclusief BTW of andersom. 21%, 9% of 0%. Gratis en direct.',
+  },
 }
 
 const faq = [

@@ -25,6 +25,14 @@ export const metadata: Metadata = {
     description: 'Maak gratis een nette factuur en download hem als PDF. Geen account nodig.',
     type: 'website',
   },
+  twitter: {
+    // [DEEL-KAART] Dezelfde woorden als openGraph hierboven, want X leest twitter: en negeert
+    // og: zodra Next die tags schrijft — en dat doet het altijd, uit de ROOT-metadata. Zonder
+    // dit blok heet deze pagina op X "BoekBrug — Financieel Command Center".
+    // De afbeelding komt uit opengraph-image.tsx in deze map; die hoeft hier niet genoemd.
+    title: 'Factuur maken — gratis factuur als PDF',
+    description: 'Maak gratis een nette factuur en download hem als PDF. Geen account nodig.',
+  },
 }
 
 // [FACTUUR-FAQ] Imported, never copied. These same questions are RENDERED by <GratisFactuur/>

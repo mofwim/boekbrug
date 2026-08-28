@@ -67,14 +67,18 @@ export const metadata: Metadata = {
     // [ANDROID/iOS] Home-screen icon when BoekBrug is added to the home screen.
     apple: "/icons/apple-touch-icon.png",
   },
-  // [SEO] Twitter/X card — makes shared links render a large image card on
-  // X, Slack, WhatsApp, etc. Image comes from the site-wide opengraph-image.
+  // [DEEL-KAART] Het kaartformaat voor X. Alleen dit, en het staat er om één reden.
+  //
+  // WAT HIER NIET WERKT, EN DAT IS GEMETEN. Next leidt twitter:title, twitter:description en
+  // twitter:image af uit de ROOT-metadata, niet uit die van de pagina. Deze regels helemaal
+  // weglaten verandert daar niets aan: met een schone build zonder `twitter`-blok stond er nog
+  // steeds "BoekBrug — Financieel Command Center" met de generieke afbeelding boven een gedeelde
+  // /btw-berekenen. X valt dus NIET terug op og: zolang Next zelf twitter-tags blijft schrijven.
+  //
+  // Daarom zet elke pagina die een eigen deelkaart verdient haar `twitter` zelf — zie de acht
+  // toolpagina's. Wie hier een titel terugzet, overschrijft ze allemaal weer.
   twitter: {
     card: "summary_large_image",
-    title: "BoekBrug — Financieel Command Center",
-    description:
-      "Je hoeft geen boekhouding te doen — alleen niets kwijt te raken. Aan het eind van het kwartaal staat alles klaar voor je boekhouder.",
-    images: ["/opengraph-image"],
   },
 };
 
