@@ -1655,6 +1655,11 @@ export const MESSAGES = {
     en: 'The VAT is missing. Which rate does the invoice show?',
     ar: 'مبلغ الضريبة ناقص. ما النسبة المذكورة في الفاتورة؟',
   },
+  'corr.tarief.nu': {
+    nl: 'Nu gerekend met {tarief}% btw. Klopt dat niet? Kies het juiste tarief.',
+    en: 'Currently calculated at {tarief}% VAT. Not right? Pick the correct rate.',
+    ar: 'يُحتسب حالياً بنسبة {tarief}٪. غير صحيح؟ اختر النسبة الصحيحة.',
+  },
   'corr.tarief.knop': {
     nl: '{tarief}% — btw wordt {btw}',
     en: '{tarief}% — VAT becomes {btw}',

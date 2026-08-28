@@ -22,7 +22,7 @@
 
 import { useState } from 'react'
 import { formatEuroNL } from '@/lib/format-nl'
-import { setExcl, setBtw, setIncl, splitByRate, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from '@/lib/amount-triplet'
+import { setExcl, setBtw, setIncl, splitByRate, rateOfTriplet, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from '@/lib/amount-triplet'
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from '@/lib/parse-nl'
 // [STATIEGELD-GAT] The deposit the reader dropped, found back on the paper — see statiegeld.ts.
@@ -139,6 +139,8 @@ export default function InvoiceCorrectionModal({
   // unrounded) — otherwise a derived field paints the float tail of ni − t.btw on screen.
   const [amountDraft, setAmountDraft] = useState<{ field: 'ex' | 'btw' | 'incl'; text: string } | null>(null)
   // [NUL-IS-GEEN-INVOER] Same rule as the verify queue, from the same module — see amount-triplet.ts.
+  // [BTW-TARIEF] Which standard rate these amounts already sit at — the row reads as well as acts.
+  const huidigTarief = rateOfTriplet(amounts)
   const amountShown = (field: 'ex' | 'btw' | 'incl', held: number) =>
     amountFieldText(held, amountDraft, field)
   const [number, setNumber] = useState(invoice.invoice_number ?? '')
@@ -366,20 +368,24 @@ export default function InvoiceCorrectionModal({
             inferred — the ex amount alone carries no rate, and a guessed btw is a guessed
             voorbelasting. Splits from the TOTAL, and only exists while there is a total with no
             btw beside it. */}
-        {Math.abs(amounts.incl) > 0.005 && Math.abs(amounts.btw) < 0.005 && (
+        {Math.abs(amounts.incl) > 0.005 && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 12.5, color: '#5F6368', marginBottom: 6, lineHeight: 1.4 }}>
-              {t('corr.tarief.vraag')}
+              {huidigTarief === null ? t('corr.tarief.vraag') : t('corr.tarief.nu', { tarief: huidigTarief })}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               {NL_BTW_RATES.map((tarief) => (
                 <button
                   key={tarief}
                   type="button"
+                  aria-pressed={huidigTarief === tarief}
                   onClick={() => setAmounts(splitByRate(amounts.incl, tarief))}
                   style={{
-                    flex: 1, minHeight: 44, borderRadius: 12, border: '1px solid #1a73e8',
-                    background: '#e8f0fe', color: '#1a4fa0', fontSize: 13.5, fontWeight: 600,
+                    flex: 1, minHeight: 44, borderRadius: 12,
+                    border: `${huidigTarief === tarief ? 2 : 1}px solid #1a73e8`,
+                    background: huidigTarief === tarief ? '#1a73e8' : '#e8f0fe',
+                    color: huidigTarief === tarief ? '#fff' : '#1a4fa0',
+                    fontSize: 13.5, fontWeight: 600,
                     cursor: 'pointer', fontFamily: FONT, padding: '10px 8px', lineHeight: 1.35,
                   }}
                 >
