@@ -17648,17 +17648,20 @@ test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked ra
 //     bounded it. bank-ingest and cash-settle chunk by hand and are right to pass;
 //   · a chain that pages — `.range(from, to)`, which is what fetchAllRows/fetchAllRowsForIds drive.
 //
-// WHY THE INVENTORY. Twenty-three sites predate this gate. Failing on all of them would mean either
-// deleting the gate or rewriting twenty-three call sites in one change, and both are how a gate
-// like this never gets written. So the set is FROZEN instead, and the assertion runs both ways: no
-// site may be added, and a site that gets fixed must be struck from the list. The list can only
-// shrink. Line numbers are deliberately absent — an entry is a file plus the expression that
-// reaches the URL, so ordinary edits never touch this block.
+// THERE IS NO INVENTORY, AND THAT IS THE POINT. Twenty-three sites predated this gate. They were
+// not all equally dangerous — most failed CLOSED, because the callers here are careful: the bank
+// doors count an unreadable link as 'unknown' and refuse to book, the creditnota route refuses to
+// credit, the pay page 503s rather than under-ask. Four did not, and those were the ones worth
+// finding: the accountant's confirmation screen said "no client has authorised you" over clients
+// who had; the payment-proof panel showed "€ 0,00 booked" on an invoice that had settled
+// thousands; the questions screen marked every document as missing; and the onboarding reset
+// answered `{ ok: true }` having deleted nothing.
 //
-// Not every entry is equally dangerous, and the list is not a blessing. The ones whose list grows
-// with the OWNER'S OWN DATA rather than with one screen's selection are the ones to take first:
-// onboarding/reset (every document the owner has), accountant/bevestigen and work-queues (every
-// client of the practice), invoice/draft (a quarter of hours on one invoice).
+// All twenty-three are chunked now, so this gate holds an empty set and says so: on a growing
+// table, a data-driven id list is chunked, always. An exemption list would have been the easier
+// ending, and it is the one that rots — every entry on it is a place where the next person reads
+// "we decided this one is fine" instead of the reasoning that made it fine.
+
 test("[IN-CHUNK] geen nieuwe ongechunkte .in() op een groeiende tabel", () => {
   // The tables that grow without bound as an owner uses the app. A lookup table or a settings row
   // is not on this list because its id list cannot outgrow anything.
@@ -17735,6 +17738,10 @@ test("[IN-CHUNK] geen nieuwe ongechunkte .in() op een groeiende tabel", () => {
   const IS_BUILDER = /^[A-Za-z_$][\w$]*(\s*\.\s*schema\s*\([^)]*\))?\s*\.\s*(from|rpc)\s*\(/;
 
   const gevonden: string[] = [];
+  // How many `.in()` calls on a growing table were EXAMINED at all — offenders and safe ones alike.
+  // With an empty offender list this is the only thing standing between a clean gate and a broken
+  // reader that quietly examines nothing and passes forever.
+  let bekeken = 0;
   for (const file of walk("src")) {
     if (file.endsWith("lifecycle-gates.test.ts")) continue;
     const src = code(file);
@@ -17744,6 +17751,7 @@ test("[IN-CHUNK] geen nieuwe ongechunkte .in() op een groeiende tabel", () => {
       if (!IS_BUILDER.test(recv)) continue;
       const tabel = /\.\s*from\s*\(\s*["'`]([a-z_]+)["'`]/.exec(recv)?.[1] ?? "";
       if (!GROEIT.has(tabel)) continue;
+      bekeken++;
 
       const args = src.slice(open + 1, endOfGroup(src, open) - 1);
       const lijst = args.slice(args.indexOf(",") + 1).trim();
@@ -17758,49 +17766,16 @@ test("[IN-CHUNK] geen nieuwe ongechunkte .in() op een groeiende tabel", () => {
     }
   }
 
-  // The frozen inventory. Sorted, and one line per call site — two sites in one file that pass the
-  // same expression appear twice on purpose, so fixing one of them is visible here.
-  const BEKEND = [
-    "src/app/api/bank/allocate/route.ts  [invoices]  in(ids)",
-    "src/app/api/bank/allocate/route.ts  [invoices]  in(rows.map((r) => r.invoice_id))",
-    "src/app/api/bank/confirm/route.ts  [invoices]  in(priced.map((r) => r.invoice_id))",
-    "src/app/api/bank/rematch/route.ts  [bank_transactions]  in(ids)",
-    "src/app/api/email/webhook/route.ts  [invoices]  in(ids)",
-    "src/app/api/invoice/betaalverzoek-bundel/route.ts  [invoices]  in(invoiceIds)",
-    "src/app/api/invoice/betaalverzoek-bundel/route.ts  [invoices]  in(invoiceIds)",
-    "src/app/api/invoice/bulk-pdf/route.ts  [invoices]  in(ids)",
-    "src/app/api/invoice/creditnota/route.ts  [invoice_lines]  in(eerdereIds)",
-    "src/app/api/invoice/draft/route.ts  [time_entries]  in(gevraagd.ids)",
-    "src/app/api/invoice/draft/route.ts  [time_entries]  in(urenIds)",
-    "src/app/api/invoice/payment/move/route.ts  [bank_tx_invoices]  in(txIds)",
-    "src/app/api/invoice/schedules/route.ts  [invoices]  in(ids)",
-    "src/app/api/onboarding/reset/route.ts  [documents]  in(ids)",
-    "src/app/api/pay/[token]/route.ts  [invoices]  in(ids)",
-    "src/app/api/pay/[token]/route.ts  [invoices]  in(ids)",
-    "src/app/dashboard/accountant/bevestigen/page.tsx  [invoices]  in(klantIds)",
-    "src/app/dashboard/bank/verdelen/[txId]/page.tsx  [invoices]  in(rows.map((r) => r.invoice_id))",
-    "src/app/dashboard/bank/verdelen/[txId]/page.tsx  [invoices]  in(rows0.map((r) => r.invoice_id))",
-    "src/app/dashboard/vragen/page.tsx  [documents]  in(docIds)",
-    "src/app/dashboard/vragen/page.tsx  [invoices]  in(invIds)",
-    "src/lib/cash-settle.ts  [cash_entries]  in(toDeleteIds)",
-    "src/modules/accountant/work-queues.ts  [invoices]  in(clientIds)",
-  ];
+  // A broken reader examines nothing and reports a clean repo, and with an empty offender list
+  // that is indistinguishable from success — forever, on exactly the gate that is claiming a
+  // whole defect class cannot come back.
+  assert.ok(bekeken > 20,
+    `[IN-CHUNK] the scanner examined only ${bekeken} .in() calls on growing tables — it is the READER that broke, not the code`);
 
-  // The gate proper: the machinery above has to still SEE something, or a broken reader would
-  // report a clean repo and this whole block would pass vacuously for good.
-  assert.ok(gevonden.length > 0,
-    "[IN-CHUNK] the scanner found no .in() at all on a growing table — it is the READER that broke, not the code");
-
-  const nieuw = gevonden.filter((g) => !BEKEND.includes(g));
-  assert.deepEqual(nieuw, [],
-    "[IN-CHUNK] a new unchunked .in() on a growing table. Past a few hundred ids this dies with a " +
+  assert.deepEqual(gevonden, [],
+    "[IN-CHUNK] an unchunked .in() on a growing table. Past a few hundred ids this dies with a " +
     "414 that supabase-js reports as an ordinary error — so the caller reads a failed call as 'no " +
     "rows'. Use fetchAllRowsForIds (reads) or chunkIds (writes) from supabase-paginate.ts");
-
-  const opgelost = BEKEND.filter((b) => !gevonden.includes(b));
-  assert.deepEqual(opgelost, [],
-    "[IN-CHUNK] these entries are fixed — strike them from BEKEND. The inventory may only shrink, " +
-    "or it stops describing the code and starts excusing it");
 });
 
 test("[IN-CHUNK] het kwartaalpakket leest de inkoopbonnen gechunkt — en zwijgt niet als dat mislukt", () => {
@@ -17956,4 +17931,76 @@ test("[ZOEK-EERLIJK] search never truncates in silence, never limits arbitrarily
   // [NO-SILENT-EMPTY] And on neither list, it says so rather than doing nothing at all.
   assert.match(inkomend, /if \(!inPending && !inIgnored\) \{[\s\S]{0,200}?t\('ink\.zoek\.nietHier'\)/,
     "a focus id on neither list is silently ignored again — the exact symptom that was reported");
+});
+
+test("[NO-SILENT-EMPTY] een mislukte lezing wordt nooit een uitspraak over iemands data", () => {
+  // Vier lezingen op drie schermen pakten alleen `data` uit. Geen van de vier gaf een foutmelding;
+  // alle vier gaven een ZIN die niet waar was, en die niet als gok te herkennen viel:
+  //
+  //   · /dashboard/accountant/bevestigen — de koppelingslezing werd "nog geen enkele klant heeft je
+  //     gemachtigd", over klanten die dat wél hadden gedaan. De boekhouder gaat zijn klant dan
+  //     vragen iets aan te zetten dat al aan staat, en de inkoopfacturen blijven wachten. De
+  //     facturenlezing werd "er staat niets te wachten", over een stapel die een kwartaal dichthoudt.
+  //     En de namenlezing maakte van elke klant 'Klant' — een lijst waarin niet meer te zien is in
+  //     WIENS administratie je op het punt staat te boeken;
+  //   · /dashboard/bank/verdelen/[txId] — dit is het bewijsscherm onder elke "Betaald". Een oude
+  //     koppelingsrij draagt geen amount_applied, dus het bedrag viel terug op de factuur, en bij
+  //     een mislukte lezing werd dat `Number(undefined ?? 0)`: € 0,00 geboekt op een factuur waar
+  //     duizenden euro's op stonden;
+  //   · /dashboard/vragen — buildOpenVragen zet documentMissing zodra een id niet in de lezing zit,
+  //     dus een mislukte lezing wees élk bestand aan als verdwenen. De ondernemer uploadt ze dan
+  //     opnieuw en de boekhouder krijgt alles dubbel;
+  //   · /api/onboarding/reset — de lezing eroverheen mislukte, het verwijderblok werd overgeslagen,
+  //     en de route antwoordde `{ ok: true }`. De eigenaar kreeg te horen dat zijn reset gelukt was
+  //     terwijl zijn onboarding-bestanden er nog stonden.
+  //
+  // Deze poort bewaakt niet dát er gechunkt wordt — [IN-CHUNK] hierboven doet dat voor de hele
+  // codebase. Ze bewaakt wat er GEBEURT als het toch misgaat: dat het scherm het zegt.
+
+  // ── De boekhouder ──────────────────────────────────────────────────────────
+  const bev = code("src/app/dashboard/accountant/bevestigen/page.tsx");
+  const bevScherm = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  // Elk van de drie mislukkingen leidt naar leesfout, niet naar een van de andere lege staten.
+  assert.equal(
+    (bev.match(/return <AccountantBevestigen rijen=\{\[\]\} leesfout \/>/g) ?? []).length, 2,
+    "een mislukte lezing op deze pagina komt niet meer (allebei) bij het leesfout-scherm uit",
+  );
+  assert.match(bev, /catch \(e\) \{[\s\S]{0,300}?koppelingen lezen mislukt[\s\S]{0,200}?leesfout/,
+    "de koppelingslezing mag weer stilzwijgend 'geen mandaat' worden");
+  assert.match(bev, /catch \(e\) \{[\s\S]{0,300}?stapel lezen mislukt[\s\S]{0,200}?leesfout/,
+    "de facturen- en namenlezing mag weer stilzwijgend een lege stapel worden");
+  // En het scherm moet die staat VÓÓR de andere twee afhandelen, anders wint alsnog de onwaarheid.
+  const iLees = bevScherm.indexOf("if (leesfout)");
+  const iMandaat = bevScherm.indexOf("if (geenMandaat)");
+  const iLeeg = bevScherm.indexOf("if (rijen.length === 0)");
+  assert.ok(iLees > 0 && iMandaat > iLees && iLeeg > iLees,
+    "het leesfout-scherm staat niet meer vóór 'geen mandaat' en 'niets te wachten' — dan wint de onwaarheid weer");
+  // De begrenzing noemt zichzelf.
+  assert.match(bev, /const meer = Math\.max\(0, facturenAlle\.length - facturen\.length\)/,
+    "de afkapping van de stapel telt niet meer hoeveel er buiten valt");
+  assert.match(bevScherm, /\{meer > 0 && \(/, "en het scherm zegt het niet meer");
+
+  // ── Het bewijsscherm van een betaling ──────────────────────────────────────
+  const verdeel = code("src/app/dashboard/bank/verdelen/[txId]/page.tsx");
+  const verdeelClient = code("src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx");
+  // Het bedrag komt uit de KOPPELING waar die het draagt; alleen een oude rij leunt op de factuur,
+  // en juist die mag bij een mislukte lezing null zijn in plaats van 0.
+  assert.match(verdeel, /settledInv === null \|\| !inv\s*\n?\s*\? null/,
+    "een onleesbaar bedrag wordt weer als een bedrag getoond");
+  assert.match(verdeelClient, /amount: number \| null/,
+    "het type laat weer geen 'niet te lezen' toe, dus wordt het weer een 0");
+  assert.match(verdeelClient, /s\.amount === null \? t\('verd\.bedragOnbekend'\)/,
+    "het scherm drukt een niet-gelezen bedrag weer af als een getal");
+
+  // ── De vragen van de ondernemer ────────────────────────────────────────────
+  const vragen = code("src/app/dashboard/vragen/page.tsx");
+  assert.match(vragen, /if \(docs === null \|\| invRows === null\) loadFailed = true/,
+    "een mislukte lezing telt niet meer mee in loadFailed — dan wijst het scherm elk bestand als verdwenen aan");
+
+  // ── De reset ───────────────────────────────────────────────────────────────
+  const reset = code("src/app/api/onboarding/reset/route.ts");
+  assert.match(reset, /const \{ data: docs, error: leesFout \}/,
+    "de reset leest de fout van zijn eigen documentlezing weer niet");
+  assert.match(reset, /if \(leesFout\) \{[\s\S]{0,400}?status: 500/,
+    "een mislukte lezing eindigt weer in `{ ok: true }` terwijl er niets is verwijderd");
 });

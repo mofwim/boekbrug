@@ -52,6 +52,22 @@ interface Props {
   geenMandaat?: boolean
   /** [VRAAG-MACHTIGING] De GEKOPPELDE klanten — om te kunnen vragen wat er nog niet is. */
   gekoppeld?: KoppelKlant[]
+  /**
+   * [NO-SILENT-EMPTY] Een lezing die MISLUKTE, niet een stapel die leeg is.
+   *
+   * Die twee zagen er op dit scherm identiek uit, en dat is de gevaarlijkste verwarring die het
+   * kan aanrichten: een mislukte koppelingslezing gaf `geenMandaat`, dus de boekhouder las dat
+   * geen enkele klant hem had gemachtigd — terwijl de machtiging er gewoon was — en ging zijn
+   * klant lastigvallen om iets dat al aan stond. Een mislukte facturenlezing gaf een lege stapel,
+   * dus hij las dat er niets te bevestigen viel — terwijl er inkoopfacturen wachtten die het
+   * kwartaal tegenhouden. Beide zinnen zijn onwaar, en geen van beide is als gok herkenbaar.
+   */
+  leesfout?: boolean
+  /**
+   * Hoeveel er NIET op dit scherm staan. De stapel is begrensd omdat een scherm met duizenden
+   * rijen niet te gebruiken is — maar een begrenzing die zichzelf niet noemt, leest als het geheel.
+   */
+  meer?: number
 }
 
 function euro(n: number | null): string {
@@ -69,7 +85,7 @@ function datumNl(iso: string | null, t: Translator): string {
     : d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-export default function AccountantBevestigen({ rijen, geenMandaat = false, gekoppeld = [] }: Props) {
+export default function AccountantBevestigen({ rijen, geenMandaat = false, gekoppeld = [], leesfout = false, meer = 0 }: Props) {
   const locale = useLocale()
   const t = translator(locale)
   const router = useRouter()
@@ -224,6 +240,27 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
     marginBottom: 16,
   }
 
+  // [NO-SILENT-EMPTY] Vóór beide andere lege staten, en dat is de hele bedoeling: zolang we niet
+  // weten wat er wacht, mag dit scherm geen uitspraak doen over machtigingen én geen uitspraak
+  // doen over de stapel. "We konden het niet lezen" is het enige dat hier waar is.
+  if (leesfout) {
+    return (
+      <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 500, color: M3.onSurface, margin: '0 0 12px' }}>
+          {t('bh.bev.titel')}
+        </h1>
+        <div style={kaart}>
+          <p style={{ margin: '0 0 12px', color: M3.onSurface, lineHeight: 1.6 }}>
+            {t('bh.bev.leesfout.kop')}
+          </p>
+          <p style={{ margin: 0, color: M3.onSurfaceVariant, lineHeight: 1.6, fontSize: 14.5 }}>
+            {t('bh.bev.leesfout.uitleg')}
+          </p>
+        </div>
+      </main>
+    )
+  }
+
   if (geenMandaat) {
     return (
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: 24 }}>
@@ -280,6 +317,14 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
         <p style={{ margin: '4px 0 0', fontSize: 14, color: M3.onSurfaceVariant }}>
           {open.length === 1 ? t('bh.bev.wacht.een') : t('bh.bev.wacht.meer')}
         </p>
+        {/* Het getal hierboven is een TELLING, en een telling die stilzwijgend afgekapt is, is een
+            verkeerd getal. Zonder deze regel las een boekhouder met een volle stapel "500 wachten"
+            terwijl het er 900 waren — en plande zijn week op het kleinere getal. */}
+        {meer > 0 && (
+          <p style={{ margin: '6px 0 0', fontSize: 13, color: M3.mutedText, lineHeight: 1.6 }}>
+            {t('bh.bev.meer', { aantal: meer })}
+          </p>
+        )}
         <p style={{ margin: '10px 0 0', fontSize: 13, color: M3.mutedText, lineHeight: 1.6 }}>
           {t('bh.bev.uitleg')}
         </p>

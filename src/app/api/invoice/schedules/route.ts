@@ -17,6 +17,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { anchorDayOf, firstRunAfter, isCadence, type Cadence } from "@/lib/recurring";
 import { requireOwner } from '@/lib/owner-only'
 
@@ -64,11 +66,28 @@ export async function GET() {
   const ids = (data ?? []).map((s: { source_invoice_id: string }) => s.source_invoice_id).filter(Boolean);
   const byId = new Map<string, { invoice_number: string | null; client_name: string | null; total_inc_btw: number | null }>();
   if (ids.length > 0) {
-    const { data: invs } = await supabase
-      .from("invoices")
-      .select("id, invoice_number, client_name, total_inc_btw")
-      .in("id", ids);
-    for (const i of invs ?? []) byId.set(i.id, i);
+    // [NO-SILENT-EMPTY] Deze lezing pakte alleen `data` uit, en dat kostte de eigenaar precies
+    // datgene waaraan hij een schema herkent: mislukte ze, dan stond er bij elk terugkerend schema
+    // geen klantnaam meer — alleen een datum. [IN-CHUNK] en gechunkt, want de lijst groeit met het
+    // aantal schema's.
+    try {
+      const invs = await fetchAllRowsForIds<{ id: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null }, string>(
+        ids,
+        (chunk, from, to) =>
+          supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, total_inc_btw")
+            .in("id", chunk)
+            .order("id", { ascending: true })
+            .range(from, to),
+      );
+      for (const i of invs) byId.set(i.id, i);
+    } catch (e) {
+      return NextResponse.json(
+        { error: "lookup_failed", detail: e instanceof Error ? e.message : "source read failed" },
+        { status: 500 },
+      );
+    }
   }
 
   return NextResponse.json({

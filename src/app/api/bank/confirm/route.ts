@@ -34,6 +34,8 @@
 //    would SILENTLY BYPASS the B.4 Conflict Guard. The session client sets auth.uid() → guard fires.
 
 import { NextRequest, NextResponse } from "next/server";
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
@@ -251,19 +253,32 @@ export async function POST(req: NextRequest) {
         // looks €300 poorer, and this very route then caps the next invoice at the smaller number
         // and books an amount that was never agreed. Same rule as allocate_bank_payment applies
         // under its lock, which is the point of it living in one file.
-        const { data: linkedInvoices } = await pipeline
-          .from("invoices")
-          // [DECLARED-INVOICE-EIGEN-CLAIM] invoice_number rides along for the guard below.
-          .select("id, direction, invoice_type, total_inc_btw, invoice_number")
-          .in("id", priced.map((r) => r.invoice_id))
-          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`);
+        // [IN-CHUNK] Gechunkt. Beide gevolgen van een onvolledige lezing waren al de veilige kant
+        // op — appliedElsewhereKnown wordt false, en de DECLARED-INVOICE-guard weigert eerder — dus
+        // dit kostte geen verkeerd bedrag, maar wel een geweigerde boeking op precies de regel die
+        // over de meeste facturen verdeeld is.
+        let linkedInvoices: Array<{ id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null; invoice_number: string | null }> = [];
+        try {
+          linkedInvoices = await fetchAllRowsForIds(priced.map((r) => r.invoice_id), (chunk, from, to) =>
+            pipeline
+              .from("invoices")
+              // [DECLARED-INVOICE-EIGEN-CLAIM] invoice_number rides along for the guard below.
+              .select("id, direction, invoice_type, total_inc_btw, invoice_number")
+              .in("id", chunk)
+              .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+              .order("id", { ascending: true })
+              .range(from, to),
+          );
+        } catch (e) {
+          console.error("[CONFIRM] gekoppelde facturen lezen mislukt", { txId: tx.id, e });
+        }
         // [DECLARED-INVOICE-EIGEN-CLAIM] An invoice this line already settled IS held, so the
         // guard below must not report it as missing on the next booking against the same line.
-        for (const r of (linkedInvoices ?? []) as Array<{ invoice_number?: string | null }>) {
+        for (const r of linkedInvoices as Array<{ invoice_number?: string | null }>) {
           const n = (r.invoice_number ?? "").trim();
           if (n !== "") linkedInvoiceNumbers.push(n);
         }
-        const sum = allocatedOnLine(priced, linkedInvoices ?? [], Number(tx.amount) || 0);
+        const sum = allocatedOnLine(priced, linkedInvoices, Number(tx.amount) || 0);
         // A sibling link whose invoice this user cannot read is the same situation as a missing
         // amount: the total is not measurable, so we say so rather than under-count it.
         if (sum.unknownInvoiceIds.length > 0) appliedElsewhereKnown = false;

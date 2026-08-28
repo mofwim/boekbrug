@@ -2034,6 +2034,33 @@ test("[RENDER-GATE] the confirm queue renders, and never hides what the reader w
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const leeg = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [] }));
   assert.match(leeg, /Er staat niets te wachten/);
+
+  // [NO-SILENT-EMPTY] And a THIRD empty state, which used to be rendered as one of the other two.
+  // A failed read on the links gave `geenMandaat` — so the accountant read that nobody had
+  // authorised them, over clients who had, and went to ask for a permission that was already
+  // granted. A failed read on the invoices gave the empty queue — so they read that there was
+  // nothing to confirm, while purchase invoices sat holding a quarter shut. Both sentences are
+  // untrue and neither is recognisable as a guess, which is why this one names what it is NOT.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stuk = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], leesfout: true }));
+  assert.match(stuk, /konden je stapel nu niet lezen/, "a failed read does not say so");
+  assert.match(stuk, /betekent niet dat er niets wacht/, "…and does not deny that work is waiting");
+  assert.match(stuk, /betekent niet dat je geen machtiging hebt/, "…or that the mandate is missing");
+  // It must WIN over both other empty states — a page that passes leesfout has nothing true to say
+  // about mandates or about the queue, so it may say neither.
+  assert.doesNotMatch(stuk, /Nog geen enkele klant heeft je gemachtigd/, "it still claims there is no mandate");
+  assert.doesNotMatch(stuk, /Er staat niets te wachten/, "it still claims the queue is empty");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stukMandaat = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], leesfout: true, geenMandaat: true }));
+  assert.match(stukMandaat, /konden je stapel nu niet lezen/, "geenMandaat overrides the read failure again");
+
+  // The 500-row cap says so instead of presenting itself as the whole pile: a count that is
+  // silently truncated is not a missing number, it is a wrong one, and the accountant plans a
+  // week on it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const veel = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [rij()], meer: 412 }));
+  assert.match(veel, /oudste 500/, "the cap no longer names itself");
+  assert.match(veel, /412/, "…nor how many are not on the screen");
 });
 
 test("[VRAAG-MACHTIGING] the empty states offer a way OUT of themselves", async () => {

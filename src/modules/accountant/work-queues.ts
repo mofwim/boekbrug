@@ -32,7 +32,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { daysLate } from '@/lib/accountant-debtors'
 import { outstandingAmount, type SalesInvoice } from '@/lib/sales-overview'
 import { fullyCreditedIdsFrom, filterOpenReceivables, creditedTotalsFrom } from '@/lib/credited-invoices'
-import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
+import { chunkIds, fetchAllRowsForIds } from '@/lib/supabase-paginate'
 
 /** Minimal shape of the session client — the same relaxed form the screens use. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -172,14 +172,23 @@ async function countAwaitingConfirmation(
 ): Promise<number | null> {
   if (clientIds.length === 0) return 0
   try {
-    const { count, error } = await pipeline
-      .from('invoices')
-      .select('id', { count: 'exact', head: true })
-      .in('receiver_id', clientIds)
-      .eq('direction', 'incoming')
-      .eq('status', 'processing')
-    if (error) return null
-    return Number(count ?? 0)
+    // [IN-CHUNK] Per brok opgeteld. Een head-query levert geen rijen, dus het ~1000-plafond raakt
+    // hem niet — maar de id-lijst reist wél in de URL, en bij een kantoor met genoeg klanten viel
+    // hij daar om. De uitkomst was dan null, en null zet `complete: false` op de hele home: het
+    // getal wordt niet getoond in plaats van te laag getoond, en dát blijft zo. Chunken maakt
+    // alleen dat het getal er is.
+    let totaal = 0
+    for (const chunk of chunkIds(clientIds)) {
+      const { count, error } = await pipeline
+        .from('invoices')
+        .select('id', { count: 'exact', head: true })
+        .in('receiver_id', chunk)
+        .eq('direction', 'incoming')
+        .eq('status', 'processing')
+      if (error) return null
+      totaal += Number(count ?? 0)
+    }
+    return totaal
   } catch {
     return null
   }

@@ -17,6 +17,8 @@ import { settleableDirection } from '@/lib/payment-plan'
 import { allocatedOnLine } from '@/lib/bank-line-budget'
 import VerdeelClient, { GeboektPaneel, type VerdeelFactuur, type GeboekteRegel } from './VerdeelClient'
 import { round2 } from '@/lib/invoice-totals'
+// [IN-CHUNK] Een id-lijst die met de verdeling meegroeit, gaat gechunkt de URL in.
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,19 +74,48 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
       : []
     let settled: GeboekteRegel['settled'] = []
     if (rows0.length > 0) {
-      const { data: settledInv } = await pipeline
-        .from('invoices')
-        .select('id, invoice_number, client_name, total_inc_btw')
-        .in('id', rows0.map((r) => r.invoice_id))
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+      // [NO-SILENT-EMPTY] Deze lezing pakte alleen `data` uit, en dat kostte hier een BEDRAG, niet
+      // een naam. Een koppelingsrij van vóór [PARTIAL-PAY] draagt geen amount_applied, dus het
+      // getoonde bedrag viel terug op total_inc_btw van de factuur — en met een mislukte lezing
+      // werd dat `Number(undefined ?? 0)`, oftewel € 0,00. Dit scherm is de betaalbewijs-link
+      // onder elke "Betaald": de eigenaar opent het juist om te controleren wat er met zijn geld
+      // is gebeurd, en las dan dat er niets op stond.
+      //
+      // [IN-CHUNK] Gechunkt, want een regel die over veel facturen is verdeeld is precies de regel
+      // waarvan iemand het bewijs komt bekijken.
+      let settledInv: Array<{ id: string; invoice_number: string | null; client_name: string | null; total_inc_btw: number | null }> | null = null
+      try {
+        settledInv = await fetchAllRowsForIds(
+          rows0.map((r) => r.invoice_id),
+          (chunk, from, to) =>
+            pipeline
+              .from('invoices')
+              .select('id, invoice_number, client_name, total_inc_btw')
+              .in('id', chunk)
+              .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+              .order('id', { ascending: true })
+              .range(from, to),
+        )
+      } catch (e) {
+        console.error('[VERDELEN] geboekte facturen lezen mislukt', { txId: tx.id, e })
+      }
       const byId = new Map((settledInv ?? []).map((i) => [i.id, i]))
       settled = rows0.map((r) => {
         const inv = byId.get(r.invoice_id)
+        // Het bedrag komt uit de KOPPELING zodra die het draagt — daar is geen factuurlezing voor
+        // nodig. Alleen een oude rij zonder amount_applied leunt op de factuur, en juist die mag
+        // bij een mislukte lezing geen 0 worden: dan is het antwoord "niet te lezen".
+        const uitKoppeling = r.amount_applied
+        const bedrag = uitKoppeling != null
+          ? round2(Math.abs(uitKoppeling))
+          : settledInv === null || !inv
+            ? null
+            : round2(Math.abs(Number(inv.total_inc_btw ?? 0)))
         return {
           id: r.invoice_id,
           invoiceNumber: inv?.invoice_number ?? null,
           partyName: inv?.client_name ?? null,
-          amount: round2(Math.abs(r.amount_applied ?? Number(inv?.total_inc_btw ?? 0))),
+          amount: bedrag,
         }
       })
     }
@@ -113,13 +144,23 @@ export default async function VerdeelPage({ params }: { params: Promise<{ txId: 
 
   // ── [WATERVAL] Tweede golf: de facturen achter de koppelingen, en de keuzelijst ──
   const [linkedS, { data: invRows }] = await Promise.all([
+    // [IN-CHUNK] Gechunkt. De uitkomst blijft met opzet best-effort — de toelichting bij
+    // `alreadyAllocated` hieronder legt uit waarom een mislukte lezing hier een RUIMER scherm
+    // geeft dat de route alsnog weigert, en dus geen verkeerd bedrag oplevert. Het chunken haalt
+    // alleen de aanleiding weg: bij een regel over veel facturen was de kale `.in()` zélf de
+    // reden dat deze lezing miste.
     rows.length > 0
-      ? pipeline
-          .from('invoices')
-          .select('id, direction, invoice_type, total_inc_btw')
-          .in('id', rows.map((r) => r.invoice_id))
-          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-          .then((r) => r, () => ({ data: null }))
+      ? fetchAllRowsForIds<{ id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null }, string>(
+          rows.map((r) => r.invoice_id),
+          (chunk, from, to) =>
+            pipeline
+              .from('invoices')
+              .select('id, direction, invoice_type, total_inc_btw')
+              .in('id', chunk)
+              .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+              .order('id', { ascending: true })
+              .range(from, to),
+        ).then((data) => ({ data }), () => ({ data: null }))
       : Promise.resolve({ data: null }),
     pipeline
       .from('invoices')
