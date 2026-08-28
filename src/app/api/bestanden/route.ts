@@ -18,6 +18,13 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
+  // The owner's own live files — the one filter every list below starts from, and the shape the
+  // pager carries. Deriving the row type from the builder rather than restating DOC_SELECT keeps
+  // the two from drifting: add a column to the select and this type follows it.
+  const eigenBestanden = () =>
+    supabase.from("documents").select(DOC_SELECT).eq("user_id", user.id).eq("trashed", false);
+  type Bestand = NonNullable<Awaited<ReturnType<typeof eigenBestanden>>["data"]>[number];
+
   const p = req.nextUrl.searchParams;
   const search        = p.get("search") ?? "";
   const starred       = p.get("starred") === "true";
@@ -60,18 +67,38 @@ export async function GET(req: NextRequest) {
   // `view=starred` is its named alias. All three return the same { documents } shape
   // the client already renders for the starred/search lists.
   if (view === "recent" || view === "starred" || view === "shared" || starred) {
-    let q = supabase
-      .from("documents").select(DOC_SELECT)
-      .eq("user_id", user.id).eq("trashed", false)
-      .order("created_at", { ascending: false });
-    // Explicit `view` wins over the legacy `starred=true` alias, so ?view=recent
-    // is never shadowed into the starred list.
-    if (view === "shared")      q = q.eq("shared", true);
-    else if (view === "recent") q = q.limit(50);           // recent — latest 50
-    else                        q = q.eq("starred", true); // view=starred OR ?starred=true
-    const { data, error } = await q;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ documents: data ?? [] });
+    try {
+      // 'recent' is a CAPPED view by design — the latest 50, not everything — so it keeps its own
+      // single-shot read. (.limit and .range are the same PostgREST knob; paging a cap is a
+      // contradiction.) The other two are full lists and must be paged.
+      if (view === "recent") {
+        const { data, error } = await eigenBestanden()
+          .order("created_at", { ascending: false }).order("id", { ascending: true })
+          .limit(50);
+        if (error) throw new Error(error.message);
+        return NextResponse.json({ documents: data ?? [] });
+      }
+      // [VOL-GELEZEN] Gepagineerd, om dezelfde reden als de meter hierboven: PostgREST kapt stil
+      // af op ~1000 rijen. Een eigenaar die drie jaar bonnen met de boekhouder deelt, opende
+      // "Gedeeld" en zag er duizend — zonder foutmelding en zonder enige aanwijzing dat er meer
+      // waren. Precies het bestand dat ontbreekt is dan het bestand dat hij zoekt.
+      const documents = await fetchAllRows<Bestand>((from, to) => {
+        const eigen = eigenBestanden();
+        // Explicit `view` wins over the legacy `starred=true` alias, so ?view=shared
+        // is never shadowed into the starred list.
+        const gefilterd = view === "shared" ? eigen.eq("shared", true) : eigen.eq("starred", true);
+        return gefilterd
+          // created_at alone is not unique — two files uploaded in the same second could straddle
+          // a page boundary, repeating one and dropping the other. id makes the order total.
+          .order("created_at", { ascending: false }).order("id", { ascending: true })
+          .range(from, to);
+      });
+      return NextResponse.json({ documents });
+    } catch (e) {
+      // [NO-SILENT-EMPTY] fetchAllRows THROWS on a failed page. A half-read list is worse than an
+      // error, because a list of files carries no sign of being half.
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Fout" }, { status: 500 });
+    }
   }
 
   // ── Search ── (documents + folders)
@@ -103,16 +130,20 @@ export async function GET(req: NextRequest) {
     if (fErr) throw new Error(fErr.message);
 
     // Documents — exclude trashed
-    let docQ = supabase
-      .from("documents").select(DOC_SELECT)
-      .eq("user_id", user.id).eq("trashed", false)
-      .order("created_at", { ascending: false });
-    if (folderId === null) docQ = docQ.is("folder_id", null);
-    else docQ = docQ.eq("folder_id", folderId);
-    const { data: documents, error: dErr } = await docQ;
-    if (dErr) throw new Error(dErr.message);
+    // [VOL-GELEZEN] Gepagineerd. Dit is de gewone mapinhoud: het scherm dat de eigenaar opent om
+    // te kijken of iets er is. De stille rijlimiet van PostgREST maakte daar "bestaat niet" van
+    // zodra één map over de duizend ging — en de map die daaroverheen gaat is altijd de map
+    // waar alles in staat, want dat is waarom hij er zoveel in heeft.
+    const documents = await fetchAllRows<Bestand>((from, to) => {
+      const eigen = eigenBestanden();
+      const inMap = folderId === null ? eigen.is("folder_id", null) : eigen.eq("folder_id", folderId);
+      // Zie de smart views hierboven: created_at alleen is niet uniek, id maakt de volgorde totaal.
+      return inMap
+        .order("created_at", { ascending: false }).order("id", { ascending: true })
+        .range(from, to);
+    });
 
-    return NextResponse.json({ folders: folders ?? [], documents: documents ?? [] });
+    return NextResponse.json({ folders: folders ?? [], documents });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Fout" }, { status: 500 });
   }

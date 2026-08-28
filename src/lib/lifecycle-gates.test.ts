@@ -11887,7 +11887,11 @@ test("[BRUG-UPLOAD-DELEN] a file dropped in the shared folder is actually shared
   // The same flag, read by the two surfaces that ARE the accountant's access. Without this the
   // gate above pins a column nobody consumes.
   const bestanden = code("src/app/api/bestanden/route.ts");
-  assert.match(bestanden, /q = q\.eq\("shared", true\)/, "the shared view reads it");
+  // Anchored on the BRANCH rather than on a variable name: the smart views were rewritten to page
+  // (the shared list used to stop at PostgREST's silent thousandth row), which renamed the builder
+  // and broke a gate that pinned `q = q.eq(…)`. What this gate is actually about is that the shared
+  // view is the one that reads the flag — so that is what it pins now.
+  assert.match(bestanden, /view === "shared" \? eigen\.eq\("shared", true\)/, "the shared view reads it");
   assert.match(bestanden, /patch\.shared = true;/, "and a move into the folder still sets it");
 });
 
@@ -17620,6 +17624,273 @@ test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked ra
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [IN-CHUNK] A GROWING ID LIST GOES INTO THE URL IN PIECES, OR NOT AT ALL
+//
+// `.in("id", ids)` puts every id in the QUERY STRING — roughly 39 bytes per uuid. Past a few
+// hundred the request line outgrows the proxy's header buffer and the call dies with a 414, which
+// supabase-js hands back as an ordinary `error` rather than throwing. A caller that destructures
+// only `data` therefore reads a FAILED call as "no rows" and carries on. The second ceiling is the
+// familiar one: PostgREST caps a response at ~1000 rows, silently, so a read keyed on 3.000 ids
+// answers with the first thousand and no flag.
+//
+// Both were live in closing-package.ts, and the second of the two decided the ZIP's contents: the
+// accountant would have received a quarter holding every sales invoice and not one purchase
+// invoice, with nothing on the summary saying so. supabase-paginate.ts had exported
+// fetchAllRowsForIds for months and that same file used it four times, once forty lines below the
+// broken read. That is the tell this gate exists for — the fix was present, understood, and
+// applied everywhere except where it mattered most, because nothing pointed at the gap.
+//
+// WHAT COUNTS AS SAFE. Three shapes, and the reasoning is about the LIST, never the caller:
+//   · a fixed vocabulary — `.in("status", ["sent", "paid"])`, `.in("status", BOOKABLE_STATUSES)`.
+//     Written into the source, so it cannot grow with anyone's data;
+//   · a chunk — `chunk`, `keyChunk`, `ids.slice(i, i + 150)`. Bounded by construction, whoever
+//     bounded it. bank-ingest and cash-settle chunk by hand and are right to pass;
+//   · a chain that pages — `.range(from, to)`, which is what fetchAllRows/fetchAllRowsForIds drive.
+//
+// WHY THE INVENTORY. Twenty-three sites predate this gate. Failing on all of them would mean either
+// deleting the gate or rewriting twenty-three call sites in one change, and both are how a gate
+// like this never gets written. So the set is FROZEN instead, and the assertion runs both ways: no
+// site may be added, and a site that gets fixed must be struck from the list. The list can only
+// shrink. Line numbers are deliberately absent — an entry is a file plus the expression that
+// reaches the URL, so ordinary edits never touch this block.
+//
+// Not every entry is equally dangerous, and the list is not a blessing. The ones whose list grows
+// with the OWNER'S OWN DATA rather than with one screen's selection are the ones to take first:
+// onboarding/reset (every document the owner has), accountant/bevestigen and work-queues (every
+// client of the practice), invoice/draft (a quarter of hours on one invoice).
+test("[IN-CHUNK] geen nieuwe ongechunkte .in() op een groeiende tabel", () => {
+  // The tables that grow without bound as an owner uses the app. A lookup table or a settings row
+  // is not on this list because its id list cannot outgrow anything.
+  const GROEIT = new Set([
+    "documents", "invoices", "invoice_lines", "bank_transactions", "bank_tx_invoices",
+    "cash_entries", "till_sales", "time_entries", "daily_turnover",
+  ]);
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts") || p.endsWith(".tsx")) out.push(p);
+    }
+    return out;
+  };
+
+  /**
+   * The chain an expression hangs off, read backwards from a `.` over balanced brackets. Same walk
+   * as the [THENABLE] gate below it and for the same reason: a regex over the line cannot tell
+   * `supabase.from("invoices").in(…)` from `someHelper(…).in(…)`, and the difference is the whole
+   * question. A newline continues the chain only while what has been collected so far still starts
+   * with a dot — otherwise the statement head was on this line and the chain stops there.
+   */
+  const receiverOf = (src: string, dot: number): string => {
+    let depth = 0;
+    let j = dot - 1;
+    for (; j >= 0; j--) {
+      const c = src[j];
+      if (c === ")" || c === "]" || c === "}") { depth++; continue; }
+      if (c === "(" || c === "[" || c === "{") {
+        if (depth === 0) break;
+        depth--;
+        continue;
+      }
+      if (depth !== 0) continue;
+      if (c === ";" || c === "," || c === "=" || c === "&" || c === "|" || c === "?" || c === ":") break;
+      if (c === "\n") {
+        const soFar = src.slice(j + 1, dot).trim();
+        if (soFar === "" || soFar.startsWith(".")) continue;
+        break;
+      }
+    }
+    return src.slice(j + 1, dot).trim().replace(/^(await|return|void)\s+/, "").trim();
+  };
+
+  /** The index just past a balanced bracket group that opens at `open`. */
+  const endOfGroup = (src: string, open: number): number => {
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      const c = src[i];
+      if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") { depth--; if (depth === 0) return i + 1; }
+    }
+    return src.length;
+  };
+
+  /** Everything chained AFTER a call — `.eq(…).order(…).range(…)`. The paging lives here, not in
+   *  the receiver, so a gate that only looked backwards would call every paged read an offender. */
+  const tailFrom = (src: string, open: number): string => {
+    let i = endOfGroup(src, open);
+    const start = i;
+    for (;;) {
+      const m = /^\s*\.\s*[A-Za-z_$][\w$]*\s*\(/.exec(src.slice(i));
+      if (!m) break;
+      i = endOfGroup(src, i + m[0].length - 1);
+    }
+    return src.slice(start, i);
+  };
+
+  // `client.from(` / `client.schema('x').from(` / `client.rpc(` — and nothing between. A storage
+  // chain reads as `supabase.storage.from(` and falls outside on its own.
+  const IS_BUILDER = /^[A-Za-z_$][\w$]*(\s*\.\s*schema\s*\([^)]*\))?\s*\.\s*(from|rpc)\s*\(/;
+
+  const gevonden: string[] = [];
+  for (const file of walk("src")) {
+    if (file.endsWith("lifecycle-gates.test.ts")) continue;
+    const src = code(file);
+    for (const m of src.matchAll(/\.\s*in\s*\(/g)) {
+      const open = m.index! + m[0].length - 1;
+      const recv = receiverOf(src, m.index!);
+      if (!IS_BUILDER.test(recv)) continue;
+      const tabel = /\.\s*from\s*\(\s*["'`]([a-z_]+)["'`]/.exec(recv)?.[1] ?? "";
+      if (!GROEIT.has(tabel)) continue;
+
+      const args = src.slice(open + 1, endOfGroup(src, open) - 1);
+      const lijst = args.slice(args.indexOf(",") + 1).trim();
+      // A vocabulary written into the source cannot grow with anyone's data.
+      if (/^\[[^\]]*\]$/.test(lijst) || /^[A-Z][A-Z0-9_]*$/.test(lijst)) continue;
+      // Bounded by construction, by hand.
+      if (/(^|[^A-Za-z0-9_$])chunk|Chunk|\.slice\s*\(/.test(lijst)) continue;
+      // Bounded by the pager, which is what fetchAllRowsForIds emits.
+      if (/\.\s*range\s*\(/.test(recv + tailFrom(src, open))) continue;
+
+      gevonden.push(`${file}  [${tabel}]  in(${lijst.replace(/\s+/g, " ")})`);
+    }
+  }
+
+  // The frozen inventory. Sorted, and one line per call site — two sites in one file that pass the
+  // same expression appear twice on purpose, so fixing one of them is visible here.
+  const BEKEND = [
+    "src/app/api/bank/allocate/route.ts  [invoices]  in(ids)",
+    "src/app/api/bank/allocate/route.ts  [invoices]  in(rows.map((r) => r.invoice_id))",
+    "src/app/api/bank/confirm/route.ts  [invoices]  in(priced.map((r) => r.invoice_id))",
+    "src/app/api/bank/rematch/route.ts  [bank_transactions]  in(ids)",
+    "src/app/api/email/webhook/route.ts  [invoices]  in(ids)",
+    "src/app/api/invoice/betaalverzoek-bundel/route.ts  [invoices]  in(invoiceIds)",
+    "src/app/api/invoice/betaalverzoek-bundel/route.ts  [invoices]  in(invoiceIds)",
+    "src/app/api/invoice/bulk-pdf/route.ts  [invoices]  in(ids)",
+    "src/app/api/invoice/creditnota/route.ts  [invoice_lines]  in(eerdereIds)",
+    "src/app/api/invoice/draft/route.ts  [time_entries]  in(gevraagd.ids)",
+    "src/app/api/invoice/draft/route.ts  [time_entries]  in(urenIds)",
+    "src/app/api/invoice/payment/move/route.ts  [bank_tx_invoices]  in(txIds)",
+    "src/app/api/invoice/schedules/route.ts  [invoices]  in(ids)",
+    "src/app/api/onboarding/reset/route.ts  [documents]  in(ids)",
+    "src/app/api/pay/[token]/route.ts  [invoices]  in(ids)",
+    "src/app/api/pay/[token]/route.ts  [invoices]  in(ids)",
+    "src/app/dashboard/accountant/bevestigen/page.tsx  [invoices]  in(klantIds)",
+    "src/app/dashboard/bank/verdelen/[txId]/page.tsx  [invoices]  in(rows.map((r) => r.invoice_id))",
+    "src/app/dashboard/bank/verdelen/[txId]/page.tsx  [invoices]  in(rows0.map((r) => r.invoice_id))",
+    "src/app/dashboard/vragen/page.tsx  [documents]  in(docIds)",
+    "src/app/dashboard/vragen/page.tsx  [invoices]  in(invIds)",
+    "src/lib/cash-settle.ts  [cash_entries]  in(toDeleteIds)",
+    "src/modules/accountant/work-queues.ts  [invoices]  in(clientIds)",
+  ];
+
+  // The gate proper: the machinery above has to still SEE something, or a broken reader would
+  // report a clean repo and this whole block would pass vacuously for good.
+  assert.ok(gevonden.length > 0,
+    "[IN-CHUNK] the scanner found no .in() at all on a growing table — it is the READER that broke, not the code");
+
+  const nieuw = gevonden.filter((g) => !BEKEND.includes(g));
+  assert.deepEqual(nieuw, [],
+    "[IN-CHUNK] a new unchunked .in() on a growing table. Past a few hundred ids this dies with a " +
+    "414 that supabase-js reports as an ordinary error — so the caller reads a failed call as 'no " +
+    "rows'. Use fetchAllRowsForIds (reads) or chunkIds (writes) from supabase-paginate.ts");
+
+  const opgelost = BEKEND.filter((b) => !gevonden.includes(b));
+  assert.deepEqual(opgelost, [],
+    "[IN-CHUNK] these entries are fixed — strike them from BEKEND. The inventory may only shrink, " +
+    "or it stops describing the code and starts excusing it");
+});
+
+test("[IN-CHUNK] het kwartaalpakket leest de inkoopbonnen gechunkt — en zwijgt niet als dat mislukt", () => {
+  // Twee lezingen in closing-package.ts haalden de PDF's van de inkoopfacturen op met een kale
+  // `.in("id", incomingDocIds)`, zonder de error te lezen. Beide ceilings golden, en de tweede is
+  // de ergste die dit bestand kent: hij bepaalt wat er IN de zip zit. Een 414 gaf `data: null`, de
+  // map bleef leeg, en de boekhouder kreeg een kwartaal met élke verkoopfactuur en géén enkele
+  // inkoopfactuur — met niets in de samenvatting dat het zei.
+  //
+  // De eerste bepaalt de TELLING, en die faalde de andere kant op: elke inkoopfactuur viel door
+  // naar `missingPdf`, dus het scherm waar de eigenaar op afgaat vóór de overdracht meldde
+  // "137 facturen zonder PDF" over een kwartaal waarvan alle bonnen er waren.
+  const src = code("src/lib/closing-package.ts");
+
+  // ── De telling: gechunkt, gepagineerd, en met een expliciet "we konden niet kijken" ──
+  assert.match(src, /fetchAllRowsForIds<\{ id: string; file_url: string \| null \}, string>\(\s*incomingDocIds,/,
+    "de telling leest de inkoopbonnen weer ongechunkt");
+  assert.match(src, /evidenceChecked = false;/,
+    "een mislukte lezing wordt niet meer als zodanig onthouden");
+  // [NO-SILENT-EMPTY] Dit is de kern: een factuur die we NIET konden opzoeken mag niet worden
+  // beschuldigd van een ontbrekende bon. Zonder deze tak is een storing niet te onderscheiden van
+  // een kwartaal zonder bonnen, en dat verschil is precies wat de eigenaar moet weten.
+  assert.match(src, /if \(!evidenceChecked\) \{\s*evidenceUnknown\+\+;\s*continue;\s*\}/,
+    "een niet-controleerbare factuur belandt weer op de lijst 'zonder PDF'");
+  // Een factuur zónder document_id is wél gewoon zonder bon — daar is geen lezing voor nodig, dus
+  // die uitspraak blijft staan of de lezing nu lukte of niet.
+  assert.match(src, /if \(!inv\.document_id\) \{\s*missingPdf\.push/,
+    "een factuur zonder gekoppeld document wordt niet meer als 'zonder PDF' geteld");
+  assert.match(src, /code: "evidence_unchecked"/,
+    "de samenvatting vertelt niet meer waaróm het aantal 'met PDF' te laag is");
+  assert.match(src, /konden we de bijlage niet controleren/,
+    "de waarschuwing is niet langer een zin die de eigenaar begrijpt");
+
+  // ── De zip: gechunkt, en de fout mag NIET worden opgevangen ──
+  const zipLezing = src.indexOf('fetchAllRowsForIds<\n      { id: string; file_url: string | null; file_name: string | null },');
+  assert.ok(zipLezing > 0, "de zip leest de inkoopbonnen niet meer via fetchAllRowsForIds");
+  // Dit is de regressie die niemand zou zien: iemand zet er behulpzaam een try/catch omheen, de
+  // gates blijven groen, en de zip vertrekt weer stil zonder inkoopfacturen. De e-factuur-lezing
+  // veertig regels verderop mág wél falen — die is een TOEVOEGING aan een pakket dat zonder haar
+  // compleet is. Deze twee ZIJN het pakket, en beide routes beantwoorden een throw al met
+  // "opnieuw proberen kan direct". Gemeten over het blok tot aan de e-factuur-lezing.
+  const blokEinde = src.indexOf("const xmlPathByInvoice", zipLezing);
+  assert.ok(blokEinde > zipLezing, "de e-factuur-lezing staat niet meer na de bonnen-lezing");
+  const zipBlok = src.slice(zipLezing, blokEinde);
+  assert.doesNotMatch(zipBlok, /catch/,
+    "de bonnen-lezing van de zip vangt haar fout weer op — dan vertrekt het pakket stil zonder inkoopfacturen");
+});
+
+test("[VOL-GELEZEN] de mappen en de prullenbak tonen álle bestanden, niet de eerste duizend", () => {
+  // Dezelfde stille rijlimiet als bij de opslagmeter hierboven, maar op de LIJSTEN zelf. Drie
+  // lezingen kapten af: de mapinhoud (het scherm waarop de eigenaar kijkt óf iets er is), de
+  // gedeelde map (wat de boekhouder ziet) en de prullenbak (waar hij terugzoekt wat hij per
+  // ongeluk weggooide — de bak die het hardst groeit, want er wordt zelden geleegd).
+  //
+  // Geen foutmelding, geen "meer laden", geen enkel spoor: het bestand stond er gewoon niet. En de
+  // enige conclusie die een mens aan een prullenbak zonder zijn bestand verbindt, is dat het echt
+  // weg is.
+  const bestanden = code("src/app/api/bestanden/route.ts");
+  const prullenbak = code("src/app/api/bestanden/trash/route.ts");
+
+  for (const [naam, src] of [["bestanden", bestanden], ["prullenbak", prullenbak]] as const) {
+    assert.match(src, /from "@\/lib\/supabase-paginate"/, `${naam}: de pager wordt niet meer geïmporteerd`);
+    // De volgorde moet TOTAAL zijn. created_at en trashed_at zijn geen van beide uniek, dus zonder
+    // id erachter kan een rij zich op een paginagrens verstoppen of verdubbelen — een paginering
+    // die rijen kwijtraakt is erger dan geen paginering, want ze ziet er compleet uit.
+    assert.match(src, /\.order\("id", \{ ascending: true \}\)\s*\n?\s*\.range\(from, to\)/,
+      `${naam}: de paginering mist haar stabiele volgorde of haar .range()`);
+  }
+
+  // De mapinhoud en de gedeelde lijst, elk apart — twee lezingen, twee schermen.
+  assert.match(bestanden, /const documents = await fetchAllRows<Bestand>\(\(from, to\) => \{\s*const eigen = eigenBestanden\(\);\s*const inMap/,
+    "de mapinhoud wordt weer in één ongepagineerde klap gelezen");
+  assert.match(bestanden, /const documents = await fetchAllRows<Bestand>\(\(from, to\) => \{\s*const eigen = eigenBestanden\(\);\s*const gefilterd = view === "shared"/,
+    "de slimme weergaven (gedeeld / met ster) worden weer ongepagineerd gelezen");
+  // 'recent' is met opzet begrensd op 50 — dat is de weergave, niet een limiet die per ongeluk
+  // afkapt. .limit en .range zijn dezelfde knop, dus die lezing hoort er juist NIET doorheen.
+  assert.match(bestanden, /if \(view === "recent"\) \{[\s\S]{0,400}?\.limit\(50\);/,
+    "de 'recent'-weergave is haar bewuste begrenzing van 50 kwijt");
+
+  assert.match(prullenbak, /await fetchAllRows<WeggegooidBestand>\(\(from, to\) =>\s*prullenbak\(\)/,
+    "de prullenbak wordt weer ongepagineerd gelezen");
+
+  // [NO-SILENT-EMPTY] fetchAllRows GOOIT bij een mislukte pagina. Wordt dat niet gevangen en als
+  // fout beantwoord, dan is een halve lijst niet te onderscheiden van een complete — en een lijst
+  // bestanden draagt geen enkel teken van half te zijn.
+  for (const [naam, src] of [["bestanden", bestanden], ["prullenbak", prullenbak]] as const) {
+    assert.match(src, /catch \(e\) \{[\s\S]{0,400}?NextResponse\.json\(\{ error: e instanceof Error \? e\.message : "(Fout|stats_failed)" \}, \{ status: 500 \}\)/,
+      `${naam}: een mislukte pagina wordt niet meer als fout beantwoord`);
+  }
+});
 
 test("[ZOEK-EERLIJK] search never truncates in silence, never limits arbitrarily, and always lands", () => {
   // REPORTED: "I searched for it in the search bar and it did not open it, or open where it is."

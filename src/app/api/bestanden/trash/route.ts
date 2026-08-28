@@ -8,6 +8,8 @@
 //   trash (must be soft-deleted first — never a one-click hard delete of a live record).
 
 import { NextRequest, NextResponse } from "next/server";
+// [VOL-GELEZEN] PostgREST kapt stil af op ~1000 rijen — zie supabase-paginate.ts.
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { deleteDocument } from "@/lib/documents";
 import { logAuditAction, getClientIP } from "@/lib/audit";
@@ -17,15 +19,34 @@ export async function GET(_req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
-  const { data, error } = await supabase
-    .from("documents")
-    .select("id, file_name, file_url, file_size, file_type, doc_type, created_at, folder_id, trashed, trashed_at, starred")
-    .eq("user_id", user.id)
-    .eq("trashed", true)
-    .order("trashed_at", { ascending: false });
+  // [VOL-GELEZEN] Gepagineerd. De prullenbak is het scherm waarop de eigenaar iets terugzoekt dat
+  // hij per ongeluk weggooide, en juist die bak groeit: er wordt zelden geleegd. Achter de stille
+  // rijlimiet van PostgREST verdween alles ouder dan de laatste duizend — hij zag geen foutmelding,
+  // hij zag een prullenbak zonder zijn bestand, en de enige conclusie daaruit is "dan is het echt weg".
+  //
+  // trashed_at is nullable (oudere soft-deletes lieten hem leeg) en DESC zet NULL bovenaan; id
+  // erachter maakt de volgorde totaal, zodat geen rij zich op een paginagrens verstopt of verdubbelt.
+  const prullenbak = () =>
+    supabase
+      .from("documents")
+      .select("id, file_name, file_url, file_size, file_type, doc_type, created_at, folder_id, trashed, trashed_at, starred")
+      .eq("user_id", user.id)
+      .eq("trashed", true);
+  type WeggegooidBestand = NonNullable<Awaited<ReturnType<typeof prullenbak>>["data"]>[number];
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+  try {
+    const data = await fetchAllRows<WeggegooidBestand>((from, to) =>
+      prullenbak()
+        .order("trashed_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    return NextResponse.json(data);
+  } catch (e) {
+    // [NO-SILENT-EMPTY] fetchAllRows THROWS on a failed page — en een halve prullenbak leest
+    // precies als een prullenbak waarin het bestand niet meer staat.
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Fout" }, { status: 500 });
+  }
 }
 
 export async function PATCH(req: NextRequest) {
