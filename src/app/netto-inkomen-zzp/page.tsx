@@ -24,6 +24,14 @@ export const metadata: Metadata = {
     description: 'Hoeveel houd je over? Een schatting met belasting, aftrek, heffingskortingen en Zvw.',
     type: 'website',
   },
+  twitter: {
+    // [DEEL-KAART] Dezelfde woorden als openGraph hierboven, want X leest twitter: en negeert
+    // og: zodra Next die tags schrijft — en dat doet het altijd, uit de ROOT-metadata. Zonder
+    // dit blok heet deze pagina op X "BoekBrug — Financieel Command Center".
+    // De afbeelding komt uit opengraph-image.tsx in deze map; die hoeft hier niet genoemd.
+    title: 'Netto inkomen ZZP berekenen (2026)',
+    description: 'Hoeveel houd je over? Een schatting met belasting, aftrek, heffingskortingen en Zvw.',
+  },
 }
 
 const faq = [

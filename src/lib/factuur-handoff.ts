@@ -85,6 +85,19 @@ export interface FactuurHandoff {
   lines: HandoffLine[];
   invoiceDate: string; // yyyy-mm-dd, '' als onbekend
   deliveryDate: string;
+  /**
+   * [VAK-BRUG] Het beroep waarmee de bezoeker binnenkwam, '' als onbekend.
+   *
+   * BEWUST GEEN NIEUWE HANDOFF_VERSION. readHandoff gooit elke payload weg waarvan de versie niet
+   * exact klopt, dus ophogen zou iedereen treffen die deze week een factuur invulde en nog niet
+   * geregistreerd is: hun overdracht verdwijnt stil op het moment dat ze terugkomen. Dat is
+   * precies het verlies waar dit bestand voor bestaat. Een payload van vóór dit veld leest hier
+   * terug als '' — 'onbekend', wat de normale toestand is en waar alles al op rekent.
+   *
+   * Ongevalideerd opgeslagen: dit bestand kent de vakkenlijst niet en hoort die niet te kennen.
+   * De schrijver zeeft met parseVak() en /register doet het bij het lezen nog eens.
+   */
+  vak: string;
 }
 
 const emptySender = (): HandoffSender => ({
@@ -142,6 +155,8 @@ export function buildHandoff(input: {
   lines: Array<Partial<HandoffLine>>;
   invoiceDate?: string;
   deliveryDate?: string;
+  /** [VAK-BRUG] Al gezeefd door de aanroeper; hier alleen nog tot string gemaakt. */
+  vak?: string | null;
   now?: Date;
 }): FactuurHandoff {
   const now = input.now ?? new Date();
@@ -162,6 +177,7 @@ export function buildHandoff(input: {
       .filter(isMeaningfulLine),
     invoiceDate: isoDate(input.invoiceDate),
     deliveryDate: isoDate(input.deliveryDate),
+    vak: str(input.vak),
   };
 }
 
@@ -241,6 +257,9 @@ export function readHandoff(storage: HandoffStorage, now: Date = new Date()): Fa
       .filter(isMeaningfulLine),
     invoiceDate: isoDate(p.invoiceDate),
     deliveryDate: isoDate(p.deliveryDate),
+    // Een payload van vóór [VAK-BRUG] heeft dit veld niet; str() maakt daar '' van, en dat
+    // is exact wat 'onbekend vak' betekent. Zie het commentaar bij FactuurHandoff.vak.
+    vak: str(p.vak),
   };
 }
 

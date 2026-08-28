@@ -21,6 +21,14 @@ export const metadata: Metadata = {
     description: 'Upload een factuur, wij lezen de gegevens automatisch uit. Gratis.',
     type: 'website',
   },
+  twitter: {
+    // [DEEL-KAART] Dezelfde woorden als openGraph hierboven, want X leest twitter: en negeert
+    // og: zodra Next die tags schrijft — en dat doet het altijd, uit de ROOT-metadata. Zonder
+    // dit blok heet deze pagina op X "BoekBrug — Financieel Command Center".
+    // De afbeelding komt uit opengraph-image.tsx in deze map; die hoeft hier niet genoemd.
+    title: 'Factuur scannen met AI',
+    description: 'Upload een factuur, wij lezen de gegevens automatisch uit. Gratis.',
+  },
 }
 
 const faq = [

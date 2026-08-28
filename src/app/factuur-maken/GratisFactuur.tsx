@@ -33,6 +33,10 @@ import PublicFooter from '@/components/public-footer'
 import { M3 } from '@/lib/design/tokens'
 import { buildHandoff, writeHandoff } from '@/lib/factuur-handoff'
 import { vakOpties, vakBySlug, vakRegelsVoorFormulier, regelsNaVakwissel } from '@/lib/vak-sjablonen'
+import { parseVak, VAK_PARAM } from '@/lib/vak-profile'
+import { trackFunnel, FUNNEL_EVENTS } from '@/lib/funnel-events'
+import { rememberAttribution } from '@/lib/campaign-attribution'
+import { INVOICE_TOOL_FAQ } from '@/lib/invoice-tool-faq'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts. The public tool gets it
 // too: a wrong invoice date here becomes a wrong quarter the moment the invoice is real.
 import DateFieldNL from '@/components/ui/DateFieldNL'
@@ -266,8 +270,54 @@ const s = {
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
-export default function GratisFactuur({ initialVak = '' }: { initialVak?: string } = {}) {
+/**
+ * [VAK-SLOT] `belowTool` is long-form copy that a SERVER component renders and hands in.
+ *
+ * It could have been imported here and switched on `initialVak`, and that would have been worse
+ * twice over: prose written for a crawler would ship in the client bundle of a page whose whole
+ * problem was weight, and every vakpagina would carry the text of all the others. The server
+ * builds only its own, and this component never learns what is in it.
+ *
+ * It lands directly above <ToolsCrossLinks/> because <PublicFooter/> is rendered INSIDE this
+ * component — anything a page appends after <GratisFactuur/> would sit underneath the footer.
+ */
+export default function GratisFactuur(
+  { initialVak = '', belowTool }: { initialVak?: string; belowTool?: React.ReactNode } = {},
+) {
   const [hydrated, setHydrated] = useState(false)
+
+  // ── [VAK-BRUG] + [FUNNEL-METING] ────────────────────────────────────────────
+  // Het vak zoals de ROUTE het kent. `initialVak` en niet `vak`: de keuzelijst in het formulier
+  // verandert de factuurregels, maar zegt niets over waar de bezoeker vandaan kwam. parseVak()
+  // laat alleen een bestaande slug door, dus een hernoemd of verzonnen vak valt hier stil weg.
+  const herkomstVak = parseVak(initialVak)
+
+  // De registratielink, mét het vak eraan. Zonder vak blijft het exact de oude kale /register,
+  // zodat de generieke pagina onveranderd werkt — het vak is een verbetering van het pad, nooit
+  // een voorwaarde ervoor.
+  const ctaHref = herkomstVak
+    ? `/register?${VAK_PARAM}=${encodeURIComponent(herkomstVak)}`
+    : '/register'
+
+  // De campagne van dit bezoek, gelezen bij binnenkomst en bewaard tot de registratie. Zie
+  // campaign-attribution.ts: first touch wint, zeven dagen houdbaar.
+  const herkomst = useRef<{ source: string; medium: string; campaign: string } | null>(null)
+
+  // Één keer per bezoek, niet één keer per render — vandaar de refs. Een teller die meeloopt met
+  // elke toetsaanslag meet de tikker, niet de trechter.
+  const gemeld = useRef({ pageView: false, created: false, handoff: false })
+
+  function meldHandoff() {
+    if (gemeld.current.handoff) return
+    gemeld.current.handoff = true
+    trackFunnel(FUNNEL_EVENTS.handoffCreated, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }
+
+  function handleCtaClick() {
+    trackFunnel(FUNNEL_EVENTS.ctaClick, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }
+
+
   const [invoiceType, setInvoiceType] = useState<InvoiceType>('factuur')
   // Date/number defaults are deterministic (pinned to Europe/Amsterdam), so a
   // lazy initializer yields the SAME value on server and client — no effect,
@@ -478,8 +528,21 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
       })),
       invoiceDate,
       deliveryDate,
+      // [VAK-BRUG] Het vak reist mee in de overdracht, niet alleen in de link. Wie de CTA
+      // overslaat en later zelf naar /register loopt — of de bevestigingsmail in een ander
+      // tabblad opent — heeft geen querystring meer; dan is dit de enige plek waar nog staat
+      // welk beroep hij ons verteld had.
+      vak: herkomstVak,
     }))
-  }, [hydrated, sender, client, lines, invoiceDate, deliveryDate])
+    // [FUNNEL-METING] Alleen melden als er ook echt iets bewaard IS. Iemand die de pagina opent
+    // en meteen wegklikt heeft geen overdracht aangemaakt, en dat als conversiestap tellen zou
+    // de trechter breder maken dan hij is.
+    if (client.client_name.trim() || numericLines.some((l) => l.line_total !== 0)) meldHandoff()
+    // meldHandoff staat bewust niet in de deps: hij bewaakt zichzelf met gemeld.current en heeft
+    // geen state die kan verouderen. Meesturen zou de lijst laten meebewegen met een functie die
+    // elke render opnieuw ontstaat, en dan draait dit effect voor niets.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, sender, client, lines, invoiceDate, deliveryDate, herkomstVak, numericLines])
 
   // [VAK-SJABLONEN] Regels van een beroep erbij zetten. Ingevulde regels blijven staan; wat het
   // VORIGE sjabloon onaangeraakt heeft achtergelaten gaat weg.
@@ -503,6 +566,27 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
     (sender.company_name.trim() || sender.full_name.trim()) &&
     client.client_name.trim() &&
     numericLines.some((l) => l.line_total !== 0)
+
+  useEffect(() => {
+    if (!hydrated || gemeld.current.pageView) return
+    gemeld.current.pageView = true
+    try {
+      herkomst.current = rememberAttribution(localStorage, window.location.search)
+    } catch {
+      /* storage geblokkeerd — het bezoek telt nog steeds mee, alleen zonder campagne */
+    }
+    trackFunnel(FUNNEL_EVENTS.pageView, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }, [hydrated, herkomstVak])
+
+  // "Aangemaakt" is het moment waarop er een echte factuur STAAT: een tegenpartij en een regel met
+  // een bedrag. Dat is dezelfde drempel als de downloadknop, want een leeg formulier dat iemand
+  // opende en verliet is geen aangemaakte factuur — en juist het verschil tussen dit event en
+  // pageView vertelt of mensen de tool begrijpen.
+  useEffect(() => {
+    if (!hydrated || gemeld.current.created || !canDownload) return
+    gemeld.current.created = true
+    trackFunnel(FUNNEL_EVENTS.created, { vak: herkomstVak, ...(herkomst.current ?? {}) })
+  }, [hydrated, canDownload, herkomstVak])
 
   const setS = (k: keyof Sender) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSender((p) => ({ ...p, [k]: e.target.value }))
@@ -535,6 +619,10 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
       /* storage blocked — the advance below still works for this session */
     }
     setInvoiceNumber((n) => nextInvoiceNumber(n))
+    // [FUNNEL-METING] Het echte moment: er ligt nu een factuur op zijn schijf. Het verschil
+    // tussen dit event en invoice_cta_click is de vraag waar deze hele fase over gaat — of
+    // iemand die waarde kreeg ook doorloopt naar een account.
+    trackFunnel(FUNNEL_EVENTS.pdfDownload, { vak: herkomstVak, ...(herkomst.current ?? {}) })
   }
 
   const fileName = `${invoiceNumber || 'concept'}.pdf`
@@ -542,10 +630,38 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
   return (
     <div style={s.page}>
       <div style={s.wrap}>
-        <h1 style={s.h1}>Gratis factuur maken</h1>
-        <p style={s.sub}>
-          Vul in, download je PDF. Geen account nodig — je gegevens blijven in je browser.
-        </p>
+        {/* [EEN-H1] Op /factuur-maken IS "Gratis factuur maken" de kop van de pagina. Op
+            /factuur-maken/<vak> is dat de kop van de vakpagina hierboven ("Factuur maken voor
+            loodgieter"), en stond deze regel er als TWEEDE h1 onder — twee koppen die allebei
+            claimen waar de pagina over gaat, terwijl de bezoeker op de eerste geklikt heeft.
+            Daar is het de kop van dít blok, de generator zelf, en dus een h2. */}
+        {initialVak === ''
+          ? <h1 style={s.h1}>Gratis factuur maken</h1>
+          : <h2 style={s.h1}>Gratis factuur maken</h2>}
+        {/* [SEO-INTRO] Twee inleidingen, en het onderscheid is `initialVak` — de ROUTE, niet de
+            keuzelijst. Een bezoeker die hierboven zijn vak kiest verandert `vak`, en als die de
+            tekst zou sturen verdween de inleiding onder zijn handen.
+            Op /factuur-maken staat de volledige tekst: dit is de pagina die op "gratis factuur
+            maken" gevonden moet worden en een zoekmachine krijgt hier zinnen in plaats van alleen
+            formuliervelden. Op /factuur-maken/<vak> blijft de korte regel staan — die pagina heeft
+            haar eigen kop en haar eigen BTW-uitleg in de server-component, en dezelfde alinea er
+            tien keer onder plakken is precies de dubbele inhoud die [VAK-PAGINAS] vermijdt. */}
+        {initialVak === '' ? (
+          <>
+            <p style={{ ...s.sub, marginBottom: 12 }}>
+              Maak snel en gratis een professionele factuur als PDF. Vul je gegevens en die van je
+              klant in, voeg je werkzaamheden toe en download je factuur direct.
+            </p>
+            <p style={s.sub}>
+              Geen account nodig en geen kosten. Je gegevens blijven in je browser zolang je geen
+              account maakt.
+            </p>
+          </>
+        ) : (
+          <p style={s.sub}>
+            Vul in, download je PDF. Geen account nodig — je gegevens blijven in je browser.
+          </p>
+        )}
 
         {/* ── Documentgegevens ── */}
         <div style={s.card}>
@@ -878,6 +994,31 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
           </p>
         )}
 
+        {/* [SEO-TEKST] Beschrijft wat de tool hierboven zojuist gedaan heeft, in gewone zinnen.
+            Dat is de reden dat hij ONDER het formulier staat en niet erboven: wie is komen
+            factureren is dan klaar, en wie via Google binnenkomt vindt hier de woorden die bij
+            zijn zoekopdracht horen. Alleen op de generieke pagina — zie [SEO-INTRO]. */}
+        {initialVak === '' && (
+          <div style={{ ...s.card, marginTop: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 10px' }}>
+              Gratis een factuur maken als ZZP’er
+            </h2>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: '0 0 10px', lineHeight: 1.6 }}>
+              Werk je als ZZP’er, freelancer of kleine ondernemer? Met BoekBrug maak je eenvoudig
+              een professionele factuur die je als PDF kunt downloaden.
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: '0 0 10px', lineHeight: 1.6 }}>
+              Je hoeft geen account aan te maken en je betaalt niets. Vul je bedrijfsgegevens, de
+              gegevens van je klant en de factuurregels in. BoekBrug berekent automatisch het
+              BTW-bedrag en het totaal.
+            </p>
+            <p style={{ fontSize: 14, color: '#5f6368', margin: 0, lineHeight: 1.6 }}>
+              Wil je je facturen later bewaren, versturen en bijhouden? Dan kun je gratis een
+              BoekBrug-account maken.
+            </p>
+          </div>
+        )}
+
         {/* ── Peak-intent register CTA (only real features) ──
             [FUNNEL-OVERDRACHT] Deze knop beloofde "bewaar je facturen" en leverde een leeg
             formulier: de gegevens stonden in localStorage maar werden na registratie nergens
@@ -892,7 +1033,20 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
             Maak een gratis account — <strong>deze factuur gaat mee</strong>. Je bedrijfsgegevens,
             je klant en je regels staan er straks al in; je hoeft niets opnieuw in te tikken.
           </div>
-          <Link href="/register" style={s.btnPrimary}>
+          {/* [VAK-BRUG] De brug had geen oprit. /register LEEST ?vak= al, vak-profile.ts is
+              getest, en profile_vak.sql zet het door naar profiles.vak — maar geen enkele link in
+              de app zette de parameter ooit, en op het registratieformulier staat geen keuzelijst.
+              Een loodgieter die via /factuur-maken/loodgieter binnenkwam registreerde dus als
+              "onbekend vak", precies de situatie die de kop van vak-profile.ts beschrijft.
+
+              De bron is `initialVak`, de ROUTE — niet `vak`, de keuzelijst in het formulier. Wie
+              op de generieke pagina een vak aanklikt heeft dat niet aan óns verteld maar aan zijn
+              factuurregels; die keuze reist mee in de overdracht en hoort niet als
+              herkomst-attributie te tellen.
+
+              parseVak() zeeft: alleen een slug die in VAKKEN bestaat komt in de URL terecht, dus
+              een verzonnen of hernoemd vak wordt hier stil weggelaten in plaats van doorgegeven. */}
+          <Link href={ctaHref} style={s.btnPrimary} onClick={handleCtaClick}>
             Gratis account maken
           </Link>
           <div style={{ fontSize: 12, color: '#5f6368', marginTop: 12 }}>
@@ -933,6 +1087,31 @@ export default function GratisFactuur({ initialVak = '' }: { initialVak?: string
               ))}
           </div>
         </div>
+
+        {/* [FACTUUR-FAQ] Dezelfde vragen die de server-shell als FAQPage-markup meestuurt, uit
+            dezelfde module — zie src/lib/invoice-tool-faq.ts. Ze stonden tot nu toe alléén in de
+            JSON-LD, en markup zonder zichtbare vraag telt niet mee; dit blok maakt de markup waar.
+            Niet op de vakpagina's: die hebben hun eigen vraag ("welk BTW-tarief geldt voor …?"),
+            en die is daar het antwoord waarvoor de bezoeker gekomen is. */}
+        {initialVak === '' && (
+          <div style={{ ...s.card, marginTop: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>
+              Veelgestelde vragen over gratis facturen maken
+            </h2>
+            {INVOICE_TOOL_FAQ.map((item) => (
+              <div key={item.q} style={{ marginBottom: 14 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '0 0 4px' }}>
+                  {item.q}
+                </h3>
+                <p style={{ fontSize: 14, color: '#5f6368', margin: 0, lineHeight: 1.6 }}>
+                  {item.a}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {belowTool}
 
         <ToolsCrossLinks currentSlug="/factuur-maken" />
         <KennisbankLinks tool="/factuur-maken" />

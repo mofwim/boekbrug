@@ -1,5 +1,46 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
+import { SITE_URL, siteUrlIssue } from "./src/lib/site";
+
+// [CANONIEK-BUILD] Say it out loud during the build when NEXT_PUBLIC_BASE_URL is the wrong host.
+//
+// WHY HERE AND NOWHERE ELSE. siteUrlIssue() already knew how to spot this, and /api/health already
+// called it — but that endpoint needs CRON_SECRET and somebody who thinks to ask. Nothing asked.
+// The variable sat on the www host for months while the deployment served the apex, and the only
+// evidence was outside the app: all 283 URLs in sitemap.xml answered 301, every canonical pointed
+// at a redirect, and Google indexed none of it. The screens were fine the whole time.
+//
+// A local build cannot catch that, because a developer's shell does not have the production
+// variable. The Vercel build does. This is the one place in the repo that runs with the real value
+// and can still print something a human sees, so the check belongs here and not in a unit test.
+//
+// IT WARNS, IT DOES NOT THROW. A wrong canonical costs indexing; a build that refuses to run costs
+// the deploy in front of it, including the deploy that would have fixed the variable. The person
+// who can act on this is the one reading the build log.
+//
+// The message is Dutch because its reader is the owner in the Vercel dashboard — the same audience
+// and the same sentence as /api/health, whose `gevolg` text is reused here rather than restated.
+const canonicalIssue = siteUrlIssue();
+if (canonicalIssue) {
+  console.warn(
+    [
+      "",
+      "════════════════════════════════════════════════════════════════════════",
+      "  ⚠  NEXT_PUBLIC_BASE_URL klopt niet — de site wordt niet geïndexeerd",
+      "",
+      `  Nu ingesteld : ${SITE_URL || "(leeg)"}`,
+      `  Probleem     : ${canonicalIssue.code}`,
+      `  Gevolg       : ${canonicalIssue.gevolg}`,
+      "",
+      "  Dit breekt geen enkel scherm. Het breekt alleen sitemap.xml, robots.txt",
+      "  en elke canonical — en dat zie je pas weken later in Search Console.",
+      "  Zet de variabele goed in Vercel → Settings → Environment Variables en",
+      "  deploy opnieuw.",
+      "════════════════════════════════════════════════════════════════════════",
+      "",
+    ].join("\n"),
+  );
+}
 
 const nextConfig: NextConfig = {
   // [PERF] Strip console.* from PRODUCTION bundles only (dev keeps all logs).
