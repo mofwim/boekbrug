@@ -114,11 +114,33 @@ export async function POST(req: NextRequest) {
   let alreadyAllocated = 0;
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: links } = await (pipeline as any)
+    const { data: links, error: linksErr } = await (pipeline as any)
       .from("bank_tx_invoices")
       .select("invoice_id, amount_applied")
       .eq("transaction_id", transactionId)
       .eq("user_id", user.id);
+    // [KOPPELING-ONBEKEND] A failed read here is NOT "this line has given nothing away".
+    //
+    // The paragraph above states the rule twice — reading a link as zero "would let the same euros
+    // be spent twice", and a budget that is too large is "the one direction this sum may never err
+    // in". Three paths honour it: a NULL amount_applied, an invoice this user cannot read, and the
+    // plan's own invoice read below (which returns 500 on its error). This one did not. On a failed
+    // read `links` is null, so rows is empty, the whole guarded block is skipped, alreadyAllocated
+    // stays 0 — and the owner is offered the FULL line to allocate again, silently.
+    //
+    // /api/bank/confirm computes the same sum at the sibling door and already answers this the
+    // right way: it sets appliedElsewhereKnown = false, "which makes that guard stricter, never
+    // looser". Two doors, one rule; this is the one that was missing it.
+    if (linksErr) {
+      return NextResponse.json(
+        {
+          error:
+            "We konden niet nagaan wat er al aan deze betaling is gekoppeld. Ververs de pagina en " +
+            "probeer het opnieuw — zolang dat onbekend is, kunnen we dit bedrag niet veilig verdelen.",
+        },
+        { status: 503 },
+      );
+    }
     const rows = (links ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>;
     if (rows.length > 0) {
       const { data: linked } = await pipeline

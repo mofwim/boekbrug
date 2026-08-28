@@ -16368,3 +16368,32 @@ test("[AANGIFTE-GEEN-FACTUUR] een verzonden aangifte is geen inkoopfactuur", () 
   assert.match(src, /NOT\(`tax_filing_notice:\$\{filing\}`\)/,
     "de reden noemt niet welke aangifte het was");
 });
+
+test("[KOPPELING-ONBEKEND] een mislukte koppelingslezing maakt het budget nooit gróter", () => {
+  // Twee deuren rekenen uit wat een banklijn al heeft weggegeven: /api/bank/confirm en
+  // /api/bank/allocate. Dezelfde som, dezelfde tabel, dezelfde regel — en de allocate-kant liet
+  // de fout van de eerste lezing vallen. Dan is `links` null, `rows` leeg, het hele bewaakte blok
+  // overgeslagen en alreadyAllocated 0: de eigenaar krijgt de VOLLEDIGE lijn opnieuw aangeboden.
+  //
+  // De alinea erboven schrijft de regel zelf twee keer op — een koppeling als nul lezen "would let
+  // the same euros be spent twice", en een te groot budget is "the one direction this sum may never
+  // err in". Drie paden hielden zich eraan (een NULL bedrag, een onleesbare factuur, en de lezing
+  // van de facturen uit het plan, die wél op zijn error controleert). Deze niet.
+  const allocate = code("src/app/api/bank/allocate/route.ts");
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+
+  // De lezing moet zijn fout UITLEZEN en erop weigeren.
+  assert.match(allocate, /const \{ data: links, error: linksErr \} = await/,
+    "de koppelingslezing gooit zijn fout weer weg");
+  assert.match(allocate, /if \(linksErr\) \{[\s\S]{0,400}?status: 503/,
+    "een mislukte lezing leidt niet tot een weigering — het budget wordt dan stil te groot");
+
+  // En de zin zegt WAAROM er niet verdeeld kan worden; "mislukt" alleen laat de eigenaar opnieuw
+  // proberen zonder te weten dat er geld op het spel staat.
+  assert.match(allocate, /kunnen we dit bedrag niet veilig verdelen/,
+    "de weigering noemt niet wat er op het spel staat");
+
+  // De zusterdeur bleef doen wat hij al deed: onbekend = strenger, nooit ruimer.
+  assert.match(confirm, /if \(linkReadErr\) \{\s*\n\s*appliedElsewhereKnown = false;/,
+    "de confirm-deur is losser geworden in plaats van de allocate-deur strenger");
+});
