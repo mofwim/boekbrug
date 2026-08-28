@@ -17605,6 +17605,14 @@ test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked ra
   // feed it in: that is the guess this whole block exists to refuse.
   assert.match(pure, /export function splitByRate\(incl: number \| null \| undefined, ratePercent: number\)/,
     "splitByRate no longer takes the rate from its caller");
+  // 0% is one of the rates, and it is NOT "no btw yet": verlegde btw, an intracommunautaire
+  // levering and a vrijgestelde prestatie all print a real zero. The owner has to be able to say it.
+  assert.match(pure, /export const NL_BTW_RATES = \[0, 9, 21\] as const;/,
+    "0% is gone — an owner cannot state a verlegde or exempt invoice any more");
+  // The readback compares CENTS as integers. "<= 0.01" on floats is not a tolerance of one cent:
+  // a drift of exactly one cent lands on 0.010000000000005 and falls outside it.
+  assert.match(pure, /Math\.abs\(cents\(splitByRate\(t\.incl, rate\)\.btw\) - cents\(t\.btw\)\) <= 1/,
+    "the rate readback compares floats again, so one cent of rounding drift hides the rate");
   assert.match(pure, /if \(!\(rate > 0\)\) return \{ ex: total, btw: 0, incl: total \}/,
     "a zero or unreadable rate now invents btw instead of leaving the base alone");
   // btw is the SUBTRACTION, so the three numbers add up exactly. Rounding both halves loses a cent.
@@ -17615,10 +17623,18 @@ test("[NUL-IS-GEEN-INVOER] a zero is a placeholder, and the btw rate is asked ra
     assert.match(bron, /NL_BTW_RATES\.map\(\(tarief\) =>/, `${naam}: the rate buttons are gone`);
     assert.match(bron, /splitByRate\((totalIncBtw|amounts\.incl), tarief\)/,
       `${naam}: the split no longer runs from the TOTAL — the best-read figure on the paper`);
-    // The offer exists only while there IS a total and NO btw. Once btw is filled there is nothing
-    // to repair, and a button that overwrites a correctly read btw is worse than no button.
-    assert.match(bron, /Math\.abs\((totalIncBtw|amounts\.incl)\) > 0\.005 && Math\.abs\((btwAmount|amounts\.btw)\) < 0\.005/,
-      `${naam}: the rate offer no longer waits for a missing btw — it can overwrite a good one`);
+    // [BTW-TARIEF] The offer first appeared only while btw was still 0, on the argument that a
+    // button which overwrites a correctly read btw is worse than none. Reported from real use, and
+    // the argument was wrong: on an invoice the app itself marked "onzeker gelezen" there IS
+    // already a btw amount, and that is exactly the moment the owner wants to say "this is 21%".
+    //
+    // So the row now stands whenever there is a total — and the safety that the old condition
+    // provided is provided better, by making the CURRENT rate visible: the button the invoice is
+    // already at is filled in, so an accidental tap changes something the owner can see.
+    assert.match(bron, /Math\.abs\((totalIncBtw|amounts\.incl)\) > 0\.005 && \(/,
+      `${naam}: the rate row is hidden again on an invoice that already carries a btw amount`);
+    assert.match(bron, /aria-pressed=\{huidigTarief === tarief\}/,
+      `${naam}: the row no longer shows which rate the invoice is at, so a stray tap is invisible`);
     assert.match(bron, /t\('corr\.tarief\.uitleg'\)/,
       `${naam}: the screen no longer says why the rate is asked instead of computed`);
   }

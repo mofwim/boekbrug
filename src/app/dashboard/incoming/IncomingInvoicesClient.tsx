@@ -43,7 +43,7 @@ import { sendWithFit } from "@/lib/upload-fit";
 // the Toevoegen sheet. Pure and tested; this surface posts to the same /api/intake.
 import { describeUploadFailure } from "@/lib/upload-failure";
 // [AMOUNT-TRIPLET] ex + btw = total keeps holding, whichever of the three you type.
-import { setExcl, setBtw, setIncl, splitByRate, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from "@/lib/amount-triplet";
+import { setExcl, setBtw, setIncl, splitByRate, rateOfTriplet, amountFieldText, AMOUNT_PLACEHOLDER, NL_BTW_RATES } from "@/lib/amount-triplet";
 // [KOMMA-INVOER] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts.
 import { parseAmountNL } from "@/lib/parse-nl";
 // [STATIEGELD-GAT] Het statiegeld dat de lezer liet vallen — zie statiegeld.ts.
@@ -1088,6 +1088,10 @@ export function ConfirmPaidModal({
   // net-credit (positive goods-BTW over a negative net excl) the raw ratio is negative, so the old
   // `btwRate < 0` test false-flagged a correctly-read Altena-style creditnota. Only a magnitude
   // above 21% is actually impossible for a (blended) NL rate.
+  // [BTW-TARIEF] Which standard rate this invoice is ALREADY at, for the button row to light up.
+  // null is a real answer: a mixed 9%/21% wholesale invoice lands around 11%, belongs to no
+  // standard rate, and showing no highlight is the honest way to say so.
+  const huidigTarief = rateOfTriplet(triplet);
   const btwRate = Math.abs(exBtw) > 0.005 ? Math.round(Math.abs(btwAmount / exBtw) * 100) : null;
   const rateFlag = btwRate !== null && btwRate > 21;
 
@@ -1415,20 +1419,29 @@ export function ConfirmPaidModal({
                   TOTAAL — hetzelfde argument als setIncl: dat is het best leesbare getal op het
                   papier. De knop bestaat alleen zolang er een totaal is zónder btw; zodra er btw
                   staat verdwijnt hij, want dan is er niets te herstellen. */}
-              {editing && Math.abs(totalIncBtw) > 0.005 && Math.abs(btwAmount) < 0.005 && (
+              {/* GEMELD, daarna: de knoppen verschenen alleen zolang de btw nog 0 was. Te streng —
+                  juist op een factuur die "onzeker gelezen" is STAAT er al een btw-bedrag, en dat
+                  is precies het moment waarop de eigenaar wil kunnen zeggen "dit is 21%". */}
+              {editing && Math.abs(totalIncBtw) > 0.005 && (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontSize: 12.5, color: "#5f6368", marginBottom: 6, lineHeight: 1.4 }}>
-                    {t('corr.tarief.vraag')}
+                    {huidigTarief === null ? t('corr.tarief.vraag') : t('corr.tarief.nu', { tarief: huidigTarief })}
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     {NL_BTW_RATES.map((tarief) => (
                       <button
                         key={tarief}
                         type="button"
+                        // The row is a READOUT as well as a control: the rate the invoice is
+                        // already at is filled in, so an accidental tap is visible immediately.
+                        aria-pressed={huidigTarief === tarief}
                         onClick={() => applyTriplet(splitByRate(totalIncBtw, tarief))}
                         style={{
-                          flex: 1, minHeight: 44, borderRadius: 12, border: "1px solid #1a73e8",
-                          background: "#e8f0fe", color: "#1a4fa0", fontSize: 13.5, fontWeight: 600,
+                          flex: 1, minHeight: 44, borderRadius: 12,
+                          border: `${huidigTarief === tarief ? 2 : 1}px solid #1a73e8`,
+                          background: huidigTarief === tarief ? "#1a73e8" : "#e8f0fe",
+                          color: huidigTarief === tarief ? "#fff" : "#1a4fa0",
+                          fontSize: 13.5, fontWeight: 600,
                           cursor: "pointer", fontFamily: "inherit", padding: "10px 8px", lineHeight: 1.35,
                         }}
                       >

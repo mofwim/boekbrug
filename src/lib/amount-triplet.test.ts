@@ -11,7 +11,8 @@ import assert from "node:assert/strict";
 
 import {
   setExcl, setBtw, setIncl, tripletHolds, splitByRate, amountFieldText, NL_BTW_RATES,
-  type AmountTriplet,
+  type AmountTriplet, rateOfTriplet,
+
 } from "./amount-triplet";
 
 const empty: AmountTriplet = { ex: 0, btw: 0, incl: 0 };
@@ -139,4 +140,41 @@ test("[NUL-IS-GEEN-INVOER] a zero shows as an empty box, not as the character 0"
   // A draft belonging to ANOTHER field never leaks into this one — that is how touching a
   // neighbouring box used to make this one jump back to "0".
   assert.equal(amountFieldText(0, { field: "incl", text: "74" }, "btw"), "");
+});
+
+test("[BTW-TARIEF] 0% is a rate the owner can state, not the absence of an answer", () => {
+  // Verlegde btw (art. 12 lid 5), an intracommunautaire levering and a vrijgestelde prestatie all
+  // print a real 0 on the paper. "No btw yet" and "the btw is nil" look identical in the database
+  // and are not identical on a document — so the owner has to be able to SAY zero.
+  assert.deepEqual(NL_BTW_RATES.slice(), [0, 9, 21]);
+  const t = splitByRate(740.47, 0);
+  assert.equal(t.btw, 0);
+  assert.equal(t.ex, 740.47, "a 0% invoice puts the whole total in the base");
+  assert.equal(t.incl, 740.47);
+});
+
+test("[BTW-TARIEF] the button row reads back the rate the invoice is already at", () => {
+  // Not used to change anything — it is what the screen shows, so an owner can see which rate the
+  // app believes the invoice carries BEFORE they touch a button, and an accidental tap is visible.
+  assert.equal(rateOfTriplet(splitByRate(740.47, 9)), 9);
+  assert.equal(rateOfTriplet(splitByRate(740.47, 21)), 21);
+  assert.equal(rateOfTriplet(splitByRate(740.47, 0)), 0);
+  // A real invoice, entered by hand rather than split: 195,28 + 41,01 = 236,29 is 21%.
+  assert.equal(rateOfTriplet({ ex: 195.28, btw: 41.01, incl: 236.29 }), 21);
+
+  // A MIXED 9%/21% wholesale invoice belongs to no standard rate and must not be claimed for one.
+  // 800 at 9% plus 200 at 21% = 872 + 242 → blended ~11,4%.
+  assert.equal(rateOfTriplet({ ex: 1000, btw: 114, incl: 1114 }), null,
+    "a blended rate was reported as a standard one");
+  // Nothing to read on an empty invoice.
+  assert.equal(rateOfTriplet({ ex: 0, btw: 0, incl: 0 }), null);
+});
+
+test("[BTW-TARIEF] the readback tolerates a cent, and no more", () => {
+  // The tolerance is on the MONEY, not on the percentage: rounding a real invoice produces a
+  // fraction of a cent of drift, and comparing rates would call a correct 9% invoice "not 9%"
+  // whenever the base rounds unkindly.
+  const nine = splitByRate(1234.56, 9);
+  assert.equal(rateOfTriplet({ ...nine, btw: round2(nine.btw + 0.01) }), 9, "one cent of drift broke the readback");
+  assert.equal(rateOfTriplet({ ...nine, btw: round2(nine.btw + 0.5) }), null, "half a euro was called 9%");
 });

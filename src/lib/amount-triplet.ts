@@ -108,10 +108,43 @@ export function tripletHolds(t: AmountTriplet): boolean {
 // point of a button: the owner asked for this rate, on this invoice, once. It is not something the
 // screen does on its own while they are typing.
 
-/** The rates a Dutch invoice can carry. 0% exists too, but it needs no button — btw is already 0. */
-export const NL_BTW_RATES = [9, 21] as const;
+/**
+ * The rates a Dutch invoice can carry, in the order the buttons show them.
+ *
+ * 0% is one of them and it is NOT the same as "no btw yet". Verlegde btw (art. 12 lid 5, the
+ * construction sector's reverse charge), an intracommunautaire levering and a vrijgestelde
+ * prestatie all print a real 0 on the paper — and an owner confirming such an invoice has to be
+ * able to SAY zero rather than leave a field they were never given a number for. The two look
+ * identical in the database and they are not identical on a document.
+ */
+export const NL_BTW_RATES = [0, 9, 21] as const;
 
 export type NlBtwRate = (typeof NL_BTW_RATES)[number];
+
+/**
+ * Which of the standard rates this split is already at, or null when it is at none of them.
+ *
+ * Not used to CHANGE anything — it is what the screen shows back, so the owner can see which rate
+ * the app currently believes the invoice carries before they touch a button. A split that matches
+ * no standard rate says something too: a mixed 9%/21% wholesale invoice lands around 11% and its
+ * lack of a highlight is the honest answer, not a defect.
+ *
+ * The tolerance is one cent on the btw, not a percentage: rounding a real invoice's rate produces
+ * a fraction of a cent of drift, and comparing rates rather than money would call a correct 9%
+ * invoice "not 9%" whenever the base happens to round unkindly.
+ */
+export function rateOfTriplet(t: AmountTriplet): NlBtwRate | null {
+  if (Math.abs(t.incl) < 0.005) return null;
+  // Compared in CENTS as integers. A tolerance of "<= 0.01" on floats is not a tolerance of one
+  // cent: a drift of exactly one cent lands on 0.010000000000005 and falls outside it. The repo
+  // already says this in amount-candidates.ts — cents as an integer is the only safe unit for an
+  // equality test on money — and a test written for one cent is what caught it here.
+  const cents = (n: number) => Math.round(n * 100);
+  for (const rate of NL_BTW_RATES) {
+    if (Math.abs(cents(splitByRate(t.incl, rate).btw) - cents(t.btw)) <= 1) return rate;
+  }
+  return null;
+}
 
 /**
  * Split a gross total by a rate.
