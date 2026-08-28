@@ -1000,7 +1000,7 @@ export default function InvoiceDetailPage() {
               if (!xq) return null
               return (
                 <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#FFF3E0', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }}>event_available</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#B26A00', marginTop: 1 }} aria-hidden>event_available</span>
                   <div style={{ fontSize: 12.5, color: '#7A4B00', lineHeight: 1.5 }}>
                     <strong>{t('detail.kwartaal.betaaldIn', { quarter: xq.paidQuarterLabel })}</strong> {t('detail.kwartaal.uitleg', { quarter: xq.bookedQuarterLabel })}
                   </div>

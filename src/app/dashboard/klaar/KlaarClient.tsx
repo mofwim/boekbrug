@@ -16,6 +16,11 @@ import { translator } from '@/lib/i18n/t'
 import { NummeringPaneel } from '@/components/beveiliging/NummeringPaneel'
 import { GeldPaneel } from '@/components/beveiliging/GeldPaneel'
 import { failureText } from '@/lib/server-message'
+// [DEADLINE] De uiterste indieningsdatum en hoeveel dagen dat nog is — zelfde rekensom als de
+// aangiftepagina en de herinneringscron.
+import { deadlineNotice } from '@/lib/btw-deadline-notice'
+import type { QuarterNo } from '@/lib/btw-reservation'
+import { formatDateNL } from '@/lib/format-nl'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -67,6 +72,9 @@ export default function KlaarClient() {
   const todayNl = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Amsterdam', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
   const curYear = Number(todayNl.slice(0, 4))
   const curQuarter = Math.floor((Number(todayNl.slice(5, 7)) - 1) / 3) + 1
+  // [DEADLINE] Op dezelfde Amsterdamse dag als de rest van dit scherm — todayNl is er al, en een
+  // tweede bron voor "vandaag" is precies hoe twee regels op één scherm een andere dag tellen.
+  const deadline = deadlineNotice(year, quarter as QuarterNo, todayNl)
   // [QUARTER] Refresh via a bump key so the manual "Vernieuwen" fetch runs through the
   // SAME cancellable effect — clicking refresh then quickly changing quarter can no longer
   // land stale-quarter data (the superseded request's cancelled flag is always set).
@@ -168,7 +176,7 @@ export default function KlaarClient() {
       <div style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '20px 16px 80px' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
           <button onClick={() => setReloadKey((k) => k + 1)} title={t('lijst.vernieuwen')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: M3.primary, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>{t('lijst.vernieuwen')}
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>refresh</span>{t('lijst.vernieuwen')}
           </button>
         </div>
 
@@ -208,13 +216,13 @@ export default function KlaarClient() {
           })}
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingInlineStart: 6 }}>
             <button onClick={() => setYear((y) => Math.max(2000, y - 1))} title={t('wh.vorigJaar')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: M3.primary }}>
-              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_left</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_left</span>
             </button>
             <span style={{ fontSize: 14, fontWeight: 700, color: M3.onSurface, minWidth: 40, textAlign: 'center' }}>{year}</span>
             {/* Stepping INTO the current year can strand the selection on a quarter that has not
                 started (Q4 2025 → 2026 in January), so the quarter is clamped with the year. */}
             <button onClick={() => { const next = Math.min(year + 1, curYear); setYear(next); if (next === curYear && quarter > curQuarter) setQuarter(curQuarter) }} disabled={year >= curYear} title={t('wh.volgendJaar')} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'none', cursor: year >= curYear ? 'default' : 'pointer', color: year >= curYear ? M3.outlineVariant : M3.primary, opacity: year >= curYear ? 0.5 : 1 }}>
-              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }}>chevron_right</span>
+              <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20 }} aria-hidden>chevron_right</span>
             </button>
           </div>
         </div>
@@ -268,7 +276,7 @@ export default function KlaarClient() {
               disabled={pkgBusy}
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '15px 18px', borderRadius: 14, border: 'none', background: M3.primary, color: '#fff', fontSize: 15.5, fontWeight: 700, marginBottom: 8, cursor: pkgBusy ? 'default' : 'pointer', fontFamily: FONT, opacity: pkgBusy ? 0.6 : 1 }}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: 20 }}>inventory_2</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>inventory_2</span>
               {pkgBusy ? t('klr.pakketBezig') : t('klr.download')}
             </button>
             {pkgError && (
@@ -342,7 +350,7 @@ export default function KlaarClient() {
 
             {report.missing.length === 0 && report.risks.length === 0 && (
               <div style={{ background: M3.successContainer, color: M3.success, borderRadius: 14, padding: '14px 16px', fontSize: 14, fontWeight: 600, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>task_alt</span>
+                <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>task_alt</span>
                 {t('brug.sluitAan')}
               </div>
             )}
@@ -378,8 +386,26 @@ export default function KlaarClient() {
               </div>
               <Link href={`/dashboard/aangifte?year=${year}&quarter=${quarter}`} style={{ fontSize: 12.5, color: M3.primary, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6 }}>
                 {t('klr.conceptAangifte')}
-                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
+                <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }} aria-hidden>chevron_right</span>
               </Link>
+              {/* [DEADLINE] Wanneer dit ingediend moet zijn — op het scherm waar de eigenaar
+                  besluit dat het kwartaal af is. Dat besluit werd tot nu toe genomen zonder dat
+                  ergens stond hoeveel tijd er nog was: de enige plek in de app die de datum
+                  noemde was een kaart op /dashboard/vandaag, een scherm dat op de telefoon geen
+                  vaste ingang heeft. De rekensom komt uit btw-deadline-notice.ts, dezelfde die de
+                  aangiftepagina en de herinneringscron gebruiken, zodat de drie nooit een andere
+                  dag tellen. */}
+              <div style={{
+                fontSize: 12.5, marginTop: 6, lineHeight: 1.5,
+                fontWeight: deadline.state === 'ruim' ? 400 : 700,
+                color: deadline.state === 'voorbij' ? M3.error
+                  : deadline.state === 'ruim' ? M3.neutral
+                  : M3.warning,
+              }}>
+                {deadline.state === 'voorbij' ? t('aang.deadline.voorbij', { datum: formatDateNL(deadline.deadline) })
+                  : deadline.state === 'vandaag' ? t('aang.deadline.vandaag')
+                  : t('aang.deadline.nog', { datum: formatDateNL(deadline.deadline), dagen: deadline.days })}
+              </div>
             </div>
 
             {/* ── Honest limits ── */}
@@ -398,7 +424,7 @@ function Section({ title, tone, icon, children }: { title: string; tone: 'warnin
   return (
     <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${tone === 'warning' ? M3.warningContainer : M3.errorContainer}`, padding: '14px 16px', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 20, color }}>{icon}</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color }} aria-hidden>{icon}</span>
         <span style={{ fontSize: 13, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '.03em' }}>{title}</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>
@@ -413,7 +439,7 @@ function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
   // owner resolves it — so "what's missing" and "where to fix it" are one action.
   const body = (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 18, color, flexShrink: 0, marginTop: 1 }} aria-hidden>
         {tone === 'warning' ? 'radio_button_unchecked' : 'error_outline'}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -422,7 +448,7 @@ function ItemRow({ item, tone }: { item: Item; tone: 'warning' | 'error' }) {
         {item.fix && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, marginTop: 6, fontSize: 12.5, fontWeight: 700, color: M3.primary }}>
             {item.fix.label}
-            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ fontSize: 16 }} aria-hidden>chevron_right</span>
           </span>
         )}
       </div>
@@ -445,7 +471,7 @@ function DimRow({ d, last }: { d: Dimension; last: boolean }) {
   return (
     <div style={{ padding: '11px 0', borderBottom: last ? 'none' : `1px solid #f1f3f4` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.neutral }}>{DIM_ICON[d.key]}</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.neutral }} aria-hidden>{DIM_ICON[d.key]}</span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{d.label}</span>
         {/* Weight as a muted chip — reads as a label ("how much it counts"), not a score.
             Hidden when n.v.t.: a non-applicable part is EXCLUDED from the score, so it

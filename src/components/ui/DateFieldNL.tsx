@@ -144,7 +144,7 @@ export default function DateFieldNL({
             display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.onSurfaceVariant }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 20, color: M3.onSurfaceVariant }} aria-hidden>
             date_range
           </span>
         </button>

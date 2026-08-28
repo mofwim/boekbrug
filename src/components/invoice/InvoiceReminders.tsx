@@ -41,6 +41,18 @@ export function InvoiceReminders({
   const [history, setHistory] = useState<Reminder[]>([])
   const [paused, setPaused] = useState(!!remindersPaused)
   const [saving, setSaving] = useState(false)
+  // [HERIN-WAARHEID] Staat de herinneringsmachine überhaupt AAN?
+  //
+  // Dit paneel zei "Deze factuur volgt je herinneringsschema (zie Instellingen)" tegen iedereen —
+  // en het las alleen `reminders_paused`, de pauze van deze ENE factuur. De globale schakelaar
+  // (profiles.reminders_enabled) kende het niet, en die staat standaard UIT: de cron scheept
+  // opzettelijk donker ("Ships DARK", api/cron/reminders). Dus de zin die de eigenaar hier las was
+  // vrijwel altijd onwaar, en het gevolg is niet cosmetisch: hij denkt dat de app zijn te late
+  // klanten najaagt, doet het daarom zelf niet, en merkt het pas weken later aan zijn bank.
+  //
+  // Vier standen, niet twee — 'onbekend' hoort erbij. Een mislukte lezing mag hier nooit lezen als
+  // "staat aan": dat is precies de bewering die dit paneel verkeerd deed.
+  const [globaal, setGlobaal] = useState<'laden' | 'aan' | 'uit' | 'onbekend'>('laden')
 
   // Only outgoing, still-open invoices are ever reminded — hide everywhere else.
   const applicable = direction !== 'incoming' && (status === 'sent' || status === 'overdue')
@@ -55,6 +67,23 @@ export function InvoiceReminders({
         .eq('invoice_id', invoiceId)
         .order('sent_at', { ascending: false })
       if (active && data) setHistory(data as Reminder[])
+    })()
+    // [HERIN-WAARHEID] De globale schakelaar, van de eigen profielrij (dezelfde lezing die
+    // Instellingen doet). Apart van de historie hierboven, want de twee zeggen iets anders en een
+    // van de twee mag de ander niet meeslepen als hij faalt.
+    ;(async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { if (active) setGlobaal('onbekend'); return }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('reminders_enabled')
+        .eq('id', user.id)
+        .maybeSingle()
+      if (!active) return
+      // Geen rij en geen fout is een echt antwoord op een kolom die per definitie bestaat als de
+      // rij bestaat; een fout is dat niet. Alleen het eerste geval mag "uit" heten.
+      if (error) { setGlobaal('onbekend'); return }
+      setGlobaal(data?.reminders_enabled ? 'aan' : 'uit')
     })()
     return () => {
       active = false
@@ -90,30 +119,59 @@ export function InvoiceReminders({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 600, color: '#202124' }}>{t('herin.titel')}</div>
-          <div style={{ fontSize: 13, color: '#5F6368', marginTop: 2 }}>
-            {paused ? t('herin.gepauzeerd') : t('herin.actief')}
+          {/* [HERIN-WAARHEID] De zin volgt de stand die hierboven is opgehaald. 'laden' zegt niets:
+              een halve seconde stilte is beter dan een halve seconde de verkeerde bewering. */}
+          <div style={{ fontSize: 13, color: globaal === 'uit' ? '#7C5800' : '#5F6368', marginTop: 2 }}>
+            {globaal === 'laden' ? ''
+              : globaal === 'onbekend' ? t('herin.onbekend')
+              : globaal === 'uit' ? t('herin.uit')
+              : paused ? t('herin.gepauzeerd')
+              : t('herin.actief')}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={togglePause}
-          disabled={saving}
-          style={{
-            flexShrink: 0,
-            padding: '8px 14px',
-            borderRadius: 20,
-            border: `1px solid ${paused ? '#1A73E8' : '#E0E0E0'}`,
-            background: paused ? '#1A73E8' : '#fff',
-            color: paused ? '#fff' : '#5F6368',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: saving ? 'default' : 'pointer',
-            opacity: saving ? 0.6 : 1,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {paused ? t('herin.hervatten') : t('herin.pauzeren')}
-        </button>
+        {/* [HERIN-WAARHEID] Pauzeren gaat over deze ene factuur en heeft alleen betekenis als er
+            iets te pauzeren valt. Staat de machine uit, dan is de enige zinnige handeling hier de
+            weg naar de schakelaar zelf — een pauzeknop zou de indruk juist versterken dat er iets
+            loopt. Bij 'onbekend' en 'laden' bieden we geen van beide: we weten het niet. */}
+        {globaal === 'uit' ? (
+          <a
+            href="/dashboard/settings"
+            style={{
+              flexShrink: 0,
+              padding: '8px 14px',
+              borderRadius: 20,
+              border: '1px solid #1A73E8',
+              color: '#1A73E8',
+              fontSize: 14,
+              fontWeight: 600,
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t('herin.aanzetten')}
+          </a>
+        ) : globaal === 'aan' ? (
+          <button
+            type="button"
+            onClick={togglePause}
+            disabled={saving}
+            style={{
+              flexShrink: 0,
+              padding: '8px 14px',
+              borderRadius: 20,
+              border: `1px solid ${paused ? '#1A73E8' : '#E0E0E0'}`,
+              background: paused ? '#1A73E8' : '#fff',
+              color: paused ? '#fff' : '#5F6368',
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: saving ? 'default' : 'pointer',
+              opacity: saving ? 0.6 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {paused ? t('herin.hervatten') : t('herin.pauzeren')}
+          </button>
+        ) : null}
       </div>
 
       {history.length > 0 && (

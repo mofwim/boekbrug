@@ -190,11 +190,29 @@ const PARENT_RULES: ParentRule[] = [
     parent: () => '/dashboard/settings',
   },
 
+  // ── settings/team → settings ─────────────────────────────────────────────
+  // [DEUR] Same shape as facturering above: no rule and no chrome title, so the bar rendered
+  // nothing. Its safe fallback would have been the home, which is wrong twice over — team is a
+  // settings child, and it is reached from the settings list.
+  {
+    match: /^\/dashboard\/settings\/team$/,
+    parent: () => '/dashboard/settings',
+  },
+
   // ── bank/categoriseren → bank ────────────────────────────────────────────
   // [NAV] Without this the categorise screen jumped past the bank overview
   // straight to home. Its real parent is the bank page it was opened from.
   {
     match: /^\/dashboard\/bank\/categoriseren$/,
+    parent: () => '/dashboard/bank',
+  },
+
+  // ── bank/verdelen/[txId] → bank ──────────────────────────────────────────
+  // [DEUR] Same reasoning as categoriseren, and worse in one way: this screen had no title in
+  // DashboardChrome either, so it rendered no bar at all AND has no back link of its own. The
+  // transaction it splits is a bank line, so the bank overview is where you came from.
+  {
+    match: /^\/dashboard\/bank\/verdelen\/[^/]+$/,
     parent: () => '/dashboard/bank',
   },
 

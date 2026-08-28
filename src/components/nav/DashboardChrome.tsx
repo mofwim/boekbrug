@@ -57,6 +57,24 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   ["/dashboard/beveiliging", "chrome.beveiliging"],
   // [BRUG-RETOUR] De vragen van de boekhouder aan de ondernemer.
   ["/dashboard/vragen", "chrome.vragen"],
+  // [DEUR] Vier schermen die hier ontbraken, met precies het gevolg dat twee regels hierboven al
+  // beschrijven: zonder entry rendert de balk NIETS. Boven 640px is er geen onderbalk, dus daar was
+  // er geen weg terug — en de Kassa is voor een baliezaak het drukst bezochte scherm van de app.
+  //
+  // Ze wijzen naar hun EIGEN schermtitel, niet naar een nieuwe chrome.*-sleutel met hetzelfde woord
+  // erin: die vier pagina's droegen die naam al in een <h1> boven hun uitleg, en dat kopje is in
+  // dezelfde wijziging weggehaald — anders staat de naam er twee keer. Eén scherm, één sleutel, dus
+  // ze kunnen niet uit elkaar gaan lopen.
+  //
+  // De ouderregel voor settings/team staat in navigation.ts (het is een instellingenkind); de
+  // andere drie horen bij de home en krijgen die al via de veilige fallback.
+  ["/dashboard/kassa", "kassa.titel"],
+  ["/dashboard/voertuigen", "vtg.titel"],
+  ["/dashboard/settings/team", "team.titel"],
+  // [UREN-DEUR] Het urenscherm bestond, was vertaald en getest, en had geen enkele link naar zich
+  // toe — en dus ook geen titel. Beide zijn hier gerepareerd: de tegel staat op de home (zie
+  // ZzpDashboard) en de balk weet nu hoe dit scherm heet.
+  ["/dashboard/uren", "uren.titel"],
   ["/dashboard/klaar", "chrome.klaar"],
   ["/dashboard/quarterly", "chrome.kwartaaloverzicht"],
   ["/dashboard/waarheid", "chrome.waarheid"],
@@ -115,6 +133,12 @@ const PATTERN_TITLES: ReadonlyArray<[RegExp, MessageKey]> = [
   // this base label shows on first paint. The /dashboard/messages LIST is an exact
   // STATIC key ("Berichten"), resolved before patterns, so it is unaffected.
   [/^\/dashboard\/messages\/[^/]+$/, "chrome.gesprek"],
+  // [DEUR] Een banktransactie over meerdere facturen verdelen. Dit scherm had geen titel, geen
+  // ouderregel én geen eigen terugknop — geen BackLink, geen router.back(), niets: je kwam er via
+  // een badge op een factuurregel en stond er vast. Op een geldscherm, midden in een handeling die
+  // bepaalt welke factuur als betaald geldt. De ouderregel (→ /dashboard/bank) staat in
+  // navigation.ts.
+  [/^\/dashboard\/bank\/verdelen\/[^/]+$/, "verd.titel"],
   // Accountant client quarter — registers "Q{q} {year} — {client}" + sort action.
   // Listed before the client-detail pattern below (more specific path first).
   [/^\/dashboard\/clients\/[^/]+\/kwartaal$/, "chrome.kwartaal"],

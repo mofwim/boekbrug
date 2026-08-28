@@ -4189,7 +4189,7 @@ export default function IncomingInvoicesClient({
             not have to be learned twice. */}
         {loadIncomplete && (
           <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "12px 14px", borderRadius: 12, border: "1px solid #F5C6C0", background: "#FCE8E6" }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }}>error</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.error, flexShrink: 0, marginTop: 1 }} aria-hidden>error</span>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 13, fontWeight: 600, color: "#B3261E", margin: 0, lineHeight: 1.4 }}>
                 {/* [TAAL] readFailed holds the server's own Dutch source names — data, shown as-is. */}

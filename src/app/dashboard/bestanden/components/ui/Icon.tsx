@@ -19,7 +19,7 @@ export function Icon({
     <span
       className="material-symbols-outlined"
       style={{ fontSize: size, lineHeight: 1, userSelect: "none", color, ...style }}
-    >
+      aria-hidden>
       {name}
     </span>
   );

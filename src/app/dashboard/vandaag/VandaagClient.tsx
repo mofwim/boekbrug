@@ -353,7 +353,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
               {t('vandaag.controleerKosten')}
             </span>
           </span>
-          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }} aria-hidden>chevron_right</span>
         </button>
       )}
 
@@ -379,7 +379,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
               {t('vandaag.geenBetaallijst')}
             </span>
           </span>
-          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }}>chevron_right</span>
+          <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: "#B06000" }} aria-hidden>chevron_right</span>
         </button>
       )}
 

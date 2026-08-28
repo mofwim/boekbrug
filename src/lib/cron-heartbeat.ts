@@ -26,6 +26,11 @@ export const CRON_JOBS = {
   // Vier keer per jaar. Deze ziet er dus bijna altijd "stil" uit — de oordeelfunctie hieronder
   // houdt daar rekening mee, anders zou hij permanent alarm slaan en daarmee waardeloos worden.
   "quarter-close": 2184,
+  // [DEADLINE] De laatste week vóór de BTW-deadline, ook vier keer per jaar (de 24e van
+  // jan/apr/jul/okt). Zelfde ritme en dus dezelfde stilte als quarter-close hierboven — en
+  // dezelfde reden om hem te bewaken: valt hij om, dan is het gevolg een ondernemer die te laat
+  // indient en dat pas merkt aan de boete, drie maanden nadat hij het had kunnen weten.
+  "btw-deadline": 2184,
   // [DAGSTART] Het ochtendbericht aan de boekhouder. Dagelijks, en het is met opzet vaak STIL —
   // hij spreekt alleen over werk dat NIEUW is en over een deadline die een band is overgestoken.
   // Een run zonder berichten is dus de gezonde normaaltoestand, niet een storing; wat hier bewaakt

@@ -110,12 +110,12 @@ export default function VragenClient({
               padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, boxShadow: EL1,
             }}
           >
-            <span className="material-symbols-outlined" style={{ color: M3.primary, fontSize: 22 }}>upload_file</span>
+            <span className="material-symbols-outlined" style={{ color: M3.primary, fontSize: 22 }} aria-hidden>upload_file</span>
             <span style={{ flex: 1 }}>
               <span style={{ display: 'block', fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{t('vr.misBon')}</span>
               <span style={{ display: 'block', fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>{t('vr.voegToe')}</span>
             </span>
-            <span className="material-symbols-outlined icon-dir" style={{ color: '#9aa0a6', fontSize: 20 }}>chevron_right</span>
+            <span className="material-symbols-outlined icon-dir" style={{ color: '#9aa0a6', fontSize: 20 }} aria-hidden>chevron_right</span>
           </button>
         )}
       </div>
@@ -177,7 +177,7 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
       {/* Waar de vraag over gaat */}
       <div style={{ padding: '16px 16px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <span className="material-symbols-outlined" style={{ color: M3.warn, fontSize: 22, marginTop: 1 }}>help</span>
+          <span className="material-symbols-outlined" style={{ color: M3.warn, fontSize: 22, marginTop: 1 }} aria-hidden>help</span>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word' }}>{naam}</div>
             <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>

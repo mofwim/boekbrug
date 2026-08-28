@@ -9,6 +9,9 @@ import { offerteSubject, offerteEmailHtml } from './offerte-send'
 // [M2] De escaper woont in een eigen bestand sinds de offertetekst puur moest worden — zie de kop
 // van escape-html.ts. Zelfde functie, zelfde gedrag, alleen niet meer hier gedeclareerd.
 import { escapeHtml } from './escape-html'
+// [BETAALBLOK] De betaalinstructies die in de factuur- en herinneringsmail horen. Puur, en
+// gedeeld door allebei die mails, zodat een klant nooit twee verschillende betaalgegevens leest.
+import type { PayBlock } from './pay-block'
 // [AFZENDERNAAM] Mail naar de KLANT VAN DE ONDERNEMER draagt zijn bedrijfsnaam, niet die van ons.
 // Alleen deze drie (factuur, herinnering, offerte) gaan naar een derde; de overige twaalf schrijven
 // aan de ondernemer zelf, zijn boekhouder of een genodigde, en daar is BoekBrug de juiste afzender.
@@ -252,6 +255,7 @@ export async function sendInvoiceToClient({
   isCorrected = false,
   extraAttachment,
   ublAttachment,
+  payBlock,
 }: {
   toEmail: string
   clientName: string
@@ -259,6 +263,15 @@ export async function sendInvoiceToClient({
   invoiceNumber: string
   totalInc: number
   dueDate: string
+  /**
+   * [BETAALBLOK] Hoe de klant kan betalen — de betaallink, het IBAN, het kenmerk. Zie
+   * src/lib/pay-block.ts voor waarom deze mail dat tot nu toe NIET bevatte, en waarom dat de
+   * duurste stilte in het product was.
+   *
+   * Optioneel, en null is een echt antwoord: een ondernemer zonder IBAN en zonder betaalpagina
+   * krijgt exact de mail die hij altijd al kreeg.
+   */
+  payBlock?: PayBlock | null
   /** ISO date — shown as Factuurdatum when provided */
   invoiceDate?: string
   /** Rendered invoice PDF — attached when provided */
@@ -358,6 +371,9 @@ export async function sendInvoiceToClient({
     ...(invoiceDate ? [`Factuurdatum: ${formatDateNL(invoiceDate)}`] : []),
     ...(dueDate ? [`Vervaldatum: ${formatDateNL(dueDate)}`] : []),
     '',
+    // [BETAALBLOK] Hoe je betaalt, in de mail zelf. Stond alleen in de PDF-bijlage, en een QR-code
+    // in een bijlage kan niet gescand worden door de telefoon die hem toont.
+    ...(payBlock ? [...payBlock.textLines, ''] : []),
     pdfBuffer ? `De volledige ${docLabel.toLowerCase()} is bijgevoegd als PDF.` : '',
     ublAttachment ? 'Ook bijgevoegd: een e-factuur (UBL) voor je boekhoudpakket.' : '',
     antwoordAdres ? `Vragen? Antwoord op deze mail of mail ${antwoordAdres}.` : '',
@@ -389,6 +405,7 @@ export async function sendInvoiceToClient({
           ${invoiceDateRow}
           ${dueDateRow}
         </div>
+        ${payBlock?.html ?? ''}
         ${attachmentLine}
         ${eFactuurRegel}
         ${contactRegel}
@@ -639,6 +656,7 @@ export async function sendInvoiceReminder({
   wik,
   pdfBuffer,
   senderEmail,
+  payBlock,
 }: {
   toEmail: string
   clientName: string
@@ -646,6 +664,15 @@ export async function sendInvoiceReminder({
   invoiceNumber: string
   /** Amount STILL owed (from openstaandOf) — never the full total. */
   openstaand: number
+  /**
+   * [BETAALBLOK] Waar het geld heen moet. Elke herinneringstrap ging uit zonder één betaalgegeven
+   * — ook de laatste, de wettelijke aanmaning die incassokosten aankondigt. Een brief die kosten
+   * noemt en niet zegt waarheen over te maken levert een telefoontje op, geen betaling.
+   *
+   * Het bedrag hierin is het OPENSTAANDE bedrag, niet het oorspronkelijke totaal: de aanroeper
+   * geeft dezelfde `openstaand` mee die hierboven in de mail staat.
+   */
+  payBlock?: PayBlock | null
   /** ISO due date — shown as the (passed) vervaldatum. */
   dueDate: string
   /** Firmer wording for a later tier (e.g. day 30). Wording only — no money change. */
@@ -700,6 +727,11 @@ export async function sendInvoiceReminder({
   const contactRegel = antwoordAdres
     ? `<p style="color: #555;">Vragen over deze factuur? Antwoord op deze mail of neem contact op via <a href="mailto:${escapeHtml(antwoordAdres)}" style="color:#1a73e8;">${escapeHtml(antwoordAdres)}</a>.</p>`
     : ''
+  // [BETAALBLOK] Het betaalblok staat in de HTML na `wikBlock`. Dat is geen willekeurige plek: bij
+  // een vriendelijke herinnering is wikBlock leeg, dus staat het pal onder de bedragen; bij de
+  // laatste aanmaning staat het onder de zin die de gevolgen noemt. In allebei de gevallen is het
+  // het laatste wat de klant leest vóór hem gevraagd wordt iets te doen.
+  //
   // [GEEN-UNSUBSCRIBE] Deliberately NO List-Unsubscribe header on a payment reminder, and the
   // absence is a decision worth recording: Gmail's one-click-unsubscribe requirement targets
   // PROMOTIONAL bulk mail, and a dunning message about an existing debt is transactional. Adding
@@ -722,6 +754,7 @@ export async function sendInvoiceReminder({
           <p style="margin:4px 0; color:#202124;"><strong>Vervaldatum:</strong> ${formatDateNL(dueDate)}</p>
         </div>
         ${wikBlock}
+        ${payBlock?.html ?? ''}
         ${attachmentLine}
         <p style="color: #5f6368; font-size: 13px;">Heb je deze factuur al betaald? Dan kun je deze ${wik ? 'aanmaning' : 'herinnering'} als niet verzonden beschouwen.</p>
         ${contactRegel}

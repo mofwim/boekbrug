@@ -22,6 +22,7 @@
 // er al staat voor als hij hem nodig heeft (zie docs/BEWAARKLUIS_BUSINESS_CASE.md §4). Een
 // archiefaccount dat dingen NIET mag, zou dat idee kapotmaken.
 
+import type { MessageKey } from "./i18n/messages";
 import { BELOFTE_KORT, BELOFTE_GERUST } from "./belofte";
 
 /** Waarvoor het account is aangemaakt. Beïnvloedt de begroeting, nooit de rechten. */
@@ -75,6 +76,16 @@ export interface PurposeCopy {
   reassurance: string;
   /** Het opschrift op de knop die het account aanmaakt. */
   cta: string;
+  /**
+   * [TAAL] Dezelfde knop als sleutel.
+   *
+   * Alleen de KNOP, en dat is een grens met een reden. De drie regels erboven (subtitle, promise,
+   * reassurance) komen uit belofte.ts en zijn geen interfacetekst: BELOFTE_GERUST is volgens zijn
+   * eigen kop een CONTRACTUELE regel (voorwaarden §5.2), met een eigen vertaalmodule ernaast
+   * (belofte-en.ts). Die horen niet in de schermcatalogus te belanden als bijvangst van een
+   * vertaalslag — dat is een aparte, bewuste wijziging. Een knopopschrift is dat niet.
+   */
+  ctaSleutel: MessageKey;
 }
 
 export function purposeCopy(purpose: AccountPurpose): PurposeCopy {
@@ -88,6 +99,7 @@ export function purposeCopy(purpose: AccountPurpose): PurposeCopy {
       reassurance:
         "Gratis beginnen · geen creditcard · je bewaarplicht blijft van jou, wij zijn je tweede exemplaar",
       cta: "Archief aanmaken",
+      ctaSleutel: "reg.ctaArchief",
     };
   }
   // [BELOFTE] Geen opsomming van functies meer. Wat hier stond ("Maak facturen, scan bonnen
@@ -98,6 +110,7 @@ export function purposeCopy(purpose: AccountPurpose): PurposeCopy {
     promise: BELOFTE_KORT,
     reassurance: BELOFTE_GERUST,
     cta: "Gratis beginnen",
+    ctaSleutel: "reg.ctaGratis",
   };
 }
 
