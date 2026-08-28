@@ -16614,3 +16614,115 @@ test("[URENCRITERIUM] the hours are read from a column that exists, and judged w
     />[^<>{}\n]*[a-z]{4,}\s+[a-z]{4,}[^<>{}\n]*</,
     "a hard-coded sentence appeared in the urencriterium panel");
 });
+
+
+test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
+  // WHY: /api/ib-jaar asked time_entries for `entry_date`. That column belongs to cash_entries;
+  // time_entries has `worked_on`. PostgREST answers "column does not exist", the caller's catch
+  // turned it into null, and the year screen said "we konden je urenregistratie niet lezen" — for
+  // every owner, from the day it shipped. The urencriterium was never once assessed.
+  //
+  // Nothing failed loudly, because the null branch prints an HONEST sentence. That is the whole
+  // shape of this class: a query that can never return a row, behind a caller that treats "error"
+  // and "nothing there" as the same answer. Types cannot see it (the column name is a string) and
+  // no gate could, because none compared the two halves.
+  //
+  // This gate compares them: the columns the migrations declare against the columns the app asks
+  // for. It is cheap, mechanical, and would have caught the above on the day it was written.
+
+  const columnsOf = new Map<string, Set<string>>();
+  const declared = new Set<string>();
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8");
+    for (const m of sql.matchAll(
+      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\n\s*\);/gi,
+    )) {
+      const table = m[1];
+      declared.add(table);
+      const set = columnsOf.get(table) ?? new Set<string>();
+      columnsOf.set(table, set);
+      for (const raw of m[2].split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("--")) continue;
+        const c = /^([a-z_][a-z0-9_]*)\s+/.exec(line);
+        if (!c) continue;
+        if (["constraint", "unique", "primary", "foreign", "check", "exclude", "like", "references"].includes(c[1])) continue;
+        set.add(c[1]);
+      }
+    }
+    // One ALTER TABLE may add SEVERAL columns, comma-separated across lines. Reading only the
+    // first is how this parser's own first draft reported two live columns as missing.
+    for (const m of sql.matchAll(/alter\s+table\s+(?:only\s+)?(?:public\.)?([a-z_][a-z0-9_]*)\s+([\s\S]*?);/gi)) {
+      const set = columnsOf.get(m[1]) ?? new Set<string>();
+      columnsOf.set(m[1], set);
+      for (const a of m[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) set.add(a[1]);
+    }
+  }
+  assert.ok(declared.size > 20, "the migration parser stopped finding tables — this gate is asleep");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const f = `${dir}/${e}`;
+      if (statSync(f).isDirectory()) out.push(...walk(f));
+      else if (/\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f)) out.push(f);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  const queried = new Set<string>();
+  let checked = 0;
+  for (const file of walk("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)\s*\.(select|insert|update|delete|upsert)/g)) {
+      queried.add(m[1]);
+    }
+    for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)/g)) {
+      const table = m[1];
+      const known = columnsOf.get(table);
+      if (!declared.has(table) || !known) continue;
+      const line = () => src.slice(0, m.index ?? 0).split("\n").length;
+      // Stop at the next .from(, or the columns of one query get blamed on another table.
+      let chain = src.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 900);
+      const next = chain.indexOf(".from(");
+      if (next !== -1) chain = chain.slice(0, next);
+
+      for (const f of chain.matchAll(
+        /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|order|contains|overlaps)\(\s*['"]([a-z_][a-z0-9_]*)['"]/g,
+      )) {
+        checked += 1;
+        if (!known.has(f[2])) offenders.push(`${file}:${line()} — ${table} has no column ${f[2]} (.${f[1]}())`);
+      }
+      const sel = /^\s*\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
+      // An embed, alias, count or wildcard is a different grammar — skipped rather than guessed at.
+      if (sel && !/[(:!*]/.test(sel[1])) {
+        for (const raw of sel[1].split(",")) {
+          const c = raw.trim();
+          if (!/^[a-z_][a-z0-9_]*$/.test(c)) continue;
+          checked += 1;
+          if (!known.has(c)) offenders.push(`${file}:${line()} — ${table} has no column ${c} (.select())`);
+        }
+      }
+    }
+  }
+
+  assert.ok(checked > 200, `the gate only checked ${checked} column references — it has stopped reaching the code`);
+  assert.deepEqual(offenders, [], `queries naming a column that does not exist:\n  ${offenders.join("\n  ")}`);
+
+  // ── THE BLIND SPOT, PINNED ──
+  //
+  // These tables were created in Supabase directly and have no CREATE TABLE in this repo, so
+  // nothing above can check a single column on them — including `invoices` and `documents`, the
+  // two the whole product runs on. Pinned rather than ignored: a NEW name appearing here means a
+  // new table shipped without its schema, and the gate should make that a decision rather than a
+  // drift. Moving one out of this list (by adding its migration) is a straight improvement.
+  const UNCHECKABLE = [
+    "accountant_clients", "audit_logs", "bank_transactions", "clients", "deletion_requests",
+    "documents", "draft_queue", "email_connections", "email_skipped_attachments", "folders",
+    "invitations", "invoice_lines", "invoices", "messages", "notifications", "profiles",
+  ];
+  const blind = [...queried].filter((t) => !declared.has(t)).sort();
+  const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
+  assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
+});
