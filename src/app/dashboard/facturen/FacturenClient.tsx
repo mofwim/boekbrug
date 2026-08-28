@@ -264,7 +264,7 @@ export default function FacturenClient({
   // facturen of the same klant. Selected rows are kept as OBJECTS (not just ids)
   // so the selection survives filter/search changes that drop rows from view.
   const [selectMode, setSelectMode] = useState(false)
-  const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number }>>({})
+  const [selected, setSelected] = useState<Record<string, { id: string; number: string; client: string; amount: number; bundelbaar: boolean }>>({})
   const [bundle, setBundle] = useState<{ url: string; amount: number; reference: string; count: number; iban: string } | null>(null)
   useCloseOnBack(!!bundle, () => setBundle(null))
   const [bundleLoading, setBundleLoading] = useState(false)
@@ -275,6 +275,10 @@ export default function FacturenClient({
   const selectedSum = selectedList.reduce((s, r) => s + r.amount, 0)
   // ONE customer pays the bundle — the button explains itself when clients mix.
   const sameClient = new Set(selectedList.map(r => r.client.trim().toLowerCase())).size <= 1
+  // [BULK-PDF] What the betaalverzoek can handle, now stated as its own condition. Until here this
+  // rule hung on the SELECTION itself (a non-bundelbaar row simply could not be ticked); now that
+  // downloading is allowed for anything, the button has to state it.
+  const allBundelbaar = selectedList.length > 0 && selectedList.every(r => r.bundelbaar)
 
   // The row fields the bundle selection reads — a subset of both the infinite
   // list's InvoiceRow and the server-search rows.
@@ -385,6 +389,47 @@ export default function FacturenClient({
     ['sent', 'overdue', 'processing'].includes(inv.status) &&
     !isVolledigGecrediteerd(inv)
 
+  // [BULK-PDF] Take the selected invoices away as pdf. One invoice comes back as the pdf itself,
+  // more as a zip — nobody should unpack an archive for a single file.
+  //
+  // What could NOT be included is reported by name, never counted: "3 of the 8 are missing" is a
+  // number nobody can act on, and a short archive looks complete when you open it.
+  const [downloading, setDownloading] = useState(false)
+  async function downloadSelectedPdf() {
+    if (downloading || selectedList.length === 0) return
+    setDownloading(true)
+    try {
+      const res = await fetch('/api/invoice/bulk-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedList.map(r => r.id), direction: 'outgoing' }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        showToast(typeof json?.error === 'string' ? json.error : t('lijst.download.mislukt'))
+        return
+      }
+      const blob = await res.blob()
+      const naam = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1]
+        ?? 'facturen.zip'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = naam
+      a.click()
+      URL.revokeObjectURL(url)
+      const ontbreekt = Number(res.headers.get('X-Bulk-Missing') ?? '0')
+      if (ontbreekt > 0) {
+        const namen = decodeURIComponent(res.headers.get('X-Bulk-Missing-Names') ?? '')
+        showToast(t('lijst.download.deels', { namen }))
+      }
+    } catch {
+      showToast(t('lijst.download.mislukt'))
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   function toggleSelect(inv: BundelRow) {
     setSelected(prev => {
       const next = { ...prev }
@@ -393,6 +438,10 @@ export default function FacturenClient({
         id: inv.id,
         number: inv.invoice_number ?? '',
         client: inv.client_name ?? '',
+        // [BULK-PDF] Whether this row may join a bundled betaalverzoek, recorded at the moment it
+        // is ticked. Same reason as everything else on this object: the selection has to survive a
+        // filter change, and by then the row itself is no longer there to ask again.
+        bundelbaar: isBundelbaar(inv),
         // [PARTIAL-PAY] The OPEN amount, not the full total — this is what the bundle's
         // QR asks the customer (buildBundelBetaalverzoek sums the open amounts). Showing
         // the full total here made the owner read one number and the customer pay another.
@@ -1389,14 +1438,19 @@ export default function FacturenClient({
                   <div
                     className="inv-row"
                     onClick={() => selectMode
-                      ? (isBundelbaar(inv) && toggleSelect(inv))
+                      ? toggleSelect(inv)
                       : setExpandedId(expanded ? null : inv.id)}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
-                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: selectMode && !isBundelbaar(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !isBundelbaar(inv) ? 0.4 : 1 }}
+                    style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: 'pointer', transition: 'background 0.4s ease' }}
                   >
                     {/* [BUNDEL-BETAALVERZOEK] selection indicator */}
-                    {selectMode && isBundelbaar(inv) && (
+                    {/* [BULK-PDF] Every row is selectable now. Downloading must work for anything —
+                        a paid invoice, a creditnota — so the betaalverzoek refuses on the BUTTON
+                        what it used to refuse through the selection. Same rule, said out loud: a
+                        guard that exists only because a row cannot be ticked is exactly the kind
+                        that disappears later without anyone noticing. */}
+                    {selectMode && (
                       <span className="material-symbols-outlined" style={{ fontSize: 22, color: selected[inv.id] ? M3.primary : '#9AA0A6', flexShrink: 0 }}>
                         {selected[inv.id] ? 'check_circle' : 'radio_button_unchecked'}
                       </span>
@@ -1881,7 +1935,7 @@ export default function FacturenClient({
             </div>
             <button
               onClick={createBundle}
-              disabled={selectedList.length < 2 || !sameClient || bundleLoading}
+              disabled={selectedList.length < 2 || !sameClient || !allBundelbaar || bundleLoading}
               style={{
                 flexShrink: 0, border: 'none', borderRadius: R.full, padding: '10px 18px',
                 fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
@@ -1891,6 +1945,25 @@ export default function FacturenClient({
               }}>
               <span className="material-symbols-outlined" style={{ fontSize: 16 }}>qr_code_2</span>
               {bundleLoading ? t('lijst.bezig') : t('lijst.betaalverzoek')}
+            </button>
+            {/* [BULK-PDF] Beside the betaalverzoek, with a looser condition: downloading works for
+                ANY selection — a single invoice, a paid one, a creditnota. The betaalverzoek states
+                its own demands (two or more, one customer, bundelbaar) and those now sit on the
+                button above instead of inside the selection. */}
+            <button
+              onClick={downloadSelectedPdf}
+              disabled={selectedList.length === 0 || downloading}
+              style={{
+                flexShrink: 0, borderRadius: R.full, padding: '10px 18px',
+                fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                cursor: selectedList.length === 0 || downloading ? 'default' : 'pointer',
+                border: `1px solid ${selectedList.length > 0 && !downloading ? M3.primary : M3.surfaceVariant}`,
+                background: '#fff',
+                color: selectedList.length > 0 && !downloading ? M3.primary : '#9AA0A6',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>download</span>
+              {downloading ? t('lijst.bezig') : t('lijst.downloadPdf')}
             </button>
           </div>
         </div>
