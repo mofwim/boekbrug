@@ -16336,3 +16336,35 @@ test("[BETER-EXEMPLAAR] een beter exemplaar vervangt de foto, en gooit het oude 
   assert.match(code("src/lib/i18n/messages.ts"), /'dsh\.vervang\.uitleg':[\s\S]{0,400}?Deze vervangt factuur X/,
     "de uitleg wijst niet naar het andere geval — twee documenten in plaats van één beter exemplaar");
 });
+
+test("[AANGIFTE-GEEN-FACTUUR] een verzonden aangifte is geen inkoopfactuur", () => {
+  // GEMETEN op een echte mail van de boekhouder: "Loonaangifte voor Kiwi Food Market is
+  // verzonden", € 952, met betalingskenmerk, IBAN en uiterste betaaldatum. Die viel al af. Zijn
+  // BROER niet: dezelfde afzender, hetzelfde sjabloon, per kwartaal in plaats van per maand —
+  //
+  //     "Uw aangifte omzetbelasting … is verzonden naar de belastingdienst.
+  //      Totaal generaal: € 1.234,56.  Maak dit bedrag over op onze bankrekening …"
+  //
+  // — kwam er dwars doorheen. "omzetbelasting" is een btw-woord, "€ 1.234,56" een bedrag met
+  // centen, en INVOICE_WORDS matcht op SUBSTRING: "rekening" in "bankrekening" las als een
+  // document dat zichzelf een rekening noemt. TAX_WORDS is wél op woordgrens bewaakt; die
+  // asymmetrie is precies wat het doorliet.
+  //
+  // Het zou de duurste valse positieve zijn die deze filter kan maken: de btw-aangifte zélf als
+  // aftrekbare kostenpost, met voorbelasting geclaimd over het bedrag dat wordt afgedragen. De
+  // bankkant van deze app weet het al beter — bank-identity.ts noemt zo'n betaling 'tax',
+  // "a settlement, not a deductible cost".
+  const src = code("src/lib/email-body-invoice.ts");
+  assert.match(src, /const FILING_WORDS = \[/, "de aangifte-vorm wordt niet herkend");
+  assert.match(src, /const FILED_WITH_AUTHORITY = \[/, "…of niet als een verzonden aangifte");
+
+  // TWEE signalen, nooit één. De eigen factuur van de boekhouder VOOR het doen van de aangifte
+  // noemt die aangifte ook, en dat is een echte kostenpost met echte voorbelasting. Wat zo'n
+  // factuur niet zegt, is dat de aangifte naar de belastingdienst is gestuurd.
+  assert.match(src, /if \(filing && FILED_WITH_AUTHORITY\.some\(/,
+    "één signaal is genoeg geworden — dan weigert dit de factuur van de boekhouder zelf");
+
+  // En de weigering zegt WELKE vorm het was, want die reden reist mee naar het overgeslagen-register.
+  assert.match(src, /NOT\(`tax_filing_notice:\$\{filing\}`\)/,
+    "de reden noemt niet welke aangifte het was");
+});

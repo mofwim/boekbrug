@@ -160,3 +160,72 @@ test('[MAILTEKST] a plain-text body works too, not only HTML', () => {
   assert.equal(htmlToReadableText(text), text, 'text without tags passes through unchanged')
   assert.equal(bodyLooksLikeInvoice(text, 'Invoice 2026-1').candidate, true)
 })
+
+// ── [AANGIFTE-GEEN-FACTUUR] A filed tax return is not a bill to the owner ────────────────────
+
+test("[AANGIFTE-GEEN-FACTUUR] a loonaangifte notice is refused, and the reason says which", () => {
+  // The reported one: "Loonaangifte voor Kiwi Food Market is verzonden", € 952, with a
+  // betalingskenmerk, an IBAN and a deadline. It failed three of the four conditions anyway; this
+  // makes the refusal say what it IS rather than "no invoice word".
+  const v = bodyLooksLikeInvoice(
+    `Uw aangifte loonheffingen over onder genoemde periode is verzonden naar de belastingdienst.
+     Periode: 2026-07-M
+     Totaal generaal: € 952
+     Betalingskenmerk: 2583.3662.7660.1070
+     IBAN: NL04 RABO 0200 1122 44
+     Uiterste betaaldatum: 31-08-2026`,
+    "Loonaangifte voor Kiwi Food Market is verzonden.",
+  );
+  assert.equal(v.candidate, false);
+  assert.match(v.reason, /tax_filing_notice/);
+});
+
+test("[AANGIFTE-GEEN-FACTUUR] the omzetbelasting sibling — the one that DID get through", () => {
+  // THE BUG. Same accountant, same template, quarterly instead of monthly. It passed all four:
+  // "omzetbelasting" is a tax word, "€ 1.234,56" is an amount with cents, and INVOICE_WORDS
+  // matches on substring — so "rekening" inside "bankrekening" read as the document naming itself
+  // a bill. Booking it would claim voorbelasting on the BTW remittance itself.
+  const v = bodyLooksLikeInvoice(
+    `Uw aangifte omzetbelasting over onder genoemde periode is verzonden naar de belastingdienst.
+     Periode: 2026-Q2
+     Totaal generaal: € 1.234,56
+     Maak dit bedrag over op onze bankrekening onder vermelding van het betalingskenmerk.
+     Uiterste betaaldatum: 31-08-2026`,
+    "Aangifte omzetbelasting is verzonden.",
+  );
+  assert.equal(v.candidate, false, "the BTW return still reads as a purchase invoice");
+  assert.match(v.reason, /tax_filing_notice:aangifte omzetbelasting/);
+});
+
+test("[AANGIFTE-GEEN-FACTUUR] the accountant's own invoice FOR filing still comes through", () => {
+  // The reason two signals are required and never one. This bill names the filing — that is what
+  // the accountant did — and it is a real cost with real voorbelasting. What it never says is that
+  // the return was sent to the tax authority; that sentence only appears on the notice.
+  const v = bodyLooksLikeInvoice(
+    `Factuur 2026-0184 voor het verzorgen van uw aangifte loonheffingen over juli 2026.
+     Bedrag excl. btw: € 145,00
+     BTW 21%: € 30,45
+     Totaal: € 175,45
+     Wij verzoeken u het bedrag over te maken op onze bankrekening.`,
+    "Factuur 2026-0184",
+  );
+  assert.equal(v.candidate, true, "a real accountant invoice was refused as a filing notice");
+});
+
+test("[AANGIFTE-GEEN-FACTUUR] one signal alone never refuses", () => {
+  // A filing word with no 'sent to the authority' phrase, and vice versa. Either on its own would
+  // start rejecting ordinary bills that merely mention tax work.
+  const alleenWoord = bodyLooksLikeInvoice(
+    `Factuur voor de btw-aangifte van dit kwartaal. Totaal € 121,00 incl. btw.
+     Graag over te maken op onze bankrekening.`,
+    "Factuur",
+  );
+  assert.equal(alleenWoord.candidate, true, "a filing word alone refused a bill");
+
+  const alleenZin = bodyLooksLikeInvoice(
+    `Factuur 900. Wij hebben uw stukken naar de belastingdienst gestuurd.
+     Totaal € 121,00 incl. btw. Over te maken op onze bankrekening.`,
+    "Factuur 900",
+  );
+  assert.equal(alleenZin.candidate, true, "the phrase alone refused a bill");
+});

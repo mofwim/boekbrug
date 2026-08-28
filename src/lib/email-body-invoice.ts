@@ -120,6 +120,42 @@ const NOT_AN_INVOICE = [
 ]
 
 /**
+ * [AANGIFTE-GEEN-FACTUUR] A notice that a TAX RETURN was filed — never a bill to the owner.
+ *
+ * MEASURED on a real one: "Loonaangifte voor Kiwi Food Market is verzonden", € 952, with a
+ * betalingskenmerk, an IBAN and a payment deadline. That one is refused already, on three of the
+ * four conditions at once. Its SIBLING is not: the same accountant, the same template, quarterly
+ * instead of monthly —
+ *
+ *     "Uw aangifte omzetbelasting … is verzonden naar de belastingdienst.
+ *      Totaal generaal: € 1.234,56.  Maak dit bedrag over op onze bankrekening …"
+ *
+ * — passed all four and reached the classifier as a possible purchase invoice. Because:
+ * "omzetbelasting" IS a tax word, "€ 1.234,56" IS an amount with cents, and INVOICE_WORDS matches
+ * on SUBSTRING, so "rekening" inside "bankrekening" reads as the document naming itself a bill.
+ * (TAX_WORDS is whole-word guarded; the invoice words are not, deliberately, so that
+ * "factuurdatum" and "factuurbedrag" still count. That asymmetry is what let this through.)
+ *
+ * Booking it would be the worst false positive this filter can produce: the BTW return itself
+ * entered as a deductible cost, with voorbelasting claimed on the very amount being remitted. The
+ * bank side of this app already knows better — bank-identity.ts calls a Belastingdienst payment
+ * 'tax', "a settlement, not a deductible cost".
+ *
+ * TWO signals are required, never one. An accountant's own invoice FOR filing the aangifte is a
+ * real bill that must keep coming through, and it names the filing too ("verzorgen van uw aangifte
+ * loonheffingen"). What it does not say is that the return has been SENT to the tax authority —
+ * that sentence only appears on the notice.
+ */
+const FILING_WORDS = [
+  'loonaangifte', 'aangifte loonheffing', 'aangifte omzetbelasting',
+  'aangifte inkomstenbelasting', 'btw-aangifte', 'btw aangifte', 'suppletie',
+]
+const FILED_WITH_AUTHORITY = [
+  'naar de belastingdienst', 'bij de belastingdienst', 'aan de belastingdienst',
+  'naar de fiscus', 'is verzonden naar', 'is ingediend bij',
+]
+
+/**
  * A euro amount as it is actually written in these mails: € 1.234,56 / EUR 1234.56 / 1.234,56 EUR.
  * At least two decimals, because a bare "€ 5" in a newsletter is not an invoice total.
  */
@@ -149,6 +185,13 @@ export function bodyLooksLikeInvoice(text: string, subject: string): BodyInvoice
 
   const excluded = NOT_AN_INVOICE.find((w) => hay.includes(w))
   if (excluded) return NOT(`not_an_invoice:${excluded}`)
+
+  // [AANGIFTE-GEEN-FACTUUR] Before anything else that could admit it: a filed tax return is not a
+  // bill to the owner, and booking one claims voorbelasting on the remittance itself.
+  const filing = FILING_WORDS.find((w) => hay.includes(w))
+  if (filing && FILED_WITH_AUTHORITY.some((w) => hay.includes(w))) {
+    return NOT(`tax_filing_notice:${filing}`)
+  }
 
   if (!INVOICE_WORDS.some((w) => hay.includes(w))) return NOT('no_invoice_word')
 
