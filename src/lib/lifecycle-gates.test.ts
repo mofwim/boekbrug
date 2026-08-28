@@ -18133,3 +18133,63 @@ test("[NO-SILENT-EMPTY] drie lezingen die bij mislukking een verkeerd BEDRAG of 
   assert.match(detail, /linkedCreditnotas\.length === 0 &&[\s\S]{0,300}?creditnotasGelezen/,
     "de bewerkknop van een verzonden factuur verschijnt weer omdat we niet konden kijken");
 });
+
+test("[GEEN-STILLE-KAP] nothing the accountant receives is assembled from a truncated read", () => {
+  // A data error is a money error is a tax error. This file builds the quarter that is handed to a
+  // boekhouder and filed on — so a read here that silently returns its first thousand rows does not
+  // produce a visible bug, it produces a WRONG FILING with nothing anywhere disagreeing.
+  //
+  // FOUND: sharedDocsForQuarter read every shared, non-trashed, non-invoice document the owner ever
+  // had — no date filter, no limit, no paging. It cannot carry a date filter: `outsideCount` exists
+  // precisely to count the shared documents belonging to ANOTHER quarter, so the whole set has to be
+  // read. That made it the one read here that grows without bound, and an owner who scans receipts
+  // daily passes a thousand within a few years.
+  //
+  // Past that point PostgREST returns 1000 rows and NO error, so both halves of the safety net fail
+  // together and in the same direction: documents of THIS quarter drop out of the ZIP, and
+  // outsideCount — the warning built to catch exactly that — is short by the same rows. The
+  // function's own header already argues that this outcome is unacceptable; it had only closed the
+  // error path, not the truncation path. It is called from both the preview and the ZIP builder.
+  const src = code("src/lib/closing-package.ts");
+
+  assert.match(src, /rows = await fetchAllRows<\{[\s\S]{0,400}?\.eq\("shared", true\)/,
+    "the shared documents are read unpaged again — the accountant's package can lose files in silence");
+  assert.match(src, /const periodRows = await fetchAllRows</,
+    "the statement periods are read unpaged again — a continuity gap past row 1000 reads as no gap");
+
+  // ── AND NOTHING NEW MAY JOIN THEM ──
+  //
+  // Every remaining unpaged listing read in this file is bounded by something real. Pinned with the
+  // reason, so a NEW unpaged read is a decision rather than a drift.
+  const BOUNDED: Array<[string, string]> = [
+    ["documents", "bankafschrift for one quarter, plus the legacy period-less ones — a handful either way"],
+    ["daily_turnover", "one row per day inside one quarter, so at most ~97"],
+    ["audit_logs", "an excerpt with a deliberate limit(500), not a complete listing"],
+    ["invoice_counters", "one row per (type, year) — a handful for the life of the account"],
+  ];
+  const allowed = new Set(BOUNDED.map(([t]) => t));
+
+  const offenders: string[] = [];
+  for (const m of src.matchAll(/\.from\(\s*['"]([a-z_]+)['"]\s*\)/g)) {
+    const at = m.index ?? 0;
+    // supabase.storage.from("documents") is a bucket, not a table.
+    if (/storage\s*$/.test(src.slice(Math.max(0, at - 20), at))) continue;
+    let chain = src.slice(at + m[0].length, at + m[0].length + 900);
+    const next = chain.indexOf(".from(");
+    if (next !== -1) chain = chain.slice(0, next);
+    const before = src.slice(Math.max(0, at - 600), at);
+    if (/fetchAllRows(ForIds)?/.test(before) || /\.range\(/.test(chain)) continue;
+    if (/\.maybeSingle\(\)|\.single\(\)/.test(chain)) continue;      // a lookup, not a listing
+    if (/\.limit\(1\)/.test(chain)) continue;                        // an existence check
+    if (/head: true|count:/.test(chain)) continue;                     // a count, not the rows
+    if (allowed.has(m[1])) continue;
+    offenders.push(`${m[1]} at line ${src.slice(0, at).split("\n").length}`);
+  }
+  assert.deepEqual(offenders, [],
+    `an unpaged listing read reached the accountant's package:\n  ${offenders.join("\n  ")}`);
+
+  // The gate must still be looking at something. A file that stopped matching turns this into a
+  // test that passes on everything — the failure this whole file exists to prevent.
+  const reads = [...src.matchAll(/\.from\(\s*['"][a-z_]+['"]\s*\)/g)].length;
+  assert.ok(reads > 15, `only ${reads} reads found in closing-package.ts — this gate is asleep`);
+});
