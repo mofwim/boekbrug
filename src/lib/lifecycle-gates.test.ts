@@ -16542,3 +16542,67 @@ test("[MANDAAT-INTREKKEN] a failed mandate read may not report a revocation that
   assert.match(route, /vraag\.or\(`zzper_id\.eq\.\$\{tegenpartij\},accountant_id\.eq\.\$\{tegenpartij\}`\)/,
     "the filter interpolates something other than the validated id");
 });
+
+test("[TERUGKEERPAD] every internal link to /login carries the parameter /login actually reads", () => {
+  // A medewerker is invited, opens the mail logged out, taps accept, gets a 401, and is sent to
+  // /login with the invitation as a return path. The path was handed over as `?next=` — and the
+  // login screen reads `?redirect=` and nothing else. So the parameter was dropped in silence: the
+  // employee logged in, landed on /dashboard, and had to dig the invitation out of their mail
+  // again. Nothing failed, nothing logged, and the one person who could report it is the one who
+  // has never seen the product before.
+  //
+  // The gate is over the SENDERS, because that is where the two halves drift apart: login's own
+  // reader is one line and is asserted below, while the links to it live in five screens that were
+  // each written months apart.
+  const senders = new Set<string>();
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      const src = code(p);
+      // Any /login?<param>= in a link, a router.push or a redirect().
+      for (const m of src.matchAll(/\/login\?(\w+)=/g)) {
+        if (m[1] !== "redirect" && m[1] !== "error") senders.add(`${p}: /login?${m[1]}=`);
+      }
+    }
+  };
+  scan("src");
+  assert.deepEqual(
+    [...senders], [],
+    `these send a return path /login never reads:\n  ${[...senders].join("\n  ")}`,
+  );
+
+  // And the reader itself, so the gate above keeps naming the right parameter.
+  assert.match(
+    code("src/app/login/page.tsx"), /searchParams\.get\('redirect'\)/,
+    "login stopped reading 'redirect' — then the check above is holding the senders to a dead name",
+  );
+});
+
+test("[KASSA-DIALOOG] no money decision is asked in a browser box", () => {
+  // 37 native alert/confirm/prompt calls were replaced with the app's own dialog (see Dialog.tsx).
+  // Two came back afterwards, in screens written after that sweep: voiding a till ticket and
+  // deleting a vehicle. Neither is a small thing to ask in a one-line OS box that shows the origin
+  // URL in a standalone PWA — and the counter one is asked with a customer standing there.
+  //
+  // The systems survived the sweep; the ADHERENCE did not, because nothing made the checklist bite
+  // at merge time. This is that thing.
+  const offenders: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scan(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      // Comments stripped: several files explain the replacement and name the old call.
+      for (const m of code(p).matchAll(/window\.(alert|confirm|prompt)\s*\(/g)) {
+        offenders.push(`${p}: window.${m[1]}()`);
+      }
+    }
+  };
+  scan("src");
+  assert.deepEqual(
+    offenders, [],
+    `use the app's dialog (useDialog) instead:\n  ${offenders.join("\n  ")}`,
+  );
+});

@@ -12,6 +12,7 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { failureText } from '@/lib/server-message'
+import { useDialog } from '@/components/ui/Dialog'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { normalizeKenteken, isKentekenShape, vehiclesNeedingApk } from '@/lib/vehicle'
 import { ApkCallList, VehicleList, type VehicleRow } from './VoertuigenPanels'
@@ -22,6 +23,7 @@ const EMPTY = { kenteken: '', description: '', customer_name: '', customer_phone
 
 export default function VoertuigenClient() {
   const t = translator(useLocale())
+  const dialog = useDialog()
   const [vehicles, setVehicles] = useState<VehicleRow[]>([])
   const [today, setToday] = useState('')
   const [form, setForm] = useState({ ...EMPTY })
@@ -78,7 +80,14 @@ export default function VoertuigenClient() {
 
   async function remove(id: string) {
     if (busy) return
-    if (!window.confirm(t('vtg.verwijderenVraag'))) return
+    // [KASSA-DIALOOG] Zie KassaClient.voidTicket: dezelfde vervanging, dezelfde reden.
+    const ok = await dialog.confirm({
+      title: t('vtg.verwijderenVraag'),
+      message: t('vtg.verwijderenUitleg'),
+      confirmLabel: t('lijst.verwijderen'),
+      danger: true,
+    })
+    if (!ok) return
     setBusy(true)
     try {
       const res = await fetch(`/api/vehicles?id=${encodeURIComponent(id)}`, { method: 'DELETE' })

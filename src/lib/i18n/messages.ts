@@ -11613,6 +11613,17 @@ export const MESSAGES = {
     en: 'Void this whole ticket?',
     ar: 'إلغاء هذه الفاتورة بالكامل؟',
   },
+  // [KASSA-DIALOOG] Wat er gebeurt, in het scherm van de app zelf. De vraag hierboven stond in een
+  // window.confirm: één regel in de chrome van het besturingssysteem, met in een geïnstalleerde PWA
+  // de herkomst-URL erboven — precies op het moment dat een geldapp er het minst betrouwbaar uitziet.
+  // En een balie-eigenaar tikt dat weg met een klant voor zich. De regels zijn een harde delete
+  // (api/till/sale DELETE), dus dit zegt allebei: het verdwijnt, en het staat nog in je logboek.
+  'kassa.terugdraaienUitleg': {
+    nl: 'De regels gaan uit de omzet van vandaag. Terugdraaien kan niet ongedaan worden gemaakt — wat erop stond blijft wel in je logboek staan.',
+    en: 'The lines leave today’s takings. Voiding cannot be undone — what was on the ticket stays in your log.',
+    ar: 'ستخرج البنود من مبيعات اليوم. لا يمكن التراجع عن الإلغاء — لكن ما كان على الفاتورة يبقى في سجلك.',
+  },
+  'kassa.terugdraaienKnop': { nl: 'Terugdraaien', en: 'Void ticket', ar: 'إلغاء الفاتورة' },
   // One sentence per payment method — a noun inside a sentence is not a parameter.
   'kassa.betaaldPin': { nl: 'Met pin betaald', en: 'Paid by card', ar: 'مدفوعة بالبطاقة' },
   'kassa.betaaldContant': { nl: 'Contant betaald', en: 'Paid in cash', ar: 'مدفوعة نقداً' },
@@ -11671,6 +11682,14 @@ export const MESSAGES = {
   },
   'vtg.verwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
   'vtg.verwijderenVraag': { nl: 'Dit voertuig verwijderen?', en: 'Remove this vehicle?', ar: 'إزالة هذه المركبة؟' },
+  // [KASSA-DIALOOG] Zie de uitleg bij kassa.terugdraaienUitleg: dezelfde reden, dezelfde vervanging.
+  // Het voertuig draagt de APK-herinnering, en die verdwijnt mee — dat is het gevolg dat niemand
+  // opmerkt tot de keuring te laat is.
+  'vtg.verwijderenUitleg': {
+    nl: 'Het voertuig verdwijnt uit je administratie, samen met de APK-herinnering die eraan hangt.',
+    en: 'The vehicle leaves your administration, along with the APK reminder attached to it.',
+    ar: 'ستختفي المركبة من إدارتك، ومعها تذكير الـ APK المرتبط بها.',
+  },
   // One whole sentence per state — never one template with the state substituted in.
   'vtg.status.expired': { nl: 'APK is verlopen', en: 'The APK has expired', ar: 'انتهى الـ APK' },
   'vtg.status.due': { nl: 'APK verloopt binnenkort', en: 'The APK expires soon', ar: 'ينتهي الـ APK قريباً' },
