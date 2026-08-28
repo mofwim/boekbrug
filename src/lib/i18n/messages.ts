@@ -1545,6 +1545,24 @@ export const MESSAGES = {
   'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة BTW كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
   'corr.grondslag': { nl: 'Grondslag', ar: 'الأساس', en: 'Base' },
   'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ BTW', en: 'BTW amount' },
+  // [BTW-TARIEF] Eén tik in plaats van hoofdrekenen. Het TARIEF wordt gevraagd, nooit geraden:
+  // uit een bedrag exclusief valt geen tarief af te leiden, en een geraden btw is een geraden
+  // voorbelasting. Elke zin een eigen sleutel — een getal is een parameter, een woord niet.
+  'corr.tarief.vraag': {
+    nl: 'Btw ontbreekt. Welk tarief staat er op de factuur?',
+    en: 'The VAT is missing. Which rate does the invoice show?',
+    ar: 'مبلغ الضريبة ناقص. ما النسبة المذكورة في الفاتورة؟',
+  },
+  'corr.tarief.knop': {
+    nl: '{tarief}% — btw wordt {btw}',
+    en: '{tarief}% — VAT becomes {btw}',
+    ar: '{tarief}٪ — تصبح الضريبة {btw}',
+  },
+  'corr.tarief.uitleg': {
+    nl: 'Wij rekenen het tarief niet zelf uit: hetzelfde bedrag kan 9% of 21% dragen, en een geraden btw is een geraden voorbelasting. Klopt het niet? Tik het bedrag gewoon over.',
+    en: 'We do not work the rate out ourselves: the same amount can carry 9% or 21%, and a guessed VAT is a guessed input tax. Not right? Just type the amount over it.',
+    ar: 'لا نحسب النسبة من تلقائنا: المبلغ نفسه قد يحمل ٩٪ أو ٢١٪، وضريبة مخمَّنة تعني ضريبة مدخلات مخمَّنة. غير صحيح؟ اكتب المبلغ فوقه ببساطة.',
+  },
   'corr.bedragUitleg': {
     nl: 'Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief rekent zichzelf uit.',
     ar: 'انقل الإجمالي ومبلغ btw كما هما مكتوبان أسفل الفاتورة — المبلغ بدون الضريبة يُحسب تلقائياً.',
