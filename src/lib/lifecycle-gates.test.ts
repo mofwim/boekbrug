@@ -6883,6 +6883,68 @@ test("[TAAL] no copy carries an HTML entity, because React paints it as one", ()
   );
 });
 
+test("[BATCH-HERKANSING] a file that failed in a batch can be tried again without finding it twice", () => {
+  // Inkomend and /dashboard/upload post to the SAME route, and only one of them could recover.
+  // /dashboard/upload keeps every file on its row and offers a retry ([UPLOAD-ERRORS]); Inkomend
+  // threw the File away the moment the request came back, so a transient failure on file 12 of 20
+  // sent the owner back to the file manager to find that one file again.
+  //
+  // Why that is a money problem. The retry that does not happen is a purchase invoice that never
+  // enters the administratie: no cost, and btw that is never reclaimed. It leaves no trace either
+  // — the queue simply has one fewer row than the stack on the desk, and nothing anywhere says a
+  // file was ever offered. The owner has to notice an absence.
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  // 1. THE FILE STAYS ON THE ROW. Both failing paths — a rejected request and a thrown one — and
+  //    the duplicate, which is the row "toch toevoegen" needs.
+  assert.match(ui, /file\?: File/, "the row must carry the file a second attempt needs");
+  // Anchored on the WHOLE return, not on `status: "error", file,` — that fragment also occurs in
+  // the thrown case one line below, so the first version of this assertion matched the other site
+  // and stayed green with the file deleted from the one it names. The gate has to be about the
+  // path it claims to be about.
+  assert.match(ui, /name: file\.name,\s*\n\s*status: "error",\s*\n\s*file,\s*\n\s*message: failure\.message/,
+    "a rejected upload must keep its file, or the row is a dead end");
+  assert.match(ui, /return \{ name: file\.name, status: "error", file, message: t\('ink\.upload\.mislukt'\) \}/,
+    "…including the thrown case, which is the most retryable failure there is");
+  assert.match(ui, /status: "duplicate", file,/);
+
+  // 2. THE BUTTON APPEARS ONLY WHERE A SECOND ATTEMPT CAN SUCCEED. describeUploadFailure already
+  //    decided this and the screen read one of its four fields. A 402 (allowance spent) and a 413
+  //    (too big) return the identical answer forever; a button that is guaranteed to fail teaches
+  //    the owner to distrust the ones that work.
+  assert.match(ui, /noRetry: failure\.noRetry/, "the screen must carry the verdict, not just the sentence");
+  assert.match(ui, /rateLimited: failure\.rateLimited/);
+  assert.match(ui, /fairUse: failure\.fairUse/);
+  assert.match(ui, /r\.status === "error" && !r\.noRetry/, "a retry may not be offered where it cannot land");
+  assert.match(ui, /\{canRetry\(r\) &&[\s\S]{0,400}t\('ink\.result\.opnieuw'\)/);
+
+  // 3. AND FOR THE WHOLE BATCH AT ONCE. Twenty files with three failures is three presses, not
+  //    three trips through the file manager.
+  assert.match(ui, /retryableIndexes\.length > 0/);
+  assert.match(ui, /onClick=\{\(\) => runAgain\(retryableIndexes\)\}/);
+
+  // 4. OVER THE CAP THE BATCH IS SPLIT, NOT REFUSED. Dropping 25 files used to send none of them
+  //    and leave the owner to work out which twenty to drop first. The surplus gets a row by name.
+  assert.match(ui, /const overflow = accepted\.splice\(MAX_BATCH\)/,
+    "the first MAX_BATCH must still go up");
+  assert.doesNotMatch(ui, /all\.length > MAX_BATCH\)\s*\{[\s\S]{0,200}return;/,
+    "a drop over the cap may not be refused whole any more");
+  assert.match(ui, /status: "skipped", file: f, message: t\('ink\.result\.buitenBatch'/,
+    "…and what did not go must be named, with its file kept so one press finishes the job");
+
+  // 5. THE OVERRIDE IS THE SERVER'S TO GRANT. `force` goes up only behind the button that
+  //    `canForce` put there — the byte-hash duplicate gate never sets it, so an identical file
+  //    still cannot slip past by pressing harder.
+  assert.match(ui, /if \(force\) formData\.append\("force", "true"\)/);
+  assert.match(ui, /canForce: \(data as \{ canForce\?: boolean \}\)\.canForce === true && !force/);
+  assert.match(ui, /r\.status === "duplicate" && r\.canForce[\s\S]{0,400}runAgain\(\[i\], true\)/);
+
+  // 6. AND LEAVING MID-BATCH ASKS FIRST. Until the last file comes back there is no results modal,
+  //    so a navigation away loses both the unsent files and every trace that they were offered.
+  assert.match(ui, /addEventListener\("beforeunload", ask\)/);
+  assert.match(ui, /removeEventListener\("beforeunload", ask\)/, "…and the listener goes when the batch does");
+});
+
 test("[PAGINA-VOLGORDE] the pages of one invoice are ordered in one place, and the order is correctable", () => {
   // Two screens collect the pages of ONE paper invoice — /dashboard/incoming and /dashboard/upload
   // — and both handed their list straight to combineImagesToPdf, whose own doc comment says it

@@ -6616,6 +6616,38 @@ export const MESSAGES = {
     ar: 'في ملفاتك',
     en: 'In your files',
   },
+  // [BATCH-HERKANSING] A failed file in a batch used to be final — the outcome said "probeer het
+  // zo opnieuw" and there was nothing to press. These are the words for the second attempt.
+  'ink.result.skipped': {
+    nl: 'Niet verstuurd',
+    ar: 'لم يُرسَل',
+    en: 'Not sent',
+  },
+  'ink.result.buitenBatch': {
+    nl: 'Er kunnen er {max} tegelijk. De rest is nog niet verstuurd — voeg dit bestand er zo bij.',
+    ar: 'يمكن إرسال {max} في المرة. البقية لم تُرسل بعد — أضف هذا الملف بعد قليل.',
+    en: '{max} can go at a time. The rest were not sent yet — add this file in a moment.',
+  },
+  'ink.result.opnieuw': {
+    nl: 'Opnieuw proberen',
+    ar: 'حاول مرة أخرى',
+    en: 'Try again',
+  },
+  'ink.result.alleOpnieuwEen': {
+    nl: 'Probeer dit bestand opnieuw',
+    ar: 'أعد محاولة هذا الملف',
+    en: 'Try this file again',
+  },
+  'ink.result.alleOpnieuwMeer': {
+    nl: 'Probeer deze {n} bestanden opnieuw',
+    ar: 'أعد محاولة هذه الملفات ({n})',
+    en: 'Try these {n} files again',
+  },
+  'ink.result.tochToevoegen': {
+    nl: 'Toch toevoegen',
+    ar: 'أضفها على أي حال',
+    en: 'Add it anyway',
+  },
   'ink.result.duplicate': {
     nl: 'Al toegevoegd',
     ar: 'أُضيفت مسبقاً',
@@ -6930,11 +6962,6 @@ export const MESSAGES = {
     nl: 'Kies bestanden of sleep hier naartoe',
     ar: 'اختر ملفات أو اسحبها إلى هنا',
     en: 'Pick files or drag them here',
-  },
-  'ink.upload.maxBatch': {
-    nl: 'Maximaal {max} bestanden per keer. Je koos er {n}.',
-    ar: 'الحد الأقصى {max} ملفاً في المرة. اخترت {n}.',
-    en: 'A maximum of {max} files at a time. You picked {n}.',
   },
   'ink.upload.mislukt': {
     nl: 'Upload mislukt — probeer opnieuw',
