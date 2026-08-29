@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 // [REGEL-KOPIE] One definition of "the content of an invoice line" — see invoice-line-copy.ts.
 import { copiedLinesFor } from '@/lib/invoice-line-copy'
-import { amsterdamToday } from '@/lib/format-nl'
+import { amsterdamToday, amsterdamMidnightUtc } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { logAuditAction } from '@/lib/audit'
 // [ACTING-FOR] Omgebouwd in plaats van dichtgezet: "maak er nog zo een" is het hart van
@@ -52,8 +52,13 @@ export async function POST(
     }
 
     const today = amsterdamToday()
-    const dueDate = new Date()
-    dueDate.setDate(dueDate.getDate() + 30)
+    // [TZ-SERVER] Beide data van dezelfde klok. `today` kwam al van de eigenaar; de vervaldatum
+    // rekende vanaf de SERVER, en in het eerste uur van een Nederlandse dag staat die nog op
+    // gisteren. Eén rij met twee klokken erin: de factuurdatum van vandaag en een vervaldatum van
+    // 30 dagen na gisteren — een verschil dat op geen enkel scherm te zien is, en dat de
+    // betaaltermijn is die de klant leest.
+    const dueDate = amsterdamMidnightUtc(today)
+    dueDate.setUTCDate(dueDate.getUTCDate() + 30)
 
     const { data: newInvoice, error: insertError } = await writeWithTrail<{ id: string }>(
       (spoor) => supabase

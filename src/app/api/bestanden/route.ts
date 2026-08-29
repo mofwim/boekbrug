@@ -6,6 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 // [VOL-GELEZEN] PostgREST kapt stil af op ~1000 rijen — zie supabase-paginate.ts.
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [TZ-SERVER] De klok van de eigenaar, niet die van de server — zie format-nl.ts.
+import { amsterdamYear, amsterdamMonth } from "@/lib/format-nl";
 import { searchBestanden, searchFolders, ensureSharedFolder } from "@/lib/bestanden";
 import type { Database } from "@/types/database.types";
 
@@ -217,9 +219,13 @@ export async function PATCH(req: NextRequest) {
       sharePeriodCache = { period: doc.period, year: doc.year ?? Number(doc.period.slice(0, 4)) };
       return sharePeriodCache;
     }
-    const now = new Date();
-    const y = now.getFullYear();
-    sharePeriodCache = { period: `${y}-Q${Math.ceil((now.getMonth() + 1) / 3)}`, year: y };
+    // [TZ-SERVER] Het kwartaal van de EIGENAAR. Deze periode is niet cosmetisch: het
+    // kwartaalpakket plaatst een gedeeld bestand op precies dit veld. Met de serverklok belandde
+    // een bon die in het eerste uur van een nieuw kwartaal wordt gedeeld in het VORIGE kwartaal —
+    // dus in het pakket dat de boekhouder al kan hebben afgesloten, en niet in het pakket waar hij
+    // hoort. Bewijs in het verkeerde kwartaal is precies wat dit veld moet voorkomen.
+    const y = amsterdamYear();
+    sharePeriodCache = { period: `${y}-Q${Math.ceil(amsterdamMonth() / 3)}`, year: y };
     return sharePeriodCache;
   };
 

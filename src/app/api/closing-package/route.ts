@@ -23,6 +23,8 @@
 export const maxDuration = 300
 
 import { NextRequest, NextResponse } from "next/server";
+// [TZ-SERVER] De klok van de eigenaar — zie format-nl.ts.
+import { amsterdamYear } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { buildClosingPackageZip, type Quarter } from "@/lib/closing-package";
@@ -73,8 +75,9 @@ export async function GET(req: NextRequest) {
   if (!limited.allowed) return rateLimitResponse(limited);
 
   // ── Params ──
-  const now = new Date();
-  const year = Number(req.nextUrl.searchParams.get("year") ?? now.getFullYear());
+  // [TZ-SERVER] Hetzelfde als op /api/quarterly: zonder ?year= besliste de serverklok welk
+  // boekjaar dit pakket is, en in het eerste uur van 1 januari is dat nog het oude.
+  const year = Number(req.nextUrl.searchParams.get("year") ?? amsterdamYear());
   const quarterRaw = Number(req.nextUrl.searchParams.get("quarter"));
   const clientId = req.nextUrl.searchParams.get("clientId");
 
