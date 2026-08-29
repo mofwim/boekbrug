@@ -10188,6 +10188,34 @@ export const MESSAGES = {
     ar: 'الباقي {bedrag} كان مسجلاً مسبقاً على فاتورة المشغّل فلم يُسجَّل مرة أخرى.',
     en: 'The remaining {bedrag} was already on an acquirer invoice and was therefore not booked again.',
   },
+  // [COM-IN-DE-REGEL] The commission the bank line states outright. A separate sentence from
+  // wh.pin.geboekt on purpose: that one is about the triangle's derived figure, this one about a
+  // number the bank quoted, and a reader must be able to tell which they are looking at.
+  'wh.pin.uitBankregel': {
+    nl: 'Je bank noemt de commissie zelf op {regels} afrekeningen: {bedrag} over {bruto} bruto ({tarief}).',
+    ar: 'بنكك يذكر العمولة بنفسه في {regels} تسوية: {bedrag} من إجمالي {bruto} ({tarief}).',
+    en: 'Your bank states the commission itself on {regels} settlements: {bedrag} on {bruto} gross ({tarief}).',
+  },
+  'wh.pin.uitBankregelGeboekt': {
+    nl: 'Dat bedrag is als kosten verwerkt in het resultaat hierboven — BTW-vrij (vrijstelling betalingsverkeer).',
+    ar: 'هذا المبلغ مُدرج كمصروف في النتيجة أعلاه — معفى من btw (إعفاء خدمات الدفع).',
+    en: 'That amount is processed as a cost in the result above — VAT-free (payment services exemption).',
+  },
+  'wh.pin.uitBankregelNietGeboekt': {
+    nl: 'Dit bedrag staat nog NIET in het resultaat hierboven: er is ook een terminal-afrekening voor deze periode, en zolang die er is boeken we de commissie nooit uit twee bronnen tegelijk.',
+    ar: 'هذا المبلغ ليس بعدُ في النتيجة أعلاه: توجد أيضاً تسوية جهاز لهذه الفترة، وما دامت موجودة فلا نسجّل العمولة من مصدرين في آن.',
+    en: 'This amount is NOT yet in the result above: a terminal settlement also exists for this period, and while it does we never book the commission from two sources at once.',
+  },
+  'wh.pin.uitBankregelOnleesbaar': {
+    nl: '{n} afrekening(en) noemden een commissie die niet klopte met het bijgeschreven bedrag. Die zijn niet meegeteld.',
+    ar: '{n} من التسويات ذكرت عمولة لا تطابق المبلغ المُودَع. لم تُحتسب.',
+    en: '{n} settlement(s) stated a commission that did not match the amount credited. Those are not counted.',
+  },
+  'wh.pin.geenBron': {
+    nl: 'Nog geen terminal-afrekening en geen bank-afrekening die de commissie zelf noemt. Zodra er één is, rekenen we de betaalkosten uit.',
+    ar: 'لا توجد بعد تسوية جهاز ولا تسوية بنكية تذكر العمولة بنفسها. حين تتوفر إحداهما نحسب تكاليف الدفع.',
+    en: 'No terminal settlement yet, and no bank settlement that states the commission itself. As soon as there is one, we work out the payment costs.',
+  },
   'wh.pin.sub': {
     nl: 'kassa · terminal · bank moeten hetzelfde zeggen',
     ar: 'الكاشير · الجهاز · البنك يجب أن تقول الشيء نفسه',
