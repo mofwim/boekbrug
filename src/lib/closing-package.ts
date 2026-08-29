@@ -207,6 +207,12 @@ export interface ClosingPackageSummary {
   missingEvidence: string[];
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
+  // [COM-IN-DE-REGEL] The acquirer commission this quarter's bank lines stated outright, or null
+  // when they stated none. Carried on the SUMMARY (not only in the ZIP) because the quarter-close
+  // cron reads this shape, and that cron is the one channel that reaches an owner who never opens
+  // the app — which is most of them. A cost the app found and booked, that its owner learns about
+  // only by visiting a screen, is work nobody will know happened.
+  cardStatedCommission?: StatedCommissionRow | null;
   generatedAt: string;               // ISO
 }
 
@@ -1690,6 +1696,32 @@ export async function summarizeClosingPackage(args: {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch(() => [] as { id: string; amount: number | null }[]);
+  // [COM-IN-DE-REGEL] The commission the bank stated on this quarter's card payouts. In-quarter by
+  // booking date — the same clip the result engine and the ZIP use, so all three quote one number.
+  // Soft: this is a finding, never a gate, so a failed read must not cost the owner their quarter
+  // notification. It degrades to "nothing stated", which is the same as most quarters honestly are.
+  const posForCommission = await fetchAllRows<{ description: string | null; amount: number | null }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("description, amount")
+      .eq("user_id", ownerId)
+      .eq("category", "pos_income")
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => [] as { description: string | null; amount: number | null }[]);
+  const statedForQuarter = statedCommission(posForCommission);
+  // Mirrors the engine's booking guard (result-range-assemble.ts): with no terminal settlement in
+  // the quarter, Leg B booked nothing, so the stated amount IS what landed in kosten.
+  const eftInQuarter = await supabase
+    .from("eft_settlements").select("id").eq("user_id", ownerId)
+    .gte("settlement_date", start).lte("settlement_date", end).limit(1);
+  const cardStatedCommission: StatedCommissionRow | null =
+    statedForQuarter.lines > 0 || statedForQuarter.unverified > 0
+      ? { ...statedForQuarter, booked: (eftInQuarter.data ?? []).length === 0 && statedForQuarter.total > 0 }
+      : null;
+
   const unresolvedBankCount = unresolvedBank.length;
   const unresolvedBankTotal =
     round2(unresolvedBank.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0));
@@ -1788,6 +1820,7 @@ export async function summarizeClosingPackage(args: {
     missingEvidence: missingPdf.slice(0, 50),
     bankStatementIncluded,
     warnings,
+    cardStatedCommission,
     generatedAt: new Date().toISOString(),
   };
 }

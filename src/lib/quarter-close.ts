@@ -3,6 +3,7 @@
 // and how complete its evidence is) into an ACTION: it notifies the owner and any linked accountant.
 // Kept pure + separate so the date math and the (honesty-critical) notification copy are unit-tested.
 import type { QuarterNo } from "./quarter";
+import { formatEuroNL as eur } from "./format-nl";
 
 /**
  * The quarter that just ended, relative to `now`. The cron fires early in the first month of a new
@@ -19,6 +20,18 @@ export interface QuarterCloseSummaryLike {
   warnings: { message: string }[];
   outgoingCount: number;
   incomingCount: number;
+  /**
+   * [COM-IN-DE-REGEL] The acquirer commission this quarter's own bank lines stated, if any.
+   *
+   * Optional, so a caller predating this still builds the same notice it always did.
+   */
+  cardStatedCommission?: {
+    total: number;
+    gross: number;
+    lines: number;
+    unverified: number;
+    booked: boolean;
+  } | null;
 }
 
 export interface QuarterCloseNotice {
@@ -43,7 +56,14 @@ export function buildQuarterCloseNotice(
   summary: QuarterCloseSummaryLike,
 ): QuarterCloseNotice {
   const gapCount = summary.warnings.length;
-  const activity = summary.outgoingCount + summary.incomingCount;
+  // [COM-IN-DE-REGEL] Card payouts that stated a commission are ACTIVITY, and counting only
+  // invoices missed that. A shop whose quarter is 91 till days and no invoices at all — the shape
+  // of a market or a snackbar — scored activity 0, was classed dormant, and was skipped along with
+  // its accountant, while the app had found and booked a real cost in that same quarter. "Dormant"
+  // has to mean nothing happened, not "nothing was invoiced".
+  const stated = summary.cardStatedCommission ?? null;
+  const statedFound = (stated?.lines ?? 0) > 0 && (stated?.total ?? 0) > 0;
+  const activity = summary.outgoingCount + summary.incomingCount + (statedFound ? 1 : 0);
   // A quarter with zero invoice activity is dormant → skip it. summarizeClosingPackage STILL emits
   // "no_invoices"/"no_bank_statement" warnings for an empty quarter, so we must NOT also require
   // gapCount===0 here — that made this guard dead code and nagged every inactive account (and its
@@ -90,5 +110,28 @@ export function buildQuarterCloseNotice(
         .slice(0, 3)
         .join(" · ")}${gapCount > 3 ? " …" : ""}`;
 
-  return { empty, clean, gapCount, ownerTitle, ownerBody, accountantTitle, accountantBody };
+  // [COM-IN-DE-REGEL] One sentence, appended — never replacing the gap list, which is what the
+  // reader has to act on. Deliberately says what the amount IS: a cost that was in the statement
+  // and not in the books, so the profit was overstated by it. Calling it "gevonden geld" would be
+  // the one framing MARKTPOSITIE_2026.md §5 warns against, and it would be a lie about direction.
+  //
+  // A finding that was NOT booked says so instead of staying silent — the owner is reading this
+  // precisely because they will not open the app to discover the difference themselves.
+  const statedSentence = !statedFound || !stated
+    ? ""
+    : stated.booked
+      ? ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${stated.lines} afrekening(en); die staan als kosten in je cijfers — je winst was tot nu toe met dat bedrag te hoog.`
+      : ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${stated.lines} afrekening(en). Die staan nog NIET in je cijfers, omdat er ook een terminal-afrekening voor dit kwartaal is — controleer dat op Waarheid voordat je indient.`;
+  const statedSentenceAccountant = !statedFound || !stated
+    ? ""
+    : stated.booked
+      ? ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${stated.lines} afrekening(en) (over ${eur(stated.gross)} bruto); die is als betaalkosten geboekt — zie kaart-reconciliatie.csv.`
+      : ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${stated.lines} afrekening(en); die is NIET geboekt omdat er ook een terminal-afrekening is — zie kaart-reconciliatie.csv.`;
+
+  return {
+    empty, clean, gapCount, ownerTitle,
+    ownerBody: ownerBody + statedSentence,
+    accountantTitle,
+    accountantBody: accountantBody + statedSentenceAccountant,
+  };
 }

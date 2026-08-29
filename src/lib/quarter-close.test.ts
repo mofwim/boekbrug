@@ -64,5 +64,59 @@ console.log("\n— notice copy is honest: clean vs gaps vs empty —");
   check("1 incoming invoice → not empty", active.empty === false);
 }
 
+// ── [COM-IN-DE-REGEL] The commission finding reaches the one channel that reaches the owner ───
+//
+// This cron is the only thing in the app that speaks to an owner who never opens it: four times a
+// year, to them AND their accountant. A cost the app found and booked, that its owner learns about
+// only by visiting a screen, is work nobody will ever know happened.
+console.log("\n— the acquirer commission the bank stated itself —");
+{
+  const base = { warnings: [] as { message: string }[], outgoingCount: 3, incomingCount: 2 };
+  const found = { total: 54.02, gross: 2922.21, lines: 22, unverified: 0, booked: true };
+
+  const n = buildQuarterCloseNotice("Q2 2026", { ...base, cardStatedCommission: found });
+  check("the owner is told the amount", n.ownerBody.includes("€ 54,02"));
+  check("and how many afrekeningen it rests on", n.ownerBody.includes("22 afrekening"));
+  // It is a COST. Calling it "gevonden geld" would be the framing MARKTPOSITIE §5 warns against,
+  // and a lie about which way it moves the profit.
+  check("and which way it moves the profit", n.ownerBody.includes("winst was tot nu toe met dat bedrag te hoog"));
+  check("the accountant gets the amount too", n.accountantBody.includes("€ 54,02"));
+  // Dutch notation, thousands separator included. This first read "2.922,21 || 2922,21" and so
+  // passed against a locally reinvented formatter that dropped the separator — the [CENT] lesson
+  // in a smaller key: one money formatter, or two screens quote the same amount differently.
+  check("with the gross it came from, in Dutch notation", n.accountantBody.includes("€ 2.922,21"));
+  check("and where the evidence sits", n.accountantBody.includes("kaart-reconciliatie.csv"));
+
+  const nb = buildQuarterCloseNotice("Q2 2026", { ...base, cardStatedCommission: { ...found, booked: false } });
+  check("a finding that was NOT booked says so to the owner", nb.ownerBody.includes("NIET in je cijfers"));
+  check("…and to the accountant", nb.accountantBody.includes("NIET geboekt"));
+
+  const withGap = buildQuarterCloseNotice("Q2 2026", {
+    warnings: [{ message: "3 facturen zonder PDF" }], outgoingCount: 3, incomingCount: 2,
+    cardStatedCommission: found,
+  });
+  check("the gap list still leads — the finding is appended, never a replacement", withGap.ownerBody.includes("3 facturen zonder PDF"));
+  check("and the finding follows it", withGap.ownerBody.includes("€ 54,02"));
+
+  const plain = buildQuarterCloseNotice("Q2 2026", base);
+  check("no finding changes nothing", plain.ownerBody === buildQuarterCloseNotice("Q2 2026", { ...base, cardStatedCommission: null }).ownerBody);
+  check("and says nothing about a betaalautomaat", !plain.ownerBody.includes("betaalautomaat"));
+
+  // 91 till days and no invoices — a market or a snackbar. Activity counted invoices only, so this
+  // owner AND their accountant were skipped as dormant while a real cost had been found and booked.
+  const tillOnly = { warnings: [] as { message: string }[], outgoingCount: 0, incomingCount: 0, cardStatedCommission: found };
+  check("a till-only quarter with a booked cost is not dormant", buildQuarterCloseNotice("Q2 2026", tillOnly).empty === false);
+  check("a genuinely empty quarter is still skipped (the anti-nag rule is unchanged)",
+    buildQuarterCloseNotice("Q2 2026", { warnings: [], outgoingCount: 0, incomingCount: 0 }).empty === true);
+
+  // Three settlements the app could not read is not a finding, and must not wake a dormant quarter.
+  const onlyUnreadable = buildQuarterCloseNotice("Q2 2026", {
+    warnings: [], outgoingCount: 0, incomingCount: 0,
+    cardStatedCommission: { total: 0, gross: 0, lines: 0, unverified: 3, booked: false },
+  });
+  check("unreadable lines alone do not manufacture activity", onlyUnreadable.empty === true);
+  check("nor a sentence", !onlyUnreadable.ownerBody.includes("betaalautomaat"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
