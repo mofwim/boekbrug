@@ -41,6 +41,11 @@ export const CRON_JOBS = {
   // facturen), dus een run zonder mails is de gezonde normaaltoestand. Bewaakt wordt dat de run
   // zelf gebeurde: valt hij stil, dan verdwijnt het dagelijkse terugkeermoment geruisloos.
   ochtend: 24,
+  // [BETAALHERINNERING] De herinnering aan wat de ondernemer ZELF moet betalen. Dagelijks, en met
+  // opzet vaak stil: hij spreekt alleen over een vervaldatum die vandaag een grens oversteekt. Een
+  // run zonder meldingen is dus de gezonde normaaltoestand — bewaakt wordt dat de run gebeurde,
+  // want valt hij om, dan mist de eigenaar geen scherm maar een betaaltermijn.
+  "payment-due": 24,
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

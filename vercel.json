@@ -39,6 +39,10 @@
     {
       "path": "/api/cron/ochtend",
       "schedule": "45 5 * * *"
+    },
+    {
+      "path": "/api/cron/payment-due",
+      "schedule": "0 6 * * *"
     }
   ]
 }
