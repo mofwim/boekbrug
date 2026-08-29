@@ -18845,3 +18845,157 @@ test("[BETAALHERINNERING] de eigenaar hoort het vóór de vervaldag, niet erna",
   assert.match(cron, /\.eq\("status", "received"\)/);
   assert.match(cron, /\.gte\("due_date", today\)/, "te laat hoort niet op deze ladder — ander bericht, andere handeling");
 });
+
+test("[PAKKET-AFDRUK] het pakket weet WAT het overhandigde, en wat een verandering betekent", () => {
+  // package_shares legt de HANDELING vast — naar wie, wanneer, hoe vaak opgehaald. Wat eruit KWAM
+  // legde niets vast, en /api/pakket bouwt de zip bij elke download opnieuw uit de huidige tabellen
+  // ("Alles komt uit de RIJ"). Zelfde token, zelfde URL, in juni een ander pakket dan in april — en
+  // "waarom veranderde deze post van € 12.400 naar € 12.454,02?" had geen antwoord dat verder kwam
+  // dan "omdat de gegevens zijn veranderd".
+  //
+  // btw_filings dekt dit niet: dat bevriest het KWARTAAL bij het INDIENEN. De boekhouder werkt uit
+  // het PAKKET, dáárvoor.
+  const puur = code("src/lib/package-fingerprint.ts");
+  const route = code("src/app/api/pakket/route.ts");
+
+  // ── De afdruk gaat over INHOUD ───────────────────────────────────────────
+  // generatedAt verschilt bij elke download; hem meenemen zou elk pakket als "veranderd" aanmerken,
+  // en dat is hetzelfde als niets zeggen. En de sortering: twee lezingen die in een andere volgorde
+  // terugkwamen zijn niet twee verschillende pakketten.
+  assert.doesNotMatch(puur, /generatedAt/, "de afdruk neemt het bouwmoment weer mee — dan is alles altijd veranderd");
+  assert.match(puur, /\[\.\.\.summary\.missingEvidence\]\.sort\(\)/, "de lijst wordt niet meer gesorteerd voor de afdruk");
+  assert.match(puur, /\[\.\.\.new Set\(summary\.warnings\.map\(\(w\) => w\.code\)\)\]\.sort\(\)/);
+
+  // ── Het verschil WEET wat voor soort verandering het is ──────────────────
+  // Dezelfde beweging in filesIncluded betekent twee tegengestelde dingen: een late inkoopfactuur
+  // (de cijfers bewogen, de boekhouder leest een verouderd totaal) of een bon die alsnog binnenkwam
+  // (elk bedrag gelijk, het pakket is alleen beter bewezen). Een bericht dat die twee niet uit
+  // elkaar houdt, is een diff.
+  assert.match(puur, /export type DriftKind =/);
+  for (const soort of ["figures_moved", "evidence_improved", "evidence_lost"]) {
+    assert.match(puur, new RegExp(`"${soort}"`), `de soort ${soort} is weg`);
+  }
+  assert.match(puur, /needsAction: kind === "figures_moved" \|\| kind === "evidence_lost"/,
+    "beter onderbouwd vraagt weer een handeling — en dat is hoe een eigenaar leert de vólgende melding weg te klikken");
+
+  // ── Een gelijk gebleven telling kan twee gebeurtenissen verbergen ────────
+  // Eén bon kwam binnen en een andere viel weg: het AANTAL blijft gelijk, de NAMEN niet.
+  assert.match(puur, /const bonErbij = current\.missingEvidence\.filter/);
+  assert.match(puur, /const bonEraf = previous\.missingEvidence\.filter/);
+
+  // ── En de route legt het vast, én zegt het ───────────────────────────────
+  assert.match(route, /\.from\("package_deliveries"\)\.insert\(\{/, "de afdruk wordt niet meer vastgelegd");
+  assert.match(route, /if \(drift\.needsAction\) \{/, "de eigenaar hoort het niet meer op het moment dat het gebeurt");
+  assert.match(route, /createNotification\(\{/);
+  // Best-effort in beide richtingen: een mislukte afdruk mag een geslaagde download nooit
+  // tegenhouden, en [DEPLOY-SAFE] — de tabel kan er nog niet zijn.
+  assert.match(route, /isMissingRelation\(afdrukFout\.message\)/, "de deploy-safe tak is weg");
+  assert.match(route, /isMissingRelation\(vorigeFout\.message\)/);
+  // [NO-SILENT-EMPTY] "geen vorige aflevering" is niet "de lezing mislukte". Het eerste betekent
+  // dat dit de eerste download is; het tweede dat we een verandering kunnen missen.
+  assert.match(route, /vorige aflevering niet gelezen — geen vergelijking/);
+
+  // ── De juridische som wordt hier NIET herhaald ───────────────────────────
+  // Die woont in btw-filing.ts / filed-quarter.ts, is daar getest, en wordt gesteld op het moment
+  // dat de boeken bewegen. Hem hier een tweede keer uitrekenen is precies hoe twee schermen een
+  // ander bedrag gaan noemen over hetzelfde kwartaal.
+  assert.doesNotMatch(route, /SUPPLETIE_THRESHOLD|correctionRoute\(|computeFilingDivergence\(/,
+    "de aangiftesom wordt op een tweede plek herhaald — één grens, één plek");
+
+  // ── De afdruk mag niet herschreven kunnen worden ─────────────────────────
+  // Een afdruk die te wijzigen is bewijst niets. Vandaar: alleen een select-policy, met opzet geen
+  // update en geen delete.
+  const sql = readFileSync("supabase/migrations/package_deliveries.sql", "utf8");
+  assert.match(sql, /CREATE POLICY package_deliveries_select_own/);
+  assert.doesNotMatch(sql, /CREATE POLICY[\s\S]*FOR (UPDATE|DELETE)/,
+    "er is een update- of delete-policy bijgekomen — dan is de afdruk geen bewijs meer");
+  assert.match(sql, /package_deliveries_quarter_idx/, "de vraag 'wat was de vorige aflevering' heeft geen index meer");
+});
+
+test("[NOTIF-DEADEND] elke melding wijst naar een scherm dat bestaat", () => {
+  // Een melding komt aan, de eigenaar tikt erop, en hij landt op een 404. Dat is erger dan geen
+  // melding: hij kost het vertrouwen in de vólgende, en niets in de codebase wees erop — de link
+  // is een string, en een string die nergens heen gaat compileert prima.
+  //
+  // Gemeten toen dit werd geschreven: de nieuwe pakket-melding wees naar /dashboard/kwartaal, dat
+  // niet bestaat (het scherm heet /dashboard/klaar). Eén string, en het hele bericht onbruikbaar.
+  //
+  // [ZOEKT-ZIJN-EIGEN-BESTANDEN] De routes komen van de map, niet uit een lijst: een melding die
+  // morgen wordt toegevoegd valt hier vanzelf onder.
+  const bestaat = (route: string): boolean => {
+    // Alleen het eerste segment onder /dashboard hoeft te bestaan; wat erachter komt is een
+    // parameter of een tab, en die kan deze poort niet beoordelen zonder de router na te bouwen.
+    const m = /^\/dashboard\/([a-z0-9-]+)/.exec(route);
+    if (!m) return route === "/dashboard" || !route.startsWith("/dashboard");
+    return existsSync(`src/app/dashboard/${m[1]}`);
+  };
+
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  const dood: string[] = [];
+  let gezien = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    if (!/createNotification\s*\(/.test(src)) continue;
+    // De link zoals hij in de aanroep staat. Een samengestelde link (`/dashboard/${x}`) kan deze
+    // poort niet volgen en wordt overgeslagen — liever niets zeggen dan een verkeerd alarm.
+    for (const m of src.matchAll(/link:\s*"(\/[^"]*)"/g)) {
+      gezien++;
+      if (!bestaat(m[1])) dood.push(`${f} → ${m[1]}`);
+    }
+  }
+  assert.ok(gezien > 10,
+    `only ${gezien} literal notification links seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+  assert.deepEqual(dood, [],
+    "these notifications link to a screen that does not exist — the message arrives and the tap lands on a 404");
+});
+
+test("[PAKKET-AFDRUK] de eigenaar kan de afdrukken ook LEZEN", () => {
+  // package_deliveries kreeg een select-policy voor een lezer die niet bestond: de afdruk werd
+  // vastgelegd, de eigenaar kreeg één melding op het moment zelf, en daarna kon hij nergens meer
+  // zien wát zijn boekhouder toen had. Een bewijsspoor dat alleen in de database te lezen is,
+  // bewijst niets aan de persoon die het nodig heeft.
+  const api = code("src/app/api/pakket/afleveringen/route.ts");
+  const scherm = code("src/app/dashboard/klaar/KlaarClient.tsx");
+
+  // Sessieclient, dus RLS is de grens — geen service_role en dus geen tweede plek die van de
+  // policy kan afwijken.
+  assert.match(api, /createServerSupabaseClient\(\)/);
+  assert.doesNotMatch(api, /createPipelineClient/,
+    "de geschiedenis wordt met service_role gelezen — dan bepaalt deze route de grens in plaats van de policy");
+
+  // [NO-SILENT-EMPTY] Drie standen, geen twee. Een ontbrekende TABEL is echt "nog geen
+  // afleveringen"; een mislukte LEZING is dat niet, en die als lege lijst tonen zegt "je
+  // boekhouder heeft dit nooit opgehaald" op het scherm waar de eigenaar dat juist controleert.
+  assert.match(api, /if \(isMissingRelation\(bericht\)\) return NextResponse\.json\(\{ afleveringen: \[\] \}\)/);
+  assert.match(api, /status: 500/, "een mislukte lezing komt weer als een lege lijst terug");
+  // De uitkomst draagt de PERIODE, zodat het effect niets synchroon hoeft te resetten (cascading
+  // renders) en er nooit even de cijfers van het vorige kwartaal onder de nieuwe kop staan.
+  assert.match(scherm, /const geladen = aflevering && aflevering\.year === year && aflevering\.quarter === quarter/);
+  assert.match(scherm, /const afleveringenFout = !!geladen && aflevering\.rijen === null/);
+  assert.match(scherm, /\{afleveringenFout && \(/, "het scherm toont de leesfout niet meer");
+  assert.match(code("src/lib/i18n/messages.ts"), /'klr\.afl\.fout':/);
+
+  // De eerste ophaling is geen verandering maar een begin — hem als "veranderd" tonen zou de hele
+  // lijst betekenisloos maken, want dan is alles altijd veranderd.
+  assert.match(api, /const vorige = i > 0 \? rijen\[i - 1\] : null;/);
+  assert.match(api, /drift\?\.changed \?\? false/);
+
+  // De uitleg komt van de server, waar de pure vergelijking woont. Het scherm formuleert hetzelfde
+  // verschil niet een tweede keer — dat is hoe twee plekken een ander verhaal gaan vertellen.
+  assert.match(scherm, /\{a\.uitleg\}/);
+  assert.doesNotMatch(scherm, /driftBetween|driftSentence/,
+    "het scherm rekent het verschil zelf uit — één vergelijking, één plek");
+
+  // [VOL-GELEZEN] + een totale ordening: delivered_at alleen is niet uniek.
+  assert.match(api, /\.order\("delivered_at", \{ ascending: true \}\)\.order\("id", \{ ascending: true \}\)/);
+  assert.match(api, /\.range\(from, to\)/);
+});

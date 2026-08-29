@@ -12378,6 +12378,16 @@ export const MESSAGES = {
   'klr.deel.notitiePlaceholder': { nl: 'Bijvoorbeeld: de bon van de verzekering komt nog na.', ar: 'مثلاً: إيصال التأمين سيصل لاحقاً.', en: 'For example: the insurance receipt is still to come.' },
   'klr.deel.versturen': { nl: 'Versturen', ar: 'إرسال', en: 'Send' },
   'klr.deel.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
+  // [PAKKET-AFDRUK] De zip wordt bij elke download opnieuw gebouwd uit de huidige tabellen, dus
+  // dezelfde link kan in juni iets anders geven dan in april. Deze regels maken dat zichtbaar op
+  // het scherm waar de eigenaar de link maakt — de enige plek waar "stuur hem opnieuw" een
+  // handeling is in plaats van een advies.
+  'klr.afl.kopEen': { nl: 'Je boekhouder haalde dit pakket 1× op', ar: 'حمّل محاسبك هذه الحزمة مرة واحدة', en: 'Your accountant collected this package once' },
+  'klr.afl.kopMeer': { nl: 'Je boekhouder haalde dit pakket {aantal}× op', ar: 'حمّل محاسبك هذه الحزمة {aantal} مرات', en: 'Your accountant collected this package {aantal} times' },
+  'klr.afl.inhoud': { nl: '{verkoop} verkoop · {inkoop} inkoop · {bestanden} bestanden', ar: '{verkoop} مبيعات · {inkoop} مشتريات · {bestanden} ملفات', en: '{verkoop} sales · {inkoop} purchase · {bestanden} files' },
+  // [NO-SILENT-EMPTY] Een lege lijst zou hier zeggen "hij heeft het nooit opgehaald" — een bewering,
+  // op precies het scherm waar de eigenaar controleert of de overdracht is aangekomen.
+  'klr.afl.fout': { nl: 'We konden de ophaalgeschiedenis nu niet lezen. Dit betekent niet dat je boekhouder het pakket niet heeft opgehaald — het betekent alleen dat we het even niet kunnen nakijken.', ar: 'تعذّرت قراءة سجلّ التحميل الآن. هذا لا يعني أن محاسبك لم يحمّل الحزمة — يعني فقط أنّنا لا نستطيع التحقّق في هذه اللحظة.', en: 'We could not read the collection history just now. This does not mean your accountant has not collected the package — only that we cannot check right now.' },
   'klr.deel.verstuurd': { nl: '✓ Verstuurd naar {email}. Je ziet hier straks of hij het pakket heeft opgehaald.', ar: '✓ أُرسل إلى {email}. سترى هنا لاحقاً إن كان قد حمّل الحزمة.', en: '✓ Sent to {email}. You will see here whether he collected the package.' },
   'klr.deel.fout': { nl: 'Versturen mislukt. Er is niets verstuurd — probeer het opnieuw.', ar: 'فشل الإرسال. لم يُرسل شيء — حاول مرة أخرى.', en: 'Sending failed. Nothing was sent — please try again.' },
   'klr.deel.offline': { nl: 'Geen verbinding. Er is niets verstuurd.', ar: 'لا يوجد اتصال. لم يُرسل شيء.', en: 'No connection. Nothing was sent.' },
