@@ -18957,3 +18957,45 @@ test("[NOTIF-DEADEND] elke melding wijst naar een scherm dat bestaat", () => {
   assert.deepEqual(dood, [],
     "these notifications link to a screen that does not exist — the message arrives and the tap lands on a 404");
 });
+
+test("[PAKKET-AFDRUK] de eigenaar kan de afdrukken ook LEZEN", () => {
+  // package_deliveries kreeg een select-policy voor een lezer die niet bestond: de afdruk werd
+  // vastgelegd, de eigenaar kreeg één melding op het moment zelf, en daarna kon hij nergens meer
+  // zien wát zijn boekhouder toen had. Een bewijsspoor dat alleen in de database te lezen is,
+  // bewijst niets aan de persoon die het nodig heeft.
+  const api = code("src/app/api/pakket/afleveringen/route.ts");
+  const scherm = code("src/app/dashboard/klaar/KlaarClient.tsx");
+
+  // Sessieclient, dus RLS is de grens — geen service_role en dus geen tweede plek die van de
+  // policy kan afwijken.
+  assert.match(api, /createServerSupabaseClient\(\)/);
+  assert.doesNotMatch(api, /createPipelineClient/,
+    "de geschiedenis wordt met service_role gelezen — dan bepaalt deze route de grens in plaats van de policy");
+
+  // [NO-SILENT-EMPTY] Drie standen, geen twee. Een ontbrekende TABEL is echt "nog geen
+  // afleveringen"; een mislukte LEZING is dat niet, en die als lege lijst tonen zegt "je
+  // boekhouder heeft dit nooit opgehaald" op het scherm waar de eigenaar dat juist controleert.
+  assert.match(api, /if \(isMissingRelation\(bericht\)\) return NextResponse\.json\(\{ afleveringen: \[\] \}\)/);
+  assert.match(api, /status: 500/, "een mislukte lezing komt weer als een lege lijst terug");
+  // De uitkomst draagt de PERIODE, zodat het effect niets synchroon hoeft te resetten (cascading
+  // renders) en er nooit even de cijfers van het vorige kwartaal onder de nieuwe kop staan.
+  assert.match(scherm, /const geladen = aflevering && aflevering\.year === year && aflevering\.quarter === quarter/);
+  assert.match(scherm, /const afleveringenFout = !!geladen && aflevering\.rijen === null/);
+  assert.match(scherm, /\{afleveringenFout && \(/, "het scherm toont de leesfout niet meer");
+  assert.match(code("src/lib/i18n/messages.ts"), /'klr\.afl\.fout':/);
+
+  // De eerste ophaling is geen verandering maar een begin — hem als "veranderd" tonen zou de hele
+  // lijst betekenisloos maken, want dan is alles altijd veranderd.
+  assert.match(api, /const vorige = i > 0 \? rijen\[i - 1\] : null;/);
+  assert.match(api, /drift\?\.changed \?\? false/);
+
+  // De uitleg komt van de server, waar de pure vergelijking woont. Het scherm formuleert hetzelfde
+  // verschil niet een tweede keer — dat is hoe twee plekken een ander verhaal gaan vertellen.
+  assert.match(scherm, /\{a\.uitleg\}/);
+  assert.doesNotMatch(scherm, /driftBetween|driftSentence/,
+    "het scherm rekent het verschil zelf uit — één vergelijking, één plek");
+
+  // [VOL-GELEZEN] + een totale ordening: delivered_at alleen is niet uniek.
+  assert.match(api, /\.order\("delivered_at", \{ ascending: true \}\)\.order\("id", \{ ascending: true \}\)/);
+  assert.match(api, /\.range\(from, to\)/);
+});
