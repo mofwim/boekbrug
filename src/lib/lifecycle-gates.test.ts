@@ -17302,6 +17302,35 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
   }
   assert.ok(declared.size > 20, "the migration parser stopped finding tables — this gate is asleep");
 
+  // ── THE SECOND SOURCE, AND WHY IT IS A UNION ──
+  //
+  // Sixteen tables the app queries have no CREATE TABLE in this repo — including `invoices` and
+  // `documents`, the two the whole product runs on. Everything above was blind to them, which is
+  // 70% of every column reference in the codebase: the entry_date bug was caught ONLY because
+  // time_entries happened to have a migration, and the same mistake on `invoices` would have been
+  // invisible.
+  //
+  // database.types.ts is generated FROM the live database, so it knows those tables. It is added as
+  // a second source rather than as the authority, and the two are UNIONED — because it is also
+  // allowed to be stale. It is: it does not carry cash_entries.deleted_at, which a migration adds
+  // and /api/cash queries every day. Types-only would have failed that working code.
+  //
+  // The union can only ever miss a bug, never invent one. That is the right direction for a gate
+  // that fails a build.
+  const typeSrc = readFileSync("src/types/database.types.ts", "utf8");
+  let fromTypes = 0;
+  for (const m of typeSrc.matchAll(/^      ([a-z_][a-z0-9_]*): \{\n        Row: \{\n([\s\S]*?)\n        \}/gm)) {
+    const cols = [...m[2].matchAll(/^          (\w+)\??:/gm)].map((c) => c[1]);
+    if (cols.length === 0) continue;
+    fromTypes += 1;
+    declared.add(m[1]);
+    const set = columnsOf.get(m[1]) ?? new Set<string>();
+    columnsOf.set(m[1], set);
+    for (const c of cols) set.add(c);
+  }
+  assert.ok(fromTypes > 30,
+    `only ${fromTypes} tables came out of database.types.ts — the generated-types parser has stopped matching, and this gate went half-blind without failing`);
+
   const walk = (dir: string): string[] => {
     const out: string[] = [];
     for (const e of readdirSync(dir)) {
@@ -17322,13 +17351,36 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
     }
     for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)/g)) {
       const table = m[1];
+      const at = m.index ?? 0;
+      // `supabase.storage.from("documents")` is a BUCKET, not a table. Its name collides with a
+      // real one, so without this every storage call reports imaginary missing columns.
+      if (/storage\s*$/.test(src.slice(Math.max(0, at - 20), at))) continue;
       const known = columnsOf.get(table);
       if (!declared.has(table) || !known) continue;
-      const line = () => src.slice(0, m.index ?? 0).split("\n").length;
-      // Stop at the next .from(, or the columns of one query get blamed on another table.
-      let chain = src.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 900);
-      const next = chain.indexOf(".from(");
-      if (next !== -1) chain = chain.slice(0, next);
+      const line = () => src.slice(0, at).split("\n").length;
+      // Walk the CHAIN, do not take a window. A fixed slice runs past the end of the query into
+      // the next statement, and then a filter from one table is reported against another — the
+      // first draft of this did exactly that and produced ten findings, every one of them mine.
+      // A chain is `.method(...)` repeated; it ends at the first thing that is not one.
+      const chain = (() => {
+        let i = at + m[0].length;
+        const start = i;
+        for (;;) {
+          while (i < src.length && /\s/.test(src[i])) i += 1;
+          if (src[i] !== ".") break;
+          const call = /^\.\w+\(/.exec(src.slice(i));
+          if (!call) break;
+          let depth = 0;
+          let j = i + call[0].length - 1;
+          for (; j < src.length; j += 1) {
+            if (src[j] === "(") depth += 1;
+            else if (src[j] === ")") { depth -= 1; if (depth === 0) break; }
+          }
+          if (j >= src.length) break;
+          i = j + 1;
+        }
+        return src.slice(start, i);
+      })();
 
       for (const f of chain.matchAll(
         /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|order|contains|overlaps)\(\s*['"]([a-z_][a-z0-9_]*)['"]/g,
@@ -17336,7 +17388,7 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
         checked += 1;
         if (!known.has(f[2])) offenders.push(`${file}:${line()} — ${table} has no column ${f[2]} (.${f[1]}())`);
       }
-      const sel = /^\s*\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
+      const sel = /\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
       // An embed, alias, count or wildcard is a different grammar — skipped rather than guessed at.
       if (sel && !/[(:!*]/.test(sel[1])) {
         for (const raw of sel[1].split(",")) {
@@ -17349,7 +17401,10 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
     }
   }
 
-  assert.ok(checked > 200, `the gate only checked ${checked} column references — it has stopped reaching the code`);
+  // Was 705 when the migrations were the only source. The generated types added the sixteen
+  // tables the app runs on, and the floor moves with it: a parser that half-breaks would
+  // otherwise leave a gate that still passes while checking a third of what it should.
+  assert.ok(checked > 1800, `the gate only checked ${checked} column references — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `queries naming a column that does not exist:\n  ${offenders.join("\n  ")}`);
 
   // ── THE BLIND SPOT, PINNED ──
@@ -17359,11 +17414,10 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
   // two the whole product runs on. Pinned rather than ignored: a NEW name appearing here means a
   // new table shipped without its schema, and the gate should make that a decision rather than a
   // drift. Moving one out of this list (by adding its migration) is a straight improvement.
-  const UNCHECKABLE = [
-    "accountant_clients", "audit_logs", "bank_transactions", "clients", "deletion_requests",
-    "documents", "draft_queue", "email_connections", "email_skipped_attachments", "folders",
-    "invitations", "invoice_lines", "invoices", "messages", "notifications", "profiles",
-  ];
+  // Was sixteen names long, and every one of them is now covered by the generated types above.
+  // Anything still here is a table the app queries that NEITHER a migration NOR the live schema
+  // knows about — which is a table that does not exist, or a typo in a .from().
+  const UNCHECKABLE: string[] = [];
   const blind = [...queried].filter((t) => !declared.has(t)).sort();
   const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
   assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
@@ -17399,6 +17453,27 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
       }
     }
   }
+  // [KOLOM-BESTAAT] Same second source, same reason, same union. database.types.ts is generated
+  // from the live database and describes 15 functions with their named arguments — including
+  // check_rate_limit, which has no CREATE FUNCTION in this repo and was therefore skipped
+  // entirely. Unioned rather than trusted alone, because the generated file is allowed to be
+  // stale; the union can only miss a mismatch, never invent one.
+  const typeSrc = readFileSync("src/types/database.types.ts", "utf8");
+  const fnBlock = /^    Functions: \{\n([\s\S]*?)\n    \}\n/m.exec(typeSrc);
+  let fromTypes = 0;
+  for (const m of (fnBlock?.[1] ?? "").matchAll(/^      ([a-z_][a-z0-9_]*): \{\n        Args: \{\n([\s\S]*?)\n        \}/gm)) {
+    const args = [...m[2].matchAll(/^          (\w+)\??:/gm)].map((a) => a[1]);
+    if (args.length === 0) continue;
+    fromTypes += 1;
+    const set = signatures.get(m[1]) ?? new Set<string>();
+    signatures.set(m[1], set);
+    for (const a of args) set.add(a);
+  }
+  // Seven of the fifteen carry NAMED arguments in the generated file; the rest take none or are
+  // typed without names, and the migrations cover those. Measured, not guessed — a floor picked by
+  // eye is how a parser that half-breaks keeps passing.
+  assert.ok(fromTypes >= 7,
+    `only ${fromTypes} functions came out of database.types.ts — the generated-types parser has stopped matching, and this gate went half-blind without failing`);
   assert.ok(signatures.size > 20, "the function parser stopped finding functions — this gate is asleep");
 
   const walk = (dir: string): string[] => {
