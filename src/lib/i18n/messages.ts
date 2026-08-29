@@ -1181,6 +1181,19 @@ export const MESSAGES = {
   'cat.zodra': { nl: 'Zodra je transacties een categorie geeft, kun je ze hier wijzigen.', ar: 'حين تعطي معاملاتك تصنيفاً، تستطيع تعديلها هنا.', en: 'Once you categorise transactions, you can change them here.' },
   'cat.vernieuw': { nl: 'Vernieuw de pagina om de volgende te zien.', ar: 'حدّث الصفحة لرؤية التالية.', en: 'Refresh the page to see the next one.' },
   'cat.fout.laden': { nl: 'We konden de banktransacties niet laden. Probeer het opnieuw.', ar: 'تعذّر تحميل معاملات البنك. حاول مرة أخرى.', en: 'Could not load the bank transactions. Try again.' },
+  // [ZELFDE-TEGENPARTIJ] One answer reaches the other lines of the same party. Said out loud,
+  // because a screen that silently changes rows the owner did not look at is the surprise this
+  // whole feature was written to avoid.
+  'cat.ookToegepast': {
+    nl: 'Ook toegepast op {n} andere regels van dezelfde tegenpartij.',
+    ar: 'طُبّق أيضاً على {n} أسطر أخرى للطرف نفسه.',
+    en: 'Also applied to {n} other lines from the same counterparty.',
+  },
+  'cat.ookToegepastEen': {
+    nl: 'Ook toegepast op één andere regel van dezelfde tegenpartij.',
+    ar: 'طُبّق أيضاً على سطر واحد آخر للطرف نفسه.',
+    en: 'Also applied to one other line from the same counterparty.',
+  },
   'cat.fout.opslaan': { nl: 'Deze transactie kon niet worden opgeslagen. Probeer het opnieuw.', ar: 'تعذّر حفظ هذه المعاملة. حاول مرة أخرى.', en: 'This transaction could not be saved. Try again.' },
   'cat.fout.automatisch': { nl: 'De automatische verwerking is niet gelukt. Probeer het opnieuw.', ar: 'لم تنجح المعالجة التلقائية. حاول مرة أخرى.', en: 'Automatic processing did not work. Try again.' },
 

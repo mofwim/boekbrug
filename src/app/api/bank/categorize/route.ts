@@ -20,6 +20,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
+// [ZELFDE-TEGENPARTIJ] Which other pending lines the owner just answered for without knowing it.
+import { linesForCounterpart } from "@/lib/counterpart-spread";
 import { ALLOWED_CATEGORIES, EXCLUDED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
@@ -261,7 +263,44 @@ export async function POST(req: NextRequest) {
   // 2) Train the memory for this counterpart (so it auto-applies next time).
   await trainMemory(supabase, user.id, tx.counterpart_name, category);
 
-  return NextResponse.json({ ok: true });
+  // 3) [ZELFDE-TEGENPARTIJ] …and apply it NOW to the other pending lines of the same party.
+  //
+  // The memory alone only pays off on the next import, the nightly cron, or the bulk button. Until
+  // one of those runs, the other lines of the party just answered stay on this very screen and get
+  // asked again. Measured live: 272 of 305 unresolved lines are repeat appearances of a party that
+  // is also elsewhere in the same list, and one party was asked about 28 separate times.
+  //
+  // Written as a SUGGESTION (category_source 'memory', category_confirmed false), exactly like
+  // every other learned application: the owner confirmed one line and this infers the rest, so it
+  // must not wear their confirmation. Best-effort — a failed spread must never cost the owner the
+  // answer they did give, which is already committed above.
+  let alsoApplied = 0;
+  try {
+    const pending = await fetchAllRows<{ id: string; counterpart_name: string | null; category: string | null }>((from, to) =>
+      supabase
+        .from("bank_transactions")
+        .select("id, counterpart_name, category")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .is("invoice_id", null)
+        .is("category", null)
+        .order("id", { ascending: true })
+        .range(from, to));
+    const ids = linesForCounterpart(pending, tx.counterpart_name, transactionId);
+    for (const id of ids) {
+      const { error } = await supabase
+        .from("bank_transactions")
+        .update({ category, category_source: "memory", category_confirmed: false })
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .is("category", null); // guard: never clobber a category set meanwhile
+      if (!error) alsoApplied++;
+    }
+  } catch (e) {
+    console.error("[ZELFDE-TEGENPARTIJ] spreading the answer failed — the answer itself stands", e);
+  }
+
+  return NextResponse.json({ ok: true, alsoApplied });
 }
 
 // ─── Bulk apply: fill ONLY the confident suggestions, leave the rest for the owner ──

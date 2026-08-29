@@ -61,6 +61,8 @@ export default function CategoriseClient() {
   const [hasMore, setHasMore] = useState(false)
   const [confidentAvailable, setConfidentAvailable] = useState(0)
   const [bulkBusy, setBulkBusy] = useState(false)
+  // [ZELFDE-TEGENPARTIJ] What the last answer also reached, for the line under the list.
+  const [spreadNote, setSpreadNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('todo')
   const [search, setSearch] = useState('')
@@ -138,9 +140,20 @@ export default function CategoriseClient() {
         body: JSON.stringify({ transaction_id: id, category }),
       })
       if (res.ok) {
-        setItems((prev) => prev.filter((it) => it.id !== id))
-        // Only the to-do queue tracks a DB-wide remaining count; review mode doesn't.
-        if (mode === 'todo') setTotalRemaining((n) => Math.max(0, n - 1))
+        // [ZELFDE-TEGENPARTIJ] The server applies this answer to the other pending lines of the
+        // same party. Drop those rows here too, and SAY how many — a list that silently shrinks by
+        // twenty-seven is the surprise this feature exists to avoid.
+        const json = await res.json().catch(() => ({} as { alsoApplied?: number }))
+        const spread = typeof json.alsoApplied === 'number' ? json.alsoApplied : 0
+        const answered = items.find((it) => it.id === id)
+        const sameParty = (a: string | null | undefined, b: string | null | undefined) =>
+          !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+        setItems((prev) => prev.filter((it) =>
+          it.id !== id && !(spread > 0 && sameParty(it.counterpart_name, answered?.counterpart_name))))
+        if (mode === 'todo') setTotalRemaining((n) => Math.max(0, n - 1 - spread))
+        setSpreadNote(spread > 0
+          ? t(spread === 1 ? 'cat.ookToegepastEen' : 'cat.ookToegepast', { n: spread })
+          : null)
       } else {
         setError(t('cat.fout.opslaan'))
       }
@@ -227,6 +240,14 @@ export default function CategoriseClient() {
         {error && (
           <div role="alert" style={{ background: '#FCE8E6', color: '#B3261E', borderRadius: 12, padding: '12px 14px', fontSize: 14, marginBottom: 14 }}>
             {error}
+          </div>
+        )}
+
+        {/* [ZELFDE-TEGENPARTIJ] What the last answer also reached. role="status" rather than
+            "alert": this is good news about work that did NOT have to be done, not a problem. */}
+        {spreadNote && (
+          <div role="status" style={{ background: M3.successContainer, color: '#146C2E', borderRadius: 12, padding: '10px 14px', fontSize: 13.5, marginBottom: 14 }}>
+            {spreadNote}
           </div>
         )}
 
