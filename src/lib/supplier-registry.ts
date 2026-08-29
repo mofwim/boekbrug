@@ -19,6 +19,8 @@ import { isReliableVendor, vendorCoreKey, vendorCoreKeyLegacy } from '@/lib/safe
 import { supplierIdForPrintedName } from '@/lib/supplier-alias-write'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database.types'
+// [IBAN-IDENTITEIT] The app's one IBAN check — a second definition is how two paths disagree.
+import { isValidIban } from './epc-qr'
 
 /** Normalized match key: lowercased, entity-form noise + punctuation stripped, collapsed. Pure.
  *  Empty string when there's nothing usable (→ not a reliable key).
@@ -69,6 +71,32 @@ export function normalizeIban(iban: string | null | undefined): string | null {
   return s.length >= 15 && /^[A-Z0-9]+$/.test(s) ? s : null
 }
 
+/**
+ * [IBAN-IDENTITEIT] The IBAN, but only when it can BE an identity — mod-97 and all.
+ *
+ * normalizeIban deliberately does not validate ("that is a payment-time concern; we only avoid
+ * keying a supplier on junk"), and for canonicalising a printed string that is right. For deciding
+ * WHO a supplier is it is not, and the live data shows exactly what it costs:
+ *
+ *   sumer food                    7 rows, 7 IBANs — six of them OCR variants of the seventh
+ *   migro hal trading             2 rows — NL53INGB0676775535 vs …553, one digit transposed
+ *   w ketels en zoon eierhandel   2 rows — NL01ABNA0133170350 (invalid) vs NL89RABO0131703501
+ *
+ * 14 of 55 stored supplier IBANs fail this app's own isValidIban. The IBAN tier is the STRONGEST
+ * identity tier and creation is keyed on it, so every misread digit manufactured a new supplier —
+ * defeating the one thing the registry exists for, its own header's words: "one consistent
+ * supplier instead of many spellings". A scanner that reads NL36SUME… for NL78RABO… has not told
+ * us about a second company; it has told us nothing, and nothing is what it must count as.
+ *
+ * Returning null here does not discard the vendor: resolution falls through to the KVK and name
+ * tiers, which is precisely where an unreadable account number belongs. Existing rows are never
+ * touched — this can only stop a future duplicate from being created.
+ */
+export function identityIban(iban: string | null | undefined): string | null {
+  const normalized = normalizeIban(iban)
+  return normalized && isValidIban(normalized) ? normalized : null
+}
+
 /** A name is usable as a match/creation key only when it is reliable (not a placeholder/junk)
  *  and its normalized core is specific enough (≥3 chars) to not merge unrelated vendors. Pure. */
 export function isReliableSupplierName(name: string | null | undefined): boolean {
@@ -111,7 +139,9 @@ export async function resolveSupplierForImport(
 ): Promise<SupplierResolution | null> {
   try {
     const cleanName = (vendor.name ?? '').trim()
-    const iban = normalizeIban(vendor.iban)
+    // [IBAN-IDENTITEIT] Identity, not merely shape — see the note on identityIban. A misread
+    // account number keys nothing and falls through to the KVK and name tiers.
+    const iban = identityIban(vendor.iban)
     const kvk = normalizeKvk(vendor.kvk)
     const btw = (vendor.btw ?? '').trim() || null
     const key = supplierNameKey(cleanName)
