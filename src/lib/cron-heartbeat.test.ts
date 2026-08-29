@@ -98,6 +98,10 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
       "accountant-daily": run(2),
       // [OCHTEND] Zelfde vorm: dagelijks, vaak zonder mails, en dat is de gezonde toestand.
       ochtend: run(2),
+      // [BETAALHERINNERING] De herinnering aan wat de ondernemer zelf moet betalen. Dagelijks, en
+      // net als de twee hierboven meestal stil: hij spreekt alleen over een vervaldatum die vandaag
+      // een grens oversteekt. Valt hij om, dan mist de eigenaar geen scherm maar een betaaltermijn.
+      "payment-due": run(2),
     },
     NU,
   );

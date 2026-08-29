@@ -18728,3 +18728,106 @@ test("[BANK-OVERAPPLIED-LOUD] de enige waarborg tegen een niet-gesloten race mel
   assert.match(code("src/lib/i18n/messages.ts"), /'log\.bank\.overapplied_check_failed':/,
     "de actie heeft geen zin, dus het logboek toont haar sleutel");
 });
+
+test("[CRON-BEDRAAD] every cron route is scheduled AND watched — none of the three lists drifts", () => {
+  // Drie lijsten die hetzelfde moeten zeggen: de routes op schijf, de planning in vercel.json en
+  // de hartslagtabel in cron-heartbeat.ts. Ze staan in drie bestanden en niets hield ze bij elkaar.
+  //
+  // De drie manieren waarop dat stilvalt, en geen ervan geeft een foutmelding:
+  //   · een route zonder planning draait NOOIT. Hij compileert, hij is te curlen, hij ziet er in
+  //     de codebase volwaardig uit — en de functie die hij levert bestaat gewoon niet;
+  //   · een route zonder hartslag draait wél, en als hij omvalt merkt niemand het. Dat is precies
+  //     waar cron-heartbeat.ts voor is gebouwd, en er buiten vallen kost je hem;
+  //   · een planning zonder route levert elke dag een 404 op een pad dat niemand meer leest.
+  //
+  // [ZOEKT-ZIJN-EIGEN-BESTANDEN] Geen ingetypte lijst: de routes komen van de map. Een cron die
+  // morgen wordt toegevoegd staat er vanzelf in, en dat is het hele punt — de bestaande poorten
+  // pinnen elk hun eigen cron met de naam erin, en die vorm dekt per definitie nooit de volgende.
+  const routes = readdirSync("src/app/api/cron")
+    .filter((naam) => existsSync(`src/app/api/cron/${naam}/route.ts`));
+  assert.ok(routes.length >= 10,
+    `only ${routes.length} cron routes found; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+
+  const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons?: { path: string; schedule: string }[] };
+  const gepland = new Set((vercel.crons ?? []).map((c) => c.path.replace(/^\/api\/cron\//, "")));
+  const beat = code("src/lib/cron-heartbeat.ts");
+  const registry = beat.slice(beat.indexOf("CRON_JOBS"), beat.indexOf("} as const"));
+  const bewaakt = new Set([...registry.matchAll(/^\s+"?([a-z-]+)"?:\s*\d+,/gm)].map((m) => m[1]));
+
+  assert.deepEqual(routes.filter((r) => !gepland.has(r)), [],
+    "these cron routes have no entry in vercel.json, so they never run — nothing fails, the feature simply does not exist");
+  assert.deepEqual(routes.filter((r) => !bewaakt.has(r)), [],
+    "these cron routes are not in CRON_JOBS, so nobody is told when they stop");
+  assert.deepEqual([...gepland].filter((p) => !routes.includes(p)), [],
+    "these schedules point at a route that is gone — a daily 404");
+});
+
+test("[BETAALHERINNERING] de eigenaar hoort het vóór de vervaldag, niet erna", () => {
+  // De aanleiding, letterlijk: een inkoopfactuur van € 1.165,73 met vervaldatum vandaag, en de
+  // eigenaar wist het niet. De app had één herinnering en die wees de andere kant op — reminders
+  // maant de KLANT van een uitgaande factuur. Voor wat de ondernemer zelf moet betalen: niets.
+
+  const puur = code("src/lib/payment-due-notice.ts");
+  const cron = code("src/app/api/cron/payment-due/route.ts");
+
+  // ── De ladder: drie treden, en stil ertussen ──────────────────────────────
+  // Eén tik is te laat om iets te regelen; een tik op drie opeenvolgende dagen leert de eigenaar
+  // ze weg te vegen, en dan gaat de enige die ertoe deed mee.
+  assert.match(puur, /if \(over === 0\) return "today";/);
+  assert.match(puur, /if \(over === 1\) return "tomorrow";/);
+  assert.match(puur, /if \(over === 3\) return "in_three_days";/);
+  assert.doesNotMatch(puur, /if \(over === 2\)/, "de stilte op dag 2 is een keuze, geen gat");
+
+  // ── Geld dat vanzelf vertrekt wordt nooit opgeëist ────────────────────────
+  // De "Automatisch"-markering op de kaart. Een "betaal dit" hierop is geen ruis maar een tweede
+  // overboeking, die de eigenaar bij zijn leverancier moet terugvragen. En de check staat vóór de
+  // datum, dus hij zwijgt op élke trede — niet alleen op de laatste.
+  const tier = puur.slice(puur.indexOf("export function tierFor"), puur.indexOf("export function pushWorthy"));
+  // Eerst DAT hij er is, dan pas WAAR. Een indexOf op een verdwenen regel geeft -1, en -1 is
+  // kleiner dan elke index — dus een volgordecontrole alléén slaagt juist wanneer de regel weg is.
+  // Een negatieve controle liep hier doorheen; dit is wat die controle opleverde.
+  const autoCheck = tier.indexOf("if (inv.autoDebit) return null;");
+  const datumCheck = tier.indexOf("if (!inv.dueDate)");
+  assert.ok(autoCheck >= 0, "de auto-incasso-check is weg — elke automatisch afgeschreven factuur wordt weer opgeëist");
+  assert.ok(datumCheck >= 0, "de datumcheck is weg");
+  assert.ok(autoCheck < datumCheck, "de auto-incasso-check staat niet meer vóór de datumcheck");
+  assert.match(cron, /autoDebit: wasAutoIncasso\(r\.field_confidence\)/,
+    "de cron leest de markering niet meer uit dezelfde bron als het scherm");
+
+  // ── De laatste BANKDAG, niet de laatste kalenderdag ───────────────────────
+  // Een Nederlandse bank verwerkt niet in het weekend: een overboeking op zaterdag komt maandag
+  // aan, ná een vervaldatum van zondag. Zonder deze verschuiving valt de "vandaag"-tik op een dag
+  // waarop de eigenaar niets meer KAN doen — dezelfde klacht, verplaatst naar het weekend.
+  assert.match(puur, /if \(day === 6\) d\.setUTCDate\(d\.getUTCDate\(\) - 1\);/);
+  assert.match(puur, /else if \(day === 0\) d\.setUTCDate\(d\.getUTCDate\(\) - 2\);/);
+  // …en het leesvenster van de cron moet die twee dagen marge meenemen, anders wordt zo'n factuur
+  // op vrijdag niet eens ingelezen en is de verschuiving een dode letter.
+  assert.match(cron, /\(LADDER_DAYS \+ 2\) \* 86_400_000/,
+    "het leesvenster dekt de weekendverschuiving niet meer");
+
+  // ── Eén bericht per trede, nooit één per factuur ──────────────────────────
+  assert.match(cron, /for \(const notice of noticesFor\(invoices, today\)\)/,
+    "de cron verstuurt weer per factuur — veertig facturen is veertig meldingen, en dan staat alles uit");
+  assert.match(puur, /export function bucketsFor/, "de bundeling is weg");
+
+  // ── De melding staat, ook als de push niet aankomt ────────────────────────
+  // Andersom zou een eigenaar zonder push-abonnement — of met een toestel dat uit stond — het
+  // helemaal niet horen. En een mislukte melding mag geen push sturen die nergens heen leidt.
+  const lus = cron.slice(cron.indexOf("const result = await createNotification"), cron.indexOf("await finishCronRun"));
+  assert.ok(lus.indexOf("createNotification") < lus.indexOf("sendPushToUser"),
+    "de push gaat weer vóór de melding");
+  assert.match(lus, /if \(!result\.ok\) \{[\s\S]{0,200}?continue;/,
+    "een niet-opgeslagen melding stuurt weer een push voor iets dat nergens staat");
+  assert.match(puur, /return tier === "today" \|\| tier === "tomorrow";/,
+    "elke trede buzzt weer — dat is hoe een herinnering wordt uitgezet");
+
+  // ── De bewakers die elke cron heeft ───────────────────────────────────────
+  assert.match(cron, /timingSafeEqualStr\(auth, `Bearer \$\{secret\}`\)/, "de route is publiek aanroepbaar geworden");
+  assert.match(cron, /cron_secret_not_configured/, "zonder secret moet hij weigeren, niet draaien");
+  assert.match(cron, /alreadyRan: true/,
+    "[EENMAAL] een tweede firing op één dag stuurt iedereen zijn meldingen nóg een keer");
+  // Alleen de geverifieerde, onbetaalde inkoopfactuur — 'processing' staat nog in de wachtrij en
+  // is dus geen schuld waarvan de eigenaar een termijn moet bewaken.
+  assert.match(cron, /\.eq\("status", "received"\)/);
+  assert.match(cron, /\.gte\("due_date", today\)/, "te laat hoort niet op deze ladder — ander bericht, andere handeling");
+});
