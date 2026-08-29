@@ -18791,8 +18791,22 @@ test("[BETAALHERINNERING] de eigenaar hoort het vóór de vervaldag, niet erna",
   assert.ok(autoCheck >= 0, "de auto-incasso-check is weg — elke automatisch afgeschreven factuur wordt weer opgeëist");
   assert.ok(datumCheck >= 0, "de datumcheck is weg");
   assert.ok(autoCheck < datumCheck, "de auto-incasso-check staat niet meer vóór de datumcheck");
-  assert.match(cron, /autoDebit: wasAutoIncasso\(r\.field_confidence\)/,
-    "de cron leest de markering niet meer uit dezelfde bron als het scherm");
+  // [AUTO-INCASSO-BRON] En de BRON, niet alleen de bedrading. Deze poort pinde eerst dat de cron
+  // `wasAutoIncasso` aanriep, en slaagde daarmee op een versie die de verkeerde vlag las: die
+  // markering wordt pas geschreven wanneer incasso-settle de factuur BOEKT, en dat gebeurt strikt
+  // ná de vervaldatum — terwijl deze ladder ervóór spreekt. De uitsluiting was dus dode code en
+  // élke automatisch afgeschreven factuur werd opgeëist. Een poort die de aanroep pint en niet de
+  // waarheid, keurt precies dat goed.
+  assert.match(cron, /\.from\("suppliers"\)\s*\.select\("id"\)\s*\.eq\("auto_incasso", true\)/,
+    "de cron leest de incasso-schakelaar niet meer van de LEVERANCIER — de enige bron die vóór de vervaldatum al waar is");
+  assert.match(cron, /autoDebit:\s*\(!!r\.supplier_id && incassoSuppliers\.has\(r\.supplier_id\)\) \|\| wasAutoIncasso\(r\.field_confidence\)/,
+    "de twee bronnen staan niet meer allebei aan — één ervan is per definitie te laat");
+  assert.match(cron, /\.select\("id, receiver_id, client_name, invoice_number, due_date, total_inc_btw, field_confidence, supplier_id"\)/,
+    "supplier_id wordt niet meer gelezen, dus de leveranciersvlag is onbereikbaar");
+  // En een mislukte leverancierslezing mag nooit "niemand incasseert" worden: dat stuurt iedereen
+  // een betaalverzoek voor geld dat al onderweg is. fetchAllRows gooit; de catch laat de run falen.
+  assert.doesNotMatch(cron, /\.from\("suppliers"\)[\s\S]{0,400}?catch/,
+    "de leverancierslezing vangt haar fout op — dan wordt een storing stilzwijgend 'niemand incasseert'");
 
   // ── De laatste BANKDAG, niet de laatste kalenderdag ───────────────────────
   // Een Nederlandse bank verwerkt niet in het weekend: een overboeking op zaterdag komt maandag
