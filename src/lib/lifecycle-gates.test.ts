@@ -18209,3 +18209,61 @@ test("[GEEN-STILLE-KAP] nothing the accountant receives is assembled from a trun
   const reads = [...src.matchAll(/\.from\(\s*['"][a-z_]+['"]\s*\)/g)].length;
   assert.ok(reads > 15, `only ${reads} reads found in closing-package.ts — this gate is asleep`);
 });
+
+
+test("[TZ-SERVER] no server route decides a period from the server's own clock", () => {
+  // A data error is a money error is a tax error, and this is the cheapest possible way to make
+  // one: the server runs on UTC, Amsterdam is UTC+1 or +2, so between midnight and 01:00/02:00 the
+  // server's date is still YESTERDAY. On 1 January that costs a year and a quarter in one step.
+  //
+  // FOUND in four places, all of them writing or choosing a PERIOD:
+  //
+  //   · /api/bestanden/classify — a document with no readable date of its own is filed under
+  //     "today". It landed in the previous year's folder carrying the previous quarter's `period`,
+  //     and `period` is the exact field closing-package reads to place a document in a quarter.
+  //   · /api/files — the same, for an upload with no year/quarter given: both the storage path and
+  //     `period` are written from those two numbers.
+  //   · /api/export — the default year of a bookkeeping export.
+  //   · accountant.service.getCurrentQuarter — "which quarter are we in", asked by the accountant's
+  //     own screens.
+  //
+  // These are SERVER files. A browser's clock is the owner's own and is a different question; this
+  // gate is about the machine that has no reason to be in Amsterdam.
+  const SERVER_FILES = [
+    "src/app/api/bestanden/classify/route.ts",
+    "src/app/api/files/route.ts",
+    "src/app/api/export/route.ts",
+    "src/modules/accountant/accountant.service.ts",
+  ];
+  // Anchored on the CALL, not on the variable it is called through. The first draft of this gate
+  // matched `now.getFullYear()` and `new Date().getFullYear()` — and a negative control that named
+  // the variable `n` walked straight past it. In a server file there is no legitimate reading of a
+  // calendar field off the current time, whatever the variable is called.
+  //
+  // The one form that IS legitimate is a Date built from EXPLICIT numbers — `new Date(year, m, 0)`
+  // to get the length of a month is a calendar fact, not a clock reading — so that receiver, and
+  // only that receiver, is allowed.
+  const offenders: string[] = [];
+  for (const f of SERVER_FILES) {
+    const src = code(f);
+    for (const m of src.matchAll(/([\w.)\]]+)\s*\.\s*(getFullYear|getMonth|getDate)\(\)/g)) {
+      const at = m.index ?? 0;
+      // The receiver ITSELF, tested at its end — not a window around it. A window let
+      // `: now.getFullYear()` through because the line above happened to contain
+      // `new Date(classification.date)`, and a negative control caught that too.
+      const receiver = src.slice(0, at + m[1].length);
+      // `new Date(<args>)` — a calendar date built from explicit numbers, e.g. the length of a
+      // month. That is a calendar fact, not a clock reading, and it is the only allowed form.
+      if (/new Date\([^()]*[^()\s][^()]*\)$/.test(receiver)) continue;
+      offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+    }
+    assert.match(src, /amsterdam(Year|Month|Today)\(/, `${f}: no longer asks the owner's calendar at all`);
+  }
+  assert.deepEqual(offenders, [],
+    `a period or a countdown is decided from the server's own clock:\n  ${offenders.join("\n  ")}`);
+
+  // One clock, so year and month can never disagree about which day it is.
+  const pure = code("src/lib/format-nl.ts");
+  assert.match(pure, /export function amsterdamMonth\(now: Date = new Date\(\)\): number \{\s*\n\s*return Number\(amsterdamToday\(now\)\.slice\(5, 7\)\)/,
+    "amsterdamMonth stopped deriving from the one clock — a second Intl call is a second clock to be wrong");
+});

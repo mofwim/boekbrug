@@ -138,6 +138,21 @@ export function amsterdamYear(now: Date = new Date()): number {
 }
 
 /**
+ * The owner's calendar MONTH in Europe/Amsterdam, 1-12.
+ *
+ * The sibling of amsterdamYear, and needed for the same reason: a document filed without a readable
+ * date of its own is filed under TODAY, and on a UTC server "today" is still yesterday between
+ * midnight and 01:00 or 02:00 Amsterdam time. On 1 January that costs a year AND a quarter — the
+ * document lands in the previous year's folder with the previous quarter's period tag, and `period`
+ * is what the accountant's package reads to decide which quarter a document belongs to.
+ *
+ * Derived from the same one clock, so year and month can never disagree about which day it is.
+ */
+export function amsterdamMonth(now: Date = new Date()): number {
+  return Number(amsterdamToday(now).slice(5, 7))
+}
+
+/**
  * The UTC instant at which a given Amsterdam calendar day BEGINS.
  *
  * [TZ] For a cron that asks "what happened yesterday", the day boundary is the owner's midnight,

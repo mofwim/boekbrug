@@ -10,6 +10,7 @@
 // GET /api/export?year=2026&accountant=true     ← all clients (accountant only)
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamYear } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { quarterStartDate, quarterEndDate } from "@/lib/quarterly";
 // [PAGINATION] PostgREST silently caps a single .select() at ~1000 rows — a
@@ -69,7 +70,9 @@ export async function GET(req: NextRequest) {
     .single();
 
   const now = new Date();
-  const year = Number(req.nextUrl.searchParams.get("year") ?? now.getFullYear());
+  // [TZ] The owner's year, not the server's: on a UTC server the first hour of 1 January
+  // still reads as December, and this default decides which year gets exported.
+  const year = Number(req.nextUrl.searchParams.get("year") ?? amsterdamYear(now));
   const rawQuarter = req.nextUrl.searchParams.get("quarter");
   const clientId = req.nextUrl.searchParams.get("clientId");
   const statusFilter = req.nextUrl.searchParams.get("status");

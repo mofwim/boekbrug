@@ -3,6 +3,8 @@
 // Uses classifyDocument from @/lib/ai + findFolderByPath from @/lib/bestanden
 
 import { NextRequest, NextResponse } from "next/server";
+// [TZ] The owner's calendar, not the server's — see format-nl.ts.
+import { amsterdamYear, amsterdamMonth } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { classifyDocument } from "@/lib/ai";
 import { findFolderByPath } from "@/lib/bestanden";
@@ -66,13 +68,18 @@ export async function POST(req: NextRequest) {
     );
 
     // Map AI result to folder path
+    // [TZ] The fallback is the OWNER's calendar, never the server's. A document with no readable
+    // date is filed under today — and on a UTC server "today" is still yesterday between midnight
+    // and 01:00/02:00 Amsterdam. On 1 January that costs a year and a quarter at once: the file
+    // lands in the previous year's folder carrying the previous quarter's `period`, which is the
+    // exact field the accountant's package reads to decide which quarter a document belongs to.
     const now = new Date();
     const year = classification.date
       ? new Date(classification.date).getUTCFullYear()
-      : now.getFullYear();
+      : amsterdamYear(now);
     const month = classification.date
       ? new Date(classification.date).getUTCMonth() + 1
-      : now.getMonth() + 1;
+      : amsterdamMonth(now);
     const quarter = monthToQuarter(month);
 
     // [BOEK-033] Map AI result to folder type
