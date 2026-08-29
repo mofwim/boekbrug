@@ -43,6 +43,7 @@ import type { VatScheme } from "./vat-scheme";
 import { exemptShareOf } from "./vat-exemption";
 import { round2 } from "./invoice-totals";
 import type { RateShare } from "./btw-rate-split";
+import { statedCommission, type StatedCommission } from "./pos-commission";
 import type { QuarterSettlements } from "./kas-payment-events";
 
 // ── The pure helpers the fetch half needs too, so they live on this side of the seam ──────────
@@ -209,6 +210,16 @@ export interface RangeResult {
     // failed read makes the reconciliation look CLEANER than it is — the caller must be able to say
     // "this cross-check did not run" instead of showing a silently weaker all-clear.
     pinLedgerAvailable: boolean;
+    // [COM-IN-DE-REGEL] The acquirer commission the BANK LINE states outright (`BRUTO … /COM …`),
+    // summed over the in-window card payouts that proved their own arithmetic. See
+    // pos-commission.ts for why it verifies rather than parses.
+    //
+    statedCommission: StatedCommission;
+    // TRUE when the figure above was folded into `commissionBooked` and therefore into kosten.
+    // FALSE when it is reported only — see the guard at statedIsBookable for exactly when, and
+    // why the ambiguous case is held back rather than guessed at. Never quietly true: a surface
+    // that says "found" about money the books do not contain is the failure this flag prevents.
+    statedCommissionBooked: boolean;
   };
 }
 
@@ -279,6 +290,12 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   // "is this a card payout?" decision the omzet-suppression leg makes. Asking the database for
   // `category = 'pos_income'` instead silently dropped the commission on every acquirer payout the
   // owner had tapped as plain 'omzet'.
+  // [COM-IN-DE-REGEL] Only the IN-WINDOW payouts state this window's commission. A buffer line
+  // belongs to the neighbouring window, exactly as its money does — the same clip as bankTx.
+  const statedCommissionInWindow = statedCommission(
+    bankBufRows.filter((b) => b.date != null && b.date >= start && b.date <= end),
+  );
+
   const posBufRows = bankBufRows.filter((b) => toResultBankTx(b).posSettlement);
   const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
 
@@ -306,7 +323,28 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
       INCOMING_OK.has(i.status ?? "") &&
       ACQUIRER_VENDOR_RE.test(i.client_name ?? ""))
     .reduce((s, i) => s + (i.total_ex_btw ?? 0) + (i.btw_amount ?? 0), 0);
-  const commissionToBook = netCommissionToBook(triangle.totalCommission, acquirerFeesBooked);
+
+  // [COM-IN-DE-REGEL] Is this window's bank-stated commission safe to BOOK, or only to report?
+  //
+  // The guard is the whole window rather than the day, and that is the careful choice, not the
+  // lazy one. Leg B books per DAY, keyed on the takings day. A stating bank line keys on its
+  // BOOKING day — its `DAT.` field is a week number (202618), not a date, so parsePosSettlement
+  // returns null and the booking date is used. Those two keys can name different days for the same
+  // money, so a per-day overlap test would compare keys that do not mean the same thing, and its
+  // failure mode is one commission booked twice in somebody's books, silently, with every total
+  // downstream carrying it into the aangifte.
+  //
+  // When the window holds NO EFT settlement, Leg B booked nothing anywhere in it, so there is
+  // provably nothing to overlap. That covers every shop in production today — eft_settlements is
+  // empty across the whole database — so the automatic path reaches all of them, while the one
+  // ambiguous combination stays reported-only until real data carrying both exists to verify a
+  // finer rule against. Reported-only is not a gap here: the figure still travels out, and
+  // `statedCommissionBooked` tells the surface exactly which of the two it is looking at.
+  const statedIsBookable = eftSettlements.length === 0 && statedCommissionInWindow.total > 0;
+  const rawCommission = round2(
+    triangle.totalCommission + (statedIsBookable ? statedCommissionInWindow.total : 0),
+  );
+  const commissionToBook = netCommissionToBook(rawCommission, acquirerFeesBooked);
 
   // [CARD-BUDGET] Per covered day, the max bank revenue it may suppress as till card takings.
   const coveredBudget = new Map(
@@ -414,6 +452,8 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
       commissionIssueDays: triangle.commissionIssueDays,
       eftSettlements: eftSettlements.length,
       pinLedgerAvailable,
+      statedCommission: statedCommissionInWindow,
+      statedCommissionBooked: statedIsBookable && scheme !== "kas",
     },
   };
 }

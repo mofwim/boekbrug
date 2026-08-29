@@ -46,7 +46,7 @@ import { round2 } from "./invoice-totals";
  * takes no card payments at all, which is most of the owners this app serves.
  */
 export type FoundAbsence =
-  | "no_card_takings" // no EFT settlement in the window: Leg B has nothing to compare
+  | "no_card_takings" // no EFT settlement AND no stating bank line: there was nothing to look at
   | "nothing_found" // the legs ran and agreed — the honest answer is "nothing was hidden"
   | "not_booked_under_kas"; // measured, but a cash-basis window books it via the acquirer's own invoice
 
@@ -60,6 +60,34 @@ export interface FoundCaveats {
   incompleteDays: number;
   /** Leg A breaks — the till and the terminal disagree. Not about commission, but not silent. */
   grossMismatchDays: number;
+}
+
+/**
+ * [COM-IN-DE-REGEL] The commission the bank line stated outright, and whether it is in the books.
+ *
+ * This is a finding of a different KIND from Leg B and is kept separate for that reason. Leg B
+ * DERIVES a commission by comparing three witnesses; this one is quoted by the bank and proves
+ * itself against the amount received. It is currently reported and not booked — see the note on
+ * `reconciliation.statedCommission` — so `inTheBooks` is what stops a screen from implying it is.
+ */
+export interface StatedFinding {
+  /** The commission the statement names, in euros. */
+  total: number;
+  /** The gross it was taken from, so a rate can be shown rather than asserted. */
+  gross: number;
+  /** How many payout lines proved their own arithmetic. */
+  lines: number;
+  /** Lines that looked like ours and did not add up — never in the total, never hidden. */
+  unverified: number;
+  /**
+   * Is this amount actually in the books, or only on the statement?
+   *
+   * TRUE when the engine folded it into kosten (the window held no EFT settlement, so Leg B had
+   * nothing it could double-count against). FALSE when it is evidence the owner can act on but the
+   * figures do not yet contain — the honest sentence then being "this is on your statement and not
+   * in your books", which is more use than a silently larger kosten total.
+   */
+  inTheBooks: boolean;
 }
 
 export interface FoundMoney {
@@ -76,6 +104,14 @@ export interface FoundMoney {
   /** How many terminal settlements the finding rests on. */
   settlements: number;
   caveats: FoundCaveats;
+  /**
+   * [COM-IN-DE-REGEL] What the bank statement said out loud, or null when it said nothing.
+   *
+   * Measured on a real ING shop: 22 payout lines in a quarter, € 54,02 on € 2.922,21 gross, every
+   * line proving BRUTO − COM against the amount received. The other 384 payouts that quarter were
+   * debit and settled GROSS, so they state nothing and hide nothing.
+   */
+  stated: StatedFinding | null;
   /**
    * TRUE when every caveat is clear: the ledger was read, no day was suspect, incomplete or
    * mismatched. Only then is `amount` the whole story rather than a floor.
@@ -103,12 +139,31 @@ export function foundMoney(range: RangeResult): FoundMoney {
     caveats.incompleteDays === 0 &&
     caveats.grossMismatchDays === 0;
   const measured = round2(r.totalCommission);
-  const base = { measured, settlements: r.eftSettlements, caveats, complete };
+  const sc = r.statedCommission;
+  // Null rather than an all-zero object: "the statement named nothing" and "the statement named
+  // € 0,00" are the same on screen only if we let them be.
+  const stated: StatedFinding | null =
+    sc && (sc.lines > 0 || sc.unverified > 0)
+      ? {
+          total: round2(sc.total), gross: round2(sc.gross), lines: sc.lines,
+          unverified: sc.unverified, inTheBooks: r.statedCommissionBooked === true,
+        }
+      : null;
+  const base = { measured, settlements: r.eftSettlements, caveats, complete, stated };
 
-  // No terminal settlement means Leg B never ran. That is not a finding of zero: the gross side
-  // of the comparison is simply absent, and a shop on a GROSS settlement contract has no Leg B
-  // to find either (MARKTPOSITIE §5 — the market is card-heavy shops ON NET settlement).
-  if (r.eftSettlements === 0) return { amount: null, absence: "no_card_takings", ...base };
+  // No terminal settlement means Leg B never ran. That is not a finding of zero: the gross side of
+  // the comparison is simply absent, and a shop on a GROSS settlement contract has no Leg B to
+  // find either (MARKTPOSITIE §5 — the market is card-heavy shops ON NET settlement).
+  //
+  // But "Leg B could not run" is no longer the same as "there is nothing to report". A bank line
+  // that states its own commission is a finding without any terminal settlement at all, which is
+  // the ordinary case for an ING shop — and was this module's blind spot: it answered
+  // "no_card_takings" for a shop with € 54,02 of commission printed on its own statement.
+  if (r.eftSettlements === 0) {
+    return stated && stated.total > 0
+      ? { amount: null, absence: null, ...base }
+      : { amount: null, absence: "no_card_takings", ...base };
+  }
 
   // [KASSTELSEL] Measured, deliberately not booked — the cost is deductible when the acquirer's
   // own invoice is paid. Reporting it as booked would claim a cost the result does not contain.

@@ -19,7 +19,9 @@ function range(recon: Partial<RangeResult["reconciliation"]> = {}, scheme: "fact
     reconciliation: {
       totalCommission: 0, commissionBooked: 0, acquirerFeeInvoices: 0,
       grossMismatchDays: 0, incompleteDays: 0, commissionIssueDays: 0,
-      eftSettlements: 0, pinLedgerAvailable: true, ...recon,
+      eftSettlements: 0, pinLedgerAvailable: true,
+      statedCommission: { total: 0, gross: 0, lines: 0, unverified: 0 },
+      statedCommissionBooked: false, ...recon,
     },
   };
 }
@@ -80,4 +82,46 @@ test("a negative or nonsensical booked amount never becomes a finding", () => {
   const f = foundMoney(range({ eftSettlements: 10, totalCommission: 5, commissionBooked: -5 }));
   assert.equal(f.amount, null);
   assert.equal(f.absence, "nothing_found");
+});
+
+// ── [COM-IN-DE-REGEL] The case this module used to get wrong ─────────────────────────────────
+
+test("a shop with no EFT file but a stating bank line is a FINDING, not 'no card takings'", () => {
+  // Kiwi Food Market, Q2 2026: zero eft_settlements (the table is empty across production), and
+  // € 54,02 of commission printed on 22 of its own bank lines. This module answered
+  // "no_card_takings" — the app looking straight past money quoted to it in plain text.
+  const f = foundMoney(range({
+    eftSettlements: 0,
+    statedCommission: { total: 54.02, gross: 2922.21, lines: 22, unverified: 0 },
+  }));
+  assert.equal(f.absence, null, "there IS something to report");
+  assert.ok(f.stated);
+  assert.equal(f.stated.total, 54.02);
+  assert.equal(f.stated.gross, 2922.21);
+  assert.equal(f.stated.lines, 22);
+});
+
+test("a stated commission is never implied to be booked", () => {
+  const f = foundMoney(range({
+    eftSettlements: 0,
+    statedCommission: { total: 54.02, gross: 2922.21, lines: 22, unverified: 0 },
+  }));
+  assert.equal(f.amount, null, "Leg B booked nothing — that field is about Leg B");
+  assert.equal(f.stated?.inTheBooks, false, "and reported-only is stated, never implied either way");
+});
+
+test("a statement that named nothing yields null, not an all-zero object", () => {
+  const f = foundMoney(range({ eftSettlements: 0 }));
+  assert.equal(f.stated, null, "'named nothing' and 'named € 0,00' must not render the same");
+  assert.equal(f.absence, "no_card_takings", "and with nothing else, the absence still holds");
+});
+
+test("a line that looked like ours and did not add up keeps the finding visible", () => {
+  const f = foundMoney(range({
+    eftSettlements: 0,
+    statedCommission: { total: 0, gross: 0, lines: 0, unverified: 3 },
+  }));
+  assert.ok(f.stated, "three unreadable lines are not silence");
+  assert.equal(f.stated.unverified, 3);
+  assert.equal(f.absence, "no_card_takings", "but nothing proved itself, so nothing is claimed");
 });

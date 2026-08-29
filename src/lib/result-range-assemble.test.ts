@@ -197,3 +197,95 @@ test("an empty window is an empty result, not a crash and not a null", () => {
   assert.equal(r.reconciliation.totalCommission, 0);
   assert.equal(r.scheme, "factuur");
 });
+
+// ── [COM-IN-DE-REGEL] The commission the bank line states outright ────────────────────────────
+
+test("the stated commission is summed from IN-WINDOW payouts only", () => {
+  // Real ING descriptions. The buffer line belongs to the next quarter, exactly as its money does.
+  const mast = (date: string) => ({
+    amount: 206.78, category: "pos_income", invoice_id: null, date,
+    description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+    counterpart_name: "ING DD&C",
+  });
+  const r = assembleRangeResult(inputs({
+    bankBufRows: [mast("2026-03-15"), mast("2026-03-31"), mast("2026-04-02")],
+  }));
+  assert.equal(r.reconciliation.statedCommission.lines, 2, "the +5 buffer day is the next window's");
+  assert.equal(r.reconciliation.statedCommission.total, 7.54, "2 × € 3,77");
+  assert.equal(r.reconciliation.statedCommission.gross, 421.1);
+});
+
+test("a debit payout that states nothing contributes nothing, and is not an error", () => {
+  const r = assembleRangeResult(inputs({
+    bankBufRows: [{
+      amount: 928.02, category: "pos_income", invoice_id: null, date: "2026-02-10",
+      description: "AFREK. BETAALAUTOMAAT MAES REFNR. F9Q3BH DAT. 20260503/6123 AANT. 60 MREFNR. KFM",
+      counterpart_name: "ING DD&C",
+    }],
+  }));
+  assert.deepEqual(r.reconciliation.statedCommission, { total: 0, gross: 0, lines: 0, unverified: 0 });
+});
+
+test("[COM-IN-DE-REGEL] with no EFT settlement the stated commission IS booked as a cost", () => {
+  // The Kiwi Food case, and every shop in production: no terminal file, commission printed on the
+  // statement. Leg B booked nothing anywhere in the window, so there is provably nothing to
+  // double-count and the cost belongs in kosten automatically.
+  const r = assembleRangeResult(inputs({
+    bankBufRows: [{
+      amount: 206.78, category: "pos_income", invoice_id: null, date: "2026-02-10",
+      description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+      counterpart_name: "ING DD&C",
+    }],
+  }));
+  assert.equal(r.reconciliation.statedCommission.total, 3.77);
+  assert.equal(r.reconciliation.statedCommissionBooked, true);
+  assert.equal(r.reconciliation.commissionBooked, 3.77, "it reaches what is booked");
+  assert.ok(r.result.kosten >= 3.77, "and therefore kosten — the profit was overstated by it");
+});
+
+test("[COM-IN-DE-REGEL] with an EFT settlement present it is reported but NOT booked", () => {
+  // Leg B books per takings day; a stating line keys on its booking day (its DAT. is a week
+  // number). Two keys that can name different days for the same money — so the ambiguous
+  // combination is held back rather than risking one commission booked twice.
+  const r = assembleRangeResult(inputs({
+    turnoverRows: [turnoverDay("2026-02-10")],
+    eftRows: [eftDay("2026-02-10", 1210)],
+    bankBufRows: [{
+      amount: 206.78, category: "pos_income", invoice_id: null, date: "2026-02-11",
+      description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+      counterpart_name: "ING DD&C",
+    }],
+  }));
+  assert.equal(r.reconciliation.statedCommission.total, 3.77, "still measured and reported");
+  assert.equal(r.reconciliation.statedCommissionBooked, false, "and explicitly not booked");
+});
+
+test("[COM-IN-DE-REGEL] under kas it is measured and never booked, like Leg B", () => {
+  const r = assembleRangeResult(inputs({
+    scheme: "kas",
+    kas: { events: [], priorByInvoice: new Map(), undatedPaidCount: 0, estimatedCount: 0,
+      settledSales: [], settledShares: new Map(), settledExempt: new Map(), settledDeductionByInvoice: new Map() },
+    bankBufRows: [{
+      amount: 206.78, category: "pos_income", invoice_id: null, date: "2026-02-10",
+      description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+      counterpart_name: "ING DD&C",
+    }],
+  }));
+  assert.equal(r.reconciliation.statedCommission.total, 3.77);
+  assert.equal(r.reconciliation.statedCommissionBooked, false, "the acquirer's own invoice books it under kas");
+  assert.equal(r.reconciliation.commissionBooked, 0);
+});
+
+test("[COM-IN-DE-REGEL] an acquirer fee invoice already in kosten still de-dups against it", () => {
+  const r = assembleRangeResult(inputs({
+    invRows: [sale({ id: "fee", direction: "incoming", status: "paid", client_name: "Adyen",
+      total_ex_btw: 10, btw_amount: 0, sender_id: null, receiver_id: OWNER })],
+    bankBufRows: [{
+      amount: 206.78, category: "pos_income", invoice_id: null, date: "2026-02-10",
+      description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+      counterpart_name: "ING DD&C",
+    }],
+  }));
+  assert.equal(r.reconciliation.commissionBooked, 0, "€3,77 stated − €10 already invoiced, floored at 0");
+  assert.equal(r.reconciliation.acquirerFeeInvoices, 10);
+});
