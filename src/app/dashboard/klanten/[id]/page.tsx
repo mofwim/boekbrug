@@ -9,6 +9,8 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getSessionUser } from '@/lib/session-user'
 import KlantDetailClient, { type KlantInvoice } from './KlantDetailClient'
 import { fetchAllRows } from '@/lib/supabase-paginate'
+import { clientPaymentBehaviour } from '@/lib/client-payment-behaviour'
+import { amsterdamTodayDayNumber } from '@/lib/invoice-reminders'
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -25,7 +27,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     .maybeSingle()
   if (!client) redirect('/dashboard/klanten')
 
-  type KlantInvoiceRow = { id: string; invoice_number: string | null; invoice_date: string | null; due_date: string | null; status: string | null; total_inc_btw: number | null; direction: string | null }
+  type KlantInvoiceRow = { id: string; invoice_number: string | null; invoice_date: string | null; due_date: string | null; status: string | null; total_inc_btw: number | null; direction: string | null; payment_date: string | null }
 
   // This customer's invoices: linked by the robust client_id, PLUS legacy invoices that
   // predate the link (client_id NULL, matched by the name snapshot). Both scoped to the
@@ -36,7 +38,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   // duizend kreeg stil te lage "Gefactureerd"/"Openstaand" totalen (dagslot-audit).
   const base = () => supabase
     .from('invoices')
-    .select('id, invoice_number, invoice_date, due_date, status, total_inc_btw, direction')
+    // [BETAALGEDRAG] payment_date joins the select: it is what turns this history into a measured
+    // betaalgedrag instead of a note the owner types from memory (kld.notitiesHint).
+    .select('id, invoice_number, invoice_date, due_date, status, total_inc_btw, direction, payment_date')
     .eq('sender_id', user.id)
     .eq('direction', 'outgoing')
   const [byId, byName] = await Promise.all([
@@ -51,6 +55,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     .map((iv) => ({
       id: iv.id, invoice_number: iv.invoice_number, invoice_date: iv.invoice_date,
       due_date: iv.due_date, status: iv.status, total_inc_btw: iv.total_inc_btw,
+      payment_date: iv.payment_date,
     }))
     .sort((a, b) => (b.invoice_date ?? '').localeCompare(a.invoice_date ?? ''))
 
@@ -58,5 +63,16 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const billed = invoices.reduce((s, iv) => s + (iv.total_inc_btw ?? 0), 0)
   const open = invoices.filter((iv) => !PAID.has(iv.status ?? '')).reduce((s, iv) => s + (iv.total_inc_btw ?? 0), 0)
 
-  return <KlantDetailClient client={client} invoices={invoices} totals={{ billed, open, count: invoices.length }} />
+  // [BETAALGEDRAG] Computed here, where the clock lives — the engine takes the Amsterdam day as a
+  // number and stays pure. The client turns it into sentences, because that is where the locale is.
+  const behaviour = clientPaymentBehaviour(invoices, amsterdamTodayDayNumber())
+
+  return (
+    <KlantDetailClient
+      client={client}
+      invoices={invoices}
+      totals={{ billed, open, count: invoices.length }}
+      behaviour={behaviour}
+    />
+  )
 }

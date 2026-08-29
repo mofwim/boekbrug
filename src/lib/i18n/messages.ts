@@ -1814,9 +1814,89 @@ export const MESSAGES = {
   'kld.adres': { nl: 'Adres', ar: 'العنوان', en: 'Address' },
   'kld.notities': { nl: 'Notities', ar: 'ملاحظات', en: 'Notes' },
   'kld.notitiesHint': {
-    nl: 'Context over deze klant — afspraken, voorkeuren, betaalgedrag…',
-    ar: 'معلومات عن هذا العميل — اتفاقات، تفضيلات، سلوك الدفع…',
-    en: 'Context about this customer — agreements, preferences, payment behaviour…',
+    nl: 'Context over deze klant — afspraken, voorkeuren, afwijkende tarieven…',
+    ar: 'معلومات عن هذا العميل — اتفاقات، تفضيلات، أسعار خاصة…',
+    en: 'Context about this customer — agreements, preferences, special rates…',
+  },
+  // ── [BETAALGEDRAG] How this customer pays, computed instead of typed ──────────────────────────
+  // The screen used to ask the owner to write "betaalgedrag" into a free-text note (kld.notitiesHint)
+  // for a customer whose every invoice date, due date and bank-matched payment date the app holds.
+  // Wording for client-payment-behaviour-copy.ts; the engine holds no sentence of its own.
+  'betaalgedrag.kop': { nl: 'Betaalgedrag', ar: 'سلوك الدفع', en: 'Payment behaviour' },
+  'betaalgedrag.traag': {
+    nl: 'Betaalt gemiddeld na {dagen} dagen — dat is {over} dagen na de vervaldatum.',
+    ar: 'يدفع بعد {dagen} يوماً في المتوسط — أي بعد تاريخ الاستحقاق بـ {over} يوماً.',
+    en: 'Pays after {dagen} days on average — {over} days past the due date.',
+  },
+  'betaalgedrag.vroeg': {
+    nl: 'Betaalt gemiddeld na {dagen} dagen — dat is {voor} dagen vóór de vervaldatum.',
+    ar: 'يدفع بعد {dagen} يوماً في المتوسط — أي قبل تاريخ الاستحقاق بـ {voor} يوماً.',
+    en: 'Pays after {dagen} days on average — {voor} days before the due date.',
+  },
+  'betaalgedrag.opTijd': {
+    nl: 'Betaalt gemiddeld na {dagen} dagen: precies op de vervaldatum.',
+    ar: 'يدفع بعد {dagen} يوماً في المتوسط: في تاريخ الاستحقاق بالضبط.',
+    en: 'Pays after {dagen} days on average: exactly on the due date.',
+  },
+  'betaalgedrag.basisAllemaal': {
+    nl: 'Op basis van {aantal} betaalde facturen, allemaal op tijd.',
+    ar: 'استناداً إلى {aantal} فواتير مدفوعة، جميعها في وقتها.',
+    en: 'Based on {aantal} paid invoices, all on time.',
+  },
+  'betaalgedrag.basis': {
+    nl: 'Op basis van {aantal} betaalde facturen, waarvan {telaat} te laat. Langste: {traagste} dagen over de termijn.',
+    ar: 'استناداً إلى {aantal} فواتير مدفوعة، منها {telaat} متأخرة. الأطول: {traagste} يوماً بعد المهلة.',
+    en: 'Based on {aantal} paid invoices, {telaat} of them late. Longest: {traagste} days past the term.',
+  },
+  'betaalgedrag.openstaand': {
+    nl: 'Nu openstaand: {aantal} facturen van samen {bedrag}. De oudste staat {dagen} dagen over de vervaldatum.',
+    ar: 'مستحق الآن: {aantal} فواتير بمجموع {bedrag}. أقدمها متأخرة {dagen} يوماً عن تاريخ الاستحقاق.',
+    en: 'Open right now: {aantal} invoices totalling {bedrag}. The oldest is {dagen} days past due.',
+  },
+  'betaalgedrag.openstaandEen': {
+    nl: 'Nu openstaand: één factuur van {bedrag}, {dagen} dagen over de vervaldatum.',
+    ar: 'مستحق الآن: فاتورة واحدة بقيمة {bedrag}، متأخرة {dagen} يوماً عن تاريخ الاستحقاق.',
+    en: 'Open right now: one invoice of {bedrag}, {dagen} days past due.',
+  },
+  'betaalgedrag.caveat.zonderDatum': {
+    nl: '{zonder} betaalde facturen tellen niet mee: er staat geen betaaldatum bij.',
+    ar: '{zonder} فواتير مدفوعة غير محتسبة: لا تحمل تاريخ دفع.',
+    en: '{zonder} paid invoices do not count: they carry no payment date.',
+  },
+  'betaalgedrag.caveat.zonderDatumEen': {
+    nl: 'Eén betaalde factuur telt niet mee: er staat geen betaaldatum bij.',
+    ar: 'فاتورة مدفوعة واحدة غير محتسبة: لا تحمل تاريخ دفع.',
+    en: 'One paid invoice does not count: it carries no payment date.',
+  },
+  'betaalgedrag.caveat.onmogelijk': {
+    nl: '{onmogelijk} facturen zijn betaald vóór hun eigen factuurdatum — die datum klopt niet.',
+    ar: '{onmogelijk} فواتير مدفوعة قبل تاريخ إصدارها — التاريخ غير صحيح.',
+    en: '{onmogelijk} invoices were paid before their own invoice date — that date is wrong.',
+  },
+  'betaalgedrag.caveat.onmogelijkEen': {
+    nl: 'Eén factuur is betaald vóór zijn eigen factuurdatum — die datum klopt niet.',
+    ar: 'فاتورة واحدة مدفوعة قبل تاريخ إصدارها — التاريخ غير صحيح.',
+    en: 'One invoice was paid before its own invoice date — that date is wrong.',
+  },
+  'betaalgedrag.absent.geenFacturen': {
+    nl: 'Nog geen facturen voor deze klant.',
+    ar: 'لا توجد فواتير لهذا العميل بعد.',
+    en: 'No invoices for this customer yet.',
+  },
+  'betaalgedrag.absent.nogNietsBetaald': {
+    nl: 'Nog geen betaalde factuur, dus nog geen betaalgedrag.',
+    ar: 'لا توجد فاتورة مدفوعة بعد، فلا سلوك دفع بعد.',
+    en: 'No paid invoice yet, so no payment behaviour yet.',
+  },
+  'betaalgedrag.absent.geenBetaaldata': {
+    nl: 'Bij de betaalde facturen staat geen betaaldatum, dus valt er niets te meten.',
+    ar: 'الفواتير المدفوعة لا تحمل تاريخ دفع، فلا شيء يمكن قياسه.',
+    en: 'The paid invoices carry no payment date, so there is nothing to measure.',
+  },
+  'betaalgedrag.absent.teWeinig': {
+    nl: 'Nog te weinig betaalde facturen om iets te zeggen over het betaalgedrag.',
+    ar: 'الفواتير المدفوعة أقل من أن تسمح بقول شيء عن سلوك الدفع.',
+    en: 'Too few paid invoices to say anything about payment behaviour.',
   },
   'kld.opslaanMislukt': {
     nl: 'Opslaan mislukt — probeer opnieuw.',
