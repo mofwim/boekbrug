@@ -11122,6 +11122,61 @@ test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is att
   }
 });
 
+test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat uit een RIJ komt", () => {
+  // De poort hierboven pint tien met de hand gekozen uitdrukkingen. Dat is precies wat ze moet
+  // doen — ze bewaakt de GUARD, niet de aanwezigheid van een helpernaam, en drie negatieve
+  // controles liepen door een eerdere versie die dat wel deed. Maar het is een LIJST onder een
+  // regel die "every" zegt, en de elfde plek staat er dan niet in.
+  //
+  // Dit is de klasse ernaast. De regel die het moduulhoofd stelt: een RIJ-check zegt "je mag dit
+  // record zien", nooit "en het record wijst naar jouw bytes". file_url en pdf_url zijn gewone
+  // tekst op een rij die de eigenaar mag schrijven, en de service_role-client passeert het
+  // bucketbeleid dat een sleutel uit andermans map zou tegenhouden. Een SESSIE-client niet: daar
+  // is het beleid de grens, en dan is attributie in de code een tweede slot op dezelfde deur.
+  //
+  // Gemeten toen dit werd geschreven: zes plekken geven een pad uit een rij aan storage, en alle
+  // zes doen dat met een sessieclient. Nul met service_role. Dus geen uitzonderingenlijst — een
+  // schone klasse mag als verbod worden vastgelegd, en dat is wat de elfde plek tegenhoudt.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  const overtreders: string[] = [];
+  let uitRij = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    for (const m of src.matchAll(
+      /([A-Za-z_$][\w$]*)\s*\.\s*storage\s*\.\s*from\s*\([^)]*\)\s*\.\s*(remove|download|createSignedUrl|copy|move)\s*\(([^)]{0,80})/g,
+    )) {
+      const client = m[1], arg = m[3];
+      // Een pad dat de app zelf BOUWT (een uploadsleutel) loopt dit risico niet — alleen een pad
+      // dat uit een rij is gelezen.
+      if (!/file_url|pdf_url|\bdoc\b|\bd\?\.|\brow\b|\bshare\b|\binv\b/.test(arg)) continue;
+      uitRij++;
+      if (!/pipeline|service|admin/i.test(client)) continue; // sessieclient: het bucketbeleid is de grens
+      const voor = src.slice(Math.max(0, (m.index ?? 0) - 1200), m.index);
+      if (/pathBelongsToOwner\s*\(/.test(voor)) continue;
+      overtreders.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${client}.storage…${m[2]}(${arg.replace(/\s+/g, " ").slice(0, 50)})`);
+    }
+  }
+
+  // Een lezer die niets ziet meldt een schone codebase, en met een lege lijst is dat niet van
+  // succes te onderscheiden. Hij moet de sessie-gevallen wél vinden, anders is HIJ stuk.
+  assert.ok(uitRij >= 4,
+    `only ${uitRij} storage calls fed a row-read path were seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+
+  assert.deepEqual(overtreders, [],
+    "these hand bytes to a service_role client at a path read from a row the OWNER may write, " +
+    "without attributing it first — RLS does not stop this, service_role bypasses the bucket policy:\n  " +
+    overtreders.join("\n  ") + "\n\nUse pathBelongsToOwner(pad, ownerId) before touching the bytes.");
+});
+
 test("[DECLARED-INVOICE-EIGEN-CLAIM] the guard is not fed the payment's own claim", () => {
   // undeclaredMissingInvoices computes "what this payment NAMES" minus "what we HOLD". It was
   // handed [...refNumbers, …] as the held set, and refNumbers is parseReferenceNumbers(tx.reference)
