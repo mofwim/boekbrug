@@ -12074,6 +12074,23 @@ export const MESSAGES = {
   'dzh.omzet21': { nl: 'Tegen 21%', en: 'At 21%', ar: 'بنسبة 21%' },
   'dzh.omzet9': { nl: 'Tegen 9%', en: 'At 9%', ar: 'بنسبة 9%' },
   'dzh.omzet0': { nl: 'Tegen 0%', en: 'At 0%', ar: 'بنسبة 0%' },
+  // [DAG-UIT-DE-BANK] The bank already describes this day's card payouts. Offered, never written:
+  // the owner presses it, because only they know the cash and the rate split.
+  'dzh.bank.suggestie': {
+    nl: 'Je bank noemt voor deze dag {bedrag} aan pinomzet ({regels} afrekeningen).',
+    ar: 'بنكك يذكر لهذا اليوم {bedrag} من مبيعات البطاقة ({regels} تسويات).',
+    en: 'Your bank reports {bedrag} of card takings for this day ({regels} settlements).',
+  },
+  'dzh.bank.overnemen': {
+    nl: 'Overnemen',
+    ar: 'اعتماد المبلغ',
+    en: 'Use this amount',
+  },
+  'dzh.bank.onvolledig': {
+    nl: 'Er staan ook creditcard-afrekeningen die een week noemen in plaats van een dag ({bedrag}). Die zitten hier NIET bij, dus dit bedrag is een ondergrens.',
+    ar: 'توجد أيضاً تسويات بطاقات ائتمان تذكر أسبوعاً لا يوماً ({bedrag}). ليست محتسبة هنا، فهذا المبلغ حدٌّ أدنى.',
+    en: 'There are also credit-card settlements naming a week rather than a day ({bedrag}). Those are NOT included, so this amount is a floor.',
+  },
   'dzh.betaaldKop': { nl: 'Hoe er betaald is', en: 'How it was paid', ar: 'كيف تم الدفع' },
   'dzh.totaalOmzet': { nl: 'Omzet bij elkaar', en: 'Revenue together', ar: 'مجموع الإيراد' },
   'dzh.totaalBetaald': { nl: 'Betaald bij elkaar', en: 'Paid together', ar: 'مجموع المدفوع' },
