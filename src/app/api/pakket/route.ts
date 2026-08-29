@@ -189,7 +189,12 @@ export async function GET(req: NextRequest) {
               : "Het pakket dat je boekhouder ophaalde is minder goed onderbouwd",
             body: zin,
             type: "status",
-            link: "/dashboard/kwartaal",
+            // [NOTIF-DEADEND] Naar het scherm waar de eigenaar de deel-link MAAKT — dat is waar
+            // "stuur hem opnieuw" een handeling is. Deze regel wees eerst naar /dashboard/kwartaal,
+            // een route die niet bestaat: de melding kwam aan, de tik erop kwam op een 404 uit, en
+            // een melding die nergens heen leidt is erger dan geen melding — ze kost het vertrouwen
+            // in de volgende.
+            link: "/dashboard/klaar",
           });
         }
       }

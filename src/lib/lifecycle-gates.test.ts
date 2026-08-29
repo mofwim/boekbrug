@@ -18911,3 +18911,49 @@ test("[PAKKET-AFDRUK] het pakket weet WAT het overhandigde, en wat een veranderi
     "er is een update- of delete-policy bijgekomen — dan is de afdruk geen bewijs meer");
   assert.match(sql, /package_deliveries_quarter_idx/, "de vraag 'wat was de vorige aflevering' heeft geen index meer");
 });
+
+test("[NOTIF-DEADEND] elke melding wijst naar een scherm dat bestaat", () => {
+  // Een melding komt aan, de eigenaar tikt erop, en hij landt op een 404. Dat is erger dan geen
+  // melding: hij kost het vertrouwen in de vólgende, en niets in de codebase wees erop — de link
+  // is een string, en een string die nergens heen gaat compileert prima.
+  //
+  // Gemeten toen dit werd geschreven: de nieuwe pakket-melding wees naar /dashboard/kwartaal, dat
+  // niet bestaat (het scherm heet /dashboard/klaar). Eén string, en het hele bericht onbruikbaar.
+  //
+  // [ZOEKT-ZIJN-EIGEN-BESTANDEN] De routes komen van de map, niet uit een lijst: een melding die
+  // morgen wordt toegevoegd valt hier vanzelf onder.
+  const bestaat = (route: string): boolean => {
+    // Alleen het eerste segment onder /dashboard hoeft te bestaan; wat erachter komt is een
+    // parameter of een tab, en die kan deze poort niet beoordelen zonder de router na te bouwen.
+    const m = /^\/dashboard\/([a-z0-9-]+)/.exec(route);
+    if (!m) return route === "/dashboard" || !route.startsWith("/dashboard");
+    return existsSync(`src/app/dashboard/${m[1]}`);
+  };
+
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  const dood: string[] = [];
+  let gezien = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    if (!/createNotification\s*\(/.test(src)) continue;
+    // De link zoals hij in de aanroep staat. Een samengestelde link (`/dashboard/${x}`) kan deze
+    // poort niet volgen en wordt overgeslagen — liever niets zeggen dan een verkeerd alarm.
+    for (const m of src.matchAll(/link:\s*"(\/[^"]*)"/g)) {
+      gezien++;
+      if (!bestaat(m[1])) dood.push(`${f} → ${m[1]}`);
+    }
+  }
+  assert.ok(gezien > 10,
+    `only ${gezien} literal notification links seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+  assert.deepEqual(dood, [],
+    "these notifications link to a screen that does not exist — the message arrives and the tap lands on a 404");
+});
