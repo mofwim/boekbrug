@@ -28,6 +28,7 @@ import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { createNotification } from "@/lib/notifications";
 import { sendPushToUser } from "@/lib/push";
 import { wasAutoIncasso } from "@/lib/auto-incasso";
+import { incassoSupported } from "@/lib/incasso-settle";
 import { noticesFor, type PayableInvoice } from "@/lib/payment-due-notice";
 
 export const dynamic = "force-dynamic";
@@ -85,12 +86,41 @@ export async function GET(req: NextRequest) {
     const grens = new Date(amsterdamMidnightUtc(today).getTime() + (LADDER_DAYS + 2) * 86_400_000);
     const tot = amsterdamToday(grens);
 
+    // ── Welke leveranciers schrijven zelf af ────────────────────────────────
+    //
+    // [AUTO-INCASSO-BRON] Dit is de bron, en het was bijna de verkeerde. De eerste versie las
+    // alleen `wasAutoIncasso(field_confidence)`, en die vlag betekent iets ANDERS dan ze lijkt:
+    // hij wordt op de factuur gezet wanneer incasso-settle hem als betaald BOEKT, en dat gebeurt
+    // strikt ná de vervaldatum ("not-yet-due" houdt hem tot dan tegen). Deze ladder spreekt vóór
+    // en óp de vervaldatum. Op het moment dat wij kijken draagt een incassofactuur die vlag dus
+    // nooit — de uitsluiting was in de praktijk dode code, en élke automatisch afgeschreven
+    // factuur zou op alle drie de treden zijn opgeëist. Dat is geen ruis: de eigenaar maakt dan
+    // een tweede keer over en moet dat bij zijn leverancier terugvragen.
+    //
+    // De waarheid staat op de LEVERANCIER (suppliers.auto_incasso) — dat is wat de schakelaar op
+    // de kaart aanzet. De factuurvlag blijft ernaast staan: een al geboekte incasso hoort evenmin
+    // opgeëist te worden, en twee bronnen die beide "laat met rust" zeggen kosten niets.
+    const incassoSuppliers = new Set<string>();
+    if (await incassoSupported(pipeline)) {
+      // [NO-SILENT-EMPTY] Een mislukte lezing mag hier NOOIT als "niemand incasseert" doorgaan:
+      // dat is precies het antwoord dat iedereen een betaalverzoek stuurt voor geld dat al
+      // onderweg is. Een dag zonder herinneringen is oneindig veel goedkoper dan een dag met
+      // verkeerde. Vandaar: gooien, en de run eindigt in de catch hieronder als mislukt.
+      const sups = await fetchAllRows<{ id: string }>((from, to) => pipeline
+        .from("suppliers")
+        .select("id")
+        .eq("auto_incasso", true)
+        .order("id", { ascending: true })
+        .range(from, to));
+      for (const s of sups) incassoSuppliers.add(s.id);
+    }
+
     const rows = await fetchAllRows<{
       id: string; receiver_id: string | null; client_name: string | null; invoice_number: string | null;
-      due_date: string | null; total_inc_btw: number | null; field_confidence: unknown;
+      due_date: string | null; total_inc_btw: number | null; field_confidence: unknown; supplier_id: string | null;
     }>((from, to) => pipeline
       .from("invoices")
-      .select("id, receiver_id, client_name, invoice_number, due_date, total_inc_btw, field_confidence")
+      .select("id, receiver_id, client_name, invoice_number, due_date, total_inc_btw, field_confidence, supplier_id")
       .eq("direction", "incoming")
       // 'received' is de geverifieerde, nog niet betaalde inkoopfactuur — dezelfde stand die
       // /dashboard/vandaag onder "Te betalen" zet. 'processing' staat nog in de controlewachtrij
@@ -114,10 +144,11 @@ export async function GET(req: NextRequest) {
         invoiceNumber: r.invoice_number,
         dueDate: r.due_date,
         amountIncBtw: r.total_inc_btw,
-        // [AUTO-INCASSO] De "Automatisch"-markering op de kaart, uit dezelfde bron die het scherm
-        // leest. Geld dat vanzelf vertrekt mag nooit een "betaal dit" opleveren: de eigenaar maakt
-        // dan een tweede keer over en moet dat terugvragen bij zijn leverancier.
-        autoDebit: wasAutoIncasso(r.field_confidence),
+        // [AUTO-INCASSO-BRON] De schakelaar op de LEVERANCIER is de waarheid — zie de toelichting
+        // bij incassoSuppliers hierboven. De factuurvlag staat ernaast en dekt de factuur die al
+        // als geïncasseerd is geboekt.
+        autoDebit:
+          (!!r.supplier_id && incassoSuppliers.has(r.supplier_id)) || wasAutoIncasso(r.field_confidence),
       };
       perOwner.set(owner, [...(perOwner.get(owner) ?? []), payable]);
     }

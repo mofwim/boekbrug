@@ -51,6 +51,14 @@ export interface PayableInvoice {
    * [AUTO-INCASSO] The supplier debits this one themselves — the "Automatisch" badge on the card.
    * Telling the owner to pay it is worse than saying nothing: the money leaves anyway, and a
    * second transfer is a real double payment they then have to claw back.
+   *
+   * WHERE THIS MUST COME FROM, because the obvious answer is the wrong one: the truth lives on the
+   * SUPPLIER (suppliers.auto_incasso — the switch on the card). The invoice's own
+   * field_confidence._auto_incasso marker is NOT enough on its own: incasso-settle writes it when
+   * it BOOKS the collection, and that happens strictly after the due date. This ladder speaks
+   * before and on the due date, so at the moment we look, an incasso invoice never carries it —
+   * an exclusion built on that flag alone is dead code, and every auto-debited invoice gets chased
+   * on all three rungs. The first version of this feature had exactly that bug.
    */
   autoDebit: boolean;
 }
