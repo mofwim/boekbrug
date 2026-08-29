@@ -607,8 +607,8 @@ export const MESSAGES = {
   'ink.naarControle': { nl: 'Naar controle', ar: 'إلى الفحص', en: 'To review' },
   'ink.terugzetten': { nl: 'Terugzetten naar wachtrij', ar: 'إعادتها إلى قائمة الانتظار', en: 'Put back in the queue' },
 
-  'ink.meerderePaginas': { nl: 'Factuur met meerdere pagina&apos;s', ar: 'فاتورة من عدة صفحات', en: 'A multi-page invoice' },
-  'ink.eenFactuurMeerPaginas': { nl: 'Eén factuur, meerdere pagina&apos;s', ar: 'فاتورة واحدة، عدة صفحات', en: 'One invoice, several pages' },
+  'ink.meerderePaginas': { nl: 'Factuur met meerdere pagina’s', ar: 'فاتورة من عدة صفحات', en: 'A multi-page invoice' },
+  'ink.eenFactuurMeerPaginas': { nl: 'Eén factuur, meerdere pagina’s', ar: 'فاتورة واحدة، عدة صفحات', en: 'One invoice, several pages' },
   'ink.neeAndere': { nl: 'Nee, andere factuur', ar: 'لا، فاتورة أخرى', en: 'No, a different invoice' },
   'ink.verwijderPagina': { nl: 'Verwijder pagina', ar: 'احذف الصفحة', en: 'Remove the page' },
 
@@ -697,7 +697,7 @@ export const MESSAGES = {
   // Fouten en offline — elke zin zegt wat er NIET is gebeurd.
   'inkoop.fout.nietOpenen': { nl: 'Deze factuur konden we hier niet openen — zoek hem op in de lijst', ar: 'تعذّر فتح هذه الفاتورة هنا — ابحث عنها في القائمة', en: 'Could not open this invoice here — find it in the list' },
   'inkoop.fout.ophalen': { nl: 'We konden je inkoopfacturen niet ophalen', ar: 'تعذّر جلب فواتير مشترياتك', en: 'Could not fetch your purchase invoices' },
-  'inkoop.fout.incassoOphalen': { nl: 'We konden je automatische incasso&apos;s niet ophalen', ar: 'تعذّر جلب خصومك التلقائية', en: 'Could not fetch your direct debits' },
+  'inkoop.fout.incassoOphalen': { nl: 'We konden je automatische incasso’s niet ophalen', ar: 'تعذّر جلب خصومك التلقائية', en: 'Could not fetch your direct debits' },
   'inkoop.fout.onvolledig': { nl: 'Dit telt alleen op wat we konden ophalen — er ontbreken facturen.', ar: 'هذا يجمع فقط ما استطعنا جلبه — ثمة فواتير ناقصة.', en: 'This only adds up what we could fetch — invoices are missing.' },
   'inkoop.fout.geenBoeking': { nl: 'Van deze betaling is geen boeking gevonden om te verplaatsen', ar: 'لم يُعثر لهذه الدفعة على قيد لنقله', en: 'No booking was found for this payment to move' },
   'inkoop.fout.nietsOpen': { nl: 'Er stond nog niets open dat al afgeschreven was.', ar: 'لم يكن ثمة شيء مفتوح خُصم مسبقاً.', en: 'Nothing open had already been debited.' },
@@ -1126,7 +1126,7 @@ export const MESSAGES = {
   'onb.hebBoekhouder': { nl: 'Heb je een boekhouder?', ar: 'ألديك محاسب؟', en: 'Do you have an accountant?' },
   'onb.klantMail': { nl: 'Je klant ontvangt een e-mail om zijn account aan te maken.', ar: 'سيصل عميلك بريد لإنشاء حسابه.', en: 'Your client gets an e-mail to create their account.' },
   'onb.slaOver': { nl: 'Sla over', ar: 'تخطَّ', en: 'Skip' },
-  'onb.slaOverLater': { nl: 'Tik op &ldquo;Sla over&rdquo; om dit later in te stellen', ar: 'اضغط «تخطَّ» لضبط هذا لاحقاً', en: 'Tap “Skip” to set this up later' },
+  'onb.slaOverLater': { nl: 'Tik op “Sla over” om dit later in te stellen', ar: 'اضغط «تخطَّ» لضبط هذا لاحقاً', en: 'Tap “Skip” to set this up later' },
   'onb.volgende': { nl: 'Volgende', ar: 'التالي', en: 'Next' },
   'onb.naarDashboard': { nl: 'Ga naar mijn dashboard', ar: 'اذهب إلى لوحتي', en: 'Go to my dashboard' },
   'onb.autoVerder': { nl: 'Of wacht even, je gaat automatisch verder…', ar: 'أو انتظر قليلاً وستنتقل تلقائياً…', en: 'Or wait a moment — you continue automatically…' },
@@ -1152,7 +1152,7 @@ export const MESSAGES = {
   'int.drieBezig': { nl: 'Even wachten — er worden er al drie verwerkt.', ar: 'انتظر قليلاً — ثلاثة قيد المعالجة بالفعل.', en: 'One moment — three are already being processed.' },
   'int.bestaande': { nl: 'Bekijk de bestaande factuur', ar: 'اعرض الفاتورة الموجودة', en: 'View the existing invoice' },
   'int.tochAndere': { nl: 'Toch toevoegen — dit is een andere factuur', ar: 'أضِفها رغم ذلك — هذه فاتورة أخرى', en: 'Add it anyway — this is a different invoice' },
-  'int.paginasSamen': { nl: 'Meerdere pagina&apos;s → samen één factuur', ar: 'عدة صفحات ← فاتورة واحدة معاً', en: 'Several pages → one invoice together' },
+  'int.paginasSamen': { nl: 'Meerdere pagina’s → samen één factuur', ar: 'عدة صفحات ← فاتورة واحدة معاً', en: 'Several pages → one invoice together' },
   'int.kiesFotos': { nl: 'Kies foto’s van de pagina’s', ar: 'اختر صور الصفحات', en: 'Choose photos of the pages' },
   'int.teruggezet': { nl: 'Teruggezet — staat weer in je controlewachtrij ✓', ar: 'أُعيدت — عادت إلى قائمة التدقيق ✓', en: 'Put back — in your review queue again ✓' },
   'int.fout.terugzetten': { nl: 'Terugzetten mislukt — controleer je verbinding', ar: 'فشلت الإعادة — تحقّق من اتصالك', en: 'Putting back failed — check your connection' },
@@ -6118,16 +6118,6 @@ export const MESSAGES = {
     ar: 'انتبه: ملف PDF واحد = فاتورة واحدة (كل الصفحات معاً). هل في ملف PDF واحد عدة فواتير مختلفة؟ لا تقسّمه — أضف كل فاتورة منفصلة.',
     en: 'Note: one PDF = one invoice (all pages together). Several different invoices in one PDF? Do not split it — add each invoice separately.',
   },
-  'ink.mp.maxPaginas': {
-    nl: 'Maximaal {max} pagina\'s per factuur.',
-    ar: 'الحد الأقصى للصفحات لكل فاتورة: {max}.',
-    en: 'A maximum of {max} pages per invoice.',
-  },
-  'ink.mp.pagina': {
-    nl: 'Pagina {n}',
-    ar: 'الصفحة {n}',
-    en: 'Page {n}',
-  },
   'ink.mp.paginasBewaard': {
     nl: 'De andere pagina\'s blijven bewaard.',
     ar: 'الصفحات الأخرى تبقى محفوظة.',
@@ -6142,6 +6132,64 @@ export const MESSAGES = {
     nl: 'Voeg eerst pagina\'s toe',
     ar: 'أضف صفحات أولاً',
     en: 'Add pages first',
+  },
+  // [PAGINA-VOLGORDE] The page tray, shared by Inkomend and Uploaden — one control, one set of
+  // words. The order these pages are in becomes the order of a document kept for seven years, so
+  // the tray both SHOWS it and lets the owner correct it.
+  'mp.volgorde.titel': {
+    nl: 'Volgorde van de pagina’s',
+    ar: 'ترتيب الصفحات',
+    en: 'The order of the pages',
+  },
+  'mp.volgorde.uitleg': {
+    nl: 'In deze volgorde komen ze in de factuur. Klopt het niet? Verplaats een pagina met ↑ of ↓.',
+    ar: 'بهذا الترتيب ستدخل في الفاتورة. ألا يطابق؟ حرّك الصفحة بـ ↑ أو ↓.',
+    en: 'This is the order they go into the invoice. Not right? Move a page with ↑ or ↓.',
+  },
+  'mp.volgorde.gesorteerd': {
+    nl: 'We hebben de pagina’s op nummer gezet. Controleer of dat klopt.',
+    ar: 'رتّبنا الصفحات حسب الرقم. تحقّق من صحّة ذلك.',
+    en: 'We put the pages in number order. Please check that it is right.',
+  },
+  'mp.pagina.nr': {
+    nl: 'Pagina {n}',
+    ar: 'الصفحة {n}',
+    en: 'Page {n}',
+  },
+  'mp.pagina.omhoog': {
+    nl: 'Pagina {n} naar voren',
+    ar: 'انقل الصفحة {n} إلى الأمام',
+    en: 'Move page {n} forward',
+  },
+  'mp.pagina.omlaag': {
+    nl: 'Pagina {n} naar achteren',
+    ar: 'انقل الصفحة {n} إلى الخلف',
+    en: 'Move page {n} back',
+  },
+  'mp.pagina.verwijderen': {
+    nl: 'Pagina {n} verwijderen',
+    ar: 'احذف الصفحة {n}',
+    en: 'Remove page {n}',
+  },
+  'mp.dubbelEen': {
+    nl: 'Eén foto stond er al bij — die is overgeslagen.',
+    ar: 'صورة واحدة كانت موجودة سلفاً — جرى تخطّيها.',
+    en: 'One photo was already there — it was skipped.',
+  },
+  'mp.dubbelMeer': {
+    nl: '{n} foto’s stonden er al bij — die zijn overgeslagen.',
+    ar: '{n} صور كانت موجودة سلفاً — جرى تخطّيها.',
+    en: '{n} photos were already there — they were skipped.',
+  },
+  'mp.overflowEen': {
+    nl: 'Eén pagina paste er niet meer bij (max {max}). Voeg die als losse factuur toe.',
+    ar: 'صفحة واحدة لم يعد لها متّسع (الحد الأقصى {max}). أضفها كفاتورة منفصلة.',
+    en: 'One page no longer fitted (max {max}). Add it as a separate invoice.',
+  },
+  'mp.overflowMeer': {
+    nl: '{n} pagina’s pasten er niet meer bij (max {max}). Voeg die als losse factuur toe.',
+    ar: '{n} صفحات لم يعد لها متّسع (الحد الأقصى {max}). أضفها كفاتورة منفصلة.',
+    en: '{n} pages no longer fitted (max {max}). Add those as a separate invoice.',
   },
   'ink.multi.bevestig': {
     nl: 'Ja, dit is één factuur',
@@ -6568,6 +6616,38 @@ export const MESSAGES = {
     ar: 'في ملفاتك',
     en: 'In your files',
   },
+  // [BATCH-HERKANSING] A failed file in a batch used to be final — the outcome said "probeer het
+  // zo opnieuw" and there was nothing to press. These are the words for the second attempt.
+  'ink.result.skipped': {
+    nl: 'Niet verstuurd',
+    ar: 'لم يُرسَل',
+    en: 'Not sent',
+  },
+  'ink.result.buitenBatch': {
+    nl: 'Er kunnen er {max} tegelijk. De rest is nog niet verstuurd — voeg dit bestand er zo bij.',
+    ar: 'يمكن إرسال {max} في المرة. البقية لم تُرسل بعد — أضف هذا الملف بعد قليل.',
+    en: '{max} can go at a time. The rest were not sent yet — add this file in a moment.',
+  },
+  'ink.result.opnieuw': {
+    nl: 'Opnieuw proberen',
+    ar: 'حاول مرة أخرى',
+    en: 'Try again',
+  },
+  'ink.result.alleOpnieuwEen': {
+    nl: 'Probeer dit bestand opnieuw',
+    ar: 'أعد محاولة هذا الملف',
+    en: 'Try this file again',
+  },
+  'ink.result.alleOpnieuwMeer': {
+    nl: 'Probeer deze {n} bestanden opnieuw',
+    ar: 'أعد محاولة هذه الملفات ({n})',
+    en: 'Try these {n} files again',
+  },
+  'ink.result.tochToevoegen': {
+    nl: 'Toch toevoegen',
+    ar: 'أضفها على أي حال',
+    en: 'Add it anyway',
+  },
   'ink.result.duplicate': {
     nl: 'Al toegevoegd',
     ar: 'أُضيفت مسبقاً',
@@ -6882,11 +6962,6 @@ export const MESSAGES = {
     nl: 'Kies bestanden of sleep hier naartoe',
     ar: 'اختر ملفات أو اسحبها إلى هنا',
     en: 'Pick files or drag them here',
-  },
-  'ink.upload.maxBatch': {
-    nl: 'Maximaal {max} bestanden per keer. Je koos er {n}.',
-    ar: 'الحد الأقصى {max} ملفاً في المرة. اخترت {n}.',
-    en: 'A maximum of {max} files at a time. You picked {n}.',
   },
   'ink.upload.mislukt': {
     nl: 'Upload mislukt — probeer opnieuw',
@@ -9393,11 +9468,6 @@ export const MESSAGES = {
     ar: 'تم ✓',
     en: 'Done ✓',
   },
-  'up.maxPaginas': {
-    nl: 'Maximaal {n} pagina’s per factuur.',
-    ar: 'الحد الأقصى للصفحات في الفاتورة: {n}.',
-    en: 'At most {n} pages per invoice.',
-  },
   'up.misluktUitleg': {
     nl: 'Mislukt komt meestal door de limiet van 240 documenten per uur of een tijdelijke leesfout — opnieuw proberen lost het vaak op.',
     ar: 'الفشل يكون غالباً بسبب حدّ 240 مستنداً في الساعة أو خطأ قراءة مؤقت — وإعادة المحاولة تحلّه في الغالب.',
@@ -9502,11 +9572,6 @@ export const MESSAGES = {
     nl: 'Pagina’s samenvoegen',
     ar: 'دمج الصفحات',
     en: 'Merge pages',
-  },
-  'up.paginaVerwijderen': {
-    nl: 'Pagina {n} verwijderen',
-    ar: 'حذف الصفحة {n}',
-    en: 'Remove page {n}',
   },
   'up.reproc.bezig': {
     nl: 'Bezig met boeken…',
