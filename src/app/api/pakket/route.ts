@@ -28,6 +28,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { buildClosingPackageZip } from "@/lib/closing-package";
+// [PAKKET-AFDRUK] Wat er is overhandigd, zodat "het pakket is veranderd" een antwoord heeft.
+import { contentOf, fingerprint, driftBetween, driftSentence } from "@/lib/package-fingerprint";
+// [DEPLOY-SAFE] "de tabel is er nog niet" is iets anders dan "de schrijf ging mis".
+import { isMissingRelation } from "@/lib/pg-missing";
+import { createNotification } from "@/lib/notifications";
 import { shareStatus } from "@/lib/package-share";
 import { logAuditAction } from "@/lib/audit";
 import type { Quarter } from "@/lib/closing-package";
@@ -118,6 +123,97 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     console.error("[PAKKET-LINK] build failed", { id: share.id, err });
     return weiger(500, "Het samenstellen van het pakket ging halverwege mis. Er is niets veranderd; opnieuw proberen kan direct.");
+  }
+
+  // [PAKKET-AFDRUK] …en WAT er is opgehaald. Het blok hieronder legde alleen de handeling vast,
+  // en de zip wordt bij elke download opnieuw gebouwd uit de huidige tabellen — dus dezelfde link
+  // kan in juni een ander pakket geven dan in april, en niets wist dat. Zie package-fingerprint.ts
+  // voor waarom btw_filings deze gebeurtenis niet dekt: dat bevriest het kwartaal bij het
+  // INDIENEN, en de boekhouder werkt uit het pakket dáárvoor.
+  //
+  // Vóór de teller, want dit is het feit; de teller is de statistiek. En best-effort in beide
+  // richtingen: een mislukte afdruk mag een geslaagde download nooit tegenhouden ([DEPLOY-SAFE] —
+  // de tabel kan er nog niet zijn), en een geslaagde download zonder afdruk is precies de toestand
+  // van vóór deze regel, niet een nieuwe storing.
+  try {
+    const inhoud = contentOf(result.summary);
+
+    // ── En de eigenaar hoort het, op het moment dat het gebeurt ──────────────
+    //
+    // Een afdruk die alleen wordt bewaard is een archief. Wat dit een verschil laat maken is dat
+    // er iemand wordt gewaarschuwd op het moment dat zijn boekhouder een ANDER pakket ophaalt dan
+    // de vorige keer — precies de constructie die filed-quarter.ts beschrijft: "the divergence was
+    // visible on two screens to an owner who happened to open them, which for a time-bound legal
+    // obligation is the same as not knowing".
+    //
+    // WAT HIER NIET WORDT UITGEREKEND: of de AANGIFTE hierdoor verandert. Die som woont in
+    // btw-filing.ts en filed-quarter.ts, wordt daar getest, en wordt daar gesteld op het moment dat
+    // de boeken bewegen — een beter moment dan dit, want dan is de eigenaar nog aan het werk. Hem
+    // hier een tweede keer uitrekenen is hoe twee schermen een ander bedrag gaan noemen over
+    // hetzelfde kwartaal. Dit bericht zegt wat er in het PAKKET veranderde; dat is zijn onderwerp.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: vorige, error: vorigeFout } = await (pipeline as any)
+      .from("package_deliveries")
+      .select("delivered_at, outgoing_count, incoming_count, files_included, invoices_with_pdf, bank_statement_included, missing_evidence, warning_codes")
+      .eq("user_id", share.user_id).eq("year", jaar).eq("quarter", kwartaal)
+      .order("delivered_at", { ascending: false })
+      .limit(1);
+    // [NO-SILENT-EMPTY] Een mislukte lezing is geen "er was geen vorige aflevering". Dat laatste
+    // betekent "dit is de eerste keer en er valt niets te vergelijken"; het eerste betekent dat we
+    // een verandering kunnen missen. Geen melding sturen op een storing is de veilige kant — een
+    // verkeerde melding over andermans boeken is erger — maar het hoort wel in het log.
+    if (vorigeFout && !isMissingRelation(vorigeFout.message)) {
+      console.error("[PAKKET-AFDRUK] vorige aflevering niet gelezen — geen vergelijking", { id: share.id, error: vorigeFout.message });
+    } else if (Array.isArray(vorige) && vorige.length > 0) {
+      const v = vorige[0] as {
+        delivered_at: string; outgoing_count: number; incoming_count: number; files_included: number;
+        invoices_with_pdf: number; bank_statement_included: boolean; missing_evidence: string[] | null; warning_codes: string[] | null;
+      };
+      const drift = driftBetween(
+        {
+          outgoingCount: v.outgoing_count, incomingCount: v.incoming_count, filesIncluded: v.files_included,
+          invoicesWithPdf: v.invoices_with_pdf, bankStatementIncluded: v.bank_statement_included,
+          missingEvidence: v.missing_evidence ?? [], warningCodes: v.warning_codes ?? [],
+        },
+        inhoud,
+      );
+      // Alleen wat iemand iets moet laten DOEN. Beter onderbouwd is goed nieuws, en een melding
+      // voor goed nieuws is hoe een eigenaar leert de volgende weg te klikken.
+      if (drift.needsAction) {
+        const zin = driftSentence(result.summary.quarter, v.delivered_at, drift);
+        if (zin) {
+          await createNotification({
+            userId: share.user_id,
+            title: drift.kind === "figures_moved"
+              ? "Je boekhouder haalde een ander pakket op dan de vorige keer"
+              : "Het pakket dat je boekhouder ophaalde is minder goed onderbouwd",
+            body: zin,
+            type: "status",
+            link: "/dashboard/kwartaal",
+          });
+        }
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: afdrukFout } = await (pipeline as any).from("package_deliveries").insert({
+      share_id: share.id,
+      user_id: share.user_id,
+      year: jaar,
+      quarter: kwartaal,
+      fingerprint: fingerprint(inhoud),
+      outgoing_count: inhoud.outgoingCount,
+      incoming_count: inhoud.incomingCount,
+      files_included: inhoud.filesIncluded,
+      invoices_with_pdf: inhoud.invoicesWithPdf,
+      bank_statement_included: inhoud.bankStatementIncluded,
+      missing_evidence: inhoud.missingEvidence,
+      warning_codes: inhoud.warningCodes,
+    });
+    if (afdrukFout && !isMissingRelation(afdrukFout.message)) {
+      console.error("[PAKKET-AFDRUK] afdruk niet vastgelegd", { id: share.id, error: afdrukFout.message });
+    }
+  } catch (e) {
+    console.error("[PAKKET-AFDRUK] afdruk niet vastgelegd", { id: share.id, e });
   }
 
   // [BEWIJS] Leg vast DAT het is opgehaald — de eigenaar hoort op zijn eigen scherm te kunnen

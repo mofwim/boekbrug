@@ -18845,3 +18845,69 @@ test("[BETAALHERINNERING] de eigenaar hoort het vóór de vervaldag, niet erna",
   assert.match(cron, /\.eq\("status", "received"\)/);
   assert.match(cron, /\.gte\("due_date", today\)/, "te laat hoort niet op deze ladder — ander bericht, andere handeling");
 });
+
+test("[PAKKET-AFDRUK] het pakket weet WAT het overhandigde, en wat een verandering betekent", () => {
+  // package_shares legt de HANDELING vast — naar wie, wanneer, hoe vaak opgehaald. Wat eruit KWAM
+  // legde niets vast, en /api/pakket bouwt de zip bij elke download opnieuw uit de huidige tabellen
+  // ("Alles komt uit de RIJ"). Zelfde token, zelfde URL, in juni een ander pakket dan in april — en
+  // "waarom veranderde deze post van € 12.400 naar € 12.454,02?" had geen antwoord dat verder kwam
+  // dan "omdat de gegevens zijn veranderd".
+  //
+  // btw_filings dekt dit niet: dat bevriest het KWARTAAL bij het INDIENEN. De boekhouder werkt uit
+  // het PAKKET, dáárvoor.
+  const puur = code("src/lib/package-fingerprint.ts");
+  const route = code("src/app/api/pakket/route.ts");
+
+  // ── De afdruk gaat over INHOUD ───────────────────────────────────────────
+  // generatedAt verschilt bij elke download; hem meenemen zou elk pakket als "veranderd" aanmerken,
+  // en dat is hetzelfde als niets zeggen. En de sortering: twee lezingen die in een andere volgorde
+  // terugkwamen zijn niet twee verschillende pakketten.
+  assert.doesNotMatch(puur, /generatedAt/, "de afdruk neemt het bouwmoment weer mee — dan is alles altijd veranderd");
+  assert.match(puur, /\[\.\.\.summary\.missingEvidence\]\.sort\(\)/, "de lijst wordt niet meer gesorteerd voor de afdruk");
+  assert.match(puur, /\[\.\.\.new Set\(summary\.warnings\.map\(\(w\) => w\.code\)\)\]\.sort\(\)/);
+
+  // ── Het verschil WEET wat voor soort verandering het is ──────────────────
+  // Dezelfde beweging in filesIncluded betekent twee tegengestelde dingen: een late inkoopfactuur
+  // (de cijfers bewogen, de boekhouder leest een verouderd totaal) of een bon die alsnog binnenkwam
+  // (elk bedrag gelijk, het pakket is alleen beter bewezen). Een bericht dat die twee niet uit
+  // elkaar houdt, is een diff.
+  assert.match(puur, /export type DriftKind =/);
+  for (const soort of ["figures_moved", "evidence_improved", "evidence_lost"]) {
+    assert.match(puur, new RegExp(`"${soort}"`), `de soort ${soort} is weg`);
+  }
+  assert.match(puur, /needsAction: kind === "figures_moved" \|\| kind === "evidence_lost"/,
+    "beter onderbouwd vraagt weer een handeling — en dat is hoe een eigenaar leert de vólgende melding weg te klikken");
+
+  // ── Een gelijk gebleven telling kan twee gebeurtenissen verbergen ────────
+  // Eén bon kwam binnen en een andere viel weg: het AANTAL blijft gelijk, de NAMEN niet.
+  assert.match(puur, /const bonErbij = current\.missingEvidence\.filter/);
+  assert.match(puur, /const bonEraf = previous\.missingEvidence\.filter/);
+
+  // ── En de route legt het vast, én zegt het ───────────────────────────────
+  assert.match(route, /\.from\("package_deliveries"\)\.insert\(\{/, "de afdruk wordt niet meer vastgelegd");
+  assert.match(route, /if \(drift\.needsAction\) \{/, "de eigenaar hoort het niet meer op het moment dat het gebeurt");
+  assert.match(route, /createNotification\(\{/);
+  // Best-effort in beide richtingen: een mislukte afdruk mag een geslaagde download nooit
+  // tegenhouden, en [DEPLOY-SAFE] — de tabel kan er nog niet zijn.
+  assert.match(route, /isMissingRelation\(afdrukFout\.message\)/, "de deploy-safe tak is weg");
+  assert.match(route, /isMissingRelation\(vorigeFout\.message\)/);
+  // [NO-SILENT-EMPTY] "geen vorige aflevering" is niet "de lezing mislukte". Het eerste betekent
+  // dat dit de eerste download is; het tweede dat we een verandering kunnen missen.
+  assert.match(route, /vorige aflevering niet gelezen — geen vergelijking/);
+
+  // ── De juridische som wordt hier NIET herhaald ───────────────────────────
+  // Die woont in btw-filing.ts / filed-quarter.ts, is daar getest, en wordt gesteld op het moment
+  // dat de boeken bewegen. Hem hier een tweede keer uitrekenen is precies hoe twee schermen een
+  // ander bedrag gaan noemen over hetzelfde kwartaal.
+  assert.doesNotMatch(route, /SUPPLETIE_THRESHOLD|correctionRoute\(|computeFilingDivergence\(/,
+    "de aangiftesom wordt op een tweede plek herhaald — één grens, één plek");
+
+  // ── De afdruk mag niet herschreven kunnen worden ─────────────────────────
+  // Een afdruk die te wijzigen is bewijst niets. Vandaar: alleen een select-policy, met opzet geen
+  // update en geen delete.
+  const sql = readFileSync("supabase/migrations/package_deliveries.sql", "utf8");
+  assert.match(sql, /CREATE POLICY package_deliveries_select_own/);
+  assert.doesNotMatch(sql, /CREATE POLICY[\s\S]*FOR (UPDATE|DELETE)/,
+    "er is een update- of delete-policy bijgekomen — dan is de afdruk geen bewijs meer");
+  assert.match(sql, /package_deliveries_quarter_idx/, "de vraag 'wat was de vorige aflevering' heeft geen index meer");
+});
