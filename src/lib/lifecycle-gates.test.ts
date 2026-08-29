@@ -143,22 +143,64 @@ test("[PAGE-KEY] every paged read over a non-unique key carries a tiebreaker", (
   //
   // The live /api/kasboek read had this right; the closing package, which produces the copy the
   // accountant reads and nobody cross-checks, did not.
-  const NON_UNIQUE = /\.order\("(entry_date|ledger_date)", \{ ascending: true \}\)(?!\s*\.order\("id")/g;
+  // [ZOEKT-ZIJN-EIGEN-BESTANDEN] Dit stond hier als vijf ingetypte paden en twee kolomnamen,
+  // onder een regel die "every paged read" zegt. Vijf van de vijfentachtig bestanden met een
+  // gepagineerde lezing — zes procent van wat de regel beweert te bewaken, en de andere
+  // negenenzeventig konden er stil bijkomen. Twee keer op één dag bleek precies die vorm te
+  // falen: [NUMMER-JAAR] hield twee bestanden terwijl de bewaarkluis er later bij kwam, en het
+  // migratie-overzicht dekte er 107. Dus loopt deze poort nu zelf de boom af.
+  //
+  // En de sleutellijst is meegegroeid met de regel. entry_date en ledger_date waren de twee die
+  // ooit misgingen; created_at is de vaakst gebruikte niet-unieke sleutel in deze codebase en
+  // stond er niet in. turnover_date blijft er met opzet BUITEN: die draagt
+  // UNIQUE (user_id, turnover_date), en een tiebreaker eisen zou een gevaar suggereren dat er
+  // niet is.
+  const NIET_UNIEK = ["created_at","updated_at","invoice_date","date","entry_date","ledger_date",
+                      "worked_on","sale_date","trashed_at","due_date","next_run_date"];
+  const loopBoom = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loopBoom(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
   const offenders: string[] = [];
-  for (const f of [
-    "src/lib/closing-package.ts",
-    "src/lib/compute-result-range.ts",
-    "src/app/api/readiness/route.ts",
-    "src/app/api/kasboek/route.ts",
-    "src/app/api/cash/route.ts",
-  ]) {
+  let gepagineerd = 0;
+  for (const f of loopBoom("src")) {
     const src = code(f);
-    for (const m of src.matchAll(NON_UNIQUE)) {
-      // Only a PAGED read is at risk: a single unpaged query returns one consistent snapshot.
-      const after = src.slice(m.index ?? 0, (m.index ?? 0) + 200);
-      if (/range\(from, to\)/.test(after)) offenders.push(`${f} — ${m[1]}`);
+    if (!/\.\s*range\s*\(/.test(src)) continue;
+    // Elke keten die op .range() eindigt: alleen een GEPAGINEERDE lezing loopt dit risico — een
+    // enkele ongepagineerde query levert één samenhangende momentopname.
+    for (const m of src.matchAll(/\.\s*from\s*\(\s*["'`][a-z_]+["'`]/g)) {
+      const start = m.index ?? 0;
+      // De keten vanaf .from() tot waar hij ophoudt: opeenvolgende .naam(...)-schakels.
+      let i = start;
+      for (;;) {
+        const volgende = /^\s*\.\s*[A-Za-z_$][\w$]*\s*\(/.exec(src.slice(i));
+        if (!volgende) break;
+        let d = 0, k = i + volgende[0].length - 1;
+        for (; k < src.length; k++) {
+          const c = src[k];
+          if (c === "(" || c === "[" || c === "{") d++;
+          else if (c === ")" || c === "]" || c === "}") { d--; if (d === 0) { k++; break; } }
+        }
+        i = k;
+      }
+      const keten = src.slice(start, i);
+      if (!/\.\s*range\s*\(/.test(keten)) continue;
+      gepagineerd++;
+      const sleutels = [...keten.matchAll(/\.\s*order\s*\(\s*["'`]([a-z_]+)["'`]/g)].map((o) => o[1]);
+      if (sleutels.length === 0 || sleutels.includes("id")) continue; // totale ordening hersteld
+      const fout = sleutels.filter((k) => NIET_UNIEK.includes(k));
+      if (fout.length > 0) offenders.push(`${f}:${src.slice(0, start).split("\n").length} — ${fout.join(", ")}`);
     }
   }
+  // Een poort die niets vindt omdat haar lezer stuk is, slaagt om de verkeerde reden — en met een
+  // lege lijst is dat niet van succes te onderscheiden.
+  assert.ok(gepagineerd > 40,
+    `only ${gepagineerd} paged reads seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
   assert.deepEqual(
     offenders, [],
     "these paged reads order by a NON-UNIQUE key, so their page boundaries are undefined and a " +
@@ -18305,12 +18347,37 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   //
   // These are SERVER files. A browser's clock is the owner's own and is a different question; this
   // gate is about the machine that has no reason to be in Amsterdam.
-  const SERVER_FILES = [
-    "src/app/api/bestanden/classify/route.ts",
-    "src/app/api/files/route.ts",
-    "src/app/api/export/route.ts",
-    "src/modules/accountant/accountant.service.ts",
-  ];
+  // [ZOEKT-ZIJN-EIGEN-BESTANDEN] Vier ingetypte paden, onder een regel die "no server route" zegt.
+  // De boom telt er dertien met een klokleziing buiten die vier, en drie daarvan beslisten een
+  // PERIODE: /api/quarterly koos zonder ?quarter= het kwartaal van de SERVER (in het eerste uur van
+  // 1 april leest de ondernemer de cijfers van Q1 op de eerste dag van Q2), /api/bestanden zette de
+  // deelperiode van een bon — het veld waarop het kwartaalpakket hem plaatst — en /api/closing-
+  // package koos het boekjaar. Precies dezelfde vorm als de bewaarkluis, die buiten [NUMMER-JAAR]
+  // viel omdat ze na die lijst kwam.
+  //
+  // Dus loopt deze poort zelf de boom af. Wat overblijft is een lijst van UITZONDERINGEN met een
+  // reden per stuk — en dat is het omgekeerde van een lijst die de reikwijdte bepaalt: de walk
+  // levert de klasse, de lijst alleen wat er bewezen buiten valt.
+  const KLOK_MAG = new Map<string, string>([
+    ["src/components/public-footer.tsx", "het jaartal in de copyrightregel — geen periode, geen bedrag"],
+    ["src/lib/documents.ts", "een YYYYMMDD-voorvoegsel in een bestandsnaam; de opslagsleutel, niet de boeking"],
+  ]);
+  const loopServer = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loopServer(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const SERVER_FILES = loopServer("src").filter((f) => {
+    // Op de client is de apparaatklok de conventie; deze regel gaat over de SERVER.
+    if (/^\s*['"]use client['"]/m.test(readFileSync(f, "utf8"))) return false;
+    return !KLOK_MAG.has(f);
+  });
+  assert.ok(SERVER_FILES.length > 200,
+    `only ${SERVER_FILES.length} server files seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
   // Anchored on the CALL, not on the variable it is called through. The first draft of this gate
   // matched `now.getFullYear()` and `new Date().getFullYear()` — and a negative control that named
   // the variable `n` walked straight past it. In a server file there is no legitimate reading of a
@@ -18331,9 +18398,15 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
       // `new Date(<args>)` — a calendar date built from explicit numbers, e.g. the length of a
       // month. That is a calendar fact, not a clock reading, and it is the only allowed form.
       if (/new Date\([^()]*[^()\s][^()]*\)$/.test(receiver)) continue;
+      // Een Date die aan een VARIABELE hangt en uit DATA is gebouwd, is ook een kalenderfeit:
+      // `const d = new Date(c.invoiceDate); d.getFullYear()` leest de factuur, niet de klok. De
+      // oude regel keek alleen naar de directe vorm en zou safecore.ts hier vals beschuldigen.
+      const bindingVanData = new RegExp(
+        `(?:const|let|var)\\s+${m[1].replace(/[.*+?^\${}()|[\]\\]/g, "\\$&")}\\s*=\\s*new Date\\([^()]*[^()\\s][^()]*\\)`,
+      );
+      if (/^[A-Za-z_$][\w$]*$/.test(m[1]) && bindingVanData.test(src.slice(0, at))) continue;
       offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
     }
-    assert.match(src, /amsterdam(Year|Month|Today)\(/, `${f}: no longer asks the owner's calendar at all`);
   }
   assert.deepEqual(offenders, [],
     `a period or a countdown is decided from the server's own clock:\n  ${offenders.join("\n  ")}`);

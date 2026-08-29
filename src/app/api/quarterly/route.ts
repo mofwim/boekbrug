@@ -9,6 +9,8 @@
 // GET /api/quarterly?year=2026&quarter=1&clientId=xxx    ← accountant mode (unchanged)
 
 import { NextRequest, NextResponse } from "next/server";
+// [TZ-SERVER] De klok van de eigenaar, niet die van de server — zie format-nl.ts.
+import { amsterdamYear, amsterdamMonth } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import {
   buildQuarterlySummary,
@@ -47,10 +49,15 @@ export async function GET(req: NextRequest) {
     .eq("id", user.id)
     .single();
 
-  const now = new Date();
-  const year = Number(req.nextUrl.searchParams.get("year") ?? now.getFullYear());
+  // [TZ-SERVER] De eigenaar zijn kwartaal, niet dat van de server. Dit is het scherm waarop de
+  // BTW van een kwartaal wordt afgelezen, en zonder ?quarter= besliste de serverklok welk kwartaal
+  // dat is. De server staat in UTC en Amsterdam is UTC+1/+2, dus in het eerste uur van 1 april
+  // staat de server nog op 31 maart: de ondernemer opent zijn kwartaaloverzicht op de eerste dag
+  // van Q2 en leest de cijfers van Q1 — zonder dat iets op het scherm zegt welk kwartaal het toont
+  // dan het kwartaal zelf, dat dus ook fout is.
+  const year = Number(req.nextUrl.searchParams.get("year") ?? amsterdamYear());
   const quarter = Number(
-    req.nextUrl.searchParams.get("quarter") ?? Math.ceil((now.getMonth() + 1) / 3)
+    req.nextUrl.searchParams.get("quarter") ?? Math.ceil(amsterdamMonth() / 3)
   ) as 1 | 2 | 3 | 4;
   const clientId = req.nextUrl.searchParams.get("clientId");
   // [BOEK-013] ZZP mode: 'paid' | 'all' — only used when role = zzper
