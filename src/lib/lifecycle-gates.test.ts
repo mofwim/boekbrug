@@ -17,6 +17,9 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 // [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
 // bug this guards was that the STRING contained a stub, which reading the file could never show.
 import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
+// [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
+// there is; only the shipped string shows it.
+import { MESSAGES } from "./i18n/messages";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -6818,6 +6821,152 @@ test("[TAAL] every message key is real, and every message is used", () => {
 
   const orphans = [...declared].filter((k) => !used.has(k));
   assert.deepEqual(orphans, [], `in the catalogue but never rendered:\n  ${orphans.join("\n  ")}`);
+});
+
+test("[TAAL] no copy carries an HTML entity, because React paints it as one", () => {
+  // The button on Inkomend read `Factuur met meerdere pagina&apos;s` — the entity itself, on
+  // screen, in front of the owner.
+  //
+  // The cause is a seam that looks like nothing. In JSX, `<p>pagina&apos;s</p>` is decoded by the
+  // compiler and is CORRECT. The same characters inside a JavaScript string are not JSX, so
+  // nothing decodes them; React then escapes the `&` on its way out and the browser receives
+  // `pagina&amp;apos;s`, which it paints as `pagina&apos;s`. Copy that used to sit in a component
+  // as JSX and was later moved into the catalogue crosses exactly that seam — and the move is the
+  // one this repo asks for ("a component holds no language of its own"), so the mistake follows
+  // the rule rather than breaking it.
+  //
+  // Nothing else can see it. tsc has a string either way, eslint has a string, the build compiles,
+  // and the render test asserts the output is not empty — which it is not. Only a reader notices,
+  // and only in the language they read.
+  //
+  // Two halves, because the source text and the shipped value are different claims.
+
+  // 1. THE VALUES. Asserted on the imported catalogue, not on the file, so quoting and formatting
+  //    cannot hide anything: this is what a screen is handed.
+  const entity = /&(?:[a-zA-Z][a-zA-Z0-9]{1,9}|#\d{1,6}|#x[0-9a-fA-F]{1,6});/;
+  const painted: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    for (const [lang, text] of Object.entries(message)) {
+      if (typeof text === "string" && entity.test(text)) painted.push(`${key}.${lang} — ${text}`);
+    }
+  }
+  assert.deepEqual(
+    painted, [],
+    `an HTML entity in a message is painted literally; write the character:\n  ${painted.join("\n  ")}`,
+  );
+
+  // 2. THE SOURCE, over every pure module — a copy module is a .ts file, and a .ts file has no JSX
+  //    text node, so an entity in a string literal there is never the decoded kind. Exempted by
+  //    CAUSE and not by a list of filenames: a literal handed to .replace/.split IS entity
+  //    handling (escape-html.ts, xaf-export.ts), and a literal that carries markup IS html.
+  const ENT = entity;
+  const offenders: string[] = [];
+  const scanCopy = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scanCopy(p); continue; }
+      if (!/\.ts$/.test(p) || /\.test\.ts$/.test(p)) continue;
+      const src = code(p);
+      for (const m of src.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g)) {
+        if (!ENT.test(m[0])) continue;
+        if (/<[a-zA-Z/!]/.test(m[0])) continue;
+        const before = src.slice(Math.max(0, m.index - 60), m.index);
+        if (/\.(?:replace|replaceAll|split|test|match|matchAll|search)\s*\([^)]*$/.test(before)) continue;
+        offenders.push(`${p} — ${m[0].slice(0, 80)}`);
+      }
+    }
+  };
+  scanCopy("src");
+  assert.deepEqual(
+    offenders, [],
+    `an HTML entity in a plain string is not decoded by anything:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[PAGINA-VOLGORDE] the pages of one invoice are ordered in one place, and the order is correctable", () => {
+  // Two screens collect the pages of ONE paper invoice — /dashboard/incoming and /dashboard/upload
+  // — and both handed their list straight to combineImagesToPdf, whose own doc comment says it
+  // combines the files "in order". That order was `Array.from(fileList)`: the BROWSER's order.
+  //
+  // What that produced is not a display problem. The combined PDF is booked, read by the
+  // extractor, and kept for the seven-year bewaarplicht — so a supplier invoice whose page 2
+  // landed after page 10 is WRONG in the archive, and the reader meets the totals before the lines
+  // that justify them. And it was unfindable: the tray listed `IMG_4821.jpg`, which says nothing
+  // about which page it is, and offered no way to move a page — only to remove one. The single
+  // signal that anything was wrong was opening the finished PDF, which nobody does on a stack.
+  //
+  // Two copies of that tray is what let it stay wrong: each screen had its own array, its own cap
+  // and its own add handler, and they had already drifted. So the state is ONE hook now, and these
+  // are the claims that keep it one.
+  const incoming = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const upload = code("src/app/dashboard/upload/UploadClient.tsx");
+  const screens: Array<[string, string]> = [["Inkomend", incoming], ["Uploaden", upload]];
+
+  for (const [name, src] of screens) {
+    // 1. NEITHER SCREEN OWNS THE TRAY. A screen holding its own page array is the second copy
+    //    this gate exists to prevent, and it is where the ordering was lost in the first place.
+    assert.match(src, /usePageTray\(MAX_PAGES\)/,
+      `${name} must take the shared tray, not keep a page list of its own`);
+    assert.doesNotMatch(src, /useState<File\[\]>/,
+      `${name} is holding its own copy of the pages again`);
+
+    // 2. AND THEREFORE DECIDES NOTHING ABOUT THE ORDER ITSELF. Appending the browser's list is
+    //    exactly the bug; slicing to the cap is [GEEN-STILLE-KAP] — pages gone without a sentence.
+    assert.doesNotMatch(src, /\[\s*\.\.\.\s*mpPages\s*,\s*\.\.\.\s*imgs\s*\]/,
+      `${name} is appending the browser's own order again`);
+    assert.doesNotMatch(src, /\.slice\(0, MAX_PAGES\)/,
+      `${name} trims the tray silently instead of reporting the overflow`);
+
+    // 3. IT DRAWS THE SHARED TRAY, wired to the shared handlers — a tray that only DISPLAYS the
+    //    order is the tray this replaced.
+    assert.match(src, /<PageTray\b/, `${name} must render the shared tray`);
+    assert.match(src, /pages=\{tray\.pages\}/, `${name} must draw the shared tray's pages`);
+    assert.match(src, /notice=\{tray\.notice\}/, `${name} must report what the last add did`);
+    assert.match(src, /onMove=\{tray\.move\}/, `${name} must let the owner correct the order`);
+
+    // 4. AND THE ORDER SURVIVES TO THE DOCUMENT. A screen that re-sorted or reversed the list on
+    //    the way into the combine would undo every correction the owner just made.
+    assert.match(src, /combineImagesToPdf\(tray\.files\)/,
+      `${name} must combine exactly the pages in the order the owner sees`);
+  }
+
+  // 5. THE HOOK APPLIES THE SHARED RULES — and applies them OUTSIDE the state updater. This flow
+  //    has already been bitten once by a reducer with a side effect in it ([MP-PURE-UPDATER]): a
+  //    React updater may run twice for one click, and here a second run would leak an objectURL
+  //    or release a preview that is still on screen.
+  const hook = code("src/lib/use-page-tray.ts");
+  assert.match(hook, /addPages\(pages\.map\(\(p\) => p\.file\), incoming, max\)/,
+    "the order, the re-picks and the cap come from page-order.ts");
+  assert.match(hook, /movePage\(current, index, direction\)/);
+  // The updater body is taken by MATCHING THE PARENTHESES, not by a fixed shape. The first version
+  // of this check looked for a body ending in a newline and two spaces — so it saw the one-line
+  // updater as no updater at all, and a createObjectURL planted inside it walked straight past.
+  // Same defect class as the gate it is written in.
+  const updaterBodies: string[] = [];
+  for (const call of hook.matchAll(/setPages\(/g)) {
+    let depth = 0;
+    let i = call.index + call[0].length - 1;
+    for (; i < hook.length; i += 1) {
+      if (hook[i] === "(") depth += 1;
+      else if (hook[i] === ")") { depth -= 1; if (depth === 0) break; }
+    }
+    updaterBodies.push(hook.slice(call.index, i + 1));
+  }
+  assert.ok(updaterBodies.length >= 3, "the hook should still be writing the tray through setPages");
+  for (const body of updaterBodies) {
+    assert.doesNotMatch(body, /createObjectURL|revokeObjectURL|setNotice|release\(/,
+      `a state updater must be pure — no URL created, released or notice written inside one:\n${body}`);
+  }
+
+  // 6. THE TRAY REALLY OFFERS THE MOVE, holds no language of its own, and shows the order it is
+  //    handed. A tray that sorted on the way to the screen would show an order the PDF does not
+  //    have — which is worse than showing none, because it reads as confirmation.
+  const tray = code("src/components/intake/PageTray.tsx");
+  assert.match(tray, /from '@\/lib\/i18n\/t'/, "[TAAL] the tray holds no language of its own");
+  assert.match(tray, /onMove\(index, direction\)/);
+  assert.match(tray, /aria-label=\{t\('mp\.pagina\.omhoog'/, "…reachable without a mouse");
+  assert.match(tray, /aria-label=\{t\('mp\.pagina\.omlaag'/);
+  assert.doesNotMatch(tray, /pages[\s\S]{0,20}\.sort\(/, "the tray displays the order, it does not decide it");
 });
 
 test("[TAAL] the translated panel holds no language of its own", () => {
@@ -14933,7 +15082,6 @@ test("[UREN] de migratie laat het werk het document overleven", () => {
   assert.match(types, /invoice_id\?: string \| null/, "…inclusief de kolom die alles draagt");
 });
 
-import { MESSAGES } from "./i18n/messages";
 
 /**
  * The catalogue, indexable by a string variable.

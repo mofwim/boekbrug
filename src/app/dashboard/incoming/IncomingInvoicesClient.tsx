@@ -108,6 +108,10 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAGINA-VOLGORDE] The order of the pages of one paper invoice, decided in one place and shown
+// in one tray — the same on Uploaden. See src/lib/page-order.ts for why a plain sort is wrong.
+import { usePageTray } from '@/lib/use-page-tray'
+import PageTray from '@/components/intake/PageTray'
 
 function friendlySkipReason(reason: string, t: ReturnType<typeof translator>): string {
   const r = (reason || "").toLowerCase();
@@ -2908,16 +2912,18 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // pages of ONE invoice (photograph or pick), we combine them into a single multi-page PDF,
   // and send it as ONE file — so a 2/3-page invoice never becomes 2/3 separate invoices.
   const [mpOpen, setMpOpen] = useState(false);
-  const [mpPages, setMpPages] = useState<File[]>([]);
+  // [MULTI-PAGE] A single invoice with more pages than this is unusual — cap so the combined
+  // PDF and the AI read stay sane. Well above any real paper invoice.
+  const MAX_PAGES = 20;
+  // [PAGINA-VOLGORDE] The tray — pages, thumbnails, order and what the last add did — is one
+  // shared piece of state, identical to the one on /dashboard/upload.
+  const tray = usePageTray(MAX_PAGES);
   const [combining, setCombining] = useState(false);
   const mpCameraRef = useRef<HTMLInputElement>(null);
   const mpFileRef = useRef<HTMLInputElement>(null);
 
   // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
   const MAX_BATCH = 20;
-  // [MULTI-PAGE] A single invoice with more pages than this is unusual — cap so the combined
-  // PDF and the AI read stay sane. Well above any real paper invoice.
-  const MAX_PAGES = 20;
 
   // [INTAKE-KEEP-ALL] Accept every common invoice/document format. PDFs and images go to the
   // extractor; the rest (XML/UBL e-invoices, Office docs, CSV, e-mail files, bank exports) are
@@ -3070,24 +3076,19 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       toast(t('ink.mp.alleenFotos'), { tone: "error" });
       return;
     }
-    setMpPages((prev) => {
-      const merged = [...prev, ...imgs];
-      if (merged.length > MAX_PAGES) {
-        toast(t('ink.mp.maxPaginas', { max: MAX_PAGES }), { tone: "error" });
-        return merged.slice(0, MAX_PAGES);
-      }
-      return merged;
-    });
+    // [PAGINA-VOLGORDE] Order, re-picks and overflow are one decision, taken in page-order.ts and
+    // REPORTED by the tray. This used to append the browser's own order and trim the surplus
+    // inside a state updater — see the module header for what that cost.
+    tray.add(imgs);
   };
-  const removeMpPage = (idx: number) => setMpPages((prev) => prev.filter((_, i) => i !== idx));
-  const cancelMultiPage = () => { setMpOpen(false); setMpPages([]); };
+  const cancelMultiPage = () => { setMpOpen(false); tray.reset(); };
   const combineAndUpload = async () => {
     // [MP-GUARD] Never run while a normal batch upload is in flight — both write the results
     // modal, and the loser's outcome would silently vanish.
-    if (mpPages.length === 0 || combining || uploading) return;
+    if (tray.pages.length === 0 || combining || uploading) return;
     setCombining(true);
     try {
-      const pdf = await combineImagesToPdf(mpPages);
+      const pdf = await combineImagesToPdf(tray.files);
       const result = await uploadOne(pdf);
       // [MP-RETRY] On a transient upload failure, KEEP the collected pages + the panel so the
       // owner can retry — never make them re-photograph every page.
@@ -3096,7 +3097,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         return;
       }
       setMpOpen(false);
-      setMpPages([]);
+      tray.reset();
       onUploaded();
       setResults([result]);
       setShowResults(true);
@@ -3254,20 +3255,17 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             {t('ink.mp.uitleg')}
           </div>
 
-          {/* Collected pages */}
-          {mpPages.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-              {mpPages.map((f, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>{t('ink.mp.pagina', { n: i + 1 })}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <button onClick={() => removeMpPage(i)} aria-label={t('ink.verwijderPagina')}
-                    disabled={combining}
-                    style={{ border: "none", background: "transparent", color: "#70757a", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* [PAGINA-VOLGORDE] Collected pages — thumbnails, and the order the owner can correct. */}
+          <div style={{ marginBottom: 12 }}>
+            <PageTray
+              pages={tray.pages}
+              notice={tray.notice}
+              accent="#007aff"
+              disabled={combining}
+              onMove={tray.move}
+              onRemove={tray.remove}
+            />
+          </div>
 
           {/* Add-page actions */}
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -3287,11 +3285,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
               {t('ink.annuleer')}
             </button>
-            <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
+            <button onClick={combineAndUpload} disabled={combining || uploading || tray.pages.length === 0}
               style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
-                background: combining || uploading || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
-                cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
-              {combining ? t('act.bezig') : mpPages.length > 0 ? (mpPages.length === 1 ? t('ink.mp.combineerEen') : t('ink.mp.combineerMeer', { n: mpPages.length })) : t('ink.mp.voegEerstToe')}
+                background: combining || uploading || tray.pages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
+                cursor: combining || uploading || tray.pages.length === 0 ? "default" : "pointer" }}>
+              {combining ? t('act.bezig') : tray.pages.length > 0 ? (tray.pages.length === 1 ? t('ink.mp.combineerEen') : t('ink.mp.combineerMeer', { n: tray.pages.length })) : t('ink.mp.voegEerstToe')}
             </button>
           </div>
         </div>
