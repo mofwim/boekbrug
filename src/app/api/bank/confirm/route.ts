@@ -813,12 +813,23 @@ export async function POST(req: NextRequest) {
   // deferred), so the next-best guarantee is that the state can never be silently wrong: re-read
   // the sum AFTER our link landed and, if the line is over-applied, say so loudly — an audit row
   // plus an owner notification naming the figures. Best-effort: a failed read changes nothing.
+  //
+  // [NO-SILENT-EMPTY] En de re-lezing leest haar eigen fout. Ze deed dat niet, en dat ondermijnde
+  // precies de zin hierboven: supabase-js gooit niet, dus een mislukte re-lezing gaf `data: null`
+  // → `?? []` → een som van 0 → 0 > payAmount is onwaar → géén auditregel, géén melding. De enige
+  // waarborg tegen een race die dit bestand met zoveel woorden NIET kan sluiten, verdween dan in
+  // stilte — en "de stand kan nooit stil verkeerd zijn" was de hele belofte.
+  //
+  // Blijft best-effort: de boekingen staan er al en mogen hier niet meer sneuvelen. Wat verandert
+  // is dat een niet-uitgevoerde controle zélf een spoor achterlaat, zodat "geen alarm" niet twee
+  // dingen tegelijk kan betekenen.
   try {
-    const { data: sumRows } = await pipeline
+    const { data: sumRows, error: sumErr } = await pipeline
       .from("bank_tx_invoices")
       .select("amount_applied")
       .eq("user_id", user.id)
       .eq("transaction_id", transactionId);
+    if (sumErr) throw new Error(sumErr.message);
     const appliedSum = (sumRows ?? []).reduce((t, r) => t + Math.max(0, Number(r.amount_applied ?? 0)), 0);
     if (appliedSum > payAmount + 0.01) {
       await logAuditAction({
@@ -836,8 +847,21 @@ export async function POST(req: NextRequest) {
         link: "/dashboard/bank",
       });
     }
-  } catch {
-    /* best-effort — the bookings themselves are already recorded */
+  } catch (e) {
+    // best-effort — the bookings themselves are already recorded and stay recorded. But the check
+    // NOT having run is a fact about this transaction, so it is written down as one.
+    console.error("[BANK-OVERAPPLIED-LOUD] over-application check did not run", { transactionId, e });
+    await logAuditAction({
+      userId: user.id,
+      action: "bank.overapplied_check_failed",
+      entityType: "bank_transaction",
+      entityId: transactionId,
+      newValue: {
+        transaction_amount: payAmount,
+        invoice_id: invoiceId,
+        reason: e instanceof Error ? e.message : "sum read failed",
+      },
+    }).catch(() => { /* the trail is the last resort; it may not cost the booking either */ });
   }
 
   // 7. Notification (non-blocking) — notifications inserts use service_role by rule.

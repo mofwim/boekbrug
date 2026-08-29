@@ -11261,6 +11261,10 @@ export const MESSAGES = {
   'log.bank.restored': { nl: 'Bankregel teruggehaald', en: 'Bank line taken back', ar: 'أُعيد سطر بنكي' },
   'log.bank.rematch_restored': { nl: 'Opnieuw proberen heeft opzijgezette bankregels teruggehaald', en: 'A re-match pass took set-aside bank lines back', ar: 'أعادت محاولة المطابقة سطوراً بنكية منحّاة' },
   'log.bank.overapplied': { nl: 'Er is meer aan deze bankregel gekoppeld dan hij groot is', en: 'More was matched to this bank line than it holds', ar: 'رُبط بهذا السطر البنكي أكثر من قيمته' },
+  // [BANK-OVERAPPLIED-LOUD] De controle hierboven is de enige waarborg tegen een race die de
+  // boekingsroute niet kan sluiten. Draaide ze niet, dan is dat een feit over deze transactie —
+  // zonder deze regel betekende 'geen alarm' zowel 'het klopt' als 'we hebben niet gekeken'.
+  'log.bank.overapplied_check_failed': { nl: 'De controle op dubbel geboekte bedragen kon bij deze bankregel niet worden uitgevoerd', en: 'The over-application check could not be run on this bank line', ar: 'تعذّر إجراء فحص الازدواج المبلغي على هذا السطر البنكي' },
   'log.creditnota.created': { nl: 'Creditnota aangemaakt', en: 'Credit note created', ar: 'أُنشئ إشعار دائن' },
   'log.invoice.archived': { nl: 'Factuur uit de boeken gehaald (bewaard, terug te halen)', en: 'Invoice removed from the books (kept, reversible)', ar: 'أُخرجت فاتورة من الدفاتر (محفوظة وقابلة للإرجاع)' },
   'log.invoice.restored': { nl: 'Factuur teruggezet in de boeken', en: 'Invoice put back in the books', ar: 'أُعيدت فاتورة إلى الدفاتر' },
