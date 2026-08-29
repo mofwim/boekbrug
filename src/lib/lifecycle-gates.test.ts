@@ -7750,6 +7750,82 @@ test("[NUMMER-JAAR] nothing on the numbering line reads the year off the server 
   }
 });
 
+test("[NUMMER-JAAR] nothing that prices or promises a retention year reads the server clock", () => {
+  // De poort hierboven sloot dezelfde fout op de nummerlijn, met een lijst van twee bestanden erin
+  // getypt. Dat is precies de vorm die veroudert: de bewaarkluis kwam later en stond er niet op.
+  //
+  // Wat daar stond, in drie bestanden tegelijk:
+  //
+  //   · /api/kluis/offerte  rekende currentYear met getUTCFullYear() en gaf dat aan kluisQuote,
+  //     waar het via remainingBewaarjaren de PRIJS bepaalt;
+  //   · /api/billing/webhook zette keep_through_year = getUTCFullYear() + years - 1, met de regel
+  //     erboven dat dit getal "wat wij beloven" is — en het wordt permanent opgeslagen;
+  //   · /dashboard/kluis toonde het bewaarvenster met diezelfde serverklok.
+  //
+  // De server staat in UTC en Amsterdam is op 1 januari UTC+1. Eén uur per jaar rekent de offerte
+  // dus een jaar bewaren TE VEEL en legt de webhook een jaar TE WEINIG vast: de klant betaalt voor
+  // N jaar en krijgt er N-1, in hetzelfde uur, in tegengestelde richting.
+  //
+  // Deze poort loopt de boom af en zoekt zijn eigen bestanden op het woordenboek van de
+  // bewaarplicht. Een vierde plek die met een bewaarjaar rekent, staat er dan vanzelf in.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const WOORDENBOEK = /keep_through_year|keepThroughYear|kluisQuote|remainingBewaarjaren|summarizeVault/;
+  const bestanden = loop("src").filter((f) => WOORDENBOEK.test(readFileSync(f, "utf8")));
+  assert.ok(bestanden.length >= 4,
+    `only ${bestanden.length} retention-year files found; the scan must be broken, and a gate ` +
+    "that finds nothing passes for the wrong reason");
+
+  for (const f of bestanden) {
+    const src = code(f); // commentaar eraf: een notitie óver de oude aanroep telt niet mee
+    assert.doesNotMatch(src, /new Date\(\)\.get(UTC)?FullYear\(\)/,
+      `${f}: the server's year is UTC, and for the first hour of the Dutch new year it is the OLD ` +
+      "year. This file prices, stores or shows a retention year — use amsterdamYear()");
+    // Wie het jaar zelf SAMENSTELT moet het van de eigenaar hebben. Een pure functie die het als
+    // parameter krijgt, hoort juist géén klok te kennen — die eis zou het omgekeerde afdwingen.
+    // Let op de vorm: `currentYear={currentYear}` is een JSX-attribuut, geen berekening. Zonder
+    // het declaratiewoord eiste deze regel een klok van KluisClient.tsx, dat het jaar juist als
+    // prop KRIJGT — een component die er zelf een ging halen, zou de fout terugbrengen.
+    if (/\b(?:const|let|var)\s+(?:currentYear|keepThroughYear)\s*=/.test(src)) {
+      assert.match(src, /amsterdamYear\(/,
+        `${f}: this file composes a retention year, so it must take it from the owner's clock`);
+    }
+  }
+});
+
+test("[EEN-KLOK] there is exactly one definition of the owner's day", () => {
+  // amsterdamToday stond twee keer in de repo — format-nl.ts en turnover-import.ts — met dezelfde
+  // regels erin getypt. Zolang beide gelijk zijn merkt niemand het, en dat is de hele val: wie de
+  // ene ooit bijstelt laat de andere staan, en dan bestaan er twee antwoorden op "welke dag is het
+  // bij de eigenaar" — één in de kassa en één op de factuur.
+  //
+  // Een telling van aanroepplekken kan dit niet zien: de tweede definitie ziet er in elke grep uit
+  // als gewoon gebruik. Daarom telt deze poort DEFINITIES.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  for (const naam of ["amsterdamToday", "amsterdamYear"]) {
+    const definieert = loop("src").filter((f) =>
+      readFileSync(f, "utf8").includes(`export function ${naam}(`),
+    );
+    assert.deepEqual(definieert, ["src/lib/format-nl.ts"],
+      `${naam} must be defined exactly once, in format-nl.ts — found: ${definieert.join(", ") || "nowhere"}`);
+  }
+});
+
 test("[NUMBER-READ-VISIBLE] the template read sees the owner's row even when a member sends", () => {
   // A verkoop-member or mandated accountant mints in the OWNER's series, but profiles RLS shows
   // their session no owner row: resolveFormat answered data:null/error:null and silently numbered

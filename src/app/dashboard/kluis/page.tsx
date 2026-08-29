@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getSessionUser } from '@/lib/session-user'
 import { summarizeVault, type VaultInvoice, type VaultDocument } from '@/lib/compliance-vault'
+import { amsterdamYear } from '@/lib/format-nl'
 import { fetchAllRows } from '@/lib/supabase-paginate'
 import { PURPOSE_PARAM, parsePurpose } from '@/lib/account-purpose'
 import KluisClient from './KluisClient'
@@ -129,7 +130,11 @@ export default async function Page({
   // The current year drives the retention window. We compute it once, on the server,
   // rather than in the client (Date.now() is unavailable in some render contexts and
   // a server value keeps the window stable within one render).
-  const currentYear = new Date().getUTCFullYear()
+  //
+  // [NUMMER-JAAR] …en van de klok van de EIGENAAR, want de server staat in UTC. In het eerste uur
+  // van 1 januari toont dit scherm anders een bewaarvenster dat een jaar achterloopt op de offerte
+  // die de klant een scherm verder betaalt.
+  const currentYear = amsterdamYear()
 
   const summaries = summarizeVault(
     currentYear,

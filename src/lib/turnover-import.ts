@@ -15,6 +15,7 @@
 
 import type { DailyTurnover } from "./turnover";
 import { round2 } from "./invoice-totals";
+import { amsterdamToday } from "@/lib/format-nl";
 
 export interface ImportWarning {
   row: number;                 // 1-based data row (as the owner sees it), 0 = sheet-level
@@ -51,12 +52,18 @@ export function turnoverDateOutOfWindow(iso: string, todayAmsterdam: string): bo
   return iso < TURNOVER_DATE_FLOOR || iso > tomorrow.toISOString().slice(0, 10);
 }
 
-/** Today in Amsterdam, as the app pins every other date boundary. */
-export function amsterdamToday(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now);
-}
+/**
+ * Today in Amsterdam, as the app pins every other date boundary.
+ *
+ * [EEN-KLOK] Doorgegeven, niet nagebouwd. Deze functie stond hier twee keer in de repo — hier en
+ * in format-nl.ts — met dezelfde regels erin getypt. Zolang beide gelijk zijn merkt niemand het,
+ * en dat is precies het probleem: wie de ene ooit bijstelt (een schrikkelseconde, een andere
+ * zone-strategie, een testbare klok) laat de andere achter, en dan bestaan er twee antwoorden op
+ * "welke dag is het bij de eigenaar" — één in de kassa en één op de factuur.
+ *
+ * De aanroepers hoeven niets te weten: ze importeren hem nog steeds hier vandaan.
+ */
+export { amsterdamToday };
 
 export type Cell = string | number | null | undefined;
 

@@ -37,6 +37,7 @@ import {
 } from "@/lib/billing";
 import { normalizeStripeStatus } from "@/lib/subscription";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { amsterdamYear } from "@/lib/format-nl";
 import { sendPaymentFailedEmail } from "@/lib/email";
 import { BEWAARPLICHT_YEARS } from "@/lib/bewaarkluis";
 
@@ -333,7 +334,13 @@ async function recordBewaarkluis(session: Stripe.Checkout.Session): Promise<void
 
   // Het jaar t/m wanneer wij bewaren, gerekend vanaf NU. Bewust niet uit de metadata: die
   // komt uit de browser-sessie van een half uur geleden, en dit getal is wat wij beloven.
-  const keepThroughYear = new Date().getUTCFullYear() + years - 1;
+  //
+  // [NUMMER-JAAR] De sleutel is de klok van de EIGENAAR, niet die van de server. getUTCFullYear()
+  // geeft in het eerste uur van 1 januari (Amsterdam is dan UTC+1) nog het OUDE jaar terug, en dit
+  // getal is precies wat de zin hierboven belooft: het jaar t/m wanneer wij bewaren. Eén uur per
+  // jaar zou een klant betalen voor N jaar en N-1 jaar krijgen — permanent vastgelegd in
+  // kluis_subscriptions.keep_through_year, waar niemand er ooit meer naar kijkt.
+  const keepThroughYear = amsterdamYear() + years - 1;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (pipeline as any).from("kluis_subscriptions").insert({
