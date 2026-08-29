@@ -17,6 +17,9 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 // [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
 // bug this guards was that the STRING contained a stub, which reading the file could never show.
 import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
+// [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
+// there is; only the shipped string shows it.
+import { MESSAGES } from "./i18n/messages";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -6818,6 +6821,214 @@ test("[TAAL] every message key is real, and every message is used", () => {
 
   const orphans = [...declared].filter((k) => !used.has(k));
   assert.deepEqual(orphans, [], `in the catalogue but never rendered:\n  ${orphans.join("\n  ")}`);
+});
+
+test("[TAAL] no copy carries an HTML entity, because React paints it as one", () => {
+  // The button on Inkomend read `Factuur met meerdere pagina&apos;s` — the entity itself, on
+  // screen, in front of the owner.
+  //
+  // The cause is a seam that looks like nothing. In JSX, `<p>pagina&apos;s</p>` is decoded by the
+  // compiler and is CORRECT. The same characters inside a JavaScript string are not JSX, so
+  // nothing decodes them; React then escapes the `&` on its way out and the browser receives
+  // `pagina&amp;apos;s`, which it paints as `pagina&apos;s`. Copy that used to sit in a component
+  // as JSX and was later moved into the catalogue crosses exactly that seam — and the move is the
+  // one this repo asks for ("a component holds no language of its own"), so the mistake follows
+  // the rule rather than breaking it.
+  //
+  // Nothing else can see it. tsc has a string either way, eslint has a string, the build compiles,
+  // and the render test asserts the output is not empty — which it is not. Only a reader notices,
+  // and only in the language they read.
+  //
+  // Two halves, because the source text and the shipped value are different claims.
+
+  // 1. THE VALUES. Asserted on the imported catalogue, not on the file, so quoting and formatting
+  //    cannot hide anything: this is what a screen is handed.
+  const entity = /&(?:[a-zA-Z][a-zA-Z0-9]{1,9}|#\d{1,6}|#x[0-9a-fA-F]{1,6});/;
+  const painted: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    for (const [lang, text] of Object.entries(message)) {
+      if (typeof text === "string" && entity.test(text)) painted.push(`${key}.${lang} — ${text}`);
+    }
+  }
+  assert.deepEqual(
+    painted, [],
+    `an HTML entity in a message is painted literally; write the character:\n  ${painted.join("\n  ")}`,
+  );
+
+  // 2. THE SOURCE, over every pure module — a copy module is a .ts file, and a .ts file has no JSX
+  //    text node, so an entity in a string literal there is never the decoded kind. Exempted by
+  //    CAUSE and not by a list of filenames: a literal handed to .replace/.split IS entity
+  //    handling (escape-html.ts, xaf-export.ts), and a literal that carries markup IS html.
+  const ENT = entity;
+  const offenders: string[] = [];
+  const scanCopy = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scanCopy(p); continue; }
+      if (!/\.ts$/.test(p) || /\.test\.ts$/.test(p)) continue;
+      const src = code(p);
+      for (const m of src.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g)) {
+        if (!ENT.test(m[0])) continue;
+        if (/<[a-zA-Z/!]/.test(m[0])) continue;
+        const before = src.slice(Math.max(0, m.index - 60), m.index);
+        if (/\.(?:replace|replaceAll|split|test|match|matchAll|search)\s*\([^)]*$/.test(before)) continue;
+        offenders.push(`${p} — ${m[0].slice(0, 80)}`);
+      }
+    }
+  };
+  scanCopy("src");
+  assert.deepEqual(
+    offenders, [],
+    `an HTML entity in a plain string is not decoded by anything:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[BATCH-HERKANSING] a file that failed in a batch can be tried again without finding it twice", () => {
+  // Inkomend and /dashboard/upload post to the SAME route, and only one of them could recover.
+  // /dashboard/upload keeps every file on its row and offers a retry ([UPLOAD-ERRORS]); Inkomend
+  // threw the File away the moment the request came back, so a transient failure on file 12 of 20
+  // sent the owner back to the file manager to find that one file again.
+  //
+  // Why that is a money problem. The retry that does not happen is a purchase invoice that never
+  // enters the administratie: no cost, and btw that is never reclaimed. It leaves no trace either
+  // — the queue simply has one fewer row than the stack on the desk, and nothing anywhere says a
+  // file was ever offered. The owner has to notice an absence.
+  const ui = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  // 1. THE FILE STAYS ON THE ROW. Both failing paths — a rejected request and a thrown one — and
+  //    the duplicate, which is the row "toch toevoegen" needs.
+  assert.match(ui, /file\?: File/, "the row must carry the file a second attempt needs");
+  // Anchored on the WHOLE return, not on `status: "error", file,` — that fragment also occurs in
+  // the thrown case one line below, so the first version of this assertion matched the other site
+  // and stayed green with the file deleted from the one it names. The gate has to be about the
+  // path it claims to be about.
+  assert.match(ui, /name: file\.name,\s*\n\s*status: "error",\s*\n\s*file,\s*\n\s*message: failure\.message/,
+    "a rejected upload must keep its file, or the row is a dead end");
+  assert.match(ui, /return \{ name: file\.name, status: "error", file, message: t\('ink\.upload\.mislukt'\) \}/,
+    "…including the thrown case, which is the most retryable failure there is");
+  assert.match(ui, /status: "duplicate", file,/);
+
+  // 2. THE BUTTON APPEARS ONLY WHERE A SECOND ATTEMPT CAN SUCCEED. describeUploadFailure already
+  //    decided this and the screen read one of its four fields. A 402 (allowance spent) and a 413
+  //    (too big) return the identical answer forever; a button that is guaranteed to fail teaches
+  //    the owner to distrust the ones that work.
+  assert.match(ui, /noRetry: failure\.noRetry/, "the screen must carry the verdict, not just the sentence");
+  assert.match(ui, /rateLimited: failure\.rateLimited/);
+  assert.match(ui, /fairUse: failure\.fairUse/);
+  assert.match(ui, /r\.status === "error" && !r\.noRetry/, "a retry may not be offered where it cannot land");
+  assert.match(ui, /\{canRetry\(r\) &&[\s\S]{0,400}t\('ink\.result\.opnieuw'\)/);
+
+  // 3. AND FOR THE WHOLE BATCH AT ONCE. Twenty files with three failures is three presses, not
+  //    three trips through the file manager.
+  assert.match(ui, /retryableIndexes\.length > 0/);
+  assert.match(ui, /onClick=\{\(\) => runAgain\(retryableIndexes\)\}/);
+
+  // 4. OVER THE CAP THE BATCH IS SPLIT, NOT REFUSED. Dropping 25 files used to send none of them
+  //    and leave the owner to work out which twenty to drop first. The surplus gets a row by name.
+  assert.match(ui, /const overflow = accepted\.splice\(MAX_BATCH\)/,
+    "the first MAX_BATCH must still go up");
+  assert.doesNotMatch(ui, /all\.length > MAX_BATCH\)\s*\{[\s\S]{0,200}return;/,
+    "a drop over the cap may not be refused whole any more");
+  assert.match(ui, /status: "skipped", file: f, message: t\('ink\.result\.buitenBatch'/,
+    "…and what did not go must be named, with its file kept so one press finishes the job");
+
+  // 5. THE OVERRIDE IS THE SERVER'S TO GRANT. `force` goes up only behind the button that
+  //    `canForce` put there — the byte-hash duplicate gate never sets it, so an identical file
+  //    still cannot slip past by pressing harder.
+  assert.match(ui, /if \(force\) formData\.append\("force", "true"\)/);
+  assert.match(ui, /canForce: \(data as \{ canForce\?: boolean \}\)\.canForce === true && !force/);
+  assert.match(ui, /r\.status === "duplicate" && r\.canForce[\s\S]{0,400}runAgain\(\[i\], true\)/);
+
+  // 6. AND LEAVING MID-BATCH ASKS FIRST. Until the last file comes back there is no results modal,
+  //    so a navigation away loses both the unsent files and every trace that they were offered.
+  assert.match(ui, /addEventListener\("beforeunload", ask\)/);
+  assert.match(ui, /removeEventListener\("beforeunload", ask\)/, "…and the listener goes when the batch does");
+});
+
+test("[PAGINA-VOLGORDE] the pages of one invoice are ordered in one place, and the order is correctable", () => {
+  // Two screens collect the pages of ONE paper invoice — /dashboard/incoming and /dashboard/upload
+  // — and both handed their list straight to combineImagesToPdf, whose own doc comment says it
+  // combines the files "in order". That order was `Array.from(fileList)`: the BROWSER's order.
+  //
+  // What that produced is not a display problem. The combined PDF is booked, read by the
+  // extractor, and kept for the seven-year bewaarplicht — so a supplier invoice whose page 2
+  // landed after page 10 is WRONG in the archive, and the reader meets the totals before the lines
+  // that justify them. And it was unfindable: the tray listed `IMG_4821.jpg`, which says nothing
+  // about which page it is, and offered no way to move a page — only to remove one. The single
+  // signal that anything was wrong was opening the finished PDF, which nobody does on a stack.
+  //
+  // Two copies of that tray is what let it stay wrong: each screen had its own array, its own cap
+  // and its own add handler, and they had already drifted. So the state is ONE hook now, and these
+  // are the claims that keep it one.
+  const incoming = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const upload = code("src/app/dashboard/upload/UploadClient.tsx");
+  const screens: Array<[string, string]> = [["Inkomend", incoming], ["Uploaden", upload]];
+
+  for (const [name, src] of screens) {
+    // 1. NEITHER SCREEN OWNS THE TRAY. A screen holding its own page array is the second copy
+    //    this gate exists to prevent, and it is where the ordering was lost in the first place.
+    assert.match(src, /usePageTray\(MAX_PAGES\)/,
+      `${name} must take the shared tray, not keep a page list of its own`);
+    assert.doesNotMatch(src, /useState<File\[\]>/,
+      `${name} is holding its own copy of the pages again`);
+
+    // 2. AND THEREFORE DECIDES NOTHING ABOUT THE ORDER ITSELF. Appending the browser's list is
+    //    exactly the bug; slicing to the cap is [GEEN-STILLE-KAP] — pages gone without a sentence.
+    assert.doesNotMatch(src, /\[\s*\.\.\.\s*mpPages\s*,\s*\.\.\.\s*imgs\s*\]/,
+      `${name} is appending the browser's own order again`);
+    assert.doesNotMatch(src, /\.slice\(0, MAX_PAGES\)/,
+      `${name} trims the tray silently instead of reporting the overflow`);
+
+    // 3. IT DRAWS THE SHARED TRAY, wired to the shared handlers — a tray that only DISPLAYS the
+    //    order is the tray this replaced.
+    assert.match(src, /<PageTray\b/, `${name} must render the shared tray`);
+    assert.match(src, /pages=\{tray\.pages\}/, `${name} must draw the shared tray's pages`);
+    assert.match(src, /notice=\{tray\.notice\}/, `${name} must report what the last add did`);
+    assert.match(src, /onMove=\{tray\.move\}/, `${name} must let the owner correct the order`);
+
+    // 4. AND THE ORDER SURVIVES TO THE DOCUMENT. A screen that re-sorted or reversed the list on
+    //    the way into the combine would undo every correction the owner just made.
+    assert.match(src, /combineImagesToPdf\(tray\.files\)/,
+      `${name} must combine exactly the pages in the order the owner sees`);
+  }
+
+  // 5. THE HOOK APPLIES THE SHARED RULES — and applies them OUTSIDE the state updater. This flow
+  //    has already been bitten once by a reducer with a side effect in it ([MP-PURE-UPDATER]): a
+  //    React updater may run twice for one click, and here a second run would leak an objectURL
+  //    or release a preview that is still on screen.
+  const hook = code("src/lib/use-page-tray.ts");
+  assert.match(hook, /addPages\(pages\.map\(\(p\) => p\.file\), incoming, max\)/,
+    "the order, the re-picks and the cap come from page-order.ts");
+  assert.match(hook, /movePage\(current, index, direction\)/);
+  // The updater body is taken by MATCHING THE PARENTHESES, not by a fixed shape. The first version
+  // of this check looked for a body ending in a newline and two spaces — so it saw the one-line
+  // updater as no updater at all, and a createObjectURL planted inside it walked straight past.
+  // Same defect class as the gate it is written in.
+  const updaterBodies: string[] = [];
+  for (const call of hook.matchAll(/setPages\(/g)) {
+    let depth = 0;
+    let i = call.index + call[0].length - 1;
+    for (; i < hook.length; i += 1) {
+      if (hook[i] === "(") depth += 1;
+      else if (hook[i] === ")") { depth -= 1; if (depth === 0) break; }
+    }
+    updaterBodies.push(hook.slice(call.index, i + 1));
+  }
+  assert.ok(updaterBodies.length >= 3, "the hook should still be writing the tray through setPages");
+  for (const body of updaterBodies) {
+    assert.doesNotMatch(body, /createObjectURL|revokeObjectURL|setNotice|release\(/,
+      `a state updater must be pure — no URL created, released or notice written inside one:\n${body}`);
+  }
+
+  // 6. THE TRAY REALLY OFFERS THE MOVE, holds no language of its own, and shows the order it is
+  //    handed. A tray that sorted on the way to the screen would show an order the PDF does not
+  //    have — which is worse than showing none, because it reads as confirmation.
+  const tray = code("src/components/intake/PageTray.tsx");
+  assert.match(tray, /from '@\/lib\/i18n\/t'/, "[TAAL] the tray holds no language of its own");
+  assert.match(tray, /onMove\(index, direction\)/);
+  assert.match(tray, /aria-label=\{t\('mp\.pagina\.omhoog'/, "…reachable without a mouse");
+  assert.match(tray, /aria-label=\{t\('mp\.pagina\.omlaag'/);
+  assert.doesNotMatch(tray, /pages[\s\S]{0,20}\.sort\(/, "the tray displays the order, it does not decide it");
 });
 
 test("[TAAL] the translated panel holds no language of its own", () => {
@@ -14933,7 +15144,6 @@ test("[UREN] de migratie laat het werk het document overleven", () => {
   assert.match(types, /invoice_id\?: string \| null/, "…inclusief de kolom die alles draagt");
 });
 
-import { MESSAGES } from "./i18n/messages";
 
 /**
  * The catalogue, indexable by a string variable.
@@ -17420,6 +17630,35 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
   }
   assert.ok(declared.size > 20, "the migration parser stopped finding tables — this gate is asleep");
 
+  // ── THE SECOND SOURCE, AND WHY IT IS A UNION ──
+  //
+  // Sixteen tables the app queries have no CREATE TABLE in this repo — including `invoices` and
+  // `documents`, the two the whole product runs on. Everything above was blind to them, which is
+  // 70% of every column reference in the codebase: the entry_date bug was caught ONLY because
+  // time_entries happened to have a migration, and the same mistake on `invoices` would have been
+  // invisible.
+  //
+  // database.types.ts is generated FROM the live database, so it knows those tables. It is added as
+  // a second source rather than as the authority, and the two are UNIONED — because it is also
+  // allowed to be stale. It is: it does not carry cash_entries.deleted_at, which a migration adds
+  // and /api/cash queries every day. Types-only would have failed that working code.
+  //
+  // The union can only ever miss a bug, never invent one. That is the right direction for a gate
+  // that fails a build.
+  const typeSrc = readFileSync("src/types/database.types.ts", "utf8");
+  let fromTypes = 0;
+  for (const m of typeSrc.matchAll(/^      ([a-z_][a-z0-9_]*): \{\n        Row: \{\n([\s\S]*?)\n        \}/gm)) {
+    const cols = [...m[2].matchAll(/^          (\w+)\??:/gm)].map((c) => c[1]);
+    if (cols.length === 0) continue;
+    fromTypes += 1;
+    declared.add(m[1]);
+    const set = columnsOf.get(m[1]) ?? new Set<string>();
+    columnsOf.set(m[1], set);
+    for (const c of cols) set.add(c);
+  }
+  assert.ok(fromTypes > 30,
+    `only ${fromTypes} tables came out of database.types.ts — the generated-types parser has stopped matching, and this gate went half-blind without failing`);
+
   const walk = (dir: string): string[] => {
     const out: string[] = [];
     for (const e of readdirSync(dir)) {
@@ -17440,13 +17679,36 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
     }
     for (const m of src.matchAll(/\.from\(\s*['"]([a-z_][a-z0-9_]*)['"]\s*\)/g)) {
       const table = m[1];
+      const at = m.index ?? 0;
+      // `supabase.storage.from("documents")` is a BUCKET, not a table. Its name collides with a
+      // real one, so without this every storage call reports imaginary missing columns.
+      if (/storage\s*$/.test(src.slice(Math.max(0, at - 20), at))) continue;
       const known = columnsOf.get(table);
       if (!declared.has(table) || !known) continue;
-      const line = () => src.slice(0, m.index ?? 0).split("\n").length;
-      // Stop at the next .from(, or the columns of one query get blamed on another table.
-      let chain = src.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 900);
-      const next = chain.indexOf(".from(");
-      if (next !== -1) chain = chain.slice(0, next);
+      const line = () => src.slice(0, at).split("\n").length;
+      // Walk the CHAIN, do not take a window. A fixed slice runs past the end of the query into
+      // the next statement, and then a filter from one table is reported against another — the
+      // first draft of this did exactly that and produced ten findings, every one of them mine.
+      // A chain is `.method(...)` repeated; it ends at the first thing that is not one.
+      const chain = (() => {
+        let i = at + m[0].length;
+        const start = i;
+        for (;;) {
+          while (i < src.length && /\s/.test(src[i])) i += 1;
+          if (src[i] !== ".") break;
+          const call = /^\.\w+\(/.exec(src.slice(i));
+          if (!call) break;
+          let depth = 0;
+          let j = i + call[0].length - 1;
+          for (; j < src.length; j += 1) {
+            if (src[j] === "(") depth += 1;
+            else if (src[j] === ")") { depth -= 1; if (depth === 0) break; }
+          }
+          if (j >= src.length) break;
+          i = j + 1;
+        }
+        return src.slice(start, i);
+      })();
 
       for (const f of chain.matchAll(
         /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|order|contains|overlaps)\(\s*['"]([a-z_][a-z0-9_]*)['"]/g,
@@ -17454,7 +17716,7 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
         checked += 1;
         if (!known.has(f[2])) offenders.push(`${file}:${line()} — ${table} has no column ${f[2]} (.${f[1]}())`);
       }
-      const sel = /^\s*\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
+      const sel = /\.select\(\s*['"]([^'"]*)['"]/.exec(chain);
       // An embed, alias, count or wildcard is a different grammar — skipped rather than guessed at.
       if (sel && !/[(:!*]/.test(sel[1])) {
         for (const raw of sel[1].split(",")) {
@@ -17467,7 +17729,10 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
     }
   }
 
-  assert.ok(checked > 200, `the gate only checked ${checked} column references — it has stopped reaching the code`);
+  // Was 705 when the migrations were the only source. The generated types added the sixteen
+  // tables the app runs on, and the floor moves with it: a parser that half-breaks would
+  // otherwise leave a gate that still passes while checking a third of what it should.
+  assert.ok(checked > 1800, `the gate only checked ${checked} column references — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `queries naming a column that does not exist:\n  ${offenders.join("\n  ")}`);
 
   // ── THE BLIND SPOT, PINNED ──
@@ -17477,11 +17742,10 @@ test("[KOLOM-BESTAAT] no query names a column its table does not have", () => {
   // two the whole product runs on. Pinned rather than ignored: a NEW name appearing here means a
   // new table shipped without its schema, and the gate should make that a decision rather than a
   // drift. Moving one out of this list (by adding its migration) is a straight improvement.
-  const UNCHECKABLE = [
-    "accountant_clients", "audit_logs", "bank_transactions", "clients", "deletion_requests",
-    "documents", "draft_queue", "email_connections", "email_skipped_attachments", "folders",
-    "invitations", "invoice_lines", "invoices", "messages", "notifications", "profiles",
-  ];
+  // Was sixteen names long, and every one of them is now covered by the generated types above.
+  // Anything still here is a table the app queries that NEITHER a migration NOR the live schema
+  // knows about — which is a table that does not exist, or a typo in a .from().
+  const UNCHECKABLE: string[] = [];
   const blind = [...queried].filter((t) => !declared.has(t)).sort();
   const grown = blind.filter((t) => !UNCHECKABLE.includes(t));
   assert.deepEqual(grown, [], `a table is queried whose schema is nowhere in this repo:\n  ${grown.join("\n  ")}`);
@@ -17517,6 +17781,27 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
       }
     }
   }
+  // [KOLOM-BESTAAT] Same second source, same reason, same union. database.types.ts is generated
+  // from the live database and describes 15 functions with their named arguments — including
+  // check_rate_limit, which has no CREATE FUNCTION in this repo and was therefore skipped
+  // entirely. Unioned rather than trusted alone, because the generated file is allowed to be
+  // stale; the union can only miss a mismatch, never invent one.
+  const typeSrc = readFileSync("src/types/database.types.ts", "utf8");
+  const fnBlock = /^    Functions: \{\n([\s\S]*?)\n    \}\n/m.exec(typeSrc);
+  let fromTypes = 0;
+  for (const m of (fnBlock?.[1] ?? "").matchAll(/^      ([a-z_][a-z0-9_]*): \{\n        Args: \{\n([\s\S]*?)\n        \}/gm)) {
+    const args = [...m[2].matchAll(/^          (\w+)\??:/gm)].map((a) => a[1]);
+    if (args.length === 0) continue;
+    fromTypes += 1;
+    const set = signatures.get(m[1]) ?? new Set<string>();
+    signatures.set(m[1], set);
+    for (const a of args) set.add(a);
+  }
+  // Seven of the fifteen carry NAMED arguments in the generated file; the rest take none or are
+  // typed without names, and the migrations cover those. Measured, not guessed — a floor picked by
+  // eye is how a parser that half-breaks keeps passing.
+  assert.ok(fromTypes >= 7,
+    `only ${fromTypes} functions came out of database.types.ts — the generated-types parser has stopped matching, and this gate went half-blind without failing`);
   assert.ok(signatures.size > 20, "the function parser stopped finding functions — this gate is asleep");
 
   const walk = (dir: string): string[] => {

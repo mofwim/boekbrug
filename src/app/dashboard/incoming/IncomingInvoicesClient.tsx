@@ -108,6 +108,10 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAGINA-VOLGORDE] The order of the pages of one paper invoice, decided in one place and shown
+// in one tray — the same on Uploaden. See src/lib/page-order.ts for why a plain sort is wrong.
+import { usePageTray } from '@/lib/use-page-tray'
+import PageTray from '@/components/intake/PageTray'
 
 function friendlySkipReason(reason: string, t: ReturnType<typeof translator>): string {
   const r = (reason || "").toLowerCase();
@@ -2864,8 +2868,28 @@ type IntakeResult = {
   // "invoice" pointed the owner at a card that is not here. "statement" / "turnover" /
   // "ledger" are the destinations the route gained since; without them each fell through to
   // the "invoice" default below and was announced as an invoice awaiting a tap.
-  status: "auto" | "invoice" | "statement" | "turnover" | "ledger" | "document" | "bank" | "duplicate" | "error";
+  status: "auto" | "invoice" | "statement" | "turnover" | "ledger" | "document" | "bank" | "duplicate" | "error" | "skipped";
   message: string;
+  // [BATCH-HERKANSING] The file itself, kept on the row.
+  //
+  // Without it a failure is final: the outcome said "probeer het zo opnieuw" and there was nothing
+  // to press, so the owner had to go back to the file manager and find file 12 of 20 again. On a
+  // month of supplier invoices that is where a document quietly does not get added — and a missing
+  // purchase invoice is btw that is never reclaimed.
+  //
+  // /dashboard/upload has had this from the start ([UPLOAD-ERRORS], retryAllFailed). This screen
+  // uploads to the SAME route and threw the file away the moment the request came back.
+  file?: File;
+  // From describeUploadFailure — all three were already computed here and dropped on the floor.
+  // A 402 (monthly allowance spent) and a 413 (too big) return the SAME answer on a second
+  // attempt, so those rows must not offer one; a 429 is only "too fast" and must.
+  rateLimited?: boolean;
+  fairUse?: boolean;
+  noRetry?: boolean;
+  // A 409 the server says may be overridden — the semantic duplicate gate, not the byte-hash one.
+  // Without this the owner meets a wall on a file the server itself calls overridable.
+  canForce?: boolean;
+  retrying?: boolean;
   // present for document / duplicate → deep-link + focus in Mijn bestanden
   link?: { folderId: string | null; focusId: string };
   // [INTAKE-FOCUS] present for invoice/receipt → "Naar controle →" deep-links to
@@ -2887,6 +2911,9 @@ const RESULT_META = {
   bank:      { icon: "🏦", color: "#1a73e8",  labelKey: "ink.result.bank" },
   duplicate: { icon: "ℹ️", color: "#5f6368",  labelKey: "ink.result.duplicate" },
   error:     { icon: "⚠️", color: "#b3261e",  labelKey: "ink.result.error" },
+  // [BATCH-HERKANSING] Over the per-drop cap. NOT an error and NOT a success: nothing was sent,
+  // nothing was lost, and the file is named so the owner knows exactly which ones to drop again.
+  skipped:   { icon: "⏸️", color: "#9a5b00",  labelKey: "ink.result.skipped" },
 } as const satisfies Record<IntakeResult["status"], { icon: string; color: string; labelKey: string }>;
 
 function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
@@ -2908,16 +2935,18 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
   // pages of ONE invoice (photograph or pick), we combine them into a single multi-page PDF,
   // and send it as ONE file — so a 2/3-page invoice never becomes 2/3 separate invoices.
   const [mpOpen, setMpOpen] = useState(false);
-  const [mpPages, setMpPages] = useState<File[]>([]);
+  // [MULTI-PAGE] A single invoice with more pages than this is unusual — cap so the combined
+  // PDF and the AI read stay sane. Well above any real paper invoice.
+  const MAX_PAGES = 20;
+  // [PAGINA-VOLGORDE] The tray — pages, thumbnails, order and what the last add did — is one
+  // shared piece of state, identical to the one on /dashboard/upload.
+  const tray = usePageTray(MAX_PAGES);
   const [combining, setCombining] = useState(false);
   const mpCameraRef = useRef<HTMLInputElement>(null);
   const mpFileRef = useRef<HTMLInputElement>(null);
 
   // [INTAKE-MULTI] Max files per batch — protects the server / AI from a huge drop.
   const MAX_BATCH = 20;
-  // [MULTI-PAGE] A single invoice with more pages than this is unusual — cap so the combined
-  // PDF and the AI read stay sane. Well above any real paper invoice.
-  const MAX_PAGES = 20;
 
   // [INTAKE-KEEP-ALL] Accept every common invoice/document format. PDFs and images go to the
   // extractor; the rest (XML/UBL e-invoices, Office docs, CSV, e-mail files, bank exports) are
@@ -2930,7 +2959,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
 
   // [INTAKE-FEEDBACK] Upload one file via /api/intake and map the response to a
   // structured outcome (never throws) — the modal renders the destination.
-  const uploadOne = async (file: File): Promise<IntakeResult> => {
+  const uploadOne = async (file: File, force = false): Promise<IntakeResult> => {
     try {
       // [UPLOAD-PLAFOND] Fit an image OR a PDF to the upload budget, and answer a platform 413 by
       // squeezing harder rather than failing. This path normalized images only, so a scanned
@@ -2938,6 +2967,10 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       const { response: res } = await sendWithFit(file, (f) => {
         const formData = new FormData();
         formData.append("file", f);
+        // [BATCH-HERKANSING] "Toch toevoegen" on a semantic duplicate — the same override
+        // /dashboard/upload sends. Never set by itself: only when the owner presses the button
+        // the server's own `canForce` put there.
+        if (force) formData.append("force", "true");
         return fetch("/api/intake", { method: "POST", body: formData });
       });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
@@ -2982,9 +3015,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       if ((data as { duplicate?: boolean }).duplicate) {
         const existing = (data as { existing?: { id: string; folder_id: string | null } }).existing;
         return {
-          name: file.name, status: "duplicate",
+          name: file.name, status: "duplicate", file,
           message: (data as { error?: string }).error || t('ink.result.duplicate'),
           link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
+          // The server says whether this one may be overridden. The byte-hash gate deliberately
+          // may not; the semantic one may, and this screen used to offer neither.
+          canForce: (data as { canForce?: boolean }).canForce === true && !force,
         };
       }
       // [UPLOAD-ERRORS] The same translator /dashboard/upload and the Toevoegen sheet use. This
@@ -2993,13 +3029,22 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       // (monthly read allowance spent) read as a breakage although the server sends the reason and
       // the way out; a 413 or 504 comes from the PLATFORM with an HTML body, so `data.error` does
       // not exist there at all and a perfectly fine file was reported as failed.
+      // [UPLOAD-ERRORS] The translator returns four things and this screen read one of them. The
+      // other three decide whether a second attempt is worth offering at all: a 402 and a 413
+      // return the same answer forever, a 429 does not.
+      const failure = describeUploadFailure(res.status, (data as { error?: string }).error);
       return {
         name: file.name,
         status: "error",
-        message: describeUploadFailure(res.status, (data as { error?: string }).error).message,
+        file,
+        message: failure.message,
+        rateLimited: failure.rateLimited,
+        fairUse: failure.fairUse,
+        noRetry: failure.noRetry,
       };
     } catch {
-      return { name: file.name, status: "error", message: t('ink.upload.mislukt') };
+      // A connection that dropped is the most retryable failure there is — keep the file.
+      return { name: file.name, status: "error", file, message: t('ink.upload.mislukt') };
     }
   };
 
@@ -3010,16 +3055,24 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
     if (uploading || !fileList || fileList.length === 0) return;
 
     const all = Array.from(fileList);
-    if (all.length > MAX_BATCH) {
-      toast(t('ink.upload.maxBatch', { max: MAX_BATCH, n: all.length }), { tone: "error" });
-      return;
-    }
 
     const accepted: File[] = [];
     const collected: IntakeResult[] = [];
     for (const f of all) {
       if (isOkType(f)) accepted.push(f);
-      else collected.push({ name: f.name, status: "error", message: t('ink.upload.nietOndersteund') });
+      else collected.push({ name: f.name, status: "error", noRetry: true, message: t('ink.upload.nietOndersteund') });
+    }
+
+    // [BATCH-HERKANSING] Over the cap, the batch is SPLIT — it used to be refused whole.
+    //
+    // Dropping 25 files got a toast and nothing else: not one of the 25 was sent, and the owner
+    // was left to work out which twenty to drop first. The cap exists to protect the reader from a
+    // huge burst, and taking the first twenty does that just as well. The rest get a row of their
+    // own, by name, saying they were not sent — so the second drop is obvious instead of a
+    // reconstruction. Nothing is lost either way; the difference is whether the owner can see it.
+    const overflow = accepted.splice(MAX_BATCH);
+    for (const f of overflow) {
+      collected.push({ name: f.name, status: "skipped", file: f, message: t('ink.result.buitenBatch', { max: MAX_BATCH }) });
     }
 
     if (accepted.length === 0) {
@@ -3070,24 +3123,19 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       toast(t('ink.mp.alleenFotos'), { tone: "error" });
       return;
     }
-    setMpPages((prev) => {
-      const merged = [...prev, ...imgs];
-      if (merged.length > MAX_PAGES) {
-        toast(t('ink.mp.maxPaginas', { max: MAX_PAGES }), { tone: "error" });
-        return merged.slice(0, MAX_PAGES);
-      }
-      return merged;
-    });
+    // [PAGINA-VOLGORDE] Order, re-picks and overflow are one decision, taken in page-order.ts and
+    // REPORTED by the tray. This used to append the browser's own order and trim the surplus
+    // inside a state updater — see the module header for what that cost.
+    tray.add(imgs);
   };
-  const removeMpPage = (idx: number) => setMpPages((prev) => prev.filter((_, i) => i !== idx));
-  const cancelMultiPage = () => { setMpOpen(false); setMpPages([]); };
+  const cancelMultiPage = () => { setMpOpen(false); tray.reset(); };
   const combineAndUpload = async () => {
     // [MP-GUARD] Never run while a normal batch upload is in flight — both write the results
     // modal, and the loser's outcome would silently vanish.
-    if (mpPages.length === 0 || combining || uploading) return;
+    if (tray.pages.length === 0 || combining || uploading) return;
     setCombining(true);
     try {
-      const pdf = await combineImagesToPdf(mpPages);
+      const pdf = await combineImagesToPdf(tray.files);
       const result = await uploadOne(pdf);
       // [MP-RETRY] On a transient upload failure, KEEP the collected pages + the panel so the
       // owner can retry — never make them re-photograph every page.
@@ -3096,7 +3144,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         return;
       }
       setMpOpen(false);
-      setMpPages([]);
+      tray.reset();
       onUploaded();
       setResults([result]);
       setShowResults(true);
@@ -3109,6 +3157,44 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       setCombining(false);
     }
   };
+
+  // ── [BATCH-HERKANSING] A second attempt, without going back to the file manager ────────────
+  //
+  // The file is on the row (see IntakeResult.file), so a retry is one press. Which rows may offer
+  // one is decided by describeUploadFailure, not by the status: a 402 and a 413 give the identical
+  // answer forever, and a button that is guaranteed to fail teaches the owner to distrust the ones
+  // that work.
+  const canRetry = (r: IntakeResult) =>
+    !!r.file && !r.retrying && (r.status === "skipped" || (r.status === "error" && !r.noRetry));
+
+  const runAgain = async (indexes: number[], force = false) => {
+    const jobs = indexes
+      .map((i) => ({ i, row: results[i] }))
+      .filter(({ row }) => row && !!row.file && !row.retrying);
+    if (jobs.length === 0) return;
+
+    setResults((prev) => prev.map((r, i) => (jobs.some((j) => j.i === i) ? { ...r, retrying: true } : r)));
+    for (const { i, row } of jobs) {
+      const outcome = await uploadOne(row.file!, force);
+      // Patch by INDEX and keep the file: a second failure must still be retryable, and the row
+      // must not silently become a row about a different file.
+      setResults((prev) => prev.map((r, at) => (at === i ? { ...outcome, retrying: false } : r)));
+    }
+    // A retry that landed changed the queue behind the modal, exactly like the first pass did.
+    onUploaded();
+  };
+
+  const retryableIndexes = results.flatMap((r, i) => (canRetry(r) ? [i] : []));
+
+  // [BATCH-HERKANSING] Leaving mid-batch loses whatever has not been sent yet, and the results
+  // modal has not opened, so there is no trace at all of what did and did not go up. The browser
+  // decides the wording; what matters is that the question gets asked.
+  useEffect(() => {
+    if (!uploading) return;
+    const ask = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", ask);
+    return () => window.removeEventListener("beforeunload", ask);
+  }, [uploading]);
 
   // [INTAKE-FEEDBACK] Close the modal AND refresh so new invoices show in the queue.
   const closeResults = () => {
@@ -3254,20 +3340,17 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
             {t('ink.mp.uitleg')}
           </div>
 
-          {/* Collected pages */}
-          {mpPages.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-              {mpPages.map((f, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#fff", borderRadius: 10, border: "1px solid #e5e5ea" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#007aff", minWidth: 58 }}>{t('ink.mp.pagina', { n: i + 1 })}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "#5f6368", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <button onClick={() => removeMpPage(i)} aria-label={t('ink.verwijderPagina')}
-                    disabled={combining}
-                    style={{ border: "none", background: "transparent", color: "#70757a", fontSize: 18, cursor: combining ? "default" : "pointer", lineHeight: 1 }}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* [PAGINA-VOLGORDE] Collected pages — thumbnails, and the order the owner can correct. */}
+          <div style={{ marginBottom: 12 }}>
+            <PageTray
+              pages={tray.pages}
+              notice={tray.notice}
+              accent="#007aff"
+              disabled={combining}
+              onMove={tray.move}
+              onRemove={tray.remove}
+            />
+          </div>
 
           {/* Add-page actions */}
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -3287,11 +3370,11 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
               style={{ padding: "11px 16px", borderRadius: 12, border: "none", background: "#f1f3f4", color: "#5f6368", fontWeight: 600, fontSize: 14, cursor: combining ? "default" : "pointer" }}>
               {t('ink.annuleer')}
             </button>
-            <button onClick={combineAndUpload} disabled={combining || uploading || mpPages.length === 0}
+            <button onClick={combineAndUpload} disabled={combining || uploading || tray.pages.length === 0}
               style={{ flex: 1, padding: "11px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
-                background: combining || uploading || mpPages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
-                cursor: combining || uploading || mpPages.length === 0 ? "default" : "pointer" }}>
-              {combining ? t('act.bezig') : mpPages.length > 0 ? (mpPages.length === 1 ? t('ink.mp.combineerEen') : t('ink.mp.combineerMeer', { n: mpPages.length })) : t('ink.mp.voegEerstToe')}
+                background: combining || uploading || tray.pages.length === 0 ? "#c7c7cc" : "#007aff", color: "#fff",
+                cursor: combining || uploading || tray.pages.length === 0 ? "default" : "pointer" }}>
+              {combining ? t('act.bezig') : tray.pages.length > 0 ? (tray.pages.length === 1 ? t('ink.mp.combineerEen') : t('ink.mp.combineerMeer', { n: tray.pages.length })) : t('ink.mp.voegEerstToe')}
             </button>
           </div>
         </div>
@@ -3384,11 +3467,54 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                           {t('ink.result.naarBank')} →
                         </Link>
                       )}
+                      {/* [BATCH-HERKANSING] The second attempt, on the file this row is about.
+                          Only where it can actually succeed — see canRetry. */}
+                      {canRetry(r) && (
+                        <button
+                          type="button"
+                          onClick={() => runAgain([i])}
+                          style={{ marginTop: 6, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1a73e8", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          {t('ink.result.opnieuw')}
+                        </button>
+                      )}
+                      {/* A semantic duplicate the SERVER says may be overridden. The byte-hash
+                          gate never sets canForce, so an identical file still cannot slip past. */}
+                      {r.status === "duplicate" && r.canForce && !r.retrying && (
+                        <button
+                          type="button"
+                          onClick={() => runAgain([i], true)}
+                          style={{ marginTop: 6, marginInlineStart: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "#9a5b00", fontSize: 12, fontWeight: 600, textDecoration: "underline" }}
+                        >
+                          {t('ink.result.tochToevoegen')}
+                        </button>
+                      )}
+                      {r.retrying && (
+                        <p style={{ fontSize: 12, color: "#5f6368", margin: "6px 0 0", fontWeight: 600 }}>{t('act.bezig')}</p>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
+
+            {/* [BATCH-HERKANSING] One press for every row that can still succeed. On a drop of
+                twenty this is the difference between finishing the batch and re-picking files by
+                hand — which is where a purchase invoice quietly never gets added. */}
+            {retryableIndexes.length > 0 && (
+              <button
+                onClick={() => runAgain(retryableIndexes)}
+                style={{
+                  width: "100%", padding: "14px", borderRadius: 14, marginBottom: 10,
+                  background: "#fff", color: "#1a73e8", border: "1.5px solid #1a73e8",
+                  fontWeight: 700, fontSize: 15, cursor: "pointer",
+                }}
+              >
+                {retryableIndexes.length === 1
+                  ? t('ink.result.alleOpnieuwEen')
+                  : t('ink.result.alleOpnieuwMeer', { n: retryableIndexes.length })}
+              </button>
+            )}
 
             <button
               onClick={closeResults}
