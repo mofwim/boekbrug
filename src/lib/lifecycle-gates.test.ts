@@ -18193,3 +18193,30 @@ test("[GEEN-STILLE-KAP] nothing the accountant receives is assembled from a trun
   const reads = [...src.matchAll(/\.from\(\s*['"][a-z_]+['"]\s*\)/g)].length;
   assert.ok(reads > 15, `only ${reads} reads found in closing-package.ts — this gate is asleep`);
 });
+
+test("[BANK-OVERAPPLIED-LOUD] de enige waarborg tegen een niet-gesloten race meldt ook haar eigen uitval", () => {
+  // Deze route zegt met zoveel woorden dat ze de race NIET kan sluiten: twee gelijktijdige
+  // bevestigingen op dezelfde bankregel lezen allebei de zusterkoppelingen vóór een van beide
+  // heeft geschreven, "the write path has no cross-request mutex (only an atomic RPC could close
+  // that fully — documented as deferred)". Wat er in plaats daarvan is beloofd, is dít: "the state
+  // can never be silently wrong" — de som wordt NA de eigen schrijving herlezen, en boven het
+  // bedrag van de regel volgt een auditregel plus een melding aan de eigenaar.
+  //
+  // Die herlezing las haar eigen fout niet. supabase-js gooit niet, dus een mislukte herlezing gaf
+  // `data: null` → `?? []` → som 0 → `0 > payAmount` onwaar → geen auditregel, geen melding. De
+  // enige waarborg tegen de enige race die dit bestand openlaat, verdween precies dan in stilte.
+  const src = code("src/app/api/bank/confirm/route.ts");
+  assert.match(src, /const \{ data: sumRows, error: sumErr \}/,
+    "de herlezing van de som leest haar fout weer niet");
+  assert.match(src, /if \(sumErr\) throw new Error\(sumErr\.message\)/,
+    "een mislukte herlezing telt weer door als een som van 0");
+  // Blijft best-effort — de boekingen staan er al — maar niet-gekeken laat nu een spoor na.
+  assert.match(src, /action: "bank\.overapplied_check_failed"/,
+    "een niet-uitgevoerde controle laat weer geen spoor na, dus 'geen alarm' betekent weer twee dingen");
+  // En de auditregel moet een ZIN hebben, anders leest het logboek hem als een identifier. De
+  // [LOGBOEK]-poorten bewaken dat al voor elke actie; dit pint de koppeling van dit paar.
+  assert.match(code("src/lib/audit.ts"), /\| 'bank\.overapplied_check_failed'/,
+    "de actie staat niet in de AuditAction-union");
+  assert.match(code("src/lib/i18n/messages.ts"), /'log\.bank\.overapplied_check_failed':/,
+    "de actie heeft geen zin, dus het logboek toont haar sleutel");
+});
