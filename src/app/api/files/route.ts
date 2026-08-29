@@ -11,6 +11,7 @@
 //   no path/flag split. This route is now owner-scoped only.
 
 import { NextRequest, NextResponse } from "next/server";
+import { amsterdamYear, amsterdamMonth } from "@/lib/format-nl";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { uploadDocument, listDocuments } from "@/lib/documents";
 
@@ -60,10 +61,14 @@ export async function POST(req: NextRequest) {
   // the current quarter for anything missing/out-of-range.
   const rawYear    = Number(formData.get("year"));
   const rawQuarter = Number(formData.get("quarter"));
+  // [TZ] The fallback is the OWNER's calendar. On a UTC server, between midnight and 01:00/02:00
+  // Amsterdam, the server's date is still yesterday — so a file uploaded just after New Year, or
+  // just after a quarter turns, is stored under the previous period. Both the storage path and
+  // `period` are written from these two numbers.
   const year      = Number.isInteger(rawYear) && rawYear >= 2000 && rawYear <= 2100
-    ? rawYear : now.getFullYear();
+    ? rawYear : amsterdamYear(now);
   const quarter   = Number.isInteger(rawQuarter) && rawQuarter >= 1 && rawQuarter <= 4
-    ? rawQuarter : Math.ceil((now.getMonth() + 1) / 3);
+    ? rawQuarter : Math.ceil(amsterdamMonth(now) / 3);
   const invoiceId = (formData.get("invoice_id") as string | null) ?? undefined;
   const notes     = (formData.get("notes")     as string | null) ?? undefined;
   // [BESTANDEN-DUP] explicit "upload again" confirmation from the dup modal
