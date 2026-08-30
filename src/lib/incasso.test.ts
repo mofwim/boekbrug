@@ -1,6 +1,7 @@
 // [WIK] Pure node test — run: npx tsx src/lib/incasso.test.ts
 import {
   aggregateWikClaims,
+  claimableForWik,
   incassokosten,
   debtorTypeOf,
   wikDeadline,
@@ -155,6 +156,61 @@ console.log("\n— [WIK-EEN-AANMANING] one aanmaning per debtor, not per invoice
   const zakelijk = buildWikNotice({ openstaand: 1000, sentIso: "2026-08-16", debtorType: "business" })!;
   check("handelsrente starts the day after the vervaldatum", /dag na de vervaldatum/.test(zakelijk.sentence));
   check("…and the consumer letter still names no start date", !/vervaldatum/.test(een.sentence));
+}
+
+// ── [WIK-VORDERING] What may stand in the hoofdsom of a statutory demand ─────────────────────
+//
+// The reminder cron built that sum from its CANDIDATE set and narrowed it nowhere, so two kinds of
+// row walked into a legal demand: a creditnota (an outgoing document with a NEGATIVE total, which
+// every openstaand helper turns into a positive magnitude) and an invoice that is not yet due.
+//
+// The cost is not the difference. Art. 6:96 lid 6 BW applies the staffel once over the debtor's
+// total hoofdsom, and an overstated hoofdsom is the standard ground on which the WHOLE
+// incassokosten claim is struck — for a consumer, lid 5 makes that dwingend recht.
+{
+  const vandaag = 100;
+  const basis = { invoiceType: "factuur", dueDayNumber: 80, todayDayNumber: vandaag, open: 1000 };
+
+  check("an overdue invoice with money open IS hoofdsom", claimableForWik(basis) === true);
+
+  // The € 500 credit the owner issued to settle a dispute, added to the demand as € 500 owed.
+  check("a creditnota is never hoofdsom",
+    claimableForWik({ ...basis, invoiceType: "creditnota" }) === false);
+
+  // The € 2.000 invoice payable next month, demanded today "binnen 14 dagen".
+  check("an invoice that is not yet due is not hoofdsom",
+    claimableForWik({ ...basis, dueDayNumber: 120 }) === false);
+
+  // Verzuim begins the day AFTER the term expires — the due date itself is not yet overdue.
+  check("the due date itself is not yet overdue",
+    claimableForWik({ ...basis, dueDayNumber: vandaag }) === false);
+  check("…and one day past it is",
+    claimableForWik({ ...basis, dueDayNumber: vandaag - 1 }) === true);
+
+  // No term can have expired if none was ever stated. Refusing is the safe direction.
+  check("no due date at all is not hoofdsom",
+    claimableForWik({ ...basis, dueDayNumber: null }) === false);
+
+  check("nothing still open is not hoofdsom", claimableForWik({ ...basis, open: 0 }) === false);
+  check("a negative openstaand is not hoofdsom either", claimableForWik({ ...basis, open: -50 }) === false);
+
+  // What it deliberately does NOT refuse: an invoice whose reminder is not due today. That is
+  // reminderTierDue's question, and dropping it here would UNDERSTATE the demand — costing the
+  // owner money they really are owed.
+  check("an invoice twenty days overdue on a non-offset day is still hoofdsom",
+    claimableForWik({ ...basis, dueDayNumber: vandaag - 20 }) === true);
+
+  // And the staffel over a corrected hoofdsom: the demand in the audit's own scenario drops from
+  // € 3.500 (invoice + credited invoice + not-yet-due invoice) to the € 1.000 actually owed.
+  const fout = aggregateWikClaims([
+    { invoiceNumber: "F-1", open: 1000 },
+    { invoiceNumber: "CN-1", open: 500 },
+    { invoiceNumber: "F-2", open: 2000 },
+  ]);
+  const goed = aggregateWikClaims([{ invoiceNumber: "F-1", open: 1000 }]);
+  check("the overstated hoofdsom was 3500", fout.principal === 3500);
+  check("the real one is 1000", goed.principal === 1000);
+  check("and the fee it carries drops with it", incassokosten(3500) === 475 && incassokosten(1000) === 150);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
