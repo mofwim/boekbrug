@@ -124,7 +124,10 @@ export async function GET(req: NextRequest) {
 
   // The TRUE remaining count — an exact head-count, independent of the page size.
   // This is what governs "alles gecategoriseerd": only 0 here means truly done.
-  const { count: totalRemaining } = await supabase
+  // [NO-SILENT-EMPTY] Dit getal beslist "alles gecategoriseerd": alleen 0 is klaar. Een mislukte
+  // telling werd via `?? 0` diezelfde nul, dus een hapering meldde een schone bankpagina terwijl
+  // er regels lagen te wachten — de enige conclusie die dit scherm nooit ten onrechte mag trekken.
+  const { count: totalRemaining, error: totalRemainingErr } = await supabase
     .from("bank_transactions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
@@ -212,10 +215,14 @@ export async function GET(req: NextRequest) {
     items,
     // items.length is only this page; totalRemaining is the honest DB-wide count.
     count: items.length,
-    total_remaining: totalRemaining ?? items.length,
+    // Onleesbaar → items.length, en dat is precies wat de zin eronder nodig heeft: dan zegt
+    // has_more niet "je bent klaar" maar "we weten het niet zeker", en de UI blijft doorvragen.
+    total_remaining: totalRemainingErr ? items.length : totalRemaining ?? items.length,
     // How many on THIS page could be auto-applied (a hint for the bulk button).
     confident_available: confidentAvailable,
-    has_more: (totalRemaining ?? 0) > items.length,
+    // [NO-SILENT-EMPTY] Een mislukte telling mag geen "alles gecategoriseerd" worden. Zolang
+    // deze pagina vol is, is er waarschijnlijk meer — dat is de veilige kant: verder kijken.
+    has_more: totalRemainingErr ? items.length >= PAGE_SIZE : (totalRemaining ?? 0) > items.length,
   });
 }
 
@@ -386,7 +393,7 @@ async function bulkApply(
   }
 
   // The honest remaining total after the sweep.
-  const { count: remaining } = await supabase
+  const { count: remaining, error: remainingErr } = await supabase
     .from("bank_transactions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
@@ -398,7 +405,8 @@ async function bulkApply(
     ok: true,
     applied,
     skipped,          // left untouched because the suggestion was only a sign-guess
-    remaining: remaining ?? 0,
+    // null = niet geteld. Nul zou "klaar" betekenen, en dat weet deze lezing niet.
+    remaining: remainingErr ? null : remaining ?? 0,
   });
 }
 

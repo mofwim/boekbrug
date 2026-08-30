@@ -28,6 +28,10 @@ import { useLocale } from '@/lib/i18n/use-locale'
 // ─────────────────────────────────────────────────────────
 
 function attentionColor(r: ClientReadiness): string {
+  // [NO-SILENT-EMPTY] Onleesbaar is geen rust. Zonder deze regel viel een klant met een mislukte
+  // telling door naar het grijze "niets in behandeling" — de kleur die zegt dat er niets te doen
+  // is, over een klant waarvan we niets weten.
+  if (r.readFailed) return '#B3261E'                            // unreadable — the numbers are floors
   if (r.openQuestions > 0) return '#EA4335'                     // an open question — act
   if (r.sharedInvoices > r.processedInvoices) return '#FBBC04'  // items still to process
   return '#DADCE0'                                              // nothing pending (neutral)
@@ -36,6 +40,9 @@ function attentionColor(r: ClientReadiness): string {
 // [TAAL] The translator travels in — a module-level helper cannot call a hook, and a sentence
 // built out here would be the one string on this screen that never gets translated.
 function readinessLine(t: Translator, r: ClientReadiness): string {
+  // [NO-SILENT-EMPTY] Vóór alle andere takken: "Geen facturen dit kwartaal" is een conclusie, en
+  // een mislukte telling mag er nooit uitzien als een lege administratie.
+  if (r.readFailed) return t('bh.klant.readiness.onleesbaar')
   if (r.sharedInvoices === 0) return t('bh.klant.readiness.none')
   return t('bh.klant.readiness.processed', {
     done: r.processedInvoices,
@@ -475,7 +482,9 @@ export default function KlantenBeheer({ initialClients, clientsUnreadable, openI
                   <span style={{ fontSize: 11, color: '#5F6368', flexShrink: 0, whiteSpace: 'nowrap' }}>
                     {readinessLine(t, client.readiness)}
                   </span>
-                  {client.readiness.openQuestions > 0 && (
+                  {/* [NO-SILENT-EMPTY] Geen vragenbadge op een stand die niet gelezen kon
+                      worden: het getal is dan een ondergrens, geen telling. */}
+                  {!client.readiness.readFailed && client.readiness.openQuestions > 0 && (
                     <span style={{
                       fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4, flexShrink: 0,
                       backgroundColor: '#FCE8E6', color: '#C5221F',

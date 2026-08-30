@@ -9889,6 +9889,94 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
 });
 
+test("[EEN-DAG-EEN-BRON] a guard that cannot see is not permission", () => {
+  // Both routes that can claim a day's revenue check first whether something else already claims
+  // it. Both guards answered a FAILED read with the same values that mean "nothing is there":
+  // a null daily_turnover row, a cash count of 0. Those are exactly the inputs daySourceConflict
+  // reads as "no conflict", so a hiccup did not block the write — it authorised it.
+  //
+  // What the guard prevents is silent in both directions:
+  //
+  //   · a hand-typed day upserts on (user_id, turnover_date) over an imported Z-report, and
+  //     bookTurnoverRows validates arithmetic and duplicate dates but never `source`;
+  //   · a turnover row on a date that already carries cash 'omzet' entries switches those entries
+  //     off in every engine at once (financial-result's covered-day rule), so the money does not
+  //     disagree with anything — it stops existing.
+  //
+  // Neither has a second reader. rebuildTillDay re-checks daily_turnover.source, but only on the
+  // Kassa's own route, and it knows nothing about cash_entries.
+  for (const f of ["src/app/api/till/sale/route.ts", "src/app/api/turnover/day/route.ts"]) {
+    const src = code(f);
+    assert.match(src, /readable: !turnover(Err|Err) && /,
+      `${f}'s claims must report whether they could be read at all`);
+    assert.match(src, /if \(!claims\.readable\) \{[\s\S]{0,200}?status: 503/,
+      `${f} must refuse the write on an unreadable guard, not proceed`);
+    // …and the refusal must come BEFORE the conflict verdict, or it decides nothing.
+    assert.ok(src.indexOf("if (!claims.readable)") < src.indexOf("const conflict = daySourceConflict(claims)"),
+      `${f} must refuse before it judges`);
+  }
+  // The one deliberate exception stays documented and stays alone: a MISSING till_sales table is a
+  // reasoned zero (the migration ships after the code), a failed read is not.
+  assert.match(code("src/app/api/turnover/day/route.ts"),
+    /tillSaleCount: tillRes\.error \? 0 : tillRes\.count \?\? 0,/);
+  assert.match(code("src/app/api/turnover/day/route.ts"), /readable: !turnoverErr && !cashRes\.error,/,
+    "…so till_sales is deliberately not part of `readable`");
+});
+
+test("[NO-SILENT-EMPTY] every counted read binds its error, because zero is a claim", () => {
+  // supabase-js answers a failed query with { data: null, error } and never throws, so
+  // `const { count } = await supabase.from(…)` turns an outage into `undefined`, and every caller
+  // spells the next line `count ?? 0`. Zero is then indistinguishable from a read that did not
+  // happen — and on a counter, zero is never neutral. It is the sentence "there is nothing".
+  //
+  // Eleven of twenty-seven counted reads did this. What they said out loud:
+  //
+  //   · /api/till/sale + /api/turnover/day — the ONE-DAY-ONE-SOURCE guard. A failed count reads
+  //     as "no cash sales on this day", the guard opens, and the turnover row switches that day's
+  //     cash entries off in every engine at once with nothing on any screen saying so.
+  //   · /api/bank/categorize — "alles gecategoriseerd", the one conclusion that screen may never
+  //     draw wrongly, drawn from a count that failed.
+  //   · the accountant's board — "0 open vragen" and "zonder bank" about a client who has
+  //     questions waiting and delivers statements every quarter.
+  //   · the owner's home screen — the badge for an open question from their bookkeeper.
+  //
+  // So the rule is absolute rather than a list: bind the error. What you then DO with it differs
+  // per surface — refuse (a guard), leave the badge off (a counter), report it (a board) — and
+  // the pinned tests elsewhere in this file say which. What no surface may do is not look.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const blind: string[] = [];
+  let tellingen = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    // A destructuring of an awaited supabase call — either directly on `.from(`, or the array
+    // form of a Promise.all whose elements are such calls.
+    for (const m of src.matchAll(
+      /(?:const|let)\s*(\[[^\]]{0,900}\]|\{[^}]{0,200}\})\s*=\s*await\s+(?:Promise\.all\(|[A-Za-z_$][\w$]*\s*\n?\s*\.from\()/g)) {
+      if (!/count/.test(m[1])) continue;
+      for (const el of m[1].matchAll(/\{[^{}]*\bcount\b[^{}]*\}/g)) {
+        tellingen++;
+        if (!/error/.test(el[0])) {
+          blind.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${el[0].replace(/\s+/g, " ").slice(0, 48)}`);
+        }
+      }
+    }
+  }
+  assert.ok(tellingen >= 20,
+    `only ${tellingen} counted reads were seen; the scan must be broken, and a scan that finds ` +
+    "nothing passes for the wrong reason");
+  assert.deepEqual(blind, [],
+    "these read a count and drop the error, so a failed read becomes 0 — which every caller then " +
+    "prints as a fact:\n  " + blind.join("\n  "));
+});
+
 test("[CREDIT-BRON] the credit notes are read where a settled one still counts", () => {
   // A creditnota is a document with its own lifecycle: it can be sent, and it can be settled, at
   // which point ITS status is 'paid'. There is such a row in this database today.
@@ -15196,7 +15284,41 @@ test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () =>
   // The success paths still say so explicitly, or `readFailed` would be undefined and read as
   // false by accident rather than by statement.
   assert.match(repo, /return \{ readFailed: false, clients: valid\.sort/);
-  assert.match(repo, /return \{ readFailed: false, todos: todos\.sort/);
+  // …except the to-do feed, whose `false` this gate used to PIN — and which was therefore wrong
+  // in a way this assertion protected. The three per-client counts inside the loop were read as
+  // bare `{ count }`, so the feed could be missing a client's open question and still return
+  // readFailed:false. Worse, the bank branch pushes its todo when the count is ZERO, so a failed
+  // read INVENTED "geen bankgegevens dit kwartaal" about a client who delivers every quarter.
+  // A literal false here is the one value that cannot be right.
+  assert.match(repo, /return \{ readFailed: telFout, todos: todos\.sort/,
+    "the feed's completeness must be a measurement of its own counts, not a constant");
+  assert.match(repo, /if \(vraagErr \|\| unprocessedErr \|\| bankErr\) \{\s*\n\s*telFout = true;?/,
+    "…and every one of the three counts feeds it");
+  assert.match(repo, /if \(!bankErr && \(bankCount \?\? 0\) === 0\) \{/,
+    "a todo may not be MADE out of a count that failed");
+
+  // The third read in this file that answered a failure with an empty book. Its one caller is the
+  // Werkboard, which renders an empty list as "Nog geen klanten gekoppeld" — the same sentence,
+  // on the board an accountant opens to see whose aangifte is due.
+  assert.match(repo, /console\.error\('\[BOEKHOUDER-LEEG\] linked client list unreadable'[\s\S]{0,200}?return \{ clients: \[\], readFailed: true \}/);
+  assert.doesNotMatch(repo, /if \(!data\) return \[\]\n\n  type LinkedProfile/,
+    "getLinkedClientList may not collapse a failed read into an empty practice");
+  const werkboard = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(werkboard, /\{klantenOnleesbaar \? \(/,
+    "…and the board must render that BEFORE its empty state, or the flag changes nothing");
+  assert.match(code("src/app/dashboard/accountant/agenda/page.tsx"),
+    /readFailed: klantenOnleesbaar \} = await getLinkedClientList/);
+
+  // Per client: a failed count is not a fact about that client either. It rides on the readiness
+  // rather than on the list, so one unreadable count cannot hide the other thirty-nine clients.
+  assert.match(repo, /hasBankData: !bankErr && \(bankCount \?\? 0\) > 0,/,
+    "'zonder bank' is a claim, and a failed count may not make it");
+  assert.match(repo, /const readFailed = !!\(sharedErr \|\| processedErr \|\| questionsErr \|\| bankErr \|\| lastDocErr\)/);
+  const kaart = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(kaart, /if \(r\.readFailed\) return t\('bh\.klant\.readiness\.onleesbaar'\)/,
+    "the card says the status could not be read, instead of printing floors as counts");
+  assert.match(kaart, /if \(r\.readFailed\) return '#B3261E'/,
+    "…and it does not fall through to the grey 'nothing pending' colour");
 
   // ── The screens. A flag nobody renders is the half-fix this file exists to catch. ──
   const page = code("src/app/dashboard/accountant/page.tsx");

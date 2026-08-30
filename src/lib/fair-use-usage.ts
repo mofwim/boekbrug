@@ -297,11 +297,14 @@ export async function measureUsage(
 
   // 3. Gekoppelde mailboxen — ook gemeten.
   try {
-    const { count } = await client
+    // [NO-SILENT-EMPTY] supabase-js gooit niet, dus de catch hieronder ving deze fout nooit —
+    // een mislukte telling werd stil 0 mailboxen, en dat is precies de "niet te meten" die het
+    // veld hoort weg te laten in plaats van als nul te tellen.
+    const { count, error } = await client
       .from("email_connections")
       .select("user_id", { count: "exact", head: true })
       .eq("user_id", userId);
-    usage.mailboxes = Number(count ?? 0);
+    if (!error) usage.mailboxes = Number(count ?? 0);
   } catch {
     /* niet te meten → laat weg */
   }

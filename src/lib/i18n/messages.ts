@@ -12741,6 +12741,10 @@ export const MESSAGES = {
   'bh.klant.list.noMatch': { nl: 'Geen klanten gevonden voor “{query}”', ar: 'لم يُعثر على عملاء لـ “{query}”', en: 'No clients found for “{query}”' },
   'bh.klant.readiness.none': { nl: 'Geen facturen dit kwartaal', ar: 'لا فواتير هذا الربع', en: 'No invoices this quarter' },
   'bh.klant.readiness.processed': { nl: '{done}/{total} verwerkt · Bank {bank}', ar: '{done}/{total} مُعالَجة · البنك {bank}', en: '{done}/{total} processed · Bank {bank}' },
+  // [NO-SILENT-EMPTY] De derde stand van een klantkaart: niet "niets te doen", maar "we konden het
+  // niet lezen". Zonder deze regel stond er "0/0 verwerkt · Bank —" bij een klant die keurig
+  // aanlevert, en dat is precies het soort zin waar een boekhouder op handelt zonder te twijfelen.
+  'bh.klant.readiness.onleesbaar': { nl: 'Stand niet te lezen', ar: 'تعذّرت قراءة الحالة', en: 'Status could not be read' },
   'bh.klant.openQuestions': { nl: '{count} vraag', ar: '{count} سؤال', en: '{count} question' },
   'bh.klant.unlink.action': { nl: 'Ontkoppelen', ar: 'إلغاء الربط', en: 'Unlink' },
   'bh.klant.unlink.title': { nl: 'Klant ontkoppelen', ar: 'إلغاء ربط العميل', en: 'Unlink client' },
