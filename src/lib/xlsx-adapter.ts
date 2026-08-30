@@ -7,6 +7,7 @@
 
 import * as XLSX from "xlsx";
 import type { Cell } from "./turnover-import";
+import { sniffReadableMime } from "./detect-file";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [SEC-XLSX / C1] Containment for the two known SheetJS CVEs.
@@ -135,7 +136,40 @@ export function withPrototypeGuard<T>(fn: () => T): T {
 }
 
 /** Raw file bytes (xls/xlsx/csv) → a rectangular cell matrix (array of rows of cells). */
+/**
+ * [GEEN-SPREADSHEET] What this file is, when it is plainly not a spreadsheet.
+ *
+ * SheetJS does not refuse a PDF. Handed one it returns rows — 296 of them from a 20KB
+ * grootboek PDF, 2.569 from a 315KB kassarapport — parsed out of binary noise. Nothing
+ * downstream booked those (parseLedgerSheet found no Datum/Ontvangen/Uitgaven header and
+ * returned null), so no wrong figure ever reached the books. What DID reach the owner was
+ * this sentence:
+ *
+ *     "Geen herkenbare grootboek-export (Datum / Ontvangen / Uitgaven) gevonden."
+ *
+ * …about a file that is a grootboek export and does carry those three columns. The message
+ * blamed the content when the problem was the FORMAT, so the one thing the owner needed to
+ * know — ask for the same export as Excel — was the one thing it did not say. A refusal that
+ * misnames its own reason sends someone to check the wrong thing.
+ *
+ * Refusing at the parser rather than in each route is deliberate: six callers reach
+ * sheetBytesToMatrix and only bank-ingest.ts checked the type first. One guard, or five more
+ * chances to forget.
+ */
+export class NotASpreadsheetError extends Error {
+  constructor(readonly mime: string) {
+    super(`not_a_spreadsheet:${mime}`);
+    this.name = "NotASpreadsheetError";
+  }
+}
+
 export function sheetBytesToMatrix(bytes: Uint8Array): Cell[][] {
+  // [GEEN-SPREADSHEET] A PDF or an image is not a spreadsheet with problems — it is a
+  // different kind of file, and saying so is the whole difference between a useful refusal
+  // and a puzzling one. CSV and every real sheet format sniff as null here and pass through
+  // untouched, so this refuses only what SheetJS should never have been handed.
+  const mime = sniffReadableMime(bytes);
+  if (mime) throw new NotASpreadsheetError(mime);
   // [SEC-XLSX] Bound the work before SheetJS sees a single byte, then contain
   // anything the parse tries to leave on a shared prototype. See the block above.
   assertWithinParseLimit(bytes.byteLength);
