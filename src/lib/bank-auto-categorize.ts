@@ -182,11 +182,26 @@ export async function applyLearnedBankCategories(args: {
   const molliePayoutHold = (t: { amount: number | null; counterpart_name: string | null; description: string | null }): boolean =>
     hasRecentMolliePayout && (t.amount ?? 0) > 0 && MOLLIE_RE.test(`${t.counterpart_name ?? ""} ${t.description ?? ""}`);
 
+  // [LEVERANCIER-BEWIJS] The counterparts this owner already holds invoices from. A suppliers row
+  // exists only because an invoice from that party was read, matched and kept, so an outgoing line
+  // to one of them is a cost the administration can prove — and this pass books only what is
+  // proven. Best-effort, like every other read here: no set means no proof means nothing coded,
+  // which is the behaviour before it existed.
+  const supplierKeys = new Set<string>();
+  try {
+    const supRows = await fetchAllRows<{ name: string | null }>((from, to) =>
+      pipeline.from("suppliers").select("name").eq("user_id", userId)
+        .order("id", { ascending: true }).range(from, to));
+    for (const r of supRows) { const k = counterpartKey(r.name); if (k) supplierKeys.add(k); }
+  } catch (e) {
+    console.error("[LEVERANCIER-BEWIJS] supplier read failed — this pass codes no proven costs", e);
+  }
+
   const applied: AutoCategorized[] = [];
   for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }[]) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory);
+    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
     if (!s.confident) continue; // ambiguous → leave for the human (never a guessed cost/omzet)
     // [DUBBEL-GEDEKT] A P&L category over money a paid invoice already explains is a double
     // booking, not a coding. The human links it instead.
