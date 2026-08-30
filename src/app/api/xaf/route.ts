@@ -25,6 +25,7 @@ import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 import { turnoverNetOmzet } from "@/lib/turnover";
 import { amsterdamToday } from "@/lib/format-nl";
 import { buildXafFile, type XafInput } from "@/lib/xaf-export";
+import { reportHandledFailure } from "@/lib/report-handled";
 
 export const dynamic = "force-dynamic";
 
@@ -211,6 +212,19 @@ export async function GET(req: NextRequest) {
     };
 
     const built = buildXafFile(input);
+    // [XAF-NIET-STIL] Een overgeslagen post is geen normale uitkomst. Het bestand zegt het nu zelf
+    // (zie de commentaarregels bovenin), maar dat vertelt alleen de mens die het opent — en een
+    // weigering wijst bijna altijd op een rij die repareerbaar is: een factuur zonder datum, een
+    // verkoopfactuur waarvan het tarief niet uit het totaal volgt. Die hoort in het storingsbeeld,
+    // want anders leert niemand dat het gebeurt.
+    if (built.skipped.length > 0) {
+      reportHandledFailure({
+        tag: "XAF-OVERGESLAGEN",
+        message: "auditfile is incompleet — posten geweigerd bij het samenstellen",
+        severity: "data-integrity",
+        context: { ownerId, year, aantal: built.skipped.length, redenen: [...new Set(built.skipped.map((s) => s.reason))] },
+      });
+    }
     const safeName = (input.company.name || "administratie").replace(/[^a-zA-Z0-9._-]/g, "_");
     return new NextResponse(built.xml, {
       status: 200,
