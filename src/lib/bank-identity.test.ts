@@ -257,5 +257,37 @@ console.log("\n— [TEKEN-EERST] een geheugen-hit is alleen zelfverzekerd als he
   check("transfer-geheugen kent geen tekenregel", suggestIdentity("Eigen rekening", null, -100, "transfer").confident === true);
 }
 
+// ── [LEVERANCIER-BEWIJS] A supplier the owner already holds invoices from ─────────────────────
+//
+// Measured live: 92 of 305 unanswered bank lines have a counterpart that is already a registered
+// supplier, and every one fell through to the bare sign fallback — the app holding the evidence
+// and offering a guess. A supplier row exists only because an invoice from that party was read,
+// matched and kept, so money LEAVING for them is a business cost the administration can prove.
+console.log("\n— leverancier-bewijs —");
+{
+  const out = suggestIdentity("GROOTHANDEL M.H. BAL V.O.F.", "factuur", -811.40, null, null, true);
+  check("money out to a known supplier is a proven cost", out.category === "kosten" && out.confident === true);
+  check("…and says where the proof came from", out.source === "supplier");
+
+  // Money arriving FROM a supplier is a refund or a creditnota, never turnover.
+  const back = suggestIdentity("GROOTHANDEL M.H. BAL V.O.F.", "creditnota", 120, null, null, true);
+  check("money IN from a supplier is never claimed as omzet on that ground", back.source !== "supplier");
+  check("…it falls to the unconfident sign guess, which is honest", back.confident === false);
+
+  // The specific identities must still win — a supplier row may not override any of them.
+  check("the tax office stays tax", suggestIdentity("Belastingdienst", "BTW", -1200, null, null, true).category === "tax");
+  check("a transfer to your own account stays a transfer",
+    suggestIdentity("M Ozturk", "Overboeking naar eigen spaarrekening", -5000, null, null, true).category === "transfer");
+
+  // What the owner confirmed himself outranks everything, as before.
+  check("memory still wins over supplier proof",
+    suggestIdentity("GROOTHANDEL M.H. BAL V.O.F.", "x", -50, "prive", null, true).category === "prive");
+
+  // And an unknown party is untouched by all of this.
+  const unknown = suggestIdentity("Mohammad Ibrahim", "betaling", -900, null, null, false);
+  check("an unregistered counterpart is still only a sign guess", unknown.confident === false);
+  check("…which is exactly the line that needs a human", unknown.category === "kosten");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
