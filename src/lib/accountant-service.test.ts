@@ -12,6 +12,7 @@ import {
   getPreviousQuarter,
   daysUntil,
 } from "../modules/accountant/accountant.service"
+import { amsterdamToday } from "./format-nl"
 
 let passed = 0
 let failed = 0
@@ -31,16 +32,44 @@ check('prev(2026,Q1) = 2025 Q4', (() => { const p = getPreviousQuarter(2026, 1);
 check('prev(2026,Q3) = 2026 Q2', (() => { const p = getPreviousQuarter(2026, 3); return p.year === 2026 && p.quarter === 2 })())
 
 console.log('\n— daysUntil is inclusive-of-today and signed —')
-const now = new Date()
-const pad = (n: number) => String(n).padStart(2, '0')
-const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-check('today → 0', daysUntil(today) === 0)
-const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-const tomorrowIso = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`
-check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
-const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-const yesterdayIso = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`
-check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
+// [TZ] "Today" here must be the OWNER's day, exactly as daysUntil defines it. This block used to
+// build it from `new Date()` — the SERVER's day — and #285 then moved the implementation onto
+// Europe/Amsterdam without moving the test with it. The two agree for 22 hours a day and disagree
+// for the other two: between 22:00 UTC (23:00 in winter) and midnight, Amsterdam is already
+// tomorrow, so all three checks below were off by one and the whole gate set went red. A test that
+// only fails at night is worse than no test — it teaches whoever meets it that gates are noise.
+//
+// Anchoring on amsterdamToday() is not the test marking its own homework: what is being asserted
+// is the SHAPE of the answer (0 today, +1 tomorrow, -1 yesterday, signed), and the shape is what
+// the countdown in front of a verzuimboete depends on.
+const todayNl = amsterdamToday()
+const shiftDays = (iso: string, delta: number): string => {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10)
+}
+check('today → 0', daysUntil(todayNl) === 0)
+check('tomorrow → 1', daysUntil(shiftDays(todayNl, 1)) === 1)
+check('yesterday → -1 (overdue)', daysUntil(shiftDays(todayNl, -1)) === -1)
+
+console.log('\n— het aftellen loopt lineair door over maand-, jaar- en schrikkeljaargrenzen —')
+// Clock-free by construction: a DIFFERENCE of two daysUntil calls cancels "today", so these hold
+// at any hour of any day.
+//
+// Be precise about what they are worth. They do NOT catch the historical bug — that one was the
+// timezone anchor, and it is pinned where it can actually be controlled: format-nl.test.ts feeds
+// amsterdamToday() fixed instants, including "22:00 UTC in summer IS already tomorrow in
+// Amsterdam", which is the exact instant that made this file fail. Nor do they catch the DST
+// arithmetic the #285 message mentions: the old Math.round form absorbs a ±1h error out of 24
+// perfectly well, and returns the same answer as the current one on every pair below (checked by
+// substituting it back, with round, floor and trunc — all three still pass).
+//
+// What they DO pin is that a day is a day: a rewrite that sums month lengths, hard-codes 365, or
+// gets a leap year wrong fails here and nowhere else in this file.
+const span = (from: string, to: string) => daysUntil(to) - daysUntil(from)
+check('over de jaarwisseling heen: 31 dec → 1 jan is één dag', span('2026-12-31', '2027-01-01') === 1)
+check('een heel schrikkeljaar telt 366 dagen', span('2028-01-01', '2029-01-01') === 366)
+check('en een gewoon jaar 365', span('2027-01-01', '2028-01-01') === 365)
+check('februari in een schrikkeljaar heeft 29 dagen', span('2028-02-01', '2028-03-01') === 29)
 
 console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
 // De regressie die dit bestand had moeten tegenhouden en niet kon, omdat het buiten de
