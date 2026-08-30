@@ -180,6 +180,9 @@ export async function GET(req: NextRequest) {
     memEntries.push({ key: m.counterpart_key, category: m.category });
   }
 
+  // [LEVERANCIER-BEWIJS] Which counterparts the owner already holds invoices from.
+  const supplierKeys = await knownSupplierKeys(supabase, user.id);
+
   let confidentAvailable = 0;
   const items = txs.map((t) => {
     const key = counterpartKey(t.counterpart_name);
@@ -187,7 +190,7 @@ export async function GET(req: NextRequest) {
     // No EXACT memory? Borrow from a similar counterpart the owner categorized before — a
     // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
     const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
-    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar);
+    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false);
     if (suggestion.confident) confidentAvailable++;
     return {
       id: t.id,
@@ -334,6 +337,9 @@ async function bulkApply(
   }
   const memMap = new Map<string, string>();
   for (const m of mem) memMap.set(m.counterpart_key, m.category);
+  // [LEVERANCIER-BEWIJS] The sweep applies only CONFIDENT suggestions, and a supplier the owner
+  // holds invoices from makes an outgoing line confident — so the sweep now reaches them too.
+  const supplierKeys = await knownSupplierKeys(supabase, userId);
 
   // Pull the uncategorized lines (capped) and decide per line.
   // [BULK-PAGINATE] `.limit(BULK_MAX)` did NOT deliver BULK_MAX rows. PostgREST caps a response at
@@ -363,7 +369,7 @@ async function bulkApply(
   for (const t of txs) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory);
+    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
     if (!s.confident) { skipped++; continue; }
 
     // Auto-applied, NOT individually confirmed by the owner → category_confirmed:false
@@ -394,6 +400,37 @@ async function bulkApply(
     skipped,          // left untouched because the suggestion was only a sign-guess
     remaining: remaining ?? 0,
   });
+}
+
+/**
+ * [LEVERANCIER-BEWIJS] The counterpart keys of every supplier this owner already holds invoices
+ * from — the evidence behind a "proven cost" suggestion.
+ *
+ * A suppliers row exists only because an invoice from that party was read, matched and kept, so
+ * the set is a statement the administration can back up rather than a guess about a name. Keyed
+ * through counterpartKey, the same normaliser the bank lines go through, so "GROOTHANDEL M.H.
+ * BAL V.O.F." on an invoice and "GROOTHANDEL M.H. BAL" on a statement are one party.
+ *
+ * Best-effort: a set that cannot be read means no proof and therefore no confident suggestion —
+ * the screen still lists every line that needs an answer, which is the behaviour without it.
+ */
+async function knownSupplierKeys(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+): Promise<Set<string>> {
+  const keys = new Set<string>();
+  try {
+    const rows = await fetchAllRows<{ name: string | null }>((from, to) =>
+      supabase.from("suppliers").select("name").eq("user_id", userId)
+        .order("id", { ascending: true }).range(from, to));
+    for (const r of rows) {
+      const k = counterpartKey(r.name);
+      if (k) keys.add(k);
+    }
+  } catch (e) {
+    console.error("[LEVERANCIER-BEWIJS] supplier read failed — no proven-cost suggestions this run", e);
+  }
+  return keys;
 }
 
 // Train per-counterpart memory from an explicit user confirmation.

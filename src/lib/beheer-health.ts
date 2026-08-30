@@ -128,3 +128,46 @@ export function healthAlarm(health: SystemHealth): { subject: string; body: stri
       "op tijd wordt gemeld.",
   };
 }
+
+/**
+ * Read the heartbeat and judge it. The ONE reader, used by both the operator page and the cron
+ * that mails the alarm.
+ *
+ * It exists because those two had the same twenty lines twice, and two readers of one table drift:
+ * the page would have said "healthy" on a window the mail computed differently. It also keeps the
+ * clock read out of a server component's render, where it is an impure call.
+ *
+ * [NO-SILENT-EMPTY] A failed read returns readable:false, never an empty-but-healthy answer.
+ */
+export async function readSystemHealth(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: any,
+  nowMs: number = Date.now(),
+): Promise<SystemHealth> {
+  let rijen: CronRunRow[] = [];
+  try {
+    // cron_runs staat niet in de gegenereerde types (handmatig toegepaste migratie) — dezelfde
+    // versoepelde cast die /api/health en de hartslagmodule zelf gebruiken.
+    const { data, error } = await pipeline
+      .from("cron_runs").select("job, started_at, ok")
+      .order("started_at", { ascending: false }).limit(500);
+    if (error) throw new Error(error.message);
+    rijen = (data ?? []) as CronRunRow[];
+  } catch {
+    return buildSystemHealth({}, nowMs, null, false);
+  }
+
+  // Nieuwste eerst, dus de EERSTE die we per job zien is de laatste run.
+  const laatste: Partial<Record<CronJob, CronRunRow | null>> = {};
+  for (const r of rijen) {
+    const job = r.job as CronJob;
+    if (job in CRON_JOBS && !(job in laatste)) laatste[job] = r;
+  }
+  // De vroegste rij in de hele tabel: judgeCron heeft hem nodig om "sinds we meten nog niet aan de
+  // beurt geweest" te scheiden van "gestopt". Zonder hem meldde de gezondheidscheck elf minuten na
+  // de migratie dat de halve app stilstond.
+  const tijden = rijen
+    .map((r) => (r.started_at ? Date.parse(r.started_at) : NaN))
+    .filter((n) => Number.isFinite(n));
+  return buildSystemHealth(laatste, nowMs, tijden.length > 0 ? Math.min(...tijden) : null, true);
+}

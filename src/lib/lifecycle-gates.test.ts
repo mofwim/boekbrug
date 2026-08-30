@@ -19082,8 +19082,15 @@ test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een cur
   // ── watchingSince is niet optioneel ──────────────────────────────────────
   // Zonder de vroegste rij liegt judgeCron: elf minuten na de migratie meldde de gezondheidscheck
   // dat de halve app stilstond, terwijl die taken simpelweg nog niet aan de beurt waren geweest.
+  assert.match(puur, /Math\.min\(\.\.\.tijden\)/, "de ondergrens van het meten wordt niet meer meegegeven");
+  // ÉÉN lezer voor beide. Twee lezers van dezelfde tabel drijven uit elkaar, en dan staat de
+  // pagina groen terwijl de mail iets anders rekende — over precies dezelfde crons.
   for (const [naam, src] of [["pagina", pagina], ["cron", cron]] as const) {
-    assert.match(src, /Math\.min\(\.\.\.tijden\)/, `${naam}: de ondergrens van het meten wordt niet meer meegegeven`);
+    assert.match(src, /readSystemHealth\(pipeline\)/, `${naam}: leest de hartslag niet meer via de gedeelde lezer`);
+    // Niet "raakt cron_runs nooit aan": de ochtendcron leest die tabel óók voor zijn
+    // [OCHTEND-EENMAAL]-waarborg, en dat is een andere vraag ("ben ik vandaag al gedraaid?") met
+    // een ander antwoord. Wat hier niet mag terugkomen is een tweede plek die zelf OORDEELT.
+    assert.doesNotMatch(src, /buildSystemHealth\(/, `${naam}: velt zelf een oordeel — dat hoort in readSystemHealth`);
   }
 
   // ── Stil bij gezond, luid bij onleesbaar ─────────────────────────────────
@@ -19104,7 +19111,6 @@ test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een cur
   assert.match(cron, /catch \(e\) \{[\s\S]{0,200}?cron-alarm mislukt/);
 
   // ── En een mens ziet het ook zonder mail ─────────────────────────────────
-  assert.match(pagina, /buildSystemHealth\(/);
   assert.match(scherm, /<Systeem systeem=\{systeem\} \/>/, "het blok staat niet meer op de pagina");
   // [NO-SILENT-EMPTY] Onleesbaar is een derde stand, geen groene.
   assert.match(scherm, /if \(!systeem\.readable\) \{/);

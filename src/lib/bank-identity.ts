@@ -188,7 +188,9 @@ export interface IdentitySuggestion {
   // 'similar' = borrowed from a DIFFERENT but similar counterpart the owner categorized
   //             (a suggestion to review, never confident — see below)
   // 'ai'      = a pattern match, or the bare sign fallback
-  source: 'memory' | 'ai' | 'similar';
+  // 'supplier' = money going OUT to a party whose invoices this owner already holds. Not a
+  //             guess about the name: a business relationship the administration can prove.
+  source: 'memory' | 'ai' | 'similar' | 'supplier';
   // TRUE only when the suggestion rests on real evidence FOR THIS counterpart: a
   // category the owner confirmed for it before (memory), or a specific pattern match
   // (tax / prive / transfer / pos_income / fee). FALSE for the bare kosten/omzet
@@ -298,6 +300,9 @@ export function suggestIdentity(
   amount: number,
   memoryCategory?: string | null,
   similar?: SimilarMemoryHit | null,
+  // [LEVERANCIER-BEWIJS] Is this counterpart a supplier this owner already holds invoices from?
+  // Optional and defaulting to false, so every existing caller behaves exactly as it did.
+  knownSupplier?: boolean,
 ): IdentitySuggestion {
   if (memoryCategory) {
     // [TEKEN-EERST] Het geheugen onthoudt de tegenpartij, niet de RICHTING — en een naam kan
@@ -315,6 +320,26 @@ export function suggestIdentity(
   }
   const id = classifyBankTransaction(counterpartName, description, amount);
   if (id !== 'unknown') return { category: id, source: 'ai', confident: true };
+
+  // [LEVERANCIER-BEWIJS] Money LEAVING for a party whose invoices the owner already holds.
+  //
+  // This is not a guess about a name — it is a business relationship the administration can
+  // prove: the supplier registry only ever gets a row because an invoice from that party was
+  // read, matched and kept. Measured live: 92 of 305 unanswered bank lines have a counterpart
+  // that is already a registered supplier, and every one of them was falling through to the bare
+  // sign fallback below — the app holding the evidence and showing a guess.
+  //
+  // Deliberately AFTER classifyBankTransaction, so the specific identities still win: a payment
+  // to the tax office, a transfer between the owner's own accounts, a bank charge and a private
+  // withdrawal are all things a supplier row must not override.
+  //
+  // And deliberately ONE-DIRECTIONAL. Money arriving FROM a supplier is a refund or a creditnota,
+  // not turnover, and this must never say otherwise — the sign fallback below reads it as omzet
+  // and marks itself unconfident, which is the honest handling of a movement nobody has explained.
+  if (knownSupplier && amount < 0) {
+    return { category: 'kosten', source: 'supplier', confident: true };
+  }
+
   // A look-alike counterpart: pre-select its category, but NEVER confident (owner confirms).
   if (similar) return { category: similar.category as Category, source: 'similar', confident: false, similarTo: similar.matchedKey };
   // Fallback: sign alone. A plausible default to SHOW, but never to auto-apply.

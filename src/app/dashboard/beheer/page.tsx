@@ -20,8 +20,7 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { isBeheerder, buildBeheerOverview } from "@/lib/beheer";
 // [BEHEER-GEZOND] Draaien de achtergrondtaken nog? Dat oordeel bestond al (judgeCron) en had één
 // lezer: een endpoint dat je moet curlen. Hier kijkt een mens ernaar.
-import { buildSystemHealth } from "@/lib/beheer-health";
-import { CRON_JOBS, type CronJob, type CronRunRow } from "@/lib/cron-heartbeat";
+import { readSystemHealth } from "@/lib/beheer-health";
 import { decidePlan } from "@/lib/subscription";
 import { BeheerScherm } from "./BeheerScherm";
 
@@ -35,44 +34,11 @@ export default async function BeheerPage() {
 
   const pipeline = createPipelineClient();
 
-  // ── [BEHEER-GEZOND] De systeemkant ────────────────────────────────────────
-  //
-  // Eén lezing voor alle taken: de laatste run per job, plus de vroegste rij in de hele tabel.
-  // Die tweede is niet optioneel — judgeCron heeft hem nodig om "sinds we meten nog niet aan de
-  // beurt geweest" te onderscheiden van "gestopt", en zonder hem meldde de gezondheidscheck elf
-  // minuten na de migratie dat de halve app stilstond.
-  //
-  // [NO-SILENT-EMPTY] Mislukt de lezing, dan is dat GEEN lege lijst: op een pagina die bestaat om
-  // te zeggen of de machine draait, mag "we konden niet kijken" nooit als "alles goed" renderen.
-  let cronRijen: Partial<Record<CronJob, CronRunRow | null>> = {};
-  let sindsWanneer: number | null = null;
-  let cronsLeesbaar = true;
-  try {
-    // cron_runs staat niet in de gegenereerde types (handmatig toegepaste migratie) — dezelfde
-    // versoepelde cast die /api/health en de hartslagmodule zelf gebruiken.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (pipeline as any)
-      .from("cron_runs")
-      .select("job, started_at, ok")
-      .order("started_at", { ascending: false })
-      .limit(500);
-    if (error) throw new Error(error.message);
-    const rijen = (data ?? []) as CronRunRow[];
-    // Nieuwste eerst, dus de EERSTE die we per job zien is de laatste run.
-    for (const r of rijen) {
-      const job = r.job as CronJob;
-      if (job in CRON_JOBS && !(job in cronRijen)) cronRijen[job] = r;
-    }
-    // started_at is nullable in de rij-typering; een rij zonder tijdstip kan geen ondergrens zijn.
-    const tijden = rijen
-      .map((r) => (r.started_at ? Date.parse(r.started_at) : NaN))
-      .filter((n) => Number.isFinite(n));
-    sindsWanneer = tijden.length > 0 ? Math.min(...tijden) : null;
-  } catch {
-    cronsLeesbaar = false;
-    cronRijen = {};
-  }
-  const systeem = buildSystemHealth(cronRijen, Date.now(), sindsWanneer, cronsLeesbaar);
+  // [BEHEER-GEZOND] Eén lezer voor de hartslag, gedeeld met de cron die het alarm mailt — twee
+  // lezers van dezelfde tabel drijven uit elkaar, en dan staat deze pagina groen terwijl de mail
+  // iets anders rekende. De klok wordt daar gelezen, niet hier: in een servercomponent is dat een
+  // onzuivere aanroep tijdens de render.
+  const systeem = await readSystemHealth(pipeline);
 
   // [PAGINATION] Both reads paged: the day this app has more than ~1000 accounts is exactly the
   // day the operator page matters most, and a silently truncated user list on an operator screen

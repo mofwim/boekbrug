@@ -15,6 +15,7 @@ import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { linesForCounterpart } from '@/lib/counterpart-spread'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -146,10 +147,15 @@ export default function CategoriseClient() {
         const json = await res.json().catch(() => ({} as { alsoApplied?: number }))
         const spread = typeof json.alsoApplied === 'number' ? json.alsoApplied : 0
         const answered = items.find((it) => it.id === id)
-        const sameParty = (a: string | null | undefined, b: string | null | undefined) =>
-          !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
-        setItems((prev) => prev.filter((it) =>
-          it.id !== id && !(spread > 0 && sameParty(it.counterpart_name, answered?.counterpart_name))))
+        // [ZELFDE-TEGENPARTIJ] The SAME decision the server made — linesForCounterpart, not a
+        // second rule. This first compared counterpart_name with a lowercase string equality while
+        // the server normalised with counterpartKey (which strips B.V., punctuation, spacing). The
+        // server would then spread to rows this filter left on screen: the note claimed four, two
+        // disappeared, and the two that stayed were already categorised — a list that disagrees
+        // with the sentence above it. One authority, or they drift apart the first time a supplier
+        // is printed twice with a different suffix.
+        const swept = new Set(linesForCounterpart(items, answered?.counterpart_name ?? null, id))
+        setItems((prev) => prev.filter((it) => it.id !== id && !swept.has(it.id)))
         if (mode === 'todo') setTotalRemaining((n) => Math.max(0, n - 1 - spread))
         setSpreadNote(spread > 0
           ? t(spread === 1 ? 'cat.ookToegepastEen' : 'cat.ookToegepast', { n: spread })

@@ -29,8 +29,7 @@ import { effectiveDirection } from "@/lib/closing-package";
 import { planOchtendMail, type OchtendPayment } from "@/lib/ochtend-digest";
 import { sendOchtendMail, sendBeheerAlarm } from "@/lib/email";
 // [BEHEER-GEZOND] Het oordeel over de andere crons bestond al en had geen enkele lezer.
-import { buildSystemHealth, healthAlarm } from "@/lib/beheer-health";
-import { CRON_JOBS, type CronJob, type CronRunRow } from "@/lib/cron-heartbeat";
+import { readSystemHealth, healthAlarm } from "@/lib/beheer-health";
 import { beheerEmails } from "@/lib/beheer";
 import { isMissingColumn } from "@/lib/pg-missing";
 
@@ -265,28 +264,8 @@ async function meldGestopteCrons(pipeline: ReturnType<typeof createPipelineClien
   // stille storing: er is niemand die hem zou lezen.
   if (ontvangers.length === 0) return false;
 
-  let rijen: CronRunRow[] = [];
-  let leesbaar = true;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (pipeline as any)
-      .from("cron_runs").select("job, started_at, ok")
-      .order("started_at", { ascending: false }).limit(500);
-    if (error) throw new Error(error.message);
-    rijen = (data ?? []) as CronRunRow[];
-  } catch {
-    leesbaar = false;
-  }
-
-  const laatste: Partial<Record<CronJob, CronRunRow | null>> = {};
-  for (const r of rijen) {
-    const job = r.job as CronJob;
-    if (job in CRON_JOBS && !(job in laatste)) laatste[job] = r;
-  }
-  const tijden = rijen.map((r) => (r.started_at ? Date.parse(r.started_at) : NaN)).filter((n) => Number.isFinite(n));
-  const alarm = healthAlarm(
-    buildSystemHealth(laatste, Date.now(), tijden.length > 0 ? Math.min(...tijden) : null, leesbaar),
-  );
+  // Dezelfde lezer als de beheerpagina — zie readSystemHealth.
+  const alarm = healthAlarm(await readSystemHealth(pipeline));
   if (!alarm) return false;
 
   await sendBeheerAlarm({ toEmails: ontvangers, subject: alarm.subject, body: alarm.body });
