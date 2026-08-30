@@ -2634,9 +2634,13 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
     );
     // …and the reduce form, which is what the fifth reader used and what the `+=` pattern above
     // walked straight past. Two spellings of one sum is exactly how they came to disagree.
+    // Any accumulator name, not just `sum`. The first version of this line required the literal
+    // identifier `sum`, and /api/bank/confirm's own re-read spelled it `(t, r) => t + Math.max(...)`
+    // — so the gate that exists to stop a second summation of this figure walked past one written
+    // three hundred lines from the assertion that names the file.
     assert.doesNotMatch(
       src,
-      /sum \+ Math\.(abs|max)\([^)]*amount_applied/,
+      /[A-Za-z_$][\w$]*\s*\+\s*Math\.(abs|max)\([^)]*amount_applied/,
       `${file} accumulates amount_applied in a reduce — same defect, different spelling`,
     );
   }
@@ -2660,11 +2664,32 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
     const src = code(f);
     if (!/amount_applied/.test(src)) continue;
     lezers++;
-    for (const m of src.matchAll(/(?:\+=|sum \+|s \+|acc \+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
+    for (const m of src.matchAll(/(?:\+=|[A-Za-z_$][\w$]*\s*\+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
       eigenSommen.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
   }
   assert.ok(lezers >= 5, `only ${lezers} files mention amount_applied; the scan must be broken`);
+
+  // [BANK-OVERAPPLIED-LOUD] The three doors that link an invoice to a bank line, and what each
+  // one has. allocate goes through an atomic RPC that recomputes the budget under a row lock;
+  // confirm and attach-invoice cannot, so they both re-read the sum AFTER their own write and say
+  // so loudly. attach-invoice had NEITHER — and it is the door that CREATES an invoice already
+  // marked paid, so over-applying there means an invoice settled from money the line did not have.
+  assert.match(code("src/app/api/bank/allocate/route.ts"), /\.rpc\("allocate_bank_payment"/,
+    "the allocate door is safe by construction and must stay that way");
+  for (const f of ["src/app/api/bank/confirm/route.ts", "src/app/api/bank/attach-invoice/route.ts"]) {
+    const src = code(f);
+    assert.match(src, /const verdict = await readOverApplied\(\{/,
+      `${f} must re-read the line's sum after writing to it`);
+    assert.match(src, /if \(!verdict\) throw new Error\("over-application check could not run"\)/,
+      `${f}: a check that could not RUN is not a check that passed`);
+    assert.match(src, /action: "bank\.overapplied_check_failed"/,
+      `${f} must record that the check did not run, or "no alarm" means two things at once`);
+  }
+  // One definition of the sum and one of the sentence — two doors reporting the same fact in two
+  // wordings is how the four readers of this figure drifted apart in the first place.
+  assert.match(code("src/lib/bank-overapplied.ts"), /allocatedOnLine\(rows, invoices, txAmount\)/,
+    "the detector itself must use the shared signed sum, not a magnitude of its own");
   assert.deepEqual(eigenSommen, [],
     "these add amount_applied up themselves instead of calling allocatedOnLine/allocatedByTransaction. " +
     "Per INVOICE the magnitude is right; per LINE a credit gives money BACK to the line, and a NULL " +
@@ -19375,11 +19400,26 @@ test("[BANK-OVERAPPLIED-LOUD] de enige waarborg tegen een niet-gesloten race mel
   // Die herlezing las haar eigen fout niet. supabase-js gooit niet, dus een mislukte herlezing gaf
   // `data: null` → `?? []` → som 0 → `0 > payAmount` onwaar → geen auditregel, geen melding. De
   // enige waarborg tegen de enige race die dit bestand openlaat, verdween precies dan in stilte.
+  // De herlezing zelf staat nu in bank-overapplied.ts, en dat is geen verhuizing om de vorm: er
+  // zijn DRIE deuren die een factuur aan een bankregel koppelen, en deze controle stond bij één.
+  // Een tweede kopie schrijven voor de derde deur is precies hoe de vier lezers van deze som ooit
+  // uit elkaar liepen ([LIJN-BUDGET]). Wat dit pint is dus de eigenschap, niet de plaats.
   const src = code("src/app/api/bank/confirm/route.ts");
-  assert.match(src, /const \{ data: sumRows, error: sumErr \}/,
-    "de herlezing van de som leest haar fout weer niet");
-  assert.match(src, /if \(sumErr\) throw new Error\(sumErr\.message\)/,
-    "een mislukte herlezing telt weer door als een som van 0");
+  const detector = code("src/lib/bank-overapplied.ts");
+  assert.match(src, /const verdict = await readOverApplied\(\{/,
+    "de herlezing is weg bij deze deur");
+  assert.match(src, /if \(!verdict\) throw new Error\("over-application check could not run"\)/,
+    "een mislukte herlezing telt weer door als 'niets aan de hand'");
+  // En de functie zelf mag het verschil niet wegmoffelen: null = niet gedraaid, nooit een nul.
+  assert.match(detector, /if \(error\) return null;/,
+    "een leesfout wordt weer een som");
+  assert.match(detector, /if \(sum\.unknownInvoiceIds\.length > 0\) return null;/,
+    "een onleesbare zusterfactuur maakt de som te LAAG — dat mag geen stilte rechtvaardigen");
+  // Getekend, niet als magnitude. Een creditnota geeft geld terug aan de regel; magnitudes tellen
+  // hem erbij op en slaan alarm over een boeking die klopt.
+  assert.match(detector, /allocatedOnLine\(rows, invoices, txAmount\)/);
+  assert.doesNotMatch(src, /Math\.max\(0, Number\(r\.amount_applied/,
+    "de handgeschreven magnitude-optelling mag niet terugkomen");
   // Blijft best-effort — de boekingen staan er al — maar niet-gekeken laat nu een spoor na.
   assert.match(src, /action: "bank\.overapplied_check_failed"/,
     "een niet-uitgevoerde controle laat weer geen spoor na, dus 'geen alarm' betekent weer twee dingen");
