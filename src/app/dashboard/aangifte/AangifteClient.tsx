@@ -12,6 +12,7 @@ import { quarterFromParams } from '@/lib/quarter'
 // [TZ] Amsterdam's day/year, never the device's — see format-nl.ts. formatDateNL renders the
 // filing timestamp as DD-MM-YYYY, pinned to the same zone.
 import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
+import { filedNotice } from '@/lib/aangifte-filed-notice'
 // [DEADLINE] De datum waarop dit ingediend moet zijn, en hoeveel dagen dat nog is.
 import { deadlineNotice } from '@/lib/btw-deadline-notice'
 import type { QuarterNo } from '@/lib/btw-reservation'
@@ -195,6 +196,10 @@ export default function AangifteClient({ hasAccountant = null }: {
   // NOW. Both sides are whole euros already (the route rounds, and 5g is a subtraction of two
   // rounded figures), so this is exact — no epsilon, no "verschil van € 0" from a float.
   const filedDelta = filed && data ? data.saldo - filed.saldo : 0
+  // [AANGIFTE-INGEDIEND] De banner als sleutels — welke zin, beslist door een pure functie.
+  // `filed` kan null zijn; dan wordt de banner hieronder toch niet gerenderd en is dit een
+  // onschuldige nulwaarde die nergens terechtkomt.
+  const bericht = filedNotice({ saldo: filed?.saldo ?? 0, delta: filedDelta })
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -295,37 +300,31 @@ export default function AangifteClient({ hasAccountant = null }: {
         {/* `data &&` is not decoration: filedDelta is 0 without it, and 0 is the sentence "komt
             precies overeen" — a claim we cannot make while the concept itself is not loaded. */}
         {filed && data && (
-          <div style={{ background: filedDelta !== 0 ? M3.errorContainer : M3.surfaceVariant, color: filedDelta !== 0 ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
-            {/* [TAAL] Hele zinnen uit de catalogus. Hier stonden zes Nederlandse brokken op een
-                scherm dat wél in de vertaalronde zit, en één zin was zelfs GESPLITST: `t('aang.jeHebt')`
-                gevolgd door het letterlijke 'te betalen'. Zo'n splitsing werkt alleen in het
-                Nederlands — het Arabisch heeft een andere woordvolgorde en het Turks hangt een
-                achtervoegsel aan het bedrag — en de helft die niet in de catalogus staat blijft in
-                élke taal Nederlands. De richting (betalen/terugkrijgen, erbij/eraf) zit nu in de
-                sleutel in plaats van erachter geplakt. */}
+          <div style={{ background: bericht.diverges ? M3.errorContainer : M3.surfaceVariant, color: bericht.diverges ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            {/* [AANGIFTE-INGEDIEND] Welke zin hier staat, wordt buiten dit component beslist.
+                De banner doet VIER uitspraken uit twee ONAFHANKELIJKE tekens — het ingediende
+                saldo (betalen of terugkrijgen) en het verschil met de huidige berekening (erbij
+                of eraf) — en één verkeerd gekozen sleutel zegt "te betalen" boven een bedrag dat
+                de ondernemer juist terugkrijgt. Dat is geen opmaakfout maar een verkeerde
+                uitspraak over geld, op het scherm dat hij opent om te zien of zijn ingediende
+                aangifte nog klopt. Die keuze is nu een pure functie met een tabeltest.
+                [TAAL] En hele zinnen. Hier stonden zes Nederlandse brokken op een scherm dat wél
+                in de vertaalronde zit, en één zin was zelfs GESPLITST: t('aang.jeHebt') gevolgd
+                door het letterlijke 'te betalen'. Dat werkt alleen in het Nederlands, en de helft
+                die niet in de catalogus staat blijft in élke taal Nederlands. */}
             <strong style={{ fontWeight: 700 }}>
-              {t('aang.ingediend.titel', { datum: formatDateNL(filed.filedAt) })}
+              {t(bericht.titelKey, { datum: formatDateNL(filed.filedAt) })}
             </strong>
-            {filedDelta === 0 ? (
-              <div style={{ marginTop: 4 }}>
-                {filed.saldo >= 0
-                  ? t('aang.ingediend.gelijk.betalen', { bedrag: eur.format(Math.abs(filed.saldo)) })
-                  : t('aang.ingediend.gelijk.terug', { bedrag: eur.format(Math.abs(filed.saldo)) })}
-              </div>
-            ) : (
-              <div style={{ marginTop: 4 }}>
-                {filed.saldo >= 0
-                  ? t('aang.ingediend.aangifte.betalen', { bedrag: eur.format(Math.abs(filed.saldo)) })
-                  : t('aang.ingediend.aangifte.terug', { bedrag: eur.format(Math.abs(filed.saldo)) })}{' '}
-                {filedDelta > 0
-                  ? t('aang.ingediend.verschil.bij', { bedrag: eur.format(Math.abs(filedDelta)) })
-                  : t('aang.ingediend.verschil.af', { bedrag: eur.format(Math.abs(filedDelta)) })}{' '}
-                {t('aang.ingediend.beslis')}
-                <div style={{ marginTop: 6 }}>
-                  <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
-                    {t('aang.verschil')}
-                  </Link>
-                </div>
+            <div style={{ marginTop: 4 }}>
+              {bericht.lines.map((r, i) => (
+                <span key={r.key}>{i > 0 ? ' ' : ''}{t(r.key, { bedrag: eur.format(r.bedrag) })}</span>
+              ))}
+            </div>
+            {bericht.diverges && (
+              <div style={{ marginTop: 6 }}>
+                <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
+                  {t('aang.verschil')}
+                </Link>
               </div>
             )}
           </div>
