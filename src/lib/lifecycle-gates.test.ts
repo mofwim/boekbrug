@@ -4509,8 +4509,10 @@ test("[AFZENDERNAAM] the three customer-facing mails carry the business, the oth
   // The rest keep BoekBrug: they write to the owner, their accountant or an invitee, and there the
   // business name would be wrong.
   const plain = [...mail.matchAll(/from: 'BoekBrug <noreply@boekbrug\.nl>'/g)].length;
-  // 13 sinds [OCHTEND]: de ochtendmail schrijft aan de EIGENAAR, dus BoekBrug is de juiste afzender.
-  assert.equal(plain, 13, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
+  // 14 sinds [BEHEER-GEZOND]: het alarm over een gestopte achtergrondtaak gaat naar de BEHEERDER.
+  // Daar zou een klantnaam niet alleen verkeerd zijn maar misleidend — het is een storing in de
+  // machine, niet in iemands boeken.
+  assert.equal(plain, 14, `interne mail blijft van BoekBrug — gevonden: ${plain}`);
 
   // The name is never interpolated raw. It is typed by a user and lands in a header that reaches
   // strangers: a newline is header injection, and an @ or a bracket lets a display name pose as
@@ -19053,4 +19055,61 @@ test("[PAKKET-AFDRUK] de eigenaar kan de afdrukken ook LEZEN", () => {
   // [VOL-GELEZEN] + een totale ordening: delivered_at alleen is niet uniek.
   assert.match(api, /\.order\("delivered_at", \{ ascending: true \}\)\.order\("id", \{ ascending: true \}\)/);
   assert.match(api, /\.range\(from, to\)/);
+});
+
+test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een curl", () => {
+  // cron-heartbeat legt elke run vast en judgeCron velt er een oordeel over. Dat oordeel had
+  // precies één lezer — /api/health, een endpoint dat je moet CURLEN met het cron-secret — en
+  // cronsNeedingAttention, de functie die bestaat om te zeggen wat er stukgaat, had in de hele
+  // productiecode geen enkele aanroeper. Alleen haar eigen test.
+  //
+  // Dus: het systeem meet dat een taak is gestopt, oordeelt erover, en vertelt het aan niemand.
+  // Valt reminders om, dan gaan er geen herinneringen meer uit; valt payment-due om, dan mist een
+  // ondernemer zijn betaaltermijnen — en het scherm ziet er in beide gevallen normaal uit. De
+  // module die stille storingen moet voorkomen, was er zelf één, één laag hoger.
+  const puur = code("src/lib/beheer-health.ts");
+  const cron = code("src/app/api/cron/ochtend/route.ts");
+  const scherm = code("src/app/dashboard/beheer/BeheerScherm.tsx");
+  const pagina = code("src/app/dashboard/beheer/page.tsx");
+
+  // ── Geen tweede oordeel ──────────────────────────────────────────────────
+  // judgeCron blijft de enige die "gezond" definieert. Twee plekken die dat verschillend doen is
+  // hoe een dashboard groen staat terwijl de gezondheidscheck rood is.
+  assert.match(puur, /judgeCron\(job, run, nowMs, watchingSince\)/);
+  assert.doesNotMatch(puur, /te-lang-stil|nooit-gedraaid/,
+    "deze module velt een eigen oordeel over gezondheid — dat hoort in cron-heartbeat.ts en nergens anders");
+
+  // ── watchingSince is niet optioneel ──────────────────────────────────────
+  // Zonder de vroegste rij liegt judgeCron: elf minuten na de migratie meldde de gezondheidscheck
+  // dat de halve app stilstond, terwijl die taken simpelweg nog niet aan de beurt waren geweest.
+  for (const [naam, src] of [["pagina", pagina], ["cron", cron]] as const) {
+    assert.match(src, /Math\.min\(\.\.\.tijden\)/, `${naam}: de ondergrens van het meten wordt niet meer meegegeven`);
+  }
+
+  // ── Stil bij gezond, luid bij onleesbaar ─────────────────────────────────
+  // Een dagelijkse "alles is in orde" is een mail die mensen wegfilteren, en dan gaat de ene die
+  // ertoe deed mee. Maar "we konden niet kijken" is geen gezonde machine.
+  assert.match(puur, /if \(health\.attention\.length === 0\) return null;/);
+  assert.match(puur, /if \(!health\.readable\) \{[\s\S]{0,400}?subject:/,
+    "een onleesbare hartslag zwijgt weer — precies het geval waarin niemand het merkt");
+
+  // ── En het bereikt iemand ────────────────────────────────────────────────
+  assert.match(cron, /await meldGestopteCrons\(pipeline\)/, "het alarm wordt niet meer verstuurd");
+  assert.match(cron, /sendBeheerAlarm\(\{ toEmails: ontvangers/);
+  // Meeliftend op een cron die al dagelijks draait: een wachter die zelf een aparte wachter nodig
+  // heeft is er een te veel.
+  assert.doesNotMatch(readFileSync("vercel.json", "utf8"), /cron\/beheer-alarm/,
+    "het alarm heeft een eigen cron gekregen — dan bewaakt niemand de bewaker");
+  // Best-effort: het alarm mag de ochtendmail nooit laten falen.
+  assert.match(cron, /catch \(e\) \{[\s\S]{0,200}?cron-alarm mislukt/);
+
+  // ── En een mens ziet het ook zonder mail ─────────────────────────────────
+  assert.match(pagina, /buildSystemHealth\(/);
+  assert.match(scherm, /<Systeem systeem=\{systeem\} \/>/, "het blok staat niet meer op de pagina");
+  // [NO-SILENT-EMPTY] Onleesbaar is een derde stand, geen groene.
+  assert.match(scherm, /if \(!systeem\.readable\) \{/);
+  assert.match(scherm, /De cron-hartslag is niet te lezen/);
+  // "nog nooit" is een echt antwoord — en het antwoord op "is deze nieuwe cron ooit gedraaid?",
+  // wat de eerste vraag is na een deploy die er een toevoegt.
+  assert.match(scherm, /"nog nooit"/);
 });

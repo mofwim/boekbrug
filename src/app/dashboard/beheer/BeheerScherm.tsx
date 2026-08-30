@@ -4,6 +4,7 @@
 // the accountant module and for the same reason: its one reader chose no language setting).
 
 import type { BeheerOverview } from "@/lib/beheer";
+import type { SystemHealth } from "@/lib/beheer-health";
 
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #E0E0E0", borderRadius: 12, padding: "16px 20px" };
 const TH: React.CSSProperties = { textAlign: "start", fontSize: 12, fontWeight: 600, color: "#5F6368", padding: "6px 10px", borderBottom: "1px solid #E0E0E0" };
@@ -18,11 +19,63 @@ function Tel({ n, label }: { n: number; label: string }) {
   );
 }
 
-export function BeheerScherm({ overview }: { overview: BeheerOverview }) {
+/**
+ * [BEHEER-GEZOND] Draaien de achtergrondtaken nog?
+ *
+ * Bovenaan, vóór de accounts, en dat is geen smaak: een gestopte cron geeft geen foutmelding en
+ * verandert niets aan het scherm — geen herinneringen meer, geen bankregels meer, geen
+ * betaaltermijn die op tijd wordt gemeld — terwijl de rest van deze pagina er normaal uitziet.
+ * Het is het enige blok hier dat een storing kan tonen die nergens anders zichtbaar is.
+ */
+function Systeem({ systeem }: { systeem: SystemHealth }) {
+  // [NO-SILENT-EMPTY] Onleesbaar is een derde stand, geen groene. Op de pagina die bestaat om te
+  // zeggen of de machine draait, mag "we konden niet kijken" nooit als "alles goed" lezen.
+  if (!systeem.readable) {
+    return (
+      <div style={{ ...CARD, borderColor: "#B3261E" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: "#B3261E" }}>De cron-hartslag is niet te lezen</div>
+        <div style={{ fontSize: 12.5, color: "#5F6368", marginTop: 4, lineHeight: 1.5 }}>
+          We weten dus niet of de achtergrondtaken nog draaien. Dat is geen bevestiging dat er iets stuk is,
+          en ook geen bevestiging dat alles goed gaat — het is precies het geval waarin niemand het merkt.
+        </div>
+      </div>
+    );
+  }
+  const kleur = (h: string) => (h === "ok" ? "#1E8E3E" : h === "nog-niet-langs" ? "#5F6368" : "#B3261E");
+  return (
+    <div style={{ ...CARD, borderColor: systeem.allWell ? "#E0E0E0" : "#B3261E" }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, color: systeem.allWell ? "#1E8E3E" : "#B3261E", marginBottom: 8 }}>
+        {systeem.allWell
+          ? `Alle ${systeem.crons.length} achtergrondtaken draaien`
+          : `${systeem.attention.length} van ${systeem.crons.length} achtergrondtaken hebben aandacht nodig`}
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {systeem.crons.map((c) => (
+            <tr key={c.job}>
+              <td style={{ ...TD, fontWeight: c.needsAttention ? 600 : 400 }}>{c.job}</td>
+              <td style={{ ...TD, color: kleur(c.health), whiteSpace: "nowrap" }}>{c.health}</td>
+              {/* "nog nooit" is een echt antwoord en het antwoord op "is deze cron ooit gedraaid?" —
+                  precies de vraag na een deploy die een nieuwe taak toevoegt. */}
+              <td style={{ ...TD, color: "#5F6368", whiteSpace: "nowrap" }}>
+                {c.lastRunAt === null ? "nog nooit" : c.hoursAgo === 0 ? "< 1 uur" : `${c.hoursAgo} uur`}
+              </td>
+              <td style={{ ...TD, color: "#5F6368" }}>{c.note ?? ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function BeheerScherm({ overview, systeem }: { overview: BeheerOverview; systeem: SystemHealth }) {
   const { users, links, counts } = overview;
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20, fontFamily: "'Roboto', -apple-system, sans-serif" }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, color: "#202124", margin: 0 }}>Beheer</h1>
+
+      <Systeem systeem={systeem} />
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Tel n={counts.total} label="accounts" />

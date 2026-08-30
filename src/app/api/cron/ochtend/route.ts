@@ -27,7 +27,11 @@ import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { effectiveDirection } from "@/lib/closing-package";
 import { planOchtendMail, type OchtendPayment } from "@/lib/ochtend-digest";
-import { sendOchtendMail } from "@/lib/email";
+import { sendOchtendMail, sendBeheerAlarm } from "@/lib/email";
+// [BEHEER-GEZOND] Het oordeel over de andere crons bestond al en had geen enkele lezer.
+import { buildSystemHealth, healthAlarm } from "@/lib/beheer-health";
+import { CRON_JOBS, type CronJob, type CronRunRow } from "@/lib/cron-heartbeat";
+import { beheerEmails } from "@/lib/beheer";
 import { isMissingColumn } from "@/lib/pg-missing";
 
 export const dynamic = "force-dynamic";
@@ -213,12 +217,31 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── [BEHEER-GEZOND] Draaien de ándere taken nog? ────────────────────────
+    //
+    // cron-heartbeat legt elke run vast en judgeCron velt er een oordeel over. Dat oordeel had één
+    // lezer — /api/health, dat je moet CURLEN — en cronsNeedingAttention had in de hele
+    // productiecode geen enkele aanroeper. Het systeem meet dus dat een taak is gestopt, oordeelt
+    // erover, en vertelt het aan niemand. Valt reminders om, dan worden er geen herinneringen meer
+    // verstuurd; valt payment-due om, dan mist een ondernemer zijn betaaltermijnen — en het scherm
+    // ziet er in beide gevallen normaal uit.
+    //
+    // Hier meeliftend en niet als twaalfde cron: deze draait al dagelijks, en een wachter die zelf
+    // een aparte wachter nodig heeft is er een te veel. Best-effort in alles — het alarm mag de
+    // ochtendmail nooit laten falen, en de beheerpagina toont dezelfde stand als tweede weg.
+    let alarmVerstuurd = false;
+    try {
+      alarmVerstuurd = await meldGestopteCrons(pipeline);
+    } catch (e) {
+      console.error("[BEHEER-GEZOND] cron-alarm mislukt", { error: e instanceof Error ? e.message : String(e) });
+    }
+
     await finishCronRun(pipeline, cronRunId, {
       ok: failed === 0,
       ...(failed > 0 ? { error: `${failed} owner(s) failed` } : {}),
-      result: { gisteren, sent, quiet, optedOut, failed },
+      result: { gisteren, sent, quiet, optedOut, failed, alarmVerstuurd },
     });
-    return NextResponse.json({ ok: failed === 0, gisteren, sent, quiet, optedOut, failed });
+    return NextResponse.json({ ok: failed === 0, gisteren, sent, quiet, optedOut, failed, alarmVerstuurd });
   } catch (e) {
     // [CRON-HONEST] A total discovery failure must not read as a quiet green morning.
     const message = e instanceof Error ? e.message : String(e);
@@ -226,4 +249,46 @@ export async function GET(req: NextRequest) {
     await finishCronRun(pipeline, cronRunId, { ok: false, error: message });
     return NextResponse.json({ error: "ochtend_failed" }, { status: 500 });
   }
+}
+
+/**
+ * [BEHEER-GEZOND] Read the heartbeat, judge it, and mail the operator when something stopped.
+ *
+ * Returns whether an alarm went out. Silent on a healthy machine — a daily "everything is fine" is
+ * a mail people filter, and then the one that mattered is filtered with it. NOT silent when the
+ * table could not be read: "we could not check" is not "nothing is wrong", and on the one signal
+ * that says whether the machine runs, that difference is the whole point.
+ */
+async function meldGestopteCrons(pipeline: ReturnType<typeof createPipelineClient>): Promise<boolean> {
+  const ontvangers = beheerEmails();
+  // Geen beheerder ingesteld = de functie staat uit, net als de beheerpagina zelf. Dan is er geen
+  // stille storing: er is niemand die hem zou lezen.
+  if (ontvangers.length === 0) return false;
+
+  let rijen: CronRunRow[] = [];
+  let leesbaar = true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (pipeline as any)
+      .from("cron_runs").select("job, started_at, ok")
+      .order("started_at", { ascending: false }).limit(500);
+    if (error) throw new Error(error.message);
+    rijen = (data ?? []) as CronRunRow[];
+  } catch {
+    leesbaar = false;
+  }
+
+  const laatste: Partial<Record<CronJob, CronRunRow | null>> = {};
+  for (const r of rijen) {
+    const job = r.job as CronJob;
+    if (job in CRON_JOBS && !(job in laatste)) laatste[job] = r;
+  }
+  const tijden = rijen.map((r) => (r.started_at ? Date.parse(r.started_at) : NaN)).filter((n) => Number.isFinite(n));
+  const alarm = healthAlarm(
+    buildSystemHealth(laatste, Date.now(), tijden.length > 0 ? Math.min(...tijden) : null, leesbaar),
+  );
+  if (!alarm) return false;
+
+  await sendBeheerAlarm({ toEmails: ontvangers, subject: alarm.subject, body: alarm.body });
+  return true;
 }
