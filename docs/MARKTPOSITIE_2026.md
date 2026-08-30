@@ -29,11 +29,21 @@ _This is not a pitch and not a consolation._
 > | "the terms quote Pro € 25 and Pro+ € 45 incl. PSD2" (stop point 0b) | **OUT OF DATE.** §5.1 of the terms now reads Boekhouder € 0 (≤ 10 linked clients) · Ondernemer Gratis € 0 · Ondernemer Plus € 12,99 incl. btw. No legal document promises PSD2 anywhere any more |
 > | "the database knows a different four-tier model" (stop point 0b) | **OUT OF DATE.** `database.sql:436` is `free/plus/boekhouder`; `supabase/migrations/subscription_plans_fair_use.sql` migrates the old rows across and forbids `boekhouder_pro`. No non-test code reads the old values |
 >
-> **What survived re-verification**, confirmed against the code again: no XAF audit file, no RGS,
-> no filing to the Belastingdienst (the `aangifte` screen prepares, it does not submit), the UBL
-> export is still deliberately *not* SI-UBL/Peppol BIS (`src/lib/ubl-export.ts:7`), the SnelStart
-> connection still waits on a subscription key (`docs/SNELSTART_INTEGRATION.md:3`), and the
-> triple card reconciliation is real.
+> **What survived re-verification** on 14 Aug 2026: no XAF audit file, no RGS, no filing to the
+> Belastingdienst (the `aangifte` screen prepares, it does not submit), the UBL export is still
+> deliberately *not* SI-UBL/Peppol BIS (`src/lib/ubl-export.ts:7`), the SnelStart connection still
+> waits on a subscription key (`docs/SNELSTART_INTEGRATION.md:3`), and the triple card
+> reconciliation is real.
+>
+> **Two of those five expired eleven days later.** Re-checked 30 Aug 2026:
+>
+> | Statement | Status on 30 Aug 2026 |
+> |---|---|
+> | "no XAF audit file, no RGS" | **OUT OF DATE.** `src/lib/xaf-export.ts` is 706 lines, shipped ~25 Aug: XAF 3.2 with verkoopboek, inkoopboek, bank, kas and dagomzet, verified RGS references on the main accounts, and an entry it cannot balance is REFUSED rather than patched. Reachable through `/api/xaf` and, since 30 Aug, inside every quarterly package (`[XAF-IN-PAKKET]`). The limit that stands: no full RGS at detail level, and no XSD validation — there is no `.xsd` in the repo and `/voor-boekhouders` no longer claims one (`[XAF-GEEN-XSD]`) |
+> | "the UBL export is deliberately not SI-UBL/Peppol BIS" | **OUT OF DATE.** `UblBuildOptions.peppol` builds the BIS 3.0 identity of the same invoice, conformance-tested (`[SI-UBL]`). What is still absent is *sending*: that needs an access-point contract, and `/voor-boekhouders` says so out loud |
+> | "no filing to the Belastingdienst" | **STILL TRUE** — and deliberately so, per §2 |
+> | "the SnelStart connection waits on a subscription key" | **STILL TRUE** (`docs/SNELSTART_INTEGRATION.md:3`) |
+> | "the triple card reconciliation is real" | **STILL TRUE**, and measured: on Kiwi Food Q2 2026 leg B recovers € 54,02 in acquirer commission — see the note under §5, which is the reason the prize is small |
 >
 > **One claim in §6 needs splitting in two.** "English exists only for the public tools and the
 > blog" is now **out of date**: `src/lib/i18n/` carries a full translation layer (`messages.ts`,
@@ -88,10 +98,11 @@ life, and part of it has now expired.)
 ## 1. The honest answer in five sentences
 
 As an **accounting package**, BoekBrug loses every comparison on row one of the feature table —
-no filing to the Belastingdienst, no XAF audit file, no RGS, and per `src/lib/ubl-export.ts:7`
-the UBL export is deliberately not SI-UBL/Peppol BIS — and that is not a gap you can close but
-a wrong category. _(The original sentence opened with "no PSD2"; a full bank connection has
-since been built — see the re-verification block.)_ At the same time, that same repo holds
+no filing to the Belastingdienst, and that is not a gap you can close but a wrong category.
+_(The original sentence opened with "no PSD2"; a full bank connection has since been built. It
+also said "no XAF audit file, no RGS" and "the UBL export is deliberately not SI-UBL/Peppol
+BIS" — all three are out of date; see the re-verification block, and the 30 Aug 2026 note under
+Route B.)_ At the same time, that same repo holds
 something no Dutch party in the € 0–25 segment has: a **triple reconciliation of card revenue**
 (till Z-report versus terminal settlement versus net bank payout) that books the difference as
 acquirer commission instead of letting it vanish into a tolerance. So the founder is right about
@@ -250,6 +261,25 @@ So: the idea survives, but with a different verb, and then it is no longer a cha
 invoice. It is demonstrating that a period is correct while till, terminal and bank shout three
 different numbers.
 
+> **Measured, 30 Aug 2026 — and it changes which half of that sentence carries the weight.**
+>
+> Step 5 of the plan (§9) asks: *is there money in it?*, with a stop point at a median under
+> ± € 250/year. On the one live administratie (Kiwi Food Market, Q2 2026 — 91 till days,
+> € 168.408 PIN, € 25.209 cash) the answer is now a number rather than a hope:
+>
+> - **Leg B — the acquirer commission the bank never itemised: € 54,02 in the quarter, ≈ € 216/year.**
+>   Under the stop point. Debit settles GROSS (16 days tie to the till to the cent) and only credit
+>   settles net, printing `BRUTO … /COM …` in its own bank line — so the recoverable amount is
+>   structurally small on a shop whose customers mostly use debit. `eft_settlements` is empty across
+>   the entire production database: leg B has never run for anyone.
+> - **The large card cost was already booked.** ING's `Kosten Zakelijk Betalingsverkeer` is
+>   € 981,30 per quarter, ≈ € 3.700/year, and the app had it in the books all along.
+>
+> The honest reading: **the money is not in the found commission, it is in the proof.** "Your
+> books are € 54 wrong" sells nothing. "Ninety-one days tie out, and here are the three that do
+> not, with the reason" is what an office pays for and what an owner cannot produce. §9 step 5
+> should be read as answered — with a "no" on the amount and a "yes" on the reconciliation.
+
 **And one figure you are probably reading wrong.** Cash was still 17% of point-of-sale payments
 in 2025; 83% went by card [V, DNB/Betaalvereniging]. That looks like the end of a "cash"
 positioning. It is the opposite: your triangle is a **card** triangle. Leg B — the commission —
@@ -314,9 +344,27 @@ large player's attention — a real moat and a poor compliment at once.
 ### Route B — Broad pre-processing for offices (the TriFact365 route) _(advise against)_
 
 Requires Exact Online, then Twinfield and AFAS, plus an XAF 3.2 audit file and RGS mapping —
-`grep` for `xaf`, `auditfile` and `rgs` returns **zero** hits in `src/`. _(Re-checked 14 Aug
-2026: still zero.)_ Months of work before you are allowed to compete, against a price floor of
-€ 2–3 [O], with no wave of dissatisfaction to ride.
+`grep` for `xaf`, `auditfile` and `rgs` returned **zero** hits in `src/` when this was written.
+_(Re-checked 14 Aug 2026: still zero.)_ Months of work before you are allowed to compete, against
+a price floor of € 2–3 [O], with no wave of dissatisfaction to ride.
+
+> **Re-checked 30 Aug 2026 — half of that blocker has shipped, and the advice does not change.**
+>
+> The grep no longer returns zero: `src/lib/xaf-export.ts` (706 lines, ~25 Aug) writes XAF 3.2
+> with RGS references on the main accounts, and the file now travels inside every quarterly
+> package. So the *file-format* half of Route B's entry price is paid. That was never the
+> expensive half.
+>
+> What is untouched is the part this section was actually about: **connections to Exact Online,
+> Twinfield and AFAS**. Each is its own OAuth application, its own approval, its own mapping and
+> its own support burden, and the price floor of € 2–3 per document has not moved. Nothing about
+> shipping an auditfile makes a TriFact365 competitor cheaper to build or easier to sell.
+>
+> The advice therefore stands — but the REASON has to be stated correctly from here on, because a
+> reason that has expired is worse than none: the objection is the integrations and the price
+> floor, not the absence of an auditfile. Anyone re-reading this section to decide should know
+> that the cheap half is already done, and that it was done for a different purpose — the
+> accountant who receives a quarterly package, not the office that pre-processes for a hundred.
 
 ### Route C — Cheap complete zzp package (the current course) _(advise against)_
 

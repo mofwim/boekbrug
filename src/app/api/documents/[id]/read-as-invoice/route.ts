@@ -50,6 +50,7 @@ import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, deriveDueDate } 
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { pathBelongsToOwner, toStoragePath } from "@/lib/storage-path";
 import type { Database } from "@/types/database.types";
+import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 
 type InvoiceFieldConfidence = Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"];
 
@@ -255,6 +256,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       // lost: the audit row two blocks down records action 'invoice.reread_from_document', which
       // says more precisely what happened than a source value ever did.
       source: "upload", client_name: leverancier.supplierName || v.vendor || "Onbekende afzender",
+      // [BTW-NUMMER-BEWAARD] Zie de intake-route: op een inkoopfactuur is dit het nummer van de
+      // leverancier, en zonder deze regel bleef de EU-inkopenlijst leeg.
+      client_btw_number: supplierBtwForInvoice(fieldConfidence._vendor_btw_printed as string | undefined, v.vendor_btw ?? null),
       invoice_date: invoiceDate,
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number?.trim() || null,

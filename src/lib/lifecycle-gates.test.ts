@@ -15923,19 +15923,26 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.match(xafSpec, /\[XAF-DIFF\]/,
     "the differential test against computeResult exists — the two engines may never drift apart in silence");
 
-  // The route restates no attribution rule: the authorities are CALLED.
+  // [XAF-BRON] The reads moved out of the route into xaf-fetch.ts when the quarterly package
+  // needed the same ones. That is the whole point of the move, so the gate follows them: the
+  // authorities are CALLED, in one place, and neither door restates a booking rule.
+  const bron = code("src/lib/xaf-fetch.ts");
+  assert.match(bron, /\.filter\(isVerifiedForPackage\)/, "the package's own verified rule decides which invoices book");
+  assert.match(bron, /toResultBankTx\(b\)\.posSettlement/, "the ONE card-payout predicate ([ONE-BANK-READ])");
+  assert.match(bron, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
+  assert.match(bron, /liveCashEntries\(pipeline\)/, "[KAS-ZACHT] a removed cash movement is out of the auditfile too");
+  assert.match(bron, /const endDate = through < vandaag \? through : vandaag;/,
+    "[XAF-PERIODE] the declared period ends at the earlier of today and the requested window — a file may not declare days that have not happened, nor days it did not read");
+
   const route = code("src/app/api/xaf/route.ts");
   assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization");
-  assert.match(route, /\.filter\(isVerifiedForPackage\)/, "the package's own verified rule decides which invoices book");
-  assert.match(route, /toResultBankTx\(b\)\.posSettlement/, "the ONE card-payout predicate ([ONE-BANK-READ])");
-  assert.match(route, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
+  assert.match(route, /buildXafInputForOwner\(\{ pipeline, ownerId, year \}\)/, "the route reads through the shared source");
   assert.match(route, /buildXafFile\(input\)/, "the pure module is CALLED, not merely exported");
   assert.match(route, /status: 503/, "a failed read refuses — a partial auditfile is a wrong administration");
-  assert.match(route, /`\$\{year\}-12-31` < vandaag \? `\$\{year\}-12-31` : vandaag/,
-    "[XAF-PERIODE] the declared period ends today for the running year — a file may not declare days that have not happened");
-  assert.match(route, /invoice_id/, "the cash select carries invoice_id — the settle branch is fed, not starved");
-  assert.match(route, /kor_active/, "the KOR flag reaches the file's own honesty notes");
-  assert.match(route, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
+  assert.match(bron, /select\("id, direction, amount, category, btw_rate, entry_date, document_id, invoice_id"\)/,
+    "the cash select carries invoice_id — the settle branch is fed, not starved");
+  assert.match(bron, /kor_active/, "the KOR flag reaches the file's own honesty notes");
+  assert.match(bron, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
 
   // Both doors, or the person who actually files never finds it.
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
@@ -19342,4 +19349,156 @@ test("[EXPORT-VOLLEDIG] every user-owned table is exported, or refused with a re
   const del = code("src/app/api/account/delete/route.ts");
   assert.match(del, /export_confirmed !== true/,
     "deletion is still gated on the export — which is why its completeness is not cosmetic");
+});
+
+// ─── [XAF-IN-PAKKET] The mail may not promise a file the archive does not write ─────────────────
+//
+// email.ts told every accountant, in the mail that carries the quarterly package: "Het pakket bevat
+// de PDF's, een CSV-overzicht en het XAF 3.2-auditbestand — te importeren in je eigen pakket." Two
+// paragraphs later: "Je hebt hiervoor geen account nodig."
+//
+// Both true. Together, a trap. buildXafFile had exactly ONE caller — /api/xaf, behind a login the
+// promised reader does not have — and closing-package.ts made sixteen zip.file() calls, none of
+// them .xaf. The recipient could neither find the file nor fetch it another way, and the only
+// person who could check was the accountant, who would assume they had missed it.
+//
+// Nothing could have failed. A sentence in a mail template and a list of writes in another module
+// have no reason to be compared, which is why this gate compares them.
+test("[XAF-IN-PAKKET] what the accountant's mail names, the package writes", () => {
+  const mail = code("src/lib/email.ts");
+  const pakket = code("src/lib/closing-package.ts");
+
+  // The mail still makes the claim…
+  assert.match(mail, /XAF 3\.2-auditbestand/,
+    "the accountant's mail names the auditfile — if that sentence goes, this gate goes with it");
+  // …and the recipient still has no other door to it, which is what makes the claim load-bearing.
+  assert.match(mail, /geen account nodig/,
+    "the reader of that mail has no account — the file has to be IN the package or it is nowhere");
+
+  // …so the package writes it.
+  assert.match(pakket, /zip\.file\(auditfileName, auditfile\.xml\)/,
+    "the auditfile is written into the archive");
+  assert.match(pakket, /const auditfileName = `Auditfile-\$\{year\}-tm-Q\$\{quarter\}\.xaf`/,
+    "…under a name that states its window: the file opens on 1 January, so a quarter-only name " +
+    "invites a second import stacked on the first");
+  assert.match(pakket, /buildXafInputForOwner\(\{ pipeline: supabase, ownerId, year, through: end \}\)/,
+    "…built through the SHARED reads, windowed to this quarter's end ([XAF-BRON])");
+
+  // An absence is stated, never silent, and never an empty file — an empty auditfile imports as an
+  // empty administration.
+  assert.match(pakket, /code: "auditfile_unavailable"/,
+    "a failed build becomes a warning the accountant reads, not a missing file they wonder about");
+  assert.match(pakket, /kon voor dit kwartaal niet worden samengesteld/,
+    "…and LEESMIJ.txt says so in the file the accountant opens first");
+
+  // The manifest carries the fact, so the claim can be CHECKED instead of trusted.
+  assert.match(pakket, /auditbestand: summary\.auditfile/,
+    "overzicht.json records the auditfile that went in");
+
+  // And the window warning, which is the one thing about this file that costs an evening when
+  // nobody says it: four quarterly packages carry four overlapping year-to-date auditfiles.
+  assert.match(pakket, /VERVANGT dit bestand, het komt er niet bij/,
+    "LEESMIJ states that a later quarter's auditfile replaces this one");
+});
+
+// ─── [XAF-GEEN-XSD] A published claim needs a mechanism, not a comment that says it has one ─────
+//
+// /voor-boekhouders told accountants the auditfile was "gevalideerd tegen het officiële schema".
+// There is no .xsd in this repo, no validator anywhere in src/, and xaf-export.test.ts asserts the
+// output with regexes. The claim traced back to a line in a header comment on the same page,
+// which asserted it about the code; the FAQ then quoted the comment.
+//
+// The page's own header explains why this matters more here than elsewhere: "an office that finds
+// a claim untrue does not file a complaint, it stops answering." Schema-validity is exactly the
+// kind of claim an office checks in a demo, with a file it already has and a validator it already
+// uses.
+//
+// The gate is conditional on purpose. If someone ships a real validator and the schema, the
+// stronger sentence may come back — the file appearing is what licenses it.
+test("[XAF-GEEN-XSD] the schema claim exists only where a validator does", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      if (e === "node_modules" || e === ".git" || e === ".next") continue;
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else out.push(p);
+    }
+    return out;
+  };
+  const hasSchema = walk(".").some((f) => f.endsWith(".xsd"));
+
+  const page = readFileSync("src/app/voor-boekhouders/page.tsx", "utf8");
+  if (!hasSchema) {
+    assert.doesNotMatch(page, /gevalideerd tegen het[\s\S]{0,40}officiële schema/,
+      "no .xsd and no validator in this repo — the page may not tell an accountant the file is " +
+      "schema-validated");
+    // …and it says what IS checked, which is the claim that survives contact with a reviewer.
+    assert.match(page, /debet = credit voordat hij in het bestand komt/,
+      "the page states the check that really runs");
+    assert.match(page, /niet sluitend te maken is wordt GEWEIGERD/,
+      "…including the refusal, which is the part an accountant cares about");
+  }
+
+  // And the mechanisms the page now points at are still in the code it points at.
+  const pure = code("src/lib/xaf-export.ts");
+  assert.match(pure, /if \(!balanced\(built\.lines\)\) \{ skipped\.push/, "per-entry balance refusal");
+  assert.match(pure, /if \(totalDebitC !== totalCreditC\) \{/, "file-level balance assertion");
+});
+
+// ─── [BTW-NUMMER-BEWAARD] Read on every invoice, written on none ────────────────────────────────
+//
+// ai.ts reads the supplier's btw-identificatienummer off every purchase invoice, and its filter is
+// right: only `NL\d{9}B\d{2}` may become a supplier KEY, so a German or Belgian number is dropped.
+// What survives is `_vendor_btw_printed` in field_confidence, which the invoice-checks screen reads
+// to tell an owner their supplier printed a malformed number.
+//
+// Nothing wrote it to invoices.client_btw_number — the column the rest of the app reads as "the
+// counterparty's VAT number", and the one that on an incoming invoice IS the supplier's, since the
+// same row holds the supplier's name in client_name.
+//
+// The consequence was total and completely quiet. buildForeignPurchases (icp.ts:261) filters
+// `direction === "incoming"` and then classifies clientVatNumber; with that column always null,
+// EU-purchase listing — rubriek 4b, the verlegde BTW an accountant has to place — could not return
+// a row for any owner, in any quarter. eu-inkopen.csv was written from an empty list and read as
+// "this administration has no EU purchases". Every test passed the whole time: the reader worked,
+// the listing worked, and the wire between them was never there.
+//
+// So the gate is on the WIRE, at every door an incoming invoice can come through.
+test("[BTW-NUMMER-BEWAARD] every incoming door stores the supplier's VAT number", () => {
+  const doors: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "camera/upload, read by ai.ts"],
+    ["src/app/api/email/upload/route.ts", "an invoice uploaded from the mail screen"],
+    ["src/app/api/documents/[id]/read-as-invoice/route.ts", "a skipped document, read again"],
+    ["src/lib/email-integration.ts", "the mailbox sync"],
+  ];
+  const missing: string[] = [];
+  for (const [file, what] of doors) {
+    const src = code(file);
+    // The door still creates incoming invoices…
+    if (!/direction: ['"]incoming['"]/.test(src)) continue;
+    // …so it must store the number through the ONE helper. A hand-rolled assignment here would be
+    // a second opinion on what counts as a VAT number, which is how the invoice screen and a
+    // fiscal listing come to disagree about the same string.
+    if (!src.includes("client_btw_number: supplierBtwForInvoice(")) missing.push(`${file} — ${what}`);
+  }
+  assert.deepEqual(missing, [],
+    "an incoming invoice path stores no supplier VAT number — the EU-purchase listing (rubriek 4b) " +
+    "is blind to every invoice that arrives this way");
+
+  // The e-factuur path deserves its own line: it is the one document type where the number is not
+  // read off a picture but stated in its own element, and the one most likely to carry a foreign
+  // supplier. It read the name and the IBAN and walked past the VAT number for the whole life of
+  // the parser — with a comment saying the XML does not carry one.
+  const ubl = code("src/lib/ubl-invoice.ts");
+  assert.match(ubl, /PartyTaxScheme/, "the supplier's VAT element is read");
+  assert.match(ubl, /checkVendorBtw\(raw\) === "ok"/,
+    "…and judged by the app's own shape authority, never by a second regex written here");
+  assert.doesNotMatch(ubl, /PartyLegalEntity[\s\S]{0,200}?supplierVatNumber/,
+    "the trade-register number sits in the same party block and is NOT a VAT number");
+
+  // The storage helper refuses rather than guesses — the rule this whole repo is built on.
+  const identity = code("src/lib/vendor-identity.ts");
+  assert.match(identity, /if \(checkVendorBtw\(raw\) !== 'ok'\) continue/,
+    "a malformed number is refused, and stays visible in _vendor_btw_printed instead");
 });
