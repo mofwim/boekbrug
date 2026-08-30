@@ -622,15 +622,40 @@ export async function sendAccountExportSummary({
   invoiceCount,
   fileCount,
   skippedCount,
-  generatedAt
+  generatedAt,
+  registerCounts,
 }: {
   toEmail: string
   invoiceCount: number
   fileCount: number
   skippedCount: number
   generatedAt: string
+  /**
+   * [EXPORT-REGISTERS] Rows per file in the ZIP, from AccountExportSummary.registerCounts.
+   *
+   * The privacyverklaring calls this mail a "bevestigingsmail met overzicht van geëxporteerde
+   * data", and for a long time the overzicht was two numbers — invoices and documents — while the
+   * archive also held the invoice lines, the customer register and the supplier register. A
+   * receipt that names less than the parcel is how an owner discovers a gap only when they need
+   * the data. Optional so a caller with no counts still sends the mail rather than nothing.
+   */
+  registerCounts?: Record<string, number>
 }) {
   const datum = new Date(generatedAt).toLocaleDateString('nl-NL')
+  // The registers worth naming on a receipt: what an owner would notice missing. Rendered only
+  // when the count is known AND non-zero — "Artikelen: 0" on the account of someone who never
+  // made a price list is noise, and noise is what makes a receipt stop being read.
+  const registerRows = ([
+    ['Factuurregels', 'factuurregels.json'],
+    ['Klanten', 'klanten.json'],
+    ['Leveranciers', 'leveranciers.json'],
+    ['Uren', 'uren.json'],
+    ['Herinneringen', 'herinneringen.json'],
+  ] as const)
+    .map(([label, file]) => [label, registerCounts?.[file] ?? 0] as const)
+    .filter(([, n]) => n > 0)
+    .map(([label, n]) => `<p style="margin:4px 0; color:#202124;"><strong>${label}:</strong> ${n}</p>`)
+    .join('')
   const skippedLine =
     skippedCount > 0
       ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
@@ -647,7 +672,10 @@ export async function sendAccountExportSummary({
         <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin:20px 0;">
           <p style="margin:4px 0; color:#202124;"><strong>Facturen:</strong> ${invoiceCount}</p>
           <p style="margin:4px 0; color:#202124;"><strong>Documenten:</strong> ${fileCount}</p>
+          ${registerRows}
         </div>
+        <p style="color:#555; font-size:13px;">In het ZIP-bestand staat <strong>manifest.json</strong> met
+        het volledige overzicht: wat er per bestand in zit, en wat er bewust niet in zit en waarom.</p>
         ${skippedLine}
         <p style="color: #555; font-size: 13px;">Heb je deze export niet zelf aangevraagd? Neem dan direct contact met ons op.</p>
         <p style="color: #5f6368; font-size: 12px; margin-top: 32px;">BoekBrug — De brug tussen jou en je boekhouder</p>

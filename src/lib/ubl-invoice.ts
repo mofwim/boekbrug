@@ -6,6 +6,8 @@
 // PDF invoice. Intentionally tolerant + prefix-agnostic (cbc:/cac: prefixes vary by issuer): a
 // clean extraction enters the queue; a partial one still enters (flagged), never silently lost.
 
+import { checkVendorBtw } from "./vendor-identity";
+
 /** Does this text look like a UBL/Peppol e-invoice (not a CAMT bank statement)? */
 export function looksLikeUblInvoice(xml: string): boolean {
   if (!xml) return false;
@@ -46,6 +48,16 @@ export interface UblInvoiceExtract {
   dueDate: string | null;
   currency: string | null;
   supplierName: string | null;
+  /**
+   * [BTW-NUMMER-BEWAARD] The supplier's VAT identification number, from the supplier party's
+   * PartyTaxScheme/CompanyID. This is the one document type where the number is not read off a
+   * picture but stated by the supplier's own system, and it is also the path most likely to carry
+   * a foreign supplier — an e-factuur from a German or Belgian company is exactly the invoice
+   * whose reverse charge an accountant has to place in rubriek 4b.
+   *
+   * null when the file states none, or states something that is not shaped like a VAT number.
+   */
+  supplierVatNumber: string | null;
   vendorIban: string | null;
   totalExBtw: number | null;
   btwAmount: number | null;
@@ -87,6 +99,25 @@ export function parseUblInvoice(xml: string): UblInvoiceExtract {
       firstTag(supBlock, "RegistrationName") ||
       firstTag(supBlock, "Name") ||
       null;
+  }
+
+  // [BTW-NUMMER-BEWAARD] Supplier VAT id, from the SUPPLIER block only — the customer party
+  // carries a CompanyID of its own in the very same shape, and picking the wrong one would put
+  // the owner's own number on the invoice as if it were the vendor's.
+  //
+  // PartyTaxScheme/CompanyID is where BT-31 lives. PartyLegalEntity/CompanyID is the KvK-style
+  // registration number and is deliberately NOT read here: the two look alike in a file and mean
+  // different things, and a KvK number classified as a VAT number is a wrong entry on a fiscal
+  // listing. Shape-checked, never trusted for being present.
+  let supplierVatNumber: string | null = null;
+  if (supBlock) {
+    const taxSchemeBlock = /<(?:\w+:)?PartyTaxScheme\b[\s\S]*?<\/(?:\w+:)?PartyTaxScheme>/i.exec(supBlock)?.[0] ?? "";
+    const raw = (firstTag(taxSchemeBlock, "CompanyID") ?? "").replace(/[\s.\-/]/g, "").toUpperCase();
+    // The app's OWN verdict on VAT-number shape, not a second one written here. A local regex
+    // over "two letters then alphanumerics" accepts ZIEBIJLAGE, which is what a supplier types
+    // into a field their software insists on filling — and it would then travel as a VAT number
+    // onto a fiscal listing. checkVendorBtw knows the EU-27 prefixes and the NL pattern.
+    if (checkVendorBtw(raw) === "ok") supplierVatNumber = raw;
   }
 
   // Supplier IBAN: PayeeFinancialAccount/ID (the account the invoice should be paid to).
@@ -138,6 +169,7 @@ export function parseUblInvoice(xml: string): UblInvoiceExtract {
     dueDate: dueDate && /^\d{4}-\d{2}-\d{2}/.test(dueDate) ? dueDate.slice(0, 10) : null,
     currency: currency || null,
     supplierName: supplierName || null,
+    supplierVatNumber,
     vendorIban,
     totalExBtw,
     btwAmount,

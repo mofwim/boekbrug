@@ -78,3 +78,42 @@ export function checkVendorBtw(raw: string | null | undefined): IdentityVerdict 
   if (!EU.has(v.slice(0, 2))) return 'bad'
   return /^[A-Z]{2}[A-Z0-9]{2,12}$/.test(v) ? 'ok' : 'bad'
 }
+
+
+/**
+ * [BTW-NUMMER-BEWAARD] The supplier's btw-identificatienummer, ready to store on the invoice row.
+ *
+ * ai.ts reads this number off every purchase invoice and then loses it. Its own filter is right on
+ * its terms — only `NL\d{9}B\d{2}` may become a supplier KEY, so a German or Belgian number is
+ * dropped — and what survives is `_vendor_btw_printed` in field_confidence, which the invoice-checks
+ * screen reads to tell an owner their supplier printed a malformed number.
+ *
+ * Nothing wrote it to `invoices.client_btw_number`, which is the column the rest of the app reads
+ * as "the counterparty's VAT number". On an incoming invoice that column IS the supplier's — the
+ * same row holds the supplier's name in client_name. The consequence was quiet and total:
+ * buildForeignPurchases (icp.ts) filters `direction === "incoming"` and then classifies
+ * clientVatNumber, so the EU-purchase listing — rubriek 4b, the verlegde BTW an accountant has to
+ * place — could never return a single row for anyone. Not "rarely": never, on any account, for any
+ * quarter. eu-inkopen.csv was written from an empty list and read as "no EU purchases".
+ *
+ * What this returns, and what it refuses:
+ *   • the printed number when checkVendorBtw calls its SHAPE valid — NL and the EU-27 alike,
+ *     normalised the way every other reader here normalises (no spaces, dots or dashes, upper);
+ *   • null for a malformed one. A wrong VAT number on a fiscal listing is a correction letter;
+ *     a missing one leaves the invoice visible as an ordinary cost, which is where it already was.
+ *     The malformed value is NOT lost — it stays in _vendor_btw_printed, where the invoice-checks
+ *     row already tells the owner about it.
+ *
+ * The NL-filtered value is accepted as a fallback so a path that never carried field_confidence
+ * still stores what it had.
+ */
+export function supplierBtwForInvoice(
+  printed: string | null | undefined,
+  vendorBtw?: string | null,
+): string | null {
+  for (const raw of [printed, vendorBtw]) {
+    if (checkVendorBtw(raw) !== 'ok') continue
+    return String(raw).replace(/[\s.-]/g, '').toUpperCase()
+  }
+  return null
+}

@@ -1,55 +1,49 @@
 # Cookiebeleid — BoekBrug
 
-**Laatst bijgewerkt:** 25 mei 2026
-**Versie:** 1.0
+**Laatst bijgewerkt:** 30 augustus 2026
+**Versie:** 2.0
 
 ---
 
 ## 1. Wat zijn cookies?
 
-Cookies zijn kleine tekstbestanden die op jouw apparaat worden opgeslagen wanneer je een website bezoekt. Ze worden gebruikt om de website te laten functioneren, je voorkeuren te onthouden of analyses uit te voeren.
+Cookies zijn kleine tekstbestanden die op jouw apparaat worden opgeslagen wanneer je een website bezoekt. Ze worden gebruikt om de website te laten functioneren, je voorkeuren te onthouden of analyses uit te voeren. Naast cookies kan een site ook `localStorage` gebruiken — hetzelfde idee, andere opslagplaats. Beide staan hieronder.
 
 ---
 
 ## 2. Welke cookies gebruikt BoekBrug?
 
-BoekBrug gebruikt **minimale cookies** en respecteert jouw privacy. Wij gebruiken **geen marketing- of advertentiecookies**.
+BoekBrug plaatst **geen enkele cookie waarvoor jouw toestemming nodig is**. Daarom zie je bij ons ook geen cookiebanner: er valt niets te kiezen, omdat wij niets plaatsen dat verder gaat dan het Platform laten werken en jouw voorkeuren onthouden.
+
+Wij gebruiken **geen marketing-, advertentie- of trackingcookies**, en wij nemen jouw scherm niet op.
 
 ### 2.1 Strikt noodzakelijke cookies (geen toestemming nodig)
 
-Deze cookies zijn essentieel voor het functioneren van het Platform.
+Zonder deze cookies kun je niet inloggen.
 
 | Naam | Doel | Bewaartermijn | Eigenaar |
 |------|------|---------------|----------|
-| `sb-access-token` | Authenticatie sessie | 1 uur | BoekBrug (Supabase) |
-| `sb-refresh-token` | Sessie verlenging | 7 dagen | BoekBrug (Supabase) |
-| `cookie-consent` | Onthouden van jouw cookievoorkeuren | 1 jaar | BoekBrug |
+| `sb-<project>-auth-token` (soms gesplitst in `…-auth-token.0`, `.1`) | Jouw ingelogde sessie: toegangs- en verniewingstoken | Toegangstoken 1 uur, sessie tot 7 dagen | BoekBrug (via Supabase) |
 
-### 2.2 Functionele cookies (geen toestemming nodig)
+De naam bevat de projectcode van onze database; hoe die precies heet, bepaalt de Supabase-bibliotheek die de sessie beheert.
 
-| Naam | Doel | Bewaartermijn |
-|------|------|---------------|
-| `preferred-language` | Onthouden van jouw taalvoorkeur | 1 jaar |
-| `theme-preference` | Onthouden van licht/donker thema | 1 jaar |
+### 2.2 Functionele cookies en opslag (geen toestemming nodig)
 
-### 2.3 Analytische cookies (toestemming vereist)
+| Naam | Waar | Doel | Bewaartermijn |
+|------|------|------|---------------|
+| `boekbrug_taal` | Cookie | Onthouden in welke taal jij het scherm wilt (nl / en / ar / tr) | 1 jaar |
+| `boekbrug.priceMode` | localStorage | Onthouden of jij factuurbedragen in- of exclusief btw invoert | Tot je je browsergegevens wist |
 
-Wij gebruiken Sentry voor foutmonitoring. Sentry verzamelt anonieme gegevens om bugs op te sporen.
+Beide onthouden alleen een keuze die jij zelf op het scherm hebt gemaakt. Ze volgen je niet en gaan nergens heen.
 
-| Naam | Doel | Bewaartermijn | Eigenaar |
-|------|------|---------------|----------|
-| `sentry-session` | Sessie tracking voor foutdiagnose | 90 dagen | Sentry (Functional Software Inc.) |
+### 2.3 Analytische cookies
 
-**Wat verzamelt Sentry?**
-- Browsertype en -versie
-- Apparaattype
-- Pagina waarop fout optrad
-- Stack trace van de fout
-- **Geen** persoonlijke gegevens
-- **Geen** wachtwoorden of tokens
+**Die hebben wij niet.**
 
-**Toestemming intrekken:**
-Via de cookiebanner kun je analytische cookies uitschakelen. Het Platform blijft volledig werken zonder deze cookies.
+- **Bezoekstatistiek** loopt via Vercel Web Analytics. Die telt paginabezoeken **zonder cookie en zonder herkenbare bezoeker** — er wordt niets op jouw apparaat gezet en er is dus niets om toestemming voor te vragen.
+- **Foutmonitoring** loopt via Sentry. Als er in je browser een fout optreedt, sturen wij de foutmelding met stack trace, browsertype en de pagina waarop het misging. Sentry zet daarvoor **geen cookie**.
+- **Session Replay staat uit.** Sentry kán een opname maken van wat er op het scherm gebeurde; die functie is uitgeschakeld. Dit is een boekhoudapp — op zo'n scherm staan jouw omzet, jouw klanten en jouw banksaldo, en dat filmen wij niet.
+- Wat Sentry bij een fout **nooit** meekrijgt: wachtwoorden, tokens, en jouw KVK-, BTW- of IBAN-nummer. Die worden verwijderd voordat de melding je browser verlaat.
 
 ---
 
@@ -62,6 +56,7 @@ Via de cookiebanner kun je analytische cookies uitschakelen. Het Platform blijft
 ❌ Geen tracking-cookies van derden
 ❌ Geen social media plugins met tracking
 ❌ Geen retargeting
+❌ Geen opname van jouw scherm (session replay)
 
 ---
 
@@ -75,30 +70,31 @@ Wanneer je Gmail koppelt voor automatische factuurverwerking, kan Google cookies
 ### 4.2 Microsoft OAuth (alleen bij Outlook-koppeling)
 Vergelijkbaar met Google, voor Outlook. Zie [Microsoft Privacy Statement](https://privacy.microsoft.com).
 
-### 4.3 Stripe (bij betalingen)
-Stripe gebruikt cookies voor fraudepreventie tijdens betalingen. Zie [Stripe Privacy Policy](https://stripe.com/privacy).
+### 4.3 Stripe (alleen bij een betaald abonnement)
+Betalen loopt via **Stripe**. Je verlaat daarvoor boekbrug.nl en betaalt op Stripe's eigen beveiligde pagina; Stripe plaatst daar cookies die nodig zijn voor de betaling en voor fraudepreventie. Jouw kaartgegevens komen nooit op onze servers. Zie [Stripe's Privacy Policy](https://stripe.com/privacy).
+
+### 4.4 Je bankkoppeling (alleen als je die maakt)
+Koppel je je bankrekening, dan log je in bij je **eigen bank**; die pagina is van de bank en valt onder hun eigen cookiebeleid. De koppeling zelf loopt via Enable Banking (Finland) en zet niets op jouw apparaat.
 
 ---
 
 ## 5. Jouw rechten en keuzes
 
 ### 5.1 Cookies weigeren of beperken
-Je kunt je cookievoorkeuren beheren via:
-- De cookiebanner bij eerste bezoek
-- De cookie-instellingen knop onderaan elke pagina
-- Je browserinstellingen
+Omdat wij niets plaatsen dat toestemming vereist, is er bij ons geen banner en geen keuzescherm. Wil je toch alles opruimen, dan kan dat altijd via je browser:
 
-### 5.2 Browser instellingen
-In de meeste browsers kun je cookies blokkeren of verwijderen:
 - **Chrome:** Instellingen → Privacy en beveiliging → Cookies
 - **Firefox:** Voorkeuren → Privacy en beveiliging
 - **Safari:** Voorkeuren → Privacy
 - **Edge:** Instellingen → Privacy, zoeken en services
 
-### 5.3 Gevolgen van weigering
-- **Strikt noodzakelijke cookies** kunnen niet worden uitgeschakeld — zonder deze werkt het Platform niet
-- **Functionele cookies** uitschakelen: voorkeuren worden niet onthouden
-- **Analytische cookies** uitschakelen: Platform werkt normaal, alleen geen foutmonitoring
+### 5.2 Gevolgen van weigering
+- **Strikt noodzakelijke cookies** wissen: je wordt uitgelogd en moet opnieuw inloggen
+- **Functionele opslag** wissen: het scherm valt terug op Nederlands en op bedragen exclusief btw
+- Er is geen categorie die je kunt uitzetten zonder iets te verliezen, omdat er geen categorie is die alleen voor ons bestaat
+
+### 5.3 Foutmonitoring uitzetten
+Sentry werkt zonder cookie en stuurt alleen iets bij een echte fout. Wil je ook dat niet, dan blokkeert elke gangbare adblocker of tracking-blocker het verkeer naar `sentry.io`; het Platform blijft daarna gewoon werken.
 
 ---
 
@@ -106,7 +102,7 @@ In de meeste browsers kun je cookies blokkeren of verwijderen:
 
 Wij kunnen dit cookiebeleid bijwerken bij nieuwe functionaliteit of wettelijke wijzigingen. De laatste versie staat altijd op boekbrug.nl/cookies.
 
-Bij significante wijzigingen vragen wij opnieuw om jouw toestemming.
+Gaan wij ooit iets plaatsen waarvoor toestemming nodig is, dan vragen wij die **voordat** het wordt geplaatst — niet erna.
 
 ---
 

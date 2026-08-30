@@ -352,3 +352,57 @@ test("[KAS-SPOOR] an account that never removed anything still gets the file, em
   assert.deepEqual(JSON.parse(await zip.file("kas-spoor.json")!.async("string")), []);
   assert.equal(summary.cashTrailCount, 0);
 });
+
+test("[EXPORT-REGISTERS] the ZIP carries the tables the owner filled, not just the invoice headers", async () => {
+  // The defect: facturen.csv held a header — a client NAME and a total — and nothing else. The
+  // lines that make up that total, the address the invoice was addressed to, the supplier register,
+  // and the link saying which bank payment settled which invoice were all absent. That is not a
+  // smaller export; it is one an owner cannot reconstruct a single invoice from, while
+  // /api/account/delete treats it as permission to destroy the original.
+  const { zipBytes, summary } = await assembleAccountExportZip({
+    userId: "u20",
+    profile: { id: "u20" },
+    invoices: [sampleInvoice],
+    files: [],
+    registers: {
+      invoiceLines: [{ id: "l1", invoice_id: "i1", description: "Advieswerk", quantity: 2, unit_price: 50 }],
+      clients: [{ id: "c1", user_id: "u20", name: "Test Klant", btw_number: "NL123456789B01" }],
+      suppliers: [{ id: "s1", user_id: "u20", name: "Groothandel", iban: "NL91ABNA0417164300" }],
+      bankInvoiceLinks: [{ id: "b1", user_id: "u20", invoice_id: "i1", amount: 121 }],
+      invoiceReminders: [{ id: "r1", user_id: "u20", invoice_id: "i1", sent_at: "2026-06-20" }],
+      timeEntries: [{ id: "t1", user_id: "u20", hours: 2 }],
+    },
+  });
+  const zip = await JSZip.loadAsync(zipBytes);
+
+  // The line that makes the invoice reconstructable at all.
+  const lines = JSON.parse(await zip.file("factuurregels.json")!.async("string"));
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].description, "Advieswerk");
+
+  // The registers behind the names on the invoice.
+  assert.equal(JSON.parse(await zip.file("klanten.json")!.async("string"))[0].btw_number, "NL123456789B01");
+  assert.equal(JSON.parse(await zip.file("leveranciers.json")!.async("string"))[0].iban, "NL91ABNA0417164300");
+  // The reconciliation itself — which payment settled which invoice.
+  assert.equal(JSON.parse(await zip.file("bank-factuur-koppelingen.json")!.async("string")).length, 1);
+  // The WIK trail. Nothing else in the ZIP records when a reminder went out.
+  assert.equal(JSON.parse(await zip.file("herinneringen.json")!.async("string")).length, 1);
+
+  // A register with nothing in it still SHIPS its file. A missing file and a dropped ledger look
+  // identical to whoever opens this ZIP in 2032 — the same rule kas-spoor.json is built on. It is
+  // an honest answer here because a failed read throws in the orchestrator rather than emptying.
+  for (const name of ["artikelen.json", "voertuigen.json", "mappen.json",
+                      "leveranciers-schrijfwijzen.json", "tegenpartij-geheugen.json"]) {
+    assert.ok(zip.file(name), `${name} must exist even when empty`);
+    assert.deepEqual(JSON.parse(await zip.file(name)!.async("string")), []);
+  }
+
+  // And the manifest counts every one of them, per FILE, so the number and the archive cannot drift.
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.equal(manifest.aantallen_per_bestand["factuurregels.json"], 1);
+  assert.equal(manifest.aantallen_per_bestand["artikelen.json"], 0);
+  assert.equal(summary.registerCounts["klanten.json"], 1);
+  assert.match(manifest.beschrijving, /klanten- en leveranciersbestand/);
+  // What is deliberately NOT in the ZIP is stated, so an absence is never an open question.
+  assert.match(manifest.niet_meegeleverd.logboek, /kasspoor/);
+});
