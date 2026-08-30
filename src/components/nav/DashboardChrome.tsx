@@ -107,6 +107,8 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   // search/filter/sort controls as a secondary sticky toolbar offset below it.
   ["/dashboard/facturen", "chrome.mijnFacturen"],
   ["/dashboard/klanten", "chrome.mijnKlanten"],
+  // [LEVERANCIER-SALDO] De crediteurenstand: wat er per leverancier nog openstaat, op een datum.
+  ["/dashboard/leveranciers", "chrome.leveranciers"],
   ["/dashboard/incoming/manage", "chrome.inkoopfacturen"],
   ["/dashboard/incoming", "chrome.inkomend"],
   // Base label; the page overrides it via useSubPageHeader with the concrete

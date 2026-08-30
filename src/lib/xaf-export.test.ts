@@ -246,3 +246,44 @@ test("[XAF-DIFF] the cash journal agrees with the result engine, category by cat
   // voorbelasting: only the documented bon claims (10.50).
   assert.equal(Math.round(-net("1400") * 100) / 100, Math.round(engine.btwVoorbelasting * 100) / 100, "voorbelasting agrees");
 });
+
+test("[XAF-LENGTE] a long customer name is clamped, because one of them refuses the WHOLE file", () => {
+  // custSupName is a String50 in XAF 3.2. A single customer with a long statutory name — a VvE, a
+  // stichting; over fifty characters is ordinary — made every XSD-validating importer reject the
+  // entire auditfile. The accountant then gets nothing at all: not a smaller administration, no
+  // administration, and an afternoon of hand-typing that the package exists to prevent.
+  const input = baseInput();
+  const langeNaam = "Vereniging van Eigenaren Residentie Beatrixpark te Amsterdam-Zuid";
+  assert.ok(langeNaam.length > 50, "the fixture is actually too long");
+  input.sales.push({
+    id: "inv-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: langeNaam,
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  const r = buildXafFile(input);
+  const naam = /<custSupName>(.*?)<\/custSupName>/.exec(r.xml)?.[1] ?? "";
+  assert.ok(naam.length > 0, "the customer is still in the file");
+  assert.ok(naam.length <= 50, `custSupName is ${naam.length} characters, the schema allows 50`);
+  assert.ok(langeNaam.startsWith(naam), "…and it is the start of the real name, not something else");
+
+  // The clamp is on the RAW value, before escaping. "&" is one character on paper and five in the
+  // string, so cutting at the fiftieth string position would slice an entity in half — no longer
+  // too long, and no longer valid XML either. Same failure, louder.
+  const metAmpersand = "Stichting Onderwijs & Opvang Midden-Nederland en Omstreken Regio Oost";
+  assert.ok(metAmpersand.length > 50);
+  const input2 = baseInput();
+  input2.sales.push({
+    id: "inv-2", invoiceNumber: "20260002", invoiceDate: "2026-03-11", clientName: metAmpersand,
+    totalExBtw: 100, btwAmount: 21, invoiceType: "factuur", rateLines: null,
+  });
+  const xml2 = buildXafFile(input2).xml;
+  const naam2 = /<custSupName>(.*?)<\/custSupName>/.exec(xml2)?.[1] ?? "";
+  assert.doesNotMatch(naam2, /&(?!(amp|lt|gt|quot|apos);)/, "no half-written entity survived the cut");
+  assert.match(naam2, /&amp;/, "…and the ampersand that IS in the first fifty characters is whole");
+
+  // The company's own city is the same String50 and the same typed-by-hand risk.
+  const input3 = baseInput();
+  input3.company.city = "Sint Anthonis gemeente Land van Cuijk provincie Noord-Brabant";
+  assert.ok(input3.company.city.length > 50);
+  const stad = /<city>(.*?)<\/city>/.exec(buildXafFile(input3).xml)?.[1] ?? "";
+  assert.ok(stad.length <= 50, `city is ${stad.length} characters`);
+});

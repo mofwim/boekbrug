@@ -586,7 +586,8 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   if (input.company.address || input.company.city) {
     out.push("<streetAddress>");
     if (input.company.address) out.push(el("streetname", esc(input.company.address)));
-    if (input.company.city) out.push(el("city", esc(input.company.city)));
+    // [XAF-LENGTE] Ook een String50 in het schema, en ook door de ondernemer zelf ingetypt.
+    if (input.company.city) out.push(el("city", esc(input.company.city.slice(0, 50))));
     if (input.company.postalCode) out.push(el("postalCode", esc(input.company.postalCode)));
     out.push(el("country", "NL"));
     out.push("</streetAddress>");
@@ -595,7 +596,17 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   for (const [name, id] of [...custId, ...supId]) {
     out.push("<customerSupplier>");
     out.push(el("custSupID", esc(id)));
-    out.push(el("custSupName", esc(name)));
+    // [XAF-LENGTE] Geknipt op 50 tekens, en op de RUWE waarde — precies zoals docRef hieronder.
+    //
+    // custSupName is in XAF 3.2 een String50. Eén klant met een lange statutaire naam (een VvE, een
+    // stichting: boven de vijftig tekens is doodgewoon) liet het HELE bestand afketsen bij elke
+    // importeur die tegen het XSD valideert. De boekhouder krijgt dan niets — geen kleinere
+    // administratie, maar geen administratie — en de ondernemer betaalt een middag handwerk.
+    //
+    // Knippen VOOR het escapen, niet erna: "&amp;" is één teken op papier en vijf in de string, en
+    // een knip op de vijftigste STRING-positie hakt zo'n entiteit doormidden. Dat levert geen te
+    // lange naam meer op maar wel ongeldige XML — dezelfde fout, luidruchtiger.
+    out.push(el("custSupName", esc(name.slice(0, 50))));
     out.push(el("custSupTp", id.startsWith("D") ? "C" : "S"));
     out.push("</customerSupplier>");
   }

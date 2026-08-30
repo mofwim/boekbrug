@@ -20149,3 +20149,56 @@ test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwv
   assert.match(pagina, /readEventSummary\(pipeline\)/);
   assert.doesNotMatch(pagina, /\.from\("system_events"\)/, "de pagina leest de tabel zelf — dat is de tweede lezer");
 });
+
+// ─── [WIK-VORDERING] The demand may only name money that is owed ────────────────────────────────
+//
+// The reminder cron does not send a nudge on its final tier. It sends the statutory aanmaning that
+// makes incassokosten claimable (art. 6:96 BW) — by e-mail, in the owner's name, at a customer,
+// with no human in the loop.
+//
+// It built the hoofdsom of that demand from its CANDIDATE set: every outgoing invoice of the owner
+// that is 'sent' or 'overdue' with a due date. That set is deliberately wider than what may be
+// demanded, because reminderTierDue narrows it afterwards — and this loop narrowed it nowhere. Two
+// kinds of row therefore walked straight into a legal document:
+//
+//   · a CREDITNOTA. An outgoing document with a NEGATIVE total, and every openstaand helper in
+//     this app takes the MAGNITUDE — so a € 500 credit the owner issued to settle a dispute was
+//     added to the demand as € 500 the customer owes.
+//   · an invoice that was NOT YET DUE, because nothing in the loop read the due date.
+//
+// The cost is not the difference. Art. 6:96 lid 6 applies the staffel once over the whole hoofdsom
+// and an overstated hoofdsom is the standard ground on which the ENTIRE incassokosten claim is
+// struck; for a consumer lid 5 makes that dwingend recht. The owner does not lose the excess, they
+// lose the lot — and they have demanded money that was never owed.
+test("[WIK-VORDERING] the statutory demand is built through the rule, not from the candidate set", () => {
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  const incasso = code("src/lib/incasso.ts");
+
+  // The rule is pure and lives beside the staffel it feeds — what may stand in a legal demand is
+  // worth asserting without a database.
+  assert.match(incasso, /export function claimableForWik/,
+    "the rule exists as a pure function");
+  assert.match(incasso, /if \(args\.invoiceType === 'creditnota'\) return false;/,
+    "money going the other way is not a debt");
+  assert.match(incasso, /if \(args\.dueDayNumber >= args\.todayDayNumber\) return false;/,
+    "verzuim starts the day AFTER the term expires — the due date itself is not overdue");
+  assert.match(incasso, /if \(args\.dueDayNumber == null\) return false;/,
+    "no stated term can have expired");
+
+  // And the cron composes its hoofdsom THROUGH it, rather than restating the same conditions.
+  assert.match(cron, /if \(!claimableForWik\(\{/,
+    "the claims loop calls the rule");
+  assert.match(cron, /aggregateWikClaims/, "…and the staffel still runs over what survives it");
+
+  // The narrowing must sit on the CLAIMS loop, which builds the sum — not only on the send loop,
+  // which decides whether a letter goes out today. Those are different questions and it was the
+  // first one that was unguarded.
+  // From the declaration of the sum to the send loop that follows it. `indexOf` from the START
+  // would find the TIER loop, which shares the same header and sits earlier — and the slice would
+  // then be empty, which is how a source gate passes vacuously over the code it is guarding.
+  const sumStart = cron.indexOf("const claimsPerDebiteur");
+  const claimsLoop = cron.slice(sumStart, cron.indexOf("for (const inv of ownerInvoices)", sumStart));
+  assert.ok(claimsLoop.length > 0, "the claims loop is still recognisable");
+  assert.match(claimsLoop, /claimableForWik/,
+    "the rule guards the SUM, which is the thing a court reads");
+});

@@ -81,6 +81,10 @@ function dutchError(code: UblErrorCode, isOwner: boolean): string {
       // [SI-UBL-EAS] Een adres met een verkeerd schema komt aan de andere kant nooit aan — dan
       // liever eerlijk weigeren met het land erbij.
       return "Het BTW-nummer van deze klant komt uit een land waarvoor we het Peppol-adresschema nog niet ondersteunen. De gewone UBL-export werkt wel.";
+    case "CLIENT_COUNTRY_UNKNOWN":
+      // [LAND-ONBEKEND] Het BTW-nummer zegt "buitenland", de e-factuur kan alleen "NL" zeggen, en
+      // die twee samen op één document is erger dan geen document. De PDF is er wel, en die klopt.
+      return "Deze klant heeft een BTW-nummer van buiten de EU. Een e-factuur moet het land van je klant noemen en dat weten we hier niet, dus maken we er geen — één bestand dat zichzelf tegenspreekt is erger dan geen bestand. De PDF-factuur kun je gewoon versturen.";
   }
 }
 

@@ -99,6 +99,51 @@ export function incassokosten(principal: number): number {
  * a business skips the letter the law DOES require, and the owner silently loses the right to
  * ever charge collection costs on that invoice. Only one of those mistakes is recoverable.
  */
+/**
+ * [WIK-VORDERING] May this invoice be part of the hoofdsom of a statutory demand?
+ *
+ * Art. 6:96 lid 6 BW applies the staffel ONCE over one debtor's total hoofdsom, and lid 7 lets a
+ * creditor add several invoices into one aanmaning. That makes the composition of the sum a legal
+ * question, not a display one — and an aanmaning that OVERSTATES the hoofdsom is the standard
+ * ground on which the entire incassokosten claim is struck. For a consumer, lid 5 makes that
+ * dwingend recht: the creditor does not lose the excess, they lose the lot.
+ *
+ * The reminder cron built that sum from its CANDIDATE set — every outgoing invoice of the owner
+ * that is 'sent' or 'overdue' with a due date — and narrowed it nowhere. Two kinds of row walked
+ * straight into a demand:
+ *
+ *   · a CREDITNOTA, which is an outgoing document with a negative total, and every "openstaand"
+ *     helper in this app takes the MAGNITUDE — so a € 500 credit issued to settle a dispute was
+ *     added as € 500 the customer owes, in a letter naming the amount;
+ *   · an invoice that is NOT YET DUE, because nothing in that loop looked at the due date.
+ *
+ * Both are refused here. What is deliberately NOT refused: an invoice whose reminder is not due
+ * TODAY. "Is a letter due today" is reminderTierDue's question; an invoice twenty days overdue on
+ * a non-offset day is perfectly good hoofdsom, and dropping it would understate the demand — which
+ * costs the owner money they are actually owed.
+ *
+ * Pure, and separate from the cron, because the composition of a legal demand is worth asserting
+ * without a database.
+ */
+export function claimableForWik(args: {
+  invoiceType: string | null | undefined;
+  /** Day number of the due date (dayNumberFromIso), or null when it has none. */
+  dueDayNumber: number | null;
+  /** Day number of today, in the same space. */
+  todayDayNumber: number;
+  /** What is still owed after payments and credit notes — the caller's own openstaand. */
+  open: number;
+}): boolean {
+  // Money going the other way is not a debt.
+  if (args.invoiceType === 'creditnota') return false;
+  // No due date → no verzuim → nothing to demand. Refusing is the safe direction: a demand needs
+  // a term that has expired, and this app cannot invent one.
+  if (args.dueDayNumber == null) return false;
+  // Verzuim starts the day AFTER the term expires, so the due date itself is not yet overdue.
+  if (args.dueDayNumber >= args.todayDayNumber) return false;
+  return args.open > 0;
+}
+
 export function debtorTypeOf(invoice: { client_btw_number?: string | null }): DebtorType {
   return (invoice.client_btw_number ?? "").trim().length > 0 ? "business" : "consumer";
 }
