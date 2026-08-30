@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { judgeCron, cronsNeedingAttention, cronHealthNote, CRON_JOBS } from "./cron-heartbeat";
+import { judgeCron, cronsNeedingAttention, cronHealthNote, CRON_JOBS, alreadyRanToday } from "./cron-heartbeat";
 
 const NU = Date.parse("2026-07-30T12:00:00.000Z");
 const gelede = (uur: number) => new Date(NU - uur * 3_600_000).toISOString();
@@ -187,4 +187,59 @@ test("de uitleg noemt de oorzaken die je een halfuur zoeken schelen", () => {
   for (const h of ["ok", "nooit-gedraaid", "afgebroken", "gefaald", "te-lang-stil"] as const) {
     assert.ok(cronHealthNote("reconcile", h).length > 10, `${h} heeft uitleg nodig`);
   }
+});
+
+// ── [CRON-EENMAAL] Het slot dat de hartslag NIET is ────────────────────────────────────────────
+//
+// De hartslag schrijft op dát er gedraaid is; hij houdt niets tegen. Voor een MELDING is dat het
+// verschil tussen één en twee: `notifications` heeft geen unieke index, dus een tweede ronde
+// stuurt hem gewoon nog een keer.
+
+/** Een minimale nep-client die precies teruggeeft wat PostgREST zou teruggeven. */
+function nepClient(antwoord: { data: unknown[] | null; error: { message: string } | null }) {
+  const gezien: Record<string, unknown> = {};
+  const ketting = {
+    select: () => ketting,
+    eq: (kolom: string, waarde: unknown) => { gezien[kolom] = waarde; return ketting; },
+    gte: (kolom: string, waarde: unknown) => { gezien[kolom] = waarde; return ketting; },
+    limit: () => Promise.resolve(antwoord),
+  };
+  return { client: { from: (t: string) => { gezien.table = t; return ketting; } }, gezien };
+}
+
+const DAG = new Date("2026-08-29T22:00:00.000Z"); // middernacht Amsterdam op 30 augustus
+
+test("[CRON-EENMAAL] een geslaagde ronde van vandaag houdt de tweede tegen", async () => {
+  const { client, gezien } = nepClient({ data: [{ id: "r1" }], error: null });
+  assert.equal(await alreadyRanToday(client, "ochtend", DAG), true);
+  // De vraag die gesteld wordt is: deze job, GESLAAGD, sinds middernacht.
+  assert.equal(gezien.table, "cron_runs");
+  assert.equal(gezien.job, "ochtend");
+  assert.equal(gezien.ok, true, "een mislukte of afgebroken ronde telt niet als 'gedraaid'");
+  assert.equal(gezien.started_at, DAG.toISOString());
+});
+
+test("[CRON-EENMAAL] geen ronde vandaag laat de cron gewoon draaien", async () => {
+  const { client } = nepClient({ data: [], error: null });
+  assert.equal(await alreadyRanToday(client, "quarter-close", DAG), false);
+});
+
+test("[CRON-EENMAAL] een leesfout is geen bewijs dat er al gedraaid is", async () => {
+  // De faalrichting, en dit is de hele reden dat deze functie geen `throw` doet. Deze wacht is een
+  // hoffelijkheid bovenop een hoffelijkheid: hij mag nooit een aangiftedeadline tegenhouden omdat
+  // een logtabel hikt. Eén verzending te veel is de goedkope kant; een gemiste deadline niet.
+  const { client } = nepClient({ data: null, error: { message: "timeout" } });
+  assert.equal(await alreadyRanToday(client, "btw-deadline", DAG), false);
+});
+
+test("[CRON-EENMAAL] een ontbrekende tabel blokkeert de cron evenmin", async () => {
+  // Vóór de handmatig toegepaste migratie bestaat cron_runs niet (42P01). Dat is een normale
+  // toestand, geen storing — en zeker geen reden om de post niet te versturen.
+  const { client } = nepClient({ data: null, error: { message: 'relation "cron_runs" does not exist' } });
+  assert.equal(await alreadyRanToday(client, "payment-due", DAG), false);
+});
+
+test("[CRON-EENMAAL] een client die gooit laat de cron ook door", async () => {
+  const kapot = { from: () => { throw new Error("verbinding weg"); } };
+  assert.equal(await alreadyRanToday(kapot, "ochtend", DAG), false);
 });

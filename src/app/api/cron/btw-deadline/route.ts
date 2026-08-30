@@ -31,8 +31,8 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter } from "@/lib/quarter-close";
 import { deadlineNotice, deadlineNudgeDue } from "@/lib/btw-deadline-notice";
-import { amsterdamToday } from "@/lib/format-nl";
-import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
+import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -52,6 +52,19 @@ export async function GET(req: NextRequest) {
   }
 
   const pipeline = createPipelineClient();
+
+  // [CRON-EENMAAL] Ten hoogste één GESLAAGDE ronde per Amsterdamse dag. De kop van dit bestand
+  // stelde dat "runs exactly once per quarter IS its idempotency — no dedup state" — en dat is een
+  // eigenschap van de PLANNER, niet van deze code. Een cron-platform levert 'at least once', een
+  // functie die time-out krijgt wordt opnieuw geprobeerd, en met het secret is deze route ook met
+  // de hand aan te roepen. Er is geen unieke index op `notifications` (nagekeken in de database),
+  // dus een tweede ronde stuurt iedere ondernemer dezelfde herinnering nog een keer.
+  //
+  // Best effort en fail-open: een onleesbare cron_runs houdt een aangiftedeadline nooit tegen.
+  if (await alreadyRanToday(pipeline, "btw-deadline", amsterdamMidnightUtc(amsterdamToday()))) {
+    return NextResponse.json({ ok: true, alreadyRan: true, notified: 0 });
+  }
+
   cronRunId = await beginCronRun(pipeline, "btw-deadline", cronStartedAt);
   const klaar = async (body: Record<string, unknown>, ok: boolean, status?: number) => {
     await finishCronRun(createPipelineClient(), cronRunId, { ok, result: body });

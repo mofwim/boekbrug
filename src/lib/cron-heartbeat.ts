@@ -236,3 +236,51 @@ export async function finishCronRun(
     console.error("[CRON-HARTSLAG] afsluiten mislukt", { runId, error: String(e) });
   }
 }
+
+/**
+ * [CRON-EENMAAL] Heeft deze cron vandaag (Amsterdamse dag) al een GESLAAGDE ronde gedraaid?
+ *
+ * ── WAAROM DIT BESTAAT ──
+ * `beginCronRun`/`finishCronRun` is een HARTSLAG, geen slot. Hij schrijft op dát er gedraaid is;
+ * hij houdt een tweede ronde nergens tegen. Voor het meeste werk hier is dat prima, want het is
+ * convergerend: reconcile boekt wat nog niet geboekt is en vindt bij een tweede ronde niets meer,
+ * en recurring en reminders worden door een unieke index in de database fysiek tegengehouden.
+ *
+ * Maar een MELDING is geen van beide. Er is geen unieke index op `notifications` (nagekeken: die
+ * tabel heeft alleen haar primaire sleutel), en een tweede ronde stuurt hem gewoon nog een keer.
+ * Twee crons rustten hun idempotentie daarom op een aanname over de PLANNER — hun eigen kop zegt
+ * het met zoveel woorden: "runs exactly once per quarter IS its idempotency — no dedup state".
+ * Dat is een eigenschap van Vercel, niet van deze code: een cron-platform levert 'at least once',
+ * een functie die time-out krijgt wordt opnieuw geprobeerd, en de route is met het secret ook met
+ * de hand aan te roepen. Dan krijgt een ondernemer dezelfde aangifteherinnering twee keer.
+ *
+ * ── DE FAALRICHTING ──
+ * Best effort, en bewust naar ÉÉN VERZENDING TE VEEL: een onleesbare of ontbrekende cron_runs-tabel
+ * blokkeert nooit het werk. Deze wacht is een hoffelijkheid bovenop een hoffelijkheid — hij mag
+ * geen aangiftedeadline tegenhouden omdat een logtabel hikt.
+ *
+ * Eén implementatie, want vier kopieën van dezelfde vraag drijven uit elkaar en dan is er één cron
+ * waar de tweede ronde wél doorheen komt.
+ */
+export async function alreadyRanToday(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  job: CronJob,
+  /** Middernacht van de Amsterdamse dag, als UTC-instant (amsterdamMidnightUtc). */
+  dayStartUtc: Date,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client
+      .from("cron_runs")
+      .select("id")
+      .eq("job", job)
+      .eq("ok", true)
+      .gte("started_at", dayStartUtc.toISOString())
+      .limit(1);
+    // Een leesfout is geen bewijs dat er niet gedraaid is — en fail-open is hier de juiste kant.
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}

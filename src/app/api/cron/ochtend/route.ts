@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
-import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { effectiveDirection } from "@/lib/closing-package";
 import { planOchtendMail, type OchtendPayment } from "@/lib/ochtend-digest";
@@ -61,21 +61,9 @@ export async function GET(req: NextRequest) {
   // run; a green 'ochtend' row started on TODAY's Amsterdam day means the morning happened.
   // Best-effort: an unreadable/absent table never blocks the mail (the guard is a courtesy on a
   // courtesy), it only fails toward one extra send.
-  try {
-    // cron_runs is not in the generated types (hand-applied migration) — same relaxed cast the
-    // heartbeat module itself uses.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: eerdere } = await (pipeline as any)
-      .from("cron_runs")
-      .select("id")
-      .eq("job", "ochtend")
-      .eq("ok", true)
-      .gte("started_at", amsterdamMidnightUtc(vandaag).toISOString())
-      .limit(1);
-    if (Array.isArray(eerdere) && eerdere.length > 0) {
-      return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
-    }
-  } catch { /* see above — fail toward sending */ }
+  if (await alreadyRanToday(pipeline, "ochtend", amsterdamMidnightUtc(vandaag))) {
+    return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
+  }
 
   cronRunId = await beginCronRun(pipeline, "ochtend", cronStartedAt);
   const gisteren = amsterdamToday(new Date(amsterdamMidnightUtc(vandaag).getTime() - 1));

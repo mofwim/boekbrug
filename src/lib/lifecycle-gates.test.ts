@@ -9978,6 +9978,63 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
 });
 
+test("[CRON-EENMAAL] a cron that MAILS cannot rely on the scheduler firing once", () => {
+  // beginCronRun/finishCronRun is a HEARTBEAT, not a lock: it records that a run happened, it
+  // stops nothing. For most of the work here that is fine, because the work converges —
+  // reconcile books what is not yet booked and finds nothing on a second pass, and recurring and
+  // reminders are physically stopped by a unique index in the database
+  // (invoices_one_per_schedule_date and invoice_reminders_once_per_tier, both verified present).
+  //
+  // A NOTIFICATION is neither. `notifications` carries no unique index at all — only its primary
+  // key — so a second run simply sends it again. Two crons rested their idempotency on the
+  // SCHEDULER instead, and said so in their own headers: "runs exactly once per quarter IS its
+  // idempotency — no dedup state, because there is only ever one run". That is a property of
+  // Vercel, not of this code: a cron platform delivers at-least-once, a function that times out is
+  // retried, and with the secret the route can be curled by hand. Then an owner gets the same
+  // aangifte deadline notice twice, on the product whose whole promise is that they can trust it.
+  const heartbeat = code("src/lib/cron-heartbeat.ts");
+  assert.match(heartbeat, /export async function alreadyRanToday\(/,
+    "one implementation of the question, or four copies drift and one cron lets the second run through");
+  // Fail-OPEN, deliberately: a hiccup in a log table may never hold back a deadline notice.
+  assert.match(heartbeat, /if \(error\) return false;/,
+    "an unreadable cron_runs is not proof that the run happened");
+
+  // Every cron that can send a notification or an e-mail either converges, is stopped by a unique
+  // index, or takes the guard. Walked, not listed — a twelfth cron would repeat this exactly.
+  const CONVERGEERT = new Map<string, string>([
+    ["reconcile", "meldt alleen wanneer er ECHT werk is gedaan (categorized.length > 0, " +
+      "incasso.booked.length > 0). Een tweede ronde vindt niets nieuws en meldt dus niets."],
+    ["reminders", "invoice_reminders_once_per_tier — de database houdt de tweede tegen"],
+    ["recurring", "invoices_one_per_schedule_date — idem, en de route vangt de 23505 op"],
+    ["bank-sync", "meldt op nieuw binnengekomen transacties; een tweede ronde haalt dezelfde " +
+      "regels niet nog een keer op (de bank levert per opvraging, en de dedup zit op de import)"],
+    ["accountant-daily", "werkt op gestempelde rijen: wat gemeld is draagt zijn stempel en " +
+      "komt niet opnieuw in de selectie"],
+  ]);
+  const cronDir = "src/app/api/cron";
+  const zonderSlot: string[] = [];
+  let gekeken = 0;
+  for (const naam of readdirSync(cronDir)) {
+    const route = `${cronDir}/${naam}/route.ts`;
+    if (!statSync(`${cronDir}/${naam}`).isDirectory()) continue;
+    let src: string;
+    try { src = code(route); } catch { continue; }
+    // Stuurt deze cron iets naar een mens?
+    if (!/createNotification|sendMail|sendEmail|sendInvoiceReminder|resend/i.test(src)) continue;
+    gekeken++;
+    if (CONVERGEERT.has(naam)) continue;
+    if (/alreadyRanToday\(/.test(src)) continue;
+    zonderSlot.push(naam);
+  }
+  assert.ok(gekeken >= 5,
+    `only ${gekeken} notifying crons were seen; the scan must be broken`);
+  assert.deepEqual(zonderSlot, [],
+    "these crons send something to a person and have neither a converging condition, nor a unique " +
+    "index, nor alreadyRanToday(). A retry after a timeout then sends it a second time:\n  " +
+    zonderSlot.join("\n  ") + "\n\nUse alreadyRanToday(client, job, amsterdamMidnightUtc(today)) " +
+    "— or, if the cron genuinely converges, add it to CONVERGEERT with the reason.");
+});
+
 test("[LINKS-WRITE-HONEST] the boolean these writers return is actually read", () => {
   // recordPaymentLinks and clearPaymentLinks each return Promise<boolean>, and their own doc
   // comments say why: "returned so a caller can say what really happened". Three call sites
