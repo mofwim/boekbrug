@@ -28,6 +28,7 @@ import {
   type SnelStartInvoiceLine,
 } from "./snelstart-mapping";
 import { quarterRange } from "./snelstart-queue";
+import { quarterRange as kasboekQuarterRange } from "./kasboek";
 import type { SnelStartBtwTarief } from "./snelstart-client";
 
 const GB = "11111111-1111-4111-8111-111111111111"; // grootboek-id
@@ -364,6 +365,46 @@ test("kwartaalvenster dekt de hele periode, ook in een schrikkeljaar", () => {
   assert.deepEqual(quarterRange(2026, 2), { from: "2026-04-01", to: "2026-06-30" });
   assert.deepEqual(quarterRange(2026, 4), { from: "2026-10-01", to: "2026-12-31" });
   assert.deepEqual(quarterRange(2024, 1), { from: "2024-01-01", to: "2024-03-31" });
+});
+
+test("[KWARTAALGRENS] beide implementaties van het kwartaalvenster zeggen hetzelfde", () => {
+  // Er zijn er TWEE: snelstart-queue.quarterRange ({from,to}) en kasboek.quarterRange
+  // ({start,end}). Ze zijn het vandaag met elkaar eens — en dat is precies de toestand waar dit
+  // repo elders voor waarschuwt: "two roundings that agree today diverge the first time one of
+  // them is improved" (accountant-pricing.ts).
+  //
+  // Hier is de inzet de aangifte zelf. Een kwartaalgrens bepaalt in WELKE btw-aangifte een euro
+  // valt; lopen de twee uiteen, dan telt de ene motor een betaling in Q1 en de andere in Q2, en
+  // geen van beide meldt iets. Andere veldnamen maakten dat verschil bovendien onzichtbaar voor
+  // de typechecker.
+  //
+  // Vier kwartalen over een schrikkeljaar en een gewoon jaar; kwartalen eindigen nooit in
+  // februari, dus de schrikkeldag toetst hier de kalenderrekensom en niet de grens zelf.
+  for (const year of [2024, 2026, 2027]) {
+    for (const q of [1, 2, 3, 4] as const) {
+      const queue = quarterRange(year, q);
+      const kas = kasboekQuarterRange(year, q);
+      assert.equal(queue.from, kas.start, `${year} Q${q}: startdatum loopt uiteen`);
+      assert.equal(queue.to, kas.end, `${year} Q${q}: einddatum loopt uiteen`);
+    }
+  }
+});
+
+test("[KWARTAALGRENS] de vier kwartalen sluiten op elkaar aan en laten geen dag vallen", () => {
+  // Een gat tussen Q1 en Q2 is een dag waarvan de omzet in geen enkele aangifte zit; een overlap
+  // is een dag die in twee aangiftes zit. Beide zijn stil.
+  const year = 2026;
+  assert.equal(quarterRange(year, 1).from, `${year}-01-01`, "het jaar begint niet op 1 januari");
+  assert.equal(quarterRange(year, 4).to, `${year}-12-31`, "het jaar eindigt niet op 31 december");
+  for (const q of [1, 2, 3] as const) {
+    const eind = new Date(`${quarterRange(year, q).to}T00:00:00Z`);
+    const volgende = new Date(`${quarterRange(year, (q + 1) as 2 | 3 | 4).from}T00:00:00Z`);
+    assert.equal(
+      (volgende.getTime() - eind.getTime()) / 86_400_000,
+      1,
+      `Q${q} en Q${q + 1} sluiten niet op elkaar aan`,
+    );
+  }
 });
 
 

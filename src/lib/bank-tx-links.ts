@@ -69,14 +69,34 @@ type Client = SupabaseClient<any>;
  * entry writes NULL, which is exactly the pre-partial-pay behaviour — only use that for a link
  * whose amount genuinely is not known.
  */
-export async function recordPaymentLinks(
-  client: Client,
+/** One row of the payment <-> invoice join table, as this file writes it. */
+export interface PaymentLinkRow {
+  user_id: string;
+  transaction_id: string;
+  invoice_id: string;
+  amount_applied: number | null;
+}
+
+/**
+ * [PARTIAL-PAY] The decision half of recordPaymentLinks, pulled out so it can be tested.
+ *
+ * It is a money decision and not a mapping: whether `amount_applied` ends up a NUMBER or NULL
+ * decides what recompute_invoice_amount_paid derives on the next unlink or undo. NULL counts as
+ * zero there, so an invoice this payment really settled re-opens at its full total and walks back
+ * into the reminder flow while the money sits in the bank. The paragraph above recordPaymentLinks
+ * describes that failure; this function is where it is decided.
+ *
+ * Kept deliberately strict — only a finite amount ABOVE zero becomes a figure. A zero, a negative
+ * or an unreadable value is not "no money applied", it is "we do not know what was applied", and
+ * NULL is the honest way to say that. Rounded through round2, the repo's only rounding.
+ */
+export function buildPaymentLinkRows(
   userId: string,
   transactionId: string,
   invoiceIds: string[],
   amountApplied?: Record<string, number | null | undefined>,
-): Promise<boolean> {
-  const rows = [...new Set(invoiceIds.filter(Boolean))].map((invoice_id) => {
+): PaymentLinkRow[] {
+  return [...new Set(invoiceIds.filter(Boolean))].map((invoice_id) => {
     const applied = amountApplied?.[invoice_id];
     return {
       user_id: userId,
@@ -88,6 +108,16 @@ export async function recordPaymentLinks(
           : null,
     };
   });
+}
+
+export async function recordPaymentLinks(
+  client: Client,
+  userId: string,
+  transactionId: string,
+  invoiceIds: string[],
+  amountApplied?: Record<string, number | null | undefined>,
+): Promise<boolean> {
+  const rows = buildPaymentLinkRows(userId, transactionId, invoiceIds, amountApplied);
   if (rows.length === 0) return true;
   // [LINKS-WRITE-HONEST] The error is READ. supabase-js does not throw, so the try/catch this
   // replaced could never fire — it only kept the surrounding await from rejecting on a network

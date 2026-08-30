@@ -21,6 +21,10 @@ check("positive incl → not credit", shouldTreatAsCreditNote(false, 1210, 1000)
 check("positive incl + negative ex (misread) → NOT credit", shouldTreatAsCreditNote(false, 11, -10) === false);
 check("zero total, untagged → not credit", shouldTreatAsCreditNote(false, 0, 0) === false);
 check("missing amounts, untagged → not credit", shouldTreatAsCreditNote(false, null, null) === false);
+// Only a finite NUMBER may flip the sign of a booking. NaN and Infinity are covered just below;
+// this is the third shape — a numeric STRING, what a reader returns when it captured the
+// characters but never the value. typeof rejects it, and that is worth holding.
+check("a numeric string is not evidence of a credit", shouldTreatAsCreditNote(false, "-100" as unknown, "-100" as unknown) === false);
 check("NaN/Infinity are ignored (not treated as negative)", shouldTreatAsCreditNote(false, Infinity, NaN) === false);
 
 console.log(`\n${passed} passed, ${failed} failed`);
