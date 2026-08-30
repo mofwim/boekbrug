@@ -156,7 +156,38 @@ export default async function AccountantDebiteurenPage() {
   // [DEEL-CREDIT] Alleen een creditnota die de factuur DEKT haalt hem van de lijst. Een deel
   // gecrediteerd betekent dat de rest nog openstaat, en een debiteurenlijst die dat weglaat laat
   // geld liggen zonder dat er iets rood wordt.
-  const creditnotas = alle.filter((r) => r.invoice_type === 'creditnota')
+  // [DEEL-CREDIT] De creditnota's komen uit een EIGEN lezing, niet uit `alle`. De lezing hierboven
+  // is gefilterd op `.in('status', ['sent','overdue','partial'])` — precies de statussen van een
+  // vordering — en een creditnota die zelf is afgewikkeld staat op 'paid'. Die viel er dus uit, en
+  // dan gebeurt tweemaal het omgekeerde van wat deze twee regels beloven: een volledig
+  // gecrediteerde factuur blijft op de nabellijst staan, en een deels gecrediteerde staat er op
+  // haar VOLLE bedrag. De boekhouder belt een klant over geld dat de ondernemer allang schriftelijk
+  // heeft teruggegeven — het scenario waar de kop van outstandingAmount() over gaat.
+  //
+  // Er staat vandaag een status='paid', invoice_type='creditnota' rij in deze database.
+  //
+  // Elke andere plek in dit product leest de creditnota's al zo: een eigen query op invoice_type,
+  // zonder statusfilter (daily-truth, vandaag, /pay, de betaalverzoeken, de herinneringencron).
+  // Deze twee accountantschermen waren de enige die ze uit de vorderingenlezing afleidden.
+  //
+  // Niet opgevangen, net als de vorderingenlezing hierboven: fetchAllRowsForIds gooit, en dan
+  // toont Next de foutpagina. Een lege creditnotalijst zou hier namelijk niet "geen creditnota's"
+  // betekenen maar "elk bedrag op zijn volle hoogte" — de nabellijst zou er normaal uitzien en
+  // precies fout zijn. Deze pagina faalt liever zichtbaar dan zeker verkeerd.
+  const creditnotas = await fetchAllRowsForIds<
+    { id: string; original_invoice_id: string | null; total_inc_btw: number | null },
+    string
+  >(
+    klantIds,
+    (chunk, from, to) => pipeline
+      .from('invoices')
+      .select('id, original_invoice_id, total_inc_btw')
+      .in('sender_id', chunk)
+      .eq('direction', 'outgoing')
+      .eq('invoice_type', 'creditnota')
+      .not('original_invoice_id', 'is', null)
+      .order('id', { ascending: true }).range(from, to),
+  )
   const rijen = filterOpenReceivables(alle, fullyCreditedIdsFrom(creditnotas, alle))
   // [DEEL-CREDIT] En hoevéél er per factuur is gecrediteerd. De regel hierboven haalt alleen de
   // volledig gecrediteerde facturen van de lijst; zonder deze regel bleef een deels gecrediteerde

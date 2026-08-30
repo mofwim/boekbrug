@@ -9867,6 +9867,87 @@ test("[DEEL-CREDIT] a partial credit is still money owed, everywhere it is asked
   );
 });
 
+test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehonderd", () => {
+  // `.limit(200)` op `created_at` aflopend. Die 200 rijen waren niet alleen de lijst maar ook de
+  // bron van de twee bedragen erboven: VerkoopClient geeft ze aan summarise(), en dat maakt er
+  // "€ … staat open" en "€ … te laat" van. Nergens stond dat er meer was.
+  //
+  // De richting van de fout is het punt. Nieuwste eerst betekent dat wat er afvalt de OUDSTE
+  // facturen zijn, en dat zijn precies de facturen die te laat zijn. Het bedrag dat een
+  // medewerker aanzet tot bellen was dus structureel te laag, en miste juist de vorderingen die
+  // er het langst op wachten.
+  const verkoop = code("src/app/dashboard/verkoop/page.tsx");
+  assert.doesNotMatch(verkoop, /\.limit\(200\)/, "een totaal mag niet op een venster rusten");
+  assert.match(verkoop, /fetchAllRows</, "gepagineerd, zoals elk ander totaal in dit product");
+  // …en op een TOTALE ordening. `created_at` alleen is niet uniek, dus bij gelijke tijd was
+  // onbepaald welke rij in welke pagina viel — dat is hoe een gepagineerde lezing alsnog rijen
+  // overslaat of dubbel leest.
+  assert.match(verkoop, /\.order\('id', \{ ascending: true \}\)\s*\n?\s*\.range\(from, to\)/,
+    "de lezing loopt op id; het scherm sorteert daarna zelf");
+  // De derde stand blijft bestaan: een mislukte lezing is geen leeg bord met € 0,00.
+  assert.match(verkoop, /const facturenOnleesbaar = facturenRes\.fout/,
+    "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
+});
+
+test("[CREDIT-BRON] the credit notes are read where a settled one still counts", () => {
+  // A creditnota is a document with its own lifecycle: it can be sent, and it can be settled, at
+  // which point ITS status is 'paid'. There is such a row in this database today.
+  //
+  // The accountant's debtor list and the office home screen each made ONE query — filtered
+  // `.in('status', ['sent','overdue','partial'])`, which is right for a receivable — and then
+  // derived their credit notes from that same array. So a settled creditnota was invisible, and
+  // both things these surfaces promise inverted at once: a fully credited invoice stayed on the
+  // call-back list, and a partly credited one was priced at its FULL amount. The accountant then
+  // telephones a customer about money the owner already gave back in writing — the scenario
+  // outstandingAmount()'s own header is about.
+  //
+  // Eleven other surfaces already did it correctly, each with a dedicated query on invoice_type
+  // and no status filter at all. These two were the exception, not the rule.
+  for (const f of ["src/app/dashboard/accountant/debiteuren/page.tsx",
+                   "src/modules/accountant/work-queues.ts"]) {
+    const src = code(f);
+    assert.doesNotMatch(src, /\.filter\(\(r\) => r\.invoice_type === 'creditnota'\)/,
+      `${f} must not derive its credit notes from the status-filtered receivables read`);
+    assert.match(src, /\.eq\('invoice_type', 'creditnota'\)/,
+      `${f} needs a creditnota query of its own`);
+  }
+
+  // ── The class: no creditnota source may carry a status filter ────────────────────────────────
+  // Walked, not listed, because the defect is in the QUERY and a thirteenth surface would repeat
+  // it exactly. A creditnota's own status says whether the OWNER has been squared up; it says
+  // nothing about whether the customer still owes the invoice it credits.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const gefilterd: string[] = [];
+  let bronnen = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    for (const m of src.matchAll(/(?:eq|in)\(\s*['"]invoice_type['"]\s*,\s*['"]creditnota['"]\s*\)/g)) {
+      bronnen++;
+      // The chain this call sits in: from the nearest `.from(` before it to the nearest `.range(`
+      // or statement end after it.
+      const vanaf = src.lastIndexOf(".from(", m.index);
+      const keten = src.slice(vanaf === -1 ? Math.max(0, (m.index ?? 0) - 400) : vanaf, (m.index ?? 0) + 400);
+      if (/\.(?:in|eq)\(\s*['"]status['"]/.test(keten)) {
+        gefilterd.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(bronnen >= 8,
+    `only ${bronnen} creditnota sources were seen; the scan must be broken`);
+  assert.deepEqual(gefilterd, [],
+    "these read the credit notes through a status filter, so a creditnota that has itself been " +
+    "settled drops out — and every invoice it credited is then priced at its full amount:\n  " +
+    gefilterd.join("\n  "));
+});
+
 test("[EEN-OPENSTAAND] no screen spells 'openstaand' a second way", () => {
   // The list in the test above says "everywhere it is asked" and then names seven files. The
   // customer detail screen was not one of them, and it had its own spelling:
