@@ -47,7 +47,7 @@ import { creditedTotalsFrom, openAfterCredit } from "@/lib/credited-invoices";
 import { sendInvoiceReminder } from "@/lib/email";
 // [WIK] The final reminder is not a firmer nudge — it is the statutory aanmaning that gives the
 // owner the right to charge collection costs at all. Pure law, no I/O: see incasso.ts.
-import { buildWikNotice, debtorTypeOf, isFinalTier, aggregateWikClaims } from "@/lib/incasso";
+import { buildWikNotice, claimableForWik, debtorTypeOf, isFinalTier, aggregateWikClaims } from "@/lib/incasso";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
@@ -471,11 +471,45 @@ export async function GET(req: NextRequest) {
     //
     // This is the second-order mistake the guard itself could have caused: invoice A is held, and
     // its amount rides into the demand for invoice B of the same debtor anyway.
+    //
+    // ── [WIK-VORDERING] Two things that are not claims, and were in the sum ─────────────────
+    //
+    // `ownerInvoices` is the CANDIDATE set — every outgoing invoice of this owner that is 'sent'
+    // or 'overdue', not paused, with a due date. That is deliberately wider than the set that may
+    // be demanded, because reminderTierDue narrows it afterwards. This loop did not narrow it at
+    // all, so two kinds of row walked into the statutory hoofdsom:
+    //
+    //   1. A CREDITNOTA. It is an outgoing document with status 'sent' and a NEGATIVE total, and
+    //      openAfterCredit takes the MAGNITUDE — so a € 500 credit the owner issued to settle a
+    //      dispute was added to the demand as € 500 the customer owes. The exact opposite of what
+    //      the document says, in a letter that names the amount.
+    //   2. AN INVOICE THAT IS NOT YET DUE. Nothing here looked at the due date, so a € 2.000
+    //      invoice payable next month was demanded today, "binnen 14 dagen", alongside the one
+    //      that really is overdue.
+    //
+    // What that costs is not the difference. Art. 6:96 lid 6 BW applies the staffel once over the
+    // debtor's total hoofdsom, and an aanmaning that OVERSTATES the hoofdsom is the standard ground
+    // on which the whole incassokosten claim is struck — for a consumer lid 5 makes that dwingend
+    // recht. So the owner does not lose the excess, they lose the entire fee, and they have sent a
+    // demand for money that is not owed, by e-mail, in their own name, with no human in the loop.
+    //
+    // The narrowing below is the eligibility the tier engine already applies, restated in the two
+    // places it is load-bearing for the SUM rather than for the sending. It is deliberately not a
+    // call to reminderTierDue: that answers "is a letter due TODAY", and an invoice twenty days
+    // overdue on a non-offset day is still perfectly good hoofdsom.
     const claimsPerDebiteur = new Map<string, Array<{ invoiceNumber: string | null; open: number }>>();
     for (const i of ownerInvoices) {
       if (bankHitById.has(i.id)) continue;
       const open = openstaandVan(i);
-      if (open <= 0) continue;
+      // [WIK-VORDERING] The pure rule, in incasso.ts beside the staffel it feeds — because what may
+      // stand in a statutory demand is a legal question, and it is worth asserting without a
+      // database. A creditnota and an invoice that is not yet due are both refused there.
+      if (!claimableForWik({
+        invoiceType: i.invoice_type,
+        dueDayNumber: dayNumberFromIso(i.due_date),
+        todayDayNumber: today,
+        open,
+      })) continue;
       const k = debiteurSleutel(i);
       if (k === "") continue;
       const list = claimsPerDebiteur.get(k);

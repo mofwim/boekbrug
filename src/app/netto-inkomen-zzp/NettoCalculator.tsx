@@ -9,15 +9,31 @@
 //   algemene heffingskorting max €3.115, afbouw 6,398% vanaf €29.736 (→ €0 bij €78.426)
 //   arbeidskorting max €5.685, afbouw 6,51% vanaf €45.592
 //   Zvw 4,85% over max €79.409
-// The arbeidskorting build-up is modelled with a conservative linear ramp to the
-// max at ~€39.000 (the detailed per-segment table is not reproduced), so for low
-// incomes the estimate leans toward MORE tax — safe for planning.
+//
+// [NETTO-TOOL] The table and the four functions live in src/lib/netto-inkomen.ts, where the
+// test:unit glob can reach them. Nothing had ever asserted a euro of this table.
+//
+// This header used to end: "the arbeidskorting build-up is modelled with a conservative linear
+// ramp … so for low incomes the estimate leans toward MORE tax — safe for planning." That was
+// wrong in both directions and it is deleted rather than softened: the ramp UNDER-credits below
+// roughly € 26k of arbeidsinkomen (the tool then shows too little net, and a reader spends less
+// than they have) and OVER-credits between AK_FULL_AT and the phase-out start (too much net, and
+// the aanslag is bigger than the tool promised). A comment that tells the next reader an error is
+// one-directional is worse than one that admits it is not.
+//
+// The approximation itself stays — the real per-segment table is not in this repo and is not
+// guessed here — but the SCREEN now says it exists, beside the amount it affects.
 
 import React, { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatEuroNL, formatEuroEN } from '@/lib/format-nl'
 import { parseAmountNL, parseAmountEN } from '@/lib/parse-nl'
 import { round2 } from '@/lib/invoice-totals'
+// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
+// own, and it gave a different answer; see the header of invoice-totals.round2.
+import {
+  P, TAX_YEAR, box1, algemeneHeffingskorting, arbeidskorting, tableIsCurrent,
+} from '@/lib/netto-inkomen'
 
 type Locale = 'nl' | 'en'
 
@@ -31,6 +47,12 @@ const COPY: Record<Locale, {
   rProfit: string; rDeduction: string; rMkb: string; rTaxable: string
   rIbBefore: string; rCredits: string; rIb: string; rZvw: string
   ctaText: string; ctaStrong: string; ctaBtn: string
+  // [NETTO-TOOL] The year the figures are FOR, printed inside the card that carries the amount —
+  // the surrounding page said "2026" in prose and the green card said nothing, so from 1 January
+  // the one thing a visitor reads would silently be last year's.
+  rateYear: string; rateYearStale: string
+  // …and the one part of the sum that is an approximation rather than the law.
+  akNote: string
 }> = {
   nl: {
     profitLabel: 'Verwachte jaarwinst', profitHint: 'Omzet min zakelijke kosten (vóór ondernemersaftrek)', profitAria: 'Jaarwinst',
@@ -40,6 +62,9 @@ const COPY: Record<Locale, {
     rProfit: 'Jaarwinst', rDeduction: 'Ondernemersaftrek', rMkb: 'MKB-winstvrijstelling (12,7%)', rTaxable: 'Belastbare winst',
     rIbBefore: 'Inkomstenbelasting (vóór kortingen)', rCredits: 'Heffingskortingen', rIb: 'Inkomstenbelasting', rZvw: 'Bijdrage Zvw (4,85%)',
     ctaText: 'Je omzet en BTW altijd bij de hand?', ctaStrong: 'BoekBrug houdt het per kwartaal bij.', ctaBtn: 'Gratis proberen →',
+    rateYear: `tarieven ${TAX_YEAR}`,
+    rateYearStale: `Let op: dit rekent nog met de tarieven van ${TAX_YEAR}. Die van dit jaar staan er nog niet in, dus dit bedrag klopt niet meer.`,
+    akNote: 'De arbeidskorting is hier benaderd, niet exact nagerekend. Daardoor kan de uitkomst een paar honderd euro per jaar afwijken — beide kanten op. Voor het echte bedrag: de rekenhulp van de Belastingdienst.',
   },
   en: {
     profitLabel: 'Expected annual profit', profitHint: 'Revenue minus business costs (before entrepreneur deduction)', profitAria: 'Annual profit',
@@ -49,54 +74,12 @@ const COPY: Record<Locale, {
     rProfit: 'Annual profit', rDeduction: 'Entrepreneur deduction', rMkb: 'SME profit exemption (12.7%)', rTaxable: 'Taxable profit',
     rIbBefore: 'Income tax (before credits)', rCredits: 'Tax credits', rIb: 'Income tax', rZvw: 'Healthcare contribution Zvw (4.85%)',
     ctaText: 'Your revenue and VAT always at hand?', ctaStrong: 'BoekBrug keeps it per quarter.', ctaBtn: 'Try it free →',
+    rateYear: `${TAX_YEAR} rates`,
+    rateYearStale: `Note: this still uses the ${TAX_YEAR} rates. This year's are not in yet, so this amount is out of date.`,
+    akNote: "The arbeidskorting (employment tax credit) is approximated here, not computed exactly. The result can therefore be a few hundred euros a year out — in either direction. For the real figure, use the Belastingdienst's own calculator.",
   },
 }
 
-const P = {
-  zelfstandigenaftrek: 1200,
-  startersaftrek: 2123,
-  mkb: 0.127,
-  brackets: [
-    { upto: 38883, rate: 0.3575 },
-    { upto: 78426, rate: 0.3756 },
-    { upto: Infinity, rate: 0.495 },
-  ],
-  ahkMax: 3115,
-  ahkStart: 29736,
-  ahkRate: 0.06398,
-  akMax: 5685,
-  akFullAt: 39000,
-  akPhaseStart: 45592,
-  akPhaseRate: 0.0651,
-  zvwRate: 0.0485,
-  zvwMax: 79409,
-}
-
-// [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
-// own, and it gave a different answer; see the header of invoice-totals.round2.
-const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
-
-function box1(belastbaar: number): number {
-  let tax = 0
-  let prev = 0
-  for (const b of P.brackets) {
-    if (belastbaar <= prev) break
-    const slice = Math.min(belastbaar, b.upto) - prev
-    tax += slice * b.rate
-    prev = b.upto
-  }
-  return tax
-}
-
-function algemeneHeffingskorting(belastbaar: number): number {
-  return clamp(P.ahkMax - Math.max(0, belastbaar - P.ahkStart) * P.ahkRate, 0, P.ahkMax)
-}
-
-function arbeidskorting(ai: number): number {
-  if (ai <= 0) return 0
-  if (ai <= P.akPhaseStart) return Math.min(P.akMax, (P.akMax * ai) / P.akFullAt)
-  return Math.max(0, P.akMax - (ai - P.akPhaseStart) * P.akPhaseRate)
-}
 
 const s = {
   card: { backgroundColor: '#ffffff', borderRadius: 20, padding: 24, boxShadow: '0 4px 24px rgba(0,0,0,0.06)', border: '1px solid #e0e0e0' } as React.CSSProperties,
@@ -123,6 +106,9 @@ export default function NettoCalculator({ locale = 'nl' }: { locale?: Locale }) 
   const [winstStr, setWinstStr] = useState(locale === 'en' ? '50,000' : '50.000')
   const [urencriterium, setUrencriterium] = useState(true)
   const [starter, setStarter] = useState(false)
+  // The clock, read once. A component body that calls new Date() on every render is impure, and
+  // this one only needs the year.
+  const [currentYearCovered] = useState(() => tableIsCurrent(new Date().getFullYear()))
 
   const r = useMemo(() => {
     const winst = Math.max(0, parseNum(winstStr))
@@ -184,7 +170,22 @@ export default function NettoCalculator({ locale = 'nl' }: { locale?: Locale }) 
         <div style={{ fontSize: 14, opacity: 0.95, marginTop: 4 }}>
           ≈ {fmt(r.nettoMaand)} {t.perMonth} · {t.effRate} {locale === 'en' ? String(r.druk) : String(r.druk).replace('.', ',')}%
         </div>
+        {/* [NETTO-TOOL] The year, on the figure itself. A visitor reads this card and nothing else,
+            and the page's prose year is three scrolls away. */}
+        <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>{t.rateYear}</div>
       </div>
+
+      {/* Only when the clock has passed the table. This is the refusal the rest of the app makes
+          everywhere: a figure the app can no longer stand behind says so, rather than being
+          quietly printed for a year in the same green box. */}
+      {!currentYearCovered && (
+        <p style={{
+          marginTop: 10, background: '#FEF7E0', border: '1px solid #FDE293', borderRadius: 12,
+          padding: 12, fontSize: 13.5, color: '#7C5800', lineHeight: 1.55,
+        }}>
+          {t.rateYearStale}
+        </p>
+      )}
 
       <div style={{ marginTop: 18 }}>
         <div style={s.row}><span style={{ color: '#5f6368' }}>{t.rProfit}</span><span style={{ fontWeight: 600 }}>{fmt(r.winst)}</span></div>
@@ -196,6 +197,11 @@ export default function NettoCalculator({ locale = 'nl' }: { locale?: Locale }) 
         <div style={s.row}><span style={{ color: '#5f6368' }}>{t.rIb}</span><span style={{ fontWeight: 600 }}>{fmt(r.ibNa)}</span></div>
         <div style={{ ...s.row, borderBottom: 'none' }}><span style={{ color: '#5f6368' }}>{t.rZvw}</span><span style={{ fontWeight: 600 }}>{fmt(r.zvw)}</span></div>
       </div>
+
+      {/* [NETTO-TOOL] Under the breakdown, beside the credits line it qualifies. The header of this
+          file used to claim the approximation always erred toward MORE tax; it does not, and a
+          reader who is told nothing has no way to know the figure carries a band at all. */}
+      <p style={{ marginTop: 12, fontSize: 12.5, color: '#5f6368', lineHeight: 1.55 }}>{t.akNote}</p>
 
       <div style={{ marginTop: 22, background: '#f8f9fa', border: '1px solid #e0e0e0', borderRadius: 14, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ fontSize: 14, color: '#3c4043' }}>

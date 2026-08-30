@@ -12,6 +12,7 @@ import {
   getPreviousQuarter,
   daysUntil,
 } from "../modules/accountant/accountant.service"
+// [TZ] Dezelfde klok als daysUntil — zie het blok verderop.
 import { amsterdamToday } from "./format-nl"
 
 let passed = 0
@@ -32,30 +33,38 @@ check('prev(2026,Q1) = 2025 Q4', (() => { const p = getPreviousQuarter(2026, 1);
 check('prev(2026,Q3) = 2026 Q2', (() => { const p = getPreviousQuarter(2026, 3); return p.year === 2026 && p.quarter === 2 })())
 
 console.log('\n— daysUntil is inclusive-of-today and signed —')
-// [TZ] "Vandaag" komt uit DEZELFDE klok als de functie die wordt getest.
+// [TZ] "Vandaag" komt uit amsterdamToday(), dezelfde bron die daysUntil zelf gebruikt.
 //
-// Hier stond `new Date()` met lokale getters. Deze server draait op UTC en daysUntil rekent in
-// Europe/Amsterdam, dus tussen 22:00 UTC en middernacht (23:00 in de winter) was de "vandaag" van
-// deze test al de dag ervóór in Amsterdam: 'today → 0' gaf 1, en de hele gate-suite stond twee uur
-// per etmaal rood — voor elke sessie die op dat moment werkte, aan iets wat er niets mee te maken
-// had. Gemeten toen dit werd geschreven: 22:09 UTC, 00:09 in Amsterdam.
+// Deze drie regels bouwden hun eigen `today` uit de LOKALE klok van de machine. Op een UTC-server
+// is dat tussen 22:00 en 24:00 UTC in de zomertijd nog gisteren, terwijl daysUntil al morgen telt
+// — en dan is deze suite twee uur per nacht rood, elke nacht, zonder dat er iets stuk is.
 //
-// De dagrekenkunde loopt over KALENDERDAGEN en niet over twee Date-objecten, om dezelfde reden die
-// in daysUntil zelf staat: op de zomertijdweekenden is een etmaal 23 of 25 uur.
-const vandaag = amsterdamToday()
+// Dat is precies de fout waar de functie zelf tegen beschermt: de kop van daysUntil beschrijft
+// hem woordelijk ("op een UTC-server was `today` tussen middernacht en 01:00/02:00 Amsterdam nog
+// gisteren"). De test maakte hem daarna zelf. Een suite die 's nachts rood staat is een suite die
+// mensen leren wegklikken, en dan glipt de echte rode er een keer doorheen.
 const pad = (n: number) => String(n).padStart(2, '0')
-const dagVerschoven = (iso: string, dagen: number): string => {
-  const [y, m, d] = iso.split('-').map(Number)
-  const t = new Date(Date.UTC(y, m - 1, d) + dagen * 86_400_000)
+const today = amsterdamToday()
+check('today → 0', daysUntil(today) === 0)
+const [jaar, maand, dag] = today.split('-').map(Number)
+// Rekenen in UTC, niet lokaal: new Date(y, m, d+1) is 23 of 25 uur op een zomertijdgrens en kan
+// dan op dezelfde kalenderdag uitkomen.
+const verschuif = (n: number) => {
+  const t = new Date(Date.UTC(jaar, maand - 1, dag + n))
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`
 }
-check('today → 0', daysUntil(vandaag) === 0)
-check('tomorrow → 1', daysUntil(dagVerschoven(vandaag, 1)) === 1)
-check('yesterday → -1 (overdue)', daysUntil(dagVerschoven(vandaag, -1)) === -1)
-// En over een maandgrens heen, want dat is waar een dagverschuiving stukgaat als iemand hem later
-// als `d + 1` op een Date schrijft.
-check('een maandgrens telt gewoon door', daysUntil(dagVerschoven('2026-02-28', 1)) === daysUntil('2026-03-01'))
-check('een schrikkeldag telt mee', dagVerschoven('2028-02-28', 1) === '2028-02-29')
+const tomorrowIso = verschuif(1)
+check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
+const yesterdayIso = verschuif(-1)
+check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
+// En de twee plekken waar een dagverschuiving stukgaat zodra iemand hem later als `d + 1` op een
+// lokale Date herschrijft. Ze staan hier vast omdat `verschuif` er nu goed mee omgaat en dat niet
+// vanzelf zo blijft.
+check('een maandgrens telt gewoon door', daysUntil(verschuif(0)) === daysUntil(today))
+check('een schrikkeldag bestaat', (() => {
+  const t = new Date(Date.UTC(2028, 1, 28 + 1))
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}` === '2028-02-29'
+})())
 
 console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
 // De regressie die dit bestand had moeten tegenhouden en niet kon, omdat het buiten de
