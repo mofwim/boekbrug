@@ -136,3 +136,53 @@ Two things are not yet true, and neither is hidden in this repo — both were al
 before this audit and are confirmed by it. The system has never been proven end-to-end against a
 live database, and it reads one acquirer format. The first is a day of work with credentials. The
 second is ten real files away, and no more code will substitute for them.
+
+---
+
+## 8. Re-measured, 30 August 2026 — §6 items 2 and 4 worked, by the same method
+
+Same two questions as §0: does a test import it, and does it perform I/O. Nothing below is an
+impression.
+
+**§6 item 2 was already done.** `result-range-assemble.ts` exists (459 lines, 17 tests) and
+`compute-result-range.ts` is down to 268 lines. The extraction this audit asked for happened in
+commit 8b90230, which named the problem exactly: _"The engine behind 'je financiële waarheid' had
+no behavioural test, and could not have one."_
+
+**§6 item 4 splits in two, and one half was reachable.** The I/O halves of `cash-settle.ts` and
+`incasso-settle.ts` still need a database. But the *decisions* they carry do not, and those were
+the untested part that mattered:
+
+| Decision | Where | What a wrong answer does |
+| --- | --- | --- |
+| `belongsToIncassoSupplier` | `incasso-settle.ts` | books an invoice nobody paid |
+| `incassoClientKey` | `incasso-settle.ts` | the idempotency lock; an unstable key double-books |
+| `pnlRole` / `categoryLabel` | `bank-categories.ts` | sends a confirmed bank line to the wrong side of the P&L, or nowhere |
+| quarter boundary | `snelstart-queue` vs `kasboek` | puts a euro in the wrong btw-aangifte |
+| `buildPaymentLinkRows` | `bank-tx-links.ts` | a NULL `amount_applied` re-opens a settled invoice at its full total |
+
+The last one needed the same extraction as item 2, on a module this audit did not list:
+`bank-tx-links.ts` writes the rows `invoices.amount_paid` is derived from, and everything in it
+did I/O except that single decision. It is `buildPaymentLinkRows` now — same logic, testable.
+
+Each of the five was verified by breaking it and watching the new test fail: a drifted quarter end,
+a weakened amount guard, a removed honesty line. A test that has never failed has not been shown to
+work.
+
+**What this did NOT change, and the reason to be careful reading it.** Two claims in §5 and §7
+stand untouched, and they are the two that matter commercially:
+
+* the system has still never been proven end-to-end against a live database;
+* `eft-parser.ts` still reads one acquirer format.
+
+Neither is a coverage problem and neither is closed by more tests. §6 items 1 and 3 remain exactly
+as written.
+
+**One correction to how §5 reads.** "The real risk is coverage, not correctness" is right about the
+assembly and misleading about the whole. Coverage here is not organised by module: it lives in
+source-level gates in `lifecycle-gates.test.ts` and in files named after the GUARD rather than the
+module — `credit-backstop.test.ts` and `ex-incl-fix.test.ts` test functions that live in `ai.ts`,
+which itself has no `ai.test.ts`. Counting test files per module therefore understates it. Three of
+the modules that looked untested on that count turned out to be covered, and one file written on
+that assumption had to be deleted again. Measure by "which decision is asserted", not by "which
+file has a neighbour".
