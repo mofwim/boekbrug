@@ -51,6 +51,7 @@
 
 import { dayNumberFromIso } from "./invoice-reminders";
 import { round2 } from "./invoice-totals";
+import { openAmount } from "./partial-payment";
 
 /** The invoice fields this module reads. A subset of the invoices row. */
 export interface BehaviourInvoice {
@@ -59,6 +60,13 @@ export interface BehaviourInvoice {
   status: string | null;
   payment_date: string | null;
   total_inc_btw: number | null;
+  /**
+   * [CREDITNOTA-NO-CHASE] Which kind of document this is. Optional so a caller that never had it
+   * keeps its old behaviour for ordinary invoices — but it is what makes the promise below true.
+   */
+  invoice_type?: string | null;
+  /** [PARTIAL-PAY] What has already been received. Absent reads as nothing received. */
+  amount_paid?: number | null;
 }
 
 /**
@@ -128,6 +136,22 @@ export interface PaymentBehaviour {
  */
 const AWAITING = new Set(["sent", "overdue"]);
 
+/**
+ * …and the type check that actually delivers the second half of that promise.
+ *
+ * AWAITING is a set of STATUSES, and a creditnota has the same statuses an invoice has — there is
+ * a live `status='sent', invoice_type='creditnota'` row in this database today. So the sentence
+ * above was true about drafts and false about credit notes: a sent creditnota past its due date
+ * was counted as an overdue debt, and because its total is stored negative it SUBTRACTED from the
+ * overdue euros while ADDING to the overdue count. The screen then read "2 facturen te laat" over
+ * an amount smaller than one of them.
+ *
+ * A pro_forma is excluded by the same line, for the same reason: it is not owed either.
+ */
+function isReceivable(iv: BehaviourInvoice): boolean {
+  return (iv.invoice_type ?? "factuur") === "factuur";
+}
+
 /** Median of a non-empty list of whole days, leaning slow on an even split (see the header). */
 function medianDays(sorted: readonly number[]): number {
   const mid = sorted.length >> 1;
@@ -155,7 +179,13 @@ export function clientPaymentBehaviour(
   let overdueAmount = 0;
   let oldestDaysLate = 0;
 
-  for (const iv of invoices) {
+  // [CREDITNOTA-NO-CHASE] Filtered ONCE, at the top, so the type check reaches both halves of
+  // this engine. The overdue euros are the obvious half; the pace median is the quieter one — a
+  // creditnota's payment_date is the day the OWNER paid the customer back, and feeding that into
+  // "how fast does this customer pay me" moves the verdict on the strength of a refund.
+  const receivables = invoices.filter(isReceivable);
+
+  for (const iv of receivables) {
     const status = iv.status ?? "";
     const due = dayNumberFromIso(iv.due_date);
 
@@ -178,7 +208,11 @@ export function clientPaymentBehaviour(
 
     if (AWAITING.has(status) && due !== null && due < todayDayNumber) {
       overdueCount++;
-      overdueAmount += iv.total_inc_btw ?? 0;
+      // [PARTIAL-PAY] What is still OWED, not what was once billed. This added the full
+      // total_inc_btw, so a € 1.000 invoice with € 900 already in the bank was chased for
+      // € 1.000 — on the panel the owner reads before picking up the telephone, and against the
+      // reminder mail, which has always asked only for the remainder.
+      overdueAmount += openAmount(iv);
       oldestDaysLate = Math.max(oldestDaysLate, todayDayNumber - due);
     }
   }
@@ -192,7 +226,7 @@ export function clientPaymentBehaviour(
   const sample = afterInvoice.length;
   if (sample < MIN_MEASURED_INVOICES) {
     const absence: BehaviourAbsence =
-      invoices.length === 0
+      receivables.length === 0
         ? "no_invoices"
         : paidCount === 0
           ? "none_paid"

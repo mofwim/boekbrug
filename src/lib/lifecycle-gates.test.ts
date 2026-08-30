@@ -9867,6 +9867,38 @@ test("[DEEL-CREDIT] a partial credit is still money owed, everywhere it is asked
   );
 });
 
+test("[EEN-OPENSTAAND] no screen spells 'openstaand' a second way", () => {
+  // The list in the test above says "everywhere it is asked" and then names seven files. The
+  // customer detail screen was not one of them, and it had its own spelling:
+  //
+  //     sum(total_inc_btw) over everything whose status is not 'paid'
+  //
+  // which counts a concept nobody has been sent, counts an archived invoice that was withdrawn,
+  // never subtracts amount_paid, and adds a creditnota's negative total into a debt. On a € 1.000
+  // invoice with € 900 already matched plus a € 500 concept, the screen the owner opens before
+  // telephoning that customer said € 1.500 where the app's own definition says € 100 — while the
+  // reminder mail, the pay-QR and the debiteurenlijst all said € 100.
+  const klant = code("src/app/dashboard/klanten/[id]/page.tsx");
+  assert.match(klant, /const open = summarise\(sales, nowMs, credited\)\.outstanding/,
+    "the customer screen's openstaand must come from the shared engine");
+  assert.match(klant, /const credited = creditedTotalsFrom\(/,
+    "…with this customer's own credit notes netted against the invoices they credit");
+  assert.doesNotMatch(klant, /!PAID\.has\(iv\.status/,
+    "the private spelling must be gone, not merely shadowed");
+  // The three columns without which the shared engine silently answers the OLD number: absent
+  // amount_paid reads as nothing received, absent invoice_type reads as 'factuur'.
+  assert.match(klant, /amount_paid, invoice_type, original_invoice_id'\)/,
+    "…and it must actually select what the engine reads");
+
+  // No class walk beside this one, and that is a measurement, not an omission. Three places in
+  // src/app/dashboard and src/modules add invoice totals up by hand, and all three already read
+  // from the shared vocabulary — a scan over a population of three that every member passes
+  // asserts nothing, and its floor would have to be lowered until it could never fail. The
+  // [SEC-STORAGE-PATH] class rule earns its walk on fourteen members; this one does not, so what
+  // guards this defect is the four pinned expressions above, which name the exact shape that was
+  // wrong.
+});
+
 test("[DEEL-CREDIT] a FULL credit is byte-for-byte the document it always was", () => {
   // Every creditnota this app has ever produced took the no-selection path. It must keep producing
   // exactly the same one, or a cent of drift lands in documents already in customers' hands.
