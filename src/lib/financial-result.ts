@@ -623,8 +623,23 @@ export function computeResult(
       if (c.direction !== "out" && (c.date ? covered.has(c.date) : covered.size > 0)) continue;
       // Money IN is the sale; money OUT under 'omzet' is a refund OF a sale.
       const amt = c.direction === "out" ? -magnitude : magnitude;
-      if (c.btw_rate && c.btw_rate > 0) {
-        const net = amt / (1 + c.btw_rate / 100);
+      // [KAS-NULTARIEF] 0% is een ANTWOORD, geen ontbrekend antwoord.
+      //
+      // De voorwaarde was `c.btw_rate && c.btw_rate > 0`, dus een bewust op 0% geboekte
+      // contante verkoop viel in de tak eronder — die hem optelt bij `cashOmzetZonderBtw`, de
+      // teller die "omzet zonder tarief" heet. Twee dingen tegelijk fout:
+      //
+      //   · de omzet bereikt GEEN rubriek. Een 0-emmer met €0 btw gaat in aangifte.ts recht naar
+      //     rubriek 1e ("Leveringen/diensten belast met 0% of niet bij u belast"), precies waar
+      //     zo'n verkoop hoort — maar hij kwam nooit in een emmer terecht;
+      //   · en `cashOmzetZonderBtw` BLOKKEERT de gereedheid (readiness/route.ts). De eigenaar
+      //     die het juiste heeft ingevuld kon zijn kwartaal dus niet afronden, en de enige
+      //     uitweg was het tarief veranderen in iets wat niet waar is.
+      //
+      // /api/cash accepteert 0 uitdrukkelijk als geldige keuze ([0, 9, 21]), en de database
+      // bewaart 0 en NULL apart. Alleen NULL betekent "niet ingevuld".
+      if (c.btw_rate != null) {
+        const net = c.btw_rate > 0 ? amt / (1 + c.btw_rate / 100) : amt;
         omzet += net;
         btwVerschuldigd += amt - net;
         addSale(c.btw_rate, net, amt - net);
@@ -632,7 +647,10 @@ export function computeResult(
         // declared exempt owner this is turnover we booked as taxed WITHOUT being able to ask.
         // Counted, so the concept names it. (An UNRATED cash sale is already surfaced by
         // cashOmzetZonderBtw and reaches no rubriek, so it needs no second warning.)
-        if (exemptOn) onclassificeerbareOmzet += net;
+        // Alleen bij een tarief BOVEN nul: de zin hierboven gaat over omzet die we als BELAST
+        // hebben geboekt zonder het te kunnen vragen. Bij 0% is er niets belast, dus daar valt
+        // ook niets onclassificeerbaars over te melden.
+        if (exemptOn && c.btw_rate > 0) onclassificeerbareOmzet += net;
       } else {
         omzet += amt;
         cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW
