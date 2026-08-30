@@ -33,6 +33,7 @@ import { escapeLikeValue } from "@/lib/sanitize";
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
+import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 
 export async function POST(req: NextRequest) {
   return withCrashNet(
@@ -486,6 +487,12 @@ const dup = await findSemanticDuplicate(
       source: "upload",
       supplier_id: uploadedSupplier?.id ?? null,
       client_name: uploadedSupplier?.name || verification.vendor || "Onbekende afzender",
+      // [BTW-NUMMER-BEWAARD] Op een inkoopfactuur is client_btw_number het nummer van de
+      // LEVERANCIER — dezelfde rij draagt zijn naam in client_name. Het werd gelezen en nergens
+      // opgeslagen, waardoor de EU-inkopenlijst (icp.ts, rubriek 4b) voor iedereen leeg bleef.
+      // Alleen een geldige VORM landt hier; een misvormd nummer blijft staan in
+      // _vendor_btw_printed, waar de controlelijst de ondernemer erover vertelt.
+      client_btw_number: supplierBtwForInvoice((verification.field_confidence as { _vendor_btw_printed?: string } | null)?._vendor_btw_printed, verification.vendor_btw ?? null),
       invoice_date: invoiceDate,
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null (honest).
       // This endpoint never set due_date at all, so invoices ingested here had no

@@ -36,6 +36,10 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import type { PipelineClient } from "./supabase-pipeline";
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner, ownedStoragePath } from "./storage-path";
+// [XAF-IN-PAKKET] The auditfile the accountant's mail promises, built from the same reads the
+// /api/xaf download uses — see xaf-fetch.ts for why those reads are not in either caller.
+import { buildXafFile } from "./xaf-export";
+import { buildXafInputForOwner } from "./xaf-fetch";
 // [SLUIS] The content sniff that decides whether an .xml really is an invoice — see the block
 // that uses it in the orchestrator below.
 import { looksLikeInvoiceXmlBytes } from "./e-invoice";
@@ -213,6 +217,15 @@ export interface ClosingPackageSummary {
   // the app — which is most of them. A cost the app found and booked, that its owner learns about
   // only by visiting a screen, is work nobody will know happened.
   cardStatedCommission?: StatedCommissionRow | null;
+  /**
+   * [XAF-IN-PAKKET] The auditfile that went into the ZIP, or null when it could not be built.
+   *
+   * On the SUMMARY and not only in the archive, because the mail that announces this package
+   * claims the file is in it. A claim and an artefact that can disagree in silence is the shape
+   * this whole module is written against; carrying the fact here is what lets the mail be checked
+   * against the manifest instead of trusted.
+   */
+  auditfile?: { fileName: string; entryCount: number; skippedCount: number; throughDate: string } | null;
   generatedAt: string;               // ISO
 }
 
@@ -221,31 +234,11 @@ export interface ClosingPackageResult {
   summary: ClosingPackageSummary;
 }
 
-// Verified status sets (Phase A confirmed against the enum). 'processing'
-// excluded — unverified must not reach the accountant.
-const OUTGOING_VERIFIED = new Set(["sent", "paid", "overdue"]);
-const INCOMING_VERIFIED = new Set(["received", "paid"]);
-
-export function isVerifiedForPackage(inv: { direction: string; status: string | null }): boolean {
-  const s = inv.status ?? "";
-  if (inv.direction === "outgoing") return OUTGOING_VERIFIED.has(s);
-  if (inv.direction === "incoming") return INCOMING_VERIFIED.has(s);
-  return false;
-}
-
-/**
- * [FIN-4] Effective direction: the stored value, or — when it is null — inferred
- * from ownership (the owner is the receiver of an incoming invoice, the sender of
- * an outgoing one). Ensures a verified row with a null direction is attributed to
- * a bucket instead of being silently dropped from the package.
- */
-export function effectiveDirection(
-  inv: { direction: string | null; receiver_id: string | null },
-  ownerId: string
-): "incoming" | "outgoing" {
-  if (inv.direction === "incoming" || inv.direction === "outgoing") return inv.direction;
-  return inv.receiver_id === ownerId ? "incoming" : "outgoing";
-}
+// [PAKKET-TOEREKENING] The two attribution rules live in package-attribution.ts now — xaf-fetch.ts
+// needs them and this module needs xaf-fetch, which would otherwise be a cycle. Re-exported here
+// because the twenty existing callers import them from this file and their behaviour is unchanged.
+export { isVerifiedForPackage, effectiveDirection } from "./package-attribution";
+import { isVerifiedForPackage, effectiveDirection } from "./package-attribution";
 
 // ─── Helpers (pure) ─────────────────────────────────────────────────────────────
 
@@ -660,6 +653,23 @@ interface AssembleInput {
    *  Eindsaldo per day. A pure projection — books nothing into the P&L. null when the drawer
    *  has no life this quarter. */
   kasboekXlsx?: Uint8Array | null;
+  /**
+   * [XAF-IN-PAKKET] The XML Auditfile Financieel 3.2, as the accountant's mail has been promising.
+   *
+   * email.ts:935 tells every accountant that this package "bevat de PDF's, een CSV-overzicht en
+   * het XAF 3.2-auditbestand", and the same mail tells them "je hebt hiervoor geen account nodig".
+   * Both sentences were true and together they were a trap: buildXafFile had exactly one caller,
+   * /api/xaf, which requires a login the promised reader does not have. Sixteen zip.file() calls,
+   * not one of them .xaf.
+   *
+   * A promise the recipient cannot collect is worse than no promise. It is also the difference
+   * between "here are the documents, do the bookkeeping" and "here is the bookkeeping" — an
+   * auditfile imports as journal entries; a folder of PDFs is an afternoon.
+   *
+   * `xml` null = it could not be built, and the reason is already in `warnings`. Never an empty
+   * file: an accountant who imports an empty auditfile imports an empty administration.
+   */
+  auditfile?: { xml: string; entryCount: number; skippedCount: number; throughDate: string } | null;
   warnings: ClosingPackageWarning[];
 }
 
@@ -699,6 +709,13 @@ export function buildLeesmij(args: {
   bankStatementIncluded: boolean;
   /** [AFLETTEREN] What of the reconciliation is already done. null = not reconciled / unreadable. */
   handover?: HandoverTotals | null;
+  /**
+   * [XAF-IN-PAKKET] The auditfile that went in, or null. Its window is YEAR-TO-DATE, which is the
+   * one thing about it that can go wrong in the accountant's hands: four quarterly packages carry
+   * four auditfiles that OVERLAP, and importing them one after another books the same year up to
+   * four times. So the file is named for its window and this text says the sentence out loud.
+   */
+  auditfile?: { entryCount: number; skippedCount: number; throughDate: string; fileName: string } | null;
   warnings: ClosingPackageWarning[];
 }): string {
   const { quarterLabel, clientName, outgoingCount, incomingCount, eInvoiceCount } = args;
@@ -774,6 +791,37 @@ export function buildLeesmij(args: {
   L.push("  kaart-reconciliatie.csv    kas ↔ pinautomaat ↔ bank, met de dagen die niet sluiten");
   L.push("  Kasboek-…xlsx              het kasboek met beginsaldo en eindsaldo per dag");
   L.push("");
+
+  // [XAF-IN-PAKKET] Its own block, not a line in the list above, because it is the one file here
+  // that a program imports as BOOKINGS rather than as a document — and because its window is the
+  // one thing about this package that can be got wrong in a way that costs an evening.
+  const xaf = args.auditfile;
+  if (xaf) {
+    L.push("HET AUDITBESTAND");
+    L.push("");
+    L.push(`  ${xaf.fileName}`);
+    L.push(`  XML Auditfile Financieel 3.2 — ${xaf.entryCount} boekingen, in te lezen in je eigen pakket.`);
+    L.push("");
+    L.push(`  LET OP — dit bestand loopt van 1 januari tot en met ${xaf.throughDate}, niet alleen`);
+    L.push("  over dit kwartaal. Het auditfile-formaat kent maandperiodes vanaf de jaarstart; een");
+    L.push("  bestand dat pas in april begint zou zichzelf tegenspreken. Praktisch betekent dat:");
+    L.push("  het auditbestand van een VOLGEND kwartaal VERVANGT dit bestand, het komt er niet bij.");
+    L.push("  Lees ze niet allebei in — dan staat hetzelfde halfjaar er twee keer in.");
+    if (xaf.skippedCount > 0) {
+      L.push("");
+      L.push(`  ${xaf.skippedCount} ${xaf.skippedCount === 1 ? "boeking is" : "boekingen zijn"} NIET in het bestand opgenomen omdat`);
+      L.push("  de tegenboeking niet sluitend te maken was. Ze staan wel als document in dit pakket.");
+      L.push("  Een niet-sluitende journaalpost weigeren is het enige eerlijke: hem rechttrekken zou");
+      L.push("  een bedrag verzinnen dat nergens op papier staat.");
+    }
+    L.push("");
+  } else {
+    L.push("Het XAF-auditbestand kon voor dit kwartaal niet worden samengesteld en zit er niet in.");
+    L.push("De reden staat onderaan bij wat we niet hebben kunnen vaststellen. De stukken, het");
+    L.push("overzicht en de afletering zijn wel compleet.");
+    L.push("");
+  }
+
   L.push("Niet elk bestand zit er altijd in: wat er niets te melden valt, wordt niet geschreven.");
   L.push("");
   L.push("WAT DIT PAKKET NIET DOET");
@@ -979,6 +1027,17 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // \u2500\u2500 Kasboek.xlsx ([KASBOEK] running-balance cash book in the store's Kiwi layout) \u2500\u2500
   if (kasboekXlsx) { zip.file(`Kasboek-Q${quarter}-${year}.xlsx`, kasboekXlsx); filesIncluded++; }
 
+  // [XAF-IN-PAKKET] The auditfile the accountant's mail promises. Named for its WINDOW — "tm-Q2"
+  // rather than "Q2" — because it runs from 1 January and a name that says "Q2" invites a second
+  // import on top of the first. Not counted in filesIncluded for the same reason LEESMIJ.txt and
+  // overzicht.json are not: that number means "documents of this administration that went in", and
+  // the auditfile is a rendering of them, not another one.
+  const auditfile = input.auditfile ?? null;
+  const auditfileName = `Auditfile-${year}-tm-Q${quarter}.xaf`;
+  if (auditfile) {
+    zip.file(auditfileName, auditfile.xml);
+  }
+
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
   const hasTurnover = !!turnoverClosing && turnoverClosing.summary.days > 0;
   if (hasTurnover && turnoverClosing) {
@@ -1061,6 +1120,15 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     missingEvidence: [],
     bankStatementIncluded: bankFiles.length > 0,
     warnings,
+    // [XAF-IN-PAKKET] The fact the accountant's mail asserts, carried where it can be checked.
+    auditfile: auditfile
+      ? {
+          fileName: auditfileName,
+          entryCount: auditfile.entryCount,
+          skippedCount: auditfile.skippedCount,
+          throughDate: auditfile.throughDate,
+        }
+      : null,
     generatedAt: new Date().toISOString(),
   };
 
@@ -1078,6 +1146,14 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         eInvoiceCount: eInvoiceXmlCount,
         bankStatementIncluded: bankFiles.length > 0,
         handover: bankHandover?.totals ?? null,
+        auditfile: auditfile
+          ? {
+              entryCount: auditfile.entryCount,
+              skippedCount: auditfile.skippedCount,
+              throughDate: auditfile.throughDate,
+              fileName: auditfileName,
+            }
+          : null,
         warnings,
       }),
   );
@@ -1142,6 +1218,12 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
         // staat onder dezelfde naam naast de PDF zodat een inleesdienst het als één document ziet.
         e_facturen_bijgevoegd: eInvoiceXmlCount,
         bankafschrift_bijgevoegd: summary.bankStatementIncluded,
+        // [XAF-IN-PAKKET] Het auditbestand, met zijn VENSTER erbij. Dat venster loopt vanaf
+        // 1 januari, niet vanaf het kwartaal: het bestand van een volgend kwartaal vervangt dit
+        // bestand en komt er niet bij. null = het kon niet worden samengesteld; de reden staat
+        // bij de waarschuwingen. Nooit een leeg auditbestand — dat leest in als een lege
+        // administratie.
+        auditbestand: summary.auditfile,
         // [AFLETTEREN] Wat er van het afletteren al gedaan is. null = er is niet afgeletterd of
         // de bankregels konden niet worden gelezen — nooit een geruststellende nul.
         afletteren: bankHandover?.totals
@@ -3098,10 +3180,46 @@ export async function buildClosingPackageZip(args: {
     });
   }
 
+  // [XAF-IN-PAKKET] The auditfile, built here so the accountant's mail stops promising a file the
+  // recipient cannot reach. Same reads as /api/xaf ([XAF-BRON]) — one answer to "what books".
+  //
+  // Windowed to the end of THIS quarter, not the year: a Q2 package carrying Q3 bookings is a file
+  // that disagrees with every other number in the archive. It still OPENS on 1 January, because
+  // that is what the format is (xaf-export.ts declares month periods from the year's start), which
+  // is exactly why LEESMIJ.txt says the next quarter's file replaces this one.
+  //
+  // Best-effort, and loudly so. A failed auditfile costs the accountant an import shortcut; it may
+  // never cost the owner their quarter, and it may never be a silent absence either — the mail
+  // announces this file by name.
+  let auditfile: { xml: string; entryCount: number; skippedCount: number; throughDate: string } | null = null;
+  try {
+    const xafInput = await buildXafInputForOwner({ pipeline: supabase, ownerId, year, through: end });
+    const builtXaf = buildXafFile(xafInput);
+    auditfile = {
+      xml: builtXaf.xml,
+      entryCount: builtXaf.entryCount,
+      skippedCount: builtXaf.skipped.length,
+      throughDate: xafInput.endDate,
+    };
+  } catch (e) {
+    warnings.push({
+      code: "auditfile_unavailable",
+      message:
+        "Het XAF-auditbestand kon niet worden samengesteld en zit niet in dit pakket. Een auditbestand " +
+        "waaruit een bron ontbreekt is geen kleinere administratie maar een verkeerde, dus is het " +
+        "weggelaten in plaats van half meegeleverd. De stukken, het overzicht en de afletering zijn wel " +
+        "compleet; genereer het pakket opnieuw.",
+    });
+    console.error("[XAF-IN-PAKKET] auditfile build failed", {
+      ownerId, year, quarter, error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   return assembleClosingPackageZip({
     year,
     quarter,
     clientName,
+    auditfile,
     outgoing,
     incoming,
     pdfByInvoice,

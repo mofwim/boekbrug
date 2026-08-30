@@ -5817,11 +5817,22 @@ test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the priv
   // identifiers to every event and replay — on screens showing turnover, customers and balances.
   assert.match(src, /sendDefaultPii: false/, "no PII by default, on a bookkeeping app");
 
-  // Stated, never inherited: these are today's library defaults, and a default is a decision
-  // someone else can change in a minor release.
-  for (const opt of ["maskAllText: true", "maskAllInputs: true", "blockAllMedia: true"]) {
-    assert.ok(src.includes(opt), `replay masking must be explicit: ${opt}`);
-  }
+  // [SENTRY-GEEN-REPLAY] Masking is no longer the question, because there is nothing to mask.
+  //
+  // Session Replay recorded 5% of sessions plus every errored one. Masked carefully — and still a
+  // RECORDING of somebody's bookkeeping session, needing browser storage to stitch its segments,
+  // which puts it outside "strikt noodzakelijk" under art. 11.7a Telecommunicatiewet and therefore
+  // behind consent. This app has no consent mechanism; the cookiebeleid described a banner that was
+  // never built. So the recording stopped rather than the banner getting built, and this gate is
+  // what keeps a wizard re-run from quietly switching it back on.
+  assert.doesNotMatch(src, /Sentry\.replayIntegration\(/,
+    "the replay integration may not come back — its consent question has no answer in this app");
+  assert.match(src, /replaysSessionSampleRate: 0,/,
+    "no session is filmed");
+  assert.match(src, /replaysOnErrorSampleRate: 0,/,
+    "an error does not buy the right to film the session that led to it either");
+  // Zero, and PRESENT. Deleting the keys would hand the decision back to the SDK defaults, which
+  // is the exact failure this file's header is about.
 
   // The work that was written in the dead file has to actually be here.
   assert.match(src, /beforeSend\(event\)/, "the PII stripper must run, not merely exist");
@@ -5831,7 +5842,6 @@ test("[SENTRY-EEN-CONFIG] the browser config that ships is the one with the priv
 
   // And the sampling the project chose, not the scaffold's 100%.
   assert.match(src, /tracesSampleRate: isProduction \? 0\.1 : 1\.0/);
-  assert.match(src, /replaysSessionSampleRate: 0\.05/);
 });
 
 // ─── [DUBBEL-ZICHTBAAR] A dropped duplicate must leave a trace the owner can see ────────────────
@@ -16424,19 +16434,26 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
   assert.match(xafSpec, /\[XAF-DIFF\]/,
     "the differential test against computeResult exists — the two engines may never drift apart in silence");
 
-  // The route restates no attribution rule: the authorities are CALLED.
+  // [XAF-BRON] The reads moved out of the route into xaf-fetch.ts when the quarterly package
+  // needed the same ones. That is the whole point of the move, so the gate follows them: the
+  // authorities are CALLED, in one place, and neither door restates a booking rule.
+  const bron = code("src/lib/xaf-fetch.ts");
+  assert.match(bron, /\.filter\(isVerifiedForPackage\)/, "the package's own verified rule decides which invoices book");
+  assert.match(bron, /toResultBankTx\(b\)\.posSettlement/, "the ONE card-payout predicate ([ONE-BANK-READ])");
+  assert.match(bron, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
+  assert.match(bron, /liveCashEntries\(pipeline\)/, "[KAS-ZACHT] a removed cash movement is out of the auditfile too");
+  assert.match(bron, /const endDate = through < vandaag \? through : vandaag;/,
+    "[XAF-PERIODE] the declared period ends at the earlier of today and the requested window — a file may not declare days that have not happened, nor days it did not read");
+
   const route = code("src/app/api/xaf/route.ts");
   assert.match(route, /resolveQuarterOwner\(supabase, user\.id/, "dual-path authorization");
-  assert.match(route, /\.filter\(isVerifiedForPackage\)/, "the package's own verified rule decides which invoices book");
-  assert.match(route, /toResultBankTx\(b\)\.posSettlement/, "the ONE card-payout predicate ([ONE-BANK-READ])");
-  assert.match(route, /fetchRateShares\(pipeline/, "the mixed-rate split comes from the one splitter");
+  assert.match(route, /buildXafInputForOwner\(\{ pipeline, ownerId, year \}\)/, "the route reads through the shared source");
   assert.match(route, /buildXafFile\(input\)/, "the pure module is CALLED, not merely exported");
   assert.match(route, /status: 503/, "a failed read refuses — a partial auditfile is a wrong administration");
-  assert.match(route, /`\$\{year\}-12-31` < vandaag \? `\$\{year\}-12-31` : vandaag/,
-    "[XAF-PERIODE] the declared period ends today for the running year — a file may not declare days that have not happened");
-  assert.match(route, /invoice_id/, "the cash select carries invoice_id — the settle branch is fed, not starved");
-  assert.match(route, /kor_active/, "the KOR flag reaches the file's own honesty notes");
-  assert.match(route, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
+  assert.match(bron, /select\("id, direction, amount, category, btw_rate, entry_date, document_id, invoice_id"\)/,
+    "the cash select carries invoice_id — the settle branch is fed, not starved");
+  assert.match(bron, /kor_active/, "the KOR flag reaches the file's own honesty notes");
+  assert.match(bron, /regimeNotes/, "…which travel inside the XML, where the importer reads them");
 
   // Both doors, or the person who actually files never finds it.
   const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
@@ -19706,6 +19723,372 @@ test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een cur
   // "nog nooit" is een echt antwoord — en het antwoord op "is deze nieuwe cron ooit gedraaid?",
   // wat de eerste vraag is na een deploy die er een toevoegt.
   assert.match(scherm, /"nog nooit"/);
+});
+
+test("[BANK-CSV-LEESBAAR] the client's readable-format list may not deny what the server parses", () => {
+  // The defect this pins is a DRIFT between two files that never reference each other.
+  //
+  // bank-parser.ts routes a .csv upload to parseBankCsv and imports its transactions like any
+  // MT940. BankClient.tsx keeps its own list of "formats we can read", written before that module
+  // existed, and the upload handler's gate is `!isReadableBankFile(name) || parsed === 0`. With
+  // .csv absent from the list the first half was ALWAYS true, so a CSV that imported forty-three
+  // transactions still raised the "could not be read" modal — the app calling its own successful
+  // work a failure, which is the one thing an owner cannot check.
+  //
+  // Source-level because that is where the disagreement lives: both halves work perfectly on
+  // their own, and no unit test crosses the boundary.
+  const client = code("src/app/dashboard/bank/BankClient.tsx");
+  const parser = code("src/lib/bank-parser.ts");
+
+  const routesCsv = /lower\.endsWith\("\.csv"\) \|\| looksLikeBankCsv\(content\)/.test(parser);
+  assert.ok(routesCsv, "the server still routes .csv to the CSV parser — if this changed, so must the list below");
+
+  const listed = client.match(/const READABLE_BANK_EXTS = \[([^\]]*)\]/);
+  assert.ok(listed, "READABLE_BANK_EXTS is still a literal list this gate can read");
+  assert.match(listed![1], /'\.csv'/,
+    "a format the server parses is READABLE on the screen too — otherwise a successful import is announced as a failure");
+
+  // And the sentence the modal shows may not contradict it either. The gate is on the message
+  // catalogue rather than the component, because the component holds no language of its own.
+  const nl = MESSAGES["bank.formaat.omTeKoppelen"].nl;
+  assert.doesNotMatch(nl, /CSV/,
+    "the 'cannot be read' sentence may not name CSV — the parser reads it");
+  assert.match(MESSAGES["bank.formaten"].nl, /CSV/,
+    "the accepted-formats line names CSV, so the owner uploads the file the bank actually gives them");
+});
+
+// ─── [SUBVERWERKER] The processor list is a claim about the code, so the code checks it ─────────
+//
+// AVG art. 28 lid 2: the controller names the sub-processors. /beveiliging tells a visitor, in so
+// many words, "de privacyverklaring noemt ELKE subverwerker met naam, land en grondslag" — a
+// completeness claim, published, on a page whose whole purpose is to be believed.
+//
+// It was not complete. Two vendors were added to the app and nobody thought of the legal text:
+//   • Enable Banking — reads the owner's bank account under PSD2. The most sensitive third party
+//     in the product, and absent from a list that claimed to be exhaustive.
+//   • Stripe — name, e-mail and subscription of every paying customer. The cookiebeleid even said
+//     "zolang BoekBrug kosteloos is" plaatst geen betaaldienstverlener cookies, months after
+//     /prijzen went live with a Subscribe button.
+//
+// Neither is a bug that can fail a test. A vendor arrives as an ordinary feature branch, and the
+// legal text sits in another directory nobody grep's. So the gate goes the other way round: it
+// starts from the CODE's vendor boundaries and demands each one appear in the published list.
+test("[SUBVERWERKER] every vendor boundary in the code is named in the privacy statement", () => {
+  const verklaring = readFileSync("src/content/legal/privacyverklaring.ts", "utf8");
+
+  // Each entry: the file that IS the boundary to a third party (this repo keeps one module per
+  // vendor by convention — see the headers of billing.ts and ai.ts), the proof it is still live,
+  // and the name that must therefore stand in §4.2.
+  const boundaries: Array<{ file: string; proof: RegExp; name: string }> = [
+    { file: "src/lib/enablebanking-client.ts", proof: /api\.enablebanking\.com/, name: "Enable Banking" },
+    { file: "src/lib/billing.ts", proof: /from "stripe"/, name: "Stripe" },
+    { file: "src/lib/ai.ts", proof: /anthropic/i, name: "Anthropic" },
+    { file: "src/lib/email.ts", proof: /resend/i, name: "Resend" },
+    { file: "src/app/layout.tsx", proof: /@vercel\/analytics/, name: "Vercel" },
+    { file: "src/instrumentation-client.ts", proof: /@sentry\/nextjs/, name: "Sentry" },
+    { file: "src/lib/supabase-server.ts", proof: /@supabase\/ssr/, name: "Supabase" },
+  ];
+
+  const missing: string[] = [];
+  for (const b of boundaries) {
+    if (!existsSync(b.file)) continue;           // vendor dropped — nothing to declare
+    if (!b.proof.test(readFileSync(b.file, "utf8"))) continue;
+    if (!verklaring.includes(b.name)) missing.push(`${b.name} (${b.file})`);
+  }
+  assert.deepEqual(
+    missing, [],
+    "a third party the code sends data to must stand in the privacy statement — /beveiliging " +
+    "publishes the claim that the list is complete",
+  );
+
+  // And the two that were missing carry their country and grounds, not just a name. A row without
+  // those is not what art. 28 asks for, and not what /beveiliging promises the reader.
+  assert.match(verklaring, /Enable Banking Oy[^|]*\|[^|]*PSD2[^|]*\|[^|]*Finland/,
+    "the bank connection's row states purpose and country");
+  assert.match(verklaring, /Stripe Payments Europe[^|]*\|[^|]*\|[^|]*Ierland/,
+    "the payment processor's row states purpose and country");
+});
+
+// ─── [COOKIE-WAAR] The cookie page describes THIS app, not a plausible one ──────────────────────
+//
+// Every storage key the old policy listed was invented: `cookie-consent`, `preferred-language`,
+// `theme-preference`, `sentry-session`. None of the four is written anywhere in this repo — the
+// real ones are `boekbrug_taal` and `boekbrug.priceMode`, and neither was mentioned. The page also
+// told the visitor to manage their choice "via de cookiebanner" and "de cookie-instellingen knop
+// onderaan elke pagina", neither of which was ever built, while Sentry Session Replay recorded 5%
+// of sessions over screens showing turnover, customers and bank balances.
+//
+// That is one defect, not five: a legal page written from what a bookkeeping app USUALLY has.
+test("[COOKIE-WAAR] the cookie policy names the storage this app writes, and no other", () => {
+  const beleid = readFileSync("src/content/legal/cookiebeleid.ts", "utf8");
+
+  // ── What the code writes must be on the page ──
+  assert.match(beleid, /boekbrug_taal/,
+    "the language cookie the app really sets (i18n/locale.ts LOCALE_COOKIE)");
+  assert.match(beleid, /boekbrug\.priceMode/,
+    "the invoice screen's excl/incl preference in localStorage");
+  const locale = readFileSync("src/lib/i18n/locale.ts", "utf8");
+  assert.match(locale, /LOCALE_COOKIE = 'boekbrug_taal'/,
+    "if the cookie is renamed, the page above is renaming with it");
+
+  // ── What the page names must exist in the code ──
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      // Not the legal text itself (it is the thing under test), and not test files — this very
+      // gate names the four ghosts in its own body, and would then find them.
+      else if (/\.tsx?$/.test(p) && !p.includes("/content/legal/") && !p.includes(".test.")) out.push(p);
+    }
+    return out;
+  };
+  const allSrc = walk("src").map((f) => readFileSync(f, "utf8")).join("\n");
+  for (const ghost of ["cookie-consent", "preferred-language", "theme-preference", "sentry-session"]) {
+    assert.ok(!allSrc.includes(ghost), `\`${ghost}\` is still invented — the code does not write it`);
+    assert.ok(!beleid.includes(ghost), `the cookie policy still lists \`${ghost}\`, which nothing sets`);
+  }
+
+  // ── A choice may only be described where a choice exists ──
+  // The page is allowed to say there is NO banner (that is now the truth); it may not tell a
+  // visitor to use one. The distinction is the word before it.
+  assert.doesNotMatch(beleid, /[Vv]ia de cookiebanner/,
+    "no banner exists — pointing a visitor at one is the promise that made this page false");
+  assert.doesNotMatch(beleid, /cookie-instellingen knop/,
+    "no settings button exists at the foot of any page");
+  assert.match(beleid, /geen cookiebanner/,
+    "the page states plainly WHY there is no banner, rather than leaving its absence unexplained");
+
+  // ── And the recording that ran without consent is named as switched off ──
+  assert.match(beleid, /Session Replay staat uit/, "the visitor is told the screen is not filmed");
+  const sentry = readFileSync("src/instrumentation-client.ts", "utf8");
+  assert.match(sentry, /replaysSessionSampleRate: 0,/, "…and it really is off");
+
+  // ── Stripe is live; the page may not still be waiting for it ──
+  assert.ok(existsSync("src/lib/billing.ts"), "the Stripe boundary exists");
+  assert.doesNotMatch(beleid, /Zolang BoekBrug kosteloos is/,
+    "payments went live — the page promised to name the processor BEFORE the first payment");
+  assert.match(beleid, /Stripe/, "the payment processor is named, as that promise required");
+});
+
+// ─── [EXPORT-VOLLEDIG] A new table joins the export, or is refused in writing ───────────────────
+//
+// AVG art. 20 and, more to the point, /api/account/delete: a confirmed export is what unlocks
+// destroying the original. So the question "is this table in the export?" has to be answered
+// every time a table is added, and it never was — invoice_lines, clients and suppliers had been
+// in the schema for the entire life of the product and in the ZIP for none of it. An owner who
+// left with that archive took invoice headers: a total, and a customer's NAME.
+//
+// A test cannot know what a new table means. It CAN refuse to let one pass unexamined: every
+// table carrying user_id is either exported, or named below with the reason it is not. Adding a
+// table without deciding fails here, which is the only moment anyone is looking.
+test("[EXPORT-VOLLEDIG] every user-owned table is exported, or refused with a reason", () => {
+  const types = readFileSync("src/types/database.types.ts", "utf8");
+  const tablesBlock = types.slice(types.indexOf("Tables: {"));
+  const owned: string[] = [];
+  for (const m of tablesBlock.matchAll(/\n      (\w+): \{\n        Row: \{([\s\S]*?)\n        \}\n/g)) {
+    if (/^\s+user_id\??:/m.test(m[2])) owned.push(m[1]);
+  }
+  assert.ok(owned.length > 20, `the type file parsed — found ${owned.length} user-owned tables`);
+
+  const exporter = readFileSync("src/lib/account-export.ts", "utf8");
+
+  // Deliberately NOT exported. Each line is an argument, not an omission.
+  const refused: Record<string, string> = {
+    // Credentials. Exporting a live token is a security defect wearing completeness as a costume:
+    // the ZIP travels by e-mail and lands in a downloads folder.
+    bank_connections: "PSD2 session credentials",
+    bank_connection_accounts: "PSD2 session credentials",
+    email_connections: "OAuth tokens (Supabase Vault)",
+    snelstart_connections: "OAuth tokens",
+    // About the SYSTEM, not the administration. An owner takes their books, not our plumbing.
+    rate_limits: "operational throttling",
+    email_failed_attempts: "operational retry log",
+    deletion_requests: "the paperwork of this very request",
+    notifications: "in-app notices, derived from events already in the ZIP",
+    snelstart_exports: "log of exports made, derived",
+    // Derived: recomputable from ledgers that ARE in the ZIP, so including them would add no fact.
+    eft_settlements: "derived from bank_transactions",
+    bank_statement_periods: "coverage metadata over bank_transactions",
+    ledger_daily: "cache over daily_turnover",
+    // Exported, but not as JSON rows.
+    documents: "exported as the actual files under bestanden/",
+    audit_logs: "the kas trail is exported ([KAS-SPOOR]); a full log dump is its own decision",
+  };
+
+  const missing: string[] = [];
+  for (const table of owned) {
+    if (refused[table]) continue;
+    // Exported means the orchestrator reads it by name.
+    if (exporter.includes(`.from("${table}")`)) continue;
+    missing.push(table);
+  }
+  assert.deepEqual(
+    missing, [],
+    "a table holding the owner's data is neither in the export nor refused above — decide which, " +
+    "because a confirmed export is what /api/account/delete accepts as permission to destroy it",
+  );
+
+  // The refusals must stay honest too: a table that no longer exists should not keep an excuse.
+  const stale = Object.keys(refused).filter((t) => !owned.includes(t));
+  assert.deepEqual(stale, [], "a refusal survives its table — remove the excuse with the table");
+
+  // And the deletion gate this whole test rests on is still there.
+  const del = code("src/app/api/account/delete/route.ts");
+  assert.match(del, /export_confirmed !== true/,
+    "deletion is still gated on the export — which is why its completeness is not cosmetic");
+});
+
+// ─── [XAF-IN-PAKKET] The mail may not promise a file the archive does not write ─────────────────
+//
+// email.ts told every accountant, in the mail that carries the quarterly package: "Het pakket bevat
+// de PDF's, een CSV-overzicht en het XAF 3.2-auditbestand — te importeren in je eigen pakket." Two
+// paragraphs later: "Je hebt hiervoor geen account nodig."
+//
+// Both true. Together, a trap. buildXafFile had exactly ONE caller — /api/xaf, behind a login the
+// promised reader does not have — and closing-package.ts made sixteen zip.file() calls, none of
+// them .xaf. The recipient could neither find the file nor fetch it another way, and the only
+// person who could check was the accountant, who would assume they had missed it.
+//
+// Nothing could have failed. A sentence in a mail template and a list of writes in another module
+// have no reason to be compared, which is why this gate compares them.
+test("[XAF-IN-PAKKET] what the accountant's mail names, the package writes", () => {
+  const mail = code("src/lib/email.ts");
+  const pakket = code("src/lib/closing-package.ts");
+
+  // The mail still makes the claim…
+  assert.match(mail, /XAF 3\.2-auditbestand/,
+    "the accountant's mail names the auditfile — if that sentence goes, this gate goes with it");
+  // …and the recipient still has no other door to it, which is what makes the claim load-bearing.
+  assert.match(mail, /geen account nodig/,
+    "the reader of that mail has no account — the file has to be IN the package or it is nowhere");
+
+  // …so the package writes it.
+  assert.match(pakket, /zip\.file\(auditfileName, auditfile\.xml\)/,
+    "the auditfile is written into the archive");
+  assert.match(pakket, /const auditfileName = `Auditfile-\$\{year\}-tm-Q\$\{quarter\}\.xaf`/,
+    "…under a name that states its window: the file opens on 1 January, so a quarter-only name " +
+    "invites a second import stacked on the first");
+  assert.match(pakket, /buildXafInputForOwner\(\{ pipeline: supabase, ownerId, year, through: end \}\)/,
+    "…built through the SHARED reads, windowed to this quarter's end ([XAF-BRON])");
+
+  // An absence is stated, never silent, and never an empty file — an empty auditfile imports as an
+  // empty administration.
+  assert.match(pakket, /code: "auditfile_unavailable"/,
+    "a failed build becomes a warning the accountant reads, not a missing file they wonder about");
+  assert.match(pakket, /kon voor dit kwartaal niet worden samengesteld/,
+    "…and LEESMIJ.txt says so in the file the accountant opens first");
+
+  // The manifest carries the fact, so the claim can be CHECKED instead of trusted.
+  assert.match(pakket, /auditbestand: summary\.auditfile/,
+    "overzicht.json records the auditfile that went in");
+
+  // And the window warning, which is the one thing about this file that costs an evening when
+  // nobody says it: four quarterly packages carry four overlapping year-to-date auditfiles.
+  assert.match(pakket, /VERVANGT dit bestand, het komt er niet bij/,
+    "LEESMIJ states that a later quarter's auditfile replaces this one");
+});
+
+// ─── [XAF-GEEN-XSD] A published claim needs a mechanism, not a comment that says it has one ─────
+//
+// /voor-boekhouders told accountants the auditfile was "gevalideerd tegen het officiële schema".
+// There is no .xsd in this repo, no validator anywhere in src/, and xaf-export.test.ts asserts the
+// output with regexes. The claim traced back to a line in a header comment on the same page,
+// which asserted it about the code; the FAQ then quoted the comment.
+//
+// The page's own header explains why this matters more here than elsewhere: "an office that finds
+// a claim untrue does not file a complaint, it stops answering." Schema-validity is exactly the
+// kind of claim an office checks in a demo, with a file it already has and a validator it already
+// uses.
+//
+// The gate is conditional on purpose. If someone ships a real validator and the schema, the
+// stronger sentence may come back — the file appearing is what licenses it.
+test("[XAF-GEEN-XSD] the schema claim exists only where a validator does", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      if (e === "node_modules" || e === ".git" || e === ".next") continue;
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else out.push(p);
+    }
+    return out;
+  };
+  const hasSchema = walk(".").some((f) => f.endsWith(".xsd"));
+
+  const page = readFileSync("src/app/voor-boekhouders/page.tsx", "utf8");
+  if (!hasSchema) {
+    assert.doesNotMatch(page, /gevalideerd tegen het[\s\S]{0,40}officiële schema/,
+      "no .xsd and no validator in this repo — the page may not tell an accountant the file is " +
+      "schema-validated");
+    // …and it says what IS checked, which is the claim that survives contact with a reviewer.
+    assert.match(page, /debet = credit voordat hij in het bestand komt/,
+      "the page states the check that really runs");
+    assert.match(page, /niet sluitend te maken is wordt GEWEIGERD/,
+      "…including the refusal, which is the part an accountant cares about");
+  }
+
+  // And the mechanisms the page now points at are still in the code it points at.
+  const pure = code("src/lib/xaf-export.ts");
+  assert.match(pure, /if \(!balanced\(built\.lines\)\) \{ skipped\.push/, "per-entry balance refusal");
+  assert.match(pure, /if \(totalDebitC !== totalCreditC\) \{/, "file-level balance assertion");
+});
+
+// ─── [BTW-NUMMER-BEWAARD] Read on every invoice, written on none ────────────────────────────────
+//
+// ai.ts reads the supplier's btw-identificatienummer off every purchase invoice, and its filter is
+// right: only `NL\d{9}B\d{2}` may become a supplier KEY, so a German or Belgian number is dropped.
+// What survives is `_vendor_btw_printed` in field_confidence, which the invoice-checks screen reads
+// to tell an owner their supplier printed a malformed number.
+//
+// Nothing wrote it to invoices.client_btw_number — the column the rest of the app reads as "the
+// counterparty's VAT number", and the one that on an incoming invoice IS the supplier's, since the
+// same row holds the supplier's name in client_name.
+//
+// The consequence was total and completely quiet. buildForeignPurchases (icp.ts:261) filters
+// `direction === "incoming"` and then classifies clientVatNumber; with that column always null,
+// EU-purchase listing — rubriek 4b, the verlegde BTW an accountant has to place — could not return
+// a row for any owner, in any quarter. eu-inkopen.csv was written from an empty list and read as
+// "this administration has no EU purchases". Every test passed the whole time: the reader worked,
+// the listing worked, and the wire between them was never there.
+//
+// So the gate is on the WIRE, at every door an incoming invoice can come through.
+test("[BTW-NUMMER-BEWAARD] every incoming door stores the supplier's VAT number", () => {
+  const doors: Array<[string, string]> = [
+    ["src/app/api/intake/route.ts", "camera/upload, read by ai.ts"],
+    ["src/app/api/email/upload/route.ts", "an invoice uploaded from the mail screen"],
+    ["src/app/api/documents/[id]/read-as-invoice/route.ts", "a skipped document, read again"],
+    ["src/lib/email-integration.ts", "the mailbox sync"],
+  ];
+  const missing: string[] = [];
+  for (const [file, what] of doors) {
+    const src = code(file);
+    // The door still creates incoming invoices…
+    if (!/direction: ['"]incoming['"]/.test(src)) continue;
+    // …so it must store the number through the ONE helper. A hand-rolled assignment here would be
+    // a second opinion on what counts as a VAT number, which is how the invoice screen and a
+    // fiscal listing come to disagree about the same string.
+    if (!src.includes("client_btw_number: supplierBtwForInvoice(")) missing.push(`${file} — ${what}`);
+  }
+  assert.deepEqual(missing, [],
+    "an incoming invoice path stores no supplier VAT number — the EU-purchase listing (rubriek 4b) " +
+    "is blind to every invoice that arrives this way");
+
+  // The e-factuur path deserves its own line: it is the one document type where the number is not
+  // read off a picture but stated in its own element, and the one most likely to carry a foreign
+  // supplier. It read the name and the IBAN and walked past the VAT number for the whole life of
+  // the parser — with a comment saying the XML does not carry one.
+  const ubl = code("src/lib/ubl-invoice.ts");
+  assert.match(ubl, /PartyTaxScheme/, "the supplier's VAT element is read");
+  assert.match(ubl, /checkVendorBtw\(raw\) === "ok"/,
+    "…and judged by the app's own shape authority, never by a second regex written here");
+  assert.doesNotMatch(ubl, /PartyLegalEntity[\s\S]{0,200}?supplierVatNumber/,
+    "the trade-register number sits in the same party block and is NOT a VAT number");
+
+  // The storage helper refuses rather than guesses — the rule this whole repo is built on.
+  const identity = code("src/lib/vendor-identity.ts");
+  assert.match(identity, /if \(checkVendorBtw\(raw\) !== 'ok'\) continue/,
+    "a malformed number is refused, and stays visible in _vendor_btw_printed instead");
 });
 
 test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwvorm, geen belofte", () => {

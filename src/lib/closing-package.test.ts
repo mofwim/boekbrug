@@ -782,3 +782,70 @@ test("[VERANTWOORDING] the LEESMIJ points at it, in the list of things to read",
   assert.match(leesmij(), /Verantwoording-…pdf/);
   assert.match(leesmij(), /in je dossier/, "and says what it is for — a page to file, not another export");
 });
+
+// ─── [XAF-IN-PAKKET] The auditfile the accountant's mail has been promising ────────────────────
+
+test("[XAF-IN-PAKKET] the auditfile goes into the ZIP, named for its window", async () => {
+  // The defect: email.ts told every accountant the package "bevat de PDF's, een CSV-overzicht en
+  // het XAF 3.2-auditbestand", and told them in the next paragraph "je hebt hiervoor geen account
+  // nodig" — while buildXafFile's only caller was /api/xaf, behind a login. A promise the reader
+  // cannot collect.
+  const { zipBytes, summary } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    quarter: 2 as const,
+    auditfile: {
+      xml: "<?xml version=\"1.0\"?><auditfile/>",
+      entryCount: 143,
+      skippedCount: 0,
+      throughDate: "2026-06-30",
+    },
+  });
+  const zip = await JSZip.loadAsync(zipBytes);
+
+  // Named for the WINDOW, not for the quarter. "Auditfile-2026-Q2" invites a second import on top
+  // of Q1's; "tm-Q2" says what it is.
+  const file = zip.file("Auditfile-2026-tm-Q2.xaf");
+  assert.ok(file, "the auditfile is in the archive under its window-bearing name");
+  assert.match(await file!.async("string"), /auditfile/);
+
+  // The manifest carries the same fact, so the mail can be checked against it rather than trusted.
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.auditbestand.fileName, "Auditfile-2026-tm-Q2.xaf");
+  assert.equal(overzicht.auditbestand.entryCount, 143);
+  assert.equal(summary.auditfile?.throughDate, "2026-06-30");
+
+  // And LEESMIJ.txt says the one thing that costs an accountant an evening if nobody says it.
+  const leesmij = await zip.file("LEESMIJ.txt")!.async("string");
+  assert.match(leesmij, /HET AUDITBESTAND/);
+  assert.match(leesmij, /van 1 januari tot en met 2026-06-30/);
+  assert.match(leesmij, /VERVANGT dit bestand/);
+});
+
+test("[XAF-IN-PAKKET] no auditfile means no file and a said-out-loud absence — never an empty one", async () => {
+  // An empty .xaf imports as an empty administration. The absence is stated in the one file the
+  // accountant actually opens, because the mail announced this file by name.
+  const { zipBytes, summary } = await assembleClosingPackageZip({ ...emptyAssemble, auditfile: null });
+  const zip = await JSZip.loadAsync(zipBytes);
+  assert.equal(zip.file("Auditfile-2026-tm-Q1.xaf"), null, "no half auditfile ships");
+  assert.equal(summary.auditfile, null);
+  assert.equal(JSON.parse(await zip.file("overzicht.json")!.async("string")).auditbestand, null);
+  assert.match(await zip.file("LEESMIJ.txt")!.async("string"), /kon voor dit kwartaal niet worden samengesteld/);
+});
+
+test("[XAF-IN-PAKKET] a refused booking is reported, not hidden", async () => {
+  // xaf-export refuses an entry it cannot balance rather than patching it — the right call, and
+  // invisible unless the count reaches a person. The document is still in the package, so the
+  // accountant can book it by hand; they just have to know which.
+  const leesmij = buildLeesmij({
+    quarterLabel: "Q2 2026",
+    clientName: "Kiwi Food Market",
+    outgoingCount: 3,
+    incomingCount: 40,
+    eInvoiceCount: 0,
+    bankStatementIncluded: true,
+    auditfile: { entryCount: 143, skippedCount: 2, throughDate: "2026-06-30", fileName: "Auditfile-2026-tm-Q2.xaf" },
+    warnings: [],
+  });
+  assert.match(leesmij, /2 boekingen zijn NIET in het bestand opgenomen/);
+  assert.match(leesmij, /staan wel als document in dit pakket/);
+});

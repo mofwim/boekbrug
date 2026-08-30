@@ -96,5 +96,46 @@ console.log("\n— [BTW-SPLIT] the per-rate breakdown, which a mixed-rate invoic
   check("no TaxSubtotal → an empty list, not a fabricated row", parseUblInvoice(UBL).btwRows.length === 0);
 }
 
+console.log("\n— [BTW-NUMMER-BEWAARD] the supplier's VAT number, which no path stored —");
+{
+  // The number is on the file, in its own element, stated by the supplier's own system. Nothing
+  // read it, so invoices.client_btw_number stayed null on every purchase invoice — and
+  // buildForeignPurchases (icp.ts) filters direction === "incoming" and then classifies exactly
+  // that column. The EU-purchase listing, rubriek 4b, could not return a row for anybody.
+  const SUP_TAX = `
+  <cac:AccountingSupplierParty><cac:Party>
+    <cac:PartyName><cbc:Name>Bäckerei Krause GmbH</cbc:Name></cac:PartyName>
+    <cac:PartyTaxScheme><cbc:CompanyID>DE 123 456 789</cbc:CompanyID>
+      <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>
+    <cac:PartyLegalEntity><cbc:RegistrationName>Bäckerei Krause GmbH</cbc:RegistrationName>
+      <cbc:CompanyID>HRB 4711</cbc:CompanyID></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingSupplierParty>`;
+  const CUST_TAX = `
+  <cac:AccountingCustomerParty><cac:Party>
+    <cac:PartyName><cbc:Name>Mijn Winkel</cbc:Name></cac:PartyName>
+    <cac:PartyTaxScheme><cbc:CompanyID>NL123456789B01</cbc:CompanyID>
+      <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:PartyTaxScheme>
+  </cac:Party></cac:AccountingCustomerParty>`;
+  const withVat = UBL
+    .replace(/<cac:AccountingSupplierParty>[\s\S]*?<\/cac:AccountingSupplierParty>/, SUP_TAX)
+    .replace(/<cac:AccountingCustomerParty>[\s\S]*?<\/cac:AccountingCustomerParty>/, CUST_TAX);
+  const g = parseUblInvoice(withVat);
+
+  check("reads the supplier's VAT number, normalised", g.supplierVatNumber === "DE123456789");
+  // The customer party carries a CompanyID in the SAME shape. Picking that one would put the
+  // owner's own number on the invoice as the vendor's — and it would look entirely plausible.
+  check("does NOT pick the customer's VAT number", g.supplierVatNumber !== "NL123456789B01");
+  // PartyLegalEntity/CompanyID is the trade-register number. It sits inside the same party block
+  // and is not a VAT number; classifying it as one puts a wrong entry on a fiscal listing.
+  check("does NOT pick the legal-entity registration number", g.supplierVatNumber !== "HRB4711");
+
+  // Absent is absent — the original fixture states no PartyTaxScheme at all.
+  check("no PartyTaxScheme → null, never a guess", parseUblInvoice(UBL).supplierVatNumber === null);
+
+  // A CompanyID that is not shaped like a VAT number is refused rather than stored.
+  const junk = withVat.replace("DE 123 456 789", "zie bijlage");
+  check("a CompanyID that is not VAT-shaped is refused", parseUblInvoice(junk).supplierVatNumber === null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -102,6 +102,7 @@ import type { Database } from '@/types/database.types'
 import { amsterdamToday } from '@/lib/format-nl'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
+import { supplierBtwForInvoice } from "./vendor-identity"
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -4416,6 +4417,13 @@ export async function syncUserEmails(
           source: 'email',
           supplier_id: supplier?.id ?? null,
           client_name: supplier?.name || rawVendorName,
+          // [BTW-NUMMER-BEWAARD] Zie intake/route.ts: op een inkoopfactuur is client_btw_number
+          // het nummer van de LEVERANCIER. Het werd gelezen en nergens bewaard, waardoor de
+          // EU-inkopenlijst (icp.ts, rubriek 4b) voor elk account leeg bleef.
+          client_btw_number: supplierBtwForInvoice(
+            (fieldConfidenceValue as { _vendor_btw_printed?: string } | null)?._vendor_btw_printed,
+            classification.vendorBtw ?? null,
+          ),
           client_email: extractEmail(attachment.from),
           invoice_date: invoiceDate,
           // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null.
