@@ -16,6 +16,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix, NotASpreadsheetError } from "@/lib/xlsx-adapter";
 // [PDF-ALS-BLAD] A PDF grootboek/Z-rapport laid back out as the table it was printed from.
 import { pdfBytesToMatrix } from "@/lib/pdf-sheet";
+// [KASSA-OMZETRAPPORT] The POS's own day report — one day, rates as rows.
+import { parsePosOmzetReport } from "@/lib/pos-omzet-report";
 import {
   normalizeTurnoverSheet,
   isRealCalendarDate,
@@ -248,6 +250,29 @@ export async function POST(req: NextRequest) {
   }
 
   const { rows, warnings } = normalizeTurnoverSheet(matrix);
+
+  // [KASSA-OMZETRAPPORT] The column reader found no header — try the POS's own day report, which
+  // is the same information transposed: one day, rates as rows. It is a separate reader because
+  // one function with two ideas of what a row is fails silently; this one refuses anything whose
+  // own arithmetic does not close, so reaching for it costs nothing when the file is something
+  // else entirely.
+  if (rows.length === 0 && warnings.some((w) => w.code === "no_header")) {
+    const pos = parsePosOmzetReport(matrix as never);
+    if (pos.day) {
+      return NextResponse.json({ ok: true, preview: true, count: 1, rows: [pos.day], warnings: [] });
+    }
+    // A report we recognised and could not trust is a different answer from a file we do not
+    // know, and the owner is told which — a total that does not add up is something he can check.
+    if (pos.refusal === "rate_math_failed" || pos.refusal === "total_mismatch") {
+      return NextResponse.json({
+        ok: false,
+        error: pos.refusal === "total_mismatch"
+          ? `Dit kassa-omzetrapport telt niet op: de tarieven samen zijn € ${(pos.detail?.found ?? 0).toFixed(2).replace(".", ",")} terwijl het rapport € ${(pos.detail?.expected ?? 0).toFixed(2).replace(".", ",")} als totaal noemt. Er is niets geboekt.`
+          : "In dit kassa-omzetrapport klopt een tarief niet met zichzelf (basis + btw ≠ inclusief). Er is niets geboekt.",
+      }, { status: 422 });
+    }
+  }
+
   return NextResponse.json({ ok: true, preview: true, count: rows.length, rows, warnings });
 }
 
