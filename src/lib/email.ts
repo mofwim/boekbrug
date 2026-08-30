@@ -116,6 +116,37 @@ export async function sendOchtendMail({
   return deliverEmail(__sendResult, { label: 'ochtend-digest', critical: false })
 }
 
+/**
+ * [BEHEER-GEZOND] Het alarm dat naar de BEHEERDER gaat als een achtergrondtaak is gestopt.
+ *
+ * Niet naar een ondernemer: een gestopte cron is een storing in de machine, niet in zijn boeken,
+ * en hij kan er niets aan doen. Naar de adressen in BEHEER_EMAILS — dezelfde grens die de
+ * beheerpagina gebruikt.
+ *
+ * critical: false, en dat is met opzet. Een mislukt alarm mag de cron waarin het meelift nooit
+ * laten falen; de beheerpagina toont dezelfde stand en is de tweede weg naar hetzelfde feit.
+ */
+export async function sendBeheerAlarm({
+  toEmails,
+  subject,
+  body,
+}: {
+  toEmails: string[]
+  subject: string
+  body: string
+}) {
+  if (toEmails.length === 0) return { delivered: false as const, reason: 'no-recipients' as const }
+  const __sendResult = await getResend().emails.send({
+    from: 'BoekBrug <noreply@boekbrug.nl>',
+    to: toEmails,
+    subject,
+    // Platte tekst in een <pre>: dit is een operatorbericht, geen klantcommunicatie, en de regels
+    // erin zijn een lijst taken. Opmaak zou hier alleen ruis toevoegen.
+    html: `<pre style="font:14px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap">${escapeHtml(body)}</pre>`,
+  })
+  return deliverEmail(__sendResult, { label: 'beheer-alarm', critical: false })
+}
+
 // ── إيميل دعوة المحاسب ────────────────────────────────────────────────────────
 export async function sendAccountantInvite({
   toEmail,

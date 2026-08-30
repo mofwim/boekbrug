@@ -18,6 +18,9 @@ import { getSessionUser } from "@/lib/session-user";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { isBeheerder, buildBeheerOverview } from "@/lib/beheer";
+// [BEHEER-GEZOND] Draaien de achtergrondtaken nog? Dat oordeel bestond al (judgeCron) en had één
+// lezer: een endpoint dat je moet curlen. Hier kijkt een mens ernaar.
+import { readSystemHealth } from "@/lib/beheer-health";
 import { decidePlan } from "@/lib/subscription";
 import { BeheerScherm } from "./BeheerScherm";
 
@@ -30,6 +33,12 @@ export default async function BeheerPage() {
   if (!user || !isBeheerder(user.email)) notFound();
 
   const pipeline = createPipelineClient();
+
+  // [BEHEER-GEZOND] Eén lezer voor de hartslag, gedeeld met de cron die het alarm mailt — twee
+  // lezers van dezelfde tabel drijven uit elkaar, en dan staat deze pagina groen terwijl de mail
+  // iets anders rekende. De klok wordt daar gelezen, niet hier: in een servercomponent is dat een
+  // onzuivere aanroep tijdens de render.
+  const systeem = await readSystemHealth(pipeline);
 
   // [PAGINATION] Both reads paged: the day this app has more than ~1000 accounts is exactly the
   // day the operator page matters most, and a silently truncated user list on an operator screen
@@ -89,5 +98,5 @@ export default async function BeheerPage() {
     (p) => decidePlan({ role: p.role, subscriptionStatus: p.subscriptionStatus, currentPeriodEnd: p.currentPeriodEnd, nowMs }).plan,
   );
 
-  return <BeheerScherm overview={overview} />;
+  return <BeheerScherm overview={overview} systeem={systeem} />;
 }

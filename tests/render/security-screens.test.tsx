@@ -428,6 +428,9 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
           links: [{ accountantName: "B. Boekhouder", clientName: "Kiwi Food Market", since: "2026-04-01" }],
           counts: { total: 2, owners: 1, accountants: 1, links: 1 },
         },
+        systeem: { readable: true, allWell: true, attention: [], crons: [
+          { job: "reminders", health: "ok", lastRunAt: "2026-09-04T07:00:00Z", hoursAgo: 2, note: null, needsAttention: false } as const,
+        ] },
       }),
     );
     assert.match(html, /Kiwi Food Market/);
@@ -444,10 +447,55 @@ test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () =>
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
       }),
     );
     assert.match(html, /Nog geen accounts/);
     assert.match(html, /Nog geen koppelingen/);
+  })();
+});
+
+test("[BEHEER-GEZOND] een gestopte cron staat bovenaan, met hoe lang al", () => {
+  // Een gestopte cron geeft geen foutmelding en verandert niets aan het scherm: geen herinneringen
+  // meer, geen bankregels meer, geen betaaltermijn die op tijd wordt gemeld — terwijl de rest van
+  // deze pagina er normaal uitziet. Dit blok is het enige dat zo'n storing kan tonen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    // `as const` zodat job en health de smalle types houden die CronStatus vraagt.
+    const gestopt = {
+      job: "reminders", health: "te-lang-stil", lastRunAt: "2026-08-31T07:00:00Z", hoursAgo: 96,
+      note: "Deze taak hoort dagelijks te draaien.", needsAttention: true,
+    } as const;
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: false, attention: [gestopt], crons: [
+          gestopt,
+          // "nog nooit" is een echt antwoord, en het antwoord op "is deze nieuwe cron ooit gedraaid?"
+          { job: "payment-due", health: "nog-niet-langs", lastRunAt: null, hoursAgo: null, note: null, needsAttention: false } as const,
+        ] },
+      }),
+    );
+    assert.match(html, /aandacht nodig/);
+    assert.match(html, /reminders/);
+    assert.match(html, /96 uur/, "hoe lang al, niet alleen dat");
+    assert.match(html, /nog nooit/, "een taak die nooit draaide zegt dat, in plaats van een leeg vakje");
+  })();
+});
+
+test("[NO-SILENT-EMPTY] een onleesbare hartslag is geen groene", () => {
+  // Op de pagina die bestaat om te zeggen of de machine draait, mag "we konden niet kijken" nooit
+  // als "alles goed" renderen — dat is precies de stille storing die dit blok moet tonen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: false, allWell: false, attention: [], crons: [] },
+      }),
+    );
+    assert.match(html, /niet te lezen/);
+    assert.doesNotMatch(html, /achtergrondtaken draaien</, "een onleesbare hartslag meldt geen gezonde machine");
   })();
 });
 
