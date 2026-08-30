@@ -608,7 +608,19 @@ export function computeResult(
       // Fail-SAFE on a missing date: a store that USES turnover (covered non-empty) has
       // its cash sales inside the Z-report, so a dateless cash omzet is treated as covered
       // rather than double-counted; a ZZP (no turnover → covered empty) still counts it.
-      if (c.date ? covered.has(c.date) : covered.size > 0) continue;
+      // [KAS-TERUGGAAF] Alleen geld dat BINNENKOMT kan de dubbeltelling zijn waar deze regel over
+      // gaat. De redenering erboven is: de eigenaar heeft de dagopbrengst die de Z-bon al telde
+      // nóg een keer als kasregel genoteerd. Een TERUGGAAF is dat niet — daar is geen tweede
+      // notering van dezelfde ontvangst, en daily_turnover.cash_amount is een positief
+      // ontvangstenbedrag dat een uitbetaling helemaal niet kan voorstellen.
+      //
+      // Hem toch overslaan haalt dus een echte beweging weg: de omzet blijft staan op het bedrag
+      // vóór de teruggaaf. En de opmerking twee regels hierboven zegt zelf dat teruggaven "the
+      // normal way a till goes the other way" zijn — precies het geval dat hier wegviel.
+      //
+      // De kosten-tak hiernaast doet dit al goed (een kas-UITGAVE op een kassadag telt gewoon);
+      // dit trekt 'omzet' met diezelfde lijn recht.
+      if (c.direction !== "out" && (c.date ? covered.has(c.date) : covered.size > 0)) continue;
       // Money IN is the sale; money OUT under 'omzet' is a refund OF a sale.
       const amt = c.direction === "out" ? -magnitude : magnitude;
       if (c.btw_rate && c.btw_rate > 0) {
