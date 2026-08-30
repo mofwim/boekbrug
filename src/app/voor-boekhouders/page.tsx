@@ -282,6 +282,39 @@ export default function VoorBoekhoudersPage() {
           ))}
         </div>
 
+        {/* ── [CARD-RECON] De pinomzet ─────────────────────────────
+            Waarom deze sectie bestaat: MARKTPOSITIE_2026.md §1 stelt vast dat wat dit product
+            werkelijk onderscheidt "op geen enkele featurelijst staat — ook niet op die van
+            hemzelf". Dit IS die lijst, en dit is precies de lezer die het aangaat: een kantoor
+            met horeca- of winkelklanten.
+
+            Onder de regel bovenaan dit bestand — alleen wat er is. De motor is
+            src/lib/card-reconcile.ts (Leg A en Leg B, met tests), de bedrading staat in
+            docs/RECONCILIATION_TRIANGLE.md. Wat daar onder "nog open" valt, staat hier niet, en
+            er staat nergens dat het al bij honderd kantoren draait. */}
+        <section style={{ ...card, marginBottom: 32 }}>
+          <h2 style={h2}>Voor klanten die veel pinnen</h2>
+          <p style={body}>
+            De kassa boekt de pinomzet <strong>bruto</strong>. De acquirer betaalt{' '}
+            <strong>netto</strong> uit — een dag later, met het weekend samengevoegd. Wie die twee
+            rechtstreeks vergelijkt, moet het verschil in een marge laten vallen, en dat verschil
+            zijn de transactiekosten. Die verdwijnen dan uit de kosten: de winst staat te hoog en
+            de btw erover wordt niet teruggevraagd.
+          </p>
+          <p style={body}>
+            BoekBrug zet de afrekening van de betaalterminal ertussen en maakt er twee exacte
+            vergelijkingen van. <strong>Kassa tegen terminal</strong>: allebei bruto, dus een
+            verschil is een echt verschil — een ontbrekende bon of een terminal die niet klopt,
+            geen afrondingsruis. En <strong>terminal tegen bank</strong>: dat verschil ís de
+            transactiekostenpost, en die wordt als kosten geboekt in plaats van weggestreept.
+          </p>
+          <p style={{ ...body, margin: 0 }}>
+            Is de bankuitbetaling er nog niet, dan zegt het scherm dat de pinomzet klopt en dat de
+            uitbetaling nog niet gekoppeld is. Er wordt geen bedrag ingevuld dat niemand heeft
+            gezien.
+          </p>
+        </section>
+
         {/* ── De grens ────────────────────────────────────────────
             This is the section an office reads twice. It is also the one that is hardest to
             claim and easiest to verify, so it is stated plainly and without adjectives. */}

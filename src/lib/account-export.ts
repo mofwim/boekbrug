@@ -19,6 +19,7 @@
 import JSZip from "jszip";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
+import { ownedStoragePath } from "./storage-path";
 import { toExportRowFull, invoicesToCsv, fmtAmountNL, type InvRow } from "./export";
 import { csvCell } from "./csv-safe";
 import { isMissingRelation } from "./pg-missing";
@@ -552,10 +553,28 @@ export async function buildAccountExportZip(args: {
   // chunked/streamed downloads. Not optimizing before measurement.
   const downloaded = await Promise.all(
     docs.map(async (d) => {
+      // [SEC-STORAGE-PATH] The row proves the RECORD is this user's; it does not prove the record
+      // POINTS at their bytes. `file_url` is ordinary text on a row the owner may UPDATE
+      // (documents_update_own is a whole-row policy), and `supabase` here is service_role — which
+      // bypasses the bucket policy that stops a session client reading another tenant's folder.
+      // Without this line, pasting another owner's key onto one's own document row and then asking
+      // for the AVG-export downloaded their file into the requester's ZIP.
+      //
+      // Refused rather than failed: an unattributable key is skipped like any unreadable file, and
+      // the export already discloses every skip below, so the owner is told rather than quietly
+      // handed a shorter ZIP.
+      const path = ownedStoragePath(d.file_url, userId);
+      if (!path) {
+        return {
+          ok: false as const,
+          name: d.file_name,
+          reason: "overgeslagen — dit bestand hoort niet bij dit account",
+        };
+      }
       try {
         const { data, error } = await supabase.storage
           .from("documents")
-          .download(d.file_url);
+          .download(path);
         if (error || !data) {
           return {
             ok: false as const,
@@ -566,7 +585,7 @@ export async function buildAccountExportZip(args: {
         const bytes = new Uint8Array(await data.arrayBuffer());
         return {
           ok: true as const,
-          file: { path: d.file_url, name: d.file_name, bytes },
+          file: { path, name: d.file_name, bytes },
         };
       } catch (e) {
         return {

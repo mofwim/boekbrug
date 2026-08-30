@@ -83,3 +83,55 @@ test("[BEHEER-GEZOND] a failed run is not a missing run", () => {
   assert.equal(rij.needsAttention, true, "…and a failed run still needs someone");
   assert.ok(rij.note, "a job that is not plain 'ok' carries its sentence");
 });
+
+// ── [STORINGSBEELD] ──────────────────────────────────────────────────────────
+import { buildEventSummary } from "./beheer-health";
+
+const ev = (tag: string, urenGeleden: number, severity = "gate-unavailable") =>
+  ({ tag, severity, at: new Date(NU - urenGeleden * UUR).toISOString() });
+
+test("[STORINGSBEELD] grouped by what broke, frequency first", () => {
+  const s = buildEventSummary(
+    [ev("CASH-SETTLE", 1), ev("CASH-SETTLE", 5), ev("CASH-SETTLE", 30), ev("MOLLIE", 2)],
+    NU, 7,
+  );
+  assert.equal(s.total, 4);
+  assert.equal(s.groups.length, 2);
+  // Frequency, not severity: one data-integrity event is a thing to look at; the same one forty
+  // times is a thing happening RIGHT NOW, and that is what an operator needs from a glance.
+  assert.equal(s.groups[0].tag, "CASH-SETTLE");
+  assert.equal(s.groups[0].count, 3);
+  // The most RECENT of the group, so "is this still going on" is answerable.
+  assert.equal(s.groups[0].hoursAgo, 1);
+});
+
+test("[STORINGSBEELD] the worst severity a tag ever had is the one shown", () => {
+  // A tag that was data-integrity once and something mild twenty times is still a tag that CAN be
+  // data-integrity — showing the last one would hide exactly the event worth seeing.
+  const s = buildEventSummary(
+    [ev("KAS", 1, "gate-unavailable"), ev("KAS", 2, "data-integrity"), ev("KAS", 3, "gate-unavailable")],
+    NU, 7,
+  );
+  assert.equal(s.groups[0].severity, "data-integrity");
+});
+
+test("[NO-SILENT-EMPTY] 'nothing broke' and 'we could not look' are different answers", () => {
+  const stil = buildEventSummary([], NU, 7);
+  assert.equal(stil.readable, true);
+  assert.deepEqual(stil.groups, [], "a quiet week is a real and good answer");
+
+  const stuk = buildEventSummary([], NU, 7, false);
+  assert.equal(stuk.readable, false, "unreadable may never render as a calm empty list");
+  assert.equal(stuk.total, 0);
+});
+
+test("[STORINGSBEELD] the shape itself cannot carry a customer's data", () => {
+  // This is the guarantee, and it is structural rather than a scrubber you have to trust: the row
+  // has three fields. A free-text message is where an amount, an invoice number or a supplier name
+  // would eventually land, and a failure log that carries those is a back door into every client's
+  // books — the one thing this product promises never to pool.
+  const s = buildEventSummary([ev("MOLLIE", 1)], NU, 7);
+  const velden = Object.keys(s.groups[0]).sort();
+  assert.deepEqual(velden, ["count", "hoursAgo", "lastAt", "severity", "tag"],
+    "a field was added to the failure view — if it can hold free text, it can hold a customer's data");
+});

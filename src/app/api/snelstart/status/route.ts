@@ -51,7 +51,9 @@ export async function GET() {
   const geclaimd = new Set([...ids.pushed, ...ids.unknown]);
   const klaar = candidates.filter((c) => !geclaimd.has(c.id)).length;
 
-  const { count: mislukt } = await supabase
+  // [NO-SILENT-EMPTY] Nul betekent "geen mislukte exports". Een mislukte telling zei precies dat,
+  // over de tabel die bijhoudt wat er NIET is doorgekomen.
+  const { count: mislukt, error: misluktErr } = await supabase
     .from("snelstart_exports")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
@@ -74,7 +76,9 @@ export async function GET() {
       // Niet "doorgestuurd" en niet "mislukt": verstuurd, maar zonder bevestiging. Een mens
       // controleert het in SnelStart; de app boekt hem niet vanzelf opnieuw.
       onbekend: ids.unknown.size,
-      mislukt: mislukt ?? 0,
+      // null = niet geteld. Nul beweert "geen mislukte exports", over precies de tabel die
+      // bijhoudt wat er níét is doorgekomen.
+      mislukt: misluktErr ? null : mislukt ?? 0,
       // Wachten op een akkoord van de eigenaar. Apart geteld van "klaar": die twee optellen zou de
       // teller weer laten zeggen dat er meer klaarstaat dan de poort doorlaat.
       tegengehouden: held.filter((h) => !geclaimd.has(h.invoice.id)).length,

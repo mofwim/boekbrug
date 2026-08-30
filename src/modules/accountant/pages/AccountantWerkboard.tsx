@@ -89,11 +89,17 @@ type NudgeState = 'idle' | 'confirm' | 'sending' | 'sent' | 'error'
 
 interface Props {
   clients: Array<{ id: string; name: string }>
+  /**
+   * [BOEKHOUDER-LEEG] true = de klantenlijst kon niet worden gelezen. Niet hetzelfde als leeg, en
+   * op dit bord staat het verschil tussen die twee tussen een nieuwe boekhouder en een praktijk
+   * met veertig klanten die te horen krijgt dat ze er geen heeft.
+   */
+  klantenOnleesbaar?: boolean
   year: number
   quarter: number
 }
 
-export default function AccountantWerkboard({ clients, year: initYear, quarter: initQuarter }: Props) {
+export default function AccountantWerkboard({ clients, klantenOnleesbaar = false, year: initYear, quarter: initQuarter }: Props) {
   const locale = useLocale()
   const t = translator(locale)
   const router = useRouter()
@@ -351,7 +357,21 @@ export default function AccountantWerkboard({ clients, year: initYear, quarter: 
 
         {/* ── Client board ── */}
         <div style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, overflow: 'hidden' }}>
-          {clients.length === 0 ? (
+          {klantenOnleesbaar ? (
+            /* [BOEKHOUDER-LEEG] Vóór de lege stand, want die zegt "Nog geen klanten gekoppeld" —
+               waar over een praktijk met veertig klanten niets van waar is. Geen actie eronder:
+               er valt hier niets te repareren, en een uitnodigingsknop zou een tweede verkeerd
+               antwoord bovenop het eerste zijn. Dezelfde vorm als het startscherm hiernaast. */
+            <div style={{ padding: '28px 16px', textAlign: 'center' }}>
+              <span className="material-symbols-outlined" style={{ color: '#B3261E', fontSize: 24 }} aria-hidden>error_outline</span>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: '8px 0 4px' }}>
+                {t('bh.home.klanten.onleesbaar.titel')}
+              </p>
+              <p style={{ fontSize: 12.5, color: '#5F6368', margin: 0, lineHeight: 1.5 }}>
+                {t('bh.home.klanten.onleesbaar.uitleg')}
+              </p>
+            </div>
+          ) : clients.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>{t('bh.werk.leeg.geenKlanten')}</p>
           ) : visible.length === 0 ? (
             <p style={{ fontSize: 14, color: '#5F6368', padding: '32px 16px', textAlign: 'center', margin: 0 }}>

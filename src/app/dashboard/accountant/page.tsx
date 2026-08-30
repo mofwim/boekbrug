@@ -67,7 +67,8 @@ export default async function AccountantPage() {
     todoResult,
     workQueues,
     { data: notifications, error: notifErr },
-    { count: unreadMessages },
+    // [NO-SILENT-EMPTY] Geen badge is beter dan een badge die "0" beweert op een mislukte lezing.
+    { count: unreadMessages, error: unreadErr },
   ] = await Promise.all([
     getAccountantClients(profile.id),
     getTodoFeed(profile.id),
@@ -127,7 +128,8 @@ export default async function AccountantPage() {
             ? 'We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.'
             : null
         }
-        unreadMessages={unreadMessages ?? 0}
+        // [NO-SILENT-EMPTY] Geen badge op een mislukte telling, in plaats van een badge die 0 zegt.
+        unreadMessages={unreadErr ? 0 : unreadMessages ?? 0}
       />
     
     )

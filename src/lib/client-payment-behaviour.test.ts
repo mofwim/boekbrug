@@ -154,3 +154,97 @@ test("a pace and an overdue invoice coexist — the habit and the exception are 
   assert.equal(b.overdue.count, 1);
   assert.equal(b.overdue.amount, 500);
 });
+
+// ── [CREDITNOTA-NO-CHASE] + [PARTIAL-PAY] — the two ways this panel invented a debt ─────────────
+//
+// Both were confident WRONG numbers on the screen the owner opens before telephoning a customer,
+// which is the one failure this module's header says it must never have.
+
+test("a sent creditnota past its due date is not an overdue debt", () => {
+  // The docstring on AWAITING already promised this ("a creditnota is money going the other way").
+  // It was not true: AWAITING is a set of STATUSES, and a creditnota carries the same ones. There
+  // is a live status='sent', invoice_type='creditnota' row in production today.
+  const b = clientPaymentBehaviour(
+    [{ ...open("sent", "2026-07-01", -250), invoice_type: "creditnota" }],
+    TODAY,
+  );
+  assert.equal(b.overdue, null, "money the owner gave back is not money the customer owes");
+});
+
+test("…and it does not drag the overdue TOTAL down while pushing the COUNT up", () => {
+  // The worst shape of the old bug: a creditnota's total is stored negative, so it subtracted from
+  // the euros and added to the count. The screen read "2 facturen te laat · € 750" over two
+  // invoices of which the only real one was € 1.000.
+  const b = clientPaymentBehaviour(
+    [
+      open("sent", "2026-07-01", 1000),
+      { ...open("sent", "2026-07-01", -250), invoice_type: "creditnota" },
+    ],
+    TODAY,
+  );
+  assert.ok(b.overdue);
+  assert.equal(b.overdue.count, 1);
+  assert.equal(b.overdue.amount, 1000);
+});
+
+test("a pro_forma is not owed either", () => {
+  const b = clientPaymentBehaviour(
+    [{ ...open("sent", "2026-07-01", 400), invoice_type: "pro_forma" }],
+    TODAY,
+  );
+  assert.equal(b.overdue, null);
+});
+
+test("a customer holding only credit notes has nothing billed to measure", () => {
+  const b = clientPaymentBehaviour(
+    [{ ...open("sent", "2026-07-01", -250), invoice_type: "creditnota" }],
+    TODAY,
+  );
+  assert.equal(b.absence, "no_invoices", "not 'none_paid' — nothing was ever billed to them");
+});
+
+test("a creditnota's payment date never enters the customer's pace", () => {
+  // The quieter half: payment_date on a creditnota is the day the OWNER paid the customer back.
+  // Three real invoices paid in 7 days, plus one credit 'paid' after 90 — the median must not move.
+  const withCredit = clientPaymentBehaviour(
+    [
+      paid("2026-01-01", "2026-01-31", "2026-01-08"),
+      paid("2026-02-01", "2026-03-03", "2026-02-08"),
+      paid("2026-03-01", "2026-03-31", "2026-03-08"),
+      { ...paid("2026-04-01", "2026-04-30", "2026-06-30"), invoice_type: "creditnota", total_inc_btw: -100 },
+    ],
+    TODAY,
+  );
+  assert.ok(withCredit.pace);
+  assert.equal(withCredit.pace.sample, 3, "three invoices, not four");
+  assert.equal(withCredit.pace.medianDaysAfterInvoice, 7);
+});
+
+test("overdue counts what is still OWED, not what was once billed", () => {
+  // € 900 of € 1.000 has been matched from the bank. The reminder mail and the pay-QR have always
+  // asked for € 100; this panel said € 1.000 — a tenfold overstatement of the same debt.
+  const b = clientPaymentBehaviour(
+    [{ ...open("sent", "2026-07-01", 1000), amount_paid: 900 }],
+    TODAY,
+  );
+  assert.ok(b.overdue);
+  assert.equal(b.overdue.count, 1, "it IS still overdue — the remainder is late");
+  assert.equal(b.overdue.amount, 100);
+});
+
+test("an invoice paid to the cent but not yet marked paid is € 0 overdue, not its full total", () => {
+  const b = clientPaymentBehaviour(
+    [{ ...open("sent", "2026-07-01", 1000), amount_paid: 1000 }],
+    TODAY,
+  );
+  assert.ok(b.overdue, "the status still says it is out with the customer, so it is still listed");
+  assert.equal(b.overdue.amount, 0, "…but there is nothing left to ask for");
+});
+
+test("an invoice with no amount_paid at all keeps exactly the number it always had", () => {
+  // The regression guard: this field is optional, and a caller that never selected it must not
+  // see its totals change.
+  const b = clientPaymentBehaviour([open("sent", "2026-07-01", 363.5)], TODAY);
+  assert.ok(b.overdue);
+  assert.equal(b.overdue.amount, 363.5);
+});

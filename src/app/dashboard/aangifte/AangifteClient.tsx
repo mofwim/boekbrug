@@ -296,20 +296,31 @@ export default function AangifteClient({ hasAccountant = null }: {
             precies overeen" — a claim we cannot make while the concept itself is not loaded. */}
         {filed && data && (
           <div style={{ background: filedDelta !== 0 ? M3.errorContainer : M3.surfaceVariant, color: filedDelta !== 0 ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            {/* [TAAL] Hele zinnen uit de catalogus. Hier stonden zes Nederlandse brokken op een
+                scherm dat wél in de vertaalronde zit, en één zin was zelfs GESPLITST: `t('aang.jeHebt')`
+                gevolgd door het letterlijke 'te betalen'. Zo'n splitsing werkt alleen in het
+                Nederlands — het Arabisch heeft een andere woordvolgorde en het Turks hangt een
+                achtervoegsel aan het bedrag — en de helft die niet in de catalogus staat blijft in
+                élke taal Nederlands. De richting (betalen/terugkrijgen, erbij/eraf) zit nu in de
+                sleutel in plaats van erachter geplakt. */}
             <strong style={{ fontWeight: 700 }}>
-              Dit kwartaal is al ingediend ({formatDateNL(filed.filedAt)})
+              {t('aang.ingediend.titel', { datum: formatDateNL(filed.filedAt) })}
             </strong>
             {filedDelta === 0 ? (
               <div style={{ marginTop: 4 }}>
-                De berekening hieronder komt (nog) precies overeen met wat je hebt ingediend:
-                5g {eur.format(Math.abs(filed.saldo))} {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'}.
+                {filed.saldo >= 0
+                  ? t('aang.ingediend.gelijk.betalen', { bedrag: eur.format(Math.abs(filed.saldo)) })
+                  : t('aang.ingediend.gelijk.terug', { bedrag: eur.format(Math.abs(filed.saldo)) })}
               </div>
             ) : (
               <div style={{ marginTop: 4 }}>
-                {t('aang.jeHebt')} <strong>{eur.format(Math.abs(filed.saldo))}</strong> {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'} ingediend.
-                Met je huidige gegevens komt daar <strong>{eur.format(Math.abs(filedDelta))}</strong>{' '}
-                {filedDelta > 0 ? 'bij' : 'af'} — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.
-                Wat je daarmee doet (verrekenen of een suppletie) beslis je op de Waarheid-pagina.
+                {filed.saldo >= 0
+                  ? t('aang.ingediend.aangifte.betalen', { bedrag: eur.format(Math.abs(filed.saldo)) })
+                  : t('aang.ingediend.aangifte.terug', { bedrag: eur.format(Math.abs(filed.saldo)) })}{' '}
+                {filedDelta > 0
+                  ? t('aang.ingediend.verschil.bij', { bedrag: eur.format(Math.abs(filedDelta)) })
+                  : t('aang.ingediend.verschil.af', { bedrag: eur.format(Math.abs(filedDelta)) })}{' '}
+                {t('aang.ingediend.beslis')}
                 <div style={{ marginTop: 6 }}>
                   <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
                     {t('aang.verschil')}
@@ -495,7 +506,10 @@ export default function AangifteClient({ hasAccountant = null }: {
                         {l.clientName ?? l.vatNumber}
                       </div>
                       <div style={{ fontSize: 12.5, color: M3.neutral, fontFamily: FONT_NUM }}>
-                        {l.vatNumber} · {l.invoiceCount} {l.invoiceCount === 1 ? 'factuur' : 'facturen'}
+                        {/* [TAAL] Het zelfstandig naamwoord is geen parameter — zie AGENTS.md. */}
+                        {l.invoiceCount === 1
+                          ? t('aang.ic.factuurEen', { btw: l.vatNumber })
+                          : t('aang.ic.factuurMeer', { btw: l.vatNumber, aantal: l.invoiceCount })}
                       </div>
                     </div>
                     <span style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>

@@ -102,9 +102,9 @@ async function readDayClaims(
   supabase: any,
   userId: string,
   date: string,
-): Promise<{ hasImportedDay: boolean; cashOmzetCount: number; hasTypedDay: boolean }> {
+): Promise<{ hasImportedDay: boolean; cashOmzetCount: number; hasTypedDay: boolean; readable: boolean }> {
   const cash = await liveCashEntries(supabase);
-  const [{ data: turnoverRow }, { count }, tillRes] = await Promise.all([
+  const [{ data: turnoverRow, error: turnoverErr }, { count, error: cashErr }, tillRes] = await Promise.all([
     supabase.from("daily_turnover").select("source").eq("user_id", userId)
       .eq("turnover_date", date).maybeSingle(),
     // [KAS-ZACHT] Only the movements that still count. A cash sale the owner has REMOVED must not
@@ -124,6 +124,11 @@ async function readDayClaims(
     // behind it, it is simply this counter's own day — which is not a conflict, it is the point.
     hasTypedDay:
       Boolean(turnoverRow) && turnoverRow.source === TILL_SOURCE && (tillRes.count ?? 0) === 0,
+    // [NO-SILENT-EMPTY] Every one of these three answers a failed read with the SAME value it uses
+    // for "nothing is there" — null row, count 0 — and all three of those mean "no conflict". So a
+    // hiccup on any of them opened the guard, and the guard is the whole point of this function:
+    // what it prevents is silent. supabase-js does not throw, so nothing else would have noticed.
+    readable: !turnoverErr && !cashErr && !tillRes.error,
   };
 }
 
@@ -159,7 +164,17 @@ export async function POST(req: NextRequest) {
     // Checked BEFORE the insert, because the damage this prevents is silent: writing a turnover day
     // on top of existing cash 'omzet' entries does not corrupt anything, it switches those entries
     // off in every engine at once, with nothing on any screen saying so. See daySourceConflict.
-    const conflict = daySourceConflict(await readDayClaims(supabase, user.id, resolved.date));
+    const claims = await readDayClaims(supabase, user.id, resolved.date);
+    // [NO-SILENT-EMPTY] Refused, not waved through. Booking a turnover day on top of existing cash
+    // 'omzet' entries switches those entries off in every engine at once and says so nowhere; a
+    // guard that cannot see is not permission to do it. Failing closed costs the shop one retry.
+    if (!claims.readable) {
+      return NextResponse.json(
+        { error: "We konden de omzet van deze dag niet controleren. Probeer het zo meteen opnieuw." },
+        { status: 503 },
+      );
+    }
+    const conflict = daySourceConflict(claims);
     if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
 
     // One ticket = one customer at the counter. The shared id is what lets a mistake be voided as

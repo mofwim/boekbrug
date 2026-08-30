@@ -20,6 +20,7 @@
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { fetchAllRows } from '@/lib/supabase-paginate'
 import { getActingFor, loadRevokedMembership } from '@/lib/acting-for-server'
 import { serverTranslator } from '@/lib/i18n/server'
 import type { Translator } from '@/lib/i18n/t'
@@ -91,13 +92,24 @@ export default async function VerkoopPage() {
   // terugkrijgt. (De route weigert hem alsnog, dus er ging niets de deur uit; er stond een knop
   // die alleen een foutmelding kon geven.) De regel stond er, alleen niet het gegeven waar hij op
   // oordeelt — en een bewaker zonder invoer ziet er precies zo uit als een bewaker.
-  const facturenQ = supabase
+  // [VOL-GELEZEN] Gepagineerd. Hier stond `.limit(200)` op `created_at` aflopend, en die 200
+  // rijen waren niet alleen de LIJST maar ook de bron van de twee bedragen bovenaan: summarise()
+  // maakt er "€ … staat open" en "€ … te laat" van, zonder dat er ergens stond dat er meer was.
+  // Wat er afviel waren juist de OUDSTE facturen — precies de facturen die te laat zijn. Een
+  // medewerker voorbij 200 facturen zag dus een "te laat"-totaal dat structureel te laag stond,
+  // en het miste de vorderingen die er het langst op wachten.
+  //
+  // Ook zonder tweede sorteersleutel: bij gelijke created_at was ONBEPAALD welke rij meekwam.
+  // De lezing loopt nu op `id` (stabiel en totaal); het scherm sorteert daarna zelf op datum.
+  const leesFacturen = () => fetchAllRows<
+    SalesInvoice & { original_invoice_id?: string | null; created_at?: string | null }
+  >((from, to) => supabase
     .from('invoices')
-    .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
+    .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id, created_at')
     .eq('sender_id', acting.ownerId)
     .eq('created_by', acting.actorId)
-    .order('created_at', { ascending: false })
-    .limit(200)
+    .order('id', { ascending: true })
+    .range(from, to) as unknown as PromiseLike<{ data: (SalesInvoice & { original_invoice_id?: string | null; created_at?: string | null })[] | null; error: { message: string } | null }>)
 
   const pipeline = createPipelineClient()
 
@@ -110,16 +122,21 @@ export default async function VerkoopPage() {
   // De naam van het bedrijf waarvoor hij werkt. Het profiel van de eigenaar is voor zijn sessie
   // onleesbaar (RLS), dus via service_role — en pas nádat de koppeling is bewezen, wat hierboven
   // is gebeurd: getActingFor() geeft alleen een andere ownerId terug bij een geldige koppeling.
-  const [{ data: facturenRaw, error: facturenErr }, { data: baas }] = await Promise.all([
-    facturenQ,
+  const [facturenRes, { data: baas }] = await Promise.all([
+    // [NO-SILENT-EMPTY] fetchAllRows gooit op een leesfout; hier wordt dat de bestaande derde
+    // stand van dit scherm in plaats van een foutpagina — de lijst zegt dan dat ze onleesbaar is.
+    leesFacturen().then((rows) => ({ rows, fout: false })).catch(() => ({ rows: null, fout: true })),
     pipeline.from('profiles').select('company_name, full_name').eq('id', acting.ownerId).single(),
   ])
 
   // [NO-SILENT-EMPTY] Een mislukte lezing werd een bord met "€ 0,00 staat open" en een lege
   // lijst — de verkeerdste twee uitspraken die dit scherm kan doen. De [SPOOR-BEWIJS]-regel
   // hieronder repareerde precies dit voor het herinnerspoor; de hoofdlezing miste hem nog.
-  const facturenOnleesbaar = !!facturenErr
-  const facturenRuw = facturenRaw as unknown as (SalesInvoice & { original_invoice_id?: string | null })[] | null
+  const facturenOnleesbaar = facturenRes.fout
+  // Nieuwste eerst, zoals dit scherm altijd toonde — nu in JS, omdat de LEZING op `id` loopt.
+  const facturenRuw = facturenRes.rows
+    ? [...facturenRes.rows].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+    : null
   const facturen: SalesInvoice[] = facturenRuw ?? []
 
   // [DEEL-CREDIT] Hoeveel er per factuur is gecrediteerd, zodat "openstaand" het RESTANT noemt en

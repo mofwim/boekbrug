@@ -1239,7 +1239,55 @@ export const MESSAGES = {
   'aang.icp': { nl: 'ICP-opgaaf · aparte aangifte', ar: 'إقرار ICP · تصريح منفصل', en: 'ICP statement · separate filing' },
   'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
   'aang.verschil': { nl: 'Bekijk het verschil op Waarheid', ar: 'اعرض الفرق في «حقيقتك»', en: 'View the difference on Truth' },
+  // [TAAL] `aang.jeHebt` was een half zinsdeel: het scherm plakte er `'te betalen'` of
+  // `'terug te ontvangen'` achter als letterlijke tekst. Dat werkt in het Nederlands en breekt
+  // in het Arabisch (woordvolgorde en congruentie) en het Turks (naamvalsuffixen) — en de helft
+  // die niet in de catalogus staat blijft in élke taal Nederlands. Elke zin heeft nu een eigen
+  // sleutel, met de richting erin verwerkt in plaats van erachter geplakt.
   'aang.jeHebt': { nl: 'Je hebt', ar: 'لديك', en: 'You have' },
+  'aang.ingediend.titel': {
+    nl: 'Dit kwartaal is al ingediend ({datum})',
+    ar: 'تم تقديم هذا الربع بالفعل ({datum})',
+    en: 'This quarter has already been filed ({datum})',
+  },
+  'aang.ingediend.gelijk.betalen': {
+    nl: 'De berekening hieronder komt (nog) precies overeen met wat je hebt ingediend: 5g {bedrag} te betalen.',
+    ar: 'الحساب أدناه ما زال مطابقًا تمامًا لما قدَّمته: 5g {bedrag} مستحقّة الدفع.',
+    en: 'The calculation below still matches exactly what you filed: 5g {bedrag} payable.',
+  },
+  'aang.ingediend.gelijk.terug': {
+    nl: 'De berekening hieronder komt (nog) precies overeen met wat je hebt ingediend: 5g {bedrag} terug te ontvangen.',
+    ar: 'الحساب أدناه ما زال مطابقًا تمامًا لما قدَّمته: 5g {bedrag} مستحقّة الاسترداد.',
+    en: 'The calculation below still matches exactly what you filed: 5g {bedrag} refundable.',
+  },
+  'aang.ingediend.aangifte.betalen': {
+    nl: 'Je hebt {bedrag} te betalen ingediend.',
+    ar: 'قدَّمت إقرارًا بمبلغ {bedrag} مستحقّ الدفع.',
+    en: 'You filed {bedrag} payable.',
+  },
+  'aang.ingediend.aangifte.terug': {
+    nl: 'Je hebt {bedrag} terug te ontvangen ingediend.',
+    ar: 'قدَّمت إقرارًا بمبلغ {bedrag} مستحقّ الاسترداد.',
+    en: 'You filed {bedrag} refundable.',
+  },
+  'aang.ingediend.verschil.bij': {
+    nl: 'Met je huidige gegevens komt daar {bedrag} bij — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.',
+    ar: 'ببياناتك الحالية يُضاف إلى ذلك {bedrag} — الأرقام أدناه هي الحساب الحالي، وليست إقرارك.',
+    en: 'With your current data {bedrag} is added — the figures below are the CURRENT calculation, not your filing.',
+  },
+  'aang.ingediend.verschil.af': {
+    nl: 'Met je huidige gegevens gaat daar {bedrag} af — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.',
+    ar: 'ببياناتك الحالية يُخصم من ذلك {bedrag} — الأرقام أدناه هي الحساب الحالي، وليست إقرارك.',
+    en: 'With your current data {bedrag} comes off — the figures below are the CURRENT calculation, not your filing.',
+  },
+  'aang.ingediend.beslis': {
+    nl: 'Wat je daarmee doet (verrekenen of een suppletie) beslis je op de Waarheid-pagina.',
+    ar: 'ما تفعله بذلك (مقاصّة أو إقرار تكميلي) تقرِّره في صفحة «حقيقتك».',
+    en: 'What you do with it (offset or a suppletie) you decide on the Truth page.',
+  },
+  // Het zelfstandig naamwoord is geen parameter — zie AGENTS.md. Twee sleutels, twee hele zinnen.
+  'aang.ic.factuurEen': { nl: '{btw} · 1 factuur', ar: '{btw} · فاتورة واحدة', en: '{btw} · 1 invoice' },
+  'aang.ic.factuurMeer': { nl: '{btw} · {aantal} facturen', ar: '{btw} · {aantal} فواتير', en: '{btw} · {aantal} invoices' },
   // [ZELF-INDIENEN] De conceptbanner, opgesplitst. De eerste zin geldt altijd; de tweede hangt
   // ervan af of er een boekhouder gekoppeld is — en die stond er tot nu toe onvoorwaardelijk,
   // waardoor een ondernemer zónder boekhouder las dat iemand anders zijn aangifte zou indienen.
@@ -12745,6 +12793,10 @@ export const MESSAGES = {
   'bh.klant.list.noMatch': { nl: 'Geen klanten gevonden voor “{query}”', ar: 'لم يُعثر على عملاء لـ “{query}”', en: 'No clients found for “{query}”' },
   'bh.klant.readiness.none': { nl: 'Geen facturen dit kwartaal', ar: 'لا فواتير هذا الربع', en: 'No invoices this quarter' },
   'bh.klant.readiness.processed': { nl: '{done}/{total} verwerkt · Bank {bank}', ar: '{done}/{total} مُعالَجة · البنك {bank}', en: '{done}/{total} processed · Bank {bank}' },
+  // [NO-SILENT-EMPTY] De derde stand van een klantkaart: niet "niets te doen", maar "we konden het
+  // niet lezen". Zonder deze regel stond er "0/0 verwerkt · Bank —" bij een klant die keurig
+  // aanlevert, en dat is precies het soort zin waar een boekhouder op handelt zonder te twijfelen.
+  'bh.klant.readiness.onleesbaar': { nl: 'Stand niet te lezen', ar: 'تعذّرت قراءة الحالة', en: 'Status could not be read' },
   'bh.klant.openQuestions': { nl: '{count} vraag', ar: '{count} سؤال', en: '{count} question' },
   'bh.klant.unlink.action': { nl: 'Ontkoppelen', ar: 'إلغاء الربط', en: 'Unlink' },
   'bh.klant.unlink.title': { nl: 'Klant ontkoppelen', ar: 'إلغاء ربط العميل', en: 'Unlink client' },

@@ -43,6 +43,7 @@ import { getSessionUser } from "@/lib/session-user";
 // Eén plek, want dit is de vraag waar een fout meteen betekent dat iemand in andermans boeken kijkt.
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { amsterdamYear, amsterdamMonth } from "@/lib/format-nl";
 import {
   findMoneyViolations,
   findDrawerViolations,
@@ -183,9 +184,12 @@ export async function GET(req: NextRequest) {
   let drawer: ReturnType<typeof findDrawerViolations> = [];
   let drawerChecked = false;
   try {
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+    // [TZ-SERVER] De klok van de EIGENAAR, niet die van de server. Deze server draait op UTC, en
+    // in de eerste een à twee uur van de eerste dag van een kwartaal staat UTC nog in het vórige.
+    // Deze as controleerde dan de lade van het afgelopen kwartaal en meldde hem als de huidige —
+    // precies in het uur waarin een winkelier zijn nieuwe kwartaal opent.
+    const year = amsterdamYear();
+    const quarter = Math.floor((amsterdamMonth() - 1) / 3) + 1;
     const state = await loadCashSettlementState(db, ownerId);
     if (state.ok) {
       const sync = computeCashSettlementSync(state.paid, state.existing);

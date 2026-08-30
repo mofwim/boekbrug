@@ -24,7 +24,8 @@ import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
 import { sendQuarterReadyToAccountant } from "@/lib/email";
 import { appOrigin } from "@/lib/app-origin";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
-import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
+import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -42,6 +43,18 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization");
   if (!auth || !timingSafeEqualStr(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // [CRON-EENMAAL] Ten hoogste één GESLAAGDE ronde per Amsterdamse dag. De kop van dit bestand
+  // stelde dat "runs exactly once per quarter IS its idempotency — no dedup state" — en dat is een
+  // eigenschap van de PLANNER, niet van deze code. Een cron-platform levert 'at least once', een
+  // functie die time-out krijgt wordt opnieuw geprobeerd, en met het secret is deze route ook met
+  // de hand aan te roepen. Er is geen unieke index op `notifications` (nagekeken in de database),
+  // dus een tweede ronde stuurt iedere ondernemer dezelfde herinnering nog een keer.
+  //
+  // Best effort en fail-open: een onleesbare cron_runs houdt een aangiftedeadline nooit tegen.
+  if (await alreadyRanToday(createPipelineClient(), "quarter-close", amsterdamMidnightUtc(amsterdamToday()))) {
+    return NextResponse.json({ ok: true, alreadyRan: true, notifiedOwners: 0, notifiedAccountants: 0 });
   }
 
   // [CRON-HARTSLAG] Pas NA de poort: een onbevoegde probe hoort geen regel te schrijven.

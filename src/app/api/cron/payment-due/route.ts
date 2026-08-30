@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
-import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { createNotification } from "@/lib/notifications";
 import { sendPushToUser } from "@/lib/push";
@@ -55,21 +55,9 @@ export async function GET(req: NextRequest) {
   const today = amsterdamToday();
 
   // [EENMAAL] Zie de kop. Zelfde vorm als /api/cron/ochtend.
-  try {
-    // cron_runs staat niet in de gegenereerde types (handmatig toegepaste migratie) — dezelfde
-    // versoepelde cast die de hartslagmodule zelf gebruikt.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: eerdere } = await (pipeline as any)
-      .from("cron_runs")
-      .select("id")
-      .eq("job", "payment-due")
-      .eq("ok", true)
-      .gte("started_at", amsterdamMidnightUtc(today).toISOString())
-      .limit(1);
-    if (Array.isArray(eerdere) && eerdere.length > 0) {
-      return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
-    }
-  } catch { /* zie de kop — falen richting één extra verzending */ }
+  if (await alreadyRanToday(pipeline, "payment-due", amsterdamMidnightUtc(today))) {
+    return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
+  }
 
   cronRunId = await beginCronRun(pipeline, "payment-due", cronStartedAt);
 

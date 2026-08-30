@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { createNotification } from "@/lib/notifications"
 import {
   verifyInvoiceFromPdf,
@@ -2273,19 +2274,44 @@ async function reconcileSupplierStatement(args: {
     ? new Date(new Date(`${anchor}T00:00:00Z`).getTime() - 90 * 86_400_000).toISOString().slice(0, 10)
     : new Date(Date.now() - 550 * 86_400_000).toISOString().slice(0, 10)
 
-  const { data: invRows } = await supabase
-    .from("invoices")
-    .select("id, invoice_number, invoice_date, total_inc_btw, status, client_name")
-    .eq("receiver_id", userId)
-    .eq("direction", "incoming")
-    .gte("invoice_date", from)
-    .order("invoice_date", { ascending: false })
-    .limit(2000)
-
-  const rows = (invRows ?? []) as unknown as Array<{
+  // [NO-SILENT-EMPTY] Dit is de lijst met wat wij WEL hebben. Een mislukte lezing werd hier een
+  // lege lijst, en dan meldt reconcileStatement élke regel op het leveranciersoverzicht als een
+  // factuur die wij missen — met een totaalbedrag eronder. De ondernemer gaat die bonnen dan
+  // opvragen en opnieuw inboeken bij een leverancier die ze allang gestuurd heeft: dubbele
+  // inkoopfacturen, dubbele voorbelasting.
+  //
+  // Er is geen halve waarheid mogelijk. Terug is `null`, en dat is een stand die deze route al
+  // kent: het bestand wordt gewoon opgeslagen zonder vergelijkingsvenster. Niets beweren is hier
+  // het juiste antwoord — het overzicht blijft in Mijn bestanden staan en kan opnieuw.
+  //
+  // [VOL-GELEZEN] En gepagineerd: `.limit(2000)` werd stil ~1000 bij PostgREST, dus een
+  // administratie met meer inkoopfacturen in het venster kreeg juist de OUDSTE eruit gefilterd —
+  // en precies die worden dan als "ontbreekt" gemeld.
+  let rows: Array<{
     id: string; invoice_number: string | null; invoice_date: string | null
     total_inc_btw: number | null; status: string | null; client_name: string | null
   }>
+  try {
+    rows = await fetchAllRows<{
+      id: string; invoice_number: string | null; invoice_date: string | null
+      total_inc_btw: number | null; status: string | null; client_name: string | null
+    }>((lo, hi) => supabase
+      .from("invoices")
+      .select("id, invoice_number, invoice_date, total_inc_btw, status, client_name")
+      .eq("receiver_id", userId)
+      .eq("direction", "incoming")
+      .gte("invoice_date", from)
+      .order("id", { ascending: true })
+      .range(lo, hi) as unknown as PromiseLike<{ data: Array<{
+        id: string; invoice_number: string | null; invoice_date: string | null
+        total_inc_btw: number | null; status: string | null; client_name: string | null
+      }> | null; error: { message: string } | null }>)
+  } catch (e) {
+    console.error("[STATEMENT-RECONCILE] eigen facturen niet te lezen — geen vergelijking gemeld", {
+      userId, documentId, error: e instanceof Error ? e.message : String(e),
+    })
+    return null
+  }
 
   // Alleen de facturen van DEZE leverancier vergelijken. Zonder bruikbare leveranciersnaam
   // vergelijken we tegen alles: een regel die we dan nergens terugvinden ontbreekt echt, en

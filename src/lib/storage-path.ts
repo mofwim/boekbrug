@@ -75,3 +75,23 @@ export function pathBelongsToOwner(path: string | null | undefined, ownerId: str
   if (!UUID_RE.test(owner)) return false;
   return storagePathOwner(path) === owner;
 }
+
+/**
+ * Normalise a stored value AND attribute it in one call: the storage key when it provably belongs
+ * to `ownerId`, otherwise null.
+ *
+ * This exists because the two-step form (`const p = toStoragePath(x); if (pathBelongsToOwner(p, o))`)
+ * is two expressions that can drift apart, and drift is how a fifth caller ends up normalising
+ * without checking — the exact shape that left the closing package and the GDPR export handing a
+ * service-role download whatever text sat in the row. One call cannot be half-applied.
+ *
+ * Null is the refusal, and every caller must treat it as one. Skipping the file is correct: an
+ * absent attachment is a support question, the wrong one is another tenant's invoice.
+ */
+export function ownedStoragePath(
+  stored: string | null | undefined,
+  ownerId: string | null | undefined,
+): string | null {
+  const path = toStoragePath(stored);
+  return pathBelongsToOwner(path, ownerId) ? path : null;
+}

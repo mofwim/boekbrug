@@ -486,9 +486,15 @@ test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
     }
     return out;
   };
-  const offenders = walk("src/app")
+  // Widened from walk("src/app") to the whole component tree. The accountant module lives in
+  // src/modules and was therefore never scanned — and AccountantFactuur, the screen on which a
+  // bookkeeper types the invoice DATE of a document they issue for a client, had a native input.
+  // A rule that says "no owner-typed date" and looks in one directory is a rule about that
+  // directory. Same lesson as [IN-CHUNK] and [TZ-SERVER]: walk, do not list.
+  const offenders = [...walk("src/app"), ...walk("src/modules"), ...walk("src/components")]
     .filter((f) => /type="date"/.test(code(f)))
-    .map((f) => f);
+    // DateFieldNL is the replacement, and it contains the native input it wraps.
+    .filter((f) => !f.endsWith("/DateFieldNL.tsx"));
 
   assert.deepEqual(
     offenders, [],
@@ -2597,11 +2603,18 @@ test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the i
 // — per invoice a credit really was settled by €150 — so every per-LINE reader has to re-derive
 // the sign, and re-deriving it four times is how they came to disagree.
 test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one shared sum", () => {
+  // The four this gate was written for. Named, because each one's wiring is pinned below.
   const readers = [
     "src/app/api/bank/allocate/route.ts",
     "src/app/api/bank/confirm/route.ts",
     "src/app/api/bank/match/route.ts",
     "src/app/dashboard/bank/verdelen/[txId]/page.tsx",
+    // The fifth, found by asking the question the list could not: /api/bank/attach-invoice summed
+    // Math.abs(amount_applied) in a .reduce — the same sign-blind shape, in a file no assertion
+    // named. On a €850 debit made of a €1.000 invoice and a €150 credit it read €1.150 applied
+    // instead of €850, so the line looked €300 poorer and the route refused an attachment it
+    // could afford. It also read NULL amount_applied as 0, which lets the same euros go twice.
+    "src/app/api/bank/attach-invoice/route.ts",
   ];
   for (const file of readers) {
     const src = code(file);
@@ -2619,7 +2632,43 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
       `${file} accumulates amount_applied itself. Per INVOICE that magnitude is right; per LINE it ` +
         "is not — a credit gives money back to the line. Use allocatedOnLine/allocatedByTransaction.",
     );
+    // …and the reduce form, which is what the fifth reader used and what the `+=` pattern above
+    // walked straight past. Two spellings of one sum is exactly how they came to disagree.
+    assert.doesNotMatch(
+      src,
+      /sum \+ Math\.(abs|max)\([^)]*amount_applied/,
+      `${file} accumulates amount_applied in a reduce — same defect, different spelling`,
+    );
   }
+
+  // ── The class beside the list ────────────────────────────────────────────────────────────────
+  // The list above pins HOW each reader is wired. This finds a SIXTH that nobody thought to add:
+  // any file that reads amount_applied and adds it up without going through the shared module.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const eigenSommen: string[] = [];
+  let lezers = 0;
+  for (const f of loop("src")) {
+    if (f.endsWith("bank-line-budget.ts") || f.endsWith("money-invariants.ts")) continue;
+    const src = code(f);
+    if (!/amount_applied/.test(src)) continue;
+    lezers++;
+    for (const m of src.matchAll(/(?:\+=|sum \+|s \+|acc \+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
+      eigenSommen.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.ok(lezers >= 5, `only ${lezers} files mention amount_applied; the scan must be broken`);
+  assert.deepEqual(eigenSommen, [],
+    "these add amount_applied up themselves instead of calling allocatedOnLine/allocatedByTransaction. " +
+    "Per INVOICE the magnitude is right; per LINE a credit gives money BACK to the line, and a NULL " +
+    "amount settled its invoice in full rather than nothing:\n  " + eigenSommen.join("\n  "));
 });
 
 // ── [BTW-ROUND] One summation for the three legal amounts on an invoice ──────
@@ -2644,6 +2693,13 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
     "src/lib/draft-totals.ts",
     "src/app/dashboard/invoice/new/page.tsx",
     "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    // The fourth. AccountantFactuur is where a bookkeeper writes an invoice FOR a client under a
+    // mandate, and it carried the same per-line loop with the same defence the other three had
+    // ("alleen om te TONEN, de server rekent hem opnieuw") — which is precisely the defect: the
+    // server recomputes with the shared function, so the accountant's screen and the document the
+    // customer receives differ by a cent on a mixed-rate invoice. It was not in this list, and it
+    // does not live under src/app, so the class scan below is what would have found it.
+    "src/modules/accountant/pages/AccountantFactuur.tsx",
   ];
   for (const file of owners) {
     const src = code(file);
@@ -2668,6 +2724,39 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
         "rounds each rate's BTW. Summing per line is a cent apart on a mixed-rate invoice.",
     );
   }
+
+  // ── The class, so a fifth surface does not need to be remembered ─────────────────────────────
+  // The list above pins the four that exist. This walks the tree for the SHAPE, in whichever
+  // spelling: a per-line ex-amount multiplied by that line's own rate. The Dutch spelling
+  // (`regelEx * r.btw_rate / 100`) is what AccountantFactuur used, and no assertion above would
+  // ever have matched it.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const eigenBtw: string[] = [];
+  let btwLezers = 0;
+  for (const f of loop("src")) {
+    // The two modules that OWN this arithmetic, and the PDF/UBL writers that group per rate.
+    if (/invoice-totals\.ts$|invoice-discount\.ts$/.test(f)) continue;
+    const src = code(f);
+    if (!/btw_rate/.test(src)) continue;
+    btwLezers++;
+    for (const m of src.matchAll(/[A-Za-z_$][\w$.]*\s*\*\s*\(?\s*[A-Za-z_$][\w$.]*\.btw_rate\s*\)?\s*\/\s*100/g)) {
+      eigenBtw.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${m[0].replace(/\s+/g, " ")}`);
+    }
+  }
+  assert.ok(btwLezers >= 15, `only ${btwLezers} files mention btw_rate; the scan must be broken`);
+  assert.deepEqual(eigenBtw, [],
+    "these multiply a LINE's amount by that line's own rate — a second summation of a legal amount. " +
+    "computeInvoiceTotals groups the ex-amount per rate and rounds each rate's BTW, which is the " +
+    "Belastingdienst and Peppol method the PDF and the UBL export already use:\n  " +
+    eigenBtw.join("\n  "));
 });
 
 // ── [DEP-VEILIG] The two overrides that are not decoration ───────────────────
@@ -9877,6 +9966,346 @@ test("[DEEL-CREDIT] a partial credit is still money owed, everywhere it is asked
   );
 });
 
+test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehonderd", () => {
+  // `.limit(200)` op `created_at` aflopend. Die 200 rijen waren niet alleen de lijst maar ook de
+  // bron van de twee bedragen erboven: VerkoopClient geeft ze aan summarise(), en dat maakt er
+  // "€ … staat open" en "€ … te laat" van. Nergens stond dat er meer was.
+  //
+  // De richting van de fout is het punt. Nieuwste eerst betekent dat wat er afvalt de OUDSTE
+  // facturen zijn, en dat zijn precies de facturen die te laat zijn. Het bedrag dat een
+  // medewerker aanzet tot bellen was dus structureel te laag, en miste juist de vorderingen die
+  // er het langst op wachten.
+  const verkoop = code("src/app/dashboard/verkoop/page.tsx");
+  assert.doesNotMatch(verkoop, /\.limit\(200\)/, "een totaal mag niet op een venster rusten");
+  assert.match(verkoop, /fetchAllRows</, "gepagineerd, zoals elk ander totaal in dit product");
+  // …en op een TOTALE ordening. `created_at` alleen is niet uniek, dus bij gelijke tijd was
+  // onbepaald welke rij in welke pagina viel — dat is hoe een gepagineerde lezing alsnog rijen
+  // overslaat of dubbel leest.
+  assert.match(verkoop, /\.order\('id', \{ ascending: true \}\)\s*\n?\s*\.range\(from, to\)/,
+    "de lezing loopt op id; het scherm sorteert daarna zelf");
+  // De derde stand blijft bestaan: een mislukte lezing is geen leeg bord met € 0,00.
+  assert.match(verkoop, /const facturenOnleesbaar = facturenRes\.fout/,
+    "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
+});
+
+test("[CRON-EENMAAL] a cron that MAILS cannot rely on the scheduler firing once", () => {
+  // beginCronRun/finishCronRun is a HEARTBEAT, not a lock: it records that a run happened, it
+  // stops nothing. For most of the work here that is fine, because the work converges —
+  // reconcile books what is not yet booked and finds nothing on a second pass, and recurring and
+  // reminders are physically stopped by a unique index in the database
+  // (invoices_one_per_schedule_date and invoice_reminders_once_per_tier, both verified present).
+  //
+  // A NOTIFICATION is neither. `notifications` carries no unique index at all — only its primary
+  // key — so a second run simply sends it again. Two crons rested their idempotency on the
+  // SCHEDULER instead, and said so in their own headers: "runs exactly once per quarter IS its
+  // idempotency — no dedup state, because there is only ever one run". That is a property of
+  // Vercel, not of this code: a cron platform delivers at-least-once, a function that times out is
+  // retried, and with the secret the route can be curled by hand. Then an owner gets the same
+  // aangifte deadline notice twice, on the product whose whole promise is that they can trust it.
+  const heartbeat = code("src/lib/cron-heartbeat.ts");
+  assert.match(heartbeat, /export async function alreadyRanToday\(/,
+    "one implementation of the question, or four copies drift and one cron lets the second run through");
+  // Fail-OPEN, deliberately: a hiccup in a log table may never hold back a deadline notice.
+  assert.match(heartbeat, /if \(error\) return false;/,
+    "an unreadable cron_runs is not proof that the run happened");
+
+  // Every cron that can send a notification or an e-mail either converges, is stopped by a unique
+  // index, or takes the guard. Walked, not listed — a twelfth cron would repeat this exactly.
+  const CONVERGEERT = new Map<string, string>([
+    ["reconcile", "meldt alleen wanneer er ECHT werk is gedaan (categorized.length > 0, " +
+      "incasso.booked.length > 0). Een tweede ronde vindt niets nieuws en meldt dus niets."],
+    ["reminders", "invoice_reminders_once_per_tier — de database houdt de tweede tegen"],
+    ["recurring", "invoices_one_per_schedule_date — idem, en de route vangt de 23505 op"],
+    ["bank-sync", "meldt op nieuw binnengekomen transacties; een tweede ronde haalt dezelfde " +
+      "regels niet nog een keer op (de bank levert per opvraging, en de dedup zit op de import)"],
+    ["accountant-daily", "werkt op gestempelde rijen: wat gemeld is draagt zijn stempel en " +
+      "komt niet opnieuw in de selectie"],
+  ]);
+  const cronDir = "src/app/api/cron";
+  const zonderSlot: string[] = [];
+  let gekeken = 0;
+  for (const naam of readdirSync(cronDir)) {
+    const route = `${cronDir}/${naam}/route.ts`;
+    if (!statSync(`${cronDir}/${naam}`).isDirectory()) continue;
+    let src: string;
+    try { src = code(route); } catch { continue; }
+    // Stuurt deze cron iets naar een mens?
+    if (!/createNotification|sendMail|sendEmail|sendInvoiceReminder|resend/i.test(src)) continue;
+    gekeken++;
+    if (CONVERGEERT.has(naam)) continue;
+    if (/alreadyRanToday\(/.test(src)) continue;
+    zonderSlot.push(naam);
+  }
+  assert.ok(gekeken >= 5,
+    `only ${gekeken} notifying crons were seen; the scan must be broken`);
+  assert.deepEqual(zonderSlot, [],
+    "these crons send something to a person and have neither a converging condition, nor a unique " +
+    "index, nor alreadyRanToday(). A retry after a timeout then sends it a second time:\n  " +
+    zonderSlot.join("\n  ") + "\n\nUse alreadyRanToday(client, job, amsterdamMidnightUtc(today)) " +
+    "— or, if the cron genuinely converges, add it to CONVERGEERT with the reason.");
+});
+
+test("[LINKS-WRITE-HONEST] the boolean these writers return is actually read", () => {
+  // recordPaymentLinks and clearPaymentLinks each return Promise<boolean>, and their own doc
+  // comments say why: "returned so a caller can say what really happened". Three call sites
+  // awaited them for the side effect and dropped the answer — a return value that exists solely
+  // to be read, unread, on the join table that decides how much of an invoice is paid.
+  //
+  // recompute_invoice_amount_paid re-derives amount_paid as SUM(amount_applied) over the links
+  // that SURVIVE, so the failure is not a lost log line, it inverts the operation:
+  //
+  //   · unlink, single — a failed clear makes the recompute restore the amount the optimistic
+  //     decrement just took off. The route answers ok, the invoice stays paid for money no longer
+  //     on any bank line, and the detached line is free to be booked again. The same euros twice.
+  //   · unlink, batch — worse: every invoice was forced to amount_paid = 0 on the promise that
+  //     the recompute reconciles it, so a failed clear puts them all back to fully paid.
+  //   · attach-invoice — the route that CREATES an already-paid invoice out of a bank line. With
+  //     no join row, the next unlink or undo finds none and re-opens the invoice at its full
+  //     total: money that was received, standing as owed.
+  const unlink = code("src/app/api/bank/unlink/route.ts");
+  assert.match(unlink, /const linksCleared = await clearPaymentLinks\(pipeline, user\.id, transactionId\);/);
+  assert.match(unlink, /const linksCleared = await clearPaymentLinks\(pipeline, userId, transactionId\);/);
+  assert.doesNotMatch(unlink, /^\s*await clearPaymentLinks\(/m,
+    "neither call site may drop the answer again");
+  // Reported where a person sees it — a console line from a route nobody watches is not a report.
+  assert.equal((unlink.match(/reportHandledFailure\(\{[\s\S]{0,120}?tag: "BANK-TX-INVOICES"/g) ?? []).length, 2,
+    "both paths must report the failure, not only log it");
+  // …and written into the audit trail, so an accountant reading the row a year later sees why a
+  // balance drifted instead of guessing.
+  assert.match(unlink, /\.\.\.\(linksCleared \? \{\} : \{ links_not_cleared: true \}\),/);
+
+  const attach = code("src/app/api/bank/attach-invoice/route.ts");
+  assert.match(attach, /const linksRecorded = await recordPaymentLinks\(/);
+  assert.match(attach, /if \(!linksRecorded\) \{[\s\S]{0,200}?reportHandledFailure\(/);
+});
+
+test("[EDIT-LINES-SAFE] a delete-then-insert may not insert on a delete that failed", () => {
+  // The header totals are committed before the lines are swapped, and the swap is not atomic over
+  // PostgREST. The insert's failure was handled in full — snapshot, restore, restore the totals —
+  // and the DELETE's error was dropped entirely. A failed delete followed by a successful insert
+  // leaves BOTH line sets on the invoice, and /api/invoice/send recomputes the totals from the
+  // lines whenever lines exist: the figure that gets a legal invoice number and goes to the
+  // customer is then roughly double what the owner typed, on a screen that showed the right one.
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(route, /const \{ error: delErr \} = await supabase\.from\('invoice_lines'\)\.delete\(\)\.eq\('invoice_id', id\)/);
+  assert.match(route, /if \(delErr \|\| previousErr\) \{/,
+    "…and the snapshot's own read error counts: without the old lines there is nothing to restore with");
+  // Refused BEFORE the insert, or the guard decides nothing.
+  assert.ok(route.indexOf("if (delErr || previousErr) {") < route.indexOf("const { error: insErr } = await supabase"),
+    "the refusal must come before the insert");
+  assert.doesNotMatch(route, /^\s*await supabase\.from\('invoice_lines'\)\.delete\(\)/m);
+});
+
+test("[REMINDER-TRUTH] a reminder that never went out cannot stay recorded as sent", () => {
+  // The claim row is inserted with status 'sent' BEFORE the send is attempted — that is what makes
+  // it a claim. When the send throws, the stamp to 'failed' is the only thing that turns it back
+  // into the truth, and its error was dropped. A failed stamp leaves the screen saying the
+  // customer received a reminder they never got, and the next attempt counts as a SECOND one
+  // against the ceiling of three. The rejection branch beside it already read its error.
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  assert.match(route, /const \{ error: stempelErr \} = await \(pipeline as any\)\s*\n?\s*\.from\('invoice_reminders'\)\.update\(\{ status: 'failed' \}\)/);
+  assert.match(route, /if \(stempelErr\) \{[\s\S]{0,400}?console\.error\('\[REMINDER-TRUTH\]/);
+});
+
+test("[STATEMENT-RECONCILE] an unreadable own-invoice list reports no comparison, not a missing one", () => {
+  // The read answers "what do WE already hold". Empty means every line on the supplier's statement
+  // is a bill we do not have — with a total underneath. So a failed read told the owner to go and
+  // request invoices their supplier already sent, and re-book them: duplicate purchase invoices
+  // and duplicate voorbelasting, from a query error.
+  //
+  // There is no half-answer available here, so the route returns null — a state it already has,
+  // in which the file is simply stored without a comparison panel.
+  const route = code("src/app/api/intake/route.ts");
+  assert.match(route, /catch \(e\) \{[\s\S]{0,300}?\[STATEMENT-RECONCILE\] eigen facturen niet te lezen[\s\S]{0,200}?return null/,
+    "a failed read must claim nothing at all");
+  // …and it must be a throwing reader, or there is no error to catch.
+  assert.match(route, /rows = await fetchAllRows</);
+  assert.doesNotMatch(route, /const \{ data: invRows \} = await supabase/,
+    "the silent version must be gone");
+  // [VOL-GELEZEN] `.limit(2000)` was silently ~1000, and what fell off was the oldest — which is
+  // exactly what then gets reported as missing.
+  assert.doesNotMatch(route, /\.order\("invoice_date", \{ ascending: false \}\)\s*\n\s*\.limit\(2000\)/);
+});
+
+test("[EEN-DAG-EEN-BRON] a guard that cannot see is not permission", () => {
+  // Both routes that can claim a day's revenue check first whether something else already claims
+  // it. Both guards answered a FAILED read with the same values that mean "nothing is there":
+  // a null daily_turnover row, a cash count of 0. Those are exactly the inputs daySourceConflict
+  // reads as "no conflict", so a hiccup did not block the write — it authorised it.
+  //
+  // What the guard prevents is silent in both directions:
+  //
+  //   · a hand-typed day upserts on (user_id, turnover_date) over an imported Z-report, and
+  //     bookTurnoverRows validates arithmetic and duplicate dates but never `source`;
+  //   · a turnover row on a date that already carries cash 'omzet' entries switches those entries
+  //     off in every engine at once (financial-result's covered-day rule), so the money does not
+  //     disagree with anything — it stops existing.
+  //
+  // Neither has a second reader. rebuildTillDay re-checks daily_turnover.source, but only on the
+  // Kassa's own route, and it knows nothing about cash_entries.
+  for (const f of ["src/app/api/till/sale/route.ts", "src/app/api/turnover/day/route.ts"]) {
+    const src = code(f);
+    assert.match(src, /readable: !turnover(Err|Err) && /,
+      `${f}'s claims must report whether they could be read at all`);
+    assert.match(src, /if \(!claims\.readable\) \{[\s\S]{0,200}?status: 503/,
+      `${f} must refuse the write on an unreadable guard, not proceed`);
+    // …and the refusal must come BEFORE the conflict verdict, or it decides nothing.
+    assert.ok(src.indexOf("if (!claims.readable)") < src.indexOf("const conflict = daySourceConflict(claims)"),
+      `${f} must refuse before it judges`);
+  }
+  // The one deliberate exception stays documented and stays alone: a MISSING till_sales table is a
+  // reasoned zero (the migration ships after the code), a failed read is not.
+  assert.match(code("src/app/api/turnover/day/route.ts"),
+    /tillSaleCount: tillRes\.error \? 0 : tillRes\.count \?\? 0,/);
+  assert.match(code("src/app/api/turnover/day/route.ts"), /readable: !turnoverErr && !cashRes\.error,/,
+    "…so till_sales is deliberately not part of `readable`");
+});
+
+test("[NO-SILENT-EMPTY] every counted read binds its error, because zero is a claim", () => {
+  // supabase-js answers a failed query with { data: null, error } and never throws, so
+  // `const { count } = await supabase.from(…)` turns an outage into `undefined`, and every caller
+  // spells the next line `count ?? 0`. Zero is then indistinguishable from a read that did not
+  // happen — and on a counter, zero is never neutral. It is the sentence "there is nothing".
+  //
+  // Eleven of twenty-seven counted reads did this. What they said out loud:
+  //
+  //   · /api/till/sale + /api/turnover/day — the ONE-DAY-ONE-SOURCE guard. A failed count reads
+  //     as "no cash sales on this day", the guard opens, and the turnover row switches that day's
+  //     cash entries off in every engine at once with nothing on any screen saying so.
+  //   · /api/bank/categorize — "alles gecategoriseerd", the one conclusion that screen may never
+  //     draw wrongly, drawn from a count that failed.
+  //   · the accountant's board — "0 open vragen" and "zonder bank" about a client who has
+  //     questions waiting and delivers statements every quarter.
+  //   · the owner's home screen — the badge for an open question from their bookkeeper.
+  //
+  // So the rule is absolute rather than a list: bind the error. What you then DO with it differs
+  // per surface — refuse (a guard), leave the badge off (a counter), report it (a board) — and
+  // the pinned tests elsewhere in this file say which. What no surface may do is not look.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const blind: string[] = [];
+  let tellingen = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    // A destructuring of an awaited supabase call — either directly on `.from(`, or the array
+    // form of a Promise.all whose elements are such calls.
+    for (const m of src.matchAll(
+      /(?:const|let)\s*(\[[^\]]{0,900}\]|\{[^}]{0,200}\})\s*=\s*await\s+(?:Promise\.all\(|[A-Za-z_$][\w$]*\s*\n?\s*\.from\()/g)) {
+      if (!/count/.test(m[1])) continue;
+      for (const el of m[1].matchAll(/\{[^{}]*\bcount\b[^{}]*\}/g)) {
+        tellingen++;
+        if (!/error/.test(el[0])) {
+          blind.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${el[0].replace(/\s+/g, " ").slice(0, 48)}`);
+        }
+      }
+    }
+  }
+  assert.ok(tellingen >= 20,
+    `only ${tellingen} counted reads were seen; the scan must be broken, and a scan that finds ` +
+    "nothing passes for the wrong reason");
+  assert.deepEqual(blind, [],
+    "these read a count and drop the error, so a failed read becomes 0 — which every caller then " +
+    "prints as a fact:\n  " + blind.join("\n  "));
+});
+
+test("[CREDIT-BRON] the credit notes are read where a settled one still counts", () => {
+  // A creditnota is a document with its own lifecycle: it can be sent, and it can be settled, at
+  // which point ITS status is 'paid'. There is such a row in this database today.
+  //
+  // The accountant's debtor list and the office home screen each made ONE query — filtered
+  // `.in('status', ['sent','overdue','partial'])`, which is right for a receivable — and then
+  // derived their credit notes from that same array. So a settled creditnota was invisible, and
+  // both things these surfaces promise inverted at once: a fully credited invoice stayed on the
+  // call-back list, and a partly credited one was priced at its FULL amount. The accountant then
+  // telephones a customer about money the owner already gave back in writing — the scenario
+  // outstandingAmount()'s own header is about.
+  //
+  // Eleven other surfaces already did it correctly, each with a dedicated query on invoice_type
+  // and no status filter at all. These two were the exception, not the rule.
+  for (const f of ["src/app/dashboard/accountant/debiteuren/page.tsx",
+                   "src/modules/accountant/work-queues.ts"]) {
+    const src = code(f);
+    assert.doesNotMatch(src, /\.filter\(\(r\) => r\.invoice_type === 'creditnota'\)/,
+      `${f} must not derive its credit notes from the status-filtered receivables read`);
+    assert.match(src, /\.eq\('invoice_type', 'creditnota'\)/,
+      `${f} needs a creditnota query of its own`);
+  }
+
+  // ── The class: no creditnota source may carry a status filter ────────────────────────────────
+  // Walked, not listed, because the defect is in the QUERY and a thirteenth surface would repeat
+  // it exactly. A creditnota's own status says whether the OWNER has been squared up; it says
+  // nothing about whether the customer still owes the invoice it credits.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const gefilterd: string[] = [];
+  let bronnen = 0;
+  for (const f of loop("src")) {
+    const src = code(f);
+    for (const m of src.matchAll(/(?:eq|in)\(\s*['"]invoice_type['"]\s*,\s*['"]creditnota['"]\s*\)/g)) {
+      bronnen++;
+      // The chain this call sits in: from the nearest `.from(` before it to the nearest `.range(`
+      // or statement end after it.
+      const vanaf = src.lastIndexOf(".from(", m.index);
+      const keten = src.slice(vanaf === -1 ? Math.max(0, (m.index ?? 0) - 400) : vanaf, (m.index ?? 0) + 400);
+      if (/\.(?:in|eq)\(\s*['"]status['"]/.test(keten)) {
+        gefilterd.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(bronnen >= 8,
+    `only ${bronnen} creditnota sources were seen; the scan must be broken`);
+  assert.deepEqual(gefilterd, [],
+    "these read the credit notes through a status filter, so a creditnota that has itself been " +
+    "settled drops out — and every invoice it credited is then priced at its full amount:\n  " +
+    gefilterd.join("\n  "));
+});
+
+test("[EEN-OPENSTAAND] no screen spells 'openstaand' a second way", () => {
+  // The list in the test above says "everywhere it is asked" and then names seven files. The
+  // customer detail screen was not one of them, and it had its own spelling:
+  //
+  //     sum(total_inc_btw) over everything whose status is not 'paid'
+  //
+  // which counts a concept nobody has been sent, counts an archived invoice that was withdrawn,
+  // never subtracts amount_paid, and adds a creditnota's negative total into a debt. On a € 1.000
+  // invoice with € 900 already matched plus a € 500 concept, the screen the owner opens before
+  // telephoning that customer said € 1.500 where the app's own definition says € 100 — while the
+  // reminder mail, the pay-QR and the debiteurenlijst all said € 100.
+  const klant = code("src/app/dashboard/klanten/[id]/page.tsx");
+  assert.match(klant, /const open = summarise\(sales, nowMs, credited\)\.outstanding/,
+    "the customer screen's openstaand must come from the shared engine");
+  assert.match(klant, /const credited = creditedTotalsFrom\(/,
+    "…with this customer's own credit notes netted against the invoices they credit");
+  assert.doesNotMatch(klant, /!PAID\.has\(iv\.status/,
+    "the private spelling must be gone, not merely shadowed");
+  // The three columns without which the shared engine silently answers the OLD number: absent
+  // amount_paid reads as nothing received, absent invoice_type reads as 'factuur'.
+  assert.match(klant, /amount_paid, invoice_type, original_invoice_id'\)/,
+    "…and it must actually select what the engine reads");
+
+  // No class walk beside this one, and that is a measurement, not an omission. Three places in
+  // src/app/dashboard and src/modules add invoice totals up by hand, and all three already read
+  // from the shared vocabulary — a scan over a population of three that every member passes
+  // asserts nothing, and its floor would have to be lowered until it could never fail. The
+  // [SEC-STORAGE-PATH] class rule earns its walk on fourteen members; this one does not, so what
+  // guards this defect is the four pinned expressions above, which name the exact shape that was
+  // wrong.
+});
+
 test("[DEEL-CREDIT] a FULL credit is byte-for-byte the document it always was", () => {
   // Every creditnota this app has ever produced took the no-selection path. It must keep producing
   // exactly the same one, or a cent of drift lands in documents already in customers' hands.
@@ -11126,29 +11555,64 @@ test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is att
   assert.doesNotMatch(pkg, /\.select\("id, file_url, file_name"\)\s*\.in\("id", incomingDocIds\)/,
     "…both of them");
 
+  // The quarter ZIP's own downloader. Four feeders reached it — the outgoing PDF, the incoming
+  // document, the bankafschrift and the shared files — and only two were attributed, so a key
+  // pasted onto one's own invoice row came back inside the package handed to an accountant. The
+  // check sits in dl() and not at the feeders on purpose: four checks are four things a fifth
+  // feeder does not inherit, and a choke point cannot be half-applied.
+  assert.match(pkg, /const path = ownedStoragePath\(stored, ownerId\);\s*\n\s*if \(!path\) return null;/,
+    "closing-package's dl() must attribute the key itself, not trust its callers");
+
+  // The AVG-export. The worst consequence in this file: the ZIP is BUILT FOR the requester, so a
+  // foreign key here does not fail — it delivers another tenant's document to their download.
+  assert.match(code("src/lib/account-export.ts"),
+    /const path = ownedStoragePath\(d\.file_url, userId\);\s*\n\s*if \(!path\) \{/);
+
+  // Narekenen reads the bytes and sends them to an AI, then reports on them.
+  assert.match(code("src/app/api/invoice/audit/route.ts"),
+    /const pad = ownedStoragePath\(d\.file_url, user\.id\);\s*\n\s*if \(pad\) docPaths\.set\(d\.id, pad\);/);
+
+  // The one that DELETES on the e-mail sync's collision branch, where pdfUrl becomes a row value.
+  assert.match(code("src/lib/email-integration.ts"),
+    /const teVerwijderen = ownedStoragePath\(pdfUrl, userId\)\s*\n\s*if \(teVerwijderen\)/);
+
   // Every one of them normalises first, or a stored full URL dodges the check entirely.
+  // ownedStoragePath does both in one call, which is why the newer sites name only that.
   for (const f of ["src/app/api/invoice/send/route.ts", "src/app/api/cron/reminders/route.ts",
                    "src/app/dashboard/vragen/page.tsx", "src/app/api/onboarding/reset/route.ts",
                    "src/lib/closing-package.ts"]) {
     assert.match(code(f), /toStoragePath\(/, `${f} must normalise the stored value first`);
   }
+  for (const f of ["src/lib/account-export.ts", "src/app/api/invoice/audit/route.ts",
+                   "src/lib/email-integration.ts"]) {
+    assert.match(code(f), /ownedStoragePath\(/, `${f} must normalise AND attribute in one call`);
+  }
 });
 
-test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat uit een RIJ komt", () => {
-  // De poort hierboven pint tien met de hand gekozen uitdrukkingen. Dat is precies wat ze moet
-  // doen — ze bewaakt de GUARD, niet de aanwezigheid van een helpernaam, en drie negatieve
-  // controles liepen door een eerdere versie die dat wel deed. Maar het is een LIJST onder een
-  // regel die "every" zegt, en de elfde plek staat er dan niet in.
+test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat het NIET zelf heeft gebouwd", () => {
+  // De vorige versie van deze poort was op twee manieren blind, en vier echte lekken liepen er
+  // doorheen — in de AVG-export, in het kwartaalpakket, in het narekenen en in de e-mailsync.
   //
-  // Dit is de klasse ernaast. De regel die het moduulhoofd stelt: een RIJ-check zegt "je mag dit
-  // record zien", nooit "en het record wijst naar jouw bytes". file_url en pdf_url zijn gewone
-  // tekst op een rij die de eigenaar mag schrijven, en de service_role-client passeert het
-  // bucketbeleid dat een sleutel uit andermans map zou tegenhouden. Een SESSIE-client niet: daar
-  // is het beleid de grens, en dan is attributie in de code een tweede slot op dezelfde deur.
+  //   1. Ze herkende een service_role-client aan zijn NAAM (/pipeline|service|admin/). Maar
+  //      closing-package.ts en account-export.ts krijgen hun client als ARGUMENT, getypt
+  //      `supabase: PipelineClient` — en `supabase` is precies de naam die "sessieclient" moest
+  //      betekenen. De gevaarlijkste twee plekken heetten als de ongevaarlijke.
+  //   2. Ze herkende een rij-pad aan de NAAM van het argument (/file_url|pdf_url|doc|row/). Maar
+  //      `inv.pdf_url` was al doorgegeven aan een lokale `dl(path)` — één hop door een parameter
+  //      en het pad heet gewoon `path`.
   //
-  // Gemeten toen dit werd geschreven: zes plekken geven een pad uit een rij aan storage, en alle
-  // zes doen dat met een sessieclient. Nul met service_role. Dus geen uitzonderingenlijst — een
-  // schone klasse mag als verbod worden vastgelegd, en dat is wat de elfde plek tegenhoudt.
+  // Dat dit niet theoretisch was, staat in de policies zelf: `documents_update_own` en
+  // `invoices_zzp_update` zijn HELE-RIJ-policies (USING/WITH CHECK op user_id resp. sender_id),
+  // dus een ingelogde gebruiker kan met alleen de publieke anon-sleutel `file_url` van zijn eigen
+  // rij naar de map van een andere klant wijzen. `documents_read` op storage.objects vergelijkt
+  // wél de eerste mapsegment met auth.uid() — dus een SESSIEclient wordt daar tegengehouden, en
+  // service_role niet. Precies die twee feiten samen zijn het lek.
+  //
+  // De regel hieronder is daarom omgekeerd: niet "verdenk paden die op een rij lijken", maar
+  // "vertrouw alleen een sleutel die deze code ZELF heeft samengesteld". Een sleutel uit een
+  // template (`${user.id}/incoming/…`) draagt zijn eigenaar omdat wij hem daar schreven; al het
+  // andere moet worden toegeschreven vóórdat het bytes aanraakt. Geen uitzonderingenlijst: elke
+  // plek voldoet, dus de klasse mag als verbod worden vastgelegd.
   const loop = (dir: string): string[] => {
     const uit: string[] = [];
     for (const e of readdirSync(dir)) {
@@ -11158,35 +11622,48 @@ test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat uit een RI
     }
     return uit;
   };
+  const OPS = "remove|download|createSignedUrl|createSignedUrls|copy|move";
 
   const overtreders: string[] = [];
-  let uitRij = 0;
+  let serviceRolls = 0;
+  let zelfGebouwd = 0;
   for (const f of loop("src")) {
     const src = code(f);
-    for (const m of src.matchAll(
-      /([A-Za-z_$][\w$]*)\s*\.\s*storage\s*\.\s*from\s*\([^)]*\)\s*\.\s*(remove|download|createSignedUrl|copy|move)\s*\(([^)]{0,80})/g,
-    )) {
-      const client = m[1], arg = m[3];
-      // Een pad dat de app zelf BOUWT (een uploadsleutel) loopt dit risico niet — alleen een pad
-      // dat uit een rij is gelezen.
-      if (!/file_url|pdf_url|\bdoc\b|\bd\?\.|\brow\b|\bshare\b|\binv\b/.test(arg)) continue;
-      uitRij++;
-      if (!/pipeline|service|admin/i.test(client)) continue; // sessieclient: het bucketbeleid is de grens
-      const voor = src.slice(Math.max(0, (m.index ?? 0) - 1200), m.index);
-      if (/pathBelongsToOwner\s*\(/.test(voor)) continue;
-      overtreders.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${client}.storage…${m[2]}(${arg.replace(/\s+/g, " ").slice(0, 50)})`);
+    for (const m of src.matchAll(new RegExp(
+      String.raw`([A-Za-z_$][\w$]*)\s*\.\s*storage\s*\.\s*from\s*\([^)]*\)\s*\.\s*(${OPS})\s*\(\s*(\[?[^)\]]{0,120})`, "g"))) {
+      const client = m[1], op = m[2], arg = m[3];
+      // Hoe is DEZE client in DIT bestand gebonden? Naam is geen bewijs; de binding wel.
+      const serviceRol =
+        new RegExp(String.raw`(const|let)\s+${client}\s*(:[^=]*)?=\s*(await\s+)?createPipelineClient\s*\(`).test(src) ||
+        new RegExp(String.raw`\b${client}\s*:\s*PipelineClient\b`).test(src);
+      if (!serviceRol) continue; // sessieclient: daar is het bucketbeleid de grens
+      serviceRolls++;
+      // Een sleutel die deze code zelf samenstelt (template, of een plak/afbeelding daarvan)
+      // draagt de eigenaar omdat wij die er zelf in schreven.
+      const namen = arg.match(/[A-Za-z_$][\w$]*/g) ?? [];
+      const zelf = namen.length > 0 && namen.every((id) =>
+        [...src.matchAll(new RegExp(String.raw`\b${id}\s*=\s*([^;\n]{0,160})`, "g"))]
+          .some((a) => /`/.test(a[1]) || /\.slice\(|\.map\(/.test(a[1])));
+      if (zelf) { zelfGebouwd++; continue; }
+      const voor = src.slice(Math.max(0, (m.index ?? 0) - 1500), m.index);
+      if (/ownedStoragePath\s*\(|pathBelongsToOwner\s*\(/.test(voor)) continue;
+      overtreders.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${client}.storage…${op}(${arg.replace(/\s+/g, " ").slice(0, 50)})`);
     }
   }
 
   // Een lezer die niets ziet meldt een schone codebase, en met een lege lijst is dat niet van
-  // succes te onderscheiden. Hij moet de sessie-gevallen wél vinden, anders is HIJ stuk.
-  assert.ok(uitRij >= 4,
-    `only ${uitRij} storage calls fed a row-read path were seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+  // succes te onderscheiden. Beide tellers moeten meebewegen, anders is de SCAN stuk en niet de
+  // code: de vorige versie zag er ook groen uit terwijl vier lekken open stonden.
+  assert.ok(serviceRolls >= 12,
+    `only ${serviceRolls} service_role storage byte-ops were seen; the client-binding scan must be broken`);
+  assert.ok(zelfGebouwd >= 3,
+    `only ${zelfGebouwd} self-built keys were recognised; the scan cannot tell built from read`);
 
   assert.deepEqual(overtreders, [],
-    "these hand bytes to a service_role client at a path read from a row the OWNER may write, " +
-    "without attributing it first — RLS does not stop this, service_role bypasses the bucket policy:\n  " +
-    overtreders.join("\n  ") + "\n\nUse pathBelongsToOwner(pad, ownerId) before touching the bytes.");
+    "these hand bytes to a service_role client at a path this code did not build itself, without " +
+    "attributing it first. service_role bypasses the storage bucket policy, and file_url/pdf_url " +
+    "are plain text on rows their owner may UPDATE:\n  " + overtreders.join("\n  ") +
+    "\n\nUse ownedStoragePath(stored, ownerId) and refuse null.");
 });
 
 test("[DECLARED-INVOICE-EIGEN-CLAIM] the guard is not fed the payment's own claim", () => {
@@ -15045,7 +15522,41 @@ test("[BOEKHOUDER-LEEG] an unread client list is never an empty practice", () =>
   // The success paths still say so explicitly, or `readFailed` would be undefined and read as
   // false by accident rather than by statement.
   assert.match(repo, /return \{ readFailed: false, clients: valid\.sort/);
-  assert.match(repo, /return \{ readFailed: false, todos: todos\.sort/);
+  // …except the to-do feed, whose `false` this gate used to PIN — and which was therefore wrong
+  // in a way this assertion protected. The three per-client counts inside the loop were read as
+  // bare `{ count }`, so the feed could be missing a client's open question and still return
+  // readFailed:false. Worse, the bank branch pushes its todo when the count is ZERO, so a failed
+  // read INVENTED "geen bankgegevens dit kwartaal" about a client who delivers every quarter.
+  // A literal false here is the one value that cannot be right.
+  assert.match(repo, /return \{ readFailed: telFout, todos: todos\.sort/,
+    "the feed's completeness must be a measurement of its own counts, not a constant");
+  assert.match(repo, /if \(vraagErr \|\| unprocessedErr \|\| bankErr\) \{\s*\n\s*telFout = true;?/,
+    "…and every one of the three counts feeds it");
+  assert.match(repo, /if \(!bankErr && \(bankCount \?\? 0\) === 0\) \{/,
+    "a todo may not be MADE out of a count that failed");
+
+  // The third read in this file that answered a failure with an empty book. Its one caller is the
+  // Werkboard, which renders an empty list as "Nog geen klanten gekoppeld" — the same sentence,
+  // on the board an accountant opens to see whose aangifte is due.
+  assert.match(repo, /console\.error\('\[BOEKHOUDER-LEEG\] linked client list unreadable'[\s\S]{0,200}?return \{ clients: \[\], readFailed: true \}/);
+  assert.doesNotMatch(repo, /if \(!data\) return \[\]\n\n  type LinkedProfile/,
+    "getLinkedClientList may not collapse a failed read into an empty practice");
+  const werkboard = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(werkboard, /\{klantenOnleesbaar \? \(/,
+    "…and the board must render that BEFORE its empty state, or the flag changes nothing");
+  assert.match(code("src/app/dashboard/accountant/agenda/page.tsx"),
+    /readFailed: klantenOnleesbaar \} = await getLinkedClientList/);
+
+  // Per client: a failed count is not a fact about that client either. It rides on the readiness
+  // rather than on the list, so one unreadable count cannot hide the other thirty-nine clients.
+  assert.match(repo, /hasBankData: !bankErr && \(bankCount \?\? 0\) > 0,/,
+    "'zonder bank' is a claim, and a failed count may not make it");
+  assert.match(repo, /const readFailed = !!\(sharedErr \|\| processedErr \|\| questionsErr \|\| bankErr \|\| lastDocErr\)/);
+  const kaart = code("src/modules/accountant/pages/KlantenBeheer.tsx");
+  assert.match(kaart, /if \(r\.readFailed\) return t\('bh\.klant\.readiness\.onleesbaar'\)/,
+    "the card says the status could not be read, instead of printing floors as counts");
+  assert.match(kaart, /if \(r\.readFailed\) return '#B3261E'/,
+    "…and it does not fall through to the grey 'nothing pending' colour");
 
   // ── The screens. A flag nobody renders is the half-fix this file exists to catch. ──
   const page = code("src/app/dashboard/accountant/page.tsx");
@@ -18720,6 +19231,10 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   const KLOK_MAG = new Map<string, string>([
     ["src/components/public-footer.tsx", "het jaartal in de copyrightregel — geen periode, geen bedrag"],
     ["src/lib/documents.ts", "een YYYYMMDD-voorvoegsel in een bestandsnaam; de opslagsleutel, niet de boeking"],
+    ["src/lib/fair-use-usage.ts",
+      "de maandsleutel van de eerlijk-gebruikmeter. UTC is hier een BEWUSTE keuze met een eigen " +
+      "toelichting, en de sleutel staat opgeslagen: hem verzetten verplaatst bestaande rijen naar " +
+      "een andere emmer. Geen boekingsdatum, geen bedrag, geen aangifte."],
   ]);
   const loopServer = (dir: string): string[] => {
     const uit: string[] = [];
@@ -18745,30 +19260,103 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   // The one form that IS legitimate is a Date built from EXPLICIT numbers — `new Date(year, m, 0)`
   // to get the length of a month is a calendar fact, not a clock reading — so that receiver, and
   // only that receiver, is allowed.
+  //
+  // ── Two blind spots this gate had, both found by asking what it CANNOT see ───────────────────
+  //
+  //  1. It matched getFullYear/getMonth/getDate and not the UTC variants. /api/money-audit read
+  //     `now.getUTCFullYear()` and `now.getUTCMonth()` to pick the quarter whose cash drawer it
+  //     audits, and walked straight through a gate written to forbid exactly that. On this UTC
+  //     server, the first hour or two of a quarter's first day is still the previous quarter.
+  //  2. Its "built from data" exemption was a regex with `[^()]*` inside `new Date(...)`, which
+  //     cannot match a nested call. So `new Date(Date.UTC(y, m, 0)).getUTCDate()` — the length of
+  //     a month, a calendar fact — was never recognised as exempt. Adding the UTC variants without
+  //     fixing that would have produced 99 findings, of which ~5 were real, and a gate that cries
+  //     wolf gets an exemption list bolted onto it until it means nothing.
+  //
+  // So the receiver is now parsed rather than pattern-matched: walk back over balanced parens to
+  // the `new Date(` that ends at the receiver, and read its ARGUMENTS. Arguments ⇒ a date built
+  // from data ⇒ a calendar fact. No arguments ⇒ the clock. Measured after: 137 date-field reads
+  // in server files, 12 of them clock readings, 3 of which were real and are now fixed.
+  const dateCallEndingAt = (src: string, end: number): string | null => {
+    if (src[end - 1] !== ")") return null;
+    let depth = 0;
+    let i = end - 1;
+    for (; i >= 0; i--) {
+      if (src[i] === ")") depth++;
+      else if (src[i] === "(") { depth--; if (depth === 0) break; }
+    }
+    if (i < 0) return null;
+    return /new Date$/.test(src.slice(Math.max(0, i - 8), i)) ? src.slice(i + 1, end - 1).trim() : null;
+  };
   const offenders: string[] = [];
+  let gelezenVelden = 0;
   for (const f of SERVER_FILES) {
     const src = code(f);
-    for (const m of src.matchAll(/([\w.)\]]+)\s*\.\s*(getFullYear|getMonth|getDate)\(\)/g)) {
+    for (const m of src.matchAll(
+      /([\w.)\]]+)\s*\.\s*(getUTCFullYear|getUTCMonth|getUTCDate|getFullYear|getMonth|getDate)\(\)/g)) {
       const at = m.index ?? 0;
-      // The receiver ITSELF, tested at its end — not a window around it. A window let
-      // `: now.getFullYear()` through because the line above happened to contain
-      // `new Date(classification.date)`, and a negative control caught that too.
-      const receiver = src.slice(0, at + m[1].length);
-      // `new Date(<args>)` — a calendar date built from explicit numbers, e.g. the length of a
-      // month. That is a calendar fact, not a clock reading, and it is the only allowed form.
-      if (/new Date\([^()]*[^()\s][^()]*\)$/.test(receiver)) continue;
-      // Een Date die aan een VARIABELE hangt en uit DATA is gebouwd, is ook een kalenderfeit:
-      // `const d = new Date(c.invoiceDate); d.getFullYear()` leest de factuur, niet de klok. De
-      // oude regel keek alleen naar de directe vorm en zou safecore.ts hier vals beschuldigen.
-      const bindingVanData = new RegExp(
-        `(?:const|let|var)\\s+${m[1].replace(/[.*+?^\${}()|[\]\\]/g, "\\$&")}\\s*=\\s*new Date\\([^()]*[^()\\s][^()]*\\)`,
-      );
-      if (/^[A-Za-z_$][\w$]*$/.test(m[1]) && bindingVanData.test(src.slice(0, at))) continue;
-      offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+      gelezenVelden++;
+      // (a) The receiver IS a `new Date(...)` call. Arguments ⇒ calendar fact; none ⇒ the clock.
+      const inline = dateCallEndingAt(src, at + m[1].length);
+      if (inline !== null) {
+        if (inline !== "") continue;
+        offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+        continue;
+      }
+      // (b) A plain identifier: find its LAST binding before this point and judge that the same
+      // way. `const d = new Date(c.invoiceDate); d.getFullYear()` reads the invoice, not the clock.
+      if (/^[A-Za-z_$][\w$]*$/.test(m[1])) {
+        const binds = [...src.slice(0, at).matchAll(
+          new RegExp(`(?:const|let|var)\\s+${m[1]}\\s*(?::[^=]*)?=\\s*`, "g"))];
+        const b = binds[binds.length - 1];
+        if (b) {
+          const na = src.slice((b.index ?? 0) + b[0].length);
+          if (!/^new Date\(/.test(na)) continue; // bound from something else entirely
+          const open = (b.index ?? 0) + b[0].length + "new Date".length;
+          let depth = 0;
+          let j = open;
+          for (; j < src.length; j++) {
+            if (src[j] === "(") depth++;
+            else if (src[j] === ")") { depth--; if (depth === 0) break; }
+          }
+          if (src.slice(open + 1, j).trim() !== "") continue;
+          offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+          continue;
+        }
+        // A PARAMETER defaulting to new Date() is the clock too — that is how bulkZipName and
+        // currentPeriod take theirs, and it is the shape a pure function uses to stay testable.
+        if (new RegExp(`${m[1]}\\s*:\\s*Date\\s*=\\s*new Date\\(\\)`).test(src)) {
+          offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+        }
+      }
     }
   }
+  assert.ok(gelezenVelden >= 100,
+    `only ${gelezenVelden} date-field reads seen in server files; the scan must be broken`);
   assert.deepEqual(offenders, [],
     `a period or a countdown is decided from the server's own clock:\n  ${offenders.join("\n  ")}`);
+
+  // ── The client side of the same rule, where it decides a LEGAL boundary ─────────────────────
+  //
+  // The scan above deliberately skips 'use client' files: on the client the device clock is the
+  // convention, and fifteen screens use it for display defaults (which year tab opens first).
+  // That is fine. What is not fine is a client that WRITES a date the law reads.
+  //
+  // Settings anchors vat_scheme_since and vat_exempt_since — the dates that decide from which
+  // quarter the books compute under kasstelsel and under the vrijstelling — to "the current
+  // quarter", and it derived that from `new Date().getMonth()`, i.e. the BROWSER's month. At 01:00
+  // Amsterdam on 1 April an owner whose device is on UTC−5 is still in March, so qStart becomes
+  // 1 January and the quarter they just filed is retroactively switched to kasstelsel — precisely
+  // what the comment beside it says must never happen ("past quarters stay factuur and are never
+  // retroactively rewritten").
+  //
+  // amsterdamToday() works in a browser exactly as it does on a server: it is Intl with a fixed
+  // timeZone, not a reading of the system zone.
+  const instellingen = code("src/app/dashboard/settings/page.tsx");
+  assert.match(instellingen, /const vandaag = amsterdamToday\(\)/,
+    "the quarter boundary written to vat_scheme_since must be the owner's, not the device's");
+  assert.doesNotMatch(instellingen, /const qStart = `\$\{now\.getFullYear\(\)\}/,
+    "the device-clock version must be gone");
 
   // One clock, so year and month can never disagree about which day it is.
   const pure = code("src/lib/format-nl.ts");
@@ -19501,4 +20089,63 @@ test("[BTW-NUMMER-BEWAARD] every incoming door stores the supplier's VAT number"
   const identity = code("src/lib/vendor-identity.ts");
   assert.match(identity, /if \(checkVendorBtw\(raw\) !== 'ok'\) continue/,
     "a malformed number is refused, and stays visible in _vendor_btw_printed instead");
+});
+
+test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwvorm, geen belofte", () => {
+  // reportHandledFailure meldde elke afgevangen storing aan Sentry en de serverlog: allebei BUITEN
+  // de app, dus je moet ergens anders inloggen om te zien of er iets aan de hand is, en daarom keek
+  // niemand. Dit is dezelfde informatie op de plek waar de beheerder toch al komt.
+  //
+  // EN DE REDEN DAT HET ZO SMAL IS. De context die een ontwikkelaar handig vindt — invoiceId,
+  // bedrag, leveranciersnaam — is exact de inhoud die dit product belooft nooit op één hoop te
+  // leggen. Een storingslogboek met vrije tekst is een achterdeur naar de boeken van élke klant, en
+  // een schrubber ernaast is een belofte die je moet vertrouwen: één onoplettende toevoeging is
+  // genoeg. Drie kolommen kunnen niets lekken.
+  const sql = readFileSync("supabase/migrations/system_events.sql", "utf8");
+  const sink = code("src/lib/report-handled.ts");
+  const puur = code("src/lib/beheer-health.ts");
+  const scherm = code("src/app/dashboard/beheer/BeheerScherm.tsx");
+
+  // ── De tabel draagt drie kolommen, en die drie ────────────────────────────
+  const tabel = sql.slice(sql.indexOf("CREATE TABLE"), sql.indexOf(");", sql.indexOf("CREATE TABLE")));
+  for (const verboden of ["message", "context", "detail", "payload", "user_id", "invoice_id", "amount", "bedrag"]) {
+    assert.doesNotMatch(tabel, new RegExp(`^\\s+${verboden}\\s`, "m"),
+      `system_events kreeg een kolom '${verboden}' — daar landt vroeg of laat een bedrag of een klantnaam in`);
+  }
+  assert.match(tabel, /^\s+tag\s+text NOT NULL/m);
+  assert.match(tabel, /^\s+severity\s+text NOT NULL/m);
+
+  // ── En de schrijver geeft niet meer mee dan die drie ──────────────────────
+  assert.match(sink, /\.from\("system_events"\)\.insert\(\{ tag, severity \}\)/,
+    "de schrijver geeft meer mee dan tag en ernst — precies waar het misgaat");
+  assert.doesNotMatch(sink, /insert\(\{[^}]*\bmessage\b/, "de zin wordt weer meegeschreven");
+  assert.doesNotMatch(sink, /insert\(\{[^}]*\bcontext\b/, "de context wordt weer meegeschreven");
+  // Losgelaten: deze functie is void en draait middenin foutafhandeling. Erop wachten maakt de
+  // melding traag; hem laten gooien breekt de belofte in de kop van dat bestand.
+  assert.match(sink, /void recordSystemEvent\(tag, severity\)/);
+  assert.match(sink, /catch \{[\s\S]{0,120}?\}\n\}/, "de schrijver mag nooit zelf een storing worden");
+
+  // ── Geen enkele policy: toegang is code, geen beleid dat te ruim kan staan ─
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
+  assert.doesNotMatch(sql, /CREATE POLICY[\s\S]*system_events/,
+    "er is een policy bijgekomen — dan kan een sessie erbij, en dat was juist de hele grens");
+
+  // ── En de weergave kan het ook niet tonen ────────────────────────────────
+  // Als het veld niet bestaat, kan geen scherm het per ongeluk afdrukken.
+  assert.match(puur, /export interface EventGroup \{[\s\S]{0,400}?\}/);
+  const groep = puur.slice(puur.indexOf("export interface EventGroup"), puur.indexOf("export interface EventSummary"));
+  for (const verboden of ["message", "context", "detail", "userId"]) {
+    assert.doesNotMatch(groep, new RegExp(`\\b${verboden}\\b`), `EventGroup kreeg een veld '${verboden}'`);
+  }
+
+  // ── [NO-SILENT-EMPTY] "er ging niets mis" ≠ "we konden niet kijken" ───────
+  assert.match(scherm, /if \(!storingen\.readable\) \{/);
+  assert.match(scherm, /Het storingsbeeld is niet te lezen/);
+  assert.match(scherm, /Geen afgevangen storingen in \{storingen\.days\} dagen/,
+    "een stille week zegt dat niet meer — en dan lijkt hij op een onleesbare");
+
+  // ── Eén lezer, zoals de hartslag ─────────────────────────────────────────
+  const pagina = code("src/app/dashboard/beheer/page.tsx");
+  assert.match(pagina, /readEventSummary\(pipeline\)/);
+  assert.doesNotMatch(pagina, /\.from\("system_events"\)/, "de pagina leest de tabel zelf — dat is de tweede lezer");
 });
