@@ -186,6 +186,29 @@ console.log("\n— turnover (retail Z-report) de-dup vs pos_income + cash —");
 // uitbetaling niet kan voorstellen. Hem overslaan laat de omzet staan op het bedrag vóór de
 // teruggaaf. De opmerking in de engine zegt zelf dat teruggaven "the normal way a till goes the
 // other way" zijn; precies dat geval viel weg.
+console.log("\n— [KAS-NULTARIEF] 0% is een antwoord, geen ontbrekend antwoord —");
+{
+  // /api/cash accepteert 0 uitdrukkelijk als geldig tarief, en de database bewaart 0 en NULL
+  // apart. Toch viel 0% in de tak voor "geen tarief opgegeven": de omzet bereikte geen enkele
+  // rubriek, en cashOmzetZonderBtw — die de gereedheid BLOKKEERT — telde hem mee. De eigenaar die
+  // het juiste invulde kon zijn kwartaal niet afronden, en de enige uitweg was liegen over het
+  // tarief.
+  const cash: ResultCashEntry[] = [
+    { direction: "in", amount: 300, category: "omzet", btw_rate: 0, date: "2026-05-02" },
+    { direction: "in", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+    { direction: "in", amount: 80, category: "omzet", btw_rate: null, date: "2026-05-02" },
+  ];
+  const r = computeResult([], [], cash, []);
+  check("de 0%-verkoop telt als omzet", near(r.omzet, 300 + 100 + 80));
+  check("…en draagt geen btw", near(r.btwVerschuldigd, 21));
+  // De emmer is wat hem in aangifte.ts naar rubriek 1e brengt.
+  const nul = r.salesByRate.find((x) => x.rate === 0);
+  check("de 0%-omzet krijgt een eigen tariefemmer (die 1e voedt)", !!nul && near(nul.omzet, 300));
+  check("…met nul btw erin", !!nul && near(nul.btw, 0));
+  // En alleen de ECHT ongetarifeerde regel blokkeert nog.
+  check("alleen de regel zonder tarief blokkeert de gereedheid", near(r.cashOmzetZonderBtw, 80));
+}
+
 console.log("\n— [KAS-TERUGGAAF] een kasteruggaaf op een gedekte dag telt wél mee —");
 {
   const turnover: DailyTurnover[] = [{
