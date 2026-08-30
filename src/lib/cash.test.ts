@@ -494,5 +494,32 @@ console.log("\n— [KAS-VOCABULAIRE] the owner writes five of the eight —");
   check("a word outside the vocabulary is neither", !isCashCategory("loon") && !isOwnerWritableCashCategory("loon"));
 }
 
+console.log("\n— [KAS-TERUGGAAF] een kasteruggaaf op een kassadag verlaat de lade echt —");
+{
+  // De lade is niet decoratief: ze gaat in het Kasboek-blad dat het kwartaalpakket aan de
+  // boekhouder geeft, en ze voedt de getuige waarmee /api/btw/file en readiness.ts een aangifte
+  // WEIGEREN bij een negatieve kas. Een teruggaaf die niet meetelt is precies het signaal dat dan
+  // verdwijnt — en de fout wijst dezelfde kant op als de dubbeltelling die deze regel repareerde:
+  // het saldo staat HOGER dan wat er ligt.
+  const tillDays = [{ date: "2026-04-04", cash_amount: 1210 }];
+  const entries = [
+    // De her-notering van dezelfde dagopbrengst: DIT is de dubbeltelling, en die blijft eruit.
+    { direction: "in" as const, amount: 1210, category: "omzet", date: "2026-04-04" },
+    // En een teruggaaf uit de lade op diezelfde dag.
+    { direction: "out" as const, amount: 121, category: "omzet", date: "2026-04-04" },
+  ];
+  const saldo = computeDrawerBalance({ openingBalance: 100, entries, tillDays });
+  // 100 begin + 1210 uit de Z-bon − 121 teruggaaf = 1189. De her-notering telt niet mee.
+  check("de teruggaaf gaat van de lade af", saldo === 1189);
+  check("…en de her-notering niet erbij", saldo !== 1189 + 1210);
+
+  // Zonder teruggaaf: precies de oude uitkomst, zodat de reparatie niets anders verschuift.
+  const zonder = computeDrawerBalance({
+    openingBalance: 100, tillDays,
+    entries: [{ direction: "in" as const, amount: 1210, category: "omzet", date: "2026-04-04" }],
+  });
+  check("zonder teruggaaf blijft de lade exact wat ze was", zonder === 1310);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

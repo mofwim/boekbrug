@@ -178,6 +178,47 @@ console.log("\n— turnover (retail Z-report) de-dup vs pos_income + cash —");
   check("bank omzet without rate is flagged too (not just cash)", r.cashOmzetZonderBtw === 850);
 }
 
+// ─── [KAS-TERUGGAAF] Een teruggaaf op een kassadag is geen dubbeltelling ──────
+//
+// De dubbeltelling waar de covered-regel over gaat is: de eigenaar noteert de dagopbrengst die de
+// Z-bon al telde nóg een keer als kasregel. Een TERUGGAAF is dat niet — er is geen tweede notering
+// van dezelfde ontvangst, en daily_turnover.cash_amount is een positief ontvangstenbedrag dat een
+// uitbetaling niet kan voorstellen. Hem overslaan laat de omzet staan op het bedrag vóór de
+// teruggaaf. De opmerking in de engine zegt zelf dat teruggaven "the normal way a till goes the
+// other way" zijn; precies dat geval viel weg.
+console.log("\n— [KAS-TERUGGAAF] een kasteruggaaf op een gedekte dag telt wél mee —");
+{
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-04",
+    base_0: 0, base_9: 0, base_21: 1000, btw_9: 0, btw_21: 210,
+    total_incl: 1210, pin_amount: 0, cash_amount: 1210, other_amount: 0,
+  }];
+  const cash: ResultCashEntry[] = [
+    // Dezelfde dag, en de eigenaar betaalt € 121 contant terug aan een klant.
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-04-04" },
+    // En de her-notering van de dagopbrengst zelf: DIE is de dubbeltelling en blijft eruit.
+    { direction: "in", amount: 1210, category: "omzet", btw_rate: 21, date: "2026-04-04" },
+  ];
+  const r = computeResult([], [], cash, turnover);
+  // Z-bon: 1000 netto. Teruggaaf: −121 incl. = −100 netto. De her-notering telt niet mee.
+  check("de teruggaaf verlaagt de omzet (1000 − 100)", near(r.omzet, 900));
+  check("…en de her-notering van dezelfde dag doet dat niet", !near(r.omzet, 900 - 1000));
+  // De BTW gaat mee dezelfde kant op: 210 − 21.
+  check("de af te dragen BTW daalt mee", near(r.btwVerschuldigd, 189));
+}
+
+console.log("\n— [KAS-TERUGGAAF] zonder kassadag verandert er niets —");
+{
+  // De regressiecontrole: op een dag die de Z-bon NIET dekt gedroeg een teruggaaf zich altijd al
+  // goed, en die uitkomst mag deze reparatie niet verschuiven.
+  const cash: ResultCashEntry[] = [
+    { direction: "in", amount: 1210, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+  ];
+  const r = computeResult([], [], cash, []);
+  check("verkoop min teruggaaf, netto", near(r.omzet, 1000 - 100));
+}
+
 console.log("\n— [BTW-TRUTH] bank omzet without a rate must not silently declare €0 BTW —");
 {
   // A plain 'omzet' bank credit and an uncovered pos_income line: both revenue, no rate.

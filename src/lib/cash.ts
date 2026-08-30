@@ -476,6 +476,18 @@ export function computeDrawerBalance(input: {
 
   const counted = input.entries.filter((e) => {
     if ((e.category ?? "") !== "omzet") return true;
+    // [KAS-TERUGGAAF] Een teruggaaf gaat de lade UIT en kan dus nooit de dubbeltelling zijn waar
+    // de regel hierboven over gaat: daar is geen tweede notering van dezelfde ontvangst, en
+    // daily_turnover.cash_amount is een positief ontvangstenbedrag dat een uitbetaling niet kan
+    // voorstellen. Hem overslaan haalt geld weg dat de lade wél heeft verlaten — en dat is
+    // dezelfde richting als de fout die deze hele regel bestaat om te repareren: het saldo staat
+    // dan HOGER dan wat er ligt.
+    //
+    // Deze lade is niet decoratief. Ze gaat in het Kasboek-blad dat het kwartaalpakket aan de
+    // boekhouder geeft, en ze voedt de getuige waarmee /api/btw/file en readiness.ts een aangifte
+    // WEIGEREN bij een negatieve kas. Een teruggaaf die niet meetelt is precies het signaal dat
+    // dan verdwijnt.
+    if (e.direction === "out") return true;
     // Fail-SAFE on a missing date, mirroring financial-result.ts: a shop that USES a till has its
     // cash sales inside the Z-report, so a dateless cash omzet is treated as covered rather than
     // double-counted; a ZZP with no till (no covered days at all) still counts it.
