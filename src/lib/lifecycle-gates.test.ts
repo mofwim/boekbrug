@@ -9889,6 +9889,88 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
 });
 
+test("[LINKS-WRITE-HONEST] the boolean these writers return is actually read", () => {
+  // recordPaymentLinks and clearPaymentLinks each return Promise<boolean>, and their own doc
+  // comments say why: "returned so a caller can say what really happened". Three call sites
+  // awaited them for the side effect and dropped the answer — a return value that exists solely
+  // to be read, unread, on the join table that decides how much of an invoice is paid.
+  //
+  // recompute_invoice_amount_paid re-derives amount_paid as SUM(amount_applied) over the links
+  // that SURVIVE, so the failure is not a lost log line, it inverts the operation:
+  //
+  //   · unlink, single — a failed clear makes the recompute restore the amount the optimistic
+  //     decrement just took off. The route answers ok, the invoice stays paid for money no longer
+  //     on any bank line, and the detached line is free to be booked again. The same euros twice.
+  //   · unlink, batch — worse: every invoice was forced to amount_paid = 0 on the promise that
+  //     the recompute reconciles it, so a failed clear puts them all back to fully paid.
+  //   · attach-invoice — the route that CREATES an already-paid invoice out of a bank line. With
+  //     no join row, the next unlink or undo finds none and re-opens the invoice at its full
+  //     total: money that was received, standing as owed.
+  const unlink = code("src/app/api/bank/unlink/route.ts");
+  assert.match(unlink, /const linksCleared = await clearPaymentLinks\(pipeline, user\.id, transactionId\);/);
+  assert.match(unlink, /const linksCleared = await clearPaymentLinks\(pipeline, userId, transactionId\);/);
+  assert.doesNotMatch(unlink, /^\s*await clearPaymentLinks\(/m,
+    "neither call site may drop the answer again");
+  // Reported where a person sees it — a console line from a route nobody watches is not a report.
+  assert.equal((unlink.match(/reportHandledFailure\(\{[\s\S]{0,120}?tag: "BANK-TX-INVOICES"/g) ?? []).length, 2,
+    "both paths must report the failure, not only log it");
+  // …and written into the audit trail, so an accountant reading the row a year later sees why a
+  // balance drifted instead of guessing.
+  assert.match(unlink, /\.\.\.\(linksCleared \? \{\} : \{ links_not_cleared: true \}\),/);
+
+  const attach = code("src/app/api/bank/attach-invoice/route.ts");
+  assert.match(attach, /const linksRecorded = await recordPaymentLinks\(/);
+  assert.match(attach, /if \(!linksRecorded\) \{[\s\S]{0,200}?reportHandledFailure\(/);
+});
+
+test("[EDIT-LINES-SAFE] a delete-then-insert may not insert on a delete that failed", () => {
+  // The header totals are committed before the lines are swapped, and the swap is not atomic over
+  // PostgREST. The insert's failure was handled in full — snapshot, restore, restore the totals —
+  // and the DELETE's error was dropped entirely. A failed delete followed by a successful insert
+  // leaves BOTH line sets on the invoice, and /api/invoice/send recomputes the totals from the
+  // lines whenever lines exist: the figure that gets a legal invoice number and goes to the
+  // customer is then roughly double what the owner typed, on a screen that showed the right one.
+  const route = code("src/app/api/invoice/[id]/route.ts");
+  assert.match(route, /const \{ error: delErr \} = await supabase\.from\('invoice_lines'\)\.delete\(\)\.eq\('invoice_id', id\)/);
+  assert.match(route, /if \(delErr \|\| previousErr\) \{/,
+    "…and the snapshot's own read error counts: without the old lines there is nothing to restore with");
+  // Refused BEFORE the insert, or the guard decides nothing.
+  assert.ok(route.indexOf("if (delErr || previousErr) {") < route.indexOf("const { error: insErr } = await supabase"),
+    "the refusal must come before the insert");
+  assert.doesNotMatch(route, /^\s*await supabase\.from\('invoice_lines'\)\.delete\(\)/m);
+});
+
+test("[REMINDER-TRUTH] a reminder that never went out cannot stay recorded as sent", () => {
+  // The claim row is inserted with status 'sent' BEFORE the send is attempted — that is what makes
+  // it a claim. When the send throws, the stamp to 'failed' is the only thing that turns it back
+  // into the truth, and its error was dropped. A failed stamp leaves the screen saying the
+  // customer received a reminder they never got, and the next attempt counts as a SECOND one
+  // against the ceiling of three. The rejection branch beside it already read its error.
+  const route = code("src/app/api/invoice/[id]/reminder/route.ts");
+  assert.match(route, /const \{ error: stempelErr \} = await \(pipeline as any\)\s*\n?\s*\.from\('invoice_reminders'\)\.update\(\{ status: 'failed' \}\)/);
+  assert.match(route, /if \(stempelErr\) \{[\s\S]{0,400}?console\.error\('\[REMINDER-TRUTH\]/);
+});
+
+test("[STATEMENT-RECONCILE] an unreadable own-invoice list reports no comparison, not a missing one", () => {
+  // The read answers "what do WE already hold". Empty means every line on the supplier's statement
+  // is a bill we do not have — with a total underneath. So a failed read told the owner to go and
+  // request invoices their supplier already sent, and re-book them: duplicate purchase invoices
+  // and duplicate voorbelasting, from a query error.
+  //
+  // There is no half-answer available here, so the route returns null — a state it already has,
+  // in which the file is simply stored without a comparison panel.
+  const route = code("src/app/api/intake/route.ts");
+  assert.match(route, /catch \(e\) \{[\s\S]{0,300}?\[STATEMENT-RECONCILE\] eigen facturen niet te lezen[\s\S]{0,200}?return null/,
+    "a failed read must claim nothing at all");
+  // …and it must be a throwing reader, or there is no error to catch.
+  assert.match(route, /rows = await fetchAllRows</);
+  assert.doesNotMatch(route, /const \{ data: invRows \} = await supabase/,
+    "the silent version must be gone");
+  // [VOL-GELEZEN] `.limit(2000)` was silently ~1000, and what fell off was the oldest — which is
+  // exactly what then gets reported as missing.
+  assert.doesNotMatch(route, /\.order\("invoice_date", \{ ascending: false \}\)\s*\n\s*\.limit\(2000\)/);
+});
+
 test("[EEN-DAG-EEN-BRON] a guard that cannot see is not permission", () => {
   // Both routes that can claim a day's revenue check first whether something else already claims
   // it. Both guards answered a FAILED read with the same values that mean "nothing is there":

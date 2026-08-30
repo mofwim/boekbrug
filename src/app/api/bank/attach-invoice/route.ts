@@ -38,6 +38,7 @@ import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber, normalizeVendor } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { reportHandledFailure } from "@/lib/report-handled";
 import { readingPromptHint } from "@/lib/reading-memory";
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 // [DECLARED-INVOICE] Invoice numbers the payment names, whether or not we hold them.
@@ -764,12 +765,28 @@ async function runAttachInvoice(req: NextRequest) {
   // link with a NULL amount makes this invoice — created 'paid' by this very payment — recompute to
   // amount_paid 0 and re-open at its full total. The invoice is created fully settled by this
   // transaction, so the applied amount is its own total.
-  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
+  // [LINKS-WRITE-HONEST] The boolean is read. recordPaymentLinks returns one so a failed write can
+  // be reported, and this route — the one that CREATES an already-'paid' invoice out of a bank
+  // line — threw it away. Without the join row, recompute_invoice_amount_paid re-derives
+  // amount_paid as SUM(amount_applied) over the surviving links on the next unlink or undo, finds
+  // none, and re-opens this invoice at its full total: money that was received, standing as owed.
+  const linksRecorded = await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
     // [BANK-BUDGET] The applied amount is what the LINE gave, which is not always the invoice's
     // total: on partial coverage the invoice stays open for the remainder, and Σ amount_applied
     // over this transaction can never exceed the money that actually moved.
     [invoice.id]: appliedNow,
   });
+
+  if (!linksRecorded) {
+    // Not fatal to the request — the invoice exists and is paid, which is the truth of what
+    // happened — but the reversal index is now incomplete, and that is invisible by construction.
+    reportHandledFailure({
+      tag: "BANK-TX-INVOICES",
+      message: "payment link not recorded for an invoice created paid from a bank line",
+      severity: "data-integrity",
+      context: { userId: user.id, invoiceId: invoice.id, transactionId },
+    });
+  }
 
   // 11. Notification (non-blocking) — service_role by rule.
   await createNotification({
