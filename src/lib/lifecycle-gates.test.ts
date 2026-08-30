@@ -486,9 +486,15 @@ test("[DATE-NL] no owner-typed date is left to the browser's locale", () => {
     }
     return out;
   };
-  const offenders = walk("src/app")
+  // Widened from walk("src/app") to the whole component tree. The accountant module lives in
+  // src/modules and was therefore never scanned — and AccountantFactuur, the screen on which a
+  // bookkeeper types the invoice DATE of a document they issue for a client, had a native input.
+  // A rule that says "no owner-typed date" and looks in one directory is a rule about that
+  // directory. Same lesson as [IN-CHUNK] and [TZ-SERVER]: walk, do not list.
+  const offenders = [...walk("src/app"), ...walk("src/modules"), ...walk("src/components")]
     .filter((f) => /type="date"/.test(code(f)))
-    .map((f) => f);
+    // DateFieldNL is the replacement, and it contains the native input it wraps.
+    .filter((f) => !f.endsWith("/DateFieldNL.tsx"));
 
   assert.deepEqual(
     offenders, [],
@@ -2597,11 +2603,18 @@ test("[CREDITNOTA-VOLGORDE] the allocate route applies credit lines before the i
 // — per invoice a credit really was settled by €150 — so every per-LINE reader has to re-derive
 // the sign, and re-deriving it four times is how they came to disagree.
 test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one shared sum", () => {
+  // The four this gate was written for. Named, because each one's wiring is pinned below.
   const readers = [
     "src/app/api/bank/allocate/route.ts",
     "src/app/api/bank/confirm/route.ts",
     "src/app/api/bank/match/route.ts",
     "src/app/dashboard/bank/verdelen/[txId]/page.tsx",
+    // The fifth, found by asking the question the list could not: /api/bank/attach-invoice summed
+    // Math.abs(amount_applied) in a .reduce — the same sign-blind shape, in a file no assertion
+    // named. On a €850 debit made of a €1.000 invoice and a €150 credit it read €1.150 applied
+    // instead of €850, so the line looked €300 poorer and the route refused an attachment it
+    // could afford. It also read NULL amount_applied as 0, which lets the same euros go twice.
+    "src/app/api/bank/attach-invoice/route.ts",
   ];
   for (const file of readers) {
     const src = code(file);
@@ -2619,7 +2632,43 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
       `${file} accumulates amount_applied itself. Per INVOICE that magnitude is right; per LINE it ` +
         "is not — a credit gives money back to the line. Use allocatedOnLine/allocatedByTransaction.",
     );
+    // …and the reduce form, which is what the fifth reader used and what the `+=` pattern above
+    // walked straight past. Two spellings of one sum is exactly how they came to disagree.
+    assert.doesNotMatch(
+      src,
+      /sum \+ Math\.(abs|max)\([^)]*amount_applied/,
+      `${file} accumulates amount_applied in a reduce — same defect, different spelling`,
+    );
   }
+
+  // ── The class beside the list ────────────────────────────────────────────────────────────────
+  // The list above pins HOW each reader is wired. This finds a SIXTH that nobody thought to add:
+  // any file that reads amount_applied and adds it up without going through the shared module.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const eigenSommen: string[] = [];
+  let lezers = 0;
+  for (const f of loop("src")) {
+    if (f.endsWith("bank-line-budget.ts") || f.endsWith("money-invariants.ts")) continue;
+    const src = code(f);
+    if (!/amount_applied/.test(src)) continue;
+    lezers++;
+    for (const m of src.matchAll(/(?:\+=|sum \+|s \+|acc \+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
+      eigenSommen.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.ok(lezers >= 5, `only ${lezers} files mention amount_applied; the scan must be broken`);
+  assert.deepEqual(eigenSommen, [],
+    "these add amount_applied up themselves instead of calling allocatedOnLine/allocatedByTransaction. " +
+    "Per INVOICE the magnitude is right; per LINE a credit gives money BACK to the line, and a NULL " +
+    "amount settled its invoice in full rather than nothing:\n  " + eigenSommen.join("\n  "));
 });
 
 // ── [BTW-ROUND] One summation for the three legal amounts on an invoice ──────
@@ -2644,6 +2693,13 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
     "src/lib/draft-totals.ts",
     "src/app/dashboard/invoice/new/page.tsx",
     "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    // The fourth. AccountantFactuur is where a bookkeeper writes an invoice FOR a client under a
+    // mandate, and it carried the same per-line loop with the same defence the other three had
+    // ("alleen om te TONEN, de server rekent hem opnieuw") — which is precisely the defect: the
+    // server recomputes with the shared function, so the accountant's screen and the document the
+    // customer receives differ by a cent on a mixed-rate invoice. It was not in this list, and it
+    // does not live under src/app, so the class scan below is what would have found it.
+    "src/modules/accountant/pages/AccountantFactuur.tsx",
   ];
   for (const file of owners) {
     const src = code(file);
@@ -2668,6 +2724,39 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
         "rounds each rate's BTW. Summing per line is a cent apart on a mixed-rate invoice.",
     );
   }
+
+  // ── The class, so a fifth surface does not need to be remembered ─────────────────────────────
+  // The list above pins the four that exist. This walks the tree for the SHAPE, in whichever
+  // spelling: a per-line ex-amount multiplied by that line's own rate. The Dutch spelling
+  // (`regelEx * r.btw_rate / 100`) is what AccountantFactuur used, and no assertion above would
+  // ever have matched it.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const eigenBtw: string[] = [];
+  let btwLezers = 0;
+  for (const f of loop("src")) {
+    // The two modules that OWN this arithmetic, and the PDF/UBL writers that group per rate.
+    if (/invoice-totals\.ts$|invoice-discount\.ts$/.test(f)) continue;
+    const src = code(f);
+    if (!/btw_rate/.test(src)) continue;
+    btwLezers++;
+    for (const m of src.matchAll(/[A-Za-z_$][\w$.]*\s*\*\s*\(?\s*[A-Za-z_$][\w$.]*\.btw_rate\s*\)?\s*\/\s*100/g)) {
+      eigenBtw.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${m[0].replace(/\s+/g, " ")}`);
+    }
+  }
+  assert.ok(btwLezers >= 15, `only ${btwLezers} files mention btw_rate; the scan must be broken`);
+  assert.deepEqual(eigenBtw, [],
+    "these multiply a LINE's amount by that line's own rate — a second summation of a legal amount. " +
+    "computeInvoiceTotals groups the ex-amount per rate and rounds each rate's BTW, which is the " +
+    "Belastingdienst and Peppol method the PDF and the UBL export already use:\n  " +
+    eigenBtw.join("\n  "));
 });
 
 // ── [DEP-VEILIG] The two overrides that are not decoration ───────────────────
