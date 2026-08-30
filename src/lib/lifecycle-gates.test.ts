@@ -19119,3 +19119,62 @@ test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een cur
   // wat de eerste vraag is na een deploy die er een toevoegt.
   assert.match(scherm, /"nog nooit"/);
 });
+
+test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwvorm, geen belofte", () => {
+  // reportHandledFailure meldde elke afgevangen storing aan Sentry en de serverlog: allebei BUITEN
+  // de app, dus je moet ergens anders inloggen om te zien of er iets aan de hand is, en daarom keek
+  // niemand. Dit is dezelfde informatie op de plek waar de beheerder toch al komt.
+  //
+  // EN DE REDEN DAT HET ZO SMAL IS. De context die een ontwikkelaar handig vindt — invoiceId,
+  // bedrag, leveranciersnaam — is exact de inhoud die dit product belooft nooit op één hoop te
+  // leggen. Een storingslogboek met vrije tekst is een achterdeur naar de boeken van élke klant, en
+  // een schrubber ernaast is een belofte die je moet vertrouwen: één onoplettende toevoeging is
+  // genoeg. Drie kolommen kunnen niets lekken.
+  const sql = readFileSync("supabase/migrations/system_events.sql", "utf8");
+  const sink = code("src/lib/report-handled.ts");
+  const puur = code("src/lib/beheer-health.ts");
+  const scherm = code("src/app/dashboard/beheer/BeheerScherm.tsx");
+
+  // ── De tabel draagt drie kolommen, en die drie ────────────────────────────
+  const tabel = sql.slice(sql.indexOf("CREATE TABLE"), sql.indexOf(");", sql.indexOf("CREATE TABLE")));
+  for (const verboden of ["message", "context", "detail", "payload", "user_id", "invoice_id", "amount", "bedrag"]) {
+    assert.doesNotMatch(tabel, new RegExp(`^\\s+${verboden}\\s`, "m"),
+      `system_events kreeg een kolom '${verboden}' — daar landt vroeg of laat een bedrag of een klantnaam in`);
+  }
+  assert.match(tabel, /^\s+tag\s+text NOT NULL/m);
+  assert.match(tabel, /^\s+severity\s+text NOT NULL/m);
+
+  // ── En de schrijver geeft niet meer mee dan die drie ──────────────────────
+  assert.match(sink, /\.from\("system_events"\)\.insert\(\{ tag, severity \}\)/,
+    "de schrijver geeft meer mee dan tag en ernst — precies waar het misgaat");
+  assert.doesNotMatch(sink, /insert\(\{[^}]*\bmessage\b/, "de zin wordt weer meegeschreven");
+  assert.doesNotMatch(sink, /insert\(\{[^}]*\bcontext\b/, "de context wordt weer meegeschreven");
+  // Losgelaten: deze functie is void en draait middenin foutafhandeling. Erop wachten maakt de
+  // melding traag; hem laten gooien breekt de belofte in de kop van dat bestand.
+  assert.match(sink, /void recordSystemEvent\(tag, severity\)/);
+  assert.match(sink, /catch \{[\s\S]{0,120}?\}\n\}/, "de schrijver mag nooit zelf een storing worden");
+
+  // ── Geen enkele policy: toegang is code, geen beleid dat te ruim kan staan ─
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
+  assert.doesNotMatch(sql, /CREATE POLICY[\s\S]*system_events/,
+    "er is een policy bijgekomen — dan kan een sessie erbij, en dat was juist de hele grens");
+
+  // ── En de weergave kan het ook niet tonen ────────────────────────────────
+  // Als het veld niet bestaat, kan geen scherm het per ongeluk afdrukken.
+  assert.match(puur, /export interface EventGroup \{[\s\S]{0,400}?\}/);
+  const groep = puur.slice(puur.indexOf("export interface EventGroup"), puur.indexOf("export interface EventSummary"));
+  for (const verboden of ["message", "context", "detail", "userId"]) {
+    assert.doesNotMatch(groep, new RegExp(`\\b${verboden}\\b`), `EventGroup kreeg een veld '${verboden}'`);
+  }
+
+  // ── [NO-SILENT-EMPTY] "er ging niets mis" ≠ "we konden niet kijken" ───────
+  assert.match(scherm, /if \(!storingen\.readable\) \{/);
+  assert.match(scherm, /Het storingsbeeld is niet te lezen/);
+  assert.match(scherm, /Geen afgevangen storingen in \{storingen\.days\} dagen/,
+    "een stille week zegt dat niet meer — en dan lijkt hij op een onleesbare");
+
+  // ── Eén lezer, zoals de hartslag ─────────────────────────────────────────
+  const pagina = code("src/app/dashboard/beheer/page.tsx");
+  assert.match(pagina, /readEventSummary\(pipeline\)/);
+  assert.doesNotMatch(pagina, /\.from\("system_events"\)/, "de pagina leest de tabel zelf — dat is de tweede lezer");
+});

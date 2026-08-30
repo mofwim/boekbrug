@@ -20,7 +20,7 @@ import { fetchAllRows } from "@/lib/supabase-paginate";
 import { isBeheerder, buildBeheerOverview } from "@/lib/beheer";
 // [BEHEER-GEZOND] Draaien de achtergrondtaken nog? Dat oordeel bestond al (judgeCron) en had één
 // lezer: een endpoint dat je moet curlen. Hier kijkt een mens ernaar.
-import { readSystemHealth } from "@/lib/beheer-health";
+import { readSystemHealth, readEventSummary } from "@/lib/beheer-health";
 import { decidePlan } from "@/lib/subscription";
 import { BeheerScherm } from "./BeheerScherm";
 
@@ -39,6 +39,8 @@ export default async function BeheerPage() {
   // iets anders rekende. De klok wordt daar gelezen, niet hier: in een servercomponent is dat een
   // onzuivere aanroep tijdens de render.
   const systeem = await readSystemHealth(pipeline);
+  // [STORINGSBEELD] Wat er de laatste week misging. Zelfde vorm: één lezer, klok daarbinnen.
+  const storingen = await readEventSummary(pipeline);
 
   // [PAGINATION] Both reads paged: the day this app has more than ~1000 accounts is exactly the
   // day the operator page matters most, and a silently truncated user list on an operator screen
@@ -98,5 +100,5 @@ export default async function BeheerPage() {
     (p) => decidePlan({ role: p.role, subscriptionStatus: p.subscriptionStatus, currentPeriodEnd: p.currentPeriodEnd, nowMs }).plan,
   );
 
-  return <BeheerScherm overview={overview} systeem={systeem} />;
+  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} />;
 }

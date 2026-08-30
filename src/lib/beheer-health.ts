@@ -171,3 +171,107 @@ export async function readSystemHealth(
     .filter((n) => Number.isFinite(n));
   return buildSystemHealth(laatste, nowMs, tijden.length > 0 ? Math.min(...tijden) : null, true);
 }
+
+// ── [STORINGSBEELD] Wat er de laatste dagen misging ──────────────────────────
+//
+// reportHandledFailure meldt elke afgevangen storing aan Sentry en de serverlog. Allebei buiten de
+// app, dus je moet ergens ANDERS inloggen om te zien of er iets aan de hand is — en daarom kijkt
+// niemand. Dit is dezelfde informatie op de plek waar de beheerder toch al kijkt.
+//
+// Bewust GEEN logboekweergave. Vierduizend regels ruwe tekst beantwoorden de vraag niet; "welke
+// storing, hoe vaak, wanneer voor het laatst" wel. En de tabel draagt met opzet geen message en
+// geen context (system_events.sql legt uit waarom), dus die weergave zou er ook niet kunnen zijn.
+
+/** One kind of failure, over the window. */
+export interface EventGroup {
+  tag: string;
+  severity: string;
+  count: number;
+  /** ISO of the most recent one. */
+  lastAt: string;
+  /** Hours since that one. */
+  hoursAgo: number | null;
+}
+
+export interface EventSummary {
+  /** [NO-SILENT-EMPTY] False when the table could not be read — never an empty, calm list. */
+  readable: boolean;
+  /** How many days the window covers, so the counts can be read. */
+  days: number;
+  groups: EventGroup[];
+  total: number;
+}
+
+/**
+ * Group raw events by tag, sharpest first.
+ *
+ * "Sharpest" is FREQUENCY, not severity: a data-integrity event that happened once is a thing to
+ * look at; the same one forty times is a thing that is happening RIGHT NOW, and that is the
+ * distinction an operator needs from a glance.
+ */
+export function buildEventSummary(
+  rows: Array<{ tag: string; severity: string; at: string }>,
+  nowMs: number,
+  days: number,
+  readable = true,
+): EventSummary {
+  if (!readable) return { readable: false, days, groups: [], total: 0 };
+
+  const byTag = new Map<string, { severity: string; count: number; lastAt: string }>();
+  for (const r of rows) {
+    const prev = byTag.get(r.tag);
+    if (!prev) {
+      byTag.set(r.tag, { severity: r.severity, count: 1, lastAt: r.at });
+      continue;
+    }
+    prev.count++;
+    // De ERNSTIGSTE die onder deze tag voorkwam blijft staan, niet de laatste: een tag die één keer
+    // data-integrity was en daarna twintig keer iets milds, is nog steeds een tag die data-integrity
+    // kán zijn — en dat is wat een beheerder moet zien.
+    if (r.severity === "data-integrity") prev.severity = r.severity;
+    if (r.at > prev.lastAt) prev.lastAt = r.at;
+  }
+
+  const groups: EventGroup[] = [...byTag.entries()]
+    .map(([tag, v]) => {
+      const ms = Date.parse(v.lastAt);
+      return {
+        tag,
+        severity: v.severity,
+        count: v.count,
+        lastAt: v.lastAt,
+        hoursAgo: Number.isFinite(ms) ? Math.max(0, Math.round((nowMs - ms) / HOUR)) : null,
+      };
+    })
+    .sort((a, b) => (b.count - a.count) || a.tag.localeCompare(b.tag));
+
+  return { readable: true, days, groups, total: rows.length };
+}
+
+/**
+ * Read the window. The ONE reader, like readSystemHealth — see its note on why two readers of one
+ * table drift.
+ *
+ * [NO-SILENT-EMPTY] A failed read returns readable:false. "Nothing went wrong this week" is a
+ * genuinely good answer and a genuinely different one from "we could not look", and on an operator
+ * page those two must never render the same.
+ */
+export async function readEventSummary(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: any,
+  nowMs: number = Date.now(),
+  days = 7,
+): Promise<EventSummary> {
+  const vanaf = new Date(nowMs - days * 24 * HOUR).toISOString();
+  try {
+    const { data, error } = await pipeline
+      .from("system_events").select("tag, severity, at")
+      .gte("at", vanaf)
+      .order("at", { ascending: false })
+      .limit(5000);
+    if (error) throw new Error(error.message);
+    return buildEventSummary((data ?? []) as Array<{ tag: string; severity: string; at: string }>, nowMs, days, true);
+  } catch {
+    return buildEventSummary([], nowMs, days, false);
+  }
+}
