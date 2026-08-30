@@ -17,6 +17,7 @@ import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { buildXafFile } from "@/lib/xaf-export";
 import { buildXafInputForOwner } from "@/lib/xaf-fetch";
+import { reportHandledFailure } from "@/lib/report-handled";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,21 @@ export async function GET(req: NextRequest) {
     const input = await buildXafInputForOwner({ pipeline, ownerId, year });
 
     const built = buildXafFile(input);
+    // [XAF-NIET-STIL] Een overgeslagen post is geen normale uitkomst. Het bestand zegt het nu zelf
+    // (buildXafFile zet het als commentaar bovenin, want de X-Xaf-Skipped-kop hieronder bereikt
+    // niemand: beide plekken die dit ophalen zijn een gewone downloadlink, en een browser toont
+    // daar geen responsheaders van). Maar dat vertelt alleen de mens die het bestand opent, en een
+    // weigering wijst bijna altijd op een repareerbare rij — een factuur zonder datum, een
+    // verkoopfactuur waarvan het tarief niet uit het totaal volgt. Die hoort in het storingsbeeld,
+    // anders leert niemand ooit dat het gebeurt.
+    if (built.skipped.length > 0) {
+      reportHandledFailure({
+        tag: "XAF-OVERGESLAGEN",
+        message: "auditfile is incompleet — posten geweigerd bij het samenstellen",
+        severity: "data-integrity",
+        context: { ownerId, year, aantal: built.skipped.length, redenen: [...new Set(built.skipped.map((s) => s.reason))] },
+      });
+    }
     const safeName = (input.company.name || "administratie").replace(/[^a-zA-Z0-9._-]/g, "_");
     return new NextResponse(built.xml, {
       status: 200,

@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildXafFile, snapRate, type XafInput } from "./xaf-export";
+import { buildXafFile, snapRate, xmlCommentSafe, type XafInput } from "./xaf-export";
 
 function baseInput(): XafInput {
   return {
@@ -286,4 +286,74 @@ test("[XAF-LENGTE] a long customer name is clamped, because one of them refuses 
   assert.ok(input3.company.city.length > 50);
   const stad = /<city>(.*?)<\/city>/.exec(buildXafFile(input3).xml)?.[1] ?? "";
   assert.ok(stad.length <= 50, `city is ${stad.length} characters`);
+});
+
+// ── [XAF-NIET-STIL] Wat er NIET in staat, staat erin ───────────────────────────────────────────
+//
+// Een auditbestand dat onvolledig is ziet er precies zo uit als een dat compleet is. De boekhouder
+// importeert het, de aansluiting met de aangifte klopt niet, en niemand weet waarom. Het aantal
+// reisde al mee in een HTTP-header — en beide plekken die dit bestand ophalen zijn een gewone
+// downloadlink, waar een browser geen responsheaders van toont. Die kop bereikte dus niemand.
+
+test("[XAF-NIET-STIL] een geweigerde post staat als waarschuwing boven in het bestand", () => {
+  const input = baseInput();
+  // Twee die het wél halen, zodat het bestand niet leeg is en de waarschuwing niet het enige is.
+  input.sales.push({
+    id: "ok-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: "Vermeulen BV",
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  // Geen factuurdatum → niet in een periode te plaatsen.
+  input.sales.push({
+    id: "weg-1", invoiceNumber: "20260002", invoiceDate: null, clientName: "Vermeulen BV",
+    totalExBtw: 500, btwAmount: 105, invoiceType: "factuur", rateLines: null,
+  });
+  // Tarief niet herleidbaar: 500 → 75 is 15%, en dat is geen Nederlands tarief.
+  input.sales.push({
+    id: "weg-2", invoiceNumber: "20260003", invoiceDate: "2026-04-01", clientName: "Vermeulen BV",
+    totalExBtw: 500, btwAmount: 75, invoiceType: "factuur", rateLines: null,
+  });
+
+  const r = buildXafFile(input);
+  assert.equal(r.skipped.length, 2, "twee posten geweigerd");
+
+  // Het bestand zegt het zelf, vóór het <auditfile>-element.
+  const kop = r.xml.slice(0, r.xml.indexOf("<auditfile"));
+  assert.match(kop, /LET OP: 2 post\(en\) staan NIET in dit auditbestand/);
+  assert.match(kop, /geen factuurdatum/);
+  assert.match(kop, /btw-tarief niet herleidbaar/);
+  assert.match(kop, /sluit daardoor niet aan op de aangifte/,
+    "de gevolgzin hoort erbij — een telling zonder betekenis leest als ruis");
+
+  // En het blijft een geldig XAF-document: het commentaar staat buiten de grammatica.
+  assert.match(r.xml, /^<\?xml version="1\.0" encoding="utf-8"\?>/);
+  assert.ok(r.xml.indexOf("<!--") < r.xml.indexOf("<auditfile"), "boven het document, niet erin");
+  assert.ok(r.xml.indexOf("-->") < r.xml.indexOf("<auditfile"), "en het is afgesloten");
+  assert.equal(r.totalDebit, r.totalCredit, "de rest van het bestand blijft in balans");
+});
+
+test("[XAF-NIET-STIL] een compleet bestand zwijgt", () => {
+  // Zwijgen is hier het juiste antwoord: een regel "0 overgeslagen" boven elk bestand is ruis, en
+  // ruis is precies wat een waarschuwing waardeloos maakt op de dag dat ze wél iets betekent.
+  const input = baseInput();
+  input.sales.push({
+    id: "ok-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: "Vermeulen BV",
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  const r = buildXafFile(input);
+  assert.equal(r.skipped.length, 0);
+  assert.doesNotMatch(r.xml, /LET OP/);
+  assert.ok(!r.xml.slice(0, r.xml.indexOf("<auditfile")).includes("<!--"));
+});
+
+test("[XAF-NIET-STIL] een reden met streepjes kan het commentaar niet afsluiten", () => {
+  // Rechtstreeks op de functie, niet op de huidige redenen. Geen enkele reden in dit bestand
+  // bevat vandaag een `--`, dus een test die alleen de gebouwde uitvoer bekijkt kan niet falen —
+  // en een test die niet kan falen bewaakt niets. Dit is wat er straks misgaat, nu al gesteld.
+  assert.equal(xmlCommentSafe("geen datum"), "geen datum", "gewone tekst blijft heel");
+  assert.equal(xmlCommentSafe("bedrag -- nul"), "bedrag - nul");
+  assert.equal(xmlCommentSafe("balans --> stuk"), "balans -> stuk", "de afsluiter kan niet ontstaan");
+  assert.equal(xmlCommentSafe("a-----b"), "a-b");
+  assert.ok(!xmlCommentSafe("x -- y --- z").includes("--"));
+  // …en de em-dash die de echte redenen wél gebruiken is geen koppelteken en blijft dus staan.
+  assert.equal(xmlCommentSafe("geen factuurdatum — niet te plaatsen"), "geen factuurdatum — niet te plaatsen");
 });

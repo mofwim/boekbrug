@@ -215,6 +215,18 @@ interface Entry {
   lines: Line[];
 }
 
+/**
+ * [XAF-NIET-STIL] Tekst die veilig binnen een XML-commentaar past.
+ *
+ * `--` is binnen een commentaar verboden en `-->` sluit het af: één reden met een dubbel
+ * koppelteken zou het hele auditbestand breken op de dag dat die reden voor het eerst voorkomt.
+ * Geen enkele reden in dit bestand bevat er vandaag een — en dat is precies waarom dit een functie
+ * is en geen aanname: de volgende reden hoeft dit niet te weten om veilig te zijn.
+ */
+export function xmlCommentSafe(text: string): string {
+  return text.replace(/-{2,}/g, "-");
+}
+
 /** Snap a header-derived rate to the Dutch set, or null when it is not one of them. */
 export function snapRate(ex: number, btw: number): number | null {
   if (cents(btw) === 0) return 0;
@@ -561,6 +573,32 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   const year = input.year;
   const out: string[] = [];
   out.push(`<?xml version="1.0" encoding="utf-8"?>`);
+  // [XAF-NIET-STIL] Wat NIET in dit bestand staat, staat erin.
+  //
+  // Elke weigering hierboven — geen datum, tarief niet herleidbaar, boeking balanceert niet —
+  // haalt een post uit het auditbestand. Het bestand komt dan korter binnen en zegt niets, en dat
+  // is precies het gevaarlijke geval: een auditbestand dat ONVOLLEDIG is ziet er exact zo uit als
+  // een dat compleet is. De boekhouder importeert het, de aansluiting met de aangifte klopt niet,
+  // en niemand weet waarom.
+  //
+  // Het aantal reisde al mee in een HTTP-header (X-Xaf-Skipped) — en beide plekken die dit bestand
+  // ophalen zijn een gewone <a href>-downloadlink. Een browser die een bestand downloadt toont
+  // geen responsheaders. Die kop bereikte dus niemand, en kon dat ook niet.
+  //
+  // Een XML-commentaar hoort niet tot de XAF-grammatica en wordt door elke importeur genegeerd,
+  // dus het bestand blijft geldig — maar iedere mens die het openslaat ziet het meteen, boven aan
+  // regel twee. Het is het enige kanaal dat zowel de machine als de mens overleeft.
+  if (skipped.length > 0) {
+    const perReden = new Map<string, number>();
+    for (const s of skipped) perReden.set(s.reason, (perReden.get(s.reason) ?? 0) + 1);
+    out.push(`<!--`);
+    out.push(`  LET OP: ${skipped.length} post(en) staan NIET in dit auditbestand.`);
+    for (const [reden, aantal] of [...perReden].sort((a, b) => b[1] - a[1])) {
+      out.push(`    ${aantal}x  ${xmlCommentSafe(reden)}`);
+    }
+    out.push(`  Dit bestand sluit daardoor niet aan op de aangifte over dezelfde periode.`);
+    out.push(`-->`);
+  }
   out.push(`<auditfile xmlns="http://www.auditfiles.nl/XAF/3.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
   out.push("<header>");
   out.push(el("fiscalYear", String(year)));

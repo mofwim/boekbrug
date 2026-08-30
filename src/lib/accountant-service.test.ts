@@ -12,6 +12,8 @@ import {
   getPreviousQuarter,
   daysUntil,
 } from "../modules/accountant/accountant.service"
+// [TZ] Dezelfde klok als daysUntil — zie het blok verderop.
+import { amsterdamToday } from "./format-nl"
 
 let passed = 0
 let failed = 0
@@ -31,15 +33,29 @@ check('prev(2026,Q1) = 2025 Q4', (() => { const p = getPreviousQuarter(2026, 1);
 check('prev(2026,Q3) = 2026 Q2', (() => { const p = getPreviousQuarter(2026, 3); return p.year === 2026 && p.quarter === 2 })())
 
 console.log('\n— daysUntil is inclusive-of-today and signed —')
-const now = new Date()
+// [TZ] "Vandaag" komt uit amsterdamToday(), dezelfde bron die daysUntil zelf gebruikt.
+//
+// Deze drie regels bouwden hun eigen `today` uit de LOKALE klok van de machine. Op een UTC-server
+// is dat tussen 22:00 en 24:00 UTC in de zomertijd nog gisteren, terwijl daysUntil al morgen telt
+// — en dan is deze suite twee uur per nacht rood, elke nacht, zonder dat er iets stuk is.
+//
+// Dat is precies de fout waar de functie zelf tegen beschermt: de kop van daysUntil beschrijft
+// hem woordelijk ("op een UTC-server was `today` tussen middernacht en 01:00/02:00 Amsterdam nog
+// gisteren"). De test maakte hem daarna zelf. Een suite die 's nachts rood staat is een suite die
+// mensen leren wegklikken, en dan glipt de echte rode er een keer doorheen.
 const pad = (n: number) => String(n).padStart(2, '0')
-const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+const today = amsterdamToday()
 check('today → 0', daysUntil(today) === 0)
-const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-const tomorrowIso = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`
+const [jaar, maand, dag] = today.split('-').map(Number)
+// Rekenen in UTC, niet lokaal: new Date(y, m, d+1) is 23 of 25 uur op een zomertijdgrens en kan
+// dan op dezelfde kalenderdag uitkomen.
+const verschuif = (n: number) => {
+  const t = new Date(Date.UTC(jaar, maand - 1, dag + n))
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`
+}
+const tomorrowIso = verschuif(1)
 check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
-const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-const yesterdayIso = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`
+const yesterdayIso = verschuif(-1)
 check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
 
 console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
