@@ -2858,15 +2858,19 @@ export const MESSAGES = {
     ar: 'حُفظ هذا الملف للمحاسب، لكن تعذّرت قراءة معاملاته للنظرة العامة.',
     en: 'This file was kept for your accountant, but its transactions could not be read for the overview.',
   },
+  // [BANK-CSV-LEESBAAR] CSV staat hier niet meer bij de onleesbare formaten: bank-csv.ts leest
+  // hem sinds die module bestaat. Deze zin bleef achter en vertelde de ondernemer dat een
+  // bestand dat WEL was ingelezen niet gelezen kon worden. PDF blijft staan — die kan de
+  // bankparser echt niet.
   'bank.formaat.omTeKoppelen': {
-    nl: 'om de transacties te koppelen. CSV en PDF kunnen niet worden uitgelezen.',
-    ar: 'لربط المعاملات. لا يمكن قراءة CSV وPDF.',
-    en: 'to link the transactions. CSV and PDF cannot be read.',
+    nl: 'om de transacties te koppelen. Een PDF-afschrift kan niet worden uitgelezen.',
+    ar: 'لربط المعاملات. لا يمكن قراءة كشف بصيغة PDF.',
+    en: 'to link the transactions. A PDF statement cannot be read.',
   },
   'bank.formaten': {
-    nl: 'CAMT.053 (.xml) of MT940 (.940 / .sta / .txt)',
-    ar: 'CAMT.053 (.xml) أو MT940 (.940 / .sta / .txt)',
-    en: 'CAMT.053 (.xml) or MT940 (.940 / .sta / .txt)',
+    nl: 'CAMT.053 (.xml), MT940 (.940 / .sta / .txt) of CSV',
+    ar: 'CAMT.053 (.xml) أو MT940 (.940 / .sta / .txt) أو CSV',
+    en: 'CAMT.053 (.xml), MT940 (.940 / .sta / .txt) or CSV',
   },
   'bank.fout.bedragPastNiet': {
     nl: 'Dat bedrag past niet op deze betaling.',

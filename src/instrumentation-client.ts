@@ -49,19 +49,32 @@ Sentry.init({
   // and their bank balance. Nobody chose to send that; a wizard did.
   sendDefaultPii: false,
 
-  replaysSessionSampleRate: 0.05,
-  replaysOnErrorSampleRate: 1.0,
-
-  integrations: [
-    Sentry.replayIntegration({
-      // Stated, not inherited. These three ARE the library defaults today, and a default is a
-      // decision someone else can change in a minor release — on a screen showing invoice amounts
-      // and customer names that is not a risk worth carrying implicitly.
-      maskAllText: true,
-      maskAllInputs: true,
-      blockAllMedia: true,
-    }),
-  ],
+  // [SENTRY-GEEN-REPLAY] Session Replay is GONE — not tuned down, removed.
+  //
+  // It ran at 5% of sessions plus every session that hit an error, masked as carefully as the SDK
+  // allows. Masking was never the problem. The problem is that a replay is a RECORDING of a
+  // browsing session, it needs browser storage to stitch its segments together, and under
+  // art. 11.7a Telecommunicatiewet that puts it outside "strikt noodzakelijk" — it needs the
+  // visitor's consent BEFORE the first segment is written.
+  //
+  // There is no consent mechanism in this app. The cookiebeleid described a banner and a
+  // settings button that were never built, so for as long as replay ran, the recording happened
+  // and the page that was supposed to offer the choice described a choice nobody was ever given.
+  //
+  // Two ways to close that. Build the banner, or stop recording. This app is a Dutch bookkeeping
+  // product whose own cookie page ends with "Minimale cookies, maximale privacy": the screens a
+  // replay would capture show one person's turnover, their customers and their bank balance, and
+  // the debugging value of watching that is small next to what it costs to ask every owner for
+  // permission to film their books. So: stop recording, and the consent question does not arise.
+  //
+  // What stays is the part that was always defensible without asking: an exception with its stack
+  // trace, and 10% tracing. No cookie, no storage, no recording — and beforeSend below still
+  // strips anything sensitive that rode along by accident.
+  //
+  // The rates are stated as zero rather than deleted. Removing the keys would leave the SDK
+  // defaults in charge, which is the exact failure this file's header is about.
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
 
   // [SENTRY-EEN-CONFIG] Carried over from sentry.client.config.ts, where it was written and never
   // ran. Everything below this line is that file's work.

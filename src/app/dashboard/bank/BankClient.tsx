@@ -58,7 +58,14 @@ const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' 
 // MT940 (.940/.sta/.mt940/.txt) and CAMT.053 (.xml). A CSV or PDF is NOT readable
 // into bank_transactions — it can still be kept for the accountant, but the owner
 // must be told the transactions weren't imported (clear modal, not a quick toast).
-const READABLE_BANK_EXTS = ['.xml', '.940', '.sta', '.mt940', '.txt']
+// [BANK-CSV-LEESBAAR] .csv hoort hier, want de server LEEST hem al.
+// bank-csv.ts (ING, Rabobank, bunq, SNS, ASN, Triodos, Knab, …) landde nadat deze lijst was
+// geschreven, en de lijst bleef staan. Gevolg: een CSV die keurig 43 transacties opleverde
+// kreeg alsnog de "kon niet worden uitgelezen"-melding, omdat de gate `!leesbaar || parsed===0`
+// is en de eerste helft altijd waar was. De tweede helft dekt de echte mislukking al — een
+// bestand dat NUL transacties gaf — dus de extensielijst mag alleen formaten uitsluiten die
+// de parser principieel niet kent (PDF, foto van een afschrift).
+const READABLE_BANK_EXTS = ['.xml', '.940', '.sta', '.mt940', '.txt', '.csv']
 function isReadableBankFile(name: string): boolean {
   const lower = name.toLowerCase()
   return READABLE_BANK_EXTS.some((ext) => lower.endsWith(ext))
@@ -643,7 +650,7 @@ export default function BankClient() {
       }
 
       // [BANK-FORMAT-GUARD] The file is always stored for the accountant (the
-      // server keeps a passthrough copy regardless of format). But a CSV/PDF — or
+      // server keeps a passthrough copy regardless of format). But a PDF — or
       // any file that yielded no transactions — could NOT be read into the bank
       // overview. Tell the owner clearly with a modal so they don't assume their
       // transactions were imported, and point them to the readable formats. We
@@ -2329,7 +2336,7 @@ export default function BankClient() {
               {t('bank.formaat.bewaard')}
             </p>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
-              {t('bank.upload.als')} <strong style={{ color: '#3c4043' }}>CAMT.053 (.xml)</strong> {t('bank.of')} <strong style={{ color: '#3c4043' }}>MT940 (.940 / .sta / .txt)</strong> {t('bank.formaat.omTeKoppelen')}
+              {t('bank.upload.als')} <strong style={{ color: '#3c4043' }}>CAMT.053 (.xml)</strong>, <strong style={{ color: '#3c4043' }}>MT940 (.940 / .sta / .txt)</strong> {t('bank.of')} <strong style={{ color: '#3c4043' }}>CSV</strong> {t('bank.formaat.omTeKoppelen')}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button
