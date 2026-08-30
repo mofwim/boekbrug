@@ -17,7 +17,7 @@
 import { logAuditAction } from "@/lib/audit";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
+import { sheetBytesToMatrix, NotASpreadsheetError } from "@/lib/xlsx-adapter";
 import { parseLedgerSheet, ledgerDailyTotals, type LedgerKind } from "@/lib/ledger-import";
 
 const MAX_BYTES = 10 * 1024 * 1024; // a grootboek export is tiny; generous.
@@ -95,7 +95,19 @@ export async function POST(req: NextRequest) {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer()); // binary-safe (never file.text())
     matrix = sheetBytesToMatrix(bytes);
-  } catch {
+  } catch (e) {
+    // [GEEN-SPREADSHEET] Name the format, not the content. "kon het bestand niet lezen als
+    // spreadsheet" is true of a PDF and tells the owner nothing they can act on; the one thing
+    // they need is that the same export exists as Excel and that is what to ask for.
+    if (e instanceof NotASpreadsheetError) {
+      return NextResponse.json({
+        ok: false,
+        error: e.mime === "application/pdf"
+          ? "Dit is een PDF. Ik kan alleen .xls, .xlsx of .csv lezen — vraag je boekhouder of kassaleverancier om dezelfde export als Excel-bestand."
+          : "Dit is een afbeelding, geen spreadsheet. Ik kan alleen .xls, .xlsx of .csv lezen.",
+        format: e.mime,
+      }, { status: 422 });
+    }
     return NextResponse.json({ error: "kon het bestand niet lezen als spreadsheet" }, { status: 422 });
   }
 
