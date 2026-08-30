@@ -12,6 +12,7 @@ import {
   getPreviousQuarter,
   daysUntil,
 } from "../modules/accountant/accountant.service"
+// [TZ] Dezelfde klok als daysUntil — zie het blok verderop.
 import { amsterdamToday } from "./format-nl"
 
 let passed = 0
@@ -32,39 +33,52 @@ check('prev(2026,Q1) = 2025 Q4', (() => { const p = getPreviousQuarter(2026, 1);
 check('prev(2026,Q3) = 2026 Q2', (() => { const p = getPreviousQuarter(2026, 3); return p.year === 2026 && p.quarter === 2 })())
 
 console.log('\n— daysUntil is inclusive-of-today and signed —')
-// [TZ] "Today" here must be the OWNER's day, exactly as daysUntil defines it. This block used to
-// build it from `new Date()` — the SERVER's day — and #285 then moved the implementation onto
-// Europe/Amsterdam without moving the test with it. The two agree for 22 hours a day and disagree
-// for the other two: between 22:00 UTC (23:00 in winter) and midnight, Amsterdam is already
-// tomorrow, so all three checks below were off by one and the whole gate set went red. A test that
-// only fails at night is worse than no test — it teaches whoever meets it that gates are noise.
+// [TZ] "Vandaag" komt uit amsterdamToday(), dezelfde bron die daysUntil zelf gebruikt.
 //
-// Anchoring on amsterdamToday() is not the test marking its own homework: what is being asserted
-// is the SHAPE of the answer (0 today, +1 tomorrow, -1 yesterday, signed), and the shape is what
-// the countdown in front of a verzuimboete depends on.
-const todayNl = amsterdamToday()
-const shiftDays = (iso: string, delta: number): string => {
-  const [y, m, d] = iso.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10)
+// Deze drie regels bouwden hun eigen `today` uit de LOKALE klok van de machine. Op een UTC-server
+// is dat tussen 22:00 en 24:00 UTC in de zomertijd nog gisteren, terwijl daysUntil al morgen telt
+// — en dan is deze suite twee uur per nacht rood, elke nacht, zonder dat er iets stuk is.
+//
+// Dat is precies de fout waar de functie zelf tegen beschermt: de kop van daysUntil beschrijft
+// hem woordelijk ("op een UTC-server was `today` tussen middernacht en 01:00/02:00 Amsterdam nog
+// gisteren"). De test maakte hem daarna zelf. Een suite die 's nachts rood staat is een suite die
+// mensen leren wegklikken, en dan glipt de echte rode er een keer doorheen.
+const pad = (n: number) => String(n).padStart(2, '0')
+const today = amsterdamToday()
+check('today → 0', daysUntil(today) === 0)
+const [jaar, maand, dag] = today.split('-').map(Number)
+// Rekenen in UTC, niet lokaal: new Date(y, m, d+1) is 23 of 25 uur op een zomertijdgrens en kan
+// dan op dezelfde kalenderdag uitkomen.
+const verschuif = (n: number) => {
+  const t = new Date(Date.UTC(jaar, maand - 1, dag + n))
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`
 }
-check('today → 0', daysUntil(todayNl) === 0)
-check('tomorrow → 1', daysUntil(shiftDays(todayNl, 1)) === 1)
-check('yesterday → -1 (overdue)', daysUntil(shiftDays(todayNl, -1)) === -1)
+const tomorrowIso = verschuif(1)
+check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
+const yesterdayIso = verschuif(-1)
+check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
 
 console.log('\n— het aftellen loopt lineair door over maand-, jaar- en schrikkeljaargrenzen —')
-// Clock-free by construction: a DIFFERENCE of two daysUntil calls cancels "today", so these hold
-// at any hour of any day.
+// Twee checks van de andere kant van deze merge staan hier NIET meer, en dat is een keuze, geen
+// merge-ongeluk. De ene was `daysUntil(verschuif(0)) === daysUntil(today)` — verschuif(0) IS
+// today, dus die regel slaagt onder elke implementatie, ook een kapotte. De andere rekende
+// Date.UTC(2028, 1, 29) uit zonder daysUntil aan te roepen: die test Node, niet ons.
 //
-// Be precise about what they are worth. They do NOT catch the historical bug — that one was the
-// timezone anchor, and it is pinned where it can actually be controlled: format-nl.test.ts feeds
-// amsterdamToday() fixed instants, including "22:00 UTC in summer IS already tomorrow in
-// Amsterdam", which is the exact instant that made this file fail. Nor do they catch the DST
-// arithmetic the #285 message mentions: the old Math.round form absorbs a ±1h error out of 24
-// perfectly well, and returns the same answer as the current one on every pair below (checked by
-// substituting it back, with round, floor and trunc — all three still pass).
+// Wat ze BEDOELDEN — maandgrens en schrikkeldag — staat er nog, maar dan door de functie zelf
+// heen. Clock-free by construction: een VERSCHIL van twee daysUntil-aanroepen laat "vandaag"
+// wegvallen, dus dit klopt op elk uur van elke dag.
 //
-// What they DO pin is that a day is a day: a rewrite that sums month lengths, hard-codes 365, or
-// gets a leap year wrong fails here and nowhere else in this file.
+// Wees precies over wat ze waard zijn. Ze vangen de historische fout NIET — die zat in de
+// tijdzone-anker, en die is vastgepind waar hij echt te sturen is: format-nl.test.ts voert
+// amsterdamToday() vaste momenten, waaronder "22:00 UTC in summer IS already tomorrow in
+// Amsterdam" — precies het moment waarop dit bestand omviel. Ze vangen ook de zomertijd-rekenkunde
+// uit de #285-tekst niet: de oude Math.round-vorm slikt een fout van ±1 uur op 24 moeiteloos en
+// geeft op elk paar hieronder hetzelfde antwoord als de huidige (nagerekend door hem terug te
+// zetten, met round, floor én trunc — alle drie blijven groen).
+//
+// Wat ze WEL vastleggen: een dag is een dag. Een herschrijving die maandlengtes optelt, 365
+// hard-codeert of een schrikkeljaar mist, valt hier om en nergens anders in dit bestand — met
+// naam en toenaam op twee regels.
 const span = (from: string, to: string) => daysUntil(to) - daysUntil(from)
 check('over de jaarwisseling heen: 31 dec → 1 jan is één dag', span('2026-12-31', '2027-01-01') === 1)
 check('een heel schrikkeljaar telt 366 dagen', span('2028-01-01', '2029-01-01') === 366)

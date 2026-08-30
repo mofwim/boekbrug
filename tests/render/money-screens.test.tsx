@@ -2984,3 +2984,76 @@ test("[BETAALGEDRAG] a customer with no invoices renders the absence, and never 
   assert.match(html, /Nog geen facturen voor deze klant/);
   assert.doesNotMatch(html, /0 dagen/, "an absence is never dressed up as a fast payer");
 });
+
+// ── [RENDER-GATE] De takken die deze ronde zijn bijgekomen ─────────────────────────────────────
+//
+// Elk van de drie hieronder is een NIEUWE vertakking, en een vertakking die nooit is aangeroepen
+// is precies wat dit bestand bestaat om te vangen: tsc keurt hem goed, eslint zwijgt, next build
+// compileert hem, en de smoke-test logt niet in. Een lege lijst rendert de tak niet — dus krijgen
+// ze rijen die hem wél aanraken.
+
+test("[RENDER-GATE] een klantkaart met een onleesbare stand rendert de derde stand, niet een nul", async () => {
+  const { default: KlantenBeheer } = await import("../../src/modules/accountant/pages/KlantenBeheer");
+
+  const klant = (id: string, naam: string, readFailed: boolean) => ({
+    id, full_name: naam, company_name: naam, email: `${id}@voorbeeld.nl`, linked_at: "2026-01-05",
+    readiness: {
+      year: 2026, quarter: 2,
+      sharedInvoices: readFailed ? 0 : 12,
+      processedInvoices: readFailed ? 0 : 9,
+      openQuestions: readFailed ? 0 : 2,
+      hasBankData: !readFailed,
+      lastUploadDaysAgo: readFailed ? null : 3,
+      readFailed,
+    },
+  });
+
+  // Beide naast elkaar: een klant waarvan we het weten en een waarvan we het niet weten. Alleen
+  // met allebei kan het scherm laten zien dat het verschil ook echt te zien is.
+  const html = renderToStaticMarkup(
+    React.createElement(KlantenBeheer as never, {
+      initialClients: [klant("k1", "Bakkerij Noord", false), klant("k2", "Loodgieter De Vries", true)],
+    }),
+  );
+
+  assert.ok(html.length > 0, "het scherm overleeft één render");
+  assert.match(html, /Bakkerij Noord/);
+  assert.match(html, /Loodgieter De Vries/);
+  // De zin uit de catalogus, niet de getallen. "0/0 verwerkt · Bank —" over een klant die keurig
+  // aanlevert is precies de bewering die deze tak weghaalt.
+  assert.match(html, /Stand niet te lezen/, "de onleesbare klant zegt dat, in plaats van nullen");
+  assert.match(html, /9\/12 verwerkt/, "…en de leesbare klant toont gewoon zijn stand");
+  // En hij valt niet door naar het grijze 'niets in behandeling'.
+  assert.match(html, /#B3261E/, "onleesbaar draagt de waarschuwingskleur, geen rust");
+});
+
+test("[RENDER-GATE] het werkbord met een onleesbare klantenlijst zegt niet 'nog geen klanten'", async () => {
+  const { default: AccountantWerkboard } = await import("../../src/modules/accountant/pages/AccountantWerkboard");
+
+  const onleesbaar = renderToStaticMarkup(
+    React.createElement(AccountantWerkboard as never, {
+      clients: [], klantenOnleesbaar: true, year: 2026, quarter: 2,
+    }),
+  );
+  assert.ok(onleesbaar.length > 0);
+  assert.doesNotMatch(onleesbaar, /Nog geen klanten gekoppeld/,
+    "dat is de ene zin die dit bord niet mag zeggen tegen een praktijk die het niet kan controleren");
+
+  // En de echt lege praktijk krijgt hem nog steeds — anders is de eerste boekhouder de dupe van
+  // een reparatie die voor de veertigste was bedoeld.
+  const leeg = renderToStaticMarkup(
+    React.createElement(AccountantWerkboard as never, {
+      clients: [], klantenOnleesbaar: false, year: 2026, quarter: 2,
+    }),
+  );
+  assert.match(leeg, /Nog geen klanten gekoppeld/);
+
+  // En een gevulde lijst rendert gewoon.
+  const gevuld = renderToStaticMarkup(
+    React.createElement(AccountantWerkboard as never, {
+      clients: [{ id: "k1", name: "Bakkerij Noord" }, { id: "k2", name: "Loodgieter De Vries" }],
+      klantenOnleesbaar: false, year: 2026, quarter: 2,
+    }),
+  );
+  assert.match(gevuld, /Bakkerij Noord/);
+});

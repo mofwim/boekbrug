@@ -1,0 +1,152 @@
+// tests/render/creditors-screen.test.tsx
+// [RENDER-GATE] Does the creditors screen survive a render, with rows that reach every branch?
+//
+// Run: npm run test:render
+//
+// The gate exists because tsc, eslint, next build and the Playwright smoke sweep are all blind to
+// a /dashboard/* screen that throws on every render — see the header of money-screens.test.tsx.
+// This screen is exactly the shape that hides such a bug: every list it draws arrives as a prop,
+// and against an empty balance `[].map(cb)` never calls `cb`. So it is handed a real balance, a
+// real aging table, a real corroboration panel — and, separately, the failed-read state, which is
+// the branch a screen about money must never get wrong.
+
+import { test, mock } from "node:test";
+import assert from "node:assert/strict";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://render-gate.invalid";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "render-gate-anon-key";
+
+mock.module("next/navigation", {
+  namedExports: {
+    useRouter: () => ({ push() {}, replace() {}, refresh() {}, back() {}, forward() {}, prefetch() {} }),
+    useSearchParams: () => new URLSearchParams(),
+    usePathname: () => "/dashboard/leveranciers",
+    useParams: () => ({}),
+    notFound: () => { throw new Error("[RENDER-GATE] the component called notFound()"); },
+    redirect: (to: string) => { throw new Error(`[RENDER-GATE] the component redirected to ${to}`); },
+  },
+});
+
+const TODAY = "2026-08-30";
+
+test("[LEVERANCIER-SALDO] the screen draws the wholesaler's own subtotal, its aging and its warnings", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { corroboratePayments } = await import("../../src/lib/payment-corroboration");
+  const { buildSupplierBalancePanel, buildCorroborationPanel } =
+    await import("../../src/lib/supplier-balance-copy");
+
+  // The two invoices off the photo, plus the rows that reach the other branches: an unverified
+  // bill, an invoice with no supplier, a creditnota and an aged one.
+  const balance = supplierBalances({
+    asOf: TODAY,
+    settlements: [],
+    invoices: [
+      { id: "a", invoiceNumber: "2034488", supplierKey: "can vleesgroothandel", supplierName: "CAN Vleesgroothandel B.V.",
+        invoiceDate: "2026-08-15", dueDate: "2026-08-29", status: "received", invoiceType: "factuur",
+        totalIncBtw: 1165.73, amountPaid: 0 },
+      { id: "b", invoiceNumber: "2034534", supplierKey: "can vleesgroothandel", supplierName: "CAN Vleesgroothandel B.V.",
+        invoiceDate: "2026-08-22", dueDate: "2026-09-05", status: "received", invoiceType: "factuur",
+        totalIncBtw: 1217.92, amountPaid: 0 },
+      { id: "c", invoiceNumber: "CN-9", supplierKey: "can vleesgroothandel", supplierName: "CAN Vleesgroothandel B.V.",
+        invoiceDate: "2026-08-20", dueDate: "2026-09-03", status: "received", invoiceType: "creditnota",
+        totalIncBtw: -80, amountPaid: 0 },
+      { id: "d", invoiceNumber: "263183", supplierKey: "groothandel m h bal", supplierName: "GROOTHANDEL M.H. BAL V.O.F.",
+        invoiceDate: "2026-01-06", dueDate: "2026-01-20", status: "received", invoiceType: "factuur",
+        totalIncBtw: 1085.33, amountPaid: 0 },
+      { id: "e", invoiceNumber: "X-1", supplierKey: "groothandel m h bal", supplierName: "GROOTHANDEL M.H. BAL V.O.F.",
+        invoiceDate: "2026-08-25", dueDate: null, status: "processing", invoiceType: "factuur",
+        totalIncBtw: 999, amountPaid: 0 },
+      { id: "f", invoiceNumber: "Z-1", supplierKey: null, supplierName: null,
+        invoiceDate: "2026-08-10", dueDate: "2026-08-24", status: "received", invoiceType: "factuur",
+        totalIncBtw: 400, amountPaid: 0 },
+    ],
+  });
+
+  // The live case: a payment ticked past the edge of the bank data, plus a real supplier gap.
+  const corroboration = corroboratePayments({
+    coverage: { from: "2026-01-01", to: "2026-08-21" },
+    claims: [
+      { invoiceId: "a", invoiceNumber: "2034488", supplierName: "CAN Vleesgroothandel B.V.",
+        supplierKey: "can vleesgroothandel", amountApplied: 1165.73, paidOn: "2026-08-29",
+        method: "bank", transactionId: null },
+      { invoiceId: "d", invoiceNumber: "263183", supplierName: "GROOTHANDEL M.H. BAL V.O.F.",
+        supplierKey: "groothandel m h bal", amountApplied: 1085.33, paidOn: "2026-08-05",
+        method: "bank", transactionId: null },
+    ],
+    debits: [{ supplierKey: "groothandel m h bal", date: "2026-08-05", amount: 200 }],
+  });
+
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(balance, "nl", TODAY),
+      corroboration: buildCorroborationPanel(corroboration, "nl"),
+      asOf: TODAY,
+      today: TODAY,
+    }),
+  );
+
+  assert.ok(html.length > 400, "the screen rendered something");
+  // The figure off the photo, minus the creditnota that belongs to the same supplier.
+  assert.match(html, /€&nbsp;2\.303,65|€ 2\.303,65/, "the supplier subtotal is on the screen");
+  assert.match(html, /CAN Vleesgroothandel/);
+  assert.match(html, /GROOTHANDEL M\.H\. BAL/);
+  assert.match(html, /Stand op 30-08-2026/, "an amount without its date is not a fact");
+  assert.match(html, /Ouderdom/, "the aging table drew");
+  assert.match(html, /90\+/, "…including the bucket the January invoice falls in");
+  assert.match(html, /bevestiging/, "the unverified bill is counted beside the total");
+  assert.match(html, /niet aan een leverancier koppelen/, "and the unkeyed one is named");
+  // The two corroboration sentences, in the order that matters.
+  const live = html.indexOf("nieuwste bankafschrift");
+  const gap = html.indexOf("Verschil");
+  assert.ok(live > 0 && gap > 0 && live < gap, "the live case leads the real gap");
+});
+
+test("[LEVERANCIER-SALDO] a failed read shows a reason, never a comfortable zero", async () => {
+  // The most dangerous sentence this screen could print is "er staat niets open" on an
+  // administration it could not read. That branch draws its own panel and no total at all.
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, { balance: null, corroboration: null, asOf: TODAY, today: TODAY }),
+  );
+  assert.match(html, /konden je inkoopfacturen nu niet lezen/);
+  assert.doesNotMatch(html, /€/, "no amount is shown at all — not even a zero");
+});
+
+test("[LEVERANCIER-SALDO] an empty balance is a sentence, and the screen still draws", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "nl", TODAY),
+      corroboration: null, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.match(html, /niets open bij een leverancier/);
+});
+
+test("[TAAL] the Arabic screen carries its direction and none of the Dutch", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({
+          asOf: TODAY, settlements: [],
+          invoices: [{ id: "a", invoiceNumber: "1", supplierKey: "can", supplierName: "CAN Vleesgroothandel B.V.",
+            invoiceDate: "2026-08-15", dueDate: "2026-08-29", status: "received", invoiceType: "factuur",
+            totalIncBtw: 1165.73, amountPaid: 0 }],
+        }), "ar", TODAY),
+      corroboration: null, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.match(html, /dir="rtl"/, "the direction travels with the words");
+  assert.doesNotMatch(html, /Wat je nog moet betalen/, "the heading is really translated");
+  // The supplier's own name is data, not copy — it stays exactly as the invoice states it.
+  assert.match(html, /CAN Vleesgroothandel/);
+});

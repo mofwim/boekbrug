@@ -2634,9 +2634,13 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
     );
     // …and the reduce form, which is what the fifth reader used and what the `+=` pattern above
     // walked straight past. Two spellings of one sum is exactly how they came to disagree.
+    // Any accumulator name, not just `sum`. The first version of this line required the literal
+    // identifier `sum`, and /api/bank/confirm's own re-read spelled it `(t, r) => t + Math.max(...)`
+    // — so the gate that exists to stop a second summation of this figure walked past one written
+    // three hundred lines from the assertion that names the file.
     assert.doesNotMatch(
       src,
-      /sum \+ Math\.(abs|max)\([^)]*amount_applied/,
+      /[A-Za-z_$][\w$]*\s*\+\s*Math\.(abs|max)\([^)]*amount_applied/,
       `${file} accumulates amount_applied in a reduce — same defect, different spelling`,
     );
   }
@@ -2660,11 +2664,32 @@ test("[LIJN-BUDGET] every reader of a bank line's spent total uses the one share
     const src = code(f);
     if (!/amount_applied/.test(src)) continue;
     lezers++;
-    for (const m of src.matchAll(/(?:\+=|sum \+|s \+|acc \+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
+    for (const m of src.matchAll(/(?:\+=|[A-Za-z_$][\w$]*\s*\+)\s*(?:Math\.(?:abs|max)\()?[^;\n]{0,60}amount_applied/g)) {
       eigenSommen.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
   }
   assert.ok(lezers >= 5, `only ${lezers} files mention amount_applied; the scan must be broken`);
+
+  // [BANK-OVERAPPLIED-LOUD] The three doors that link an invoice to a bank line, and what each
+  // one has. allocate goes through an atomic RPC that recomputes the budget under a row lock;
+  // confirm and attach-invoice cannot, so they both re-read the sum AFTER their own write and say
+  // so loudly. attach-invoice had NEITHER — and it is the door that CREATES an invoice already
+  // marked paid, so over-applying there means an invoice settled from money the line did not have.
+  assert.match(code("src/app/api/bank/allocate/route.ts"), /\.rpc\("allocate_bank_payment"/,
+    "the allocate door is safe by construction and must stay that way");
+  for (const f of ["src/app/api/bank/confirm/route.ts", "src/app/api/bank/attach-invoice/route.ts"]) {
+    const src = code(f);
+    assert.match(src, /const verdict = await readOverApplied\(\{/,
+      `${f} must re-read the line's sum after writing to it`);
+    assert.match(src, /if \(!verdict\) throw new Error\("over-application check could not run"\)/,
+      `${f}: a check that could not RUN is not a check that passed`);
+    assert.match(src, /action: "bank\.overapplied_check_failed"/,
+      `${f} must record that the check did not run, or "no alarm" means two things at once`);
+  }
+  // One definition of the sum and one of the sentence — two doors reporting the same fact in two
+  // wordings is how the four readers of this figure drifted apart in the first place.
+  assert.match(code("src/lib/bank-overapplied.ts"), /allocatedOnLine\(rows, invoices, txAmount\)/,
+    "the detector itself must use the shared signed sum, not a magnitude of its own");
   assert.deepEqual(eigenSommen, [],
     "these add amount_applied up themselves instead of calling allocatedOnLine/allocatedByTransaction. " +
     "Per INVOICE the magnitude is right; per LINE a credit gives money BACK to the line, and a NULL " +
@@ -10077,6 +10102,64 @@ test("[LINKS-WRITE-HONEST] the boolean these writers return is actually read", (
   const attach = code("src/app/api/bank/attach-invoice/route.ts");
   assert.match(attach, /const linksRecorded = await recordPaymentLinks\(/);
   assert.match(attach, /if \(!linksRecorded\) \{[\s\S]{0,200}?reportHandledFailure\(/);
+
+  // ── The class, because the list missed one ──────────────────────────────────────────────────
+  // This gate first named three call sites and pinned each. bank-auto-confirm was a FOURTH, and no
+  // assertion here mentioned it — the same "a rule guarded by a hand-written list is not guarded"
+  // that this file keeps re-learning. Walked now: every caller of either writer must bind the
+  // answer, whatever it then does with it.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const weggegooid: string[] = [];
+  let aanroepen = 0;
+  for (const f of loop("src")) {
+    if (f.endsWith("bank-tx-links.ts")) continue; // waar ze wonen
+    const src = code(f);
+    for (const m of src.matchAll(/(?:^|[^.\w])(await\s+)?(recordPaymentLinks|clearPaymentLinks)\s*\(/g)) {
+      // Alleen echte aanroepen, geen import-regel.
+      const regelStart = src.lastIndexOf("\n", m.index ?? 0) + 1;
+      const regel = src.slice(regelStart, src.indexOf("\n", m.index ?? 0));
+      if (/^\s*import\b/.test(regel)) continue;
+      aanroepen++;
+      // De uitkomst moet aan iets worden gebonden: `const x = await …`.
+      if (!/=\s*await\s*$/.test(src.slice(Math.max(0, (m.index ?? 0) - 12), (m.index ?? 0) + (m[1] ? m[1].length : 0)).trimEnd() + " ")
+          && !new RegExp(`=\\s*await\\s+${m[2]}\\s*\\(`).test(src.slice(regelStart, (m.index ?? 0) + 40))) {
+        weggegooid.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(aanroepen >= 5, `only ${aanroepen} call sites seen; the scan must be broken`);
+  assert.deepEqual(weggegooid, [],
+    "these await one of the payment-link writers and drop the answer it returns. Both return a " +
+    "boolean precisely so a failed write can be reported, and recompute_invoice_amount_paid " +
+    "re-derives amount_paid from the links that SURVIVE — so a dropped failure does not lose a " +
+    "log line, it inverts the operation:\n  " + weggegooid.join("\n  "));
+});
+
+test("[PARTIAL-PAY] a path that marks an invoice paid also advances amount_paid", () => {
+  // The invariant every surface rests on: amount_paid = Σ bank_tx_invoices.amount_applied.
+  // bank-auto-confirm wrote status 'paid' and left amount_paid at 0 while recording the full
+  // amount on the link. No screen lied — openAmount reads the status first — but money-invariants
+  // reports the gap as `payments_without_paid` on /dashboard/klaar, the screen where the owner
+  // decides to hand the quarter over. Measured in production: fourteen invoices, EUR 5.321,68
+  // together, every one of them genuinely paid and every one of them reported as a discrepancy.
+  //
+  // A false alarm on the panel that exists to buy trust is worse than no panel.
+  const auto = code("src/lib/bank-auto-confirm.ts");
+  assert.match(auto, /\.update\(\{ status: "paid", amount_paid: Math\.abs\(Number\(inv\.total_inc_btw \?\? 0\)\)/,
+    "the pay write must advance amount_paid with the same amount it puts on the link");
+  // …and the rollback puts it back, or a successful undo leaves an invoice that is not paid and
+  // still carries an amount — the mirror of the same defect.
+  assert.match(auto, /\.update\(\{ status: inv\.status, amount_paid: inv\.amount_paid \?\? 0,/);
+  // The two amounts come from one expression, so they cannot drift apart.
+  assert.match(auto, /\[invoiceId\]: Math\.abs\(Number\(inv\.total_inc_btw \?\? 0\)\),/);
 });
 
 test("[EDIT-LINES-SAFE] a delete-then-insert may not insert on a delete that failed", () => {
@@ -19358,6 +19441,75 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   assert.doesNotMatch(instellingen, /const qStart = `\$\{now\.getFullYear\(\)\}/,
     "the device-clock version must be gone");
 
+  // ── En de TESTS, want een test met de verkeerde klok is een rode poort om nul uur ────────────
+  //
+  // De scan hierboven slaat testbestanden over. Dat leek onschuldig tot deze suite om 22:09 UTC
+  // rood stond: accountant-service.test.ts bouwde zijn "vandaag" uit `new Date()` met lokale
+  // getters, terwijl daysUntil in Europe/Amsterdam rekent. Tussen 22:00 UTC en middernacht (23:00
+  // in de winter) is dat al de volgende dag hier, dus `today → 0` gaf 1 — twee uur per etmaal een
+  // rode gate-suite, voor élke sessie die dan werkt, aan iets wat er niets mee te maken had.
+  //
+  // En invoice-numbering.test.ts deed het met het JAAR: `new Date().getFullYear()`, precies de
+  // aanroep die die module heeft afgeschaft, in de test die de afschaffing bewaakt. Eén uur per
+  // jaar, op 31 december — vaak genoeg om een keer op het slechtste moment af te gaan.
+  //
+  // Een test die de klok nodig heeft, leest hem uit dezelfde bron als de code die hij test. Er is
+  // hier geen uitzondering en dus geen lijst: gemeten nadat dit was geschreven staat de teller op
+  // nul, en een klasse die schoon is mag als verbod worden vastgelegd.
+  // Een eigen wandelaar: loopServer sluit .test.-bestanden juist UIT, en dat is precies de reden
+  // dat deze klasse tot nu toe onzichtbaar was.
+  const loopAlles = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loopAlles(pad));
+      else if (/\.tsx?$/.test(pad)) uit.push(pad);
+    }
+    return uit;
+  };
+  const TEST_FILES = [...loopAlles("src"), ...loopAlles("tests")]
+    .filter((f) => /\.(test|spec)\.tsx?$/.test(f));
+  assert.ok(TEST_FILES.length > 40,
+    `only ${TEST_FILES.length} test files seen; the scan must be broken`);
+  const klokTests: string[] = [];
+  for (const f of TEST_FILES) {
+    // code() strips comments — zonder dat vindt deze scan vooral de toelichtingen die uitleggen
+    // waarom de aanroep weg moest, en dan is de poort een generator van vals alarm.
+    const src = code(f);
+    for (const m of src.matchAll(
+      /([\w.)\]]+)\s*\.\s*(getUTCFullYear|getUTCMonth|getUTCDate|getFullYear|getMonth|getDate)\(\)/g)) {
+      const at = m.index ?? 0;
+      const inline = dateCallEndingAt(src, at + m[1].length);
+      if (inline !== null) {
+        if (inline !== "") continue; // uit DATA gebouwd: een kalenderfeit, precies wat een test hoort te doen
+        klokTests.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the wall clock`);
+        continue;
+      }
+      if (/^[A-Za-z_$][\w$]*$/.test(m[1])) {
+        const binds = [...src.slice(0, at).matchAll(
+          new RegExp(`(?:const|let|var)\\s+${m[1]}\\s*(?::[^=]*)?=\\s*`, "g"))];
+        const b = binds[binds.length - 1];
+        if (!b) continue;
+        const na = src.slice((b.index ?? 0) + b[0].length);
+        if (!/^new Date\(/.test(na)) continue;
+        const open = (b.index ?? 0) + b[0].length + "new Date".length;
+        let depth = 0;
+        let j = open;
+        for (; j < src.length; j++) {
+          if (src[j] === "(") depth++;
+          else if (src[j] === ")") { depth--; if (depth === 0) break; }
+        }
+        if (src.slice(open + 1, j).trim() !== "") continue;
+        klokTests.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the wall clock`);
+      }
+    }
+  }
+  assert.deepEqual(klokTests, [],
+    "these tests read a calendar field off the CURRENT clock. The code under test uses the " +
+    "Amsterdam day (amsterdamToday/amsterdamYear), so for the hours where the two disagree the " +
+    "suite goes red on something that is not broken:\n  " + klokTests.join("\n  ") +
+    "\n\nRead the same clock the code reads, and shift days over calendar days.");
+
   // One clock, so year and month can never disagree about which day it is.
   const pure = code("src/lib/format-nl.ts");
   assert.match(pure, /export function amsterdamMonth\(now: Date = new Date\(\)\): number \{\s*\n\s*return Number\(amsterdamToday\(now\)\.slice\(5, 7\)\)/,
@@ -19375,11 +19527,26 @@ test("[BANK-OVERAPPLIED-LOUD] de enige waarborg tegen een niet-gesloten race mel
   // Die herlezing las haar eigen fout niet. supabase-js gooit niet, dus een mislukte herlezing gaf
   // `data: null` → `?? []` → som 0 → `0 > payAmount` onwaar → geen auditregel, geen melding. De
   // enige waarborg tegen de enige race die dit bestand openlaat, verdween precies dan in stilte.
+  // De herlezing zelf staat nu in bank-overapplied.ts, en dat is geen verhuizing om de vorm: er
+  // zijn DRIE deuren die een factuur aan een bankregel koppelen, en deze controle stond bij één.
+  // Een tweede kopie schrijven voor de derde deur is precies hoe de vier lezers van deze som ooit
+  // uit elkaar liepen ([LIJN-BUDGET]). Wat dit pint is dus de eigenschap, niet de plaats.
   const src = code("src/app/api/bank/confirm/route.ts");
-  assert.match(src, /const \{ data: sumRows, error: sumErr \}/,
-    "de herlezing van de som leest haar fout weer niet");
-  assert.match(src, /if \(sumErr\) throw new Error\(sumErr\.message\)/,
-    "een mislukte herlezing telt weer door als een som van 0");
+  const detector = code("src/lib/bank-overapplied.ts");
+  assert.match(src, /const verdict = await readOverApplied\(\{/,
+    "de herlezing is weg bij deze deur");
+  assert.match(src, /if \(!verdict\) throw new Error\("over-application check could not run"\)/,
+    "een mislukte herlezing telt weer door als 'niets aan de hand'");
+  // En de functie zelf mag het verschil niet wegmoffelen: null = niet gedraaid, nooit een nul.
+  assert.match(detector, /if \(error\) return null;/,
+    "een leesfout wordt weer een som");
+  assert.match(detector, /if \(sum\.unknownInvoiceIds\.length > 0\) return null;/,
+    "een onleesbare zusterfactuur maakt de som te LAAG — dat mag geen stilte rechtvaardigen");
+  // Getekend, niet als magnitude. Een creditnota geeft geld terug aan de regel; magnitudes tellen
+  // hem erbij op en slaan alarm over een boeking die klopt.
+  assert.match(detector, /allocatedOnLine\(rows, invoices, txAmount\)/);
+  assert.doesNotMatch(src, /Math\.max\(0, Number\(r\.amount_applied/,
+    "de handgeschreven magnitude-optelling mag niet terugkomen");
   // Blijft best-effort — de boekingen staan er al — maar niet-gekeken laat nu een spoor na.
   assert.match(src, /action: "bank\.overapplied_check_failed"/,
     "een niet-uitgevoerde controle laat weer geen spoor na, dus 'geen alarm' betekent weer twee dingen");
@@ -20148,4 +20315,57 @@ test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwv
   const pagina = code("src/app/dashboard/beheer/page.tsx");
   assert.match(pagina, /readEventSummary\(pipeline\)/);
   assert.doesNotMatch(pagina, /\.from\("system_events"\)/, "de pagina leest de tabel zelf — dat is de tweede lezer");
+});
+
+// ─── [WIK-VORDERING] The demand may only name money that is owed ────────────────────────────────
+//
+// The reminder cron does not send a nudge on its final tier. It sends the statutory aanmaning that
+// makes incassokosten claimable (art. 6:96 BW) — by e-mail, in the owner's name, at a customer,
+// with no human in the loop.
+//
+// It built the hoofdsom of that demand from its CANDIDATE set: every outgoing invoice of the owner
+// that is 'sent' or 'overdue' with a due date. That set is deliberately wider than what may be
+// demanded, because reminderTierDue narrows it afterwards — and this loop narrowed it nowhere. Two
+// kinds of row therefore walked straight into a legal document:
+//
+//   · a CREDITNOTA. An outgoing document with a NEGATIVE total, and every openstaand helper in
+//     this app takes the MAGNITUDE — so a € 500 credit the owner issued to settle a dispute was
+//     added to the demand as € 500 the customer owes.
+//   · an invoice that was NOT YET DUE, because nothing in the loop read the due date.
+//
+// The cost is not the difference. Art. 6:96 lid 6 applies the staffel once over the whole hoofdsom
+// and an overstated hoofdsom is the standard ground on which the ENTIRE incassokosten claim is
+// struck; for a consumer lid 5 makes that dwingend recht. The owner does not lose the excess, they
+// lose the lot — and they have demanded money that was never owed.
+test("[WIK-VORDERING] the statutory demand is built through the rule, not from the candidate set", () => {
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  const incasso = code("src/lib/incasso.ts");
+
+  // The rule is pure and lives beside the staffel it feeds — what may stand in a legal demand is
+  // worth asserting without a database.
+  assert.match(incasso, /export function claimableForWik/,
+    "the rule exists as a pure function");
+  assert.match(incasso, /if \(args\.invoiceType === 'creditnota'\) return false;/,
+    "money going the other way is not a debt");
+  assert.match(incasso, /if \(args\.dueDayNumber >= args\.todayDayNumber\) return false;/,
+    "verzuim starts the day AFTER the term expires — the due date itself is not overdue");
+  assert.match(incasso, /if \(args\.dueDayNumber == null\) return false;/,
+    "no stated term can have expired");
+
+  // And the cron composes its hoofdsom THROUGH it, rather than restating the same conditions.
+  assert.match(cron, /if \(!claimableForWik\(\{/,
+    "the claims loop calls the rule");
+  assert.match(cron, /aggregateWikClaims/, "…and the staffel still runs over what survives it");
+
+  // The narrowing must sit on the CLAIMS loop, which builds the sum — not only on the send loop,
+  // which decides whether a letter goes out today. Those are different questions and it was the
+  // first one that was unguarded.
+  // From the declaration of the sum to the send loop that follows it. `indexOf` from the START
+  // would find the TIER loop, which shares the same header and sits earlier — and the slice would
+  // then be empty, which is how a source gate passes vacuously over the code it is guarding.
+  const sumStart = cron.indexOf("const claimsPerDebiteur");
+  const claimsLoop = cron.slice(sumStart, cron.indexOf("for (const inv of ownerInvoices)", sumStart));
+  assert.ok(claimsLoop.length > 0, "the claims loop is still recognisable");
+  assert.match(claimsLoop, /claimableForWik/,
+    "the rule guards the SUM, which is the thing a court reads");
 });

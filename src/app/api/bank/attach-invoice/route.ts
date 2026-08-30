@@ -40,6 +40,7 @@ import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { reportHandledFailure } from "@/lib/report-handled";
 import { allocatedOnLine } from "@/lib/bank-line-budget";
+import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
 import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { readingPromptHint } from "@/lib/reading-memory";
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
@@ -826,6 +827,58 @@ async function runAttachInvoice(req: NextRequest) {
       severity: "data-integrity",
       context: { userId: user.id, invoiceId: invoice.id, transactionId },
     });
+  }
+
+  // [BANK-OVERAPPLIED-LOUD] De derde deur. /api/bank/allocate gaat door een atomaire RPC die het
+  // budget onder een rijvergrendeling herberekent, en /api/bank/confirm herleest de som ná de
+  // eigen schrijving en slaat alarm. Deze route had geen van beide: ze leest het budget in JS en
+  // schrijft daarna een gewone insert, dus twee gelijktijdige verzoeken — of één die met een
+  // confirm overlapt — lezen allebei dezelfde "al toegewezen" en schrijven allebei.
+  //
+  // En dit is de deur waar dat het meest kost: ze MAAKT een factuur die meteen op 'betaald' staat.
+  // Over-besteden betekent hier een factuur die is voldaan uit geld dat de regel niet had, op een
+  // rij die niemand nog met een document kan vergelijken.
+  //
+  // De race sluiten kan alleen een atomaire RPC (gedocumenteerd als uitgesteld). Wat hier bij komt
+  // is dezelfde belofte als bij confirm: de stand kan nooit STIL verkeerd zijn.
+  try {
+    const verdict = await readOverApplied({
+      client: pipeline, userId: user.id, transactionId, txAmount: bankAmount,
+    });
+    if (!verdict) throw new Error("over-application check could not run");
+    if (verdict.over) {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.overapplied",
+        entityType: "bank_transaction",
+        entityId: transactionId,
+        newValue: { transaction_amount: bankAmount, applied_sum: verdict.appliedSum, invoice_id: invoice.id },
+      });
+      const bericht = overAppliedNotice(verdict);
+      await createNotification({
+        userId: user.id,
+        title: bericht.title,
+        body: bericht.body,
+        type: "payment",
+        link: "/dashboard/bank",
+      });
+    }
+  } catch (e) {
+    // Best effort: de boeking staat er al en mag hier niet meer sneuvelen. Maar een controle die
+    // NIET heeft gedraaid is zelf een feit over deze transactie, dus die wordt opgeschreven —
+    // anders betekent "geen alarm" twee dingen tegelijk.
+    console.error("[BANK-OVERAPPLIED-LOUD] over-application check did not run", { transactionId, e });
+    await logAuditAction({
+      userId: user.id,
+      action: "bank.overapplied_check_failed",
+      entityType: "bank_transaction",
+      entityId: transactionId,
+      newValue: {
+        transaction_amount: bankAmount,
+        invoice_id: invoice.id,
+        reason: e instanceof Error ? e.message : "sum read failed",
+      },
+    }).catch(() => { /* het spoor is de laatste redmiddel; het mag de boeking niet kosten */ });
   }
 
   // 11. Notification (non-blocking) — service_role by rule.

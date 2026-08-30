@@ -28,6 +28,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { generateInvoiceNumber } from "./invoice-numbering";
+// [NUMMER-JAAR] Dezelfde klok als de functie die wordt getest. Hier stond `new Date().getFullYear()`
+// — precies de aanroep die deze module heeft afgeschaft, in de test die de afschaffing bewaakt.
+// Tussen 23:00 UTC op 31 december en middernacht is Nederland al in het nieuwe jaar en de server
+// niet, dus één uur per jaar verwachtte deze test het VORIGE jaar in een nummer dat het nieuwe
+// draagt. Eén uur per jaar is precies vaak genoeg om een keer een groene suite rood te maken op
+// het moment dat niemand tijd heeft om uit te zoeken waarom.
+import { amsterdamYear } from "./format-nl";
 
 type RpcArgs = { p_user_id: string; p_year: number; p_type: string };
 
@@ -82,13 +89,13 @@ test("[NUMBER-READ-HONEST] both callers already turn that into a clean 500", () 
 test("[FACTUUR-B] a custom template is honoured, shape and padding", () => {
   return (async () => {
     const { client } = stub(ok("{seq}-{year}", 3), 46);
-    assert.equal(await generateInvoiceNumber(client, "u1", "factuur"), "046-2026".replace("2026", String(new Date().getFullYear())));
+    assert.equal(await generateInvoiceNumber(client, "u1", "factuur"), "046-2026".replace("2026", String(amsterdamYear())));
   })();
 });
 
 test("[FACTUUR-B] no template falls back to the product default", () => {
   return (async () => {
-    const year = new Date().getFullYear();
+    const year = amsterdamYear();
     const { client } = stub(ok(null), 46);
     assert.equal(await generateInvoiceNumber(client, "u1", "factuur"), `${year}0046`);
   })();
@@ -96,7 +103,7 @@ test("[FACTUUR-B] no template falls back to the product default", () => {
 
 test("[FACTUUR-B] creditnota and pro forma keep the system format, never the custom one", () => {
   return (async () => {
-    const year = new Date().getFullYear();
+    const year = amsterdamYear();
     // Even with a custom factuur template configured: customization is factuur-only, because a
     // credit note that adopted the sales series would collide with it.
     const { client } = stub(ok("{seq}-{year}", 3), 46);
@@ -107,7 +114,7 @@ test("[FACTUUR-B] creditnota and pro forma keep the system format, never the cus
 
 test("[FACTUUR-B] the template decides WHICH counter is drawn from — the heart of the bug", () => {
   return (async () => {
-    const year = new Date().getFullYear();
+    const year = amsterdamYear();
 
     // {year} present → yearly reset → keyed by the calendar year.
     const yearly = stub(ok("{year}{seq}", 4), 46);

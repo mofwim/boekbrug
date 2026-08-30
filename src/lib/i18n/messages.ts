@@ -119,6 +119,12 @@ export const MESSAGES = {
   // "Mijn", omdat de boekhouder hiernaast ook de facturen van zijn KLANTEN ziet.
   'chrome.mijnFacturen': { nl: 'Mijn facturen', ar: 'فواتيري', en: 'My invoices' },
   'chrome.mijnKlanten': { nl: 'Mijn klanten', ar: 'عملائي', en: 'My clients' },
+  'chrome.leveranciers': {
+    nl: 'Leveranciers',
+    ar: 'المورّدون',
+    en: 'Suppliers',
+    tr: 'Tedarikçiler',
+  },
   'chrome.inkoopfacturen': { nl: 'Inkoopfacturen', ar: 'فواتير المشتريات', en: 'Purchase invoices' },
   'chrome.inkomend': { nl: 'Inkomend', ar: 'الوارد', en: 'Incoming' },
   'chrome.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
@@ -1938,6 +1944,173 @@ export const MESSAGES = {
     nl: 'Eén factuur is betaald vóór zijn eigen factuurdatum — die datum klopt niet.',
     ar: 'فاتورة واحدة مدفوعة قبل تاريخ إصدارها — التاريخ غير صحيح.',
     en: 'One invoice was paid before its own invoice date — that date is wrong.',
+  },
+  // ── [LEVERANCIER-SALDO] Wat de winkel nog moet betalen, per leverancier ──────────────────
+  //
+  // Deze schermtaal komt van een foto van het pakket van een groothandel: hun "Openstaande
+  // verkoopfacturen", gefilterd op klant 13168 — Kiwi Food Market. Dezelfde twee facturen die
+  // BoekBrug als INKOOPfacturen heeft. De woorden hier beschrijven onze kant van precies dat.
+  //
+  // [TAAL] Een zelfstandig naamwoord in een zin is geen parameter: "vervallen" en "openstaand"
+  // krijgen hun eigen sleutel per zin, want de Arabische en Turkse vormen verschillen per zin.
+  'leveranciers.titel': {
+    nl: 'Wat je nog moet betalen',
+    ar: 'ما عليك دفعه',
+    en: 'What you still owe',
+    tr: 'Ödemeniz gerekenler',
+  },
+  'leveranciers.leeg': {
+    nl: 'Er staat op dit moment niets open bij een leverancier.',
+    ar: 'لا يوجد حالياً أي مبلغ مستحق لأي مورّد.',
+    en: 'Nothing is outstanding with a supplier right now.',
+    tr: 'Şu anda hiçbir tedarikçiye ödenmemiş borcunuz yok.',
+  },
+  'leveranciers.totaal': {
+    nl: 'Totaal openstaand',
+    ar: 'إجمالي المستحق',
+    en: 'Total outstanding',
+    tr: 'Toplam ödenmemiş',
+  },
+  'leveranciers.peildatum': {
+    nl: 'Stand op {datum}',
+    ar: 'الوضع بتاريخ {datum}',
+    en: 'As at {datum}',
+    tr: '{datum} itibarıyla',
+  },
+  // De gevaarlijkste zin op dit scherm, en daarom staat hij er. Zonder gedateerde betaalregels is
+  // het cijfer dat van VANDAAG, welke peildatum er ook boven staat.
+  'leveranciers.basisHuidig': {
+    nl: 'Dit is de stand van nu. Voor een stand op een datum in het verleden hebben we betaaldata per factuur nodig, en die ontbreken hier.',
+    ar: 'هذا هو الوضع الحالي. لعرض الوضع في تاريخ سابق نحتاج تواريخ السداد لكل فاتورة، وهي غير متوفّرة هنا.',
+    en: 'This is the position right now. A position on an earlier date needs a payment date per invoice, and those are missing here.',
+    tr: 'Bu, şu anki durumdur. Geçmiş bir tarihteki durum için fatura başına ödeme tarihi gerekir; burada yoklar.',
+  },
+  'leveranciers.vervallen': {
+    nl: 'waarvan {bedrag} vervallen',
+    ar: 'منها {bedrag} مستحقّة السداد',
+    en: 'of which {bedrag} overdue',
+    tr: 'bunun {bedrag} tutarı vadesi geçmiş',
+  },
+  'leveranciers.oudste': {
+    nl: 'oudste vervaldatum {datum}',
+    ar: 'أقدم تاريخ استحقاق {datum}',
+    en: 'oldest due date {datum}',
+    tr: 'en eski vade {datum}',
+  },
+  'leveranciers.aantalFacturen': {
+    nl: '{aantal} facturen',
+    ar: '{aantal} فاتورة',
+    en: '{aantal} invoices',
+    tr: '{aantal} fatura',
+  },
+  'leveranciers.eenFactuur': {
+    nl: '1 factuur',
+    ar: 'فاتورة واحدة',
+    en: '1 invoice',
+    tr: '1 fatura',
+  },
+  'leveranciers.peildatumLabel': {
+    nl: 'Peildatum',
+    ar: 'تاريخ الرصد',
+    en: 'As at date',
+    tr: 'Referans tarihi',
+  },
+  'leveranciers.toon': {
+    nl: 'Toon',
+    ar: 'اعرض',
+    en: 'Show',
+    tr: 'Göster',
+  },
+  'leveranciers.naarBank': {
+    nl: 'Naar je bankafschriften',
+    ar: 'إلى كشوفك البنكية',
+    en: 'To your bank statements',
+    tr: 'Banka ekstrelerinize',
+  },
+  'leveranciers.nietGelezen': {
+    nl: 'We konden je inkoopfacturen nu niet lezen, dus staat hier geen bedrag. Een leeg totaal zou betekenen dat er niets openstaat, en dat is niet vastgesteld. Probeer het zo opnieuw.',
+    ar: 'تعذّرت قراءة فواتير الشراء الآن، لذلك لا يظهر أي مبلغ هنا. الإجمالي الفارغ يعني أن لا شيء مستحق، وهذا لم يُثبَت. أعد المحاولة بعد قليل.',
+    en: 'We could not read your purchase invoices just now, so no amount is shown. An empty total would mean nothing is outstanding, and that has not been established. Try again shortly.',
+    tr: 'Alış faturalarınız şu anda okunamadı, bu yüzden burada tutar yok. Boş bir toplam hiçbir borcunuz olmadığı anlamına gelirdi; bu tespit edilmedi. Birazdan tekrar deneyin.',
+  },
+  'leveranciers.ouderdom': {
+    nl: 'Ouderdom',
+    ar: 'التقادم',
+    en: 'Aging',
+    tr: 'Yaşlandırma',
+  },
+  'leveranciers.ouderdom.nietVervallen': {
+    nl: 'Nog niet vervallen',
+    ar: 'لم تستحقّ بعد',
+    en: 'Not yet due',
+    tr: 'Henüz vadesi gelmedi',
+  },
+  'leveranciers.ouderdom.zonderDatum': {
+    nl: 'Zonder vervaldatum',
+    ar: 'بدون تاريخ استحقاق',
+    en: 'No due date',
+    tr: 'Vade tarihi yok',
+  },
+  'leveranciers.onbevestigd': {
+    nl: 'Daarnaast wachten {aantal} inkoopfacturen nog op je bevestiging. Die tellen hier bewust niet mee: ze zijn door de app gelezen en door niemand nagekeken.',
+    ar: 'إضافةً إلى ذلك، هناك {aantal} فاتورة شراء تنتظر تأكيدك. هي غير محتسبة هنا عن قصد: قرأها التطبيق ولم يراجعها أحد.',
+    en: 'On top of this, {aantal} purchase invoices are still waiting for your confirmation. They are deliberately not counted here: the app read them and nobody checked them.',
+    tr: 'Ayrıca {aantal} alış faturası hâlâ onayınızı bekliyor. Bunlar bilinçli olarak sayılmadı: uygulama okudu, kimse kontrol etmedi.',
+  },
+  'leveranciers.zonderLeverancier': {
+    nl: '{aantal} openstaande facturen ({bedrag}) konden we niet aan een leverancier koppelen. Ze tellen wel mee in het totaal.',
+    ar: 'تعذّر ربط {aantal} فاتورة مفتوحة ({bedrag}) بأي مورّد. لكنها محتسبة ضمن الإجمالي.',
+    en: '{aantal} open invoices ({bedrag}) could not be tied to a supplier. They do count in the total.',
+    tr: '{aantal} açık fatura ({bedrag}) bir tedarikçiye bağlanamadı. Toplama dâhildirler.',
+  },
+  // ── [BETAALD-MAAR-WAAR] De betalingen die het afschrift nog niet kan bevestigen ───────────
+  'betaalcheck.titel': {
+    nl: 'Betalingen die we nog niet konden controleren',
+    ar: 'دفعات لم نتمكّن من التحقّق منها بعد',
+    en: 'Payments we could not check yet',
+    tr: 'Henüz kontrol edemediğimiz ödemeler',
+  },
+  'betaalcheck.naDekking': {
+    nl: 'Je hebt {aantal} facturen afgevinkt als betaald met een datum ná je nieuwste bankafschrift ({datum}). We kunnen ze pas nakijken als je het volgende afschrift inleest.',
+    ar: 'وضعتَ علامة "مدفوعة" على {aantal} فاتورة بتاريخ بعد آخر كشف بنكي لديك ({datum}). لا يمكننا التحقّق منها حتى تُدخِل الكشف التالي.',
+    en: 'You ticked {aantal} invoices as paid with a date after your newest bank statement ({datum}). We can only check them once you import the next statement.',
+    tr: '{aantal} faturayı, en yeni banka ekstrenizden ({datum}) sonraki bir tarihle ödendi olarak işaretlediniz. Bir sonraki ekstreyi aktarana kadar kontrol edemeyiz.',
+  },
+  'betaalcheck.naDekkingEen': {
+    nl: 'Je hebt 1 factuur afgevinkt als betaald met een datum ná je nieuwste bankafschrift ({datum}). We kunnen hem pas nakijken als je het volgende afschrift inleest.',
+    ar: 'وضعتَ علامة "مدفوعة" على فاتورة واحدة بتاريخ بعد آخر كشف بنكي لديك ({datum}). لا يمكننا التحقّق منها حتى تُدخِل الكشف التالي.',
+    en: 'You ticked 1 invoice as paid with a date after your newest bank statement ({datum}). We can only check it once you import the next statement.',
+    tr: '1 faturayı, en yeni banka ekstrenizden ({datum}) sonraki bir tarihle ödendi olarak işaretlediniz. Bir sonraki ekstreyi aktarana kadar kontrol edemeyiz.',
+  },
+  'betaalcheck.geenAfschrift': {
+    nl: 'Er is nog geen bankafschrift ingelezen, dus we kunnen geen enkele afgevinkte betaling nakijken.',
+    ar: 'لم يُدخَل أي كشف بنكي بعد، لذا لا يمكننا التحقّق من أي دفعة مؤشَّرة.',
+    en: 'No bank statement has been imported yet, so we cannot check a single ticked payment.',
+    tr: 'Henüz hiçbir banka ekstresi aktarılmadı; bu yüzden işaretlenmiş hiçbir ödemeyi kontrol edemiyoruz.',
+  },
+  'betaalcheck.geenDatum': {
+    nl: 'Bij {aantal} betalingen staat geen datum. Zonder datum kunnen we ze nergens tegen afzetten.',
+    ar: 'هناك {aantal} دفعة بلا تاريخ. بدون تاريخ لا يمكننا مقارنتها بشيء.',
+    en: '{aantal} payments carry no date. Without one there is nothing to hold them against.',
+    tr: '{aantal} ödemede tarih yok. Tarih olmadan hiçbir şeyle karşılaştıramayız.',
+  },
+  'betaalcheck.voorDekking': {
+    nl: '{aantal} afgevinkte betalingen liggen vóór je oudste afschrift ({datum}). Die blijven ongecontroleerd tenzij je een ouder afschrift inleest.',
+    ar: '{aantal} دفعة مؤشَّرة تقع قبل أقدم كشف لديك ({datum}). ستبقى دون تحقّق ما لم تُدخِل كشفاً أقدم.',
+    en: '{aantal} ticked payments fall before your oldest statement ({datum}). They stay unchecked unless you import an older one.',
+    tr: '{aantal} işaretli ödeme, en eski ekstrenizden ({datum}) öncesine düşüyor. Daha eskisini aktarmazsanız kontrolsüz kalırlar.',
+  },
+  'betaalcheck.tekort': {
+    nl: 'Volgens je boeken betaalde je {geclaimd} aan {leverancier}, terwijl je afschrift over dezelfde periode {betaald} laat vertrekken. Verschil: {verschil}.',
+    ar: 'حسب دفاترك دفعتَ {geclaimd} إلى {leverancier}، بينما يُظهر كشفك خروج {betaald} في الفترة نفسها. الفرق: {verschil}.',
+    en: 'Your books say you paid {geclaimd} to {leverancier}, while your statement shows {betaald} leaving over the same period. Difference: {verschil}.',
+    tr: 'Defterlerinize göre {leverancier} firmasına {geclaimd} ödediniz; ekstreniz aynı dönemde {betaald} çıkış gösteriyor. Fark: {verschil}.',
+  },
+  'betaalcheck.klopt': {
+    nl: 'Alles wat je als betaald hebt afgevinkt, past binnen wat er in die periode van je rekening is gegaan.',
+    ar: 'كل ما أشّرتَه كمدفوع يقع ضمن ما خرج فعلاً من حسابك في تلك الفترة.',
+    en: 'Everything you ticked as paid fits inside what actually left your account in that period.',
+    tr: 'Ödendi olarak işaretlediğiniz her şey, o dönemde hesabınızdan çıkanın içinde kalıyor.',
   },
   'betaalgedrag.absent.geenFacturen': {
     nl: 'Nog geen facturen voor deze klant.',

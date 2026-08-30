@@ -47,6 +47,7 @@ import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
 import { allocatedOnLine } from "@/lib/bank-line-budget";
+import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
@@ -824,25 +825,30 @@ export async function POST(req: NextRequest) {
   // is dat een niet-uitgevoerde controle zélf een spoor achterlaat, zodat "geen alarm" niet twee
   // dingen tegelijk kan betekenen.
   try {
-    const { data: sumRows, error: sumErr } = await pipeline
-      .from("bank_tx_invoices")
-      .select("amount_applied")
-      .eq("user_id", user.id)
-      .eq("transaction_id", transactionId);
-    if (sumErr) throw new Error(sumErr.message);
-    const appliedSum = (sumRows ?? []).reduce((t, r) => t + Math.max(0, Number(r.amount_applied ?? 0)), 0);
-    if (appliedSum > payAmount + 0.01) {
+    // [LIJN-BUDGET] Via de gedeelde, GETEKENDE som. Hier stond een eigen optelling van
+    // magnitudes (`t + Math.max(0, amount_applied)`) — per FACTUUR juist, per REGEL niet: een
+    // creditnota geeft geld terug aan de regel, dus een regel van € 850 die bestaat uit een
+    // inkoopfactuur van € 1.000 en een credit van € 150 telde € 1.150 en zou alarm slaan over een
+    // boeking die precies klopt. Vandaag draagt geen enkele regel beide tegelijk, dus het was nog
+    // geen vals alarm — maar een geldwaarschuwing die één keer ten onrechte afgaat, is de tweede
+    // keer een die je wegklikt.
+    const verdict = await readOverApplied({
+      client: pipeline, userId: user.id, transactionId, txAmount: payAmount,
+    });
+    if (!verdict) throw new Error("over-application check could not run");
+    if (verdict.over) {
       await logAuditAction({
         userId: user.id,
         action: "bank.overapplied",
         entityType: "bank_transaction",
         entityId: transactionId,
-        newValue: { transaction_amount: payAmount, applied_sum: round2(appliedSum), invoice_id: invoiceId },
+        newValue: { transaction_amount: payAmount, applied_sum: verdict.appliedSum, invoice_id: invoiceId },
       });
+      const bericht = overAppliedNotice(verdict);
       await createNotification({
         userId: user.id,
-        title: "Controleer deze betaling",
-        body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
+        title: bericht.title,
+        body: bericht.body,
         type: "payment",
         link: "/dashboard/bank",
       });
