@@ -11116,29 +11116,64 @@ test("[SEC-STORAGE-PATH] every service-role read of an owner-written path is att
   assert.doesNotMatch(pkg, /\.select\("id, file_url, file_name"\)\s*\.in\("id", incomingDocIds\)/,
     "…both of them");
 
+  // The quarter ZIP's own downloader. Four feeders reached it — the outgoing PDF, the incoming
+  // document, the bankafschrift and the shared files — and only two were attributed, so a key
+  // pasted onto one's own invoice row came back inside the package handed to an accountant. The
+  // check sits in dl() and not at the feeders on purpose: four checks are four things a fifth
+  // feeder does not inherit, and a choke point cannot be half-applied.
+  assert.match(pkg, /const path = ownedStoragePath\(stored, ownerId\);\s*\n\s*if \(!path\) return null;/,
+    "closing-package's dl() must attribute the key itself, not trust its callers");
+
+  // The AVG-export. The worst consequence in this file: the ZIP is BUILT FOR the requester, so a
+  // foreign key here does not fail — it delivers another tenant's document to their download.
+  assert.match(code("src/lib/account-export.ts"),
+    /const path = ownedStoragePath\(d\.file_url, userId\);\s*\n\s*if \(!path\) \{/);
+
+  // Narekenen reads the bytes and sends them to an AI, then reports on them.
+  assert.match(code("src/app/api/invoice/audit/route.ts"),
+    /const pad = ownedStoragePath\(d\.file_url, user\.id\);\s*\n\s*if \(pad\) docPaths\.set\(d\.id, pad\);/);
+
+  // The one that DELETES on the e-mail sync's collision branch, where pdfUrl becomes a row value.
+  assert.match(code("src/lib/email-integration.ts"),
+    /const teVerwijderen = ownedStoragePath\(pdfUrl, userId\)\s*\n\s*if \(teVerwijderen\)/);
+
   // Every one of them normalises first, or a stored full URL dodges the check entirely.
+  // ownedStoragePath does both in one call, which is why the newer sites name only that.
   for (const f of ["src/app/api/invoice/send/route.ts", "src/app/api/cron/reminders/route.ts",
                    "src/app/dashboard/vragen/page.tsx", "src/app/api/onboarding/reset/route.ts",
                    "src/lib/closing-package.ts"]) {
     assert.match(code(f), /toStoragePath\(/, `${f} must normalise the stored value first`);
   }
+  for (const f of ["src/lib/account-export.ts", "src/app/api/invoice/audit/route.ts",
+                   "src/lib/email-integration.ts"]) {
+    assert.match(code(f), /ownedStoragePath\(/, `${f} must normalise AND attribute in one call`);
+  }
 });
 
-test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat uit een RIJ komt", () => {
-  // De poort hierboven pint tien met de hand gekozen uitdrukkingen. Dat is precies wat ze moet
-  // doen — ze bewaakt de GUARD, niet de aanwezigheid van een helpernaam, en drie negatieve
-  // controles liepen door een eerdere versie die dat wel deed. Maar het is een LIJST onder een
-  // regel die "every" zegt, en de elfde plek staat er dan niet in.
+test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat het NIET zelf heeft gebouwd", () => {
+  // De vorige versie van deze poort was op twee manieren blind, en vier echte lekken liepen er
+  // doorheen — in de AVG-export, in het kwartaalpakket, in het narekenen en in de e-mailsync.
   //
-  // Dit is de klasse ernaast. De regel die het moduulhoofd stelt: een RIJ-check zegt "je mag dit
-  // record zien", nooit "en het record wijst naar jouw bytes". file_url en pdf_url zijn gewone
-  // tekst op een rij die de eigenaar mag schrijven, en de service_role-client passeert het
-  // bucketbeleid dat een sleutel uit andermans map zou tegenhouden. Een SESSIE-client niet: daar
-  // is het beleid de grens, en dan is attributie in de code een tweede slot op dezelfde deur.
+  //   1. Ze herkende een service_role-client aan zijn NAAM (/pipeline|service|admin/). Maar
+  //      closing-package.ts en account-export.ts krijgen hun client als ARGUMENT, getypt
+  //      `supabase: PipelineClient` — en `supabase` is precies de naam die "sessieclient" moest
+  //      betekenen. De gevaarlijkste twee plekken heetten als de ongevaarlijke.
+  //   2. Ze herkende een rij-pad aan de NAAM van het argument (/file_url|pdf_url|doc|row/). Maar
+  //      `inv.pdf_url` was al doorgegeven aan een lokale `dl(path)` — één hop door een parameter
+  //      en het pad heet gewoon `path`.
   //
-  // Gemeten toen dit werd geschreven: zes plekken geven een pad uit een rij aan storage, en alle
-  // zes doen dat met een sessieclient. Nul met service_role. Dus geen uitzonderingenlijst — een
-  // schone klasse mag als verbod worden vastgelegd, en dat is wat de elfde plek tegenhoudt.
+  // Dat dit niet theoretisch was, staat in de policies zelf: `documents_update_own` en
+  // `invoices_zzp_update` zijn HELE-RIJ-policies (USING/WITH CHECK op user_id resp. sender_id),
+  // dus een ingelogde gebruiker kan met alleen de publieke anon-sleutel `file_url` van zijn eigen
+  // rij naar de map van een andere klant wijzen. `documents_read` op storage.objects vergelijkt
+  // wél de eerste mapsegment met auth.uid() — dus een SESSIEclient wordt daar tegengehouden, en
+  // service_role niet. Precies die twee feiten samen zijn het lek.
+  //
+  // De regel hieronder is daarom omgekeerd: niet "verdenk paden die op een rij lijken", maar
+  // "vertrouw alleen een sleutel die deze code ZELF heeft samengesteld". Een sleutel uit een
+  // template (`${user.id}/incoming/…`) draagt zijn eigenaar omdat wij hem daar schreven; al het
+  // andere moet worden toegeschreven vóórdat het bytes aanraakt. Geen uitzonderingenlijst: elke
+  // plek voldoet, dus de klasse mag als verbod worden vastgelegd.
   const loop = (dir: string): string[] => {
     const uit: string[] = [];
     for (const e of readdirSync(dir)) {
@@ -11148,35 +11183,48 @@ test("[SEC-STORAGE-PATH] geen service_role raakt bytes op een pad dat uit een RI
     }
     return uit;
   };
+  const OPS = "remove|download|createSignedUrl|createSignedUrls|copy|move";
 
   const overtreders: string[] = [];
-  let uitRij = 0;
+  let serviceRolls = 0;
+  let zelfGebouwd = 0;
   for (const f of loop("src")) {
     const src = code(f);
-    for (const m of src.matchAll(
-      /([A-Za-z_$][\w$]*)\s*\.\s*storage\s*\.\s*from\s*\([^)]*\)\s*\.\s*(remove|download|createSignedUrl|copy|move)\s*\(([^)]{0,80})/g,
-    )) {
-      const client = m[1], arg = m[3];
-      // Een pad dat de app zelf BOUWT (een uploadsleutel) loopt dit risico niet — alleen een pad
-      // dat uit een rij is gelezen.
-      if (!/file_url|pdf_url|\bdoc\b|\bd\?\.|\brow\b|\bshare\b|\binv\b/.test(arg)) continue;
-      uitRij++;
-      if (!/pipeline|service|admin/i.test(client)) continue; // sessieclient: het bucketbeleid is de grens
-      const voor = src.slice(Math.max(0, (m.index ?? 0) - 1200), m.index);
-      if (/pathBelongsToOwner\s*\(/.test(voor)) continue;
-      overtreders.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${client}.storage…${m[2]}(${arg.replace(/\s+/g, " ").slice(0, 50)})`);
+    for (const m of src.matchAll(new RegExp(
+      String.raw`([A-Za-z_$][\w$]*)\s*\.\s*storage\s*\.\s*from\s*\([^)]*\)\s*\.\s*(${OPS})\s*\(\s*(\[?[^)\]]{0,120})`, "g"))) {
+      const client = m[1], op = m[2], arg = m[3];
+      // Hoe is DEZE client in DIT bestand gebonden? Naam is geen bewijs; de binding wel.
+      const serviceRol =
+        new RegExp(String.raw`(const|let)\s+${client}\s*(:[^=]*)?=\s*(await\s+)?createPipelineClient\s*\(`).test(src) ||
+        new RegExp(String.raw`\b${client}\s*:\s*PipelineClient\b`).test(src);
+      if (!serviceRol) continue; // sessieclient: daar is het bucketbeleid de grens
+      serviceRolls++;
+      // Een sleutel die deze code zelf samenstelt (template, of een plak/afbeelding daarvan)
+      // draagt de eigenaar omdat wij die er zelf in schreven.
+      const namen = arg.match(/[A-Za-z_$][\w$]*/g) ?? [];
+      const zelf = namen.length > 0 && namen.every((id) =>
+        [...src.matchAll(new RegExp(String.raw`\b${id}\s*=\s*([^;\n]{0,160})`, "g"))]
+          .some((a) => /`/.test(a[1]) || /\.slice\(|\.map\(/.test(a[1])));
+      if (zelf) { zelfGebouwd++; continue; }
+      const voor = src.slice(Math.max(0, (m.index ?? 0) - 1500), m.index);
+      if (/ownedStoragePath\s*\(|pathBelongsToOwner\s*\(/.test(voor)) continue;
+      overtreders.push(`${f}:${src.slice(0, m.index).split("\n").length} — ${client}.storage…${op}(${arg.replace(/\s+/g, " ").slice(0, 50)})`);
     }
   }
 
   // Een lezer die niets ziet meldt een schone codebase, en met een lege lijst is dat niet van
-  // succes te onderscheiden. Hij moet de sessie-gevallen wél vinden, anders is HIJ stuk.
-  assert.ok(uitRij >= 4,
-    `only ${uitRij} storage calls fed a row-read path were seen; the scan must be broken, and a gate that finds nothing passes for the wrong reason`);
+  // succes te onderscheiden. Beide tellers moeten meebewegen, anders is de SCAN stuk en niet de
+  // code: de vorige versie zag er ook groen uit terwijl vier lekken open stonden.
+  assert.ok(serviceRolls >= 12,
+    `only ${serviceRolls} service_role storage byte-ops were seen; the client-binding scan must be broken`);
+  assert.ok(zelfGebouwd >= 3,
+    `only ${zelfGebouwd} self-built keys were recognised; the scan cannot tell built from read`);
 
   assert.deepEqual(overtreders, [],
-    "these hand bytes to a service_role client at a path read from a row the OWNER may write, " +
-    "without attributing it first — RLS does not stop this, service_role bypasses the bucket policy:\n  " +
-    overtreders.join("\n  ") + "\n\nUse pathBelongsToOwner(pad, ownerId) before touching the bytes.");
+    "these hand bytes to a service_role client at a path this code did not build itself, without " +
+    "attributing it first. service_role bypasses the storage bucket policy, and file_url/pdf_url " +
+    "are plain text on rows their owner may UPDATE:\n  " + overtreders.join("\n  ") +
+    "\n\nUse ownedStoragePath(stored, ownerId) and refuse null.");
 });
 
 test("[DECLARED-INVOICE-EIGEN-CLAIM] the guard is not fed the payment's own claim", () => {
