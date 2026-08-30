@@ -14,14 +14,27 @@ follow the checklist.
 
 ### Title (max 30 chars)
 ```
-BoekBrug: Facturen & Bonnen
+BoekBrug: ZZP Boekhouding
 ```
+*25 chars.* The title is the heaviest keyword field Play has, and the previous one
+(`BoekBrug: Facturen & Bonnen`, 27) spent all of it on two feature words while
+missing **zzp** and **boekhouding** — the two terms a Dutch freelancer actually
+types into the store. "Facturen" and "bonnen" move down to the short description,
+which is also indexed, so nothing is lost and two high-volume terms are gained.
+
+> Changing the title is safe: Play re-indexes on the next update and rankings for
+> the brand name are unaffected. Do it as one change and leave it alone — an app
+> that renames itself repeatedly is harder for a returning user to find.
 
 ### Short description (max 80 chars)
 **NL**
 ```
-Fotografeer je bonnen en facturen — klaar voor je boekhouder, zonder gedoe.
+Bonnen scannen, facturen maken, btw bijhouden. Boekhouding voor zzp'ers.
 ```
+*72 chars.* Keeps the three things people search for and states the category
+plainly. The previous line — "Fotografeer je bonnen en facturen — klaar voor je
+boekhouder, zonder gedoe." — was better prose and worse ASO: it carried neither
+**btw** nor **boekhouding** nor **zzp**.
 **EN**
 ```
 Snap your receipts and invoices — ready for your accountant, hassle-free.
