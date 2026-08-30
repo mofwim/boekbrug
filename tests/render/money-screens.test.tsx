@@ -2034,6 +2034,33 @@ test("[RENDER-GATE] the confirm queue renders, and never hides what the reader w
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const leeg = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [] }));
   assert.match(leeg, /Er staat niets te wachten/);
+
+  // [NO-SILENT-EMPTY] And a THIRD empty state, which used to be rendered as one of the other two.
+  // A failed read on the links gave `geenMandaat` — so the accountant read that nobody had
+  // authorised them, over clients who had, and went to ask for a permission that was already
+  // granted. A failed read on the invoices gave the empty queue — so they read that there was
+  // nothing to confirm, while purchase invoices sat holding a quarter shut. Both sentences are
+  // untrue and neither is recognisable as a guess, which is why this one names what it is NOT.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stuk = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], leesfout: true }));
+  assert.match(stuk, /konden je stapel nu niet lezen/, "a failed read does not say so");
+  assert.match(stuk, /betekent niet dat er niets wacht/, "…and does not deny that work is waiting");
+  assert.match(stuk, /betekent niet dat je geen machtiging hebt/, "…or that the mandate is missing");
+  // It must WIN over both other empty states — a page that passes leesfout has nothing true to say
+  // about mandates or about the queue, so it may say neither.
+  assert.doesNotMatch(stuk, /Nog geen enkele klant heeft je gemachtigd/, "it still claims there is no mandate");
+  assert.doesNotMatch(stuk, /Er staat niets te wachten/, "it still claims the queue is empty");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stukMandaat = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [], leesfout: true, geenMandaat: true }));
+  assert.match(stukMandaat, /konden je stapel nu niet lezen/, "geenMandaat overrides the read failure again");
+
+  // The 500-row cap says so instead of presenting itself as the whole pile: a count that is
+  // silently truncated is not a missing number, it is a wrong one, and the accountant plans a
+  // week on it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const veel = renderToStaticMarkup(React.createElement(AccountantBevestigen as any, { rijen: [rij()], meer: 412 }));
+  assert.match(veel, /oudste 500/, "the cap no longer names itself");
+  assert.match(veel, /412/, "…nor how many are not on the screen");
 });
 
 test("[VRAAG-MACHTIGING] the empty states offer a way OUT of themselves", async () => {
@@ -2887,3 +2914,73 @@ test("[IB-JAAR] een kanttekening verschijnt, en zonder kanttekeningen geen leeg 
   })();
 });
 
+
+// ── [BETAALGEDRAG] The customer screen now states how a customer pays, instead of asking ────────
+//
+// This screen was already on this line's blind side: it is /dashboard/*, so the smoke test never
+// logs in to it. What is new is a panel whose content is a LIST (`caveats`) mapped inside the
+// render — exactly the shape AGENTS.md warns about, where `[].map(cb)` never calls `cb` and an
+// empty fixture proves nothing. So both cases are handed in: a customer with every branch lit,
+// and one with nothing to say at all.
+
+test("[BETAALGEDRAG] the customer screen renders a measured pace, an overdue invoice and its caveats", async () => {
+  const { default: KlantDetailClient } = await import("../../src/app/dashboard/klanten/[id]/KlantDetailClient");
+  const { clientPaymentBehaviour } = await import("../../src/lib/client-payment-behaviour");
+  const { dayNumberFromIso } = await import("../../src/lib/invoice-reminders");
+  const today = dayNumberFromIso("2026-08-29") as number;
+
+  const iv = (over: Record<string, unknown>) => ({
+    id: String(Math.random()), invoice_number: "F-1", invoice_date: "2026-01-01",
+    due_date: "2026-01-31", status: "paid", total_inc_btw: 121, payment_date: null, ...over,
+  });
+  const invoices = [
+    iv({ id: "a", payment_date: "2026-02-10" }), // 10 days past the term
+    iv({ id: "b", invoice_date: "2026-02-01", due_date: "2026-03-03", payment_date: "2026-03-13" }),
+    iv({ id: "c", invoice_date: "2026-03-01", due_date: "2026-03-31", payment_date: "2026-06-29" }),
+    iv({ id: "d", payment_date: null }), // paid, no date → a caveat line
+    iv({ id: "e", invoice_date: "2026-05-10", due_date: "2026-06-09", payment_date: "2026-05-01" }), // impossible → a second caveat line
+    iv({ id: "f", status: "sent", due_date: "2026-07-15", total_inc_btw: 500 }), // overdue right now
+  ];
+  const behaviour = clientPaymentBehaviour(invoices, today);
+
+  const html = renderToStaticMarkup(
+    React.createElement(KlantDetailClient as never, {
+      client: {
+        id: "k1", name: "Bakkerij Noord", email: null, kvk_number: null, btw_number: null,
+        iban: null, address: null, postal_code: null, city: null, notes: null,
+      },
+      invoices,
+      totals: { billed: 1226, open: 500, count: invoices.length },
+      behaviour,
+    }),
+  );
+
+  assert.ok(html.length > 0);
+  assert.match(html, /BETAALGEDRAG/i, "the panel is on the screen (Card uppercases its title)");
+  assert.match(html, /na de vervaldatum/, "and it says which side of the term this customer is on");
+  assert.match(html, /90/, "the worst case is named");
+  assert.match(html, /500,00/, "the invoice standing open right now is stated in euros");
+  assert.match(html, /geen betaaldatum/, "the unmeasurable invoice is visible, not silently dropped");
+  assert.match(html, /klopt niet/, "and so is the impossible one — both list items rendered");
+  assert.doesNotMatch(html, /betaalgedrag…/, "the notes box no longer asks for what the app now states");
+});
+
+test("[BETAALGEDRAG] a customer with no invoices renders the absence, and never a '0 dagen'", async () => {
+  const { default: KlantDetailClient } = await import("../../src/app/dashboard/klanten/[id]/KlantDetailClient");
+  const { clientPaymentBehaviour } = await import("../../src/lib/client-payment-behaviour");
+
+  const html = renderToStaticMarkup(
+    React.createElement(KlantDetailClient as never, {
+      client: {
+        id: "k2", name: "Nieuwe klant", email: null, kvk_number: null, btw_number: null,
+        iban: null, address: null, postal_code: null, city: null, notes: null,
+      },
+      invoices: [],
+      totals: { billed: 0, open: 0, count: 0 },
+      behaviour: clientPaymentBehaviour([], 20000),
+    }),
+  );
+
+  assert.match(html, /Nog geen facturen voor deze klant/);
+  assert.doesNotMatch(html, /0 dagen/, "an absence is never dressed up as a fast payer");
+});

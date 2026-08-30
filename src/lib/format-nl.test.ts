@@ -1,5 +1,5 @@
 // [TZ] Pure node test — run: npx tsx src/lib/format-nl.test.ts
-import { amsterdamToday, amsterdamMidnightUtc, formatDateNL } from "./format-nl";
+import { amsterdamToday, amsterdamMidnightUtc, formatDateNL, amsterdamYear, amsterdamMonth } from "./format-nl";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -59,5 +59,35 @@ console.log("\n— [TZ] amsterdamMidnightUtc: the owner's day boundary, as a UTC
     amsterdamMidnightUtc("2026-10-26").toISOString() === "2026-10-25T23:00:00.000Z");
 }
 
+console.log("\n— [TZ] the owner's MONTH, on the hour where it differs from the server's —");
+{
+  // The whole point in one instant. 00:30 Amsterdam on 1 January 2027 is 23:30 UTC on
+  // 31 December 2026, so a UTC server says month 12 and year 2026. A document filed on that clock
+  // lands in the previous YEAR's folder carrying the previous QUARTER's period tag — and `period`
+  // is exactly what the accountant's package reads to place a document in a quarter.
+  const newYearNight = new Date("2026-12-31T23:30:00.000Z");
+  check("the month is January, not December", amsterdamMonth(newYearNight) === 1);
+  check("…and the year is 2027, not 2026", amsterdamYear(newYearNight) === 2027);
+  check("sanity: the server clock really does say December", newYearNight.getUTCMonth() + 1 === 12);
+
+  // The same hour at a quarter boundary: 00:30 Amsterdam on 1 April is 22:30 UTC on 31 March
+  // (summer time, UTC+2). Q2 on the owner's calendar, Q1 on the server's.
+  const quarterTurn = new Date("2026-03-31T22:30:00.000Z");
+  check("the quarter is Q2, not Q1", Math.ceil(amsterdamMonth(quarterTurn) / 3) === 2);
+  check("sanity: the server clock really does say Q1", Math.ceil((quarterTurn.getUTCMonth() + 1) / 3) === 1);
+
+  // An ordinary midday, where the two agree — the fix must not move anything else.
+  const ordinary = new Date("2026-08-26T12:00:00.000Z");
+  check("an ordinary day is unchanged", amsterdamMonth(ordinary) === 8 && amsterdamYear(ordinary) === 2026);
+
+  // Every month is reachable, so a slice that lost a digit would show up here.
+  let allMonths = true;
+  for (let m = 1; m <= 12; m++) {
+    if (amsterdamMonth(new Date(Date.UTC(2026, m - 1, 15, 12, 0, 0))) !== m) allMonths = false;
+  }
+  check("every month comes back as itself", allMonths);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+

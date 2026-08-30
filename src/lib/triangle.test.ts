@@ -202,5 +202,64 @@ console.log("\n— [CROSS-QUARTER] an ambiguous next-quarter payout is NOT stole
   check("Q3 (owns 07-01) books the €10 commission", near(q3.totalCommission, 10));
 }
 
+
+// ── [COM-IN-DE-REGEL] The second commission source on the accountant's sheet ──────────────────
+console.log("\n— buildCardReconciliationCsv with a bank-stated commission —");
+{
+  // Kiwi Food Market's real shape: a quarter of till days and bank payouts, ZERO terminal
+  // settlements, and € 54,02 of commission the bank stated on 22 of its own payout lines.
+  const tri = reconcileTriangle({
+    turnover: [{ turnover_date: "2026-05-04", base_0: 0, base_9: 0, base_21: 1000, btw_9: 0, btw_21: 210, total_incl: 1210, pin_amount: 1210, cash_amount: 0, other_amount: 0 }],
+    eftSettlements: [],
+    bankNetByDay: new Map([["2026-05-04", 1210]]),
+  });
+  const csv = buildCardReconciliationCsv("Q2 2026", tri, {
+    total: 54.02, gross: 2922.21, lines: 22, unverified: 0, booked: true,
+  });
+  check("the sheet names the bank-stated commission", csv.includes("Commissie die de bank zélf noemt"));
+  check("with the amount", csv.includes("54,02"));
+  check("and the gross it came from", csv.includes("2922,21"));
+  check("and how many settlements it rests on", csv.includes("22 afrekening(en)"));
+  check("it says the amount IS in the result", csv.includes("Daarvan geboekt als betaalkosten"));
+  check("and explains why the debit rows show nothing", csv.includes("BRUTO uitbetaald"));
+  check("the triangle's own total is still its own line", csv.includes("Totaal kaartcommissie"));
+}
+{
+  // The ambiguous case: a terminal settlement exists too, so the stated amount is reported and
+  // NOT booked. The accountant must be able to see that it is deliberately outside the figures.
+  const tri = reconcileTriangle({
+    turnover: [{ turnover_date: "2026-05-04", base_0: 0, base_9: 0, base_21: 1000, btw_9: 0, btw_21: 210, total_incl: 1210, pin_amount: 1210, cash_amount: 0, other_amount: 0 }],
+    eftSettlements: [{ terminalId: "T1", periodNr: "1", shiftNr: null, periodStart: null, periodEnd: null, firstTrx: null, lastTrx: null, settlementDate: "2026-05-04", grossTotal: 1210, txCount: 10, byScheme: [] }],
+    bankNetByDay: new Map([["2026-05-04", 1185.8]]),
+  });
+  const csv = buildCardReconciliationCsv("Q2 2026", tri, {
+    total: 54.02, gross: 2922.21, lines: 22, unverified: 0, booked: false,
+  });
+  check("a reported-but-unbooked amount says so in words", csv.includes("NIET geboekt"));
+  check("and gives the reason", csv.includes("nooit uit twee bronnen tegelijk"));
+  check("and books 0,00 in the amount column", csv.includes(";0,00;"));
+}
+{
+  // A line that stated a commission and did not add up is never counted and never hidden.
+  const tri = reconcileTriangle({
+    turnover: [{ turnover_date: "2026-05-04", base_0: 0, base_9: 0, base_21: 100, btw_9: 0, btw_21: 21, total_incl: 121, pin_amount: 121, cash_amount: 0, other_amount: 0 }],
+    eftSettlements: [], bankNetByDay: new Map([["2026-05-04", 121]]),
+  });
+  const csv = buildCardReconciliationCsv("Q2 2026", tri, {
+    total: 0, gross: 0, lines: 0, unverified: 3, booked: false,
+  });
+  check("unreadable settlements are named on the sheet", csv.includes("niet klopte met het bijgeschreven bedrag"));
+  check("with their count", /niet meegeteld\)[^\n]*;3/.test(csv));
+}
+{
+  // No second source at all → the sheet is byte-identical to what it always was.
+  const tri = reconcileTriangle({
+    turnover: [{ turnover_date: "2026-05-04", base_0: 0, base_9: 0, base_21: 100, btw_9: 0, btw_21: 21, total_incl: 121, pin_amount: 121, cash_amount: 0, other_amount: 0 }],
+    eftSettlements: [], bankNetByDay: new Map([["2026-05-04", 121]]),
+  });
+  check("no stated commission adds no rows", buildCardReconciliationCsv("Q2 2026", tri) === buildCardReconciliationCsv("Q2 2026", tri, null));
+  check("and mentions nothing about it", !buildCardReconciliationCsv("Q2 2026", tri).includes("bank zélf noemt"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

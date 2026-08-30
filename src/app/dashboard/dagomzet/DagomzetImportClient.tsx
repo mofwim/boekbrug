@@ -21,6 +21,7 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
+import type { CardPayoutLine } from '@/lib/day-card-takings'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -51,7 +52,9 @@ const LEDGER_DONE_MANY: Record<string, MessageKey> = { pin: 'dzi.klaarPin', cash
 const sum = (rows: TurnoverRow[], pick: (r: TurnoverRow) => number | null) =>
   rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 
-export default function DagomzetImportClient({ korActive = false }: { korActive?: boolean } = {}) {
+export default function DagomzetImportClient(
+  { korActive = false, cardPayouts = [] }: { korActive?: boolean; cardPayouts?: CardPayoutLine[] } = {},
+) {
   const t = translator(useLocale())
   const [fileName, setFileName] = useState<string | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -338,7 +341,7 @@ export default function DagomzetImportClient({ korActive = false }: { korActive?
             never looks at this, and a shop without one had no door at all. Saving remounts the
             insights panel above through the same refreshTick the import commit uses, so the day
             appears in the figures immediately rather than after a reload. */}
-        <HandmatigeDag korActive={korActive} onSaved={() => setRefreshTick((n) => n + 1)} />
+        <HandmatigeDag korActive={korActive} cardPayouts={cardPayouts} onSaved={() => setRefreshTick((n) => n + 1)} />
       </div>
     </div>
   )

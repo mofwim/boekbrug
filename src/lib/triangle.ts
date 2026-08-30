@@ -172,7 +172,32 @@ const STATUS_NL: Record<string, string> = {
  * commission = gross − net on the last column. Pure (semicolon CSV, Excel-NL). Only days
  * that carry at least one card figure are listed, so a pure-invoice quarter yields no rows.
  */
-export function buildCardReconciliationCsv(quarterLabel: string, tri: TriangleResult): string {
+/**
+ * [COM-IN-DE-REGEL] The commission the BANK LINE stated itself, for the accountant's sheet.
+ *
+ * A second, independent source for the same cost — and on a shop with no terminal settlements the
+ * ONLY one. Without it this sheet printed "Totaal kaartcommissie € 0,00" while the P&L in the same
+ * ZIP carried the booked amount: the evidence sheet contradicting the figures it is evidence for,
+ * which is precisely the divergence an accountant cannot be asked to reconcile by hand.
+ */
+export interface StatedCommissionRow {
+  /** Σ commission stated across the quarter's payouts, in euros. */
+  total: number;
+  /** Σ gross those commissions were taken from. */
+  gross: number;
+  /** How many payout lines stated one and proved it against the amount credited. */
+  lines: number;
+  /** Lines that stated one and did NOT prove it. Reported, never counted. */
+  unverified: number;
+  /** Whether the engine booked it as a cost — see result-range-assemble.ts for when it does not. */
+  booked: boolean;
+}
+
+export function buildCardReconciliationCsv(
+  quarterLabel: string,
+  tri: TriangleResult,
+  stated?: StatedCommissionRow | null,
+): string {
   const EUR = (n: number | null) => (n == null ? "" : n.toFixed(2).replace(".", ","));
   const esc = (v: string | number) => {
     const s = String(v ?? "");
@@ -194,7 +219,27 @@ export function buildCardReconciliationCsv(quarterLabel: string, tri: TriangleRe
   L.push(["Totaal kaartcommissie (bruto − netto, BTW-vrij)", "", "", "", "", EUR(tri.totalCommission), ""].map(esc).join(";"));
   L.push(["Dagen kassa ≠ terminal (controleer voor de aangifte)", "", "", "", "", "", String(tri.grossMismatchDays)].map(esc).join(";"));
   L.push(["Dagen nog niet compleet (bank-uitbetaling of terminal ontbreekt)", "", "", "", "", "", String(tri.incompleteDays)].map(esc).join(";"));
+  // [COM-IN-DE-REGEL] The second source, when there is one. Kept below the triangle's own totals
+  // and labelled by where it came from, because the two are found in completely different ways: the
+  // rows above are a DERIVED difference between three witnesses, these are quoted by the bank on
+  // the payout itself and verified against the amount credited (BRUTO − COM === bijgeschreven).
+  if (stated && (stated.lines > 0 || stated.unverified > 0)) {
+    L.push("");
+    L.push(["Commissie die de bank zélf noemt op de afrekening (BRUTO/COM in de omschrijving)", "", "", "", EUR(stated.gross), EUR(stated.total), `${stated.lines} afrekening(en)`].map(esc).join(";"));
+    L.push([
+      stated.booked
+        ? "Daarvan geboekt als betaalkosten in het resultaat (BTW-vrij)"
+        : "NIET geboekt: er is ook een terminal-afrekening voor deze periode, en de commissie wordt nooit uit twee bronnen tegelijk geboekt",
+      "", "", "", "", EUR(stated.booked ? stated.total : 0), "",
+    ].map(esc).join(";"));
+    if (stated.unverified > 0) {
+      L.push(["Afrekeningen waar BRUTO − COM niet klopte met het bijgeschreven bedrag (niet meegeteld)", "", "", "", "", "", String(stated.unverified)].map(esc).join(";"));
+    }
+  }
   L.push("");
   L.push("Let op: als de acquirer (CCV/Worldline/…) de transactiekosten APART factureert, staat die factuur bij de inkoopfacturen en IS die commissie daar al als kosten geboekt — dan is dit bruto-verschil ter controle, niet nog eens boeken.");
+  if (stated && stated.lines > 0) {
+    L.push("Toelichting: veel Nederlandse betaalpassen (Maestro, V-Pay, Debit Mastercard, Visa Debit) worden BRUTO uitbetaald — daar zit geen commissie in de uitbetaling en valt er in de regels hierboven niets te vinden. De kosten daarvan staan op de aparte maandfactuur van de bank/acquirer.");
+  }
   return L.join("\r\n");
 }

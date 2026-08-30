@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { kluisQuote, estimateArchiveMb, formatArchiveSize, KLUIS_GRACE_MONTHS } from "@/lib/bewaarkluis";
+import { amsterdamYear } from "@/lib/format-nl";
 import { createKluisCheckoutSession, isKluisBillingConfigured, resolveCustomerId } from "@/lib/billing";
 
 export const dynamic = "force-dynamic";
@@ -124,7 +125,11 @@ export async function GET() {
   }
 
   const snap = await readSnapshot(supabase, user.id);
-  const currentYear = new Date().getUTCFullYear();
+  // [NUMMER-JAAR] Het jaar van de EIGENAAR, niet van de server. Dit getal loopt via
+  // remainingBewaarjaren rechtstreeks naar de PRIJS: de server staat in UTC, dus in het eerste uur
+  // van 1 januari (Amsterdam is dan UTC+1) staat hier nog het oude jaar en rekent deze offerte een
+  // heel jaar bewaren te veel.
+  const currentYear = amsterdamYear();
 
   // Nog geen enkel stuk: geen bewaarplicht om over te praten, en dus geen offerte. Eerlijker
   // dan een prijs tonen voor een leeg archief.
@@ -185,7 +190,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const quote = kluisQuote(snap.lastFiscalYear, new Date().getUTCFullYear());
+  const quote = kluisQuote(snap.lastFiscalYear, amsterdamYear());
   if (quote.years < 1) {
     return NextResponse.json(
       {

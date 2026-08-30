@@ -109,6 +109,7 @@ export type AuditAction =
   // second one needs the run's whole id list to explain why several lines moved at once.
   | 'bank.rematch_restored'           // ← [BANK-REMATCH] a forced re-match put set-aside lines back
   | 'bank.overapplied'                // ← [BANK-OVERAPPLIED-LOUD] Σ amount_applied exceeds the bank line (concurrent confirms) — flagged, never silent
+  | 'bank.overapplied_check_failed'   // ← …and when that check could not RUN. Without this row, 'no alarm' meant both 'the sum is fine' and 'we never looked'.
   | 'creditnota.created'              // ← v2: matches historical data
   | 'invoice.archived'                 // ← [INVOICE-REMOVE] owner removed an invoice from the books (kept 7 years, reversible)
   | 'invoice.restored'                 // ← [INVOICE-REMOVE] owner put an archived invoice back

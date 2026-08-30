@@ -22,6 +22,8 @@
 // =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { amsterdamToday } from '@/lib/format-nl'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -273,12 +275,28 @@ export async function POST(request: NextRequest) {
     const eerdereIds = (existingCreditnotas ?? []).map((c) => (c as { id: string }).id)
     let alGecrediteerdPerRegel = new Map<string, number>()
     if (eerdereIds.length > 0) {
-      const { data: eerdereRegels, error: eerdereErr } = await db
-        .from('invoice_lines')
-        // '*' om dezelfde reden als hierboven: elke kolom mee, zonder een tweede lijst die kan gaan
-        // afwijken van wat de spiegel schrijft.
-        .select('*')
-        .in('invoice_id', eerdereIds)
+      // [IN-CHUNK] Gechunkt én gepagineerd. Twee plafonds golden hier tegelijk: de regels van
+      // meerdere creditnota's lopen makkelijk over de duizend, en de id-lijst over de URL-lengte.
+      // Beide zouden een TE LAAG "al gecrediteerd" opleveren — en dat is de kant waarop deze
+      // controle nooit mag missen: te laag betekent dat er nóg een keer gecrediteerd mag worden.
+      let eerdereRegels: Array<Record<string, unknown>> = []
+      let eerdereErr: { message: string } | null = null
+      try {
+        eerdereRegels = await fetchAllRowsForIds<Record<string, unknown>, string>(
+          eerdereIds,
+          (chunk, from, to) =>
+            db
+              .from('invoice_lines')
+              // '*' om dezelfde reden als hierboven: elke kolom mee, zonder een tweede lijst die kan gaan
+              // afwijken van wat de spiegel schrijft.
+              .select('*')
+              .in('invoice_id', chunk)
+              .order('id', { ascending: true })
+              .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
+        )
+      } catch (e) {
+        eerdereErr = { message: e instanceof Error ? e.message : 'earlier creditnota lines unreadable' }
+      }
       if (eerdereErr) {
         // Fail closed. Dit is de enige lezing die weet hoeveel er al terug is, en zonder haar zou
         // de controle stilletjes terugvallen op "er is nog niets gecrediteerd" — precies de fout

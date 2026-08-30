@@ -22,6 +22,8 @@ import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { getSessionUser } from '@/lib/session-user'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+// [IN-CHUNK] Gechunkt en gepagineerd — zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
 import { toStoragePath, pathBelongsToOwner } from '@/lib/storage-path'
 import {
@@ -108,21 +110,42 @@ export default async function VragenPage() {
   const accountantId: string | null = link?.accountant_id ?? null
   const pipeline = createPipelineClient()
 
-  const [{ data: docs }, { data: invData }, { data: accProfile }] = await Promise.all([
-    docIds.length
-      ? supabase.from('documents').select('id, file_name, file_url, trashed').in('id', docIds)
-      : Promise.resolve({ data: [] as Array<{ id: string; file_name: string | null; file_url: string | null; trashed: boolean | null }> }),
-    invIds.length
-      ? supabase.from('invoices').select('id, invoice_number, client_name, total_inc_btw, invoice_date').in('id', invIds)
-      : Promise.resolve({ data: [] as VraagInvoiceRow[] }),
+  // [NO-SILENT-EMPTY] Deze twee lezingen pakten alleen `data` uit, en het gevolg stond niet in de
+  // lijst maar IN elke regel ervan: buildOpenVragen zet `documentMissing: true` zodra een id niet
+  // in de lezing zit. Mislukte de lezing, dan kreeg de ondernemer dus zijn vragen te zien met bij
+  // stuk voor stuk "dit bestand is er niet" — over bestanden die er gewoon zijn. Hij gaat ze dan
+  // opnieuw uploaden, en de boekhouder krijgt alles dubbel.
+  //
+  // [IN-CHUNK] En gechunkt: docIds/invIds groeien met het aantal openstaande vragen, en een kale
+  // `.in()` is voorbij een paar honderd id's precies de manier waarop deze lezing mislukt.
+  const [docs, invRows, { data: accProfile }] = await Promise.all([
+    fetchAllRowsForIds<{ id: string; file_name: string | null; file_url: string | null; trashed: boolean | null }, string>(
+      docIds,
+      (chunk, from, to) =>
+        supabase.from('documents').select('id, file_name, file_url, trashed')
+          .in('id', chunk).order('id', { ascending: true }).range(from, to),
+    ).catch((e: unknown) => {
+      console.error('[VRAGEN] documenten bij de vragen lezen mislukt', { userId: user.id, e })
+      return null
+    }),
+    fetchAllRowsForIds<VraagInvoiceRow, string>(
+      invIds,
+      (chunk, from, to) =>
+        supabase.from('invoices').select('id, invoice_number, client_name, total_inc_btw, invoice_date')
+          .in('id', chunk).order('id', { ascending: true }).range(from, to),
+    ).catch((e: unknown) => {
+      console.error('[VRAGEN] facturen bij de vragen lezen mislukt', { userId: user.id, e })
+      return null
+    }),
     accountantId
       ? pipeline.from('profiles').select('full_name, company_name').eq('id', accountantId).maybeSingle()
       : Promise.resolve({ data: null }),
   ])
 
-  const docRows = (docs ?? []) as Array<{
-    id: string; file_name: string | null; file_url: string | null; trashed: boolean | null
-  }>
+  // null = de lezing mislukte. Dat telt mee in loadFailed, want een scherm dat elk bestand als
+  // verdwenen aanwijst is erger dan een scherm dat zegt dat het even niet kon lezen.
+  if (docs === null || invRows === null) loadFailed = true
+  const docRows = docs ?? []
 
   const documentVragen = buildOpenVragen(statusRows, docRows)
 
@@ -141,7 +164,7 @@ export default async function VragenPage() {
   // Een mislukte lezing van deze helft is óók een reden om niet 'geen vragen' te zeggen.
   if (invStatusErr) loadFailed = true
 
-  const invoiceVragen = buildOpenInvoiceVragen(invStatusRows, (invData ?? []) as VraagInvoiceRow[])
+  const invoiceVragen = buildOpenInvoiceVragen(invStatusRows, invRows ?? [])
 
   // Samengevoegd en opnieuw op ouderdom gesorteerd: voor de klant is dit één lijst "wat wil mijn
   // boekhouder van mij", niet twee lijstjes per tabel waar de vraag toevallig in staat.

@@ -92,7 +92,10 @@ import { csvCell } from "./csv-safe";
 import { formatEuroNL } from "./format-nl";
 import { buildTurnoverClosing, type TurnoverClosing } from "./turnover-closing";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
-import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult } from "./triangle";
+import { reconcileTriangle, bankNetByDay, buildCardReconciliationCsv, type TriangleResult, type StatedCommissionRow } from "./triangle";
+// [COM-IN-DE-REGEL] The commission the bank line states outright — a second source for the same
+// cost, and the only one for a shop that has never uploaded a terminal settlement.
+import { statedCommission } from "./pos-commission";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "./cash-live";
 import { buildKasboek, openingBalanceForQuarter, kasboekToMatrix, removedInQuarter, type KasEntry, type KasTurnoverDay, type RemovedKasEntry, type Quarter as KasQuarter } from "./kasboek";
@@ -204,6 +207,12 @@ export interface ClosingPackageSummary {
   missingEvidence: string[];
   bankStatementIncluded: boolean;
   warnings: ClosingPackageWarning[];
+  // [COM-IN-DE-REGEL] The acquirer commission this quarter's bank lines stated outright, or null
+  // when they stated none. Carried on the SUMMARY (not only in the ZIP) because the quarter-close
+  // cron reads this shape, and that cron is the one channel that reaches an owner who never opens
+  // the app — which is most of them. A cost the app found and booked, that its owner learns about
+  // only by visiting a screen, is work nobody will know happened.
+  cardStatedCommission?: StatedCommissionRow | null;
   generatedAt: string;               // ISO
 }
 
@@ -611,6 +620,8 @@ interface AssembleInput {
    *  the acquirer commission and the days that don't tie out. null for a non-retail owner
    *  or when no terminal settlement / card payout exists for the quarter. */
   cardReconciliation?: TriangleResult | null;
+  /** [COM-IN-DE-REGEL] The commission the bank stated itself, for the accountant's card sheet. */
+  cardStatedCommission?: StatedCommissionRow | null;
   /** [AANGIFTE] The CONCEPT BTW-aangifte for the quarter — the SAME figures the owner
    *  sees on the app's aangifte screen (computed via the one reconciliation engine), so
    *  the accountant opens it next to the evidence in this ZIP. null when there is no
@@ -794,7 +805,7 @@ export function buildLeesmij(args: {
 }
 
 export async function assembleClosingPackageZip(input: AssembleInput): Promise<ClosingPackageResult> {
-  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx, bankHandover } = input;
+  const { year, quarter, clientName, outgoing, incoming, pdfByInvoice, bankFiles, kilometerFiles, sharedFiles, paymentDates, hasBankData, turnoverClosing, cardReconciliation, cardStatedCommission, conceptAangifte, icp: icpForZip, euPurchases: euPurchasesForZip, kasboekXlsx, bankHandover } = input;
   // [SLUIS] Absent map = no e-facturen to add. Never a silent skip of a map that WAS handed over.
   const xmlByInvoice = input.xmlByInvoice ?? new Map<string, PackageFile>();
   const warnings = [...input.warnings];
@@ -985,7 +996,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   // terminal afrekening vs the net bank payout, with the commission (BTW-vrij) and the days
   // that don't reconcile flagged. This is the reconciliation nothing else in the ZIP shows.
   if (cardReconciliation && cardReconciliation.days.length > 0) {
-    zip.file("kaart-reconciliatie.csv", "﻿" + buildCardReconciliationCsv(quarterLabel, cardReconciliation));
+    zip.file("kaart-reconciliatie.csv", "﻿" + buildCardReconciliationCsv(quarterLabel, cardReconciliation, cardStatedCommission));
     if (cardReconciliation.grossMismatchDays > 0) {
       warnings.push({
         code: "card_gross_mismatch",
@@ -1336,20 +1347,40 @@ async function sharedDocsForQuarter(
   // [NO-SILENT-EMPTY] Same rule as datelessVerifiedInvoices above. This read decides BOTH what goes
   // into the package and what the package warns about, so a dropped error shipped an accountant a
   // quarter with its shared documents missing and nothing saying they were ever expected.
-  const { data, error } = await supabase
-    .from("documents")
-    .select("file_url, file_name, doc_type, invoice_id, period")
-    .eq("user_id", ownerId)
-    .eq("shared", true)
-    .eq("trashed", false)
-    .is("invoice_id", null);
-  if (error) {
-    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", { ownerId, error: error.message });
-    return { paths: [], outsideCount: 0, checked: false };
-  }
-  const rows = (data ?? []) as Array<{
+  //
+  // [GEEN-STILLE-KAP] And the same is true of a read that is merely TRUNCATED, which is why this
+  // one pages. The query carries no date filter — it cannot: `outsideCount` exists precisely to
+  // count the shared documents that belong to ANOTHER quarter, so the full set has to be read. That
+  // makes it the one read here that grows without bound, and an owner who scans receipts daily
+  // passes a thousand shared documents inside a few years.
+  //
+  // Past that point PostgREST returns 1000 rows and NO error, so both halves of the safety net
+  // fail together and in the same direction: documents belonging to this quarter drop out of the
+  // accountant's ZIP, and `outsideCount` — the warning that exists to catch exactly that — is
+  // short by the same rows. fetchAllRows pages, and throws rather than shortening.
+  let rows: Array<{
     file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
   }>;
+  try {
+    rows = await fetchAllRows<{
+      file_url: string | null; file_name: string | null; doc_type: string | null; period: string | null;
+    }>((from, to) =>
+      supabase
+        .from("documents")
+        .select("file_url, file_name, doc_type, invoice_id, period")
+        .eq("user_id", ownerId)
+        .eq("shared", true)
+        .eq("trashed", false)
+        .is("invoice_id", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch (e) {
+    console.error("[NO-SILENT-EMPTY] shared-document read failed — the package says so", {
+      ownerId, error: e instanceof Error ? e.message : String(e),
+    });
+    return { paths: [], outsideCount: 0, checked: false };
+  }
   const paths: Array<{ path: string; name: string }> = [];
   let outsideCount = 0;
   for (const d of rows) {
@@ -1665,6 +1696,32 @@ export async function summarizeClosingPackage(args: {
       .order("id", { ascending: true })
       .range(from, to),
   ).catch(() => [] as { id: string; amount: number | null }[]);
+  // [COM-IN-DE-REGEL] The commission the bank stated on this quarter's card payouts. In-quarter by
+  // booking date — the same clip the result engine and the ZIP use, so all three quote one number.
+  // Soft: this is a finding, never a gate, so a failed read must not cost the owner their quarter
+  // notification. It degrades to "nothing stated", which is the same as most quarters honestly are.
+  const posForCommission = await fetchAllRows<{ description: string | null; amount: number | null }>((from, to) =>
+    supabase
+      .from("bank_transactions")
+      .select("description, amount")
+      .eq("user_id", ownerId)
+      .eq("category", "pos_income")
+      .gte("date", start)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch(() => [] as { description: string | null; amount: number | null }[]);
+  const statedForQuarter = statedCommission(posForCommission);
+  // Mirrors the engine's booking guard (result-range-assemble.ts): with no terminal settlement in
+  // the quarter, Leg B booked nothing, so the stated amount IS what landed in kosten.
+  const eftInQuarter = await supabase
+    .from("eft_settlements").select("id").eq("user_id", ownerId)
+    .gte("settlement_date", start).lte("settlement_date", end).limit(1);
+  const cardStatedCommission: StatedCommissionRow | null =
+    statedForQuarter.lines > 0 || statedForQuarter.unverified > 0
+      ? { ...statedForQuarter, booked: (eftInQuarter.data ?? []).length === 0 && statedForQuarter.total > 0 }
+      : null;
+
   const unresolvedBankCount = unresolvedBank.length;
   const unresolvedBankTotal =
     round2(unresolvedBank.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0));
@@ -1763,6 +1820,7 @@ export async function summarizeClosingPackage(args: {
     missingEvidence: missingPdf.slice(0, 50),
     bankStatementIncluded,
     warnings,
+    cardStatedCommission,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -2335,6 +2393,7 @@ export async function buildClosingPackageZip(args: {
 
   let turnoverClosing: TurnoverClosing | null = null;
   let cardReconciliation: TriangleResult | null = null;
+  let cardStatedCommission: StatedCommissionRow | null = null;
   if (turnover.length > 0) {
     // pos_income lines over the quarter ± a settlement-lag buffer; the DAT date (parsed
     // inside buildTurnoverClosing) keys each settlement to its takings day.
@@ -2406,6 +2465,22 @@ export async function buildClosingPackageZip(args: {
     const pinLedgerByDay = new Map<string, number>();
     for (const r of (pinLedgerRows ?? [])) if (r.ledger_date) pinLedgerByDay.set(r.ledger_date, (Number(r.received) || 0) - (Number(r.spent) || 0));
     const tri = reconcileTriangle({ turnover, eftSettlements, bankNetByDay: netByDay, pinLedgerByDay });
+    // [COM-IN-DE-REGEL] IN-QUARTER payouts only, by booking date — the same clip the result engine
+    // uses, so the ZIP and the P&L quote one number. The ±5-day fetch buffer exists to complete a
+    // boundary day's triangle, never to move a neighbouring quarter's commission into this sheet.
+    const statedInQuarter = statedCommission(
+      posData.filter((p) => p.date != null && p.date >= start && p.date <= end)
+        .map((p) => ({ description: p.description, amount: p.amount })),
+    );
+    if (statedInQuarter.lines > 0 || statedInQuarter.unverified > 0) {
+      cardStatedCommission = {
+        ...statedInQuarter,
+        // Mirrors the engine's guard exactly (result-range-assemble.ts): with no terminal
+        // settlement in the window, Leg B booked nothing, so there is provably nothing to
+        // double-count and the stated amount IS in the figures.
+        booked: eftSettlements.length === 0 && statedInQuarter.total > 0,
+      };
+    }
     // Only attach when there is a card figure to show (a terminal settlement or a payout).
     if (eftSettlements.length > 0 || netByDay.size > 0) cardReconciliation = tri;
   }
@@ -2829,11 +2904,22 @@ export async function buildClosingPackageZip(args: {
   // "we did not look", which is not the same as "covered" and must never render as one.
   let coverage: ReturnType<typeof coverageOfPeriod> = { accounts: [], complete: false, checked: false };
   try {
-    const { data: periodRows } = await supabase
-      .from("bank_statement_periods")
-      .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
-      .eq("user_id", ownerId)
-      .order("period_start", { ascending: true });
+    // [GEEN-STILLE-KAP] Every statement period this owner ever had — no date filter, because
+    // continuity is a question about the WHOLE run of statements, not about one quarter. Paged for
+    // the same reason as the shared documents: a gap that only exists past row 1000 would read as
+    // "no gap", which is the answer that closes a quarter it should have stopped.
+    const periodRows = await fetchAllRows<{
+      document_id: string; iban: string | null; period_start: string | null; period_end: string | null;
+      opening_balance: number | null; closing_balance: number | null;
+    }>((from, to) =>
+      supabase
+        .from("bank_statement_periods")
+        .select("document_id, iban, period_start, period_end, opening_balance, closing_balance")
+        .eq("user_id", ownerId)
+        .order("period_start", { ascending: true })
+        .order("document_id", { ascending: true })
+        .range(from, to),
+    );
     const periods: ContinuityStatementPeriod[] = ((periodRows ?? []) as unknown as Array<{
       document_id: string; iban: string | null; period_start: string | null; period_end: string | null;
       opening_balance: number | null; closing_balance: number | null;
@@ -3014,6 +3100,7 @@ export async function buildClosingPackageZip(args: {
     hasBankData,
     turnoverClosing,
     cardReconciliation,
+    cardStatedCommission,
     conceptAangifte,
     icp,
     euPurchases,

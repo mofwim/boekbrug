@@ -17,6 +17,8 @@
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { chunkIds, fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
@@ -156,16 +158,31 @@ export async function POST(request: NextRequest) {
       if (!gevraagd.ok) {
         return NextResponse.json({ error: UREN_REFUSAL_NL[gevraagd.code], code: gevraagd.code }, { status: 400 })
       }
-      const { data: uren, error: urenErr } = await pipeline
-        .from('time_entries')
-        .select('id, client_id, worked_on, description, hours, hourly_rate, invoice_id')
-        .in('id', gevraagd.ids)
-        .eq('user_id', ownerId)
-        .is('invoice_id', null)
+      // [IN-CHUNK] Gechunkt. Een kwartaal aan uren op één factuur is geen randgeval maar de
+      // gewone reden om deze knop te gebruiken, en voorbij een paar honderd id's liep de lijst de
+      // URL over. De 503 hieronder ving dat al netjes op — dit haalt de aanleiding weg.
+      let uren: Array<{ id: string; client_id: string | null; worked_on: string | null; description: string | null; hours: number | null; hourly_rate: number | null; invoice_id: string | null }> | null = null
+      let urenErr: { message: string } | null = null
+      try {
+        uren = await fetchAllRowsForIds(gevraagd.ids, (chunk, from, to) =>
+          pipeline
+            .from('time_entries')
+            .select('id, client_id, worked_on, description, hours, hourly_rate, invoice_id')
+            .in('id', chunk)
+            .eq('user_id', ownerId)
+            .is('invoice_id', null)
+            .order('id', { ascending: true })
+            .range(from, to),
+        )
+      } catch (e) {
+        urenErr = { message: e instanceof Error ? e.message : 'uren read failed' }
+      }
 
-      // [NO-SILENT-EMPTY] supabase-js geeft bij een fout `{ data: null, error }` terug in plaats van
-      // te gooien. Zonder deze tak zou een onbereikbare database er hier uitzien als "geen uren" —
-      // en dat wordt dan een factuur zonder regels, of erger: een lege lijst die stil doorloopt.
+      // [NO-SILENT-EMPTY] Zonder deze tak zou een onbereikbare database er hier uitzien als "geen
+      // uren" — en dat wordt dan een factuur zonder regels, of erger: een lege lijst die stil
+      // doorloopt. De reden dat de tak nodig is, is sinds het chunken hierboven veranderd en niet
+      // verdwenen: fetchAllRowsForIds GOOIT waar supabase-js een `{ data: null, error }` teruggaf,
+      // dus de fout komt nu uit de catch in plaats van uit de destructurering.
       if (urenErr) {
         console.error('[UREN] uren lezen mislukt — geen concept gemaakt', { urenErr })
         return NextResponse.json(
@@ -466,17 +483,27 @@ export async function POST(request: NextRequest) {
     // geen uren onder zitten is erger dan geen factuur: de uren blijven in de lijst staan en worden
     // straks nóg een keer gefactureerd, en de klant is degene die dat merkt.
     if (urenIds.length > 0) {
-      const { data: vastgezet, error: urenLinkErr } = await pipeline
-        .from('time_entries')
-        .update({ invoice_id: factuur.id, updated_at: new Date().toISOString() })
-        .in('id', urenIds)
-        .eq('user_id', ownerId)
-        .is('invoice_id', null)
-        .select('id')
+      // [IN-CHUNK] Per brok. Deze UPDATE is wat een uur AAN de factuur vastzet; sneuvelde ze in
+      // haar geheel op een 414, dan bestond de factuur wel en waren de uren nog vrij — dus
+      // factureerbaar voor een tweede keer. verifyStamped hieronder ving dat al op en draaide de
+      // hele factuur terug, wat de juiste uitkomst is; chunken maakt dat de zeldzame uitkomst.
+      const vastgezet: Array<{ id: string }> = []
+      let urenLinkErr: { message: string } | null = null
+      for (const chunk of chunkIds(urenIds)) {
+        const { data: brok, error: brokErr } = await pipeline
+          .from('time_entries')
+          .update({ invoice_id: factuur.id, updated_at: new Date().toISOString() })
+          .in('id', chunk)
+          .eq('user_id', ownerId)
+          .is('invoice_id', null)
+          .select('id')
+        if (brokErr) { urenLinkErr = brokErr; break }
+        vastgezet.push(...((brok ?? []) as Array<{ id: string }>))
+      }
 
       const uitkomst = urenLinkErr
         ? { ok: false as const, missing: urenIds }
-        : verifyStamped(urenIds, ((vastgezet ?? []) as Array<{ id: string }>).map((r) => r.id))
+        : verifyStamped(urenIds, vastgezet.map((r) => r.id))
 
       if (!uitkomst.ok) {
         // Eerst de uren die het WEL haalden weer losmaken, dan de regels, dan de factuur. In deze

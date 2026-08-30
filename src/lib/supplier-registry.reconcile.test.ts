@@ -107,11 +107,11 @@ async function run() {
       seedRow({ id: 'kvkrow', name: 'Hocaoglu', name_key: 'hocaoglu', kvk_number: '12345678' }),
     ])
     const res = await resolveSupplierForImport(client, U, {
-      name: 'Silifke Groothandel', iban: 'NL37BNGH0123456789', kvk: '12345678',
+      name: 'Silifke Groothandel', iban: 'NL66BNGH0123456789', kvk: '12345678',
     })
     check('Bug2: IBAN+KVK invoice resolves to the existing KVK-only row', res?.id === 'kvkrow')
     check('Bug2: the IBAN got attached to that row (future IBAN-only invoices resolve here)',
-      client._rows.find((r: Row) => r.id === 'kvkrow')?.iban === 'NL37BNGH0123456789')
+      client._rows.find((r: Row) => r.id === 'kvkrow')?.iban === 'NL66BNGH0123456789')
     check('Bug2: no duplicate supplier was created', client._rows.length === 1)
   }
 
@@ -119,7 +119,7 @@ async function run() {
   // company (same name_key) must adopt that row and tag it with the KVK — not create a duplicate. ─
   {
     const client = makeClient([
-      seedRow({ id: 'ibanrow', name: 'Atapack B.V.', name_key: 'atapack', iban: 'NL11RABO0111111111' }),
+      seedRow({ id: 'ibanrow', name: 'Atapack B.V.', name_key: 'atapack', iban: 'NL28RABO0111111111' }),
     ])
     const res = await resolveSupplierForImport(client, U, {
       name: 'Atapack', kvk: '87654321',
@@ -155,13 +155,13 @@ async function run() {
   // kvk and returns the existing row WITHOUT clobbering its IBAN. ────────────────────────────────
   {
     const client = makeClient([
-      seedRow({ id: 'kvkiban', name: 'Bal', name_key: 'bal', kvk_number: '44444444', iban: 'NL22INGB0999999999' }),
+      seedRow({ id: 'kvkiban', name: 'Bal', name_key: 'bal', kvk_number: '44444444', iban: 'NL37INGB0999999999' }),
     ])
     const res = await resolveSupplierForImport(client, U, {
-      name: 'M.H. Bal Groothandel', iban: 'NL99ABNA0888888888', kvk: '44444444',
+      name: 'M.H. Bal Groothandel', iban: 'NL69ABNA0888888888', kvk: '44444444',
     })
     check('23505 catch: IBAN+KVK invoice resolves to the existing KVK row', res?.id === 'kvkiban')
-    check('23505 catch: existing IBAN was NOT overwritten', client._rows.find((r: Row) => r.id === 'kvkiban')?.iban === 'NL22INGB0999999999')
+    check('23505 catch: existing IBAN was NOT overwritten', client._rows.find((r: Row) => r.id === 'kvkiban')?.iban === 'NL37INGB0999999999')
     check('23505 catch: no duplicate created', client._rows.length === 1)
   }
 

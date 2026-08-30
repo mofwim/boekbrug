@@ -1,6 +1,6 @@
 // [SUPPLIER-REGISTRY] Pure node test — run: npx tsx src/lib/supplier-registry.test.ts
 // Locks the pure identity helpers that decide when two vendor spellings are the SAME supplier.
-import { supplierNameKey, normalizeIban, isReliableSupplierName, normalizeKvk } from "./supplier-registry";
+import { supplierNameKey, normalizeIban, isReliableSupplierName, normalizeKvk, identityIban } from './supplier-registry';
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -44,6 +44,40 @@ check("7 digits → null (not a KVK)", normalizeKvk("1234567") === null);
 check("9 digits → null", normalizeKvk("123456789") === null);
 check("null → null", normalizeKvk(null) === null);
 check("letters only → null", normalizeKvk("abcdefgh") === null);
+
+
+// ── [IBAN-IDENTITEIT] A misread account number is not a second company ───────────────────────
+//
+// Live data: 14 of 55 stored supplier IBANs fail this app's own isValidIban, and one supplier
+// ("Sumer Food B.V.") had SEVEN rows with seven IBANs — six of them OCR variants of the seventh.
+// Creation is keyed on the IBAN, so every misread digit manufactured a new supplier and split that
+// company's history across seven islands.
+console.log("\n— identityIban: only a real IBAN may decide who a supplier is —");
+{
+  // The one that validates, from the same supplier's seven rows.
+  check("a valid IBAN is an identity", identityIban("NL78RABO0364345977") === "NL78RABO0364345977");
+  check("spacing and case do not matter", identityIban("nl78 rabo 0364 3459 77") === "NL78RABO0364345977");
+
+  // The six that did not, verbatim from the live suppliers table.
+  for (const junk of [
+    "NL0036434597700", "NL3603643459977", "NL3663043450977",
+    "NL36SNSB0363434977", "NL36SUME0364345977", "NL36SUMER0364345977",
+  ]) {
+    check(`the OCR variant ${junk} keys nothing`, identityIban(junk) === null);
+  }
+
+  // Migro-Hal has two rows whose IBANs differ by one transposition. Exactly one is real, and the
+  // guard has to be the thing that knows which — I had them the wrong way round until it said so.
+  check("NL53INGB0676775535 is the real one and keys", identityIban("NL53INGB0676775535") === "NL53INGB0676775535");
+  check("NL53INGB0676775553 is the misread and keys nothing", identityIban("NL53INGB0676775553") === null);
+
+  check("absent stays absent", identityIban(null) === null && identityIban("") === null);
+  check("junk stays junk", identityIban("ONBEKEND") === null && identityIban("zie factuur") === null);
+
+  // The guard is narrower than normalizeIban ON PURPOSE: the printed string is still worth
+  // canonicalising for display, it just may not decide identity.
+  check("normalizeIban still accepts the shape it always did", normalizeIban("NL36SUME0364345977") === "NL36SUME0364345977");
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

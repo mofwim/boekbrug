@@ -13,12 +13,15 @@ import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { statusChip } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { paymentBehaviourPanel } from '@/lib/client-payment-behaviour-copy'
+import type { PaymentBehaviour } from '@/lib/client-payment-behaviour'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
 export interface KlantInvoice {
   id: string; invoice_number: string | null; invoice_date: string | null
   due_date: string | null; status: string | null; total_inc_btw: number | null
+  payment_date: string | null
 }
 interface Client {
   id: string; name: string; email: string | null; kvk_number: string | null
@@ -31,8 +34,9 @@ interface Client {
 // verificatiewachtrij "Te verifiëren" zegt. Eén klant zag dus drie andere woorden voor dezelfde
 // drie statussen, afhankelijk van het scherm. Nu uit src/lib/invoice-status.ts.
 
-export default function KlantDetailClient({ client, invoices, totals }: {
+export default function KlantDetailClient({ client, invoices, totals, behaviour }: {
   client: Client; invoices: KlantInvoice[]; totals: { billed: number; open: number; count: number }
+  behaviour: PaymentBehaviour
 }) {
   const taal = useLocale()
   const t = translator(taal)
@@ -55,6 +59,9 @@ export default function KlantDetailClient({ client, invoices, totals }: {
     },
     [client.name],
   )
+  // [TAAL] The component holds no language of its own: the copy module turns the measured facts
+  // into sentences, and the text direction travels with them on the same object.
+  const paneel = paymentBehaviourPanel(behaviour, taal)
   const [notes, setNotes] = useState(client.notes ?? '')
   const [savedNote, setSavedNote] = useState<string>(client.notes ?? '')
   const [savingNote, setSavingNote] = useState(false)
@@ -105,6 +112,24 @@ export default function KlantDetailClient({ client, invoices, totals }: {
           <Row k="KVK" v={client.kvk_number || '—'} />
           <Row k="BTW" v={client.btw_number || '—'} />
           <Row k="IBAN" v={client.iban || '—'} />
+        </Card>
+
+        {/* [BETAALGEDRAG] What this customer's own invoices say about how they pay. Deliberately
+            ABOVE the notes box: that box used to ask the owner to type this from memory, for a
+            customer whose every invoice date, due date and bank-matched payment date the app holds. */}
+        <Card title={paneel.heading}>
+          <div dir={paneel.dir} style={{ textAlign: 'start' }}>
+            <div style={{ fontSize: 14, color: M3.onSurface, lineHeight: 1.5 }}>{paneel.pace}</div>
+            {paneel.basis && (
+              <div style={{ marginTop: 4, fontSize: 12.5, color: M3.neutral }}>{paneel.basis}</div>
+            )}
+            {paneel.overdue && (
+              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: M3.warning }}>{paneel.overdue}</div>
+            )}
+            {paneel.caveats.map((zin) => (
+              <div key={zin} style={{ marginTop: 6, fontSize: 12, color: M3.neutral }}>{zin}</div>
+            ))}
+          </div>
         </Card>
 
         {/* Notes */}

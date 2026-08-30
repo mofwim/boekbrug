@@ -518,6 +518,15 @@ export async function GET() {
       .eq("user_id", user.id)
       .eq("status", "matched")
       .order("date", { ascending: false })
+      // [PAGE-KEY] date is NIET uniek — een rekening heeft er tientallen op één dag. Een
+      // .range()-grens is alleen stabiel over een TOTALE ordening; onder gelijke datums geeft
+      // Postgres geen gedefinieerde volgorde, dus een rij kan twee keer langskomen of overgeslagen
+      // worden. De toelichting hierboven redeneert over het ~1000-plafond ("de oudste vallen af")
+      // en dekt daarmee de andere grens niet: hier verdwijnt een rij niet aan het EIND maar op een
+      // paginagrens. En dat is exact wat deze paginering moest voorkomen — de tekst zegt het zelf:
+      // "een geboekte betaling kon uit Gekoppeld verdwijnen en onbereikbaar worden om terug te
+      // draaien". Een dubbel getoonde regel is de andere kant: dezelfde betaling twee keer.
+      .order("id", { ascending: true })
       .range(from, to),
   );
   const matchedTx = (matchedRows ?? []) as BankTransactionDbRow[];

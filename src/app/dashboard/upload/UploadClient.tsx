@@ -39,6 +39,10 @@ import { M3, COLUMN } from '@/lib/design/tokens'
 import { describeUploadFailure } from '@/lib/upload-failure'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [PAGINA-VOLGORDE] The order of the pages of one paper invoice, decided in one place and shown
+// in one tray — the same on Inkomend. See src/lib/page-order.ts for why a plain sort is wrong.
+import { usePageTray } from '@/lib/use-page-tray'
+import PageTray from '@/components/intake/PageTray'
 import type { MessageKey } from '@/lib/i18n/messages'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -208,7 +212,9 @@ export default function UploadClient() {
 
   // [MULTI-PAGE] Collect the photos of ONE paper invoice, combine → one PDF → one invoice.
   const [mpMode, setMpMode] = useState(false)
-  const [mpPages, setMpPages] = useState<File[]>([])
+  // [PAGINA-VOLGORDE] The tray — pages, thumbnails, order and what the last add did — is one
+  // shared piece of state, identical to the one on /dashboard/incoming.
+  const tray = usePageTray(MAX_PAGES)
   const [combining, setCombining] = useState(false)
   const [mpError, setMpError] = useState<string | null>(null)
   const mpFileRef = useRef<HTMLInputElement>(null)
@@ -336,28 +342,22 @@ export default function UploadClient() {
     if (!fl || fl.length === 0) return
     const imgs = Array.from(fl).filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp|tiff?)$/i.test(f.name))
     if (imgs.length === 0) { setMpError(t('up.kiesFotos')); return }
-    // [MP-PURE-UPDATER] Never set state from inside a state updater: a reducer must be pure, and
-    // React may run it twice (StrictMode / concurrent rendering), which fired the cap warning
-    // twice for one pick. Compute the capped list first, then write both pieces of state once.
-    const merged = [...mpPages, ...imgs]
-    const capped = merged.length > MAX_PAGES
-    setMpPages(capped ? merged.slice(0, MAX_PAGES) : merged)
-    setMpError(capped ? t('up.maxPaginas', { n: MAX_PAGES }) : null)
-  }, [mpPages, t])
-
-  const removeMpPage = useCallback((idx: number) => {
-    setMpPages((prev) => prev.filter((_, i) => i !== idx))
-  }, [])
+    // [PAGINA-VOLGORDE] Order, re-picks and overflow are one decision, taken in page-order.ts and
+    // REPORTED by the tray — which also ends the [MP-PURE-UPDATER] hazard this handler carried:
+    // nothing here is computed inside a state updater any more.
+    tray.add(imgs)
+    setMpError(null)
+  }, [tray, t])
 
   // Combine the collected pages into ONE PDF in the browser, then hand that single PDF to the
   // normal upload queue → /api/intake extracts ONE invoice from all pages (the multi-page path).
   const combineAndUpload = useCallback(async () => {
-    if (mpPages.length === 0 || combining) return
+    if (tray.pages.length === 0 || combining) return
     setCombining(true); setMpError(null)
     try {
-      const pdf = await combineImagesToPdf(mpPages)
+      const pdf = await combineImagesToPdf(tray.files)
       addFiles([pdf])
-      setMpMode(false); setMpPages([])
+      setMpMode(false); tray.reset()
     } catch (e) {
       // combineImagesToPdf names the failing page ("Pagina 2 kon niet…") — surface it as-is so the
       // owner knows which photo to redo; keep the other pages in the tray for a quick retry.
@@ -367,7 +367,7 @@ export default function UploadClient() {
     } finally {
       setCombining(false)
     }
-  }, [mpPages, combining, addFiles, t])
+  }, [tray, combining, addFiles, t])
 
   // Re-try a file that failed (a transient AI error or a rate-limit that has since cleared).
   const retry = useCallback((item: Item) => {
@@ -587,7 +587,7 @@ export default function UploadClient() {
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <p style={{ fontSize: 13.5, fontWeight: 700, color: M3.onSurface, margin: 0 }}>{t('up.eenFactuur')}</p>
-                <button onClick={() => { setMpMode(false); setMpPages([]); setMpError(null) }}
+                <button onClick={() => { setMpMode(false); tray.reset(); setMpError(null) }}
                   style={{ background: 'transparent', border: 'none', color: M3.neutral, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: FONT }}>
                   {t('lijst.annuleren')}
                 </button>
@@ -612,24 +612,22 @@ export default function UploadClient() {
                 </button>
               </div>
 
-              {mpPages.length > 0 && (
-                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {mpPages.map((f, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: M3.onSurface }}>
-                      <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, background: M3.primaryContainer, color: '#041E49', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{i + 1}</span>
-                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                      <button onClick={() => removeMpPage(i)} aria-label={t('up.paginaVerwijderen', { n: i + 1 })}
-                        style={{ flexShrink: 0, background: 'transparent', border: 'none', color: M3.error, fontSize: 16, lineHeight: 1, cursor: 'pointer', fontFamily: FONT }}>×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* [PAGINA-VOLGORDE] The same tray as Inkomend — thumbnails, and an order the owner
+                  can correct. Both screens bind one paper invoice; one control for both. */}
+              <PageTray
+                pages={tray.pages}
+                notice={tray.notice}
+                accent={M3.primary}
+                disabled={combining}
+                onMove={tray.move}
+                onRemove={tray.remove}
+              />
 
               {mpError && <p style={{ fontSize: 12, color: M3.error, margin: '8px 0 0', lineHeight: 1.4 }}>{mpError}</p>}
 
-              <button onClick={combineAndUpload} disabled={combining || mpPages.length === 0}
-                style={{ marginTop: 12, width: '100%', background: combining || mpPages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff', border: 'none', borderRadius: 12, padding: '12px 18px', fontSize: 14, fontWeight: 700, cursor: combining || mpPages.length === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
-                {combining ? t('up.bezigSamenvoegen') : mpPages.length > 0 ? (mpPages.length === 1 ? t('up.combineerEen') : t('up.combineer', { n: mpPages.length })) : t('up.voegEerstToe')}
+              <button onClick={combineAndUpload} disabled={combining || tray.pages.length === 0}
+                style={{ marginTop: 12, width: '100%', background: combining || tray.pages.length === 0 ? '#C7C7CC' : M3.primary, color: '#fff', border: 'none', borderRadius: 12, padding: '12px 18px', fontSize: 14, fontWeight: 700, cursor: combining || tray.pages.length === 0 ? 'default' : 'pointer', fontFamily: FONT }}>
+                {combining ? t('up.bezigSamenvoegen') : tray.pages.length > 0 ? (tray.pages.length === 1 ? t('up.combineerEen') : t('up.combineer', { n: tray.pages.length })) : t('up.voegEerstToe')}
               </button>
             </>
           )}

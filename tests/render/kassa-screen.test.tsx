@@ -342,3 +342,52 @@ test("[VOERTUIG] an empty garage says so, in Arabic too, without leaking a key",
   // They stay as they are in every language, exactly like btw.
   assert.match(ar, /APK/, "APK stays APK in Arabic");
 });
+
+// ── [DAG-UIT-DE-BANK] The hand-typed day offers what the bank already knows ───────────────────
+//
+// This panel takes its data as props, so the suggestion can be rendered without a session or a
+// database. Both branches are handed in on purpose: the offer, and its floor caveat — the caveat
+// is a conditional inside the panel, so an empty fixture would prove nothing about it.
+
+test("[DAG-UIT-DE-BANK] a day the bank describes gets an offer, and it is an offer", async () => {
+  const { default: HandmatigeDag } = await import("../../src/app/dashboard/dagomzet/HandmatigeDag");
+  const { amsterdamToday } = await import("../../src/lib/turnover-import");
+  const today = amsterdamToday();
+  // Real ING debit lines, re-dated so their DAT names today — the panel opens on today's date.
+  const dat = today.replace(/-/g, "");
+  const payouts = [
+    { date: today, amount: 928.02, description: `AFREK. BETAALAUTOMAAT MAES REFNR. F9Q3BH DAT. ${dat}/6123 AANT. 60 MREFNR. KFM` },
+    { date: today, amount: 318.87, description: `AFREK. BETAALAUTOMAAT VPAY REFNR. F9Q3BH DAT. ${dat}/6123 AANT. 19 MREFNR. KFM` },
+  ];
+  const html = renderToStaticMarkup(React.createElement(HandmatigeDag as never, { cardPayouts: payouts }));
+  assert.match(html, /1\.246,89/, "the bank's figure for the day is on the screen");
+  assert.match(html, /Overnemen/, "…as something the owner presses, never as a filled field");
+  // The offer is NOT the field. The Pin input must still be empty: only the owner knows the cash
+  // and the rate split, so a form that filled itself would look complete while being neither.
+  assert.match(html, /aria-label="Pin"[^>]*value=""/, "the Pin field stays empty until pressed");
+});
+
+test("[DAG-UIT-DE-BANK] a week-numbered credit payout makes the figure a stated floor", async () => {
+  const { default: HandmatigeDag } = await import("../../src/app/dashboard/dagomzet/HandmatigeDag");
+  const { amsterdamToday } = await import("../../src/lib/turnover-import");
+  const today = amsterdamToday();
+  const dat = today.replace(/-/g, "");
+  const payouts = [
+    { date: today, amount: 928.02, description: `AFREK. BETAALAUTOMAAT MAES REFNR. F9Q3BH DAT. ${dat}/6123 AANT. 60 MREFNR. KFM` },
+    // DAT. 202618 is a WEEK number: it belongs to no day, and its € 210,55 is excluded.
+    { date: today, amount: 206.78, description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377" },
+  ];
+  const html = renderToStaticMarkup(React.createElement(HandmatigeDag as never, { cardPayouts: payouts }));
+  assert.match(html, /928,02/, "only the day-dated line is in the figure");
+  assert.doesNotMatch(html, /1\.138,57/, "the week-numbered line is never added to a day");
+  assert.match(html, /ondergrens/, "and the panel says the figure is a floor");
+  assert.match(html, /210,55/, "naming what it left out");
+});
+
+test("[DAG-UIT-DE-BANK] a day the bank says nothing about offers nothing", async () => {
+  const { default: HandmatigeDag } = await import("../../src/app/dashboard/dagomzet/HandmatigeDag");
+  const html = renderToStaticMarkup(React.createElement(HandmatigeDag as never, { cardPayouts: [] }));
+  assert.ok(html.length > 0, "the form still renders");
+  assert.doesNotMatch(html, /Overnemen/, "no offer where there is nothing to offer");
+  assert.doesNotMatch(html, /ondergrens/);
+});

@@ -17,6 +17,8 @@
 // permission and the read below can be seconds stale.
 
 import { NextRequest, NextResponse } from "next/server";
+// [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import {
@@ -188,16 +190,30 @@ export async function GET(req: NextRequest) {
   const txIds = [...new Set(payments.map((p) => p.transaction_id).filter(Boolean))] as string[];
   const linkedByTx = new Map<string, Set<string>>();
   if (txIds.length > 0) {
-    const { data: siblings, error: siblingsErr } = await pipeline
-      .from("bank_tx_invoices")
-      .select("transaction_id, invoice_id")
-      .eq("user_id", user.id)
-      .in("transaction_id", txIds);
     // [MOVE-READ-HONEST] This read is what keeps an already-linked invoice OUT of the list. Losing
     // it silently offers targets the database will refuse (bank_tx_invoices_unique_pair), so the
     // owner picks, waits, and gets a refusal for a choice we should not have shown.
-    if (siblingsErr) return readFailed("existing links of this transaction", siblingsErr.message);
-    for (const s of (siblings ?? []) as { transaction_id: string; invoice_id: string }[]) {
+    //
+    // [IN-CHUNK] Gechunkt: bij genoeg betalingen was de kale `.in()` zelf de manier waarop deze
+    // lezing "stilletjes verloren" ging.
+    // transaction_id is nullable in the schema; the rows we asked for are keyed on it, so the
+    // filter below drops any that come back without one rather than asserting they cannot.
+    let siblings: Array<{ transaction_id: string | null; invoice_id: string }>;
+    try {
+      siblings = await fetchAllRowsForIds(txIds, (chunk, from, to) =>
+        pipeline
+          .from("bank_tx_invoices")
+          .select("transaction_id, invoice_id")
+          .eq("user_id", user.id)
+          .in("transaction_id", chunk)
+          .order("invoice_id", { ascending: true })
+          .range(from, to),
+      );
+    } catch (e) {
+      return readFailed("existing links of this transaction", e instanceof Error ? e.message : "read failed");
+    }
+    for (const s of siblings) {
+      if (!s.transaction_id) continue;
       const set = linkedByTx.get(s.transaction_id) ?? new Set<string>();
       set.add(s.invoice_id);
       linkedByTx.set(s.transaction_id, set);

@@ -4,6 +4,7 @@
 // Repository calls these; pages/components call repository.
 
 import type { QuarterRange } from './accountant.types'
+import { amsterdamYear, amsterdamMonth, amsterdamToday } from '@/lib/format-nl'
 
 // ─────────────────────────────────────────────────────────
 // [READINESS] The old computeClientStatus (klaar/bijna_klaar/wacht) was removed.
@@ -23,9 +24,12 @@ import type { QuarterRange } from './accountant.types'
  * Q1 = Jan–Mar, Q2 = Apr–Jun, Q3 = Jul–Sep, Q4 = Oct–Dec
  */
 export function getCurrentQuarter(): { year: number; quarter: number } {
+  // [TZ] Europe/Amsterdam, never the server's clock. This answers "which quarter are we in", and
+  // on a UTC server the first hour of 1 January still reads as the previous quarter of the
+  // previous year — the one moment of the year when the answer matters most.
   const now = new Date()
-  const month = now.getMonth() + 1  // 1-based
-  const year = now.getFullYear()
+  const month = amsterdamMonth(now)
+  const year = amsterdamYear(now)
   const quarter = Math.ceil(month / 3)
   return { year, quarter }
 }
@@ -106,11 +110,21 @@ export function getAangifteDeadline(year: number, quarter: number): string {
  * @example daysUntil('2026-07-31')  // on 2026-07-24 → 7
  */
 export function daysUntil(iso: string): number {
-  const [y, m, d] = iso.split('-').map(Number)
-  const target = new Date(y, m - 1, d)
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000)
+  // [TZ] "Today" is the OWNER's day, and the arithmetic is on calendar days rather than on two
+  // Date objects built in whatever zone the server happens to run in.
+  //
+  // This is the BTW-deadline countdown. On a UTC server, between midnight and 01:00/02:00
+  // Amsterdam, `today` was still yesterday — so the screen said "nog 3 dagen" on a deadline that
+  // was two days away. A day of false comfort in front of a date that carries a verzuimboete.
+  //
+  // Counting whole days out of Date.UTC keeps it exact across DST too: the old subtraction of two
+  // local midnights is 23 or 25 hours on the changeover weekends, and Math.round hid that rather
+  // than fixing it.
+  const dayIndex = (s: string): number => {
+    const [y, m, d] = s.split('-').map(Number)
+    return Math.floor(Date.UTC(y, m - 1, d) / 86_400_000)
+  }
+  return dayIndex(iso) - dayIndex(amsterdamToday())
 }
 
 /**

@@ -28,6 +28,8 @@ import { amsterdamToday } from '@/lib/turnover-import'
 // [KOR-FACTUUR] The same sentence the invoice screen shows beside its rate menu — one legal
 // explanation, shared, rather than two screens that can drift apart about the same scheme.
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
+// [DAG-UIT-DE-BANK] What the bank already says this day's card takings were.
+import { cardTakingsForDay, type CardPayoutLine } from '@/lib/day-card-takings'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -52,7 +54,8 @@ const EMPTY: Record<FieldKey, string> = {
 }
 
 export default function HandmatigeDag(
-  { korActive = false, onSaved }: { korActive?: boolean; onSaved?: () => void },
+  { korActive = false, cardPayouts = [], onSaved }:
+    { korActive?: boolean; cardPayouts?: CardPayoutLine[]; onSaved?: () => void },
 ) {
   const t = translator(useLocale())
   const [date, setDate] = useState(() => amsterdamToday())
@@ -60,6 +63,8 @@ export default function HandmatigeDag(
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
+  // [DAG-UIT-DE-BANK] Recomputed as the date changes. Pure and local — no request per keystroke.
+  const bankDay = cardTakingsForDay(cardPayouts, date)
 
   const amount = (key: FieldKey) => parseAmountNL(values[key])
   const revenueTotal = REVENUE_FIELDS.reduce((sum, f) => sum + amount(f.key), 0)
@@ -135,6 +140,31 @@ export default function HandmatigeDag(
       {PAID_FIELDS.map((f) => (
         <AmountRow key={f.key} label={t(f.labelKey)} value={values[f.key]} onChange={(v) => set(f.key, v)} />
       ))}
+
+      {/* [DAG-UIT-DE-BANK] The bank's own figure for this day's card takings — OFFERED, not filled.
+          Pressing it is the owner's act: the app knows the card side and cannot know the cash or
+          the rate split, so a form that filled itself would look complete while being neither. */}
+      {bankDay && (
+        <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 12, background: M3.surfaceVariant }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: FONT, fontSize: 13, color: M3.onSurfaceVariant }}>
+              {t('dzh.bank.suggestie', { bedrag: eur.format(bankDay.total), regels: bankDay.lines })}
+            </span>
+            <button
+              type="button"
+              onClick={() => set('pin', bankDay.total.toFixed(2).replace('.', ','))}
+              style={{ background: M3.primary, color: '#fff', border: 'none', borderRadius: 999, padding: '5px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: FONT }}
+            >
+              {t('dzh.bank.overnemen')}
+            </button>
+          </div>
+          {!bankDay.complete && (
+            <p style={{ margin: '6px 0 0', fontFamily: FONT, fontSize: 11.5, color: M3.onSurfaceVariant, lineHeight: 1.45 }}>
+              {t('dzh.bank.onvolledig', { bedrag: eur.format(bankDay.unplaced) })}
+            </p>
+          )}
+        </div>
+      )}
 
       <div
         style={{

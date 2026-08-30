@@ -22,6 +22,7 @@ import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { cardPanelVisible, cardStatsVisible } from '@/lib/card-panel'
 
 // [HEADER-SYSTEM] This screen previously shipped its own Inter font — the only
 // Inter surface in an otherwise Roboto app. It now uses the shared FONT token
@@ -104,6 +105,11 @@ interface TruthResponse {
     commissionBooked: number;
     acquirerFeeInvoices: number;
     eftSettlements: number;
+    // [COM-IN-DE-REGEL] The commission the BANK LINE states outright ("BRUTO … /COM …"). A second,
+    // independent source for the same cost: measured without any terminal file, and on an ING shop
+    // the ONLY source there is. Optional so an older /api/truth response still renders.
+    statedCommission?: { total: number; gross: number; lines: number; unverified: number };
+    statedCommissionBooked?: boolean;
   };
   // [HONESTY-PARITY] Why a figure may be incomplete — at parity with /api/result + /api/readiness.
   scheme: "factuur" | "kas";
@@ -313,6 +319,8 @@ export default function WaarheidClient() {
   }, [data, period, load, dialog, toast]);
 
   const r = data?.result;
+  // [COM-IN-DE-REGEL] The commission the bank line stated itself, when the response carries it.
+  const statedCom = data?.reconciliation?.statedCommission;
   const isQuarterLens = !!(data?.quarter && data?.year);
   const div = data?.filed?.divergence;
   // [BTW-CERTAINTY] How much weight the BTW amount may be given — see btw-certainty.ts.
@@ -649,11 +657,12 @@ export default function WaarheidClient() {
               stayed hidden: the only shop that needed the instruction was the only one that could
               not see it, and its acquirer commission was missing from kosten in silence. Any card
               activity at all now opens it, including the days that are merely incomplete. */}
-          {(data.reconciliation.eftSettlements > 0
-            || data.reconciliation.totalCommission > 0
-            || data.reconciliation.grossMismatchDays > 0
-            || data.reconciliation.incompleteDays > 0
-            || data.reconciliation.commissionIssueDays > 0) && (
+          {/* [COM-IN-DE-REGEL] Both gates live in card-panel.ts now — they were inline conditions
+              listing the triangle's figures and nothing else, which stopped being complete the
+              moment a commission could also come from the bank line. A JSX condition is not
+              somewhere a test can reach, and this one decided whether a booked cost is explained
+              to anyone at all. */}
+          {cardPanelVisible(data.reconciliation) && (
             <div style={{ background: M.surface, border: `1px solid ${M.line}`, borderRadius: 18, padding: 20, marginBottom: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
               <div style={{ fontSize: 13, color: M.muted, fontWeight: 600 }}>
                 {t('wh.pinGecontroleerd')}
@@ -665,7 +674,7 @@ export default function WaarheidClient() {
                   nothing uploaded yet saw — a confident answer to a question nobody had been able to
                   ask. When there is nothing measured, skip the figures and go straight to the one
                   line that says what to do; the numbers appear once they mean something. */}
-              {(data.reconciliation.totalCommission > 0 || data.reconciliation.eftSettlements > 0) && (
+              {cardStatsVisible(data.reconciliation) && (
                 <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
                   {/* [KAS-COMMISSION] MEASURED vs BOOKED are two different numbers and are labelled as
                       such. Under kasstelsel the triangle delta is deliberately not auto-booked (the fee
@@ -685,8 +694,39 @@ export default function WaarheidClient() {
                     ? `${t('wh.pin.geboekt', { bedrag: eur.format(data.reconciliation.commissionBooked) })}${data.reconciliation.acquirerFeeInvoices > 0 ? ` ${t('wh.pin.overige', { bedrag: eur.format(data.reconciliation.acquirerFeeInvoices) })}` : ""}`
                     : data.reconciliation.acquirerFeeInvoices > 0
                       ? t('wh.pin.acquirer', { bedrag: eur.format(data.reconciliation.acquirerFeeInvoices) })
-                      : t('wh.pin.zodra')}
+                      /* [COM-IN-DE-REGEL] "Waiting for a terminal settlement" is the wrong sentence for
+                         a shop whose bank names the commission outright — it asks for a file that
+                         would add nothing. Say what is actually missing instead. */
+                      : (data.reconciliation.statedCommission?.total ?? 0) > 0
+                        ? ""
+                        : data.reconciliation.eftSettlements > 0
+                          ? t('wh.pin.zodra')
+                          : t('wh.pin.geenBron')}
               </p>
+              {/* [COM-IN-DE-REGEL] What the bank said out loud, and whether it is in the figures.
+                  Kept separate from the triangle's own sentence above: that one is a DERIVED figure
+                  from three witnesses, this one is a number the bank quoted and that proved itself
+                  against the amount credited. A reader must be able to tell which is which. */}
+              {statedCom && statedCom.total > 0 && (
+                <p style={{ fontSize: 12.5, color: M.muted, lineHeight: 1.55, margin: '8px 0 0' }}>
+                  {t('wh.pin.uitBankregel', {
+                    regels: statedCom.lines,
+                    bedrag: eur.format(statedCom.total),
+                    bruto: eur.format(statedCom.gross),
+                    tarief: `${(100 * statedCom.total / statedCom.gross).toFixed(2).replace('.', ',')}%`,
+                  })}{' '}
+                  {data.scheme === "kas"
+                    ? ''
+                    : data.reconciliation.statedCommissionBooked
+                      ? t('wh.pin.uitBankregelGeboekt')
+                      : t('wh.pin.uitBankregelNietGeboekt')}
+                </p>
+              )}
+              {statedCom && statedCom.unverified > 0 && (
+                <p style={{ fontSize: 12, color: M.muted, lineHeight: 1.55, margin: '6px 0 0' }}>
+                  {t('wh.pin.uitBankregelOnleesbaar', { n: statedCom.unverified })}
+                </p>
+              )}
               {data.reconciliation.grossMismatchDays > 0 && (
                 <div style={{ background: M.warnBg, borderRadius: 12, padding: "10px 12px", marginTop: 10, fontSize: 12.5, color: M.warnFg, lineHeight: 1.5 }}>
                   {t('wh.pin.mismatch', { n: data.reconciliation.grossMismatchDays })}

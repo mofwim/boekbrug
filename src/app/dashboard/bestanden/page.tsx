@@ -8,6 +8,9 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session-user";
 import { ensureYearStructure } from "@/lib/bestanden";
+// [TZ-SERVER] Het jaar van de eigenaar — anders krijgt wie in het eerste uur van 1 januari
+// uploadt de map van vorig jaar aangemaakt.
+import { amsterdamYear } from "@/lib/format-nl";
 import { BestandenPage } from "./BestandenPage";
 
 export const metadata = { title: "Mijn bestanden — BoekBrug" };
@@ -26,7 +29,7 @@ export default async function BestandenServerPage() {
     // [BOEK-033] Read onboarding_done + role in a single query
     supabase.from("profiles").select("onboarding_done, role").eq("id", user.id).single(),
     // [BOEK-033] Ensure year structure exists — idempotent, fast-path on built years
-    ensureYearStructure(user.id, new Date().getFullYear()),
+    ensureYearStructure(user.id, amsterdamYear()),
   ]);
 
   if (!profile?.onboarding_done) redirect("/onboarding");

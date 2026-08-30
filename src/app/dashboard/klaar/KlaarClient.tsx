@@ -28,6 +28,20 @@ type DimensionKey = 'invoices' | 'bank' | 'cash' | 'vat'
 interface Dimension { key: DimensionKey; label: string; weight: number; applicable: boolean; subscore: number; detail: string }
 interface Item { severity: 'missing' | 'risk'; title: string; detail?: string; fix?: { label: string; href: string } }
 type Status = 'ready' | 'almost' | 'attention'
+/** [PAKKET-AFDRUK] Eén ophaling van dit kwartaalpakket, met wat er sinds de vorige veranderde. */
+interface Aflevering {
+  id: string
+  opgehaaldOp: string
+  verkoopfacturen: number
+  inkoopfacturen: number
+  bestanden: number
+  metBon: number
+  veranderd: boolean
+  /** 'figures_moved' | 'evidence_improved' | 'evidence_lost' — null bij de eerste ophaling. */
+  soort: string | null
+  vraagtActie: boolean
+  uitleg: string | null
+}
 interface Report {
   quarterLabel: string
   score: number
@@ -122,6 +136,37 @@ export default function KlaarClient() {
   const [mailBezig, setMailBezig] = useState(false)
   const [mailFout, setMailFout] = useState<string | null>(null)
   const [mailGelukt, setMailGelukt] = useState<string | null>(null)
+
+  // [PAKKET-AFDRUK] Welke versies je boekhouder heeft opgehaald. package_deliveries legt elke
+  // download vast; zonder dit blok bestond die select-policy voor een lezer die er niet was — de
+  // eigenaar kreeg één melding op het moment zelf en kon daarna nergens meer zien wát hij toen had.
+  //
+  // [NO-SILENT-EMPTY] Drie standen, geen twee: nog niet gelezen (null), gelezen (een lijst, die
+  // leeg mag zijn omdat "nooit opgehaald" een echt antwoord is), en niet te lezen (leesfout). Die
+  // laatste als lege lijst tonen zou zeggen "je boekhouder heeft dit nooit opgehaald" — een
+  // bewering, op precies het scherm waar de eigenaar controleert of de overdracht is aangekomen.
+  // De uitkomst draagt de PERIODE waar hij bij hoort. Zo hoeft het effect niets synchroon te
+  // resetten — dat veroorzaakt cascading renders — en toont het scherm nooit even de cijfers van
+  // het vorige kwartaal onder de kop van het nieuwe.
+  const [aflevering, setAflevering] = useState<
+    { year: number; quarter: number; rijen: Aflevering[] | null } | null
+  >(null)
+  const geladen = aflevering && aflevering.year === year && aflevering.quarter === quarter
+  const afleveringen = geladen ? aflevering.rijen : null
+  const afleveringenFout = !!geladen && aflevering.rijen === null
+
+  useEffect(() => {
+    let afgebroken = false
+    fetch(`/api/pakket/afleveringen?year=${year}&quarter=${quarter}`)
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}))
+        if (afgebroken) return
+        // rijen === null is de LEESFOUT; een lege array is het echte antwoord "nooit opgehaald".
+        setAflevering({ year, quarter, rijen: res.ok ? ((json.afleveringen ?? []) as Aflevering[]) : null })
+      })
+      .catch(() => { if (!afgebroken) setAflevering({ year, quarter, rijen: null }) })
+    return () => { afgebroken = true }
+  }, [year, quarter, reloadKey])
 
   async function stuurNaarBoekhouder(y: number, q: number) {
     const adres = mailAdres.trim().toLowerCase()
@@ -331,6 +376,43 @@ export default function KlaarClient() {
                     {t('klr.deel.verstuurd', { email: mailGelukt })}
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* ── [PAKKET-AFDRUK] Wat je boekhouder werkelijk heeft opgehaald ──
+                De zip wordt bij elke download opnieuw gebouwd uit de huidige tabellen, dus dezelfde
+                link kan in juni iets anders geven dan in april. Dit is waar dat zichtbaar wordt. */}
+            {afleveringenFout && (
+              <p role="alert" style={{ fontSize: 13, color: M3.error, margin: '12px 0 0', lineHeight: 1.5 }}>
+                {t('klr.afl.fout')}
+              </p>
+            )}
+            {!afleveringenFout && afleveringen !== null && afleveringen.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: M3.neutral, textTransform: 'uppercase', letterSpacing: 0.4, margin: '0 0 8px' }}>
+                  {afleveringen.length === 1 ? t('klr.afl.kopEen') : t('klr.afl.kopMeer', { aantal: afleveringen.length })}
+                </p>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
+                  {afleveringen.map((a) => (
+                    <li key={a.id} style={{
+                      borderInlineStart: `3px solid ${a.vraagtActie ? M3.error : a.veranderd ? M3.warning : M3.outlineVariant}`,
+                      paddingInlineStart: 10,
+                    }}>
+                      <p style={{ fontSize: 13.5, color: M3.onSurface, margin: 0, fontWeight: 600 }}>
+                        {new Date(a.opgehaaldOp).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {' · '}
+                        {t('klr.afl.inhoud', { verkoop: a.verkoopfacturen, inkoop: a.inkoopfacturen, bestanden: a.bestanden })}
+                      </p>
+                      {/* De uitleg komt van de server, waar de pure vergelijking woont — het scherm
+                          bedenkt hier geen tweede formulering van hetzelfde verschil. */}
+                      {a.uitleg && (
+                        <p style={{ fontSize: 13, color: a.vraagtActie ? M3.error : M3.neutral, margin: '2px 0 0', lineHeight: 1.5 }}>
+                          {a.uitleg}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
