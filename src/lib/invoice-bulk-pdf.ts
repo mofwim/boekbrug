@@ -31,6 +31,9 @@
  * serverless function with a ceiling. Above this the owner is told to select fewer, rather than
  * being handed a request that dies halfway with nothing to show for it.
  */
+// [TZ-SERVER] De dag van de EIGENAAR voor de bestandsnaam — zie bulkZipName.
+import { amsterdamToday } from "./format-nl";
+
 export const BULK_PDF_MAX = 100;
 
 export interface BulkPdfInvoice {
@@ -99,9 +102,11 @@ export function planBulkPdf(invoices: readonly BulkPdfInvoice[]): BulkPdfPlan {
 
 /** What the archive itself is called when there is more than one. */
 export function bulkZipName(now: Date = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  // [KWARTAAL-VAST] UTC getters, for the reason quarter.ts reads its month out of the string: a
-  // local getter answers differently depending on where this runs, and a file name that disagrees
-  // with the invoice dates inside it is a small thing that costs trust.
-  return `facturen-${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}.zip`;
+  // [TZ-SERVER] The OWNER's day. The note that stood here argued for UTC getters because "a local
+  // getter answers differently depending on where this runs, and a file name that disagrees with
+  // the invoice dates inside it is a small thing that costs trust" — and the second half of that
+  // sentence is the argument against the first. The dates INSIDE are Amsterdam dates, so between
+  // midnight and 01:00 or 02:00 the UTC name disagreed with every one of them. amsterdamToday() is
+  // not a local getter either: it is a fixed timezone, so it does not move with the server.
+  return `facturen-${amsterdamToday(now)}.zip`;
 }

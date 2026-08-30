@@ -61,9 +61,18 @@ test("[BULK-PDF] nothing selected, and too much selected, both say what to do", 
   assert.equal(precies.ok, true);
 });
 
-test("[BULK-PDF] the archive name does not shift with the timezone it is built in", () => {
-  // Midnight UTC on the 1st. A local getter west of UTC would name this file after the previous
-  // month, and a name that disagrees with the invoices inside it is a small thing that costs trust.
+test("[BULK-PDF] the archive is named after the OWNER's day, not the server's", () => {
+  // This test used to assert UTC, on the argument that "a name that disagrees with the invoices
+  // inside it is a small thing that costs trust" — and that argument is the one against UTC. The
+  // invoice dates inside are Amsterdam dates (amsterdamToday, everywhere in this app), so between
+  // midnight and 01:00 or 02:00 the UTC name disagreed with every one of them.
+  //
+  // amsterdamToday is not a "local getter" either — the thing the old note was right to refuse. It
+  // is a fixed timeZone, so the name still does not move with wherever the server happens to run.
   assert.equal(bulkZipName(new Date("2026-03-01T00:00:00.000Z")), "facturen-2026-03-01.zip");
-  assert.equal(bulkZipName(new Date("2026-12-31T23:59:59.000Z")), "facturen-2026-12-31.zip");
+  // 23:59:59 UTC on 31 December is 00:59 on 1 January in the Netherlands. An owner downloading
+  // then is in the new year, and so is every invoice they create in that hour.
+  assert.equal(bulkZipName(new Date("2026-12-31T23:59:59.000Z")), "facturen-2027-01-01.zip");
+  // …and the summer offset is +2, so the same hour in July is a day earlier in UTC terms.
+  assert.equal(bulkZipName(new Date("2026-06-30T22:30:00.000Z")), "facturen-2026-07-01.zip");
 });

@@ -19157,6 +19157,10 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   const KLOK_MAG = new Map<string, string>([
     ["src/components/public-footer.tsx", "het jaartal in de copyrightregel — geen periode, geen bedrag"],
     ["src/lib/documents.ts", "een YYYYMMDD-voorvoegsel in een bestandsnaam; de opslagsleutel, niet de boeking"],
+    ["src/lib/fair-use-usage.ts",
+      "de maandsleutel van de eerlijk-gebruikmeter. UTC is hier een BEWUSTE keuze met een eigen " +
+      "toelichting, en de sleutel staat opgeslagen: hem verzetten verplaatst bestaande rijen naar " +
+      "een andere emmer. Geen boekingsdatum, geen bedrag, geen aangifte."],
   ]);
   const loopServer = (dir: string): string[] => {
     const uit: string[] = [];
@@ -19182,30 +19186,103 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
   // The one form that IS legitimate is a Date built from EXPLICIT numbers — `new Date(year, m, 0)`
   // to get the length of a month is a calendar fact, not a clock reading — so that receiver, and
   // only that receiver, is allowed.
+  //
+  // ── Two blind spots this gate had, both found by asking what it CANNOT see ───────────────────
+  //
+  //  1. It matched getFullYear/getMonth/getDate and not the UTC variants. /api/money-audit read
+  //     `now.getUTCFullYear()` and `now.getUTCMonth()` to pick the quarter whose cash drawer it
+  //     audits, and walked straight through a gate written to forbid exactly that. On this UTC
+  //     server, the first hour or two of a quarter's first day is still the previous quarter.
+  //  2. Its "built from data" exemption was a regex with `[^()]*` inside `new Date(...)`, which
+  //     cannot match a nested call. So `new Date(Date.UTC(y, m, 0)).getUTCDate()` — the length of
+  //     a month, a calendar fact — was never recognised as exempt. Adding the UTC variants without
+  //     fixing that would have produced 99 findings, of which ~5 were real, and a gate that cries
+  //     wolf gets an exemption list bolted onto it until it means nothing.
+  //
+  // So the receiver is now parsed rather than pattern-matched: walk back over balanced parens to
+  // the `new Date(` that ends at the receiver, and read its ARGUMENTS. Arguments ⇒ a date built
+  // from data ⇒ a calendar fact. No arguments ⇒ the clock. Measured after: 137 date-field reads
+  // in server files, 12 of them clock readings, 3 of which were real and are now fixed.
+  const dateCallEndingAt = (src: string, end: number): string | null => {
+    if (src[end - 1] !== ")") return null;
+    let depth = 0;
+    let i = end - 1;
+    for (; i >= 0; i--) {
+      if (src[i] === ")") depth++;
+      else if (src[i] === "(") { depth--; if (depth === 0) break; }
+    }
+    if (i < 0) return null;
+    return /new Date$/.test(src.slice(Math.max(0, i - 8), i)) ? src.slice(i + 1, end - 1).trim() : null;
+  };
   const offenders: string[] = [];
+  let gelezenVelden = 0;
   for (const f of SERVER_FILES) {
     const src = code(f);
-    for (const m of src.matchAll(/([\w.)\]]+)\s*\.\s*(getFullYear|getMonth|getDate)\(\)/g)) {
+    for (const m of src.matchAll(
+      /([\w.)\]]+)\s*\.\s*(getUTCFullYear|getUTCMonth|getUTCDate|getFullYear|getMonth|getDate)\(\)/g)) {
       const at = m.index ?? 0;
-      // The receiver ITSELF, tested at its end — not a window around it. A window let
-      // `: now.getFullYear()` through because the line above happened to contain
-      // `new Date(classification.date)`, and a negative control caught that too.
-      const receiver = src.slice(0, at + m[1].length);
-      // `new Date(<args>)` — a calendar date built from explicit numbers, e.g. the length of a
-      // month. That is a calendar fact, not a clock reading, and it is the only allowed form.
-      if (/new Date\([^()]*[^()\s][^()]*\)$/.test(receiver)) continue;
-      // Een Date die aan een VARIABELE hangt en uit DATA is gebouwd, is ook een kalenderfeit:
-      // `const d = new Date(c.invoiceDate); d.getFullYear()` leest de factuur, niet de klok. De
-      // oude regel keek alleen naar de directe vorm en zou safecore.ts hier vals beschuldigen.
-      const bindingVanData = new RegExp(
-        `(?:const|let|var)\\s+${m[1].replace(/[.*+?^\${}()|[\]\\]/g, "\\$&")}\\s*=\\s*new Date\\([^()]*[^()\\s][^()]*\\)`,
-      );
-      if (/^[A-Za-z_$][\w$]*$/.test(m[1]) && bindingVanData.test(src.slice(0, at))) continue;
-      offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+      gelezenVelden++;
+      // (a) The receiver IS a `new Date(...)` call. Arguments ⇒ calendar fact; none ⇒ the clock.
+      const inline = dateCallEndingAt(src, at + m[1].length);
+      if (inline !== null) {
+        if (inline !== "") continue;
+        offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+        continue;
+      }
+      // (b) A plain identifier: find its LAST binding before this point and judge that the same
+      // way. `const d = new Date(c.invoiceDate); d.getFullYear()` reads the invoice, not the clock.
+      if (/^[A-Za-z_$][\w$]*$/.test(m[1])) {
+        const binds = [...src.slice(0, at).matchAll(
+          new RegExp(`(?:const|let|var)\\s+${m[1]}\\s*(?::[^=]*)?=\\s*`, "g"))];
+        const b = binds[binds.length - 1];
+        if (b) {
+          const na = src.slice((b.index ?? 0) + b[0].length);
+          if (!/^new Date\(/.test(na)) continue; // bound from something else entirely
+          const open = (b.index ?? 0) + b[0].length + "new Date".length;
+          let depth = 0;
+          let j = open;
+          for (; j < src.length; j++) {
+            if (src[j] === "(") depth++;
+            else if (src[j] === ")") { depth--; if (depth === 0) break; }
+          }
+          if (src.slice(open + 1, j).trim() !== "") continue;
+          offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+          continue;
+        }
+        // A PARAMETER defaulting to new Date() is the clock too — that is how bulkZipName and
+        // currentPeriod take theirs, and it is the shape a pure function uses to stay testable.
+        if (new RegExp(`${m[1]}\\s*:\\s*Date\\s*=\\s*new Date\\(\\)`).test(src)) {
+          offenders.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the server clock`);
+        }
+      }
     }
   }
+  assert.ok(gelezenVelden >= 100,
+    `only ${gelezenVelden} date-field reads seen in server files; the scan must be broken`);
   assert.deepEqual(offenders, [],
     `a period or a countdown is decided from the server's own clock:\n  ${offenders.join("\n  ")}`);
+
+  // ── The client side of the same rule, where it decides a LEGAL boundary ─────────────────────
+  //
+  // The scan above deliberately skips 'use client' files: on the client the device clock is the
+  // convention, and fifteen screens use it for display defaults (which year tab opens first).
+  // That is fine. What is not fine is a client that WRITES a date the law reads.
+  //
+  // Settings anchors vat_scheme_since and vat_exempt_since — the dates that decide from which
+  // quarter the books compute under kasstelsel and under the vrijstelling — to "the current
+  // quarter", and it derived that from `new Date().getMonth()`, i.e. the BROWSER's month. At 01:00
+  // Amsterdam on 1 April an owner whose device is on UTC−5 is still in March, so qStart becomes
+  // 1 January and the quarter they just filed is retroactively switched to kasstelsel — precisely
+  // what the comment beside it says must never happen ("past quarters stay factuur and are never
+  // retroactively rewritten").
+  //
+  // amsterdamToday() works in a browser exactly as it does on a server: it is Intl with a fixed
+  // timeZone, not a reading of the system zone.
+  const instellingen = code("src/app/dashboard/settings/page.tsx");
+  assert.match(instellingen, /const vandaag = amsterdamToday\(\)/,
+    "the quarter boundary written to vat_scheme_since must be the owner's, not the device's");
+  assert.doesNotMatch(instellingen, /const qStart = `\$\{now\.getFullYear\(\)\}/,
+    "the device-clock version must be gone");
 
   // One clock, so year and month can never disagree about which day it is.
   const pure = code("src/lib/format-nl.ts");
