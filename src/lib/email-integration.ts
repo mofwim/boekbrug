@@ -15,6 +15,7 @@ import { textToPdf } from '@/lib/text-to-pdf'
 // [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
 import { extractMimeAttachments, mimeHeader, uniqueAttachmentName, type EmbeddedAttachment } from '@/lib/mime-attachments'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { ownedStoragePath } from '@/lib/storage-path'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
 import { escapeLikeValue } from '@/lib/sanitize'
@@ -4483,7 +4484,13 @@ export async function syncUserEmails(
             await insertPipeline.from('documents').delete().eq('id', documentId)
           }
           if (pdfUrl) {
-            await supabase.storage.from('documents').remove([pdfUrl])
+            // [SEC-STORAGE-PATH] `pdfUrl` is `storagePath` on the normal path — a key this sync
+            // just built — but on the hash-collision branch above it is `recovered.file_url`, read
+            // from a row the owner may UPDATE. This client is service_role, so it bypasses the
+            // bucket policy, and this call DELETES. An unattributable key is left alone: an
+            // orphaned object is reclaimable by the retention sweep, another tenant's bill is not.
+            const teVerwijderen = ownedStoragePath(pdfUrl, userId)
+            if (teVerwijderen) await supabase.storage.from('documents').remove([teVerwijderen])
           }
           // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
           // sync re-fetches and retries this email … unless this attachment has now failed

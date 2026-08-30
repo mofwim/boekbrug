@@ -24,6 +24,21 @@ export interface ClientReadiness {
   openQuestions: number        // accountant_status = 'vraag' (an open question to the client)
   hasBankData: boolean         // bank_transactions dated in the quarter — the HONEST bank signal
   lastUploadDaysAgo: number | null  // days since the client's newest document (null = never)
+  /**
+   * [NO-SILENT-EMPTY] false = every count above was actually read. true = at least one read
+   * failed, so the numbers are floors and not facts.
+   *
+   * supabase-js answers a failed query with { data: null, error } rather than throwing, and this
+   * readiness was destructured as bare `{ count }` five times over. A failed count therefore read
+   * as 0, and the accountant's board stated "0 open vragen" and the label "zonder bank" about a
+   * client who had questions waiting and delivers statements every quarter. Those are the two
+   * sentences this board exists to produce, and both are the kind an accountant acts on without
+   * doubting — they see what we hand them and form a judgement their client is paying for.
+   *
+   * It sits on the CLIENT and not on the list: one unreadable count must not hide the other
+   * thirty-nine clients, which is what promoting it to the list-level readFailed would do.
+   */
+  readFailed: boolean
 }
 
 /** Lightweight summary — used in client list and overview counts */

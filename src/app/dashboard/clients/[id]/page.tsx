@@ -48,9 +48,11 @@ export default function ClientDetailPage() {
       const { data: clientData } = await supabase.from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
       else setMissing(true)
-      const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
+      // [NO-SILENT-EMPTY] Een mislukte telling is geen "0 ongelezen". De badge blijft dan weg in
+      // plaats van te beweren dat er niets ligt.
+      const { count, error: unreadErr } = await supabase.from('messages').select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId).eq('receiver_id', user.id).eq('read', false)
-      setUnreadCount(count || 0)
+      setUnreadCount(unreadErr ? 0 : count || 0)
       setLoading(false)
     }
     load()

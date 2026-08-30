@@ -47,7 +47,7 @@ async function readDayClaims(
   date: string,
 ) {
   const cash = await liveCashEntries(supabase);
-  const [{ data: turnoverRow }, cashRes, tillRes] = await Promise.all([
+  const [{ data: turnoverRow, error: turnoverErr }, cashRes, tillRes] = await Promise.all([
     supabase.from("daily_turnover").select("source").eq("user_id", userId)
       .eq("turnover_date", date).maybeSingle(),
     // [KAS-ZACHT] Only the movements that still count — see the same note in /api/till/sale.
@@ -69,6 +69,15 @@ async function readDayClaims(
     // this day, which is exactly what a count of zero says. The Kassa's own route makes no such
     // allowance: without the table it genuinely cannot work, and should say so rather than pretend.
     tillSaleCount: tillRes.error ? 0 : tillRes.count ?? 0,
+    // [NO-SILENT-EMPTY] The two reads with no such allowance. A failed daily_turnover read gives a
+    // null row and a failed cash count gives 0 — which are exactly the values that mean "nothing
+    // claims this day", i.e. "no conflict". So a hiccup opened the guard, and what the guard
+    // prevents is silent: the upsert on (user_id, turnover_date) switches the day's cash 'omzet'
+    // entries off in every engine at once with nothing on any screen saying so.
+    //
+    // till_sales is NOT in here on purpose — see the DEPLOY-SAFE note above. A missing table is a
+    // known, reasoned zero; a failed read is not.
+    readable: !turnoverErr && !cashRes.error,
   };
 }
 
@@ -101,7 +110,16 @@ export async function POST(req: NextRequest) {
   if (kor) return NextResponse.json({ error: kor }, { status: 400 });
 
   try {
-    const conflict = daySourceConflict(await readDayClaims(supabase, user.id, resolved.date));
+    const claims = await readDayClaims(supabase, user.id, resolved.date);
+    // [NO-SILENT-EMPTY] Refused rather than waved through — same reasoning as /api/till/sale, and
+    // the same cost: one retry, against a day of turnover silently switched off.
+    if (!claims.readable) {
+      return NextResponse.json(
+        { error: "We konden de omzet van deze dag niet controleren. Probeer het zo meteen opnieuw." },
+        { status: 503 },
+      );
+    }
+    const conflict = daySourceConflict(claims);
     if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
 
     const row = buildTurnoverRow(resolved.date, day.gross);

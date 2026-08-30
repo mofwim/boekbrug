@@ -61,12 +61,14 @@ async function computeClientReadiness(
   // [BANK-TELLING] Zie de toelichting bij de query zelf: alleen de bankTELLING gaat hierlangs.
   const bankCounter = createPipelineClient()
 
+  // [NO-SILENT-EMPTY] Every error bound, not one of them dropped. See ClientReadiness.readFailed
+  // for what the silence produced on the board.
   const [
-    { count: sharedInvoices },
-    { count: processedInvoices },
-    { count: openQuestions },
-    { count: bankCount },
-    { data: lastDoc },
+    { count: sharedInvoices, error: sharedErr },
+    { count: processedInvoices, error: processedErr },
+    { count: openQuestions, error: questionsErr },
+    { count: bankCount, error: bankErr },
+    { data: lastDoc, error: lastDocErr },
   ] = await Promise.all([
     supabase.from('invoices').select('id', { count: 'exact', head: true })
       .or(bothDirections).eq('shared', true)
@@ -106,14 +108,27 @@ async function computeClientReadiness(
     lastUploadDaysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24))
   }
 
+  const readFailed = !!(sharedErr || processedErr || questionsErr || bankErr || lastDocErr)
+  if (readFailed) {
+    console.error('[NO-SILENT-EMPTY] client readiness partly unreadable', {
+      clientId,
+      shared: sharedErr?.message, processed: processedErr?.message,
+      questions: questionsErr?.message, bank: bankErr?.message, lastDoc: lastDocErr?.message,
+    })
+  }
+
   return {
     year,
     quarter,
+    // The numbers stay, so nothing downstream has to handle undefined — but they are FLOORS when
+    // readFailed is true, and the screen says so instead of printing them as facts.
     sharedInvoices: sharedInvoices ?? 0,
     processedInvoices: processedInvoices ?? 0,
     openQuestions: openQuestions ?? 0,
-    hasBankData: (bankCount ?? 0) > 0,
+    // Not `(bankCount ?? 0) > 0` on a failed read: that spells "zonder bank", which is a claim.
+    hasBankData: !bankErr && (bankCount ?? 0) > 0,
     lastUploadDaysAgo,
+    readFailed,
   }
 }
 
@@ -236,10 +251,10 @@ export async function getAccountantClients(
  */
 export async function getLinkedClientList(
   accountantId: string,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<{ clients: Array<{ id: string; name: string }>; readFailed: boolean }> {
   const supabase = await createServerSupabaseClient()
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('accountant_clients')
     .select(`
       profiles!zzper_id (
@@ -250,16 +265,31 @@ export async function getLinkedClientList(
     `)
     .eq('accountant_id', accountantId)
 
-  if (!data) return []
+  // [BOEKHOUDER-LEEG] The argument for this is written out in full forty lines above, on
+  // getLinkedClientsWithReadiness — and this function, in the same file, did the thing that note
+  // exists to forbid: `const { data }` with no error binding, then `if (!data) return []`. Its one
+  // caller is the Werkboard, which renders an empty list as "Nog geen klanten gekoppeld". So a
+  // failed read told a working practice it had no practice, on the board they open to see which
+  // client's aangifte is due.
+  if (error) {
+    console.error('[BOEKHOUDER-LEEG] linked client list unreadable', {
+      accountantId, error: error.message,
+    })
+    return { clients: [], readFailed: true }
+  }
+  if (!data) return { clients: [], readFailed: true }
 
   type LinkedProfile = { id: string; full_name: string | null; company_name: string | null }
   const rows = data as unknown as Array<{ profiles: LinkedProfile | null }>
 
-  return rows
-    .map(row => row.profiles)
-    .filter((p): p is LinkedProfile => p !== null)
-    .map(p => ({ id: p.id, name: p.company_name || p.full_name || 'Onbekend' }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'nl'))
+  return {
+    readFailed: false,
+    clients: rows
+      .map(row => row.profiles)
+      .filter((p): p is LinkedProfile => p !== null)
+      .map(p => ({ id: p.id, name: p.company_name || p.full_name || 'Onbekend' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'nl')),
+  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -398,6 +428,15 @@ export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult>
 
   // [BRIDGE-A] intentionally paid-only until ج-1 — shared now includes sent/received
   const todos: TodoItem[] = []
+  // [NO-SILENT-EMPTY] The three counts below were read as bare `{ count }`, and this function
+  // returned readFailed:false regardless — so a partly unreadable feed reached the screen as a
+  // COMPLETE one. Two different lies came out of that: a client's open question was omitted (the
+  // banner above the list exists precisely because an accountant told "nothing to do" in aangifte
+  // week closes the app, and the deadline is statutory), and — worse — the bank check pushes its
+  // todo when the count is zero, so a FAILED read invented "geen bankgegevens dit kwartaal" about
+  // a client who delivers every quarter. One flag, set by any of them, and the existing banner
+  // says so ABOVE the list rather than instead of it.
+  let telFout = false
 
   // The joined `profiles` relation post-dates the generated types → shape cast.
   type TodoLinkRow = {
@@ -416,7 +455,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult>
 
       // 1. Invoices with 'vraag' status (client needs to answer) — this quarter,
       //    both directions (was sender-only + paid-only).
-      const { count: vraagCount } = await supabase
+      const { count: vraagCount, error: vraagErr } = await supabase
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .or(bothDirections)
@@ -442,7 +481,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult>
       // therefore hid every untouched invoice from this todo count while the
       // readiness score counted them — adjacent surfaces disagreed. IS NULL
       // must be matched explicitly.
-      const { count: unprocessedCount } = await supabase
+      const { count: unprocessedCount, error: unprocessedErr } = await supabase
         .from('invoices')
         .select('id', { count: 'exact', head: true })
         .or(bothDirections)
@@ -464,14 +503,23 @@ export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult>
       // 3. No bank data for the quarter. [READINESS] honest signal = bank_transactions
       //    dated in the quarter (the old doc_type='bank' check was always true here:
       //    no write path stores 'bank' — statements are stored as 'bankafschrift').
-      const { count: bankCount } = await supabase
+      const { count: bankCount, error: bankErr } = await supabase
         .from('bank_transactions')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', clientId)
         .gte('date', start)
         .lte('date', end)
 
-      if ((bankCount ?? 0) === 0) {
+      if (vraagErr || unprocessedErr || bankErr) {
+        telFout = true
+        console.error('[BOEKHOUDER-LEEG] todo counts partly unreadable', {
+          clientId, vraag: vraagErr?.message, onverwerkt: unprocessedErr?.message, bank: bankErr?.message,
+        })
+      }
+
+      // Alleen wanneer de telling ook echt gelukt is. Een mislukte lezing is geen nul, en dit is
+      // de enige tak hier die een taak MAAKT uit een afwezigheid.
+      if (!bankErr && (bankCount ?? 0) === 0) {
         todos.push({
           client_id: clientId,
           client_name: clientName,
@@ -488,7 +536,7 @@ export async function getTodoFeed(accountantId: string): Promise<TodoFeedResult>
     invoices_to_process: 1,
     missing_file: 2,
   }
-  return { readFailed: false, todos: todos.sort((a, b) => URGENCY[a.type] - URGENCY[b.type]) }
+  return { readFailed: telFout, todos: todos.sort((a, b) => URGENCY[a.type] - URGENCY[b.type]) }
 }
 
 // ─────────────────────────────────────────────────────────

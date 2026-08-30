@@ -177,7 +177,7 @@ export async function importBankStatement(args: {
       .maybeSingle();
     if (existingDoc) {
       priorDocId = existingDoc.id as string;
-      const { count } = await pipeline
+      const { count, error: countErr } = await pipeline
         .from("bank_transactions")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
@@ -187,7 +187,10 @@ export async function importBankStatement(args: {
       // get them back — and in both cases short-circuiting would freeze the gap permanently
       // instead of repairing it. Equality is the only count that proves nothing is missing;
       // anything less falls through to layers 2 and 3, which insert exactly what is absent.
-      alreadyImported = transactions.length > 0 && (count ?? 0) === transactions.length;
+      // [NO-SILENT-EMPTY] The fail-closed made explicit rather than left to arithmetic. A failed
+      // count already produced 0 ≠ transactions.length, so this changes nothing — it says the
+      // reason out loud, and it is the one shape where an unbound error was actually harmless.
+      alreadyImported = !countErr && transactions.length > 0 && (count ?? 0) === transactions.length;
     }
   } catch {
     // Best-effort: an unreadable documents table must never block an import. Layers 2 and 3 still

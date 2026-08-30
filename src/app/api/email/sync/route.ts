@@ -67,7 +67,9 @@ export async function GET(_req: NextRequest) {
     .limit(1)
     .single()
 
-  const { count: pendingCount } = await supabase
+  // [NO-SILENT-EMPTY] Nul betekent hier "niets wacht op verificatie". Een mislukte telling gaf
+  // dezelfde nul, en dat is een uitspraak over de inkomende post van deze ondernemer.
+  const { count: pendingCount, error: pendingErr } = await supabase
     .from('invoices')
     .select('id', { count: 'exact', head: true })
     .eq('receiver_id', user.id)
@@ -80,7 +82,8 @@ export async function GET(_req: NextRequest) {
     provider: connection?.provider ?? null,
     email: connection?.email ?? null,
     connected_at: connection?.connected_at ?? null,
-    pending_count: pendingCount ?? 0,
+    // null = niet geteld; 0 zou "er wacht niets op verificatie" beweren.
+    pending_count: pendingErr ? null : pendingCount ?? 0,
   })
 }
 

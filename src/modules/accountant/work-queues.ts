@@ -228,7 +228,29 @@ async function sumOverdue(
       SalesInvoice & { invoice_type?: string | null; original_invoice_id?: string | null }
     >
     // [DEEL-CREDIT] Dekkend gecrediteerd = van de lijst; deels gecrediteerd = de rest telt nog.
-    const creditnotas = all.filter((r) => r.invoice_type === 'creditnota')
+    //
+    // Uit een EIGEN lezing, niet uit `all`. De lezing hierboven is gefilterd op de statussen van
+    // een openstaande vordering, en een creditnota die zelf is afgewikkeld staat op 'paid' — die
+    // viel er dus uit. Gevolg: een volledig gecrediteerde factuur bleef in het 'te laat'-totaal
+    // op het kantoorstartscherm staan, en een deels gecrediteerde stond er op haar volle bedrag.
+    // Er staat vandaag zo'n rij in deze database.
+    //
+    // Binnen dezelfde try: een mislukte lezing maakt van deze functie null, en de beller toont dan
+    // "niet te lezen" in plaats van een te hoog bedrag — precies zoals voor elke andere lezing hier.
+    const creditnotas = await fetchAllRowsForIds<
+      { id: string; original_invoice_id: string | null; total_inc_btw: number | null },
+      string
+    >(
+      clientIds,
+      (chunk, from, to) => pipeline
+        .from('invoices')
+        .select('id, original_invoice_id, total_inc_btw')
+        .in('sender_id', chunk)
+        .eq('direction', 'outgoing')
+        .eq('invoice_type', 'creditnota')
+        .not('original_invoice_id', 'is', null)
+        .order('id', { ascending: true }).range(from, to),
+    )
     const rows = filterOpenReceivables(all, fullyCreditedIdsFrom(creditnotas, all))
     // …en "de rest" is het totaal MINUS wat er is gecrediteerd. Zonder deze regel haalde de vorige
     // regel wel de volledig gecrediteerde facturen van de lijst, maar prijsde ze de deels

@@ -431,6 +431,7 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
         systeem: { readable: true, allWell: true, attention: [], crons: [
           { job: "reminders", health: "ok", lastRunAt: "2026-09-04T07:00:00Z", hoursAgo: 2, note: null, needsAttention: false } as const,
         ] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
       }),
     );
     assert.match(html, /Kiwi Food Market/);
@@ -448,6 +449,7 @@ test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () =>
       React.createElement(BeheerScherm, {
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
       }),
     );
     assert.match(html, /Nog geen accounts/);
@@ -474,6 +476,7 @@ test("[BEHEER-GEZOND] een gestopte cron staat bovenaan, met hoe lang al", () => 
           // "nog nooit" is een echt antwoord, en het antwoord op "is deze nieuwe cron ooit gedraaid?"
           { job: "payment-due", health: "nog-niet-langs", lastRunAt: null, hoursAgo: null, note: null, needsAttention: false } as const,
         ] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
       }),
     );
     assert.match(html, /aandacht nodig/);
@@ -492,6 +495,7 @@ test("[NO-SILENT-EMPTY] een onleesbare hartslag is geen groene", () => {
       React.createElement(BeheerScherm, {
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: false, allWell: false, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
       }),
     );
     assert.match(html, /niet te lezen/);

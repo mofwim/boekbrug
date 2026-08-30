@@ -314,7 +314,18 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       // zeggen dat er niets is aangekomen — en de volgende poging niet als "tweede herinnering"
       // wordt geteld.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (pipeline as any).from('invoice_reminders').update({ status: 'failed' }).eq('id', claim.id)
+      const { error: stempelErr } = await (pipeline as any)
+        .from('invoice_reminders').update({ status: 'failed' }).eq('id', claim.id)
+      if (stempelErr) {
+        // Gelezen, net als bij de vrijgave hieronder en om dezelfde reden. De claim is aangemaakt
+        // met status 'sent' (regel 264), dus een mislukte stempel laat een herinnering staan die
+        // nooit is aangekomen: het scherm zegt dat de klant er een heeft gehad, en de volgende
+        // poging telt als TWEEDE herinnering tegen het plafond van drie. Precies de toestand die
+        // de kop van dit bestand ([REMINDER-TRUTH]) zegt nooit te mogen bestaan.
+        console.error('[REMINDER-TRUTH] mislukte herinnering NIET op failed gezet — hij staat nu als verstuurd', {
+          id, claimId: claim.id, error: stempelErr.message,
+        })
+      }
       console.error('[ACTING-FOR] herinnering versturen mislukt', { id, error: String(e) })
       return NextResponse.json({ error: 'De herinnering kon niet worden verstuurd — probeer opnieuw' }, { status: 502 })
     }

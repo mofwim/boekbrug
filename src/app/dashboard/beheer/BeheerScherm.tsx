@@ -4,7 +4,7 @@
 // the accountant module and for the same reason: its one reader chose no language setting).
 
 import type { BeheerOverview } from "@/lib/beheer";
-import type { SystemHealth } from "@/lib/beheer-health";
+import type { SystemHealth, EventSummary } from "@/lib/beheer-health";
 
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #E0E0E0", borderRadius: 12, padding: "16px 20px" };
 const TH: React.CSSProperties = { textAlign: "start", fontSize: 12, fontWeight: 600, color: "#5F6368", padding: "6px 10px", borderBottom: "1px solid #E0E0E0" };
@@ -69,13 +69,73 @@ function Systeem({ systeem }: { systeem: SystemHealth }) {
   );
 }
 
-export function BeheerScherm({ overview, systeem }: { overview: BeheerOverview; systeem: SystemHealth }) {
+/**
+ * [STORINGSBEELD] Wat er de laatste dagen misging.
+ *
+ * Geen logboek. Vierduizend regels ruwe tekst beantwoorden de vraag niet; "welke storing, hoe vaak,
+ * wanneer voor het laatst" wel — en dat is ook precies wat de tabel draagt, want die bewaart met
+ * opzet geen message en geen context (system_events.sql legt uit waarom: drie kolommen kunnen geen
+ * klantgegeven lekken). De zin staat in de serverlog en in Sentry, met de toegang die daarbij past.
+ */
+function Storingen({ storingen }: { storingen: EventSummary }) {
+  // [NO-SILENT-EMPTY] "Er ging niets mis" is een goed antwoord en een ANDER antwoord dan "we konden
+  // niet kijken". Op een beheerpagina mogen die twee nooit hetzelfde zijn — de tweede is precies de
+  // toestand waarin een storing onopgemerkt doorloopt.
+  if (!storingen.readable) {
+    return (
+      <div style={{ ...CARD, borderColor: "#B3261E" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: "#B3261E" }}>Het storingsbeeld is niet te lezen</div>
+        <div style={{ fontSize: 12.5, color: "#5F6368", marginTop: 4, lineHeight: 1.5 }}>
+          We weten dus niet of er de afgelopen {storingen.days} dagen iets is misgegaan. Dat is niet hetzelfde
+          als &quot;er ging niets mis&quot;.
+        </div>
+      </div>
+    );
+  }
+  if (storingen.groups.length === 0) {
+    return (
+      <div style={{ ...CARD }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: "#1E8E3E" }}>
+          Geen afgevangen storingen in {storingen.days} dagen
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ ...CARD }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, color: "#202124", marginBottom: 8 }}>
+        {storingen.total} afgevangen storing{storingen.total === 1 ? "" : "en"} in {storingen.days} dagen
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <tbody>
+          {storingen.groups.map((g) => (
+            <tr key={g.tag}>
+              <td style={{ ...TD, fontWeight: 600 }}>{g.tag}</td>
+              <td style={{ ...TD, color: g.severity === "data-integrity" ? "#B3261E" : "#5F6368", whiteSpace: "nowrap" }}>
+                {g.severity}
+              </td>
+              {/* Frequentie eerst, want dat is het verschil tussen "dit gebeurde ooit" en "dit
+                  gebeurt nu" — en dat is wat een beheerder in één blik moet zien. */}
+              <td style={{ ...TD, whiteSpace: "nowrap" }}>{g.count}×</td>
+              <td style={{ ...TD, color: "#5F6368", whiteSpace: "nowrap" }}>
+                {g.hoursAgo === null ? "" : g.hoursAgo === 0 ? "< 1 uur geleden" : `${g.hoursAgo} uur geleden`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function BeheerScherm({ overview, systeem, storingen }: { overview: BeheerOverview; systeem: SystemHealth; storingen: EventSummary }) {
   const { users, links, counts } = overview;
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20, fontFamily: "'Roboto', -apple-system, sans-serif" }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, color: "#202124", margin: 0 }}>Beheer</h1>
 
       <Systeem systeem={systeem} />
+      <Storingen storingen={storingen} />
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Tel n={counts.total} label="accounts" />

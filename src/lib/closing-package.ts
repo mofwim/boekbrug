@@ -35,7 +35,7 @@ import JSZip from "jszip";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import type { PipelineClient } from "./supabase-pipeline";
 // [SEC-STORAGE-PATH] A row check is not a path check — see the header of storage-path.ts.
-import { toStoragePath, pathBelongsToOwner } from "./storage-path";
+import { toStoragePath, pathBelongsToOwner, ownedStoragePath } from "./storage-path";
 // [SLUIS] The content sniff that decides whether an .xml really is an invoice — see the block
 // that uses it in the orchestrator below.
 import { looksLikeInvoiceXmlBytes } from "./e-invoice";
@@ -2277,7 +2277,20 @@ export async function buildClosingPackageZip(args: {
   }
 
   // ── Download everything in parallel; a failed file → warning, not a crash ──
-  async function dl(path: string, name: string): Promise<PackageFile | null> {
+  //
+  // [SEC-STORAGE-PATH] The attribution lives HERE, not at each feeder. `supabase` is the
+  // service-role client, so it bypasses the bucket policy that stops a session client reading
+  // another tenant's folder — and every path below arrives as ordinary text from a row the owner
+  // may UPDATE (invoices_zzp_update / documents_update_own are whole-row policies). Two of the
+  // four feeders checked; the outgoing PDF, the bankafschrift and the shared documents did not,
+  // so a key pasted onto one's own row came back inside the quarter ZIP handed to an accountant.
+  //
+  // Guarding the feeders would have been four checks that a fifth feeder does not inherit. One
+  // choke point cannot be half-applied: nothing reaches storage from this builder except through
+  // this function, and it refuses what it cannot attribute.
+  async function dl(stored: string, name: string): Promise<PackageFile | null> {
+    const path = ownedStoragePath(stored, ownerId);
+    if (!path) return null;
     try {
       const { data, error } = await supabase.storage.from("documents").download(path);
       if (error || !data) return null;
