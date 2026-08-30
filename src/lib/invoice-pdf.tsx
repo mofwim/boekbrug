@@ -337,7 +337,20 @@ export function InvoicePDF({
   const netRateLines = rateLines.map((g) => {
     const off = afgetrokken.get(g.rate) ?? 0
     const ex = round2(g.ex - off)
-    return { ...g, ex, btw: off > 0 ? round2((ex * g.rate) / 100) : g.btw }
+    // [KORTING] `off !== 0`, niet `off > 0`. Op een CREDITNOTA is alles negatief — applyDiscount
+    // spiegelt de korting mee (`applied = sign * appliedMagnitude`), dus de aftrek per tarief is
+    // daar een negatief bedrag. Met `> 0` werd `ex` dan wél bijgesteld en de BTW niet, en dan
+    // drukt dit document een verlaagd subtotaal naast een onverlaagde BTW — een factuur die niet
+    // met zichzelf klopt, precies wat de regels hierboven zeggen te voorkomen. Het staat ook los
+    // van de opgeslagen totalen, die via applyDiscount wél de gespiegelde korting dragen, dus de
+    // PDF zou afwijken van de aangifte en van de betaallink.
+    //
+    // De herberekening werkt in beide richtingen: (−900 × 21) / 100 = −189, wat een creditnota
+    // hoort te zijn. Nul blijft nul — zonder korting op dit tarief is er niets bij te stellen.
+    //
+    // Vandaag draagt geen enkele factuur in de database een korting, dus dit is nog nooit
+    // afgedrukt. Het is de deur die openstaat, niet een document dat de deur uit is.
+    return { ...g, ex, btw: off !== 0 ? round2((ex * g.rate) / 100) : g.btw }
   })
 
   const displaySubtotal = round2(rateLines.reduce((a, g) => a + g.ex, 0))

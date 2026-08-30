@@ -642,3 +642,53 @@ test("[EIGEN-MARKER] the offerte carries the same captions", async () => {
   assert.match(text, /KLANT/);
   assert.match(text, /AFZENDER/);
 })
+
+// ─── [KORTING] Een creditnota met een documentkorting ─────────────────────────
+//
+// applyDiscount spiegelt de korting mee op een negatief document: `applied = sign * magnitude`,
+// dus de aftrek per tarief is daar NEGATIEF. De PDF stelde de basis alleen bij als die aftrek
+// groter dan nul was, dus op een creditnota werd het subtotaal wél verlaagd en de BTW niet.
+//
+// De creditnota-route zet de korting er echt op — geschaald naar het gecrediteerde deel
+// (/api/invoice/creditnota, discount_type/discount_value) — dus dit is bereikbaar zodra een
+// gekorte factuur wordt gecrediteerd. In de database staat vandaag geen enkele factuur met een
+// korting, dus er is nog nooit zo'n document uitgegaan; dit is de deur, niet de schade.
+
+test("[KORTING] een creditnota met documentkorting drukt een BTW die bij haar eigen basis hoort", async () => {
+  // −1.000 ex, 10% documentkorting → −900 ex, en 21% daarvan is −189. Vóór de reparatie stond
+  // er −900 naast −210: een document dat zichzelf tegenspreekt, en dat afwijkt van de opgeslagen
+  // totalen én van de aangifte, die allebei via applyDiscount wél de gespiegelde korting dragen.
+  const text = await pdfText(await renderInvoicePdf(
+    {
+      ...QUOTE, invoice_type: "creditnota", invoice_number: "20260099-C1",
+      total_ex_btw: -900, btw_amount: -189, total_inc_btw: -1089,
+      discount_type: "percent", discount_value: 10,
+    } as never,
+    [{ description: "Teruggenomen levering", quantity: 1, unit_price: -1000, btw_rate: 21, line_total: -1000 }],
+    PROFILE,
+  ));
+
+  // De cijfers op het papier. De BTW hoort bij de VERLAAGDE basis.
+  assert.ok(text.includes("900,00"), "het verlaagde subtotaal staat er");
+  assert.ok(text.includes("189,00"), "en de BTW is 21% daarvan, niet van de onverlaagde 1.000");
+  assert.ok(!text.includes("210,00"), "de onverlaagde BTW mag nergens op dit document staan");
+  // En het document telt op met zichzelf: 900 + 189 = 1.089.
+  assert.ok(text.includes("1.089,00"), "het totaal is de som van wat eronder staat");
+});
+
+test("[KORTING] een gewone factuur met documentkorting blijft precies zoals hij was", async () => {
+  // De regressiecontrole bij de reparatie hierboven: `off !== 0` mag het positieve geval niet
+  // veranderen, want daar werkte `off > 0` altijd al.
+  const text = await pdfText(await renderInvoicePdf(
+    {
+      ...QUOTE, invoice_type: "factuur", invoice_number: "20260100",
+      total_ex_btw: 900, btw_amount: 189, total_inc_btw: 1089,
+      discount_type: "percent", discount_value: 10,
+    } as never,
+    [{ description: "Levering", quantity: 1, unit_price: 1000, btw_rate: 21, line_total: 1000 }],
+    PROFILE,
+  ));
+  assert.ok(text.includes("900,00"));
+  assert.ok(text.includes("189,00"));
+  assert.ok(text.includes("1.089,00"));
+});
