@@ -25,6 +25,14 @@ console.log("\n— [HUNT-F1] a reverse-charge memo is NOT 'reconciled' into a wr
   check("reverse-charge (ex==incl, illegal implied rate) → ex unchanged", near(fixExInclConfusion(1000, 210, 1000), 1000));
 }
 
+console.log("\n— the low rate is recovered too, and any rate this country does not have is refused —");
+// The band is 0–21, so 9% must pass and anything above 21% must not. The existing case above
+// proves one illegal rate (27%); these two fence the other side and the far end, so a later
+// widening of the band cannot slip through as "still rejects reverse charge".
+check("9%: ex 109 == incl 109, btw 9 → ex 100", near(fixExInclConfusion(109, 9, 109), 100));
+check("implied 33% → ex unchanged", near(fixExInclConfusion(400, 100, 400), 400));
+check("implied 100% → ex unchanged", near(fixExInclConfusion(200, 100, 200), 200));
+
 console.log("\n— never touches a correct or genuinely-different invoice —");
 check("already correct (333.06/69.94/403) is unchanged", near(fixExInclConfusion(333.06, 69.94, 403.00), 333.06));
 check("zero BTW + ex==incl is left alone (a legit 0% invoice)", near(fixExInclConfusion(403.00, 0, 403.00), 403.00));
