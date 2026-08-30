@@ -12,13 +12,17 @@
 // default) means the page exists for nobody — it 404s, indistinguishable from a route that was
 // never built, so this ships dark and turns on only when the env var is set.
 
-export function isBeheerder(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const allowed = (process.env.BEHEER_EMAILS || "")
+/** The operator addresses, parsed once. Empty means the feature is off — see the note above. */
+export function beheerEmails(): string[] {
+  return (process.env.BEHEER_EMAILS || "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  return allowed.includes(email.trim().toLowerCase());
+}
+
+export function isBeheerder(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return beheerEmails().includes(email.trim().toLowerCase());
 }
 
 /** One row of the operator's user list. A projection — never the whole profile. */

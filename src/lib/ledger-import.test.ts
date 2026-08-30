@@ -128,5 +128,43 @@ console.log("\n— robustness —");
     ]).ledger!.entries[0].received, 1234.56));
 }
 
+// ── [PDF-ALS-BLAD] The grootboek as the POS prints it: a two-digit year ───────────────────────
+//
+// The .xlsx of this report carries a real date and never needed this. The PDF of the SAME report
+// prints "29/08/26", and without a reading for it the export parsed its header — rekening 570000,
+// KASBOEK, kind cash — and then returned zero rows. A file that is completely readable, yielding
+// nothing, with "Geen dagregels met een geldige datum gevonden" as the only clue.
+console.log("\n— tweecijferig jaartal, zoals de kassa het drukt —");
+{
+  const rows: Cell[][] = [
+    ["KIWI FOOD MARKET", "Datum:", "30/08/2026"],
+    ["KASBOEK"],
+    ["Rekening Nr:", "570000"],
+    ["Datum", "Naam", "Omschrijving", "Ontvangen", "Uitgaven"],
+    ["29/08/26", "Totaal van de kassa", "Totaal Kontant van 29/08/2026", "280,95", "0,00"],
+    ["TOTALEN:", "280,95", "0,00"],
+  ];
+  const { ledger } = parseLedgerSheet(rows);
+  check("the PDF's grootboek now yields its day row", !!ledger && ledger.entries.length === 1);
+  check("read as 2026, not 1926", ledger?.entries[0]?.date === "2026-08-29");
+  check("with the amount the xlsx of the same report gives", ledger?.entries[0]?.received === 280.95);
+  const totals = ledger ? ledgerDailyTotals(ledger) : new Map();
+  check("and the same daily total", totals.get("2026-08-29")?.received === 280.95);
+
+  // A four-digit year must never be reinterpreted — the two-digit branch is anchored last.
+  const four = parseLedgerSheet([
+    ["Datum", "Ontvangen", "Uitgaven"],
+    ["29/08/2026", "1,00", "0,00"],
+  ]);
+  check("a four-digit year is still taken literally", four.ledger?.entries[0]?.date === "2026-08-29");
+
+  // And an impossible day is still refused, whatever the year's width.
+  const bad = parseLedgerSheet([
+    ["Datum", "Ontvangen", "Uitgaven"],
+    ["31/02/26", "1,00", "0,00"],
+  ]);
+  check("31 February is refused with two digits too", (bad.ledger?.entries.length ?? 0) === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

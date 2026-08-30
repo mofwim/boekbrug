@@ -13,7 +13,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { sheetBytesToMatrix } from "@/lib/xlsx-adapter";
+import { sheetBytesToMatrix, NotASpreadsheetError } from "@/lib/xlsx-adapter";
+// [PDF-ALS-BLAD] A PDF grootboek/Z-rapport laid back out as the table it was printed from.
+import { pdfBytesToMatrix } from "@/lib/pdf-sheet";
 import {
   normalizeTurnoverSheet,
   isRealCalendarDate,
@@ -202,11 +204,36 @@ export async function POST(req: NextRequest) {
   }
 
   let matrix;
+  // Read once: the PDF fallback below needs the same bytes, and re-reading a File to recover
+  // from a refusal is a second chance for the read itself to be the thing that fails.
+  const bytes = new Uint8Array(await file.arrayBuffer()); // binary-safe (never file.text())
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer()); // binary-safe (never file.text())
     matrix = sheetBytesToMatrix(bytes);
-  } catch {
-    return NextResponse.json({ error: "kon het bestand niet lezen als spreadsheet" }, { status: 422 });
+  } catch (e) {
+    // [GEEN-SPREADSHEET] Name the format, not the content. "kon het bestand niet lezen als
+    // spreadsheet" is true of a PDF and tells the owner nothing they can act on; the one thing
+    // they need is that the same export exists as Excel and that is what to ask for.
+    if (e instanceof NotASpreadsheetError) {
+      // [PDF-ALS-BLAD] Before refusing a PDF, try to read it. The owner's bookkeeper sends the
+      // grootboek as PDF and his POS prints the Z-report as one; both carry every figure the
+      // import needs, laid out as a table whose coordinates the file still declares. Falling
+      // back to the refusal below when that does not work keeps the honest answer intact.
+      if (e.mime === "application/pdf") {
+        const fromPdf = await pdfBytesToMatrix(bytes);
+        if (fromPdf && fromPdf.length > 0) matrix = fromPdf as never;
+      }
+      if (!matrix) {
+        return NextResponse.json({
+          ok: false,
+          error: e.mime === "application/pdf"
+            ? "Ik kon deze PDF niet als tabel lezen. Vraag je boekhouder of kassaleverancier om dezelfde export als Excel-bestand (.xls, .xlsx) of .csv."
+            : "Dit is een afbeelding, geen spreadsheet. Ik kan alleen .xls, .xlsx of .csv lezen.",
+          format: e.mime,
+        }, { status: 422 });
+      }
+    } else {
+      return NextResponse.json({ error: "kon het bestand niet lezen als spreadsheet" }, { status: 422 });
+    }
   }
 
   // [DETECT] A grootboek/kas export (OVERZICHT/KASBOEK) is NOT a Z-report — its per-rate
