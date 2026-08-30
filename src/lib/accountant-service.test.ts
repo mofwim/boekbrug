@@ -12,6 +12,7 @@ import {
   getPreviousQuarter,
   daysUntil,
 } from "../modules/accountant/accountant.service"
+import { amsterdamToday } from "./format-nl"
 
 let passed = 0
 let failed = 0
@@ -31,16 +32,30 @@ check('prev(2026,Q1) = 2025 Q4', (() => { const p = getPreviousQuarter(2026, 1);
 check('prev(2026,Q3) = 2026 Q2', (() => { const p = getPreviousQuarter(2026, 3); return p.year === 2026 && p.quarter === 2 })())
 
 console.log('\n— daysUntil is inclusive-of-today and signed —')
-const now = new Date()
+// [TZ] "Vandaag" komt uit DEZELFDE klok als de functie die wordt getest.
+//
+// Hier stond `new Date()` met lokale getters. Deze server draait op UTC en daysUntil rekent in
+// Europe/Amsterdam, dus tussen 22:00 UTC en middernacht (23:00 in de winter) was de "vandaag" van
+// deze test al de dag ervóór in Amsterdam: 'today → 0' gaf 1, en de hele gate-suite stond twee uur
+// per etmaal rood — voor elke sessie die op dat moment werkte, aan iets wat er niets mee te maken
+// had. Gemeten toen dit werd geschreven: 22:09 UTC, 00:09 in Amsterdam.
+//
+// De dagrekenkunde loopt over KALENDERDAGEN en niet over twee Date-objecten, om dezelfde reden die
+// in daysUntil zelf staat: op de zomertijdweekenden is een etmaal 23 of 25 uur.
+const vandaag = amsterdamToday()
 const pad = (n: number) => String(n).padStart(2, '0')
-const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-check('today → 0', daysUntil(today) === 0)
-const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-const tomorrowIso = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`
-check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
-const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-const yesterdayIso = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`
-check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
+const dagVerschoven = (iso: string, dagen: number): string => {
+  const [y, m, d] = iso.split('-').map(Number)
+  const t = new Date(Date.UTC(y, m - 1, d) + dagen * 86_400_000)
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`
+}
+check('today → 0', daysUntil(vandaag) === 0)
+check('tomorrow → 1', daysUntil(dagVerschoven(vandaag, 1)) === 1)
+check('yesterday → -1 (overdue)', daysUntil(dagVerschoven(vandaag, -1)) === -1)
+// En over een maandgrens heen, want dat is waar een dagverschuiving stukgaat als iemand hem later
+// als `d + 1` op een Date schrijft.
+check('een maandgrens telt gewoon door', daysUntil(dagVerschoven('2026-02-28', 1)) === daysUntil('2026-03-01'))
+check('een schrikkeldag telt mee', dagVerschoven('2028-02-28', 1) === '2028-02-29')
 
 console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
 // De regressie die dit bestand had moeten tegenhouden en niet kon, omdat het buiten de

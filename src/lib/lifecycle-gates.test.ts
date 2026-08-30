@@ -10102,6 +10102,64 @@ test("[LINKS-WRITE-HONEST] the boolean these writers return is actually read", (
   const attach = code("src/app/api/bank/attach-invoice/route.ts");
   assert.match(attach, /const linksRecorded = await recordPaymentLinks\(/);
   assert.match(attach, /if \(!linksRecorded\) \{[\s\S]{0,200}?reportHandledFailure\(/);
+
+  // ── The class, because the list missed one ──────────────────────────────────────────────────
+  // This gate first named three call sites and pinned each. bank-auto-confirm was a FOURTH, and no
+  // assertion here mentioned it — the same "a rule guarded by a hand-written list is not guarded"
+  // that this file keeps re-learning. Walked now: every caller of either writer must bind the
+  // answer, whatever it then does with it.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  const weggegooid: string[] = [];
+  let aanroepen = 0;
+  for (const f of loop("src")) {
+    if (f.endsWith("bank-tx-links.ts")) continue; // waar ze wonen
+    const src = code(f);
+    for (const m of src.matchAll(/(?:^|[^.\w])(await\s+)?(recordPaymentLinks|clearPaymentLinks)\s*\(/g)) {
+      // Alleen echte aanroepen, geen import-regel.
+      const regelStart = src.lastIndexOf("\n", m.index ?? 0) + 1;
+      const regel = src.slice(regelStart, src.indexOf("\n", m.index ?? 0));
+      if (/^\s*import\b/.test(regel)) continue;
+      aanroepen++;
+      // De uitkomst moet aan iets worden gebonden: `const x = await …`.
+      if (!/=\s*await\s*$/.test(src.slice(Math.max(0, (m.index ?? 0) - 12), (m.index ?? 0) + (m[1] ? m[1].length : 0)).trimEnd() + " ")
+          && !new RegExp(`=\\s*await\\s+${m[2]}\\s*\\(`).test(src.slice(regelStart, (m.index ?? 0) + 40))) {
+        weggegooid.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(aanroepen >= 5, `only ${aanroepen} call sites seen; the scan must be broken`);
+  assert.deepEqual(weggegooid, [],
+    "these await one of the payment-link writers and drop the answer it returns. Both return a " +
+    "boolean precisely so a failed write can be reported, and recompute_invoice_amount_paid " +
+    "re-derives amount_paid from the links that SURVIVE — so a dropped failure does not lose a " +
+    "log line, it inverts the operation:\n  " + weggegooid.join("\n  "));
+});
+
+test("[PARTIAL-PAY] a path that marks an invoice paid also advances amount_paid", () => {
+  // The invariant every surface rests on: amount_paid = Σ bank_tx_invoices.amount_applied.
+  // bank-auto-confirm wrote status 'paid' and left amount_paid at 0 while recording the full
+  // amount on the link. No screen lied — openAmount reads the status first — but money-invariants
+  // reports the gap as `payments_without_paid` on /dashboard/klaar, the screen where the owner
+  // decides to hand the quarter over. Measured in production: fourteen invoices, EUR 5.321,68
+  // together, every one of them genuinely paid and every one of them reported as a discrepancy.
+  //
+  // A false alarm on the panel that exists to buy trust is worse than no panel.
+  const auto = code("src/lib/bank-auto-confirm.ts");
+  assert.match(auto, /\.update\(\{ status: "paid", amount_paid: Math\.abs\(Number\(inv\.total_inc_btw \?\? 0\)\)/,
+    "the pay write must advance amount_paid with the same amount it puts on the link");
+  // …and the rollback puts it back, or a successful undo leaves an invoice that is not paid and
+  // still carries an amount — the mirror of the same defect.
+  assert.match(auto, /\.update\(\{ status: inv\.status, amount_paid: inv\.amount_paid \?\? 0,/);
+  // The two amounts come from one expression, so they cannot drift apart.
+  assert.match(auto, /\[invoiceId\]: Math\.abs\(Number\(inv\.total_inc_btw \?\? 0\)\),/);
 });
 
 test("[EDIT-LINES-SAFE] a delete-then-insert may not insert on a delete that failed", () => {
@@ -19382,6 +19440,75 @@ test("[TZ-SERVER] no server route decides a period from the server's own clock",
     "the quarter boundary written to vat_scheme_since must be the owner's, not the device's");
   assert.doesNotMatch(instellingen, /const qStart = `\$\{now\.getFullYear\(\)\}/,
     "the device-clock version must be gone");
+
+  // ── En de TESTS, want een test met de verkeerde klok is een rode poort om nul uur ────────────
+  //
+  // De scan hierboven slaat testbestanden over. Dat leek onschuldig tot deze suite om 22:09 UTC
+  // rood stond: accountant-service.test.ts bouwde zijn "vandaag" uit `new Date()` met lokale
+  // getters, terwijl daysUntil in Europe/Amsterdam rekent. Tussen 22:00 UTC en middernacht (23:00
+  // in de winter) is dat al de volgende dag hier, dus `today → 0` gaf 1 — twee uur per etmaal een
+  // rode gate-suite, voor élke sessie die dan werkt, aan iets wat er niets mee te maken had.
+  //
+  // En invoice-numbering.test.ts deed het met het JAAR: `new Date().getFullYear()`, precies de
+  // aanroep die die module heeft afgeschaft, in de test die de afschaffing bewaakt. Eén uur per
+  // jaar, op 31 december — vaak genoeg om een keer op het slechtste moment af te gaan.
+  //
+  // Een test die de klok nodig heeft, leest hem uit dezelfde bron als de code die hij test. Er is
+  // hier geen uitzondering en dus geen lijst: gemeten nadat dit was geschreven staat de teller op
+  // nul, en een klasse die schoon is mag als verbod worden vastgelegd.
+  // Een eigen wandelaar: loopServer sluit .test.-bestanden juist UIT, en dat is precies de reden
+  // dat deze klasse tot nu toe onzichtbaar was.
+  const loopAlles = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loopAlles(pad));
+      else if (/\.tsx?$/.test(pad)) uit.push(pad);
+    }
+    return uit;
+  };
+  const TEST_FILES = [...loopAlles("src"), ...loopAlles("tests")]
+    .filter((f) => /\.(test|spec)\.tsx?$/.test(f));
+  assert.ok(TEST_FILES.length > 40,
+    `only ${TEST_FILES.length} test files seen; the scan must be broken`);
+  const klokTests: string[] = [];
+  for (const f of TEST_FILES) {
+    // code() strips comments — zonder dat vindt deze scan vooral de toelichtingen die uitleggen
+    // waarom de aanroep weg moest, en dan is de poort een generator van vals alarm.
+    const src = code(f);
+    for (const m of src.matchAll(
+      /([\w.)\]]+)\s*\.\s*(getUTCFullYear|getUTCMonth|getUTCDate|getFullYear|getMonth|getDate)\(\)/g)) {
+      const at = m.index ?? 0;
+      const inline = dateCallEndingAt(src, at + m[1].length);
+      if (inline !== null) {
+        if (inline !== "") continue; // uit DATA gebouwd: een kalenderfeit, precies wat een test hoort te doen
+        klokTests.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the wall clock`);
+        continue;
+      }
+      if (/^[A-Za-z_$][\w$]*$/.test(m[1])) {
+        const binds = [...src.slice(0, at).matchAll(
+          new RegExp(`(?:const|let|var)\\s+${m[1]}\\s*(?::[^=]*)?=\\s*`, "g"))];
+        const b = binds[binds.length - 1];
+        if (!b) continue;
+        const na = src.slice((b.index ?? 0) + b[0].length);
+        if (!/^new Date\(/.test(na)) continue;
+        const open = (b.index ?? 0) + b[0].length + "new Date".length;
+        let depth = 0;
+        let j = open;
+        for (; j < src.length; j++) {
+          if (src[j] === "(") depth++;
+          else if (src[j] === ")") { depth--; if (depth === 0) break; }
+        }
+        if (src.slice(open + 1, j).trim() !== "") continue;
+        klokTests.push(`${f}:${src.slice(0, at).split("\n").length} — ${m[2]}() off the wall clock`);
+      }
+    }
+  }
+  assert.deepEqual(klokTests, [],
+    "these tests read a calendar field off the CURRENT clock. The code under test uses the " +
+    "Amsterdam day (amsterdamToday/amsterdamYear), so for the hours where the two disagree the " +
+    "suite goes red on something that is not broken:\n  " + klokTests.join("\n  ") +
+    "\n\nRead the same clock the code reads, and shift days over calendar days.");
 
   // One clock, so year and month can never disagree about which day it is.
   const pure = code("src/lib/format-nl.ts");
