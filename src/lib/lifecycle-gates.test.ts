@@ -20587,3 +20587,119 @@ test("[WIK-VORDERING] the statutory demand is built through the rule, not from t
   assert.match(claimsLoop, /claimableForWik/,
     "the rule guards the SUM, which is the thing a court reads");
 });
+
+// ─── [CSV-MUNT] Geen enkele deur mag vreemde valuta als euro's naar binnen laten ──────
+//
+// `bank_transactions` heeft geen valutakolom. Alles wat erop volgt — kosten, omzet, de matching,
+// de afletterset, het banksaldo, de aangifte — leest `amount` als euro's. Een regel van $ 1.000,00
+// die als 1000 binnenkomt is daarna niet meer van € 1.000,00 te onderscheiden: er is nergens meer
+// een spoor dat het dollars waren.
+//
+// De weigering STOND er, in bank-ingest, en las `parsed.currency`. Alleen: parseBankCsv zette daar
+// de letterlijke string "EUR" in, voor elk bestand, ongeacht wat er in de muntkolom stond. De
+// weigering kon voor geen enkel CSV-bestand afgaan. Een bewaker die altijd "in orde" antwoordt is
+// geen bewaker — hij is erger dan geen, want hij is de reden dat niemand meer kijkt.
+//
+// ── WAAROM DEZE POORT DE DEUREN ZÉLF OPZOEKT ──
+//
+// Dit bestand heeft één terugkerende les: een geautomatiseerde regel met een handgeschreven lijst
+// eronder is niet geautomatiseerd. Toen dit werd geschreven waren er twee schrijvers naar
+// bank_transactions — de upload (bank-ingest) en de bankkoppeling (enablebanking-sync) — en de
+// tweede was pas een jaar na de eerste ontstaan, mét dezelfde blinde vlek. Een derde deur komt er,
+// en die zou onder een vaste lijst van twee onzichtbaar blijven. Dus: de poort ZOEKT de schrijvers,
+// en elke gevonden schrijver moet een valutacontrole op zijn pad hebben.
+
+test("[CSV-MUNT] every writer into bank_transactions refuses money that is not in euros", () => {
+  const writers: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\./.test(p)) continue;
+      const src = code(p);
+      // A writer is a file that puts rows INTO the table. `.select`-only files are readers and
+      // have nothing to refuse — the money is already inside by the time they see it.
+      if (/from\("bank_transactions"\)[\s\S]{0,400}?\.(insert|upsert)\(/.test(src)) writers.push(p);
+    }
+  };
+  walk("src/lib");
+  walk("src/app");
+
+  assert.ok(writers.length >= 2, `expected to find the bank_transactions writers, found ${writers.length}`);
+
+  for (const w of writers) {
+    const src = code(w);
+    // The check itself, however it is spelled: something in this file compares a currency against
+    // EUR. Deliberately loose about HOW — the point is that the file makes the comparison at all,
+    // not that it makes it in one blessed shape.
+    assert.match(
+      src, /!==\s*"EUR"|!==\s*'EUR'/,
+      `${w} writes into bank_transactions but never compares a currency against EUR. Without that ` +
+        `comparison a dollar or pound line lands as euros, and after it is booked nothing anywhere ` +
+        `records that it was not.`,
+    );
+  }
+});
+
+test("[CSV-MUNT] the CSV parser reports the file's currency instead of asserting EUR", () => {
+  const src = code("src/lib/bank-csv.ts");
+
+  // The defect, exactly: a literal EUR handed to the caller as THE currency of a file that parsed
+  // fine. The two early returns above it (empty file, unrecognised columns) may keep their literal
+  // — they carry zero transactions, so there is no money to be wrong about.
+  assert.doesNotMatch(
+    src, /const currency = "EUR";/,
+    "parseBankCsv hard-codes the statement currency again. bank-ingest's non-euro refusal reads " +
+      "exactly this value, so a literal here makes that refusal unreachable for every CSV.",
+  );
+
+  // And the positive half: the currency is derived from what was actually read.
+  assert.match(
+    src, /seenCurrencies/,
+    "the statement currency is no longer computed from the transactions that were read",
+  );
+  assert.match(
+    src, /currency: number;/,
+    "ColumnMap lost its currency column — with no column to read, the derivation above can only " +
+      "ever produce the default, which is the hard-coded literal by another route",
+  );
+});
+
+test("[CSV-MUNT] the upload refusal reads the LINES, not only the header", () => {
+  const src = code("src/lib/bank-ingest.ts");
+
+  // One statement, one currency is the common case but not the only one: CAMT carries Ccy per
+  // <Ntry> and a CSV has a currency column per row. A file can therefore say EUR at the top and
+  // still hold dollar lines, and reading only the top let those lines through.
+  assert.match(
+    src, /parsed\.transactions[\s\S]{0,200}?\.currency/,
+    "the non-euro refusal only looks at the statement-level currency again. A mixed-currency file " +
+      "declares EUR at the top, so the header alone cannot see its foreign lines.",
+  );
+});
+
+test("[CSV-MUNT] the bank feed is held to the same rule as the upload", () => {
+  const map = code("src/lib/enablebanking-map.ts");
+  const sync = code("src/lib/enablebanking-sync.ts");
+
+  // This door runs on a cron. Nobody is looking at the moment it books, so a wrong line here is
+  // discovered later than a wrong line from an upload — if at all.
+  assert.match(
+    map, /toUpperCase\(\) !== "EUR"/,
+    "mapEnableBankingTransactions no longer filters foreign-currency lines. The feed reaches banks " +
+      "all over Europe and hands over the currency on every transaction; storing one means booking " +
+      "kroner or pounds as euros.",
+  );
+  // Dropped money must be SAID. A silent filter is the same defect wearing the other mask: the
+  // owner reconciles a bank balance against an import that is quietly missing a line.
+  assert.match(
+    map, /describeForeignCurrency/,
+    "a foreign line is now dropped without a word — the owner would reconcile against an import " +
+      "that is silently short a transaction",
+  );
+  assert.match(
+    sync, /skippedForeignCurrency/,
+    "a non-euro ACCOUNT is fetched again. Beyond the money, it spends one of the few daily reads " +
+      "the bank allows on transactions that can never be stored.",
+  );
+});

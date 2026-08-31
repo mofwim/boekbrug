@@ -490,6 +490,16 @@ export function mapEnableBankingTransactions(
     }
     const mapped = mapEnableBankingTransaction(tx);
     if (mapped) {
+      // [CSV-MUNT] Een regel in een andere munt dan de euro gaat NIET mee. bank_transactions heeft
+      // geen valutakolom, dus $ 1.000,00 zou als € 1.000,00 in de kosten, de matching en de
+      // afletterset landen — hetzelfde bedrag, de verkeerde munt, en na het boeken nergens meer
+      // terug te zien. De uploaddeur weigert zo'n bestand al; deze deur deed dat niet, en die
+      // draait op een cron waar niemand naar kijkt. Overslaan is verlies, maar het is ZICHTBAAR
+      // verlies: de regel hieronder noemt hem met bedrag en munt.
+      if ((mapped.currency || "EUR").toUpperCase() !== "EUR") {
+        warnings.push(describeForeignCurrency(mapped));
+        continue;
+      }
       transactions.push(mapped);
       continue;
     }
@@ -497,6 +507,23 @@ export function mapEnableBankingTransactions(
   }
 
   return { transactions, warnings, skipped };
+}
+
+/**
+ * [CSV-MUNT] One Dutch line for a transaction we CAN read but must not book: it is not in euros.
+ *
+ * Deliberately different wording from `describeUnreadable`. "We could not read it" would send the
+ * owner looking for a broken line at his bank; the truth is that we read it perfectly and this
+ * administratie has nowhere to put a currency. He needs to know which line, and why.
+ */
+function describeForeignCurrency(tx: BankTransaction): string {
+  const bits = [tx.date, `${tx.currency} ${Math.abs(tx.amount).toFixed(2)}`].filter(Boolean);
+  const what = tx.counterpartName || (tx.description || "").slice(0, 40);
+  return (
+    `Een banktransactie in ${tx.currency} is niet geïmporteerd (${bits.join(", ")}` +
+    (what ? `, "${what}"` : "") +
+    `) — deze boekhouding werkt in euro's en zou het bedrag anders als euro's boeken.`
+  );
 }
 
 /** One Dutch line describing a transaction we could not read, with whatever identified it. */

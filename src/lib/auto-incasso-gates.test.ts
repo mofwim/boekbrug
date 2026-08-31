@@ -151,10 +151,25 @@ test("[DD-SIGNAL] the CSV mapper still has a role for the incasso columns", () =
   assert.match(src, /mutatiesoort/, "ING's Mutatiesoort column is unmapped again");
   assert.match(src, /machtigingskenmerk/, "Rabobank's Machtigingskenmerk column is unmapped again");
   assert.match(src, /incassant/, "Rabobank's Incassant ID column is unmapped again");
-  assert.match(
-    src, /return \{ date, amount, sign, name, iban, ownIban, descCols, typeCode, mandate, creditor \}/,
-    "the mapper found the columns but stopped returning them",
-  );
+  // Finding a column and HANDING IT OVER are two different things: the three roles above were once
+  // detected in mapColumns and then dropped on the floor by the return, which reads as working.
+  //
+  // Checked per role, not as one frozen tuple. The tuple version failed the day a fourth role
+  // (currency) was added — a correct change, reported as "the mapper stopped returning them",
+  // which is exactly the kind of false alarm that gets a gate deleted rather than read.
+  const ret = /return \{([^}]*)\};/.exec(src.slice(src.indexOf("function mapColumns")));
+  assert.ok(ret, "mapColumns no longer ends in an object literal — the roles cannot be checked");
+  for (const role of ["typeCode", "mandate", "creditor"]) {
+    // The role must carry a VALUE out, not merely appear. `mandate: -1` mentions the role and
+    // hands over "no such column" forever — the same silence as dropping it, spelled so that a
+    // presence check reads it as fine. So: shorthand, or a colon followed by a name.
+    assert.match(
+      ret[1], new RegExp(`(^|[,\\s])${role}\\s*(,|\\}|$|:\\s*[A-Za-z_$])`),
+      `mapColumns detects ${role} but does not hand it over — the column is found and then dropped ` +
+        `(or pinned to a literal), which looks like working code and reads like a bank that does ` +
+        `not name its incasso's`,
+    );
+  }
 });
 
 test("[DD-SIGNAL] a proposal is a question, never a decision", () => {
