@@ -72,13 +72,38 @@ export async function POST(req: NextRequest) {
   // [IN-CHUNK] Gechunkt. De 503 hieronder was er al en is precies goed — maar bij een selectie van
   // een paar honderd facturen wás de kale `.in()` de reden dat hij afging, en dat is juist de
   // download waarvoor de eigenaar de knop indrukt.
-  let rows: Array<{ id: string; invoice_number: string | null; client_name: string | null; pdf_url: string | null; direction: string | null }> | null = null;
+  // [BULK-PDF-VOLLEDIG] Every column renderInvoicePdf reads, not the five the file naming needs.
+  // See the select below for what the short list cost.
+  let rows: Array<{
+    id: string; invoice_number: string | null; client_name: string | null;
+    pdf_url: string | null; direction: string | null; invoice_type: string | null;
+    invoice_date: string | null; due_date: string | null; delivery_date: string | null;
+    client_address: string | null; client_postal_code: string | null; client_city: string | null;
+    client_email: string | null; client_btw_number: string | null;
+    total_ex_btw: number | null; btw_amount: number | null;
+    original_invoice_id: string | null;
+  }> | null = null;
   let error: { message: string } | null = null;
   try {
     rows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
       supabase
         .from("invoices")
-        .select("id, invoice_number, client_name, pdf_url, direction")
+        // [BULK-PDF-VOLLEDIG] These five were everything the ZIP's file NAMES need — and the
+        // same row is handed to renderInvoicePdf when there is no stored pdf, which reads fifteen.
+        // The ten that were missing are not decoration:
+        //
+        //   · invoice_type — `(invoice.invoice_type as string) || 'factuur'` in invoice-pdf.tsx,
+        //     so a CREDITNOTA was re-drawn as a "Factuur" with an amount owed. Measured: the
+        //     bytes came out the same length as a factuur (3283) and 96 longer than the
+        //     creditnota it actually is (3187);
+        //   · client_address / postal_code / city / btw_number and invoice_date — art. 35a Wet OB
+        //     requires the customer's name and address, the date and the BTW on an invoice. A
+        //     document without them is not one;
+        //   · original_invoice_id — the creditnota's reference to the invoice it corrects, which
+        //     it must carry and which an accountant matches the pair on. It is an ID, not the
+        //     number the PDF prints, so it is resolved below;
+        //   · total_ex_btw / btw_amount — the header figures the totals block prints.
+        .select("id, invoice_number, client_name, pdf_url, direction, invoice_type, invoice_date, due_date, delivery_date, client_address, client_postal_code, client_city, client_email, client_btw_number, total_ex_btw, btw_amount, original_invoice_id")
         .in("id", chunk)
         .eq(ownerColumn, ownerId)
         .eq("direction", direction)
@@ -101,21 +126,73 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Deze facturen zijn niet gevonden." }, { status: 404 });
   }
 
+  // [BULK-PDF-VOLLEDIG] A creditnota states WHICH invoice it corrects — the PDF prints the number
+  // and the date, and an accountant matches the pair on them. The row carries only the id, so the
+  // originals are resolved in one read and attached before anything is drawn. Ownership is a WHERE
+  // here too: these ids come from rows the caller already owns, but the lookup must not become a
+  // way to read someone else's invoice number.
+  const originalIds = [...new Set(invoices.map((i) => i.original_invoice_id).filter((v): v is string => !!v))];
+  const originals = new Map<string, { invoice_number: string | null; invoice_date: string | null }>();
+  if (originalIds.length > 0) {
+    // [IN-CHUNK] Chunked, like the read above it and for the same reason: a bare .in() past a few
+    // hundred ids dies with a 414 that supabase-js reports as an ordinary error, so the caller
+    // reads a failed call as "no rows". On this read that would mean every creditnota in a large
+    // download quietly losing its reference — which is exactly the failure the enrichment exists
+    // to prevent. The repo's own gate caught this line.
+    try {
+      const originalRows = await fetchAllRowsForIds(originalIds, (chunk, from, to) =>
+        supabase
+          .from("invoices")
+          .select("id, invoice_number, invoice_date")
+          .in("id", chunk)
+          .eq(ownerColumn, ownerId)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      for (const r of originalRows) originals.set(r.id, r);
+    } catch {
+      // Best-effort by design, and the ONLY read in this route that is: a creditnota whose
+      // original cannot be resolved still prints as a creditnota with its own number and totals.
+      // Failing the whole download over the reference would withhold documents the owner is
+      // entitled to — and unlike the profile and the lines, this one cannot make a document look
+      // like something it is not.
+    }
+  }
+  const enriched = invoices.map((i) => {
+    const origin = i.original_invoice_id ? originals.get(i.original_invoice_id) : undefined;
+    return {
+      ...i,
+      original_invoice_number: origin?.invoice_number ?? null,
+      original_invoice_date: origin?.invoice_date ?? null,
+    };
+  });
+
   const plan = planBulkPdf(invoices);
   if (!plan.ok) return NextResponse.json({ error: plan.error }, { status: 400 });
 
   // The sender's own details, once — every rendered invoice carries the same ones.
-  const { data: profile } = await supabase
+  // [NO-SILENT-EMPTY] The outcome is READ. This was `const { data: profile }` with the error
+  // dropped, and `profile ?? {}` below — so a failed read drew every invoice in the ZIP without a
+  // company name, KVK number, BTW number or IBAN, and reported the archive as complete. Those are
+  // the sender's legally required details (art. 35a Wet OB); a document without them is not an
+  // invoice, and it is the copy the owner keeps for seven years.
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("company_name, full_name, email, phone, address, postal_code, city, kvk_number, btw_number, iban, kor_active, vat_exempt_activity, vat_statement_note")
     .eq("id", ownerId)
     .maybeSingle();
+  if (profileError || !profile) {
+    return NextResponse.json(
+      { error: "We konden je bedrijfsgegevens niet ophalen, dus de facturen zouden zonder je naam en KVK-nummer worden getekend. Probeer het zo opnieuw." },
+      { status: 503 },
+    );
+  }
 
   const files: Array<{ name: string; bytes: Uint8Array }> = [];
   /** Named, never counted: "3 of the 8 could not be included" is a number nobody can act on. */
   const missing: string[] = [];
 
-  for (const inv of invoices) {
+  for (const inv of enriched) {
     const name = plan.names.get(inv.id)!;
     const stored = String(inv.pdf_url ?? "").trim();
 
@@ -138,12 +215,17 @@ export async function POST(req: NextRequest) {
     // 3. Our own invoice with no stored pdf — a draft, or one from before pdfs were kept. Drawn
     // from its own lines, which is exactly what the screen would have shown.
     try {
-      const { data: lines } = await supabase
+      // [NO-SILENT-EMPTY] Likewise. `lines ?? []` on a failed read drew an invoice with no lines
+      // and EUR 0,00 totals, pushed it into the ZIP, and counted it as one of the files that
+      // succeeded — an empty document is indistinguishable from a real one to whoever opens the
+      // archive a year later. A read that failed is a MISSING invoice, and missing[] names it.
+      const { data: lines, error: linesError } = await supabase
         .from("invoice_lines")
         .select("*")
         .eq("invoice_id", inv.id)
         .order("id", { ascending: true });
-      const bytes = await renderInvoicePdf(inv, lines ?? [], profile ?? {});
+      if (linesError) throw new Error(`invoice_lines: ${linesError.message}`);
+      const bytes = await renderInvoicePdf(inv, lines ?? [], profile);
       files.push({ name, bytes: new Uint8Array(bytes) });
     } catch (e) {
       console.error("[BULK-PDF] rendering one invoice failed", {
