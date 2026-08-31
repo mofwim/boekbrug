@@ -8363,7 +8363,11 @@ test("[UNDO-EIGEN-WERK] every detach write reads its error", () => {
     "a detach whose error is dropped is followed by deleting the links anyway: the invoice goes " +
       "unpaid while its transaction stays 'matched' and pointed at it",
   );
-  assert.equal((detach.match(/status: 503/g) ?? []).length, 2, "…and each refuses, recoverably");
+  // Drie, niet twee: de batch-tak heeft er een derde bij gekregen. Die weigert wanneer er geen
+  // zusterfactuur is om de bankregel naar te HERWIJZEN — want het alternatief, invoice_id op null
+  // zetten terwijl de status 'matched' blijft, is precies de eindstandtoestand die [BATCH-DETACH]
+  // beschrijft: dubbel geteld in de W&V en door geen enkele deur meer te bereiken.
+  assert.equal((detach.match(/status: 503/g) ?? []).length, 3, "…and each refuses, recoverably");
 });
 
 test("[UNDO-EIGEN-WERK] the race and the rule are proven against a database", () => {
@@ -10011,6 +10015,46 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
   // De derde stand blijft bestaan: een mislukte lezing is geen leeg bord met € 0,00.
   assert.match(verkoop, /const facturenOnleesbaar = facturenRes\.fout/,
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
+});
+
+test("[BATCH-DETACH] undoing one invoice of a batch repoints the bank line, never empties it", () => {
+  // Eén overboeking betaalt twee facturen. De eigenaar draait er één van terug. De regel betaalt
+  // de andere nog, dus haar status blijft terecht 'matched' — en de tak zette tegelijk invoice_id
+  // op null. Die combinatie hoort nergens thuis, en drie dingen gaan er tegelijk mis:
+  //
+  //   · financial-result.ts slaat een bankregel alleen over op `if (t.invoice_id) continue`. Geen
+  //     status erbij. Met een lege pointer en een categorie — die de auto-categorisatie bij het
+  //     importeren zet, toen de regel nog geen invoice_id had — boekt het volle bedrag van de
+  //     regel een TWEEDE keer als kost of omzet, bovenop de facturen die hij betaalde;
+  //   · /api/bank/match haalt alleen status='pending' op, dus hij komt nooit terug in
+  //     "Te bevestigen";
+  //   · /api/bank/unlink weigert met not_linked zodra invoice_id leeg is.
+  //
+  // Eindstation: dubbel geteld en door geen enkele deur nog te bereiken — terwijl bulk-undo-pay.ts
+  // de eigenaar met zoveel woorden belooft dat "de bankregel zich weer aanbiedt om te koppelen",
+  // en het bulkscherm deze route één keer per rij aanroept, dus in aantallen.
+  //
+  // De juiste waarde lag er al: een van de koppelingen die blijft staan. book_bank_batch kiest bij
+  // het BOEKEN net zo een vertegenwoordiger; dit is de omkering daarvan.
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  assert.match(route, /\.update\(\{ invoice_id: prev\.otherInvoiceId \}\)/,
+    "de batch-tak moet herwijzen naar een overlevende zuster");
+  assert.doesNotMatch(route, /\.update\(\{ invoice_id: null \}\)/,
+    "leegmaken terwijl de status 'matched' blijft, is de eindstandtoestand zelf");
+  // De zuster moet haar factuur ook echt MEEGEVEN — een query die alleen haar bestaan leest, kan
+  // niets herwijzen, en dat was precies de vorm die er stond.
+  assert.match(route, /\.select\("invoice_id"\)\.eq\("user_id", user\.id\)\.eq\("transaction_id", txId\)\.neq\("invoice_id", invoiceId\)/,
+    "de zusterlezing moet de invoice_id ophalen, niet alleen het bestaan van een rij");
+  // Geen zuster met een factuur → weigeren, nooit alsnog leegmaken.
+  assert.match(route, /if \(!prev\.otherInvoiceId\) \{[\s\S]{0,400}?status: 503/,
+    "zonder herwijsdoel is weigeren het enige antwoord dat de eindstand niet maakt");
+  // En de terugdraai moet op de GESCHREVEN waarde guarden, anders draait ze stil niets terug.
+  assert.match(route, /wrote\.invoiceIdSetTo === null\s*\n?\s*\? revert\.is\("invoice_id", null\)\s*\n?\s*: revert\.eq\("invoice_id", wrote\.invoiceIdSetTo\)/,
+    "de rollback guardt nog op `is null` terwijl er een pointer is geschreven");
+
+  // De reden dat dit een gat KON zijn: de P&L-onderdrukking kijkt alleen naar de pointer.
+  assert.match(code("src/lib/financial-result.ts"), /if \(t\.invoice_id\) continue;/,
+    "als dit ooit ook de status leest, mag de zin hierboven worden herschreven — nu niet");
 });
 
 test("[MANDAAT-SOORT] every read of the mandate table says WHICH mandate", () => {
