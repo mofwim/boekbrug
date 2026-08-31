@@ -490,7 +490,7 @@ test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentag
             {
               invoiceId: "i1", supplierName: "Dutch Sweets Company B.V.",
               atMs: Date.UTC(2026, 7, 3, 9, 20), what: "bedrag" as const,
-              amountBefore: "33.87", amountAfter: "-33.87",
+              amountBefore: "6.8100000000000005", amountAfter: "-6.8100000000000005",
               ibanBefore: null, ibanAfter: null, afterPayment: false,
             },
           ],
@@ -505,7 +505,11 @@ test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentag
     assert.match(html, /Dutch Sweets Company/, "de leverancier hoort met naam op het scherm");
     assert.match(html, /<td[^>]*>12<\/td>/,
       "…met de noemer erbij: 5 van 12 is iets anders dan 5 van 400");
-    assert.match(html, /33\.87/, "…met wat er stond naast wat het werd");
+    // Precies de reeks die in productie op dit scherm stond. Het spoor bewaart hem — het scherm
+    // hoort er een bedrag van te maken, want hier leest zo'n staart als een fout in de boeken.
+    assert.match(html, /6,81/, "…met wat er stond naast wat het werd, als bedrag");
+    assert.doesNotMatch(html, /6\.8100000000000005/,
+      "de drijvende-komma-staart hoort niet op een scherm over geld");
     assert.match(html, /586/);
     assert.match(html, /niemand opmerkte/, "de eerlijkheidszin hoort erbij: dit is de fout die IEMAND zag");
   })();
