@@ -50,6 +50,34 @@ const AMOUNT_EXPLAINING_KEYS: readonly string[] = [
 ];
 
 /**
+ * [INCASSO-ONGEDAAN] De sleutels die vastleggen wat de APP heeft gedaan, niet wat er op het papier
+ * staat. Die overleven een herlezing ALTIJD, en om een andere reden dan alle lijsten hierboven.
+ *
+ * AMOUNT_EXPLAINING_KEYS blijven staan zolang de bedragen blijven staan — komen er verse bedragen,
+ * dan gaat de oude verklaring terecht mee weg. Deze sleutel werkt precies andersom. `_auto_incasso`
+ * zegt niet iets over het document; het zegt dat wij deze factuur ooit automatisch als betaald
+ * hebben geboekt. Opnieuw naar de pdf kijken kan dat feit niet opnieuw afleiden en kan het ook niet
+ * weerleggen. Het is een audit-spoor, net als `_intake_paid_evidence` een paar regels hoger, en om
+ * dezelfde reden onaantastbaar.
+ *
+ * Waarom het geld kost als hij toch verdwijnt. incassoDecision houdt sinds vandaag een factuur
+ * tegen die OPEN staat én deze sleutel draagt: die combinatie kan maar één ding betekenen — wij
+ * hebben hem geboekt en iemand heeft hem teruggezet, meestal na een storno, precies zoals de
+ * melding van de cron zelf voorstelt. De idempotentie-sleutel zelf staat in de bank_tx_invoices-rij
+ * die het ongedaan maken juist weghaalt, dus dit merkteken is wat er nog over is. Valt het weg bij
+ * een druk op "Opnieuw inlezen", dan is de factuur weer een gewone openstaande factuur van een
+ * gemarkeerde leverancier en boekt de eerstvolgende cron-ronde het hele bedrag opnieuw — uurlijks,
+ * op een afschrijving die is teruggedraaid.
+ *
+ * De kop van AMOUNT_EXPLAINING_KEYS waarschuwt hier woordelijk voor ("wie hier een nieuwe soort
+ * verklaring toevoegt en deze lijst vergeet…") en `_statiegeld` is het bewijs dat het al een keer
+ * is gebeurd. Dit is dezelfde vergissing, maar dan met een boeking eraan.
+ */
+const ACTION_TRAIL_KEYS: readonly string[] = [
+  "_auto_incasso",    // [AUTO-INCASSO] wij hebben deze factuur zelf als betaald geboekt
+];
+
+/**
  * De sleutels binnen `_safecore` die over de RELATIE met een andere factuur gaan.
  * Deze overleven een re-import ALTIJD: opnieuw naar dít document kijken zegt niets over de
  * vraag of er elders een tweeling ligt, en de route zoekt die tweeling niet opnieuw op.
@@ -108,6 +136,10 @@ export function buildReimportFieldConfidence(input: ReimportCarryInput): Record<
       // niets aan. (Ook _intake_paid_evidence en _intake_paid_card4 horen hierbij: dat is het
       // bewijs waarop de betaalwijze rust — een audit-spoor dat niet mag verdampen.)
       if (k.startsWith("_intake")) carried[k] = priorFc[k];
+      // [INCASSO-ONGEDAAN] Wat de app heeft gedaan, onvoorwaardelijk — zie ACTION_TRAIL_KEYS.
+      // Bewust NIET achter `!freshHasTotal`: een verse lezing met bedragen erin zegt nog steeds
+      // niets over de vraag of wij ooit een incasso hebben geboekt.
+      else if (ACTION_TRAIL_KEYS.includes(k)) carried[k] = priorFc[k];
       // [BTW-SUM-FIX] / [BTW-SPLIT] / [PRINTED-TOTAL] Deze sleutels verklaren de OPGESLAGEN
       // bedragen: "deze BTW is van ons, niet van de factuur", "de btw-specificatie op het papier
       // telt op tot iets anders", "op de factuur staat een ander te betalen totaal", "het derde
