@@ -20959,3 +20959,33 @@ test("[KASSA-VERS] the fingerprint identifies WHICH sales, not how many", () => 
   assert.match(fn, /\.sort\(\)/, "without a sort the fingerprint depends on read order, so an unchanged day can read as changed");
   assert.doesNotMatch(fn, /\.length/, "a count-based fingerprint cannot see a sale swapped for another");
 });
+
+// ── [HANDMATIG-OVERGENOMEN] Een menselijke hand wist de machine-vlag ─────────
+test("[HANDMATIG-OVERGENOMEN] ontkoppelen en handmatig bevestigen wissen auto_match_reason", () => {
+  // auto_match_reason zegt één ding: de APP heeft deze regel op bedrag en leveranciersnaam alleen
+  // geboekt, en niemand heeft hem nagekeken. readiness telt precies de rijen die hem dragen terwijl
+  // status 'matched' is, en maakt daar "loop ze na vóór je de aangifte indient" van op het
+  // kwartaalbord.
+  //
+  // Zodra een mens de regel overneemt is die zin onwaar. Alleen de expliciete "Klopt,
+  // gecontroleerd"-tik wiste hem, dus na ontkoppelen bleef de vlag staan en droeg de volgende
+  // handmatige bevestiging hem terug naar 'matched' — waarna het bord de eigenaar waarschuwde voor
+  // een koppeling die de eigenaar zélf had gelegd. Een vals item op het scherm dat er staat om
+  // geloofd te worden. Vandaag draagt geen enkele rij die toestand; dit houdt het zo.
+  const unlink = code("src/app/api/bank/unlink/route.ts");
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+
+  for (const [naam, src] of [["unlink", unlink], ["confirm", confirm]] as const) {
+    assert.match(src, /auto_match_reason: null/,
+      `${naam} wist de machine-vlag niet meer — het kwartaalbord waarschuwt dan voor werk van de eigenaar zelf`);
+  }
+  // Eigen update, niet meegelift op de hoofdschrijving: de kolom komt uit een met de hand
+  // toegepaste migratie, en hem in de schrijving hierboven vouwen maakt van een achterlopende
+  // migratie een kapotte ontkoppeling. Een verouderde vlag is hinder; een route die weigert niet.
+  assert.match(unlink, /\.update\(\{ auto_match_reason: null \} as any\)\s*\n\s*\.eq\("id", transactionId\)/,
+    "de wis-schrijving in unlink is samengevoegd met de hoofdschrijving — een ontbrekende kolom breekt dan het ontkoppelen zelf");
+  // En alleen wanneer de koppeling er echt is: een 0-rij-schrijving betekent dat een andere
+  // aanvraag de regel heeft gepakt, en dan zou dit HUN waarschuwing wissen.
+  assert.match(confirm, /if \(!linkErr && linkData && linkData\.length > 0\) await clearAutoReason\(\)/,
+    "confirm wist de vlag ook wanneer de koppeling niet landde — dat wist de waarschuwing van een andere aanvraag");
+});
