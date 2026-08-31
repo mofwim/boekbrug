@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { createNotification } from "@/lib/notifications"
 import {
   verifyInvoiceFromPdf,
@@ -2331,12 +2331,45 @@ async function reconcileSupplierStatement(args: {
   // dat is de enige claim die we in dat geval doen (zie hieronder — geen `notOnStatement`).
   const vendorKey = supplierNameKey(read.vendor)
   const scoped = vendorKey ? rows.filter((r) => supplierNameKey(r.client_name) === vendorKey) : rows
+
+  // [TWEE-BOEKEN] Welke van die betalingen een BANKREGEL onder zich heeft.
+  //
+  // Het verschil beslist welke zin de eigenaar leest. Staat een factuur nog open op het overzicht
+  // van de leverancier terwijl de bank de betaling laat zien, dan is het geld aantoonbaar
+  // vertrokken en loopt de leverancier achter — vervelend, niet duur. Is het een handmatige
+  // afvinking, dan heeft alléén de leverancier bewijs, en dan is dit het geval waarin er een
+  // tweede keer betaald wordt of een aanmaning binnenkomt voor iets dat in de app groen staat.
+  //
+  // Best-effort: mislukt deze lezing, dan is er geen bewijs bekend en valt alles terug op de
+  // voorzichtige zin. Dat is de goede kant om op te falen — hij vraagt om een controle die de
+  // eigenaar hoe dan ook zelf kan doen.
+  const bankProof = new Set<string>()
+  if (scoped.length > 0) {
+    try {
+      const links = await fetchAllRowsForIds<{ invoice_id: string | null; transaction_id: string | null }, string>(
+        scoped.map((r) => r.id),
+        (chunk, lo, hi) => supabase
+          .from("bank_tx_invoices")
+          .select("invoice_id, transaction_id")
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(lo, hi),
+      )
+      for (const l of links) if (l.invoice_id && l.transaction_id) bankProof.add(l.invoice_id)
+    } catch (e) {
+      console.error("[TWEE-BOEKEN] betaalbewijs niet te lezen — de voorzichtige zin blijft staan", {
+        userId, documentId, error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
   const booked: BookedInvoice[] = scoped.map((r) => ({
     id: r.id,
     invoice_number: r.invoice_number,
     invoice_date: r.invoice_date,
     total_inc_btw: r.total_inc_btw,
     status: r.status ?? "processing",
+    paymentHasBankProof: bankProof.has(r.id),
   }))
 
   const result = reconcileStatement({

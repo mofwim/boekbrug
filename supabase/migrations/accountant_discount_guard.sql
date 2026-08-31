@@ -1,54 +1,38 @@
--- accountant_amount_guard_restore.sql
--- [SEC] Twee gaten in dezelfde trigger: drie kolommen die stil uit de deny-list vielen, en een
--- machtigingsuitzondering die meer toestond dan de machtiging zelf.
+-- accountant_discount_guard.sql
+-- [KORTING-SLOT] De korting op factuurniveau ontbrak in de accountant-deny-list, en daaruit worden
+-- de bedragen op de e-factuur afgeleid.
 -- BoekBrug · augustus 2026
 --
--- ── WAT ER IS GEBEURD ──
+-- ── WAT ER MIS WAS ──
 --
--- accountant_write_holes.sql voegde `vendor_iban`, `payment_reference` en `document_id` toe aan de
--- beschermde kolommen van prevent_accountant_amount_changes(), met een [SEC]-toelichting erbij
--- over waarom juist die. Daarna herdefinieerde accountant_confirm_mandate.sql dezelfde functie —
--- om uitzondering 5 (de bevestigmachtiging) toe te voegen — en nam de lijst over ZONDER die drie.
+-- invoices_accountant_update_v2 geeft een gekoppelde boekhouder een UPDATE op de hele rij van elke
+-- gedeelde factuur van zijn klant; prevent_accountant_amount_changes() beschermt daarvan een
+-- opsomming van kolommen. discount_type en discount_value stonden er niet in.
 --
--- CREATE OR REPLACE vervangt het lichaam volledig. Er is geen waarschuwing, geen conflict, en in
--- een map met 118 migraties zonder volgordenummer en zonder journaal is er ook niets dat zegt
--- welke van de twee als laatste is gedraaid. Nagekeken in de productiedatabase op 30 augustus
--- 2026: de LIVE functie draagt zeventien kolommen, niet twintig. De reparatie was dus terug-
--- gedraaid en niemand wist het.
+-- Dat is geen vergeten veld maar een vergeten SOORT veld. De andere twintig zijn bedragen, data en
+-- statussen: de UITKOMST. Deze twee zijn de INVOER waaruit die uitkomst wordt gerekend:
 --
--- ── WAAROM DIT ERGER IS DAN EEN VERGETEN KOLOM ──
+--   · buildInvoiceUbl (src/lib/ubl-export.ts) leidt TaxExclusiveAmount, TaxAmount,
+--     TaxInclusiveAmount en PayableAmount af uit parseDiscount(header.discount_type,
+--     header.discount_value). Eén PATCH met {percent, 100} zet de e-factuur van een openstaande
+--     factuur van EUR 1.210 op EUR 0,00 — het bedrag dat het systeem van de klant importeert.
+--     Dezelfde XML gaat mee in de kwartaal-ZIP voor de boekhouder.
+--   · PUT /api/invoice/[id] valt terug op existing.discount_type/existing.discount_value zodra de
+--     body ze niet meestuurt, en herberekent daaruit total_ex_btw, btw_amount en total_inc_btw.
+--     Die drie stáán in de lijst — maar de eerstvolgende gewone opslag door de eigenaar zet de
+--     gemanipuleerde korting alsnog om in gemanipuleerde beschermde totalen.
 --
--- `invoices_accountant_update_v2` laat een gemachtigde boekhouder een gedeelde factuur UPDATEN;
--- deze trigger is wat daar de financiële kolommen uit houdt. Met vendor_iban erbuiten kan een
--- boekhouder het rekeningnummer op een inkoopfactuur van zijn klant wijzigen. De ondernemer
--- betaalt daarna naar dat nummer.
+-- ── WAAROM DE HELE LIJST HIER OPNIEUW STAAT ──
 --
--- En het is dubbel: `vendor_iban` is óók de referentie waartegen de IBAN-wisselcontrole
--- (iban-change.ts, import-health.ts) de VOLGENDE factuur van dezelfde leverancier vergelijkt.
--- Wie hem hier verzet, verlegt de betaling én de meetlat die dat had moeten opmerken.
--- correction-scope.ts zegt het zelf, over een andere deur: "letting it change AFTER money moved
--- is precisely the edit an attacker would want".
+-- Om dezelfde reden als in accountant_amount_guard_restore.sql, waar dit lichaam vandaan komt:
+-- CREATE OR REPLACE vervangt de functie volledig, en in deze map zonder volgordenummers valt niet
+-- vast te stellen welke migratie als laatste draait. Dus draagt elke herdefinitie de VOLLEDIGE
+-- lijst plus alle vijf de uitzonderingen. Dit bestand is dat lichaam, letterlijk overgenomen, met
+-- alleen de twee regels erbij — zodat er geen uitzondering per ongeluk kan sneuvelen.
 --
--- ── WAT HIERONDER STAAT ──
---
--- Dezelfde functie als in accountant_confirm_mandate.sql — alle vijf de uitzonderingen ongewijzigd,
--- inclusief de bevestigmachtiging — met de drie kolommen terug in de deny-list. Er verandert
--- niets aan wat een boekhouder MAG; alleen aan wat hij niet mag.
---
--- ── EN HET TWEEDE GAT, IN DEZELFDE FUNCTIE ──
---
--- Uitzondering 4 (de factuurmachtiging) pinde alleen sender_id, receiver_id en direction. Al het
--- andere stond open — inclusief status, amount_paid en de betaaldatums. De machtiging heet
--- "facturen opstellen namens de klant" en zegt niets over BETAALD verklaren, maar een gemachtigde
--- boekhouder kon met één PATCH zijn eigen concept op 'paid' zetten met een bedrag erbij: een
--- betaling die nooit binnenkwam, in de boeken van de klant. Nu staat er precies toe wat
--- /api/invoice/send schrijft en niets daarbuiten. Zie de toelichting bij de uitzondering zelf.
---
--- Beide zitten in ÉÉN bestand omdat ze dezelfde functie herschrijven: los toegepast wint de
--- laatste en verliest de andere, wat exact is hoe het eerste gat is ontstaan.
---
--- TOEPASSEN: draaien in de Supabase SQL-editor. Verwijdert niets. Idempotent (CREATE OR REPLACE).
--- =====================================================================
+-- ── TOEPASSEN ──
+-- Draai dit in de SQL-editor van Supabase. Daarna de controle onderaan; alle vier moeten `true`
+-- geven.
 
 CREATE OR REPLACE FUNCTION public.prevent_accountant_amount_changes()
 RETURNS trigger
@@ -164,10 +148,22 @@ BEGIN
      -- draagt elke herdefinitie de volledige lijst. Zonder deze regel zou dit bestand, één keer ná
      -- accountant_vat_deduction_guard.sql gedraaid, de kolom weer uit de bescherming halen.
      (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)       OR
-     -- [KORTING-SLOT] Geen bedragen maar de INVOER waaruit bedragen worden herrekend:
-     -- buildInvoiceUbl leidt PayableAmount en TaxAmount af uit parseDiscount(discount_type,
-     -- discount_value), en PUT /api/invoice/[id] herberekent daaruit total_ex_btw, btw_amount en
-     -- total_inc_btw. Een uitkomst beschermen en de invoer open laten is geen bescherming.
+     -- [KORTING-SLOT] De vijfde en zesde, en ze zijn van een andere soort dan de rest: dit zijn
+     -- geen bedragen, het zijn de INVOER waaruit de bedragen opnieuw worden berekend.
+     --
+     -- buildInvoiceUbl leidt TaxExclusiveAmount, TaxAmount, TaxInclusiveAmount en PayableAmount
+     -- af uit parseDiscount(header.discount_type, header.discount_value). Een aan de klant
+     -- gekoppelde boekhouder kon die twee schrijven zonder mandaat, en op een factuur van EUR
+     -- 1.210 die de klant nog moet betalen zet {percent, 100} de e-factuur op EUR 0,00 — het
+     -- bedrag en de btw die het boekhoudsysteem van de klant importeert, en het document dat de
+     -- Belastingdienst als de factuur leest.
+     --
+     -- En het blijft niet bij de XML. PUT /api/invoice/[id] valt terug op
+     -- existing.discount_type/existing.discount_value wanneer de body ze niet meestuurt, en
+     -- herberekent daaruit total_ex_btw, btw_amount en total_inc_btw — precies de drie kolommen
+     -- die bovenaan deze lijst staan. Een uitkomst beschermen en de invoer ervan open laten is
+     -- geen bescherming: de eerstvolgende gewone opslag door de eigenaar zet de gemanipuleerde
+     -- korting om in gemanipuleerde BESCHERMDE totalen.
      (NEW.discount_type       IS DISTINCT FROM OLD.discount_type)       OR
      (NEW.discount_value      IS DISTINCT FROM OLD.discount_value)
   THEN
@@ -180,21 +176,12 @@ END;
 $$;
 
 -- =====================================================================
--- CONTROLE (apart draaien na het toepassen). Alle drie moeten `true` geven.
+-- CONTROLE (apart draaien na het toepassen). Alle vier moeten `true` geven.
 -- =====================================================================
 -- select
---   position('vendor_iban'       in pg_get_functiondef(p.oid)) > 0 as iban_beschermd,
---   position('payment_reference' in pg_get_functiondef(p.oid)) > 0 as kenmerk_beschermd,
---   position('document_id'       in pg_get_functiondef(p.oid)) > 0 as bewijs_beschermd
--- from pg_proc p join pg_namespace n on n.oid = p.pronamespace
--- where n.nspname = 'public' and p.proname = 'prevent_accountant_amount_changes';
---
--- En dat uitzondering 5 er nog staat (de bevestigmachtiging mag niet zijn gesneuveld):
--- select position('has_active_confirm_mandate' in pg_get_functiondef(p.oid)) > 0 as bevestigen_nog_mogelijk
--- from pg_proc p join pg_namespace n on n.oid = p.pronamespace
--- where n.nspname = 'public' and p.proname = 'prevent_accountant_amount_changes';
---
--- En dat uitzondering 4 de betaalkolommen vastpint (moet `true` geven):
--- select position('NEW.amount_paid         IS NOT DISTINCT FROM OLD.amount_paid' in pg_get_functiondef(p.oid)) > 0 as mandaat_betaalt_niet
+--   position('NEW.discount_type'  in pg_get_functiondef(p.oid)) > 0 as korting_soort_beschermd,
+--   position('NEW.discount_value' in pg_get_functiondef(p.oid)) > 0 as korting_waarde_beschermd,
+--   position('NEW.vat_deduction'  in pg_get_functiondef(p.oid)) > 0 as aftrek_nog_beschermd,
+--   position('has_active_confirm_mandate' in pg_get_functiondef(p.oid)) > 0 as bevestigen_nog_mogelijk
 -- from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 -- where n.nspname = 'public' and p.proname = 'prevent_accountant_amount_changes';

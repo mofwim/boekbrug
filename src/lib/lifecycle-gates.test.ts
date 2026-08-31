@@ -10297,7 +10297,43 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     // van de klant met het volledige btw_amount van de factuur — aftrekbaar naar geblokkeerd of
     // andersom — en een aan de klant gekoppelde boekhouder kon hem schrijven zonder mandaat.
     "vat_deduction",
+    // [KORTING-SLOT] En de vijfde en zesde, van een ANDERE soort dan alle voorgaande: dit zijn
+    // geen bedragen maar de INVOER waaruit bedragen worden herrekend. Zie de sectie hieronder,
+    // die ze niet uit deze lijst haalt maar uit de route die de totalen herberekent.
+    "discount_type", "discount_value",
   ];
+
+  // ── [KORTING-SLOT] EEN UITKOMST BESCHERMEN EN DE INVOER OPEN LATEN IS GEEN BESCHERMING ────────
+  //
+  // Deze lijst is vier keer te kort gebleken, en elke keer is er één naam bij geschreven. Dat is
+  // precies de vorm die dit bestand elders een klasse-met-handgeschreven-lijst noemt. Dus komt de
+  // eis er hier NIET bij als naam, maar uit een tweede bron: PUT /api/invoice/[id] herberekent
+  // total_ex_btw, btw_amount en total_inc_btw — de drie kolommen die bovenaan de lijst staan — en
+  // valt daarbij terug op `existing.<kolom>`. Elke kolom die daar wordt gelezen bepaalt dus een
+  // beschermd bedrag, en moet zelf even beschermd zijn.
+  //
+  // Wat dat vond: discount_type en discount_value. Een gekoppelde boekhouder kon ze schrijven —
+  // ze staan in geen enkele trigger — en buildInvoiceUbl leidt PayableAmount en TaxAmount eruit
+  // af, dus één PATCH met {percent, 100} zette de e-factuur van een openstaande factuur van
+  // EUR 1.210 op EUR 0,00. En de eerstvolgende gewone opslag door de eigenaar zette diezelfde
+  // korting om in gemanipuleerde BESCHERMDE totalen.
+  const putRoute = code("src/app/api/invoice/[id]/route.ts");
+  const herberekening = /const \{ total_ex_btw, btw_amount, total_inc_btw \}[\s\S]{0,400}?computeInvoiceTotals\(lines\)/.exec(putRoute);
+  assert.ok(herberekening, "de totalen-herberekening in de PUT-route moet vindbaar zijn");
+  // De terugval staat een paar regels erboven; neem het hele blok vanaf de korting.
+  const blok = putRoute.slice(putRoute.indexOf("const kortingMeegestuurd"), herberekening!.index + herberekening![0].length);
+  const invoer = [...new Set([...blok.matchAll(/existing\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]))];
+  assert.ok(invoer.length > 0, "de herberekening leest niets van de bestaande rij — is ze verplaatst?");
+  const onbeschermd = invoer.filter((k) => !MOET_BESCHERMEN.includes(k)).sort();
+  assert.deepEqual(
+    onbeschermd, [],
+    "deze kolommen bepalen de herberekende totalen maar staan niet in de deny-lijst, dus een " +
+    `boekhouder kan ze schrijven en de bescherming van de totalen omzeilen:\n  ${onbeschermd.join("\n  ")}`,
+  );
+  // En de e-factuur leidt haar bedragen uit dezelfde twee af — de tweede weg naar buiten, die niet
+  // eens langs de route loopt.
+  assert.match(code("src/lib/ubl-export.ts"), /parseDiscount\(header\.discount_type, header\.discount_value\)/,
+    "de e-factuur leidt haar bedragen uit de korting af; verandert dat, dan verandert deze eis");
 
   const migraties = readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
@@ -22102,6 +22138,188 @@ test("[BANK-STAND] the top line reports the queue instead of describing the scre
     "the empty verdict depends on the lazily-loaded ignored list again, so an administration whose " +
       "lines are all ignored reads as one that has none",
   );
+});
+
+// ─── [DEUR] A screen with no way in is a screen that does not exist ─────────────────────────────
+//
+// This repo already carries the scar. The hours screen — /dashboard/uren, the archetypal screen
+// for a zzp'er who bills by the hour — was built, translated, tested and through the render gate,
+// and had ZERO inbound links: reachable only by typing the path. The comment that records it sits
+// in ZzpDashboard.tsx under [UREN-DEUR].
+//
+// Then it happened again, in the same week, to /dashboard/leveranciers. Everything passed. tsc
+// compiled it, eslint was clean, the render gate drew it with real rows, the smoke test swept the
+// public surface. None of them asks the one question a visitor asks: how do I get here.
+//
+// The trap the second time was subtler than the first. The screen WAS in DashboardChrome's title
+// table — so a grep for its path found a hit and the author (me) stopped looking. That table gives
+// a screen a header and a back button once you are ON it. It is not a door. Which is why this gate
+// discounts it, and navigation.ts with it: a parent for the back button is not a way in either.
+//
+// Exempt without a list: a page whose whole body is a redirect. Three of those exist — the old
+// documents system, the accountant werkplek menu, the duplicate invite screen — each kept so a
+// saved bookmark still lands somewhere live. Reachable-by-URL-only is exactly what they are FOR,
+// and a hand-kept exception list would go stale the day someone turns one back into a real screen.
+test("[DEUR] every dashboard screen is reachable from somewhere in the app", () => {
+  const routes: string[] = [];
+  const walk = (dir: string, route: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) walk(p, `${route}/${e}`);
+      else if (e === "page.tsx") routes.push(route);
+    }
+  };
+  walk("src/app/dashboard", "/dashboard");
+  assert.ok(routes.length > 30, `the walk found ${routes.length} dashboard screens`);
+
+  // Every file that could hold a door, minus the two tables that only look like ones.
+  const sources: Array<[string, string]> = [];
+  const collect = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { collect(p); continue; }
+      if (!/\.tsx?$/.test(p) || p.includes(".test.")) continue;
+      if (p.endsWith("src/components/nav/DashboardChrome.tsx")) continue; // a title, not a door
+      if (p.endsWith("src/lib/navigation.ts")) continue;                  // a back button, not a door
+      // Comments stripped. A comment ABOUT a screen is not a way to it — and the first draft of
+      // this gate proved it the hard way: deleting the tile it was written to protect left the
+      // gate green, because the comment above the tile still named the path.
+      sources.push([p, code(p)]);
+    }
+  };
+  collect("src");
+
+  const isRedirectStub = (route: string): boolean => {
+    const body = readFileSync(`src/app${route}/page.tsx`, "utf8");
+    return /redirect\(/.test(body) && !/<[A-Z]/.test(body);
+  };
+
+  /**
+   * A screen that must NOT have a door, with the reason. One entry, and it earns it.
+   *
+   * The operator page answers notFound() for everyone outside BEHEER_EMAILS, and its own header
+   * says why that matters: "indistinguishable from a route that was never built, so the page leaks
+   * nothing about its own existence". A tile pointing at it would undo exactly that. It is reached
+   * by typing the path, on purpose, by the one person who knows it is there.
+   */
+  const EXEMPT_DOORLESS = new Map([
+    ["/dashboard/beheer", "operator-only behind notFound() — a link would announce it exists"],
+  ]);
+
+  const doorless: string[] = [];
+  for (const route of routes) {
+    if (route === "/dashboard") continue;      // the home screen IS the door
+    if (route.includes("[")) continue;          // a dynamic route is reached by construction
+    if (isRedirectStub(route)) continue;        // kept alive for a bookmark, by design
+    if (EXEMPT_DOORLESS.has(route)) continue;   // doorless on purpose — see the map above
+    // The route must appear as a COMPLETE path somewhere else. Requiring the boundary matters:
+    // without it "/dashboard/klanten" would count as linked because "/dashboard/klanten/${id}"
+    // exists, and the list screen behind that detail page could still have no door of its own.
+    const re = new RegExp(route.replace(/[/]/g, "\\/") + `(?=['"\`?#\\s)]|$)`);
+    const own = `src/app${route}/`;
+    const found = sources.some(([path, text]) => !path.startsWith(own) && re.test(text));
+    if (!found) doorless.push(route);
+  }
+
+  assert.deepEqual(
+    doorless, [],
+    "these screens are reachable only by typing their path — add a tile, a link or a nav entry, " +
+    "or make the page a redirect if it is meant to be retired",
+  );
+});
+
+// ─── [TWEE-BOEKEN] The one document that can contradict the books may not be read as agreement ──
+//
+// A supplier's rekeningoverzicht is the only source in this whole app that speaks from OUTSIDE.
+// The bank can say what left the account; it cannot say whether the supplier received it, applied
+// it to the right invoice, or still considers the bill open. That statement can.
+//
+// It arrived, it was parsed, every line was matched — and the summary said "alle facturen op dit
+// overzicht heb je al", because the reconciler compared EXISTENCE and never STATE. The live case:
+// invoice 2034488, EUR 1.165,73, listed as open and overdue by the wholesaler and standing as
+// 'paid' in BoekBrug on a hand tick with no bank line behind it. The one document that would have
+// caught it reported agreement.
+//
+// Two things this gate holds, and the second matters as much as the first: the contradiction is
+// SAID, and it is only said where it IS one. A periodeoverzicht lists the owner's own payments,
+// and there a paid invoice is entirely ordinary — crying wolf every month is how a warning stops
+// being read.
+test("[TWEE-BOEKEN] a paid invoice the supplier still lists is a contradiction, and it is said", () => {
+  const pure = code("src/lib/statement-reconcile.ts");
+
+  // The bucket exists and is a SUBSET of matched, never a replacement: the invoice really was
+  // found, and only the conclusion drawn from that changes.
+  assert.match(pure, /const alsoPaid = matched\.filter\(\(m\) => m\.invoice\.status === "paid"\);/,
+    "the contradiction is derived from matched, so 'we have it' stays true");
+
+  // The distinction rests on an observable fact, not on a guess about the document's purpose.
+  assert.match(pure, /!\(input\.lines \?\? \[\]\)\.some\(\(l\) => l\.kind === "payment"\)/,
+    "an open-items list shows no payments of ours; a period statement does");
+
+  // The sentence that used to swallow it may no longer fire while a contradiction stands.
+  assert.match(pure, /if \(r\.missing\.length === 0 && tegenspraak\.length === 0\) \{/,
+    "'alle facturen heb je al' is now conditional on there being no contradiction");
+
+  // And the two halves of the answer stay apart, because the owner's next action differs. With a
+  // bank line the money demonstrably left and the supplier is behind; without one, only the
+  // supplier holds evidence — and that is the case that costs a second payment or an aanmaning.
+  assert.match(pure, /m\.invoice\.paymentHasBankProof === true/,
+    "the verdict splits on whether a bank line carries the payment");
+  assert.match(pure, /geen bankregel die die betaling draagt/, "the unproven case asks for a check");
+  assert.match(pure, /nog niet verwerkt/, "the proven case reassures instead of accusing");
+
+  // The evidence has to be FETCHED, or the split above is decoration and every owner gets the
+  // cautious sentence. This is the [UREN-DEUR] failure in another shape: a distinction that is
+  // built, tested and never fed.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /\.from\("bank_tx_invoices"\)/, "the intake route reads the payment links");
+  assert.match(intake, /if \(l\.invoice_id && l\.transaction_id\) bankProof\.add\(l\.invoice_id\)/,
+    "…and a link counts as proof only when it names an actual bank transaction");
+  assert.match(intake, /paymentHasBankProof: bankProof\.has\(r\.id\)/,
+    "…and hands it to the reconciler");
+});
+
+// ─── [RUBRIEK-1E] The right total in the wrong box is still a wrong return ──────────────────────
+//
+// The BTW form has three boxes for turnover that carries no Dutch BTW and they are not
+// interchangeable: 1e is domestic 0% and verlegde omzet, 3a is export outside the EU, 3c is
+// installation and distance sales inside it. This concept can emit 1a, 1b, 1c, 1e and 3b — a grep
+// for a 3a or 3c row returns nothing — so an export to a customer in London lands in 1e.
+//
+// Every total is right. All three boxes carry EUR 0 of BTW, so 5a and 5g do not move by a cent,
+// and that is exactly what made it invisible: nothing reconciles, nothing warns, and the filed
+// return states domestic 0%-omzet where there was an export.
+//
+// The app cannot split it — there is no country for a customer anywhere in the schema, which is
+// the same absence that makes the e-factuur refuse to name a buyer's country rather than default
+// it to NL. So it says so, in the concept and on the page that sells the concept, and leaves the
+// number alone. A guess printed on a tax return would be the worse answer by a distance.
+test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names the limit", () => {
+  const pure = code("src/lib/aangifte.ts");
+
+  // The row set is still the five it was — if a 3a row ever ships, this gate should be revisited
+  // rather than silently outlived.
+  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "3b";/,
+    "five rubrieken, and 3a/3c are not among them");
+
+  // The note fires on the AMOUNT, so a quarter with no 0%-turnover stays quiet. An aangifte that
+  // lectures every owner about export is one whose notes stop being read.
+  assert.match(pure, /const bedrag1e = rows\.find\(\(r\) => r\.code === "1e"\)\?\.omzet \?\? 0;/);
+  assert.match(pure, /if \(bedrag1e !== 0\) \{/, "no 0%-turnover, no note");
+  assert.match(pure, /3a \(uitvoer\)/, "…and it names the box the turnover may belong in");
+  assert.match(pure, /land van je klant nergens vast/,
+    "…and why the app cannot decide it, which is the honest half");
+
+  // It is a NOTE, not a computation. Nothing about it may move a figure.
+  assert.doesNotMatch(pure, /code: "3a"/, "no invented rubriek row");
+  assert.doesNotMatch(pure, /code: "3c"/);
+
+  // And the page that sells this to an accountant states the limit, like it does for XAF, Peppol
+  // and filing. Its own header: an office that finds a claim untrue does not complain, it stops
+  // answering.
+  const publiek = code("src/app/voor-boekhouders/page.tsx");
+  assert.match(publiek, /Welke rubrieken: 1a, 1b, 1c, 1e en 3b\./);
+  assert.match(publiek, /Rubriek 3a \(uitvoer buiten de EU\) en 3c/);
 });
 
 // ─── [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er buiten de boeken staat ──────────────────
