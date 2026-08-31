@@ -186,7 +186,14 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
     vraag: 'Doet BoekBrug de aangifte?',
     antwoord:
       'Nee. Het scherm BEREIDT de BTW-aangifte voor — het rekent de rubrieken uit en laat zien ' +
-      'waar ze vandaan komen. Verzenden naar de Belastingdienst doet het niet.',
+      'waar ze vandaan komen. Verzenden naar de Belastingdienst doet het niet. ' +
+      // [RUBRIEK-1E] De grens, hardop, om dezelfde reden als bij XAF en Peppol hierboven: een
+      // kantoor dat een niet-genoemde beperking in een demo tegenkomt, stopt met antwoorden.
+      'Welke rubrieken: 1a, 1b, 1c, 1e en 3b. Rubriek 3a (uitvoer buiten de EU) en 3c ' +
+      '(afstandsverkopen) niet — die vragen het land van de klant, en dat legt BoekBrug nergens ' +
+      'vast. 0%-omzet die niet als levering binnen de EU herkend is, staat daarom in 1e, met een ' +
+      'notitie bij het concept die dat benoemt. De bedragen kloppen; de indeling van die ene ' +
+      'rubriek beoordeel jij.',
   },
   {
     vraag: 'Is er een XAF-auditbestand of RGS-rekeningschema?',

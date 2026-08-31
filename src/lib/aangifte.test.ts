@@ -519,6 +519,52 @@ console.log("\n— [SUPPLETIE-FANTOOM] het saldo van een INGEDIENDE momentopname
     && filedSaldo({}) === 0);
 }
 
+// ── [RUBRIEK-1E] Het juiste bedrag in het verkeerde vakje ────────────────────────────────────
+//
+// Het formulier heeft drie vakken voor omzet zonder Nederlandse BTW, en ze zijn niet
+// uitwisselbaar: 1e (binnenlands 0% en verlegd), 3a (uitvoer buiten de EU) en 3c (installatie- en
+// afstandsverkopen binnen de EU). Dit concept kent er maar één van de drie, dus een export naar
+// een klant in Londen belandt in 1e. De TOTALEN kloppen — alle drie dragen € 0 BTW, dus 5a en 5g
+// bewegen geen cent — en de aangifte is toch onjuist: er staat binnenlandse 0%-omzet waar uitvoer
+// hoorde te staan.
+//
+// Splitsen kan de app niet: er is nergens een land van de klant vastgelegd. Dus zegt hij het.
+console.log("\n[RUBRIEK-1E] wat er in 1e staat, en wat de app er niet uit kan halen");
+{
+  const met1e = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: 1000, btw: 210 }, { rate: 0, omzet: 5000, btw: 0 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  const zin = met1e.notes.find((n) => n.includes("rubriek 1e"));
+  check("er staat een notitie over 1e", !!zin);
+  check("…met het bedrag erin", !!zin && /5\.000/.test(zin));
+  check("…die 3a noemt voor buiten de EU", !!zin && /3a \(uitvoer\)/.test(zin));
+  check("…en 3c voor afstandsverkopen", !!zin && /3c/.test(zin));
+  check("…en waarom de app het niet zelf kan: geen land van de klant", !!zin && /land van je klant nergens vast/.test(zin));
+
+  // De cijfers mogen door deze notitie niet bewegen. Dat is de hele veiligheid ervan.
+  check("5a blijft de BTW van 1a", met1e.verschuldigd === 210);
+  check("1e houdt zijn eigen bedrag", met1e.rows.find((r) => r.code === "1e")?.omzet === 5000);
+  check("…en nul BTW", met1e.rows.find((r) => r.code === "1e")?.btw === 0);
+
+  // Geen 1e-omzet, geen notitie. Een aangifte die elke ondernemer over uitvoer aanspreekt terwijl
+  // hij alleen in Tilburg verkoopt, is een aangifte waarvan de notities niet meer gelezen worden.
+  const zonder1e = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: 1000, btw: 210 }], btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  check("zonder 0%-omzet zwijgt de notitie", !zonder1e.notes.some((n) => n.includes("rubriek 1e")));
+
+  // Wat naar 3b is verhuisd, staat niet meer in 1e — en als er niets overblijft, is er ook niets
+  // te melden: dan is de rubriek al goed.
+  const alles3b = buildAangifte(
+    { salesByRate: [{ rate: 0, omzet: 5000, btw: 0 }], intraEuOmzet: 5000, btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  check("volledig intra-EU ⇒ geen 1e-rij", !alles3b.rows.some((r) => r.code === "1e"));
+  check("…en dus geen notitie", !alles3b.notes.some((n) => n.includes("rubriek 1e")));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
 

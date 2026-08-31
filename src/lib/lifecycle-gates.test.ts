@@ -22068,3 +22068,46 @@ test("[TWEE-BOEKEN] a paid invoice the supplier still lists is a contradiction, 
   assert.match(intake, /paymentHasBankProof: bankProof\.has\(r\.id\)/,
     "…and hands it to the reconciler");
 });
+
+// ─── [RUBRIEK-1E] The right total in the wrong box is still a wrong return ──────────────────────
+//
+// The BTW form has three boxes for turnover that carries no Dutch BTW and they are not
+// interchangeable: 1e is domestic 0% and verlegde omzet, 3a is export outside the EU, 3c is
+// installation and distance sales inside it. This concept can emit 1a, 1b, 1c, 1e and 3b — a grep
+// for a 3a or 3c row returns nothing — so an export to a customer in London lands in 1e.
+//
+// Every total is right. All three boxes carry EUR 0 of BTW, so 5a and 5g do not move by a cent,
+// and that is exactly what made it invisible: nothing reconciles, nothing warns, and the filed
+// return states domestic 0%-omzet where there was an export.
+//
+// The app cannot split it — there is no country for a customer anywhere in the schema, which is
+// the same absence that makes the e-factuur refuse to name a buyer's country rather than default
+// it to NL. So it says so, in the concept and on the page that sells the concept, and leaves the
+// number alone. A guess printed on a tax return would be the worse answer by a distance.
+test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names the limit", () => {
+  const pure = code("src/lib/aangifte.ts");
+
+  // The row set is still the five it was — if a 3a row ever ships, this gate should be revisited
+  // rather than silently outlived.
+  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "3b";/,
+    "five rubrieken, and 3a/3c are not among them");
+
+  // The note fires on the AMOUNT, so a quarter with no 0%-turnover stays quiet. An aangifte that
+  // lectures every owner about export is one whose notes stop being read.
+  assert.match(pure, /const bedrag1e = rows\.find\(\(r\) => r\.code === "1e"\)\?\.omzet \?\? 0;/);
+  assert.match(pure, /if \(bedrag1e !== 0\) \{/, "no 0%-turnover, no note");
+  assert.match(pure, /3a \(uitvoer\)/, "…and it names the box the turnover may belong in");
+  assert.match(pure, /land van je klant nergens vast/,
+    "…and why the app cannot decide it, which is the honest half");
+
+  // It is a NOTE, not a computation. Nothing about it may move a figure.
+  assert.doesNotMatch(pure, /code: "3a"/, "no invented rubriek row");
+  assert.doesNotMatch(pure, /code: "3c"/);
+
+  // And the page that sells this to an accountant states the limit, like it does for XAF, Peppol
+  // and filing. Its own header: an office that finds a claim untrue does not complain, it stops
+  // answering.
+  const publiek = code("src/app/voor-boekhouders/page.tsx");
+  assert.match(publiek, /Welke rubrieken: 1a, 1b, 1c, 1e en 3b\./);
+  assert.match(publiek, /Rubriek 3a \(uitvoer buiten de EU\) en 3c/);
+});
