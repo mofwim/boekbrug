@@ -1000,7 +1000,9 @@ async function fetchMessageAttachments(
           continue
         }
         // [E-FACTUUR-XML] Een .xml kan de factuur ZELF zijn: Peppol/NLCIUS stuurt hem zo, en dat
-        // wordt in Nederland verplicht — boven € 800k omzet vanaf 2027, voor iedereen vanaf 2028.
+        // wordt in Nederland ooit verplicht. GEEN datum hier: de enige plek in dit repo die deze
+        // vraag met bronnen beantwoordt is de kop van src/lib/e-invoice.ts, en dit bestand had er
+        // een eigen jaartal naast staan dat daar met zoveel woorden onwaar wordt genoemd.
         // De bytes gaan mee; of het echt een e-factuur is, beslist de inhoud verderop en niet de
         // extensie. Parseert hij niet volledig, dan valt hij terug op de melding hieronder.
         if (/\.(?:xml|ubl)$/i.test(filename)) {

@@ -167,6 +167,54 @@ console.log("— outstandingCorrection: what is still owed after what was carrie
   check("1400 moved, 100 carried → 1300 still needs a suppletie", correctionRoute(outstandingCorrection(1400, 100)) === "suppletie");
 }
 
+// ── [SUPPLETIE-EEN-ANTWOORD] Eén vraag, één antwoord ─────────────────────────────────────────
+//
+// De route die de eigenaar te ZIEN krijgt (de banner op het kwartaalscherm, de banner op Waarheid,
+// de zin bij de wijziging) en de route waarop de KNOP ernaast handelt, kwamen uit twee verschillende
+// metingen: de banner uit het BRUTO verschil, de knop uit wat er na eerdere doorschuivingen nog
+// openstaat. Dus kon de app "dien een suppletie in" zeggen over een correctie die hij zelf al had
+// helpen doorschuiven, met een knop ernaast die terecht doorschuiven aanbood.
+console.log("\n[SUPPLETIE-EEN-ANTWOORD] de banner en de knop meten hetzelfde");
+{
+  // Bruto € 1.400 bewogen, waarvan € 900 al doorgeschoven. Wat resteert is € 500 — doorschuiven.
+  const bewogen: FilingFigures = { ...base, btwSaldo: 2660, btwVerschuldigd: 3500 };
+  const zonderKennis = computeFilingDivergence(base, bewogen);
+  check("bruto € 1.400 alleen is een suppletie", zonderKennis.needsSuppletie === true);
+  check("…en het restant is dan het hele bedrag", zonderKennis.outstanding === 1400);
+
+  const metCarry = computeFilingDivergence(base, bewogen, 900);
+  check("met € 900 al doorgeschoven resteert € 500", metCarry.outstanding === 500);
+  check("…en dat is geen suppletie meer", metCarry.needsSuppletie === false);
+  check("…de route zegt hetzelfde als needsSuppletie", metCarry.route === "carry");
+  check("…en dat is precies wat de knop meet",
+    metCarry.route === correctionRoute(outstandingCorrection(metCarry.btwSaldoDelta, 900)));
+
+  // Andersom: een groot restant blijft een suppletie, ook als er al iets is doorgeschoven.
+  const groot = computeFilingDivergence(base, { ...base, btwSaldo: 5260, btwVerschuldigd: 6100 }, 900);
+  check("€ 4.000 bewogen, € 900 door: het restant van € 3.100 blijft suppletie", groot.route === "suppletie");
+  check("…en needsSuppletie volgt de route", groot.needsSuppletie === true);
+
+  // Alles doorgeschoven: er is niets meer te melden, en de app moet dat ook zeggen.
+  const helemaal = computeFilingDivergence(base, bewogen, 1400);
+  check("alles doorgeschoven ⇒ geen route meer", helemaal.route === "none");
+  check("…en geen suppletie", helemaal.needsSuppletie === false);
+  check("…maar het bruto verschil blijft zichtbaar", helemaal.btwSaldoDelta === 1400);
+  check("…en `changed` blijft waar: het kwartaal IS afgeweken", helemaal.changed === true);
+
+  // Zonder carry-argument verandert er niets aan het oude gedrag — de meeste kwartalen.
+  check("carry weggelaten ⇒ precies de oude uitkomst",
+    computeFilingDivergence(base, bewogen).needsSuppletie === (Math.abs(1400) > SUPPLETIE_THRESHOLD));
+  check("null en undefined tellen als nul",
+    computeFilingDivergence(base, bewogen, null).outstanding === 1400 &&
+    computeFilingDivergence(base, bewogen, undefined).outstanding === 1400);
+
+  // De grens zelf: precies € 1.000 mag doorgeschoven worden, één cent meer niet.
+  const opDeGrens = computeFilingDivergence(base, { ...base, btwSaldo: 2260, btwVerschuldigd: 3100 });
+  check("precies € 1.000 is doorschuiven", opDeGrens.outstanding === 1000 && opDeGrens.route === "carry");
+  const erboven = computeFilingDivergence(base, { ...base, btwSaldo: 2260.01, btwVerschuldigd: 3100.01 });
+  check("één cent erboven is suppletie", erboven.route === "suppletie");
+}
+
 // The summary and the exit stay LAST. A block appended after process.exit() runs not one line
 // and still prints "36 passed" — which is how a test file grows a section nobody notices is dead.
 console.log(`\n${passed} passed, ${failed} failed\n`);

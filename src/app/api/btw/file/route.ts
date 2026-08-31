@@ -13,7 +13,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResultForRange } from "@/lib/compute-result-range";
 import { computeFilingDivergence, decideFilingWrite } from "@/lib/btw-filing";
-import { quarterBounds, figuresOf, readFiling } from "@/lib/filed-quarter";
+import { quarterBounds, figuresOf, readFiling, readFilingWithCarry } from "@/lib/filed-quarter";
 // [KAS-NEGATIEF] The same drawer witness /dashboard/klaar blocks on — see the gate below.
 import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { logAuditAction, getClientIP } from "@/lib/audit";
@@ -57,7 +57,11 @@ export async function GET(req: NextRequest) {
   // [FILING-NO-OVERWRITE] The error was dropped here too, so a hiccup answered `filed: null` — and
   // the screens that ask this question use the answer to decide whether to show a lock badge and a
   // "markeer als ingediend" button. Say we could not look instead.
-  const { row: fRow, failed } = await readFiling(db, user.id, year, quarter);
+  // [SUPPLETIE-EEN-ANTWOORD] Mét carried_saldo, want de banner die dit antwoord toont bepaalt
+  // hiermee of hij "suppletie" of "doorschuiven" zegt — en dat moet hetzelfde bedrag zijn als
+  // waarop de knop ernaast zijn route bepaalt. [DEPLOY-SAFE] valt terug op de kale lezing wanneer
+  // de kolom er nog niet is; dan is er ook niets doorgeschoven en klopt het antwoord alsnog.
+  const { row: fRow, failed } = await readFilingWithCarry(db, user.id, year, quarter);
   if (failed) return NextResponse.json(READ_FAILED, { status: 503 });
   if (!fRow) return NextResponse.json({ ok: true, filed: null });
 
@@ -69,7 +73,7 @@ export async function GET(req: NextRequest) {
   const divergence = computeFilingDivergence(figures, {
     omzet: result.omzet, kosten: result.kosten,
     btwVerschuldigd: result.btwVerschuldigd, btwVoorbelasting: result.btwVoorbelasting, btwSaldo: result.btwSaldo,
-  });
+  }, Number(fRow.carried_saldo) || 0);
 
   return NextResponse.json({ ok: true, filed: { filedAt: fRow.filed_at, figures, divergence } });
 }

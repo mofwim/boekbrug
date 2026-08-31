@@ -20,7 +20,8 @@
 // DESCRIPTION only, while the PDF derived it from the DOCUMENT (EU VAT number + zero BTW + not
 // KOR). The two answers agreed only when the owner happened to type "btw verlegd" into a line.
 //
-// From the 2027/2028 Dutch e-invoicing mandate the XML is the document that counts, so this test
+// Where the XML is the document that counts — every EU counterparty already, and eventually here
+// too ([E-FACTUUR-DATUM]: e-invoice.ts holds the sourced timetable, no year is stated here) — so this test
 // pins the two readers to one predicate: isReverseChargedInvoice() in icp.ts.
 
 import { test } from "node:test";
