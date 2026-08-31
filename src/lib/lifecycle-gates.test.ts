@@ -22399,3 +22399,104 @@ test("[BANK-LEGE-LINK] the in-tab categorise link never points at an empty scree
     "the link no longer asks whether there is anything to categorise",
   );
 });
+
+// ─── [CREDIT-BEVESTIG] The accountant's confirm door booked a creditnota as a purchase ──────────
+//
+// A supplier creditnota that PRINTS its amounts positive is the ordinary shape, not an edge case —
+// most Dutch ones do, and ai.ts tells the model so in as many words: return them positive, the
+// system will hold it for a human. Both of the OWNER's confirm doors repair the sign before
+// anything books (asCreditAmounts, in api/email/confirm/[id] and api/invoice/[id]/amounts).
+//
+// The ACCOUNTANT's door did not read invoice_type at all. It wrote status:'received' and the row
+// went into the concept aangifte with a plus, because /api/aangifte selects direction, status,
+// total_ex_btw and btw_amount and sums them raw. A EUR 51,80 creditnota (EUR 4,28 btw) then puts
+// +4,28 in rubriek 5b where −4,28 belongs: EUR 8,56 of over-claimed voorbelasting per document, in
+// the owner's favour on the return, which is the direction that becomes a naheffing. The owner
+// signs it and the accountant's professional liability sits under it.
+//
+// REFUSE, do not repair — three reasons all already in the repo: the database trigger lets this
+// path move only status and confirmed_by; the route's own header says an accountant does not
+// rewrite a client's figures but asks; and /dashboard/accountant/opvragen is that door.
+test("[CREDIT-BEVESTIG] a positive creditnota is refused at the accountant's door, and before the tap", () => {
+  const route = code("src/app/api/accountant/bevestig/route.ts");
+
+  // It has to READ the column before it can judge it. That was the whole omission.
+  assert.match(route, /invoice_number, client_name, total_inc_btw, invoice_type/,
+    "invoice_type is selected");
+  // One question, asked by the one function the owner's own list already asks it with. A second
+  // formulation here would let two screens disagree about the same piece of paper.
+  assert.match(route, /creditnotaSignConflict\(\{ invoiceType: factuur\.invoice_type, totalIncBtw: factuur\.total_inc_btw \}\)/,
+    "the shared predicate decides, not a local re-reading of the sign");
+  assert.match(route, /status: 409/, "…and it refuses rather than booking");
+  // Repair is not an option here and must not become one: the trigger would reject it, and an
+  // accountant rewriting a client's amounts is what art. 52 AWR and this route's header forbid.
+  assert.doesNotMatch(route, /asCreditAmounts/,
+    "this door may not repair the sign — it asks the owner to");
+
+  // And the refusal is visible BEFORE the tap. A 409 after the click leaves an accountant with an
+  // error and no way forward; the way forward exists and is named beside the row.
+  const page = code("src/app/dashboard/accountant/bevestigen/page.tsx");
+  assert.match(page, /field_confidence, invoice_type/, "the queue reads the column too");
+  assert.match(page, /creditTegenTeken: creditnotaSignConflict\(/, "…and judges it with the same function");
+  const scherm = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.match(scherm, /disabled=\{bezig === rij\.id \|\| isKlaar \|\| rij\.creditTegenTeken === true\}/,
+    "the button is off on exactly the rows the route refuses");
+  assert.match(scherm, /t\('bh\.bev\.rij\.creditTegenTeken'\)/, "…with the reason, and what to do instead");
+});
+
+// ─── [PARTIAL-PAY-DOOR] A split that was written, tested, and never fed ─────────────────────────
+//
+// quarterly.ts splits the cash column on inv.amount_paid: the settled part of a deelbetaling counts
+// as paid, only the remainder is outstanding or overdue. Its own tests prove it. And the ONLY route
+// that calls it never selected the column and never mapped it, so `inv.amount_paid ?? 0` was always
+// zero and the whole split was dead in production.
+//
+// An invoice of EUR 5.000 with EUR 4.000 settled therefore stood at EUR 5.000 under "Openstaand",
+// and at EUR 5.000 under "Vervallen" the day after its due date. The tiles print those as facts,
+// and they are the figures an owner uses to decide whether they can spend and an accountant uses to
+// decide who to chase.
+//
+// Same class as the intake route feeding the two-ledger check: a distinction that exists, is
+// correct, is covered by tests — and is handed nothing.
+test("[PARTIAL-PAY-DOOR] the quarterly route feeds the partial-payment split it depends on", () => {
+  const route = code("src/app/api/quarterly/route.ts");
+
+  // Both branches: the accountant's client view and the owner's own.
+  const selects = route.match(/\.select\("id, invoice_number, client_name, status, direction[^"]*"\)/g) ?? [];
+  assert.equal(selects.length, 2, "both quarterly reads are still recognisable");
+  for (const sel of selects) {
+    assert.match(sel, /amount_paid/, `a quarterly select still omits amount_paid: ${sel.slice(0, 80)}…`);
+  }
+  // Selecting it is not enough — it has to survive the mapping into InvoiceForQuarterly.
+  const mapped = route.match(/amount_paid: inv\.amount_paid,/g) ?? [];
+  assert.equal(mapped.length, 2, "both mappings carry it through to the summary");
+
+  // The pure side is unchanged and still the one that decides.
+  const pure = code("src/lib/quarterly.ts");
+  assert.match(pure, /const settled = Math\.max\(0, Math\.min\(Math\.abs\(incBtw\), inv\.amount_paid \?\? 0\)\);/,
+    "the split still reads the column this route now supplies");
+});
+
+// ─── [REGEL-ZONDER-OMSCHRIJVING] The screen showed a total the invoice would not carry ──────────
+//
+// The accountant's invoice screen computed its Subtotaal/BTW/Totaal over ALL lines and then sent
+// only the lines that had a description. A EUR 400 line whose description was forgotten counted in
+// the total on screen and was dropped from the document: the screen said EUR 968,00 and an invoice
+// for EUR 484,00 left, out of the CLIENT's doorlopende reeks. The customer receives and pays the
+// smaller amount, the number is burnt, and the correction is a creditnota plus a re-issue.
+//
+// The owner's own editor already validates a description per line. This screen was the exception,
+// and it knew about the dropped line and said nothing.
+test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the send", () => {
+  const scherm = code("src/modules/accountant/pages/AccountantFactuur.tsx");
+  assert.match(scherm, /const zonderOmschrijving = regels\.findIndex\(\(r\) => !r\.description\.trim\(\) && naarGetal\(r\.unit_price\) !== 0\)/,
+    "the row is FOUND rather than filtered away");
+  assert.match(scherm, /if \(zonderOmschrijving >= 0\) \{/, "…and it refuses");
+  assert.match(scherm, /t\('bh\.fact\.foutOmschrijving', \{ nummer: zonderOmschrijving \+ 1 \}\)/,
+    "…naming which row, because 'something is wrong' is not an error message");
+  // The refusal must come BEFORE the draft is created: once /api/invoice/draft has run, the
+  // number is minted and the damage is a creditnota away.
+  const refuseAt = scherm.indexOf("zonderOmschrijving >= 0");
+  const draftAt = scherm.indexOf("/api/invoice/draft");
+  assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
+});

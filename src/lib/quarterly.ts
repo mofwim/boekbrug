@@ -110,6 +110,19 @@ export function buildZzpSummary(
     const status = inv.status ?? '';
 
     if (mode === 'paid') {
+      // [PARTIAL-PAY-DOOR] Deze tak is met opzet STATUS-gebaseerd gebleven, ook nadat de route
+      // amount_paid is gaan meesturen. Een factuur van € 10.000 waarop € 4.000 is betaald telt
+      // hier dus als € 0, niet als € 4.000.
+      //
+      // Waarom niet ook hier splitsen: dit is de kasweergave, en onder het kasstelsel loopt de BTW
+      // MEE met de betaling. Alleen `totalIn` naar rato maken terwijl `totalBtwIn` de volledige BTW
+      // van de factuur blijft optellen, levert twee cijfers op die niet meer bij elkaar horen — een
+      // nieuw fout getal in ruil voor een te laag getal. De juiste versie verdeelt allebei naar rato
+      // en is een eigen beslissing met een eigen test, geen bijvangst van deze regel.
+      //
+      // De richting is intussen de veilige: te laag, dus een ondernemer die hierop afgaat geeft
+      // minder uit dan hij kan. De ACCRUAL-splitsing in buildQuarterlySummary hieronder is wél naar
+      // rato en is waar "Openstaand" en "Vervallen" vandaan komen.
       if (isOutgoing && status === 'paid') {
         totalIn += incBtw;
         totalBtwIn += btw;

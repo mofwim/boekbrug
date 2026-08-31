@@ -20,6 +20,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 // supabase-paginate.ts voor waarom een kale .in() hier stil als 'geen rijen' terugkomt.
 import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import AccountantBevestigen, { type TeBevestigen } from '@/modules/accountant/pages/AccountantBevestigen'
+import { creditnotaSignConflict } from '@/lib/creditnota-signal'
 
 export const dynamic = 'force-dynamic'
 
@@ -189,6 +190,7 @@ export default async function AccountantBevestigenPage() {
   // de URL laat overlopen.
   let facturenAlle: Array<{
     id: string; receiver_id: string | null; client_name: string | null; invoice_number: string | null
+    invoice_type?: string | null
     invoice_date: string | null; total_inc_btw: number | null; btw_amount: number | null
     field_confidence: unknown
   }>
@@ -198,7 +200,11 @@ export default async function AccountantBevestigenPage() {
       fetchAllRowsForIds(klantIds, (chunk, from, to) =>
         pipeline
           .from('invoices')
-          .select('id, receiver_id, client_name, invoice_number, invoice_date, total_inc_btw, btw_amount, field_confidence')
+          // [CREDIT-BEVESTIG] invoice_type erbij: zonder dat kolommetje kan dit scherm een creditnota
+          // niet van een inkoopfactuur onderscheiden, en bood het "Bevestigen" aan op een stuk dat
+          // zo geboekt btw TERUGVRAAGT die er juist af hoort. De route weigert hem nu — maar een
+          // weigering ná de tik is een dood spoor; hier hoort te staan waarom.
+          .select('id, receiver_id, client_name, invoice_number, invoice_date, total_inc_btw, btw_amount, field_confidence, invoice_type')
           .in('receiver_id', chunk)
           .eq('direction', 'incoming')
           .eq('status', 'processing')
@@ -252,6 +258,10 @@ export default async function AccountantBevestigenPage() {
     totaalInc: f.total_inc_btw,
     btw: f.btw_amount,
     twijfels: twijfelsVan(f.field_confidence),
+    // [CREDIT-BEVESTIG] Dezelfde ene vraag die de lijst van de ONDERNEMER al stelt
+    // (IncomingManageClient), gesteld door dezelfde functie. Een tweede formulering hier zou
+    // betekenen dat twee schermen het oneens kunnen worden over hetzelfde stuk papier.
+    creditTegenTeken: creditnotaSignConflict({ invoiceType: f.invoice_type, totalIncBtw: f.total_inc_btw }),
   }))
 
   return <AccountantBevestigen rijen={rijen} meer={meer} />
