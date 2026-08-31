@@ -360,11 +360,14 @@ export async function POST(req: NextRequest) {
   for (const l of myLinks) if (l.transaction_id) linkedTxIds.add(l.transaction_id);
 
   // Per-tx prior state + "does it also pay other invoices?" (batch detection).
-  const txPrev = new Map<string, { status: string | null; invoice_id: string | null; hasOthers: boolean }>();
+  const txPrev = new Map<string, { status: string | null; invoice_id: string | null; hasOthers: boolean; otherInvoiceId: string | null }>();
   for (const txId of linkedTxIds) {
     const [{ data: txRow, error: txErr }, { data: otherRows, error: othersErr }] = await Promise.all([
       pipeline.from("bank_transactions").select("status, invoice_id").eq("id", txId).eq("user_id", user.id).maybeSingle(),
-      pipeline.from("bank_tx_invoices").select("id").eq("user_id", user.id).eq("transaction_id", txId).neq("invoice_id", invoiceId).limit(1),
+      // [BATCH-DETACH] De zusterkoppeling levert nu haar invoice_id, niet alleen haar bestaan.
+      // Die is nodig om de bankregel te HERWIJZEN in plaats van hem op null te zetten — zie de
+      // toelichting bij de detach-tak zelf. Geordend zodat twee lezingen dezelfde zuster kiezen.
+      pipeline.from("bank_tx_invoices").select("invoice_id").eq("user_id", user.id).eq("transaction_id", txId).neq("invoice_id", invoiceId).order("invoice_id", { ascending: true }).limit(1),
     ]);
     if (txErr) return readFailed("bank_transactions row", txErr.message);
     if (othersErr) return readFailed("bank_tx_invoices siblings", othersErr.message);
@@ -375,6 +378,7 @@ export async function POST(req: NextRequest) {
       status: (txRow as { status: string | null }).status,
       invoice_id: (txRow as { invoice_id: string | null }).invoice_id,
       hasOthers: (otherRows ?? []).length > 0,
+      otherInvoiceId: ((otherRows ?? [])[0] as { invoice_id?: string | null } | undefined)?.invoice_id ?? null,
     });
   }
 
@@ -403,7 +407,7 @@ export async function POST(req: NextRequest) {
   // These are filled in by the writes below, which is why they are `let`/mutable here: the rollback
   // has to be DEFINED before the first destructive write, but it must READ what those writes did.
   let deletedLinks: LinkRow[] = [];
-  const wroteTx = new Map<string, { status: string | null; invoiceIdCleared: boolean }>();
+  const wroteTx = new Map<string, { status: string | null; invoiceIdSetTo: string | null }>();
 
   const rollbackBankState = async () => {
     try {
@@ -430,7 +434,12 @@ export async function POST(req: NextRequest) {
           .update({ status: prev.status, invoice_id: prev.invoice_id })
           .eq("id", txId).eq("user_id", user.id);
         if (wrote.status !== null) revert = revert.eq("status", wrote.status);
-        if (wrote.invoiceIdCleared) revert = revert.is("invoice_id", null);
+        // Geguard op de WAARDE die we schreven, niet op "we schreven iets". De batch-tak zet de
+        // regel niet meer op null maar wijst hem naar een overlevende zuster, dus `is null` zou
+        // daar nooit meer matchen en de terugdraai stil niets doen.
+        revert = wrote.invoiceIdSetTo === null
+          ? revert.is("invoice_id", null)
+          : revert.eq("invoice_id", wrote.invoiceIdSetTo);
         await revert;
       }
       // [PARTIAL-PAY-INVARIANT] Best-effort is right HERE — this is the rollback of an operation
@@ -458,8 +467,41 @@ export async function POST(req: NextRequest) {
   for (const [txId, prev] of txPrev) {
     if (prev.hasOthers) {
       if (prev.invoice_id === invoiceId) {
+        // [BATCH-DETACH] HERWIJZEN, niet leegmaken.
+        //
+        // Deze tak liet de status op 'matched' staan — terecht, want de regel betaalt nog steeds
+        // andere facturen — en zette tegelijk invoice_id op null. Die twee samen zijn een stand
+        // die nergens meer thuishoort, en drie dingen gaan er tegelijk mis:
+        //
+        //   · financial-result telt een bankregel alleen NIET mee op `if (t.invoice_id) continue`.
+        //     Geen status erbij. Met een lege pointer en een categorie (die de auto-categorisatie
+        //     bij het importeren zet) boekt het volle bedrag van de regel een TWEEDE keer als kost
+        //     of omzet, bovenop de facturen die hij betaalde en die gewoon blijven meetellen;
+        //   · /api/bank/match haalt alleen status='pending' op, dus de regel komt nooit terug in
+        //     "Te bevestigen";
+        //   · /api/bank/unlink weigert met not_linked zodra invoice_id leeg is.
+        //
+        // De regel is daarmee eindstation: dubbel geteld en door geen enkele deur meer te
+        // bereiken — terwijl bulk-undo-pay.ts de eigenaar belooft dat "de bankregel zich weer
+        // aanbiedt om te koppelen".
+        //
+        // De juiste waarde is er gewoon: een van de koppelingen die blijft staan. book_bank_batch
+        // kiest bij het BOEKEN op dezelfde manier een vertegenwoordiger; dit is de omkering ervan.
+        //
+        // bank_tx_invoices.invoice_id is NOT NULL, dus een zuster die bestaat draagt er altijd een.
+        // Mocht die aanname ooit toch niet gelden, dan is leegmaken het ENE antwoord dat niet mag:
+        // dat is precies de eindstandtoestand hierboven. Dan liever weigeren — er is op dit punt
+        // nog niets verwijderd, dus weigeren kost niets.
+        if (!prev.otherInvoiceId) {
+          await rollbackBankState();
+          console.error("[BATCH-DETACH] zusterkoppeling zonder factuur — niet losgekoppeld", { invoiceId, txId, userId: user.id });
+          return NextResponse.json(
+            { error: "undo_failed", detail: "De betaling kon niet worden losgekoppeld. Er is niets gewijzigd — probeer het zo meteen opnieuw." },
+            { status: 503 }
+          );
+        }
         const { error } = await pipeline.from("bank_transactions")
-          .update({ invoice_id: null }).eq("id", txId).eq("user_id", user.id);
+          .update({ invoice_id: prev.otherInvoiceId }).eq("id", txId).eq("user_id", user.id);
         if (error) {
           await rollbackBankState();
           console.error("[UNDO-EIGEN-WERK] batch detach failed — nothing deleted yet", { invoiceId, txId, userId: user.id, message: error.message });
@@ -468,8 +510,8 @@ export async function POST(req: NextRequest) {
             { status: 503 }
           );
         }
-        // status untouched on this branch, so the revert is guarded on the cleared pointer alone.
-        wroteTx.set(txId, { status: null, invoiceIdCleared: true });
+        // status untouched on this branch, so the revert is guarded on the pointer we wrote.
+        wroteTx.set(txId, { status: null, invoiceIdSetTo: prev.otherInvoiceId });
       }
     } else {
       const { error } = await pipeline.from("bank_transactions")
@@ -483,7 +525,7 @@ export async function POST(req: NextRequest) {
           { status: 503 }
         );
       }
-      wroteTx.set(txId, { status: "pending", invoiceIdCleared: true });
+      wroteTx.set(txId, { status: "pending", invoiceIdSetTo: null });
     }
   }
   // Remove ONLY this invoice's join rows (never the whole tx's set).

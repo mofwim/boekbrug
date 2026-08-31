@@ -661,3 +661,54 @@ test("mapping a list keeps order and reports every line it could not read", () =
   assert.equal(warnings.length, 1);
   assert.equal(skipped, 0);
 });
+
+// ─── [CSV-MUNT] currency ──────────────────────────────────────────────────────────────────────
+//
+// bank_transactions has no currency column. Everything downstream — kosten, omzet, de matching,
+// de afletterset, het banksaldo — reads `amount` as euros. So a line the bank hands over in
+// another currency has exactly two possible fates: booked as euros (wrong money, invisible after
+// the fact) or not booked and SAID. The upload door has refused non-euro statements from the
+// start; this door, which runs on a cron with nobody watching, did not.
+
+test("[CSV-MUNT] a non-euro line is not imported, and is named", () => {
+  // The vendor's own Danish sample, next to a euro line. 88 DKK is roughly € 12 — booking it as
+  // € 88,00 is not a rounding difference, it is a different amount of money.
+  const raw: EnableBankingRawTransaction[] = [
+    { value_date: "2026-03-01", transaction_amount: { amount: "10.00", currency: "EUR" }, credit_debit_indicator: "CRDT", status: "BOOK", debtor: { name: "Klant BV" } },
+    { value_date: "2026-03-02", transaction_amount: { amount: "88.0", currency: "DKK" }, credit_debit_indicator: "DBIT", status: "BOOK", creditor: { name: "Krestoffer" } },
+  ];
+  const { transactions, warnings, skipped } = mapEnableBankingTransactions(raw);
+
+  assert.deepEqual(transactions.map((t) => t.amount), [10], "only the euro line is stored");
+  assert.equal(skipped, 0, "a foreign line is not a pending line — it was booked at the bank");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /DKK/, "the warning names the currency");
+  assert.match(warnings[0], /88\.00/, "…and the amount, so the owner can find the line");
+  assert.match(warnings[0], /Krestoffer/, "…and who it was");
+  assert.doesNotMatch(warnings[0], /kon niet gelezen worden/,
+    "it was read perfectly; saying otherwise sends the owner to the wrong place");
+});
+
+test("[CSV-MUNT] a missing currency is a euro line, not a refused one", () => {
+  // Most of this feed's rows carry no currency at all. Treating that as 'not EUR' would refuse a
+  // whole administratie's bank feed — the guard must only bite on a currency the bank NAMED.
+  const raw: EnableBankingRawTransaction[] = [
+    { value_date: "2026-03-01", transaction_amount: { amount: "10.00" }, credit_debit_indicator: "CRDT", status: "BOOK", debtor: { name: "A" } },
+  ];
+  const { transactions, warnings } = mapEnableBankingTransactions(raw);
+  assert.equal(transactions.length, 1);
+  assert.equal(warnings.length, 0);
+});
+
+test("[CSV-MUNT] the single mapper still reads a foreign line faithfully", () => {
+  // The split matters: mapEnableBankingTransaction says WHAT the bank sent (that is what the
+  // cross-door contentKey test above compares), and the list function decides what may be stored.
+  // Filtering inside the mapper would make a foreign line unreadable rather than unbookable.
+  const one = mapEnableBankingTransaction({
+    value_date: "2026-03-02", transaction_amount: { amount: "88.0", currency: "DKK" },
+    credit_debit_indicator: "DBIT", status: "BOOK", creditor: { name: "Krestoffer" },
+  });
+  assert.ok(one);
+  assert.equal(one.currency, "DKK");
+  assert.equal(one.amount, -88);
+});

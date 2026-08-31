@@ -5,7 +5,7 @@
 // "naar Excel" export.
 import {
   parseBankCsv, parseBankAmount, parseBankDate, looksLikeBankCsv,
-  toExportMatrix, toNormalizedCsv, splitCsv,
+  toExportMatrix, toNormalizedCsv, splitCsv, readCurrencyCode,
 } from "./bank-csv";
 import { parseBankFile } from "./bank-parser";
 
@@ -209,6 +209,108 @@ console.log("\n— [LEES] an unrecognised Af/Bij flag is SAID, never silently gu
     r.parseErrors.some((e) => /Af\/Bij-vlag die we niet herkennen/.test(e)));
   const zonder = parseBankCsv(csv.replace('"Onbekend"', '"Af"'));
   check("a recognised flag produces NO warning", !zonder.parseErrors.some((e) => /herkennen/.test(e)));
+}
+
+console.log("\n— [CSV-MUNT] the file's own currency column is read, and believed —");
+{
+  // Rabobank's real layout: "Munt" sits between the IBAN and the amount, and holds EUR.
+  const rabo = [
+    '"IBAN/BBAN","Munt","BIC","Volgnr","Datum","Rentedatum","Bedrag","Saldo na trn","Tegenrekening IBAN/BBAN","Naam tegenpartij","Omschrijving-1"',
+    '"NL11RABO0123456789","EUR","RABONL2U","1","2026-08-01","2026-08-01","-250,00","1000,00","NL02INGB0002","Sligro","levering"',
+  ].join("\n");
+  const r = parseBankCsv(rabo);
+  check("a EUR file is still EUR (nothing changes for the 99% case)", r.currency === "EUR");
+  check("…and its row carries EUR too", r.transactions[0]?.currency === "EUR");
+
+  // The same file at a bank that holds the account in dollars. Before this, parseBankCsv
+  // hard-coded "EUR" and $ 250,00 was booked as € 250,00.
+  const usd = rabo.replace(/"EUR"/, '"USD"');
+  const u = parseBankCsv(usd);
+  check("a USD file reports USD, not EUR", u.currency === "USD");
+  check("…and so does the transaction", u.transactions[0]?.currency === "USD");
+
+  // The whole point: bank-ingest refuses on exactly this value. Prove the value differs.
+  check("the two files disagree — which is what makes the refusal reachable", r.currency !== u.currency);
+}
+
+console.log("\n— [CSV-MUNT] 'Valuta' means two things; only one of them is a currency —");
+{
+  // "Valutadatum" is a value DATE. Reading it as the currency would compare "24-" against "EUR".
+  const csv = [
+    "Boekdatum;Valutadatum;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;2026-08-02;-250,00;Sligro;levering",
+  ].join("\n");
+  const r = parseBankCsv(csv);
+  check("a Valutadatum column does not become the currency", r.currency === "EUR");
+  check("…and the date still parses from Boekdatum", r.transactions[0]?.date === "2026-08-01");
+
+  // The case that actually needs the exclusion, and the reason it is not enough that a date cell
+  // fails to read as a code: when BOTH columns exist and the date one comes first, the role would
+  // land on the date, the real Valuta column would never be looked at, and a dollar statement
+  // would report EUR — the exact silence this whole change exists to end.
+  const beide = [
+    "Boekdatum;Valutadatum;Valuta;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;2026-08-02;USD;-250,00;Sligro;levering",
+  ].join("\n");
+  check("Valuta wins over Valutadatum even when the date column comes first",
+    parseBankCsv(beide).currency === "USD");
+
+  // A bare "Valuta" column DOES mean the currency.
+  const munt = [
+    "Boekdatum;Valuta;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;GBP;-250,00;Sligro;levering",
+  ].join("\n");
+  check("a bare Valuta column IS the currency", parseBankCsv(munt).currency === "GBP");
+
+  // A koers column names a currency but holds a number.
+  const koers = [
+    "Boekdatum;Wisselkoers;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;1,0842;-250,00;Sligro;levering",
+  ].join("\n");
+  check("a Wisselkoers column is not read as a currency", parseBankCsv(koers).currency === "EUR");
+}
+
+console.log("\n— [CSV-MUNT] readCurrencyCode only accepts a bare code —");
+{
+  check("EUR", readCurrencyCode("EUR") === "EUR");
+  check("lowercase and padded", readCurrencyCode("  usd ") === "USD");
+  check("trailing punctuation", readCurrencyCode("EUR.") === "EUR");
+  check("a code with its amount beside it still reads", readCurrencyCode("EUR 1.000,00") === "EUR");
+  check("…in either order", readCurrencyCode("1.000,00 EUR") === "EUR");
+  check("free text is not a currency", readCurrencyCode("Betaling aan leverancier") === null);
+  check("empty is not a currency", readCurrencyCode("") === null);
+  check("two letters is not a code", readCurrencyCode("EU") === null);
+  check("four letters is not a code", readCurrencyCode("EURO") === null);
+  // The one that bit: three letters split by dots is "niet van toepassing", not a currency.
+  check("n.v.t. is not the currency NVT", readCurrencyCode("n.v.t.") === null);
+  check("a currency symbol alone is not a code", readCurrencyCode("€") === null);
+}
+
+console.log("\n— [CSV-MUNT] a file with two currencies makes no file-wide claim —");
+{
+  const csv = [
+    "Boekdatum;Munt;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;EUR;-250,00;Sligro;levering",
+    "2026-08-02;USD;-100,00;Adobe;abonnement",
+  ].join("\n");
+  const r = parseBankCsv(csv);
+  check("no single currency is claimed for the file", r.currency === "EUR");
+  // …but the LINES keep the truth, which is what the refusal downstream reads.
+  check("the euro line stays EUR", r.transactions[0]?.currency === "EUR");
+  check("the dollar line stays USD", r.transactions[1]?.currency === "USD");
+}
+
+console.log("\n— [CSV-MUNT] the Excel export names the currency it is actually showing —");
+{
+  const usd = [
+    "Boekdatum;Munt;Bedrag;Naam tegenpartij;Omschrijving",
+    "2026-08-01;USD;-250,00;Sligro;levering",
+  ].join("\n");
+  const m = toExportMatrix(parseBankCsv(usd));
+  check("the amount header says USD, not EUR", m[0][1] === "Bedrag (USD)");
+  const eur = toExportMatrix(parseBankCsv(usd.replace("USD", "EUR")));
+  check("a euro file still says Bedrag (EUR)", eur[0][1] === "Bedrag (EUR)");
+  check("the CSV download carries it too", /Bedrag \(USD\)/.test(toNormalizedCsv(parseBankCsv(usd))));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -90,6 +90,16 @@ export default async function AccountantDebiteurenPage() {
       .from('accountant_invoice_mandates')
       .select('zzper_id')
       .eq('accountant_id', user.id)
+      // [MANDAAT-SOORT] `kind`, en dat is geen verfijning maar de grens zelf. Er zijn twee
+      // machtigingen: 'facturen' (namens de klant factureren) en 'bevestigen' (inkoopfacturen van
+      // de klant bevestigen). Zonder dit filter telde ELKE levende machtiging mee, dus een klant
+      // die alleen 'bevestigen' had gegeven — toestemming die over zijn INKOOP gaat — opende
+      // hiermee zijn hele debiteurenpositie: elke openstaande verkoopfactuur, met bedrag, met
+      // klantnaam, en met de knop om die klant een herinnering te sturen.
+      //
+      // has_active_invoice_mandate() in de database filtert er wél op; deze query las dezelfde
+      // tabel zonder. Het bevestigscherm hiernaast doet het al goed, met precies deze regel.
+      .eq('kind', 'facturen')
       .is('revoked_at', null),
   ])
 

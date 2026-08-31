@@ -20,6 +20,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
+import { DOCUMENT_REFERRERS } from "./document-references";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -8363,7 +8364,11 @@ test("[UNDO-EIGEN-WERK] every detach write reads its error", () => {
     "a detach whose error is dropped is followed by deleting the links anyway: the invoice goes " +
       "unpaid while its transaction stays 'matched' and pointed at it",
   );
-  assert.equal((detach.match(/status: 503/g) ?? []).length, 2, "…and each refuses, recoverably");
+  // Drie, niet twee: de batch-tak heeft er een derde bij gekregen. Die weigert wanneer er geen
+  // zusterfactuur is om de bankregel naar te HERWIJZEN — want het alternatief, invoice_id op null
+  // zetten terwijl de status 'matched' blijft, is precies de eindstandtoestand die [BATCH-DETACH]
+  // beschrijft: dubbel geteld in de W&V en door geen enkele deur meer te bereiken.
+  assert.equal((detach.match(/status: 503/g) ?? []).length, 3, "…and each refuses, recoverably");
 });
 
 test("[UNDO-EIGEN-WERK] the race and the rule are proven against a database", () => {
@@ -10011,6 +10016,123 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
   // De derde stand blijft bestaan: een mislukte lezing is geen leeg bord met € 0,00.
   assert.match(verkoop, /const facturenOnleesbaar = facturenRes\.fout/,
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
+});
+
+test("[BATCH-DETACH] undoing one invoice of a batch repoints the bank line, never empties it", () => {
+  // Eén overboeking betaalt twee facturen. De eigenaar draait er één van terug. De regel betaalt
+  // de andere nog, dus haar status blijft terecht 'matched' — en de tak zette tegelijk invoice_id
+  // op null. Die combinatie hoort nergens thuis, en drie dingen gaan er tegelijk mis:
+  //
+  //   · financial-result.ts slaat een bankregel alleen over op `if (t.invoice_id) continue`. Geen
+  //     status erbij. Met een lege pointer en een categorie — die de auto-categorisatie bij het
+  //     importeren zet, toen de regel nog geen invoice_id had — boekt het volle bedrag van de
+  //     regel een TWEEDE keer als kost of omzet, bovenop de facturen die hij betaalde;
+  //   · /api/bank/match haalt alleen status='pending' op, dus hij komt nooit terug in
+  //     "Te bevestigen";
+  //   · /api/bank/unlink weigert met not_linked zodra invoice_id leeg is.
+  //
+  // Eindstation: dubbel geteld en door geen enkele deur nog te bereiken — terwijl bulk-undo-pay.ts
+  // de eigenaar met zoveel woorden belooft dat "de bankregel zich weer aanbiedt om te koppelen",
+  // en het bulkscherm deze route één keer per rij aanroept, dus in aantallen.
+  //
+  // De juiste waarde lag er al: een van de koppelingen die blijft staan. book_bank_batch kiest bij
+  // het BOEKEN net zo een vertegenwoordiger; dit is de omkering daarvan.
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+  assert.match(route, /\.update\(\{ invoice_id: prev\.otherInvoiceId \}\)/,
+    "de batch-tak moet herwijzen naar een overlevende zuster");
+  assert.doesNotMatch(route, /\.update\(\{ invoice_id: null \}\)/,
+    "leegmaken terwijl de status 'matched' blijft, is de eindstandtoestand zelf");
+  // De zuster moet haar factuur ook echt MEEGEVEN — een query die alleen haar bestaan leest, kan
+  // niets herwijzen, en dat was precies de vorm die er stond.
+  assert.match(route, /\.select\("invoice_id"\)\.eq\("user_id", user\.id\)\.eq\("transaction_id", txId\)\.neq\("invoice_id", invoiceId\)/,
+    "de zusterlezing moet de invoice_id ophalen, niet alleen het bestaan van een rij");
+  // Geen zuster met een factuur → weigeren, nooit alsnog leegmaken.
+  assert.match(route, /if \(!prev\.otherInvoiceId\) \{[\s\S]{0,400}?status: 503/,
+    "zonder herwijsdoel is weigeren het enige antwoord dat de eindstand niet maakt");
+  // En de terugdraai moet op de GESCHREVEN waarde guarden, anders draait ze stil niets terug.
+  assert.match(route, /wrote\.invoiceIdSetTo === null\s*\n?\s*\? revert\.is\("invoice_id", null\)\s*\n?\s*: revert\.eq\("invoice_id", wrote\.invoiceIdSetTo\)/,
+    "de rollback guardt nog op `is null` terwijl er een pointer is geschreven");
+
+  // De reden dat dit een gat KON zijn: de P&L-onderdrukking kijkt alleen naar de pointer.
+  assert.match(code("src/lib/financial-result.ts"), /if \(t\.invoice_id\) continue;/,
+    "als dit ooit ook de status leest, mag de zin hierboven worden herschreven — nu niet");
+});
+
+test("[MANDAAT-SOORT] every read of the mandate table says WHICH mandate", () => {
+  // Er zijn twee machtigingen en ze betekenen verschillende dingen: 'facturen' laat een boekhouder
+  // NAMENS de klant factureren, 'bevestigen' laat hem de INKOOPfacturen van de klant bevestigen.
+  // De database weet dat — has_active_invoice_mandate en has_active_confirm_mandate filteren allebei
+  // op `kind`. Twee schermen lazen dezelfde tabel zonder.
+  //
+  // Wat dat kostte op /dashboard/accountant/debiteuren: een klant die alleen 'bevestigen' had
+  // gegeven — toestemming die over zijn inkoop gaat — kwam in de gemandateerde lijst terecht, en
+  // dat scherm toont zijn hele debiteurenpositie: elke openstaande verkoopfactuur, met bedrag,
+  // met klantnaam, en met de knop om die klant een herinnering te sturen. Toestemming voor het
+  // ene ding, toegang tot het andere.
+  //
+  // En op /dashboard/accountant/factuur het spiegelbeeld: diezelfde klant stond in de keuzelijst
+  // "namens wie factureer ik", waar de trigger de boeking daarna alsnog weigert. Geen lek, maar
+  // een aanbod dat niet kan slagen — de boekhouder typt een hele factuur voordat hij het hoort.
+  //
+  // De REVOKE-schrijvingen filteren bewust niet: bij een ontkoppeling moeten álle machtigingen
+  // vervallen, en een kind-filter zou daar juist een rij laten staan.
+  //
+  // Er staat verderop een tweede poort met dezelfde tag ("an invoicing mandate is read as one, and
+  // only one"). Die pint de UITDRUKKINGEN in acting-for-server.ts, waar dezelfde fout eerder is
+  // gerepareerd. Deze hier loopt de BOOM af en vindt de plekken die geen enkele assertie noemt —
+  // de twee schermen hierboven stonden in geen van beide lijsten. Samen: de een zegt hoe de
+  // bekende plek is bedraad, de ander vindt de volgende.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  // Eén uitzondering, met haar reden, en niet meer dan één: de terugval van vóór de migratie.
+  // `kind` komt met accountant_confirm_mandate.sql, en een SELECT op een kolom die nog niet bestaat
+  // laat de hele lezing mislukken — wat daar de FACTUURtoegang van een boekhouder zou kosten. In
+  // een schema zónder die kolom bestaat het onderscheid ook niet: elke machtiging is er een
+  // factuurmachtiging, want 'bevestigen' is met die kolom meegekomen. In de productiedatabase
+  // bestaat de kolom, dus deze tak is daar dood.
+  const SOORTLOOS_MAG = new Map<string, string>([
+    ["src/lib/acting-for-server.ts",
+      "de [DEPLOY-SAFE] terugval voor een schema van vóór accountant_confirm_mandate.sql, waar de " +
+      "kolom `kind` nog niet bestaat en het onderscheid dus ook niet"],
+  ]);
+  const zonderSoort: string[] = [];
+  let lezingen = 0;
+  let uitgezonderd = 0;
+  for (const f of loop("src")) {
+    if (f.includes("database.types")) continue;
+    const src = code(f);
+    for (const m of src.matchAll(/\.from\(['"]accountant_invoice_mandates['"]\)/g)) {
+      // De keten loopt tot de VOLGENDE .from(, niet tot de eerstvolgende lege regel: code() haalt
+      // commentaar weg en laat daar witregels achter, en een eerdere versie sneed daardoor de
+      // .eq('kind', …) eraf van een query die het juist wél goed doet. Een poort die een correcte
+      // plek beschuldigt, wordt genegeerd — en dan bewaakt ze niets meer.
+      const rest = src.slice(m.index ?? 0);
+      const volgende = rest.indexOf(".from(", 6);
+      const keten = rest.slice(0, volgende === -1 ? 600 : Math.min(volgende, 600));
+      // Alleen LEZINGEN. Een update (intrekken) en een insert (verlenen) horen hier niet.
+      if (/\.update\(|\.insert\(|\.upsert\(|\.delete\(/.test(keten)) continue;
+      lezingen++;
+      if (!/\bkind\b/.test(keten)) {
+        if (SOORTLOOS_MAG.has(f)) { uitgezonderd++; continue; }
+        zonderSoort.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(lezingen >= 5, `only ${lezingen} mandate reads seen; the scan must be broken`);
+  // De uitzondering moet ook echt geraakt worden. Een lijst die naar niets wijst is een lijst die
+  // niemand opruimt, en dan verbergt ze op een dag wél iets.
+  assert.equal(uitgezonderd, 1,
+    `${uitgezonderd} reads used the exemption; it names exactly one and must keep doing so`);
+  assert.deepEqual(zonderSoort, [],
+    "these read accountant_invoice_mandates without naming a kind, so a mandate granted for one " +
+    "thing counts as permission for the other:\n  " + zonderSoort.join("\n  "));
 });
 
 test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop a column", () => {
@@ -20477,4 +20599,363 @@ test("[WIK-VORDERING] the statutory demand is built through the rule, not from t
   assert.ok(claimsLoop.length > 0, "the claims loop is still recognisable");
   assert.match(claimsLoop, /claimableForWik/,
     "the rule guards the SUM, which is the thing a court reads");
+});
+
+// ─── [CSV-MUNT] Geen enkele deur mag vreemde valuta als euro's naar binnen laten ──────
+//
+// `bank_transactions` heeft geen valutakolom. Alles wat erop volgt — kosten, omzet, de matching,
+// de afletterset, het banksaldo, de aangifte — leest `amount` als euro's. Een regel van $ 1.000,00
+// die als 1000 binnenkomt is daarna niet meer van € 1.000,00 te onderscheiden: er is nergens meer
+// een spoor dat het dollars waren.
+//
+// De weigering STOND er, in bank-ingest, en las `parsed.currency`. Alleen: parseBankCsv zette daar
+// de letterlijke string "EUR" in, voor elk bestand, ongeacht wat er in de muntkolom stond. De
+// weigering kon voor geen enkel CSV-bestand afgaan. Een bewaker die altijd "in orde" antwoordt is
+// geen bewaker — hij is erger dan geen, want hij is de reden dat niemand meer kijkt.
+//
+// ── WAAROM DEZE POORT DE DEUREN ZÉLF OPZOEKT ──
+//
+// Dit bestand heeft één terugkerende les: een geautomatiseerde regel met een handgeschreven lijst
+// eronder is niet geautomatiseerd. Toen dit werd geschreven waren er twee schrijvers naar
+// bank_transactions — de upload (bank-ingest) en de bankkoppeling (enablebanking-sync) — en de
+// tweede was pas een jaar na de eerste ontstaan, mét dezelfde blinde vlek. Een derde deur komt er,
+// en die zou onder een vaste lijst van twee onzichtbaar blijven. Dus: de poort ZOEKT de schrijvers,
+// en elke gevonden schrijver moet een valutacontrole op zijn pad hebben.
+
+test("[CSV-MUNT] every writer into bank_transactions refuses money that is not in euros", () => {
+  const writers: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\./.test(p)) continue;
+      const src = code(p);
+      // A writer is a file that puts rows INTO the table. `.select`-only files are readers and
+      // have nothing to refuse — the money is already inside by the time they see it.
+      if (/from\("bank_transactions"\)[\s\S]{0,400}?\.(insert|upsert)\(/.test(src)) writers.push(p);
+    }
+  };
+  walk("src/lib");
+  walk("src/app");
+
+  assert.ok(writers.length >= 2, `expected to find the bank_transactions writers, found ${writers.length}`);
+
+  for (const w of writers) {
+    const src = code(w);
+    // The check itself, however it is spelled: something in this file compares a currency against
+    // EUR. Deliberately loose about HOW — the point is that the file makes the comparison at all,
+    // not that it makes it in one blessed shape.
+    assert.match(
+      src, /!==\s*"EUR"|!==\s*'EUR'/,
+      `${w} writes into bank_transactions but never compares a currency against EUR. Without that ` +
+        `comparison a dollar or pound line lands as euros, and after it is booked nothing anywhere ` +
+        `records that it was not.`,
+    );
+  }
+});
+
+test("[CSV-MUNT] the CSV parser reports the file's currency instead of asserting EUR", () => {
+  const src = code("src/lib/bank-csv.ts");
+
+  // The defect, exactly: a literal EUR handed to the caller as THE currency of a file that parsed
+  // fine. The two early returns above it (empty file, unrecognised columns) may keep their literal
+  // — they carry zero transactions, so there is no money to be wrong about.
+  assert.doesNotMatch(
+    src, /const currency = "EUR";/,
+    "parseBankCsv hard-codes the statement currency again. bank-ingest's non-euro refusal reads " +
+      "exactly this value, so a literal here makes that refusal unreachable for every CSV.",
+  );
+
+  // And the positive half: the currency is derived from what was actually read.
+  assert.match(
+    src, /seenCurrencies/,
+    "the statement currency is no longer computed from the transactions that were read",
+  );
+  assert.match(
+    src, /currency: number;/,
+    "ColumnMap lost its currency column — with no column to read, the derivation above can only " +
+      "ever produce the default, which is the hard-coded literal by another route",
+  );
+});
+
+test("[CSV-MUNT] the upload refusal reads the LINES, not only the header", () => {
+  const src = code("src/lib/bank-ingest.ts");
+
+  // One statement, one currency is the common case but not the only one: CAMT carries Ccy per
+  // <Ntry> and a CSV has a currency column per row. A file can therefore say EUR at the top and
+  // still hold dollar lines, and reading only the top let those lines through.
+  assert.match(
+    src, /parsed\.transactions[\s\S]{0,200}?\.currency/,
+    "the non-euro refusal only looks at the statement-level currency again. A mixed-currency file " +
+      "declares EUR at the top, so the header alone cannot see its foreign lines.",
+  );
+});
+
+test("[CSV-MUNT] the bank feed is held to the same rule as the upload", () => {
+  const map = code("src/lib/enablebanking-map.ts");
+  const sync = code("src/lib/enablebanking-sync.ts");
+
+  // This door runs on a cron. Nobody is looking at the moment it books, so a wrong line here is
+  // discovered later than a wrong line from an upload — if at all.
+  assert.match(
+    map, /toUpperCase\(\) !== "EUR"/,
+    "mapEnableBankingTransactions no longer filters foreign-currency lines. The feed reaches banks " +
+      "all over Europe and hands over the currency on every transaction; storing one means booking " +
+      "kroner or pounds as euros.",
+  );
+  // Dropped money must be SAID. A silent filter is the same defect wearing the other mask: the
+  // owner reconciles a bank balance against an import that is quietly missing a line.
+  assert.match(
+    map, /describeForeignCurrency/,
+    "a foreign line is now dropped without a word — the owner would reconcile against an import " +
+      "that is silently short a transaction",
+  );
+  assert.match(
+    sync, /skippedForeignCurrency/,
+    "a non-euro ACCOUNT is fetched again. Beyond the money, it spends one of the few daily reads " +
+      "the bank allows on transactions that can never be stored.",
+  );
+});
+
+// ─── [BEWIJS-VAST] Een boeking mag nooit achterblijven zonder haar bewijsstuk ─────────
+//
+// Acht foreign keys wijzen naar `documents`. Zeven staan op ON DELETE SET NULL en één op CASCADE,
+// dus een definitieve verwijdering uit de prullenbak SLAAGT en neemt de koppeling mee: geen fout,
+// geen auditregel, en achteraf geen enkel verschil meer tussen een factuur die nooit een scan had
+// en een factuur waarvan de scan is weggegooid. De Belastingdienst maakt dat verschil ook niet —
+// beide zijn een administratie zonder bewijsstuk, zeven jaar lang.
+//
+// De achtste is erger en zou niemand voorspellen. bank_statement_periods.document_id staat op
+// CASCADE, dus het verwijderen van een afschrift-PDF verwijdert de DEKKINGSREGEL. Dekking is geen
+// documentatie maar invoer: computeDrawerBalance en het financiële resultaat onderdrukken bedragen
+// op dagen die een afschrift dekt. Weg die regel, en gedekte dagen tellen weer mee — de eigenaar
+// ziet zijn kasresultaat veranderen omdat hij zijn prullenbak leegde.
+//
+// Waarom niet gewoon RESTRICT in de database: dat is er ooit UIT gehaald, met reden. Zie
+// circle_integrity_and_indexes.sql §3 — zonder on-delete gaf het verwijderen van een FACTUUR een
+// kale 23503 en werd geblokkeerd. SET NULL loste dat op. De weigering hoort dus in de app, waar
+// hij een zin kan zijn in plaats van een SQL-code: het verwijderen van een factuur werkt nog
+// steeds, en het verwijderen van een BESTAND waar nog iets aan hangt zegt wat er aan hangt.
+
+test("[BEWIJS-VAST] every foreign key into documents is one the delete guard knows about", () => {
+  // De lijst in document-references.ts is met de hand geschreven, en dit bestand heeft één
+  // terugkerende les: een geautomatiseerde regel met een handgeschreven lijst eronder is niet
+  // geautomatiseerd. Dus leest deze poort de MIGRATIES en vergelijkt. Wat hij niet kan zien, en
+  // wat hier eerlijk staat: een foreign key die rechtstreeks in het Supabase-dashboard is gezet
+  // staat in geen enkel bestand — docs/MIGRATIES_VOLGORDE.md zegt met zoveel woorden dat de
+  // migratielijst niet de waarheid is. Toen dit werd geschreven vond deze poort er acht, precies
+  // de acht die de productiedatabase ook heeft.
+  const declared = new Set(DOCUMENT_REFERRERS.map((r) => `${r.table}.${r.column}`));
+  const inSchema: { key: string; file: string }[] = [];
+
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8").replace(/--[^\n]*/g, "");
+    const re = /references\s+(?:public\.)?documents\s*\(\s*id\s*\)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sql))) {
+      const before = sql.slice(0, m.index);
+      // The table is the CREATE/ALTER this constraint sits under; the column is either the inline
+      // definition right before REFERENCES, or the FOREIGN KEY (…) of the constraint being added.
+      const anchors = [...before.matchAll(/(?:create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table)\s+(?:public\.)?"?(\w+)"?/gi)];
+      const anchor = anchors[anchors.length - 1];
+      if (!anchor) continue;
+      const seg = before.slice(anchor.index);
+      const inline = /(\w+)\s+uuid\b[\s\w]*$/i.exec(seg);
+      let column = inline?.[1] ?? null;
+      if (!column) {
+        const fks = [...seg.matchAll(/foreign\s+key\s*\(\s*"?(\w+)"?\s*\)/gi)];
+        column = fks.length ? fks[fks.length - 1][1] : null;
+      }
+      if (column) inSchema.push({ key: `${anchor[1]}.${column}`, file: f });
+    }
+  }
+
+  assert.ok(
+    inSchema.length >= 8,
+    `expected to find the foreign keys into documents in the migrations, found ${inSchema.length} — ` +
+      `the extractor above stopped recognising them, which makes this whole gate pass vacuously`,
+  );
+
+  for (const { key, file } of inSchema) {
+    assert.ok(
+      declared.has(key),
+      `${key} (${file}) points at documents but DOCUMENT_REFERRERS does not know it. A permanent ` +
+        `delete would therefore succeed and quietly null or cascade it away — a booking left ` +
+        `without its bewijsstuk, with no error and no audit line saying so. Add it there, with the ` +
+        `Dutch sentence its rows deserve.`,
+    );
+  }
+});
+
+test("[BEWIJS-VAST] the guard sits in deleteDocument, not in the route that happens to call it", () => {
+  const docs = code("src/lib/documents.ts");
+
+  // In de route zou hij kloppen en omzeilbaar zijn: de volgende aanroeper van deleteDocument zou
+  // alles hierboven opnieuw moeten ontdekken. In de functie zelf kan hij dat niet.
+  const fn = docs.slice(docs.indexOf("export async function deleteDocument"));
+  assert.match(
+    fn.slice(0, fn.indexOf("storage")), /readDocumentReferences/,
+    "deleteDocument no longer checks what points at the document before removing it — every " +
+      "reference is ON DELETE SET NULL or CASCADE, so the delete succeeds and the evidence link " +
+      "disappears without an error",
+  );
+  // En de reden dat dit een verdict is en geen getal: een mislukte telling die als 0 wordt gelezen
+  // is toestemming om te verwijderen, uitgedeeld door de storing zelf.
+  assert.match(
+    fn, /if \(!refs\.ok\)/,
+    "a failed reference check is no longer refused. supabase-js does not throw on a query error — " +
+      "it returns { count: null, error } — so 'the check did not run' would read as 'nothing " +
+      "points at this file' on exactly the delete this guard exists to stop",
+  );
+});
+
+test("[BEWIJS-VAST] the screen renders the reason from keys, not from the server's sentence", () => {
+  const ui = code("src/app/dashboard/bestanden/components/Trash.tsx");
+
+  // AGENTS.md: een component draagt geen eigen taal. De server stuurt sleutels plus een aantal;
+  // de Nederlandse zin in `error` is voor het log en voor een oudere client, niet voor het scherm.
+  assert.doesNotMatch(
+    ui, /alert\(\{[^}]*message:\s*(?:body|json|res)\??\.\w*[Ee]rror/,
+    "the trash screen prints the server's Dutch sentence again. An owner whose interface is Arabic " +
+      "then gets Dutch on the one screen that is telling him his bookkeeping still needs a file.",
+  );
+  assert.match(ui, /ref\.key as MessageKey/, "the reasons are no longer rendered from their catalogue keys");
+  assert.match(
+    ui, /ref\.key in MESSAGES/,
+    "an unknown key is no longer filtered out — t() returns the key itself for one it does not " +
+      "know, so a server ahead of an open tab would print `prul.ref.dagstaat.meer` on screen",
+  );
+});
+
+// ─── [MOLLIE-C7-RACE] Een betaalde factuur die niemand boekt ──────────────────────────
+//
+// De duurste stille fout die dit product kan maken is niet een verkeerd bedrag — het is geld dat
+// binnen is en in de boekhouding niet bestaat. Deze keten deed dat, in vier stappen:
+//
+//   A zet zijn placeholder-rij neer en belt Mollie.
+//   B vindt A's rij, noemt hem "halverwege gestrand", en VERWIJDERT hem.
+//   A komt terug en werkt zijn rij bij — nul rijen geraakt, en daar meldt PostgREST geen fout
+//     over, dus A deelt zijn checkout-URL gewoon uit.
+//   De klant betaalt. Mollie belt de webhook met ?link=<A's rij-id>, die rij bestaat niet meer, en
+//     de webhook antwoordt op een onbekende rij `ok: true` — waarna Mollie stopt met bellen.
+//
+// De factuur staat open, de klant heeft betaald, en er is nergens een spoor. De route kende de
+// juiste lezing trouwens al: de 23505-tak zegt met zoveel woorden dat een lege checkout_url
+// betekent dat de winnaar zelf nog bezig is. Twee plekken lazen hetzelfde teken en trokken de
+// omgekeerde conclusie.
+
+test("[MOLLIE-C7-RACE] a placeholder is only cleaned up once it can no longer be in flight", () => {
+  const src = code("src/app/api/pay/[token]/ideal/route.ts");
+
+  const del = src.indexOf("'mollie_payment_links').delete()");
+  assert.ok(del > 0, "the placeholder cleanup vanished — [MOLLIE-C7] is what it exists for");
+  assert.match(
+    // `[^)]*` between the parens would be wrong here and it is worth naming why: the argument
+    // list contains `new Date()`, so a negated-paren class stops at the FIRST `)` and never
+    // reaches the comparison. That exact shape has made a gate in this file read a hole before.
+    src, /placeholderVerdict\([\s\S]{0,100}?=== 'in_flight'/,
+    "the cleanup deletes every placeholder again, including the one a concurrent request put down " +
+      "half a second ago and is still holding. That delete is what makes a paid invoice unbookable.",
+  );
+  // En de leeftijd moet gelezen KUNNEN worden: zonder created_at in de select is elke rij
+  // ongedateerd, en dan is het oordeel altijd hetzelfde — de poort zou passeren terwijl er niets
+  // meer wordt opgeruimd.
+  assert.match(
+    src, /select\('id, link_id, checkout_url, amount_value, status, created_at'\)/,
+    "created_at is no longer read, so every placeholder is undatable — the verdict then never says " +
+      "'stranded' and [MOLLIE-C7]'s cleanup silently stops happening",
+  );
+});
+
+test("[MOLLIE-C7-RACE] the checkout URL is handed out only when its row survived", () => {
+  const src = code("src/app/api/pay/[token]/ideal/route.ts");
+
+  // Een UPDATE die nul rijen raakt is in PostgREST geen fout. `if (updErr)` alleen leest een
+  // verdwenen rij daarom als succes — en die rij is precies wat de webhook nodig heeft.
+  assert.match(
+    src, /\.select\('id'\)[\s\S]{0,240}?updated\?\.length \?\? 0\) === 0/,
+    "the final update no longer counts the rows it hit. A row deleted by a concurrent request " +
+      "then reads as success, the URL goes out, and the payment that follows can never be booked.",
+  );
+});
+
+test("[MOLLIE-C7-RACE] a webhook for a row we no longer have is never a silent 200", () => {
+  const src = code("src/app/api/mollie/webhook/route.ts");
+
+  // Dit bestand belooft het in zijn eigen kop: "nooit een stille 200". Juist hier is de stilte het
+  // duurst — er is betaald, er is niets geboekt, en het verschil staat op geen enkel scherm.
+  // NIET op een venster van zoveel tekens na `if (!row)`. Dat was de eerste versie, en die
+  // passeerde toen de tak weer een stille 200 werd: er staat verderop in dit bestand nóg een
+  // reportHandledFailure, en die viel binnen het venster. Een poort die het verkeerde stuk leest
+  // meldt niets en heet groen — precies de vorm die dit hele bestand probeert te vermijden.
+  //
+  // Dus: de exacte regressie, en de melding aan haar eigen tekst.
+  assert.doesNotMatch(
+    src, /if \(!row\) return NextResponse\.json\(\{ ok: true \}\)/,
+    "an unknown link row answers ok:true again without a word. Mollie stops retrying after that " +
+      "200, so it is the last moment anything could notice that money arrived and nothing was booked.",
+  );
+  assert.match(
+    src, /Mollie belde over een betaallink waarvan de rij niet meer bestaat/,
+    "the report for an unknown link row is gone — that row is the only thing that could have made " +
+      "the payment bookable, so its absence is the whole event",
+  );
+});
+
+// ─── [KASSA-VERS] Een kassadag die achterloopt op zijn eigen tickets ──────────────────
+//
+// rebuildTillDay leest de verkopen van een dag en schrijft daarna een ABSOLUUT dagtotaal. Tussen
+// die twee stappen kan een andere aanvraag een ticket aanslaan, en dan landt de schrijving met een
+// totaal dat een moment geleden waar was:
+//
+//   A slaat ticket X aan, leest de dag → [X], berekent X.
+//   B slaat ticket Y aan, leest de dag → [X, Y], berekent X + Y, schrijft X + Y.
+//   A schrijft X.
+//
+// daily_turnover zegt dan X terwijl till_sales X én Y bevat. De omzet van die dag is een heel
+// ticket te laag, en de btw erover ook — tot in rubriek 1a/1b van de aangifte. Er is niets aan te
+// zien: de rij bestaat, de rekensom erbinnen klopt, en het kassascherm leest zijn ticketlijst uit
+// till_sales, dus dáár staan ze allebei nog. Twee kassa's, of één keer dubbel tikken.
+
+test("[KASSA-VERS] the day is read back after it is written", () => {
+  const src = code("src/lib/till-book.ts");
+
+  const fn = src.slice(src.indexOf("export async function rebuildTillDay"));
+  assert.match(
+    fn, /const after = await readDaySales\([\s\S]{0,120}?salesFingerprint\(after\) === applied/,
+    "rebuildTillDay writes an absolute day total again without checking whether the day changed " +
+      "while it was writing. The loser of that race stores a total that is short a whole ticket, " +
+      "and every screen still looks right because the ticket list comes from till_sales.",
+  );
+  // De DELETE-tak hoort binnen dezelfde lus: "de dag is leeg, haal de rij weg" is dezelfde race met
+  // het teken om, en laat een verkoop achter zonder dagomzetrij.
+  const loop = fn.slice(fn.indexOf("for (let attempt"));
+  assert.match(loop, /\.delete\(\)/, "the empty-day delete fell outside the verify loop");
+  assert.match(loop, /bookTurnoverRows/, "the upsert fell outside the verify loop");
+});
+
+test("[KASSA-VERS] a day that will not settle is bounded and reported", () => {
+  const src = code("src/lib/till-book.ts");
+
+  assert.match(
+    src, /attempt <= REBUILD_MAX_ATTEMPTS/,
+    "the rebuild loop lost its bound — a busy till would spin instead of returning",
+  );
+  assert.match(
+    src, /reportHandledFailure\([\s\S]{0,400}?KASSA/,
+    "reaching the attempt bound is silent again. The last write may then be stale, and an " +
+      "understated turnover day looks exactly like a quiet day.",
+  );
+});
+
+test("[KASSA-VERS] the fingerprint identifies WHICH sales, not how many", () => {
+  const src = code("src/lib/till-book.ts");
+
+  // Eén ticket aangeslagen en één gestorneerd in hetzelfde moment laat het AANTAL gelijk terwijl de
+  // dag een andere dag is. Een telling zou dat "onveranderd" noemen — en dat is precies het geval
+  // waarop niemand kijkt.
+  const fn = src.slice(src.indexOf("export function salesFingerprint"), src.indexOf("export const REBUILD_MAX_ATTEMPTS"));
+  assert.match(fn, /\.id\)/, "the fingerprint no longer reads the sale ids");
+  assert.match(fn, /\.sort\(\)/, "without a sort the fingerprint depends on read order, so an unchanged day can read as changed");
+  assert.doesNotMatch(fn, /\.length/, "a count-based fingerprint cannot see a sale swapped for another");
 });
