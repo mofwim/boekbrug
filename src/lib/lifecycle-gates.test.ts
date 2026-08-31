@@ -21555,3 +21555,57 @@ test("[SPLIT-ONBEKEND] the money audit does not call an unread split an arithmet
     "the exemption is computed but not applied",
   );
 });
+
+// ─── [HARTSLAG-NIETS-TE-DOEN] Een taak die keurig draait en niets te doen heeft ───────
+//
+// bank-sync keerde vóór zijn hartslagregel terug wanneer er geen bankkoppeling is ingesteld. De
+// bedoeling stond er zelfs bij — "a server without bank credentials simply has no feed to run.
+// Saying so plainly beats a heartbeat that reads as a failure every single day" — en het effect was
+// het omgekeerde: zonder regel kon het beheerscherm niet zien dát hij draaide, dus stond er elke
+// dag in het rood "heeft NOOIT gedraaid" over een taak die iedere ochtend om 05:00 langskomt.
+//
+// En de uitleg ernaast beweerde dat CRON_SECRET ontbrak, terwijl acht andere taken op hetzelfde
+// scherm op "ok" stonden met tijden van uren geleden. Het scherm sprak zichzelf tegen en stuurde de
+// lezer naar omgevingsvariabelen die in orde waren.
+
+test("[HARTSLAG-NIETS-TE-DOEN] a cron writes its heartbeat before it can decide there is nothing to do", () => {
+  const src = code("src/app/api/cron/bank-sync/route.ts");
+
+  // Op de AANROEP, niet op de import. De eerste versie zocht "beginCronRun" en vond de importregel
+  // bovenaan — die staat per definitie vóór alles, dus de vergelijking was altijd waar en de poort
+  // bleef groen toen de fix eruit werd gehaald.
+  const begin = src.indexOf("await beginCronRun(");
+  const configCheck = src.indexOf("isEnableBankingConfigured()");
+  assert.ok(begin > 0 && configCheck > 0, "the heartbeat call or the configuration check disappeared");
+  assert.ok(
+    begin < configCheck,
+    "bank-sync returns before writing its heartbeat again, so a run with nothing to do is " +
+      "indistinguishable from a run that never happened — and the screen says the second, in red, " +
+      "every day",
+  );
+  // …en hij sluit de regel ook af, anders blijft hij op 'afgebroken' staan, wat nóg erger leest.
+  const nietsTeDoen = src.slice(configCheck, configCheck + 400);
+  assert.match(
+    nietsTeDoen, /finishCronRun\(/,
+    "the nothing-to-do path leaves its heartbeat open, which reads as a crashed run",
+  );
+});
+
+test("[HARTSLAG-BEWIJS] a diagnosis does not name a cause the same screen refutes", () => {
+  const mod = code("src/lib/cron-heartbeat.ts");
+  const beheer = code("src/lib/beheer-health.ts");
+  const health = code("src/app/api/health/route.ts");
+
+  assert.match(
+    mod, /othersRan === true/,
+    "cronHealthNote is back to one fixed sentence for 'nooit-gedraaid'. It blames CRON_SECRET, " +
+      "which is a good guess when everything is dead and demonstrably wrong when eight other jobs " +
+      "on the same screen ran with that very key.",
+  );
+  for (const [name, src] of [["beheer-health", beheer], ["api/health", health]] as const) {
+    assert.match(
+      src, /cronHealthNote\([^)]*(?:othersRan|anyCronRan)\)/,
+      `${name} calls cronHealthNote without the evidence, so the sentence goes back to guessing`,
+    );
+  }
+});
