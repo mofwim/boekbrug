@@ -338,7 +338,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       const res = await fetch(`/api/documents/${docId}/read-as-invoice`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setRereadMessage(typeof json?.error === "string" ? json.error : t('ink.reread.fout'));
+        setRereadMessage(failureText(res.status, json, t('ink.reread.fout')));
         return;
       }
       setRereadMessage(typeof json?.message === "string" ? json.message : t('ink.reread.klaar'));
@@ -393,7 +393,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         const data = await res.json();
 
         if (data.error) {
-          setSyncResult(`${t('ink.sync.foutPrefix')} ${data.error}`);
+          setSyncResult(`${t('ink.sync.foutPrefix')} ${failureText(res.status, data, t('ink.sync.mislukt'))}`);
           setSyncing(false);
           return;
         }
@@ -513,11 +513,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         // sentence saying the lookup failed and that this tells you nothing about what was skipped.
         // The screen threw that away and printed the false all-clear anyway — the server refusing
         // to lie is worth nothing if the client lies on its behalf.
-        setSkippedError(
-          typeof data?.error === "string" && data.error
-            ? data.error
-            : t('ink.skipped.fout'),
-        );
+        setSkippedError(failureText(res.status, data, t('ink.skipped.fout')));
       }
     } catch {
       setSkippedError(
@@ -2086,7 +2082,7 @@ export function InvoiceCard({
         const data = await res.json().catch(() => ({}));
         await dialog.alert({
           title: t('ink.nietGelukt'),
-          message: data?.detail || t('ink.multi.foutWeghalen'),
+          message: failureText(res.status, data, t('ink.multi.foutWeghalen')),
         });
         return;
       }
@@ -2127,7 +2123,7 @@ export function InvoiceCard({
         // is where "the old one is already paid" lands, with the exit named.
         await dialog.alert({
           title: t('ink.vervang.kanNiet'),
-          message: data?.detail || t('ink.vervang.mislukt'),
+          message: failureText(res.status, data, t('ink.vervang.mislukt')),
         });
         return;
       }
@@ -2160,7 +2156,7 @@ export function InvoiceCard({
         const data = await res.json().catch(() => ({}));
         await dialog.alert({
           title: t('ink.nietGelukt'),
-          message: data?.detail || t('ink.dubbel.foutWeghalen'),
+          message: failureText(res.status, data, t('ink.dubbel.foutWeghalen')),
         });
         return;
       }
@@ -2223,10 +2219,10 @@ export function InvoiceCard({
             t('ink.herlees.geenGegevens') +
             (data.reason ? ` (${data.reason})` : "") +
             ". " +
-            (data.detail ?? t('ink.herlees.nietGewijzigd')),
+            (failureText(res.status, data, t('ink.herlees.nietGewijzigd'))),
         });
       } else {
-        toast(data.error || t('ink.herlees.mislukt'), { tone: "error" });
+        toast(failureText(res.status, data, t('ink.herlees.mislukt')), { tone: "error" });
       }
     } catch {
       toast(t('ink.herlees.mislukt'), { tone: "error" });
@@ -3016,7 +3012,7 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         const existing = (data as { existing?: { id: string; folder_id: string | null } }).existing;
         return {
           name: file.name, status: "duplicate", file,
-          message: (data as { error?: string }).error || t('ink.result.duplicate'),
+          message: failureText(res.status, data as { error?: unknown }, t('ink.result.duplicate')),
           link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
           // The server says whether this one may be overridden. The byte-hash gate deliberately
           // may not; the semantic one may, and this screen used to offer neither.
@@ -4261,7 +4257,7 @@ export default function IncomingInvoicesClient({
         // reached it). That is not a failure — count it as skipped so the summary stays honest.
         else if (res.status === 409) skipped++;
         else if (data.code === "model_unavailable") {
-          stoppedReason = typeof data.error === "string" ? data.error : t('ink.herleesAlles.modelWeg');
+          stoppedReason = failureText(res.status, data, t('ink.herleesAlles.modelWeg'));
           setReimportAllDone((n) => n + 1);
           break;
         }

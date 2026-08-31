@@ -20,7 +20,7 @@ import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter }
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { categoryLabel } from '@/lib/bank-categories'
-import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel } from '@/lib/bank-ignore-reason'
+import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel, ignoreReasonGroups } from '@/lib/bank-ignore-reason'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -462,7 +462,7 @@ export default function BankClient() {
       if (!res.ok) {
         // Includes the honest "this payment is split over several invoices" answer — ambiguous
         // here by nature, and better named than silently resolved to one of them.
-        showToast(json?.detail || t('bank.fout.betalingenOphalen'))
+        showToast(failureText(res.status, json, t('bank.fout.betalingenOphalen')))
         return
       }
       const payments = (json?.payments ?? []) as MovePayment[]
@@ -483,7 +483,7 @@ export default function BankClient() {
       if (!res.ok) {
         // The move is atomic, so a refusal means nothing changed — and the server's sentence says
         // which reason it was. Never our guess.
-        showToast(json?.detail || t('bank.fout.verplaatsen'))
+        showToast(failureText(res.status, json, t('bank.fout.verplaatsen')))
         return
       }
       await runMatch()
@@ -796,11 +796,13 @@ export default function BankClient() {
           invoiceId,
           invoiceNumber: invoiceNumber ?? null,
           missingNumbers: (json.missingNumbers ?? []) as string[],
-          detail: String(json.detail ?? ''),
+          // [SERVER-ZIN] Deze string wordt als tekst getoond (de <p> in het splitsvenster), dus
+          // hij gaat door dezelfde regel als elke andere servermelding.
+          detail: failureText(res.status, json, ''),
         })
       } else if (json?.error === 'bad_allocation') {
         // [BANK-SPLIT] The stated amount does not fit. The server names which ceiling it hit.
-        showToast(String(json.detail ?? t('bank.fout.bedragPastNiet')))
+        showToast(failureText(res.status, json, t('bank.fout.bedragPastNiet')))
       } else if (json?.error === 'verwerkt') {
         setVerwerktCtx({ number: json.invoiceNumber ?? invoiceNumber ?? '' })
       } else if (res.status === 409 && json?.error === 'payment_fully_applied') {
@@ -1076,7 +1078,15 @@ export default function BankClient() {
         else window.open(json.url, '_blank')
       } else {
         if (tab) tab.close()
-        showToast(json?.detail || json?.error === 'no_file' ? t('bank.fout.geenBestand') : t('bank.fout.factuurOpenen'))
+        // [SERVER-ZIN] Was: `json?.detail || json?.error === 'no_file' ? A : B`. `||` bindt losser
+        // dan `===`, dus de hele linkerkant was de CONDITIE — een niet-lege detail liet de toast
+        // "geen bestand" zeggen, wat de reden ook was. Nu expliciet: eerst de code die we kennen,
+        // dan de zin van de server als het er een is, dan de eigen regel.
+        showToast(
+          json?.error === 'no_file'
+            ? t('bank.fout.geenBestand')
+            : failureText(res.status, json, t('bank.fout.factuurOpenen')),
+        )
       }
     } catch {
       if (tab) tab.close()
@@ -1092,7 +1102,7 @@ export default function BankClient() {
       const res = await fetch(`/api/invoice/${invoiceId}/amounts`)
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
-        showToast(typeof json.error === 'string' ? json.error : t('bank.fout.factuurNietOpgehaald'))
+        showToast(failureText(res.status, json, t('bank.fout.factuurNietOpgehaald')))
         return
       }
       if (!json.editable) {
@@ -1132,7 +1142,7 @@ export default function BankClient() {
       })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok) {
-        showToast(typeof json?.error === 'string' ? json.error : t('bank.fout.toevoegenNiets'))
+        showToast(failureText(res.status, json, t('bank.fout.toevoegenNiets')))
         return
       }
       const landedAsInvoice = json.destination === 'invoice' || json.destination === 'receipt'
@@ -1191,7 +1201,7 @@ export default function BankClient() {
           // owner reads WHY before deciding.
           const proceed = await dialog.confirm({
             title: t('bank.tochKoppelenVraag'),
-            message: json?.detail || json?.error || t('bank.lijktDubbel'),
+            message: failureText(res.status, json, t('bank.lijktDubbel')),
             confirmLabel: t('bank.jaTochKoppelen'),
             cancelLabel: t('bank.overslaan'),
             danger: true,
@@ -1203,7 +1213,7 @@ export default function BankClient() {
           ok++
           if (json?.amountWarning) lastMsg = t('bank.controleerBedrag')
         } else {
-          lastMsg = json?.error || t('bank.fout.koppelen')
+          lastMsg = failureText(res.status, json, t('bank.fout.koppelen'))
         }
       }
       if (ok > 0) {
@@ -3078,6 +3088,16 @@ function TxCard({
                   {t('bank.zonderReden')}
                 </button>
               </div>
+              {/* [GENEGEERD-TELT] Wat de keuze met het GELD doet, zichtbaar. Dit stond alleen in een
+                  title-attribuut: een tooltip die op een telefoon niet bestaat, terwijl drie van de vijf
+                  knoppen het bedrag ook uit de kosten en de btw halen. De namen komen uit de regel zelf
+                  (ignoreReasonGroups), zodat de zin niet kan afwijken van wat er werkelijk gebeurt. */}
+              <p style={{ fontSize: 11.5, color: '#5F6368', margin: '8px 0 0', lineHeight: 1.45 }}>
+                {t('bank.redenGevolg', {
+                  uit: ignoreReasonGroups().excluded.join(', '),
+                  in: ignoreReasonGroups().kept.join(' en '),
+                })}
+              </p>
             </div>
           )}
 
@@ -3260,6 +3280,16 @@ function TxCard({
                     {t('bank.zonderReden')}
                   </button>
                 </div>
+                {/* [GENEGEERD-TELT] Wat de keuze met het GELD doet, zichtbaar. Dit stond alleen in een
+                    title-attribuut: een tooltip die op een telefoon niet bestaat, terwijl drie van de vijf
+                    knoppen het bedrag ook uit de kosten en de btw halen. De namen komen uit de regel zelf
+                    (ignoreReasonGroups), zodat de zin niet kan afwijken van wat er werkelijk gebeurt. */}
+                <p style={{ fontSize: 11.5, color: '#5F6368', margin: '8px 0 0', lineHeight: 1.45 }}>
+                  {t('bank.redenGevolg', {
+                    uit: ignoreReasonGroups().excluded.join(', '),
+                    in: ignoreReasonGroups().kept.join(' en '),
+                  })}
+                </p>
               </div>
             )}
             </>

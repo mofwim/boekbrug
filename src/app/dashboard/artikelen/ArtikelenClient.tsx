@@ -212,7 +212,7 @@ export default function ArtikelenClient() {
         body: JSON.stringify({ confirm: 'ALLES' }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok || !json.ok) { setToast(typeof json.error === 'string' ? json.error : t('art.fout.leegmaken')); return }
+      if (!res.ok || !json.ok) { setToast(failureText(res.status, json, t('art.fout.leegmaken'))); return }
       setToast(json.deleted === 1 ? t('art.verwijderdEen') : t('art.verwijderdMeer', { n: json.deleted }))
     } catch { setToast(t('art.fout.leegmakenVerbinding')); return }
     finally { await load() }

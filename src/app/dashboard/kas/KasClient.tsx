@@ -438,7 +438,7 @@ export default function KasClient() {
         // "beginsaldo moet 0 of hoger zijn", …). Replacing it with "probeer opnieuw" told the
         // owner to repeat the one thing that cannot work.
         const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
-        setError(json?.detail || json?.error || t('kas.fout.boekingOpslaan'))
+        setError(failureText(res.status, json, t('kas.fout.boekingOpslaan')))
       }
     } catch { setError(t('bank.fout.algemeen')) } finally { setSaving(false) }
   }
@@ -453,7 +453,7 @@ export default function KasClient() {
       const res = await fetch(`/api/cash?id=${id}`, { method: 'DELETE' })
       if (!res.ok) {
         const json = await res.json().catch(() => ({} as { detail?: string; error?: string }))
-        setError(json?.detail || json?.error || t('kas.fout.boekingVerwijderen'))
+        setError(failureText(res.status, json, t('kas.fout.boekingVerwijderen')))
       } else {
         setError('')
       }
@@ -517,7 +517,7 @@ export default function KasClient() {
       } else if (json?.duplicate) {
         setCashUploadMsg({ kind: 'err', text: t('kas.upload.dubbel') })
       } else {
-        setCashUploadMsg({ kind: 'err', text: json?.error || t('kas.upload.mislukt') })
+        setCashUploadMsg({ kind: 'err', text: failureText(res.status, json, t('kas.upload.mislukt')) })
       }
     } catch {
       setCashUploadMsg({ kind: 'err', text: t('kas.upload.misging') })

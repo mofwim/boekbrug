@@ -31,6 +31,7 @@ import { computeInvoiceTotals } from '@/lib/invoice-totals'
 // [DATE-NL] dd-mm-jjjj, ongeacht de browsertaal.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
+import { failureText } from '@/lib/server-message'
 
 /** Eén klant die deze boekhouder gemachtigd heeft. */
 export interface GemachtigdeKlant {
@@ -163,7 +164,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const conceptData = await concept.json().catch(() => ({}))
       if (!concept.ok || !conceptData?.invoiceId) {
-        throw new Error(conceptData?.error || t('bh.fact.foutConcept'))
+        throw new Error(failureText(concept.status, conceptData, t('bh.fact.foutConcept')))
       }
 
       // Stap 2 — uitgeven. Hier valt het nummer uit de reeks van de KLANT (art. 35), krijgt hij
@@ -175,7 +176,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const verzondenData = await verzonden.json().catch(() => ({}))
       if (!verzonden.ok) {
-        throw new Error(verzondenData?.error || t('bh.fact.foutVersturen'))
+        throw new Error(failureText(verzonden.status, verzondenData, t('bh.fact.foutVersturen')))
       }
 
       router.push(`/dashboard/invoice/${conceptData.invoiceId}`)

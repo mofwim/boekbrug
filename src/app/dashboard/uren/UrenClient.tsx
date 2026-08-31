@@ -69,6 +69,7 @@ const emptyForm = (): Form => ({
  */
 const URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey> = {
   unknown: 'uren.criterium.onbekend',
+  not_tracked: 'uren.criterium.nietbijgehouden',
   met: 'uren.criterium.gehaald',
   too_early: 'uren.criterium.tevroeg',
   on_track: 'uren.criterium.opkoers',

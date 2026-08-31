@@ -741,3 +741,49 @@ test("[GELD-INVARIANT] the invoice's own arithmetic is still checked on such a r
   assert.ok(kinds(v).includes("paid_amount_never_written"));
   assert.ok(kinds(v).includes("btw_arithmetic"), "the arithmetic check was skipped along with the gap");
 });
+
+// ─── [SPLIT-ONBEKEND] Een ongelezen splitsing is geen rekenfout ──────────────────────────────────
+//
+// De regel boven btw_arithmetic zegt het zelf: afwezig is niet fout, "want een schending verzinnen
+// uit een gat is hoe een audit ophoudt geloofd te worden". Dat gold voor NULL en niet voor NUL —
+// terwijl de lezer een nog niet gelezen splitsing als 0/0 wegschrijft naast een totaal dat er wel
+// is. Gemeten in de productiedatabase: drie facturen stonden zo, en de audit meldde ze met "Dit
+// getal staat in je aangifte" over een splitsing die nog helemaal niet was gelezen. Eén enkele
+// échte rekenbreuk stond ertussen.
+
+test("[SPLIT-ONBEKEND] ex=0 and btw=0 beside a real total is not reported as arithmetic", () => {
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "i1", invoiceNumber: "TNK-1", status: "processing", totalExBtw: 0, btwAmount: 0, totalIncBtw: 1040.12 })],
+    links: [], transactions: [],
+  });
+  assert.equal(v.filter((x) => x.kind === "btw_arithmetic").length, 0);
+});
+
+test("[SPLIT-ONBEKEND] a genuine break is still reported — that is the one worth seeing", () => {
+  // Both figures present and non-zero, and they do not add up. This is the case the check exists
+  // for, and it must not disappear among the false ones.
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "i2", invoiceNumber: "ZTN-9", status: "received", totalExBtw: 1000, btwAmount: 210, totalIncBtw: 1386.40 })],
+    links: [], transactions: [],
+  });
+  assert.equal(v.filter((x) => x.kind === "btw_arithmetic").length, 1);
+});
+
+test("[SPLIT-ONBEKEND] a zero-total invoice is not swept in by the exemption", () => {
+  // 0/0/0 adds up, so it was never a violation; the exemption must not be what makes it pass, or
+  // it would also excuse 0 + 0 ≠ 5 on an invoice whose total was later corrected.
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "i3", invoiceNumber: "NUL-1", status: "received", totalExBtw: 0, btwAmount: 0, totalIncBtw: 0 })],
+    links: [], transactions: [],
+  });
+  assert.equal(v.filter((x) => x.kind === "btw_arithmetic").length, 0);
+});
+
+test("[SPLIT-ONBEKEND] only BOTH at zero is exempt — one of the two is still a break", () => {
+  // ex present, btw zero, and they do not reach the total: something WAS read, and it is wrong.
+  const v = findMoneyViolations({
+    invoices: [inv({ id: "i4", invoiceNumber: "HALF-1", status: "received", totalExBtw: 100, btwAmount: 0, totalIncBtw: 121 })],
+    links: [], transactions: [],
+  });
+  assert.equal(v.filter((x) => x.kind === "btw_arithmetic").length, 1);
+});

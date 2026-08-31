@@ -71,6 +71,73 @@ export function toBankIgnoreReason(v: unknown): BankIgnoreReason | null {
     : null
 }
 
+/**
+ * [GENEGEERD-TELT] Hoort deze genegeerde regel nog in de boekhouding?
+ *
+ * ── DE REDEN IS EEN AANTEKENING, BEHALVE WANNEER HET DAT NIET IS ──
+ *
+ * "Negeren" doet twee heel verschillende dingen, afhankelijk van waaróm. Bij drie van de vijf
+ * redenen zegt de eigenaar dat dit geld niet in zijn boeken hoort; bij de vierde zegt hij alleen
+ * dat er nooit een factuur bij komt. Die twee als hetzelfde behandelen kost geld, en in beide
+ * richtingen:
+ *
+ *   · Een als `prive` weggezette regel bleef in de kosten staan en zijn BTW in de voorbelasting.
+ *     Dat is een aftrek waar geen recht op bestaat — precies de post waar de Belastingdienst naar
+ *     kijkt, en de eigenaar heeft zelf aangegeven dat het niet zakelijk was.
+ *   · Een als `dubbel` weggezette regel telde zijn kosten en voorbelasting een TWEEDE keer. De
+ *     eigenaar heeft de dubbeling gemeld en hij staat er nog steeds in.
+ *   · `niet_van_mij` is geld dat nooit van hem was (een bankvergissing, een terugboeking).
+ *
+ * En de reden die juist WEL moet blijven tellen:
+ *
+ *   · `geen_factuur` — huur, lease, een abonnement. Een echte zakelijke kost waar alleen nooit een
+ *     factuur bij komt. Die uit de boeken halen zou de kosten verlagen, de winst verhogen en de
+ *     eigenaar te veel belasting laten betalen. Dat is de duurste van de twee fouten, en dit is
+ *     verreweg de meest gekozen reden.
+ *
+ * ── WAAROM `anders` EN "GEEN REDEN" BLIJVEN TELLEN ──
+ *
+ * Ze zeggen niets over de aard van het bedrag, en de veilige richting bij onwetendheid is: laat
+ * staan wat er staat. Uitsluiten zou stilzwijgend kosten uit reeds ingediende kwartalen halen op
+ * grond van een aanname die de eigenaar nooit heeft gedaan. Toen dit werd geschreven stond er in
+ * de productiedatabase precies één genegeerde regel, en die had geen reden — dus verandert deze
+ * regel aan geen enkel bestaand cijfer iets, en pakt hij vanaf de volgende keer wel.
+ *
+ * Het gevolg staat vanaf nu ook op het scherm bij de keuze zelf: een reden die geld uit de boeken
+ * haalt mag geen aantekening lijken.
+ */
+export function ignoredLineCountsInBooks(reason: string | null | undefined): boolean {
+  switch (toBankIgnoreReason(reason)) {
+    case 'prive':
+    case 'dubbel':
+    case 'niet_van_mij':
+      return false
+    // 'geen_factuur' is een echte kost; 'anders' en null zeggen niets. Beide blijven tellen.
+    default:
+      return true
+  }
+}
+
+/**
+ * [GENEGEERD-TELT] De twee groepen redenen, als de LABELS die op de knoppen staan.
+ *
+ * Afgeleid van ignoredLineCountsInBooks in plaats van naast die regel opgeschreven. Een zin die
+ * zegt "Privé haalt het bedrag uit je kosten" terwijl de regel het er laat staan is erger dan geen
+ * zin: de eigenaar neemt dan een besluit op grond van iets dat niet gebeurt.
+ *
+ * En het zijn de labels zoals ze op het scherm staan, niet vertaalde omschrijvingen — AGENTS.md:
+ * een zin die naar een knop wijst noemt die knop zoals hij geschreven is, anders zoekt de lezer
+ * naar een woord dat nergens in de interface staat.
+ */
+export function ignoreReasonGroups(): { excluded: string[]; kept: string[] } {
+  const excluded: string[] = []
+  const kept: string[] = []
+  for (const r of BANK_IGNORE_REASONS) {
+    ;(ignoredLineCountsInBooks(r) ? kept : excluded).push(BANK_IGNORE_REASON_LABELS[r].label)
+  }
+  return { excluded, kept }
+}
+
 /** Het korte label voor het Genegeerd-tabblad. Onbekend/leeg → null (dan toont het scherm niets). */
 export function bankIgnoreReasonLabel(reason: string | null | undefined): string | null {
   const r = toBankIgnoreReason(reason)

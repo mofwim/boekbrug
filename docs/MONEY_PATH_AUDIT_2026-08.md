@@ -353,3 +353,152 @@ established correctly in one place and not read in another — a key stored wher
 undo deletes it, a marker not on a carry list, a definition spelled twice, a
 recovery path that could not be reached, a probe whose two failures mean opposite
 things. The engines were never the risk. The seams are.
+
+## 11. A second pass, in parallel — 31 August 2026
+
+Written by a session working alongside §10, on the same night. It found no arithmetic error either,
+and that is now two independent passes reaching the same conclusion by different routes.
+
+The shape here was slightly different from §10's. Where that pass hunted one signature — a fact
+established in one place and not read in another — this one kept running into a second: **a check
+that could not fire.** A guard that answers "fine" to every input is not a weak guard, it is the
+reason nobody looks any more.
+
+### Fixed, each verified against production before a line was changed
+
+**A dollar statement was booked as euros, on both doors that write bank transactions.**
+`bank-ingest` has refused non-euro statements from the start, reading `parsed.currency` — and
+`parseBankCsv` wrote the literal `"EUR"` into that field for every file it parsed, whatever the
+file's own Munt/Valuta/Currency column said. The refusal could not fire for a single CSV. The bank
+FEED (Enable Banking, whose own sample data is Danish) had no check at all, and that is the worse
+door: it runs on a cron with nobody watching. `bank_transactions` has no currency column, so a
+foreign line stored as a number is thereafter indistinguishable from euros. Also closed for CAMT,
+which carries `Ccy` per `<Ntry>` and could declare EUR at the top while holding dollar lines.
+
+**Emptying the prullenbak could leave a booking without its bewijsstuk.** Eight foreign keys point
+at `documents`; seven are `ON DELETE SET NULL` and one is `CASCADE`. The delete SUCCEEDED and took
+the link with it — no error, no audit line, and afterwards no way to tell an invoice that never had
+a scan from one whose scan was thrown away. The CASCADE one is worse than it looks:
+`bank_statement_periods.document_id` deletes the COVERAGE record, and coverage is an input to
+`computeDrawerBalance` and the financial result, so an owner could watch his kasresultaat change
+because he emptied his bin. Refused now, with the reason, from inside `deleteDocument` rather than
+from the route that happens to call it.
+
+**Two iDEAL clicks at once could take a customer's payment and book nothing.** The create route
+puts down a placeholder row immediately before calling Mollie; the cleanup treated every placeholder
+as stranded and DELETED it. A concurrent request then handed out a checkout URL for a row that no
+longer existed, the customer paid, and the webhook answered `ok: true` on an unknown row — after
+which Mollie stops retrying. Money in the bank, nothing in the books, no trace. The route already
+knew the right reading: its 23505 branch says an empty checkout_url means the winner is still busy.
+Two places read the same sign and drew opposite conclusions.
+
+**A second cashier ringing up mid-rebuild made the day's turnover short a whole ticket.**
+`rebuildTillDay` reads a day's sales and writes an ABSOLUTE total; a ticket landing between those
+two steps is lost from `daily_turnover` while staying visible in `till_sales`, so every screen still
+looks right. Fixed by convergence rather than a lock — a rebuild is idempotent, which is the
+module's own stated reason for rebuilding instead of applying a delta.
+
+**Three owners were told their numbering was unbroken over numbers that were never written.**
+`checkContinuity` builds its series from the invoices, so a series with no invoice has no bucket and
+`burnedAtEnd` — the only check that sees the END of a series — is never computed for it.
+`series.every(...)` over an empty list is `true`. Measured: two owners with a creditnota counter at
+1 and 2 and zero creditnota's. The ordinary cause is a discarded draft, which is a perfectly good
+answer — the owner just has to be asked before he can give it.
+
+**A bank line the owner marked private kept its cost in kosten and its BTW in voorbelasting.**
+Three of the five ignore reasons (`prive`, `dubbel`, `niet_van_mij`) are statements that the money
+does not belong in the books; the route's own comment called the reason "een NOTITIE, geen besluit".
+The fourth, `geen_factuur` (rent, lease, a subscription), is a real cost and MUST keep counting —
+which is why this is a rule per reason and not a filter on status. The consequence now stands
+visibly under both pickers, derived from the rule so the sentence cannot drift from what happens.
+
+**The filed aangifte produced a €1 phantom suppletie on an unchanged return.** §10 item 4, closed.
+The concept's 5g is the SUM of per-rubriek rounded amounts (what the paper form asks for); the
+filed snapshot's raw total was rounded ONCE, with `Math.round` where the rubrieken beside it use a
+symmetric rounding. The screen subtracted the two displays. The real suppletie machinery
+(`computeFilingDivergence`) compared raw with raw all along and was never wrong — only the sentence
+was.
+
+**The auditfile never said which VAT scheme its dates should be read under.** It books on invoice
+date, correct under both schemes — but under the kasstelsel the BTW is due in the quarter of
+PAYMENT, and nothing in the file said so. The regimeNotes already declared the KOR and the undivided
+0% turnover; the scheme is the only one of the three that moves the timing of everything. They also
+moved from behind `</company>` to above `<auditfile>`, where a reader meets them before the figures
+rather than after several thousand journal lines.
+
+### The method, since it is the transferable part
+
+Every one of these was verified against the production database before anything was changed, and
+several turned out to be **latent** — the mechanism real, the damage not yet done. Those are said as
+such rather than dressed up. Three had already fired: the three burned creditnota numbers, and
+(from §10) the eleven duplicate purchase invoices.
+
+Every gate added here was checked by deliberately reintroducing the defect and confirming it bites.
+That caught four gates of mine that would have passed over the very thing they claimed to pin —
+including one that looked for a report within 900 characters of a branch and found an unrelated one
+further down the file, and one whose `[^)]*` could not cross a `new Date()`. A gate that reads the
+wrong region reports nothing and calls itself green.
+
+### Still open after both passes
+
+§10's list stands, minus item 4 (closed above). Item 1 still needs a migration, item 2 a design
+choice, item 3 a product decision, item 5 is closed above. Two operational items also remain and
+are the owner's to do, not an agent's: applying
+`supabase/migrations/accountant_amount_guard_restore.sql` (a security regression plus a mandate
+tightening), and deciding what to do about the 14 invoices whose `amount_paid` is 0 while their
+links cover the total exactly — `recompute_invoice_amount_paid` would repair them, but that writes
+to real books.
+
+### §11 continued — the later half of the same night
+
+**Two doors for "mark this invoice paid" disagreed.** `/api/email/confirm`'s 'pay' action wrote the
+status and not `amount_paid`; pay-toggle, the bank confirmation and the auto-confirm all write both.
+Five purchase invoices sit in production as paid/bank/0/no-links. The aangifte is unaffected —
+`isSettled` reads `amount_paid > 0 || status === 'paid'` precisely for legacy rows — but the money
+audit reports them with a sentence describing the wrong thing.
+
+**The money audit was crying wolf.** `btw_arithmetic` reported three live invoices as "ex 0 + btw 0
+is not € 1.040,12 — dit getal staat in je aangifte", about a split the reader has not reached yet.
+The check's own comment forbids exactly this ("een schending verzinnen uit een gat is hoe een audit
+ophoudt geloofd te worden") and covered NULL but not zero. One genuine break exists in the books
+(€ 176,40) and deserved not to be lost among three false ones.
+
+**The three screens a return is filed from had no render coverage** — aangifte, klaar, waarheid —
+which is the class AGENTS.md opens with. Verified by reintroducing that exact defect.
+
+**Every owner was told their zelfstandigenaftrek might lapse.** All nine have zero time entries, so
+all nine got the full red warning about the largest deduction a zzp'er has. urencriterium.ts's own
+rule 3 draws the line this crossed: only registered hours count, and that is a statement about the
+registration, "the difference between a fact and an accusation".
+
+### Checked and found SOUND — recorded so nobody re-investigates
+
+**The UBL creditnota flip.** `ubl-export.ts` negates quantity and line total while keeping the unit
+price a magnitude, and that is correct: Peppol BIS 3.0 states a credit note's amounts positive with
+type code 381, and BR-27 forbids a negative `cbc:PriceAmount`. `CR-20260002` in production has the
+shape that would break a naive reading (negative quantity AND negative line total) and comes out
+right. The `?? 1` default cannot express a negated line, but no invoice_line in production has a
+null quantity, and the module's comment reasons about that default deliberately.
+
+**The cash-drawer axis.** My first pass reported two owners below zero. That was my error: it summed
+`cash_entries` alone, and till takings enter the drawer through `daily_turnover` without a
+cash_entries row. Corrected, one owner's low point is +€59 (not −€41) and the other's is −€892,86
+(not −€2.804,45). The remaining negative is real, and the app already detects it — `drawer_negative`
+reports it and the filing gate blocks on it. No code defect; the owner's data has a question in it.
+
+### One complete feature that nothing calls
+
+`src/lib/found-money.ts` — `foundMoney()`, fully written and tested, imported by nothing. It turns
+the one figure the reconciliation genuinely FINDS (the acquirer commission that was silently
+inflating profit) into something an owner learns about. Its own header says why that matters: the
+figure "reaches exactly one place: a stat tile on /dashboard/waarheid, alive for as long as that
+screen is open", and "for an owner who does not open that screen it is work the app did that nobody
+will ever learn about".
+
+Not wired here, and the reason is the same one §10 gives for its item 3: WHERE this surfaces is a
+product decision, not a wiring task. It puts a new claim about money in front of the owner, and the
+module itself is careful about the framing (MARKTPOSITIE_2026.md §5: lead with "your profit is
+overstated", never with "we found you € 340"). It takes a `RangeResult`, which
+`computeResultForRange` already produces, so wiring it anywhere is a few lines once the destination
+is chosen. Two other modules are also uncalled — `deck.ts` (buildDeck) and `recon-confirm-client.ts`
+(confirmReconPayment) — and were not investigated further.

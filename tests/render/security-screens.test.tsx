@@ -182,6 +182,32 @@ test("[DOORLOPEND] half a check is never reported as a whole one", () => {
   })();
 });
 
+test("[REEKS-ZONDER-FACTUUR] a series with nothing in it gets its own sentence", () => {
+  return (async () => {
+    const { NummeringUitslag } = await import("../../src/components/beveiliging/NummeringPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    // The production shape: invoices in one series, and a creditnota counter standing above zero
+    // with no creditnota under it. "Aan het eind van de reeks" presupposes a reeks; this one has
+    // none, and the owner's answer to it ("that was a draft I threw away") is a different answer.
+    const html = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, {
+        report: {
+          series: [
+            series(),
+            series({ type: "creditnota", first: null, last: null, issued: 0, burnedAtEnd: 2 }),
+          ],
+          unreadable: [], clean: false, unaccounted: 2, countersRead: true,
+        },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(html, /geen enkel document in deze reeks/, "the empty-series sentence must be the one shown");
+    assert.doesNotMatch(html, /teller staat hoger dan je hoogste factuur/,
+      "the end-of-series sentence talks about a highest invoice this series does not have");
+    assert.match(html, /Creditnota/, "the owner must know WHICH series");
+  })();
+});
+
 // ─── [GELD-INVARIANT] Do the books agree with themselves? ────────────────────────────
 
 // money-invariants.ts was complete, considered and tested — and nothing called it. No screen, no

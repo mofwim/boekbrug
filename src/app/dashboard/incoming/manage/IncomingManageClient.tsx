@@ -1242,12 +1242,12 @@ export default function IncomingManageClient({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // Each refusal says what to DO about it. "Mislukt" on its own is how a dead end starts.
-        const err = String(json?.error ?? '')
+        const err = String(failureText(res.status, json, ''))
         showToast(
           err === 'heeft_al_een_origineel' ? t('ink.origineel.alAanwezig')
           // [BETER-EXEMPLAAR] De boekhouder heeft dit stuk al gecontroleerd; de zin van de server
           // noemt hem, want hij is de enige die dit verder kan brengen.
-          : err === 'verwerkt' ? String(json?.detail ?? t('ink.origineel.mislukt'))
+          : err === 'verwerkt' ? String(failureText(res.status, json, t('ink.origineel.mislukt')))
           : err === 'bestandstype_niet_ondersteund' ? t('ink.origineel.bestandstype')
           : err === 'bestand_te_groot' ? t('ink.origineel.teGroot')
           : err === 'not_found' ? t('ink.origineel.bestaatNiet')
@@ -1307,7 +1307,7 @@ export default function IncomingManageClient({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.ok) {
-        showToast(typeof data.error === 'string' ? data.error : t('ink.instellenMislukt'))
+        showToast(failureText(res.status, data, t('ink.instellenMislukt')))
         return
       }
       setIncassoSet(prev => {
@@ -1350,7 +1350,7 @@ export default function IncomingManageClient({
         // [UI-HONESTY] The route's refusals are states with a way out named in them ("draai eerst
         // de betaling terug", "je boekhouder heeft deze factuur al verwerkt"). A generic retry
         // message would send the owner at a button that cannot work.
-        showToast(typeof data.error === 'string' ? data.error : t('ink.omboekenMislukt'))
+        showToast(failureText(res.status, data, t('ink.omboekenMislukt')))
         return
       }
       // From the SERVER's answer, never optimistically: this row's sign is what the payment screens,
@@ -1663,7 +1663,7 @@ export default function IncomingManageClient({
         // route `error` is a CODE, and at its 500 it is a raw Postgres message; neither belongs on
         // an owner's phone. No detail → our own Dutch sentence.
         const json = await res.json().catch(() => ({} as { detail?: string }))
-        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
+        showToast(failureText(res.status, json, t('lijst.fout.verwijderenVervers')))
       }
     } catch {
       showToast(t('lijst.fout.verwijderen'))
@@ -1698,7 +1698,7 @@ export default function IncomingManageClient({
       const res = await fetch(`/api/invoice/payment/move?invoiceId=${encodeURIComponent(inv.id)}`)
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast(json?.detail || t('ink.betalingenOphalenMislukt'))
+        showToast(failureText(res.status, json, t('ink.betalingenOphalenMislukt')))
         return
       }
       const payments = (json?.payments ?? []) as MovePayment[]
@@ -1728,7 +1728,7 @@ export default function IncomingManageClient({
       if (!res.ok) {
         // The move is atomic — a refusal means nothing changed, and the server's sentence says
         // which reason it was. Never our guess: it re-decided on fresher data than we hold.
-        showToast(json?.detail || t('ink.verplaatsenMislukt'))
+        showToast(failureText(res.status, json, t('ink.verplaatsenMislukt')))
         return
       }
       // Both invoices changed. Patch what the server actually reported rather than assuming:
@@ -1799,7 +1799,7 @@ export default function IncomingManageClient({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // The server asked the same questions of fresher data. Show ITS answer, not ours.
-        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
+        showToast(failureText(res.status, json, t('lijst.fout.verwijderenVervers')))
         return
       }
       setInvoices(prev => prev.filter(i => i.id !== id))
@@ -1877,7 +1877,7 @@ export default function IncomingManageClient({
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         // De server stelde dezelfde vragen aan verser data — toon ZIJN antwoord, niet het onze.
-        await dialog.alert({ title: t('ink.vervang.kanNiet'), message: data?.detail || t('ink.vervang.mislukt') })
+        await dialog.alert({ title: t('ink.vervang.kanNiet'), message: failureText(res.status, data, t('ink.vervang.mislukt')) })
         return
       }
       showToast(data?.archivedNumber

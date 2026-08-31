@@ -71,7 +71,7 @@ async function fetchGrootboeken(t: Translator): Promise<
   try {
     const res = await fetch("/api/snelstart/grootboeken");
     const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error ?? t("ss.grootboekenMislukt") };
+    if (!res.ok) return { ok: false, error: failureText(res.status, data, t("ss.grootboekenMislukt")) };
     return { ok: true, grootboeken: data.grootboeken ?? [] };
   } catch {
     return { ok: false, error: t("ss.grootboekenMislukt") };
@@ -197,7 +197,7 @@ export function SnelStartCard() {
       if (!res.ok || !data.ok) {
         // De server kent redenen die permanent zijn ("je boekhouder heeft deze al verwerkt") — dan
         // is "probeer opnieuw" een leugen. Zeg wat hij zegt.
-        setError(typeof data.error === "string" ? data.error : t("ss.akkoordMislukt"));
+        setError(failureText(res.status, data, t("ss.akkoordMislukt")));
         return;
       }
       setNotice(

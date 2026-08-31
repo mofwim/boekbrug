@@ -19,6 +19,7 @@ import type { QuarterNo } from '@/lib/btw-reservation'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -51,7 +52,16 @@ interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
 // [FILED-QUARTER] The frozen figures of an aangifte this owner already marked as ingediend, when
 // this quarter is one of them. Everything else on this page is recomputed LIVE, so without this
 // the screen shows a fresh concept for a closed quarter and says nothing about it.
-interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number }
+interface Filed {
+  filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number
+  /**
+   * [SUPPLETIE-FANTOOM] Wat er sinds het indienen bij is gekomen of af is gegaan, berekend op de
+   * server uit de ONafgeronde cijfers. Niet hier uit twee afgeronde bedragen af te trekken: het
+   * concept-5g is de som van per rubriek afgeronde bedragen en het ingediende saldo is in één keer
+   * afgerond, dus dat verschil bestond ook op een kwartaal waar niemand iets aan veranderde.
+   */
+  saldoDelta: number
+}
 
 // [SUPPLETIE-VERREKEND] A correction from an EARLIER filed quarter, €1.000 or less, that has not
 // been declared anywhere yet. The Belastingdienst allows those to be processed in the next regular
@@ -133,9 +143,7 @@ export default function AangifteClient({ hasAccountant = null }: {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
-        setCarryNote(typeof json.error === 'string'
-          ? json.error
-          : t('aang.correcties.mislukt'))
+        setCarryNote(failureText(res.status, json, t('aang.correcties.mislukt')))
         return
       }
       setCorrections((prev) => prev.filter((x) => x.quarter !== c.quarter))
@@ -166,9 +174,7 @@ export default function AangifteClient({ hasAccountant = null }: {
           setLoadError(
             res.status === 401
               ? t('aang.sessieVerlopen')
-              : (typeof json?.detail === 'string' && json.detail.trim())
-                ? json.detail.trim()
-                : t('aang.ladenMislukt'),
+              : failureText(res.status, json, t('aang.ladenMislukt')),
           )
           return
         }
@@ -195,7 +201,12 @@ export default function AangifteClient({ hasAccountant = null }: {
   // [FILED-QUARTER] The difference between what was handed in and what this quarter's data says
   // NOW. Both sides are whole euros already (the route rounds, and 5g is a subtraction of two
   // rounded figures), so this is exact — no epsilon, no "verschil van € 0" from a float.
-  const filedDelta = filed && data ? data.saldo - filed.saldo : 0
+  // [SUPPLETIE-FANTOOM] Het verschil komt van de SERVER, uit de onafgeronde cijfers. Hier stond
+  // `data.saldo - filed.saldo`: het concept-5g (de som van de per rubriek afgeronde bedragen) min
+  // een saldo dat in één keer was afgerond. Twee verschillende bewerkingen, dus op een kwartaal
+  // waar niemand iets aan veranderde stond hier tot een paar euro — en dan las de eigenaar dat er
+  // iets "bij komt" op een aangifte die hij al had ingediend.
+  const filedDelta = filed?.saldoDelta ?? 0
   // [AANGIFTE-INGEDIEND] De banner als sleutels — welke zin, beslist door een pure functie.
   // `filed` kan null zijn; dan wordt de banner hieronder toch niet gerenderd en is dit een
   // onschuldige nulwaarde die nergens terechtkomt.

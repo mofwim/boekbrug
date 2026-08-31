@@ -158,6 +158,13 @@ export interface RangeInputs {
   exemptExByInvoice: ReadonlyMap<string, number>;
   /** Bank lines over the ±5-day BUFFER window — read once, both legs derived from it. */
   bankBufRows: readonly RawBankRow[];
+  /**
+   * [GENEGEERD-TELT] De ids van genegeerde bankregels die volgens hun eigen reden buiten de boeken
+   * vallen (privé, dubbel, niet van mij). Meegegeven in plaats van hier gelezen, omdat deze module
+   * puur assembleert; compute-result-range doet de I/O. Afwezig → niets uitgesloten, wat het
+   * gedrag is van vóór deze regel en de veilige richting bij onwetendheid.
+   */
+  excludedBankIds?: ReadonlySet<string>;
   cashRows: readonly RangeCashRow[];
   /** daily_turnover over the ±5-day buffer window. */
   turnoverRows: readonly RangeTurnoverRow[];
@@ -231,7 +238,7 @@ export interface RangeResult {
 export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   const {
     ownerId, start, end, scheme, span, invRows, exemption,
-    rateSharesByInvoice, exemptExByInvoice, bankBufRows, cashRows,
+    rateSharesByInvoice, exemptExByInvoice, bankBufRows, cashRows, excludedBankIds,
     turnoverRows, eftRows, pinLedgerRows, pinLedgerAvailable, kas, datelessRows,
   } = inputs;
 
@@ -252,7 +259,9 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   // date cannot be placed in any window, exactly as the old date-bounded query implied.
   const bankTx: ResultBankTx[] = bankBufRows
     .filter((b) => b.date != null && b.date >= start && b.date <= end)
-    .map(toResultBankTx);
+    // [GENEGEERD-TELT] Expliciete pijl: `.map(toResultBankTx)` geeft de INDEX als tweede argument
+    // mee, en dat is precies de vorm waarin deze verzameling stilzwijgend leeg zou blijven.
+    .map((b) => toResultBankTx(b, excludedBankIds));
 
   const cashEntries: ResultCashEntry[] = cashRows.map((c) => ({
     direction: c.direction === "in" ? "in" : "out",
@@ -296,7 +305,7 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
     bankBufRows.filter((b) => b.date != null && b.date >= start && b.date <= end),
   );
 
-  const posBufRows = bankBufRows.filter((b) => toResultBankTx(b).posSettlement);
+  const posBufRows = bankBufRows.filter((b) => toResultBankTx(b, excludedBankIds).posSettlement);
   const netByDay = bankNetByDay(posBufRows.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
 
   const pinLedgerByDay = new Map<string, number>();

@@ -326,8 +326,12 @@ export function OnboardingWizard({
         setFinishing(false);
         return; // stay on page — user can retry
       }
-      // Use hard navigation to guarantee the redirect + fresh middleware check
-      window.location.href = "/dashboard";
+      // Use hard navigation to guarantee the redirect + fresh middleware check.
+      // `.assign()` rather than assigning `.href`: the React compiler reads a write to a property
+      // of a value defined outside the component as a mutation it cannot reason about, and refuses
+      // the file. Same navigation, and it says "navigate" instead of looking like a variable being
+      // set.
+      window.location.assign("/dashboard");
     } catch (err) {
       console.error("[BOEK-015] finish error:", err);
       setSaveError(t('onb.afrondenMislukt'));
@@ -575,8 +579,8 @@ export function OnboardingWizard({
       setShowResetConfirm(false);
       return;
     }
-    // Hard reload to clear all state and re-fetch profile
-    window.location.href = "/onboarding";
+    // Hard reload to clear all state and re-fetch profile. `.assign()` — see finish() above.
+    window.location.assign("/onboarding");
   }
 
   const isDone = (role === "zzp" && step === 6) || (role === "accountant" && step === 5);
@@ -609,11 +613,23 @@ export function OnboardingWizard({
     step === "3C" &&
     numberingTrimmed !== "" &&
     !previewInvoiceStart(numberingTrimmed, new Date().getFullYear()).ok;
-  const isNextDisabled =
-    (isCompanyStep && (
-      !company.company_name.trim() ||
-      (kvkVal.length > 0 && !/^\d{8}$/.test(kvkVal))
-    )) || numberingBad;
+  // [ONB-WAAROM] Waarom "Volgende" uit staat — als één uitdrukking, waaruit ook het uitzetten zelf
+  // volgt. Dat is de hele fix: de knop ging grijs en er stond nergens waarom.
+  //
+  // Bij het KVK-nummer was dat aantoonbaar onherstelbaar. De zin "KVK-nummer moet uit 8 cijfers
+  // bestaan" wordt gezet in handleNext — en handleNext kán niet draaien, want de knop die hem
+  // aanroept is precies om die reden uitgeschakeld. De uitleg stond in code die deze gebruiker
+  // nooit bereikt. Hij tikt zeven cijfers, de knop dooft, en het scherm zwijgt: de enige uitweg is
+  // raden welk veld het is.
+  //
+  // Eén bron, twee gebruiken: de reden bepaalt of de knop uit gaat, dus ze kunnen niet uit elkaar
+  // lopen. Een lege reden = niets aan de hand.
+  const nextBlockedReason: string | null =
+    isCompanyStep && !company.company_name.trim() ? t('onb.blokBedrijfsnaam')
+    : isCompanyStep && kvkVal.length > 0 && !/^\d{8}$/.test(kvkVal) ? t('onb.blokKvk')
+    : numberingBad ? t('onb.blokNummering')
+    : null;
+  const isNextDisabled = nextBlockedReason !== null;
 
   return (
     <div
@@ -715,6 +731,12 @@ export function OnboardingWizard({
               />
             )
           )}
+          {/* [ONB-IBAN] missingIban staat los van missingSendFields, want het is een andere
+              mededeling. Die vier velden zijn wettelijk verplicht (art. 35a) en de verstuurroute
+              weigert zonder; de IBAN is dat niet, dus de factuur gaat gewoon weg — met "IBAN: —"
+              op de PDF en zonder de zin "op onze bankrekening". De klant krijgt een geldige
+              factuur die hij niet kán betalen, en de ondernemer heeft net "Je bent klaar 🎉"
+              gelezen. */}
           {role === "zzp" && step === 6 && (
             <StepDone
               firstName={firstName}
@@ -725,6 +747,7 @@ export function OnboardingWizard({
                 !company.kvk_number.trim() && t('onb.veldKvk'),
                 !company.address.trim() && t('onb.veldAdres'),
               ].filter(Boolean) as string[]}
+              missingIban={!company.iban.trim()}
             />
           )}
 
@@ -750,7 +773,19 @@ export function OnboardingWizard({
           {isDone ? (
             <Btn onClick={finish} loading={finishing}>{t('onb.naarDashboard')} →</Btn>
           ) : (
-            !hideNextButton && <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>{t('onb.volgende')}</Btn>
+            !hideNextButton && (
+              <>
+                <Btn onClick={handleNext} loading={saving} disabled={isNextDisabled}>{t('onb.volgende')}</Btn>
+                {/* [ONB-WAAROM] Onder de knop, niet bij het veld: de gebruiker kijkt naar de knop
+                    die niet reageert. role="status" zodat een schermlezer de reden ook krijgt —
+                    een uitgeschakelde knop zonder uitleg is dáár helemaal een doodlopende weg. */}
+                {nextBlockedReason && (
+                  <p role="status" style={{ margin: "8px 0 0", fontSize: "13.5px", color: "#5f6368", textAlign: "center" }}>
+                    {nextBlockedReason}
+                  </p>
+                )}
+              </>
+            )
           )}
           {showSkip && (
             <button
@@ -1224,7 +1259,7 @@ function StepGmail({ gmailConnected, onNext }: { gmailConnected: boolean; onNext
           type="button"
           onClick={() => {
             setLoading(true);
-            window.location.href = "/api/email/connect?provider=gmail&redirect=/onboarding";
+            window.location.assign("/api/email/connect?provider=gmail&redirect=/onboarding");
           }}
           style={{
             textAlign: "start", padding: "20px", borderRadius: "18px", background: "#f8f9fa",
@@ -1297,35 +1332,59 @@ function StepInviteClient({ clientEmail, setClientEmail, error }: {
   );
 }
 
-function StepDone({ firstName, role, missingSendFields }: { firstName: string; role: Role; missingSendFields: string[] }) {
+/**
+ * Exported so tests/render/ can hand it each of the four states and assert what the owner reads.
+ * The rule that decides them is one boolean per gap; this is where those become sentences, and a
+ * step that computed the right verdict and rendered the wrong string would pass every other test.
+ */
+export function StepDone({ firstName, role, missingSendFields, missingIban = false }: { firstName: string; role: Role; missingSendFields: string[]; missingIban?: boolean }) {
   const t = translator(useLocale())
   // [TRUST-ONBOARDING] Be HONEST about readiness. The invoice-send route legally
   // requires bedrijfsnaam + BTW + KvK + adres; if any is still blank we must NOT
   // celebrate "klaar voor gebruik" and then hard-block the owner at their first
   // invoice. When something's missing we say so plainly and point to Instellingen.
   const needsMore = role === "zzp" && missingSendFields.length > 0;
+  // [ONB-IBAN] Geen blokkade, wel een gat: zonder rekeningnummer staat er "IBAN: —" op de factuur.
+  const noIban = role === "zzp" && missingIban;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "40px", gap: "16px" }}>
-      <span style={{ fontSize: "60px" }}>{needsMore ? "👍" : "🎉"}</span>
+      {/* [ONB-IBAN] Een ontbrekende IBAN dooft de slingers ook. "Je bent klaar 🎉" boven een
+          factuur die niemand kan betalen is precies de mededeling die dit blok moest voorkomen —
+          alleen keek hij naar vier velden waar de IBAN niet bij zat. */}
+      <span style={{ fontSize: "60px" }}>{needsMore || noIban ? "👍" : "🎉"}</span>
       <div>
         <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 700, color: "#202124" }}>
-          {needsMore ? t('onb.bijnaKlaar', { name: firstName }) : t('onb.jeBentKlaar', { name: firstName })}
+          {needsMore || noIban ? t('onb.bijnaKlaar', { name: firstName }) : t('onb.jeBentKlaar', { name: firstName })}
         </h2>
         <p style={{ margin: "10px 0 0", fontSize: "16px", color: "#5f6368" }}>
           {role === "accountant"
             ? t('onb.klaarAccountant')
             : needsMore
+              // Versturen is geblokkeerd — de zwaarste van de twee, dus die zin wint.
               ? t('onb.klaarNogEen')
-              : t('onb.klaarIngericht')}
+              : noIban
+                // Versturen kan wél; betaald worden niet. Een eigen zin, want "voordat je facturen
+                // kunt versturen" zou hier onwaar zijn en de ondernemer naar het verkeerde zoeken.
+                ? t('onb.klaarNogBetaald')
+                : t('onb.klaarIngericht')}
         </p>
       </div>
-      {needsMore ? (
+      {needsMore && (
         <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "start", width: "100%", lineHeight: 1.5 }}>
           {t('onb.vulNog', { fields: missingSendFields.join(', ') })}
         </div>
-      ) : (
+      )}
+      {/* [ONB-IBAN] Eigen blok, ook wanneer de vier verplichte velden wél compleet zijn — dan is dit
+          juist het ENIGE dat er nog tussen zit en zou het anders helemaal niet worden gezegd. */}
+      {noIban && (
+        <div style={{ background: "#FFF8E6", border: "1px solid #FFE9A8", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#7C5800", textAlign: "start", width: "100%", lineHeight: 1.5 }}>
+          {t('onb.geenIban')}
+        </div>
+      )}
+      {!needsMore && !noIban && (
         <div style={{ background: "#f8f9fa", borderRadius: "16px", padding: "16px 20px", fontSize: "14px", color: "#5f6368", textAlign: "start", width: "100%" }}>
-          💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden
+          {/* [TAAL] Stond hier als kale Nederlandse string in het component. */}
+          {t('onb.tipZoekbalk')}
         </div>
       )}
     </div>

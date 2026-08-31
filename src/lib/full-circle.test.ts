@@ -74,7 +74,7 @@ const rawBank: RawBankRow[] = [
   { amount: 545, category: "pos_income", invoice_id: null, date: "2026-05-11", description: "BEA card payout", counterpart_name: "CCV" },
   { amount: 1210, category: "omzet", invoice_id: "INV1", date: "2026-05-20", description: "overboeking klant" },
 ];
-const bank = rawBank.map(toResultBankTx);
+const bank = rawBank.map((b) => toResultBankTx(b));
 
 // commissionToBook: the card terminal (EFT) reconciled against the bank payout. Here the payout
 // equals the terminal gross (no fee) → commission 0. (A fee case is asserted separately below.)
@@ -149,9 +149,9 @@ const feePos: RawBankRow[] = [{ amount: 1200, category: "pos_income", invoice_id
 const net = bankNetByDay(feePos.map((b) => ({ description: b.description, amount: b.amount, date: b.date })));
 const tri = reconcileTriangle({ turnover: [turnover[0]], eftSettlements: eft, bankNetByDay: net });
 check("triangle commission = 10 (1210 gross − 1200 net)", near(tri.totalCommission, 10));
-const withFee = computeResult(invoices, feePos.map(toResultBankTx), [], [turnover[0]],
+const withFee = computeResult(invoices, feePos.map((b) => toResultBankTx(b)), [], [turnover[0]],
   new Set(["2026-05-10"]), tri.totalCommission, new Map([["2026-05-10", cardBudgetBound(turnover[0])]]));
-const withoutFee = computeResult(invoices, feePos.map(toResultBankTx), [], [turnover[0]],
+const withoutFee = computeResult(invoices, feePos.map((b) => toResultBankTx(b)), [], [turnover[0]],
   new Set(["2026-05-10"]), 0, new Map([["2026-05-10", cardBudgetBound(turnover[0])]]));
 check("booking the €10 commission raises kosten by exactly 10 and leaves omzet + BTW untouched",
   near(withFee.kosten - withoutFee.kosten, 10) && near(withFee.omzet, withoutFee.omzet) && near(withFee.btwVerschuldigd, withoutFee.btwVerschuldigd));

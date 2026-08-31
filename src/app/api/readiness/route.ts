@@ -20,6 +20,7 @@ import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 // [RUBRIEK-SPLIT] One helper, three surfaces — see the call site for why readiness needs it too.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
 import { needsDocument } from "@/lib/bank-identity";
@@ -99,7 +100,10 @@ export async function GET(req: NextRequest) {
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
   const bank = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
+    // [GENEGEERD-TELT] id erbij — status stond er al. De reden komt uit readExcludedBankIds, want
+    // zonder de reden is elke genegeerde regel hetzelfde, en "hier komt geen factuur bij" (huur,
+    // lease) is juist een echte kost die MOET blijven tellen.
+    .select("id, amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   // [KAS-AUTO-BOOK] Bank lines this quarter that the app booked onto an invoice on amount + supplier
@@ -406,7 +410,10 @@ export async function GET(req: NextRequest) {
   // Card takings reconciled to a Z-report are excluded via the shared toResultBankTx mapper
   // (settleDate + coveredDates), which also catches an acquirer payout the owner mis-tapped
   // as 'omzet' so readiness agrees exactly with /api/result and /api/aangifte.
-  const bankTx: ResultBankTx[] = bank.map(toResultBankTx);
+  // [GENEGEERD-TELT] Zie aangifte: de reden komt uit een eigen, wegvallende lezing, en de pijl is
+  // expliciet omdat `.map(toResultBankTx)` de index als verzameling zou doorgeven.
+  const excludedBankIds = await readExcludedBankIds({ client: pipeline, userId: ownerId, start, end });
+  const bankTx: ResultBankTx[] = bank.map((b) => toResultBankTx(b, excludedBankIds));
   const coveredBudget = new Map(
     allTurnover
       .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)

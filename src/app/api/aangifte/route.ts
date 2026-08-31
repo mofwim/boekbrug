@@ -9,7 +9,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
-import { buildAangifte, privegebruikNote, type AangifteCompleteness } from "@/lib/aangifte";
+import { buildAangifte, euro, privegebruikNote, type AangifteCompleteness } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -29,6 +29,7 @@ import { doubleCostNote } from "@/lib/cash-cost-overlap";
 import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 // [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
@@ -113,13 +114,19 @@ export async function GET(req: NextRequest) {
   // Bank + cash (same de-dup inputs as /api/result).
   const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description, counterpart_name")
+    // [GENEGEERD-TELT] id + status; de reden komt uit readExcludedBankIds. Zonder die twee telt een
+    // als privé of dubbel weggezette regel mee in de aangifte die de eigenaar indient.
+    .select("id, amount, category, invoice_id, date, description, counterpart_name, status")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   // [SETTLE] The card-settlement de-dup is derived by the shared toResultBankTx mapper, so
   // /api/result, /api/readiness AND the closing package all agree on the same quarter and the
   // same covered-day witness rule (incl. an acquirer payout the owner mis-tapped as 'omzet').
-  const bankTx: ResultBankTx[] = bankRows.map(toResultBankTx);
+  // [GENEGEERD-TELT] De redenen apart gelezen (zie bank-ignored-excluded). Let op de expliciete
+  // pijl: `.map(toResultBankTx)` zou de INDEX als tweede argument meegeven — TypeScript ving dat
+  // hier, maar het is een val die op elke aanroepplek opnieuw open ligt.
+  const excludedBankIds = await readExcludedBankIds({ client: pipeline, userId: ownerId, start, end });
+  const bankTx: ResultBankTx[] = bankRows.map((b) => toResultBankTx(b, excludedBankIds));
 
   // [KAS-ZACHT] A removed movement is not turnover, not a cost and not voorbelasting.
   const cash = await liveCashEntries(pipeline);
@@ -434,7 +441,7 @@ export async function GET(req: NextRequest) {
   // A failed read is reported as UNKNOWN, never as "not filed": telling someone their quarter is
   // still open when it is not is the one wrong answer this block could give.
   // btw_filings is not in the generated types (btw_filings.sql) → same relaxed client /api/truth uses.
-  let filed: { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number } | null = null;
+  let filed: { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number; saldoDelta: number } | null = null;
   let filedUnknown = false;
   {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -458,11 +465,29 @@ export async function GET(req: NextRequest) {
       }
     } else if (fRow) {
       const r = fRow as { filed_at: string; btw_verschuldigd: number | null; btw_voorbelasting: number | null; btw_saldo: number | null };
+      // [SUPPLETIE-FANTOOM] `euro`, niet Math.round — dezelfde afronding waarmee de rubrieken
+      // hiernaast zijn berekend. Math.round breekt gelijkspel naar +∞, dus op een kwartaal dat per
+      // saldo negatief uitkomt gaven twee getallen op ÉÉN scherm een ander antwoord over dezelfde
+      // halve euro.
+      const rawSaldo = Number(r.btw_saldo) || 0;
       filed = {
         filedAt: r.filed_at,
-        verschuldigd: Math.round(Number(r.btw_verschuldigd) || 0),
-        voorbelasting: Math.round(Number(r.btw_voorbelasting) || 0),
-        saldo: Math.round(Number(r.btw_saldo) || 0),
+        verschuldigd: euro(Number(r.btw_verschuldigd) || 0),
+        voorbelasting: euro(Number(r.btw_voorbelasting) || 0),
+        saldo: euro(rawSaldo),
+        // [SUPPLETIE-FANTOOM] Het VERSCHIL, uit de onafgeronde cijfers.
+        //
+        // Het scherm rekende `aangifte.saldo - filed.saldo`: het concept-5g (de SOM van de per
+        // rubriek afgeronde bedragen, zoals het papieren formulier het wil) min een saldo dat in
+        // één keer is afgerond. Die twee zijn niet dezelfde bewerking, en op een kwartaal waar
+        // niemand iets aan veranderde verschilden ze tot een paar euro. De eigenaar las dan dat er
+        // "€ 1 bij komt" op een aangifte die hij al had ingediend — een suppletie-prompt voor een
+        // verschil dat alleen in de afronding bestond, op precies het scherm waar hij een cijfer
+        // moet kunnen vertrouwen.
+        //
+        // Ruw tegen ruw is de enige vergelijking die klopt; dat is ook wat
+        // computeFilingDivergence doet, en die voedt de echte suppletie-machinerie.
+        saldoDelta: euro((result.btwSaldo ?? 0) - rawSaldo),
       };
     }
   }

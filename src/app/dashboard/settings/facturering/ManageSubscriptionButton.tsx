@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 export default function ManageSubscriptionButton({ hasSubscription }: { hasSubscription: boolean }) {
   const t = translator(useLocale())
@@ -29,7 +30,7 @@ export default function ManageSubscriptionButton({ hasSubscription }: { hasSubsc
           router.push(body.redirect)
           return
         }
-        setError(body?.error || t('abo.nietOpenen'))
+        setError(failureText(res.status, body, t('abo.nietOpenen')))
         setBusy(false)
         return
       }

@@ -26,6 +26,7 @@ import { translator } from '@/lib/i18n/t'
 // [MEDEWERKER] De kop met de bel en de uitlogknop die dit scherm — en dus deze gebruiker — niet had.
 import { MedewerkerHeader } from '@/components/nav/MedewerkerHeader'
 import type { HeaderProfile } from '@/app/dashboard/_shared'
+import { failureText } from '@/lib/server-message'
 
 const EURO = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 const DATUM = (s: string | null) => {
@@ -107,7 +108,7 @@ export default function VerkoopClient({
         // line in it. Showing it as a red dead end would teach the owner to ignore the one message
         // on this screen that can stop a wrong aanmaning.
         if (json?.code === 'bank_payment_found') setOndanksBank(id)
-        setMelding({ tekst: json?.error || vert('vk.herinnerenMislukt'), goed: false })
+        setMelding({ tekst: failureText(res.status, json, vert('vk.herinnerenMislukt')), goed: false })
         return
       }
       // [NO-SILENT-EMPTY] The reminder went out, but the bank comparison did not run. The owner is

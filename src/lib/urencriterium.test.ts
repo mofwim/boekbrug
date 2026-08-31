@@ -119,3 +119,56 @@ test("[URENCRITERIUM] a leap year has its extra day", () => {
   const ordinary = assessUrencriterium({ hoursSoFar: 0, today: "2026-01-01", year: 2026 });
   assert.equal(ordinary.daysLeft, 364);
 });
+
+// ─── [NIET-BIJGEHOUDEN] Een leeg urenregister is geen mislukt jaar ──────────────────────────────
+//
+// Rule 3 in this module's header — only REGISTERED hours count — is a statement about the
+// registration, not about the work, and that is "the difference between a fact and an accusation".
+// The verdict crossed that line: an owner with no entries got the full warning, in red, about the
+// largest deduction a zzp'er has.
+//
+// Measured when this was written: every single owner in the production database had zero time
+// entries. Not an edge case — the answer everybody got. And a warning everybody gets over nothing
+// is precisely the noise this module's own header says costs the real warning its credibility.
+
+test("[NIET-BIJGEHOUDEN] an owner who has never registered an hour gets no verdict", () => {
+  const r = assessUrencriterium({ hoursSoFar: 0, today: "2026-08-31", year: 2026, everRegistered: false });
+  assert.equal(r.level, "not_tracked");
+  assert.equal(r.warn, false, "there is nothing to warn about");
+  assert.equal(r.projected, null, "and nothing to project from");
+  assert.equal(r.neededPerWeek, null, "a pace over an empty register is a number about nothing");
+});
+
+test("[NIET-BIJGEHOUDEN] it wins over every other verdict, including a closed year", () => {
+  // "closed_missed" over an empty register is the same accusation with the tense changed — and it
+  // is the one an accountant would read in January about the year just gone.
+  const closed = assessUrencriterium({ hoursSoFar: 0, today: "2027-02-01", year: 2026, everRegistered: false });
+  assert.equal(closed.level, "not_tracked");
+  const early = assessUrencriterium({ hoursSoFar: 0, today: "2026-01-05", year: 2026, everRegistered: false });
+  assert.equal(early.level, "not_tracked");
+});
+
+test("[NIET-BIJGEHOUDEN] someone who DOES use the feature still gets the real warning", () => {
+  // Last year's hours, none yet this year: an empty January is a genuine signal for him. This is
+  // why the probe asks about ALL years and not this one.
+  const r = assessUrencriterium({ hoursSoFar: 0, today: "2026-08-31", year: 2026, everRegistered: true });
+  assert.notEqual(r.level, "not_tracked");
+  assert.equal(r.warn, true);
+});
+
+test("[NIET-BIJGEHOUDEN] a failed probe changes nothing", () => {
+  // The safe direction here is the opposite of most in this repo, and deliberately so: a broken
+  // probe must not silence a warning that may be entirely genuine.
+  const withNull = assessUrencriterium({ hoursSoFar: 400, today: "2026-08-31", year: 2026, everRegistered: null });
+  const without = assessUrencriterium({ hoursSoFar: 400, today: "2026-08-31", year: 2026 });
+  assert.deepEqual(withNull, without);
+  assert.notEqual(withNull.level, "not_tracked");
+});
+
+test("[NIET-BIJGEHOUDEN] hours on the clock outrank the flag", () => {
+  // everRegistered false with hours > 0 is a contradiction the caller cannot produce (the hours
+  // come from the same table), but if it ever arrives the hours are the harder fact — and the
+  // verdict must not claim 1.225 are still to go while 1.300 are registered.
+  const r = assessUrencriterium({ hoursSoFar: 1300, today: "2026-08-31", year: 2026, everRegistered: false });
+  assert.equal(r.level, "met", "registered hours are evidence of registration");
+});

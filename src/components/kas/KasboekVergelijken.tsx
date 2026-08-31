@@ -24,6 +24,7 @@
 // van 91 regels waar niemand doorheen komt.
 
 import { useRef, useState } from "react";
+import { failureText } from '@/lib/server-message'
 
 type Verdict = "ontbreekt" | "app_meer";
 
@@ -225,7 +226,7 @@ export default function KasboekVergelijken() {
       const res = await fetch("/api/kasboek/vergelijk", { method: "POST", body: fd });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        setFout(json?.detail || json?.error || "Vergelijken mislukt.");
+        setFout(failureText(res.status, json, "Vergelijken mislukt."));
         return;
       }
       setData(json as Vergelijking);
@@ -249,7 +250,7 @@ export default function KasboekVergelijken() {
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        setFout(json?.detail || json?.error || "Boeken mislukt.");
+        setFout(failureText(res.status, json, "Boeken mislukt."));
         return;
       }
       setResultaat(`${json.booked} ${json.booked === 1 ? "dag" : "dagen"} geboekt — ${eur(json.total)}. Je kassaldo is bijgewerkt.`);

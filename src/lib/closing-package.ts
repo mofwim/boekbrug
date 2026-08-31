@@ -28,6 +28,7 @@
 // Mirrors account-export.ts: a pure assemble (node-testable) + an orchestrator
 // (fetch + parallel download, then assemble). Reuses quarterly.ts + export.ts.
 
+import { readExcludedBankIds } from "./bank-ignored-excluded";
 import JSZip from "jszip";
 // [CLOSING-PACKAGE-PAYDATE] pdf-lib stamps a small "Betaald op: DD-MM-YYYY" line
 // on the first page of each PAID invoice. Mechanical text-draw at fixed
@@ -2630,7 +2631,9 @@ export async function buildClosingPackageZip(args: {
       .from("bank_transactions")
       // [AFLETTEREN] reference and status ride along: the same rows already feed the concept
       // aangifte, and a second read of the same table for two columns is a query nobody needs.
-      .select("amount, category, invoice_id, date, description, counterpart_name, reference, status")
+      // [GENEGEERD-TELT] id rijdt mee: het pakket voor de boekhouder moet dezelfde regels tellen als het
+      // resultaat en de aangifte, en daarvoor moet het de genegeerde regels kunnen herkennen.
+      .select("id, amount, category, invoice_id, date, description, counterpart_name, reference, status")
       .eq("user_id", ownerId)
       .gte("date", start)
       .lte("date", end)
@@ -2643,7 +2646,10 @@ export async function buildClosingPackageZip(args: {
   // [SETTLE] Shared mapper — identical card-settlement de-dup to /api/result, /api/aangifte and
   // /api/readiness, incl. flagging an acquirer payout mis-tapped as 'omzet' so the closing
   // package never double-counts a covered-day card settlement.
-  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map(toResultBankTx);
+  // [GENEGEERD-TELT] Het pakket telt dezelfde regels als het resultaat en de aangifte, dus ook
+  // dezelfde uitsluitingen. Expliciete pijl: `.map(toResultBankTx)` zou de index doorgeven.
+  const excludedBankIds = await readExcludedBankIds({ client: supabase, userId: ownerId, start, end });
+  const bankForResult: ResultBankTx[] = (bankAllRows ?? []).map((b) => toResultBankTx(b, excludedBankIds));
   // [RUBRIEK-SPLIT] The accountant's package must show the same rubrieken as the aangifte the
   // owner files, so a mixed-rate sales invoice is split by its own lines here too. Only invoices
   // whose lines add up to their header are split; everything else keeps the header-derived rate.

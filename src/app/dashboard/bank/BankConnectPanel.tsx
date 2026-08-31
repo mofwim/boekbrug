@@ -23,6 +23,7 @@ import { M3, R, EL1 } from '@/lib/design/tokens'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator, type Translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -149,7 +150,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       const res = await fetch('/api/bank/enablebanking/banks?country=NL')
       const json = await res.json()
       setInstitutions(Array.isArray(json.banks) ? json.banks : [])
-      if (json.error) onMessage?.(String(json.error))
+      if (json.error) onMessage?.(failureText(res.status, json, t('bkc.ophalenMislukt')))
     } catch {
       setInstitutions([])
       onMessage?.(t('bkc.banklijstFout'))
@@ -166,7 +167,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       })
       const json = await res.json()
       if (!res.ok || !json.link) {
-        onMessage?.(json?.error ?? t('bkc.koppelenMislukt'))
+        onMessage?.(failureText(res.status, json, t('bkc.koppelenMislukt')))
         setBusy(null)
         return
       }
@@ -188,7 +189,7 @@ export default function BankConnectPanel({ initialState = null, onImported, onMe
       })
       const json = await res.json()
       if (!res.ok) {
-        onMessage?.(json?.error ?? t('bkc.ophalenMislukt'))
+        onMessage?.(failureText(res.status, json, t('bkc.ophalenMislukt')))
         return
       }
       const inserted = Number(json.inserted ?? 0)

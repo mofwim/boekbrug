@@ -313,7 +313,7 @@ export default function IntakeButton({
           // beslissing ("Toch toevoegen") die alleen de eigenaar kan nemen, en hem wegstoppen in een
           // samenvatting zou betekenen dat een factuur stil buiten de boeken blijft.
           noteLanded(file.name, t('int.landed.mogelijkDubbel'))
-          setDupModal({ message: data.error || t('int.bestaatAl'), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
+          setDupModal({ message: failureText(res.status, data, t('int.bestaatAl')), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
           // BYTE-HASH duplicate of a file (exact same bytes) → show where it already is.
@@ -324,7 +324,7 @@ export default function IntakeButton({
           noteLanded(file.name, t('int.landed.dubbel'))
           if (mayNavigate()) setDestModal({
             fileName: file.name,
-            message: data.error || t('int.bestandBestaatAl'),
+            message: failureText(res.status, data, t('int.bestandBestaatAl')),
             folderName: data.existing.folder_name ?? null,
             folderId: data.existing.folder_id ?? null,
             documentId: data.existing.id,
@@ -333,7 +333,7 @@ export default function IntakeButton({
           else showToast(data.message || t('int.toegevoegd'))
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate) {
-          setDupModal({ message: data.error || t('int.bestaatAl'), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
+          setDupModal({ message: failureText(res.status, data, t('int.bestaatAl')), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else {
           // [UPLOAD-ERRORS] Dezelfde vertaler als /dashboard/upload. `data.error || 'Toevoegen

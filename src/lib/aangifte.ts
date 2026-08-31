@@ -108,8 +108,12 @@ export interface ConceptAangifte {
  *
  * `-0` is normalised to `0`: JavaScript keeps them distinct, and a rubriek printed as "−0" on a
  * concept an accountant reads is a question nobody should have to ask.
+ *
+ * EXPORTED because the filed snapshot is shown next to these figures and must be rounded by the
+ * same rule. It was rounded with Math.round, which is the asymmetry above — on a quarter that nets
+ * negative the two numbers on one screen disagreed about the same half-euro.
  */
-const euro = (n: number): number => {
+export const euro = (n: number): number => {
   if (!Number.isFinite(n)) return 0;
   const rounded = Math.sign(n) * Math.round(Math.abs(n));
   return rounded === 0 ? 0 : rounded;

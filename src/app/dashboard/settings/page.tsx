@@ -360,7 +360,7 @@ export default function SettingsPage() {
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setNumberingError(d?.error || t('inst.opslaanMislukt'))
+        setNumberingError(failureText(res.status, d, t('inst.opslaanMislukt')))
         if (d?.locked) setNumberingLocked(true)
       } else {
         setNumberingNext(d.next ?? '')
@@ -389,7 +389,7 @@ export default function SettingsPage() {
     const data = await res.json()
 
     if (!res.ok) {
-      setErrorInvite(data.error || t('inst.uitnodigingMislukt'))
+      setErrorInvite(failureText(res.status, data, t('inst.uitnodigingMislukt')))
     } else if (data.warning === 'email_failed') {
       // [INVITE-HONEST] The invitation row was created but the e-mail did NOT go out (Resend
       // rejected it / no API key). Don't claim "verstuurd" — tell the owner to share the link
@@ -422,7 +422,7 @@ export default function SettingsPage() {
       setMayConfirm(false)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('inst.ontkoppelenMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('inst.ontkoppelenMislukt')), { tone: 'error' })
     }
   }
 
@@ -464,7 +464,7 @@ export default function SettingsPage() {
       else setMayConfirm(!aan)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('inst.wijzigenMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('inst.wijzigenMislukt')), { tone: 'error' })
     }
     setMandaatBezig(null)
   }

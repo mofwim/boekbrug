@@ -2964,7 +2964,9 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
   // The answer is always a sentence. A silent button on the one panel whose purpose is honesty
   // about what went missing would be the wrong thing twice over.
   assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
-  assert.match(ui, /setRereadMessage\(typeof json\?\.error === "string"/, "and so does failure");
+  // [SERVER-ZIN] Zelfde correctie als bij [ARTIKEL-CODE] hierboven: de eis is dat de mislukking
+  // wordt UITGESPROKEN, niet dat hij op één bepaalde manier is opgeschreven.
+  assert.match(ui, /setRereadMessage\(failureText\(/, "and so does failure");
 });
 
 // ── [VRIJGESTELD-KOPIE] Every route that COPIES invoice lines carries the exemption flag ──
@@ -3917,9 +3919,14 @@ test("[ARTIKEL-CODE] a line can be saved to the catalog WITH a code, and a clash
   // A REFUSAL MUST BE HEARD. articles carries UNIQUE(user_id, code) and the route answers 409
   // with which code is taken. Swallowing that leaves the owner believing "22" now points at this
   // line while it points at another — and they will pull up the wrong line later.
+  // [SERVER-ZIN] Gepind op de EIGENSCHAP, niet op de spelling. Deze regel eiste letterlijk
+  // `typeof j?.error === 'string'` — de rauwe vorm — en viel dus om toen die plek door
+  // failureText ging, wat hetzelfde doet én een machinecode tegenhoudt. Een poort die de
+  // schrijfwijze vastlegt in plaats van wat er moet gelden, verzet zich tegen zijn eigen doel.
   assert.match(
-    page, /setCodeError\(typeof j\?\.error === 'string'/,
-    "a rejected code must be shown, not swallowed",
+    page, /setCodeError\(failureText\(/,
+    "a rejected code must be shown, not swallowed — and through the one rule, so a 409 that ever " +
+      "answers with a code instead of a sentence does not put that code on the screen",
   );
   assert.match(page, /\{codeError && </, "…on screen, beside the field it belongs to");
   assert.doesNotMatch(
@@ -9388,12 +9395,43 @@ test("[SERVER-ZIN] no screen renders a route's error straight", () => {
   // [DIEP-2] The first regex named two setter names, and a screen whose state is called
   // setBulkError or setSaveError walked straight past it — thirteen live sites did. The sink is
   // any setter whose NAME says it renders an error or message, plus the two non-setter sinks.
-  const RAW = /(showToast|set[A-Za-z]*(?:Error|Message|Fout)|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+  // [DIEP-3] De derde versie, en de reden staat er nu bij: de vorige TWEE lieten samen 55 levende
+  // plekken door, en de poort was al die tijd groen.
+  //
+  // Wat de vorige miste, in de vorm waarin het in dit project voorkomt:
+  //
+  //   · `toast(...)`, `setToast(...)`, `setMelding(...)`, `setFout(...)` — de sinklijst noemde
+  //     alleen showToast en set*Error/Message/Fout;
+  //   · `{ message: data.error || … }` en `{ text: … }` — een veld in een object is net zo goed
+  //     een scherm als een aanroep;
+  //   · `json?.detail || …` — server-message.ts noemt de 5xx-`detail` (een rauwe databasestring
+  //     met functienaam en uuid) met zoveel woorden, en de poort keek er niet naar;
+  //   · `typeof data.error === 'string' ? data.error : …` — hier zat de scherpste: de vorige regel
+  //     had een negatieve lookahead op `===` om een VERGELIJKING toe te laten ("herken de code en
+  //     kies de juiste zin", precies het goede patroon) — en die lookahead sloeg daarmee óók de
+  //     meest voorkomende rauwe vorm in dit project over.
+  //
+  // Deze versie draait het om: een SINK gevolgd door een `.error`/`.detail` van een antwoordbody,
+  // tenzij daar een vertaler tussen staat. Vergelijkingen (`=== 'no_file'`) dragen geen sink en
+  // komen er zo niet meer in voor.
+  const SINK = "(?:showToast|toast|setToast|throw new Error|set[A-Za-z]*(?:Error|Message|Fout|Melding|Note|Notice|Reason|Result)|(?:message|text|tekst|body|detail|title|reason)\\s*:)";
+  // De lookahead is terug, maar hij doet nu iets anders dan in versie twee. Daar zat hij op de
+  // hele uitdrukking en excuseerde daarmee `typeof x.error === 'string' ? x.error : …` volledig.
+  // Hier zit hij op het GEVONDEN voorkomen: een vergelijking (`json.error === 'verwerkt'`) is geen
+  // weergave, maar de `? x.error` verderop in diezelfde ternary wordt nog steeds gevonden — die
+  // wordt door niets gevolgd dan een dubbele punt.
+  const BODY = "(?:json|data|body|payload|resp|d|j|err)\\d?\\??\\.(?:error|detail)\\b(?!\\s*(?:===|!==|==|!=))";
+  // Alles tussen de sink en de body, zolang het geen nieuwe instructie begint — zo vangt hij ook
+  // de ternary die over drie regels staat, zonder de halve component mee te nemen.
+  const RAW = new RegExp(`${SINK}\\s*\\(?(?![^;{}]{0,200}?(?:failureText|serverSentence|isMachineCode|describeUploadFailure))[^;{}]{0,200}?${BODY}`, "g");
 
   const offenders: string[] = [];
   for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
     if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
-    const src = code(f); // comments stripped — a note about the old shape must not count
+    // Comments stripped (a note about the old shape must not count) AND string literals blanked:
+    // `labelKey: "ink.result.error"` is a translation key, not a read of a response body, and it
+    // put two innocent lines on this list while it was being written.
+    const src = code(f).replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, (m) => m[0] + " ".repeat(Math.max(0, m.length - 2)) + m[0]);
     for (const m of src.matchAll(RAW)) {
       offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
@@ -21050,5 +21088,449 @@ test("[SPLIT-EERLIJK] a rate split that could not be read is reported, and said 
     xafSrc, /splitDegraded/,
     "the auditfile no longer carries the fact that its rate split degraded. Its totals are right " +
       "and its rate distribution is not, and a reader cannot derive that from the file itself.",
+  );
+});
+
+// ─── [REEKS-ZONDER-FACTUUR] Een lege lijst bewijst niets ─────────────────────────────
+//
+// `series.every(...)` over een lege lijst is `true`. De serie-lus bouwt zijn emmers uit de
+// FACTUREN, dus een reeks zonder ook maar één factuur heeft geen emmer — en burnedAtEnd, de enige
+// controle die het EINDE van een reeks ziet, wordt er nooit voor uitgerekend. De uitslag zei dan
+// "je nummering klopt" over nummers die zijn toegekend en nooit geschreven.
+//
+// Niet theoretisch, en niet een kwestie van een lege administratie: de gewone vorm is een
+// ondernemer die facturen stuurt en nog nooit een creditnota maakte, terwijl er wel een
+// creditnota-nummer is toegekend aan een concept dat hij heeft weggegooid. Gemeten in de
+// productiedatabase toen dit werd geschreven: twee eigenaren, drie zulke nummers, drie schermen
+// die zeiden dat alles klopte.
+
+test("[REEKS-ZONDER-FACTUUR] the counters are read for series the invoices never mention", () => {
+  const src = code("src/lib/invoice-continuity.ts");
+
+  assert.match(
+    src, /for \(const counter of counters \?\? \[\]\)[\s\S]{0,600}?burnedAtEnd: lastSeq/,
+    "checkContinuity builds its series from the invoices alone again. A counter standing above " +
+      "zero in a series with no invoices then has nothing to be compared against, and the report " +
+      "reassures over numbers that were allocated and never written.",
+  );
+  // Dezelfde grens als de factuurlus: een type waarvoor dit rapport geen formaat kent (pro forma)
+  // hoort hier net zo min thuis.
+  assert.match(
+    src, /formats\.some\(\(f\) => f\.type === type\)/,
+    "a counter for a type this report does not judge would invent a series for it",
+  );
+  // En eerlijke grenzen: 0 zou een uitspraak zijn over nummers die niet bestaan.
+  assert.match(
+    src, /first: number \| null;/,
+    "first/last went back to a plain number, so a series with nothing in it has to claim it runs " +
+      "from 0 to 0 — a statement about numbers that do not exist",
+  );
+});
+
+test("[REEKS-ZONDER-FACTUUR] the screen says which of the two it is", () => {
+  const ui = code("src/components/beveiliging/NummeringPaneel.tsx");
+
+  assert.match(
+    ui, /s\.issued === 0[\s\S]{0,120}?doorlopend\.reeksLeeg/,
+    "an empty series is reported with the end-of-series sentence again — which says the counter " +
+      "stands higher than the owner's highest invoice, in a series where there is no invoice at all",
+  );
+});
+
+// ─── [GENEGEERD-TELT] Een genegeerde regel die toch in de kosten bleef staan ──────────
+//
+// "Negeren" doet twee heel verschillende dingen, afhankelijk van waaróm. Bij drie van de vijf
+// redenen zegt de eigenaar dat dit geld niet in zijn boeken hoort:
+//
+//   · `prive`        — een aftrek waarvan hij ZELF heeft gezegd dat er geen recht op bestaat;
+//   · `dubbel`       — een kost die twee keer telt, gemeld door degene die de dubbeling meldde;
+//   · `niet_van_mij` — geld dat nooit van hem was.
+//
+// Alle drie bleven in de kosten staan en hun btw in de voorbelasting. En de reden die juist WEL
+// moet blijven tellen — `geen_factuur` (huur, lease, abonnement) — is verreweg de meest gekozen:
+// die uitsluiten zou de kosten verlagen, de winst verhogen en de eigenaar te veel belasting laten
+// betalen. Dat is de duurdere van de twee fouten, en daarom is dit een regel per reden en geen
+// filter op status.
+
+test("[GENEGEERD-TELT] the engine skips a line the owner said does not belong in his books", () => {
+  const src = code("src/lib/financial-result.ts");
+
+  assert.match(
+    src, /if \(t\.excludedByOwner\) continue;/,
+    "the result engine counts every ignored bank line again, including the ones the owner marked " +
+      "privé or dubbel — a deduction he himself said he was not entitled to",
+  );
+  // Vóór de categorie-tak: een genegeerde regel is niet ONVERKLAARD, hij is verklaard en hoort er
+  // niet. Hem als vraagpost tellen ruilt het ene verkeerde cijfer voor het andere.
+  const loop = src.slice(src.indexOf("for (const t of bankTx) {"));
+  assert.ok(
+    loop.indexOf("excludedByOwner") < loop.indexOf("if (!t.category)"),
+    "the exclusion moved below the uncategorised branch, so an ignored private line now lands on " +
+      "the vraagpost counter instead — a different wrong figure, not a right one",
+  );
+});
+
+test("[GENEGEERD-TELT] the reason is read separately, so a lagging migration cannot blank a screen", () => {
+  const reader = code("src/lib/bank-ignored-excluded.ts");
+
+  // ignore_reason komt uit een met de hand toegepaste migratie, en een kolom die PostgREST niet
+  // kent weigert de HELE select waarin hij staat. Meegenomen in de bankregel-lezing van resultaat,
+  // aangifte, readiness en jaarpakket zou dat vier schermen zonder één bankregel opleveren.
+  assert.match(reader, /select\("id, ignore_reason"\)/, "the reason read stopped being its own query");
+  assert.match(reader, /catch/, "the read no longer degrades — a lagging migration would break its callers");
+
+  for (const f of [
+    "src/lib/compute-result-range.ts",
+    "src/app/api/aangifte/route.ts",
+    "src/app/api/readiness/route.ts",
+    "src/lib/closing-package.ts",
+  ]) {
+    const src = code(f);
+    assert.doesNotMatch(
+      src, /select\("[^"]*ignore_reason[^"]*(amount|category)/,
+      `${f} folded ignore_reason into its main bank select. A database without that column then ` +
+        `returns nothing for the whole read.`,
+    );
+    assert.match(
+      src, /readExcludedBankIds/,
+      `${f} no longer reads which lines the owner excluded, so it counts money the other money ` +
+        `screens do not — and the four are supposed to agree exactly`,
+    );
+  }
+});
+
+test("[GENEGEERD-TELT] nobody passes the array index where the exclusion set belongs", () => {
+  // `.map(toResultBankTx)` geeft de INDEX als tweede argument mee. TypeScript ving dat toen de
+  // parameter erbij kwam — maar alleen omdat het type een Set is; een losser type zou hier
+  // stilzwijgend een getal krijgen en niets uitsluiten, op elk van de zes geldschermen.
+  const walk = (dir: string, hits: string[]) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p, hits); continue; }
+      if (!/\.tsx?$/.test(p)) continue;
+      if (/\.map\(toResultBankTx\)/.test(code(p))) hits.push(p);
+    }
+    return hits;
+  };
+  const bare = walk("src", []);
+  assert.deepEqual(
+    bare, [],
+    `these files pass toResultBankTx straight to .map, so Array.prototype.map hands it the index ` +
+      `as its exclusion set: ${bare.join(", ")}`,
+  );
+});
+
+test("[GENEGEERD-TELT] the screen says what the choice does with the money", () => {
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+  const copy = code("src/lib/bank-ignore-reason.ts");
+
+  // Het stond in een title-attribuut — een tooltip die op een telefoon niet bestaat, terwijl drie
+  // van de vijf knoppen een bedrag uit de kosten en de btw halen.
+  const notes = [...ui.matchAll(/bank\.redenGevolg/g)].length;
+  assert.equal(notes, 2, `both reason pickers must carry the consequence line, found ${notes}`);
+
+  // En afgeleid van de regel, niet ernaast geschreven: een zin die zegt dat Privé het bedrag
+  // weghaalt terwijl de regel het laat staan is erger dan geen zin.
+  assert.match(
+    copy, /ignoredLineCountsInBooks\(r\) \? kept : excluded/,
+    "the two groups are hand-listed again, so the sentence and the rule can drift — and the owner " +
+      "would be deciding on the basis of something that does not happen",
+  );
+});
+
+// ─── [SUPPLETIE-FANTOOM] Een correctie die alleen in de afronding bestond ─────────────
+//
+// Twee getallen op één scherm, allebei "het BTW-saldo van dit kwartaal", langs verschillende wegen
+// afgerond:
+//
+//   · het concept-5g is de SOM van de per rubriek afgeronde bedragen, want zo vraagt het papieren
+//     formulier het;
+//   · de ingediende momentopname bewaart het ruwe totaal van de motor, en het scherm rondde dat in
+//     ÉÉN keer af — met Math.round bovendien, dat gelijkspel naar +∞ breekt waar de rubrieken
+//     ernaast symmetrisch rond nul afronden.
+//
+// Het scherm trok die twee van elkaar af. Op een kwartaal waar niemand iets aan veranderde stond er
+// dan "er komt € 1 bij" boven een aangifte die al was ingediend — een suppletie-prompt voor een
+// verschil dat alleen in de afronding bestond, op precies het scherm waar een cijfer te vertrouwen
+// moet zijn. En een waarschuwing die één keer onterecht blijkt, is de reden dat de volgende niet
+// wordt gelezen.
+//
+// De echte suppletie-machinerie (computeFilingDivergence) vergeleek altijd al ruw met ruw en was
+// nooit fout. Alleen de zin op het scherm was dat.
+
+test("[SUPPLETIE-FANTOOM] the difference comes from the raw figures, never from two displays", () => {
+  const ui = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  const route = code("src/app/api/aangifte/route.ts");
+
+  assert.doesNotMatch(
+    ui, /data\.saldo - filed\.saldo/,
+    "the screen subtracts two independently rounded numbers again. The concept's 5g is a sum of " +
+      "rounded rubrieken and the filed saldo is a total rounded once — on an unchanged quarter " +
+      "those differ, and the owner is told to correct a return nobody touched.",
+  );
+  assert.match(ui, /filed\?\.saldoDelta/, "the client no longer uses the server's raw-derived delta");
+  assert.match(
+    route, /saldoDelta: euro\(\(result\.btwSaldo \?\? 0\) - rawSaldo\)/,
+    "the route stopped deriving the delta from the unrounded figures on both sides",
+  );
+});
+
+test("[SUPPLETIE-FANTOOM] the filed snapshot is rounded by the same rule as the rubrieken beside it", () => {
+  const route = code("src/app/api/aangifte/route.ts");
+
+  // Math.round breekt gelijkspel naar +∞; euro() rondt symmetrisch rond nul af. Op een kwartaal dat
+  // per saldo negatief uitkomt — een grote creditnota, een teruggedraaid seizoen — gaven de twee
+  // getallen op één scherm daardoor een ander antwoord over dezelfde halve euro.
+  const block = route.slice(route.indexOf("filed = {"), route.indexOf("filed = {") + 700);
+  assert.doesNotMatch(
+    block, /Math\.round\(Number\(r\.btw_/,
+    "the filed figures are rounded with Math.round again, while the rubrieken next to them use " +
+      "euro(). On a quarter that nets negative the same half-euro then goes two ways on one screen.",
+  );
+  assert.match(block, /euro\(Number\(r\.btw_verschuldigd\)/, "5a of the filing no longer uses the shared rounding");
+  assert.match(block, /euro\(rawSaldo\)/, "5g of the filing no longer uses the shared rounding");
+});
+
+// ─── [ONB-WAAROM · ONB-IBAN] De twee stiltes in de onboarding ─────────────────────────
+//
+// EEN. "Volgende" ging grijs en er stond nergens waarom. Bij het KVK-nummer was dat aantoonbaar
+// onherstelbaar: de zin "KVK-nummer moet uit 8 cijfers bestaan" wordt gezet in handleNext, en
+// handleNext KAN niet draaien, want de knop die hem aanroept is precies daarom uitgeschakeld. De
+// uitleg stond in code die deze gebruiker nooit bereikt. Hij tikt zeven cijfers, de knop dooft, en
+// hij mag raden welk veld het is — in stap één van het product.
+//
+// TWEE. "Je bent klaar 🎉" zonder IBAN. De vier velden die wél werden gecontroleerd zijn die van
+// art. 35a, waar de verstuurroute op weigert. De IBAN staat daar niet bij, dus de factuur gaat
+// gewoon de deur uit — met "IBAN: —" op de PDF (invoice-pdf.tsx:451) en zonder de zin "op onze
+// bankrekening" (:365). Een juridisch geldige factuur die de klant niet kan betalen, overhandigd
+// aan iemand die net heeft gelezen dat hij klaar is.
+
+test("[ONB-WAAROM] a disabled Volgende always carries its reason", () => {
+  const src = code("src/components/onboarding/OnboardingWizard.tsx");
+
+  // Eén uitdrukking, twee gebruiken: de reden bepaalt of de knop uit gaat. Zo kunnen ze niet uit
+  // elkaar lopen — een knop die om reden X uit staat terwijl er reden Y onder staat is erger dan
+  // stilte.
+  assert.match(
+    src, /const isNextDisabled = nextBlockedReason !== null;/,
+    "the disabled state is computed separately from the reason again, so the button can go grey " +
+      "for something the sentence under it does not mention — or for nothing it mentions at all",
+  );
+  assert.match(
+    src, /\{nextBlockedReason && \(/,
+    "the reason is no longer rendered. The KVK sentence lives in handleNext, which cannot run " +
+      "while the button that calls it is disabled, so nothing reaches the screen at all.",
+  );
+  assert.match(
+    src, /role="status"/,
+    "the reason lost its live region — a disabled button with no announced explanation is a dead " +
+      "end for a screen reader in particular",
+  );
+});
+
+test("[ONB-IBAN] finishing without an account number is not a celebration", () => {
+  const wizard = code("src/components/onboarding/OnboardingWizard.tsx");
+
+  assert.match(
+    wizard, /missingIban=\{!company\.iban\.trim\(\)\}/,
+    "the done step no longer asks whether an IBAN was entered",
+  );
+  assert.match(
+    wizard, /needsMore \|\| noIban \? "👍" : "🎉"/,
+    "an invoice nobody can pay gets the party emoji again — which is the whole defect, not the " +
+      "decoration on it",
+  );
+  // En een EIGEN zin: "voordat je facturen kunt versturen" is hier onwaar (versturen kan wél) en
+  // stuurt de ondernemer naar het verkeerde veld.
+  assert.match(
+    wizard, /onb\.klaarNogBetaald/,
+    "the IBAN case borrows the send-blocked sentence again, which says something untrue about it",
+  );
+});
+
+test("[ONB-IBAN] the wizard does not claim the IBAN is needed to SEND", () => {
+  // Het is niet nodig om te versturen — art. 35a noemt het niet en de verstuurroute controleert het
+  // niet. Het is nodig om BETAALD te worden. Dat verschil bepaalt waar de ondernemer gaat zoeken.
+  assert.doesNotMatch(
+    MESSAGES["onb.alleenNaamUitleg"].nl, /IBAN heb je nodig om facturen te versturen/,
+    "the wizard says the IBAN is required to send invoices. It is not — the send route does not " +
+      "check it and art. 35a does not list it. It is required to get paid, which is a different " +
+      "sentence and a different next step.",
+  );
+});
+
+// ─── [OVER-DATUM] Eén antwoord op "is deze factuur te laat", op elk scherm ────────────
+//
+// De poort hieronder bestaat omdat het tweede antwoord twee keer is teruggekomen. De vorm is
+// steeds dezelfde, en steeds op een ander scherm:
+//
+//     new Date(inv.due_date) < new Date()
+//
+// Dat vergelijkt een DAG met een MOMENT. `new Date('2026-07-31')` is middernacht UTC, oftewel
+// 02:00 in Amsterdam — dus vanaf twee uur 's nachts OP de vervaldag staat er "Verlopen" bij een
+// factuur die de klant die hele dag nog op tijd mag betalen. En het leest de klok van de BROWSER,
+// dus op de boekhouderspagina kreeg een kantoor in een andere tijdzone een ander oordeel over
+// dezelfde factuur dan zijn klant.
+//
+// Op de kwartaalpagina zat er nog een tweede fout in: de test begon met `status === 'sent'`, wat
+// uitsluitend de verkoopkant is. Een inkoopfactuur staat op 'received', dus een rekening die de
+// ondernemer ZELF te laat betaalt kon daar nooit "Verlopen" heten — op de ene pagina waar de
+// crediteuren een eigen sectie hebben.
+
+test("[OVER-DATUM] no screen computes 'te laat' from the browser clock", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const offenders: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
+    if (/\.test\.tsx?$/.test(f)) continue;
+    const src = code(f);
+    // `new Date(<iets met due_date/vervaldatum>) < new Date()` — de dag-tegen-moment vergelijking,
+    // in welke schrijfwijze dan ook.
+    if (/new Date\([^)]*(?:due_date|vervaldatum|dueDate)[^)]*\)\s*<\s*new Date\(\s*\)/.test(src)) {
+      offenders.push(f);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these compare a due DAY against the moment the browser thinks it is, so an invoice reads " +
+      `'Verlopen' from 02:00 on the day it is still due:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[OVER-DATUM] the accountant's quarter page uses the shared rule", () => {
+  const page = code("src/app/dashboard/clients/[id]/kwartaal/page.tsx");
+
+  assert.match(
+    page, /isOverdue\(\{ status: inv\.status/,
+    "the quarter page went back to its own verlopen rule. Beyond the day-versus-moment bug, its " +
+      "version started at `status === 'sent'` — sales only — so an overdue PURCHASE invoice could " +
+      "never be flagged on the one page that gives crediteuren their own section.",
+  );
+  assert.doesNotMatch(
+    page, /inv\.status === 'sent' &&/,
+    "the sales-only condition is back, and the crediteuren section can no longer show a late bill",
+  );
+});
+
+// ─── [NIET-BIJGEHOUDEN] Een leeg urenregister is geen mislukt jaar ────────────────────
+//
+// urencriterium.ts stelt zijn eigen regel 3: alleen GEREGISTREERDE uren tellen, en dat is een
+// uitspraak over de registratie, niet over het werk — "het verschil tussen een feit en een
+// beschuldiging". Het oordeel stapte over die grens heen. Een ondernemer zonder één urenregel
+// las, in rood: "je hebt nog 1.225 uur te gaan… houd er rekening mee dat de zelfstandigenaftrek
+// dit jaar kan vervallen."
+//
+// Voor wie vast prijs factureert, zijn uren in een spreadsheet bijhoudt of er geen aanspraak op
+// maakt, is dat een waarschuwing over de grootste aftrek die hij heeft, op grond van niets. Gemeten
+// toen dit werd toegevoegd: ELKE eigenaar in de productiedatabase had nul uren staan. Geen
+// randgeval dus, maar het antwoord dat iedereen kreeg — en precies de ruis waarvan de kop van die
+// module zegt dat hij de échte waarschuwing zijn geloofwaardigheid kost.
+
+test("[NIET-BIJGEHOUDEN] an empty hour register produces no verdict about the year", () => {
+  const mod = code("src/lib/urencriterium.ts");
+
+  assert.match(
+    mod, /input\.everRegistered === false && hours === 0/,
+    "assessUrencriterium judges an owner who has never registered an hour again — and 'closed_missed' " +
+      "over an empty register is the same accusation with the tense changed",
+  );
+  // De `hours === 0` hoort erbij: geregistreerde uren zijn zelf het bewijs van registratie, en
+  // "je houdt hier geen uren bij" boven 1.300 ervan is het scherm dat zichzelf tegenspreekt.
+  assert.match(mod, /"not_tracked"/, "the level itself is gone");
+
+  const page = code("src/app/dashboard/uren/page.tsx");
+  assert.match(
+    page, /everRegistered/,
+    "the page no longer asks whether this owner has ever registered an hour, so the module cannot " +
+      "tell an empty register from a bad year",
+  );
+  // Over ALLE jaren: wie vorig jaar uren bijhield en dit jaar nog niets invulde, gebruikt de
+  // functie wél, en voor hem is een lege januari een echt signaal.
+  assert.doesNotMatch(
+    page, /from\('time_entries'\)\s*\.select\('id'\)\s*\.gte\('worked_on'/,
+    "the ever-registered probe was narrowed to this year, which turns an owner's quiet January " +
+      "into 'you do not track hours' and takes away a warning he should have",
+  );
+});
+
+// ─── [BEDRAG-MEE] Eén feit, vier schrijvers, en één ervan schreef het half ────────────
+//
+// `status = 'paid'` en `amount_paid` zeggen hetzelfde: deze factuur is voldaan. Elke deur die de
+// eerste schrijft moet de tweede meenemen, anders staat er een rij die twee dingen tegelijk zegt.
+//
+// /api/email/confirm ('deze had ik al betaald') was de enige die dat niet deed. Gemeten in de
+// productiedatabase: vijf inkoopfacturen staan zo — paid, methode bank, amount_paid 0, geen enkele
+// bankkoppeling. De geldaudit van deze app meldt ze, en met een zin die het verkeerde zegt: "staat
+// op betaald, maar er is € 79,00 van open", terwijl er niets openstaat en alleen de kolom niet is
+// geschreven. Een controlepaneel dat vijf dingen verkeerd benoemt is een paneel dat niemand leest.
+
+test("[BEDRAG-MEE] every door that writes status 'paid' writes the amount with it", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\./.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const f of walk("src/app/api").concat(walk("src/lib"))) {
+    const src = code(f);
+    // Twee vormen, want dit project schrijft de status op twee manieren. Als ÉÉN reguliere
+    // expressie geschreven eiste de eerste versie het woord `status` twee keer achter elkaar en
+    // matchte daardoor de tweede vorm nooit — precies de vorm van de deur die de aanleiding was.
+    // Het negatieve testje ving dat: het weghalen van de fix liet deze poort groen.
+    //
+    //   1. `.update({ … status: "paid" … })`  — de directe schrijving;
+    //   2. `patch.status = "paid"`            — een object dat verderop wordt weggeschreven.
+    const WRITES = [
+      /\.update\(\s*\{[^{}]*status["']?\s*:\s*["']paid["']/g,
+      /\b[A-Za-z_$][\w$]*\.status\s*=\s*["']paid["']/g,
+    ];
+    for (const m of WRITES.flatMap((re) => [...src.matchAll(re)])) {
+      // Alleen schrijvingen naar INVOICES. mollie_payment_links kent ook een 'paid' en heeft geen
+      // amount_paid — de eerste versie van deze poort wees die twee aan, en een poort die het
+      // verkeerde bestand aanwijst wordt uitgezet in plaats van gelezen.
+      const before = src.slice(Math.max(0, m.index - 600), m.index);
+      const lastFrom = [...before.matchAll(/\.from\(\s*["']([a-z_]+)["']\s*\)/g)].pop();
+      if (lastFrom && lastFrom[1] !== "invoices") continue;
+      const window = src.slice(m.index, m.index + 900);
+      if (/amount_paid/.test(window)) continue;
+      // apply_manual_payment en recompute_invoice_amount_paid schrijven de kolom in de database
+      // zelf, onder een rijvergrendeling — dat is de betere vorm, niet een uitzondering erop.
+      if (/apply_manual_payment|recompute_invoice_amount_paid/.test(window)) continue;
+      offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these mark an invoice paid without writing what was paid, so the row says 'settled in full' " +
+      `and 'nothing received' at the same time:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SPLIT-ONBEKEND] the money audit does not call an unread split an arithmetic error", () => {
+  const mod = code("src/lib/money-invariants.ts");
+
+  // De regel boven btw_arithmetic zegt het zelf: afwezig is niet fout, "want een schending
+  // verzinnen uit een gat is hoe een audit ophoudt geloofd te worden". Dat gold voor NULL en niet
+  // voor NUL — terwijl de lezer een nog niet gelezen splitsing als 0/0 wegschrijft.
+  assert.match(
+    mod, /const splitNeverRead =[\s\S]{0,400}?Math\.abs\(num\(inv\.totalIncBtw\)\) > MONEY_EPSILON/,
+    "the audit reports 'ex 0 + btw 0 is not € 1.040,12' as an arithmetic break again, with the " +
+      "sentence 'Dit getal staat in je aangifte' — about a split that has not been read yet",
+  );
+  assert.match(
+    mod, /Math\.abs\(gap\) > 0\.01 && !splitNeverRead/,
+    "the exemption is computed but not applied",
   );
 });

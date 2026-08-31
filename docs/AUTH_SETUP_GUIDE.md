@@ -34,6 +34,27 @@ profile`) — dat is de makkelijke categorie (alleen *brand verification*, géé
 - **Authorized domains:** `boekbrug.nl` + `supabase.co`
 - **Developer contact:** je e-mailadres
 
+### A.1b — "Doorgaan naar cedrndplmydqcmbszfmp.supabase.co"
+
+Zo ziet het inlogscherm eruit zolang A.1 leeg is. Waargenomen op 28-08-2026, op precies het
+scherm waar een nieuwe gebruiker beslist of hij deze app vertrouwt: een willekeurige reeks
+letters in plaats van een naam. Er gaat niets stuk — en dat is het lastige eraan, want er komt
+ook geen enkele foutmelding die je erop wijst.
+
+Het zijn **twee dingen** op dat scherm, met twee verschillende oplossingen:
+
+| Wat je ziet | Wat het is | Hoe het weggaat |
+|---|---|---|
+| de NAAM in "Doorgaan naar …" | het `App name`-veld van het consent screen | A.1 invullen — gratis, meteen |
+| het DOMEIN `<ref>.supabase.co` | de callback-host waar Google naartoe terugstuurt | alleen met een Supabase **Custom Domain** (betaalde add-on), bv. `auth.boekbrug.nl` |
+
+Een ingevulde A.1 haalt de reeks dus niet vanzelf weg: die hoort bij de callback, niet bij de naam.
+
+⚠️ **Als je het custom domain aanzet, hoort de Google-redirect in dezelfde sessie mee.**
+`Authorized redirect URIs` (A.5) moet dan van `https://<ref>.supabase.co/auth/v1/callback` naar
+`https://auth.boekbrug.nl/auth/v1/callback`. Vergeet je dat, dan kan **niemand** meer inloggen —
+niet één gebruiker, iedereen tegelijk, en pas op het moment dat ze het proberen.
+
 ### A.2 — Scopes
 `Scopes` tab → voeg **alleen** toe:
 - `.../auth/userinfo.email`
@@ -215,6 +236,7 @@ via de **losse** flow `/api/email/connect`. Dit staat los van inloggen:
 
 **Nu (pre-launch beta):**
 - [ ] A.1 Consent screen ingevuld (logo, privacy, voorwaarden, domeinen)
+- [ ] A.1b Inlogscherm toont **BoekBrug** en niet `<ref>.supabase.co`
 - [ ] A.2 Alleen basis-scopes — géén gmail.readonly
 - [ ] A.3 App op **Testing** + beta-testers als Test users toegevoegd
 - [ ] A.5 Redirect URI = `https://<ref>.supabase.co/auth/v1/callback`

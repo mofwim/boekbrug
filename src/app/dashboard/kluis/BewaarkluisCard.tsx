@@ -17,6 +17,7 @@ import { M3, FONT, FONT_NUM } from '@/lib/design/tokens'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 type Offerte = {
   leeg: boolean
@@ -64,7 +65,7 @@ export default function BewaarkluisCard() {
       const res = await fetch('/api/kluis/offerte', { method: 'POST' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok || !body?.url) {
-        setFout(body?.error || t('kluis.cardFout'))
+        setFout(failureText(res.status, body, t('kluis.cardFout')))
         setBezig(false)
         return
       }

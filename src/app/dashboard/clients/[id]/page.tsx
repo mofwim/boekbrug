@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/Toast'
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { failureText } from '@/lib/server-message'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -81,7 +82,7 @@ export default function ClientDetailPage() {
       router.push('/dashboard')
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('bh.det.ontkoppelMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('bh.det.ontkoppelMislukt')), { tone: 'error' })
     }
   }
 
