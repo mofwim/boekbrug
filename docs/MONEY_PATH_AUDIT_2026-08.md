@@ -635,3 +635,61 @@ in silently and correctly stopped being filled in.
 The copy lives in `bank-already-booked-notice.ts` rather than in the component, and the reason→copy
 map is a `Record` over the hold union rather than a switch with a default: a third hold reason stops
 compiling until it has words, where a default branch would have shipped it wearing the wrong ones.
+
+---
+
+## 13. The checker said the guards were applied. They were not. — 31 August 2026
+
+`docs/WELKE_MIGRATIES_STAAN_ER.sql` answers the one operational question that matters between a
+written migration and a protected database: **what still needs applying?** It reported a clean
+sheet — 114 migrations, 2 open. Both of those were already known.
+
+It was wrong, and wrong in the direction that costs the most.
+
+`prevent_accountant_amount_changes` is written by **nine** migration files. The probe asked whether
+the FUNCTION exists — and it has, since the first of those nine. So all nine reported TOEGEPAST,
+while the function running in production was missing three protected columns:
+
+| Column | What an accountant could move without it |
+| --- | --- |
+| `vat_deduction` | rubriek 5b of the client's aangifte, by the invoice's whole `btw_amount` — on € 10.000 + 21% that is € 2.100, silently, in the return that goes to the Belastingdienst |
+| `discount_type` | the invoice-level discount the e-factuur's amounts are derived from |
+| `discount_value` | the same |
+
+Both guards were written weeks ago, both were reported to the owner as "written, not applied", and
+the one tool that answers "did I apply it?" said yes. That is not a migration that was forgotten —
+it is a measurement that could not see what it claimed to check.
+
+This is the same defect the file's own header is about, one level down. That header records the
+question drifting behind the folder ("de VRAAG staat hier met de hand in"), which was fixed by
+generating it. Nobody asked whether the ANSWER could drift: **existence stops being evidence the
+moment a second file writes the same object.** Eight functions in this repo are written by more
+than one migration, covering about twenty files.
+
+### What the probe measures now
+
+For a function with more than one definer, the generated query reads the deployed body and checks
+every `NEW.`/`OLD.` column reference that **every** current definition contains — what the folder
+unanimously says belongs in that function, whichever file you happen to open. Run against
+production it returns exactly `.discount_type, .discount_value, .vat_deduction`.
+
+The intersection and not the union, deliberately: a union would carry a column one definition
+deliberately dropped, and then an alarm goes off that can never be cleared — which teaches everyone
+to click it away, the failure this file's own header warns about twice.
+
+Where several definitions share no column reference at all (a non-trigger function), the list says
+so in words rather than falling silent: *"GEEN INHOUDSMETING — Deel 1 valt hier terug op het bestaan
+van de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft."*
+
+The gate derives its rule from the generated list rather than from a list of functions someone
+maintains: **no function name may be probed by mere existence from more than one file**, unless the
+list itself explains why it cannot be measured. A tenth redefinition of anything fails it on the
+day it is written.
+
+### Also closed
+
+`src/lib/recon-confirm-client.ts` was deleted. The audit recorded it as "a complete feature nothing
+calls"; it is not a feature, it is a second spelling of `useInvoiceReconciliation.confirmMatch`,
+which two screens do call — and the worse of the two: it reports a 409 `invoice_already_paid` as
+`'error'`, so an invoice the auto-confirm had already booked would have shown the owner "mislukt".
+`deck.ts` is not uncalled either: `scripts/generate-deck.mts` builds from it.

@@ -12877,6 +12877,67 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
     "a hard-coded schema is exactly the bug this replaced");
 });
 
+// ─── [MIGRATIE-JOURNAAL] Bestaan is geen bewijs zodra twee migraties hetzelfde schrijven ────────
+//
+// Negen migratiebestanden herdefiniëren prevent_accountant_amount_changes. De probe vroeg of de
+// FUNCTIE bestaat — en dat deed ze al sinds de eerste van de negen. Dus meldde dit rapport ze alle
+// negen als TOEGEPAST, terwijl de productiedatabase de beschermde kolommen `vat_deduction`,
+// `discount_type` en `discount_value` miste: een gekoppelde boekhouder kon rubriek 5b van zijn
+// klant verzetten met het volledige btw_amount van een factuur, en de korting waaruit de bedragen
+// op de e-factuur worden afgeleid. Twee beveiligingsmigraties lagen weken klaar en gemeld, en het
+// enige gereedschap dat "wat moet er nog?" beantwoordt zei dat ze gedraaid waren.
+//
+// Dat is de kwaal uit de kop van dat bestand, één niveau dieper: niet de VRAAG liep achter op de
+// map, maar het ANTWOORD op de vraag.
+//
+// De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
+// functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
+// haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measured by its body", () => {
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const deel1 = sql.slice(sql.indexOf("-- ── DEEL 1"), sql.indexOf("-- ── DEEL 2"));
+
+  // Elke probe-regel, uit de gegenereerde lijst.
+  const rows = [...deel1.matchAll(/\('([^']+)', '([a-z_]+)', '([^']+)', (?:null|'([^']*)'), '([^']+)'\)/g)]
+    .map((m) => ({ bestand: m[1], soort: m[2], object: m[3], merken: m[4] ?? null }));
+  assert.ok(rows.length > 100, `only ${rows.length} probe rows parsed — this gate would prove nothing`);
+
+  // DE REGEL: een functienaam die op bestaan wordt bevraagd, mag maar door één bestand komen.
+  const bestaansProbes = new Map<string, string[]>();
+  for (const r of rows.filter((r) => r.soort === "function")) {
+    if (!bestaansProbes.has(r.object)) bestaansProbes.set(r.object, []);
+    bestaansProbes.get(r.object)!.push(r.bestand);
+  }
+  // …behalve waar de definities niets delen om op te meten. Dat staat met zoveel woorden in de
+  // lijst zelf, dus de uitzondering is niet stil en niet met de hand: ze moet daar zijn uitgelegd.
+  for (const [fn, files] of bestaansProbes) {
+    if (files.length < 2) continue;
+    assert.match(
+      sql, new RegExp(`${fn}\\b[\\s\\S]{0,900}GEEN INHOUDSMETING`),
+      `${fn} is probed by mere existence from ${files.length} files (${files.join(", ")}) — the second ` +
+      `and every one after it are proven by the first, so a security guard that never ran reads as applied`,
+    );
+  }
+
+  // De familie waar het om begon: alle definities meten mee op de drie kolommen die in productie
+  // ontbraken, en niemand van hen valt terug op bestaan.
+  const guard = rows.filter((r) => r.object === "prevent_accountant_amount_changes");
+  assert.ok(guard.length >= 8, `${guard.length} files define the accountant guard — expected the whole family`);
+  for (const r of guard) {
+    assert.equal(r.soort, "function_body", `${r.bestand} still proves the guard by its existence`);
+    for (const kolom of [".vat_deduction", ".discount_type", ".discount_value", ".vendor_iban"]) {
+      assert.ok(r.merken?.split(",").includes(kolom),
+        `${r.bestand} does not measure ${kolom} — the column production was missing`);
+    }
+  }
+
+  // En de query moet de body echt lezen. Een 'function_body' die stiekem op bestaan terugvalt is
+  // hetzelfde alarm dat nooit afgaat.
+  assert.match(sql, /when 'function_body' then exists \(/);
+  assert.match(sql, /not exists \(select 1 from unnest\(string_to_array\(p\.tabel, ','\)\) mk/);
+  assert.match(sql, /where position\(mk in f\.prosrc\) = 0\)\)/);
+});
+
 test("[MIGRATIE-JOURNAAL] every ignored object is named, reasoned, and really created", () => {
   // NIETS_BEWIJZEND is de enige plek waar met de hand een meting wordt uitgezet. Dat maakt het de
   // enige plek waar een falende migratie zich kan verstoppen — dus staat er een prijs op: het
