@@ -2021,10 +2021,16 @@ test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", ()
     m, /if \(inc === null \|\| ex === null \|\| btw === null\) return null/,
     "three figures or nothing",
   );
+  // [EURO-ALLEEN] Asked of the shared rule, not of the inline comparison this used to pin. The
+  // spelling moved for a reason: there are TWO doors onto the same bytes and only this one asked,
+  // so the standalone-.xml door in /api/intake booked USD 10.000 as EUR 10.000. A gate anchored on
+  // the old spelling would have gone red on the fix and green on the defect — see the sibling
+  // [EURO-ALLEEN] gate, which is where "both doors ask" is now enforced.
   assert.match(
-    m, /if \(v\.currency !== null && v\.currency\.toUpperCase\(\) !== 'EUR'\) return null/,
+    m, /if \(!isEuroDocument\(v\.currency\)\) return null/,
     "1 200 SEK booked as € 1 200 survives every other check in the building",
   );
+  assert.match(m, /export function isEuroDocument\(/, "…and the rule is exported, so both doors can ask it");
   assert.match(
     m, /if \(Math\.abs\(round2\(ex \+ btw\) - round2\(inc\)\) > 0\.01\) return null/,
     "an e-invoice whose own numbers disagree is not a better witness than the model",
@@ -16690,6 +16696,40 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[EURO-ALLEEN] both doors onto an e-invoice refuse a currency this app cannot book", () => {
+  // There are TWO readers of the same bytes, and only one of them asked.
+  //
+  // A Peppol invoice arriving as a PDF attachment goes through parseEInvoice, whose complete() has
+  // refused a stated non-euro currency for as long as it has existed — its own comment says
+  // "silently treating 1 200 SEK as EUR 1 200 is the kind of error that survives every other check
+  // in the building". The IDENTICAL invoice uploaded as a standalone .xml goes to
+  // handleUblInvoice in /api/intake instead, which calls parseUblInvoice — a different parser that
+  // extracts DocumentCurrencyCode into `currency` and handed it to a caller that never read it.
+  //
+  // Measured on one file through both doors: USD 10.000 refused there, booked as EUR 10.000 here,
+  // with its voorbelasting claimed in rubriek 5b at a euro amount nobody ever paid. The amounts are
+  // internally consistent and the file validates against Peppol, so nothing downstream can catch
+  // it — there is no second currency anywhere to compare against.
+  const lib = code("src/lib/e-invoice.ts");
+  assert.match(lib, /export function isEuroDocument\(/, "one rule, exported, so both doors can ask it");
+  assert.match(lib, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the Factur-X door must ask the shared rule, not its own inline comparison");
+
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the standalone .xml door must ask it too — this is the door that was missing it");
+
+  // Asked BEFORE anything is written. The refusal is worth nothing after the row exists.
+  const gevraagd = intake.indexOf("if (!isEuroDocument(v.currency)) return null");
+  const geschreven = intake.indexOf("const sign = v.isCreditNote ? -1 : 1");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the amount handling must be findable");
+  assert.ok(gevraagd < geschreven, "the currency must be refused before the amounts are signed and stored");
+
+  // And neither door may go back to spelling the comparison itself — that is how they drifted.
+  assert.doesNotMatch(intake, /currency[\s\S]{0,40}!==\s*['"]EUR['"]/,
+    "no second spelling of the euro rule in the intake route");
 });
 
 test("[CREDIT-IS-CREDIT] a creditnota may not come out of the door asking for money", () => {
