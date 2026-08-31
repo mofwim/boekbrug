@@ -252,6 +252,11 @@ export default function BankClient() {
   // [P1-UNCATEGORIZED] Count of bank lines with NO category (not tied to an invoice). Money on
   // these lines is silently absent from the W&V/BTW until categorized — surface it, never hide it.
   const [uncatCount, setUncatCount] = useState(0)
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld daarin zit, uit en in apart. `null` = de server kon het
+  // niet optellen — nooit 0, want dat zou beweren dat er geen geld buiten de boeken staat over een
+  // som die niet gelukt is.
+  const [uncatOut, setUncatOut] = useState<number | null>(null)
+  const [uncatIn, setUncatIn] = useState<number | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BANK-BATCH-CONFIRM] Bulk-confirm only for strong 'auto' single-invoice matches
   // (each already carries an unambiguous best candidate from the bank statement).
@@ -612,7 +617,11 @@ export default function BankClient() {
         // [P1-UNCATEGORIZED] The exact head-count of still-uncategorized bank lines.
         const cat = await fetch('/api/bank/categorize')
         const catJson = await cat.json().catch(() => ({}))
-        if (!cancelled && cat.ok) setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
+        if (!cancelled && cat.ok) {
+          setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
+          setUncatOut(typeof catJson.remaining_out === 'number' ? catJson.remaining_out : null)
+          setUncatIn(typeof catJson.remaining_in === 'number' ? catJson.remaining_in : null)
+        }
       } catch {
         /* silent — empty state shows the upload card */
       } finally {
@@ -1760,6 +1769,21 @@ export default function BankClient() {
             <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
               {uncatCount === 1 ? t('bank.uncatEen') : t('bank.uncat', { count: uncatCount })}
             </span>
+            {/* [BANK-GELD-NIET-GEBOEKT] Het BEDRAG, tussen het aantal en de uitleg. "299
+                banktransacties" is een klus; "€ 266.834 aan uitgaven" is zijn geld — en dat is wat
+                er werkelijk buiten zijn winst & verlies staat. Uit en in blijven apart: netto zou
+                € 10.000 in en € 10.000 uit lezen als "er mist niets", terwijl het twee onverklaarde
+                feiten zijn (zie financial-result.ts). Kon de server niet optellen, dan staat hier
+                niets — een te laag bedrag is erger dan geen bedrag. */}
+            {(uncatOut ?? 0) + (uncatIn ?? 0) > 0 && (
+              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#7A4F00', marginTop: 2 }}>
+                {(uncatOut ?? 0) > 0 && (uncatIn ?? 0) > 0
+                  ? t('bank.uncatGeld.beide', { uit: eur.format(uncatOut as number), in: eur.format(uncatIn as number) })
+                  : (uncatOut ?? 0) > 0
+                    ? t('bank.uncatGeld.uit', { uit: eur.format(uncatOut as number) })
+                    : t('bank.uncatGeld.in', { in: eur.format(uncatIn as number) })}
+              </span>
+            )}
             <span style={{ display: 'block', fontSize: 12, color: '#7A4F00', marginTop: 1 }}>
               {t('bank.uncatUitleg')}
             </span>
