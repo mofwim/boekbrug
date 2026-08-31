@@ -4144,6 +4144,11 @@ export default function IncomingManageClient({
           }}
           onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
           onCorrectKenmerk={() => { const inv = prepareCtx; setPrepareCtx(null); if (inv) openCorrection(inv) }}
+          // [PAPIER-BIJ-DE-BETALING] setPrepareCtx blijft staan: het documentblad valt eroverheen
+          // en laat bij het sluiten het bedrag en de betaalnotitie ongemoeid. Dit blad hier sluiten
+          // zou het bedrag terugzetten op het openstaande saldo — en dan betaalt iemand die een
+          // DEELbedrag had ingetypt alsnog het hele bedrag.
+          onShowPaper={() => setDocCtx(prepareCtx)}
         />
       )}
 
@@ -4934,6 +4939,7 @@ function PreparePaymentSheet({
   onConfirmPaid,
   onCopied,
   onCorrectKenmerk,
+  onShowPaper,
 }: {
   inv: IncomingRow
   onClose: () => void
@@ -4941,6 +4947,11 @@ function PreparePaymentSheet({
   onCopied: (what: string) => void
   /** [KENMERK-VAN-WIE] Opens the correction editor on this invoice — see the Kenmerk row below. */
   onCorrectKenmerk: () => void
+  /**
+   * [PAPIER-BIJ-DE-BETALING] Opens the document sheet ON TOP of this one (z-index 320 over 200),
+   * so closing it returns here with the amount and the note still typed in.
+   */
+  onShowPaper: () => void
 }) {
   const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -5051,6 +5062,24 @@ function PreparePaymentSheet({
                 </div>
               )}
             </div>
+
+            {/* [PAPIER-BIJ-DE-BETALING] De factuur zelf, één tik van de QR vandaan.
+                Dit blad toont een rekeningnummer en een bedrag die uit een MACHINALE lezing komen,
+                en de bankapp neemt ze zo over. Wat hier ontbrak was het enige wat de lezing kan
+                weerleggen: het papier. Niet nog een controle van ons erbij — de eigenaar zelf, op
+                het moment dat het uitmaakt, zonder dit blad kwijt te raken. */}
+            <button
+              onClick={onShowPaper}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 8, padding: '12px 16px', marginBottom: 14, borderRadius: 12,
+                border: '1px solid #DADCE0', background: '#F8F9FA', color: '#202124',
+                fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>description</span>
+              {t('ink.papierErbij')}
+            </button>
 
             {/* Copy rows */}
             <CopyRow label="IBAN" value={ibanDisplay} raw={(inv.vendor_iban ?? '')} onCopy={copy} />

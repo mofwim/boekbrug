@@ -7066,6 +7066,12 @@ export const MESSAGES = {
     ar: 'هذه تُحتسب الآن في رصيدك المفتوح وفي الضريبة التي تستردها.',
     en: 'These currently count in your outstanding balance and in the btw you reclaim.',
   },
+  'ink.papierErbij': {
+    nl: 'Bekijk de factuur',
+    ar: 'اعرض الفاتورة',
+    en: 'View the invoice',
+    tr: 'Faturayı görüntüle',
+  },
   'ink.scanBankapp': {
     nl: 'Scan met je bankapp of kopieer de gegevens. Je betaalt in je eigen bank.',
     ar: 'امسح بتطبيق بنكك أو انسخ البيانات. الدفع يتم في بنكك أنت.',
