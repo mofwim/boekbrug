@@ -8837,17 +8837,117 @@ test("[BANK-RESTANTEN] the three reported bank residuals stay closed", () => {
   assert.match(matching, /partialOk =\s*\n?\s*!amtOk && !nearOk &&\s*\n?\s*\(ibanOk \|\| supplierIbanOk \|\| rememberedOk\)/, "the instalment tier requires account identity");
   assert.match(matching, /nearOk \|\| partialOk \? 0\.55 : 0\.35/, "…and stays below the booking bar");
 
-  // A confident memory hit consults the paid invoices before writing a P&L category.
-  const cat = code("src/lib/bank-auto-categorize.ts");
-  // The pattern pins the CONDITION OPENING: a negative control wrapped the same text in
-  // `if (false && …)` and a body-match stayed green — the [STRIPPER-BLIND] shape again.
-  assert.match(cat, /if \(\(s\.category === "kosten" \|\| s\.category === "omzet"\) && paidExplains\(t\.amount \?\? 0, t\.date\)\) continue;/, "the double-booking guard runs on P&L categories");
-  assert.match(cat, /export function paidInvoiceExplainsLine/, "…as a pure, tested rule");
+  // A confident memory hit consults the paid invoices before writing a P&L category — and the
+  // rule is one rule. [DUBBEL-GEDEKT] below walks every writer instead of naming them.
+  assert.match(code("src/lib/bank-double-booking.ts"), /export function paidInvoiceExplainsLine/, "…as a pure, tested rule");
 
   // The content dedup only calls two accounts different when both are PROVABLE identities.
   const imp = code("src/lib/bank-import.ts");
   assert.match(imp, /\^\[A-Z\]\{2\}\\d\{2\}\[A-Z0-9\]\{11,30\}\$/, "only a real IBAN suffix counts as an account identity");
   assert.match(imp, /incomingAccount && rowAccount && rowAccount !== incomingAccount\) continue/, "…and a different account never explains the line");
+});
+
+// ─── [DUBBEL-GEDEKT] Every writer of an inferred bank category asks the same question ────────────
+//
+// Three code paths write a category the owner did not answer for personally, all three running the
+// SAME classifier over the SAME rows. Only the nightly pass consulted the paid invoices first — and
+// the one that did NOT was the button on the categorisatie screen, the fast path the owner presses.
+//
+// Measured in production the day this gate was written: 53 uncategorised lines, together
+// € 31.188,87, sat against a paid invoice that already explained them; 45 of those (€ 22.821,96)
+// would have been coded 'kosten' by one press. The same cost twice in the resultaat and in the
+// closing package, flagged by nothing — readiness counts EXCLUDED categories, and a doubled
+// 'kosten' is not excluded, it is deductible.
+//
+// So this gate does not name the three writers. A list of writers is exactly what went missing the
+// first time: the second and third were written later by someone reading the first. It DERIVES the
+// set from the source — every update that writes `category_confirmed: false` onto bank_transactions
+// is, by the app's own convention, a machine's inference rather than the owner's answer (the
+// owner's own confirmation writes `true`) — and requires each one to consult the guard inside the
+// loop that reaches it. A fourth writer added tomorrow fails this test on the day it is written.
+
+test("[DUBBEL-GEDEKT] no machine writes a bank category without asking what is already booked", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // An inferred write: sets a category AND stamps category_confirmed:false. The owner's own answer
+  // (category_confirmed:true) is deliberately NOT in this set — they are stating a fact about that
+  // one line, and the app must not overrule it.
+  const INFERRED_WRITE = /\.update\(\{[^}]*\bcategory\b[^}]*category_confirmed: false[^}]*\}\)/g;
+  const sites: { file: string; at: number }[] = [];
+  for (const file of walk("src")) {
+    const src = code(file);
+    if (!src.includes('from("bank_transactions")')) continue;
+    for (const m of src.matchAll(INFERRED_WRITE)) sites.push({ file, at: m.index ?? 0 });
+  }
+
+  // The scan must not go vacuously green. These two files hold the writers the money was measured
+  // on; a regex that stops finding them is broken, not satisfied.
+  assert.ok(sites.length >= 3, `found ${sites.length} inferred category writers — the scan is broken`);
+  for (const must of ["src/lib/bank-auto-categorize.ts", "src/app/api/bank/categorize/route.ts"]) {
+    assert.ok(sites.some((w) => w.file === must), `${must} writes inferred categories and must be in the scan`);
+  }
+
+  for (const { file, at } of sites) {
+    const src = code(file);
+    // The guard has to be asked about THIS line, so it has to be asked inside the loop that
+    // produced it. Slice back to the loop's own header: a hold() call before that opening is a
+    // different line's answer, and one after the write is too late.
+    const loopAt = src.lastIndexOf("for (", at);
+    assert.ok(loopAt > 0, `${file}: an inferred category write outside any loop — a shape this gate has not seen`);
+    const body = src.slice(loopAt, at);
+    assert.match(
+      body, /\.hold\(/,
+      `${file}: writes a category the owner never confirmed without asking the double-booking guard — ` +
+      `the cost may already be in the books through a paid invoice, and this books it a second time`,
+    );
+  }
+
+  // …and it is one rule, not three copies of one. Only the shared module may declare it.
+  const declaring = walk("src").filter((f) => /function paidInvoiceExplainsLine/.test(code(f)));
+  assert.deepEqual(declaring, ["src/lib/bank-double-booking.ts"], "the rule is declared exactly once");
+
+  // The window needs a date. Without one every magnitude match reads as undatable, which errs
+  // toward holding — safe, but it would quietly freeze the sweep the owner presses.
+  const route = code("src/app/api/bank/categorize/route.ts");
+  assert.match(route, /\.select\("id, amount, counterpart_name, description, date"\)/, "the sweep reads the line's date");
+  assert.match(route, /\.select\("id, counterpart_name, category, amount, description, date"\)/, "…and so does the spread");
+
+  // mollie_payment_links carries RLS with zero policies, so the RLS client reads an empty set and
+  // the payout hold would never fire while looking exactly like "this owner has no Mollie".
+  assert.match(route, /molliePipeline = createPipelineClient\(\)/, "the Mollie probe gets a client that can actually see the table");
+  const guardSrc = code("src/lib/bank-double-booking.ts");
+  assert.match(guardSrc, /molliePayoutKnown/, "…and a probe that could not run says so rather than reporting 'no Mollie'");
+
+  // ── And the screen does not propose by hand what the machines refuse to write ──────────────
+  //
+  // Closing the automatic double booking opens a quieter one: the held line lands on the
+  // categorisatie screen looking exactly like a line nobody could classify, with a 'kosten' chip
+  // already selected and a confirm button under it. One tap books the cost a second time, with the
+  // app's own suggestion saying it was right.
+  assert.match(route, /const alreadyBooked = guard\.hold\(suggestion\.category, t\);/, "the review list knows which lines are held");
+  assert.match(route, /if \(suggestion\.confident && !alreadyBooked\) confidentAvailable\+\+;/,
+    "…and the 'N zekere invullen' count never promises lines the sweep will not write");
+  assert.match(route, /already_booked: alreadyBooked,/, "…and the screen is told, not left to guess");
+
+  const screen = code("src/app/dashboard/bank/categoriseren/CategoriseClient.tsx");
+  assert.match(screen, /for \(const it of list\) if \(!it\.already_booked\) initial\[it\.id\] = it\.suggested/,
+    "a held line starts with NOTHING chosen — a pre-selected chip is the same double booking, one tap away");
+  assert.match(screen, /disabled=\{busy === it\.id \|\| !choice\[it\.id\]\}/,
+    "…and the confirm button is inert while nothing is chosen, instead of a tap that does nothing");
+  // The component holds no language of its own (AGENTS.md): the words and their direction come
+  // from the pure module on one object, so they can never render out of step.
+  assert.match(screen, /alreadyBookedNotice\(it\.already_booked, locale\)/, "the sentence comes from the catalogue module");
+  assert.doesNotMatch(screen, /t\('cat\.alGeboekt/, "…and the screen does not pick the words itself");
+  assert.match(code("src/lib/bank-already-booked-notice.ts"), /Record<DoubleBookingHold, \{ title: MessageKey; body: MessageKey \}>/,
+    "a third hold reason stops compiling until it has words — a default branch would give it the wrong ones");
 });
 
 test("[INTAKE-CLAIM] the semantic-duplicate race has its database backstop", () => {
@@ -12603,6 +12703,54 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
     // …en dus NIET als probe, want dan zou hij voor eeuwig 'OPEN' heten.
     assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
   }
+});
+
+test("[PRIVACY-WAAR] the privacy notice says what the code actually grants the accountant", () => {
+  // Gemeten op 31-08-2026. De gepubliceerde verklaring zei tegen elke gebruiker:
+  //
+  //     "✅ Betaalde facturen (status = 'paid')  ❌ Niet-bevestigde inkomende facturen blijven privé"
+  //
+  // De gegenereerde kolom `shared` deelt sent, received ÉN paid. En het Bevestigen-scherm leest
+  // inkomende facturen met status 'processing' via de service-role client — precies wat de zin
+  // hierboven privé noemde. De FUNCTIE is in orde en staat achter een aparte machtiging; de
+  // VERKLARING was er nooit op bijgewerkt en was dus een onwaarheid tegen de eigen gebruikers.
+  //
+  // Deze poort houdt de tekst aan de code vast, zoals de [TAAL]-poorten de woordenlijst
+  // vasthouden. Verandert de zichtbaarheid, dan valt hij om — en dat is de bedoeling: een
+  // privacyverklaring die stilletjes achterloopt op de policy is precies wat hier misging.
+  const tekst = readFileSync("src/content/legal/privacyverklaring.ts", "utf8");
+  const schema = readFileSync("database.sql", "utf8");
+
+  // 1. Wat maakt een factuur zichtbaar voor de boekhouder? Lees het uit de kolom zelf.
+  const gen = /shared boolean GENERATED ALWAYS AS \(status = ANY \(ARRAY\[([^\]]+)\]\)\)/.exec(schema);
+  assert.ok(gen, "de gegenereerde kolom `shared` moet leesbaar zijn, anders meet deze poort niets");
+  const statussen = [...gen[1].matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+  assert.ok(statussen.length >= 2, `only ${statussen.length} statuses parsed — the scan is broken`);
+
+  // Elke status die zichtbaarheid geeft, moet in de verklaring genoemd staan. Nederlandse woorden
+  // mogen — het is een tekst voor een ondernemer — maar de technische status staat er ook bij.
+  for (const st of statussen) {
+    assert.ok(tekst.includes(`\`${st}\``),
+      `status '${st}' makes an invoice visible to the accountant, and the privacy notice does not ` +
+      "name it. Users are being told less than what is shared");
+  }
+
+  // 2. De oude onwaarheid mag niet terugkomen: 'alleen betaalde facturen' was aantoonbaar onjuist.
+  assert.ok(!/Betaalde facturen\*\* \(status = 'paid'\)/.test(tekst),
+    "the notice claimed only paid invoices are shared; sent and received are shared too");
+
+  // 3. De bevestigingsmachtiging opent de wachtrij. Zwijgt de verklaring daarover, dan belooft ze
+  //    privacy die het scherm elke dag weerlegt.
+  const mandaat = readFileSync("src/lib/accountant-mandate.ts", "utf8");
+  assert.match(mandaat, /"facturen" \| "bevestigen"/, "the two mandate kinds must stay readable here");
+  assert.match(tekst, /bevestigen/i,
+    "the 'bevestigen' mandate lets the accountant see incoming invoices still in the queue — the " +
+    "notice must say so, because without it the notice promises the opposite");
+  assert.match(tekst, /machtiging/i, "…and name it as something the owner grants separately");
+
+  // 4. Een gewijzigde verklaring die zichzelf ongewijzigd noemt, is de volgende onwaarheid.
+  assert.doesNotMatch(tekst, /\*\*Versie:\*\* 1\.0/,
+    "the notice was corrected; its own version line must move with it");
 });
 
 test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
@@ -17352,9 +17500,12 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
 
   // [MOLLIE-C9] The payout hold is bounded in time and scoped to Mollie — one iDEAL payment in
   // August must not un-code every CCV settlement forever.
-  const autoCat = code("src/lib/bank-auto-categorize.ts");
-  assert.match(autoCat, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
-  assert.match(autoCat, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
+  // [DUBBEL-GEDEKT] The hold moved to the shared module the day the button got it too — the rule
+  // is one rule now, so the gate reads it where it lives.
+  const payoutHold = code("src/lib/bank-double-booking.ts");
+  assert.match(payoutHold, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
+  assert.match(payoutHold, /MOLLIE_RECENCY_MS = 45 \* 24 \* 60 \* 60 \* 1000/, "…and that window is a named constant, not a number in a query");
+  assert.match(payoutHold, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
 
   // The pure refusal directions: a wrong amount REFUSES (never clamps, never marks), and a
   // €0/negative ask never becomes a link.
@@ -17395,9 +17546,15 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
   assert.match(pay, /fetch\(`\/api\/pay\/\$\{token\}\/ideal`, \{ method: 'POST' \}\)/, "…and creates lazily on click");
   const settings = code("src/app/dashboard/settings/page.tsx");
   assert.match(settings, /<MollieCard \/>/, "the owner can actually connect a key");
-  const auto = code("src/lib/bank-auto-categorize.ts");
-  assert.match(auto, /if \(molliePayoutHold\(t\)\) continue;/,
+  // [MOLLIE-UITBETALING] A fee-reduced payout is never pre-coded into a second omzet. The branch
+  // lives in the shared guard; the pattern pins the CONDITION OPENING, because a negative control
+  // that wrapped the same body in `if (false && …)` once stayed green on a body match.
+  assert.match(payoutHold, /if \(hasRecentMolliePayout && isMollieCredit\(line\)\) return "mollie-payout";/,
     "[MOLLIE-UITBETALING] a fee-reduced payout is never pre-coded into a second omzet");
+  // …and the nightly pass still asks. The other two writers are covered by [DUBBEL-GEDEKT], which
+  // derives them from the source rather than naming them here.
+  const auto = code("src/lib/bank-auto-categorize.ts");
+  assert.match(auto, /if \(guard\.hold\(s\.category, t\)\) continue;/, "…on every confident suggestion it makes");
 });
 
 test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carries its road", () => {
@@ -22381,4 +22538,105 @@ test("[BANK-LEGE-LINK] the in-tab categorise link never points at an empty scree
     src, /bankTab === 'none' && uncatCount > 0 && \(/,
     "the link no longer asks whether there is anything to categorise",
   );
+});
+
+// ─── [CREDIT-BEVESTIG] The accountant's confirm door booked a creditnota as a purchase ──────────
+//
+// A supplier creditnota that PRINTS its amounts positive is the ordinary shape, not an edge case —
+// most Dutch ones do, and ai.ts tells the model so in as many words: return them positive, the
+// system will hold it for a human. Both of the OWNER's confirm doors repair the sign before
+// anything books (asCreditAmounts, in api/email/confirm/[id] and api/invoice/[id]/amounts).
+//
+// The ACCOUNTANT's door did not read invoice_type at all. It wrote status:'received' and the row
+// went into the concept aangifte with a plus, because /api/aangifte selects direction, status,
+// total_ex_btw and btw_amount and sums them raw. A EUR 51,80 creditnota (EUR 4,28 btw) then puts
+// +4,28 in rubriek 5b where −4,28 belongs: EUR 8,56 of over-claimed voorbelasting per document, in
+// the owner's favour on the return, which is the direction that becomes a naheffing. The owner
+// signs it and the accountant's professional liability sits under it.
+//
+// REFUSE, do not repair — three reasons all already in the repo: the database trigger lets this
+// path move only status and confirmed_by; the route's own header says an accountant does not
+// rewrite a client's figures but asks; and /dashboard/accountant/opvragen is that door.
+test("[CREDIT-BEVESTIG] a positive creditnota is refused at the accountant's door, and before the tap", () => {
+  const route = code("src/app/api/accountant/bevestig/route.ts");
+
+  // It has to READ the column before it can judge it. That was the whole omission.
+  assert.match(route, /invoice_number, client_name, total_inc_btw, invoice_type/,
+    "invoice_type is selected");
+  // One question, asked by the one function the owner's own list already asks it with. A second
+  // formulation here would let two screens disagree about the same piece of paper.
+  assert.match(route, /creditnotaSignConflict\(\{ invoiceType: factuur\.invoice_type, totalIncBtw: factuur\.total_inc_btw \}\)/,
+    "the shared predicate decides, not a local re-reading of the sign");
+  assert.match(route, /status: 409/, "…and it refuses rather than booking");
+  // Repair is not an option here and must not become one: the trigger would reject it, and an
+  // accountant rewriting a client's amounts is what art. 52 AWR and this route's header forbid.
+  assert.doesNotMatch(route, /asCreditAmounts/,
+    "this door may not repair the sign — it asks the owner to");
+
+  // And the refusal is visible BEFORE the tap. A 409 after the click leaves an accountant with an
+  // error and no way forward; the way forward exists and is named beside the row.
+  const page = code("src/app/dashboard/accountant/bevestigen/page.tsx");
+  assert.match(page, /field_confidence, invoice_type/, "the queue reads the column too");
+  assert.match(page, /creditTegenTeken: creditnotaSignConflict\(/, "…and judges it with the same function");
+  const scherm = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.match(scherm, /disabled=\{bezig === rij\.id \|\| isKlaar \|\| rij\.creditTegenTeken === true\}/,
+    "the button is off on exactly the rows the route refuses");
+  assert.match(scherm, /t\('bh\.bev\.rij\.creditTegenTeken'\)/, "…with the reason, and what to do instead");
+});
+
+// ─── [PARTIAL-PAY-DOOR] A split that was written, tested, and never fed ─────────────────────────
+//
+// quarterly.ts splits the cash column on inv.amount_paid: the settled part of a deelbetaling counts
+// as paid, only the remainder is outstanding or overdue. Its own tests prove it. And the ONLY route
+// that calls it never selected the column and never mapped it, so `inv.amount_paid ?? 0` was always
+// zero and the whole split was dead in production.
+//
+// An invoice of EUR 5.000 with EUR 4.000 settled therefore stood at EUR 5.000 under "Openstaand",
+// and at EUR 5.000 under "Vervallen" the day after its due date. The tiles print those as facts,
+// and they are the figures an owner uses to decide whether they can spend and an accountant uses to
+// decide who to chase.
+//
+// Same class as the intake route feeding the two-ledger check: a distinction that exists, is
+// correct, is covered by tests — and is handed nothing.
+test("[PARTIAL-PAY-DOOR] the quarterly route feeds the partial-payment split it depends on", () => {
+  const route = code("src/app/api/quarterly/route.ts");
+
+  // Both branches: the accountant's client view and the owner's own.
+  const selects = route.match(/\.select\("id, invoice_number, client_name, status, direction[^"]*"\)/g) ?? [];
+  assert.equal(selects.length, 2, "both quarterly reads are still recognisable");
+  for (const sel of selects) {
+    assert.match(sel, /amount_paid/, `a quarterly select still omits amount_paid: ${sel.slice(0, 80)}…`);
+  }
+  // Selecting it is not enough — it has to survive the mapping into InvoiceForQuarterly.
+  const mapped = route.match(/amount_paid: inv\.amount_paid,/g) ?? [];
+  assert.equal(mapped.length, 2, "both mappings carry it through to the summary");
+
+  // The pure side is unchanged and still the one that decides.
+  const pure = code("src/lib/quarterly.ts");
+  assert.match(pure, /const settled = Math\.max\(0, Math\.min\(Math\.abs\(incBtw\), inv\.amount_paid \?\? 0\)\);/,
+    "the split still reads the column this route now supplies");
+});
+
+// ─── [REGEL-ZONDER-OMSCHRIJVING] The screen showed a total the invoice would not carry ──────────
+//
+// The accountant's invoice screen computed its Subtotaal/BTW/Totaal over ALL lines and then sent
+// only the lines that had a description. A EUR 400 line whose description was forgotten counted in
+// the total on screen and was dropped from the document: the screen said EUR 968,00 and an invoice
+// for EUR 484,00 left, out of the CLIENT's doorlopende reeks. The customer receives and pays the
+// smaller amount, the number is burnt, and the correction is a creditnota plus a re-issue.
+//
+// The owner's own editor already validates a description per line. This screen was the exception,
+// and it knew about the dropped line and said nothing.
+test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the send", () => {
+  const scherm = code("src/modules/accountant/pages/AccountantFactuur.tsx");
+  assert.match(scherm, /const zonderOmschrijving = regels\.findIndex\(\(r\) => !r\.description\.trim\(\) && naarGetal\(r\.unit_price\) !== 0\)/,
+    "the row is FOUND rather than filtered away");
+  assert.match(scherm, /if \(zonderOmschrijving >= 0\) \{/, "…and it refuses");
+  assert.match(scherm, /t\('bh\.fact\.foutOmschrijving', \{ nummer: zonderOmschrijving \+ 1 \}\)/,
+    "…naming which row, because 'something is wrong' is not an error message");
+  // The refusal must come BEFORE the draft is created: once /api/invoice/draft has run, the
+  // number is minted and the damage is a creditnota away.
+  const refuseAt = scherm.indexOf("zonderOmschrijving >= 0");
+  const draftAt = scherm.indexOf("/api/invoice/draft");
+  assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
 });

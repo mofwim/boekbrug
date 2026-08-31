@@ -134,6 +134,24 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
     setFout(null)
     if (!klant) return setFout(t('bh.fact.foutKiesKlant'))
     if (!naam.trim()) return setFout(t('bh.fact.foutOntvanger'))
+    // [REGEL-ZONDER-OMSCHRIJVING] Weigeren, niet stil weglaten.
+    //
+    // `totalen` hierboven rekent over ALLE regels; deze filter stuurde alleen de regels mét
+    // omschrijving door. Een regel van € 400 waarvan de omschrijving vergeten is, stond dus wel in
+    // het totaal op het scherm en niet op de factuur: het scherm zei "Totaal € 968,00" en er ging
+    // een factuur van € 484,00 de deur uit, uit de DOORLOPENDE reeks van de klant. De klant
+    // ontvangt en betaalt het lagere bedrag, het nummer is vergeven, en herstellen kost een
+    // creditnota plus een nieuwe factuur.
+    //
+    // De editor van de ondernemer zelf doet dit al goed: die stuurt alle regels mee en valideert de
+    // omschrijving per regel. Dit scherm was de uitzondering.
+    //
+    // Een lege regel onderaan (geen bedrag, geen tekst) blijft onschuldig en wordt gewoon
+    // weggelaten — alleen een regel MET bedrag en ZONDER omschrijving houdt de verzending tegen.
+    const zonderOmschrijving = regels.findIndex((r) => !r.description.trim() && naarGetal(r.unit_price) !== 0)
+    if (zonderOmschrijving >= 0) {
+      return setFout(t('bh.fact.foutOmschrijving', { nummer: zonderOmschrijving + 1 }))
+    }
     const bruikbaar = regels.filter((r) => r.description.trim() && naarGetal(r.unit_price) !== 0)
     if (bruikbaar.length === 0) return setFout(t('bh.fact.foutRegel'))
 

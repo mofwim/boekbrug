@@ -16,6 +16,8 @@ import { rowMatchesQuery } from '@/lib/search'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { linesForCounterpart } from '@/lib/counterpart-spread'
+// [DUBBEL-GEDEKT] The words for a line the app refuses to fill in live apart from the screen.
+import { alreadyBookedNotice } from '@/lib/bank-already-booked-notice'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
 
@@ -33,6 +35,9 @@ interface Item {
   suggested_source: 'memory' | 'ai' | 'similar'
   suggested_confident: boolean
   suggested_similar_to?: string | null
+  // [DUBBEL-GEDEKT] Why the app refuses to fill this one in: a paid invoice already carries the
+  // amount, or it is a Mollie payout of invoices already settled. null = nothing in the way.
+  already_booked?: 'paid-invoice' | 'mollie-payout' | null
   confirmed?: boolean
 }
 
@@ -53,7 +58,8 @@ function prettyKey(key: string): string {
 }
 
 export default function CategoriseClient() {
-  const t = translator(useLocale())
+  const locale = useLocale()
+  const t = translator(locale)
   const [items, setItems] = useState<Item[]>([])
   const [choice, setChoice] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
@@ -92,7 +98,11 @@ export default function CategoriseClient() {
         setHasMore(Boolean(json.has_more))
         setConfidentAvailable(json.confident_available ?? 0)
         const initial: Record<string, string> = {}
-        for (const it of list) initial[it.id] = it.suggested
+        // [DUBBEL-GEDEKT] A held line starts with NOTHING chosen. Pre-selecting the suggestion
+        // here is the same double booking the sweep refuses to write, one tap away and with the
+        // app's own chip saying it is the right answer. The owner may still pick it — they might
+        // genuinely have two identical costs — but they have to mean it.
+        for (const it of list) if (!it.already_booked) initial[it.id] = it.suggested
         setChoice(initial)
         setError(null)
       } else {
@@ -362,7 +372,20 @@ export default function CategoriseClient() {
                   </div>
                 </div>
 
-                {/* Category chips — pre-selected to the suggestion. */}
+                {/* [DUBBEL-GEDEKT] Say what the app knows. Without this the line is
+                    indistinguishable from one nobody could classify, and the owner fills it in. */}
+                {(() => {
+                  const notice = alreadyBookedNotice(it.already_booked, locale)
+                  if (!notice) return null
+                  return (
+                    <div dir={notice.dir} style={{ marginTop: 10, padding: '10px 12px', borderRadius: 12, background: '#FEF7E0', border: '1px solid #F9E3A2', textAlign: 'start' }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#5C4400' }}>{notice.title}</div>
+                      <div style={{ fontSize: 12.5, color: '#6B5200', marginTop: 3, lineHeight: 1.45 }}>{notice.body}</div>
+                    </div>
+                  )
+                })()}
+
+                {/* Category chips — pre-selected to the suggestion, except on a held line. */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
                   {CATS.map((c) => {
                     const active = choice[it.id] === c.key
@@ -386,11 +409,13 @@ export default function CategoriseClient() {
 
                 <button
                   onClick={() => confirmCategory(it.id)}
-                  disabled={busy === it.id}
+                  // Nothing chosen (a held line, until the owner picks) → confirmCategory returns
+                  // early, so an enabled button here would be a tap that does nothing at all.
+                  disabled={busy === it.id || !choice[it.id]}
                   style={{
                     marginTop: 12, width: '100%', padding: '11px', borderRadius: 12, border: 'none',
-                    background: busy === it.id ? '#dadce0' : M3.primary, color: M3.onPrimary,
-                    fontSize: 15, fontWeight: 600, cursor: busy === it.id ? 'default' : 'pointer', fontFamily: FONT,
+                    background: busy === it.id || !choice[it.id] ? '#dadce0' : M3.primary, color: M3.onPrimary,
+                    fontSize: 15, fontWeight: 600, cursor: busy === it.id || !choice[it.id] ? 'default' : 'pointer', fontFamily: FONT,
                   }}
                 >
                   {busy === it.id ? t('cat.bezig') : t('cat.bevestigen')}

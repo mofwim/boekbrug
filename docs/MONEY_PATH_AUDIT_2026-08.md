@@ -560,3 +560,78 @@ session the same night. Worth recording because the useful discipline is the sam
 everything above: **check the current code and the live database before acting on a finding, however
 confident it sounds.** Two of twenty-two were already done, one migration's deny list turned out to
 be six files wide, and one of my own SQL statements had a bug I only found by re-reading it.
+
+---
+
+## 12. The guard that only one of three writers had — 31 August 2026
+
+An earlier pass found that a bill the owner marked paid by hand puts its cost in the books before
+its bank debit ever arrives; the matcher excludes paid invoices, so the debit finds no candidate,
+and a confident memory hit codes it `kosten` — the same cost twice, in the resultaat and in the
+closing package. The fix landed in `bank-auto-categorize.ts` and was documented there at length.
+
+It was documented in the one place it was not most needed. Three code paths write a category the
+owner did not answer for personally, all running the same classifier over the same rows:
+
+| Writer | Reached by | Had the guard |
+| --- | --- | --- |
+| `applyLearnedBankCategories` | import, cron, `/bank` load | yes |
+| `bulkApply` | **the "N zekere invullen" button** | no |
+| the `[ZELFDE-TEGENPARTIJ]` spread | confirming one line of a party | no |
+
+The unguarded pair includes the one the owner presses.
+
+### Measured before changing anything
+
+Across production, 53 uncategorised bank lines — together **€ 31.188,87** — sit against a paid
+invoice that already explains them (same direction, same amount to the cent, settled within a
+fortnight). Of those, **45 (€ 22.821,96)** would be confidently coded `kosten` by one press of the
+button, at one owner. Nothing downstream would have flagged it: readiness counts *excluded*
+categories, and a doubled `kosten` is not excluded, it is deductible.
+
+### What changed
+
+The decision moved to `src/lib/bank-double-booking.ts` and the three writers ask it. Not copied —
+copying it is what produced the defect. Two details were only visible once it was shared:
+
+- **The spread and the sweep never read the line's date.** Without it every magnitude match reads
+  as undatable, which the rule resolves toward holding — safe, but it would have frozen the sweep
+  the owner presses. Both reads now select `date`, and the gate says why.
+- **`mollie_payment_links` has RLS on with zero policies**, by design: every other access in the
+  app goes through the service role. A guard wired with the caller's RLS client would have read an
+  empty set, and "no rows" is indistinguishable from "this owner has no Mollie" — the payout hold
+  would have been silently off on exactly the path that needed it. The route hands the probe a
+  service-role client scoped to that `user_id`, and a probe that could not run reports
+  `molliePayoutKnown: false` instead of an answer.
+
+### The gate names no writers
+
+A list of writers is what went missing the first time: the second and third were written later, by
+someone reading the first. `[DUBBEL-GEDEKT]` in `lifecycle-gates.test.ts` derives the set from the
+source instead — every update that stamps `category_confirmed: false` onto `bank_transactions` is,
+by the app's own convention, a machine's inference rather than the owner's answer, which writes
+`true` — and requires each one to consult the guard inside the loop that reaches it.
+
+Verified by negative control, including the one that matters: a fourth writer added in a brand-new
+file the gate had never heard of fails it on the day it is written.
+
+### The half that only appeared once the first half worked
+
+Blocking the machines opened a quieter door. A held line lands on the categorisatie screen looking
+exactly like a line nobody could classify — same card, a `kosten` chip already selected, a confirm
+button under it. One tap books the cost a second time, with the app's own suggestion saying it was
+right, and the owner has no way of knowing.
+
+So the screen was given what the server knows: the hold arrives as `already_booked`, the line is
+excluded from the "N zekere invullen" hint (the sweep will not write it; promising it there is a
+number that cannot be delivered), and it reaches the owner with **nothing chosen**, under a sentence
+naming what already carries the amount. They may still pick `kosten` — two identical costs a
+fortnight apart are possible — but they have to mean it.
+
+The friction this adds is measurably nil: of the 53 held lines, 45 were the ones the button would
+have coded and the other 8 were never going to be auto-coded at all. Nothing that used to be filled
+in silently and correctly stopped being filled in.
+
+The copy lives in `bank-already-booked-notice.ts` rather than in the component, and the reason→copy
+map is a `Record` over the hold union rather than a switch with a default: a third hold reason stops
+compiling until it has words, where a default branch would have shipped it wearing the wrong ones.

@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
     // a busy quarter's summary/list can never truncate; stable id tiebreak.
     const data = await fetchAllRows((from, to) => supabase
       .from("invoices")
-      .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
+      .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, due_date, sender_id, receiver_id")
       .or(`sender_id.eq.${clientId},receiver_id.eq.${clientId}`)
       .gte("invoice_date", start)
       .lte("invoice_date", end)
@@ -137,7 +137,19 @@ export async function GET(req: NextRequest) {
           direction,
           total_ex_btw: inv.total_ex_btw,
           btw_amount: inv.btw_amount,
+          // [PARTIAL-PAY-DOOR] amount_paid, en het ontbrak op allebei de takken van deze route.
+          //
+          // quarterly.ts:179 splitst de kaskolom op `inv.amount_paid ?? 0`, met eigen tests die bewijzen
+          // dat het deel dat betaald is als betaald telt en alleen de rest openstaat. Alleen: deze route
+          // — de ENIGE die die functie aanroept — selecteerde de kolom niet en gaf hem niet door, dus was
+          // dat `?? 0` altijd nul en was de hele splitsing dood in productie. Een factuur van € 5.000
+          // waarop € 4.000 betaald is, stond voor € 5.000 in "Openstaand", en zodra de vervaldatum
+          // voorbij was voor € 5.000 in "Vervallen".
+          //
+          // De tegels eronder tonen dat als feit ("Betaald" / "Openstaand"), en het is het cijfer waarop
+          // een ondernemer besluit of hij nog kan uitgeven en een boekhouder besluit wie hij aanmaant.
           total_inc_btw: inv.total_inc_btw,
+          amount_paid: inv.amount_paid,
           invoice_date: inv.invoice_date,
           due_date: inv.due_date ?? undefined,
           // [BOEK-FOUNDATION-TYPES] Null-safe btw_rate calculation
@@ -168,7 +180,7 @@ export async function GET(req: NextRequest) {
   // [PAGINATION] Same silent-cap fix as the accountant branch above.
   const data = await fetchAllRows((from, to) => supabase
     .from("invoices")
-    .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, sender_id, receiver_id")
+    .select("id, invoice_number, client_name, status, direction, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, due_date, sender_id, receiver_id")
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -203,7 +215,19 @@ export async function GET(req: NextRequest) {
       direction,
       total_ex_btw: inv.total_ex_btw,
       btw_amount: inv.btw_amount,
+      // [PARTIAL-PAY-DOOR] amount_paid, en het ontbrak op allebei de takken van deze route.
+      //
+      // quarterly.ts:179 splitst de kaskolom op `inv.amount_paid ?? 0`, met eigen tests die bewijzen
+      // dat het deel dat betaald is als betaald telt en alleen de rest openstaat. Alleen: deze route
+      // — de ENIGE die die functie aanroept — selecteerde de kolom niet en gaf hem niet door, dus was
+      // dat `?? 0` altijd nul en was de hele splitsing dood in productie. Een factuur van € 5.000
+      // waarop € 4.000 betaald is, stond voor € 5.000 in "Openstaand", en zodra de vervaldatum
+      // voorbij was voor € 5.000 in "Vervallen".
+      //
+      // De tegels eronder tonen dat als feit ("Betaald" / "Openstaand"), en het is het cijfer waarop
+      // een ondernemer besluit of hij nog kan uitgeven en een boekhouder besluit wie hij aanmaant.
       total_inc_btw: inv.total_inc_btw,
+      amount_paid: inv.amount_paid,
       invoice_date: inv.invoice_date,
       due_date: inv.due_date ?? undefined,
       // [BOEK-013] btw_rate does not exist in DB — always calculate

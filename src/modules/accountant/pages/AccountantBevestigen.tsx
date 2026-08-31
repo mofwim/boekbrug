@@ -44,6 +44,17 @@ export interface TeBevestigen {
   btw: number | null
   /** Wat de lezer NIET zeker wist. Leeg = niets aan de hand. */
   twijfels: string[]
+  /**
+   * [CREDIT-BEVESTIG] Een creditnota die POSITIEF is opgeslagen — het gewone geval, want de meeste
+   * Nederlandse creditnota's drukken hun bedragen positief af en de lezer levert ze met opzet zo
+   * aan (ai.ts: "het systeem houdt hem tegen voor een mens").
+   *
+   * Zo bevestigd telt hij als kosten en vraagt hij btw TERUG die er juist af hoort — in het
+   * voordeel van de ondernemer op de aangifte, dus precies de richting die een naheffing wordt.
+   * De route weigert hem. Deze vlag is waarom de knop hier al niet meer aangeboden wordt: een
+   * weigering ná de tik laat een boekhouder achter met een foutmelding en geen uitweg.
+   */
+  creditTegenTeken?: boolean
 }
 
 interface Props {
@@ -444,20 +455,43 @@ export default function AccountantBevestigen({ rijen, geenMandaat = false, gekop
               </p>
             )}
 
+            {/* [CREDIT-BEVESTIG] Voor de knop, niet erna. De route weigert dit stuk, en een weigering
+                die pas komt ná de tik laat een boekhouder achter met een foutmelding en geen uitweg
+                — terwijl de uitweg bestaat en er hiernaast staat: vraag de ondernemer het bedrag te
+                corrigeren. */}
+            {rij.creditTegenTeken && !isKlaar && (
+              <div
+                role="alert"
+                style={{
+                  marginTop: 12,
+                  padding: '10px 12px',
+                  background: M3.warningContainer,
+                  border: `1px solid ${M3.warning}`,
+                  borderRadius: R.sm,
+                  fontSize: 13.5,
+                  lineHeight: 1.55,
+                  color: M3.warning,
+                }}
+              >
+                {t('bh.bev.rij.creditTegenTeken')}
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={() => bevestig(rij)}
-                disabled={bezig === rij.id || isKlaar}
+                // [CREDIT-BEVESTIG] Uitgeschakeld op precies de rijen die de route toch weigert.
+                disabled={bezig === rij.id || isKlaar || rij.creditTegenTeken === true}
                 style={{
                   padding: '9px 16px',
-                  background: isKlaar ? M3.successContainer : M3.primary,
-                  color: isKlaar ? M3.success : M3.onPrimary,
+                  background: isKlaar ? M3.successContainer : rij.creditTegenTeken ? M3.surfaceVariant : M3.primary,
+                  color: isKlaar ? M3.success : rij.creditTegenTeken ? M3.neutral : M3.onPrimary,
                   border: 'none',
                   borderRadius: R.full,
                   fontSize: 14,
                   fontWeight: 500,
-                  cursor: bezig === rij.id || isKlaar ? 'default' : 'pointer',
+                  cursor: bezig === rij.id || isKlaar || rij.creditTegenTeken ? 'default' : 'pointer',
                 }}
               >
                 {isKlaar
