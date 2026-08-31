@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 109 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 110 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 9 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -47,6 +47,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('account_purpose_archief.sql', 'column', 'account_purpose', 'profiles', 'public'),
   ('account_purpose_archief.sql', 'constraint', 'profiles_account_purpose_check', null, 'public'),
   ('account_purpose_archief.sql', 'function', 'handle_new_user', null, 'public'),
+  ('accountant_amount_guard_restore.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'confirmed_by', 'invoices', 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'kind', 'accountant_invoice_mandates', 'public'),
   ('accountant_confirm_mandate.sql', 'constraint', 'accountant_invoice_mandates_kind_check', null, 'public'),
@@ -439,7 +440,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 118
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 119
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
