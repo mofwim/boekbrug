@@ -230,7 +230,20 @@ BEGIN
      (NEW.payment_prepared_at IS DISTINCT FROM OLD.payment_prepared_at) OR
      (NEW.pay_token           IS DISTINCT FROM OLD.pay_token)           OR
      (NEW.invoice_number      IS DISTINCT FROM OLD.invoice_number)      OR
-     (NEW.invoice_type        IS DISTINCT FROM OLD.invoice_type)
+     (NEW.invoice_type        IS DISTINCT FROM OLD.invoice_type)        OR
+     -- [SEC] Deze drie zijn later toegevoegd (accountant_write_holes.sql) en vielen bij een
+     -- volgende CREATE OR REPLACE stil uit de lijst. Ze staan nu in ELKE herdefinitie, zodat het
+     -- niet uitmaakt welke van deze bestanden als laatste is gedraaid — deze map kent geen volgorde
+     -- en houdt geen journaal bij, dus dat is niet vast te stellen.
+     --
+     -- vendor_iban        het rekeningnummer waar de ondernemer naartoe betaalt, EN de referentie
+     --                    waartegen de IBAN-wisselcontrole de volgende factuur van dezelfde
+     --                    leverancier afzet: hem verzetten verlegt de betaling én de meetlat.
+     -- payment_reference  het kenmerk dat hij bij die betaling overneemt.
+     -- document_id        welk bewijsstuk onder deze factuur hangt.
+     (NEW.vendor_iban         IS DISTINCT FROM OLD.vendor_iban)         OR
+     (NEW.payment_reference   IS DISTINCT FROM OLD.payment_reference)   OR
+     (NEW.document_id         IS DISTINCT FROM OLD.document_id)
   THEN
     RAISE EXCEPTION
       'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',

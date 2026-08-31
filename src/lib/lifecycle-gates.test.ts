@@ -10013,6 +10013,78 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
 });
 
+test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop a column", () => {
+  // Wat er is gebeurd, en het is de gevaarlijkste vorm die een migratiemap zonder volgorde kent.
+  //
+  // accountant_write_holes.sql voegde `vendor_iban`, `payment_reference` en `document_id` toe aan
+  // de beschermde kolommen van prevent_accountant_amount_changes(), met een [SEC]-toelichting per
+  // stuk. Daarna herdefinieerde accountant_confirm_mandate.sql dezelfde functie — voor een andere,
+  // legitieme reden (de bevestigmachtiging) — en nam de lijst over zonder die drie.
+  //
+  // CREATE OR REPLACE vervangt het lichaam volledig. Geen waarschuwing, geen conflict, en niets in
+  // deze map dat zegt welke van de twee als laatste is gedraaid. Nagekeken in de productiedatabase:
+  // de LIVE functie droeg zeventien kolommen in plaats van twintig, dus de reparatie was terug-
+  // gedraaid en niemand wist het.
+  //
+  // Waarom het geld raakt: invoices_accountant_update_v2 laat een gemachtigde boekhouder een
+  // gedeelde factuur UPDATEN, en deze trigger is wat daar de financiële kolommen uit houdt. Met
+  // vendor_iban erbuiten kan hij het rekeningnummer op een inkoopfactuur van zijn klant wijzigen —
+  // waar de ondernemer daarna naartoe betaalt. En vendor_iban is óók de referentie waartegen de
+  // IBAN-wisselcontrole de VOLGENDE factuur van dezelfde leverancier afzet, dus dezelfde bewerking
+  // verlegt de betaling én de meetlat die dat had moeten zien.
+  //
+  // De regel hieronder is daarom niet "het laatste bestand moet kloppen" — welk bestand dat is,
+  // valt hier niet vast te stellen — maar: ELKE herdefinitie draagt de volledige lijst. Dan maakt
+  // de volgorde niet meer uit, en dat is precies de eigenschap die deze map mist.
+  const MOET_BESCHERMEN = [
+    "total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "due_date",
+    "sender_id", "receiver_id", "direction", "status", "amount_paid",
+    "payment_method", "payment_date", "marked_paid_at", "payment_prepared_at",
+    "pay_token", "invoice_number", "invoice_type",
+    // De drie die stil wegvielen.
+    "vendor_iban", "payment_reference", "document_id",
+  ];
+
+  const migraties = readdirSync("supabase/migrations")
+    .filter((f) => f.endsWith(".sql"))
+    .map((f) => `supabase/migrations/${f}`);
+  assert.ok(migraties.length > 50, `only ${migraties.length} migrations seen; the scan must be broken`);
+
+  const herdefinities: string[] = [];
+  const gaten: string[] = [];
+  for (const f of migraties) {
+    const sql = readFileSync(f, "utf8");
+    if (!/CREATE OR REPLACE FUNCTION public\.prevent_accountant_amount_changes/.test(sql)) continue;
+    herdefinities.push(f);
+    // Alleen de deny-lijst zelf, niet de uitzonderingen erboven — die noemen dezelfde kolommen om
+    // ze juist toe te STAAN, en dat mag deze telling niet als bescherming lezen.
+    //
+    // Geankerd op de STRUCTUUR en niet op een commentaarregel: de zeven herdefinities gebruiken
+    // drie verschillende koppen, en een eerdere versie van deze poort sneed op "Everyone else
+    // (accountant)" — waardoor ze bij vier bestanden een lege lijst las en ze alle twintig kolommen
+    // als ontbrekend meldde. Een poort die vals alarm slaat, wordt uitgezet.
+    //
+    // De deny-lijst is per definitie de IF die direct vóór de RAISE staat — binnen DEZE functie.
+    // Een migratie definieert er vaak meer dan één (next_invoice_seq gooit drie keer), dus de
+    // zoektocht begint bij de CREATE van de functie waar het hier over gaat en niet bij byte nul.
+    const vanaf = sql.indexOf("CREATE OR REPLACE FUNCTION public.prevent_accountant_amount_changes");
+    const eind = sql.indexOf("RAISE EXCEPTION", vanaf);
+    const start = eind === -1 ? -1 : sql.lastIndexOf("IF (", eind);
+    const lijst = start !== -1 && eind !== -1 ? sql.slice(start, eind) : "";
+    for (const kolom of MOET_BESCHERMEN) {
+      if (!new RegExp(`NEW\\.${kolom}\\b`).test(lijst)) gaten.push(`${f} — ${kolom}`);
+    }
+  }
+  assert.ok(herdefinities.length >= 3,
+    `only ${herdefinities.length} redefinitions found; the scan must be broken — this gate is ` +
+    "worthless if it cannot see the files it is about");
+  assert.deepEqual(gaten, [],
+    "these redefinitions of prevent_accountant_amount_changes leave a column OUT of the deny-list. " +
+    "CREATE OR REPLACE replaces the whole body, and nothing here records which migration ran last, " +
+    "so whichever one it was decides what a mandated accountant may rewrite:\n  " +
+    gaten.join("\n  "));
+});
+
 test("[CRON-EENMAAL] a cron that MAILS cannot rely on the scheduler firing once", () => {
   // beginCronRun/finishCronRun is a HEARTBEAT, not a lock: it records that a run happened, it
   // stops nothing. For most of the work here that is fine, because the work converges —
