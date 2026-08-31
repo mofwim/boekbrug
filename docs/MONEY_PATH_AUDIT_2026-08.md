@@ -448,3 +448,57 @@ are the owner's to do, not an agent's: applying
 tightening), and deciding what to do about the 14 invoices whose `amount_paid` is 0 while their
 links cover the total exactly — `recompute_invoice_amount_paid` would repair them, but that writes
 to real books.
+
+### §11 continued — the later half of the same night
+
+**Two doors for "mark this invoice paid" disagreed.** `/api/email/confirm`'s 'pay' action wrote the
+status and not `amount_paid`; pay-toggle, the bank confirmation and the auto-confirm all write both.
+Five purchase invoices sit in production as paid/bank/0/no-links. The aangifte is unaffected —
+`isSettled` reads `amount_paid > 0 || status === 'paid'` precisely for legacy rows — but the money
+audit reports them with a sentence describing the wrong thing.
+
+**The money audit was crying wolf.** `btw_arithmetic` reported three live invoices as "ex 0 + btw 0
+is not € 1.040,12 — dit getal staat in je aangifte", about a split the reader has not reached yet.
+The check's own comment forbids exactly this ("een schending verzinnen uit een gat is hoe een audit
+ophoudt geloofd te worden") and covered NULL but not zero. One genuine break exists in the books
+(€ 176,40) and deserved not to be lost among three false ones.
+
+**The three screens a return is filed from had no render coverage** — aangifte, klaar, waarheid —
+which is the class AGENTS.md opens with. Verified by reintroducing that exact defect.
+
+**Every owner was told their zelfstandigenaftrek might lapse.** All nine have zero time entries, so
+all nine got the full red warning about the largest deduction a zzp'er has. urencriterium.ts's own
+rule 3 draws the line this crossed: only registered hours count, and that is a statement about the
+registration, "the difference between a fact and an accusation".
+
+### Checked and found SOUND — recorded so nobody re-investigates
+
+**The UBL creditnota flip.** `ubl-export.ts` negates quantity and line total while keeping the unit
+price a magnitude, and that is correct: Peppol BIS 3.0 states a credit note's amounts positive with
+type code 381, and BR-27 forbids a negative `cbc:PriceAmount`. `CR-20260002` in production has the
+shape that would break a naive reading (negative quantity AND negative line total) and comes out
+right. The `?? 1` default cannot express a negated line, but no invoice_line in production has a
+null quantity, and the module's comment reasons about that default deliberately.
+
+**The cash-drawer axis.** My first pass reported two owners below zero. That was my error: it summed
+`cash_entries` alone, and till takings enter the drawer through `daily_turnover` without a
+cash_entries row. Corrected, one owner's low point is +€59 (not −€41) and the other's is −€892,86
+(not −€2.804,45). The remaining negative is real, and the app already detects it — `drawer_negative`
+reports it and the filing gate blocks on it. No code defect; the owner's data has a question in it.
+
+### One complete feature that nothing calls
+
+`src/lib/found-money.ts` — `foundMoney()`, fully written and tested, imported by nothing. It turns
+the one figure the reconciliation genuinely FINDS (the acquirer commission that was silently
+inflating profit) into something an owner learns about. Its own header says why that matters: the
+figure "reaches exactly one place: a stat tile on /dashboard/waarheid, alive for as long as that
+screen is open", and "for an owner who does not open that screen it is work the app did that nobody
+will ever learn about".
+
+Not wired here, and the reason is the same one §10 gives for its item 3: WHERE this surfaces is a
+product decision, not a wiring task. It puts a new claim about money in front of the owner, and the
+module itself is careful about the framing (MARKTPOSITIE_2026.md §5: lead with "your profit is
+overstated", never with "we found you € 340"). It takes a `RangeResult`, which
+`computeResultForRange` already produces, so wiring it anywhere is a few lines once the destination
+is chosen. Two other modules are also uncalled — `deck.ts` (buildDeck) and `recon-confirm-client.ts`
+(confirmReconPayment) — and were not investigated further.
