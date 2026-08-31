@@ -599,6 +599,20 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     out.push(`  Dit bestand sluit daardoor niet aan op de aangifte over dezelfde periode.`);
     out.push(`-->`);
   }
+  // [XAF-REGIME] Dezelfde plek, om dezelfde reden. Deze notities zeggen onder welk BTW-stelsel de
+  // datums in dit bestand gelezen moeten worden en wat er NIET in gesplitst is — uitspraken die
+  // bepalen hoe álles hieronder telt. Ze stonden achter </company>, helemaal onderaan: technisch
+  // in het bestand, praktisch achter duizenden regels journaalposten. Een lezer die het bestand
+  // opent moet ze zien vóór hij aan de cijfers begint, niet erna.
+  //
+  // xmlCommentSafe en niet esc(): dit is een XML-COMMENTAAR. Daar sluit een dubbel koppelteken het
+  // commentaar (en maakt het bestand ongeldig), terwijl &amp; er juist letterlijk als "&amp;"
+  // komt te staan. De twee ontsnappingen lossen tegengestelde problemen op.
+  if (input.regimeNotes.length > 0) {
+    out.push(`<!--`);
+    for (const note of input.regimeNotes) out.push(`  ${xmlCommentSafe(note)}`);
+    out.push(`-->`);
+  }
   out.push(`<auditfile xmlns="http://www.auditfiles.nl/XAF/3.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
   out.push("<header>");
   out.push(el("fiscalYear", String(year)));
@@ -731,9 +745,6 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</transactions>");
   out.push("</company>");
-  for (const note of input.regimeNotes) {
-    out.push(`<!-- BoekBrug LET OP: ${esc(note)} -->`);
-  }
   if (skipped.length > 0) {
     const listed = skipped.slice(0, 50).map((s) => `${s.source}:${s.id} (${s.reason})`).join("; ");
     out.push(`<!-- BoekBrug: ${skipped.length} regel(s) niet opgenomen - ${esc(listed)}${skipped.length > 50 ? "; ..." : ""} -->`);
