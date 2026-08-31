@@ -292,6 +292,18 @@ function matchedCoveredDay(t: ResultBankTx, covered: Set<string>, remaining: Map
 }
 
 /**
+ * [COM-DUBBEL] Does this card payout reconcile to a day the till already counted?
+ *
+ * The same recognition question matchedCoveredDay answers, exported as a yes/no so the commission
+ * decision in result-range-assemble.ts asks it in exactly the same words as the omzet-suppression
+ * leg. Passing an empty budget map is deliberate: budget decides WHICH covered day a payout draws
+ * from, and this asks only WHETHER it reconciles to one at all.
+ */
+export function reconcilesToCoveredDay(t: ResultBankTx, covered: Set<string>): boolean {
+  return matchedCoveredDay(t, covered, new Map()) !== null;
+}
+
+/**
  * [WEEKBATCH] How much of this settlement was already counted by the till — across EVERY covered
  * day it can reach, not just one.
  *
