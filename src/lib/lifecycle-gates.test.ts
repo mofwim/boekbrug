@@ -21199,3 +21199,56 @@ test("[GENEGEERD-TELT] the screen says what the choice does with the money", () 
       "would be deciding on the basis of something that does not happen",
   );
 });
+
+// ─── [SUPPLETIE-FANTOOM] Een correctie die alleen in de afronding bestond ─────────────
+//
+// Twee getallen op één scherm, allebei "het BTW-saldo van dit kwartaal", langs verschillende wegen
+// afgerond:
+//
+//   · het concept-5g is de SOM van de per rubriek afgeronde bedragen, want zo vraagt het papieren
+//     formulier het;
+//   · de ingediende momentopname bewaart het ruwe totaal van de motor, en het scherm rondde dat in
+//     ÉÉN keer af — met Math.round bovendien, dat gelijkspel naar +∞ breekt waar de rubrieken
+//     ernaast symmetrisch rond nul afronden.
+//
+// Het scherm trok die twee van elkaar af. Op een kwartaal waar niemand iets aan veranderde stond er
+// dan "er komt € 1 bij" boven een aangifte die al was ingediend — een suppletie-prompt voor een
+// verschil dat alleen in de afronding bestond, op precies het scherm waar een cijfer te vertrouwen
+// moet zijn. En een waarschuwing die één keer onterecht blijkt, is de reden dat de volgende niet
+// wordt gelezen.
+//
+// De echte suppletie-machinerie (computeFilingDivergence) vergeleek altijd al ruw met ruw en was
+// nooit fout. Alleen de zin op het scherm was dat.
+
+test("[SUPPLETIE-FANTOOM] the difference comes from the raw figures, never from two displays", () => {
+  const ui = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  const route = code("src/app/api/aangifte/route.ts");
+
+  assert.doesNotMatch(
+    ui, /data\.saldo - filed\.saldo/,
+    "the screen subtracts two independently rounded numbers again. The concept's 5g is a sum of " +
+      "rounded rubrieken and the filed saldo is a total rounded once — on an unchanged quarter " +
+      "those differ, and the owner is told to correct a return nobody touched.",
+  );
+  assert.match(ui, /filed\?\.saldoDelta/, "the client no longer uses the server's raw-derived delta");
+  assert.match(
+    route, /saldoDelta: euro\(\(result\.btwSaldo \?\? 0\) - rawSaldo\)/,
+    "the route stopped deriving the delta from the unrounded figures on both sides",
+  );
+});
+
+test("[SUPPLETIE-FANTOOM] the filed snapshot is rounded by the same rule as the rubrieken beside it", () => {
+  const route = code("src/app/api/aangifte/route.ts");
+
+  // Math.round breekt gelijkspel naar +∞; euro() rondt symmetrisch rond nul af. Op een kwartaal dat
+  // per saldo negatief uitkomt — een grote creditnota, een teruggedraaid seizoen — gaven de twee
+  // getallen op één scherm daardoor een ander antwoord over dezelfde halve euro.
+  const block = route.slice(route.indexOf("filed = {"), route.indexOf("filed = {") + 700);
+  assert.doesNotMatch(
+    block, /Math\.round\(Number\(r\.btw_/,
+    "the filed figures are rounded with Math.round again, while the rubrieken next to them use " +
+      "euro(). On a quarter that nets negative the same half-euro then goes two ways on one screen.",
+  );
+  assert.match(block, /euro\(Number\(r\.btw_verschuldigd\)/, "5a of the filing no longer uses the shared rounding");
+  assert.match(block, /euro\(rawSaldo\)/, "5g of the filing no longer uses the shared rounding");
+});

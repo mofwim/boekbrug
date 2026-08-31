@@ -2,7 +2,7 @@
 // The headline case is PINNED to a REAL accountant filing: Kiwi Food Market, Btw-aangifte
 // 1e kwartaal 2026. If the mapper reproduces that form line-for-line from the same
 // numbers, the concept is trustworthy.
-import { buildAangifte, buildAangifteCsv, privegebruikNote, type AangifteInput, type AangifteCompleteness } from "./aangifte";
+import { buildAangifte, buildAangifteCsv, euro, privegebruikNote, type AangifteInput, type AangifteCompleteness } from "./aangifte";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -456,6 +456,35 @@ console.log("\n— [AFRONDING] hele euro's, symmetrisch rond nul —");
   );
   check("voorbelasting 210,50 wordt 211", teruggaaf.voorbelasting === 211);
   check("en het saldo is dan -211", teruggaaf.saldo === -211);
+}
+
+console.log("\n— [SUPPLETIE-FANTOOM] the two roundings that produced a phantom correction —");
+{
+  // The concept's 5a is the SUM of the per-rubriek rounded amounts, because that is what the paper
+  // form asks for. The filing snapshot stores the engine's raw total, and the screen rounded that
+  // ONCE. Those are different operations, and on a quarter nobody touched they disagreed — so the
+  // owner read that "€ 1 komt erbij" on a return he had already filed: a suppletie prompt for a
+  // difference that existed only in the rounding, on the screen where a figure has to be trusted.
+  //
+  // (The other half of the same defect — Math.round against euro() on a negative quarter — is
+  // pinned by the [AFRONDING] block above; the filed snapshot now uses euro() too.)
+  const input: AangifteInput = {
+    salesByRate: [
+      { rate: 21, omzet: 1000, btw: 100.5 },   // → 101 on its own line
+      { rate: 9, omzet: 1000, btw: 200.5 },    // → 201 on its own line
+    ],
+    btwVoorbelasting: 0,
+    cashOmzetZonderBtw: 0,
+  };
+  const a = buildAangifte(input, compl(), "Q3 2026");
+  const rawTotal = 100.5 + 200.5;              // 301 exactly — what the engine hands the filing
+
+  check("5a is the sum of the rounded rubrieken (101 + 201)", a.verschuldigd === 302);
+  check("rounding the raw total once gives 301 instead", euro(rawTotal) === 301);
+  check("so subtracting the two DISPLAYS invents a euro out of nothing", a.verschuldigd - euro(rawTotal) === 1);
+  // The comparison that is actually correct, and what the route now returns as saldoDelta — the
+  // same raw-against-raw that computeFilingDivergence has always used for the real suppletie.
+  check("raw against raw is zero on an unchanged quarter", euro(rawTotal - rawTotal) === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
