@@ -16722,11 +16722,26 @@ test("[CREDIT-IS-CREDIT] a creditnota may not come out of the door asking for mo
     "…and refuse with the sentence that names which of the two it is");
 
   // Asked BEFORE the row is written, and before a number is consumed from the creditnota series.
+  // The second half is this file's own rule for the route: "een creditnota die hier wordt geweigerd
+  // heeft nog geen nummer verbruikt". A refusal that lands after the mint burns a number out of the
+  // doorlopende creditnota-reeks on a document that is never created — a gap an accountant has to
+  // explain.
   const gevraagd = route.indexOf("creditNetFault(keuze.totalIncBtw)");
   const geschreven = route.indexOf("total_inc_btw: -keuze.totalIncBtw");
+  const genummerd = route.indexOf("await generateInvoiceNumber(");
   assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the mirror must be findable");
+  assert.ok(genummerd >= 0, "the number mint must be findable — has it moved?");
   assert.ok(gevraagd < geschreven,
     "the check must run before the mirror writes the header, not after");
+  assert.ok(gevraagd < genummerd,
+    "…and before a number is taken out of the creditnota series");
+
+  // ONE definition of "a creditnota whose money sits the wrong way". creditnotaSignConflict is what
+  // every widget already uses to spot such a row once it is STORED; the door asks the same question
+  // one step earlier, of the row the selection would produce. A second spelling here would be a
+  // second answer, and this file has a name for that.
+  assert.match(rules, /creditnotaSignConflict\(\{ invoiceType: "creditnota", totalIncBtw: -totalIncBtw \}\)/,
+    "the door must reuse the conflict definition, not restate it");
 });
 
 test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {

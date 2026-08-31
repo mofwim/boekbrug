@@ -40,6 +40,8 @@
 // weg verandert geen cent.
 
 import { round2 } from "./invoice-totals";
+// [CREDIT-IS-CREDIT] The one definition of "a creditnota whose money sits the wrong way".
+import { creditnotaSignConflict } from "./creditnota-signal";
 import { applyDiscount, parseDiscount, lineGrossEx, lineNetEx, type Discount } from "./invoice-discount";
 // [DEEL-CREDIT-CUMULATIEF] Het voorvoegsel waarmee een creditnotaregel zijn origineel noemt — de
 // enige verwijzing die er is, want een kolom die terugwijst bestaat niet. Zie creditnota-lines.ts.
@@ -469,7 +471,14 @@ export function creditNetFault(totalIncBtw: number): CreditNetFault | null {
   // [CENT] Integer cents — a selection that nets a fraction of a cent is not "almost a credit".
   const cents = Math.round(totalIncBtw * 100);
   if (!Number.isFinite(cents) || cents === 0) return "credits_nothing";
-  return cents < 0 ? "charges_instead_of_credits" : null;
+  // "Charges instead of credits" is not a second opinion: it is creditnotaSignConflict, asked of
+  // the row this selection WOULD produce. That function is what every widget already uses to spot
+  // a stored creditnota carrying a positive total ("the app contradicting itself"); this is the
+  // same question one step earlier, at the door, where it can still be refused. One definition,
+  // two moments — so if what counts as a conflict ever changes, both move together.
+  return creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: -totalIncBtw })
+    ? "charges_instead_of_credits"
+    : null;
 }
 
 /** What the owner reads. Dutch, like every other refusal this route sends — see NOT_A_FACTUUR_REASON. */
