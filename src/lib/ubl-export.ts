@@ -295,7 +295,7 @@ function invoiceTypeCode(invoiceType: string | null): "380" | "381" | "325" {
  * what it does with an export — and E and AE are the ones a receiver has to book differently.
  * Under BR-E-* and BR-AE-* of Peppol BIS Billing 3.0 both codes also REQUIRE a reason on the
  * TaxSubtotal (TaxExemptionReason), so a validator rejects the document rather than mis-reading
- * it. That is why this was worth fixing before the 2027/2028 Dutch e-invoicing mandate rather
+ * it. That is why this was worth fixing before any Dutch e-invoicing mandate lands rather
  * than after: an invoice that fails validation is an invoice that was never delivered.
  *
  * A line says which one it is via vat_treatment ('exempt') — the same flag the aangifte reads to

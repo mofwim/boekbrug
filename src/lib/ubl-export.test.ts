@@ -261,7 +261,7 @@ test("[MIN-REGEL] an ordinary line is emitted exactly as it was before", () => {
 // Z is the one that tells the receiving system "taxable, rate zero". For an exempt physio or a
 // reverse-charged subcontractor that is a different legal fact about the same money, and it is the
 // fact the receiver has to book differently. Peppol also REFUSES E and AE without a reason
-// (BR-E-10 / BR-AE-10), so this is not only a mis-statement — after the 2027/2028 mandate it is a
+// (BR-E-10 / BR-AE-10), so this is not only a mis-statement — once a mandate lands it is a
 // document that never arrives.
 
 test("[E-FACTUUR] an exempt line is category E with a reason, not Z", () => {

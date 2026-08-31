@@ -89,6 +89,27 @@ export function getPreviousQuarter(
 /**
  * BTW-aangifte deadline (ISO date, inclusive) for a filed quarter.
  * @example getAangifteDeadline(2026, 2) → '2026-07-31'
+ *
+ * ── [TIJDVAK-KWARTAAL] What this assumes, said once, here ──
+ *
+ * That the entrepreneur files PER QUARTER. That is the ordinary Dutch tijdvak for a zzp'er and it
+ * is the only one this app supports — `quarter` is typed 1|2|3|4 end to end, btw_filings has a
+ * CHECK on it and a UNIQUE (user_id, year, quarter), and there is no profile field, setting or
+ * screen where an owner can say otherwise.
+ *
+ * A monthly filer is therefore handed figures that are correctly LABELLED ("Q2 2026") and grouped
+ * for a period they do not file — an inconvenience, not a wrong number. The one thing that WOULD
+ * be wrong for them is this date: their deadline is the last day of the month after each MONTH,
+ * so a countdown to 31 July is three deadlines too late.
+ *
+ * Which is why both callers are accountant surfaces — the werkboard hero and the accountant's
+ * daily mail — where the reader knows their client's tijdvak. The gate [TIJDVAK-KWARTAAL] in
+ * lifecycle-gates.test.ts keeps it that way: this deadline may not appear on an owner's screen
+ * while the app cannot ask which tijdvak they are on.
+ *
+ * Supporting a monthly tijdvak properly is a product decision with its own migration (a column on
+ * profiles, a period type that is not QuarterNo, and a btw_filings shape that can hold a month) —
+ * not a change to be made by widening this function.
  */
 export function getAangifteDeadline(year: number, quarter: number): string {
   const endMonths: Record<number, number> = { 1: 3, 2: 6, 3: 9, 4: 12 }

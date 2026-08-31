@@ -357,8 +357,8 @@ export interface ReverseChargeFacts {
  * [E-FACTUUR-VERLEGD] Split out of reverseChargeNotice() because the answer has TWO readers who
  * must never disagree: the PDF prints a sentence, and the UBL export has to put the supply in
  * category AE instead of Z. It used to be the sentence only, so the same invoice went out saying
- * "Btw verlegd" on paper and "zero rated" in the XML — and from the 2027/2028 Dutch mandate the
- * XML is the one that counts.
+ * "Btw verlegd" on paper and "zero rated" in the XML — and for a counterparty whose system reads
+ * the file rather than the page, the XML is the one that counts.
  *
  * Note what is NOT here: the line-text check. "The owner already wrote it, so do not say it twice"
  * is about the SENTENCE, not about whether the reverse charge applies. Folding it in would mean an

@@ -89,7 +89,10 @@ export async function GET(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: fRow, error: fErr } = await (pipeline as any)
       .from("btw_filings")
-      .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo")
+      // [SUPPLETIE-EEN-ANTWOORD] carried_saldo hoort erbij. Zonder die kolom weet de banner niet
+      // wat er al is aangegeven, en zei hij "dien een suppletie in" over een correctie die de app
+      // zelf al had helpen doorschuiven — met de knop ernaast die terecht een doorschuif aanbood.
+      .select("filed_at, omzet, kosten, btw_verschuldigd, btw_voorbelasting, btw_saldo, carried_saldo")
       .eq("user_id", owner.ownerId)
       .eq("year", win.year)
       .eq("quarter", win.quarter)
@@ -103,6 +106,7 @@ export async function GET(req: NextRequest) {
     const row = fRow as unknown as {
       filed_at: string; omzet: number; kosten: number;
       btw_verschuldigd: number; btw_voorbelasting: number; btw_saldo: number;
+      carried_saldo: number | null;
     } | null;
     if (row) {
       const figures = {
@@ -121,7 +125,9 @@ export async function GET(req: NextRequest) {
           btwVerschuldigd: result.btwVerschuldigd,
           btwVoorbelasting: result.btwVoorbelasting,
           btwSaldo: result.btwSaldo,
-        }),
+        // [SUPPLETIE-EEN-ANTWOORD] Wat er al is doorgeschoven, zodat de banner over het RESTANT
+        // spreekt — hetzelfde bedrag waarop de knop ernaast zijn route bepaalt.
+        }, Number(row.carried_saldo) || 0),
       };
     }
   }
