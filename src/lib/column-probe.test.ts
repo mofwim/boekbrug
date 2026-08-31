@@ -91,3 +91,29 @@ test("[KAS-PROBE] a YES is cached and a failure never becomes one", async () => 
   assert.equal(await columnExists(gone, "t", "c", "why"), true, "a proven column stopped being proven");
   assert.equal(await columnExists(gone, "t", "other", "why"), false, "one column's YES answered for another");
 });
+
+// ── The shape the kasstelsel reader actually sees ───────────────────────────
+//
+// fetchAllRows does `throw new Error(error.message)`, so a caller downstream of it gets an Error
+// with a message and NO code. Every code-based branch above is unavailable there, and the wording
+// match is the only thing standing between "the column is missing" and "the database was busy".
+// kas-payment-events-fetch depends on exactly that: a wrong answer silently re-reads without
+// paid_on and takes every cash instalment out of its BTW quarter.
+
+test("[KAS-PROBE] a code-less Error from fetchAllRows is still classified correctly", () => {
+  const absent = new Error("column bank_tx_invoices.paid_on does not exist");
+  assert.equal(columnIsAbsent(absent, "paid_on"), true, "the wrapped absent-column error was not recognised");
+
+  for (const message of [
+    "canceling statement due to statement timeout",
+    "fetch failed",
+    "JSON object requested, multiple (or no) rows returned",
+    "column bank_tx_invoices.some_other_column does not exist",
+  ]) {
+    assert.equal(
+      columnIsAbsent(new Error(message), "paid_on"),
+      false,
+      `"${message}" would have dropped paid_on and re-dated every cash instalment`,
+    );
+  }
+});

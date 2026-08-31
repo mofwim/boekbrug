@@ -19845,10 +19845,22 @@ test("[BETAALHERINNERING] de eigenaar hoort het vóór de vervaldag, niet erna",
   // ná de vervaldatum — terwijl deze ladder ervóór spreekt. De uitsluiting was dus dode code en
   // élke automatisch afgeschreven factuur werd opgeëist. Een poort die de aanroep pint en niet de
   // waarheid, keurt precies dat goed.
-  assert.match(cron, /\.from\("suppliers"\)\s*\.select\("id"\)\s*\.eq\("auto_incasso", true\)/,
+  assert.match(cron, /\.from\("suppliers"\)\s*\.select\("id, user_id, name, name_key"\)\s*\.eq\("auto_incasso", true\)/,
     "de cron leest de incasso-schakelaar niet meer van de LEVERANCIER — de enige bron die vóór de vervaldatum al waar is");
-  assert.match(cron, /autoDebit:\s*\(!!r\.supplier_id && incassoSuppliers\.has\(r\.supplier_id\)\) \|\| wasAutoIncasso\(r\.field_confidence\)/,
-    "de twee bronnen staan niet meer allebei aan — één ervan is per definitie te laat");
+  // [EEN-DEFINITIE] En sinds vandaag pint deze poort niet de SPELLING maar de BRON. De regel las
+  // eerst alleen supplier_id, terwijl belongsToIncassoSupplier — dezelfde vraag, gesteld door de
+  // module die de factuur automatisch als betaald BOEKT — terugvalt op de naamsleutel zodra
+  // supplier_id leeg is of naar een niet-gemarkeerde rij wijst. Een factuur in dat gat werd wél
+  // afgeschreven én aangemaand: precies de tweede overboeking die de kop hierboven beschrijft.
+  // Twee facturen stonden er op het moment van de meting in.
+  //
+  // Dus: de cron moet de FUNCTIE aanroepen, niet zijn eigen versie ervan naschrijven. Dat is ook
+  // wat deze poort al over zichzelf had geleerd — "een poort die de aanroep pint en niet de
+  // waarheid, keurt precies dat goed" — één laag hoger toegepast.
+  assert.match(cron, /import \{ belongsToIncassoSupplier[^}]*\} from "@\/lib\/incasso-settle"/,
+    "de cron leent de definitie niet meer van de boekingsmodule — dan zijn het weer twee spellingen");
+  assert.match(cron, /autoDebit:\s*!!belongsToIncassoSupplier\(r, incassoByOwner\.get\(owner\) \?\? \[\]\) \|\| wasAutoIncasso\(r\.field_confidence\)/,
+    "de twee bronnen staan niet meer allebei aan, of de leverancierskant is weer eigen handwerk");
   assert.match(cron, /\.select\("id, receiver_id, client_name, invoice_number, due_date, total_inc_btw, field_confidence, supplier_id"\)/,
     "supplier_id wordt niet meer gelezen, dus de leveranciersvlag is onbereikbaar");
   // En een mislukte leverancierslezing mag nooit "niemand incasseert" worden: dat stuurt iedereen

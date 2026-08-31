@@ -14,6 +14,7 @@
 // so a creditnota (negative header) nets correctly.
 
 import type { PipelineClient } from "./supabase-pipeline";
+import { columnIsAbsent } from "@/lib/column-probe";
 import { fetchAllRows } from "./supabase-paginate";
 import {
   buildQuarterSettlements,
@@ -93,8 +94,21 @@ export async function fetchSettlementEvents(
       .eq("user_id", ownerId)
       .order("id", { ascending: true }).range(from, to) as never,
   );
+  // [KAS-PROBE] The fallback fires ONLY on a genuinely absent column. It used to fire on any
+  // rejection, and the two are nothing alike: a statement timeout, a 5xx on page two or a pooler
+  // refusal would silently re-read WITHOUT paid_on, and paid_on is the date a manual instalment is
+  // dated by. Losing it does not lose a field — under the kasstelsel it takes every cash and manual
+  // instalment out of the quarter it belongs to, so the BTW owed on it is under-declared (or the
+  // voorbelasting on the purchase side is lost), and undatedPaidCount then blocks the filing over
+  // rows that were perfectly datable a second earlier.
+  //
+  // The window the fallback was written for is closed: bank_tx_invoices.paid_on exists in
+  // production. Same rule and same helper as the five capability probes — see column-probe.ts.
   const links = await fetchLinks("invoice_id, transaction_id, amount_applied, paid_on")
-    .catch(() => fetchLinks("invoice_id, transaction_id, amount_applied"))
+    .catch((e: unknown) => {
+      if (!columnIsAbsent(e as { code?: string; message?: string }, "paid_on")) throw e;
+      return fetchLinks("invoice_id, transaction_id, amount_applied");
+    })
     .catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
   const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
 
