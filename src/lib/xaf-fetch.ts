@@ -20,6 +20,7 @@
 // which cash rows exist, fetchRateShares supplies the mixed-rate split.
 
 import type { PipelineClient } from "@/lib/supabase-pipeline";
+import { isQuote } from "./offerte-followup";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { isVerifiedForPackage, effectiveDirection } from "@/lib/package-attribution";
 import { toResultBankTx } from "@/lib/financial-result";
@@ -80,6 +81,12 @@ export async function buildXafInputForOwner(args: {
     .order("id", { ascending: true }).range(from, to));
   const attributed = invRows
     .map((r) => ({ ...r, direction: effectiveDirection(r, ownerId) }))
+    // [OFFERTE-GEEN-OMZET] A quote is not a booking. It reached this file with direction
+    // 'outgoing' and status 'sent', and xaf-export captions anything that is not a creditnota
+    // "Verkoopfactuur" — so an unaccepted quote became a VRK journal entry in the auditfile the
+    // accountant and the Belastingdienst read, with a debiteuren line and a "BTW over omzet" line,
+    // for a document that carries no invoice number at all (Art. 35 Wet OB).
+    .filter((r) => !isQuote(r.invoice_type))
     .filter(isVerifiedForPackage);
   const outgoing = attributed.filter((r) => r.direction === "outgoing");
   const incoming = attributed.filter((r) => r.direction === "incoming");

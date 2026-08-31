@@ -3087,3 +3087,21 @@ test("[BANK-WERK-EERST] the bank screen renders, and its file input is always in
     "two file inputs would mean the drop zone and the header button write to different fields",
   );
 });
+
+test("[BANK-STAND] the bank screen says what is waiting, and says nothing while it is still reading", async () => {
+  const { default: BankClient } = await import("../../src/app/dashboard/bank/BankClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  // Effecten draaien niet onder renderToStaticMarkup, dus dit is de eerste verf: `data` is nog
+  // null. Precies het geval dat fout zou zijn om iets over te beweren — "Alles afgehandeld" boven
+  // een scherm dat nog laadt, is een geruststelling die een halve seconde later een leugen blijkt.
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null, React.createElement(BankClient))),
+  );
+  assert.doesNotMatch(html, /Alles afgehandeld/, "it claims the queue is empty before it has read one");
+  assert.doesNotMatch(html, /wachten op je bevestiging/, "it names a count it does not have yet");
+  // En de oude vaste zin is weg: die beschreef wat het scherm DOET, elke dag hetzelfde.
+  assert.doesNotMatch(html, /Koppel je bank of upload je bankafschrift\. We koppelen/, "the static intro is back");
+});

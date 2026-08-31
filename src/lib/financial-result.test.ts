@@ -932,5 +932,43 @@ console.log("\n— [VRAAGPOST] the money the result refuses to guess at is NAMED
     tidy.ongecategoriseerdBankIn === 0 && tidy.ongecategoriseerdBankUit === 0);
 }
 
+console.log("\n— [OFFERTE-GEEN-OMZET] a quote is not turnover —");
+{
+  // A quote e-mailed to a customer is stored as invoice_type 'pro_forma', direction 'outgoing',
+  // status 'sent', with its real totals on it — and this engine filtered on direction and status
+  // alone, so it was declared as taxed omzet. Measured before the guard existed, on exactly the
+  // rows below: omzet 11000 / btw 2310 where the truth is 1000 / 210. The owner was told to pay
+  // EUR 2.100 of BTW on a quote nobody had accepted, for a document with no invoice number.
+  const paid: ResultInvoice = { direction: "outgoing", status: "paid", invoice_type: "factuur", total_ex_btw: 1000, btw_amount: 210 };
+  const quote: ResultInvoice = { direction: "outgoing", status: "sent", invoice_type: "pro_forma", total_ex_btw: 10000, btw_amount: 2100 };
+  // BOTH spellings are load-bearing: the product writes 'pro_forma', while 'offerte' lives in
+  // older rows and in every invoice_type union in the codebase.
+  const legacy: ResultInvoice = { ...quote, invoice_type: "offerte" };
+
+  const r = computeResult([paid, quote, legacy], [], [], []);
+  check("a sent quote adds no omzet", near(r.omzet, 1000));
+  check("…and no verschuldigde BTW", near(r.btwVerschuldigd, 210));
+  check("…in either spelling", r.salesByRate.every((s) => near(s.omzet, 1000)));
+
+  // The control, stated as an assertion: without the type the very same rows DO book. This is
+  // what every caller that forgets to SELECT invoice_type still gets, and why a gate holds them.
+  const blind = computeResult(
+    [paid, quote, legacy].map((i) => ({ ...i, invoice_type: undefined })), [], [], [],
+  );
+  check("a row whose type was not selected still books — the guard fails OPEN",
+    near(blind.omzet, 21000) && near(blind.btwVerschuldigd, 4410));
+
+  // The guard may not swallow anything else. A creditnota is negative BY DESIGN and must net.
+  const credit: ResultInvoice = { direction: "outgoing", status: "paid", invoice_type: "creditnota", total_ex_btw: -500, btw_amount: -105 };
+  const r2 = computeResult([paid, credit], [], [], []);
+  check("a creditnota still nets off the omzet", near(r2.omzet, 500) && near(r2.btwVerschuldigd, 105));
+  // An invoice with no type at all (an older row) is not a quote and must keep counting.
+  const untyped: ResultInvoice = { direction: "outgoing", status: "paid", invoice_type: null, total_ex_btw: 300, btw_amount: 63 };
+  check("an untyped row is not treated as a quote", near(computeResult([untyped], [], [], []).omzet, 300));
+  // A quote that never left the desk was already excluded by status; it must stay excluded.
+  const draftQuote: ResultInvoice = { direction: "outgoing", status: "draft", invoice_type: "pro_forma", total_ex_btw: 999, btw_amount: 209 };
+  check("a draft quote is still nothing", near(computeResult([draftQuote], [], [], []).omzet, 0));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
