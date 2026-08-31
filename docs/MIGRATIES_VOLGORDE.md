@@ -349,6 +349,7 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 17 | `function_search_path.sql` | een vast zoekpad op de negen eigen functies — hygiëne, geen haast |
 | 18 | `bank_auto_book_blocked.sql` | een teruggedraaide automatische boeking komt nu binnen het uur terug |
 | 19 | `accountant_vat_deduction_guard.sql` | een gekoppelde boekhouder kan rubriek 5b van de klant verzetten |
+| 20 | `creditnota_per_rate_ceiling.sql` | twee gelijktijdige deel-creditnota's crediteren dezelfde regel twee keer |
 
 **Over 18 — wat er zonder gebeurt.** runBankAutoConfirm koppelt een bankregel aan een factuur en
 zet die op betaald, en belooft in zijn eigen kop dat het omkeerbaar is: *"fully reversible (owner
