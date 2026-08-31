@@ -12563,6 +12563,38 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
+  // De duurste leesfout die deze administratie in een jaar maakte, was er één soort: een
+  // creditnota geboekt als schuld, waarbij de btw bij de teruggave werd OPGETELD in plaats van
+  // afgetrokken. Het model gaf is_credit_note=false op een document met "CREDITFACTUUR" in de kop.
+  //
+  // Daar staan nu twee deterministische grepen op, en het punt is dat ze ONAFHANKELIJK falen:
+  // het NUMMER (CR…) helpt niet bij een leverancier die creditnota's in de gewone reeks nummert,
+  // en dan is de KOP het enige bewijs dat er nog is. Eén van de drie schakels losmaken — lezen,
+  // vlaggen, oordelen — maakt de andere twee zinloos zonder dat er iets stukgaat.
+  const mod = code("src/lib/creditnota-signal.ts");
+  assert.match(mod, /export function creditWordInHeader/, "de lezing zelf");
+  assert.match(mod, /const KOPLENGTE = \d+/,
+    "alleen de KOP: 'creditnota' staat in de voorwaarden van talloze gewone facturen, en een " +
+    "alarm dat daarop afgaat leert iedereen om het weg te klikken");
+
+  // De intake schrijft de vlag, en doet dat met de tekstlaag die daar toch al ligt.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /creditWordInHeader\(pdfText\)/, "de kop wordt bij de intake gelezen");
+  assert.match(intake, /credit_word_in_header: true/, "…en als vlag vastgelegd");
+
+  // En de gezondheidsklasse doet er iets mee — anders is het een vlag die niemand leest.
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /storedSafecore\?\.credit_word_in_header === true/,
+    "de vlag moet het oordeel bereiken, anders staat hij er voor niets");
+  assert.match(health, /flags\.creditPrefix = true/,
+    "…en de rij tegenhouden voor één blik van een mens");
+
+  // Wat deze greep NOOIT mag doen, net als de prefixpoort: een bedrag omdraaien.
+  assert.doesNotMatch(intake, /credit_word_in_header[\s\S]{0,400}?total_inc_btw\s*=/,
+    "flaggen, niet boeken — de eigenaar verklaart de soort, niet wij");
+});
+
 test("[LEVERANCIER-INTAKE] every path that creates an incoming invoice resolves a supplier", () => {
   // Gemeten in productie op 28-08-2026: vijftien inkoopfacturen droegen een IBAN én geen
   // supplier_id, en voor vijf ervan bestond een leveranciersrij met precies dat IBAN al. De
