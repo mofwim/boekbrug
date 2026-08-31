@@ -61,9 +61,15 @@ export type SeriesReport = {
   /** The series this is about: type plus the year in its numbers, or null for a continuous series. */
   type: string;
   year: number | null;
-  /** The lowest and highest sequence number actually issued in this administration. */
-  first: number;
-  last: number;
+  /**
+   * The lowest and highest sequence number actually issued in this administration.
+   *
+   * [REEKS-ZONDER-FACTUUR] Null when the series has no invoices at all — which is a real state, not
+   * an empty one: a counter can stand above zero while nothing was ever written under it. Zero
+   * would be a claim ("the series runs from 0 to 0") about numbers that do not exist.
+   */
+  first: number | null;
+  last: number | null;
   /** How many invoices carry a number in this series. */
   issued: number;
   /** Sequence values with no invoice, BETWEEN first and last. Never below first — see the header. */
@@ -242,6 +248,41 @@ export function checkContinuity(args: {
         : Math.max(0, lastSeq - last);
 
     series.push({ type: bucket.type, year: bucket.year, first, last, issued: sorted.length, missing, duplicates, burnedAtEnd });
+  }
+
+  // ── [REEKS-ZONDER-FACTUUR] De reeksen waar de teller wél iets over zegt en de facturen niets ──
+  //
+  // De lus hierboven loopt over de emmers die uit de FACTUREN zijn gebouwd. Een reeks zonder ook
+  // maar één factuur heeft dus geen emmer, en burnedAtEnd — de enige controle die het EINDE van een
+  // reeks ziet — wordt er nooit voor uitgerekend. De uitslag zegt dan "alles loopt door" over
+  // nummers die zijn uitgegeven en nooit geschreven.
+  //
+  // Dat is geen theoretisch geval en het is geen kwestie van een lege administratie. De gewone vorm
+  // is een ondernemer die facturen stuurt maar nog nooit een creditnota heeft gemaakt, terwijl er
+  // wel een creditnota-nummer is toegekend (een concept dat is weggegooid). Gemeten in de
+  // productiedatabase toen dit werd geschreven: twee eigenaren met een creditnota-teller op 1 en 2
+  // en nul creditnota's — drie toegekende nummers die nergens staan, en alle drie de eigenaren
+  // lazen op hun scherm dat hun nummering klopt.
+  //
+  // `series.every(...)` over een lege lijst is `true`, en dat is precies hoe die stilte eruitziet:
+  // niet als een fout, maar als een geruststelling.
+  for (const counter of counters ?? []) {
+    const type = counter.type ?? "";
+    const year = counter.year ?? null;
+    // Alleen reeksen die dit rapport überhaupt beoordeelt. Een teller voor een type waarvoor geen
+    // formaat is meegegeven (pro forma) hoort hier net zo min als in de lus hierboven.
+    if (!formats.some((f) => f.type === type)) continue;
+    if (seen.has(keyOf(type, year))) continue;
+    const lastSeq = counter.last_seq;
+    if (typeof lastSeq !== "number" || lastSeq <= 0) continue;
+    series.push({
+      type, year,
+      first: null, last: null, issued: 0,
+      missing: [],
+      duplicates: [],
+      // Alles wat de teller heeft uitgegeven is verbrand: er staat geen enkel nummer tegenover.
+      burnedAtEnd: lastSeq,
+    });
   }
 
   // Stable order so two runs read the same: by type, then by year, oldest first.

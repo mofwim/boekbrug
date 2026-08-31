@@ -21022,3 +21022,49 @@ test("[SPLIT-EERLIJK] a rate split that could not be read is reported, and said 
       "and its rate distribution is not, and a reader cannot derive that from the file itself.",
   );
 });
+
+// ─── [REEKS-ZONDER-FACTUUR] Een lege lijst bewijst niets ─────────────────────────────
+//
+// `series.every(...)` over een lege lijst is `true`. De serie-lus bouwt zijn emmers uit de
+// FACTUREN, dus een reeks zonder ook maar één factuur heeft geen emmer — en burnedAtEnd, de enige
+// controle die het EINDE van een reeks ziet, wordt er nooit voor uitgerekend. De uitslag zei dan
+// "je nummering klopt" over nummers die zijn toegekend en nooit geschreven.
+//
+// Niet theoretisch, en niet een kwestie van een lege administratie: de gewone vorm is een
+// ondernemer die facturen stuurt en nog nooit een creditnota maakte, terwijl er wel een
+// creditnota-nummer is toegekend aan een concept dat hij heeft weggegooid. Gemeten in de
+// productiedatabase toen dit werd geschreven: twee eigenaren, drie zulke nummers, drie schermen
+// die zeiden dat alles klopte.
+
+test("[REEKS-ZONDER-FACTUUR] the counters are read for series the invoices never mention", () => {
+  const src = code("src/lib/invoice-continuity.ts");
+
+  assert.match(
+    src, /for \(const counter of counters \?\? \[\]\)[\s\S]{0,600}?burnedAtEnd: lastSeq/,
+    "checkContinuity builds its series from the invoices alone again. A counter standing above " +
+      "zero in a series with no invoices then has nothing to be compared against, and the report " +
+      "reassures over numbers that were allocated and never written.",
+  );
+  // Dezelfde grens als de factuurlus: een type waarvoor dit rapport geen formaat kent (pro forma)
+  // hoort hier net zo min thuis.
+  assert.match(
+    src, /formats\.some\(\(f\) => f\.type === type\)/,
+    "a counter for a type this report does not judge would invent a series for it",
+  );
+  // En eerlijke grenzen: 0 zou een uitspraak zijn over nummers die niet bestaan.
+  assert.match(
+    src, /first: number \| null;/,
+    "first/last went back to a plain number, so a series with nothing in it has to claim it runs " +
+      "from 0 to 0 — a statement about numbers that do not exist",
+  );
+});
+
+test("[REEKS-ZONDER-FACTUUR] the screen says which of the two it is", () => {
+  const ui = code("src/components/beveiliging/NummeringPaneel.tsx");
+
+  assert.match(
+    ui, /s\.issued === 0[\s\S]{0,120}?doorlopend\.reeksLeeg/,
+    "an empty series is reported with the end-of-series sentence again — which says the counter " +
+      "stands higher than the owner's highest invoice, in a series where there is no invoice at all",
+  );
+});

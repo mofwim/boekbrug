@@ -11971,6 +11971,15 @@ export const MESSAGES = {
     en: '— {aantal} at the end of the series: the counter stands higher than your highest invoice.',
     ar: '— {aantal} في نهاية السلسلة: العدّاد أعلى من أعلى فاتورة لديك.',
   },
+  // [REEKS-ZONDER-FACTUUR] Een eigen zin, want "aan het eind van de reeks" veronderstelt een reeks.
+  // Dit gaat over een reeks waarin nooit iets is geschreven: de teller staat op 2 en er is geen
+  // enkele creditnota. De gewone aanleiding is een weggegooid concept, en dat is een volstrekt
+  // legitiem antwoord — de eigenaar moet het alleen kunnen GEVEN, en daarvoor moet hij het zien.
+  'doorlopend.reeksLeeg': {
+    nl: '— {aantal} toegekend, maar er staat geen enkel document in deze reeks. Meestal een concept dat is weggegooid; noteer dat even voor je boekhouder.',
+    en: '— {aantal} allocated, but there is no document at all in this series. Usually a discarded draft; make a note of it for your accountant.',
+    ar: '— {aantal} مُخصّصة، لكن لا يوجد أي مستند في هذه السلسلة. غالبًا مسوّدة حُذفت؛ دوّن ذلك لمحاسبك.',
+  },
   'doorlopend.dubbel': {
     nl: '— nummer {nummers} komt twee keer voor. Dit hoort niet te kunnen; laat het ons weten.',
     en: '— number {nummers} appears twice. This should not be possible; please tell us.',
