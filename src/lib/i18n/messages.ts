@@ -4454,6 +4454,29 @@ export const MESSAGES = {
     ar: 'النتائج في كل المجلدات: {count}',
     en: '{count} results in all folders',
   },
+  // [DUBBEL-GEDEKT] Waarom deze regel niet is ingevuld. Vier zinnen, elk een eigen sleutel: een
+  // zelfstandig naamwoord in een zin is geen parameter (AGENTS.md), en deze twee gevallen zeggen
+  // iets anders — de ene gaat over één factuur, de andere over een hele uitbetaling.
+  'cat.alGeboekt.factuur': {
+    nl: 'Een betaalde factuur verklaart dit bedrag al.',
+    ar: 'هناك فاتورة مدفوعة تفسّر هذا المبلغ بالفعل.',
+    en: 'A paid invoice already accounts for this amount.',
+  },
+  'cat.alGeboekt.factuurUitleg': {
+    nl: 'Waarschijnlijk is dit de betaling ervan. Kies alleen een categorie als het echt een tweede uitgave is — anders staat de kost twee keer in je winst & verlies.',
+    ar: 'على الأرجح هذه هي عملية دفعها. لا تختر تصنيفاً إلا إذا كانت فعلاً نفقة ثانية — وإلا ستُسجَّل التكلفة مرتين في أرباحك وخسائرك.',
+    en: 'This is most likely the payment of it. Only pick a category if it really is a second expense — otherwise the cost lands in your profit and loss twice.',
+  },
+  'cat.alGeboekt.mollie': {
+    nl: 'Dit lijkt een uitbetaling van Mollie.',
+    ar: 'يبدو أنّ هذا تحويل من Mollie.',
+    en: 'This looks like a Mollie payout.',
+  },
+  'cat.alGeboekt.mollieUitleg': {
+    nl: 'De facturen die erin zitten staan al als betaald in je boeken. Kies alleen een categorie als je zeker weet dat dit iets anders is.',
+    ar: 'الفواتير التي يشملها مسجَّلة أصلاً كمدفوعة في دفاترك. لا تختر تصنيفاً إلا إذا كنت واثقاً أنّ هذا شيء آخر.',
+    en: 'The invoices inside it are already marked paid in your books. Only pick a category if you are sure this is something else.',
+  },
   'cat.automatisch': {
     nl: 'automatisch ingevuld',
     ar: 'عُبّئت تلقائياً',

@@ -196,6 +196,12 @@ export async function GET(req: NextRequest) {
   // [LEVERANCIER-BEWIJS] Which counterparts the owner already holds invoices from.
   const supplierKeys = await knownSupplierKeys(supabase, user.id);
 
+  // [DUBBEL-GEDEKT] What is already in the books. The sweep and the nightly pass withhold these
+  // lines; this screen must not silently PROPOSE what they refuse to write — a pre-selected
+  // 'kosten' chip on a cost the owner already booked is one tap away from the same double count,
+  // and the owner has no way of knowing. So a held line arrives labelled, with nothing chosen.
+  const guard = await doubleBookingGuard(supabase, user.id, txs);
+
   let confidentAvailable = 0;
   const items = txs.map((t) => {
     const key = counterpartKey(t.counterpart_name);
@@ -204,7 +210,10 @@ export async function GET(req: NextRequest) {
     // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
     const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
     const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false);
-    if (suggestion.confident) confidentAvailable++;
+    const alreadyBooked = guard.hold(suggestion.category, t);
+    // A held line is not among the "N zekere" the button offers, because the button will not write
+    // it. Counting it there would promise a number the sweep cannot deliver.
+    if (suggestion.confident && !alreadyBooked) confidentAvailable++;
     return {
       id: t.id,
       date: t.date,
@@ -213,8 +222,12 @@ export async function GET(req: NextRequest) {
       description: t.description,
       suggested: suggestion.category,
       suggested_source: suggestion.source,
-      // Only confident suggestions are eligible for the one-click bulk apply.
-      suggested_confident: suggestion.confident,
+      // Only confident suggestions are eligible for the one-click bulk apply — and a line whose
+      // money is already booked is not, whatever the classifier thinks of the counterpart.
+      suggested_confident: suggestion.confident && !alreadyBooked,
+      // Why the app will not fill this one in: a paid invoice already carries the amount, or it is
+      // a Mollie payout of invoices already settled. null = nothing in the way.
+      already_booked: alreadyBooked,
       // On a 'similar' suggestion: the memorized counterpart it resembles (for a "lijkt op …" hint).
       suggested_similar_to: suggestion.similarTo ?? null,
     };
