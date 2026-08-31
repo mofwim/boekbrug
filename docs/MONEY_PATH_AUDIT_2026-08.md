@@ -265,6 +265,19 @@ because an agent asserted it.
 | Four more probes read "busy" as "column gone" | `column-probe.ts` | one question, five spellings, five copies of one bug |
 | € 5.321,68 of phantom discrepancy | `money-invariants.ts` | the write path was fixed; the rows it left were not |
 | Three audit checks that could never fire | `scripts/money-audit.ts` | the checks were right; the caller fed them two columns short |
+| Auto-collected AND dunned, on the same invoice | `cron/payment-due` | "which supplier collects this?" was spelled twice, and the spellings disagree |
+| A slow query moved cash payments into the wrong BTW quarter | `kas-payment-events-fetch.ts` | the probe defect a sixth time, wearing a try/catch instead of a boolean |
+| The board warned about a link the owner made by hand | `bank/unlink`, `bank/confirm` | a marker with one writer, one clearer, and two paths that should have cleared it |
+| Two reads that said "nothing here" before finishing | `verkoop/page.tsx`, `incoming/missing` | a recovery written, argued for, and unreachable because the read never threw |
+
+The payment-due one is the sharpest of the set, because the disagreement is
+load-bearing in both directions: `belongsToIncassoSupplier` falls through to the
+supplier's name key — deliberately, since that is what reaches invoices imported
+before the supplier registry existed — while the reminder ladder matched on
+`supplier_id` alone. An invoice in that gap is collected by the bank *and* claimed
+by the ladder, and the route's own comment already said what that costs: "de
+eigenaar maakt dan een tweede keer over en moet dat bij zijn leverancier
+terugvragen." Two invoices were sitting in it.
 
 The probe cluster is worth reading as the lesson. I fixed ONE of them by hand, wrote it up, and the
 signature-hunt then found the same eight lines in four more files — including one whose own
@@ -309,3 +322,34 @@ Ten of the eleven were created between 5 and 19 July, and `possible-duplicate-co
 not exist. Each surviving copy counts its total into kosten and its BTW into voorbelasting a second
 time, so this is real exposure and not a display problem. Nothing was touched: which of two invoices
 is the real one is a judgement about somebody's administration, and §6's rule holds.
+
+### Still open from this pass, in the order I would take them
+
+Each survived three skeptics. None has been changed, and the reason differs:
+
+1. **A concurrent partial creditnota passes a gross-only database guard**
+   (`creditnota_partial.sql:74`). Needs a migration; not something to apply to a
+   production database on an agent's own judgement.
+2. **An undone bank booking is re-made within the hour** (`bank/unlink`). The same
+   defect as the auto-incasso one, and the module header's promise — "fully
+   reversible (owner can unlink)" — is what it breaks. Needs a design choice
+   (a new column, or overloading `auto_match_reason`) with effects on the readiness
+   board, and `bank-auto-confirm.ts` was being edited by another session the same
+   night.
+3. **A turnover import can claim a day the owner already filled by hand**
+   (`turnover-book.ts:105`). Verified structurally: `daySourceConflict` has two
+   readers, both manual doors, and the single writer consults neither. Needs a
+   product decision about what the owner sees.
+4. **The filed aangifte rounds once where the concept rounds per rubriek**
+   (`aangifte/route.ts:465`), producing a €1 phantom suppletie prompt on an
+   unchanged return.
+5. **An ignored bank line keeps counting in the P&L** (`bank/ignore`). Marking a
+   duplicate 'dubbel' hides it from the matcher and leaves its cost in kosten and
+   its BTW in voorbelasting.
+
+The pattern across everything fixed tonight is worth keeping in front of whoever
+picks these up: **not one was an arithmetic error.** Every single one was a fact
+established correctly in one place and not read in another — a key stored where an
+undo deletes it, a marker not on a carry list, a definition spelled twice, a
+recovery path that could not be reached, a probe whose two failures mean opposite
+things. The engines were never the risk. The seams are.
