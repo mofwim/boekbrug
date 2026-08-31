@@ -1967,8 +1967,11 @@ test("[ONBEREIKBAAR] a byte fetch that will never succeed must not freeze the ma
 test("[E-FACTUUR] the supplier's own figures are read, and they outrank the reading", () => {
   // A Factur-X or ZUGFeRD PDF carries the invoice a SECOND time as XML the supplier produced, and
   // the app was photographing it like any other page while the exact figures sat unread inside the
-  // same bytes. NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for
-  // everyone from 2028, so this arrives now and will only arrive more.
+  // same bytes. [E-FACTUUR-DATUM] No year here: the one place in this repo that answers "when does
+  // the Netherlands make this mandatory" with sources is the header of src/lib/e-invoice.ts, and it
+  // says in as many words that the 2027/2028 sentence which used to stand here is not true. The
+  // reason this matters today is not a deadline: German suppliers send ZUGFeRD now, French ones
+  // Factur-X, Belgian ones Peppol UBL since January 2026, and a Dutch buyer receives all three.
   const ai = code("src/lib/ai.ts");
   assert.match(
     ai, /extractEmbeddedInvoiceXmlDetailed\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
@@ -2130,8 +2133,9 @@ test("[MAILTEKST] the text conversion keeps table cells apart", () => {
 });
 
 test("[E-FACTUUR-XML] ONE reader books a Peppol invoice, and BOTH doors reach it", () => {
-  // NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for everyone from
-  // 2028, and suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
+  // [E-FACTUUR-DATUM] No year here either — see e-invoice.ts's header for the sourced answer, and
+  // for why the 2027/2028 sentence that used to stand here was written from nothing. What is true
+  // without any date: suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
   // read one.
   //
   // It is read in verifyInvoiceFromPdf — the reader BOTH doors call — and not at a door. The first
@@ -18174,7 +18178,7 @@ test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de be
   const carry = code("src/lib/reimport-carry.ts");
   const lijst = carry.slice(
     carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
-    carry.indexOf("const RELATION_KEYS"),
+    carry.indexOf("const FRESH_OWNS"),
   );
   assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
   assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");
@@ -22882,4 +22886,118 @@ test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the se
   const refuseAt = scherm.indexOf("zonderOmschrijving >= 0");
   const draftAt = scherm.indexOf("/api/invoice/draft");
   assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
+});
+
+// ─── [E-FACTUUR-DATUM] One file owns the timetable; everywhere else states no year ──────────────
+//
+// A sentence — "the Netherlands makes Peppol e-invoicing mandatory over €800k turnover from 2027
+// and for everyone from 2028" — was written once from an unnamed source and then copied into eight
+// places: ai.ts, email-integration.ts, ubl-export.ts, icp.ts, three test files and this one. A
+// later session read it here, cited it back as a fact about the world, and proposed a strategy on
+// top of it. A claim does not become verified by being committed.
+//
+// e-invoice.ts checked it against the record and says plainly that it is not true: B2G has been
+// obligatory since 2017, domestic B2B is not law and not yet a bill, and the first hard EU date is
+// 1 July 2030 for cross-border. That file carries the sources and the instruction to re-check.
+//
+// So it is the only file allowed to name a year for this. Everywhere else states the thing that is
+// true without one — German suppliers send ZUGFeRD now, French ones Factur-X, Belgian ones Peppol
+// UBL since January 2026, and a Dutch buyer receives all three today. That argument needs no
+// deadline, which is exactly why it survives one being wrong.
+//
+// No customer-facing surface ever carried a year, and none may start: this gate covers src/ whole.
+test("[E-FACTUUR-DATUM] only e-invoice.ts names a Dutch e-invoicing mandate year", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // A line that names a year AND ties it to this obligation. Both halves are required: "2027" on
+  // its own is a date fixture, and "verplicht" on its own is any other rule in the app.
+  const YEAR = /\b(2026|2027|2028|2029|2030)\b/;
+  const MANDATE = /peppol|e-?factur|e-?invoic/i;
+  const OBLIGATION = /mandator|mandate|verplicht|800k|€\s?800/i;
+
+  // Judged on a WINDOW around each mention, not on a line. The legal texts are stored as one
+  // enormous single-line string, so a line-wide test found "2026" in its Laatst-bijgewerkt header,
+  // "factuur" three thousand characters later and "verplicht" somewhere else again, and reported a
+  // mandate claim that nobody had written. Proximity is the thing being asserted.
+  const WINDOW = 160;
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    // The authority itself, and this gate, which has to quote the sentence to forbid it.
+    if (file.endsWith("src/lib/e-invoice.ts")) continue;
+    if (file.endsWith("src/lib/lifecycle-gates.test.ts")) continue;
+    const text = readFileSync(file, "utf8");
+    for (const hit of text.matchAll(new RegExp(MANDATE.source, "gi"))) {
+      const at = hit.index ?? 0;
+      const near = text.slice(Math.max(0, at - WINDOW), at + WINDOW);
+      if (YEAR.test(near) && OBLIGATION.test(near)) {
+        offenders.push(`${file}: …${near.replace(/\s+/g, " ").slice(0, 120)}…`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "a Dutch e-invoicing mandate year outside e-invoice.ts — that file holds the sourced answer, " +
+    "and every copy of a date is a copy that will still say 2027 when the answer has changed",
+  );
+
+  // And the authority still IS one: it carries the correction and its sources.
+  const authority = readFileSync("src/lib/e-invoice.ts", "utf8");
+  assert.match(authority, /That is not true/, "the file states the correction it was written for");
+  assert.match(authority, /1 July 2030/, "…names the one hard EU date");
+  assert.match(authority, /Sources:/, "…and cites where that came from");
+  assert.match(authority, /Re-check before quoting/, "…and says it is a moving file");
+});
+
+// ─── [TIJDVAK-KWARTAAL] A deadline the app cannot know is not shown to the person it binds ──────
+//
+// Quarterly is baked in end to end: `quarter` is typed 1|2|3|4, btw_filings has a CHECK on it and
+// a UNIQUE (user_id, year, quarter), and there is no profile field, setting or screen where an
+// owner can state a different tijdvak. Every FIGURE a monthly filer sees is nevertheless correctly
+// labelled "Q2 2026" — so what they are handed is inconveniently grouped, not mislabelled.
+//
+// One thing would be genuinely wrong for them, and it is not a figure: the DEADLINE. A monthly
+// filer's aangifte is due at the end of the month after each month, so a countdown to 31 July is
+// three deadlines too late — on a date that carries a verzuimboete.
+//
+// Both callers today are accountant surfaces, where the reader knows their client's tijdvak. This
+// gate keeps it there. Supporting monthly properly is a product decision with its own migration,
+// and widening this function is not it.
+test("[TIJDVAK-KWARTAAL] the quarterly deadline stays off the owner's screens", () => {
+  const service = code("src/modules/accountant/accountant.service.ts");
+  assert.match(service, /export function getAangifteDeadline/);
+  // The assumption is written where the function is, not only in a gate nobody reads while coding.
+  const doc = readFileSync("src/modules/accountant/accountant.service.ts", "utf8");
+  assert.match(doc, /\[TIJDVAK-KWARTAAL\]/, "the function states what it assumes");
+  assert.match(doc, /their deadline is the last day of the month after each MONTH/,
+    "…and what it would cost the filer it does not fit");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !p.includes(".test.")) out.push(p);
+    }
+    return out;
+  };
+
+  const owner: string[] = [];
+  for (const file of walk("src/app/dashboard")) {
+    // The accountant's own surfaces are exactly where this belongs.
+    if (file.includes("/dashboard/accountant/")) continue;
+    if (code(file).includes("getAangifteDeadline")) owner.push(file);
+  }
+  assert.deepEqual(
+    owner, [],
+    "an owner-facing screen counts down to a quarterly deadline while the app never asks which " +
+    "tijdvak that owner is on — for a monthly filer that date is three deadlines late",
+  );
 });
