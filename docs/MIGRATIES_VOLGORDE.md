@@ -347,6 +347,26 @@ een lopende kluis wordt overgeslagen, ook als zijn eigen zeven jaar verstreken z
 | 15 | `invoice_bijlage.sql` | één eigen bestand met de factuurmail mee |
 | 16 | `rpc_anon_revoke.sql` | ⚠️ **de geld-functies zijn aanroepbaar zonder account — draai deze als eerste** |
 | 17 | `function_search_path.sql` | een vast zoekpad op de negen eigen functies — hygiëne, geen haast |
+| 18 | `bank_auto_book_blocked.sql` | een teruggedraaide automatische boeking komt nu binnen het uur terug |
+| 19 | `accountant_vat_deduction_guard.sql` | een gekoppelde boekhouder kan rubriek 5b van de klant verzetten |
+| 20 | `creditnota_per_rate_ceiling.sql` | twee gelijktijdige deel-creditnota's crediteren dezelfde regel twee keer |
+
+**Over 18 — wat er zonder gebeurt.** runBankAutoConfirm koppelt een bankregel aan een factuur en
+zet die op betaald, en belooft in zijn eigen kop dat het omkeerbaar is: *"fully reversible (owner
+can unlink)"*. Het scherm zegt het tegen de eigenaar in nog kortere woorden — *"One tap on
+Ontkoppelen above undoes it."*
+
+Die belofte houdt geen uur stand. Ontkoppelen zet de regel terug op `pending` en de factuur op
+`received` — precies de toestand waaruit auto-confirm boekt. Het bewijs is niet veranderd
+(hetzelfde bedrag, dezelfde IBAN, dezelfde tegenpartij), dus de volgende cron-ronde neemt dezelfde
+beslissing en legt dezelfde koppeling terug. Een leverancier die maandelijks € 89,00 incasseert,
+een openstaande januarifactuur en een afschrijving in maart: de cron zet januari op betaald met
+betaaldatum 03-03, de eigenaar ziet de verkeerde maand en ontkoppelt, en binnen het uur staat het
+er weer. Onder het kasstelsel staat de BTW van die factuur dan in het verkeerde kwartaal.
+
+Zonder de kolom gedraagt de app zich exact zoals nu: de code vraagt eerst of hij bestaat
+(`columnExists`) en laat het filter anders weg — een ontbrekende kolom in dat filter zou de hele
+lezing laten falen, en dat is geen degradatie maar een auto-confirm die voor iedereen stilvalt.
 
 **Over 16 — dit is de enige met haast.** De andere migraties voegen iets toe; deze sluit iets af
 dat open staat. Een reeks `SECURITY DEFINER`-functies bewaakt zichzelf met

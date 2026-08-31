@@ -3238,11 +3238,6 @@ export const MESSAGES = {
     ar: 'جارٍ القراءة…',
     en: 'Reading it in…',
   },
-  'bank.intro': {
-    nl: 'Koppel je bank of upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt.',
-    ar: 'اربط بنكك أو ارفع كشف حسابك. نربط المعاملات بفواتيرك — وأنت تؤكّد.',
-    en: 'Connect your bank or upload your bank statement. We link transactions to your invoices — you confirm.',
-  },
   'bank.jaTochKoppelen': {
     nl: 'Ja, toch koppelen',
     ar: 'نعم، اربطها رغم ذلك',
@@ -10947,6 +10942,76 @@ export const MESSAGES = {
     nl: '💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden',
     ar: '💡 نصيحة: استخدم شريط البحث للعثور على أي فاتورة في ثوانٍ',
     en: '💡 Tip: use the search bar to find any invoice in seconds',
+  },
+  // [BANK-WERK-EERST] De kop waaronder de machinerie van het bankscherm samenvouwt zodra er werk
+  // is: de koppeling, de sleepzone en de lijst afschriften. Eén regel in plaats van drie blokken
+  // boven het enige waarvoor de ondernemer dit scherm opent.
+  // [BANK-STAND] Wat er nú op de ondernemer wacht, in één zin — dezelfde plaats en dezelfde toon
+  // als de kopregel van /dashboard/incoming, die deze vorm al had. Wat er stond was een vaste
+  // beschrijving van wat het scherm dóét ("Koppel je bank of upload je bankafschrift…"), en die
+  // las elke dag hetzelfde, hoeveel of hoe weinig er ook lag.
+  //
+  // Aparte zinnen per geval en geen zelfstandig naamwoord als parameter: "te bevestigen" en "zonder
+  // factuur" zijn twee verschillende handelingen en geen twee waarden van één woord.
+  'bank.stand.leeg': {
+    nl: 'Nog geen banktransacties. Koppel je bank of upload een afschrift — daarna koppelen we ze aan je facturen en bevestig jij.',
+    ar: 'لا توجد حركات بنكية بعد. اربط بنكك أو ارفع كشفاً — بعدها نربطها بفواتيرك وتؤكّد أنت.',
+    en: 'No bank transactions yet. Connect your bank or upload a statement — then we link them to your invoices and you confirm.',
+  },
+  'bank.stand.klaar': {
+    nl: 'Alles afgehandeld. Er wacht geen bankregel meer op je.',
+    ar: 'كل شيء منجَز. لا يوجد سطر بنكي ينتظرك.',
+    en: 'All handled. No bank line is waiting for you.',
+  },
+  'bank.stand.bevestigenEen': {
+    nl: '1 regel wacht op je bevestiging.',
+    ar: 'سطر واحد ينتظر تأكيدك.',
+    en: '1 line is waiting for you to confirm it.',
+  },
+  'bank.stand.bevestigen': {
+    nl: '{count} regels wachten op je bevestiging.',
+    ar: '{count} أسطر تنتظر تأكيدك.',
+    en: '{count} lines are waiting for you to confirm them.',
+  },
+  'bank.stand.geenFactuurEen': {
+    nl: '1 regel heeft nog geen factuur.',
+    ar: 'سطر واحد بلا فاتورة بعد.',
+    en: '1 line has no invoice yet.',
+  },
+  'bank.stand.geenFactuur': {
+    nl: '{count} regels hebben nog geen factuur.',
+    ar: '{count} أسطر بلا فواتير بعد.',
+    en: '{count} lines have no invoice yet.',
+  },
+  'bank.stand.pinEen': {
+    nl: '1 pinafrekening wacht op je.',
+    ar: 'تسوية دفع إلكتروني واحدة تنتظرك.',
+    en: '1 card settlement is waiting for you.',
+  },
+  'bank.stand.pin': {
+    nl: '{count} pinafrekeningen wachten op je.',
+    ar: '{count} تسويات دفع إلكتروني تنتظرك.',
+    en: '{count} card settlements are waiting for you.',
+  },
+  'bank.setup.kop': {
+    nl: 'Afschriften en koppeling',
+    ar: 'الكشوف والربط البنكي',
+    en: 'Statements and bank link',
+  },
+  'bank.setup.aantalEen': {
+    nl: '· 1 afschrift',
+    ar: '· كشف واحد',
+    en: '· 1 statement',
+  },
+  'bank.setup.aantal': {
+    nl: '· {count} afschriften',
+    ar: '· {count} كشوف',
+    en: '· {count} statements',
+  },
+  'bank.setup.toevoegen': {
+    nl: 'Afschrift toevoegen',
+    ar: 'إضافة كشف',
+    en: 'Add a statement',
   },
   'bank.redenGevolg': {
     nl: '{uit} halen dit bedrag ook uit je kosten en btw. Bij {in} blijft het gewoon meetellen.',

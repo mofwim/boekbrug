@@ -190,6 +190,26 @@ export async function POST(req: Request) {
     .eq("id", transactionId)
     .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
 
+  // [AUTO-BOEK-ONGEDAAN] En vastleggen DAT hij is teruggedraaid, want anders komt hij terug.
+  //
+  // auto-confirm leest `status = 'pending'` en facturen `neq status 'paid'` — precies de toestand
+  // die dit ontkoppelen zojuist heeft hersteld. Het bewijs is niet veranderd (zelfde bedrag,
+  // zelfde IBAN, zelfde tegenpartij), dus de eerstvolgende cron-ronde neemt dezelfde beslissing
+  // en legt dezelfde koppeling terug. De module belooft in zijn eigen kop "fully reversible
+  // (owner can unlink)" en het scherm zegt tegen de eigenaar "One tap on Ontkoppelen above undoes
+  // it" — die belofte hield geen uur stand.
+  //
+  // Eigen update en best-effort, om dezelfde reden als de wis hierboven: de kolom komt uit een met
+  // de hand toegepaste migratie (bank_auto_book_blocked.sql). Zolang die niet is gedraaid faalt
+  // deze schrijving stil en gedraagt alles zich als vandaag — maar het ontkoppelen zelf mag er
+  // nooit op stuklopen.
+  await (pipeline
+    .from("bank_transactions")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update({ auto_book_blocked_at: new Date().toISOString() } as any)
+    .eq("id", transactionId)
+    .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
+
   // 4. Restore the invoice. SESSION client so the B.4 trigger has auth context. incoming →
   //    'received', else 'sent'. 'overdue' is never stored (recomputed from due_date), and
   //    'processing' invoices are excluded from matching (isEligible), so by construction the

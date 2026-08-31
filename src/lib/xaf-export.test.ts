@@ -394,3 +394,46 @@ test("[XAF-REGIME] no notes means no empty comment block", () => {
   const r = buildXafFile({ ...baseInput(), regimeNotes: [] });
   assert.doesNotMatch(r.xml.slice(0, r.xml.indexOf("<auditfile")), /<!--/);
 });
+
+// ── [XAF-NULBOEKING] Een inkoop zonder bedragen is geen inkoop van nul ───────
+//
+// De toestand: total_ex_btw 0, btw_amount 0, en een brutobedrag dat er wél is (een controleur die
+// 0 in het excl.-veld typt, of een lezing die alleen het totaal vond). Drie regels van 0,00
+// balanceren keurig — 0 = 0 — dus de push-helper liet ze door, en er stond een INK-boeking in het
+// auditbestand met de leverancier voluit en 0,00 op zowel de kosten- als de crediteurenregel.
+//
+// Een lezer kan daar één ding uit opmaken: deze inkoop was gratis. Terwijl de facturenlijst en het
+// afsluitpakket hetzelfde stuk voor het volle bedrag noemen — het auditbestand spreekt dan de
+// administratie tegen op precies de plek waar het bewijs van hoort te zijn.
+
+test("[XAF-NULBOEKING] een inkoop zonder bedragen wordt overgeslagen, niet als 0,00 geboekt", () => {
+  const input = baseInput();
+  input.purchases = [{
+    id: "leeg", invoiceNumber: "2026-0042", invoiceDate: "2026-03-14",
+    vendorName: "Leverancier BV", totalExBtw: 0, btwAmount: 0, totalIncBtw: 150,
+  } as XafInput["purchases"][number]];
+  const r = buildXafFile(input);
+
+  assert.deepEqual(r.skipped.map((s) => s.id), ["leeg"], "de factuur staat niet in de weglatingslijst");
+  assert.match(r.skipped[0].reason, /geen bedragen/, "de reden zegt niet wat er ontbrak");
+  // NIET op de leveranciersnaam toetsen: die hoort in de stamgegevens te staan, ook wanneer er
+  // geen boeking van komt. Waar het om gaat is dat er geen BOEKING is — geen trLine die naar dit
+  // factuurnummer verwijst, en geen inkoopjournaalpost.
+  assert.ok(!r.xml.includes("2026-0042"),
+    "er staat nog een boeking met dit factuurnummer in het auditbestand");
+  assert.ok(!/<trLine>/.test(r.xml.slice(r.xml.indexOf("<journal") === -1 ? 0 : r.xml.indexOf("<journal"))),
+    "er staat nog een journaalregel in het bestand terwijl de enige inkoop is overgeslagen");
+});
+
+test("[XAF-NULBOEKING] en een inkoop die alleen BTW draagt wordt gewoon geboekt", () => {
+  // De grens de andere kant op: nul is alleen een weigering wanneer er NIETS te boeken valt. Een
+  // verlegde of gecorrigeerde regel met alleen voorbelasting is een echte boeking.
+  const input = baseInput();
+  input.purchases = [{
+    id: "alleen-btw", invoiceNumber: "2026-0043", invoiceDate: "2026-03-14",
+    vendorName: "Leverancier BV", totalExBtw: 0, btwAmount: 21, totalIncBtw: 21,
+  } as XafInput["purchases"][number]];
+  const r = buildXafFile(input);
+  assert.deepEqual(r.skipped, [], "een boeking met een echt bedrag werd geweigerd");
+  assert.ok(r.xml.includes("Leverancier BV"));
+});

@@ -281,6 +281,25 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
   const docRef = inv.invoiceNumber ?? inv.id;
   const exC = cents(inv.totalExBtw);
   const btwC = cents(inv.btwAmount);
+  // [XAF-NULBOEKING] Een inkoop zonder bedragen is geen boeking van nul — het is een factuur die
+  // niet te lezen viel, en dat zijn twee verschillende uitspraken tegen de Belastingdienst.
+  //
+  // Zonder deze regel bouwt de functie drie regels van 0,00 die keurig balanceren (0 = 0), dus de
+  // `push`-helper hierboven laat ze door: er staat dan een INK-boeking in het auditbestand met de
+  // leverancier voluit, de factuurdatum, het factuurnummer — en 0,00 op zowel de kosten- als de
+  // crediteurenregel. Een lezer kan daar maar één ding uit opmaken: deze inkoop was gratis.
+  //
+  // Terwijl de factuur in de app wél een brutobedrag draagt (de toestand ontstaat wanneer een
+  // controleur 0 in het excl.-veld typt of de lezing alleen het totaal vond), dus de rest van de
+  // administratie — de facturenlijst, het afsluitpakket — noemt hetzelfde stuk voor het volle
+  // bedrag. Het auditbestand spreekt dan de administratie tegen waar het bewijs van hoort te zijn.
+  //
+  // De skipped-lijst bestaat precies hiervoor, en buildBank een paar regels lager weigert al op
+  // dezelfde grond ("bedrag nul"). Een genoemde weglating is een controleerbaar feit; een boeking
+  // van nul is een bewering.
+  if (exC === 0 && btwC === 0) {
+    return { reason: "geen bedragen op de factuur — een boeking van 0,00 zou zeggen dat deze inkoop gratis was" };
+  }
   const lines: Line[] = [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef }];
   if (btwC !== 0) lines.push({ accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting", docRef });
   lines.push({ accID: ACC.crediteuren, debitC: -(exC + btwC), desc: inv.vendorName ?? "Crediteur", docRef, custSupID });

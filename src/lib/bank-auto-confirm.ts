@@ -16,6 +16,7 @@
 // line link + all reads always use the service-role `pipeline` (user-pinned by user_id).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { columnExists } from "@/lib/column-probe";
 import type { PipelineClient } from "./supabase-pipeline";
 import { fetchAllRows } from "./supabase-paginate";
 import {
@@ -146,15 +147,35 @@ export async function runBankAutoConfirm(args: {
   // them means an outage is visible in the log instead of being indistinguishable from silence.
   const kasRefusals: Partial<Record<"filed_quarter" | "unknown_filing" | "no_payment_date", number>> = {};
 
-  const txRows = await fetchAllRows((from, to) =>
-    pipeline
+  // [AUTO-BOEK-ONGEDAAN] Een regel waarvan de eigenaar een AUTOMATISCHE koppeling heeft
+  // teruggedraaid, boeken we niet opnieuw.
+  //
+  // Ontkoppelen zet de regel terug op 'pending' en de factuur op 'received'/'sent' — precies de
+  // toestand waaruit deze functie boekt. Het bewijs is niet veranderd, dus zonder dit filter neemt
+  // de eerstvolgende ronde dezelfde beslissing en staat de koppeling er binnen het uur weer. De
+  // kop van dit bestand belooft "fully reversible (owner can unlink)"; dit is wat die belofte waar
+  // maakt. De regel gaat daarna naar de matcher, waar een mens hem koppelt — wat de bedoeling is
+  // van iemand die zojuist heeft gezegd dat de machine het mis had.
+  //
+  // [DEPLOY-SAFE] De kolom komt uit een met de hand toegepaste migratie. Zonder de kolom zou het
+  // filter de HELE lezing laten falen — en dat is geen degradatie maar een auto-confirm die voor
+  // iedereen stilvalt — dus hij wordt alleen toegevoegd wanneer de kolom er is. Zolang dat niet
+  // zo is gedraagt deze functie zich exact als vandaag.
+  const blockedColumn = await columnExists(
+    pipeline, "bank_transactions", "auto_book_blocked_at",
+    "a booking the owner undid would be made again within the hour",
+  );
+  const txRows = await fetchAllRows((from, to) => {
+    const q = pipeline
       .from("bank_transactions")
       .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
       .eq("user_id", userId)
-      .eq("status", "pending")
+      .eq("status", "pending");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (blockedColumn ? (q as any).is("auto_book_blocked_at", null) : q)
       .order("id", { ascending: true })
-      .range(from, to),
-  );
+      .range(from, to);
+  });
   const invRows = await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")

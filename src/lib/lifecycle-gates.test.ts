@@ -10216,6 +10216,10 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     "pay_token", "invoice_number", "invoice_type",
     // De drie die stil wegvielen.
     "vendor_iban", "payment_reference", "document_id",
+    // [VRIJGESTELD] En de vierde, die er nooit in heeft gestaan: vat_deduction verzet rubriek 5b
+    // van de klant met het volledige btw_amount van de factuur — aftrekbaar naar geblokkeerd of
+    // andersom — en een aan de klant gekoppelde boekhouder kon hem schrijven zonder mandaat.
+    "vat_deduction",
   ];
 
   const migraties = readdirSync("supabase/migrations")
@@ -21794,4 +21798,134 @@ test("[HARTSLAG-BEWIJS] a diagnosis does not name a cause the same screen refute
       `${name} calls cronHealthNote without the evidence, so the sentence goes back to guessing`,
     );
   }
+});
+
+// ─── [BANK-WERK-EERST] Het werk bovenaan, de machinerie eronder ───────────────────────
+//
+// Het bankscherm heeft één taak voor de ondernemer: welke bankregels wachten nog op mij. Daarboven
+// stonden negen blokken die alle drie over iets anders gaan — de bankkoppeling, de sleepzone, de
+// lijst geüploade afschriften met "Opnieuw matchen" en "Namen bijwerken" ernaast, plus de uitkomst
+// van elk daarvan. Op een telefoon is dat twee schermen scrollen vóór de eerste transactie.
+//
+// Geen ervan is overbodig. Maar ze beantwoorden allemaal de vraag HOE DE GEGEVENS HIER KOMEN, en
+// die stelt de ondernemer één keer per maand — terwijl hij WAT MOET IK NOG DOEN elke keer stelt.
+
+test("[BANK-WERK-EERST] the plumbing collapses only when there is work to show instead", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Op de PENDING lijsten, niet op "zijn er transacties": een administratie waarin alles al is
+  // afgehandeld heeft geen werk om bovenaan te zetten, en dan is de sleepzone opnieuw het nuttigste
+  // ding op het scherm — net als bij een lege administratie.
+  assert.match(
+    src, /const heeftWerk = toConfirm\.length \+ noMatch\.length \+ posList\.length > 0/,
+    "the collapse is no longer decided by whether there is work, so it can hide the upload zone on " +
+      "a screen that has nothing else to offer",
+  );
+  assert.match(
+    src, /const setupZichtbaar = setupOpen \?\? !heeftWerk/,
+    "the owner's own choice no longer wins over the default — opening the section must keep it open",
+  );
+
+  // Drie blokken achter de klep, en geen ervan mag stiekem buiten blijven staan.
+  for (const [needle, what] of [
+    ["{setupZichtbaar && (\n        <BankConnectPanel", "the bank connection panel"],
+    ["{setupZichtbaar && (\n      <label", "the upload drop zone"],
+    ["{setupZichtbaar && statements && statements.length > 0", "the statement list"],
+  ] as const) {
+    assert.ok(src.includes(needle), `${what} is no longer inside the collapsible section`);
+  }
+});
+
+test("[BANK-WERK-EERST] uploading stays one tap, and the answers stay visible", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Het bestandsveld staat ALTIJD in de pagina — anders kan de knop in de ingeklapte kop er niet
+  // bij en is uploaden ineens twee handelingen geworden op het scherm dat simpeler moest.
+  const inputAt = src.indexOf('id="bank-statement-file"');
+  const collapseAt = src.indexOf("{setupZichtbaar && (\n      <label");
+  assert.ok(inputAt > 0, "the shared file input is gone");
+  assert.ok(
+    inputAt < collapseAt,
+    "the file input moved inside the collapsible section, so the header button reaches nothing",
+  );
+  assert.match(src, /statementFileRef\.current\?\.click\(\)/, "the header button no longer opens the picker");
+  assert.match(src, /htmlFor="bank-statement-file"/, "the drop zone lost its link to the shared input");
+
+  // En wat er NA een upload gebeurt hoort níét achter de klep: die kan dicht staan wanneer er via
+  // de kopknop is geüpload, en dan zou de ondernemer nooit lezen wat er is ingelezen — of dat het
+  // afschrift niet op zijn eigen begin- en eindsaldo uitkwam.
+  assert.doesNotMatch(
+    src, /\{setupZichtbaar && uploadInfo/,
+    "the upload result moved behind the collapse. Uploading from the collapsed header would then " +
+      "report nothing at all — including a statement that does not tie out to its own balances.",
+  );
+  assert.doesNotMatch(
+    src, /\{setupZichtbaar && uncatCount > 0/,
+    "the uncategorised-money banner moved behind the collapse. That is money not yet in the books, " +
+      "which is work — the one thing this change exists to put first.",
+  );
+});
+
+test("[BANK-LEGE-TAB] a tab with nothing in it is not offered, but the one you are on stays", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.match(
+    src, /tabs\.filter\(\(t\) => t\.count > 0 \|\| t\.key === bankTab\)/,
+    "all five tabs are shown again, counts and all. On an ordinary administration two or three " +
+      "are empty, so the owner reads five numbers to find the two that matter — and tapping one " +
+      "of the others answers nothing.",
+  );
+  // De tweede helft van die regel is geen detail: zonder `|| t.key === bankTab` verdwijnt het
+  // tabblad onder de vinger van de ondernemer op het moment dat hij zijn laatste regel afhandelt,
+  // en juist dan hoort daar "je bent hier klaar" te staan.
+  assert.match(
+    src, /\|\| t\.key === bankTab/,
+    "the active tab is dropped the moment it empties, which is exactly when it should be saying " +
+      "that this list is finished",
+  );
+});
+
+// ─── [BANK-STAND] Eén zin die zegt wat er nú op je wacht ──────────────────────────────
+//
+// Bovenaan het bankscherm stond een vaste beschrijving van wat het scherm dóét: "Koppel je bank of
+// upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt." Die las elke
+// dag hetzelfde, hoeveel of hoe weinig er ook lag, en de ondernemer kent hem na de eerste keer —
+// terwijl de vraag waarmee hij komt een andere is: moet ik hier iets?
+//
+// /dashboard/incoming had die vorm al ("3 hebben aandacht nodig · 12 klaar om te bevestigen"), op
+// dezelfde plaats en in dezelfde toon. Dit is geen nieuw idee maar hetzelfde idee, op het scherm
+// waar het ontbrak — en het is geen extra blok: het vervangt de regel die er stond.
+
+test("[BANK-STAND] the top line reports the queue instead of describing the screen", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.doesNotMatch(
+    src, /\{t\('bank\.intro'\)\}/,
+    "the static intro is back. It says the same thing every day, on the screen whose whole purpose " +
+      "is to tell the owner what is different today.",
+  );
+  assert.match(src, /bank\.stand\.bevestigen/, "the count of lines waiting for a confirmation is gone");
+  assert.match(src, /bank\.stand\.geenFactuur/, "the count of lines without an invoice is gone");
+
+  // De pinregels tellen mee in heeftWerk. Laat je ze uit de zin, dan staat er een LEGE alinea boven
+  // een lijst met werk — op precies het scherm dat zou moeten zeggen wat er te doen is.
+  assert.match(
+    src, /bank\.stand\.pin/,
+    "card settlements count as work but are not named, so a pin-only queue renders an empty sentence",
+  );
+
+  // En niets beweren zolang de eerste lezing loopt: "Alles afgehandeld" boven een ladend scherm is
+  // een geruststelling die een halve seconde later een leugen blijkt.
+  assert.match(
+    src, /\{data && \(\s*<p style=\{\{ fontSize: 13\.5/,
+    "the status line renders before the first read has answered, so it claims a state it cannot know",
+  );
+
+  // "Nog geen transacties" mag niet aan de genegeerd-lijst hangen: die wordt pas geladen als dat
+  // tabblad wordt geopend, dus bij de eerste verf is hij altijd leeg.
+  assert.match(
+    src, /\(data\.suggestions\?\.length \?\? 0\) === 0/,
+    "the empty verdict depends on the lazily-loaded ignored list again, so an administration whose " +
+      "lines are all ignored reads as one that has none",
+  );
 });

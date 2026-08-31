@@ -351,6 +351,27 @@ export default function BankClient() {
   // the owner opens the "Genegeerd" tab.
   const [ignoredList, setIgnoredList] = useState<Suggestion[] | null>(null)
 
+  // ── [BANK-WERK-EERST] De machinerie staat niet meer boven het werk ──────────────────────────
+  //
+  // Dit scherm heeft één taak voor de ondernemer: "welke bankregels wachten nog op mij, en laat me
+  // ze afhandelen". Daarboven stonden negen blokken die alle drie over iets anders gaan — de
+  // bankkoppeling, de sleepzone, de lijst geüploade afschriften met "Opnieuw matchen" en "Namen
+  // bijwerken" ernaast, plus de uitkomst van elk daarvan. Op een telefoon (en dit bestand zegt in
+  // zijn kop "mobile-first") is dat twee schermen scrollen vóór de eerste transactie.
+  //
+  // Geen ervan is overbodig: zonder afschrift is er niets te doen, en een verlopen koppeling moet
+  // je kunnen herstellen. Maar ze beantwoorden allemaal de vraag HOE DE GEGEVENS HIER KOMEN, en die
+  // vraag stelt de ondernemer één keer per maand — terwijl hij de vraag WAT MOET IK NOG DOEN elke
+  // keer stelt dat hij dit scherm opent.
+  //
+  // Dus: is er werk, dan staat het werk bovenaan en vouwt de machinerie samen tot één regel met een
+  // knop "Afschrift toevoegen" erin (uploaden blijft één tik). Is er nog niks, dan ÍS de machinerie
+  // het scherm en staat alles open — dan is de sleepzone precies wat de ondernemer zoekt.
+  //
+  // `null` = nog niet beslist. De keuze valt zodra de eerste lezing binnen is en blijft daarna van
+  // de ondernemer: klapt hij hem open, dan blijft hij open, ook na een herlezing.
+  const [setupOpen, setSetupOpen] = useState<boolean | null>(null)
+
 
   // Shared matcher call — used by the initial load, after an upload, and (background:true) by the
   // tab-return refresh. [CIRKEL-C6] The body is guarded: mr.ok is checked BEFORE .json() (a
@@ -1406,6 +1427,13 @@ export default function BankClient() {
     { key: 'ignored' as const, label: t('bank.genegeerd'), icon: 'visibility_off', count: ignoredInQ.length },
     { key: 'done' as const, label: t('bank.tab.bevestigd'), icon: 'link', count: confirmedList.length },
   ]
+  // [BANK-WERK-EERST] Is er iets te doen? Alleen dán vouwt de machinerie samen. Bewust de PENDING
+  // lijsten en niet 'zijn er transacties': een administratie waarin alles al is afgehandeld heeft
+  // geen werk om bovenaan te zetten, en dan is de sleepzone opnieuw het nuttigste ding op het
+  // scherm — precies zoals bij een lege administratie.
+  const heeftWerk = toConfirm.length + noMatch.length + posList.length > 0
+  const setupZichtbaar = setupOpen ?? !heeftWerk
+
   const activeListRaw =
     bankTab === 'confirm' ? toConfirm
     : bankTab === 'none' ? noMatch
@@ -1459,6 +1487,9 @@ export default function BankClient() {
   // rekeningen zijn. Doe je dat daar, dan kijkt hij na een geslaagde toestemming tegen een
   // time-out van zijn browser aan. Hier draait het terwijl de pagina er al staat.
   const bankConnectHandledRef = useRef(false)
+  // [BANK-WERK-EERST] Het bestandsveld krijgt een ref, zodat "Afschrift toevoegen" in de
+  // ingeklapte kop precies hetzelfde doet als de sleepzone eronder — één tik, geen omweg.
+  const statementFileRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => {
     const outcome = searchParams.get('bank')
     if (!outcome || bankConnectHandledRef.current) return
@@ -1590,14 +1621,126 @@ export default function BankClient() {
       {/* [HEADER-SYSTEM] Title "Bank" + back live in the shared sub-page bar
           (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
           removed. The descriptive intro line stays. */}
-      <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
-        {t('bank.intro')}
-      </p>
+      {/* ── [BANK-STAND] Wat er nú op je wacht ────────────────────────────────────────────────
+          Hier stond een vaste beschrijving van wat dit scherm dóét ("Koppel je bank of upload je
+          bankafschrift…"). Die las elke dag hetzelfde, hoeveel of hoe weinig er ook lag — terwijl
+          de ondernemer die zin al kent na de eerste keer, en de vraag waarmee hij komt een andere
+          is: moet ik hier iets?
+          Dezelfde plaats en dezelfde toon als de kopregel van /dashboard/incoming, die deze vorm al
+          had. En het is geen extra blok: het vervangt de regel die er stond.
+          Zolang de eerste lezing loopt (data === null) staat er niets. "Alles afgehandeld" boven een
+          scherm dat nog aan het laden is, is precies het soort geruststelling dat later een leugen
+          blijkt te zijn geweest. */}
+      {data && (
+        <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
+          {/* "Nog geen transacties" hangt aan de lezing zelf, niet aan de genegeerd-lijst: die
+              wordt pas geladen als dat tabblad wordt geopend, dus bij de eerste verf is hij altijd
+              leeg — en een administratie met alleen genegeerde regels zou dan lezen als een lege. */}
+          {(data.suggestions?.length ?? 0) === 0
+            ? t('bank.stand.leeg')
+            : !heeftWerk
+              ? t('bank.stand.klaar')
+              : (
+                <>
+                  {toConfirm.length > 0 && (
+                    <strong style={{ color: '#3c4043' }}>
+                      {toConfirm.length === 1
+                        ? t('bank.stand.bevestigenEen')
+                        : t('bank.stand.bevestigen', { count: toConfirm.length })}
+                    </strong>
+                  )}
+                  {toConfirm.length > 0 && noMatch.length > 0 && ' '}
+                  {noMatch.length > 0 && (
+                    noMatch.length === 1
+                      ? t('bank.stand.geenFactuurEen')
+                      : t('bank.stand.geenFactuur', { count: noMatch.length })
+                  )}
+                  {/* De pinregels horen erbij, anders is de zin LEEG op een scherm waar alleen
+                      pinafrekeningen wachten — heeftWerk telt ze mee, dus zonder deze zin zou daar
+                      een lege alinea staan boven een lijst met werk. */}
+                  {(toConfirm.length > 0 || noMatch.length > 0) && posList.length > 0 && ' '}
+                  {posList.length > 0 && (
+                    posList.length === 1
+                      ? t('bank.stand.pinEen')
+                      : t('bank.stand.pin', { count: posList.length })
+                  )}
+                </>
+              )}
+        </p>
+      )}
+
+      {/* ── [BANK-WERK-EERST] De kop van de machinerie ──────────────────────────────────────
+          Eén regel in plaats van drie blokken, met de handeling die de ondernemer hier écht doet
+          (een afschrift toevoegen) als knop erin. Alleen zichtbaar als er werk is — anders staat
+          alles gewoon open en is deze regel er niet, want dan is de sleepzone het scherm. */}
+      {heeftWerk && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+          padding: '10px 14px', marginBottom: setupZichtbaar ? 14 : 18,
+          borderRadius: R.lg, background: M3.surface, boxShadow: EL1, border: '1px solid #EEE',
+        }}>
+          <button
+            type="button"
+            onClick={() => setSetupOpen(!setupZichtbaar)}
+            aria-expanded={setupZichtbaar}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none',
+              padding: 0, cursor: 'pointer', fontFamily: FONT, minWidth: 0, textAlign: 'start',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5F6368' }} aria-hidden>
+              {setupZichtbaar ? 'expand_less' : 'expand_more'}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#3c4043' }}>
+              {t('bank.setup.kop')}
+            </span>
+            {statements && statements.length > 0 && (
+              <span style={{ fontSize: 12.5, color: '#5F6368' }}>
+                {statements.length === 1
+                  ? t('bank.setup.aantalEen')
+                  : t('bank.setup.aantal', { count: statements.length })}
+              </span>
+            )}
+          </button>
+          {/* Uploaden blijft één tik, ook ingeklapt: dezelfde input als de sleepzone hieronder. */}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => statementFileRef.current?.click()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+              padding: '7px 14px', borderRadius: R.full, border: `1px solid ${M3.primary}`,
+              background: '#fff', color: M3.primary, fontSize: 12.5, fontWeight: 600,
+              cursor: busy ? 'default' : 'pointer', fontFamily: FONT, opacity: busy ? 0.6 : 1,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+              {busy ? 'hourglass_empty' : 'upload_file'}
+            </span>
+            {busy ? t('bank.bezig') : t('bank.setup.toevoegen')}
+          </button>
+        </div>
+      )}
 
       {/* [ENABLEBANKING] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
-      <BankConnectPanel
-        onMessage={showToast}
-        onImported={() => { void runMatch(); void loadStatements() }}
+      {setupZichtbaar && (
+        <BankConnectPanel
+          onMessage={showToast}
+          onImported={() => { void runMatch(); void loadStatements() }}
+        />
+      )}
+
+      {/* [BANK-WERK-EERST] Het bestandsveld staat ALTIJD in de pagina, ook ingeklapt — de knop in
+          de kop hierboven klikt erop. `htmlFor` houdt de sleepzone hieronder een echt <label>, dus
+          slepen en klikken blijven allebei werken op precies dezelfde invoer. */}
+      <input
+        ref={statementFileRef}
+        id="bank-statement-file"
+        type="file"
+        accept=".xml,.940,.sta,.mt940,.txt"
+        onChange={handleFile}
+        disabled={busy}
+        style={{ display: 'none' }}
       />
 
       {/* [P1-UNCATEGORIZED] Money that is NOT yet in your books. A bank line without a category
@@ -1625,7 +1768,9 @@ export default function BankClient() {
       )}
 
       {/* Upload card */}
+      {setupZichtbaar && (
       <label
+        htmlFor="bank-statement-file"
         onDrop={onDropZone}
         onDragOver={onDragOverZone}
         onDragLeave={onDragLeaveZone}
@@ -1650,8 +1795,8 @@ export default function BankClient() {
         {!busy && !dragActive && (
           <span style={{ fontSize: 11.5, color: '#5b7aa8' }}>{t('bank.upload.sleep')}</span>
         )}
-        <input type="file" accept=".xml,.940,.sta,.mt940,.txt" onChange={handleFile} disabled={busy} style={{ display: 'none' }} />
       </label>
+      )}
 
       {/* Upload summary */}
       {uploadInfo && (
@@ -1700,7 +1845,7 @@ export default function BankClient() {
       {/* [BANK-STATEMENTS] Uploaded statements table — shows what the owner has
           uploaded and when. Plus a "refresh names" action that upgrades older
           rows whose name is still "Onbekende" (read from their description). */}
-      {statements && statements.length > 0 && (
+      {setupZichtbaar && statements && statements.length > 0 && (
         <div style={{ marginTop: 16, borderRadius: R.lg, background: M3.surface, boxShadow: EL1, border: '1px solid #EEE', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '12px 14px', borderBottom: '1px solid #F0F0F0' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: '#3c4043', letterSpacing: 0.3 }}>
@@ -1902,7 +2047,15 @@ export default function BankClient() {
               is visible at once and wraps to the next line on narrow screens — no
               hidden horizontal scroll the owner can miss. */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-            {tabs.map((t) => {
+            {/* [BANK-LEGE-TAB] Een tabblad met niets erin wordt niet getoond.
+                Er stonden er vijf, altijd, met een teller erbij — en bij een gewone administratie
+                zijn er twee of drie leeg. Die leiden naar een lijst met niets, dus ze vragen wel
+                aandacht en beantwoorden niets: de ondernemer leest vijf getallen om te ontdekken
+                welke twee ertoe doen.
+                Het ACTIEVE tabblad blijft altijd staan, ook als het leegloopt. Anders verdwijnt het
+                onder zijn vinger op het moment dat hij zijn laatste regel afhandelt — en juist dan
+                hoort er "je bent hier klaar" te staan, niet een sprong naar een ander tabblad. */}
+            {tabs.filter((t) => t.count > 0 || t.key === bankTab).map((t) => {
               const active = bankTab === t.key
               return (
                 <button
