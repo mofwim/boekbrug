@@ -2003,7 +2003,15 @@ export default function BankClient() {
               is visible at once and wraps to the next line on narrow screens — no
               hidden horizontal scroll the owner can miss. */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-            {tabs.map((t) => {
+            {/* [BANK-LEGE-TAB] Een tabblad met niets erin wordt niet getoond.
+                Er stonden er vijf, altijd, met een teller erbij — en bij een gewone administratie
+                zijn er twee of drie leeg. Die leiden naar een lijst met niets, dus ze vragen wel
+                aandacht en beantwoorden niets: de ondernemer leest vijf getallen om te ontdekken
+                welke twee ertoe doen.
+                Het ACTIEVE tabblad blijft altijd staan, ook als het leegloopt. Anders verdwijnt het
+                onder zijn vinger op het moment dat hij zijn laatste regel afhandelt — en juist dan
+                hoort er "je bent hier klaar" te staan, niet een sprong naar een ander tabblad. */}
+            {tabs.filter((t) => t.count > 0 || t.key === bankTab).map((t) => {
               const active = bankTab === t.key
               return (
                 <button

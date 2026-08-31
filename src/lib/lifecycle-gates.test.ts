@@ -21776,3 +21776,22 @@ test("[BANK-WERK-EERST] uploading stays one tap, and the answers stay visible", 
       "which is work — the one thing this change exists to put first.",
   );
 });
+
+test("[BANK-LEGE-TAB] a tab with nothing in it is not offered, but the one you are on stays", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.match(
+    src, /tabs\.filter\(\(t\) => t\.count > 0 \|\| t\.key === bankTab\)/,
+    "all five tabs are shown again, counts and all. On an ordinary administration two or three " +
+      "are empty, so the owner reads five numbers to find the two that matter — and tapping one " +
+      "of the others answers nothing.",
+  );
+  // De tweede helft van die regel is geen detail: zonder `|| t.key === bankTab` verdwijnt het
+  // tabblad onder de vinger van de ondernemer op het moment dat hij zijn laatste regel afhandelt,
+  // en juist dan hoort daar "je bent hier klaar" te staan.
+  assert.match(
+    src, /\|\| t\.key === bankTab/,
+    "the active tab is dropped the moment it empties, which is exactly when it should be saying " +
+      "that this list is finished",
+  );
+});
