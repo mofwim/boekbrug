@@ -10216,6 +10216,10 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     "pay_token", "invoice_number", "invoice_type",
     // De drie die stil wegvielen.
     "vendor_iban", "payment_reference", "document_id",
+    // [VRIJGESTELD] En de vierde, die er nooit in heeft gestaan: vat_deduction verzet rubriek 5b
+    // van de klant met het volledige btw_amount van de factuur — aftrekbaar naar geblokkeerd of
+    // andersom — en een aan de klant gekoppelde boekhouder kon hem schrijven zonder mandaat.
+    "vat_deduction",
   ];
 
   const migraties = readdirSync("supabase/migrations")
