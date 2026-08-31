@@ -21929,3 +21929,142 @@ test("[BANK-STAND] the top line reports the queue instead of describing the scre
       "lines are all ignored reads as one that has none",
   );
 });
+
+// ─── [DEUR] A screen with no way in is a screen that does not exist ─────────────────────────────
+//
+// This repo already carries the scar. The hours screen — /dashboard/uren, the archetypal screen
+// for a zzp'er who bills by the hour — was built, translated, tested and through the render gate,
+// and had ZERO inbound links: reachable only by typing the path. The comment that records it sits
+// in ZzpDashboard.tsx under [UREN-DEUR].
+//
+// Then it happened again, in the same week, to /dashboard/leveranciers. Everything passed. tsc
+// compiled it, eslint was clean, the render gate drew it with real rows, the smoke test swept the
+// public surface. None of them asks the one question a visitor asks: how do I get here.
+//
+// The trap the second time was subtler than the first. The screen WAS in DashboardChrome's title
+// table — so a grep for its path found a hit and the author (me) stopped looking. That table gives
+// a screen a header and a back button once you are ON it. It is not a door. Which is why this gate
+// discounts it, and navigation.ts with it: a parent for the back button is not a way in either.
+//
+// Exempt without a list: a page whose whole body is a redirect. Three of those exist — the old
+// documents system, the accountant werkplek menu, the duplicate invite screen — each kept so a
+// saved bookmark still lands somewhere live. Reachable-by-URL-only is exactly what they are FOR,
+// and a hand-kept exception list would go stale the day someone turns one back into a real screen.
+test("[DEUR] every dashboard screen is reachable from somewhere in the app", () => {
+  const routes: string[] = [];
+  const walk = (dir: string, route: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) walk(p, `${route}/${e}`);
+      else if (e === "page.tsx") routes.push(route);
+    }
+  };
+  walk("src/app/dashboard", "/dashboard");
+  assert.ok(routes.length > 30, `the walk found ${routes.length} dashboard screens`);
+
+  // Every file that could hold a door, minus the two tables that only look like ones.
+  const sources: Array<[string, string]> = [];
+  const collect = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { collect(p); continue; }
+      if (!/\.tsx?$/.test(p) || p.includes(".test.")) continue;
+      if (p.endsWith("src/components/nav/DashboardChrome.tsx")) continue; // a title, not a door
+      if (p.endsWith("src/lib/navigation.ts")) continue;                  // a back button, not a door
+      // Comments stripped. A comment ABOUT a screen is not a way to it — and the first draft of
+      // this gate proved it the hard way: deleting the tile it was written to protect left the
+      // gate green, because the comment above the tile still named the path.
+      sources.push([p, code(p)]);
+    }
+  };
+  collect("src");
+
+  const isRedirectStub = (route: string): boolean => {
+    const body = readFileSync(`src/app${route}/page.tsx`, "utf8");
+    return /redirect\(/.test(body) && !/<[A-Z]/.test(body);
+  };
+
+  /**
+   * A screen that must NOT have a door, with the reason. One entry, and it earns it.
+   *
+   * The operator page answers notFound() for everyone outside BEHEER_EMAILS, and its own header
+   * says why that matters: "indistinguishable from a route that was never built, so the page leaks
+   * nothing about its own existence". A tile pointing at it would undo exactly that. It is reached
+   * by typing the path, on purpose, by the one person who knows it is there.
+   */
+  const EXEMPT_DOORLESS = new Map([
+    ["/dashboard/beheer", "operator-only behind notFound() — a link would announce it exists"],
+  ]);
+
+  const doorless: string[] = [];
+  for (const route of routes) {
+    if (route === "/dashboard") continue;      // the home screen IS the door
+    if (route.includes("[")) continue;          // a dynamic route is reached by construction
+    if (isRedirectStub(route)) continue;        // kept alive for a bookmark, by design
+    if (EXEMPT_DOORLESS.has(route)) continue;   // doorless on purpose — see the map above
+    // The route must appear as a COMPLETE path somewhere else. Requiring the boundary matters:
+    // without it "/dashboard/klanten" would count as linked because "/dashboard/klanten/${id}"
+    // exists, and the list screen behind that detail page could still have no door of its own.
+    const re = new RegExp(route.replace(/[/]/g, "\\/") + `(?=['"\`?#\\s)]|$)`);
+    const own = `src/app${route}/`;
+    const found = sources.some(([path, text]) => !path.startsWith(own) && re.test(text));
+    if (!found) doorless.push(route);
+  }
+
+  assert.deepEqual(
+    doorless, [],
+    "these screens are reachable only by typing their path — add a tile, a link or a nav entry, " +
+    "or make the page a redirect if it is meant to be retired",
+  );
+});
+
+// ─── [TWEE-BOEKEN] The one document that can contradict the books may not be read as agreement ──
+//
+// A supplier's rekeningoverzicht is the only source in this whole app that speaks from OUTSIDE.
+// The bank can say what left the account; it cannot say whether the supplier received it, applied
+// it to the right invoice, or still considers the bill open. That statement can.
+//
+// It arrived, it was parsed, every line was matched — and the summary said "alle facturen op dit
+// overzicht heb je al", because the reconciler compared EXISTENCE and never STATE. The live case:
+// invoice 2034488, EUR 1.165,73, listed as open and overdue by the wholesaler and standing as
+// 'paid' in BoekBrug on a hand tick with no bank line behind it. The one document that would have
+// caught it reported agreement.
+//
+// Two things this gate holds, and the second matters as much as the first: the contradiction is
+// SAID, and it is only said where it IS one. A periodeoverzicht lists the owner's own payments,
+// and there a paid invoice is entirely ordinary — crying wolf every month is how a warning stops
+// being read.
+test("[TWEE-BOEKEN] a paid invoice the supplier still lists is a contradiction, and it is said", () => {
+  const pure = code("src/lib/statement-reconcile.ts");
+
+  // The bucket exists and is a SUBSET of matched, never a replacement: the invoice really was
+  // found, and only the conclusion drawn from that changes.
+  assert.match(pure, /const alsoPaid = matched\.filter\(\(m\) => m\.invoice\.status === "paid"\);/,
+    "the contradiction is derived from matched, so 'we have it' stays true");
+
+  // The distinction rests on an observable fact, not on a guess about the document's purpose.
+  assert.match(pure, /!\(input\.lines \?\? \[\]\)\.some\(\(l\) => l\.kind === "payment"\)/,
+    "an open-items list shows no payments of ours; a period statement does");
+
+  // The sentence that used to swallow it may no longer fire while a contradiction stands.
+  assert.match(pure, /if \(r\.missing\.length === 0 && tegenspraak\.length === 0\) \{/,
+    "'alle facturen heb je al' is now conditional on there being no contradiction");
+
+  // And the two halves of the answer stay apart, because the owner's next action differs. With a
+  // bank line the money demonstrably left and the supplier is behind; without one, only the
+  // supplier holds evidence — and that is the case that costs a second payment or an aanmaning.
+  assert.match(pure, /m\.invoice\.paymentHasBankProof === true/,
+    "the verdict splits on whether a bank line carries the payment");
+  assert.match(pure, /geen bankregel die die betaling draagt/, "the unproven case asks for a check");
+  assert.match(pure, /nog niet verwerkt/, "the proven case reassures instead of accusing");
+
+  // The evidence has to be FETCHED, or the split above is decoration and every owner gets the
+  // cautious sentence. This is the [UREN-DEUR] failure in another shape: a distinction that is
+  // built, tested and never fed.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /\.from\("bank_tx_invoices"\)/, "the intake route reads the payment links");
+  assert.match(intake, /if \(l\.invoice_id && l\.transaction_id\) bankProof\.add\(l\.invoice_id\)/,
+    "…and a link counts as proof only when it names an actual bank transaction");
+  assert.match(intake, /paymentHasBankProof: bankProof\.has\(r\.id\)/,
+    "…and hands it to the reconciler");
+});
