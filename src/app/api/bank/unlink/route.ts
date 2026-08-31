@@ -169,6 +169,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "conflict" }, { status: 409 });
   }
 
+  // [HANDMATIG-OVERGENOMEN] auto_match_reason means one thing: the APP booked this line on amount
+  // and supplier name alone, and nobody has checked it. readiness counts exactly the rows carrying
+  // it while status='matched', and turns that count into "loop ze na vóór je de aangifte indient"
+  // on the quarter-close board.
+  //
+  // The moment a human takes the row over, that sentence is false. Only the explicit "Klopt,
+  // gecontroleerd" tap cleared it, so an unlink left the flag on the row and the next manual
+  // confirm carried it back into 'matched' — and the board then warned the owner about a link the
+  // owner made by hand. A false item on the one screen that exists to be believed.
+  //
+  // Its OWN update, deliberately, and best-effort. The column arrives with a hand-applied
+  // migration (bank_auto_match_reason.sql), and folding it into the write above would turn a
+  // lagging migration into a broken unlink — the same reasoning readiness gives for reading it
+  // separately. A stale amber flag is a nuisance; a route that refuses to run is not.
+  await (pipeline
+    .from("bank_transactions")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update({ auto_match_reason: null } as any)
+    .eq("id", transactionId)
+    .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
+
   // 4. Restore the invoice. SESSION client so the B.4 trigger has auth context. incoming →
   //    'received', else 'sent'. 'overdue' is never stored (recomputed from due_date), and
   //    'processing' invoices are excluded from matching (isEligible), so by construction the

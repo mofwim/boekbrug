@@ -18,6 +18,7 @@
 // niets extra's terug. Het scherm is de presentatie, niet het slot.
 
 import { redirect } from 'next/navigation'
+import { fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { fetchAllRows } from '@/lib/supabase-paginate'
@@ -163,14 +164,30 @@ export default async function VerkoopPage() {
   const ids = facturen.map((f) => f.id)
   if (ids.length) {
     try {
-      const { data: herinneringen } = await pipeline
-        .from('invoice_reminders')
-        .select('invoice_id, sent_at, status')
-        .in('invoice_id', ids)
-        .neq('status', 'failed')
-        .order('sent_at', { ascending: false })
+      // [HERINNER-AFKAP] Was een kale `.in()` met een weggegooide `error`, in een try/catch die niet
+      // kón afgaan: supabase-js geeft een fout TERUG in plaats van hem te gooien, dus een 414 op een
+      // lange id-lijst of de stille afkap op ~1000 rijen kwam hier binnen als `data: null` en werd
+      // `?? []`. Elke factuur kreeg dan reminder_count 0 en last_reminder_at null.
+      //
+      // Wat daarop volgt is geen weergavefout. canRemind leest precies die twee velden, dus de knop
+      // "herinner" verschijnt op facturen die het maximum van drie herinneringen al hebben gehad en
+      // op facturen die nog in hun afkoelperiode zitten — een tweede mail naar een klant die er
+      // gisteren al een kreeg. De regel drie regels hierboven zegt letterlijk dat dat niet mag.
+      //
+      // fetchAllRowsForIds hakt de id-lijst én paginieert, en gooit bij een fout, zodat een
+      // onvolledige lezing niet als "nog nooit herinnerd" kan doorgaan.
+      const herinneringen = await fetchAllRowsForIds<{ invoice_id: string; sent_at: string; status: string }, string>(
+        ids,
+        (chunk, from, to) => pipeline
+          .from('invoice_reminders')
+          .select('invoice_id, sent_at, status')
+          .in('invoice_id', chunk)
+          .neq('status', 'failed')
+          .order('id', { ascending: true })
+          .range(from, to),
+      )
       const perFactuur = new Map<string, { laatste: string; aantal: number }>()
-      for (const r of (herinneringen ?? []) as Array<{ invoice_id: string; sent_at: string }>) {
+      for (const r of [...herinneringen].sort((a, b) => (b.sent_at ?? '').localeCompare(a.sent_at ?? '')) as Array<{ invoice_id: string; sent_at: string }>) {
         const b = perFactuur.get(r.invoice_id)
         if (b) b.aantal++
         else perFactuur.set(r.invoice_id, { laatste: r.sent_at, aantal: 1 })
