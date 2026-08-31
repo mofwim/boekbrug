@@ -12705,6 +12705,63 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
+  // De regel stond al in invoice/draft/route.ts, in zoveel woorden: "Een factuurkop zonder regels
+  // is erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent."
+  //
+  // De creditnota-route was de uitzondering: `await db.from('invoice_lines').insert(...)` zonder
+  // de fout te lezen. Tot vandaag viel dat nauwelijks op; sinds creditnota_per_rate_ceiling.sql
+  // hangt er een BEFORE INSERT-trigger op invoice_lines die check_violation RAISEt, en dan liep de
+  // route langs de weigering heen naar een PDF met een KLOPPEND totaal boven een LEGE regeltabel —
+  // opgeslagen, in het kwartaalpakket, en gemaild naar de klant.
+  //
+  // Deze poort zoekt zijn eigen routes op: elk bestand dat regels in invoice_lines schrijft, moet
+  // de fout van die insert lezen. Een zevende route erbij is dan meteen een rode poort.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (pad.endsWith(".ts") && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  const schrijvers = loop("src/app/api").filter((f) =>
+    /from\(['"]invoice_lines['"]\)[\s\S]{0,200}?\.insert\(/.test(readFileSync(f, "utf8")),
+  );
+  assert.ok(schrijvers.length >= 2,
+    `only ${schrijvers.length} routes insert invoice lines; the scan is broken and a gate that ` +
+    "finds nothing passes for the wrong reason");
+
+  for (const f of schrijvers) {
+    const src = code(f); // commentaar eraf — een notitie óver een foutcontrole is er geen
+    // Een KALE `await …insert(`: de await moet aan het begin van een statement staan. Zonder die
+    // eis matchte dit ook `const { error: lineErr } = await …insert(` — en dat is precies de goede
+    // vorm. Deze poort wees zo in eerste instantie cron/recurring aan, een route die zijn fout wél
+    // leest en daar zelfs een [LINES-READ-HONEST]-notitie over draagt. Een poort die het juiste
+    // gedrag beschuldigt, wordt weggeklikt en beschermt daarna niets meer.
+    const kaal = new RegExp(
+      String.raw`(^|[\n{;])\s*await\s+\w+(?:\.\w+)*\s*\.from\(['"]invoice_lines['"]\)\s*\.insert\(`,
+    ).test(src);
+    assert.ok(!kaal,
+      `${f} inserts invoice lines without reading the error. A document head with no lines counts ` +
+      "in every overview and opens empty — and a creditnota does not stay inside: it is rendered, " +
+      "stored in the accountant's package, and mailed to the customer");
+  }
+
+  // En specifiek op de route die het misging: de rij wordt teruggedraaid, en het verbruikte
+  // nummer wordt gemeld — niet stil weggeslikt.
+  const cn = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(cn, /const \{ error: regelFout \} = await db\.from\('invoice_lines'\)/,
+    "the creditnota line insert must read its error");
+  assert.match(cn, /if \(regelFout\)[\s\S]{0,600}?\.from\('invoices'\)\.delete\(\)\.eq\('id', creditnota\.id\)/,
+    "…and roll the half-made creditnota back, the way the draft route already does");
+  assert.match(cn, /if \(regelFout\)[\s\S]{0,1200}?Sentry\.captureMessage/,
+    "…and report the minted-but-unused number, because a gap nobody knows about is the one the " +
+    "[DOORLOPEND] check later hands to the owner as a riddle");
+});
+
 test("[PRIVACY-WAAR] the privacy notice says what the code actually grants the accountant", () => {
   // Gemeten op 31-08-2026. De gepubliceerde verklaring zei tegen elke gebruiker:
   //
