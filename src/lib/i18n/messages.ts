@@ -13088,6 +13088,11 @@ export const MESSAGES = {
   'bh.fact.foutKiesKlant': { nl: 'Kies eerst voor welke klant je factureert.', ar: 'اختر أولاً العميل الذي تصدر الفاتورة نيابةً عنه.', en: 'First choose which client you are invoicing for.' },
   'bh.fact.foutOntvanger': { nl: 'Vul in aan wie de factuur gericht is.', ar: 'أدخل الجهة التي توجَّه إليها الفاتورة.', en: 'Fill in who the invoice is addressed to.' },
   'bh.fact.foutRegel': { nl: 'Vul minstens één regel in met een omschrijving en een bedrag.', ar: 'أدخل سطراً واحداً على الأقل مع وصف ومبلغ.', en: 'Fill in at least one line with a description and an amount.' },
+  // [REGEL-ZONDER-OMSCHRIJVING] Een regel met een bedrag en geen omschrijving werd stil weggelaten
+  // uit de factuur terwijl hij WEL in het totaal op het scherm stond. Het factuurnummer is dan al
+  // vergeven en de klant betaalt het lagere bedrag; herstellen kost een creditnota. Weigeren dus,
+  // met het regelnummer erbij — "er klopt iets niet" zonder te zeggen wát is geen foutmelding.
+  'bh.fact.foutOmschrijving': { nl: 'Regel {nummer} heeft wel een bedrag maar geen omschrijving. Vul hem in of maak het bedrag leeg — anders staat er straks een ander totaal op de factuur dan hier op het scherm.', ar: 'السطر {nummer} فيه مبلغ بلا وصف. أكمِله أو امسح المبلغ — وإلا سيظهر على الفاتورة إجمالي غير الذي تراه هنا.', en: 'Line {nummer} carries an amount but no description. Fill it in or clear the amount — otherwise the invoice will show a different total from the one on screen.', tr: '{nummer}. satırda tutar var ama açıklama yok. Doldurun ya da tutarı silin; aksi hâlde faturada ekrandakinden farklı bir toplam çıkar.' },
   'bh.fact.foutConcept': { nl: 'Het concept kon niet worden aangemaakt.', ar: 'تعذّر إنشاء المسودة.', en: 'The draft could not be created.' },
   'bh.fact.foutVersturen': { nl: 'Het concept staat klaar, maar versturen lukte niet. Probeer het opnieuw vanaf de factuur zelf.', ar: 'المسودة جاهزة، لكن الإرسال لم ينجح. حاول مرة أخرى من الفاتورة نفسها.', en: 'The draft is ready, but sending failed. Try again from the invoice itself.' },
   'bh.fact.foutOnbekend': { nl: 'Er ging iets mis. Probeer het opnieuw.', ar: 'حدث خطأ ما. حاول مرة أخرى.', en: 'Something went wrong. Try again.' },
@@ -13123,6 +13128,14 @@ export const MESSAGES = {
   'bh.bev.rij.zonderNummer': { nl: 'zonder nummer', ar: 'بدون رقم', en: 'without number' },
   'bh.bev.rij.datumOnbekend': { nl: 'datum onbekend', ar: 'تاريخ غير معروف', en: 'date unknown' },
   'bh.bev.rij.waarvanBtw': { nl: 'waarvan {bedrag} btw', ar: 'منها {bedrag} btw', en: 'of which {bedrag} btw' },
+  // [CREDIT-BEVESTIG] Waarom deze rij niet te bevestigen is, en wat de boekhouder in plaats
+  // daarvan doet. De reden staat erbij, want "kan niet" zonder waarom is een doodlopend scherm.
+  'bh.bev.rij.creditTegenTeken': {
+    nl: 'Dit is een creditnota met een positief bedrag. Zo bevestigd telt hij als kosten en vraagt hij btw terug die er juist af hoort. Vraag de ondernemer het bedrag te corrigeren — daarna kun je hem bevestigen.',
+    ar: 'هذا إشعار دائن بمبلغ موجب. تأكيده هكذا يجعله يُحتسب كتكلفة ويسترجع ضريبة يجب طرحها. اطلب من صاحب العمل تصحيح المبلغ، ثم يمكنك تأكيده.',
+    en: 'This is a credit note carrying a positive amount. Confirmed as it stands it counts as a cost and reclaims VAT that ought to be deducted instead. Ask the owner to correct the amount — then you can confirm it.',
+    tr: 'Bu, pozitif tutarlı bir alacak dekontudur. Bu hâliyle onaylanırsa gider sayılır ve düşülmesi gereken KDV\'yi geri ister. Tutarı düzeltmesini işletme sahibinden isteyin; sonra onaylayabilirsiniz.',
+  },
   'bh.bev.rij.twijfels': { nl: 'Dit konden wij niet zeker lezen: {twijfels}. Controleer het aan het document zelf voor je bevestigt.', ar: 'لم نتمكن من قراءة هذا بثقة: {twijfels}. تحقّق منه في المستند نفسه قبل أن تؤكد.', en: 'We could not read this with certainty: {twijfels}. Check it against the document itself before you confirm.' },
   'bh.bev.rij.vraagVerstuurd': { nl: 'Vraag verstuurd', ar: 'تم إرسال السؤال', en: 'Question sent' },
   'bh.bev.rij.kloptNiet': { nl: 'Klopt niet — vraag stellen', ar: 'غير صحيح — اطرح سؤالًا', en: 'Not correct — ask a question' },
