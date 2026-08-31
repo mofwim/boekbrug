@@ -83,6 +83,9 @@ export interface RangeInvoiceRow {
   id?: string | null;
   direction: string | null;
   status: string | null;
+  // [OFFERTE-GEEN-OMZET] A quote is stored with direction 'outgoing' and status 'sent', so the
+  // engine needs the type to refuse it. compute-result-range.ts selects it.
+  invoice_type?: string | null;
   total_ex_btw: number | null;
   btw_amount: number | null;
   invoice_date?: string | null;
@@ -245,6 +248,8 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   const invoices: ResultInvoice[] = invRows.map((i) => ({
     direction: effDirOf(i, ownerId),
     status: i.status,
+    // [OFFERTE-GEEN-OMZET] Without this the engine cannot tell a quote from an invoice.
+    invoice_type: i.invoice_type,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
     // [RUBRIEK-SPLIT] Present only on a mixed-rate sales invoice; everything else keeps the

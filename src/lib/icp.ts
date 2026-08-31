@@ -97,12 +97,21 @@ export function classifyVatNumber(raw: string | null | undefined): VatShape {
 }
 
 /** One sales invoice, as much of it as the ICP needs. */
+import { isQuote } from "./offerte-followup";
+
 export interface IcpInvoice {
   invoiceNumber: string | null;
   clientName: string | null;
   clientVatNumber: string | null;
   direction: "incoming" | "outgoing" | null;
   status: string | null;
+  // [OFFERTE-GEEN-OMZET] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'.
+  //
+  // An unaccepted quote to an EU customer used to become a LINE of this opgaaf, keyed on that
+  // customer's VAT number, for a supply that never happened — and the Belastingdienst
+  // cross-checks the opgaaf against rubriek 3b and against the customer's own listing in their
+  // member state. A quote has no invoice number to put on it either.
+  invoiceType?: string | null;
   totalExBtw: number | null;
   btwAmount: number | null;
 }
@@ -156,6 +165,9 @@ export function buildIcp(args: { invoices: IcpInvoice[]; korActive?: boolean }):
 
   for (const i of args.invoices) {
     if (i.direction !== "outgoing") continue;
+    // [OFFERTE-GEEN-OMZET] Before the status test, for the same reason as in financial-result.ts:
+    // a quote is stored 'sent' and passes it.
+    if (isQuote(i.invoiceType)) continue;
     if (!DECLARED_OUTGOING.has(i.status ?? "")) continue;
 
     const shape = classifyVatNumber(i.clientVatNumber);

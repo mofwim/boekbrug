@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
   // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, client_name, direction, status, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
+    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
   );
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
     direction: effDir(i),
-    status: i.status, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
+    status: i.status, invoice_type: i.invoice_type, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
     rate_lines: i.id ? rateSharesByInvoice.get(i.id) ?? null : null,
     exempt_ex: i.id ? exemptExByInvoice.get(i.id) ?? null : null,
     vat_deduction: i.id ? exemption.deductionByInvoice.get(i.id) ?? null : null,
@@ -396,6 +396,9 @@ export async function GET(req: NextRequest) {
   const icp = buildIcp({
     korActive,
     invoices: invRaw.map((i): IcpInvoice => ({
+      // [OFFERTE-GEEN-OMZET] Or an unaccepted quote becomes a line of the opgaaf, keyed on
+      // the customer's EU VAT number, for a supply that never happened.
+      invoiceType: (i.invoice_type as string | null) ?? null,
       invoiceNumber: (i.invoice_number as string | null) ?? null,
       clientName: (i.client_name as string | null) ?? null,
       clientVatNumber: (i.client_btw_number as string | null) ?? null,
@@ -413,6 +416,9 @@ export async function GET(req: NextRequest) {
   // carry verlegde BTW.
   const euPurchases = buildForeignPurchases({
     invoices: invRaw.map((i): IcpInvoice => ({
+      // [OFFERTE-GEEN-OMZET] Or an unaccepted quote becomes a line of the opgaaf, keyed on
+      // the customer's EU VAT number, for a supply that never happened.
+      invoiceType: (i.invoice_type as string | null) ?? null,
       invoiceNumber: (i.invoice_number as string | null) ?? null,
       clientName: (i.client_name as string | null) ?? null,
       clientVatNumber: (i.client_btw_number as string | null) ?? null,

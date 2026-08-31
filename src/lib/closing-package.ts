@@ -2701,6 +2701,8 @@ export async function buildClosingPackageZip(args: {
   const invoicesForResult: ResultInvoice[] = all.map((i) => ({
     direction: i.direction as "outgoing" | "incoming" | null,
     status: i.status,
+    // [OFFERTE-GEEN-OMZET] Without this the engine cannot tell a quote from an invoice.
+    invoice_type: i.invoice_type,
     total_ex_btw: i.total_ex_btw,
     btw_amount: i.btw_amount,
     rate_lines: (i as { id?: string }).id ? rateSharesByInvoice.get((i as { id: string }).id) ?? null : null,
@@ -2848,6 +2850,8 @@ export async function buildClosingPackageZip(args: {
   const icp = buildIcp({
     korActive,
     invoices: outgoing.map((i): IcpInvoice => ({
+      // [OFFERTE-GEEN-OMZET] Or an unaccepted quote becomes a line of the opgaaf.
+      invoiceType: i.invoice_type,
       invoiceNumber: i.invoice_number,
       clientName: i.client_name,
       clientVatNumber: i.client_btw_number,
