@@ -15,6 +15,8 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
+// [OFFERTE-GEEN-OMZET] One answer to "is this a quote", shared with the follow-up engine.
+import { isQuote } from "./offerte-followup";
 import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
 import { nearestLegalRate } from "./btw-rate";
 import { isPosPayoutDescription } from "./bank-identity";
@@ -68,6 +70,18 @@ export interface ComputeOpts {
 export interface ResultInvoice {
   direction: "outgoing" | "incoming" | null;
   status: string | null;
+  // [OFFERTE-GEEN-OMZET] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'.
+  //
+  // This field did not exist here, and its absence was the defect: a quote e-mailed to a customer
+  // is stored as invoice_type 'pro_forma' with direction 'outgoing', status 'sent' and its real
+  // totals, so it satisfied the direction+status test below and was booked as omzet with
+  // verschuldigde BTW. The engine could not even see the type to refuse it.
+  //
+  // OPTIONAL, and that is a deliberate risk: a caller whose SELECT omits the column passes
+  // `undefined`, which is not a quote, and the row books as before. The four callers all pass it
+  // and a gate holds them there — but the honest reading is that the column has to be SELECTED,
+  // and forgetting it fails open. See isQuote in offerte-followup.ts.
+  invoice_type?: string | null;
   total_ex_btw: number | null;
   btw_amount: number | null;
   // [RUBRIEK-SPLIT] The invoice's omzet per BTW rate, when its lines say more than its header
@@ -467,6 +481,18 @@ export function computeResult(
     }
   } else {
     for (const inv of invoices) {
+      // [OFFERTE-GEEN-OMZET] A quote is not turnover, however far out the door it went.
+      //
+      // It carries no invoice number — it is not in the doorlopende reeks at all (Art. 35 Wet OB)
+      // — nothing was delivered, and the customer may never accept it. But it is stored with
+      // direction 'outgoing', status 'sent' and real totals, so the direction+status test on the
+      // very next line booked it as omzet with BTW over it. Measured on one EUR 10.000 quote
+      // beside one EUR 1.000 paid invoice: rubriek 1a read 11.000 / 2.310 where the truth is
+      // 1.000 / 210, and 5g told the owner to pay EUR 2.100 of BTW on a quote nobody accepted.
+      //
+      // Guarded here, in the engine, rather than in each of the four callers' queries: a filter
+      // that has to be repeated four times is a filter that is one refactor from being three.
+      if (isQuote(inv.invoice_type)) continue;
       const ex = inv.total_ex_btw ?? 0;
       const btw = inv.btw_amount ?? 0;
       const st = inv.status ?? "";

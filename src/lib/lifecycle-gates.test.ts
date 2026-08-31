@@ -16620,6 +16620,95 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
 
+test("[OFFERTE-GEEN-OMZET] a quote is not turnover, on every surface that declares money", () => {
+  // A quote e-mailed to a customer is stored by /api/invoice/draft as invoice_type 'pro_forma',
+  // direction 'outgoing', with its real total_ex_btw and btw_amount; send-offerte then sets
+  // status 'sent' and deliberately leaves the type and the totals alone. Every money surface in
+  // this app filtered on direction and status and NEVER on the type — financial-result.ts did not
+  // even have an invoice_type field to filter on — so an unaccepted quote was declared as taxed
+  // omzet. Measured on one EUR 10.000 quote beside one EUR 1.000 paid invoice:
+  //
+  //     rubriek 1a   omzet 11.000  BTW 2.310        truth: 1.000 / 210
+  //     5a / 5g      2.310                          truth: 210
+  //
+  // The owner is told to pay EUR 2.100 of BTW on a document that carries no invoice number at all
+  // (Art. 35 Wet OB — a quote is not in the doorlopende reeks), for a supply that never happened
+  // and may never happen. The same row became a line of the concept ICP-opgaaf keyed on the
+  // customer's EU VAT number — which the Belastingdienst cross-checks against rubriek 3b and
+  // against that customer's own listing abroad — and a "Verkoopfactuur" journal entry in the XAF
+  // auditfile, with a debiteuren line and a "BTW over omzet" line.
+
+  // 1. THE ENGINE REFUSES IT, so a caller cannot forget the filter — there are four of them.
+  const engine = code("src/lib/financial-result.ts");
+  assert.match(engine, /if \(isQuote\(inv\.invoice_type\)\) continue;/,
+    "the money engine must refuse a quote itself");
+  assert.match(engine, /invoice_type\?: string \| null;/, "…which needs the type to be on the row");
+
+  // 2. AND EVERY QUERY THAT FEEDS IT SELECTS THE COLUMN. This is the load-bearing half: the guard
+  //    FAILS OPEN. A row whose invoice_type was not selected arrives as `undefined`, is not a
+  //    quote, and books exactly as it did before — silently, with nothing red anywhere. Asserted
+  //    on the SELECT string, because that is the thing that is easy to trim in a later refactor.
+  const feeders: Array<[string, string]> = [
+    ["src/app/api/aangifte/route.ts", "the concept BTW-aangifte"],
+    ["src/app/api/readiness/route.ts", "the readiness check"],
+    ["src/lib/compute-result-range.ts", "the result over a range"],
+    ["src/lib/closing-package.ts", "the accountant's quarter package"],
+  ];
+  for (const [path, what] of feeders) {
+    const src = code(path);
+    // ANY column list that carries money, not only an inline .select(): closing-package.ts keeps
+    // its columns in a `... as const` string, and a gate that only knew the inline form reported
+    // "has this moved?" on the file with the longest select in the repo.
+    //
+    // Matched as a COLUMN LIST — lowercase identifiers separated by commas, nothing else. A looser
+    // `"[^"]*total_ex_btw[^"]*"` spans from one quote in the code to the next unrelated one and
+    // reports a fragment of arithmetic as a select, which is how the first version of this failed.
+    const selects = [...src.matchAll(/"([a-z_0-9]+(?:, ?[a-z_0-9]+)+)"/g)]
+      .map((m) => m[1])
+      .filter((columns) => /\btotal_ex_btw\b/.test(columns));
+    assert.ok(selects.length > 0, `${path}: no invoices column list found — has this moved?`);
+    for (const columns of selects) {
+      assert.ok(
+        /\binvoice_type\b/.test(columns),
+        `${what} (${path}) selects money without invoice_type, so a quote books as omzet:\n  ${columns}`,
+      );
+    }
+  }
+
+  // 3. AND THE MAPPER PASSES IT ON. Selecting the column and dropping it on the way into
+  //    ResultInvoice is the same bug one step later, and it type-checks — the field is optional.
+  for (const path of [
+    "src/app/api/aangifte/route.ts",
+    "src/app/api/readiness/route.ts",
+    "src/lib/closing-package.ts",
+    "src/lib/result-range-assemble.ts",
+  ]) {
+    assert.match(code(path), /invoice_type: i\.invoice_type/,
+      `${path}: the ResultInvoice mapper drops the type it just selected`);
+  }
+
+  // 4. THE OTHER TWO DOCUMENTS A QUOTE LEAKED INTO. Neither goes through computeResult, so
+  //    neither is covered by anything above.
+  const icp = code("src/lib/icp.ts");
+  assert.match(icp, /if \(isQuote\(i\.invoiceType\)\) continue;/,
+    "an unaccepted quote must not become a line of the ICP-opgaaf");
+  const xaf = code("src/lib/xaf-fetch.ts");
+  assert.match(xaf, /\.filter\(\(r\) => !isQuote\(r\.invoice_type\)\)/,
+    "an unaccepted quote must not become a VRK entry in the auditfile");
+
+  // 5. ONE VOCABULARY. 'pro_forma' is what the product writes and 'offerte' lives in older rows
+  //    and in every invoice_type union — a check that knows one of them works until it meets the
+  //    other, and there were already six hand-written copies of this pair before the money engine
+  //    got a seventh (none at all).
+  const vocab = code("src/lib/offerte-followup.ts");
+  assert.match(vocab, /export const QUOTE_TYPES: ReadonlySet<string> = new Set\(\["pro_forma", "offerte"\]\)/);
+  assert.match(vocab, /export function isQuote\(/, "the one answer must be exported");
+  for (const path of ["src/lib/financial-result.ts", "src/lib/icp.ts", "src/lib/xaf-fetch.ts"]) {
+    assert.match(code(path), /import \{ isQuote \} from "\.\/offerte-followup"/,
+      `${path}: must ask the shared vocabulary, not spell the pair again`);
+  }
+});
+
 test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-input in de geldmodals", () => {
   // GEMELD: op de NemaFood-factuur staat de btw als 95,54 — en het btw-veld van de bevestig-modal
   // nam niets voorbij "95" aan. <input type="number"> weigert het Nederlandse decimaalteken, zet
