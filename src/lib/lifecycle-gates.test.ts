@@ -12563,6 +12563,38 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
+  // De duurste leesfout die deze administratie in een jaar maakte, was er één soort: een
+  // creditnota geboekt als schuld, waarbij de btw bij de teruggave werd OPGETELD in plaats van
+  // afgetrokken. Het model gaf is_credit_note=false op een document met "CREDITFACTUUR" in de kop.
+  //
+  // Daar staan nu twee deterministische grepen op, en het punt is dat ze ONAFHANKELIJK falen:
+  // het NUMMER (CR…) helpt niet bij een leverancier die creditnota's in de gewone reeks nummert,
+  // en dan is de KOP het enige bewijs dat er nog is. Eén van de drie schakels losmaken — lezen,
+  // vlaggen, oordelen — maakt de andere twee zinloos zonder dat er iets stukgaat.
+  const mod = code("src/lib/creditnota-signal.ts");
+  assert.match(mod, /export function creditWordInHeader/, "de lezing zelf");
+  assert.match(mod, /const KOPLENGTE = \d+/,
+    "alleen de KOP: 'creditnota' staat in de voorwaarden van talloze gewone facturen, en een " +
+    "alarm dat daarop afgaat leert iedereen om het weg te klikken");
+
+  // De intake schrijft de vlag, en doet dat met de tekstlaag die daar toch al ligt.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /creditWordInHeader\(pdfText\)/, "de kop wordt bij de intake gelezen");
+  assert.match(intake, /credit_word_in_header: true/, "…en als vlag vastgelegd");
+
+  // En de gezondheidsklasse doet er iets mee — anders is het een vlag die niemand leest.
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /storedSafecore\?\.credit_word_in_header === true/,
+    "de vlag moet het oordeel bereiken, anders staat hij er voor niets");
+  assert.match(health, /flags\.creditPrefix = true/,
+    "…en de rij tegenhouden voor één blik van een mens");
+
+  // Wat deze greep NOOIT mag doen, net als de prefixpoort: een bedrag omdraaien.
+  assert.doesNotMatch(intake, /credit_word_in_header[\s\S]{0,400}?total_inc_btw\s*=/,
+    "flaggen, niet boeken — de eigenaar verklaart de soort, niet wij");
+});
+
 test("[LEVERANCIER-INTAKE] every path that creates an incoming invoice resolves a supplier", () => {
   // Gemeten in productie op 28-08-2026: vijftien inkoopfacturen droegen een IBAN én geen
   // supplier_id, en voor vijf ervan bestond een leveranciersrij met precies dat IBAN al. De
@@ -16622,6 +16654,62 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {
+  // The bulk download hands the owner a ZIP of their invoices. When an invoice has no stored PDF
+  // (a draft, or one from before PDFs were kept) the route DRAWS one — and it drew it from the
+  // five columns the ZIP's file NAMES need, while renderInvoicePdf reads fifteen.
+  //
+  // The worst of the ten that were missing is invoice_type. invoice-pdf.tsx opens with
+  // `const type = (invoice.invoice_type as string) || 'factuur'`, so an absent type is not an
+  // error — it is an INVOICE. A creditnota came out of the archive titled "Factuur" with an amount
+  // owed on it. Measured: the drawn bytes were the same length as a factuur (3313) and differed
+  // from the creditnota it actually is.
+  //
+  // The others are not decoration either. Art. 35a Wet OB requires the customer's name and
+  // address, the date and the BTW on an invoice; a creditnota must state which invoice it
+  // corrects. This is the copy the owner keeps for seven years.
+  //
+  // TWO SOURCES OF TRUTH, COMPARED — the pattern that keeps finding these. What the PDF reads is
+  // read out of the PDF module itself, so a field added there tomorrow fails this gate rather than
+  // quietly rendering blank in the archive.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  const needed = new Set([...pdf.matchAll(/\binvoice\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]));
+  assert.ok(needed.size >= 10, `only ${needed.size} invoice fields found in the PDF — has it moved?`);
+
+  const route = code("src/app/api/invoice/bulk-pdf/route.ts");
+  const select = /\.select\("(id, invoice_number[^"]*)"\)/.exec(route);
+  assert.ok(select, "the bulk-pdf invoices select must be findable");
+  const selected = new Set(select![1].split(",").map((c) => c.trim()));
+
+  // Two fields are ENRICHED rather than selected: the row carries original_invoice_id, and the
+  // number and date the PDF prints are resolved from it in a second read. Exempted by naming the
+  // mechanism, and the mechanism itself is asserted below — not by adding them to a skip list.
+  const enriched = new Set(["original_invoice_number", "original_invoice_date"]);
+  const absent = [...needed].filter((f) => !selected.has(f) && !enriched.has(f)).sort();
+  assert.deepEqual(
+    absent, [],
+    `the bulk download draws invoices without these columns, so the PDF prints them blank:\n  ${absent.join("\n  ")}`,
+  );
+  assert.match(route, /original_invoice_id/, "…and the creditnota's reference must be selected");
+  assert.match(route, /original_invoice_number: origin\?\.invoice_number \?\? null/,
+    "…and resolved into the number the PDF prints");
+
+  // [NO-SILENT-EMPTY] Both reads inside the drawing path dropped their outcome. `profile ?? {}`
+  // drew every invoice in the ZIP with no company name, KVK or BTW number and reported the archive
+  // as complete; `lines ?? []` drew an invoice with no lines and EUR 0,00 totals and counted it as
+  // one of the files that succeeded. An empty document is indistinguishable from a real one to
+  // whoever opens the archive a year later.
+  assert.match(route, /const \{ data: profile, error: profileError \}/,
+    "the profile read must be checked, or the ZIP is signed by nobody");
+  assert.match(route, /if \(profileError \|\| !profile\)/);
+  assert.match(route, /const \{ data: lines, error: linesError \}/,
+    "the lines read must be checked, or an empty invoice ships as a real one");
+  assert.match(route, /if \(linesError\) throw new Error/,
+    "…and a failed lines read must land in missing[], not in the archive");
+  assert.doesNotMatch(route, /renderInvoicePdf\(inv, lines \?\? \[\], profile \?\? \{\}\)/,
+    "the two fallbacks that made a hollow document look like a real one are gone");
 });
 
 test("[OFFERTE-GEEN-OMZET] a quote is not turnover, on every surface that declares money", () => {

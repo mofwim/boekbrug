@@ -285,3 +285,47 @@ export function asCreditAmounts(input: {
     flipped: true,
   };
 }
+
+// ─── [CREDIT-WOORD] Het woord op het papier ─────────────────────────────────────
+//
+// De prefixpoort hierboven ving CR0301267. Een leverancier die zijn creditnota's in dezelfde
+// nummerreeks zet als zijn facturen, glipt daar volledig doorheen — en elke ANDERE creditcontrole
+// in deze codebase vraagt het model, precies wat is_credit_note=false teruggaf op een document met
+// "CREDITFACTUUR" in de kop.
+//
+// De tekstlaag ligt bij de intake al klaar (hij wordt gebruikt om meerdere facturen in één bestand
+// te herkennen) en werd nergens op dit punt gelezen. Dat is een tweede deterministische greep op
+// dezelfde fout, gratis, en hij kijkt naar hetzelfde wat de mens ziet: de kop.
+//
+// ── ALLEEN DE KOP, EN DAAR IS EEN REDEN VOOR ──
+//
+// "Creditnota" staat op talloze GEWONE facturen, onderaan, in de voorwaarden: "bij retour ontvangt
+// u een creditnota". Zou dit het hele document doorzoeken, dan ging het alarm op een groot deel van
+// alle inkoopfacturen af — en een alarm dat te vaak afgaat, leert iedereen om het weg te klikken.
+// Dat is in dit bestand de duurste uitkomst, duurder dan de fout die het moest vangen.
+//
+// Dus: alleen het kopblok, en "geen creditnota" telt niet mee.
+//
+// Dit BESLIST niets over de soort en draait geen enkel bedrag om — dezelfde regel als de
+// prefixpoort. Het houdt het document tegen voor één blik van een mens.
+
+/** Hoeveel tekens van bovenaf als "de kop" gelden. Ruim genoeg voor een briefhoofd, te krap voor
+ *  het voorwaardenblok onderaan. */
+const KOPLENGTE = 600;
+
+const CREDIT_WOORDEN = /\b(creditnota|creditfactuur|creditnote|credit\s?nota|credit\s?note)\b/i;
+/** "geen creditnota", "geen credit note" — een ontkenning is geen aankondiging. */
+const ONTKEND = /\bgeen\s+(?:creditnota|creditfactuur|creditnote|credit\s?nota|credit\s?note)\b/i;
+
+/**
+ * Staat het woord "creditnota" (of een variant) in de KOP van dit document?
+ *
+ * Puur. `text` is de ruwe tekstlaag zoals de extractie hem oplevert; null/leeg → false, want een
+ * scan zonder tekstlaag zegt hier niets — en niets is geen bewijs van het tegendeel.
+ */
+export function creditWordInHeader(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const kop = text.slice(0, KOPLENGTE);
+  if (ONTKEND.test(kop)) return false;
+  return CREDIT_WOORDEN.test(kop);
+}
