@@ -241,3 +241,71 @@ twice. That is the assembly layer, not the engines — which is precisely where 
 
 §6 items 1 and 3 remain open and are still not closable from here: one needs a live database pass,
 the other needs real acquirer files.
+
+---
+
+## 10. One signature, hunted deliberately — 31 August 2026
+
+§9 ended on the observation that all four defects shared a shape: **not an arithmetic error, but a
+decision taken correctly in one place and not read in another.** That is a searchable signature, so
+this pass searched for it on purpose rather than asking again for "bugs" — one seam class per
+reader (idempotency keys, markers, definitions spelled twice, capability probes, undo paths,
+coercions, rounding, period assignment, truncation, owner scoping), each finding then put to three
+independent skeptics instructed to refute.
+
+The refute rate is the useful number: **most findings did not survive.** Nothing below is included
+because an agent asserted it.
+
+### Fixed, each verified against production before a line was changed
+
+| What | Where | Why it was the signature |
+| --- | --- | --- |
+| A reversed auto-incasso re-booked hourly | `auto-incasso.ts` | the idempotency key was stable, and stored in the row the undo deletes |
+| "Opnieuw inlezen" erased the guard for it | `reimport-carry.ts` | the marker that replaced the key was not on the carry allow-list |
+| Four more probes read "busy" as "column gone" | `column-probe.ts` | one question, five spellings, five copies of one bug |
+| € 5.321,68 of phantom discrepancy | `money-invariants.ts` | the write path was fixed; the rows it left were not |
+| Three audit checks that could never fire | `scripts/money-audit.ts` | the checks were right; the caller fed them two columns short |
+
+The probe cluster is worth reading as the lesson. I fixed ONE of them by hand, wrote it up, and the
+signature-hunt then found the same eight lines in four more files — including one whose own
+`[NO-SILENT-EMPTY]` comment forbids exactly the outcome its probe produced, and which defended the
+read one line *below* the probe that gates it. A rule guarded by a hand-written list is not
+guarded; a rule with five spellings is five rules.
+
+### Verified and NOT fixed, with the reason
+
+**The turnover import can overwrite a day the owner already claimed.** `daySourceConflict`
+(`till-day.ts:296`) is the guard for "one day, one source". It has exactly two readers — both manual
+doors (`till/sale`, `turnover/day`). The single writer, `turnover-book.ts:105`, upserts on
+`(user_id, turnover_date)` without consulting it; `till-book.ts:95` says so in its own comment. So a
+Z-report import can claim a day that already carries hand-entered cash `omzet` rows, and the
+covered-day rule then skips those rows as presumed duplicates — the hand-entered turnover leaves the
+books silently.
+
+Structure verified here (two readers, one writer, and the writer's own admission). Not fixed for two
+reasons, both worth stating rather than quietly deferring: it needs a product decision (should an
+import refuse such a day, warn, or merge — and what does the owner see?), and another session was
+editing this exact area the same night, including the covered-day rule itself. A collision in cash
+accounting bought nothing that waiting does not.
+
+**A concurrent partial creditnota can pass a gross-only database guard.** Three skeptics
+independently traced this end to end: `creditnota_partial.sql:40` drops the unique index that
+serialised this path, and the replacement trigger sums document totals rather than per-line
+quantities, while the per-line ceiling is enforced in the route between a read and an insert. Two
+simultaneous requests for the same line both land.
+
+Carried here on skeptic agreement, NOT on my own end-to-end reading, and that distinction is the
+point of writing it down. It also needs a migration, and a migration against a production database
+while nobody is awake is not a thing to do on an agent's say-so.
+
+### For the owner, not for the code
+
+The revived duplicate check finds **eleven groups of live purchase invoices** sharing a supplier and
+an invoice number modulo punctuation — one of them three copies — including the pair the check was
+written for: `26/1876` and `26 / 1876`, same date, same € 665,02, both paid.
+
+Ten of the eleven were created between 5 and 19 July, and `possible-duplicate-collect.ts` landed on
+19 August. So they are residue and not a detector failure — the detector did not miss them, it did
+not exist. Each surviving copy counts its total into kosten and its BTW into voorbelasting a second
+time, so this is real exposure and not a display problem. Nothing was touched: which of two invoices
+is the real one is a judgement about somebody's administration, and §6's rule holds.
