@@ -18,7 +18,7 @@ import { getSessionUser } from "@/lib/session-user";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { bankBalanceOf } from "@/lib/bank-balance";
 import { computeResultForRange } from "@/lib/compute-result-range";
-import { buildAangifte } from "@/lib/aangifte";
+import { buildAangifte, filedSaldo } from "@/lib/aangifte";
 import { quarterStartDate, quarterEndDate } from "@/lib/quarterly";
 import { amsterdamToday } from "@/lib/format-nl";
 import {
@@ -41,6 +41,7 @@ export const dynamic = "force-dynamic";
  * period the figure covers instead of implying it covers everything.
  */
 const LOOKBACK_QUARTERS = 4;
+
 
 export async function GET() {
   const user = await getSessionUser();
@@ -91,7 +92,7 @@ export async function GET() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data, error } = await (pipeline as any)
           .from("btw_filings")
-          .select("year, quarter, btw_saldo")
+          .select("year, quarter, btw_saldo, btw_verschuldigd, btw_voorbelasting")
           .eq("user_id", user.id);
         return error ? null : ((data ?? []) as FilingRow[]);
       } catch {
@@ -141,7 +142,8 @@ export async function GET() {
             key,
             year,
             quarter,
-            balance: Math.round(Number(filed.btw_saldo) || 0),
+            // [SUPPLETIE-FANTOOM] Zelfde bewerking als de ongediende tak — zie filedBalance.
+            balance: filedSaldo(filed),
             filed: true,
           },
         };

@@ -119,6 +119,37 @@ export const euro = (n: number): number => {
   return rounded === 0 ? 0 : rounded;
 };
 
+/**
+ * [SUPPLETIE-FANTOOM] Het 5g-saldo van een INGEDIENDE momentopname, gerekend zoals 5g gedefinieerd
+ * is: 5a min 5b, elk afzonderlijk afgerond. Eén regel, twee lezers — /api/aangifte toont hem naast
+ * 5a en 5b, /api/btw-reservation telt hem op bij het bedrag dat opzij moet.
+ *
+ * Beide deden het anders, en allebei fout op hun eigen manier:
+ *
+ *   · btw-reservation rondde het RUWE verschil in één keer af (Math.round), terwijl de ongediende
+ *     tak van diezelfde route buildAangifte aanroept en dus 5a−5b krijgt. Op verschuldigd
+ *     € 1000,60 en voorbelasting € 200,40 reserveerde het scherm € 800 voor een aangifte die de
+ *     eigenaar zojuist voor € 801 had ingediend.
+ *   · /api/aangifte toonde 5a = euro(1000,60) = 1001 en 5b = euro(200,40) = 200 naast een 5g van
+ *     euro(800,20) = 800. Drie getallen op één paneel waarvan er twee de derde tegenspreken.
+ *
+ * WAT DIT NIET REPAREERT: de momentopname bewaart alleen de totalen, niet de rubrieken. Het concept
+ * telt per tarief afgerond op; dit rondt hun som af. Bij één tarief — het gewone geval, en het
+ * geval hierboven — is dat hetzelfde getal. Bij meerdere tarieven kan er één euro overblijven, en
+ * die is pas weg als de momentopname de rubrieken zelf bewaart. Dat is een migratie.
+ */
+export function filedSaldo(filed: {
+  btw_saldo?: number | null;
+  btw_verschuldigd?: number | null;
+  btw_voorbelasting?: number | null;
+}): number {
+  const v = filed.btw_verschuldigd;
+  const vb = filed.btw_voorbelasting;
+  // Een oudere rij kan de twee componenten missen; dan is het ruwe saldo het beste dat er is.
+  if (v == null || vb == null) return euro(Number(filed.btw_saldo) || 0);
+  return euro(Number(v) || 0) - euro(Number(vb) || 0);
+}
+
 const RATE_LABEL: Record<string, string> = {
   "1a": "Leveringen/diensten belast met hoog tarief (21%)",
   "1b": "Leveringen/diensten belast met laag tarief (9%)",

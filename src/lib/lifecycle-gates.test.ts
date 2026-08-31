@@ -21288,7 +21288,28 @@ test("[SUPPLETIE-FANTOOM] the filed snapshot is rounded by the same rule as the 
       "euro(). On a quarter that nets negative the same half-euro then goes two ways on one screen.",
   );
   assert.match(block, /euro\(Number\(r\.btw_verschuldigd\)/, "5a of the filing no longer uses the shared rounding");
-  assert.match(block, /euro\(rawSaldo\)/, "5g of the filing no longer uses the shared rounding");
+
+  // [SUPPLETIE-FANTOOM] 5g pinde eerst `euro(rawSaldo)`, en dat was de goede afronding op het
+  // verkeerde getal. 5a en 5b staan er direct boven en worden ELK apart afgerond; het ruwe saldo in
+  // één keer afronden geeft daar niet altijd hetzelfde antwoord op. Op verschuldigd € 1000,60 tegen
+  // voorbelasting € 200,40 stonden 1001, 200 en 800 onder elkaar — drie getallen waarvan er twee de
+  // derde tegenspreken, op het paneel waar de eigenaar zijn ingediende aangifte terugleest.
+  //
+  // 5g IS 5a min 5b. Dat staat nu in één functie (aangifte.ts, filedSaldo) omdat
+  // /api/btw-reservation dezelfde momentopname leest en er hetzelfde getal uit moet krijgen: die
+  // route telt hem op bij het bedrag dat opzij moet, en rondde het ruwe verschil in één keer af —
+  // dus na "markeer als ingediend" reserveerde het scherm € 800 voor een aangifte die de eigenaar
+  // zojuist voor € 801 had ingediend.
+  assert.match(block, /saldo: filedSaldo\(r\)/,
+    "5g of the filing is computed here again instead of through the shared filedSaldo — then the " +
+      "reservation screen and this panel can disagree about the same filed quarter.");
+  assert.doesNotMatch(block, /saldo: euro\(rawSaldo\)/,
+    "5g is a single rounding of the raw difference again, so it can contradict the 5a and 5b " +
+      "printed directly above it.");
+  // rawSaldo blijft bestaan — het verschil hoort ruw tegen ruw te worden gerekend, zie de test
+  // hierboven. Alleen het GETOONDE saldo mag er niet uit komen.
+  assert.match(route, /saldoDelta: euro\(\(result\.btwSaldo \?\? 0\) - rawSaldo\)/,
+    "the raw-against-raw delta was dropped along with the display change");
 });
 
 // ─── [ONB-WAAROM · ONB-IBAN] De twee stiltes in de onboarding ─────────────────────────

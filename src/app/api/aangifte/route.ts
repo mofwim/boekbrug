@@ -9,7 +9,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { computeResult, toResultBankTx, cardBudgetBound, type ResultInvoice, type ResultBankTx, type ResultCashEntry } from "@/lib/financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "@/lib/turnover";
-import { buildAangifte, euro, privegebruikNote, type AangifteCompleteness } from "@/lib/aangifte";
+import { buildAangifte, euro, privegebruikNote, type AangifteCompleteness, filedSaldo } from "@/lib/aangifte";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { quarterFromParams } from "@/lib/quarter";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -474,7 +474,11 @@ export async function GET(req: NextRequest) {
         filedAt: r.filed_at,
         verschuldigd: euro(Number(r.btw_verschuldigd) || 0),
         voorbelasting: euro(Number(r.btw_voorbelasting) || 0),
-        saldo: euro(rawSaldo),
+        // [SUPPLETIE-FANTOOM] 5g IS 5a − 5b, en die twee staan hier direct boven. `euro(rawSaldo)`
+        // rondde het ruwe verschil in één keer af, dus op € 1000,60 tegen € 200,40 stond er 1001,
+        // 200 en 800 onder elkaar — drie getallen waarvan er twee de derde tegenspreken. Eén regel
+        // voor beide lezers, in aangifte.ts.
+        saldo: filedSaldo(r),
         // [SUPPLETIE-FANTOOM] Het VERSCHIL, uit de onafgeronde cijfers.
         //
         // Het scherm rekende `aangifte.saldo - filed.saldo`: het concept-5g (de SOM van de per
