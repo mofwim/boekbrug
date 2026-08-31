@@ -186,3 +186,58 @@ which itself has no `ai.test.ts`. Counting test files per module therefore under
 the modules that looked untested on that count turned out to be covered, and one file written on
 that assumption had to be deleted again. Measure by "which decision is asserted", not by "which
 file has a neighbour".
+
+---
+
+## 9. The four defects the adversarial pass found, closed 31 August 2026
+
+§8 measured the *coverage* gap. This section is the other kind of finding: places where the code
+was wrong, not merely unwatched. All four came out of a fan-out audit over the money path whose
+findings were then verified one at a time against production data before a line was changed —
+because a plausible finding that nobody checked is how an audit starts costing more than it saves.
+
+Two of the four are gone. Two were real in shape and reachable by nobody today; both are recorded
+here as *measured*, not as *dismissed*.
+
+| # | Where | What it did | State |
+| --- | --- | --- | --- |
+| A | `auto-incasso.ts` | an auto-collection the owner reversed was re-booked within the hour, forever | **fixed** |
+| B | `cash-settle.ts` | a failed read was misread as "the column is gone", deleting real cash movements | **fixed** |
+| C | `cash-settle.ts` | an unreadable invoice direction is guessed, silently | **guess kept, now reported** |
+| D | `cron/reconcile` | an owner who paid only part in cash was invisible to the hourly pass | **fixed** |
+
+**A — the undo that did not survive the hour.** The idempotency key is derived from the invoice and
+its vervaldatum, so it is identical on every run. But it is *stored* in the `bank_tx_invoices` row,
+and the undo deletes that row — so the correction removed the very record that made the booking
+unrepeatable. Nothing in the undo path knew what an incasso was; nothing in the settle path read
+the marker it writes itself. `amount_paid` is clamped, so the books stayed self-consistent while
+asserting a payment that never happened, and under the kasstelsel the restored `payment_date`
+decided the quarter — voorbelasting claimed on money that never left the account.
+
+**B — the probe that could not tell two things apart.** Documented in full in its own commit. The
+short version: `settlement_id` exists in production, so the deploy window the fallback was written
+for has closed, and every `false` the probe could still return was a false one — each costing two
+hard-deleted cash movements and a third re-dated across a possible quarter end.
+
+**C — why the guess stays.** Refusing to guess is worse than guessing here, and that is worth
+writing down so nobody "fixes" it later: `computeCashSettlementSync` deletes every linked entry
+whose invoice is absent from the paid set, so dropping an invoice with an unreadable direction
+would *remove* a real cash movement rather than merely mis-sign it. The column is nullable with no
+default and no check constraint, and is clean today — 605 invoices, 586 incoming, 19 outgoing, not
+one null. The report is what will say the day that changes.
+
+**D — the hole in the safety net.** "Who has cash to reconcile" is a definition written once and
+spelled twice; the second spelling, in the cron, had only half of it. The half it lost was exactly
+the case the cron exists for — the owner whose synchronous reconcile failed and who therefore has
+no drawer entry to be discovered by.
+
+### What this changes about §5 and §7
+
+Nothing in §7. The verdict there is about the arithmetic and it still holds; none of these four was
+an arithmetic error. All four were the same shape, and it is the shape §5 predicted: **a decision
+taken correctly in one place and not read in another.** A key that is stable but stored where an
+undo deletes it. A probe whose two possible failures mean opposite things. A definition spelled
+twice. That is the assembly layer, not the engines — which is precisely where §3 said the risk was.
+
+§6 items 1 and 3 remain open and are still not closable from here: one needs a live database pass,
+the other needs real acquirer files.

@@ -205,3 +205,65 @@ test("een kapotte _safecore laat de rest niet omvallen", () => {
     assert.equal(fc?._intake_kind, "receipt", `_safecore = ${JSON.stringify(kapot)} mag de rest niet slopen`);
   }
 });
+
+// ── [INCASSO-ONGEDAAN] The marker that records what the APP did ──────────────
+//
+// incassoDecision holds an invoice that stands OPEN and carries _auto_incasso: the marker is only
+// ever written after a successful booking, so that combination means we booked it and somebody put
+// it back — a storno, exactly what the cron's own notification tells the owner to do. The
+// idempotency key itself lives in the bank_tx_invoices row that the undo deletes, so this marker is
+// what is left.
+//
+// "Opnieuw inlezen" rebuilds field_confidence from an allow-list. The marker matched no entry on
+// it, so one tap returned the invoice to being an ordinary open invoice of a marked supplier — and
+// the next hourly pass re-booked the whole balance on a collection that was reversed.
+//
+// These pin the carry-over from both sides, because the allow-list has already lost a key once
+// (_statiegeld) and its own header warns that it will happen again.
+
+test("[INCASSO-ONGEDAAN] a re-import keeps the record that we booked this invoice ourselves", () => {
+  const mark = { at: "2026-05-16T02:00:00.000Z", paid_on: "2026-05-15", supplier: "Eneco" };
+  const out = buildReimportFieldConfidence({
+    priorFc: { _auto_incasso: mark },
+    aiConfidence: null,
+    freshHasTotal: false,
+    verdict: null,
+    heldAt: "2026-05-16T02:00:00.000Z",
+    freshIsReminder: false,
+    freshReminderOf: null,
+  });
+  assert.deepEqual(out?._auto_incasso, mark, "the auto-incasso marker did not survive a re-import");
+});
+
+test("[INCASSO-ONGEDAAN] …including when the fresh read DID produce amounts", () => {
+  // The important half. AMOUNT_EXPLAINING_KEYS are deliberately dropped once fresh amounts arrive,
+  // because they explain the old ones. This marker is the opposite kind of fact: it says what we
+  // did with money, and re-reading the pdf can neither re-derive it nor refute it. A re-read that
+  // succeeds is the MORE likely case, so guarding it behind !freshHasTotal would leave the hole
+  // open for almost every real re-import.
+  const mark = { at: "2026-05-16T02:00:00.000Z", paid_on: "2026-05-15", supplier: "Eneco" };
+  const out = buildReimportFieldConfidence({
+    priorFc: { _auto_incasso: mark, _btw_derived: true },
+    aiConfidence: null,
+    freshHasTotal: true,
+    verdict: null,
+    heldAt: "2026-05-16T02:00:00.000Z",
+    freshIsReminder: false,
+    freshReminderOf: null,
+  });
+  assert.deepEqual(out?._auto_incasso, mark, "the marker was dropped once the re-read found a total");
+  assert.equal(out?._btw_derived, undefined, "an amount explanation wrongly survived fresh amounts");
+});
+
+test("[INCASSO-ONGEDAAN] an invoice we never booked gains no marker from a re-import", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: { _intake_kind: "camera" },
+    aiConfidence: null,
+    freshHasTotal: true,
+    verdict: null,
+    heldAt: "2026-05-16T02:00:00.000Z",
+    freshIsReminder: false,
+    freshReminderOf: null,
+  });
+  assert.equal(out?._auto_incasso, undefined, "a marker was invented for an invoice nobody booked");
+});

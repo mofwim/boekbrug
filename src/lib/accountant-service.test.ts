@@ -57,14 +57,33 @@ const tomorrowIso = verschuif(1)
 check('tomorrow → 1', daysUntil(tomorrowIso) === 1)
 const yesterdayIso = verschuif(-1)
 check('yesterday → -1 (overdue)', daysUntil(yesterdayIso) === -1)
-// En de twee plekken waar een dagverschuiving stukgaat zodra iemand hem later als `d + 1` op een
-// lokale Date herschrijft. Ze staan hier vast omdat `verschuif` er nu goed mee omgaat en dat niet
-// vanzelf zo blijft.
-check('een maandgrens telt gewoon door', daysUntil(verschuif(0)) === daysUntil(today))
-check('een schrikkeldag bestaat', (() => {
-  const t = new Date(Date.UTC(2028, 1, 28 + 1))
-  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}` === '2028-02-29'
-})())
+
+console.log('\n— het aftellen loopt lineair door over maand-, jaar- en schrikkeljaargrenzen —')
+// Twee checks van de andere kant van deze merge staan hier NIET meer, en dat is een keuze, geen
+// merge-ongeluk. De ene was `daysUntil(verschuif(0)) === daysUntil(today)` — verschuif(0) IS
+// today, dus die regel slaagt onder elke implementatie, ook een kapotte. De andere rekende
+// Date.UTC(2028, 1, 29) uit zonder daysUntil aan te roepen: die test Node, niet ons.
+//
+// Wat ze BEDOELDEN — maandgrens en schrikkeldag — staat er nog, maar dan door de functie zelf
+// heen. Clock-free by construction: een VERSCHIL van twee daysUntil-aanroepen laat "vandaag"
+// wegvallen, dus dit klopt op elk uur van elke dag.
+//
+// Wees precies over wat ze waard zijn. Ze vangen de historische fout NIET — die zat in de
+// tijdzone-anker, en die is vastgepind waar hij echt te sturen is: format-nl.test.ts voert
+// amsterdamToday() vaste momenten, waaronder "22:00 UTC in summer IS already tomorrow in
+// Amsterdam" — precies het moment waarop dit bestand omviel. Ze vangen ook de zomertijd-rekenkunde
+// uit de #285-tekst niet: de oude Math.round-vorm slikt een fout van ±1 uur op 24 moeiteloos en
+// geeft op elk paar hieronder hetzelfde antwoord als de huidige (nagerekend door hem terug te
+// zetten, met round, floor én trunc — alle drie blijven groen).
+//
+// Wat ze WEL vastleggen: een dag is een dag. Een herschrijving die maandlengtes optelt, 365
+// hard-codeert of een schrikkeljaar mist, valt hier om en nergens anders in dit bestand — met
+// naam en toenaam op twee regels.
+const span = (from: string, to: string) => daysUntil(to) - daysUntil(from)
+check('over de jaarwisseling heen: 31 dec → 1 jan is één dag', span('2026-12-31', '2027-01-01') === 1)
+check('een heel schrikkeljaar telt 366 dagen', span('2028-01-01', '2029-01-01') === 366)
+check('en een gewoon jaar 365', span('2027-01-01', '2028-01-01') === 365)
+check('februari in een schrikkeljaar heeft 29 dagen', span('2028-02-01', '2028-03-01') === 29)
 
 console.log('\n— [KWARTAAL] bord en landingspagina moeten hetzelfde kwartaal bedoelen —')
 // De regressie die dit bestand had moeten tegenhouden en niet kon, omdat het buiten de

@@ -662,3 +662,82 @@ test("[GELD-INVARIANT] the audit is wired to a route and a screen, not merely ex
   const screen = readFileSync("src/app/dashboard/klaar/KlaarClient.tsx", "utf8");
   assert.match(screen, /<GeldPaneel \/>/, "the panel exists and is on no screen — the same defect, one level up");
 });
+
+// ── [BEDRAG-NOOIT-GESCHREVEN] The gap that is not a disagreement ─────────────
+//
+// Measured in production on 30 August 2026: fourteen invoices, € 5.321,68, every one of them
+// correctly received. Status 'paid', bank links covering the total exactly, amount_paid zero —
+// runBankAutoConfirm's pay write set four columns and skipped the fifth, while the link it wrote
+// on the next line recorded the whole sum. The cause is closed; the rows it left do not heal
+// themselves, because amount_paid is only re-derived per invoice on a pay-toggle, an unlink or a
+// statement delete.
+//
+// Reported as an ordinary gap it reads as € 5.321,68 missing on /dashboard/klaar — the screen
+// where an owner decides to hand the quarter to their accountant. That is the false alarm that
+// teaches someone to stop reading the panel. These tests pin the separation, and — more
+// importantly — the four boundaries where it must NOT apply, because a suppression that is too
+// eager is the same panel lying in the other direction.
+
+test("[GELD-INVARIANT] a fully-covered paid invoice with no amount written is its own finding", () => {
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 0 })],
+    links: [link({ amountApplied: 121 })],
+  });
+  assert.deepEqual(kinds(v), ["paid_amount_never_written"]);
+  assert.equal(v[0].euros, 121, "the finding names the invoice total, not a shortfall");
+  assert.match(v[0].message, /ontbreekt geen geld/, "the message no longer says no money is missing");
+});
+
+test("[GELD-INVARIANT] …and it does not also report the status as open", () => {
+  // The same single cause said a second way. status_paid_but_open fires on paid < total, which is
+  // exactly this row, so without the suppression one unwritten column produces two findings and
+  // the panel looks twice as bad as the books are.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 0 })],
+    links: [link({ amountApplied: 121 })],
+  });
+  assert.ok(!kinds(v).includes("status_paid_but_open"), "the same cause was reported twice");
+});
+
+test("[GELD-INVARIANT] partial cover is a real gap and stays one", () => {
+  // The boundary that matters most. € 60 of a € 121 invoice really is money that has not arrived,
+  // and calling it "only a column" would hide a genuine shortfall behind a reassuring sentence.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 0 })],
+    links: [link({ amountApplied: 60 })],
+  });
+  assert.deepEqual(kinds(v).sort(), ["payments_without_paid", "status_paid_but_open"]);
+});
+
+test("[GELD-INVARIANT] a non-zero amount that disagrees is a real gap too", () => {
+  // amount_paid was written, and written to something the links do not support. Two sources really
+  // do disagree here, and which one is right is not knowable from these rows.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 50 })],
+    links: [link({ amountApplied: 121 })],
+  });
+  assert.deepEqual(kinds(v).sort(), ["payments_without_paid", "status_paid_but_open"]);
+});
+
+test("[GELD-INVARIANT] an invoice that does not claim to be paid is untouched by this", () => {
+  // Covered links on an OPEN invoice is a different defect with a different consequence — a
+  // reminder still going to somebody who paid. It must keep its own name.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "received", amountPaid: 0 })],
+    links: [link({ amountApplied: 121 })],
+  });
+  assert.ok(!kinds(v).includes("paid_amount_never_written"));
+  assert.ok(kinds(v).includes("payments_without_paid"));
+});
+
+test("[GELD-INVARIANT] the invoice's own arithmetic is still checked on such a row", () => {
+  // The suppression is deliberately narrow. Which payment column was written has nothing to do
+  // with whether ex + btw equals inc — that figure goes into the aangifte, and an earlier draft of
+  // this change skipped it by returning early.
+  const v = findMoneyViolations({
+    invoices: [inv({ status: "paid", amountPaid: 0, totalExBtw: 100, btwAmount: 30, totalIncBtw: 121 })],
+    links: [link({ amountApplied: 121 })],
+  });
+  assert.ok(kinds(v).includes("paid_amount_never_written"));
+  assert.ok(kinds(v).includes("btw_arithmetic"), "the arithmetic check was skipped along with the gap");
+});

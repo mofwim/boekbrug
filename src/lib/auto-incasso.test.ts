@@ -183,6 +183,52 @@ test('[AUTO-INCASSO] the label says who does it and when', () => {
   assert.equal(incassoLabel('collected', '1 aug'), 'Automatisch afgeschreven')
 })
 
+// ─── [INCASSO-ONGEDAAN] The owner's correction has to survive the next hour ────
+
+test('[INCASSO-ONGEDAAN] an invoice we booked once and that is open again is NOT booked again', () => {
+  // The loop this closes: the idempotency key is derived from the invoice and its vervaldatum, so
+  // it is identical on every run — but it is STORED in the bank_tx_invoices row, and the undo
+  // (/api/invoice/pay-toggle) deletes that row. The replay lookup then misses, the selection still
+  // matches (status 'received', direction incoming), and the pass books the whole balance again,
+  // hourly, for as long as the supplier stays marked.
+  //
+  // The marker is written only AFTER a successful booking, so carrying it while standing at
+  // 'received' means exactly one thing: the payment we assumed was reversed.
+  const undone = rent({
+    field_confidence: withIncassoMark(null, { at: '2026-08-01T09:00:00Z', paid_on: '2026-08-01', supplier: 'WonenBreburg' }),
+  })
+  assert.equal(hold(undone), 'undone', 'a reversed auto-incasso booking was re-booked')
+})
+
+test('[INCASSO-ONGEDAAN] the owner is told why, in words, not left watching it flip back', () => {
+  // Every hold carries its own sentence for the same reason the type says: "a held invoice keeps
+  // standing open, and an unexplained one looks like the feature is broken".
+  assert.ok(INCASSO_HOLD_REASON.undone.length > 0)
+  assert.match(INCASSO_HOLD_REASON.undone, /openstaand/, 'the reason must name what the owner did')
+})
+
+test('[INCASSO-ONGEDAAN] it does not fire on an invoice that was never auto-booked', () => {
+  // The narrowness matters: holding a clean invoice would stop the feature working at all. Only
+  // the marker this module itself writes counts — not any other field_confidence content.
+  assert.equal(hold(rent({ field_confidence: null })), null, 'a clean invoice must still settle')
+  assert.equal(
+    hold(rent({ field_confidence: { vendor: 0.98, _safecore: { arithmetic_ok: true } } })),
+    null,
+    'ordinary AI confidence scores were mistaken for the incasso marker',
+  );
+  assert.equal(hold(rent({ field_confidence: {} })), null)
+})
+
+test('[INCASSO-ONGEDAAN] a still-paid invoice is held as not-open, not as undone', () => {
+  // Order matters. An invoice that is still 'paid' has not been reversed at all — reporting it as
+  // "you put this back" would be a sentence about something the owner never did.
+  const stillPaid = rent({
+    status: 'paid',
+    field_confidence: withIncassoMark(null, { at: 'x', paid_on: '2026-08-01', supplier: null }),
+  })
+  assert.equal(hold(stillPaid), 'not-open')
+})
+
 // ─── The assumption is recorded as an assumption ──────────────────────────────
 
 test('[AUTO-INCASSO] an assumed payment is marked as one, without disturbing the rest', () => {

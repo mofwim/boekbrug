@@ -69,6 +69,7 @@ const HEADINGS: Record<string, string> = {
   overpaid: 'Meer betaald dan de factuur waard is',
   paid_without_payments: 'Als betaald geboekt zonder bankregel die het dekt',
   payments_without_paid: 'Bankregels gekoppeld die de factuur niet toont',
+  paid_amount_never_written: 'Volledig betaald — alleen het bedrag is nooit weggeschreven (er ontbreekt geen geld)',
   status_paid_but_open: 'Staat op betaald terwijl er geld open is',
   status_open_but_covered: 'Helemaal betaald maar staat nog open',
   btw_arithmetic: 'ex + btw is niet inc — dit getal staat in de aangifte',
@@ -434,6 +435,28 @@ async function main() {
   console.log('  schrijft een onwaar getal over een waar heen en wist het bewijs dat ze ooit')
   console.log('  verschilden. Op een kwartaal dat al is ingediend is dat geen bug maar een')
   console.log('  correctie die niemand kan terugvinden.\n')
+
+  // [BEDRAG-NOOIT-GESCHREVEN] Eén groep hierboven is de uitzondering op de premisse, niet op de
+  // regel. Daar spreken de bronnen elkaar niet tegen: de factuur staat op betaald, de bankregels
+  // dekken hem precies, en alleen amount_paid is nooit weggeschreven. Er valt niets te kiezen.
+  // Dit script repareert hem nog steeds niet — het zegt alleen wat de reparatie IS, zodat de
+  // afweging die een mens moet maken klein blijft in plaats van forensisch.
+  const nooitGeschreven = byKind.get('paid_amount_never_written') ?? []
+  if (nooitGeschreven.length > 0) {
+    const som = Math.round(nooitGeschreven.reduce((s, v) => s + v.euros, 0) * 100) / 100
+    console.log(`  Uitzondering: ${nooitGeschreven.length}× "${HEADINGS.paid_amount_never_written}"`)
+    console.log(`  (samen € ${som.toFixed(2)}). Hier spreken de bronnen elkaar NIET tegen — status,`)
+    console.log('  bankregels en bedrag zeggen alledrie dat de factuur volledig betaald is, en er is')
+    console.log('  alleen één kolom niet geschreven. De oorzaak zit sinds 30 augustus dicht in')
+    console.log('  bank-auto-confirm.ts; de rijen die er al waren herstellen zichzelf niet, want')
+    console.log('  amount_paid wordt alleen per factuur opnieuw afgeleid (pay-toggle, ontkoppelen,')
+    console.log('  afschrift verwijderen). De reparatie is per factuur de RPC die de app zelf')
+    console.log('  overal gebruikt:\n')
+    console.log('     select recompute_invoice_amount_paid(<user_id>, <invoice_id>);\n')
+    console.log('  Draai hem pas als je de lijst hierboven hebt bekeken. Hij zet amount_paid op de')
+    console.log('  som van de gekoppelde bankregels, begrensd op het factuurbedrag — precies wat')
+    console.log('  elke ontkoppeling ook doet.\n')
+  }
 
   // A non-zero exit makes this usable in CI or a cron without anyone having to read the output.
   process.exitCode = 1
