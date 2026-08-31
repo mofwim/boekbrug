@@ -293,3 +293,31 @@ test("[REGEL-KORTING] discounts are judged on the NET amount when deciding factu
   ]);
   assert.equal(out.ok, false, "the credits are worth more than what is delivered");
 });
+
+test("[TARIEF-STRIKT] a line with no btw_rate is refused, not stored as 0%", () => {
+  // The invoice door tested `ALLOWED_BTW_RATES.includes(Number(row.btw_rate))`. Number(null),
+  // Number(""), Number(" "), Number([]) and Number(false) are all 0 — and 0 IS a legal rate — so a
+  // line carrying no rate at all was accepted and written as a 0% line.
+  //
+  // What that costs, on one 10 x EUR 100 line: the header is stored 1000 / 0 / 1000 where 21%
+  // gives 1000 / 210 / 1210. EUR 210 of verschuldigde BTW off a sales invoice — and ex + btw = inc
+  // balances perfectly at 0%, so no arithmetic check anywhere can notice. The customer's copy and
+  // the e-factuur both state EUR 0 BTW, so their bookkeeping deducts nothing either.
+  const line = (btw_rate: unknown) =>
+    [{ description: "Advieswerk", quantity: 10, unit_price: 100, btw_rate }] as never;
+
+  for (const missing of [null, "", " ", [], false, undefined]) {
+    const out = validateDraftLines(line(missing), "factuur");
+    assert.equal(out.ok, false, `${JSON.stringify(missing) ?? "undefined"} is not a rate and may not be accepted`);
+  }
+  // An unknown NUMBER was always refused and still is — that half was never broken.
+  assert.equal(validateDraftLines(line(12), "factuur").ok, false);
+  assert.equal(validateDraftLines(line("abc"), "factuur").ok, false);
+
+  // And every real rate still passes, including the text form a field hands over.
+  for (const real of [21, 9, 0, "21", "9", "0"]) {
+    const out = validateDraftLines(line(real), "factuur");
+    assert.equal(out.ok, true, `${JSON.stringify(real)} is a legal rate`);
+    assert.equal(out.lines?.[0]?.btw_rate, Number(real), "…and is stored as the number it is");
+  }
+});

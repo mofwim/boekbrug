@@ -155,5 +155,50 @@ console.log("\n— [BTW-EIGEN-GEWICHT] een 0%-regel draagt geen btw —");
     sum(raar, "ex") === 3333.33 && sum(raar, "btw") === 33.33);
 }
 
+// ── [KORTING-RUBRIEK] A document discount must not switch the split off ────────────────────────
+//
+// The discount lives on the HEADER; invoice_lines.line_total does not carry it. So the line sum
+// missed the header by the whole discount, this module refused, and the caller fell back to a
+// header-derived BLENDED rate — 21% materials and 9% labour in ONE rubriek of the aangifte.
+//
+// And worse in the auditfile: xaf-export falls back to snapRate(ex, btw) when there is no split,
+// and the blended rate of this very invoice is 17,00% — not a legal NL rate, so snapRate returns
+// null and the entry is SKIPPED from the XAF the accountant and the Belastingdienst read.
+{
+  const mixed = [{ line_total: 1000, btw_rate: 21 }, { line_total: 500, btw_rate: 9 }];
+
+  const plain = rateSharesFromLines(mixed, 1500, 255);
+  check("without a discount the split is exact", JSON.stringify(plain) === JSON.stringify([
+    { rate: 21, ex: 1000, btw: 210 }, { rate: 9, ex: 500, btw: 45 },
+  ]));
+
+  // 10% off: header 1350 / 229,50 — the figures applyDiscount actually produces.
+  const discounted = rateSharesFromLines(mixed, 1350, 229.5);
+  check("a 10% document discount still splits", discounted !== null);
+  check("…proportionally, per rate", JSON.stringify(discounted) === JSON.stringify([
+    { rate: 21, ex: 900, btw: 189 }, { rate: 9, ex: 450, btw: 40.5 },
+  ]));
+  // The property the whole module rests on: a split may move omzet BETWEEN rubrieken, never change
+  // a total. Both halves must still reconcile to the header after the discount is spread.
+  const sumEx = (discounted ?? []).reduce((s, r) => s + r.ex, 0);
+  const sumBtw = (discounted ?? []).reduce((s, r) => s + r.btw, 0);
+  check("the discounted buckets still add up to the header", Math.abs(sumEx - 1350) < 0.005 && Math.abs(sumBtw - 229.5) < 0.005);
+
+  // A fixed-amount discount, which distributes differently from a percentage.
+  const fixed = rateSharesFromLines(mixed, 1250, 212.5);
+  check("a fixed-amount discount splits too", fixed !== null && Math.abs(fixed.reduce((s, r) => s + r.btw, 0) - 212.5) < 0.005);
+
+  // AND THE REFUSAL IS INTACT. These are the cases the check exists for, and closing the discount
+  // gap must not have opened them.
+  check("half-saved lines are still refused",
+    rateSharesFromLines([{ line_total: 1000, btw_rate: 21 }, { line_total: 5, btw_rate: 9 }], 1500, 255) === null);
+  check("a header BIGGER than its lines is still refused",
+    rateSharesFromLines(mixed, 2000, 340) === null);
+  check("a header whose BTW does not follow from the split is still refused",
+    rateSharesFromLines(mixed, 1350, 300) === null);
+  check("lines of the opposite sign to the header are still refused",
+    rateSharesFromLines(mixed, -1350, -229.5) === null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

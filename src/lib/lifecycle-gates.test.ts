@@ -2021,10 +2021,16 @@ test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", ()
     m, /if \(inc === null \|\| ex === null \|\| btw === null\) return null/,
     "three figures or nothing",
   );
+  // [EURO-ALLEEN] Asked of the shared rule, not of the inline comparison this used to pin. The
+  // spelling moved for a reason: there are TWO doors onto the same bytes and only this one asked,
+  // so the standalone-.xml door in /api/intake booked USD 10.000 as EUR 10.000. A gate anchored on
+  // the old spelling would have gone red on the fix and green on the defect — see the sibling
+  // [EURO-ALLEEN] gate, which is where "both doors ask" is now enforced.
   assert.match(
-    m, /if \(v\.currency !== null && v\.currency\.toUpperCase\(\) !== 'EUR'\) return null/,
+    m, /if \(!isEuroDocument\(v\.currency\)\) return null/,
     "1 200 SEK booked as € 1 200 survives every other check in the building",
   );
+  assert.match(m, /export function isEuroDocument\(/, "…and the rule is exported, so both doors can ask it");
   assert.match(
     m, /if \(Math\.abs\(round2\(ex \+ btw\) - round2\(inc\)\) > 0\.01\) return null/,
     "an e-invoice whose own numbers disagree is not a better witness than the model",
@@ -12699,6 +12705,111 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
+  // De regel stond al in invoice/draft/route.ts, in zoveel woorden: "Een factuurkop zonder regels
+  // is erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent."
+  //
+  // De creditnota-route was de uitzondering: `await db.from('invoice_lines').insert(...)` zonder
+  // de fout te lezen. Tot vandaag viel dat nauwelijks op; sinds creditnota_per_rate_ceiling.sql
+  // hangt er een BEFORE INSERT-trigger op invoice_lines die check_violation RAISEt, en dan liep de
+  // route langs de weigering heen naar een PDF met een KLOPPEND totaal boven een LEGE regeltabel —
+  // opgeslagen, in het kwartaalpakket, en gemaild naar de klant.
+  //
+  // Deze poort zoekt zijn eigen routes op: elk bestand dat regels in invoice_lines schrijft, moet
+  // de fout van die insert lezen. Een zevende route erbij is dan meteen een rode poort.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (pad.endsWith(".ts") && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  const schrijvers = loop("src/app/api").filter((f) =>
+    /from\(['"]invoice_lines['"]\)[\s\S]{0,200}?\.insert\(/.test(readFileSync(f, "utf8")),
+  );
+  assert.ok(schrijvers.length >= 2,
+    `only ${schrijvers.length} routes insert invoice lines; the scan is broken and a gate that ` +
+    "finds nothing passes for the wrong reason");
+
+  for (const f of schrijvers) {
+    const src = code(f); // commentaar eraf — een notitie óver een foutcontrole is er geen
+    // Een KALE `await …insert(`: de await moet aan het begin van een statement staan. Zonder die
+    // eis matchte dit ook `const { error: lineErr } = await …insert(` — en dat is precies de goede
+    // vorm. Deze poort wees zo in eerste instantie cron/recurring aan, een route die zijn fout wél
+    // leest en daar zelfs een [LINES-READ-HONEST]-notitie over draagt. Een poort die het juiste
+    // gedrag beschuldigt, wordt weggeklikt en beschermt daarna niets meer.
+    const kaal = new RegExp(
+      String.raw`(^|[\n{;])\s*await\s+\w+(?:\.\w+)*\s*\.from\(['"]invoice_lines['"]\)\s*\.insert\(`,
+    ).test(src);
+    assert.ok(!kaal,
+      `${f} inserts invoice lines without reading the error. A document head with no lines counts ` +
+      "in every overview and opens empty — and a creditnota does not stay inside: it is rendered, " +
+      "stored in the accountant's package, and mailed to the customer");
+  }
+
+  // En specifiek op de route die het misging: de rij wordt teruggedraaid, en het verbruikte
+  // nummer wordt gemeld — niet stil weggeslikt.
+  const cn = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(cn, /const \{ error: regelFout \} = await db\.from\('invoice_lines'\)/,
+    "the creditnota line insert must read its error");
+  assert.match(cn, /if \(regelFout\)[\s\S]{0,600}?\.from\('invoices'\)\.delete\(\)\.eq\('id', creditnota\.id\)/,
+    "…and roll the half-made creditnota back, the way the draft route already does");
+  assert.match(cn, /if \(regelFout\)[\s\S]{0,1200}?Sentry\.captureMessage/,
+    "…and report the minted-but-unused number, because a gap nobody knows about is the one the " +
+    "[DOORLOPEND] check later hands to the owner as a riddle");
+});
+
+test("[PRIVACY-WAAR] the privacy notice says what the code actually grants the accountant", () => {
+  // Gemeten op 31-08-2026. De gepubliceerde verklaring zei tegen elke gebruiker:
+  //
+  //     "✅ Betaalde facturen (status = 'paid')  ❌ Niet-bevestigde inkomende facturen blijven privé"
+  //
+  // De gegenereerde kolom `shared` deelt sent, received ÉN paid. En het Bevestigen-scherm leest
+  // inkomende facturen met status 'processing' via de service-role client — precies wat de zin
+  // hierboven privé noemde. De FUNCTIE is in orde en staat achter een aparte machtiging; de
+  // VERKLARING was er nooit op bijgewerkt en was dus een onwaarheid tegen de eigen gebruikers.
+  //
+  // Deze poort houdt de tekst aan de code vast, zoals de [TAAL]-poorten de woordenlijst
+  // vasthouden. Verandert de zichtbaarheid, dan valt hij om — en dat is de bedoeling: een
+  // privacyverklaring die stilletjes achterloopt op de policy is precies wat hier misging.
+  const tekst = readFileSync("src/content/legal/privacyverklaring.ts", "utf8");
+  const schema = readFileSync("database.sql", "utf8");
+
+  // 1. Wat maakt een factuur zichtbaar voor de boekhouder? Lees het uit de kolom zelf.
+  const gen = /shared boolean GENERATED ALWAYS AS \(status = ANY \(ARRAY\[([^\]]+)\]\)\)/.exec(schema);
+  assert.ok(gen, "de gegenereerde kolom `shared` moet leesbaar zijn, anders meet deze poort niets");
+  const statussen = [...gen[1].matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+  assert.ok(statussen.length >= 2, `only ${statussen.length} statuses parsed — the scan is broken`);
+
+  // Elke status die zichtbaarheid geeft, moet in de verklaring genoemd staan. Nederlandse woorden
+  // mogen — het is een tekst voor een ondernemer — maar de technische status staat er ook bij.
+  for (const st of statussen) {
+    assert.ok(tekst.includes(`\`${st}\``),
+      `status '${st}' makes an invoice visible to the accountant, and the privacy notice does not ` +
+      "name it. Users are being told less than what is shared");
+  }
+
+  // 2. De oude onwaarheid mag niet terugkomen: 'alleen betaalde facturen' was aantoonbaar onjuist.
+  assert.ok(!/Betaalde facturen\*\* \(status = 'paid'\)/.test(tekst),
+    "the notice claimed only paid invoices are shared; sent and received are shared too");
+
+  // 3. De bevestigingsmachtiging opent de wachtrij. Zwijgt de verklaring daarover, dan belooft ze
+  //    privacy die het scherm elke dag weerlegt.
+  const mandaat = readFileSync("src/lib/accountant-mandate.ts", "utf8");
+  assert.match(mandaat, /"facturen" \| "bevestigen"/, "the two mandate kinds must stay readable here");
+  assert.match(tekst, /bevestigen/i,
+    "the 'bevestigen' mandate lets the accountant see incoming invoices still in the queue — the " +
+    "notice must say so, because without it the notice promises the opposite");
+  assert.match(tekst, /machtiging/i, "…and name it as something the owner grants separately");
+
+  // 4. Een gewijzigde verklaring die zichzelf ongewijzigd noemt, is de volgende onwaarheid.
+  assert.doesNotMatch(tekst, /\*\*Versie:\*\* 1\.0/,
+    "the notice was corrected; its own version line must move with it");
+});
+
 test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
   // De duurste leesfout die deze administratie in een jaar maakte, was er één soort: een
   // creditnota geboekt als schuld, waarbij de btw bij de teruggave werd OPGETELD in plaats van
@@ -16851,6 +16962,92 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[EURO-ALLEEN] both doors onto an e-invoice refuse a currency this app cannot book", () => {
+  // There are TWO readers of the same bytes, and only one of them asked.
+  //
+  // A Peppol invoice arriving as a PDF attachment goes through parseEInvoice, whose complete() has
+  // refused a stated non-euro currency for as long as it has existed — its own comment says
+  // "silently treating 1 200 SEK as EUR 1 200 is the kind of error that survives every other check
+  // in the building". The IDENTICAL invoice uploaded as a standalone .xml goes to
+  // handleUblInvoice in /api/intake instead, which calls parseUblInvoice — a different parser that
+  // extracts DocumentCurrencyCode into `currency` and handed it to a caller that never read it.
+  //
+  // Measured on one file through both doors: USD 10.000 refused there, booked as EUR 10.000 here,
+  // with its voorbelasting claimed in rubriek 5b at a euro amount nobody ever paid. The amounts are
+  // internally consistent and the file validates against Peppol, so nothing downstream can catch
+  // it — there is no second currency anywhere to compare against.
+  const lib = code("src/lib/e-invoice.ts");
+  assert.match(lib, /export function isEuroDocument\(/, "one rule, exported, so both doors can ask it");
+  assert.match(lib, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the Factur-X door must ask the shared rule, not its own inline comparison");
+
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the standalone .xml door must ask it too — this is the door that was missing it");
+
+  // Asked BEFORE anything is written. The refusal is worth nothing after the row exists.
+  const gevraagd = intake.indexOf("if (!isEuroDocument(v.currency)) return null");
+  const geschreven = intake.indexOf("const sign = v.isCreditNote ? -1 : 1");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the amount handling must be findable");
+  assert.ok(gevraagd < geschreven, "the currency must be refused before the amounts are signed and stored");
+
+  // And neither door may go back to spelling the comparison itself — that is how they drifted.
+  assert.doesNotMatch(intake, /currency[\s\S]{0,40}!==\s*['"]EUR['"]/,
+    "no second spelling of the euro rule in the intake route");
+});
+
+test("[CREDIT-IS-CREDIT] a creditnota may not come out of the door asking for money", () => {
+  // The route writes the header as `total_inc_btw: -keuze.totalIncBtw` — it MIRRORS the selection,
+  // unconditionally. That is right for every ordinary selection and wrong for one.
+  //
+  // An invoice may carry a [MIN-REGEL] return line: nine boxes delivered, two handed back, settled
+  // on the same document the way every wholesaler in this trade writes it. checkCreditSelection
+  // lets that line be credited — it only requires the requested quantity to share the line's SIGN,
+  // so -2 against a -2 line is a legal request. But crediting a return means the customer is NOT
+  // giving those boxes back, so the selection nets NEGATIVE and the mirror turns it POSITIVE.
+  // Measured on 9 delivered + 2 returned at EUR 100 + 21%: selection inc -242, header inc +242 —
+  // a row with invoice_type 'creditnota' that demands payment.
+  //
+  // Nothing downstream survives it: creditedTotalsFrom() and openAfterCredit() SUBTRACT a
+  // creditnota as money returned, so the debtor position moves the wrong way by twice its value.
+  //
+  // The rule lives in partial-credit.ts and is tested there. THIS gate exists because a unit test
+  // cannot see whether the DOOR asks: a negative control that stubbed the route's call out left
+  // all 33 library tests green.
+  const rules = code("src/lib/partial-credit.ts");
+  assert.match(rules, /export function creditNetFault\(totalIncBtw: number\)/);
+  assert.match(rules, /const cents = Math\.round\(totalIncBtw \* 100\)/,
+    "[CENT] decided in integer cents — a fraction of a cent is not almost a credit");
+
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /const nettoFout = creditNetFault\(keuze\.totalIncBtw\)/,
+    "the route must ask whether the selection actually gives money back");
+  assert.match(route, /if \(nettoFout\) \{[\s\S]{0,200}creditNetReason\(nettoFout\)/,
+    "…and refuse with the sentence that names which of the two it is");
+
+  // Asked BEFORE the row is written, and before a number is consumed from the creditnota series.
+  // The second half is this file's own rule for the route: "een creditnota die hier wordt geweigerd
+  // heeft nog geen nummer verbruikt". A refusal that lands after the mint burns a number out of the
+  // doorlopende creditnota-reeks on a document that is never created — a gap an accountant has to
+  // explain.
+  const gevraagd = route.indexOf("creditNetFault(keuze.totalIncBtw)");
+  const geschreven = route.indexOf("total_inc_btw: -keuze.totalIncBtw");
+  const genummerd = route.indexOf("await generateInvoiceNumber(");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the mirror must be findable");
+  assert.ok(genummerd >= 0, "the number mint must be findable — has it moved?");
+  assert.ok(gevraagd < geschreven,
+    "the check must run before the mirror writes the header, not after");
+  assert.ok(gevraagd < genummerd,
+    "…and before a number is taken out of the creditnota series");
+
+  // ONE definition of "a creditnota whose money sits the wrong way". creditnotaSignConflict is what
+  // every widget already uses to spot such a row once it is STORED; the door asks the same question
+  // one step earlier, of the row the selection would produce. A second spelling here would be a
+  // second answer, and this file has a name for that.
+  assert.match(rules, /creditnotaSignConflict\(\{ invoiceType: "creditnota", totalIncBtw: -totalIncBtw \}\)/,
+    "the door must reuse the conflict definition, not restate it");
 });
 
 test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {
@@ -22459,4 +22656,105 @@ test("[BANK-LEGE-LINK] the in-tab categorise link never points at an empty scree
     src, /bankTab === 'none' && uncatCount > 0 && \(/,
     "the link no longer asks whether there is anything to categorise",
   );
+});
+
+// ─── [CREDIT-BEVESTIG] The accountant's confirm door booked a creditnota as a purchase ──────────
+//
+// A supplier creditnota that PRINTS its amounts positive is the ordinary shape, not an edge case —
+// most Dutch ones do, and ai.ts tells the model so in as many words: return them positive, the
+// system will hold it for a human. Both of the OWNER's confirm doors repair the sign before
+// anything books (asCreditAmounts, in api/email/confirm/[id] and api/invoice/[id]/amounts).
+//
+// The ACCOUNTANT's door did not read invoice_type at all. It wrote status:'received' and the row
+// went into the concept aangifte with a plus, because /api/aangifte selects direction, status,
+// total_ex_btw and btw_amount and sums them raw. A EUR 51,80 creditnota (EUR 4,28 btw) then puts
+// +4,28 in rubriek 5b where −4,28 belongs: EUR 8,56 of over-claimed voorbelasting per document, in
+// the owner's favour on the return, which is the direction that becomes a naheffing. The owner
+// signs it and the accountant's professional liability sits under it.
+//
+// REFUSE, do not repair — three reasons all already in the repo: the database trigger lets this
+// path move only status and confirmed_by; the route's own header says an accountant does not
+// rewrite a client's figures but asks; and /dashboard/accountant/opvragen is that door.
+test("[CREDIT-BEVESTIG] a positive creditnota is refused at the accountant's door, and before the tap", () => {
+  const route = code("src/app/api/accountant/bevestig/route.ts");
+
+  // It has to READ the column before it can judge it. That was the whole omission.
+  assert.match(route, /invoice_number, client_name, total_inc_btw, invoice_type/,
+    "invoice_type is selected");
+  // One question, asked by the one function the owner's own list already asks it with. A second
+  // formulation here would let two screens disagree about the same piece of paper.
+  assert.match(route, /creditnotaSignConflict\(\{ invoiceType: factuur\.invoice_type, totalIncBtw: factuur\.total_inc_btw \}\)/,
+    "the shared predicate decides, not a local re-reading of the sign");
+  assert.match(route, /status: 409/, "…and it refuses rather than booking");
+  // Repair is not an option here and must not become one: the trigger would reject it, and an
+  // accountant rewriting a client's amounts is what art. 52 AWR and this route's header forbid.
+  assert.doesNotMatch(route, /asCreditAmounts/,
+    "this door may not repair the sign — it asks the owner to");
+
+  // And the refusal is visible BEFORE the tap. A 409 after the click leaves an accountant with an
+  // error and no way forward; the way forward exists and is named beside the row.
+  const page = code("src/app/dashboard/accountant/bevestigen/page.tsx");
+  assert.match(page, /field_confidence, invoice_type/, "the queue reads the column too");
+  assert.match(page, /creditTegenTeken: creditnotaSignConflict\(/, "…and judges it with the same function");
+  const scherm = code("src/modules/accountant/pages/AccountantBevestigen.tsx");
+  assert.match(scherm, /disabled=\{bezig === rij\.id \|\| isKlaar \|\| rij\.creditTegenTeken === true\}/,
+    "the button is off on exactly the rows the route refuses");
+  assert.match(scherm, /t\('bh\.bev\.rij\.creditTegenTeken'\)/, "…with the reason, and what to do instead");
+});
+
+// ─── [PARTIAL-PAY-DOOR] A split that was written, tested, and never fed ─────────────────────────
+//
+// quarterly.ts splits the cash column on inv.amount_paid: the settled part of a deelbetaling counts
+// as paid, only the remainder is outstanding or overdue. Its own tests prove it. And the ONLY route
+// that calls it never selected the column and never mapped it, so `inv.amount_paid ?? 0` was always
+// zero and the whole split was dead in production.
+//
+// An invoice of EUR 5.000 with EUR 4.000 settled therefore stood at EUR 5.000 under "Openstaand",
+// and at EUR 5.000 under "Vervallen" the day after its due date. The tiles print those as facts,
+// and they are the figures an owner uses to decide whether they can spend and an accountant uses to
+// decide who to chase.
+//
+// Same class as the intake route feeding the two-ledger check: a distinction that exists, is
+// correct, is covered by tests — and is handed nothing.
+test("[PARTIAL-PAY-DOOR] the quarterly route feeds the partial-payment split it depends on", () => {
+  const route = code("src/app/api/quarterly/route.ts");
+
+  // Both branches: the accountant's client view and the owner's own.
+  const selects = route.match(/\.select\("id, invoice_number, client_name, status, direction[^"]*"\)/g) ?? [];
+  assert.equal(selects.length, 2, "both quarterly reads are still recognisable");
+  for (const sel of selects) {
+    assert.match(sel, /amount_paid/, `a quarterly select still omits amount_paid: ${sel.slice(0, 80)}…`);
+  }
+  // Selecting it is not enough — it has to survive the mapping into InvoiceForQuarterly.
+  const mapped = route.match(/amount_paid: inv\.amount_paid,/g) ?? [];
+  assert.equal(mapped.length, 2, "both mappings carry it through to the summary");
+
+  // The pure side is unchanged and still the one that decides.
+  const pure = code("src/lib/quarterly.ts");
+  assert.match(pure, /const settled = Math\.max\(0, Math\.min\(Math\.abs\(incBtw\), inv\.amount_paid \?\? 0\)\);/,
+    "the split still reads the column this route now supplies");
+});
+
+// ─── [REGEL-ZONDER-OMSCHRIJVING] The screen showed a total the invoice would not carry ──────────
+//
+// The accountant's invoice screen computed its Subtotaal/BTW/Totaal over ALL lines and then sent
+// only the lines that had a description. A EUR 400 line whose description was forgotten counted in
+// the total on screen and was dropped from the document: the screen said EUR 968,00 and an invoice
+// for EUR 484,00 left, out of the CLIENT's doorlopende reeks. The customer receives and pays the
+// smaller amount, the number is burnt, and the correction is a creditnota plus a re-issue.
+//
+// The owner's own editor already validates a description per line. This screen was the exception,
+// and it knew about the dropped line and said nothing.
+test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the send", () => {
+  const scherm = code("src/modules/accountant/pages/AccountantFactuur.tsx");
+  assert.match(scherm, /const zonderOmschrijving = regels\.findIndex\(\(r\) => !r\.description\.trim\(\) && naarGetal\(r\.unit_price\) !== 0\)/,
+    "the row is FOUND rather than filtered away");
+  assert.match(scherm, /if \(zonderOmschrijving >= 0\) \{/, "…and it refuses");
+  assert.match(scherm, /t\('bh\.fact\.foutOmschrijving', \{ nummer: zonderOmschrijving \+ 1 \}\)/,
+    "…naming which row, because 'something is wrong' is not an error message");
+  // The refusal must come BEFORE the draft is created: once /api/invoice/draft has run, the
+  // number is minted and the damage is a creditnota away.
+  const refuseAt = scherm.indexOf("zonderOmschrijving >= 0");
+  const draftAt = scherm.indexOf("/api/invoice/draft");
+  assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
 });

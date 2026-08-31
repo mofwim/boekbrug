@@ -16,6 +16,7 @@ import { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } from 'pdf-lib'
 import {
   extractEmbeddedInvoiceXml,
   extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, looksLikeInvoiceXml,
+  isEuroDocument,
   eInvoiceSettlesAmounts,
 } from './e-invoice'
 
@@ -630,4 +631,35 @@ test('[VOORUITBETALING] the ordinary invoice — no deposit, no rounding — is 
   assert.equal(got?.totalExBtw, 1000)
   assert.equal(got?.btwAmount, 210)
   assert.equal(got?.totalIncBtw, 1210)
+})
+
+test('[EURO-ALLEEN] the rule is one rule, and it is the one both doors use', () => {
+  // An absent currency is accepted — some producers omit the attribute, and a Dutch supplier
+  // billing a Dutch customer in euros is what that almost always means.
+  assert.equal(isEuroDocument(null), true)
+  assert.equal(isEuroDocument(undefined), true)
+  assert.equal(isEuroDocument(''), true)
+  assert.equal(isEuroDocument('   '), true)
+  // A STATED euro, in any casing or with the whitespace a producer leaves in.
+  assert.equal(isEuroDocument('EUR'), true)
+  assert.equal(isEuroDocument('eur'), true)
+  assert.equal(isEuroDocument(' EUR '), true)
+  // Everything else is a currency this app cannot book.
+  for (const cur of ['USD', 'SEK', 'GBP', 'CHF', 'usd', 'DKK', 'NOK', 'PLN']) {
+    assert.equal(isEuroDocument(cur), false, `${cur} is not euro`)
+  }
+})
+
+test('[EURO-ALLEEN] a foreign-currency invoice is refused, not booked at the same number', () => {
+  // Measured before this: USD 10.000 was refused by parseEInvoice and booked as EUR 10.000 by the
+  // standalone-.xml door — including its voorbelasting, claimed in rubriek 5b at a euro amount
+  // nobody ever paid. The amounts are internally consistent and the file validates against Peppol,
+  // so nothing else in the building can catch it.
+  const foreign = (cur: string) => ubl({ inc: '10000.00', ex: '10000.00', cur })
+  assert.equal(parseEInvoice(foreign('USD')), null)
+  assert.equal(parseEInvoice(foreign('SEK')), null)
+  assert.equal(parseEInvoice(foreign('GBP')), null)
+  // …and the euro one still reads exactly as before.
+  const euro = parseEInvoice(foreign('EUR'))
+  assert.equal(euro?.totalIncBtw, 10000)
 })

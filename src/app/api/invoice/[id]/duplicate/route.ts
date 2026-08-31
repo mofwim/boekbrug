@@ -149,9 +149,27 @@ export async function POST(
       // still carried the DISCOUNTED line_total beside the undiscounted price, so it looked right
       // until it was opened and saved: € 100,00 + € 21,00 where the original said € 90,00 +
       // € 18,90. See invoice-line-copy.ts for the two columns before it that drifted the same way.
-      await supabase.from('invoice_lines').insert(
+      const { error: regelFout } = await supabase.from('invoice_lines').insert(
         copiedLinesFor(originalLines as never, newInvoice.id) as never,
       )
+
+      // [CREDIT-REGELS-OF-NIETS] De kop zonder zijn regels is erger dan geen kopie: hij telt mee
+      // in elk overzicht en is leeg als je hem opent. Dezelfde regel die invoice/draft/route.ts al
+      // uitschrijft, en die hier ontbrak.
+      //
+      // Deze route heeft vandaag geen knop in het product, dus niemand liep hier tegenaan. Dat is
+      // precies waarom het blijft staan tot iemand er wél een knop aan hangt — en dan is het geen
+      // nieuwe fout maar een oude die eindelijk bereikbaar werd. Een concept mint geen nummer
+      // (invoice_number: null), dus terugdraaien laat geen gat in de reeks achter.
+      if (regelFout) {
+        await supabase.from('invoices').delete().eq('id', newInvoice.id)
+        console.error('[REGEL-KOPIE] regels kopiëren mislukt — kopie teruggedraaid',
+          { source_invoice_id: id, error: regelFout.message })
+        return NextResponse.json(
+          { error: 'De regels konden niet worden gekopieerd — er is geen kopie gemaakt. Probeer het opnieuw.' },
+          { status: 500 },
+        )
+      }
     }
 
     // [CONTROL] audit_logs has NO authenticated INSERT policy (service_role only)

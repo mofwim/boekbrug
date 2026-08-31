@@ -21,6 +21,8 @@ import {
   creditableRemaining,
   fitsWithinOriginal,
   overCreditReason,
+  creditNetFault,
+  creditNetReason,
 } from "./partial-credit";
 
 const line = (id: string, quantity: number, unit_price: number, btw_rate = 21, extra = {}) =>
@@ -404,3 +406,45 @@ test("[EMMER-SLEUTEL] twee identieke regels delen ook BINNEN één selectie hun 
   assert.equal(checkCreditSelection(dubbel, [{ id: "a", quantity: 1 }, { id: "b", quantity: 1 }]), null);
 });
 
+test("[CREDIT-IS-CREDIT] a creditnota may not come out asking for money", () => {
+  // An invoice carrying a [MIN-REGEL] return line — nine boxes delivered, two handed back on the
+  // same document, the way every wholesaler in this trade writes it. checkCreditSelection lets the
+  // return line be credited (it only requires the requested quantity to share the line's SIGN), and
+  // the route mirrors the selection unconditionally into the header. So crediting a return produced
+  // a row with invoice_type 'creditnota' and a POSITIVE total: a credit note that demands payment.
+  const lines = [
+    { id: "L1", description: "Levering 9 dozen", quantity: 9, unit_price: 100, btw_rate: 21, line_total: 900 },
+    { id: "L2", description: "Retour 2 dozen", quantity: -2, unit_price: 100, btw_rate: 21, line_total: -200 },
+  ];
+  const inc = (selection?: Array<{ id: string; quantity: number }>) =>
+    buildCreditSelection({ lines, selection } as never).totalIncBtw;
+
+  // The ordinary credit is untouched — it nets positive and the mirror makes it negative.
+  assert.equal(inc(), 847);
+  assert.equal(creditNetFault(inc()), null, "crediting the whole invoice is a real credit");
+  assert.equal(creditNetFault(inc([{ id: "L1", quantity: 9 }])), null, "…and so is crediting the delivery");
+
+  // Crediting the RETURN line nets negative: the customer keeps the boxes, so they owe MORE. The
+  // mirror would turn -242 into a creditnota header of +242.
+  assert.equal(inc([{ id: "L2", quantity: -2 }]), -242);
+  assert.equal(creditNetFault(inc([{ id: "L2", quantity: -2 }])), "charges_instead_of_credits");
+  assert.equal(creditNetFault(inc([{ id: "L2", quantity: -1 }])), "charges_instead_of_credits");
+
+  // And a selection that nets exactly nothing still consumes a number from the creditnota series.
+  assert.equal(inc([{ id: "L1", quantity: 2 }, { id: "L2", quantity: -2 }]), 0);
+  assert.equal(creditNetFault(0), "credits_nothing");
+
+  // Both refusals name what happened, in the language the owner reads them in.
+  assert.match(creditNetReason("credits_nothing"), /€ 0,00/);
+  assert.match(creditNetReason("charges_instead_of_credits"), /in rekening/i);
+});
+
+test("[CREDIT-IS-CREDIT] the rule is decided in cents, not in floats", () => {
+  // [CENT] A selection that nets a fraction of a cent is not "almost a credit". Anything under half
+  // a cent is nothing, and half a cent of credit is not a document worth a number.
+  assert.equal(creditNetFault(0.004), "credits_nothing");
+  assert.equal(creditNetFault(-0.004), "credits_nothing");
+  assert.equal(creditNetFault(0.01), null);
+  assert.equal(creditNetFault(-0.01), "charges_instead_of_credits");
+  assert.equal(creditNetFault(Number.NaN), "credits_nothing", "an unreadable total is never a credit");
+});
