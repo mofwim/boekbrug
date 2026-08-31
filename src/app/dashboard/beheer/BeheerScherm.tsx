@@ -22,6 +22,24 @@ function Tel({ n, label }: { n: number; label: string }) {
 
 
 /**
+ * Een bedrag uit het auditspoor, leesbaar.
+ *
+ * Het spoor bewaart de rij zoals hij was, en dat is een JSON-getal: op het scherm verscheen
+ * "6.8100000000000005" naast "-6.8100000000000005". Dat is geen leesfout van de app maar de
+ * gewone drijvende-komma-staart van een optelling — alleen staat hij hier op een scherm dat over
+ * geldbedragen gaat, en daar leest zo'n reeks als een fout in de administratie.
+ *
+ * Het SPOOR wordt niet aangeraakt: dat is machinaal bewijs en blijft staan zoals het is
+ * vastgelegd. Alleen de weergave rondt af, zoals elk ander bedrag in deze app.
+ */
+function bedragUitSpoor(raw: string | null): string {
+  if (raw === null) return "—";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
  * [LEESKWALITEIT] Hoe vaak moest een mens de machine verbeteren — en bij WIE.
  *
  * Het getal dat dit paneel bestaat om te weerleggen is het percentage. Op één echte administratie
@@ -109,8 +127,8 @@ function Leeskwaliteit({ q }: { q: ReaderQuality | null }) {
                 <td style={TD}>{new Date(c.atMs).toISOString().slice(0, 10)}</td>
                 <td style={TD}>{c.supplierName}</td>
                 <td style={TD}>{c.what}</td>
-                <td style={TD}>{c.what === "iban" ? (c.ibanBefore ?? "—") : (c.amountBefore ?? "—")}</td>
-                <td style={TD}>{c.what === "iban" ? (c.ibanAfter ?? "—") : (c.amountAfter ?? "—")}</td>
+                <td style={TD}>{c.what === "iban" ? (c.ibanBefore ?? "—") : bedragUitSpoor(c.amountBefore)}</td>
+                <td style={TD}>{c.what === "iban" ? (c.ibanAfter ?? "—") : bedragUitSpoor(c.amountAfter)}</td>
               </tr>
             ))}
             {q.recent.length === 0 && (
