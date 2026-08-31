@@ -73,7 +73,7 @@ export async function computeResultForRange(args: {
   // Invoices for this owner (outgoing = sender, incoming = receiver) in the window.
   const invRows = await fetchAllRows<RangeInvoiceRow>((from, to) => pipeline
     .from("invoices")
-    .select("id, direction, status, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
+    .select("id, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)

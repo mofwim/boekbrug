@@ -65,7 +65,41 @@ export interface FollowupQuote {
 export type QuoteFollowupState = "geaccepteerd" | "verloopt-binnenkort" | "verlopen";
 
 /** De typen waaronder een offerte wordt opgeslagen. 'pro_forma' is wat de app schrijft. */
-const QUOTE_TYPES = new Set(["pro_forma", "offerte"]);
+/**
+ * [OFFERTE-GEEN-OMZET] The two spellings a quote is stored under.
+ *
+ * Exported, because "is this document a quote" turned out to be a MONEY question and not just a
+ * follow-up one. A quote sent to a customer is `invoice_type 'pro_forma'`, `direction 'outgoing'`,
+ * `status 'sent'` with real totals on it — and every money surface in this app filtered on
+ * direction and status alone, so an unaccepted quote was declared as taxed turnover. See isQuote.
+ */
+export const QUOTE_TYPES: ReadonlySet<string> = new Set(["pro_forma", "offerte"]);
+
+/**
+ * Is this document a quote rather than something that was actually invoiced?
+ *
+ * A quote is not omzet. It carries no invoice number (Art. 35 Wet OB — it is not in the
+ * doorlopende reeks at all), nothing was delivered, and the customer may never accept it. Measured
+ * before this existed, on one EUR 10.000 quote beside one EUR 1.000 paid invoice:
+ *
+ *     rubriek 1a   omzet 11.000  BTW 2.310      truth: 1.000 / 210
+ *     5a / 5g      2.310                        truth: 210
+ *
+ * The owner was told to pay EUR 2.100 of BTW on a quote that was never accepted. The same row also
+ * became a line of the concept ICP-opgaaf keyed on the customer's EU VAT number, for a supply that
+ * never happened, and a "Verkoopfactuur" entry in the XAF auditfile.
+ *
+ * TWO SPELLINGS, and both are load-bearing: the product writes 'pro_forma' (see DB_TYPE in
+ * /api/invoice/draft) while 'offerte' exists in older rows and in the type unions. A check that
+ * knows only one of them is a check that works until it meets the other.
+ *
+ * This is the one answer. Six local copies of it existed before — in the kluis export, the
+ * reminder engine, the payment-behaviour report, two screens and an export button — and the money
+ * engine had a seventh: none at all.
+ */
+export function isQuote(invoiceType: string | null | undefined): boolean {
+  return QUOTE_TYPES.has(String(invoiceType ?? ""));
+}
 
 /** Standaard: vanaf drie dagen voor het verlopen is het iets van vandaag. */
 export const DEFAULT_SOON_DAYS = 3;
