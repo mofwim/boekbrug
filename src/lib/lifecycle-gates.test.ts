@@ -16846,6 +16846,65 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
 
+test("[VERWERKT-GELIJK] the two freezes on invoices protect the same facts", () => {
+  // public.invoices carries two column freezes side by side:
+  //
+  //   prevent_accountant_amount_changes   a linked accountant may not move their client's figures
+  //   prevent_verwerkt_invoice_changes    once the accountant has BOOKED it, the figures are fixed
+  //
+  // They guard against different people and protect the same FACTS. Both were hand-written
+  // enumerations and only the first was kept up. Measured: the verwerkt list was a STRICT SUBSET —
+  // 11 columns against 23, and not one column the other way. So there was no argument for the
+  // twelve that were missing; they simply never grew with their twin.
+  //
+  // What that still allowed after an invoice was processed: flipping invoice_type from factuur to
+  // creditnota (the amounts are frozen, so the document keeps its numbers and only changes what
+  // their SIGN means — creditedTotalsFrom, openAfterCredit, the aangifte and SnelStart all move the
+  // other way), reversing direction, moving it to another party, shifting vat_deduction and with it
+  // rubriek 5b, rewriting the discount the frozen totals are recomputed from, and swapping the
+  // evidence document under a booking the accountant has signed off.
+  //
+  // THE GATE IS THE RELATIONSHIP, NOT A THIRD LIST. Both sets are read out of the SQL, so a column
+  // added to either freeze in future has to appear in both — which is the property that failed
+  // here, and a hand-written list in this file would fail the same way.
+  const columnsOf = (path: string, fn: string): Set<string> => {
+    const sql = readFileSync(path, "utf8");
+    const at = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${fn}`);
+    assert.ok(at >= 0, `${fn} not found in ${path}`);
+    const body = sql.slice(at);
+    const end = body.indexOf("RAISE EXCEPTION");
+    assert.ok(end > 0, `${fn} has no refusal — has it been rewritten?`);
+    return new Set([...body.slice(0, end).matchAll(/NEW\.([a-z_]+)\s+IS DISTINCT FROM/g)].map((m) => m[1]));
+  };
+
+  const accountant = columnsOf("supabase/migrations/accountant_discount_guard.sql", "prevent_accountant_amount_changes");
+  const verwerkt = columnsOf("supabase/migrations/verwerkt_freeze_level.sql", "prevent_verwerkt_invoice_changes");
+  assert.ok(accountant.size >= 20, `only ${accountant.size} columns in the accountant freeze — the scan must be broken`);
+  assert.ok(verwerkt.size >= 20, `only ${verwerkt.size} columns in the verwerkt freeze — the scan must be broken`);
+
+  const missing = [...accountant].filter((c) => !verwerkt.has(c)).sort();
+  assert.deepEqual(
+    missing, [],
+    "an invoice the accountant has BOOKED may still be changed in these columns, while the same " +
+    `columns are frozen against the accountant on the same table:\n  ${missing.join("\n  ")}`,
+  );
+
+  // EVERY redefinition of the verwerkt freeze carries the full list, for the reason
+  // accountant_amount_guard_restore.sql documents at length: CREATE OR REPLACE replaces the whole
+  // body, and nothing in this directory records which migration ran last.
+  const holes: string[] = [];
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const path = `supabase/migrations/${f}`;
+    if (!readFileSync(path, "utf8").includes("CREATE OR REPLACE FUNCTION public.prevent_verwerkt_invoice_changes")) continue;
+    const cols = columnsOf(path, "prevent_verwerkt_invoice_changes");
+    for (const c of accountant) if (!cols.has(c)) holes.push(`${f} — ${c}`);
+  }
+  assert.deepEqual(
+    holes, [],
+    `these redefinitions of the verwerkt freeze leave a column out; whichever ran last decides:\n  ${holes.join("\n  ")}`,
+  );
+});
+
 test("[EURO-ALLEEN] both doors onto an e-invoice refuse a currency this app cannot book", () => {
   // There are TWO readers of the same bytes, and only one of them asked.
   //

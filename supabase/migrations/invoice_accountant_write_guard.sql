@@ -133,17 +133,33 @@ BEGIN
   IF OLD.accountant_status IS DISTINCT FROM 'verwerkt' THEN
     RETURN NEW;
   END IF;
-  IF (NEW.total_ex_btw   IS DISTINCT FROM OLD.total_ex_btw)   OR
-     (NEW.btw_amount     IS DISTINCT FROM OLD.btw_amount)     OR
-     (NEW.total_inc_btw  IS DISTINCT FROM OLD.total_inc_btw)  OR
-     (NEW.invoice_date   IS DISTINCT FROM OLD.invoice_date)   OR
-     (NEW.due_date       IS DISTINCT FROM OLD.due_date)       OR
-     (NEW.invoice_number IS DISTINCT FROM OLD.invoice_number) OR
-     (NEW.status         IS DISTINCT FROM OLD.status)         OR
-     (NEW.amount_paid    IS DISTINCT FROM OLD.amount_paid)    OR
-     (NEW.payment_method IS DISTINCT FROM OLD.payment_method) OR
-     (NEW.payment_date   IS DISTINCT FROM OLD.payment_date)   OR
-     (NEW.marked_paid_at IS DISTINCT FROM OLD.marked_paid_at)
+  -- [VERWERKT-GELIJK] De volledige lijst, gelijk aan prevent_accountant_amount_changes op dezelfde
+  -- tabel. Ze stond hier 12 kolommen korter — een ECHTE deelverzameling, nul de andere kant op —
+  -- en elke herdefinitie draagt de hele lijst omdat CREATE OR REPLACE het lichaam vervangt en deze
+  -- map niet vastlegt welke migratie als laatste draait. Zie verwerkt_freeze_level.sql.
+  IF (NEW.total_ex_btw        IS DISTINCT FROM OLD.total_ex_btw) OR
+     (NEW.btw_amount          IS DISTINCT FROM OLD.btw_amount) OR
+     (NEW.total_inc_btw       IS DISTINCT FROM OLD.total_inc_btw) OR
+     (NEW.invoice_date        IS DISTINCT FROM OLD.invoice_date) OR
+     (NEW.due_date            IS DISTINCT FROM OLD.due_date) OR
+     (NEW.sender_id           IS DISTINCT FROM OLD.sender_id) OR
+     (NEW.receiver_id         IS DISTINCT FROM OLD.receiver_id) OR
+     (NEW.direction           IS DISTINCT FROM OLD.direction) OR
+     (NEW.status              IS DISTINCT FROM OLD.status) OR
+     (NEW.amount_paid         IS DISTINCT FROM OLD.amount_paid) OR
+     (NEW.payment_method      IS DISTINCT FROM OLD.payment_method) OR
+     (NEW.payment_date        IS DISTINCT FROM OLD.payment_date) OR
+     (NEW.marked_paid_at      IS DISTINCT FROM OLD.marked_paid_at) OR
+     (NEW.payment_prepared_at IS DISTINCT FROM OLD.payment_prepared_at) OR
+     (NEW.pay_token           IS DISTINCT FROM OLD.pay_token) OR
+     (NEW.invoice_number      IS DISTINCT FROM OLD.invoice_number) OR
+     (NEW.invoice_type        IS DISTINCT FROM OLD.invoice_type) OR
+     (NEW.vendor_iban         IS DISTINCT FROM OLD.vendor_iban) OR
+     (NEW.payment_reference   IS DISTINCT FROM OLD.payment_reference) OR
+     (NEW.document_id         IS DISTINCT FROM OLD.document_id) OR
+     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction) OR
+     (NEW.discount_type       IS DISTINCT FROM OLD.discount_type) OR
+     (NEW.discount_value      IS DISTINCT FROM OLD.discount_value)
   THEN
     RAISE EXCEPTION
       'Factuur % is verwerkt door de boekhouder — vraag eerst om de verwerking ongedaan te maken',
