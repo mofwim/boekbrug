@@ -18105,7 +18105,7 @@ test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de be
   const carry = code("src/lib/reimport-carry.ts");
   const lijst = carry.slice(
     carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
-    carry.indexOf("const RELATION_KEYS"),
+    carry.indexOf("const FRESH_OWNS"),
   );
   assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
   assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");

@@ -267,3 +267,109 @@ test("[INCASSO-ONGEDAAN] an invoice we never booked gains no marker from a re-im
   });
   assert.equal(out?._auto_incasso, undefined, "a marker was invented for an invoice nobody booked");
 });
+
+// ─── [SAFECORE-BLIJFT] Een waarschuwing die de herlezing niet opnieuw afleidt ────────────────
+//
+// De witte lijst hiervoor liet alles verdampen wat er niet in stond, en de herleesroute leidt
+// géén van deze vlaggen opnieuw af. Erger nog dan verdwijnen: invoice-checks.ts zegt bij een
+// ontbrekende iban_changed het TEGENDEEL — "ongewijzigd ten opzichte van eerdere facturen".
+
+const HERLEZING = {
+  aiConfidence: null,
+  freshHasTotal: true,
+  verdict: null,
+  heldAt: "2026-08-31T02:00:00.000Z",
+  freshIsReminder: false,
+  freshReminderOf: null,
+} as const;
+
+test("[SAFECORE-BLIJFT] een gewijzigd rekeningnummer overleeft 'Opnieuw inlezen'", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: {
+      _safecore: {
+        iban_changed: true,
+        iban_changed_from: "NL91ABNA0417164300",
+        iban_changed_to: "NL02RABO0123456789",
+      },
+    },
+    ...HERLEZING,
+  });
+  const sc = out?._safecore as Record<string, unknown>;
+  assert.equal(sc?.iban_changed, true,
+    "dit is het ENE signaal tussen de eigenaar en een omgeleide betaling, en de herlezing " +
+    "leidt het niet opnieuw af — verdwijnt het, dan zegt de controlelijst 'ongewijzigd'");
+  assert.equal(sc?.iban_changed_from, "NL91ABNA0417164300", "…met beide nummers, want vergelijken IS de controle");
+  assert.equal(sc?.iban_changed_to, "NL02RABO0123456789");
+});
+
+test("[SAFECORE-BLIJFT] 'we konden het niet nagaan' overleeft ook — stilte leest als schoon", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: { _safecore: { iban_check_unavailable: true } },
+    ...HERLEZING,
+  });
+  assert.equal((out?._safecore as Record<string, unknown>)?.iban_check_unavailable, true);
+});
+
+test("[SAFECORE-BLIJFT] meerdere facturen in één bestand, en de kop die 'creditnota' zei", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: {
+      _safecore: {
+        multiple_invoices: true,
+        multiple_invoices_reason: "CR0301267, CR0300797",
+        one_invoice_unverified: true,
+        credit_word_in_header: true,
+      },
+    },
+    ...HERLEZING,
+  });
+  const sc = out?._safecore as Record<string, unknown>;
+  assert.equal(sc?.multiple_invoices, true, "één tik maakte van elf gemiste facturen er nul");
+  assert.equal(sc?.multiple_invoices_reason, "CR0301267, CR0300797");
+  assert.equal(sc?.one_invoice_unverified, true);
+  assert.equal(sc?.credit_word_in_header, true,
+    "de tweede deterministische creditgreep — de eerste die géén model bevraagt");
+});
+
+test("[SAFECORE-BLIJFT] een onbekende toekomstige vlag overleeft ook: de lijst kan niet verouderen", () => {
+  // Dit is waarom de regel is omgedraaid. Wie morgen een nieuwe waarschuwing toevoegt en deze
+  // module niet kent, krijgt hem gratis mee — precies andersom dan de witte lijst, die zwijgt.
+  const out = buildReimportFieldConfidence({
+    priorFc: { _safecore: { een_vlag_die_nog_niet_bestond: "let op" } },
+    ...HERLEZING,
+  });
+  assert.equal((out?._safecore as Record<string, unknown>)?.een_vlag_die_nog_niet_bestond, "let op");
+});
+
+test("[SAFECORE-BLIJFT] de herinneringsvlag blijft NIET staan — die knop bestaat er juist voor", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: { _safecore: { reminder: true, reminder_of: "2026-0912", iban_changed: true } },
+    ...HERLEZING,
+  });
+  const sc = out?._safecore as Record<string, unknown>;
+  assert.equal(sc?.reminder, undefined,
+    "een ten onrechte gezette herinnering moet met deze knop weg kunnen — anders is hij onherstelbaar");
+  assert.equal(sc?.reminder_of, undefined);
+  assert.equal(sc?.iban_changed, true, "…en dat mag de rest niet meeslepen");
+});
+
+test("[SAFECORE-BLIJFT] een verse schone som heft de oude hold op, maar raakt de rest niet", () => {
+  const out = buildReimportFieldConfidence({
+    priorFc: {
+      _safecore: {
+        arithmetic_ok: false,
+        reason: "excl + btw != incl",
+        held_at: "2026-07-01T00:00:00.000Z",
+        iban_changed: true,
+        possible_duplicate: true,
+      },
+    },
+    ...HERLEZING,
+    verdict: { ok: true },
+  });
+  const sc = out?._safecore as Record<string, unknown>;
+  assert.equal(sc?.arithmetic_ok, undefined, "een terecht gecorrigeerde factuur moet weer schoon kunnen worden");
+  assert.equal(sc?.reason, undefined);
+  assert.equal(sc?.held_at, undefined);
+  assert.equal(sc?.iban_changed, true, "…zonder de fraudevlag mee te nemen");
+  assert.equal(sc?.possible_duplicate, true, "…of het tweelingsignaal");
+});
