@@ -160,6 +160,12 @@ export interface PackageInvoice {
   document_id: string | null;        // link to documents (incoming original)
   client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
+  // [PAYDATE-ECHT] De dag waarop het geld volgens de eigenaar is bewogen. apply_manual_payment
+  // schrijft hem (`payment_date = p_pay_date`) en de kasstelsel-aangifte rekent ermee. Hij stond al
+  // in de select en werd hier niet doorgegeven, dus de enige 'echte' bron van deze functie was de
+  // OUDE enkelvoudige kolom bank_transactions.invoice_id — en al het andere viel terug op een
+  // schatting.
+  payment_date: string | null;
   // [HERTIKKEN] factuur | creditnota. Zonder deze kolom is een creditnota in de inhoudslijst
   // alleen aan een minteken te herkennen, en dat is precies het soort verschil waar een
   // boekhouder een half uur aan kwijt is als hij het pas bij het inboeken ontdekt.
@@ -322,8 +328,40 @@ async function stampPaymentDate(
 }
 
 /**
+ * [PAYDATE-ECHT] Welke datum het pakket voor één betaalde factuur afdrukt, en of het een schatting
+ * is. De enige beslissing in resolvePaymentDates die geen I/O is, dus de enige die te testen viel.
+ *
+ * De volgorde is een rangorde van BEWIJS, niet van gemak:
+ *
+ *   1. de datum van de gekoppelde bankregel — de bank zag het geld bewegen;
+ *   2. invoices.payment_date — de dag die de eigenaar in het betaaldialoog invulde en die
+ *      apply_manual_payment heeft weggeschreven. Geen schatting: het is een bewering van de
+ *      eigenaar over wanneer hij betaalde, en het is exact het veld waar de kasstelsel-aangifte
+ *      mee rekent;
+ *   3. marked_paid_at — iets anders, en dat verschil is het hele punt. Dat is het moment waarop de
+ *      betaling in de app is VASTGELEGD, niet waarop het geld bewoog.
+ *
+ * Stap 2 ontbrak. Voor contant en met de hand betaald gemarkeerde facturen bestaat er geen
+ * bankregel, dus viel álles daarvan door naar het vastlegmoment. Wie op 30 juni contant betaalt en
+ * het op 3 juli invoert kreeg "Betaald op: 03-07-2026 (geschat)" op pagina 1 van die factuur en in
+ * overzicht.csv — een Q3-datum — terwijl de kasstelsel-aangifte in DEZELFDE zip hem in Q2 boekt.
+ * Twee data voor één betaling in één pakket, en onder het kasstelsel bepaalt die datum in welk
+ * kwartaal de voorbelasting valt.
+ */
+export function pickPaymentDate(
+  bankDate: string | null,
+  inv: { payment_date?: string | null; marked_paid_at?: string | null },
+): PaymentDateInfo {
+  if (bankDate) return { date: bankDate.slice(0, 10), estimated: false };
+  if (inv.payment_date) return { date: inv.payment_date.slice(0, 10), estimated: false };
+  if (inv.marked_paid_at) return { date: inv.marked_paid_at.slice(0, 10), estimated: true };
+  return { date: null, estimated: true };
+}
+
+/**
  * For a set of PAID invoices, resolve each one's payment date in ONE query.
- * Priority: linked bank transaction date (real) → marked_paid_at (estimate) →
+ * Priority: linked bank transaction date (real) → invoices.payment_date (real) → marked_paid_at
+ * (estimate) →
  * null (honest — never invented). A bank transaction is considered linked when
  * its invoice_id points at the invoice, REGARDLESS of the transaction's own
  * status: even a partially-linked multi-invoice transaction (status still
@@ -383,14 +421,7 @@ async function resolvePaymentDates(
   }
 
   for (const inv of paidInvoices) {
-    const bankDate = bankDateByInvoice.get(inv.id);
-    if (bankDate) {
-      result.set(inv.id, { date: bankDate.slice(0, 10), estimated: false });
-    } else if (inv.marked_paid_at) {
-      result.set(inv.id, { date: inv.marked_paid_at.slice(0, 10), estimated: true });
-    } else {
-      result.set(inv.id, { date: null, estimated: true });
-    }
+    result.set(inv.id, pickPaymentDate(bankDateByInvoice.get(inv.id) ?? null, inv));
   }
   return { dates: result, complete };
 }
