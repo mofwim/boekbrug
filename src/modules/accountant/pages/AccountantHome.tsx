@@ -35,6 +35,7 @@ import DashboardTools from '@/components/tools/DashboardTools'
 // [TAAL] This screen holds no language of its own: every sentence comes from messages.ts.
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { failureText } from '@/lib/server-message'
 
 // ─────────────────────────────────────────────────────────
 // Constants
@@ -228,7 +229,7 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
         // Zeg wat er aan de hand is. 429 is het enige geval waarin wachten wél helpt.
         setAiResult({
           subject: res.status === 429 ? t('bh.home.ai.teVeel') : t('bh.home.ai.mislukt'),
-          body: json?.error ?? t('bh.home.ai.probeerStraks'),
+          body: failureText(res.status, json, t('bh.home.ai.probeerStraks')),
         })
         return
       }

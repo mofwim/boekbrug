@@ -90,10 +90,12 @@ export default function AccountantOpvragen({ klanten, kwartalen }: Props) {
     if (!sleutel || !klantId || !kwartaal) return
     let afgebroken = false
     fetch(`/api/readiness?clientId=${encodeURIComponent(klantId)}&year=${kwartaal.year}&quarter=${kwartaal.quarter}`)
-      .then((r) => r.json())
-      .then((d) => {
+      // [SERVER-ZIN] De status blijft mee: failureText onderdrukt een 5xx-`detail` (een rauwe
+      // databasestring), en zonder de status kan het dat onderscheid niet maken.
+      .then((r) => r.json().then((d) => ({ status: r.status, d })))
+      .then(({ status, d }) => {
         if (afgebroken) return
-        if (!d?.ok || !d?.report) throw new Error(d?.error || t('bh.opvr.fout.lezen'))
+        if (!d?.ok || !d?.report) throw new Error(failureText(status, d, t('bh.opvr.fout.lezen')))
         const missing: MissingItem[] = Array.isArray(d.report.missing) ? d.report.missing : []
         setGeladen({ sleutel, items: missing })
         // Standaard alles aangevinkt: de boekhouder haalt weg wat hij al weet, in plaats van

@@ -2964,7 +2964,9 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
   // The answer is always a sentence. A silent button on the one panel whose purpose is honesty
   // about what went missing would be the wrong thing twice over.
   assert.match(ui, /setRereadMessage\(typeof json\?\.message === "string"/, "success speaks");
-  assert.match(ui, /setRereadMessage\(typeof json\?\.error === "string"/, "and so does failure");
+  // [SERVER-ZIN] Zelfde correctie als bij [ARTIKEL-CODE] hierboven: de eis is dat de mislukking
+  // wordt UITGESPROKEN, niet dat hij op één bepaalde manier is opgeschreven.
+  assert.match(ui, /setRereadMessage\(failureText\(/, "and so does failure");
 });
 
 // ── [VRIJGESTELD-KOPIE] Every route that COPIES invoice lines carries the exemption flag ──
@@ -3917,9 +3919,14 @@ test("[ARTIKEL-CODE] a line can be saved to the catalog WITH a code, and a clash
   // A REFUSAL MUST BE HEARD. articles carries UNIQUE(user_id, code) and the route answers 409
   // with which code is taken. Swallowing that leaves the owner believing "22" now points at this
   // line while it points at another — and they will pull up the wrong line later.
+  // [SERVER-ZIN] Gepind op de EIGENSCHAP, niet op de spelling. Deze regel eiste letterlijk
+  // `typeof j?.error === 'string'` — de rauwe vorm — en viel dus om toen die plek door
+  // failureText ging, wat hetzelfde doet én een machinecode tegenhoudt. Een poort die de
+  // schrijfwijze vastlegt in plaats van wat er moet gelden, verzet zich tegen zijn eigen doel.
   assert.match(
-    page, /setCodeError\(typeof j\?\.error === 'string'/,
-    "a rejected code must be shown, not swallowed",
+    page, /setCodeError\(failureText\(/,
+    "a rejected code must be shown, not swallowed — and through the one rule, so a 409 that ever " +
+      "answers with a code instead of a sentence does not put that code on the screen",
   );
   assert.match(page, /\{codeError && </, "…on screen, beside the field it belongs to");
   assert.doesNotMatch(
@@ -9388,12 +9395,43 @@ test("[SERVER-ZIN] no screen renders a route's error straight", () => {
   // [DIEP-2] The first regex named two setter names, and a screen whose state is called
   // setBulkError or setSaveError walked straight past it — thirteen live sites did. The sink is
   // any setter whose NAME says it renders an error or message, plus the two non-setter sinks.
-  const RAW = /(showToast|set[A-Za-z]*(?:Error|Message|Fout)|throw new Error)\(\s*\(?(?:json|data|j|res)\??\)?[.?]*\.?error\b(?!\s*(?:===|!==|==|!=|\?\.))/g;
+  // [DIEP-3] De derde versie, en de reden staat er nu bij: de vorige TWEE lieten samen 55 levende
+  // plekken door, en de poort was al die tijd groen.
+  //
+  // Wat de vorige miste, in de vorm waarin het in dit project voorkomt:
+  //
+  //   · `toast(...)`, `setToast(...)`, `setMelding(...)`, `setFout(...)` — de sinklijst noemde
+  //     alleen showToast en set*Error/Message/Fout;
+  //   · `{ message: data.error || … }` en `{ text: … }` — een veld in een object is net zo goed
+  //     een scherm als een aanroep;
+  //   · `json?.detail || …` — server-message.ts noemt de 5xx-`detail` (een rauwe databasestring
+  //     met functienaam en uuid) met zoveel woorden, en de poort keek er niet naar;
+  //   · `typeof data.error === 'string' ? data.error : …` — hier zat de scherpste: de vorige regel
+  //     had een negatieve lookahead op `===` om een VERGELIJKING toe te laten ("herken de code en
+  //     kies de juiste zin", precies het goede patroon) — en die lookahead sloeg daarmee óók de
+  //     meest voorkomende rauwe vorm in dit project over.
+  //
+  // Deze versie draait het om: een SINK gevolgd door een `.error`/`.detail` van een antwoordbody,
+  // tenzij daar een vertaler tussen staat. Vergelijkingen (`=== 'no_file'`) dragen geen sink en
+  // komen er zo niet meer in voor.
+  const SINK = "(?:showToast|toast|setToast|throw new Error|set[A-Za-z]*(?:Error|Message|Fout|Melding|Note|Notice|Reason|Result)|(?:message|text|tekst|body|detail|title|reason)\\s*:)";
+  // De lookahead is terug, maar hij doet nu iets anders dan in versie twee. Daar zat hij op de
+  // hele uitdrukking en excuseerde daarmee `typeof x.error === 'string' ? x.error : …` volledig.
+  // Hier zit hij op het GEVONDEN voorkomen: een vergelijking (`json.error === 'verwerkt'`) is geen
+  // weergave, maar de `? x.error` verderop in diezelfde ternary wordt nog steeds gevonden — die
+  // wordt door niets gevolgd dan een dubbele punt.
+  const BODY = "(?:json|data|body|payload|resp|d|j|err)\\d?\\??\\.(?:error|detail)\\b(?!\\s*(?:===|!==|==|!=))";
+  // Alles tussen de sink en de body, zolang het geen nieuwe instructie begint — zo vangt hij ook
+  // de ternary die over drie regels staat, zonder de halve component mee te nemen.
+  const RAW = new RegExp(`${SINK}\\s*\\(?(?![^;{}]{0,200}?(?:failureText|serverSentence|isMachineCode|describeUploadFailure))[^;{}]{0,200}?${BODY}`, "g");
 
   const offenders: string[] = [];
   for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
     if (f.includes("/api/") || /\.test\.tsx?$/.test(f)) continue;
-    const src = code(f); // comments stripped — a note about the old shape must not count
+    // Comments stripped (a note about the old shape must not count) AND string literals blanked:
+    // `labelKey: "ink.result.error"` is a translation key, not a read of a response body, and it
+    // put two innocent lines on this list while it was being written.
+    const src = code(f).replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, (m) => m[0] + " ".repeat(Math.max(0, m.length - 2)) + m[0]);
     for (const m of src.matchAll(RAW)) {
       offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }

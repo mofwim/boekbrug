@@ -44,6 +44,7 @@ import { translator } from '@/lib/i18n/t'
 import { usePageTray } from '@/lib/use-page-tray'
 import PageTray from '@/components/intake/PageTray'
 import type { MessageKey } from '@/lib/i18n/messages'
+import { failureText } from '@/lib/server-message'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
@@ -230,7 +231,7 @@ export default function UploadClient() {
       // block only renders WITH a summary — so the button used to go quiet and the
       // owner was left believing nothing needed booking. Say what happened instead.
       if (!res.ok || !data?.summary) {
-        setReproc({ busy: false, done: true, error: data?.error || t('up.fout.boekenOpnieuw') })
+        setReproc({ busy: false, done: true, error: failureText(res.status, data, t('up.fout.boekenOpnieuw')) })
         return
       }
       setReproc({ busy: false, done: true, summary: data.summary, results: data.results })
@@ -297,7 +298,7 @@ export default function UploadClient() {
             })
           } else if (res.status === 409 && data?.duplicate) {
             patch(item.id, {
-              status: 'duplicate', message: data.error || t('up.alToegevoegd'), canForce: !!data.canForce,
+              status: 'duplicate', message: failureText(res.status, data, t('up.alToegevoegd')), canForce: !!data.canForce,
               // [DUP-ARCHIVED] alleen gezet als de bestaande factuur écht in Genegeerd staat
               archived: data.archived ?? undefined,
               // [BESTANDEN-WIJS] Bij een duplicaat wijst de link naar het bestand dat er AL staat —
@@ -483,7 +484,7 @@ export default function UploadClient() {
       } else {
         // [UI-HONESTY] Een 409 betekent dat hij niet (meer) in Genegeerd staat. Nooit "gelukt" zeggen.
         const data = await res.json().catch(() => ({}))
-        patch(item.id, { restoring: false, message: data.error || t('up.fout.terugzettenVervers') })
+        patch(item.id, { restoring: false, message: failureText(res.status, data, t('up.fout.terugzettenVervers')) })
       }
     } catch {
       patch(item.id, { restoring: false, message: t('up.fout.terugzettenVerbinding') })

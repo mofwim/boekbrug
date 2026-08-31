@@ -50,6 +50,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [LEVERANCIER-VASTLEGGEN] Eén keer opschrijven wie deze leverancier is — zie SupplierPinModal.
 import SupplierPinModal from '@/components/invoice/SupplierPinModal'
+import { failureText } from '@/lib/server-message'
 
 
 /** What the sheet needs about the invoice. A structural subset of the row. */
@@ -109,10 +110,12 @@ export default function InvoiceDocumentSheet({
     // and a late answer writing into the new render would show the previous invoice's document.
     let cancelled = false
     fetch(`/api/email/file/${invoice.id}`)
-      .then((r) => r.json())
-      .then((d: { url?: string; kind?: string; name?: string; error?: string }) => {
+      // [SERVER-ZIN] De status reist mee, zodat failureText een 5xx-`detail` (een rauwe
+      // databasestring) kan onderdrukken in plaats van hem aan de eigenaar te tonen.
+      .then((r) => r.json().then((d) => ({ status: r.status, d })))
+      .then(({ status, d }: { status: number; d: { url?: string; kind?: string; name?: string; error?: string } }) => {
         if (cancelled) return
-        if (!d.url) { setDoc({ phase: 'failed', message: d.error || t('dsh.nietOpenen') }); return }
+        if (!d.url) { setDoc({ phase: 'failed', message: failureText(status, d, t('dsh.nietOpenen')) }); return }
         // The route sends the kind; previewKind() re-derives it from the name as a fallback, so a
         // still-deployed older route (which only knew image/pdf/other) also gets the new answer.
         const sent = d.kind

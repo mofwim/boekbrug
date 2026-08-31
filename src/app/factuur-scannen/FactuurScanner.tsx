@@ -12,6 +12,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { amsterdamToday } from '@/lib/format-nl'
 import Link from 'next/link'
 import { formatEuroNL } from '@/lib/format-nl'
+import { failureText } from '@/lib/server-message'
 
 const DAILY_CAP = 3
 const CAP_KEY = 'boekbrug.factuur-scannen.usage'
@@ -144,7 +145,7 @@ export default function FactuurScanner() {
       })
       const json = await res.json().catch(() => null)
       if (!res.ok) {
-        setError((json && json.error) || 'Het scannen is mislukt. Probeer het opnieuw.')
+        setError(failureText(res.status, json, 'Het scannen is mislukt. Probeer het opnieuw.'))
         return
       }
       // Only count a scan that actually reached the model and returned.

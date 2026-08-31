@@ -32,6 +32,7 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -78,7 +79,7 @@ export default function SupplierPinModal({
       if (!res.ok) {
         setError({
           field: typeof json?.field === 'string' ? json.field : null,
-          text: typeof json?.error === 'string' && json.error ? json.error : t('lev.fout.opslaan'),
+          text: failureText(res.status, json, t('lev.fout.opslaan')),
         })
         setSaving(false)
         return

@@ -13,6 +13,7 @@ import { BestandRow } from "../types";
 // [TAAL] A component holds no language of its own.
 import { useLocale } from "@/lib/i18n/use-locale";
 import { translator } from "@/lib/i18n/t";
+import { failureText } from '@/lib/server-message'
 
 interface UploadAreaProps {
   currentFolderId: string | null;
@@ -71,7 +72,7 @@ export function UploadArea({ currentFolderId, onUploaded }: UploadAreaProps) {
     if (!json.id) {
       // [BRIDGE-EXTRACT] Duplicate (409) carries `existing` → surface it so the
       // catch can render a link to the file that's already there.
-      const e = new Error(json.error ?? t("bst.uploadMislukt")) as Error & {
+      const e = new Error(failureText(res.status, json, t("bst.uploadMislukt"))) as Error & {
         existing?: FailedFile["existing"];
       };
       if (json.duplicate && json.existing) e.existing = json.existing;

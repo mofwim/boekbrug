@@ -13,6 +13,7 @@ import BewaarkluisCard from './BewaarkluisCard'
 // [TAAL] The screen speaks the owner's language.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -112,7 +113,7 @@ function YearCard({ s, currentYear, t }: { s: YearSummary; currentYear: number; 
       const res = await fetch(`/api/kluis/export?year=${s.year}`)
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
-        setErr(j.error || t('kluis.exportMislukt')); setBusy(false); return
+        setErr(failureText(res.status, j, t('kluis.exportMislukt'))); setBusy(false); return
       }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

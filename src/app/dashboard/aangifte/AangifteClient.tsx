@@ -19,6 +19,7 @@ import type { QuarterNo } from '@/lib/btw-reservation'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -142,9 +143,7 @@ export default function AangifteClient({ hasAccountant = null }: {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
-        setCarryNote(typeof json.error === 'string'
-          ? json.error
-          : t('aang.correcties.mislukt'))
+        setCarryNote(failureText(res.status, json, t('aang.correcties.mislukt')))
         return
       }
       setCorrections((prev) => prev.filter((x) => x.quarter !== c.quarter))
@@ -175,9 +174,7 @@ export default function AangifteClient({ hasAccountant = null }: {
           setLoadError(
             res.status === 401
               ? t('aang.sessieVerlopen')
-              : (typeof json?.detail === 'string' && json.detail.trim())
-                ? json.detail.trim()
-                : t('aang.ladenMislukt'),
+              : failureText(res.status, json, t('aang.ladenMislukt')),
           )
           return
         }

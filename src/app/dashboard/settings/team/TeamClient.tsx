@@ -53,7 +53,7 @@ export default function TeamClient() {
       if (!res.ok) {
         // Meestal: de migratie staat er nog niet. Dat is iets anders dan "je hebt geen team",
         // en die twee moeten niet op elkaar lijken.
-        return { ok: false, fout: json?.error || t('team.laadMislukt') }
+        return { ok: false, fout: failureText(res.status, json, t('team.laadMislukt')) }
       }
       return { ok: true, leden: json.leden ?? [], open: json.uitnodigingen ?? [], beschikbaar: json.beschikbaar !== false }
     } catch {
