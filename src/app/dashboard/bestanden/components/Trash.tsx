@@ -13,6 +13,7 @@ import { useDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { MESSAGES, type MessageKey } from '@/lib/i18n/messages'
 
 interface TrashProps {
   onBack: () => void;
@@ -72,17 +73,54 @@ export function Trash({ onBack }: TrashProps) {
     const results = await Promise.all(ids.map(async id => {
       try {
         const res = await fetch(`/api/bestanden/trash?id=${id}`, { method: "DELETE" });
-        return { id, ok: res.ok };
+        if (res.ok) return { id, ok: true as const, code: null, references: [] };
+        // [BEWIJS-VAST] A refusal is not a failure — it is an answer, and it names what to do.
+        // Counting it as "N bestanden konden niet worden verwijderd" told the owner nothing he
+        // could act on about the one thing the server knew exactly.
+        const body = await res.json().catch(() => null) as
+          { code?: string | null; references?: { key: string; count: number }[] } | null;
+        return { id, ok: false as const, code: body?.code ?? null, references: body?.references ?? [] };
       } catch {
-        return { id, ok: false };
+        return { id, ok: false as const, code: null, references: [] };
       }
     }));
     const deletedIds = results.filter(r => r.ok).map(r => r.id);
-    const failed = results.length - deletedIds.length;
     if (deletedIds.length > 0) setItems(p => p.filter(d => !deletedIds.includes(d.id)));
     setSelected(new Set());
-    if (failed > 0) {
-      toast(t('prul.verwijderMislukt', { count: failed }), { tone: 'error' });
+
+    const refused = results.filter(r => !r.ok && r.code === 'referenced');
+    const uncheckable = results.filter(r => !r.ok && r.code === 'check-failed');
+    const broken = results.filter(r => !r.ok && r.code !== 'referenced' && r.code !== 'check-failed');
+
+    // The refusal gets a dialog, not a toast: the owner just confirmed a permanent delete and it
+    // did not happen, which is exactly the case that deserves an acknowledgement. The reasons are
+    // rendered from their KEYS — the server sends keys and counts, never a finished sentence.
+    if (refused.length > 0) {
+      // Only keys this build actually knows. A deploy where the server is ahead of the page in a
+      // still-open tab would otherwise print the literal key on screen — t() returns the key for an
+      // unknown one, on purpose, so that a typo is loud in development. Loud is right there and
+      // wrong here: the two sentences around the list already say what happened and what to do.
+      const reasons = [...new Set(
+        refused
+          .flatMap(r => r.references)
+          .filter(ref => ref.key in MESSAGES)
+          .map(ref => t(ref.key as MessageKey, { count: ref.count }))
+      )];
+      await dialog.alert({
+        title: t('prul.nietVerwijderdTitel'),
+        message: [t('prul.nietVerwijderdUitleg'), ...reasons.map(x => `• ${x}`), t('prul.nietVerwijderdActie')].join('\n'),
+        tone: 'error',
+      });
+    }
+    if (uncheckable.length > 0) {
+      await dialog.alert({
+        title: t('prul.controleMisluktTitel'),
+        message: t('prul.controleMislukt'),
+        tone: 'error',
+      });
+    }
+    if (broken.length > 0) {
+      toast(t('prul.verwijderMislukt', { count: broken.length }), { tone: 'error' });
     }
   };
 

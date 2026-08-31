@@ -10818,6 +10818,120 @@ export const MESSAGES = {
     ar: 'الملفات التي تعذّر حذفها: {count}. ما زالت في سلة المهملات.',
     en: '{count} file(s) could not be deleted. They are still in the bin.',
   },
+  // ─── [BEWIJS-VAST] Waarom een definitieve verwijdering wordt geweigerd ──────────────────────
+  //
+  // Elk van deze regels noemt één ding dat nog naar het bestand verwijst. Ze staan per AANTAL
+  // apart, enkelvoud en meervoud, om de reden die bovenaan dit bestand staat: "1 factuur" en
+  // "3 facturen" zijn twee zinnen, en in het Arabisch en Turks liggen ze verder uit elkaar dan in
+  // het Nederlands. De server kiest de sleutel; het scherm rendert wat het krijgt.
+  'prul.ref.factuurBewijs.een': {
+    nl: 'een factuur waarvan dit het bewijsstuk is',
+    ar: 'فاتورة هذا الملف هو مستندها الداعم',
+    en: 'an invoice this file is the supporting document for',
+  },
+  'prul.ref.factuurBewijs.meer': {
+    nl: '{count} facturen waarvan dit het bewijsstuk is',
+    ar: '{count} فواتير هذا الملف هو مستندها الداعم',
+    en: '{count} invoices this file is the supporting document for',
+  },
+  'prul.ref.factuurBijlage.een': {
+    nl: 'een factuur die dit als bijlage heeft meegestuurd',
+    ar: 'فاتورة أُرسل معها هذا الملف كمرفق',
+    en: 'an invoice that was sent out with this as an attachment',
+  },
+  'prul.ref.factuurBijlage.meer': {
+    nl: '{count} facturen die dit als bijlage hebben meegestuurd',
+    ar: '{count} فواتير أُرسل معها هذا الملف كمرفق',
+    en: '{count} invoices that were sent out with this as an attachment',
+  },
+  'prul.ref.kasboek.een': {
+    nl: 'een kasboekregel waar dit de bon van is',
+    ar: 'سطر في دفتر النقدية هذا الملف هو إيصاله',
+    en: 'a cash-book line this file is the receipt for',
+  },
+  'prul.ref.kasboek.meer': {
+    nl: '{count} kasboekregels waar dit de bon van is',
+    ar: '{count} أسطر في دفتر النقدية هذا الملف هو إيصالها',
+    en: '{count} cash-book lines this file is the receipt for',
+  },
+  'prul.ref.dagomzet.een': {
+    nl: 'een dagomzet die op dit bestand steunt',
+    ar: 'إيراد يوم واحد يستند إلى هذا الملف',
+    en: "a day's turnover that rests on this file",
+  },
+  'prul.ref.dagomzet.meer': {
+    nl: '{count} dagomzetten die op dit bestand steunen',
+    ar: 'إيرادات {count} أيام تستند إلى هذا الملف',
+    en: '{count} daily turnover records that rest on this file',
+  },
+  'prul.ref.pin.een': {
+    nl: 'een pinafrekening die op dit bestand steunt',
+    ar: 'تسوية دفع إلكتروني واحدة تستند إلى هذا الملف',
+    en: 'a card settlement that rests on this file',
+  },
+  'prul.ref.pin.meer': {
+    nl: '{count} pinafrekeningen die op dit bestand steunen',
+    ar: '{count} تسويات دفع إلكتروني تستند إلى هذا الملف',
+    en: '{count} card settlements that rest on this file',
+  },
+  'prul.ref.dagstaat.een': {
+    nl: 'een dagstaat die op dit bestand steunt',
+    ar: 'كشف يومي واحد يستند إلى هذا الملف',
+    en: 'a daily ledger sheet that rests on this file',
+  },
+  'prul.ref.dagstaat.meer': {
+    nl: '{count} dagstaten die op dit bestand steunen',
+    ar: '{count} كشوف يومية تستند إلى هذا الملف',
+    en: '{count} daily ledger sheets that rest on this file',
+  },
+  'prul.ref.banktransactie.een': {
+    nl: 'een banktransactie die uit dit afschrift is ingelezen',
+    ar: 'حركة بنكية واحدة قُرئت من هذا الكشف',
+    en: 'a bank transaction that was read from this statement',
+  },
+  'prul.ref.banktransactie.meer': {
+    nl: '{count} banktransacties die uit dit afschrift zijn ingelezen',
+    ar: '{count} حركات بنكية قُرئت من هذا الكشف',
+    en: '{count} bank transactions that were read from this statement',
+  },
+  // De enige die niet zegt wat eraan hangt maar wat er VERANDERT: deze verwijzing is ON DELETE
+  // CASCADE, dus de dekkingsregel wordt niet losgekoppeld maar weggegooid — en dekking is geen
+  // documentatie, het is invoer voor de kas- en bankstanden.
+  'prul.ref.dekking.een': {
+    nl: 'de dekking van dit bankafschrift — het verwijderen verandert je kas- en bankstanden',
+    ar: 'تغطية هذا الكشف البنكي — حذفه يغيّر أرصدة النقدية والبنك لديك',
+    en: "this statement's coverage — deleting it changes your cash and bank balances",
+  },
+  'prul.ref.dekking.meer': {
+    nl: 'de dekking van {count} bankafschriftperiodes — het verwijderen verandert je kas- en bankstanden',
+    ar: 'تغطية {count} فترات كشوف بنكية — حذفها يغيّر أرصدة النقدية والبنك لديك',
+    en: "the coverage of {count} statement periods — deleting it changes your cash and bank balances",
+  },
+  'prul.nietVerwijderdTitel': {
+    nl: 'Dit bestand is nog in gebruik',
+    ar: 'هذا الملف ما زال قيد الاستخدام',
+    en: 'This file is still in use',
+  },
+  'prul.nietVerwijderdUitleg': {
+    nl: 'Het is niet verwijderd: je boekhouding verwijst er nog naar.',
+    ar: 'لم يُحذف: ما زالت محاسبتك تشير إليه.',
+    en: 'It was not deleted: your bookkeeping still refers to it.',
+  },
+  'prul.nietVerwijderdActie': {
+    nl: 'Haal het bestand daar eerst los, of verwijder die boeking. Daarna kun je het hier weggooien — zo blijft je administratie niet achter met een boeking zonder bewijsstuk.',
+    ar: 'افصل الملف عن ذلك أولًا، أو احذف ذلك القيد. بعدها يمكنك حذفه من هنا — بهذا لا تبقى إدارتك بقيد بلا مستند داعم.',
+    en: 'Detach the file there first, or delete that entry. After that you can throw it away here — so your records are never left with an entry that has no supporting document.',
+  },
+  'prul.controleMisluktTitel': {
+    nl: 'Niet verwijderd',
+    ar: 'لم يُحذف',
+    en: 'Not deleted',
+  },
+  'prul.controleMislukt': {
+    nl: 'We konden niet nagaan of je boekhouding nog naar dit bestand verwijst, dus is het niet verwijderd. Probeer het straks opnieuw — het staat nog in je prullenbak.',
+    ar: 'تعذّر علينا التحقق مما إذا كانت محاسبتك ما زالت تشير إلى هذا الملف، لذلك لم يُحذف. حاول لاحقًا — ما زال في سلة المهملات.',
+    en: 'We could not check whether your bookkeeping still refers to this file, so it was not deleted. Try again later — it is still in your bin.',
+  },
   'prul.verwijderVraagEen': {
     nl: 'Bestand permanent verwijderen?',
     ar: 'حذف الملف نهائيًا؟',

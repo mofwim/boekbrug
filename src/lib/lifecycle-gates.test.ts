@@ -20,6 +20,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
+import { DOCUMENT_REFERRERS } from "./document-references";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -20701,5 +20702,115 @@ test("[CSV-MUNT] the bank feed is held to the same rule as the upload", () => {
     sync, /skippedForeignCurrency/,
     "a non-euro ACCOUNT is fetched again. Beyond the money, it spends one of the few daily reads " +
       "the bank allows on transactions that can never be stored.",
+  );
+});
+
+// ─── [BEWIJS-VAST] Een boeking mag nooit achterblijven zonder haar bewijsstuk ─────────
+//
+// Acht foreign keys wijzen naar `documents`. Zeven staan op ON DELETE SET NULL en één op CASCADE,
+// dus een definitieve verwijdering uit de prullenbak SLAAGT en neemt de koppeling mee: geen fout,
+// geen auditregel, en achteraf geen enkel verschil meer tussen een factuur die nooit een scan had
+// en een factuur waarvan de scan is weggegooid. De Belastingdienst maakt dat verschil ook niet —
+// beide zijn een administratie zonder bewijsstuk, zeven jaar lang.
+//
+// De achtste is erger en zou niemand voorspellen. bank_statement_periods.document_id staat op
+// CASCADE, dus het verwijderen van een afschrift-PDF verwijdert de DEKKINGSREGEL. Dekking is geen
+// documentatie maar invoer: computeDrawerBalance en het financiële resultaat onderdrukken bedragen
+// op dagen die een afschrift dekt. Weg die regel, en gedekte dagen tellen weer mee — de eigenaar
+// ziet zijn kasresultaat veranderen omdat hij zijn prullenbak leegde.
+//
+// Waarom niet gewoon RESTRICT in de database: dat is er ooit UIT gehaald, met reden. Zie
+// circle_integrity_and_indexes.sql §3 — zonder on-delete gaf het verwijderen van een FACTUUR een
+// kale 23503 en werd geblokkeerd. SET NULL loste dat op. De weigering hoort dus in de app, waar
+// hij een zin kan zijn in plaats van een SQL-code: het verwijderen van een factuur werkt nog
+// steeds, en het verwijderen van een BESTAND waar nog iets aan hangt zegt wat er aan hangt.
+
+test("[BEWIJS-VAST] every foreign key into documents is one the delete guard knows about", () => {
+  // De lijst in document-references.ts is met de hand geschreven, en dit bestand heeft één
+  // terugkerende les: een geautomatiseerde regel met een handgeschreven lijst eronder is niet
+  // geautomatiseerd. Dus leest deze poort de MIGRATIES en vergelijkt. Wat hij niet kan zien, en
+  // wat hier eerlijk staat: een foreign key die rechtstreeks in het Supabase-dashboard is gezet
+  // staat in geen enkel bestand — docs/MIGRATIES_VOLGORDE.md zegt met zoveel woorden dat de
+  // migratielijst niet de waarheid is. Toen dit werd geschreven vond deze poort er acht, precies
+  // de acht die de productiedatabase ook heeft.
+  const declared = new Set(DOCUMENT_REFERRERS.map((r) => `${r.table}.${r.column}`));
+  const inSchema: { key: string; file: string }[] = [];
+
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const sql = readFileSync(`supabase/migrations/${f}`, "utf8").replace(/--[^\n]*/g, "");
+    const re = /references\s+(?:public\.)?documents\s*\(\s*id\s*\)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sql))) {
+      const before = sql.slice(0, m.index);
+      // The table is the CREATE/ALTER this constraint sits under; the column is either the inline
+      // definition right before REFERENCES, or the FOREIGN KEY (…) of the constraint being added.
+      const anchors = [...before.matchAll(/(?:create\s+table(?:\s+if\s+not\s+exists)?|alter\s+table)\s+(?:public\.)?"?(\w+)"?/gi)];
+      const anchor = anchors[anchors.length - 1];
+      if (!anchor) continue;
+      const seg = before.slice(anchor.index);
+      const inline = /(\w+)\s+uuid\b[\s\w]*$/i.exec(seg);
+      let column = inline?.[1] ?? null;
+      if (!column) {
+        const fks = [...seg.matchAll(/foreign\s+key\s*\(\s*"?(\w+)"?\s*\)/gi)];
+        column = fks.length ? fks[fks.length - 1][1] : null;
+      }
+      if (column) inSchema.push({ key: `${anchor[1]}.${column}`, file: f });
+    }
+  }
+
+  assert.ok(
+    inSchema.length >= 8,
+    `expected to find the foreign keys into documents in the migrations, found ${inSchema.length} — ` +
+      `the extractor above stopped recognising them, which makes this whole gate pass vacuously`,
+  );
+
+  for (const { key, file } of inSchema) {
+    assert.ok(
+      declared.has(key),
+      `${key} (${file}) points at documents but DOCUMENT_REFERRERS does not know it. A permanent ` +
+        `delete would therefore succeed and quietly null or cascade it away — a booking left ` +
+        `without its bewijsstuk, with no error and no audit line saying so. Add it there, with the ` +
+        `Dutch sentence its rows deserve.`,
+    );
+  }
+});
+
+test("[BEWIJS-VAST] the guard sits in deleteDocument, not in the route that happens to call it", () => {
+  const docs = code("src/lib/documents.ts");
+
+  // In de route zou hij kloppen en omzeilbaar zijn: de volgende aanroeper van deleteDocument zou
+  // alles hierboven opnieuw moeten ontdekken. In de functie zelf kan hij dat niet.
+  const fn = docs.slice(docs.indexOf("export async function deleteDocument"));
+  assert.match(
+    fn.slice(0, fn.indexOf("storage")), /readDocumentReferences/,
+    "deleteDocument no longer checks what points at the document before removing it — every " +
+      "reference is ON DELETE SET NULL or CASCADE, so the delete succeeds and the evidence link " +
+      "disappears without an error",
+  );
+  // En de reden dat dit een verdict is en geen getal: een mislukte telling die als 0 wordt gelezen
+  // is toestemming om te verwijderen, uitgedeeld door de storing zelf.
+  assert.match(
+    fn, /if \(!refs\.ok\)/,
+    "a failed reference check is no longer refused. supabase-js does not throw on a query error — " +
+      "it returns { count: null, error } — so 'the check did not run' would read as 'nothing " +
+      "points at this file' on exactly the delete this guard exists to stop",
+  );
+});
+
+test("[BEWIJS-VAST] the screen renders the reason from keys, not from the server's sentence", () => {
+  const ui = code("src/app/dashboard/bestanden/components/Trash.tsx");
+
+  // AGENTS.md: een component draagt geen eigen taal. De server stuurt sleutels plus een aantal;
+  // de Nederlandse zin in `error` is voor het log en voor een oudere client, niet voor het scherm.
+  assert.doesNotMatch(
+    ui, /alert\(\{[^}]*message:\s*(?:body|json|res)\??\.\w*[Ee]rror/,
+    "the trash screen prints the server's Dutch sentence again. An owner whose interface is Arabic " +
+      "then gets Dutch on the one screen that is telling him his bookkeeping still needs a file.",
+  );
+  assert.match(ui, /ref\.key as MessageKey/, "the reasons are no longer rendered from their catalogue keys");
+  assert.match(
+    ui, /ref\.key in MESSAGES/,
+    "an unknown key is no longer filtered out — t() returns the key itself for one it does not " +
+      "know, so a server ahead of an open tab would print `prul.ref.dagstaat.meer` on screen",
   );
 });
