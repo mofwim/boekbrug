@@ -10907,6 +10907,15 @@ export const MESSAGES = {
     ar: 'تغطية {count} فترات كشوف بنكية — حذفها يغيّر أرصدة النقدية والبنك لديك',
     en: "the coverage of {count} statement periods — deleting it changes your cash and bank balances",
   },
+  // [GENEGEERD-TELT] Wat "negeren" met het geld doet, zichtbaar bij de keuze zelf. De hint stond
+  // alleen in een title-attribuut — een tooltip die op een telefoon niet bestaat, terwijl drie van
+  // de vijf knoppen een bedrag uit de kosten en de btw halen. De redenen worden als LABELS
+  // ingevuld, precies zoals ze op de knoppen staan.
+  'bank.redenGevolg': {
+    nl: '{uit} halen dit bedrag ook uit je kosten en btw. Bij {in} blijft het gewoon meetellen.',
+    en: '{uit} also take this amount out of your costs and VAT. With {in} it keeps counting as before.',
+    ar: '{uit} تُخرج هذا المبلغ أيضًا من تكاليفك وضريبتك. أما مع {in} فيبقى محتسبًا كما هو.',
+  },
   'prul.nietVerwijderdTitel': {
     nl: 'Dit bestand is nog in gebruik',
     ar: 'هذا الملف ما زال قيد الاستخدام',

@@ -20,7 +20,7 @@ import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter }
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { categoryLabel } from '@/lib/bank-categories'
-import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel } from '@/lib/bank-ignore-reason'
+import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel, ignoreReasonGroups } from '@/lib/bank-ignore-reason'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
@@ -3078,6 +3078,16 @@ function TxCard({
                   {t('bank.zonderReden')}
                 </button>
               </div>
+              {/* [GENEGEERD-TELT] Wat de keuze met het GELD doet, zichtbaar. Dit stond alleen in een
+                  title-attribuut: een tooltip die op een telefoon niet bestaat, terwijl drie van de vijf
+                  knoppen het bedrag ook uit de kosten en de btw halen. De namen komen uit de regel zelf
+                  (ignoreReasonGroups), zodat de zin niet kan afwijken van wat er werkelijk gebeurt. */}
+              <p style={{ fontSize: 11.5, color: '#5F6368', margin: '8px 0 0', lineHeight: 1.45 }}>
+                {t('bank.redenGevolg', {
+                  uit: ignoreReasonGroups().excluded.join(', '),
+                  in: ignoreReasonGroups().kept.join(' en '),
+                })}
+              </p>
             </div>
           )}
 
@@ -3260,6 +3270,16 @@ function TxCard({
                     {t('bank.zonderReden')}
                   </button>
                 </div>
+                {/* [GENEGEERD-TELT] Wat de keuze met het GELD doet, zichtbaar. Dit stond alleen in een
+                    title-attribuut: een tooltip die op een telefoon niet bestaat, terwijl drie van de vijf
+                    knoppen het bedrag ook uit de kosten en de btw halen. De namen komen uit de regel zelf
+                    (ignoreReasonGroups), zodat de zin niet kan afwijken van wat er werkelijk gebeurt. */}
+                <p style={{ fontSize: 11.5, color: '#5F6368', margin: '8px 0 0', lineHeight: 1.45 }}>
+                  {t('bank.redenGevolg', {
+                    uit: ignoreReasonGroups().excluded.join(', '),
+                    in: ignoreReasonGroups().kept.join(' en '),
+                  })}
+                </p>
               </div>
             )}
             </>

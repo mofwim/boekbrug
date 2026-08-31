@@ -29,6 +29,7 @@ import { doubleCostNote } from "@/lib/cash-cost-overlap";
 import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 // [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
@@ -113,13 +114,19 @@ export async function GET(req: NextRequest) {
   // Bank + cash (same de-dup inputs as /api/result).
   const bankRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description, counterpart_name")
+    // [GENEGEERD-TELT] id + status; de reden komt uit readExcludedBankIds. Zonder die twee telt een
+    // als privé of dubbel weggezette regel mee in de aangifte die de eigenaar indient.
+    .select("id, amount, category, invoice_id, date, description, counterpart_name, status")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   // [SETTLE] The card-settlement de-dup is derived by the shared toResultBankTx mapper, so
   // /api/result, /api/readiness AND the closing package all agree on the same quarter and the
   // same covered-day witness rule (incl. an acquirer payout the owner mis-tapped as 'omzet').
-  const bankTx: ResultBankTx[] = bankRows.map(toResultBankTx);
+  // [GENEGEERD-TELT] De redenen apart gelezen (zie bank-ignored-excluded). Let op de expliciete
+  // pijl: `.map(toResultBankTx)` zou de INDEX als tweede argument meegeven — TypeScript ving dat
+  // hier, maar het is een val die op elke aanroepplek opnieuw open ligt.
+  const excludedBankIds = await readExcludedBankIds({ client: pipeline, userId: ownerId, start, end });
+  const bankTx: ResultBankTx[] = bankRows.map((b) => toResultBankTx(b, excludedBankIds));
 
   // [KAS-ZACHT] A removed movement is not turnover, not a cost and not voorbelasting.
   const cash = await liveCashEntries(pipeline);

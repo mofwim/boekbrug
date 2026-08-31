@@ -21098,3 +21098,104 @@ test("[REEKS-ZONDER-FACTUUR] the screen says which of the two it is", () => {
       "stands higher than the owner's highest invoice, in a series where there is no invoice at all",
   );
 });
+
+// ─── [GENEGEERD-TELT] Een genegeerde regel die toch in de kosten bleef staan ──────────
+//
+// "Negeren" doet twee heel verschillende dingen, afhankelijk van waaróm. Bij drie van de vijf
+// redenen zegt de eigenaar dat dit geld niet in zijn boeken hoort:
+//
+//   · `prive`        — een aftrek waarvan hij ZELF heeft gezegd dat er geen recht op bestaat;
+//   · `dubbel`       — een kost die twee keer telt, gemeld door degene die de dubbeling meldde;
+//   · `niet_van_mij` — geld dat nooit van hem was.
+//
+// Alle drie bleven in de kosten staan en hun btw in de voorbelasting. En de reden die juist WEL
+// moet blijven tellen — `geen_factuur` (huur, lease, abonnement) — is verreweg de meest gekozen:
+// die uitsluiten zou de kosten verlagen, de winst verhogen en de eigenaar te veel belasting laten
+// betalen. Dat is de duurdere van de twee fouten, en daarom is dit een regel per reden en geen
+// filter op status.
+
+test("[GENEGEERD-TELT] the engine skips a line the owner said does not belong in his books", () => {
+  const src = code("src/lib/financial-result.ts");
+
+  assert.match(
+    src, /if \(t\.excludedByOwner\) continue;/,
+    "the result engine counts every ignored bank line again, including the ones the owner marked " +
+      "privé or dubbel — a deduction he himself said he was not entitled to",
+  );
+  // Vóór de categorie-tak: een genegeerde regel is niet ONVERKLAARD, hij is verklaard en hoort er
+  // niet. Hem als vraagpost tellen ruilt het ene verkeerde cijfer voor het andere.
+  const loop = src.slice(src.indexOf("for (const t of bankTx) {"));
+  assert.ok(
+    loop.indexOf("excludedByOwner") < loop.indexOf("if (!t.category)"),
+    "the exclusion moved below the uncategorised branch, so an ignored private line now lands on " +
+      "the vraagpost counter instead — a different wrong figure, not a right one",
+  );
+});
+
+test("[GENEGEERD-TELT] the reason is read separately, so a lagging migration cannot blank a screen", () => {
+  const reader = code("src/lib/bank-ignored-excluded.ts");
+
+  // ignore_reason komt uit een met de hand toegepaste migratie, en een kolom die PostgREST niet
+  // kent weigert de HELE select waarin hij staat. Meegenomen in de bankregel-lezing van resultaat,
+  // aangifte, readiness en jaarpakket zou dat vier schermen zonder één bankregel opleveren.
+  assert.match(reader, /select\("id, ignore_reason"\)/, "the reason read stopped being its own query");
+  assert.match(reader, /catch/, "the read no longer degrades — a lagging migration would break its callers");
+
+  for (const f of [
+    "src/lib/compute-result-range.ts",
+    "src/app/api/aangifte/route.ts",
+    "src/app/api/readiness/route.ts",
+    "src/lib/closing-package.ts",
+  ]) {
+    const src = code(f);
+    assert.doesNotMatch(
+      src, /select\("[^"]*ignore_reason[^"]*(amount|category)/,
+      `${f} folded ignore_reason into its main bank select. A database without that column then ` +
+        `returns nothing for the whole read.`,
+    );
+    assert.match(
+      src, /readExcludedBankIds/,
+      `${f} no longer reads which lines the owner excluded, so it counts money the other money ` +
+        `screens do not — and the four are supposed to agree exactly`,
+    );
+  }
+});
+
+test("[GENEGEERD-TELT] nobody passes the array index where the exclusion set belongs", () => {
+  // `.map(toResultBankTx)` geeft de INDEX als tweede argument mee. TypeScript ving dat toen de
+  // parameter erbij kwam — maar alleen omdat het type een Set is; een losser type zou hier
+  // stilzwijgend een getal krijgen en niets uitsluiten, op elk van de zes geldschermen.
+  const walk = (dir: string, hits: string[]) => {
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { walk(p, hits); continue; }
+      if (!/\.tsx?$/.test(p)) continue;
+      if (/\.map\(toResultBankTx\)/.test(code(p))) hits.push(p);
+    }
+    return hits;
+  };
+  const bare = walk("src", []);
+  assert.deepEqual(
+    bare, [],
+    `these files pass toResultBankTx straight to .map, so Array.prototype.map hands it the index ` +
+      `as its exclusion set: ${bare.join(", ")}`,
+  );
+});
+
+test("[GENEGEERD-TELT] the screen says what the choice does with the money", () => {
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+  const copy = code("src/lib/bank-ignore-reason.ts");
+
+  // Het stond in een title-attribuut — een tooltip die op een telefoon niet bestaat, terwijl drie
+  // van de vijf knoppen een bedrag uit de kosten en de btw halen.
+  const notes = [...ui.matchAll(/bank\.redenGevolg/g)].length;
+  assert.equal(notes, 2, `both reason pickers must carry the consequence line, found ${notes}`);
+
+  // En afgeleid van de regel, niet ernaast geschreven: een zin die zegt dat Privé het bedrag
+  // weghaalt terwijl de regel het laat staan is erger dan geen zin.
+  assert.match(
+    copy, /ignoredLineCountsInBooks\(r\) \? kept : excluded/,
+    "the two groups are hand-listed again, so the sentence and the rule can drift — and the owner " +
+      "would be deciding on the basis of something that does not happen",
+  );
+});
