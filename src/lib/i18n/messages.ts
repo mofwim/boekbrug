@@ -3614,6 +3614,29 @@ export const MESSAGES = {
     ar: 'معاملة بنكية واحدة لم تُصنَّف بعد',
     en: '1 bank transaction not yet categorised',
   },
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er buiten de boeken staat, niet alleen hoeveel regels.
+  // Voor een winkelier is "299 banktransacties" een klus; "€ 266.834 aan uitgaven" is zijn geld —
+  // en dat waren precies de twee getallen bij één eigenaar toen dit werd geschreven.
+  //
+  // UIT en IN blijven apart. financial-result.ts houdt ze om dezelfde reden gescheiden: "€ 10.000
+  // in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist' terwijl het twee
+  // onverklaarde feiten zijn." Aparte zinnen per geval, want een bedrag dat er niet is hoort ook
+  // niet als "€ 0,00" in de zin te staan.
+  'bank.uncatGeld.beide': {
+    nl: 'Daarin staat {uit} aan uitgaven en {in} aan ontvangsten.',
+    ar: 'يشمل ذلك {uit} من المصروفات و{in} من المقبوضات.',
+    en: 'That includes {uit} in payments out and {in} in payments in.',
+  },
+  'bank.uncatGeld.uit': {
+    nl: 'Daarin staat {uit} aan uitgaven.',
+    ar: 'يشمل ذلك {uit} من المصروفات.',
+    en: 'That includes {uit} in payments out.',
+  },
+  'bank.uncatGeld.in': {
+    nl: 'Daarin staat {in} aan ontvangsten.',
+    ar: 'يشمل ذلك {in} من المقبوضات.',
+    en: 'That includes {in} in payments in.',
+  },
   'bank.uncatUitleg': {
     nl: 'Dit geld telt nog niet mee in je winst & verlies en BTW. Geef het een categorie →',
     ar: 'هذا المال لا يُحتسب بعد في ربحك وخسارتك ولا في الضريبة. أعطه تصنيفاً ←',
