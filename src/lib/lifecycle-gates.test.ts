@@ -21588,3 +21588,69 @@ test("[HARTSLAG-BEWIJS] a diagnosis does not name a cause the same screen refute
     );
   }
 });
+
+// ─── [BANK-WERK-EERST] Het werk bovenaan, de machinerie eronder ───────────────────────
+//
+// Het bankscherm heeft één taak voor de ondernemer: welke bankregels wachten nog op mij. Daarboven
+// stonden negen blokken die alle drie over iets anders gaan — de bankkoppeling, de sleepzone, de
+// lijst geüploade afschriften met "Opnieuw matchen" en "Namen bijwerken" ernaast, plus de uitkomst
+// van elk daarvan. Op een telefoon is dat twee schermen scrollen vóór de eerste transactie.
+//
+// Geen ervan is overbodig. Maar ze beantwoorden allemaal de vraag HOE DE GEGEVENS HIER KOMEN, en
+// die stelt de ondernemer één keer per maand — terwijl hij WAT MOET IK NOG DOEN elke keer stelt.
+
+test("[BANK-WERK-EERST] the plumbing collapses only when there is work to show instead", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Op de PENDING lijsten, niet op "zijn er transacties": een administratie waarin alles al is
+  // afgehandeld heeft geen werk om bovenaan te zetten, en dan is de sleepzone opnieuw het nuttigste
+  // ding op het scherm — net als bij een lege administratie.
+  assert.match(
+    src, /const heeftWerk = toConfirm\.length \+ noMatch\.length \+ posList\.length > 0/,
+    "the collapse is no longer decided by whether there is work, so it can hide the upload zone on " +
+      "a screen that has nothing else to offer",
+  );
+  assert.match(
+    src, /const setupZichtbaar = setupOpen \?\? !heeftWerk/,
+    "the owner's own choice no longer wins over the default — opening the section must keep it open",
+  );
+
+  // Drie blokken achter de klep, en geen ervan mag stiekem buiten blijven staan.
+  for (const [needle, what] of [
+    ["{setupZichtbaar && (\n        <BankConnectPanel", "the bank connection panel"],
+    ["{setupZichtbaar && (\n      <label", "the upload drop zone"],
+    ["{setupZichtbaar && statements && statements.length > 0", "the statement list"],
+  ] as const) {
+    assert.ok(src.includes(needle), `${what} is no longer inside the collapsible section`);
+  }
+});
+
+test("[BANK-WERK-EERST] uploading stays one tap, and the answers stay visible", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Het bestandsveld staat ALTIJD in de pagina — anders kan de knop in de ingeklapte kop er niet
+  // bij en is uploaden ineens twee handelingen geworden op het scherm dat simpeler moest.
+  const inputAt = src.indexOf('id="bank-statement-file"');
+  const collapseAt = src.indexOf("{setupZichtbaar && (\n      <label");
+  assert.ok(inputAt > 0, "the shared file input is gone");
+  assert.ok(
+    inputAt < collapseAt,
+    "the file input moved inside the collapsible section, so the header button reaches nothing",
+  );
+  assert.match(src, /statementFileRef\.current\?\.click\(\)/, "the header button no longer opens the picker");
+  assert.match(src, /htmlFor="bank-statement-file"/, "the drop zone lost its link to the shared input");
+
+  // En wat er NA een upload gebeurt hoort níét achter de klep: die kan dicht staan wanneer er via
+  // de kopknop is geüpload, en dan zou de ondernemer nooit lezen wat er is ingelezen — of dat het
+  // afschrift niet op zijn eigen begin- en eindsaldo uitkwam.
+  assert.doesNotMatch(
+    src, /\{setupZichtbaar && uploadInfo/,
+    "the upload result moved behind the collapse. Uploading from the collapsed header would then " +
+      "report nothing at all — including a statement that does not tie out to its own balances.",
+  );
+  assert.doesNotMatch(
+    src, /\{setupZichtbaar && uncatCount > 0/,
+    "the uncategorised-money banner moved behind the collapse. That is money not yet in the books, " +
+      "which is work — the one thing this change exists to put first.",
+  );
+});
