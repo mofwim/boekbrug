@@ -22090,3 +22090,21 @@ test("[BANK-GELD-NIET-GEBOEKT] the banner names the money, and keeps in and out 
     "the screen coerces a missing sum to a number, which turns 'we could not add it up' into '€ 0'",
   );
 });
+
+test("[BANK-LEGE-LINK] the in-tab categorise link never points at an empty screen", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Hij hing aan noMatch: bankregels zonder factuur. Maar een regel zonder factuur kan al een
+  // categorie hebben — dan is er niets te categoriseren en kwam de ondernemer op een leeg scherm.
+  // Dezelfde teleurstelling als een tabblad zonder inhoud, en hier kost hij het vertrouwen in de
+  // banner bovenaan die hetzelfde scherm aanbiedt wanneer er wél werk ligt.
+  assert.doesNotMatch(
+    src, /bankTab === 'none' && noMatch\.length > 0 && \(\s*<Link\s+href="\/dashboard\/bank\/categoriseren"/,
+    "the in-tab categorise link hangs on noMatch again, so it appears when there is nothing to " +
+      "categorise and leads to an empty screen",
+  );
+  assert.match(
+    src, /bankTab === 'none' && uncatCount > 0 && \(/,
+    "the link no longer asks whether there is anything to categorise",
+  );
+});
