@@ -10083,6 +10083,31 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     "CREATE OR REPLACE replaces the whole body, and nothing here records which migration ran last, " +
     "so whichever one it was decides what a mandated accountant may rewrite:\n  " +
     gaten.join("\n  "));
+
+  // ── En de machtiging mag niet méér toestaan dan ze belooft ──────────────────────────────────
+  //
+  // Uitzondering 4 laat een gemachtigde boekhouder zijn EIGEN concept voor DEZE klant bijwerken.
+  // Ze pinde alleen sender_id, receiver_id en direction, dus al het andere stond open — inclusief
+  // status, amount_paid en de betaaldatums. De machtiging heet "facturen opstellen namens de
+  // klant"; ze zegt niets over BETAALD verklaren. Eén PATCH op status='paid' met een bedrag erbij
+  // zette een betaling in de boeken van de klant die nooit is binnengekomen.
+  //
+  // Wat /api/invoice/send met de sessie van de boekhouder schrijft is precies: status → 'sent',
+  // invoice_number, invoice_type, soms delivery_date en de drie totalen. Dat blijft toegestaan.
+  // De vier regels hieronder pinnen wat er NIET meer bij mag, want dit is dezelfde functie die
+  // hierboven al een keer stil een lijst verloor.
+  const herstel = readFileSync("supabase/migrations/accountant_amount_guard_restore.sql", "utf8");
+  const uitz4 = herstel.slice(herstel.indexOf("Exception 4"), herstel.indexOf("Exception 5"));
+  assert.ok(uitz4.length > 200, "uitzondering 4 is niet te vinden — de scan is stuk");
+  assert.match(uitz4, /NEW\.status IN \(OLD\.status, 'sent'\)/,
+    "een machtiging om te FACTUREREN mag geen enkele andere status zetten, en 'paid' al helemaal niet");
+  assert.match(uitz4, /OLD\.invoice_number IS NULL\s*\n\s*OR NEW\.invoice_number IS NOT DISTINCT FROM OLD\.invoice_number/,
+    "een nummer mag worden GESLAGEN, niet herschreven — Art. 35 vraagt een doorlopende reeks");
+  for (const kolom of ["amount_paid", "payment_method", "payment_date", "marked_paid_at",
+                       "payment_prepared_at", "pay_token"]) {
+    assert.match(uitz4, new RegExp(`NEW\\.${kolom}\\s+IS NOT DISTINCT FROM OLD\\.${kolom}`),
+      `uitzondering 4 laat ${kolom} weer los — dat is een betaling verklaren, niet een factuur opstellen`);
+  }
 });
 
 test("[CRON-EENMAAL] a cron that MAILS cannot rely on the scheduler firing once", () => {

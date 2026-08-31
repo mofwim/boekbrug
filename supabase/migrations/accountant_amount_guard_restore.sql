@@ -1,5 +1,6 @@
 -- accountant_amount_guard_restore.sql
--- [SEC] De drie kolommen die een latere CREATE OR REPLACE stil uit de deny-list liet vallen.
+-- [SEC] Twee gaten in dezelfde trigger: drie kolommen die stil uit de deny-list vielen, en een
+-- machtigingsuitzondering die meer toestond dan de machtiging zelf.
 -- BoekBrug · augustus 2026
 --
 -- ── WAT ER IS GEBEURD ──
@@ -34,6 +35,18 @@
 -- inclusief de bevestigmachtiging — met de drie kolommen terug in de deny-list. Er verandert
 -- niets aan wat een boekhouder MAG; alleen aan wat hij niet mag.
 --
+-- ── EN HET TWEEDE GAT, IN DEZELFDE FUNCTIE ──
+--
+-- Uitzondering 4 (de factuurmachtiging) pinde alleen sender_id, receiver_id en direction. Al het
+-- andere stond open — inclusief status, amount_paid en de betaaldatums. De machtiging heet
+-- "facturen opstellen namens de klant" en zegt niets over BETAALD verklaren, maar een gemachtigde
+-- boekhouder kon met één PATCH zijn eigen concept op 'paid' zetten met een bedrag erbij: een
+-- betaling die nooit binnenkwam, in de boeken van de klant. Nu staat er precies toe wat
+-- /api/invoice/send schrijft en niets daarbuiten. Zie de toelichting bij de uitzondering zelf.
+--
+-- Beide zitten in ÉÉN bestand omdat ze dezelfde functie herschrijven: los toegepast wint de
+-- laatste en verliest de andere, wat exact is hoe het eerste gat is ontstaan.
+--
 -- TOEPASSEN: draaien in de Supabase SQL-editor. Verwijdert niets. Idempotent (CREATE OR REPLACE).
 -- =====================================================================
 
@@ -55,11 +68,38 @@ BEGIN
     RETURN NEW;
   END IF;
   -- [MANDAAT] Exception 4: a mandated accountant issuing a draft THEY made for THIS client.
+  --
+  -- [SEC] De uitzondering pinde alleen sender_id, receiver_id en direction. Al het andere stond
+  -- open, en dat is méér dan de machtiging zegt. De machtiging heet "facturen opstellen namens de
+  -- klant"; ze zegt niets over BETAALD verklaren. Met de oude vorm kon een gemachtigde boekhouder
+  -- zijn eigen concept met één PATCH op `status = 'paid'`, `amount_paid = <totaal>`,
+  -- `payment_date = <datum>` zetten: een betaling die nooit is binnengekomen, in de boeken van de
+  -- klant, zonder bankregel en zonder dat de eigenaar iets deed.
+  --
+  -- Wat de app zelf schrijft bij het VERSTUREN (api/invoice/send, met de sessie van de boekhouder)
+  -- is precies: status → 'sent', invoice_number, invoice_type, soms delivery_date, en de drie
+  -- totalen. Die blijven allemaal toegestaan — er verandert niets aan wat een boekhouder MAG doen.
+  --
+  --   · status mag alleen naar 'sent' (of blijven wat het was: een conversie raakt hem niet aan).
+  --     Niet naar 'paid', niet naar 'received'.
+  --   · invoice_number mag worden GEZET als er nog geen stond — dat is het slaan van het nummer —
+  --     maar een bestaand nummer niet worden herschreven. Art. 35 vraagt een doorlopende reeks, en
+  --     invoice-continuity.ts meldt een gat op het klaar-scherm van de eigenaar.
+  --   · de betaalkolommen blijven staan zoals ze stonden.
   IF OLD.status = 'draft'
      AND OLD.created_by = auth.uid()
      AND NEW.sender_id   IS NOT DISTINCT FROM OLD.sender_id
      AND NEW.receiver_id IS NOT DISTINCT FROM OLD.receiver_id
      AND NEW.direction   IS NOT DISTINCT FROM OLD.direction
+     AND NEW.status IN (OLD.status, 'sent')
+     AND (OLD.invoice_number IS NULL
+          OR NEW.invoice_number IS NOT DISTINCT FROM OLD.invoice_number)
+     AND NEW.amount_paid         IS NOT DISTINCT FROM OLD.amount_paid
+     AND NEW.payment_method      IS NOT DISTINCT FROM OLD.payment_method
+     AND NEW.payment_date        IS NOT DISTINCT FROM OLD.payment_date
+     AND NEW.marked_paid_at      IS NOT DISTINCT FROM OLD.marked_paid_at
+     AND NEW.payment_prepared_at IS NOT DISTINCT FROM OLD.payment_prepared_at
+     AND NEW.pay_token           IS NOT DISTINCT FROM OLD.pay_token
      AND public.has_active_invoice_mandate(auth.uid(), OLD.sender_id)
   THEN
     RETURN NEW;
@@ -137,5 +177,10 @@ $$;
 --
 -- En dat uitzondering 5 er nog staat (de bevestigmachtiging mag niet zijn gesneuveld):
 -- select position('has_active_confirm_mandate' in pg_get_functiondef(p.oid)) > 0 as bevestigen_nog_mogelijk
+-- from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+-- where n.nspname = 'public' and p.proname = 'prevent_accountant_amount_changes';
+--
+-- En dat uitzondering 4 de betaalkolommen vastpint (moet `true` geven):
+-- select position('NEW.amount_paid         IS NOT DISTINCT FROM OLD.amount_paid' in pg_get_functiondef(p.oid)) > 0 as mandaat_betaalt_niet
 -- from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 -- where n.nspname = 'public' and p.proname = 'prevent_accountant_amount_changes';
