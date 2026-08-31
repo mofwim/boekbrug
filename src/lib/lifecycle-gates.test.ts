@@ -10220,7 +10220,43 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     // van de klant met het volledige btw_amount van de factuur — aftrekbaar naar geblokkeerd of
     // andersom — en een aan de klant gekoppelde boekhouder kon hem schrijven zonder mandaat.
     "vat_deduction",
+    // [KORTING-SLOT] En de vijfde en zesde, van een ANDERE soort dan alle voorgaande: dit zijn
+    // geen bedragen maar de INVOER waaruit bedragen worden herrekend. Zie de sectie hieronder,
+    // die ze niet uit deze lijst haalt maar uit de route die de totalen herberekent.
+    "discount_type", "discount_value",
   ];
+
+  // ── [KORTING-SLOT] EEN UITKOMST BESCHERMEN EN DE INVOER OPEN LATEN IS GEEN BESCHERMING ────────
+  //
+  // Deze lijst is vier keer te kort gebleken, en elke keer is er één naam bij geschreven. Dat is
+  // precies de vorm die dit bestand elders een klasse-met-handgeschreven-lijst noemt. Dus komt de
+  // eis er hier NIET bij als naam, maar uit een tweede bron: PUT /api/invoice/[id] herberekent
+  // total_ex_btw, btw_amount en total_inc_btw — de drie kolommen die bovenaan de lijst staan — en
+  // valt daarbij terug op `existing.<kolom>`. Elke kolom die daar wordt gelezen bepaalt dus een
+  // beschermd bedrag, en moet zelf even beschermd zijn.
+  //
+  // Wat dat vond: discount_type en discount_value. Een gekoppelde boekhouder kon ze schrijven —
+  // ze staan in geen enkele trigger — en buildInvoiceUbl leidt PayableAmount en TaxAmount eruit
+  // af, dus één PATCH met {percent, 100} zette de e-factuur van een openstaande factuur van
+  // EUR 1.210 op EUR 0,00. En de eerstvolgende gewone opslag door de eigenaar zette diezelfde
+  // korting om in gemanipuleerde BESCHERMDE totalen.
+  const putRoute = code("src/app/api/invoice/[id]/route.ts");
+  const herberekening = /const \{ total_ex_btw, btw_amount, total_inc_btw \}[\s\S]{0,400}?computeInvoiceTotals\(lines\)/.exec(putRoute);
+  assert.ok(herberekening, "de totalen-herberekening in de PUT-route moet vindbaar zijn");
+  // De terugval staat een paar regels erboven; neem het hele blok vanaf de korting.
+  const blok = putRoute.slice(putRoute.indexOf("const kortingMeegestuurd"), herberekening!.index + herberekening![0].length);
+  const invoer = [...new Set([...blok.matchAll(/existing\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]))];
+  assert.ok(invoer.length > 0, "de herberekening leest niets van de bestaande rij — is ze verplaatst?");
+  const onbeschermd = invoer.filter((k) => !MOET_BESCHERMEN.includes(k)).sort();
+  assert.deepEqual(
+    onbeschermd, [],
+    "deze kolommen bepalen de herberekende totalen maar staan niet in de deny-lijst, dus een " +
+    `boekhouder kan ze schrijven en de bescherming van de totalen omzeilen:\n  ${onbeschermd.join("\n  ")}`,
+  );
+  // En de e-factuur leidt haar bedragen uit dezelfde twee af — de tweede weg naar buiten, die niet
+  // eens langs de route loopt.
+  assert.match(code("src/lib/ubl-export.ts"), /parseDiscount\(header\.discount_type, header\.discount_value\)/,
+    "de e-factuur leidt haar bedragen uit de korting af; verandert dat, dan verandert deze eis");
 
   const migraties = readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
