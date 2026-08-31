@@ -85,7 +85,13 @@ BEGIN
      -- document_id        welk bewijsstuk onder deze factuur hangt.
      (NEW.vendor_iban         IS DISTINCT FROM OLD.vendor_iban)         OR
      (NEW.payment_reference   IS DISTINCT FROM OLD.payment_reference)   OR
-     (NEW.document_id         IS DISTINCT FROM OLD.document_id)
+     (NEW.document_id         IS DISTINCT FROM OLD.document_id)         OR
+     -- [VRIJGESTELD] vat_deduction verzet rubriek 5b van de klant met het volledige btw_amount van
+     -- de factuur: 'direct_exempt' schuift de voorbelasting van aftrekbaar naar geblokkeerd, en
+     -- andersom net zo makkelijk. Hij stond in GEEN enkele versie van deze lijst. Hij staat in élke
+     -- herdefinitie omdat in deze map niet vast te stellen is welke als laatste draait — één oude
+     -- die na de nieuwe draait zou hem anders weer uit de bescherming halen.
+     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)
   THEN
     RAISE EXCEPTION
       'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',

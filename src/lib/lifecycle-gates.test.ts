@@ -9500,7 +9500,14 @@ test("[MIN-REGEL] the sign rule has one definition, and three surfaces use it", 
 test("[MIN-REGEL] the quantity may go negative and the price may not", () => {
   const screen = code("src/app/dashboard/invoice/new/page.tsx");
   // The floor is what threw the minus away: Math.max(0.01, -3) is 0,01.
-  assert.match(screen, /onChange\(allowNegative \? parsed : Math\.max\(min, parsed\)\)/,
+  //
+  // [KOMMA-INVOER] Asked of DecimalInput, not of this screen. The typing behaviour used to be
+  // written out inside the builder's own LineInput, and this assertion was pinned to that copy —
+  // so when the behaviour moved to the shared field (because the EDITOR next door had none of it,
+  // and read a typed 23,95 as 2395) the gate went red on a refactor rather than on a defect. It is
+  // aimed at the rule now, wherever the rule lives.
+  const field = code("src/components/ui/DecimalInput.tsx");
+  assert.match(field, /onChange\(allowNegative \? parsed : Math\.max\(min, parsed\)\)/,
     "the floor may only apply to a field that must not go negative");
   // Exactly one field carries it. A grep for the prop, so a second one cannot be added quietly.
   const withFlag = [...screen.matchAll(/<LineInput[^>]*allowNegative[^>]*>/g)].map((m) => m[0]);
@@ -9585,10 +9592,16 @@ test("[MIN-REGEL] the two invoice forms allow and refuse the same things", () =>
   // `min="1"` on its quantity field. An owner could then create the ATAPACK invoice and not open
   // it again — and min="1" had been refusing half an hour of work since long before any of this.
   const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
-  const qty = /type="number" value=\{line\.quantity\}([^/>]*)/.exec(edit);
+  // [KOMMA-INVOER] This used to look for `type="number" value={line.quantity}` — and the widget it
+  // was anchored on turned out to be the defect: in Chromium an <input type="number"> DROPS a
+  // typed comma rather than refusing it, so 0,5 arrived as 5 and half an hour of work was billed
+  // as five hours. The field is a DecimalInput now; the CLAIM is unchanged and is asked of it.
+  const qty = /<DecimalInput\b([\s\S]{0,700}?)value=\{line\.quantity\}([\s\S]{0,400}?)\/>/.exec(edit);
   assert.ok(qty, "the quantity field must be findable on the edit screen");
-  assert.doesNotMatch(qty![1], /min=/, "no floor: a credit line is a negative aantal");
-  assert.match(qty![1], /step="any"/, "and no whole-unit spinner, which makes 0,5 invalid");
+  const qtyProps = qty![1] + qty![2];
+  assert.doesNotMatch(qtyProps, /\bmin=/, "no floor: a credit line is a negative aantal");
+  assert.match(qtyProps, /allowNegative/, "…and it must be the field that is allowed to go below zero");
+  assert.doesNotMatch(qtyProps, /type="number"/, "never the widget that eats the comma");
 
   // One rule, one module, asked by both screens and by the door.
   assert.match(edit, /import \{ staysAFactuur \} from '@\/lib\/negative-line'/,
@@ -10203,6 +10216,10 @@ test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop 
     "pay_token", "invoice_number", "invoice_type",
     // De drie die stil wegvielen.
     "vendor_iban", "payment_reference", "document_id",
+    // [VRIJGESTELD] En de vierde, die er nooit in heeft gestaan: vat_deduction verzet rubriek 5b
+    // van de klant met het volledige btw_amount van de factuur — aftrekbaar naar geblokkeerd of
+    // andersom — en een aan de klant gekoppelde boekhouder kon hem schrijven zonder mandaat.
+    "vat_deduction",
   ];
 
   const migraties = readdirSync("supabase/migrations")
@@ -10497,8 +10514,19 @@ test("[EEN-DAG-EEN-BRON] a guard that cannot see is not permission", () => {
   // reasoned zero (the migration ships after the code), a failed read is not.
   assert.match(code("src/app/api/turnover/day/route.ts"),
     /tillSaleCount: tillRes\.error \? 0 : tillRes\.count \?\? 0,/);
-  assert.match(code("src/app/api/turnover/day/route.ts"), /readable: !turnoverErr && !cashRes\.error,/,
-    "…so till_sales is deliberately not part of `readable`");
+  // [KASSA-STIL] En die tweede helft — "a failed read is not" — stond wél in de zin hierboven en
+  // niet in de code. `tillRes.error ? 0 : …` gaf een ontbrekende tabel en een time-out hetzelfde
+  // antwoord, en daySourceConflict leest een nul hier als "er is vandaag niets aangeslagen". Dan
+  // komt de weigering niet en wordt een met de hand getypt dagtotaal over een aangeslagen Kassadag
+  // heen geüpsert: op € 1.210 aangeslagen tegen € 500 getypt is dat € 586,78 omzet en € 123,22 BTW
+  // uit rubriek 1a/1b, zonder dat enig scherm zegt dat er een getal is vervangen.
+  //
+  // De uitzondering blijft dus bestaan en blijft alleen staan — maar nu als uitzondering voor een
+  // ONTBREKENDE tabel, niet voor elke fout. till_sales bestaat inmiddels in productie, dus elke
+  // overgebleven fout is de andere soort.
+  assert.match(code("src/app/api/turnover/day/route.ts"),
+    /readable: !turnoverErr && !cashRes\.error && \(!tillRes\.error \|\| isMissingRelation\(tillRes\.error\.message\)\),/,
+    "een MISLUKTE till_sales-lezing telt weer als 'geen kassaverkopen' — dat is geen antwoord maar een hapering");
 });
 
 test("[NO-SILENT-EMPTY] every counted read binds its error, because zero is a claim", () => {
@@ -16644,6 +16672,79 @@ test("[KOMMA-INVOER] geldvelden nemen een Nederlandse komma aan — geen number-
   const corr = code("src/components/invoice/InvoiceCorrectionModal.tsx");
   assert.ok(corr.includes("amountShown(f.key, amounts[f.key])"),
     "correctie-modal: de velden tonen het kladpaar niet");
+
+  // 5. AND NOW THE CLASS, NOT THE TWO FILES ABOVE.
+  //
+  // Everything up to here names two paths by hand — and while it did, SEVEN other money fields
+  // kept the widget it forbids: the unit price and the aantal on the invoice EDITOR, four discount
+  // fields on the builder and the editor, and the credit quantity on the invoice detail screen.
+  // The gate was green the whole time. This is the defect class this repo keeps rediscovering: a
+  // guard that lists its members instead of describing them.
+  //
+  // What the widget actually does is worse than refusing the comma — it DROPS it. Measured in the
+  // Chromium these tests run against, and written down in DecimalInput.tsx:
+  //
+  //     typed 23,95     -> .value "2395"     -> 2395      a hundred times too much
+  //     typed 1.250,00  -> .value "1.25000"  -> 1.25      a thousand times too little
+  //     typed 0,5       -> .value "05"       -> 5
+  //
+  // On a unit price that is an invoice sent to a customer for a hundred times the agreed amount,
+  // with nothing on screen to show for it.
+  //
+  // THE RULE, by cause rather than by list: on a surface that can write money, an <input
+  // type="number"> is allowed ONLY where it declares itself an integer count with
+  // inputMode="numeric" (a payment term in days is the only one today). Anything decimal is a text
+  // field, and its typing behaviour comes from DecimalInput.
+  const numberInputs: string[] = [];
+  const scanWidgets = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scanWidgets(p); continue; }
+      if (!/\.tsx$/.test(p) || /\.test\.tsx$/.test(p)) continue;
+      const src = code(p);
+      for (const tag of src.matchAll(/<input\b[\s\S]{0,900}?\/>/g)) {
+        if (!/type="number"/.test(tag[0])) continue;
+        // An integer COUNT may stay a number input: there is no decimal separator to lose.
+        if (/inputMode="numeric"/.test(tag[0])) continue;
+        numberInputs.push(`${p} — ${tag[0].replace(/\s+/g, " ").slice(0, 100)}`);
+      }
+    }
+  };
+  for (const dir of ["src/app/dashboard", "src/components", "src/modules"]) scanWidgets(dir);
+  assert.deepEqual(
+    numberInputs, [],
+    `<input type="number"> eats the Dutch comma — use DecimalInput, or declare an integer count ` +
+    `with inputMode="numeric":\n  ${numberInputs.join("\n  ")}`,
+  );
+
+  // 6. ONE IMPLEMENTATION OF THE TYPING, not one per screen. The behaviour lived inside the
+  //    builder's own LineInput, and being written THERE is exactly why the editor next door never
+  //    got it. Both screens and the credit screen now take the same component.
+  const field = code("src/components/ui/DecimalInput.tsx");
+  assert.match(field, /type="text"/, "the shared field must not be a number input either");
+  assert.doesNotMatch(field, /type="number"/);
+  assert.match(field, /inputMode="decimal"/);
+  // The raw draft — without it the parent's re-render eats the comma the owner just typed.
+  assert.match(field, /value=\{focused \? raw :/,
+    "no draft: the field would snap back to the parsed number mid-keystroke and lose the comma");
+  assert.match(field, /if \(e\.key === ','\)/, "the comma key must type the decimal separator");
+  for (const screen of [
+    "src/app/dashboard/invoice/new/page.tsx",
+    "src/app/dashboard/invoice/[id]/edit/page.tsx",
+    "src/app/dashboard/invoice/[id]/page.tsx",
+  ]) {
+    assert.match(code(screen), /<DecimalInput\b/, `${screen}: does not use the shared money field`);
+  }
+  // And the editor's two line fields specifically — they are the unit price and the aantal on a
+  // document that goes to a customer, and they are what this whole section was written out of.
+  const editor = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(editor, /<DecimalInput[\s\S]{0,600}?onChange=\{v => updateLine\(index, 'quantity', v\)\}/,
+    "the editor's aantal is not on the shared field");
+  assert.match(editor, /<DecimalInput[\s\S]{0,900}?onChange=\{v => updateLinePrice\(index, v\)\}/,
+    "the editor's unit price is not on the shared field");
+  assert.doesNotMatch(editor, /parseFloat\(e\.target\.value\) \|\| 0/,
+    "a money field is reading its own value with parseFloat again");
 });
 
 test("[DUBBEL-STORM] een geblokkeerd duplicaat wordt niet elke twee uur opnieuw door het model gelezen", () => {
@@ -21288,7 +21389,28 @@ test("[SUPPLETIE-FANTOOM] the filed snapshot is rounded by the same rule as the 
       "euro(). On a quarter that nets negative the same half-euro then goes two ways on one screen.",
   );
   assert.match(block, /euro\(Number\(r\.btw_verschuldigd\)/, "5a of the filing no longer uses the shared rounding");
-  assert.match(block, /euro\(rawSaldo\)/, "5g of the filing no longer uses the shared rounding");
+
+  // [SUPPLETIE-FANTOOM] 5g pinde eerst `euro(rawSaldo)`, en dat was de goede afronding op het
+  // verkeerde getal. 5a en 5b staan er direct boven en worden ELK apart afgerond; het ruwe saldo in
+  // één keer afronden geeft daar niet altijd hetzelfde antwoord op. Op verschuldigd € 1000,60 tegen
+  // voorbelasting € 200,40 stonden 1001, 200 en 800 onder elkaar — drie getallen waarvan er twee de
+  // derde tegenspreken, op het paneel waar de eigenaar zijn ingediende aangifte terugleest.
+  //
+  // 5g IS 5a min 5b. Dat staat nu in één functie (aangifte.ts, filedSaldo) omdat
+  // /api/btw-reservation dezelfde momentopname leest en er hetzelfde getal uit moet krijgen: die
+  // route telt hem op bij het bedrag dat opzij moet, en rondde het ruwe verschil in één keer af —
+  // dus na "markeer als ingediend" reserveerde het scherm € 800 voor een aangifte die de eigenaar
+  // zojuist voor € 801 had ingediend.
+  assert.match(block, /saldo: filedSaldo\(r\)/,
+    "5g of the filing is computed here again instead of through the shared filedSaldo — then the " +
+      "reservation screen and this panel can disagree about the same filed quarter.");
+  assert.doesNotMatch(block, /saldo: euro\(rawSaldo\)/,
+    "5g is a single rounding of the raw difference again, so it can contradict the 5a and 5b " +
+      "printed directly above it.");
+  // rawSaldo blijft bestaan — het verschil hoort ruw tegen ruw te worden gerekend, zie de test
+  // hierboven. Alleen het GETOONDE saldo mag er niet uit komen.
+  assert.match(route, /saldoDelta: euro\(\(result\.btwSaldo \?\? 0\) - rawSaldo\)/,
+    "the raw-against-raw delta was dropped along with the display change");
 });
 
 // ─── [ONB-WAAROM · ONB-IBAN] De twee stiltes in de onboarding ─────────────────────────

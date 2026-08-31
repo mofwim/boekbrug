@@ -15,6 +15,8 @@ import { createClient } from '@/lib/supabase'
 // [MIN-REGEL] Where the minus sign may live on a line, and when a document stops being a factuur
 // — see negative-line.ts.
 import { lineSignFault, staysAFactuur } from '@/lib/negative-line'
+// [KOMMA-INVOER] One comma-safe money field for every screen that has one.
+import DecimalInput from '@/components/ui/DecimalInput'
 import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -201,109 +203,25 @@ function LineInput({
   value: number
   onChange: (v: number) => void
   min?: number
-  /**
-   * [MIN-REGEL] May this field go below zero?
-   *
-   * Only the QUANTITY may, and only because a wholesaler settles a return on the next invoice as
-   * a line with a negative aantal (ATAPACK 26304787: −3 × € 23,95). The price may never — Peppol
-   * BR-27 rejects a negative cbc:PriceAmount, so such an invoice would look right on the PDF and
-   * never reach the customer electronically. See negative-line.ts.
-   *
-   * The character filter below already accepted a minus; `Math.max(min, parsed)` then threw it
-   * away, which is why typing −3 silently became 0,01.
-   */
+  /** [MIN-REGEL] Only a quantity may go below zero. See DecimalInput and negative-line.ts. */
   allowNegative?: boolean
   focusColor: string
   hasError?: boolean
 }) {
+  // [KOMMA-INVOER] The typing behaviour — comma, raw draft, Enter, arrows — lives in DecimalInput
+  // now, shared with the invoice editor and the credit screen. It used to be written out here, and
+  // being written out HERE is why the editor next door kept an <input type="number"> that silently
+  // read 23,95 as 2395. This wrapper is the label and the Material You look, nothing more.
   const [focused, setFocused] = useState(false)
-  // Raw string while typing — allows "0." mid-entry
-  const [raw, setRaw] = useState(value === 0 ? '' : String(value))
-
-  // [REACT] Ruwe invoer bijstellen tijdens de render in plaats van via een effect: dit is
-  // afgeleide state (het tekstveld volgt de waarde van buiten zolang je er niet in typt).
-  // Via een effect zag de gebruiker één frame lang de oude tekst staan.
-  const [prevSync, setPrevSync] = useState<{ value: number; focused: boolean }>({ value, focused })
-  if (prevSync.value !== value || prevSync.focused !== focused) {
-    setPrevSync({ value, focused })
-    if (!focused) setRaw(value === 0 ? '' : String(value))
-  }
-
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    let v = e.target.value
-    // [BOEK-031] comma → dot for decimal — May 2026
-    v = v.replace(',', '.')
-    // Only allow valid number characters: digits, one dot, optional minus
-    if (!/^-?\d*\.?\d*$/.test(v)) return
-    setRaw(v)
-    const parsed = parseFloat(v)
-    // [MIN-REGEL] The floor only applies to a field that may not go negative. A credit line is
-    // rejected by the form's own check when it reaches zero, which is where that judgement belongs.
-    if (!isNaN(parsed)) onChange(allowNegative ? parsed : Math.max(min, parsed))
-  }
-
-  function handleBlur() {
-    setFocused(false)
-    // [BOEK-031] clean up on blur — remove leading zeros — May 2026
-    const parsed = parseFloat(raw)
-    // [MIN-REGEL] An empty or unreadable field still falls back; a NEGATIVE one is kept, because
-    // on a credit line that is the value the owner meant.
-    if (isNaN(parsed)) {
-      setRaw(allowNegative ? '' : (min === 0 ? '' : String(min)))
-      onChange(allowNegative ? 0 : min)
-    } else if (!allowNegative && parsed < min) {
-      setRaw(min === 0 ? '' : String(min))
-      onChange(min)
-    } else {
-      setRaw(String(parsed))
-      onChange(parsed)
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // [BOEK-031] comma key → insert dot — May 2026
-    if (e.key === ',') {
-      e.preventDefault()
-      if (!raw.includes('.')) {
-        const next = raw ? raw + '.' : '0.'
-        setRaw(next)
-      }
-      return
-    }
-    // [BOEK-031] Enter → focus next input — May 2026
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      const form = e.currentTarget.closest('[data-form]') ?? document
-      const focusable = Array.from(
-        form.querySelectorAll<HTMLElement>('input, select')
-      ).filter(el => !el.hasAttribute('disabled'))
-      const idx = focusable.indexOf(e.currentTarget)
-      if (idx >= 0 && idx < focusable.length - 1) focusable[idx + 1].focus()
-      return
-    }
-    // [BOEK-031] ArrowUp/Down step by 1 whole number — May 2026
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      e.preventDefault()
-      const delta = e.key === 'ArrowUp' ? 1 : -1
-      const current = parseFloat(raw) || 0
-      const next = Math.max(min, Math.round(current) + delta)
-      setRaw(String(next))
-      onChange(next)
-    }
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <label style={{ fontSize: 12, fontWeight: 500, color: hasError ? '#EA4335' : focused ? focusColor : '#5F6368' }}>{label}</label>
-      <input
-        type="text"
-        inputMode="decimal"
-        value={focused ? raw : (value === 0 ? '' : String(value))}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)) }}
-        onBlur={handleBlur}
-        placeholder="0"
+      <DecimalInput
+        value={value}
+        onChange={onChange}
+        min={min}
+        allowNegative={allowNegative}
+        onFocusChange={setFocused}
         style={{
           width: '100%', minHeight: 44,
           border: `${hasError || focused ? '2px' : '1px'} solid ${hasError ? '#EA4335' : focused ? focusColor : '#E0E0E0'}`,
@@ -2065,9 +1983,12 @@ function NewInvoicePageContent() {
                             ))}
                           </div>
                           <input
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            /* [KOMMA-INVOER] Never type="number": Chromium DROPS the comma, so a
+                               12,5% discount arrived as "125" — over MAX_PERCENT, hence no discount
+                               at all — and a EUR 2,50 one arrived as 250 and was capped at the whole
+                               invoice. parseDiscount already reads a comma; the widget never let one
+                               through. No draft needed here: this field's value IS the raw string. */
+                            type="text"
                             inputMode="decimal"
                             autoFocus
                             placeholder={line.discount_type === 'percent' ? t('nieuw.korting.hintPercentage') : t('nieuw.korting.hintBedrag')}
@@ -2138,9 +2059,8 @@ function NewInvoicePageContent() {
                   ))}
                 </div>
                 <input
-                  type="number"
-                  min={0}
-                  step="0.01"
+                  /* [KOMMA-INVOER] See the per-line discount above — the number widget ate the comma. */
+                  type="text"
                   inputMode="decimal"
                   placeholder={discountType === 'percent' ? t('nieuw.korting.hintPercentage') : t('nieuw.korting.hintBedrag')}
                   value={discountValue}

@@ -16,6 +16,7 @@
 // daySourceConflict keeps a day from being claimed by both.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isMissingRelation } from "@/lib/pg-missing";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { validateManualDay, daySourceConflict, buildTurnoverRow, korTillRefusal } from "@/lib/till-day";
 import { bookTurnoverRows } from "@/lib/turnover-book";
@@ -75,9 +76,23 @@ async function readDayClaims(
     // prevents is silent: the upsert on (user_id, turnover_date) switches the day's cash 'omzet'
     // entries off in every engine at once with nothing on any screen saying so.
     //
-    // till_sales is NOT in here on purpose — see the DEPLOY-SAFE note above. A missing table is a
-    // known, reasoned zero; a failed read is not.
-    readable: !turnoverErr && !cashRes.error,
+    // [KASSA-STIL] till_sales hoort hier WEL in, en de zin hierboven zei al waarom: "a missing
+    // table is a known, reasoned zero; a failed read is not." Die twee stonden in het commentaar
+    // uit elkaar en in de code op één hoop — `tillRes.error ? 0 : …` behandelt een ontbrekende
+    // tabel en een time-out identiek, en alleen de eerste is een antwoord.
+    //
+    // Wat een verkeerde nul kost: daySourceConflict weigert een handmatig getypte dag zodra er
+    // vandaag al op de Kassa is aangeslagen ("Je hebt vandaag al verkopen aangeslagen op de
+    // Kassa"). Valt die telling stil op nul, dan komt die weigering niet, en de getypte dag wordt
+    // over de aangeslagen dag heen geüpsert op (user_id, turnover_date). Een winkel die € 1.210
+    // heeft aangeslagen en er € 500 bij typt, houdt € 500 over: € 586,78 omzet en € 123,22 BTW uit
+    // rubriek 1a/1b weg, zonder dat enig scherm zegt dat er een getal is vervangen.
+    //
+    // De deploy-uitzondering blijft precies wat hij was: een ONTBREKENDE tabel telt nog steeds als
+    // nul en houdt de route leesbaar, want dan heeft er nooit een Kassa gedraaid. till_sales
+    // bestaat inmiddels in productie, dus dat venster is dicht en elke overgebleven fout is de
+    // andere soort.
+    readable: !turnoverErr && !cashRes.error && (!tillRes.error || isMissingRelation(tillRes.error.message)),
   };
 }
 

@@ -2,7 +2,7 @@
 // The headline case is PINNED to a REAL accountant filing: Kiwi Food Market, Btw-aangifte
 // 1e kwartaal 2026. If the mapper reproduces that form line-for-line from the same
 // numbers, the concept is trustworthy.
-import { buildAangifte, buildAangifteCsv, euro, privegebruikNote, type AangifteInput, type AangifteCompleteness } from "./aangifte";
+import { buildAangifte, buildAangifteCsv, euro, filedSaldo, privegebruikNote, type AangifteInput, type AangifteCompleteness } from "./aangifte";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -487,6 +487,39 @@ console.log("\n— [SUPPLETIE-FANTOOM] the two roundings that produced a phantom
   check("raw against raw is zero on an unchanged quarter", euro(rawTotal - rawTotal) === 0);
 }
 
+console.log("\n— [SUPPLETIE-FANTOOM] het saldo van een INGEDIENDE momentopname —");
+{
+  // 5g is 5a min 5b, elk afzonderlijk afgerond — dat is wat op het formulier staat en wat de
+  // eigenaar indient. Twee lezers van de opgeslagen momentopname deden het allebei anders, en
+  // allebei op hun eigen manier fout: /api/btw-reservation rondde het RUWE verschil in één keer af
+  // en reserveerde € 800 voor een aangifte die zojuist voor € 801 was ingediend; /api/aangifte
+  // toonde 1001 en 200 naast een saldo van 800 — drie getallen waarvan er twee de derde
+  // tegenspreken.
+  check("verschuldigd 1000,60 en voorbelasting 200,40 geven 801, niet 800",
+    filedSaldo({ btw_verschuldigd: 1000.6, btw_voorbelasting: 200.4, btw_saldo: 800.2 }) === 801);
+  check("…en Math.round op het ruwe saldo gaf echt 800 (anders is het voorbeeld zijn punt kwijt)",
+    Math.round(800.2) === 800);
+
+  // De hele reden dat dit één functie is: de ingediende en de nog-niet-ingediende tak van
+  // /api/btw-reservation vullen ÉÉN lijst en tellen op tot het bedrag dat opzij moet. Rekenen ze
+  // anders, dan verandert dat bedrag zodra de eigenaar "markeer als ingediend" tikt.
+  const zelfde = ([[1000.6, 200.4], [0.5, 0], [100.5, 300.5], [0, 0], [-100.4, 50.6]] as const)
+    .every(([v, vb]) => filedSaldo({ btw_verschuldigd: v, btw_voorbelasting: vb, btw_saldo: v - vb }) === euro(v) - euro(vb));
+  check("ingediend en concept geven hetzelfde getal op dezelfde cijfers", zelfde);
+
+  // euro() rondt van nul áf, Math.round breekt gelijkspel naar +∞. Op een teruggavekwartaal gaven
+  // twee getallen op één scherm daardoor een ander antwoord over dezelfde halve euro.
+  check("een teruggavekwartaal rondt van nul af, niet naar boven",
+    filedSaldo({ btw_verschuldigd: 100, btw_voorbelasting: 100.5, btw_saldo: -0.5 }) === -1 && Object.is(Math.round(-0.5), -0));
+
+  // De momentopname heeft de twee kolommen niet altijd gehad. Terugvallen is beter dan nul.
+  check("een oudere rij zonder componenten valt terug op het ruwe saldo",
+    filedSaldo({ btw_saldo: 800.2 }) === 800
+    && filedSaldo({ btw_saldo: 800.2, btw_verschuldigd: null, btw_voorbelasting: null }) === 800
+    && filedSaldo({}) === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
+
 

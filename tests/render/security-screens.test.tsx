@@ -458,6 +458,7 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
           { job: "reminders", health: "ok", lastRunAt: "2026-09-04T07:00:00Z", hoursAgo: 2, note: null, needsAttention: false } as const,
         ] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /Kiwi Food Market/);
@@ -465,6 +466,68 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
     assert.match(html, /koppelingen/);
     // Alleen-lezen belofte staat op het scherm zelf.
     assert.match(html, /Alleen-lezen/);
+  })();
+});
+
+test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentage", () => {
+  // De vondst waar dit paneel uit voortkomt: vijf creditnota's van één leverancier, in één zitting
+  // rechtgezet. Als percentage was dat 0,9% en dus onzichtbaar; per leverancier is het één sjabloon
+  // dat de lezer niet aankan. Het scherm moet die NAAM tonen, anders is er niets gewonnen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: {
+          read: 586,
+          amountCorrected: 5,
+          ibanCorrected: 0,
+          afterPayment: 0,
+          troubleSuppliers: [{ supplierName: "Dutch Sweets Company B.V.", corrected: 5, read: 12 }],
+          recent: [
+            {
+              invoiceId: "i1", supplierName: "Dutch Sweets Company B.V.",
+              atMs: Date.UTC(2026, 7, 3, 9, 20), what: "bedrag" as const,
+              amountBefore: "6.8100000000000005", amountAfter: "-6.8100000000000005",
+              ibanBefore: null, ibanAfter: null, afterPayment: false,
+            },
+          ],
+        },
+      }),
+    );
+    // Op de KOP en op het aantal, niet alleen op de naam: die naam staat ook in de lijst met
+    // losse correcties eronder, dus een match daarop bleef groen terwijl de groepering per
+    // leverancier — het hele punt van dit paneel — was weggehaald. Dat is precies gemeten.
+    assert.match(html, /Leveranciers met meer dan één verbetering/,
+      "de groepering per leverancier is waarom dit paneel bestaat");
+    assert.match(html, /Dutch Sweets Company/, "de leverancier hoort met naam op het scherm");
+    assert.match(html, /<td[^>]*>12<\/td>/,
+      "…met de noemer erbij: 5 van 12 is iets anders dan 5 van 400");
+    // Precies de reeks die in productie op dit scherm stond. Het spoor bewaart hem — het scherm
+    // hoort er een bedrag van te maken, want hier leest zo'n staart als een fout in de boeken.
+    assert.match(html, /6,81/, "…met wat er stond naast wat het werd, als bedrag");
+    assert.doesNotMatch(html, /6\.8100000000000005/,
+      "de drijvende-komma-staart hoort niet op een scherm over geld");
+    assert.match(html, /586/);
+    assert.match(html, /niemand opmerkte/, "de eerlijkheidszin hoort erbij: dit is de fout die IEMAND zag");
+  })();
+});
+
+test("[LEESKWALITEIT] niet kunnen kijken leest nooit als nul fouten", () => {
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
+      }),
+    );
+    assert.match(html, /niet te lezen/, "een mislukte meting moet zichzelf zo noemen");
+    assert.doesNotMatch(html, /Gevonden foutpercentage/, "…en zeker geen percentage tonen");
   })();
 });
 
@@ -476,6 +539,7 @@ test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () =>
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: true, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /Nog geen accounts/);
@@ -503,6 +567,7 @@ test("[BEHEER-GEZOND] een gestopte cron staat bovenaan, met hoe lang al", () => 
           { job: "payment-due", health: "nog-niet-langs", lastRunAt: null, hoursAgo: null, note: null, needsAttention: false } as const,
         ] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /aandacht nodig/);
@@ -522,6 +587,7 @@ test("[NO-SILENT-EMPTY] een onleesbare hartslag is geen groene", () => {
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: false, allWell: false, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /niet te lezen/);

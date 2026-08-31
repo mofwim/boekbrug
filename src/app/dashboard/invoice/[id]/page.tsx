@@ -7,6 +7,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { M3, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
+// [KOMMA-INVOER] The one comma-safe money field — see its header for what type="number" did.
+import DecimalInput from '@/components/ui/DecimalInput'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams, notFound, useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
@@ -1208,12 +1210,14 @@ export default function InvoiceDetailPage() {
                           <span style={{ color: '#5F6368', fontSize: 12 }}>
                             {t('detail.credit.van', { max: String(max) })}
                           </span>
-                          <input
-                            type="number"
-                            step="any"
+                          <DecimalInput
+                            /* [KOMMA-INVOER] Was <input type="number">, which in Chromium reads a
+                               typed 0,5 as "05" — five. Crediting half a unit was impossible and
+                               silently became the whole line, on a creditnota. */
                             value={creditQty[id] ?? 0}
-                            onChange={(e) => {
-                              const typed = parseFloat(e.target.value)
+                            allowNegative
+                            ariaLabel={t('detail.credit.aantal')}
+                            onChange={(typed) => {
                               // Begrensd op wat er geleverd is, in de richting van de regel: een
                               // creditregel ([MIN-REGEL]) is negatief en blijft dat.
                               const veilig = !Number.isFinite(typed)
@@ -1223,7 +1227,6 @@ export default function InvoiceDetailPage() {
                                   : Math.abs(typed) > Math.abs(max) ? max : typed
                               setCreditQty((prev) => ({ ...prev, [id]: veilig }))
                             }}
-                            aria-label={t('detail.credit.aantal')}
                             style={{ width: 76, minHeight: 36, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 8px', fontSize: 14 }}
                           />
                         </div>

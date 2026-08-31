@@ -18,6 +18,7 @@ import {
   effectiveDirection,
   datelessWarning,
   sharedOutsideWarning,
+  pickPaymentDate,
   type PackageInvoice,
   type PaymentDateInfo,
 } from "./closing-package";
@@ -37,6 +38,7 @@ function invoice(over: Partial<PackageInvoice>): PackageInvoice {
     btw_amount: over.btw_amount ?? 21,
     total_inc_btw: over.total_inc_btw ?? 121,
     invoice_date: over.invoice_date ?? "2026-02-10",
+    payment_date: over.payment_date ?? null,
     due_date: over.due_date ?? "2026-03-10",
     pdf_url: over.pdf_url ?? null,
     document_id: over.document_id ?? null,
@@ -848,4 +850,40 @@ test("[XAF-IN-PAKKET] a refused booking is reported, not hidden", async () => {
   });
   assert.match(leesmij, /2 boekingen zijn NIET in het bestand opgenomen/);
   assert.match(leesmij, /staan wel als document in dit pakket/);
+});
+
+
+// ── [PAYDATE-ECHT] Welke dag het pakket afdrukt, en of dat een schatting is ──
+//
+// De boekhouder leest deze datum op pagina 1 van elke betaalde factuur en in overzicht.csv, en
+// onder het kasstelsel bepaalt hij in welk kwartaal de voorbelasting valt. Hij mag dus niet iets
+// anders zeggen dan de aangifte die in dezelfde zip zit.
+
+test("[PAYDATE-ECHT] een gekoppelde bankregel wint, en is geen schatting", () => {
+  assert.deepEqual(
+    pickPaymentDate("2026-06-30T00:00:00Z", { payment_date: "2026-06-28", marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-06-30", estimated: false },
+  );
+});
+
+test("[PAYDATE-ECHT] zonder bankregel telt de ingevulde betaaldatum, niet het vastlegmoment", () => {
+  // Het gemeten geval: contant betaald op 30 juni, ingevoerd op 3 juli. Hier stond 03-07 met
+  // "(geschat)" erbij — een Q3-datum op een betaling die de aangifte in dezelfde zip in Q2 boekt.
+  assert.deepEqual(
+    pickPaymentDate(null, { payment_date: "2026-06-30", marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-06-30", estimated: false },
+  );
+});
+
+test("[PAYDATE-ECHT] het vastlegmoment blijft de laatste terugval, en blijft geschat", () => {
+  // Het IS een schatting: het zegt wanneer iemand het invoerde, niet wanneer het geld bewoog.
+  assert.deepEqual(
+    pickPaymentDate(null, { payment_date: null, marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-07-03", estimated: true },
+  );
+});
+
+test("[PAYDATE-ECHT] en zonder enige bron liegt het pakket geen datum", () => {
+  assert.deepEqual(pickPaymentDate(null, {}), { date: null, estimated: true });
+  assert.deepEqual(pickPaymentDate(null, { payment_date: null, marked_paid_at: null }), { date: null, estimated: true });
 });

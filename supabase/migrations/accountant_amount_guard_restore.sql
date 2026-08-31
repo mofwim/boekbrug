@@ -155,7 +155,15 @@ BEGIN
      --                    eronder schuiven verandert waar de boeking op steunt.
      (NEW.vendor_iban         IS DISTINCT FROM OLD.vendor_iban)         OR
      (NEW.payment_reference   IS DISTINCT FROM OLD.payment_reference)   OR
-     (NEW.document_id         IS DISTINCT FROM OLD.document_id)
+     (NEW.document_id         IS DISTINCT FROM OLD.document_id)         OR
+     -- [VRIJGESTELD] Toegevoegd toen bleek dat vat_deduction in GEEN enkele versie van deze lijst
+     -- stond. Hij verzet rubriek 5b van de klant met het volledige btw_amount van de factuur:
+     -- 'direct_exempt' schuift de voorbelasting van aftrekbaar naar geblokkeerd, en andersom net zo
+     -- makkelijk. Hij staat hier ook al is dit niet de nieuwste herdefinitie — dat is juist het punt
+     -- van deze lijst: welke migratie als laatste draait, valt in deze map niet vast te stellen, dus
+     -- draagt elke herdefinitie de volledige lijst. Zonder deze regel zou dit bestand, één keer ná
+     -- accountant_vat_deduction_guard.sql gedraaid, de kolom weer uit de bescherming halen.
+     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)
   THEN
     RAISE EXCEPTION
       'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',

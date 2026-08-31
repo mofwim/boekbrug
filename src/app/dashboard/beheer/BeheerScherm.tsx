@@ -5,6 +5,7 @@
 
 import type { BeheerOverview } from "@/lib/beheer";
 import type { SystemHealth, EventSummary } from "@/lib/beheer-health";
+import { caughtErrorPct, type ReaderQuality } from "@/lib/reader-quality";
 
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #E0E0E0", borderRadius: 12, padding: "16px 20px" };
 const TH: React.CSSProperties = { textAlign: "start", fontSize: 12, fontWeight: 600, color: "#5F6368", padding: "6px 10px", borderBottom: "1px solid #E0E0E0" };
@@ -16,6 +17,127 @@ function Tel({ n, label }: { n: number; label: string }) {
       <div style={{ fontSize: 26, fontWeight: 700, color: "#202124" }}>{n}</div>
       <div style={{ fontSize: 12.5, color: "#5F6368" }}>{label}</div>
     </div>
+  );
+}
+
+
+/**
+ * Een bedrag uit het auditspoor, leesbaar.
+ *
+ * Het spoor bewaart de rij zoals hij was, en dat is een JSON-getal: op het scherm verscheen
+ * "6.8100000000000005" naast "-6.8100000000000005". Dat is geen leesfout van de app maar de
+ * gewone drijvende-komma-staart van een optelling — alleen staat hij hier op een scherm dat over
+ * geldbedragen gaat, en daar leest zo'n reeks als een fout in de administratie.
+ *
+ * Het SPOOR wordt niet aangeraakt: dat is machinaal bewijs en blijft staan zoals het is
+ * vastgelegd. Alleen de weergave rondt af, zoals elk ander bedrag in deze app.
+ */
+function bedragUitSpoor(raw: string | null): string {
+  if (raw === null) return "—";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * [LEESKWALITEIT] Hoe vaak moest een mens de machine verbeteren — en bij WIE.
+ *
+ * Het getal dat dit paneel bestaat om te weerleggen is het percentage. Op één echte administratie
+ * stond het op 0,9%, en dat las als "verwaarloosbaar". Die vijf correcties waren één leverancier,
+ * vijf creditnota's, allemaal binnen 42 seconden rechtgezet door iemand die net had uitgevogeld
+ * wat er mis was: het model gaf is_credit_note=false op een document dat "€ -33,87" afdrukte.
+ *
+ * Per leverancier is dat geen ruis maar een sjabloon. Vandaar dat de leverancierslijst hier boven
+ * het percentage staat en niet eronder.
+ */
+function Leeskwaliteit({ q }: { q: ReaderQuality | null }) {
+  // [NO-SILENT-EMPTY] Niet kunnen kijken is geen nul. Op het paneel dat over leesfouten gaat, is
+  // "geen fouten gevonden" en "we konden de vraag niet stellen" het gevaarlijkste paar om te
+  // verwarren — de eerste stelt gerust, de tweede hoort dat juist niet te doen.
+  if (!q) {
+    return (
+      <section style={{ ...CARD, borderColor: "#B3261E" }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: "#B3261E", margin: "0 0 6px" }}>Leeskwaliteit is niet te lezen</h2>
+        <p style={{ fontSize: 12.5, color: "#5F6368", margin: 0, lineHeight: 1.5 }}>
+          De vraag kon niet gesteld worden. Dat is géén bevestiging dat de lezer het goed doet.
+        </p>
+      </section>
+    );
+  }
+
+  const pct = caughtErrorPct(q);
+  return (
+    <section style={CARD}>
+      <h2 style={{ fontSize: 15, fontWeight: 600, color: "#202124", margin: "0 0 4px" }}>Leeskwaliteit</h2>
+      <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 14px", lineHeight: 1.5 }}>
+        Hoe vaak een mens een gelezen bedrag of rekeningnummer heeft moeten verbeteren, over de
+        laatste 90 dagen. Dit is de fout die IEMAND ZAG — een misllezing die niemand opmerkte, ziet
+        er van hier af uit als een goede lezing.
+      </p>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <Tel n={q.read} label="facturen gelezen" />
+        <Tel n={q.amountCorrected} label="bedrag verbeterd" />
+        <Tel n={q.ibanCorrected} label="rekeningnummer verbeterd" />
+        <div style={{ ...CARD, minWidth: 120, borderColor: q.afterPayment > 0 ? "#B3261E" : "#E0E0E0" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: q.afterPayment > 0 ? "#B3261E" : "#202124" }}>{q.afterPayment}</div>
+          <div style={{ fontSize: 12.5, color: "#5F6368" }}>verbeterd ná betaling</div>
+        </div>
+      </div>
+
+      {pct !== null && (
+        <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 14px" }}>
+          Gevonden foutpercentage: <strong style={{ color: "#202124" }}>{pct.toFixed(1)}%</strong>.
+        </p>
+      )}
+
+      {/* De leverancierslijst BOVEN de losse correcties: fouten komen per sjabloon, niet los. */}
+      {q.troubleSuppliers.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <h3 style={{ fontSize: 13.5, fontWeight: 600, color: "#202124", margin: "0 0 6px" }}>
+            Leveranciers met meer dan één verbetering
+          </h3>
+          <p style={{ fontSize: 12, color: "#5F6368", margin: "0 0 8px", lineHeight: 1.5 }}>
+            Twee keer dezelfde leverancier is zelden toeval — dat is meestal één documentsoort die de
+            lezer niet aankan, en die herhaalt zich bij elke volgende factuur van dat bedrijf.
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead><tr><th style={TH}>Leverancier</th><th style={TH}>Verbeterd</th><th style={TH}>Van hoeveel</th></tr></thead>
+              <tbody>
+                {q.troubleSuppliers.map((s) => (
+                  <tr key={s.supplierName}>
+                    <td style={TD}>{s.supplierName}</td>
+                    <td style={TD}>{s.corrected}</td>
+                    <td style={TD}>{s.read}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead><tr><th style={TH}>Wanneer</th><th style={TH}>Leverancier</th><th style={TH}>Wat</th><th style={TH}>Was</th><th style={TH}>Werd</th></tr></thead>
+          <tbody>
+            {q.recent.map((c) => (
+              <tr key={c.invoiceId}>
+                <td style={TD}>{new Date(c.atMs).toISOString().slice(0, 10)}</td>
+                <td style={TD}>{c.supplierName}</td>
+                <td style={TD}>{c.what}</td>
+                <td style={TD}>{c.what === "iban" ? (c.ibanBefore ?? "—") : bedragUitSpoor(c.amountBefore)}</td>
+                <td style={TD}>{c.what === "iban" ? (c.ibanAfter ?? "—") : bedragUitSpoor(c.amountAfter)}</td>
+              </tr>
+            ))}
+            {q.recent.length === 0 && (
+              <tr><td style={TD} colSpan={5}>Geen enkele verbetering in deze periode.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -128,7 +250,7 @@ function Storingen({ storingen }: { storingen: EventSummary }) {
   );
 }
 
-export function BeheerScherm({ overview, systeem, storingen }: { overview: BeheerOverview; systeem: SystemHealth; storingen: EventSummary }) {
+export function BeheerScherm({ overview, systeem, storingen, leeskwaliteit }: { overview: BeheerOverview; systeem: SystemHealth; storingen: EventSummary; leeskwaliteit: ReaderQuality | null }) {
   const { users, links, counts } = overview;
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20, fontFamily: "'Roboto', -apple-system, sans-serif" }}>
@@ -170,6 +292,8 @@ export function BeheerScherm({ overview, systeem, storingen }: { overview: Behee
           </table>
         </div>
       </section>
+
+      <Leeskwaliteit q={leeskwaliteit} />
 
       <section style={CARD}>
         <h2 style={{ fontSize: 15, fontWeight: 600, color: "#202124", margin: "0 0 10px" }}>Boekhouder ↔ klant</h2>

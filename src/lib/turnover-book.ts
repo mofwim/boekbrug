@@ -12,6 +12,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkTurnoverArithmetic, type DailyTurnover } from "./turnover";
 import type { LedgerKind } from "./ledger-import";
 import { round2 } from "./invoice-totals";
+// [DAG-GECLAIMD] Eén dag, één bron — de regel die tot nu toe alleen in de twee handmatige deuren stond.
+import { liveCashEntries } from "./cash-live";
+import { fetchAllRowsForIds } from "./supabase-paginate";
+import { TILL_SOURCE } from "./till-book";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any>;
@@ -64,6 +68,67 @@ export async function bookTurnoverRows(
     });
     if (breaks.length > 0) rejected.push(`${r.turnover_date}: ${breaks[0].note}`);
   }
+  // [DAG-GECLAIMD] Een Z-rapport mag geen dag inpikken die de eigenaar al met de hand heeft geboekt.
+  //
+  // daySourceConflict bewaakt "één dag, één bron" en wordt gelezen door precies twee deuren: het
+  // Kassa-ticket en het handmatig getypte dagtotaal. De drie IMPORT-deuren — /api/turnover/import,
+  // de gefotografeerde dagstaat via /api/intake, en /api/documents/reprocess — komen alle drie hier
+  // langs en vroegen niets. De upsert op (user_id, turnover_date) claimde de dag gewoon.
+  //
+  // Dat is niet "de dag wordt overschreven met een ander getal", wat al erg genoeg zou zijn. Zodra
+  // de dag een Z-rapport draagt staat hij in `covered`, en de covered-day-regel in
+  // financial-result.ts slaat de contante 'omzet'-boekingen van die dag over als dubbeltellingen.
+  // Een handmatig geboekte contante verkoop van € 300 verdwijnt dan volledig: € 247,93 omzet en
+  // € 52,07 uit rubriek 1a, zonder waarschuwing op enig scherm — terwijl het Z-rapport alleen de
+  // pintransacties bevatte die de terminal zag.
+  //
+  // De regel hoort bij de SCHRIJVER, om precies de reden die twintig regels hoger staat voor
+  // [DAGOMZET-DUP-DAY: "waar élke deur langskomt". De twee handmatige bronnen zijn uitgezonderd:
+  // die hebben daySourceConflict al gesteld, en de Kassa moet de dag die hij zelf opbouwt altijd
+  // kunnen herschrijven.
+  //
+  // Weigeren, niet stilletjes overslaan: dat is wat deze functie al doet zodra één dag niet klopt,
+  // en een half toegepaste import laat de eigenaar met een boekhouding zitten waarvan hij niet kan
+  // zien welke dagen erin zitten.
+  if (source !== TILL_SOURCE && rows.length > 0) {
+    const dagen = [...new Set(rows.map((r) => r.turnover_date))];
+    const live = await liveCashEntries(supabase);
+    // [IN-CHUNK] Gehakt én gepagineerd. De lijst is hier dagen, niet id's, maar een jaarblad noemt
+    // er driehonderdvijfenzestig en één dag kan meerdere kasboekingen dragen — dus zowel de
+    // URL-lengte als het rijenplafond zijn bereikbaar, en allebei zouden ze hetzelfde verkeerde
+    // antwoord geven: "niemand claimt deze dagen".
+    let kasRijen: Array<{ entry_date: string }>;
+    try {
+      kasRijen = await fetchAllRowsForIds<{ entry_date: string }, string>(
+        dagen,
+        (chunk, from, to) => live.only(
+          supabase.from("cash_entries").select("entry_date")
+            .eq("user_id", userId).eq("category", "omzet").in("entry_date", chunk),
+        ).order("entry_date", { ascending: true }).range(from, to),
+      );
+    } catch {
+      // [NO-SILENT-EMPTY] Een mislukte lezing is geen "niemand claimt deze dagen". Dat antwoord is
+      // precies het antwoord dat de contante boekingen laat verdwijnen, dus het mag niet uit een
+      // hapering komen.
+      return {
+        ok: false, days: 0, span: "", total_incl: 0,
+        rejected: ["We konden niet nagaan of je voor deze dagen al contante omzet hebt geboekt. Er is niets opgeslagen — probeer het zo meteen opnieuw."],
+      };
+    }
+    const geclaimd = [...new Set(kasRijen.map((r) => r.entry_date))].sort();
+    if (geclaimd.length > 0) {
+      const lijst = geclaimd.join(", ");
+      return {
+        ok: false, days: 0, span: "", total_incl: 0,
+        rejected: [
+          `Voor ${geclaimd.length === 1 ? "deze dag" : "deze dagen"} heb je al contante omzet in je Kas geboekt: ${lijst}. ` +
+          "Eén dag telt uit één bron — anders telt die contante verkoop straks niet meer mee. " +
+          "Haal die kasboeking(en) weg, of laat deze dag(en) uit het bestand.",
+        ],
+      };
+    }
+  }
+
   if (rejected.length > 0) {
     const dates = rows.map((r) => r.turnover_date).sort();
     return {
