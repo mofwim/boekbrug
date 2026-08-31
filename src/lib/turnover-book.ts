@@ -90,8 +90,32 @@ export async function bookTurnoverRows(
   // Weigeren, niet stilletjes overslaan: dat is wat deze functie al doet zodra één dag niet klopt,
   // en een half toegepaste import laat de eigenaar met een boekhouding zitten waarvan hij niet kan
   // zien welke dagen erin zitten.
-  if (source !== TILL_SOURCE && rows.length > 0) {
-    const dagen = [...new Set(rows.map((r) => r.turnover_date))];
+  //
+  // ── EN WAAROM DIT SMALLER IS DAN HET LIJKT ──
+  //
+  // Een kassawinkel HOORT allebei te hebben. financial-result.ts zegt het zelf: de contante
+  // dagopbrengst komt twee keer binnen — één keer als daily_turnover.cash_amount uit de Z-bon, en
+  // één keer als kasregel, "omdat dat de standaardcategorie van de Kas-pagina is en de natuurlijke
+  // manier om diezelfde lade te noteren". De covered-day-regel slaat die tweede notering over, en
+  // dat is dan volkomen juist.
+  //
+  // Elke import weigeren zodra er een contante omzetregel op zo'n dag staat, zou dus precies de
+  // normale werkwijze blokkeren van de enige soort gebruiker die deze import gebruikt. Nagemeten:
+  // 92 van de 93 dagomzetten dragen een eigen cash_amount. Voor die 92 klopt het overslaan.
+  //
+  // Het gaat mis in één vorm, en alleen daar: een Z-bon die GEEN contant meldt (alleen de
+  // pintransacties die de terminal zag) claimt de dag toch, en dan wordt de handmatig geboekte
+  // contante verkoop overgeslagen als dubbeltelling terwijl er niets is dat hem dekt. € 300
+  // contant wordt dan € 247,93 omzet en € 52,07 rubriek 1a die nergens meer staan.
+  //
+  // Dus: alleen weigeren wanneer de rij die we schrijven zelf geen contant meldt. Met
+  // preserveSplit blijft de bestaande verdeling van de dag staan — dan verandert er niets aan wat
+  // de dag over contant zegt, en is er ook niets nieuws om tegen te houden.
+  const dagenZonderContant = opts?.preserveSplit
+    ? []
+    : rows.filter((r) => !(Number(r.cash_amount ?? 0) > 0)).map((r) => r.turnover_date);
+  if (source !== TILL_SOURCE && dagenZonderContant.length > 0) {
+    const dagen = [...new Set(dagenZonderContant)];
     const live = await liveCashEntries(supabase);
     // [IN-CHUNK] Gehakt én gepagineerd. De lijst is hier dagen, niet id's, maar een jaarblad noemt
     // er driehonderdvijfenzestig en één dag kan meerdere kasboekingen dragen — dus zowel de
@@ -121,9 +145,11 @@ export async function bookTurnoverRows(
       return {
         ok: false, days: 0, span: "", total_incl: 0,
         rejected: [
-          `Voor ${geclaimd.length === 1 ? "deze dag" : "deze dagen"} heb je al contante omzet in je Kas geboekt: ${lijst}. ` +
-          "Eén dag telt uit één bron — anders telt die contante verkoop straks niet meer mee. " +
-          "Haal die kasboeking(en) weg, of laat deze dag(en) uit het bestand.",
+          `Voor ${geclaimd.length === 1 ? "deze dag" : "deze dagen"} heb je contante omzet in je Kas geboekt, ` +
+          `terwijl dit bestand er geen contant bij vermeldt: ${lijst}. ` +
+          "Zou ik deze dag zo overnemen, dan telt die contante verkoop nergens meer mee — het " +
+          "dagrapport dekt hem niet en de kasboeking wordt als dubbeltelling overgeslagen. " +
+          "Vul het contante bedrag aan in het bestand, of haal die dag(en) eruit.",
         ],
       };
     }

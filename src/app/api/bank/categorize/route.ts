@@ -24,6 +24,7 @@ import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } 
 import { linesForCounterpart } from "@/lib/counterpart-spread";
 import { ALLOWED_CATEGORIES, EXCLUDED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { round2 } from "@/lib/invoice-totals";
 
 // How many rows one GET page returns (the review list). The true remaining total is
 // reported separately via an exact head-count, so a capped page never reads as "done".
@@ -210,11 +211,56 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er nog buiten de boeken staat, niet alleen hoeveel
+  // regels. Voor een winkelier is "299 banktransacties" een klus; "€ 266.834 aan uitgaven staat
+  // nog niet in je winst & verlies" is zijn geld. Gemeten in de productiedatabase toen dit werd
+  // geschreven: precies die twee getallen, bij één eigenaar.
+  //
+  // UIT en IN apart, en dat is geen opmaakkeuze. financial-result.ts houdt deze twee om dezelfde
+  // reden gescheiden: "€ 10.000 in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist'
+  // terwijl het twee onverklaarde feiten zijn."
+  //
+  // Een onvolledige som is erger dan geen som — dan staat er een bedrag op het scherm dat kleiner
+  // is dan de werkelijkheid, over precies het geld dat nog niet meetelt. fetchAllRows gooit bij een
+  // mislukte pagina, en dan blijft dit null en toont het scherm alleen het aantal.
+  let remainingOut: number | null = null;
+  let remainingIn: number | null = null;
+  try {
+    const bedragen = await fetchAllRows<{ amount: number | null }>((from, to) =>
+      supabase
+        .from("bank_transactions")
+        .select("amount")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .is("invoice_id", null)
+        .is("category", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    let uit = 0;
+    let inn = 0;
+    for (const r of bedragen) {
+      const a = Number(r.amount) || 0;
+      if (a < 0) uit += -a;
+      else inn += a;
+    }
+    remainingOut = round2(uit);
+    remainingIn = round2(inn);
+  } catch (e) {
+    console.warn("[BANK-GELD-NIET-GEBOEKT] som van ongecategoriseerde regels mislukt", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     items,
     // items.length is only this page; totalRemaining is the honest DB-wide count.
     count: items.length,
+    // [BANK-GELD-NIET-GEBOEKT] null = we konden het niet optellen. Nooit 0: dat zou "er staat geen
+    // geld buiten je boeken" beweren over een som die niet gelukt is.
+    remaining_out: remainingOut,
+    remaining_in: remainingIn,
     // Onleesbaar → items.length, en dat is precies wat de zin eronder nodig heeft: dan zegt
     // has_more niet "je bent klaar" maar "we weten het niet zeker", en de UI blijft doorvragen.
     total_remaining: totalRemainingErr ? items.length : totalRemaining ?? items.length,

@@ -21985,3 +21985,40 @@ test("[BANK-STAND] the top line reports the queue instead of describing the scre
       "lines are all ignored reads as one that has none",
   );
 });
+
+// ─── [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er buiten de boeken staat ──────────────────
+//
+// De banner op het bankscherm telde REGELS: "299 banktransacties nog niet gecategoriseerd". Dat is
+// waar en het is een klus. Wat er werkelijk aan de hand is, is dit: gemeten in de productiedatabase
+// stond er bij één eigenaar € 266.834,31 aan uitgaven en € 11.385,38 aan ontvangsten buiten zijn
+// winst & verlies — geld dat de app terecht weigert te raden (zie [VRAAGPOST] in
+// financial-result.ts), maar waarvan hij alleen een aantal te zien kreeg.
+//
+// Voor een winkelier is "299 transacties" een getal over administratie. "€ 266.834 aan uitgaven" is
+// zijn geld, en een deel ervan zijn aftrekbare kosten.
+
+test("[BANK-GELD-NIET-GEBOEKT] the banner names the money, and keeps in and out apart", () => {
+  const route = code("src/app/api/bank/categorize/route.ts");
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.match(route, /remaining_out: remainingOut/, "the route no longer reports what is out of the books");
+  assert.match(route, /remaining_in: remainingIn/, "…nor the other direction");
+
+  // Twee bedragen, geen netto. financial-result.ts houdt ze om dezelfde reden gescheiden: "€ 10.000
+  // in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist' terwijl het twee
+  // onverklaarde feiten zijn."
+  assert.match(ui, /bank\.uncatGeld\.beide/, "the two directions were folded into one figure again");
+  assert.match(ui, /bank\.uncatGeld\.uit/, "a debits-only case has no sentence of its own");
+  assert.match(ui, /bank\.uncatGeld\.in/, "a credits-only case has no sentence of its own");
+
+  // Een onvolledige som is erger dan geen som: er staat dan een bedrag op het scherm dat KLEINER is
+  // dan de werkelijkheid, over precies het geld dat nog niet meetelt.
+  assert.match(
+    route, /let remainingOut: number \| null = null/,
+    "the sums default to 0 again, so a failed read would claim that no money is outside the books",
+  );
+  assert.match(
+    ui, /typeof catJson\.remaining_out === 'number' \? catJson\.remaining_out : null/,
+    "the screen coerces a missing sum to a number, which turns 'we could not add it up' into '€ 0'",
+  );
+});
