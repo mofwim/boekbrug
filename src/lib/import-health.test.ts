@@ -248,6 +248,37 @@ console.log('\n— [CREDIT-PREFIX-GATE] a credit-numbered document is held, and 
     total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87,
   }))
   check('a correctly booked creditnota is clean on this axis', booked.flags.creditPrefix === false)
+
+  // ── [CREDIT-WOORD] De tweede greep, voor de leverancier die géén CR-nummer gebruikt ──
+  //
+  // De prefixpoort hierboven ving CR0301267 op zijn NUMMER. Een leverancier die zijn creditnota's
+  // in dezelfde reeks nummert als zijn facturen, komt daar ongehinderd langs — en dan is de kop van
+  // het papier het enige dat er nog over te zeggen valt. Het model zei op precies zo'n document
+  // is_credit_note=false.
+  const woord = classifyImportHealth(inv({
+    invoice_number: '2026-0912', invoice_type: 'factuur',
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+    field_confidence: { _safecore: { credit_word_in_header: true } },
+  }))
+  check('een gewoon nummer met het WOORD in de kop → needs-review',
+    woord.level === 'needs-review' && woord.flags.creditPrefix === true)
+  check('en de reden noemt de kop, niet het nummer',
+    /kop/i.test(woord.reasons.join(' · ')) && /creditnota/i.test(woord.reasons.join(' · ')))
+
+  // Zonder de vlag is exact dezelfde factuur schoon — dus de vlag is aantoonbaar de oorzaak.
+  const zonder = classifyImportHealth(inv({
+    invoice_number: '2026-0912', invoice_type: 'factuur',
+    total_ex_btw: 31.07, btw_amount: 2.8, total_inc_btw: 33.87,
+  }))
+  check('zonder de vlag is dezelfde factuur schoon op deze as', zonder.flags.creditPrefix === false)
+
+  // Al negatief geboekt, of al als creditnota getypt: de vraag is beantwoord, het alarm zwijgt.
+  const alGoed = classifyImportHealth(inv({
+    invoice_number: '2026-0913', invoice_type: 'factuur',
+    total_ex_btw: -31.07, btw_amount: -2.8, total_inc_btw: -33.87,
+    field_confidence: { _safecore: { credit_word_in_header: true } },
+  }))
+  check('een al negatief geboekte rij vraagt niets meer', alGoed.flags.creditPrefix === false)
 }
 
 console.log('\n— [BTW-SPLIT] a per-rate block that contradicts our btw holds the invoice —')

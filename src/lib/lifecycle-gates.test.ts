@@ -12563,6 +12563,38 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
+  // De duurste leesfout die deze administratie in een jaar maakte, was er één soort: een
+  // creditnota geboekt als schuld, waarbij de btw bij de teruggave werd OPGETELD in plaats van
+  // afgetrokken. Het model gaf is_credit_note=false op een document met "CREDITFACTUUR" in de kop.
+  //
+  // Daar staan nu twee deterministische grepen op, en het punt is dat ze ONAFHANKELIJK falen:
+  // het NUMMER (CR…) helpt niet bij een leverancier die creditnota's in de gewone reeks nummert,
+  // en dan is de KOP het enige bewijs dat er nog is. Eén van de drie schakels losmaken — lezen,
+  // vlaggen, oordelen — maakt de andere twee zinloos zonder dat er iets stukgaat.
+  const mod = code("src/lib/creditnota-signal.ts");
+  assert.match(mod, /export function creditWordInHeader/, "de lezing zelf");
+  assert.match(mod, /const KOPLENGTE = \d+/,
+    "alleen de KOP: 'creditnota' staat in de voorwaarden van talloze gewone facturen, en een " +
+    "alarm dat daarop afgaat leert iedereen om het weg te klikken");
+
+  // De intake schrijft de vlag, en doet dat met de tekstlaag die daar toch al ligt.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /creditWordInHeader\(pdfText\)/, "de kop wordt bij de intake gelezen");
+  assert.match(intake, /credit_word_in_header: true/, "…en als vlag vastgelegd");
+
+  // En de gezondheidsklasse doet er iets mee — anders is het een vlag die niemand leest.
+  const health = code("src/lib/import-health.ts");
+  assert.match(health, /storedSafecore\?\.credit_word_in_header === true/,
+    "de vlag moet het oordeel bereiken, anders staat hij er voor niets");
+  assert.match(health, /flags\.creditPrefix = true/,
+    "…en de rij tegenhouden voor één blik van een mens");
+
+  // Wat deze greep NOOIT mag doen, net als de prefixpoort: een bedrag omdraaien.
+  assert.doesNotMatch(intake, /credit_word_in_header[\s\S]{0,400}?total_inc_btw\s*=/,
+    "flaggen, niet boeken — de eigenaar verklaart de soort, niet wij");
+});
+
 test("[LEVERANCIER-INTAKE] every path that creates an incoming invoice resolves a supplier", () => {
   // Gemeten in productie op 28-08-2026: vijftien inkoopfacturen droegen een IBAN én geen
   // supplier_id, en voor vijf ervan bestond een leveranciersrij met precies dat IBAN al. De
@@ -16622,6 +16654,62 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {
+  // The bulk download hands the owner a ZIP of their invoices. When an invoice has no stored PDF
+  // (a draft, or one from before PDFs were kept) the route DRAWS one — and it drew it from the
+  // five columns the ZIP's file NAMES need, while renderInvoicePdf reads fifteen.
+  //
+  // The worst of the ten that were missing is invoice_type. invoice-pdf.tsx opens with
+  // `const type = (invoice.invoice_type as string) || 'factuur'`, so an absent type is not an
+  // error — it is an INVOICE. A creditnota came out of the archive titled "Factuur" with an amount
+  // owed on it. Measured: the drawn bytes were the same length as a factuur (3313) and differed
+  // from the creditnota it actually is.
+  //
+  // The others are not decoration either. Art. 35a Wet OB requires the customer's name and
+  // address, the date and the BTW on an invoice; a creditnota must state which invoice it
+  // corrects. This is the copy the owner keeps for seven years.
+  //
+  // TWO SOURCES OF TRUTH, COMPARED — the pattern that keeps finding these. What the PDF reads is
+  // read out of the PDF module itself, so a field added there tomorrow fails this gate rather than
+  // quietly rendering blank in the archive.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  const needed = new Set([...pdf.matchAll(/\binvoice\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]));
+  assert.ok(needed.size >= 10, `only ${needed.size} invoice fields found in the PDF — has it moved?`);
+
+  const route = code("src/app/api/invoice/bulk-pdf/route.ts");
+  const select = /\.select\("(id, invoice_number[^"]*)"\)/.exec(route);
+  assert.ok(select, "the bulk-pdf invoices select must be findable");
+  const selected = new Set(select![1].split(",").map((c) => c.trim()));
+
+  // Two fields are ENRICHED rather than selected: the row carries original_invoice_id, and the
+  // number and date the PDF prints are resolved from it in a second read. Exempted by naming the
+  // mechanism, and the mechanism itself is asserted below — not by adding them to a skip list.
+  const enriched = new Set(["original_invoice_number", "original_invoice_date"]);
+  const absent = [...needed].filter((f) => !selected.has(f) && !enriched.has(f)).sort();
+  assert.deepEqual(
+    absent, [],
+    `the bulk download draws invoices without these columns, so the PDF prints them blank:\n  ${absent.join("\n  ")}`,
+  );
+  assert.match(route, /original_invoice_id/, "…and the creditnota's reference must be selected");
+  assert.match(route, /original_invoice_number: origin\?\.invoice_number \?\? null/,
+    "…and resolved into the number the PDF prints");
+
+  // [NO-SILENT-EMPTY] Both reads inside the drawing path dropped their outcome. `profile ?? {}`
+  // drew every invoice in the ZIP with no company name, KVK or BTW number and reported the archive
+  // as complete; `lines ?? []` drew an invoice with no lines and EUR 0,00 totals and counted it as
+  // one of the files that succeeded. An empty document is indistinguishable from a real one to
+  // whoever opens the archive a year later.
+  assert.match(route, /const \{ data: profile, error: profileError \}/,
+    "the profile read must be checked, or the ZIP is signed by nobody");
+  assert.match(route, /if \(profileError \|\| !profile\)/);
+  assert.match(route, /const \{ data: lines, error: linesError \}/,
+    "the lines read must be checked, or an empty invoice ships as a real one");
+  assert.match(route, /if \(linesError\) throw new Error/,
+    "…and a failed lines read must land in missing[], not in the archive");
+  assert.doesNotMatch(route, /renderInvoicePdf\(inv, lines \?\? \[\], profile \?\? \{\}\)/,
+    "the two fallbacks that made a hollow document look like a real one are gone");
 });
 
 test("[OFFERTE-GEEN-OMZET] a quote is not turnover, on every surface that declares money", () => {
@@ -22110,4 +22198,59 @@ test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names th
   const publiek = code("src/app/voor-boekhouders/page.tsx");
   assert.match(publiek, /Welke rubrieken: 1a, 1b, 1c, 1e en 3b\./);
   assert.match(publiek, /Rubriek 3a \(uitvoer buiten de EU\) en 3c/);
+});
+
+// ─── [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er buiten de boeken staat ──────────────────
+//
+// De banner op het bankscherm telde REGELS: "299 banktransacties nog niet gecategoriseerd". Dat is
+// waar en het is een klus. Wat er werkelijk aan de hand is, is dit: gemeten in de productiedatabase
+// stond er bij één eigenaar € 266.834,31 aan uitgaven en € 11.385,38 aan ontvangsten buiten zijn
+// winst & verlies — geld dat de app terecht weigert te raden (zie [VRAAGPOST] in
+// financial-result.ts), maar waarvan hij alleen een aantal te zien kreeg.
+//
+// Voor een winkelier is "299 transacties" een getal over administratie. "€ 266.834 aan uitgaven" is
+// zijn geld, en een deel ervan zijn aftrekbare kosten.
+
+test("[BANK-GELD-NIET-GEBOEKT] the banner names the money, and keeps in and out apart", () => {
+  const route = code("src/app/api/bank/categorize/route.ts");
+  const ui = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.match(route, /remaining_out: remainingOut/, "the route no longer reports what is out of the books");
+  assert.match(route, /remaining_in: remainingIn/, "…nor the other direction");
+
+  // Twee bedragen, geen netto. financial-result.ts houdt ze om dezelfde reden gescheiden: "€ 10.000
+  // in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist' terwijl het twee
+  // onverklaarde feiten zijn."
+  assert.match(ui, /bank\.uncatGeld\.beide/, "the two directions were folded into one figure again");
+  assert.match(ui, /bank\.uncatGeld\.uit/, "a debits-only case has no sentence of its own");
+  assert.match(ui, /bank\.uncatGeld\.in/, "a credits-only case has no sentence of its own");
+
+  // Een onvolledige som is erger dan geen som: er staat dan een bedrag op het scherm dat KLEINER is
+  // dan de werkelijkheid, over precies het geld dat nog niet meetelt.
+  assert.match(
+    route, /let remainingOut: number \| null = null/,
+    "the sums default to 0 again, so a failed read would claim that no money is outside the books",
+  );
+  assert.match(
+    ui, /typeof catJson\.remaining_out === 'number' \? catJson\.remaining_out : null/,
+    "the screen coerces a missing sum to a number, which turns 'we could not add it up' into '€ 0'",
+  );
+});
+
+test("[BANK-LEGE-LINK] the in-tab categorise link never points at an empty screen", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // Hij hing aan noMatch: bankregels zonder factuur. Maar een regel zonder factuur kan al een
+  // categorie hebben — dan is er niets te categoriseren en kwam de ondernemer op een leeg scherm.
+  // Dezelfde teleurstelling als een tabblad zonder inhoud, en hier kost hij het vertrouwen in de
+  // banner bovenaan die hetzelfde scherm aanbiedt wanneer er wél werk ligt.
+  assert.doesNotMatch(
+    src, /bankTab === 'none' && noMatch\.length > 0 && \(\s*<Link\s+href="\/dashboard\/bank\/categoriseren"/,
+    "the in-tab categorise link hangs on noMatch again, so it appears when there is nothing to " +
+      "categorise and leads to an empty screen",
+  );
+  assert.match(
+    src, /bankTab === 'none' && uncatCount > 0 && \(/,
+    "the link no longer asks whether there is anything to categorise",
+  );
 });

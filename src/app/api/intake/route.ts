@@ -101,6 +101,7 @@ import { loadReadingMemory } from "@/lib/reading-memory-source"
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
 // [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer → needs-review (en dus nooit auto-boeken).
 import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier"
+import { creditWordInHeader } from "@/lib/creditnota-signal"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -1195,6 +1196,18 @@ async function runIntake(req: NextRequest) {
   // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
   // doorgestuurde vervalste factuur komt net zo goed via dit pad binnen als via de mailsync.
   //
+  // [CREDIT-WOORD] Staat het woord in de KOP van het papier? Dit is de enige creditcontrole die
+  // noch het model noch het nummer nodig heeft, en precies de twee die faalden op CR0301267: het
+  // model gaf is_credit_note=false, en een leverancier die zijn creditnota's in de gewone reeks
+  // nummert laat ook de prefixpoort niets zien. De kop stond er wél op.
+  //
+  // Alleen vlaggen, nooit een bedrag omdraaien — classifyImportHealth maakt er needs-review van en
+  // de eigenaar beslist. En alleen als de lezing er géén creditnota van maakte: anders zou het
+  // document een vraag stellen die het zelf al heeft beantwoord.
+  if (v.is_credit_note !== true && creditWordInHeader(pdfText)) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, { credit_word_in_header: true })
+  }
+
   // [LEVERANCIER-INTAKE] Eén stap voor allebei: de IBAN-controle EN de leverancier, in die
   // volgorde. Gemeten in productie: dit pad schreef wel vendor_iban op de factuur maar liet
   // supplier_id leeg, terwijl de e-mailwegen dat wel invulden — de leverancier van een factuur

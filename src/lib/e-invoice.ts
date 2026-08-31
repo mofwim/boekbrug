@@ -287,15 +287,44 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
  * BTW is taken from LegalMonetaryTotal's own two figures rather than from TaxTotal/TaxAmount,
  * because TaxAmount appears once per rate as well and the first occurrence is not always the total.
  * The subtraction cannot pick the wrong element; a mis-picked TaxAmount can.
+ *
+ * ── [VOORUITBETALING] WHICH GROSS THE SUBTRACTION USES ─────────────────────────────────────────
+ *
+ * TaxInclusiveAmount (BT-112), never PayableAmount (BT-115). This read used to prefer the payable,
+ * and the comment beside it conceded the whole problem — "TaxInclusiveAmount equals it except when
+ * a prepayment or a rounding line is present" — and then derived the tax from the one figure that
+ * differs in exactly that case. EN 16931 defines them apart:
+ *
+ *     BR-CO-15   TaxInclusiveAmount = TaxExclusiveAmount + TaxAmount
+ *     BR-CO-16   PayableAmount      = TaxInclusiveAmount - PrepaidAmount + PayableRoundingAmount
+ *
+ * So on a conformant invoice with a EUR 200 deposit already paid (ex 1000, btw 210, incl 1210,
+ * prepaid 200, payable 1010) the subtraction returned btw 10, and the invoice booked with EUR 10
+ * of voorbelasting instead of 210 — EUR 200 of deductible BTW gone from rubriek 5b. With a EUR 500
+ * deposit it returned btw -290 on an ordinary purchase invoice. Measured, both of them.
+ *
+ * Nothing downstream could catch it. complete()'s ex + btw == inc test is VACUOUS here, because
+ * btw is defined as inc - ex; the file validates against Peppol; and an e-factuur stands the money
+ * gates down and auto-books, so no human ever saw the figure. The CII path next door reads all
+ * three amounts independently and was never wrong — the two syntaxes in this one file disagreed
+ * about which figure is the invoice total.
+ *
+ * The prepayment is not lost by ignoring it: it is a PAYMENT against this invoice, and payments
+ * are matched from the bank. The invoice's own gross is what the books and the aangifte need.
  */
 function parseUbl(xml: string): EInvoiceFigures | null {
   const block = firstBlock(xml, 'LegalMonetaryTotal')
   if (!block) return null
-  // PayableAmount is what the buyer owes and is the figure a bookkeeper books; TaxInclusiveAmount
-  // equals it except when a prepayment or a rounding line is present, so it is the fallback.
-  const inc = firstAmount(block, 'PayableAmount') ?? firstAmount(block, 'TaxInclusiveAmount')
   const ex = firstAmount(block, 'TaxExclusiveAmount')
-  const currency = firstCurrency(block, 'PayableAmount') ?? firstCurrency(block, 'TaxInclusiveAmount')
+  const taxInclusive = firstAmount(block, 'TaxInclusiveAmount')
+  const payable = firstAmount(block, 'PayableAmount')
+  // A producer that omits BT-112 is not conformant, but the invoice is still readable: BR-CO-16
+  // run backwards recovers the gross exactly. Absent prepayment and rounding are 0 by definition,
+  // so on the ordinary invoice this reduces to the payable, which is what it always was.
+  const prepaid = firstAmount(block, 'PrepaidAmount') ?? 0
+  const rounding = firstAmount(block, 'PayableRoundingAmount') ?? 0
+  const inc = taxInclusive ?? (payable !== null ? round2(payable + prepaid - rounding) : null)
+  const currency = firstCurrency(block, 'TaxInclusiveAmount') ?? firstCurrency(block, 'PayableAmount')
   const btw = inc !== null && ex !== null ? round2(inc - ex) : null
   const head = xml.slice(0, indexOfFirstCac(xml))
   // Scoped to the SUPPLIER's block: AccountingCustomerParty holds the same element names, and the
@@ -344,6 +373,12 @@ function complete(v: {
   // every other check in the building.
   if (v.currency !== null && v.currency.toUpperCase() !== 'EUR') return null
   if (Math.abs(inc) < 0.005) return null
+  // [VOORUITBETALING] This line is REAL for CII and VACUOUS for UBL, and the difference is worth
+  // knowing before anyone leans on it. parseCii reads GrandTotalAmount, TaxBasisTotalAmount and
+  // TaxTotalAmount as three independent figures, so this genuinely cross-checks them. parseUbl
+  // DEFINES btw as inc - ex, so ex + btw == inc always holds there — it can never fail, whatever
+  // the two amounts were read from. That is why reading the wrong gross went unnoticed: the check
+  // that looks like it would catch it cannot.
   if (Math.abs(round2(ex + btw) - round2(inc)) > 0.01) return null
   return {
     totalIncBtw: round2(inc),
