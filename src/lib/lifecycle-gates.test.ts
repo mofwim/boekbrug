@@ -16846,6 +16846,60 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
 
+test("[DAG-GECLAIMD] every door that books a day goes through the writer that knows the rule", () => {
+  // bookTurnoverRows carries "één dag, één bron", and its own comment names the three import doors
+  // that come past it: /api/turnover/import, the photographed dagstaat via /api/intake, and
+  // /api/documents/reprocess. Two of the three really did. The primary Dagomzet import did not —
+  // it upserted daily_turnover directly, so the day was claimed with nothing asked, and the comment
+  // asserting otherwise had been true of the library and never of that route.
+  //
+  // What it costs is in the guard's own words: once a day carries a Z-report it counts as
+  // `covered`, and the covered-day rule in financial-result.ts then skips that day's cash bookings
+  // as double counts. A EUR 300 cash sale booked by hand disappears completely — EUR 247,93 of
+  // omzet and EUR 52,07 out of rubriek 1a — with no warning on any screen.
+  //
+  // THE GATE IS "NO PRIVATE WRITER", not a list of doors. Any route that writes daily_turnover
+  // itself is a route that has its own answer to the one-day-one-source question.
+  const writers: string[] = [];
+  const scanRoutes = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scanRoutes(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      const src = code(p);
+      // The library itself is the one place allowed to write the table.
+      if (p.endsWith("src/lib/turnover-book.ts")) continue;
+      if (/\.from\("daily_turnover"\)[\s\S]{0,200}?\.(?:upsert|insert|update)\(/.test(src)) {
+        writers.push(p);
+      }
+    }
+  };
+  scanRoutes("src/app");
+  scanRoutes("src/lib");
+  assert.deepEqual(
+    writers, [],
+    "these write daily_turnover without going through bookTurnoverRows, so they claim a day " +
+    `without asking whether the owner already booked it as cash:\n  ${writers.join("\n  ")}`,
+  );
+
+  // And the import door specifically — the one that was missing — asks, and tells the two kinds of
+  // failure apart. A claimed day is a 409 the owner can act on; an empty rejected list is a
+  // database failure and must never be reported as "your numbers are wrong".
+  const route = code("src/app/api/turnover/import/route.ts");
+  assert.match(route, /bookTurnoverRows\(supabase, user\.id, records, "dagomzet_import"\)/,
+    "the Dagomzet import must book through the shared writer");
+  assert.match(route, /if \(booked\.rejected\.length > 0\)/,
+    "…and separate a refusal with named days from a database failure");
+
+  // The arithmetic check still answers FIRST, so a sheet whose figures cannot be true is refused
+  // for that reason and not for a claimed day.
+  const rekenen = route.indexOf("badDays.length > 0");
+  const boeken = route.indexOf("bookTurnoverRows(supabase, user.id, records");
+  assert.ok(rekenen >= 0 && boeken >= 0, "both checks must be findable");
+  assert.ok(rekenen < boeken, "the arithmetic refusal must come before the day is claimed");
+});
+
 test("[VERWERKT-GELIJK] the two freezes on invoices protect the same facts", () => {
   // public.invoices carries two column freezes side by side:
   //
