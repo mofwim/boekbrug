@@ -32,6 +32,8 @@ import { chunkIds, fetchAllRows } from "@/lib/supabase-paginate";
 import { reportHandledFailure } from "@/lib/report-handled";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
+// [KAS-PROBE] One definition for "does this database have that column yet" — see the module header.
+import { columnExists } from "@/lib/column-probe";
 
 // [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
 // (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
@@ -46,69 +48,25 @@ import { liveCashEntries } from "@/lib/cash-live";
 //
 // Cached only when TRUE: a false answer must stay re-checkable, or a server instance that started
 // before the migration would keep the old behaviour until it happened to restart.
-let settlementColumnKnown = false;
-
-/**
- * [KAS-PROBE] Is this error the column genuinely not being there — or just a read that failed?
- *
- * The distinction is the whole point. PostgREST answers an absent column with SQLSTATE 42703 and
- * says so in words; a statement timeout, a dropped connection, a pooler at its ceiling or an RLS
- * refusal all arrive through the SAME `error` channel and mean something completely different.
- */
-function columnIsAbsent(error: { code?: string | null; message?: string | null } | null): boolean {
-  if (!error) return false;
-  if (error.code === "42703") return true;
-  // PGRST204 is the schema-cache form of the same fact, and the message is the belt to that brace:
-  // a PostgREST version that reports it differently must not silently read as "present".
-  if (error.code === "PGRST204") return true;
-  return /column .*settlement_id.* does not exist|could not find the .*settlement_id.* column/i
-    .test(error.message ?? "");
-}
 
 /**
  * [DEPLOY-SAFE][KAS-PROBE] Does cash_entries carry settlement_id?
  *
  * A NO here is not a small answer. It switches this module into the pre-instalment model, and in
- * that model `existing` is read WITHOUT settlement_id — so every drawer entry of an invoice keys
- * to the same AGGREGATE_KEY, the first is kept and healed to the aggregate amount and the last
- * cash date, and computeCashSettlementSync marks EVERY OTHER ONE a duplicate and hard-deletes it.
- * An invoice paid in three till handovers loses two real cash movements and has the third re-dated
+ * that model `existing` is read WITHOUT settlement_id — so every drawer entry of an invoice keys to
+ * the same AGGREGATE_KEY, the first is kept and healed to the aggregate amount on the last cash
+ * date, and computeCashSettlementSync marks EVERY OTHER ONE a duplicate and hard-deletes it. An
+ * invoice paid in three till handovers loses two real cash movements and has the third re-dated
  * onto a day the money did not move — which, across a quarter boundary, is a BTW period.
  *
- * So a wrong NO is destructive, and until now ANY error produced one: the probe could not tell an
- * absent column from a statement timeout. The column exists in production (checked), which means
- * the deploy window this guard was written for has closed and every remaining `false` it could
- * return is a false one.
- *
- * The safe default is therefore YES on anything that is not a recognisable absent column. If the
- * database really is unwell, the very next read asks for settlement_id, fails, and the pass bails
- * without deleting a thing — reconcileCashSettlements catches it and money-audit reports the axis
- * as unchecked rather than clean. Bailing costs an hour; guessing costs the drawer.
+ * The discrimination that makes that safe now lives in column-probe.ts, because this was never one
+ * module's problem: five probes were written from the same eight lines and every one of them read
+ * a statement timeout as a missing column. That file states the rule and what each caller's reduced
+ * mode costs.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cashInstalmentsSupported(supabase: SupabaseClient<any>): Promise<boolean> {
-  if (settlementColumnKnown) return true;
-  try {
-    const { error } = await supabase.from("cash_entries").select("settlement_id").limit(1);
-    if (!error) {
-      settlementColumnKnown = true;
-      return true;
-    }
-    if (columnIsAbsent(error)) return false;
-    // [KAS-STIL] Not silent: this is the read that decides whether a destructive pass runs in its
-    // safe model or its legacy one, and it just failed for a reason nobody chose.
-    reportHandledFailure({
-      tag: "CASH-SETTLE",
-      message: "the settlement_id probe failed for a reason other than an absent column — assuming the column is there, which makes the pass bail instead of falling back to the aggregate model",
-      severity: "gate-unavailable",
-      context: { error: error.message, code: (error as { code?: string }).code ?? null },
-    });
-    return true;
-  } catch {
-    // A thrown read (network, abort) is the same class as the error above, never evidence about
-    // the schema.
-    return true;
-  }
+  return columnExists(supabase, "cash_entries", "settlement_id", "per-instalment drawer entries would be deleted as duplicates");
 }
 
 /**

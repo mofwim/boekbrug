@@ -32,23 +32,18 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-let softDeleteColumnKnown = false;
+import { columnExists } from "@/lib/column-probe";
+
 
 /** Does this database have cash_entries.deleted_at yet? See the header for why it is probed. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cashSoftDeleteSupported(supabase: SupabaseClient<any>): Promise<boolean> {
-  if (softDeleteColumnKnown) return true;
-  try {
-    const { error } = await supabase.from("cash_entries").select("deleted_at").limit(1);
-    if (error) return false;
-    softDeleteColumnKnown = true;
-    return true;
-  } catch {
-    return false;
-  }
+  // [KAS-PROBE] One definition, in column-probe.ts. The eight lines that used to be here answered
+  // NO to any error — and a NO here un-removes every soft-deleted cash movement (back into omzet,
+  // the drawer and the aangifte) and turns the DELETE door into a hard delete.
+  return columnExists(supabase, "cash_entries", "deleted_at", "removed cash movements would count again");
 }
 
-let invoiceLinkColumnKnown = false;
 
 /**
  * [DEPLOY-SAFE] Does this database have cash_entries.invoice_id yet?
@@ -70,15 +65,7 @@ let invoiceLinkColumnKnown = false;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cashInvoiceLinkSupported(supabase: SupabaseClient<any>): Promise<boolean> {
-  if (invoiceLinkColumnKnown) return true;
-  try {
-    const { error } = await supabase.from("cash_entries").select("invoice_id").limit(1);
-    if (error) return false;
-    invoiceLinkColumnKnown = true;
-    return true;
-  } catch {
-    return false;
-  }
+  return columnExists(supabase, "cash_entries", "invoice_id", "the kasboek would stop linking drawer entries to their invoice");
 }
 
 /**

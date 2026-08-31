@@ -38,7 +38,11 @@ function fakeClient(opts: {
     // and maybeSingle() (the profile).
     const q: Record<string, unknown> = {};
     const self = () => q;
-    for (const m of ["select", "eq", "lte", "order"]) q[m] = self;
+    // `is` is here because the live-rows filter is part of the production read: liveCashEntries
+    // applies `.is("deleted_at", null)` now that the probe no longer answers NO to a stub whose
+    // `.limit` is missing. Leaving it out did not make the test simpler — it made it exercise the
+    // one path production never takes.
+    for (const m of ["select", "eq", "lte", "order", "is"]) q[m] = self;
     q.range = (from: number, to: number) =>
       Promise.resolve(failed ? { data: null, error: err } : { data: rowsFor(table).slice(from, to + 1), error: null });
     q.maybeSingle = () =>

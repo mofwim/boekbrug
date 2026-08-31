@@ -13,6 +13,7 @@
 // remembered" must not be said when nothing was written.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { columnExists } from '@/lib/column-probe'
 // [TYPES] Sinds supplier_aliases.sql is toegepast staat de tabel in de gegenereerde types, dus
 // mag deze client strak: de compiler kijkt nu elke kolomnaam hier na in plaats van de database bij
 // de eerste echte schrijfactie.
@@ -42,17 +43,10 @@ const NOTHING: AliasLearnResult = { learned: false, renamed: false, message: nul
  * today's: the correction saves, nothing is learned, nothing errors. Cached after the first
  * success — a table does not disappear.
  */
-let aliasTableKnown = false
 export async function supplierAliasSupported(supabase: Client): Promise<boolean> {
-  if (aliasTableKnown) return true
-  try {
-    const { error } = await supabase.from('supplier_aliases').select('id').limit(1)
-    if (error) return false
-    aliasTableKnown = true
-    return true
-  } catch {
-    return false
-  }
+  // [KAS-PROBE] One definition, in column-probe.ts. A NO here stops aliases being written, so the
+  // same supplier keeps splitting into two rows — which is the thing this table exists to prevent.
+  return columnExists(supabase, 'supplier_aliases', 'id', 'supplier aliases would stop being written')
 }
 
 /**
