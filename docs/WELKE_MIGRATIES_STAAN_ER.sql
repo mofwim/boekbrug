@@ -44,14 +44,14 @@
 -- ── DEEL 1 ──────────────────────────────────────────────────────────
 
 with probe(bestand, soort, object, tabel, schema) as (values
+  ('account_purpose_archief.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('account_purpose_archief.sql', 'column', 'account_purpose', 'profiles', 'public'),
   ('account_purpose_archief.sql', 'constraint', 'profiles_account_purpose_check', null, 'public'),
-  ('account_purpose_archief.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('accountant_amount_guard_restore.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('accountant_confirm_mandate.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'confirmed_by', 'invoices', 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'kind', 'accountant_invoice_mandates', 'public'),
   ('accountant_confirm_mandate.sql', 'constraint', 'accountant_invoice_mandates_kind_check', null, 'public'),
-  ('accountant_confirm_mandate.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('accountant_confirm_mandate.sql', 'function', 'has_active_confirm_mandate', null, 'public'),
   ('accountant_confirm_mandate.sql', 'function', 'has_active_invoice_mandate', null, 'public'),
   ('accountant_discount_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
@@ -243,7 +243,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('intake_claims.sql', 'table', 'intake_claims', null, 'public'),
   ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', 'invitations', 'public'),
   ('invoice_accountant_write_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
-  ('invoice_accountant_write_guard.sql', 'function', 'prevent_verwerkt_invoice_changes', null, 'public'),
+  ('invoice_accountant_write_guard.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('invoice_archive_reason.sql', 'column', 'archive_reason', 'invoices', 'public'),
   ('invoice_archive_reason.sql', 'column', 'archived_at', 'invoices', 'public'),
   ('invoice_archive_reason.sql', 'constraint', 'invoices_archive_reason_check', null, 'public'),
@@ -328,8 +328,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_user', null, 'public'),
   ('pay_bundles.sql', 'index', 'pay_bundle_invoices_unique_pair', null, 'public'),
   ('pay_bundles.sql', 'policy', 'pay_bundle_invoices_delete_own', 'pay_bundle_invoices', 'public'),
-  ('profile_vak.sql', 'column', 'vak', 'profiles', 'public'),
   ('profile_vak.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
+  ('profile_vak.sql', 'column', 'vak', 'profiles', 'public'),
   ('push_subscriptions.sql', 'index', 'idx_push_subscriptions_user', null, 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', 'push_subscriptions', 'public'),
@@ -397,12 +397,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('urenregistratie.sql', 'policy', 'time_entries_insert_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_select_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_update_own', 'time_entries', 'public'),
+  ('vat_exemption.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('vat_exemption.sql', 'column', 'vat_deduction', 'invoices', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_activity', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_since', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_treatment', 'invoice_lines', 'public'),
   ('vat_exemption.sql', 'constraint', 'invoice_lines_vat_treatment_check', null, 'public'),
-  ('vat_exemption.sql', 'constraint', 'invoices_vat_deduction_check', null, 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles', 'public'),
   ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public'),
@@ -412,7 +412,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vehicles.sql', 'policy', 'vehicles_select_own', 'vehicles', 'public'),
   ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
   ('vehicles.sql', 'table', 'vehicles', null, 'public'),
-  ('verwerkt_freeze_level.sql', 'function', 'prevent_verwerkt_invoice_changes', null, 'public')
+  ('verwerkt_freeze_level.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public')
 ),
 bevonden as (
   select p.*,
@@ -458,7 +458,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 
 -- ── WAT DEEL 1 OVER DEZE FUNCTIES WÉL EN NIET ZEGT ──────────────────
 --
---   8 functies worden door meer dan één migratie geschreven. Voor die functies zegt TOEGEPAST: de
+--   9 functies worden door meer dan één migratie geschreven. Voor die functies zegt TOEGEPAST: de
 --   body in de database bevat elke kolomverwijzing die de map er unaniem in verwacht. Het zegt NIET
 --   welk van die bestanden hem daar gezet heeft — en dat is niet vast te stellen, want een CREATE OR
 --   REPLACE laat geen spoor van zijn herkomst achter. OPEN betekent hier dus: de functie in de
@@ -515,6 +515,10 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --     · accountant_write_holes.sql
 --     · invoice_accountant_write_guard.sql
 --     · vat_exemption.sql
+--
+--   prevent_verwerkt_invoice_changes
+--     · invoice_accountant_write_guard.sql
+--     · verwerkt_freeze_level.sql
 --
 --   recompute_invoice_amount_paid
 --     · invoice_partial_payments.sql

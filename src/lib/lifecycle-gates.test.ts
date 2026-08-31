@@ -13034,6 +13034,18 @@ test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measure
   // ontbraken, en niemand van hen valt terug op bestaan.
   const guard = rows.filter((r) => r.object === "prevent_accountant_amount_changes");
   assert.ok(guard.length >= 8, `${guard.length} files define the accountant guard — expected the whole family`);
+  // Every file that DEFINES it must carry the body probe. The six-probe cap sorted alphabetically
+  // and cut exactly the sharpest measurement: vat_exemption.sql's six ordinary column/constraint
+  // probes filled the slots and its body probe fell out — a silent truncation of the same kind as
+  // the defect this whole test exists for. Derived from the folder, so a tenth file is covered too.
+  const definieert = readdirSync("supabase/migrations")
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => /create\s+(or\s+replace\s+)?function\s+(public\.)?"?prevent_accountant_amount_changes/i
+      .test(readFileSync(`supabase/migrations/${f}`, "utf8").replace(/--[^\n]*/g, " ")));
+  for (const f of definieert) {
+    assert.ok(guard.some((r) => r.bestand === f),
+      `${f} rewrites the accountant guard but carries no body probe — its half of the measurement was cut`);
+  }
   for (const r of guard) {
     assert.equal(r.soort, "function_body", `${r.bestand} still proves the guard by its existence`);
     for (const kolom of [".vat_deduction", ".discount_type", ".discount_value", ".vendor_iban"]) {

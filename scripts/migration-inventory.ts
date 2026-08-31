@@ -470,10 +470,17 @@ for (const { bestand, sql } of gelezen) {
     continue;
   }
   // Hooguit zes, en deterministisch gekozen, zodat de gegenereerde SQL niet wappert tussen runs.
-  const gekozen = bruikbaar
+  //
+  // Behalve een 'function_body': die overleeft het plafond altijd. Hij bestaat juist omdát bestaan
+  // niet genoeg was, en het plafond koos alfabetisch — dus bij vat_exemption.sql vulden zes gewone
+  // kolom- en constraint-probes de zes plekken en viel de body-meting eruit. Een plafond dat precies
+  // de scherpste meting afkapt, is een stille afknotting van hetzelfde soort als de kwaal.
+  const gesorteerd = bruikbaar
     .slice()
-    .sort((a, b) => (a.soort + a.object).localeCompare(b.soort + b.object))
-    .slice(0, 6);
+    .sort((a, b) => (a.soort + a.object).localeCompare(b.soort + b.object));
+  const body = gesorteerd.filter((p) => p.soort === "function_body");
+  const rest = gesorteerd.filter((p) => p.soort !== "function_body");
+  const gekozen = [...body, ...rest.slice(0, Math.max(0, 6 - body.length))];
   for (const p of gekozen) {
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
     rijen.push(

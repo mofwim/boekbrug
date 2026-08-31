@@ -718,6 +718,19 @@ The proof left nothing behind; the row it ran against is byte-for-byte as it was
 
 A deployed text is not a working rule. The difference is one query, and it is the query nobody runs.
 
+### One truncation found while verifying the fix itself
+
+The generator caps a migration at six probes, chosen alphabetically. `vat_exemption.sql` has six
+ordinary column and constraint probes, so `function_body` — which sorts after both — fell off the
+end. A cap that cuts exactly the sharpest measurement is a silent truncation of the same kind as
+the defect it was written for, so a body probe now survives the cap unconditionally and the gate
+walks the folder: every file that rewrites the guard must carry one.
+
+(The finding before it was mine, not the tool's: I read the emitted marker list with a `grep` that
+dropped its first field and briefly believed `amount_paid` had gone missing. It had not — all 24
+columns were there. Worth recording, because it is the third time this week that the thing which
+looked broken was the measurement rather than the thing measured.)
+
 ### Still open, and now accurately reported
 
 - `bank_auto_book_blocked.sql` and `creditnota_per_rate_ceiling.sql` — the two the checker always
