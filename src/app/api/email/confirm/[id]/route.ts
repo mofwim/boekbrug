@@ -281,6 +281,25 @@ export async function POST(
     updatePatch.status = "paid";
     updatePatch.payment_method = body.payment_method;
     updatePatch.marked_paid_at = new Date().toISOString();
+    // [BEDRAG-MEE] En het BEDRAG, want anders zegt deze rij twee dingen tegelijk.
+    //
+    // Dit was de enige deur die 'paid' schreef zonder amount_paid mee te nemen. /api/invoice/
+    // pay-toggle doet het wel (via apply_manual_payment), de bankbevestiging doet het, de
+    // auto-confirm doet het — hier bleef de kolom op 0 staan naast een status die zegt dat alles
+    // is voldaan. Eén feit, vier schrijvers, en één ervan schreef het half.
+    //
+    // Gemeten in de productiedatabase: vijf inkoopfacturen staan zo — 'paid', methode 'bank',
+    // amount_paid 0, geen enkele bankkoppeling. De geldaudit van deze app meldt ze, en met een zin
+    // die het verkeerde zegt: "staat op betaald, maar er is € 79,00 van open" terwijl er niets
+    // openstaat en alleen de kolom niet is geschreven. Een controlepaneel dat vijf dingen verkeerd
+    // benoemt, is een paneel dat de eigenaar niet meer leest.
+    //
+    // De MAGNITUDE, zoals overal: amount_paid is altijd positief, ook op een creditnota, want het
+    // is "hoeveel geld er is bewogen" en niet "in welke richting" — dat zegt total_inc_btw al.
+    // De effectieve waarde (getypt waar de beoordelaar iets typte, anders het opgeslagen totaal),
+    // want dit is dezelfde schrijving die dat totaal bijwerkt.
+    const paidTotal = Math.abs(Number(updatePatch.total_inc_btw ?? incBtw) || 0);
+    if (paidTotal > 0) updatePatch.amount_paid = paidTotal;
     // [BRIDGE-QUARTER] Real payment date (Axis 2 / cash). Prefer an explicit YYYY-MM-DD; else the
     // invoice's OWN date (a receipt uploaded weeks later is a far better accounting-day proxy than
     // "today", which would misattribute a cross-quarter payment to the wrong quarter); "today" is

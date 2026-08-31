@@ -21459,3 +21459,78 @@ test("[NIET-BIJGEHOUDEN] an empty hour register produces no verdict about the ye
       "into 'you do not track hours' and takes away a warning he should have",
   );
 });
+
+// ─── [BEDRAG-MEE] Eén feit, vier schrijvers, en één ervan schreef het half ────────────
+//
+// `status = 'paid'` en `amount_paid` zeggen hetzelfde: deze factuur is voldaan. Elke deur die de
+// eerste schrijft moet de tweede meenemen, anders staat er een rij die twee dingen tegelijk zegt.
+//
+// /api/email/confirm ('deze had ik al betaald') was de enige die dat niet deed. Gemeten in de
+// productiedatabase: vijf inkoopfacturen staan zo — paid, methode bank, amount_paid 0, geen enkele
+// bankkoppeling. De geldaudit van deze app meldt ze, en met een zin die het verkeerde zegt: "staat
+// op betaald, maar er is € 79,00 van open", terwijl er niets openstaat en alleen de kolom niet is
+// geschreven. Een controlepaneel dat vijf dingen verkeerd benoemt is een paneel dat niemand leest.
+
+test("[BEDRAG-MEE] every door that writes status 'paid' writes the amount with it", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\./.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  for (const f of walk("src/app/api").concat(walk("src/lib"))) {
+    const src = code(f);
+    // Twee vormen, want dit project schrijft de status op twee manieren. Als ÉÉN reguliere
+    // expressie geschreven eiste de eerste versie het woord `status` twee keer achter elkaar en
+    // matchte daardoor de tweede vorm nooit — precies de vorm van de deur die de aanleiding was.
+    // Het negatieve testje ving dat: het weghalen van de fix liet deze poort groen.
+    //
+    //   1. `.update({ … status: "paid" … })`  — de directe schrijving;
+    //   2. `patch.status = "paid"`            — een object dat verderop wordt weggeschreven.
+    const WRITES = [
+      /\.update\(\s*\{[^{}]*status["']?\s*:\s*["']paid["']/g,
+      /\b[A-Za-z_$][\w$]*\.status\s*=\s*["']paid["']/g,
+    ];
+    for (const m of WRITES.flatMap((re) => [...src.matchAll(re)])) {
+      // Alleen schrijvingen naar INVOICES. mollie_payment_links kent ook een 'paid' en heeft geen
+      // amount_paid — de eerste versie van deze poort wees die twee aan, en een poort die het
+      // verkeerde bestand aanwijst wordt uitgezet in plaats van gelezen.
+      const before = src.slice(Math.max(0, m.index - 600), m.index);
+      const lastFrom = [...before.matchAll(/\.from\(\s*["']([a-z_]+)["']\s*\)/g)].pop();
+      if (lastFrom && lastFrom[1] !== "invoices") continue;
+      const window = src.slice(m.index, m.index + 900);
+      if (/amount_paid/.test(window)) continue;
+      // apply_manual_payment en recompute_invoice_amount_paid schrijven de kolom in de database
+      // zelf, onder een rijvergrendeling — dat is de betere vorm, niet een uitzondering erop.
+      if (/apply_manual_payment|recompute_invoice_amount_paid/.test(window)) continue;
+      offenders.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these mark an invoice paid without writing what was paid, so the row says 'settled in full' " +
+      `and 'nothing received' at the same time:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[SPLIT-ONBEKEND] the money audit does not call an unread split an arithmetic error", () => {
+  const mod = code("src/lib/money-invariants.ts");
+
+  // De regel boven btw_arithmetic zegt het zelf: afwezig is niet fout, "want een schending
+  // verzinnen uit een gat is hoe een audit ophoudt geloofd te worden". Dat gold voor NULL en niet
+  // voor NUL — terwijl de lezer een nog niet gelezen splitsing als 0/0 wegschrijft.
+  assert.match(
+    mod, /const splitNeverRead =[\s\S]{0,400}?Math\.abs\(num\(inv\.totalIncBtw\)\) > MONEY_EPSILON/,
+    "the audit reports 'ex 0 + btw 0 is not € 1.040,12' as an arithmetic break again, with the " +
+      "sentence 'Dit getal staat in je aangifte' — about a split that has not been read yet",
+  );
+  assert.match(
+    mod, /Math\.abs\(gap\) > 0\.01 && !splitNeverRead/,
+    "the exemption is computed but not applied",
+  );
+});

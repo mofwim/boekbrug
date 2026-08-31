@@ -274,7 +274,24 @@ export function findMoneyViolations(input: {
     // is not wrong, and inventing a violation from a gap is how an audit stops being believed.
     if (inv.totalExBtw != null && inv.btwAmount != null && inv.totalIncBtw != null) {
       const gap = round2(num(inv.totalExBtw) + num(inv.btwAmount) - num(inv.totalIncBtw));
-      if (Math.abs(gap) > 0.01) {
+      // [SPLIT-ONBEKEND] Beide op nul naast een totaal dat er wél is, is GEEN rekenfout. Het is
+      // dezelfde toestand als NULL — "we hebben alleen het totaal gelezen" — en de regel hierboven
+      // zegt zelf dat afwezig niet fout is, "want een schending verzinnen uit een gat is hoe een
+      // audit ophoudt geloofd te worden".
+      //
+      // Dat gebeurde ook. Gemeten in de productiedatabase: drie facturen stonden zo (nog in
+      // verwerking, de lezer was er nog niet aan toe), en de audit meldde ze met de zin "Dit getal
+      // staat in je aangifte" — over een splitsing die nog helemaal niet is gelezen. Eén enkele
+      // echte rekenbreuk stond ertussen, en die verdient het om niet in drie valse te verdwijnen.
+      //
+      // Op een factuur die WEL meetelt is een ontbrekende splitsing overigens een echt probleem
+      // (de voorbelasting leest dan stil nul) — maar dat is een ander feit met een andere zin, en
+      // niet iets om onder "de optelling klopt niet" te verstoppen.
+      const splitNeverRead =
+        Math.abs(num(inv.totalExBtw)) <= MONEY_EPSILON &&
+        Math.abs(num(inv.btwAmount)) <= MONEY_EPSILON &&
+        Math.abs(num(inv.totalIncBtw)) > MONEY_EPSILON;
+      if (Math.abs(gap) > 0.01 && !splitNeverRead) {
         out.push({
           kind: "btw_arithmetic",
           entityId: inv.id,
