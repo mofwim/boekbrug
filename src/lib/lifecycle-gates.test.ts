@@ -20889,3 +20889,61 @@ test("[MOLLIE-C7-RACE] a webhook for a row we no longer have is never a silent 2
       "the payment bookable, so its absence is the whole event",
   );
 });
+
+// ─── [KASSA-VERS] Een kassadag die achterloopt op zijn eigen tickets ──────────────────
+//
+// rebuildTillDay leest de verkopen van een dag en schrijft daarna een ABSOLUUT dagtotaal. Tussen
+// die twee stappen kan een andere aanvraag een ticket aanslaan, en dan landt de schrijving met een
+// totaal dat een moment geleden waar was:
+//
+//   A slaat ticket X aan, leest de dag → [X], berekent X.
+//   B slaat ticket Y aan, leest de dag → [X, Y], berekent X + Y, schrijft X + Y.
+//   A schrijft X.
+//
+// daily_turnover zegt dan X terwijl till_sales X én Y bevat. De omzet van die dag is een heel
+// ticket te laag, en de btw erover ook — tot in rubriek 1a/1b van de aangifte. Er is niets aan te
+// zien: de rij bestaat, de rekensom erbinnen klopt, en het kassascherm leest zijn ticketlijst uit
+// till_sales, dus dáár staan ze allebei nog. Twee kassa's, of één keer dubbel tikken.
+
+test("[KASSA-VERS] the day is read back after it is written", () => {
+  const src = code("src/lib/till-book.ts");
+
+  const fn = src.slice(src.indexOf("export async function rebuildTillDay"));
+  assert.match(
+    fn, /const after = await readDaySales\([\s\S]{0,120}?salesFingerprint\(after\) === applied/,
+    "rebuildTillDay writes an absolute day total again without checking whether the day changed " +
+      "while it was writing. The loser of that race stores a total that is short a whole ticket, " +
+      "and every screen still looks right because the ticket list comes from till_sales.",
+  );
+  // De DELETE-tak hoort binnen dezelfde lus: "de dag is leeg, haal de rij weg" is dezelfde race met
+  // het teken om, en laat een verkoop achter zonder dagomzetrij.
+  const loop = fn.slice(fn.indexOf("for (let attempt"));
+  assert.match(loop, /\.delete\(\)/, "the empty-day delete fell outside the verify loop");
+  assert.match(loop, /bookTurnoverRows/, "the upsert fell outside the verify loop");
+});
+
+test("[KASSA-VERS] a day that will not settle is bounded and reported", () => {
+  const src = code("src/lib/till-book.ts");
+
+  assert.match(
+    src, /attempt <= REBUILD_MAX_ATTEMPTS/,
+    "the rebuild loop lost its bound — a busy till would spin instead of returning",
+  );
+  assert.match(
+    src, /reportHandledFailure\([\s\S]{0,400}?KASSA/,
+    "reaching the attempt bound is silent again. The last write may then be stale, and an " +
+      "understated turnover day looks exactly like a quiet day.",
+  );
+});
+
+test("[KASSA-VERS] the fingerprint identifies WHICH sales, not how many", () => {
+  const src = code("src/lib/till-book.ts");
+
+  // Eén ticket aangeslagen en één gestorneerd in hetzelfde moment laat het AANTAL gelijk terwijl de
+  // dag een andere dag is. Een telling zou dat "onveranderd" noemen — en dat is precies het geval
+  // waarop niemand kijkt.
+  const fn = src.slice(src.indexOf("export function salesFingerprint"), src.indexOf("export const REBUILD_MAX_ATTEMPTS"));
+  assert.match(fn, /\.id\)/, "the fingerprint no longer reads the sale ids");
+  assert.match(fn, /\.sort\(\)/, "without a sort the fingerprint depends on read order, so an unchanged day can read as changed");
+  assert.doesNotMatch(fn, /\.length/, "a count-based fingerprint cannot see a sale swapped for another");
+});
