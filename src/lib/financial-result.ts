@@ -261,6 +261,13 @@ export interface SalesRateBucket { rate: number; omzet: number; btw: number }
 // treated as a witness so a €0.01 gap can't fabricate a phantom omzet-zonder-tarief nudge.
 const EXCESS_EPS = 0.02;
 
+// [WEEKBATCH] How far back a settlement may DRAW DOWN till takings, as opposed to how far back it
+// may be RECOGNISED as a settlement (SETTLE_LAG_DAYS, unchanged). Nine days covers the ordinary
+// weekly batch: a scheme that pays out on Monday is settling the Monday-to-Sunday before it, so the
+// oldest day it accounts for is eight days behind the payout. See suppressAgainstCoveredDays for
+// why widening this one is bounded and cannot hide revenue.
+const BATCH_DRAWDOWN_DAYS = 9;
+
 // WHICH covered takings day does this settlement line reconcile to (or null)? Exact takings
 // date (settleExact) → exact covered match. Fallback booking date (no printed DAT.) → accept a
 // covered day up to SETTLE_LAG_DAYS earlier (the sale happened before the payout posted). In
@@ -282,6 +289,82 @@ function matchedCoveredDay(t: ResultBankTx, covered: Set<string>, remaining: Map
     if (rem === undefined || rem > 0.005) return d; // still has budget (undefined = prior-quarter day)
   }
   return firstCovered;
+}
+
+/**
+ * [WEEKBATCH] How much of this settlement was already counted by the till — across EVERY covered
+ * day it can reach, not just one.
+ *
+ * matchedCoveredDay answers "WHICH day", and the caller drew down that ONE day's card budget. That
+ * is right for a payout that settles a single trading day, and wrong for the one shape that is
+ * completely ordinary: a credit-card scheme pays a WEEK in one batch. Its DAT. is a week number, so
+ * parsePosSettlement correctly refuses to read it as a date, settleDate falls back to the booking
+ * date, and the line is DAT-less by construction — exactly the case this window exists for.
+ *
+ * Measured on five trading days of EUR 400 card takings each, paid out as one EUR 2.000 batch:
+ *
+ *     till omzet for the week    1.652,90
+ *     omzet computed             3.252,90
+ *     booked as off-till revenue 1.600,00
+ *
+ * One day's EUR 400 was recognised as already counted and the other four days' takings were booked
+ * a SECOND time — as omzet with no BTW rate, which also raises the omzet-zonder-tarief nudge and
+ * blocks readiness over money that was never earned twice. Nearly double the week's turnover.
+ *
+ * So the payout draws down every covered day in its window, nearest first, until it is used up.
+ * Nearest first because settlement lags takings: the closest covered day is the likeliest source,
+ * and consuming it first leaves the older days for the older payouts. What is left after every
+ * reachable day is exhausted is genuine off-till revenue and still counts, exactly as before.
+ *
+ * An EXACT takings date still consumes only its own day — that is not a guess and must not widen.
+ */
+function suppressAgainstCoveredDays(
+  t: ResultBankTx,
+  raw: number,
+  covered: Set<string>,
+  remaining: Map<string, number>,
+): { matched: boolean; suppressed: number } {
+  const first = matchedCoveredDay(t, covered, remaining);
+  if (!first) return { matched: false, suppressed: 0 };
+  // A prior-quarter buffer day carries no budget entry: the payout belongs to that quarter, whole.
+  if (!remaining.has(first)) return { matched: true, suppressed: raw };
+
+  const days: string[] = [];
+  if (t.settleDate && covered.has(t.settleDate)) {
+    days.push(t.settleDate); // exact/known takings date — its own day only
+  } else {
+    // TWO WINDOWS, TWO QUESTIONS, and the difference is the whole safety argument.
+    //
+    // matchedCoveredDay above answers the CONSERVATIVE one — "is this line a settlement of till
+    // takings at all?" — and keeps the shared SETTLE_LAG_DAYS, so nothing about which lines
+    // reconcile has changed. This loop answers the second question, "which of the till's card
+    // takings does it account for?", and reaches further back because a weekly batch pays out days
+    // that are eight or nine days behind the payout.
+    //
+    // Widening only THIS one cannot hide revenue: every euro suppressed here comes out of
+    // cardRemaining, which is built solely from covered days' own card takings (cardBudgetBound).
+    // Total suppression across all payouts can therefore never exceed what the till itself recorded
+    // as card revenue. An uncovered day contributes no budget, so genuine off-till takings have
+    // nothing to be absorbed by — which is the property the header of this section calls "never
+    // hide". What the wider window changes is only WHICH covered day a settlement draws from.
+    for (let back = 1; back <= BATCH_DRAWDOWN_DAYS; back++) {
+      const d = isoMinusDays(t.settleDate ?? "", back);
+      if (covered.has(d) && remaining.has(d)) days.push(d);
+    }
+  }
+
+  let left = raw;
+  let suppressed = 0;
+  for (const d of days) {
+    if (left <= 0.005) break;
+    const rem = Math.max(0, remaining.get(d) ?? 0);
+    if (rem <= 0.005) continue;
+    const take = Math.min(left, rem);
+    remaining.set(d, round2(rem - take));
+    suppressed = round2(suppressed + take);
+    left = round2(left - take);
+  }
+  return { matched: true, suppressed };
 }
 
 // Subtract whole days from a 'YYYY-MM-DD' string via UTC (no local-TZ drift). Returns
@@ -601,12 +684,9 @@ export function computeResult(
         if (t.settleExact && t.settleDate && covered.has(t.settleDate)) continue;
         // else fall through → the negative reduces omzet below.
       } else {
-        const day = matchedCoveredDay(t, covered, cardRemaining);
-        if (day) {
-          if (!cardRemaining.has(day)) continue; // prior-quarter buffer day w/o budget → belongs there
-          const rem = Math.max(0, cardRemaining.get(day) ?? 0);
-          const suppressed = Math.min(raw, rem);
-          cardRemaining.set(day, round2(rem - suppressed));
+        // [WEEKBATCH] Across every covered day this payout can reach, not just the nearest one.
+        const { matched, suppressed } = suppressAgainstCoveredDays(t, raw, covered, cardRemaining);
+        if (matched) {
           const excess = round2(raw - suppressed);
           if (excess <= EXCESS_EPS) continue; // within the till's card takings (+rounding) → witness
           // The part beyond the till's card takings is real off-till revenue with no BTW rate.
