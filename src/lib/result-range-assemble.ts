@@ -34,6 +34,7 @@
 import {
   computeResult, toResultBankTx, cardBudgetBound,
   type RawBankRow, type ResultInvoice, type ResultBankTx, type ResultCashEntry, type FinancialResult,
+  reconcilesToCoveredDay,
 } from "./financial-result";
 import { turnoverNetOmzet, type DailyTurnover } from "./turnover";
 import { reconcileTriangle, bankNetByDay } from "./triangle";
@@ -43,7 +44,7 @@ import type { VatScheme } from "./vat-scheme";
 import { exemptShareOf } from "./vat-exemption";
 import { round2 } from "./invoice-totals";
 import type { RateShare } from "./btw-rate-split";
-import { statedCommission, type StatedCommission } from "./pos-commission";
+import { parsePosCommission, statedCommission, type StatedCommission } from "./pos-commission";
 import type { QuarterSettlements } from "./kas-payment-events";
 
 // ── The pure helpers the fetch half needs too, so they live on this side of the seam ──────────
@@ -354,7 +355,31 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   // ambiguous combination stays reported-only until real data carrying both exists to verify a
   // finer rule against. Reported-only is not a gap here: the figure still travels out, and
   // `statedCommissionBooked` tells the surface exactly which of the two it is looking at.
-  const statedIsBookable = eftSettlements.length === 0 && statedCommissionInWindow.total > 0;
+  // [COM-DUBBEL] …AND the revenue those payouts carry must have entered the books at GROSS.
+  //
+  // The window test above asks whether Leg B could have booked the same commission. It never asked
+  // the other question: was the payout's own revenue counted gross, or was the bank credit itself
+  // taken as the revenue? On a takings day the till DID cover, the till booked the gross and the
+  // commission is a real, separate cost — correct. On a day it did NOT cover, there is no till row,
+  // so the bank credit becomes the revenue — and that credit is ALREADY net of the commission.
+  // Adding the commission to kosten then takes it off a second time.
+  //
+  // Measured on one payout: gross 1000, commission 20, bank credits 980.
+  //
+  //     day covered      omzet 826,45 ex-btw   kosten 20   winst 806,45   correct
+  //     day NOT covered  omzet 980,00          kosten 20   winst 960,00   truth 980
+  //
+  // Held back for the WHOLE window when any stating payout fails it, which is the same choice the
+  // paragraph above makes and for the same reason: the figure still travels out, and
+  // statedCommissionBooked tells the surface which of the two it is looking at. Guessing per line
+  // would put the ambiguous half in somebody's books.
+  const statingPayoutsAllCovered = bankBufRows
+    .filter((b) => b.date != null && b.date >= start && b.date <= end)
+    .filter((b) => parsePosCommission({ description: b.description, amount: b.amount }) !== null)
+    .every((b) => reconcilesToCoveredDay(toResultBankTx(b, excludedBankIds), coveredDates));
+
+  const statedIsBookable =
+    eftSettlements.length === 0 && statedCommissionInWindow.total > 0 && statingPayoutsAllCovered;
   const rawCommission = round2(
     triangle.totalCommission + (statedIsBookable ? statedCommissionInWindow.total : 0),
   );
