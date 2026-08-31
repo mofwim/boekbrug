@@ -357,3 +357,40 @@ test("[XAF-NIET-STIL] een reden met streepjes kan het commentaar niet afsluiten"
   // …en de em-dash die de echte redenen wél gebruiken is geen koppelteken en blijft dus staan.
   assert.equal(xmlCommentSafe("geen factuurdatum — niet te plaatsen"), "geen factuurdatum — niet te plaatsen");
 });
+
+// ─── [XAF-REGIME] De notities staan waar ze gelezen worden ───────────────────────────────────────
+
+test("[XAF-REGIME] the regime notes stand ABOVE the auditfile, not behind its transactions", () => {
+  // Ze zeggen onder welk BTW-stelsel de datums in dit bestand gelezen moeten worden en wat er niet
+  // in gesplitst is — uitspraken die bepalen hoe alles eronder telt. Achter </company> stonden ze
+  // technisch in het bestand en praktisch achter duizenden regels journaalposten.
+  const r = buildXafFile({
+    ...baseInput(),
+    regimeNotes: ["Deze onderneming voert het KASSTELSEL. De journaalposten staan op factuurdatum."],
+  });
+  const noteAt = r.xml.indexOf("KASSTELSEL");
+  const openAt = r.xml.indexOf("<auditfile");
+  assert.ok(noteAt >= 0, "the regime note is not in the file at all");
+  assert.ok(noteAt < openAt, "the regime note sits after the opening tag — a reader meets it last");
+});
+
+test("[XAF-REGIME] a note with a double hyphen cannot break the file", () => {
+  // Een XML-commentaar eindigt bij `--`. esc() ontsnapt & < >, en juist niet dit — en in een
+  // commentaar is esc() bovendien verkeerd om: &amp; komt er letterlijk als "&amp;" te staan.
+  const r = buildXafFile({
+    ...baseInput(),
+    regimeNotes: ["Stelsel -- let op -- gewijzigd per 1 juli & daarna"],
+  });
+  // Het commentaar ZELF begint met `<!--` en eindigt met `-->`, dus de test moet naar de INHOUD
+  // kijken en niet naar de afbakening. (Eerste versie deed dat niet en viel over zijn eigen
+  // openingsteken — een test die zijn eigen delimiters aanziet voor de fout die hij zoekt.)
+  const body = r.xml.slice(r.xml.indexOf("<!--") + 4, r.xml.indexOf("-->"));
+  assert.doesNotMatch(body, /--/, "a raw double hyphen inside the comment makes the XML invalid");
+  assert.doesNotMatch(body, /&amp;/, "escaping & inside a comment shows the reader '&amp;' instead of '&'");
+  assert.match(body, /& daarna/, "the ampersand must survive as itself");
+});
+
+test("[XAF-REGIME] no notes means no empty comment block", () => {
+  const r = buildXafFile({ ...baseInput(), regimeNotes: [] });
+  assert.doesNotMatch(r.xml.slice(0, r.xml.indexOf("<auditfile")), /<!--/);
+});

@@ -26,6 +26,7 @@ import { toResultBankTx } from "@/lib/financial-result";
 import { liveCashEntries } from "@/lib/cash-live";
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 import { turnoverNetOmzet } from "@/lib/turnover";
+import { getVatScheme } from "@/lib/vat-scheme";
 import { amsterdamToday } from "@/lib/format-nl";
 import type { XafInput } from "@/lib/xaf-export";
 
@@ -82,7 +83,7 @@ export async function buildXafInputForOwner(args: {
     .filter(isVerifiedForPackage);
   const outgoing = attributed.filter((r) => r.direction === "outgoing");
   const incoming = attributed.filter((r) => r.direction === "incoming");
-  const { rateShares } = await fetchRateShares(pipeline, outgoing.map((r) => ({ id: r.id, total_ex_btw: r.total_ex_btw, btw_amount: r.btw_amount })));
+  const { rateShares, degraded: splitDegraded } = await fetchRateShares(pipeline, outgoing.map((r) => ({ id: r.id, total_ex_btw: r.total_ex_btw, btw_amount: r.btw_amount })));
 
   // ── Bank lines + the direction of whatever invoice each one settles ──
   const bankRows = await fetchAllRows<{
@@ -157,6 +158,51 @@ export async function buildXafInputForOwner(args: {
     regimeNotes.push("Deze onderneming valt onder de KOR: er bestaat geen recht op aftrek van voorbelasting. Beoordeel de 1400-regels in dit bestand voordat je ze overneemt.");
   }
   regimeNotes.push("Omzet op rekening 8020 is 0%/verlegd/vrijgesteld ZONDER onderscheid — de BTW-aangifte in BoekBrug draagt de rubriekverdeling.");
+
+  // [XAF-STELSEL] Welk BTW-stelsel deze ondernemer voert, IN het bestand.
+  //
+  // Dit bestand boekt op factuurdatum. Dat is voor de journaalposten juist onder beide stelsels —
+  // maar onder het kasstelsel is de BTW pas verschuldigd in het kwartaal waarin er BETAALD is, en
+  // die verschuiving staat nergens in dit bestand. Een boekhouder die de aangifte uit deze
+  // journaalposten afleidt komt dan voor een kasstelsel-klant in het verkeerde kwartaal uit.
+  //
+  // De regimeNotes bestaan precies hiervoor: ze noemen al de KOR en de ongesplitste 0%-omzet. Het
+  // stelsel ontbrak, en dat is de enige van de drie die de TIMING van elk bedrag raakt.
+  //
+  // Eigen query, met opzet. vat_scheme komt uit een losse migratie (vat_scheme.sql); één kolom
+  // erbij in de profielselect hierboven laat op een achterlopende database die HELE select vallen,
+  // en dan heeft het auditfile geen bedrijfsnaam meer. Zelfde patroon als kas-payment-events-fetch.
+  const { data: schemeRow } = await pipeline
+    .from("profiles")
+    .select("vat_scheme, vat_scheme_since")
+    .eq("id", ownerId)
+    .maybeSingle();
+  const schemeProfile = schemeRow as { vat_scheme?: string | null; vat_scheme_since?: string | null } | null;
+  if (getVatScheme(schemeProfile?.vat_scheme) === "kas") {
+    const since = schemeProfile?.vat_scheme_since;
+    regimeNotes.push(
+      "Deze onderneming voert het KASSTELSEL" +
+        (since ? ` (sinds ${since})` : "") +
+        ". De journaalposten hieronder staan op FACTUURDATUM; de BTW is echter verschuldigd in het " +
+        "kwartaal waarin is betaald. Leid de aangifte niet rechtstreeks uit de datums in dit " +
+        "bestand af — de BTW-aangifte in BoekBrug rekent met de betaaldatums.",
+    );
+  } else {
+    // Ook het gewone geval wordt gezegd. "Er staat niets over het stelsel" laat de lezer raden, en
+    // een auditfile hoort geen enkele vraag open te laten die het zelf kan beantwoorden.
+    regimeNotes.push("Deze onderneming voert het FACTUURSTELSEL: de BTW volgt de factuurdatums in dit bestand.");
+  }
+
+  // [SPLIT-EERLIJK] Kon de tariefverdeling niet gelezen worden, dan draagt elke verkoopregel het
+  // gemengde tarief uit de factuurkop. De totalen kloppen, de verdeling over de tarieven niet — en
+  // dat is precies het soort verschil dat een lezer nooit uit het bestand zelf kan afleiden.
+  if (splitDegraded) {
+    regimeNotes.push(
+      "LET OP: de factuurregels konden niet worden gelezen. Verkoopfacturen met meerdere " +
+        "BTW-tarieven staan hier daarom met één tarief uit de factuurkop. De totalen kloppen; de " +
+        "verdeling over de tarieven is in dit bestand niet betrouwbaar.",
+    );
+  }
 
   return {
     year,

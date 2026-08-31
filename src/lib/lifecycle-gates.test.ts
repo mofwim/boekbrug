@@ -20947,3 +20947,66 @@ test("[KASSA-VERS] the fingerprint identifies WHICH sales, not how many", () => 
   assert.match(fn, /\.sort\(\)/, "without a sort the fingerprint depends on read order, so an unchanged day can read as changed");
   assert.doesNotMatch(fn, /\.length/, "a count-based fingerprint cannot see a sale swapped for another");
 });
+
+// ─── [XAF-STELSEL · SPLIT-EERLIJK] Wat het auditbestand over zichzelf zegt ────────────
+//
+// Twee dingen die een lezer van het auditfile niet uit het bestand kan afleiden en die de betekenis
+// van élk bedrag erin veranderen:
+//
+//   · Het BTW-STELSEL. Dit bestand boekt op factuurdatum — juist onder beide stelsels. Maar onder
+//     het kasstelsel is de BTW verschuldigd in het kwartaal waarin BETAALD is, en die verschuiving
+//     staat nergens. Een boekhouder die de aangifte uit deze journaalposten afleidt komt voor een
+//     kasstelsel-klant in het verkeerde kwartaal uit. De regimeNotes noemden al de KOR en de
+//     ongesplitste 0%-omzet; het stelsel is de enige van de drie die de TIMING van alles raakt.
+//
+//   · Een MISLUKTE tariefsplitsing. fetchRateShares geeft bij een leesfout lege maps terug, en dat
+//     is exact hetzelfde antwoord als "geen enkele factuur heeft meer dan één tarief". Voor de
+//     aangifte maakt dat weinig uit (5a/5b/5g zijn identiek; de splitsing verplaatst alleen omzet
+//     tussen rubrieken). Voor het auditfile wel: dat beschrijft de boekhouding aan een boekhouder
+//     en aan de Belastingdienst, en een verkoopregel die stilzwijgend één mengtarief draagt waar de
+//     factuur er twee heeft is een onware uitspraak over de administratie.
+
+test("[XAF-STELSEL] the auditfile declares which VAT scheme its dates must be read under", () => {
+  const src = code("src/lib/xaf-fetch.ts");
+
+  assert.match(
+    src, /getVatScheme\([\s\S]{0,80}?=== "kas"/,
+    "the auditfile no longer says whether the owner is on the kasstelsel. Its entries are dated by " +
+      "invoice date; under cash basis the BTW belongs to the quarter of PAYMENT, and nothing in " +
+      "the file would tell the reader that.",
+  );
+  assert.match(src, /KASSTELSEL/, "the kasstelsel note itself is gone");
+  // Ook het gewone geval hoort gezegd: "er staat niets over het stelsel" laat de lezer raden.
+  assert.match(src, /FACTUURSTELSEL/, "the factuurstelsel case says nothing, so silence has two meanings again");
+
+  // Eigen query, met opzet: vat_scheme komt uit een losse migratie, en die kolom in de
+  // profielselect hierboven zetten laat op een achterlopende database de HELE select vallen —
+  // dan heeft het auditfile geen bedrijfsnaam meer.
+  assert.doesNotMatch(
+    src, /select\("company_name[^"]*vat_scheme/,
+    "vat_scheme was folded into the main profile select. On a database where vat_scheme.sql has " +
+      "not run, naming a missing column fails that whole select — and the auditfile loses its " +
+      "company details over a note",
+  );
+});
+
+test("[SPLIT-EERLIJK] a rate split that could not be read is reported, and said in the file", () => {
+  const fetchSrc = code("src/lib/btw-rate-split-fetch.ts");
+  const xafSrc = code("src/lib/xaf-fetch.ts");
+
+  assert.match(
+    fetchSrc, /degraded/,
+    "fetchRateShares answers a failed read with the same empty maps as a clean quarter again, so " +
+      "no caller can tell 'nothing was mixed' from 'we could not look'",
+  );
+  assert.match(
+    fetchSrc, /reportHandledFailure\([\s\S]{0,300}?RUBRIEK-SPLIT/,
+    "the degradation is back to a console.error nobody reads. It is silent by construction — the " +
+      "aangifte adds up to exactly the same totals — so the log line is the only moment it exists",
+  );
+  assert.match(
+    xafSrc, /splitDegraded/,
+    "the auditfile no longer carries the fact that its rate split degraded. Its totals are right " +
+      "and its rate distribution is not, and a reader cannot derive that from the file itself.",
+  );
+});
