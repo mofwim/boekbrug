@@ -15,6 +15,9 @@ import { assessSupplierCadence, cadenceReason, type CadenceVerdict } from "@/lib
 import { supplierNameKey } from "@/lib/supplier-registry";
 // [TZ] The owner's day, not the server's — see amsterdamToday().
 import { amsterdamToday } from "@/lib/format-nl";
+// [RITME-AFKAP] Een afgekapte lezing is hier hetzelfde als "er ontbreekt niets".
+import { fetchAllRows } from "@/lib/supabase-paginate";
+import { reportHandledFailure } from "@/lib/report-handled";
 
 export const dynamic = "force-dynamic";
 
@@ -34,24 +37,46 @@ export async function GET() {
   // Het ritme wordt afgeleid uit facturen die ECHT geteld hebben. Genegeerde facturen doen niet
   // mee: die heeft de eigenaar juist weggezet, en ze zouden een ritme suggereren dat hij zelf
   // heeft afgewezen. Facturen zonder datum kunnen per definitie geen ritme dragen.
-  const { data, error } = await supabase
-    .from("invoices")
-    .select("supplier_id, client_name, invoice_date")
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .in("status", ["processing", "received", "paid"])
-    .not("invoice_date", "is", null)
-    .order("invoice_date", { ascending: false })
-    .limit(2000);
-
-  if (error) return NextResponse.json({ missing: [] });
+  // [RITME-AFKAP] `.limit(2000)` was a promise PostgREST does not keep: a single response is capped
+  // at ~1000 rows, so the limit read as "everything" and returned half. On an endpoint that looks
+  // at an ABSENCE that is the worst possible truncation — it goes quiet on exactly the suppliers
+  // with the longest history, which are the monthly rent, the accountant's fee and the abonnement:
+  // the invoices whose rhythm is most regular and whose absence is most meaningful.
+  //
+  // The header of this file already names the failure it becomes: "een lege wachtrij ziet er
+  // hetzelfde uit als een afgehandelde wachtrij". Paged, so the read is complete or it throws.
+  type InvRow = { supplier_id: string | null; client_name: string | null; invoice_date: string | null };
+  let rows: InvRow[];
+  try {
+    rows = await fetchAllRows<InvRow>((from, to) => supabase
+      .from("invoices")
+      .select("supplier_id, client_name, invoice_date")
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .in("status", ["processing", "received", "paid"])
+      .not("invoice_date", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to));
+  } catch (e) {
+    // [RITME-STIL] A failed read still answers with an empty list, because the caller renders a
+    // list and there is nothing honest to put in it. But it must not be SILENT: "we could not look"
+    // and "nothing is missing" render identically on screen, and this endpoint exists precisely
+    // because those two are indistinguishable to the eye.
+    reportHandledFailure({
+      tag: "RITME",
+      message: "the missing-invoice check could not read the invoices — the owner was shown 'niets ontbreekt' without anything having been checked",
+      severity: "gate-unavailable",
+      context: { userId: user.id, error: e instanceof Error ? e.message : String(e) },
+    });
+    return NextResponse.json({ missing: [] });
+  }
 
   // Groeperen op de sterkste identiteit die de rij heeft: supplier_id wanneer de registratie hem
   // heeft opgelost, anders de genormaliseerde naamsleutel — zodat "KPN B.V." en "KPN" één ritme
   // vormen in plaats van twee halve.
   type Row = { supplier_id: string | null; client_name: string | null; invoice_date: string | null };
   const groups = new Map<string, { name: string; dates: string[] }>();
-  for (const row of (data ?? []) as Row[]) {
+  for (const row of rows as Row[]) {
     const naam = (row.client_name ?? "").trim();
     const key = row.supplier_id ?? (naam ? `naam:${supplierNameKey(naam)}` : null);
     if (!key || !row.invoice_date) continue;
