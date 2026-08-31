@@ -8831,17 +8831,94 @@ test("[BANK-RESTANTEN] the three reported bank residuals stay closed", () => {
   assert.match(matching, /partialOk =\s*\n?\s*!amtOk && !nearOk &&\s*\n?\s*\(ibanOk \|\| supplierIbanOk \|\| rememberedOk\)/, "the instalment tier requires account identity");
   assert.match(matching, /nearOk \|\| partialOk \? 0\.55 : 0\.35/, "…and stays below the booking bar");
 
-  // A confident memory hit consults the paid invoices before writing a P&L category.
-  const cat = code("src/lib/bank-auto-categorize.ts");
-  // The pattern pins the CONDITION OPENING: a negative control wrapped the same text in
-  // `if (false && …)` and a body-match stayed green — the [STRIPPER-BLIND] shape again.
-  assert.match(cat, /if \(\(s\.category === "kosten" \|\| s\.category === "omzet"\) && paidExplains\(t\.amount \?\? 0, t\.date\)\) continue;/, "the double-booking guard runs on P&L categories");
-  assert.match(cat, /export function paidInvoiceExplainsLine/, "…as a pure, tested rule");
+  // A confident memory hit consults the paid invoices before writing a P&L category — and the
+  // rule is one rule. [DUBBEL-GEDEKT] below walks every writer instead of naming them.
+  assert.match(code("src/lib/bank-double-booking.ts"), /export function paidInvoiceExplainsLine/, "…as a pure, tested rule");
 
   // The content dedup only calls two accounts different when both are PROVABLE identities.
   const imp = code("src/lib/bank-import.ts");
   assert.match(imp, /\^\[A-Z\]\{2\}\\d\{2\}\[A-Z0-9\]\{11,30\}\$/, "only a real IBAN suffix counts as an account identity");
   assert.match(imp, /incomingAccount && rowAccount && rowAccount !== incomingAccount\) continue/, "…and a different account never explains the line");
+});
+
+// ─── [DUBBEL-GEDEKT] Every writer of an inferred bank category asks the same question ────────────
+//
+// Three code paths write a category the owner did not answer for personally, all three running the
+// SAME classifier over the SAME rows. Only the nightly pass consulted the paid invoices first — and
+// the one that did NOT was the button on the categorisatie screen, the fast path the owner presses.
+//
+// Measured in production the day this gate was written: 53 uncategorised lines, together
+// € 31.188,87, sat against a paid invoice that already explained them; 45 of those (€ 22.821,96)
+// would have been coded 'kosten' by one press. The same cost twice in the resultaat and in the
+// closing package, flagged by nothing — readiness counts EXCLUDED categories, and a doubled
+// 'kosten' is not excluded, it is deductible.
+//
+// So this gate does not name the three writers. A list of writers is exactly what went missing the
+// first time: the second and third were written later by someone reading the first. It DERIVES the
+// set from the source — every update that writes `category_confirmed: false` onto bank_transactions
+// is, by the app's own convention, a machine's inference rather than the owner's answer (the
+// owner's own confirmation writes `true`) — and requires each one to consult the guard inside the
+// loop that reaches it. A fourth writer added tomorrow fails this test on the day it is written.
+
+test("[DUBBEL-GEDEKT] no machine writes a bank category without asking what is already booked", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // An inferred write: sets a category AND stamps category_confirmed:false. The owner's own answer
+  // (category_confirmed:true) is deliberately NOT in this set — they are stating a fact about that
+  // one line, and the app must not overrule it.
+  const INFERRED_WRITE = /\.update\(\{[^}]*\bcategory\b[^}]*category_confirmed: false[^}]*\}\)/g;
+  const sites: { file: string; at: number }[] = [];
+  for (const file of walk("src")) {
+    const src = code(file);
+    if (!src.includes('from("bank_transactions")')) continue;
+    for (const m of src.matchAll(INFERRED_WRITE)) sites.push({ file, at: m.index ?? 0 });
+  }
+
+  // The scan must not go vacuously green. These two files hold the writers the money was measured
+  // on; a regex that stops finding them is broken, not satisfied.
+  assert.ok(sites.length >= 3, `found ${sites.length} inferred category writers — the scan is broken`);
+  for (const must of ["src/lib/bank-auto-categorize.ts", "src/app/api/bank/categorize/route.ts"]) {
+    assert.ok(sites.some((w) => w.file === must), `${must} writes inferred categories and must be in the scan`);
+  }
+
+  for (const { file, at } of sites) {
+    const src = code(file);
+    // The guard has to be asked about THIS line, so it has to be asked inside the loop that
+    // produced it. Slice back to the loop's own header: a hold() call before that opening is a
+    // different line's answer, and one after the write is too late.
+    const loopAt = src.lastIndexOf("for (", at);
+    assert.ok(loopAt > 0, `${file}: an inferred category write outside any loop — a shape this gate has not seen`);
+    const body = src.slice(loopAt, at);
+    assert.match(
+      body, /\.hold\(/,
+      `${file}: writes a category the owner never confirmed without asking the double-booking guard — ` +
+      `the cost may already be in the books through a paid invoice, and this books it a second time`,
+    );
+  }
+
+  // …and it is one rule, not three copies of one. Only the shared module may declare it.
+  const declaring = walk("src").filter((f) => /function paidInvoiceExplainsLine/.test(code(f)));
+  assert.deepEqual(declaring, ["src/lib/bank-double-booking.ts"], "the rule is declared exactly once");
+
+  // The window needs a date. Without one every magnitude match reads as undatable, which errs
+  // toward holding — safe, but it would quietly freeze the sweep the owner presses.
+  const route = code("src/app/api/bank/categorize/route.ts");
+  assert.match(route, /\.select\("id, amount, counterpart_name, description, date"\)/, "the sweep reads the line's date");
+  assert.match(route, /\.select\("id, counterpart_name, category, amount, description, date"\)/, "…and so does the spread");
+
+  // mollie_payment_links carries RLS with zero policies, so the RLS client reads an empty set and
+  // the payout hold would never fire while looking exactly like "this owner has no Mollie".
+  assert.match(route, /molliePipeline = createPipelineClient\(\)/, "the Mollie probe gets a client that can actually see the table");
+  const guardSrc = code("src/lib/bank-double-booking.ts");
+  assert.match(guardSrc, /molliePayoutKnown/, "…and a probe that could not run says so rather than reporting 'no Mollie'");
 });
 
 test("[INTAKE-CLAIM] the semantic-duplicate race has its database backstop", () => {
@@ -17224,9 +17301,12 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
 
   // [MOLLIE-C9] The payout hold is bounded in time and scoped to Mollie — one iDEAL payment in
   // August must not un-code every CCV settlement forever.
-  const autoCat = code("src/lib/bank-auto-categorize.ts");
-  assert.match(autoCat, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
-  assert.match(autoCat, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
+  // [DUBBEL-GEDEKT] The hold moved to the shared module the day the button got it too — the rule
+  // is one rule now, so the gate reads it where it lives.
+  const payoutHold = code("src/lib/bank-double-booking.ts");
+  assert.match(payoutHold, /\.gte\("paid_at", cutoff\)/, "the hold expires (45 days), it is not a life sentence");
+  assert.match(payoutHold, /MOLLIE_RECENCY_MS = 45 \* 24 \* 60 \* 60 \* 1000/, "…and that window is a named constant, not a number in a query");
+  assert.match(payoutHold, /MOLLIE_RE\.test\(/, "…and holds only Mollie-named credits, not every PSP");
 
   // The pure refusal directions: a wrong amount REFUSES (never clamps, never marks), and a
   // €0/negative ask never becomes a link.
@@ -17267,9 +17347,15 @@ test("[MOLLIE] the doorbell never books: every mark-paid stands on our own authe
   assert.match(pay, /fetch\(`\/api\/pay\/\$\{token\}\/ideal`, \{ method: 'POST' \}\)/, "…and creates lazily on click");
   const settings = code("src/app/dashboard/settings/page.tsx");
   assert.match(settings, /<MollieCard \/>/, "the owner can actually connect a key");
-  const auto = code("src/lib/bank-auto-categorize.ts");
-  assert.match(auto, /if \(molliePayoutHold\(t\)\) continue;/,
+  // [MOLLIE-UITBETALING] A fee-reduced payout is never pre-coded into a second omzet. The branch
+  // lives in the shared guard; the pattern pins the CONDITION OPENING, because a negative control
+  // that wrapped the same body in `if (false && …)` once stayed green on a body match.
+  assert.match(payoutHold, /if \(hasRecentMolliePayout && isMollieCredit\(line\)\) return "mollie-payout";/,
     "[MOLLIE-UITBETALING] a fee-reduced payout is never pre-coded into a second omzet");
+  // …and the nightly pass still asks. The other two writers are covered by [DUBBEL-GEDEKT], which
+  // derives them from the source rather than naming them here.
+  const auto = code("src/lib/bank-auto-categorize.ts");
+  assert.match(auto, /if \(guard\.hold\(s\.category, t\)\) continue;/, "…on every confident suggestion it makes");
 });
 
 test("[CIRKEL] the incoming-bank circle closes: every cross-surface claim carries its road", () => {
