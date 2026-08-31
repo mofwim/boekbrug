@@ -333,3 +333,25 @@ test("[UREN] the validator refuses exactly what the database refuses", () => {
   const r = normalizeTimeEntryInput({ worked_on: "2026-08-03", description: "W", hours: 1.005 });
   assert.equal(r.ok === true && r.entry.hours, 1.01);
 });
+
+test("[TARIEF-STRIKT] an hours invoice never falls to 0% because the rate was missing", () => {
+  // DEFAULT_HOUR_BTW_RATE's own comment forbids exactly this outcome: "Never 0 — that reads as
+  // vrijgesteld on the invoice and silently takes real turnover out of the aangifte." But the
+  // route called linesFromEntries(gevonden, Number(body.uren_btw_rate)), and Number(null) is 0 —
+  // a legal rate — so a request carrying `uren_btw_rate: null` billed the WHOLE invoice at 0%
+  // while the parameter's type said the rate had already been validated.
+  const entries = [{
+    id: "1", client_id: "c1", worked_on: "2026-03-01",
+    description: "Advieswerk", hours: 10, hourly_rate: 100, invoice_id: null,
+  }];
+
+  for (const missing of [null, "", " ", [], false, undefined]) {
+    const built = linesFromEntries(entries as never, missing as never);
+    assert.equal(built.lines[0]?.btw_rate, 21,
+      `${JSON.stringify(missing) ?? "undefined"} is not a rate — it must fall back to the app default, never to 0%`);
+  }
+  // A rate the owner really chose is honoured, 0% included — that is a real choice.
+  assert.equal(linesFromEntries(entries as never, 0 as never).lines[0]?.btw_rate, 0);
+  assert.equal(linesFromEntries(entries as never, 9 as never).lines[0]?.btw_rate, 9);
+  assert.equal(linesFromEntries(entries as never, "9" as never).lines[0]?.btw_rate, 9);
+});
