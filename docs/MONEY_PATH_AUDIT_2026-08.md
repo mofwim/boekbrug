@@ -614,3 +614,24 @@ by the app's own convention, a machine's inference rather than the owner's answe
 
 Verified by negative control, including the one that matters: a fourth writer added in a brand-new
 file the gate had never heard of fails it on the day it is written.
+
+### The half that only appeared once the first half worked
+
+Blocking the machines opened a quieter door. A held line lands on the categorisatie screen looking
+exactly like a line nobody could classify — same card, a `kosten` chip already selected, a confirm
+button under it. One tap books the cost a second time, with the app's own suggestion saying it was
+right, and the owner has no way of knowing.
+
+So the screen was given what the server knows: the hold arrives as `already_booked`, the line is
+excluded from the "N zekere invullen" hint (the sweep will not write it; promising it there is a
+number that cannot be delivered), and it reaches the owner with **nothing chosen**, under a sentence
+naming what already carries the amount. They may still pick `kosten` — two identical costs a
+fortnight apart are possible — but they have to mean it.
+
+The friction this adds is measurably nil: of the 53 held lines, 45 were the ones the button would
+have coded and the other 8 were never going to be auto-coded at all. Nothing that used to be filled
+in silently and correctly stopped being filled in.
+
+The copy lives in `bank-already-booked-notice.ts` rather than in the component, and the reason→copy
+map is a `Record` over the hold union rather than a switch with a default: a third hold reason stops
+compiling until it has words, where a default branch would have shipped it wearing the wrong ones.

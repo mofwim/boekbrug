@@ -8919,6 +8919,29 @@ test("[DUBBEL-GEDEKT] no machine writes a bank category without asking what is a
   assert.match(route, /molliePipeline = createPipelineClient\(\)/, "the Mollie probe gets a client that can actually see the table");
   const guardSrc = code("src/lib/bank-double-booking.ts");
   assert.match(guardSrc, /molliePayoutKnown/, "…and a probe that could not run says so rather than reporting 'no Mollie'");
+
+  // ── And the screen does not propose by hand what the machines refuse to write ──────────────
+  //
+  // Closing the automatic double booking opens a quieter one: the held line lands on the
+  // categorisatie screen looking exactly like a line nobody could classify, with a 'kosten' chip
+  // already selected and a confirm button under it. One tap books the cost a second time, with the
+  // app's own suggestion saying it was right.
+  assert.match(route, /const alreadyBooked = guard\.hold\(suggestion\.category, t\);/, "the review list knows which lines are held");
+  assert.match(route, /if \(suggestion\.confident && !alreadyBooked\) confidentAvailable\+\+;/,
+    "…and the 'N zekere invullen' count never promises lines the sweep will not write");
+  assert.match(route, /already_booked: alreadyBooked,/, "…and the screen is told, not left to guess");
+
+  const screen = code("src/app/dashboard/bank/categoriseren/CategoriseClient.tsx");
+  assert.match(screen, /for \(const it of list\) if \(!it\.already_booked\) initial\[it\.id\] = it\.suggested/,
+    "a held line starts with NOTHING chosen — a pre-selected chip is the same double booking, one tap away");
+  assert.match(screen, /disabled=\{busy === it\.id \|\| !choice\[it\.id\]\}/,
+    "…and the confirm button is inert while nothing is chosen, instead of a tap that does nothing");
+  // The component holds no language of its own (AGENTS.md): the words and their direction come
+  // from the pure module on one object, so they can never render out of step.
+  assert.match(screen, /alreadyBookedNotice\(it\.already_booked, locale\)/, "the sentence comes from the catalogue module");
+  assert.doesNotMatch(screen, /t\('cat\.alGeboekt/, "…and the screen does not pick the words itself");
+  assert.match(code("src/lib/bank-already-booked-notice.ts"), /Record<DoubleBookingHold, \{ title: MessageKey; body: MessageKey \}>/,
+    "a third hold reason stops compiling until it has words — a default branch would give it the wrong ones");
 });
 
 test("[INTAKE-CLAIM] the semantic-duplicate race has its database backstop", () => {
