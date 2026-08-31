@@ -14,6 +14,8 @@ import { round2 } from '@/lib/invoice-totals'
 // [MIN-REGEL] When a set of lines stops describing a factuur — the same module the builder and the
 // PUT route ask, so this screen cannot form its own opinion. See negative-line.ts.
 import { staysAFactuur } from '@/lib/negative-line'
+// [KOMMA-INVOER] The one comma-safe money field, shared with the builder and the credit screen.
+import DecimalInput from '@/components/ui/DecimalInput'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
@@ -756,24 +758,30 @@ export default function InvoiceEditPage() {
                 />
               </div>
               <div className="col-span-2">
-                <input
-                  /* [MIN-REGEL] No min, and step="any". A credit line for a return is a NEGATIVE
-                     aantal — a wholesaler settles it on the next invoice (ATAPACK 26304787:
-                     −3 x EUR 23,95) — and this field refused it while the builder next door
-                     allowed it, so an invoice could be made there and not edited here. min="1"
-                     also refused half an hour of work, and the whole-unit spinner made 0,5 invalid
-                     to the browser. What may be typed is decided in negative-line.ts, not by the
-                     widget. */
-                  type="number" value={line.quantity} step="any"
-                  onChange={e => updateLine(index, 'quantity', parseFloat(e.target.value) || 0)}
+                <DecimalInput
+                  /* [MIN-REGEL] No min. A credit line for a return is a NEGATIVE aantal — a
+                     wholesaler settles it on the next invoice (ATAPACK 26304787: −3 x EUR 23,95) —
+                     and this field refused it while the builder next door allowed it, so an
+                     invoice could be made there and not edited here. What may be typed is decided
+                     in negative-line.ts, not by the widget.
+                     [KOMMA-INVOER] And the widget itself was <input type="number">, which in
+                     Chromium DROPS the comma rather than refusing it: 0,5 arrived as 5. Half an
+                     hour of work was billed as five. */
+                  value={line.quantity}
+                  onChange={v => updateLine(index, 'quantity', v)}
+                  allowNegative
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                 />
               </div>
               <div className="col-span-2">
                 {/* [PRIJS-MODUS] Toont en accepteert de prijs in de gekozen stand; de regel
                     bewaart altijd ex-btw. */}
-                <input
-                  /* [PRIJSVELD-CENT] Aantal en regeltotaal mee, zodat het veld net zoveel
+                <DecimalInput
+                  /* [KOMMA-INVOER] Was <input type="number">, which in Chromium reads a typed
+                     23,95 as "2395" — the unit price on an invoice that goes to a customer, a
+                     hundred times too high, with nothing on screen to show it. DecimalInput is a
+                     text field with a raw draft; see its header for the measurements.
+                     [PRIJSVELD-CENT] Aantal en regeltotaal mee, zodat het veld net zoveel
                      decimalen toont als de regel nodig heeft. Op centen afgerond toonde het een
                      prijs die niet met zijn eigen regeltotaal vermenigvuldigt — en verving die
                      afgeronde prijs de opgeslagen breuk zodra er iets in het veld terechtkwam.
@@ -783,10 +791,11 @@ export default function InvoiceEditPage() {
                      precisie zoeken waarop aantal × prijs op het verlaagde bedrag uitkomt en een
                      prijs tonen die nooit is afgesproken. Dus het brutobedrag, of — zonder
                      korting — precies het regeltotaal dat hier altijd al werd meegegeven. */
-                  type="number" value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity, line.discount_type ? lineGrossEx(line) : (line as { line_total?: number | null }).line_total)} min="0" step="any"
-                  onChange={e => updateLinePrice(index, parseFloat(e.target.value) || 0)}
+                  value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity, line.discount_type ? lineGrossEx(line) : (line as { line_total?: number | null }).line_total)}
+                  onChange={v => updateLinePrice(index, v)}
+                  min={0}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-                  placeholder="0.00"
+                  placeholder="0,00"
                 />
               </div>
               <div className="col-span-2">
@@ -831,7 +840,11 @@ export default function InvoiceEditPage() {
                     ))}
                   </div>
                   <input
-                    type="number" min="0" step="0.01" inputMode="decimal"
+                    /* [KOMMA-INVOER] Not type="number": Chromium DROPS the comma, so a 12,5%
+                       discount arrived as "125" (over MAX_PERCENT, hence no discount at all) and a
+                       EUR 2,50 one as 250, capped at the whole invoice. No draft needed — the value
+                       here IS the raw string, and parseDiscount already reads a comma. */
+                    type="text" inputMode="decimal"
                     value={line.discount_value ?? ''}
                     onChange={e => setLineDiscount(index, { discount_value: e.target.value })}
                     aria-label={line.discount_type === 'percent' ? t('nieuw.korting.percentage') : t('nieuw.korting.bedrag')}
@@ -896,9 +909,8 @@ export default function InvoiceEditPage() {
               ))}
             </div>
             <input
-              type="number"
-              min={0}
-              step="0.01"
+              /* [KOMMA-INVOER] See the per-line discount above. */
+              type="text"
               inputMode="decimal"
               placeholder={discountType === 'percent' ? t('nieuw.korting.hintPercentage') : t('nieuw.korting.hintBedrag')}
               value={discountValue}
