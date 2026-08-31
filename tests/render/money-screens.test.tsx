@@ -3057,3 +3057,33 @@ test("[RENDER-GATE] het werkbord met een onleesbare klantenlijst zegt niet 'nog 
   );
   assert.match(gevuld, /Bakkerij Noord/);
 });
+
+// ─── [BANK-WERK-EERST] Het bankscherm zelf ──────────────────────────────────────────────────────
+//
+// Het grootste scherm van de app (3.500 regels) stond in geen enkele rendertest. Het is er nu bij
+// omdat de machinerie erboven — koppeling, sleepzone, afschriftenlijst — achter één inklapregel is
+// gezet, en dat is precies het soort JSX-verbouwing waar tsc, eslint en next build niets van zien:
+// een scheve fragment-haak of een label dat zijn invoer kwijt is, breekt pas bij het renderen.
+
+test("[BANK-WERK-EERST] the bank screen renders, and its file input is always in the page", async () => {
+  const { default: BankClient } = await import("../../src/app/dashboard/bank/BankClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null, React.createElement(BankClient))),
+  );
+  assert.ok(html.length > 400, "the bank screen rendered almost nothing");
+
+  // Effecten draaien niet onder renderToStaticMarkup, dus dit is de eerste verf: nog geen gegevens,
+  // dus geen werk, dus de machinerie hoort OPEN te staan — dan is de sleepzone het nuttigste ding
+  // op het scherm en precies wat een lege administratie nodig heeft.
+  assert.match(html, /bank-statement-file/, "the file input must be in the page for the header button to reach it");
+  assert.match(html, /type="file"/, "…and it must still be a real file input");
+  // Eén invoer, niet twee: het label wijst er met htmlFor naar in plaats van er een tweede te maken.
+  assert.equal(
+    (html.match(/id="bank-statement-file"/g) ?? []).length, 1,
+    "two file inputs would mean the drop zone and the header button write to different fields",
+  );
+});

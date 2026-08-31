@@ -10948,6 +10948,29 @@ export const MESSAGES = {
     ar: '💡 نصيحة: استخدم شريط البحث للعثور على أي فاتورة في ثوانٍ',
     en: '💡 Tip: use the search bar to find any invoice in seconds',
   },
+  // [BANK-WERK-EERST] De kop waaronder de machinerie van het bankscherm samenvouwt zodra er werk
+  // is: de koppeling, de sleepzone en de lijst afschriften. Eén regel in plaats van drie blokken
+  // boven het enige waarvoor de ondernemer dit scherm opent.
+  'bank.setup.kop': {
+    nl: 'Afschriften en koppeling',
+    ar: 'الكشوف والربط البنكي',
+    en: 'Statements and bank link',
+  },
+  'bank.setup.aantalEen': {
+    nl: '· 1 afschrift',
+    ar: '· كشف واحد',
+    en: '· 1 statement',
+  },
+  'bank.setup.aantal': {
+    nl: '· {count} afschriften',
+    ar: '· {count} كشوف',
+    en: '· {count} statements',
+  },
+  'bank.setup.toevoegen': {
+    nl: 'Afschrift toevoegen',
+    ar: 'إضافة كشف',
+    en: 'Add a statement',
+  },
   'bank.redenGevolg': {
     nl: '{uit} halen dit bedrag ook uit je kosten en btw. Bij {in} blijft het gewoon meetellen.',
     en: '{uit} also take this amount out of your costs and VAT. With {in} it keeps counting as before.',
