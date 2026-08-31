@@ -414,6 +414,7 @@ export const MESSAGES = {
   'start.tegel.facturen': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
   'start.tegel.inkomend': { nl: 'Inkomend', ar: 'الوارد', en: 'Incoming' },
   'start.tegel.inkoop': { nl: 'Inkoopfacturen', ar: 'فواتير المشتريات', en: 'Purchase invoices' },
+  'start.tegel.leveranciers': { nl: 'Leveranciers', ar: 'المورّدون', en: 'Suppliers', tr: 'Tedarikçiler' },
   'start.tegel.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'start.tegel.kas': { nl: 'Kas', ar: 'الصندوق', en: 'Cash drawer' },
   'start.cijfers': { nl: 'Cijfers & aangifte', ar: 'الأرقام والإقرار', en: 'Figures & filing' },

@@ -255,6 +255,41 @@ export function buildAangifte(
       "Ken een tarief toe voor een compleet beeld.",
     );
   }
+  // [RUBRIEK-1E] What is in 1e, and what the app cannot take out of it.
+  //
+  // The form has three boxes for turnover that carries no Dutch BTW, and they are not
+  // interchangeable:
+  //   1e  0%-omzet en verlegde omzet — BINNENLANDS
+  //   3a  leveringen naar landen BUITEN de EU (uitvoer)
+  //   3c  installatie- en afstandsverkopen BINNEN de EU
+  //
+  // This concept can emit 1a, 1b, 1c, 1e and 3b, and no others. Everything taxed at 0% that is not
+  // recognised as intra-EU therefore lands in 1e — including an export to a customer in the UK,
+  // Switzerland or the United States, which belongs in 3a. The TOTAL is right either way (all
+  // three boxes carry EUR 0 of BTW, so 5a and 5g do not move by a cent), and the FILED RETURN is
+  // still wrong: it states domestic 0%/verlegde omzet where there was an export.
+  //
+  // Why this is a note and not a computation: 3a and 3c are decided by where the customer is and
+  // what kind of supply it was, and this app holds no country for a customer at all — there is no
+  // country column on clients or invoices, which is the same absence that makes the e-factuur
+  // refuse to name a buyer's country rather than default it to NL ([LAND-ONBEKEND] in
+  // ubl-export.ts). Splitting 1e without that data would be a guess printed on a tax return.
+  //
+  // So the accountant is told exactly what 1e holds and what to look for, and the number is left
+  // alone. That is the same shape as the [ICP] block above, which only ever MOVES turnover it can
+  // account for and never invents any.
+  const bedrag1e = rows.find((r) => r.code === "1e")?.omzet ?? 0;
+  if (bedrag1e !== 0) {
+    notes.push(
+      `€${bedrag1e.toLocaleString("nl-NL")} staat in rubriek 1e. Daar zet deze app ALLE 0%-omzet in die ` +
+      "niet als levering binnen de EU herkend is. Verkocht je aan een klant BUITEN de EU, dan hoort " +
+      "die omzet in 3a (uitvoer), en installatie- of afstandsverkopen binnen de EU horen in 3c. " +
+      "BoekBrug legt het land van je klant nergens vast en kan dat onderscheid dus niet maken — het " +
+      "bedrag en de te betalen BTW veranderen er niet door, de rubriek wel. Laat je boekhouder dit " +
+      "controleren als je buiten Nederland hebt geleverd.",
+    );
+  }
+
   // [VRIJGESTELD] Exempt turnover, and what it costs on the deduction side. Four separate
   // sentences because they are four separate facts, and an owner who reads only the first one
   // must not be left with a wrong impression of the other three — the same discipline the KOR
