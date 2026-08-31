@@ -1623,6 +1623,22 @@ async function handleUblInvoice(
   // recognisable e-invoice → let the safe document store keep it.
   if (!v.invoiceNumber && v.totalIncBtw == null) return null
 
+  // [EURO-ALLEEN] The same refusal the OTHER door onto these bytes already made.
+  //
+  // A Peppol invoice attached to a PDF goes through parseEInvoice, whose complete() has refused a
+  // stated non-euro currency for as long as it has existed — "silently treating 1 200 SEK as
+  // EUR 1 200 is the kind of error that survives every other check in the building". The identical
+  // invoice uploaded as a standalone .xml comes here instead, and this reader extracted
+  // DocumentCurrencyCode into v.currency and then never looked at it. Measured on one file through
+  // both doors: USD 10.000 refused there, booked as EUR 10.000 here — with its voorbelasting
+  // claimed in rubriek 5b at a euro amount nobody ever paid.
+  //
+  // Returning null is not discarding it: the caller falls through to the document store, so the
+  // file is kept, findable and safe — it is simply not booked as an invoice whose amounts this app
+  // cannot honour. That is exactly what the other door does with the same bytes.
+  const { isEuroDocument } = await import("@/lib/e-invoice")
+  if (!isEuroDocument(v.currency)) return null
+
   const hash = computeContentHash(buffer)
   // Byte-hash dedup (same file re-uploaded) — surface the existing one instead of a second row.
   // [FORCE-INVARIANT] NEVER forceable: the exact same bytes can't be added twice, matching the

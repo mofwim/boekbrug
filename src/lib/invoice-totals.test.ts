@@ -59,5 +59,17 @@ check("6 (a rate that no longer exists) is not", !isValidBtwRate(6));
 check("a string of a valid rate still passes (form input)", isValidBtwRate("21"));
 check("null / undefined / junk are not", !isValidBtwRate(null) && !isValidBtwRate(undefined) && !isValidBtwRate("abc"));
 
+// [TARIEF-STRIKT] The header of isValidBtwRate names three values that must not pass — null,
+// undefined and "" — and the guard named exactly those. That is one short of the problem: Number()
+// turns " ", [] and false into 0 as well, and 0 is a REAL rate (vrijgesteld/verlegd). All three
+// were accepted as a legal 0% tarief by the very function written to prevent that.
+check("a blank string is not a rate", !isValidBtwRate(" ") && !isValidBtwRate("\t"));
+check("an empty array is not a rate", !isValidBtwRate([]));
+check("a boolean is not a rate", !isValidBtwRate(false) && !isValidBtwRate(true));
+check("an object is not a rate", !isValidBtwRate({}) && !isValidBtwRate({ btw_rate: 21 }));
+// …and the forms that ARE a rate still are. A form field hands over the TEXT of a number.
+check("a number is a rate", isValidBtwRate(21) && isValidBtwRate(9) && isValidBtwRate(0));
+check("the text of a number is a rate", isValidBtwRate("21") && isValidBtwRate("9") && isValidBtwRate("0"));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

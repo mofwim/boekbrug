@@ -2021,10 +2021,16 @@ test("[E-FACTUUR] nothing is trusted from a half-read or non-euro e-invoice", ()
     m, /if \(inc === null \|\| ex === null \|\| btw === null\) return null/,
     "three figures or nothing",
   );
+  // [EURO-ALLEEN] Asked of the shared rule, not of the inline comparison this used to pin. The
+  // spelling moved for a reason: there are TWO doors onto the same bytes and only this one asked,
+  // so the standalone-.xml door in /api/intake booked USD 10.000 as EUR 10.000. A gate anchored on
+  // the old spelling would have gone red on the fix and green on the defect — see the sibling
+  // [EURO-ALLEEN] gate, which is where "both doors ask" is now enforced.
   assert.match(
-    m, /if \(v\.currency !== null && v\.currency\.toUpperCase\(\) !== 'EUR'\) return null/,
+    m, /if \(!isEuroDocument\(v\.currency\)\) return null/,
     "1 200 SEK booked as € 1 200 survives every other check in the building",
   );
+  assert.match(m, /export function isEuroDocument\(/, "…and the rule is exported, so both doors can ask it");
   assert.match(
     m, /if \(Math\.abs\(round2\(ex \+ btw\) - round2\(inc\)\) > 0\.01\) return null/,
     "an e-invoice whose own numbers disagree is not a better witness than the model",
@@ -16838,6 +16844,92 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   // …en de kaart draagt die containment nog steeds; valt dit weg, dan is de gate hierboven
   // gratis waar en bewaakt hij niets meer.
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
+});
+
+test("[EURO-ALLEEN] both doors onto an e-invoice refuse a currency this app cannot book", () => {
+  // There are TWO readers of the same bytes, and only one of them asked.
+  //
+  // A Peppol invoice arriving as a PDF attachment goes through parseEInvoice, whose complete() has
+  // refused a stated non-euro currency for as long as it has existed — its own comment says
+  // "silently treating 1 200 SEK as EUR 1 200 is the kind of error that survives every other check
+  // in the building". The IDENTICAL invoice uploaded as a standalone .xml goes to
+  // handleUblInvoice in /api/intake instead, which calls parseUblInvoice — a different parser that
+  // extracts DocumentCurrencyCode into `currency` and handed it to a caller that never read it.
+  //
+  // Measured on one file through both doors: USD 10.000 refused there, booked as EUR 10.000 here,
+  // with its voorbelasting claimed in rubriek 5b at a euro amount nobody ever paid. The amounts are
+  // internally consistent and the file validates against Peppol, so nothing downstream can catch
+  // it — there is no second currency anywhere to compare against.
+  const lib = code("src/lib/e-invoice.ts");
+  assert.match(lib, /export function isEuroDocument\(/, "one rule, exported, so both doors can ask it");
+  assert.match(lib, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the Factur-X door must ask the shared rule, not its own inline comparison");
+
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /if \(!isEuroDocument\(v\.currency\)\) return null/,
+    "the standalone .xml door must ask it too — this is the door that was missing it");
+
+  // Asked BEFORE anything is written. The refusal is worth nothing after the row exists.
+  const gevraagd = intake.indexOf("if (!isEuroDocument(v.currency)) return null");
+  const geschreven = intake.indexOf("const sign = v.isCreditNote ? -1 : 1");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the amount handling must be findable");
+  assert.ok(gevraagd < geschreven, "the currency must be refused before the amounts are signed and stored");
+
+  // And neither door may go back to spelling the comparison itself — that is how they drifted.
+  assert.doesNotMatch(intake, /currency[\s\S]{0,40}!==\s*['"]EUR['"]/,
+    "no second spelling of the euro rule in the intake route");
+});
+
+test("[CREDIT-IS-CREDIT] a creditnota may not come out of the door asking for money", () => {
+  // The route writes the header as `total_inc_btw: -keuze.totalIncBtw` — it MIRRORS the selection,
+  // unconditionally. That is right for every ordinary selection and wrong for one.
+  //
+  // An invoice may carry a [MIN-REGEL] return line: nine boxes delivered, two handed back, settled
+  // on the same document the way every wholesaler in this trade writes it. checkCreditSelection
+  // lets that line be credited — it only requires the requested quantity to share the line's SIGN,
+  // so -2 against a -2 line is a legal request. But crediting a return means the customer is NOT
+  // giving those boxes back, so the selection nets NEGATIVE and the mirror turns it POSITIVE.
+  // Measured on 9 delivered + 2 returned at EUR 100 + 21%: selection inc -242, header inc +242 —
+  // a row with invoice_type 'creditnota' that demands payment.
+  //
+  // Nothing downstream survives it: creditedTotalsFrom() and openAfterCredit() SUBTRACT a
+  // creditnota as money returned, so the debtor position moves the wrong way by twice its value.
+  //
+  // The rule lives in partial-credit.ts and is tested there. THIS gate exists because a unit test
+  // cannot see whether the DOOR asks: a negative control that stubbed the route's call out left
+  // all 33 library tests green.
+  const rules = code("src/lib/partial-credit.ts");
+  assert.match(rules, /export function creditNetFault\(totalIncBtw: number\)/);
+  assert.match(rules, /const cents = Math\.round\(totalIncBtw \* 100\)/,
+    "[CENT] decided in integer cents — a fraction of a cent is not almost a credit");
+
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /const nettoFout = creditNetFault\(keuze\.totalIncBtw\)/,
+    "the route must ask whether the selection actually gives money back");
+  assert.match(route, /if \(nettoFout\) \{[\s\S]{0,200}creditNetReason\(nettoFout\)/,
+    "…and refuse with the sentence that names which of the two it is");
+
+  // Asked BEFORE the row is written, and before a number is consumed from the creditnota series.
+  // The second half is this file's own rule for the route: "een creditnota die hier wordt geweigerd
+  // heeft nog geen nummer verbruikt". A refusal that lands after the mint burns a number out of the
+  // doorlopende creditnota-reeks on a document that is never created — a gap an accountant has to
+  // explain.
+  const gevraagd = route.indexOf("creditNetFault(keuze.totalIncBtw)");
+  const geschreven = route.indexOf("total_inc_btw: -keuze.totalIncBtw");
+  const genummerd = route.indexOf("await generateInvoiceNumber(");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the mirror must be findable");
+  assert.ok(genummerd >= 0, "the number mint must be findable — has it moved?");
+  assert.ok(gevraagd < geschreven,
+    "the check must run before the mirror writes the header, not after");
+  assert.ok(gevraagd < genummerd,
+    "…and before a number is taken out of the creditnota series");
+
+  // ONE definition of "a creditnota whose money sits the wrong way". creditnotaSignConflict is what
+  // every widget already uses to spot such a row once it is STORED; the door asks the same question
+  // one step earlier, of the row the selection would produce. A second spelling here would be a
+  // second answer, and this file has a name for that.
+  assert.match(rules, /creditnotaSignConflict\(\{ invoiceType: "creditnota", totalIncBtw: -totalIncBtw \}\)/,
+    "the door must reuse the conflict definition, not restate it");
 });
 
 test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {
