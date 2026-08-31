@@ -12,6 +12,8 @@
 // preview warnings are shown to the owner, and only the owner's confirmed rows are stored.
 
 import { NextRequest, NextResponse } from "next/server";
+// [DAG-GECLAIMD] The one writer of daily_turnover that knows "one day, one source".
+import { bookTurnoverRows } from "@/lib/turnover-book";
 import { isMissingRelation } from "@/lib/pg-missing";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix, NotASpreadsheetError } from "@/lib/xlsx-adapter";
@@ -174,12 +176,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // One row per day: a re-import of the same date UPDATES (the unique constraint
-    // daily_turnover_unique_day (user_id, turnover_date) drives the upsert).
-    const { error } = await supabase
-      .from("daily_turnover")
-      .upsert(records, { onConflict: "user_id,turnover_date" });
-    if (error) return NextResponse.json({ error: "kon dagomzet niet opslaan" }, { status: 500 });
+    // [DAG-GECLAIMD] Through the SHARED writer, not a private upsert.
+    //
+    // bookTurnoverRows carries the "één dag, één bron" rule, and its own comment named the three
+    // import doors that come past it — /api/turnover/import, the photographed dagstaat via
+    // /api/intake, and /api/documents/reprocess. Two of those three really do. THIS one, the
+    // primary Dagomzet import, never called it: it upserted daily_turnover directly, so the day
+    // was claimed with nothing asked.
+    //
+    // What that costs is in the guard's own words. Once a day carries a Z-report it counts as
+    // `covered`, and the covered-day rule in financial-result.ts then skips that day's cash
+    // bookings as double counts. A cash sale of EUR 300 the owner booked by hand disappears
+    // completely — EUR 247,93 of omzet and EUR 52,07 out of rubriek 1a — with no warning on any
+    // screen, while the Z-report held only the card transactions the terminal saw.
+    //
+    // The arithmetic check above stays where it is: it must answer BEFORE the guard so a sheet
+    // whose figures cannot be true is refused for that reason and not for a claimed day.
+    const booked = await bookTurnoverRows(supabase, user.id, records, "dagomzet_import");
+    if (!booked.ok) {
+      // A refusal with named days is the guard speaking; an empty one is a database failure. The
+      // two must never be reported as each other — see TurnoverBookResult.rejected.
+      if (booked.rejected.length > 0) {
+        return NextResponse.json(
+          { error: "dag_al_geboekt", detail: booked.rejected.join(" ") },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: "kon dagomzet niet opslaan" }, { status: 500 });
+    }
 
     // [DAGOMZET-AUDIT] This is a money mutation into the BTW-authoritative daily_turnover — audit it
     // (the intake/reprocess paths already do). Constraint (4): every money write is auditable.

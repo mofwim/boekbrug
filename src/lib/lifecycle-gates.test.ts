@@ -16907,6 +16907,119 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
 
+test("[DAG-GECLAIMD] every door that books a day goes through the writer that knows the rule", () => {
+  // bookTurnoverRows carries "één dag, één bron", and its own comment names the three import doors
+  // that come past it: /api/turnover/import, the photographed dagstaat via /api/intake, and
+  // /api/documents/reprocess. Two of the three really did. The primary Dagomzet import did not —
+  // it upserted daily_turnover directly, so the day was claimed with nothing asked, and the comment
+  // asserting otherwise had been true of the library and never of that route.
+  //
+  // What it costs is in the guard's own words: once a day carries a Z-report it counts as
+  // `covered`, and the covered-day rule in financial-result.ts then skips that day's cash bookings
+  // as double counts. A EUR 300 cash sale booked by hand disappears completely — EUR 247,93 of
+  // omzet and EUR 52,07 out of rubriek 1a — with no warning on any screen.
+  //
+  // THE GATE IS "NO PRIVATE WRITER", not a list of doors. Any route that writes daily_turnover
+  // itself is a route that has its own answer to the one-day-one-source question.
+  const writers: string[] = [];
+  const scanRoutes = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) { scanRoutes(p); continue; }
+      if (!/\.tsx?$/.test(p) || /\.test\.tsx?$/.test(p)) continue;
+      const src = code(p);
+      // The library itself is the one place allowed to write the table.
+      if (p.endsWith("src/lib/turnover-book.ts")) continue;
+      if (/\.from\("daily_turnover"\)[\s\S]{0,200}?\.(?:upsert|insert|update)\(/.test(src)) {
+        writers.push(p);
+      }
+    }
+  };
+  scanRoutes("src/app");
+  scanRoutes("src/lib");
+  assert.deepEqual(
+    writers, [],
+    "these write daily_turnover without going through bookTurnoverRows, so they claim a day " +
+    `without asking whether the owner already booked it as cash:\n  ${writers.join("\n  ")}`,
+  );
+
+  // And the import door specifically — the one that was missing — asks, and tells the two kinds of
+  // failure apart. A claimed day is a 409 the owner can act on; an empty rejected list is a
+  // database failure and must never be reported as "your numbers are wrong".
+  const route = code("src/app/api/turnover/import/route.ts");
+  assert.match(route, /bookTurnoverRows\(supabase, user\.id, records, "dagomzet_import"\)/,
+    "the Dagomzet import must book through the shared writer");
+  assert.match(route, /if \(booked\.rejected\.length > 0\)/,
+    "…and separate a refusal with named days from a database failure");
+
+  // The arithmetic check still answers FIRST, so a sheet whose figures cannot be true is refused
+  // for that reason and not for a claimed day.
+  const rekenen = route.indexOf("badDays.length > 0");
+  const boeken = route.indexOf("bookTurnoverRows(supabase, user.id, records");
+  assert.ok(rekenen >= 0 && boeken >= 0, "both checks must be findable");
+  assert.ok(rekenen < boeken, "the arithmetic refusal must come before the day is claimed");
+});
+
+test("[VERWERKT-GELIJK] the two freezes on invoices protect the same facts", () => {
+  // public.invoices carries two column freezes side by side:
+  //
+  //   prevent_accountant_amount_changes   a linked accountant may not move their client's figures
+  //   prevent_verwerkt_invoice_changes    once the accountant has BOOKED it, the figures are fixed
+  //
+  // They guard against different people and protect the same FACTS. Both were hand-written
+  // enumerations and only the first was kept up. Measured: the verwerkt list was a STRICT SUBSET —
+  // 11 columns against 23, and not one column the other way. So there was no argument for the
+  // twelve that were missing; they simply never grew with their twin.
+  //
+  // What that still allowed after an invoice was processed: flipping invoice_type from factuur to
+  // creditnota (the amounts are frozen, so the document keeps its numbers and only changes what
+  // their SIGN means — creditedTotalsFrom, openAfterCredit, the aangifte and SnelStart all move the
+  // other way), reversing direction, moving it to another party, shifting vat_deduction and with it
+  // rubriek 5b, rewriting the discount the frozen totals are recomputed from, and swapping the
+  // evidence document under a booking the accountant has signed off.
+  //
+  // THE GATE IS THE RELATIONSHIP, NOT A THIRD LIST. Both sets are read out of the SQL, so a column
+  // added to either freeze in future has to appear in both — which is the property that failed
+  // here, and a hand-written list in this file would fail the same way.
+  const columnsOf = (path: string, fn: string): Set<string> => {
+    const sql = readFileSync(path, "utf8");
+    const at = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${fn}`);
+    assert.ok(at >= 0, `${fn} not found in ${path}`);
+    const body = sql.slice(at);
+    const end = body.indexOf("RAISE EXCEPTION");
+    assert.ok(end > 0, `${fn} has no refusal — has it been rewritten?`);
+    return new Set([...body.slice(0, end).matchAll(/NEW\.([a-z_]+)\s+IS DISTINCT FROM/g)].map((m) => m[1]));
+  };
+
+  const accountant = columnsOf("supabase/migrations/accountant_discount_guard.sql", "prevent_accountant_amount_changes");
+  const verwerkt = columnsOf("supabase/migrations/verwerkt_freeze_level.sql", "prevent_verwerkt_invoice_changes");
+  assert.ok(accountant.size >= 20, `only ${accountant.size} columns in the accountant freeze — the scan must be broken`);
+  assert.ok(verwerkt.size >= 20, `only ${verwerkt.size} columns in the verwerkt freeze — the scan must be broken`);
+
+  const missing = [...accountant].filter((c) => !verwerkt.has(c)).sort();
+  assert.deepEqual(
+    missing, [],
+    "an invoice the accountant has BOOKED may still be changed in these columns, while the same " +
+    `columns are frozen against the accountant on the same table:\n  ${missing.join("\n  ")}`,
+  );
+
+  // EVERY redefinition of the verwerkt freeze carries the full list, for the reason
+  // accountant_amount_guard_restore.sql documents at length: CREATE OR REPLACE replaces the whole
+  // body, and nothing in this directory records which migration ran last.
+  const holes: string[] = [];
+  for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+    const path = `supabase/migrations/${f}`;
+    if (!readFileSync(path, "utf8").includes("CREATE OR REPLACE FUNCTION public.prevent_verwerkt_invoice_changes")) continue;
+    const cols = columnsOf(path, "prevent_verwerkt_invoice_changes");
+    for (const c of accountant) if (!cols.has(c)) holes.push(`${f} — ${c}`);
+  }
+  assert.deepEqual(
+    holes, [],
+    `these redefinitions of the verwerkt freeze leave a column out; whichever ran last decides:\n  ${holes.join("\n  ")}`,
+  );
+});
+
 test("[EURO-ALLEEN] both doors onto an e-invoice refuse a currency this app cannot book", () => {
   // There are TWO readers of the same bytes, and only one of them asked.
   //

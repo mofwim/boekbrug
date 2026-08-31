@@ -226,21 +226,57 @@ test("a debit payout that states nothing contributes nothing, and is not an erro
   assert.deepEqual(r.reconciliation.statedCommission, { total: 0, gross: 0, lines: 0, unverified: 0 });
 });
 
+/** The MAST payout the [COM-IN-DE-REGEL] cases are built on: BRUTO 210,55 − COM 3,77 = 206,78. */
+const mastPayout = (date: string) => ({
+  amount: 206.78, category: "pos_income", invoice_id: null, date,
+  description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
+  counterpart_name: "ING DD&C",
+});
+
 test("[COM-IN-DE-REGEL] with no EFT settlement the stated commission IS booked as a cost", () => {
   // The Kiwi Food case, and every shop in production: no terminal file, commission printed on the
   // statement. Leg B booked nothing anywhere in the window, so there is provably nothing to
   // double-count and the cost belongs in kosten automatically.
+  //
+  // [COM-DUBBEL] The till day is part of the fixture now, and it always belonged there. This case
+  // is a shop whose TILL counted the gross 210,55 and whose bank credited 206,78 — that is the
+  // whole reason the 3,77 is a separate cost. Written without a turnover row the fixture described
+  // a shop with no till at all, where the bank credit IS the revenue and is already net, so
+  // booking the commission takes it off a SECOND time. The assertions below are unchanged; only
+  // the scenario now matches the sentence above them.
   const r = assembleRangeResult(inputs({
-    bankBufRows: [{
-      amount: 206.78, category: "pos_income", invoice_id: null, date: "2026-02-10",
-      description: "AFREK. BETAALAUTOMAAT MAST REFNR. F9Q3BH DAT. 202618 AANT. 12 BRUTO 21055 /COM D377",
-      counterpart_name: "ING DD&C",
-    }],
+    bankBufRows: [mastPayout("2026-02-10")],
+    turnoverRows: [turnoverDay("2026-02-09", { base_21: 174.01, btw_21: 36.54, total_incl: 210.55, pin_amount: 210.55 })],
   }));
   assert.equal(r.reconciliation.statedCommission.total, 3.77);
   assert.equal(r.reconciliation.statedCommissionBooked, true);
   assert.equal(r.reconciliation.commissionBooked, 3.77, "it reaches what is booked");
   assert.ok(r.result.kosten >= 3.77, "and therefore kosten — the profit was overstated by it");
+});
+
+test("[COM-DUBBEL] a payout whose takings day the till never counted does NOT book its commission", () => {
+  // The other half of the same question, and the one nobody asked. With no till row for the
+  // takings day there is nothing that counted the gross, so the BANK CREDIT becomes the revenue —
+  // and it is already net of the commission. Adding the commission to kosten deducts it twice.
+  //
+  // Measured on gross 1000 / commission 20 / credit 980:
+  //     day covered      omzet 826,45 ex-btw  kosten 20  winst 806,45  correct
+  //     day NOT covered  omzet 980,00         kosten 20  winst 960,00  truth 980
+  const r = assembleRangeResult(inputs({ bankBufRows: [mastPayout("2026-02-10")] }));
+  assert.equal(r.reconciliation.statedCommission.total, 3.77, "it is still FOUND and reported");
+  assert.equal(r.reconciliation.statedCommissionBooked, false, "…but not booked");
+  assert.equal(r.reconciliation.commissionBooked, 0, "and it does not reach kosten");
+});
+
+test("[COM-DUBBEL] one uncovered payout holds the whole window back, rather than guessing per line", () => {
+  // The same choice the EFT paragraph makes: the ambiguous case is held back, not split. Guessing
+  // per line would put the half nobody can vouch for into somebody's books.
+  const r = assembleRangeResult(inputs({
+    bankBufRows: [mastPayout("2026-02-10"), mastPayout("2026-03-10")],
+    turnoverRows: [turnoverDay("2026-02-09", { base_21: 174.01, btw_21: 36.54, total_incl: 210.55, pin_amount: 210.55 })],
+  }));
+  assert.equal(r.reconciliation.statedCommission.total, 7.54, "both are found");
+  assert.equal(r.reconciliation.statedCommissionBooked, false, "one uncovered payout is enough to hold back");
 });
 
 test("[COM-IN-DE-REGEL] with an EFT settlement present it is reported but NOT booked", () => {

@@ -970,5 +970,54 @@ console.log("\n— [OFFERTE-GEEN-OMZET] a quote is not turnover —");
   check("a draft quote is still nothing", near(computeResult([draftQuote], [], [], []).omzet, 0));
 }
 
+console.log("\n— [WEEKBATCH] a card batch settles more than one day —");
+{
+  // A credit-card scheme pays a WEEK in one batch. Its DAT. is a week number, so
+  // parsePosSettlement correctly refuses to read it as a date and settleDate falls back to the
+  // booking date — the line is DAT-less by construction, which is the case the covered-day window
+  // exists for. But the payout could only ever draw down ONE day's card budget, so everything
+  // beyond that one day was booked a SECOND time as off-till revenue with no BTW rate.
+  //
+  // Measured before the fix, on five trading days of EUR 400 card takings paid out as one
+  // EUR 2.000 batch: omzet 3.252,90 against a till total of 1.652,90 — EUR 1.600 counted twice,
+  // and an omzet-zonder-tarief nudge raised over money nobody earned twice.
+  const week = ["2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"];
+  const turnover: DailyTurnover[] = week.map((d) => ({
+    turnover_date: d, base_0: 0, base_9: 0, base_21: 330.58, btw_9: 0, btw_21: 69.42,
+    total_incl: 400, pin_amount: 400, cash_amount: 0, other_amount: 0,
+  }) as DailyTurnover);
+  const tillOmzet = 5 * 330.58;
+  const batch: ResultBankTx = {
+    amount: 2000, category: "pos_income", invoice_id: null,
+    settleDate: "2026-03-09", settleExact: false, posSettlement: true,
+  };
+
+  const r = computeResult([], [batch], [], turnover);
+  check("a weekly batch adds no second helping of revenue", near(r.omzet, tillOmzet));
+  check("…and raises no omzet-zonder-tarief over it", near(r.cashOmzetZonderBtw, 0));
+
+  // The excess BEYOND the week's card takings is real off-till revenue and must still count —
+  // the fix may not become a way to hide money the till never saw.
+  const bigger = computeResult([], [{ ...batch, amount: 2300 }], [], turnover);
+  check("a batch larger than the week's takings still books the excess",
+    near(bigger.omzet, tillOmzet + 300) && near(bigger.cashOmzetZonderBtw, 300));
+
+  // An EXACT takings date is a claim about ONE day and must NOT widen — the rest is genuinely
+  // unexplained and has to count.
+  const exact = computeResult([], [{ ...batch, settleDate: "2026-03-06", settleExact: true }], [], turnover);
+  check("an exact DAT still consumes only its own day",
+    near(exact.cashOmzetZonderBtw, 1600));
+
+  // Day-by-day payouts must keep working — and they leaked one day's takings before this too.
+  const perDay: ResultBankTx[] = ["2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06", "2026-03-09"]
+    .map((d) => ({ amount: 400, category: "pos_income", invoice_id: null, settleDate: d, settleExact: false, posSettlement: true }));
+  check("the same week paid day by day is also exact",
+    near(computeResult([], perDay, [], turnover).omzet, tillOmzet));
+
+  // And the till on its own is untouched by any of this.
+  check("no bank line at all leaves the till's own omzet alone",
+    near(computeResult([], [], [], turnover).omzet, tillOmzet));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
