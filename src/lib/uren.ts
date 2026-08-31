@@ -24,10 +24,11 @@
 // is in field names that mirror the database columns, and in nothing else — the sentences the
 // owner reads live in messages.ts.
 
-import { round2 } from "./invoice-totals";
-// The rates the invoice route will actually accept, imported rather than copied: a second list of
-// legal btw rates is a list that drifts, and the one that drifts is the one nobody is testing.
-import { ALLOWED_BTW_RATES as ALLOWED_LINE_BTW_RATES } from "./draft-totals";
+import { round2, isValidBtwRate } from "./invoice-totals";
+// [TARIEF-STRIKT] The list itself is no longer imported here — isValidBtwRate above answers the
+// question, and it reads BTW_RATES from the same module the invoice door does. A second list of
+// legal btw rates is a list that drifts, and the one that drifts is the one nobody is testing;
+// asking one function instead of holding one list closes that for good.
 
 /** One recorded stretch of work, as the database stores it. */
 export interface TimeEntry {
@@ -186,7 +187,12 @@ export const HOUR_UNIT = "uur";
  */
 export function linesFromEntries(
   entries: readonly TimeEntry[],
-  btwRate: number = DEFAULT_HOUR_BTW_RATE,
+  // [TARIEF-STRIKT] `unknown`, not `number`, and that widening is the fix. The route calls this as
+  // linesFromEntries(gevonden, Number(body.uren_btw_rate)) — and Number(null) is 0, a legal rate,
+  // so a request carrying `uren_btw_rate: null` billed a whole hours invoice at 0% while the type
+  // said the rate had already been validated. Taking the raw value means the check below is the
+  // one that decides, which is what the comment under it always claimed.
+  btwRate: unknown = DEFAULT_HOUR_BTW_RATE,
 ): {
   lines: InvoiceLineDraft[];
   /** Entries left out because they carry no rate. Named, never silently dropped. */
@@ -195,8 +201,12 @@ export function linesFromEntries(
   billedIds: string[];
 } {
   // A rate the route would refuse is not silently replaced by a cheaper one: it falls back to the
-  // app's default, which is the same number the editor would have put there.
-  const rate = ALLOWED_LINE_BTW_RATES.includes(Number(btwRate)) ? Number(btwRate) : DEFAULT_HOUR_BTW_RATE;
+  // app's default, which is the same number the editor would have put there. isValidBtwRate is
+  // what decides — `ALLOWED_LINE_BTW_RATES.includes(Number(btwRate))` accepted null, "", " ", []
+  // and false as 0%, which is the one outcome DEFAULT_HOUR_BTW_RATE's own comment forbids: "Never
+  // 0 — that reads as vrijgesteld on the invoice and silently takes real turnover out of the
+  // aangifte."
+  const rate = isValidBtwRate(btwRate) ? Number(btwRate) : DEFAULT_HOUR_BTW_RATE;
 
   const lines: InvoiceLineDraft[] = [];
   const skipped: TimeEntry[] = [];

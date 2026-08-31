@@ -51,7 +51,7 @@
 // NOTE ON LANGUAGE: identifiers and comments are English (see AGENTS.md). The `reason` sentences
 // stay Dutch — they travel to the screen.
 
-import { computeInvoiceTotals } from "./invoice-totals";
+import { isValidBtwRate, computeInvoiceTotals } from "./invoice-totals";
 import { applyDiscount, lineNetEx, parseDiscount, type Discount } from "./invoice-discount";
 // [MIN-REGEL] When a set of lines stops describing a factuur — one definition, shared with the
 // screen that refuses it before the request is sent. See negative-line.ts.
@@ -161,10 +161,18 @@ export function validateDraftLines(
     const row = (r ?? {}) as Record<string, unknown>;
     const q = Number(row.quantity);
     const p = Number(row.unit_price);
-    const t = Number(row.btw_rate);
+    // [TARIEF-STRIKT] isValidBtwRate, not `ALLOWED_BTW_RATES.includes(Number(...))`. That naive
+    // form is the bug the helper was written to prevent, and it was still here on the INVOICE
+    // path — the one door where it costs the most. Number(null), Number(""), Number(" "),
+    // Number([]) and Number(false) are all 0, and 0 is a legal rate (vrijgesteld/verlegd), so a
+    // line with NO rate was accepted and stored as a 0% line. Measured on a 10 x EUR 100 line:
+    // accepted, stored at 0%, header written as 1000 / 0 / 1000 where 21% gives 1000 / 210 / 1210.
+    // EUR 210 of verschuldigde BTW off a sales invoice, and ex + btw = inc still balances
+    // perfectly at 0%, so no arithmetic check anywhere can notice.
+    const t = isValidBtwRate(row.btw_rate) ? Number(row.btw_rate) : Number.NaN;
     if (!Number.isFinite(q)) errors.push({ index: i, field: "quantity", reason: "geen getal" });
     if (!Number.isFinite(p)) errors.push({ index: i, field: "unit_price", reason: "geen getal" });
-    if (!ALLOWED_BTW_RATES.includes(t)) {
+    if (!isValidBtwRate(row.btw_rate)) {
       errors.push({ index: i, field: "btw_rate", reason: `${row.btw_rate} is geen bestaand BTW-tarief` });
     }
     const description = typeof row.description === "string" ? row.description.trim() : "";

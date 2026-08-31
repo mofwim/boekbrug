@@ -59,6 +59,8 @@ import { creditLinesFor } from '@/lib/creditnota-lines'
 // [DEEL-CREDIT] Welke regels, hoeveel ervan, en het plafond dat nooit mag schuiven.
 import {
   buildCreditSelection,
+  creditNetFault,
+  creditNetReason,
   checkCreditSelection,
   creditedQuantitiesByLine,
   creditableRemaining,
@@ -337,6 +339,17 @@ export async function POST(request: NextRequest) {
       discountValue: original.discount_value,
     })
 
+    // [CREDIT-IS-CREDIT] Geeft deze selectie per saldo wel iets terug?
+    //
+    // De kop hieronder spiegelt de selectie onvoorwaardelijk (`-keuze.totalIncBtw`). Bij een
+    // factuur met een retourregel ([MIN-REGEL]) kan de selectie NEGATIEF uitkomen — je crediteert
+    // dan een teruggave — en dan maakt die spiegeling een creditnota met een POSITIEF totaal: een
+    // document dat geld vraagt. Alles wat er daarna mee rekent trekt een creditnota juist AF.
+    const nettoFout = creditNetFault(keuze.totalIncBtw)
+    if (nettoFout) {
+      return NextResponse.json({ error: creditNetReason(nettoFout) }, { status: 400 })
+    }
+
     // ── Het plafond ──
     //
     // Meer teruggeven dan er ooit in rekening is gebracht betekent btw terugvragen die nooit is
@@ -493,9 +506,57 @@ export async function POST(request: NextRequest) {
       // and the exemption flag, whose absence puts the correction in a different rubriek than the
       // invoice it undoes), and which are hardened. It sat here as an object literal inside a
       // .map(), where none of it could be checked without a database.
-      await db.from('invoice_lines').insert(
+      const { error: regelFout } = await db.from('invoice_lines').insert(
         creditLinesFor(keuze.lines, creditnota.id, reason) as never,
       )
+
+      // [CREDIT-REGELS-OF-NIETS] Deze insert stond hier met een kale `await` en las zijn fout niet.
+      //
+      // Dat was tot vandaag bijna onschadelijk en is het nu niet meer:
+      // creditnota_per_rate_ceiling.sql hangt assert_credit_within_rate_trg als BEFORE INSERT op
+      // invoice_lines en RAISEt check_violation zodra een creditnota op één btw-tarief méér
+      // terugneemt dan de oorspronkelijke factuur daarop draagt. De weigering slaagt, en de route
+      // liep er straal langs:
+      //
+      //   · het nummer is al uit de doorlopende reeks gemunt;
+      //   · renderInvoicePdf heeft een terugval voor facturen zonder regels (invoice-pdf.tsx:304)
+      //     en tekent dan een KLOPPEND totaal boven een LEGE regeltabel;
+      //   · de PDF wordt onvoorwaardelijk opgeslagen, dus hij belandt ook via invoices.pdf_url in
+      //     het kwartaalpakket van de boekhouder;
+      //   · en de mail gaat eruit.
+      //
+      // De klant houdt dan een correctiedocument in handen dat geen enkel goed of dienst noemt, en
+      // zijn boekhouder kan het niet boeken. Een creditnota is geen concept: hij verlaat het pand.
+      //
+      // De regel staat al in dit huis, in invoice/draft/route.ts: "Een factuurkop zonder regels is
+      // erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent.
+      // Terugdraaien, en eerlijk melden dat het niet lukte." Deze route was de uitzondering.
+      if (regelFout) {
+        await db.from('invoices').delete().eq('id', creditnota.id)
+
+        // [TRUST-NUMBER] Zelfde boekhouding als de race hierboven: het gemunte nummer is verbruikt
+        // en het document is er niet. Dat is een echt gat in de reeks (Art. 35), en een gat
+        // waarvan niemand weet is het gat dat de [DOORLOPEND]-controle later als raadsel bij de
+        // eigenaar neerlegt.
+        const regelCode = (regelFout as { code?: string }).code
+        const plafond =
+          regelCode === '23514' ||
+          /meer terug dan|check_violation|exceeds/i.test(regelFout.message ?? '')
+        console.warn('[TRUST-NUMBER] Creditnota-regels geweigerd — rij teruggedraaid, nummer ongebruikt (gat)',
+          { original_invoice_id, regelCode })
+        Sentry.captureMessage('creditnota lines refused: row rolled back, minted number unused (sequence gap)', {
+          level: 'warning',
+          extra: { original_invoice_id, code: regelCode, message: regelFout.message },
+        })
+        return NextResponse.json(
+          {
+            error: plafond
+              ? 'Deze creditnota neemt op één btw-tarief meer terug dan de oorspronkelijke factuur daarop draagt. Kijk na welke regels je hebt gekozen en probeer het opnieuw.'
+              : 'De regels van de creditnota konden niet worden opgeslagen — er is niets verstuurd. Probeer het opnieuw.',
+          },
+          { status: plafond ? 409 : 500 },
+        )
+      }
     }
 
     // [BOEK-031] BOEK-SECURITY-2 — audit via helper, newValue is object — May 2026

@@ -79,16 +79,58 @@ export function rateSharesFromLines(
     .sort((a, b) => b.rate - a.rate);
 
   const sumEx = cents(shares.reduce((s, r) => s + r.ex, 0));
+
+  // [KORTING-RUBRIEK] A document-level discount lives on the HEADER and is not in line_total.
+  //
+  // So on every discounted invoice the line sum missed the header by the whole discount, this
+  // check refused, and the caller fell back to a header-derived BLENDED rate — which puts 21%
+  // materials and 9% labour in ONE rubriek of the aangifte. Measured on 1000@21 + 500@9 with 10%
+  // off: without the discount the split is [21: 1000, 9: 500]; with it, null.
+  //
+  // A document discount reduces every rate group IN PROPORTION — that is what applyDiscount does
+  // for the header, and what buildInvoiceUbl emits as one AllowanceCharge per tax group. So the
+  // same distribution recovers the buckets from the data already here, with no extra columns to
+  // read. Verified against applyDiscount on percentage and fixed-amount discounts, two and three
+  // rate groups, and odd cent splits: the recovered buckets reproduce its header exactly.
+  //
+  // WHY THIS DOES NOT WEAKEN THE REFUSAL. The gap is only closed when it looks like a discount —
+  // same sign as the lines, and never bigger than them — and the BTW check below is untouched and
+  // becomes the real validator: the recomputed BTW depends on WHERE the omzet sits, so a line set
+  // that does not describe this header still fails it. Half-saved lines are still refused; what
+  // changes is only that a correctly discounted invoice stops being mistaken for one.
+  const gap = cents(sumEx - cents(headerEx));
+  const looksLikeDiscount =
+    Math.abs(gap) > HEADER_TOLERANCE &&
+    Math.abs(sumEx) > EPS &&
+    Math.sign(gap) === Math.sign(sumEx) &&
+    // A discount REDUCES the magnitude and never crosses zero — applyDiscount caps it at the
+    // invoice for exactly that reason. Without this line a header of the opposite sign to its
+    // lines got "rescued" into a split that reconciled perfectly, because the arithmetic happens
+    // to work out: 1500 of lines against a header of -1350 spreads to -900/-450 and matches. That
+    // is not a discounted invoice, it is a broken row, and it must still be refused.
+    //
+    // These two sign tests are the WHOLE condition: together they already say 0 < |headerEx| <
+    // |sumEx|. A magnitude check stood here as well and no control could make it fire, because it
+    // could not — an unprovable line on a money path is worse than none, so it is gone.
+    Math.sign(cents(headerEx)) === Math.sign(sumEx);
+  if (looksLikeDiscount) {
+    for (const share of shares) {
+      share.ex = cents(share.ex - cents((gap * share.ex) / sumEx));
+      share.btw = cents((share.ex * share.rate) / 100);
+    }
+  }
+
+  const spreadEx = cents(shares.reduce((s, r) => s + r.ex, 0));
   const sumBtw = cents(shares.reduce((s, r) => s + r.btw, 0));
   // The refusal that keeps this safe: lines that do not describe this header are not a better
   // truth about it. (Also catches an invoice whose lines were never saved, or half-saved.)
-  if (Math.abs(sumEx - cents(headerEx)) > HEADER_TOLERANCE) return null;
+  if (Math.abs(spreadEx - cents(headerEx)) > HEADER_TOLERANCE) return null;
   if (Math.abs(sumBtw - cents(headerBtw)) > HEADER_TOLERANCE) return null;
 
   // Absorb the rounding residue into the biggest bucket, so the split can never move a cent of
   // the totals — only WHERE they sit.
   const biggest = shares.reduce((a, b) => (Math.abs(b.ex) > Math.abs(a.ex) ? b : a));
-  biggest.ex = cents(biggest.ex + (cents(headerEx) - sumEx));
+  biggest.ex = cents(biggest.ex + (cents(headerEx) - spreadEx));
   biggest.btw = cents(biggest.btw + (cents(headerBtw) - sumBtw));
   return shares;
 }

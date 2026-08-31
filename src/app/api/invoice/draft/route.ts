@@ -199,7 +199,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: UREN_REFUSAL_NL.none_billable, code: 'none_billable' }, { status: 409 })
       }
 
-      const gebouwd = linesFromEntries(gevonden, Number(body.uren_btw_rate))
+      // [TARIEF-STRIKT] The RAW value, not Number(...): Number(null) is 0, a legal rate, so a body
+      // with uren_btw_rate: null used to bill the whole hours invoice at 0%. linesFromEntries
+      // validates it and falls back to 21 for anything that is not a rate.
+      const gebouwd = linesFromEntries(gevonden, body.uren_btw_rate)
       if (gebouwd.lines.length === 0) {
         return NextResponse.json({ error: UREN_REFUSAL_NL.no_rate, code: 'no_rate' }, { status: 409 })
       }

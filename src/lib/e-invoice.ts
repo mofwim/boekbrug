@@ -359,6 +359,27 @@ function isoDay(v: string | null): string | null {
  * not add up is not a better witness than the model — it is a broken document, and treating it as
  * authoritative would be the worst possible outcome of this whole feature.
  */
+/**
+ * [EURO-ALLEEN] May this document's amounts be booked as euros?
+ *
+ * Absent is accepted — some producers omit the attribute, and a Dutch supplier billing a Dutch
+ * customer in euros is what the omission almost always means. A STATED non-euro currency is not:
+ * this app books euro, and silently treating 1 200 SEK as EUR 1 200 is the kind of error that
+ * survives every other check in the building. The amounts are internally consistent, the file
+ * validates against Peppol, and nothing downstream has a currency to compare against.
+ *
+ * EXPORTED because there are TWO doors onto the same bytes and only one of them asked. A Peppol
+ * invoice arriving as a PDF attachment goes through parseEInvoice/complete() and was refused; the
+ * same invoice uploaded as a standalone .xml goes through parseUblInvoice in /api/intake, which
+ * extracts DocumentCurrencyCode and handed it to a caller that never looked. Measured on one file,
+ * both doors: USD 10.000 refused here, booked as EUR 10.000 there — including its voorbelasting,
+ * claimed at a euro amount nobody ever paid.
+ */
+export function isEuroDocument(currency: string | null | undefined): boolean {
+  if (currency == null || String(currency).trim() === "") return true;
+  return String(currency).trim().toUpperCase() === "EUR";
+}
+
 function complete(v: {
   inc: number | null; ex: number | null; btw: number | null
   currency: string | null; syntax: 'cii' | 'ubl'; invoiceNumber: string | null
@@ -371,7 +392,7 @@ function complete(v: {
   // Currency: absent is accepted (some producers omit the attribute), a NON-euro one is not — this
   // app books euro, and silently treating 1 200 SEK as € 1 200 is the kind of error that survives
   // every other check in the building.
-  if (v.currency !== null && v.currency.toUpperCase() !== 'EUR') return null
+  if (!isEuroDocument(v.currency)) return null
   if (Math.abs(inc) < 0.005) return null
   // [VOORUITBETALING] This line is REAL for CII and VACUOUS for UBL, and the difference is worth
   // knowing before anyone leans on it. parseCii reads GrandTotalAmount, TaxBasisTotalAmount and
