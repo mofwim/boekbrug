@@ -23,6 +23,7 @@ import { EL1, M3, R, COLUMN, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { isOverdue } from '@/components/invoice/InvoiceRow'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -90,10 +91,29 @@ const SECTIONS = [
     filter: (i: KwartaalInvoice) => i.status === 'paid' },
 ] as const
 
-// [BRIDGE-A] Verlopen is computed at display time — never stored in DB
-function isVerlopen(inv: KwartaalInvoice): boolean {
-  return inv.status === 'sent' && !!inv.due_date && new Date(inv.due_date) < new Date()
-}
+// [OVER-DATUM] Verlopen wordt bij het tonen berekend, nooit opgeslagen — maar door de ENE bron.
+//
+// Hier stond een tweede antwoord, en het was hetzelfde verkeerde antwoord dat InvoiceRow al eens
+// heeft weggehaald:
+//
+//     inv.status === 'sent' && new Date(inv.due_date) < new Date()
+//
+// Drie dingen mis, op het scherm waar een boekhouder een kwartaal beoordeelt:
+//
+//   1. Het vergelijkt een DAG met een MOMENT. `new Date('2026-07-31')` is middernacht UTC, dus
+//      02:00 in Amsterdam: vanaf twee uur 's nachts OP de vervaldag stond er "Verlopen" bij een
+//      factuur die de klant die hele dag nog op tijd kon betalen. Bovendien uit de klok van de
+//      BROWSER, dus een boekhouder in een andere tijdzone kreeg een ander oordeel dan zijn klant.
+//   2. `status === 'sent'` is uitsluitend de verkoopkant. Een INKOOPfactuur staat op 'received',
+//      dus een rekening die de ondernemer zelf te laat betaalt kon hier nooit "Verlopen" heten —
+//      op precies de pagina waar de crediteuren als eigen sectie staan.
+//   3. Een OFFERTE met een verstreken "geldig tot"-datum viel er wél doorheen, want die staat ook
+//      op 'sent'. Rood en dringend over een bedrag dat niemand verschuldigd is.
+//
+// isOverdue (lib/overdue.ts, via InvoiceRow) beantwoordt alle drie: Amsterdamse dagen, elke
+// richting, en offertes uitgezonderd.
+const isVerlopen = (inv: KwartaalInvoice): boolean =>
+  isOverdue({ status: inv.status ?? '', due_date: inv.due_date, invoice_type: inv.invoice_type })
 
 // ─────────────────────────────────────────────────────────
 // Components

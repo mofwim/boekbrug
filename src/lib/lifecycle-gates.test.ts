@@ -21358,3 +21358,63 @@ test("[ONB-IBAN] the wizard does not claim the IBAN is needed to SEND", () => {
       "sentence and a different next step.",
   );
 });
+
+// ─── [OVER-DATUM] Eén antwoord op "is deze factuur te laat", op elk scherm ────────────
+//
+// De poort hieronder bestaat omdat het tweede antwoord twee keer is teruggekomen. De vorm is
+// steeds dezelfde, en steeds op een ander scherm:
+//
+//     new Date(inv.due_date) < new Date()
+//
+// Dat vergelijkt een DAG met een MOMENT. `new Date('2026-07-31')` is middernacht UTC, oftewel
+// 02:00 in Amsterdam — dus vanaf twee uur 's nachts OP de vervaldag staat er "Verlopen" bij een
+// factuur die de klant die hele dag nog op tijd mag betalen. En het leest de klok van de BROWSER,
+// dus op de boekhouderspagina kreeg een kantoor in een andere tijdzone een ander oordeel over
+// dezelfde factuur dan zijn klant.
+//
+// Op de kwartaalpagina zat er nog een tweede fout in: de test begon met `status === 'sent'`, wat
+// uitsluitend de verkoopkant is. Een inkoopfactuur staat op 'received', dus een rekening die de
+// ondernemer ZELF te laat betaalt kon daar nooit "Verlopen" heten — op de ene pagina waar de
+// crediteuren een eigen sectie hebben.
+
+test("[OVER-DATUM] no screen computes 'te laat' from the browser clock", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const offenders: string[] = [];
+  for (const f of walk("src/app").concat(walk("src/components")).concat(walk("src/modules"))) {
+    if (/\.test\.tsx?$/.test(f)) continue;
+    const src = code(f);
+    // `new Date(<iets met due_date/vervaldatum>) < new Date()` — de dag-tegen-moment vergelijking,
+    // in welke schrijfwijze dan ook.
+    if (/new Date\([^)]*(?:due_date|vervaldatum|dueDate)[^)]*\)\s*<\s*new Date\(\s*\)/.test(src)) {
+      offenders.push(f);
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "these compare a due DAY against the moment the browser thinks it is, so an invoice reads " +
+      `'Verlopen' from 02:00 on the day it is still due:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+test("[OVER-DATUM] the accountant's quarter page uses the shared rule", () => {
+  const page = code("src/app/dashboard/clients/[id]/kwartaal/page.tsx");
+
+  assert.match(
+    page, /isOverdue\(\{ status: inv\.status/,
+    "the quarter page went back to its own verlopen rule. Beyond the day-versus-moment bug, its " +
+      "version started at `status === 'sent'` — sales only — so an overdue PURCHASE invoice could " +
+      "never be flagged on the one page that gives crediteuren their own section.",
+  );
+  assert.doesNotMatch(
+    page, /inv\.status === 'sent' &&/,
+    "the sales-only condition is back, and the crediteuren section can no longer show a late bill",
+  );
+});
