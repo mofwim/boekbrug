@@ -2147,7 +2147,15 @@ export default function BankClient() {
               identity: kost, huur, fee, transfer…) with NO link anywhere — reachable only
               by typing the URL. Surface it here, where uncategorised "geen factuur" lines
               live, so those costs can actually reach the W&V/BTW. */}
-          {bankTab === 'none' && noMatch.length > 0 && (
+          {/* [BANK-LEGE-LINK] Op uncatCount, niet op noMatch. Een regel zonder factuur kan al een
+              categorie hebben — dan is er niets te categoriseren en leidde deze link naar een leeg
+              scherm. Dat is niet alleen nutteloos: het is dezelfde teleurstelling als een tabblad
+              zonder inhoud, en op deze plek verliest hij het vertrouwen in de banner bovenaan die
+              hetzelfde scherm aanbiedt wanneer er WÉL werk is.
+              De link blijft naast de banner bestaan, en dat is geen dubbeling om weg te halen: de
+              banner staat bovenaan de pagina en deze staat waar de ondernemer op dat moment kijkt.
+              Twee wegen naar dezelfde handeling is normaal; een weg naar niets is dat niet. */}
+          {bankTab === 'none' && uncatCount > 0 && (
             <Link
               href="/dashboard/bank/categoriseren"
               style={{
