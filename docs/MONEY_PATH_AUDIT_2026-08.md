@@ -693,3 +693,37 @@ calls"; it is not a feature, it is a second spelling of `useInvoiceReconciliatio
 which two screens do call — and the worse of the two: it reports a 409 `invoice_already_paid` as
 `'error'`, so an invoice the auto-confirm had already booked would have shown the owner "mislukt".
 `deck.ts` is not uncalled either: `scripts/generate-deck.mts` builds from it.
+
+### Applied to production, 31 August 2026 — with the owner's approval
+
+`accountant_discount_guard.sql` (which carries the full 24-column deny list, including
+`vat_deduction`) was applied. Checked before applying, because a `CREATE OR REPLACE FUNCTION`
+silently resets what it does not restate: the live function was `SECURITY INVOKER`, no
+`search_path`, `VOLATILE` — exactly what the file produces, so nothing was lost. Verified after:
+
+| Check | Result |
+| --- | --- |
+| the file's own CONTROLE block (4 assertions) | all true |
+| `vendor_iban` / `payment_reference` / `document_id` still protected | yes |
+| both mandate exceptions (opstellen, bevestigen) still reachable | yes |
+| trigger still attached to `invoices` | yes, 1 |
+| `security definer` / `search_path` / volatility | unchanged |
+| the new body probe, the one that reported the hole an hour earlier | TOEGEPAST, nothing missing |
+
+And then the guard was made to **bite**, in a transaction that always aborts: acting as a uid that
+is neither sender nor receiver and holds no mandate, `vat_deduction`, `discount_value` and
+`vendor_iban` were each GEWEIGERD; acting as the invoice's own receiver, `vat_deduction` was
+TOEGESTAAN — so `/dashboard/incoming/manage`, the one screen that writes that column, still works.
+The proof left nothing behind; the row it ran against is byte-for-byte as it was.
+
+A deployed text is not a working rule. The difference is one query, and it is the query nobody runs.
+
+### Still open, and now accurately reported
+
+- `bank_auto_book_blocked.sql` and `creditnota_per_rate_ceiling.sql` — the two the checker always
+  named correctly (they create objects that do not exist yet).
+- `accountant_vat_deduction_guard.sql` reads TOEGEPAST now and that is correct: its columns are in
+  the deployed body. The two files are two spellings of one deny list, which is the convention this
+  family documents — whichever runs last, the list is whole.
+- The 14 invoices with `amount_paid = 0` whose links cover the total (7 incoming € 1.071,89,
+  7 outgoing € 4.249,79): approved for repair via `recompute_invoice_amount_paid`, not yet run.
