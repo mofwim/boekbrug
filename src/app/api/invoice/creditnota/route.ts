@@ -59,6 +59,8 @@ import { creditLinesFor } from '@/lib/creditnota-lines'
 // [DEEL-CREDIT] Welke regels, hoeveel ervan, en het plafond dat nooit mag schuiven.
 import {
   buildCreditSelection,
+  creditNetFault,
+  creditNetReason,
   checkCreditSelection,
   creditedQuantitiesByLine,
   creditableRemaining,
@@ -336,6 +338,17 @@ export async function POST(request: NextRequest) {
       discountType: original.discount_type,
       discountValue: original.discount_value,
     })
+
+    // [CREDIT-IS-CREDIT] Geeft deze selectie per saldo wel iets terug?
+    //
+    // De kop hieronder spiegelt de selectie onvoorwaardelijk (`-keuze.totalIncBtw`). Bij een
+    // factuur met een retourregel ([MIN-REGEL]) kan de selectie NEGATIEF uitkomen — je crediteert
+    // dan een teruggave — en dan maakt die spiegeling een creditnota met een POSITIEF totaal: een
+    // document dat geld vraagt. Alles wat er daarna mee rekent trekt een creditnota juist AF.
+    const nettoFout = creditNetFault(keuze.totalIncBtw)
+    if (nettoFout) {
+      return NextResponse.json({ error: creditNetReason(nettoFout) }, { status: 400 })
+    }
 
     // ── Het plafond ──
     //

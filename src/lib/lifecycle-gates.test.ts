@@ -16692,6 +16692,43 @@ test("[BLAD-PORTAAL] het documentblad ontsnapt aan de kaart die het zou wegknipp
   assert.match(kaart, /className="inv-card"/, "de kaart draagt de containment die dit alles nodig maakt");
 });
 
+test("[CREDIT-IS-CREDIT] a creditnota may not come out of the door asking for money", () => {
+  // The route writes the header as `total_inc_btw: -keuze.totalIncBtw` — it MIRRORS the selection,
+  // unconditionally. That is right for every ordinary selection and wrong for one.
+  //
+  // An invoice may carry a [MIN-REGEL] return line: nine boxes delivered, two handed back, settled
+  // on the same document the way every wholesaler in this trade writes it. checkCreditSelection
+  // lets that line be credited — it only requires the requested quantity to share the line's SIGN,
+  // so -2 against a -2 line is a legal request. But crediting a return means the customer is NOT
+  // giving those boxes back, so the selection nets NEGATIVE and the mirror turns it POSITIVE.
+  // Measured on 9 delivered + 2 returned at EUR 100 + 21%: selection inc -242, header inc +242 —
+  // a row with invoice_type 'creditnota' that demands payment.
+  //
+  // Nothing downstream survives it: creditedTotalsFrom() and openAfterCredit() SUBTRACT a
+  // creditnota as money returned, so the debtor position moves the wrong way by twice its value.
+  //
+  // The rule lives in partial-credit.ts and is tested there. THIS gate exists because a unit test
+  // cannot see whether the DOOR asks: a negative control that stubbed the route's call out left
+  // all 33 library tests green.
+  const rules = code("src/lib/partial-credit.ts");
+  assert.match(rules, /export function creditNetFault\(totalIncBtw: number\)/);
+  assert.match(rules, /const cents = Math\.round\(totalIncBtw \* 100\)/,
+    "[CENT] decided in integer cents — a fraction of a cent is not almost a credit");
+
+  const route = code("src/app/api/invoice/creditnota/route.ts");
+  assert.match(route, /const nettoFout = creditNetFault\(keuze\.totalIncBtw\)/,
+    "the route must ask whether the selection actually gives money back");
+  assert.match(route, /if \(nettoFout\) \{[\s\S]{0,200}creditNetReason\(nettoFout\)/,
+    "…and refuse with the sentence that names which of the two it is");
+
+  // Asked BEFORE the row is written, and before a number is consumed from the creditnota series.
+  const gevraagd = route.indexOf("creditNetFault(keuze.totalIncBtw)");
+  const geschreven = route.indexOf("total_inc_btw: -keuze.totalIncBtw");
+  assert.ok(gevraagd >= 0 && geschreven >= 0, "both the check and the mirror must be findable");
+  assert.ok(gevraagd < geschreven,
+    "the check must run before the mirror writes the header, not after");
+});
+
 test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column it needs", () => {
   // The bulk download hands the owner a ZIP of their invoices. When an invoice has no stored PDF
   // (a draft, or one from before PDFs were kept) the route DRAWS one — and it drew it from the

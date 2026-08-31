@@ -433,6 +433,52 @@ export function fitsWithinOriginal(
  * Nederlands in een Engels bestand (AGENTS.md): dit is geen commentaar maar de zin die de route
  * terugstuurt en het scherm toont, en de route heeft geen taalinstelling om mee te vertalen.
  */
+/**
+ * [CREDIT-IS-CREDIT] Does this selection actually give money back?
+ *
+ * The route writes the creditnota's header as `total_inc_btw: -keuze.totalIncBtw` — it MIRRORS the
+ * selection, unconditionally. That is right for every ordinary selection and wrong for the one
+ * this rule exists for.
+ *
+ * An invoice may carry a [MIN-REGEL] return line: nine boxes delivered, two handed back, settled on
+ * the same document the way every wholesaler in this trade writes it. checkCreditSelection lets
+ * that line be credited — it only requires the requested quantity to have the SAME SIGN as the
+ * line, so −2 is a legal request against a −2 line. But crediting a return means the customer is
+ * NOT giving those two boxes back after all, so the selection nets NEGATIVE, the mirror turns it
+ * POSITIVE, and the result is a row with invoice_type 'creditnota' and a total that ASKS FOR MONEY.
+ *
+ * Measured on 9 delivered + 2 returned at EUR 100 + 21%:
+ *
+ *     credit the whole invoice        selection inc  847   header inc  −847   correct
+ *     credit only the return line     selection inc −242   header inc  +242   a creditnota that charges
+ *     credit 2 delivered + 2 returned selection inc    0   header inc     0   a creditnota that credits nothing
+ *
+ * Nothing downstream survives that. creditedTotalsFrom() and openAfterCredit() SUBTRACT a
+ * creditnota as money returned, so a positive one moves the debtor position the wrong way by twice
+ * its value; the aangifte nets it into the wrong side of the omzet; and the customer receives a
+ * document headed "Creditnota" that demands payment. A number out of the creditnota series is
+ * consumed either way — including by the EUR 0,00 one, which credits nothing at all.
+ *
+ * This is the mirror of staysAFactuur in negative-line.ts, and the same argument: a document that
+ * moves money the other way is a DIFFERENT document, and the screen that made it must say so
+ * rather than let the totals quietly change sign.
+ */
+export type CreditNetFault = "credits_nothing" | "charges_instead_of_credits";
+
+export function creditNetFault(totalIncBtw: number): CreditNetFault | null {
+  // [CENT] Integer cents — a selection that nets a fraction of a cent is not "almost a credit".
+  const cents = Math.round(totalIncBtw * 100);
+  if (!Number.isFinite(cents) || cents === 0) return "credits_nothing";
+  return cents < 0 ? "charges_instead_of_credits" : null;
+}
+
+/** What the owner reads. Dutch, like every other refusal this route sends — see NOT_A_FACTUUR_REASON. */
+export function creditNetReason(fault: CreditNetFault): string {
+  return fault === "credits_nothing"
+    ? "Deze selectie geeft per saldo niets terug. Een creditnota van € 0,00 verbruikt wel een nummer uit je creditnotareeks — kies de regels die je écht wilt crediteren."
+    : "Deze selectie brengt per saldo geld IN REKENING in plaats van terug te geven — dat kan een creditnota niet zijn. Je crediteert hier (een deel van) een retourregel; wil je die terugdraaien, maak dan een gewone factuur voor wat de klant alsnog houdt.";
+}
+
 export function overCreditReason(remaining: number): string {
   return remaining <= 0
     ? "Deze factuur is al volledig gecrediteerd."
