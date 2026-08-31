@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 112 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 113 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 9 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -185,6 +185,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('company_members_sales_role.sql', 'index', 'clients_created_by_idx', null, 'public'),
   ('company_members_sales_role.sql', 'index', 'company_member_invites_owner_idx', null, 'public'),
   ('creditnota_partial.sql', 'function', 'assert_credit_within_original', null, 'public'),
+  ('creditnota_per_rate_ceiling.sql', 'function', 'assert_credit_within_rate', null, 'public'),
   ('crm_backbone.sql', 'column', 'client_id', 'invoices', 'public'),
   ('crm_backbone.sql', 'column', 'notes', 'clients', 'public'),
   ('crm_backbone.sql', 'index', 'idx_invoices_client_id', null, 'public'),
@@ -443,7 +444,7 @@ group by bestand
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 121
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 122
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

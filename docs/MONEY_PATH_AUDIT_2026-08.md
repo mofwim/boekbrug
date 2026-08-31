@@ -502,3 +502,61 @@ overstated", never with "we found you € 340"). It takes a `RangeResult`, which
 `computeResultForRange` already produces, so wiring it anywhere is a few lines once the destination
 is chosen. Two other modules are also uncalled — `deck.ts` (buildDeck) and `recon-confirm-client.ts`
 (confirmReconPayment) — and were not investigated further.
+
+---
+
+## 11. The signature hunt, closed out — 31 August 2026
+
+§10 listed five survivors as open. They are settled, along with the rest of the pass: 35 findings,
+105 skeptic verdicts, 22 survivors of a 2-of-3 majority. Every one is now fixed, written as a
+migration, or recorded here with the measurement that says why not.
+
+### Fixed in code
+
+| Where | What it did |
+| --- | --- |
+| `cron/payment-due` | auto-collected AND dunned the same invoice — two spellings of one supplier question |
+| `kas-payment-events-fetch` | a slow query moved every cash payment into the wrong BTW quarter |
+| `bank/unlink`, `bank/confirm` | the quarter-close board warned about a link the owner made by hand |
+| `verkoop`, `incoming/missing` | two reads that said "nothing here" before finishing |
+| `kas-payment-events-fetch`, `readiness`, `debiteuren` | three id-list reads that die at the gateway |
+| `btw-reservation`, `api/aangifte` | the reservation asked for €1 less than the return just filed |
+| `turnover/day`, `turnover/import`, `turnover-book` | a day's takings could be typed over, imported over, or deleted out from under itself |
+| `closing-package` | the accountant's ZIP dated a cash payment from a different quarter than its own aangifte |
+| `bank-auto-confirm`, `bank/unlink` | "one tap undoes it" lasted about an hour |
+| `xaf-export` | the auditfile told the Belastingdienst a purchase was free |
+
+### Written as migrations, NOT applied
+
+Three, each idempotent and each stating in its own header that the assistant did not run it:
+
+- `bank_auto_book_blocked.sql` — the column that makes an undone bank booking stay undone. The code
+  is deploy-safe on both sides: without the migration the app behaves exactly as today.
+- `accountant_vat_deduction_guard.sql` — `vat_deduction` was in no version of the accountant deny
+  list, and it moves the client's rubriek 5b by the invoice's whole btw_amount. Adding it to the
+  gate's list immediately failed six redefinitions; all six carry it now, which is the
+  order-independence that gate exists to create.
+- `creditnota_per_rate_ceiling.sql` — the only one I could not measure against a database, and its
+  header says so and asks to be run when a normal creditnota can be made to confirm one still
+  succeeds.
+
+### Measured, and deliberately not changed
+
+- **The kasstelsel quarter attribution** (`bulk-undo-pay`, `invoice-scan`). Both real: an invoice
+  settled across two quarters warns about one, and the booked-invoice scan buckets a correction by
+  invoice date where kas books it by payment date. Neither is reachable — **zero kasstelsel owners**
+  in production, one invoice with multiple instalments, none spanning two quarters — and both need
+  per-instalment dates plumbed through a screen another session was editing the same night.
+- **An unmatched categorised bank line double-counts against its invoice.** Verified, and the
+  finding's framing is incomplete: the unlink does not create the double count, it returns to the
+  ordinary unmatched state which predates any link. Removing it means either deleting the invoice
+  attach-invoice created — nothing marks which those are — or discarding the owner's own
+  classification.
+
+### Two findings were already fixed while the pass ran
+
+The `/api/aangifte` phantom suppletie and the ignored-bank-line P&L leak were both closed by another
+session the same night. Worth recording because the useful discipline is the same one that produced
+everything above: **check the current code and the live database before acting on a finding, however
+confident it sounds.** Two of twenty-two were already done, one migration's deny list turned out to
+be six files wide, and one of my own SQL statements had a bug I only found by re-reading it.
