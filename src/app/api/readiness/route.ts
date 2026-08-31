@@ -475,10 +475,22 @@ export async function GET(req: NextRequest) {
   if (turnover.length > 0) {
     try {
       const endBuffer = shiftDays(end, 5);
-      const { data: eftRows } = await pipeline
+      // [EFT-READ-ERROR] Paged AND ordered, like the sibling read in compute-result-range.ts:172
+      // that was fixed for exactly this. Unpaged, a retail owner past ~1000 settlement rows in a
+      // quarter loses an arbitrary subset — and this feeds reconcileTriangle on the ONE screen that
+      // decides whether the quarter may go to the accountant. A missing settlement day turns a real
+      // 'gross_mismatch' (the till's PIN total disagreeing with the terminal's) into 'incomplete',
+      // so the risk row the panel exists to raise is never pushed and the day passes as 'klaar'.
+      // Unordered, the subset is not even stable between two loads of the same screen.
+      const eftRows = await fetchAllRows<{
+        settlement_date: string; terminal_id: string | null; period_nr: string | null; shift_nr: string | null;
+        period_start: string | null; period_end: string | null; first_trx: string | null; last_trx: string | null;
+        gross_total: number | null; tx_count: number | null; by_scheme: unknown;
+      }>((from, to) => pipeline
         .from("eft_settlements")
         .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
-        .eq("user_id", ownerId).gte("settlement_date", start).lte("settlement_date", end);
+        .eq("user_id", ownerId).gte("settlement_date", start).lte("settlement_date", end)
+        .order("id", { ascending: true }).range(from, to) as never);
       const eftSettlements: EftSettlement[] = (eftRows ?? []).map((e) => ({
         terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
         periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,

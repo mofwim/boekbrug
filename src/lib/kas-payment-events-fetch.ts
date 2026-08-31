@@ -15,7 +15,7 @@
 
 import type { PipelineClient } from "./supabase-pipeline";
 import { columnIsAbsent } from "@/lib/column-probe";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 import {
   buildQuarterSettlements,
   type HeaderWithPaid,
@@ -142,9 +142,25 @@ export async function fetchSettlementEvents(
   const txIds = [...new Set(links.map((l) => l.transaction_id).filter((id): id is string => !!id))];
   const txDate = new Map<string, string>();
   if (txIds.length > 0) {
-    const txRows = await fetchAllRows<{ id: string; date: string | null }>((from, to) => pipeline
-      .from("bank_transactions").select("id, date").in("id", txIds)
-      .order("id", { ascending: true }).range(from, to),
+    // [ID-CHUNK] fetchAllRowsForIds, not fetchAllRows with a bare `.in()`. The two solve different
+    // ceilings and only one of them was closed here: fetchAllRows re-issues `.range()` for the
+    // ~1000-row RESPONSE cap, but it rebuilds the same full id list in the URL on every page, so
+    // the REQUEST-line ceiling is untouched.
+    //
+    // And this id list is the worst case in the app. `links` above is read by user_id with no date
+    // filter — its own comment says "ALL of the owner's bank↔invoice links" — so txIds is every
+    // bank transaction that ever settled one of this owner's invoices, all-time. At ~37 URL bytes
+    // per uuid a few hundred settled invoices already outgrow the request line, and the 414 is not
+    // a degraded read: it throws, and the concept BTW-aangifte, the resultaat screen, readiness and
+    // the closing package all lose their settlement dating at once, permanently, for the owners
+    // with the longest history.
+    //
+    // payment-evidence-collect.ts:62 does this identical three-step read the right way already.
+    const txRows = await fetchAllRowsForIds<{ id: string; date: string | null }, string>(
+      txIds,
+      (chunk, from, to) => pipeline
+        .from("bank_transactions").select("id, date").in("id", chunk)
+        .order("id", { ascending: true }).range(from, to),
     ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_transactions fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
     for (const t of txRows) if (t.date) txDate.set(t.id, t.date.slice(0, 10));
   }

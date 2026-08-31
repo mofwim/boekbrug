@@ -210,13 +210,28 @@ export default async function AccountantDebiteurenPage() {
   const factuurIds = rijen.map((r) => r.id)
   const spoor: Record<string, { count: number; last: string | null }> = {}
   if (factuurIds.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: herinneringen } = await (pipeline as any)
-      .from('invoice_reminders')
-      .select('invoice_id, sent_at, status')
-      .in('invoice_id', factuurIds)
-      .order('sent_at', { ascending: false })
-    for (const h of (herinneringen ?? []) as Array<{ invoice_id: string; sent_at: string; status: string }>) {
+    // [VOL-GELEZEN] Gehakt én gepagineerd, net als de twee lezingen hierboven in dit blok. Dit was
+    // de derde en de enige kale `.in()`: factuurIds is elke openstaande vordering van élke
+    // gemandateerde klant van het kantoor, dus bij veertig klanten met dertig posten is dat 1200
+    // uuid's en ~44 kB URL — een 414. supabase-js geeft die fout TERUG, en hij werd hier niet eens
+    // uitgelezen, dus `spoor` bleef leeg en elke rij kreeg reminder_count 0.
+    //
+    // Onder de 414-drempel doet de stille afkap op ~1000 rijen hetzelfde, maar erger gericht: met
+    // `sent_at desc` overleven juist de NIEUWSTE herinneringen, dus de oudste vorderingen — die
+    // bovenaan een lijst staan die op oudste schuld sorteert — verliezen hun spoor het eerst.
+    // Sorteren gebeurt nu in het geheugen, want pagineren heeft een stabiele sleutel nodig.
+    const herinneringen = await fetchAllRowsForIds<{ invoice_id: string; sent_at: string; status: string }, string>(
+      factuurIds,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chunk, from, to) => (pipeline as any)
+        .from('invoice_reminders')
+        .select('invoice_id, sent_at, status')
+        .in('invoice_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+    const opDatum = [...herinneringen].sort((a, b) => (b.sent_at ?? '').localeCompare(a.sent_at ?? ''))
+    for (const h of opDatum) {
       // Een mislukte poging telt niet als herinnering — de klant heeft niets ontvangen, en hem
       // daarvoor een beurt laten overslaan zou de fout van ons bij hem neerleggen.
       if (h.status === 'failed') continue
