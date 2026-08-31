@@ -1621,9 +1621,53 @@ export default function BankClient() {
       {/* [HEADER-SYSTEM] Title "Bank" + back live in the shared sub-page bar
           (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
           removed. The descriptive intro line stays. */}
-      <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
-        {t('bank.intro')}
-      </p>
+      {/* ── [BANK-STAND] Wat er nú op je wacht ────────────────────────────────────────────────
+          Hier stond een vaste beschrijving van wat dit scherm dóét ("Koppel je bank of upload je
+          bankafschrift…"). Die las elke dag hetzelfde, hoeveel of hoe weinig er ook lag — terwijl
+          de ondernemer die zin al kent na de eerste keer, en de vraag waarmee hij komt een andere
+          is: moet ik hier iets?
+          Dezelfde plaats en dezelfde toon als de kopregel van /dashboard/incoming, die deze vorm al
+          had. En het is geen extra blok: het vervangt de regel die er stond.
+          Zolang de eerste lezing loopt (data === null) staat er niets. "Alles afgehandeld" boven een
+          scherm dat nog aan het laden is, is precies het soort geruststelling dat later een leugen
+          blijkt te zijn geweest. */}
+      {data && (
+        <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
+          {/* "Nog geen transacties" hangt aan de lezing zelf, niet aan de genegeerd-lijst: die
+              wordt pas geladen als dat tabblad wordt geopend, dus bij de eerste verf is hij altijd
+              leeg — en een administratie met alleen genegeerde regels zou dan lezen als een lege. */}
+          {(data.suggestions?.length ?? 0) === 0
+            ? t('bank.stand.leeg')
+            : !heeftWerk
+              ? t('bank.stand.klaar')
+              : (
+                <>
+                  {toConfirm.length > 0 && (
+                    <strong style={{ color: '#3c4043' }}>
+                      {toConfirm.length === 1
+                        ? t('bank.stand.bevestigenEen')
+                        : t('bank.stand.bevestigen', { count: toConfirm.length })}
+                    </strong>
+                  )}
+                  {toConfirm.length > 0 && noMatch.length > 0 && ' '}
+                  {noMatch.length > 0 && (
+                    noMatch.length === 1
+                      ? t('bank.stand.geenFactuurEen')
+                      : t('bank.stand.geenFactuur', { count: noMatch.length })
+                  )}
+                  {/* De pinregels horen erbij, anders is de zin LEEG op een scherm waar alleen
+                      pinafrekeningen wachten — heeftWerk telt ze mee, dus zonder deze zin zou daar
+                      een lege alinea staan boven een lijst met werk. */}
+                  {(toConfirm.length > 0 || noMatch.length > 0) && posList.length > 0 && ' '}
+                  {posList.length > 0 && (
+                    posList.length === 1
+                      ? t('bank.stand.pinEen')
+                      : t('bank.stand.pin', { count: posList.length })
+                  )}
+                </>
+              )}
+        </p>
+      )}
 
       {/* ── [BANK-WERK-EERST] De kop van de machinerie ──────────────────────────────────────
           Eén regel in plaats van drie blokken, met de handeling die de ondernemer hier écht doet

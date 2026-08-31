@@ -21795,3 +21795,48 @@ test("[BANK-LEGE-TAB] a tab with nothing in it is not offered, but the one you a
       "that this list is finished",
   );
 });
+
+// ─── [BANK-STAND] Eén zin die zegt wat er nú op je wacht ──────────────────────────────
+//
+// Bovenaan het bankscherm stond een vaste beschrijving van wat het scherm dóét: "Koppel je bank of
+// upload je bankafschrift. We koppelen transacties aan je facturen — jij bevestigt." Die las elke
+// dag hetzelfde, hoeveel of hoe weinig er ook lag, en de ondernemer kent hem na de eerste keer —
+// terwijl de vraag waarmee hij komt een andere is: moet ik hier iets?
+//
+// /dashboard/incoming had die vorm al ("3 hebben aandacht nodig · 12 klaar om te bevestigen"), op
+// dezelfde plaats en in dezelfde toon. Dit is geen nieuw idee maar hetzelfde idee, op het scherm
+// waar het ontbrak — en het is geen extra blok: het vervangt de regel die er stond.
+
+test("[BANK-STAND] the top line reports the queue instead of describing the screen", () => {
+  const src = code("src/app/dashboard/bank/BankClient.tsx");
+
+  assert.doesNotMatch(
+    src, /\{t\('bank\.intro'\)\}/,
+    "the static intro is back. It says the same thing every day, on the screen whose whole purpose " +
+      "is to tell the owner what is different today.",
+  );
+  assert.match(src, /bank\.stand\.bevestigen/, "the count of lines waiting for a confirmation is gone");
+  assert.match(src, /bank\.stand\.geenFactuur/, "the count of lines without an invoice is gone");
+
+  // De pinregels tellen mee in heeftWerk. Laat je ze uit de zin, dan staat er een LEGE alinea boven
+  // een lijst met werk — op precies het scherm dat zou moeten zeggen wat er te doen is.
+  assert.match(
+    src, /bank\.stand\.pin/,
+    "card settlements count as work but are not named, so a pin-only queue renders an empty sentence",
+  );
+
+  // En niets beweren zolang de eerste lezing loopt: "Alles afgehandeld" boven een ladend scherm is
+  // een geruststelling die een halve seconde later een leugen blijkt.
+  assert.match(
+    src, /\{data && \(\s*<p style=\{\{ fontSize: 13\.5/,
+    "the status line renders before the first read has answered, so it claims a state it cannot know",
+  );
+
+  // "Nog geen transacties" mag niet aan de genegeerd-lijst hangen: die wordt pas geladen als dat
+  // tabblad wordt geopend, dus bij de eerste verf is hij altijd leeg.
+  assert.match(
+    src, /\(data\.suggestions\?\.length \?\? 0\) === 0/,
+    "the empty verdict depends on the lazily-loaded ignored list again, so an administration whose " +
+      "lines are all ignored reads as one that has none",
+  );
+});
