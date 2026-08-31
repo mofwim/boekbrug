@@ -12619,6 +12619,14 @@ export const MESSAGES = {
     en: 'At this pace you will reach about {verwacht} hours this year. That is above the 1,225.',
     ar: 'بهذه الوتيرة ستصل إلى نحو {verwacht} ساعة هذا العام، أي فوق 1.225.',
   },
+  // [NIET-BIJGEHOUDEN] Geen oordeel, want er valt niets te oordelen. En géén aansporing om het hier
+  // te gaan doen: veel ondernemers houden hun uren ergens anders bij, en dat is prima — wat ze
+  // moeten weten is dát die registratie bewaard moet blijven, niet waar hij staat.
+  'uren.criterium.nietbijgehouden': {
+    nl: 'Je houdt je uren hier (nog) niet bij, dus we kunnen niets zeggen over het urencriterium. Doe je dat ergens anders? Bewaar die registratie goed — de Belastingdienst kan erom vragen. Vul je ze hier in, dan rekenen we mee, ook de uren die je niet factureert.',
+    en: 'You are not keeping your hours here, so we cannot say anything about the urencriterium. Keeping them somewhere else? Hold on to that record — the Belastingdienst may ask for it. Enter them here and we will count along, including the hours you do not invoice.',
+    ar: 'أنت لا تسجّل ساعاتك هنا، لذلك لا يمكننا قول شيء عن معيار الساعات. أتحتفظ بها في مكان آخر؟ احتفظ بذلك السجل جيداً — فقد تطلبه مصلحة الضرائب. وإن أدخلتها هنا فسنحسبها معك، بما فيها الساعات غير المفوترة.',
+  },
   'uren.criterium.achter': {
     nl: 'Op dit tempo kom je uit op ongeveer {verwacht} uur — onder de 1.225. Je hebt nog {resterend} uur te gaan in {dagen} dagen: gemiddeld {perweek} uur per week.',
     en: 'At this pace you will reach about {verwacht} hours — below the 1,225. You have {resterend} hours to go in {dagen} days: {perweek} hours a week on average.',

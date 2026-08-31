@@ -68,6 +68,21 @@ export const HARD_WEEK_HOURS = 40;
 export type UrencriteriumLevel =
   /** The hours could not be read. Never "not met" over a failed read. */
   | "unknown"
+  /**
+   * [NIET-BIJGEHOUDEN] This owner has never registered an hour here, in any year.
+   *
+   * Not the same as zero hours worked, and it is the difference rule 3 above is about: only
+   * registered hours count, and that is a statement about the REGISTRATION. An owner who bills
+   * fixed-price, or keeps a spreadsheet, or has an employer's contract alongside, has an empty
+   * table here and a perfectly sound year — and was being told, in red, that his
+   * zelfstandigenaftrek might lapse.
+   *
+   * Measured when this was added: every single owner in the production database had zero time
+   * entries. So this was not an edge case, it was the answer everybody got — and a warning
+   * everybody gets over nothing is exactly the noise this module's header says costs the real
+   * warning its credibility.
+   */
+  | "not_tracked"
   /** 1.225 registered. Nothing further to do, and the screen should stop asking. */
   | "met"
   /** Too little of the year has passed to say anything about where it lands. */
@@ -88,6 +103,17 @@ export interface UrencriteriumInput {
   today: string;
   /** The calendar year being assessed. */
   year: number;
+  /**
+   * [NIET-BIJGEHOUDEN] Has this owner ever registered an hour here, in ANY year?
+   *
+   * Deliberately across all time, not this year: someone who kept hours last year and has entered
+   * none yet this year IS using the feature, and for him an empty January is a real signal. Only
+   * an owner with nothing at all, ever, gives this module nothing to judge by.
+   *
+   * `null` means the probe did not run, and then nothing changes — the old behaviour stands rather
+   * than a failed read silencing a warning that may be genuine.
+   */
+  everRegistered?: boolean | null;
 }
 
 export interface UrencriteriumStatus {
@@ -148,6 +174,18 @@ export function assessUrencriterium(input: UrencriteriumInput): UrencriteriumSta
   }
 
   const hours = round2(Math.max(0, hoursSoFar));
+
+  // [NIET-BIJGEHOUDEN] Before any verdict, including "closed_missed" and "too_early": an owner who
+  // has never registered an hour here is not behind, ahead or too early. There is nothing to
+  // measure, and saying otherwise turns the absence of a registration into a claim about his year.
+  //
+  // `hours === 0` is part of the test, and not belt-and-braces: hours ON THE CLOCK are themselves
+  // evidence of registration, and they are the harder fact. The two cannot disagree in practice
+  // (both come from time_entries) — but if they ever did, saying "you do not keep hours here"
+  // above 1.300 registered ones would be the screen contradicting itself.
+  if (input.everRegistered === false && hours === 0) {
+    return { ...base, hours: 0, remaining: threshold, level: "not_tracked" };
+  }
   const remaining = round2(Math.max(0, threshold - hours));
 
   const todayIdx = dayIndex(today);

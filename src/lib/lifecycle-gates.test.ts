@@ -21418,3 +21418,44 @@ test("[OVER-DATUM] the accountant's quarter page uses the shared rule", () => {
     "the sales-only condition is back, and the crediteuren section can no longer show a late bill",
   );
 });
+
+// ─── [NIET-BIJGEHOUDEN] Een leeg urenregister is geen mislukt jaar ────────────────────
+//
+// urencriterium.ts stelt zijn eigen regel 3: alleen GEREGISTREERDE uren tellen, en dat is een
+// uitspraak over de registratie, niet over het werk — "het verschil tussen een feit en een
+// beschuldiging". Het oordeel stapte over die grens heen. Een ondernemer zonder één urenregel
+// las, in rood: "je hebt nog 1.225 uur te gaan… houd er rekening mee dat de zelfstandigenaftrek
+// dit jaar kan vervallen."
+//
+// Voor wie vast prijs factureert, zijn uren in een spreadsheet bijhoudt of er geen aanspraak op
+// maakt, is dat een waarschuwing over de grootste aftrek die hij heeft, op grond van niets. Gemeten
+// toen dit werd toegevoegd: ELKE eigenaar in de productiedatabase had nul uren staan. Geen
+// randgeval dus, maar het antwoord dat iedereen kreeg — en precies de ruis waarvan de kop van die
+// module zegt dat hij de échte waarschuwing zijn geloofwaardigheid kost.
+
+test("[NIET-BIJGEHOUDEN] an empty hour register produces no verdict about the year", () => {
+  const mod = code("src/lib/urencriterium.ts");
+
+  assert.match(
+    mod, /input\.everRegistered === false && hours === 0/,
+    "assessUrencriterium judges an owner who has never registered an hour again — and 'closed_missed' " +
+      "over an empty register is the same accusation with the tense changed",
+  );
+  // De `hours === 0` hoort erbij: geregistreerde uren zijn zelf het bewijs van registratie, en
+  // "je houdt hier geen uren bij" boven 1.300 ervan is het scherm dat zichzelf tegenspreekt.
+  assert.match(mod, /"not_tracked"/, "the level itself is gone");
+
+  const page = code("src/app/dashboard/uren/page.tsx");
+  assert.match(
+    page, /everRegistered/,
+    "the page no longer asks whether this owner has ever registered an hour, so the module cannot " +
+      "tell an empty register from a bad year",
+  );
+  // Over ALLE jaren: wie vorig jaar uren bijhield en dit jaar nog niets invulde, gebruikt de
+  // functie wél, en voor hem is een lege januari een echt signaal.
+  assert.doesNotMatch(
+    page, /from\('time_entries'\)\s*\.select\('id'\)\s*\.gte\('worked_on'/,
+    "the ever-registered probe was narrowed to this year, which turns an owner's quiet January " +
+      "into 'you do not track hours' and takes away a warning he should have",
+  );
+});
