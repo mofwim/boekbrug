@@ -90,6 +90,16 @@ export default async function AccountantDebiteurenPage() {
       .from('accountant_invoice_mandates')
       .select('zzper_id')
       .eq('accountant_id', user.id)
+      // [MANDAAT-SOORT] `kind`, en dat is geen verfijning maar de grens zelf. Er zijn twee
+      // machtigingen: 'facturen' (namens de klant factureren) en 'bevestigen' (inkoopfacturen van
+      // de klant bevestigen). Zonder dit filter telde ELKE levende machtiging mee, dus een klant
+      // die alleen 'bevestigen' had gegeven — toestemming die over zijn INKOOP gaat — opende
+      // hiermee zijn hele debiteurenpositie: elke openstaande verkoopfactuur, met bedrag, met
+      // klantnaam, en met de knop om die klant een herinnering te sturen.
+      //
+      // has_active_invoice_mandate() in de database filtert er wél op; deze query las dezelfde
+      // tabel zonder. Het bevestigscherm hiernaast doet het al goed, met precies deze regel.
+      .eq('kind', 'facturen')
       .is('revoked_at', null),
   ])
 
@@ -156,7 +166,38 @@ export default async function AccountantDebiteurenPage() {
   // [DEEL-CREDIT] Alleen een creditnota die de factuur DEKT haalt hem van de lijst. Een deel
   // gecrediteerd betekent dat de rest nog openstaat, en een debiteurenlijst die dat weglaat laat
   // geld liggen zonder dat er iets rood wordt.
-  const creditnotas = alle.filter((r) => r.invoice_type === 'creditnota')
+  // [DEEL-CREDIT] De creditnota's komen uit een EIGEN lezing, niet uit `alle`. De lezing hierboven
+  // is gefilterd op `.in('status', ['sent','overdue','partial'])` — precies de statussen van een
+  // vordering — en een creditnota die zelf is afgewikkeld staat op 'paid'. Die viel er dus uit, en
+  // dan gebeurt tweemaal het omgekeerde van wat deze twee regels beloven: een volledig
+  // gecrediteerde factuur blijft op de nabellijst staan, en een deels gecrediteerde staat er op
+  // haar VOLLE bedrag. De boekhouder belt een klant over geld dat de ondernemer allang schriftelijk
+  // heeft teruggegeven — het scenario waar de kop van outstandingAmount() over gaat.
+  //
+  // Er staat vandaag een status='paid', invoice_type='creditnota' rij in deze database.
+  //
+  // Elke andere plek in dit product leest de creditnota's al zo: een eigen query op invoice_type,
+  // zonder statusfilter (daily-truth, vandaag, /pay, de betaalverzoeken, de herinneringencron).
+  // Deze twee accountantschermen waren de enige die ze uit de vorderingenlezing afleidden.
+  //
+  // Niet opgevangen, net als de vorderingenlezing hierboven: fetchAllRowsForIds gooit, en dan
+  // toont Next de foutpagina. Een lege creditnotalijst zou hier namelijk niet "geen creditnota's"
+  // betekenen maar "elk bedrag op zijn volle hoogte" — de nabellijst zou er normaal uitzien en
+  // precies fout zijn. Deze pagina faalt liever zichtbaar dan zeker verkeerd.
+  const creditnotas = await fetchAllRowsForIds<
+    { id: string; original_invoice_id: string | null; total_inc_btw: number | null },
+    string
+  >(
+    klantIds,
+    (chunk, from, to) => pipeline
+      .from('invoices')
+      .select('id, original_invoice_id, total_inc_btw')
+      .in('sender_id', chunk)
+      .eq('direction', 'outgoing')
+      .eq('invoice_type', 'creditnota')
+      .not('original_invoice_id', 'is', null)
+      .order('id', { ascending: true }).range(from, to),
+  )
   const rijen = filterOpenReceivables(alle, fullyCreditedIdsFrom(creditnotas, alle))
   // [DEEL-CREDIT] En hoevéél er per factuur is gecrediteerd. De regel hierboven haalt alleen de
   // volledig gecrediteerde facturen van de lijst; zonder deze regel bleef een deels gecrediteerde
@@ -169,13 +210,28 @@ export default async function AccountantDebiteurenPage() {
   const factuurIds = rijen.map((r) => r.id)
   const spoor: Record<string, { count: number; last: string | null }> = {}
   if (factuurIds.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: herinneringen } = await (pipeline as any)
-      .from('invoice_reminders')
-      .select('invoice_id, sent_at, status')
-      .in('invoice_id', factuurIds)
-      .order('sent_at', { ascending: false })
-    for (const h of (herinneringen ?? []) as Array<{ invoice_id: string; sent_at: string; status: string }>) {
+    // [VOL-GELEZEN] Gehakt én gepagineerd, net als de twee lezingen hierboven in dit blok. Dit was
+    // de derde en de enige kale `.in()`: factuurIds is elke openstaande vordering van élke
+    // gemandateerde klant van het kantoor, dus bij veertig klanten met dertig posten is dat 1200
+    // uuid's en ~44 kB URL — een 414. supabase-js geeft die fout TERUG, en hij werd hier niet eens
+    // uitgelezen, dus `spoor` bleef leeg en elke rij kreeg reminder_count 0.
+    //
+    // Onder de 414-drempel doet de stille afkap op ~1000 rijen hetzelfde, maar erger gericht: met
+    // `sent_at desc` overleven juist de NIEUWSTE herinneringen, dus de oudste vorderingen — die
+    // bovenaan een lijst staan die op oudste schuld sorteert — verliezen hun spoor het eerst.
+    // Sorteren gebeurt nu in het geheugen, want pagineren heeft een stabiele sleutel nodig.
+    const herinneringen = await fetchAllRowsForIds<{ invoice_id: string; sent_at: string; status: string }, string>(
+      factuurIds,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (chunk, from, to) => (pipeline as any)
+        .from('invoice_reminders')
+        .select('invoice_id, sent_at, status')
+        .in('invoice_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    )
+    const opDatum = [...herinneringen].sort((a, b) => (b.sent_at ?? '').localeCompare(a.sent_at ?? ''))
+    for (const h of opDatum) {
       // Een mislukte poging telt niet als herinnering — de klant heeft niets ontvangen, en hem
       // daarvoor een beurt laten overslaan zou de fout van ons bij hem neerleggen.
       if (h.status === 'failed') continue

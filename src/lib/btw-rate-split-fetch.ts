@@ -12,6 +12,7 @@ import type { PipelineClient } from "./supabase-pipeline";
 // [VRIJGESTELD] The exempt part of a sale is read from the SAME lines as the rate mix — one
 // query, one truth. See vat-exemption.ts for why exempt is not a rate.
 import { getVatTreatment } from "./vat-exemption";
+import { reportHandledFailure } from "./report-handled";
 
 export interface RateSplitInvoice {
   id?: string | null;
@@ -27,6 +28,19 @@ export interface RateSplitResult {
    * Empty unless the caller asked for it AND the invoice actually has exempt lines.
    */
   exemptExByInvoice: Map<string, number>;
+  /**
+   * [SPLIT-EERLIJK] Did the read fail, leaving both maps empty because we could not look?
+   *
+   * Empty maps are the normal answer for "no invoice in this quarter has more than one rate", and
+   * they are ALSO the answer when the read fell over. The caller cannot tell those apart from the
+   * maps, and for the aangifte that hardly matters — the totals (5a, 5b, 5g) are identical either
+   * way, the split only moves omzet between rubrieken. For the AUDITFILE it matters a great deal:
+   * that file is handed to an accountant and to the Belastingdienst as a description of the books,
+   * and a sales entry silently carrying one blended header rate where the invoice has two is a
+   * statement about the administratie that is not true. A file may say what it could not read;
+   * it may not quietly say something else.
+   */
+  degraded: boolean;
 }
 
 /**
@@ -57,8 +71,9 @@ export async function fetchRateShares(
 ): Promise<RateSplitResult> {
   const out = new Map<string, RateShare[]>();
   const exemptExByInvoice = new Map<string, number>();
+  let degraded = false;
   const ids = invoices.map((i) => i.id).filter((id): id is string => !!id);
-  if (ids.length === 0) return { rateShares: out, exemptExByInvoice };
+  if (ids.length === 0) return { rateShares: out, exemptExByInvoice, degraded: false };
 
   try {
     // [IN-CHUNK] Chunked, because `ids` is EVERY sales invoice in the quarter. `.in()` has a second,
@@ -137,10 +152,18 @@ export async function fetchRateShares(
     // omzet BETWEEN rubrieken. What is not acceptable is that it used to fail INVISIBLY: with the
     // 414 path closed above, an error here is a real outage, and a rubriek split that quietly
     // degraded on a filed declaration should be findable afterwards.
-    console.error("[RUBRIEK-SPLIT] invoice_lines read failed — falling back to the header rate", {
-      invoiceCount: ids.length,
-      error: e instanceof Error ? e.message : String(e),
+    // [SPLIT-EERLIJK] Via reportHandledFailure, niet alleen console.error. Deze degradatie is
+    // stil per constructie — de aangifte telt daarna exact hetzelfde op — en juist daarom is een
+    // logregel die niemand leest de verkeerde plek: het enige moment waarop dit nog te zien is,
+    // is nu. En de aanroeper krijgt het te horen, want de auditfile moet het in het bestand zetten.
+    reportHandledFailure({
+      tag: "RUBRIEK-SPLIT",
+      severity: "data-integrity",
+      message:
+        "invoice_lines kon niet gelezen worden — de rubriekverdeling valt terug op het tarief uit de factuurkop.",
+      context: { invoiceCount: ids.length, error: e instanceof Error ? e.message : String(e) },
     });
+    degraded = true;
     // [VRIJGESTELD] Both maps are dropped TOGETHER. Today the only throw is the fetch itself,
     // which happens before either map is written, so this clears nothing — it is here so that
     // the invariant survives the next edit: a half-built picture (some invoices classified, the
@@ -149,5 +172,5 @@ export async function fetchRateShares(
     out.clear();
     exemptExByInvoice.clear();
   }
-  return { rateShares: out, exemptExByInvoice };
+  return { rateShares: out, exemptExByInvoice, degraded };
 }

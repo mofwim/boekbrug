@@ -126,8 +126,19 @@ export async function importBankStatement(args: {
   let refused: string | null = null;
   if (parsed) {
     const cur = (parsed.currency || "").toUpperCase();
+    // [CSV-MUNT] Ook PER REGEL. De valuta van het afschrift is één uitspraak over het hele
+    // bestand, en een bestand hoeft er geen te doen: CAMT zet Ccy per <Ntry> en een CSV heeft een
+    // muntkolom per rij, dus een bestand met een euro-kop kan regels in dollars bevatten. Alleen
+    // de kop lezen liet die regels als euro's binnen — hetzelfde bedrag, de verkeerde munt, en
+    // nergens meer zichtbaar zodra ze geboekt zijn.
+    const rowCurrencies = [...new Set(
+      (parsed.transactions ?? []).map((t) => (t.currency || "").toUpperCase()).filter(Boolean),
+    )];
+    const vreemd = rowCurrencies.filter((c) => c !== "EUR");
     if (cur && cur !== "EUR") {
       refused = `Dit afschrift is in ${cur}, en deze administratie boekt in euro's. Een vreemde-valutarekening kunnen we nog niet verwerken — de bedragen zouden anders als euro's in je boekhouding landen.`;
+    } else if (vreemd.length > 0) {
+      refused = `Dit bestand bevat regels in een andere munt dan de euro (${vreemd.join(", ")}), en deze administratie boekt in euro's. Splits die regels bij je bank naar een eigen afschrift — anders landen die bedragen als euro's in je boekhouding.`;
     } else if (parsed.format === "MT940") {
       const raw = buffer.toString("utf8");
       const accts = [...new Set([...raw.matchAll(/^:25:(.+)$/gm)].map((m) => m[1].trim()))];
@@ -177,7 +188,7 @@ export async function importBankStatement(args: {
       .maybeSingle();
     if (existingDoc) {
       priorDocId = existingDoc.id as string;
-      const { count } = await pipeline
+      const { count, error: countErr } = await pipeline
         .from("bank_transactions")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
@@ -187,7 +198,10 @@ export async function importBankStatement(args: {
       // get them back — and in both cases short-circuiting would freeze the gap permanently
       // instead of repairing it. Equality is the only count that proves nothing is missing;
       // anything less falls through to layers 2 and 3, which insert exactly what is absent.
-      alreadyImported = transactions.length > 0 && (count ?? 0) === transactions.length;
+      // [NO-SILENT-EMPTY] The fail-closed made explicit rather than left to arithmetic. A failed
+      // count already produced 0 ≠ transactions.length, so this changes nothing — it says the
+      // reason out loud, and it is the one shape where an unbound error was actually harmless.
+      alreadyImported = !countErr && transactions.length > 0 && (count ?? 0) === transactions.length;
     }
   } catch {
     // Best-effort: an unreadable documents table must never block an import. Layers 2 and 3 still

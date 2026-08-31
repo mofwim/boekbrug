@@ -29,6 +29,7 @@ import { sheetPaddingBottom } from '@/lib/design/tokens'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 
@@ -97,9 +98,7 @@ export default function FeedbackButton() {
       } else {
         setResult({
           ok: false,
-          text: typeof json?.error === 'string' && json.error
-            ? json.error
-            : t('fb.mislukt'),
+          text: failureText(res.status, json, t('fb.mislukt')),
         })
       }
     } catch {

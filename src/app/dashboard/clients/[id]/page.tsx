@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/Toast'
 import { EL1, M3, R, COLUMN } from '@/lib/design/tokens'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
+import { failureText } from '@/lib/server-message'
 
 const LAST_CLIENT_KEY = 'last_client_id'
 
@@ -48,9 +49,11 @@ export default function ClientDetailPage() {
       const { data: clientData } = await supabase.from('profiles').select('*').eq('id', clientId).single()
       if (clientData) setClient(clientData)
       else setMissing(true)
-      const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true })
+      // [NO-SILENT-EMPTY] Een mislukte telling is geen "0 ongelezen". De badge blijft dan weg in
+      // plaats van te beweren dat er niets ligt.
+      const { count, error: unreadErr } = await supabase.from('messages').select('id', { count: 'exact', head: true })
         .eq('sender_id', clientId).eq('receiver_id', user.id).eq('read', false)
-      setUnreadCount(count || 0)
+      setUnreadCount(unreadErr ? 0 : count || 0)
       setLoading(false)
     }
     load()
@@ -79,7 +82,7 @@ export default function ClientDetailPage() {
       router.push('/dashboard')
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('bh.det.ontkoppelMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('bh.det.ontkoppelMislukt')), { tone: 'error' })
     }
   }
 

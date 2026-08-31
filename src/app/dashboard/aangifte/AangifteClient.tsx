@@ -12,12 +12,14 @@ import { quarterFromParams } from '@/lib/quarter'
 // [TZ] Amsterdam's day/year, never the device's — see format-nl.ts. formatDateNL renders the
 // filing timestamp as DD-MM-YYYY, pinned to the same zone.
 import { amsterdamToday, formatDateNL } from '@/lib/format-nl'
+import { filedNotice } from '@/lib/aangifte-filed-notice'
 // [DEADLINE] De datum waarop dit ingediend moet zijn, en hoeveel dagen dat nog is.
 import { deadlineNotice } from '@/lib/btw-deadline-notice'
 import type { QuarterNo } from '@/lib/btw-reservation'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })
 
@@ -50,7 +52,16 @@ interface Icp { lines: IcpLine[]; totalExBtw: number; problems: IcpProblem[] }
 // [FILED-QUARTER] The frozen figures of an aangifte this owner already marked as ingediend, when
 // this quarter is one of them. Everything else on this page is recomputed LIVE, so without this
 // the screen shows a fresh concept for a closed quarter and says nothing about it.
-interface Filed { filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number }
+interface Filed {
+  filedAt: string; verschuldigd: number; voorbelasting: number; saldo: number
+  /**
+   * [SUPPLETIE-FANTOOM] Wat er sinds het indienen bij is gekomen of af is gegaan, berekend op de
+   * server uit de ONafgeronde cijfers. Niet hier uit twee afgeronde bedragen af te trekken: het
+   * concept-5g is de som van per rubriek afgeronde bedragen en het ingediende saldo is in één keer
+   * afgerond, dus dat verschil bestond ook op een kwartaal waar niemand iets aan veranderde.
+   */
+  saldoDelta: number
+}
 
 // [SUPPLETIE-VERREKEND] A correction from an EARLIER filed quarter, €1.000 or less, that has not
 // been declared anywhere yet. The Belastingdienst allows those to be processed in the next regular
@@ -132,9 +143,7 @@ export default function AangifteClient({ hasAccountant = null }: {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok || !json.ok) {
-        setCarryNote(typeof json.error === 'string'
-          ? json.error
-          : t('aang.correcties.mislukt'))
+        setCarryNote(failureText(res.status, json, t('aang.correcties.mislukt')))
         return
       }
       setCorrections((prev) => prev.filter((x) => x.quarter !== c.quarter))
@@ -165,9 +174,7 @@ export default function AangifteClient({ hasAccountant = null }: {
           setLoadError(
             res.status === 401
               ? t('aang.sessieVerlopen')
-              : (typeof json?.detail === 'string' && json.detail.trim())
-                ? json.detail.trim()
-                : t('aang.ladenMislukt'),
+              : failureText(res.status, json, t('aang.ladenMislukt')),
           )
           return
         }
@@ -194,7 +201,16 @@ export default function AangifteClient({ hasAccountant = null }: {
   // [FILED-QUARTER] The difference between what was handed in and what this quarter's data says
   // NOW. Both sides are whole euros already (the route rounds, and 5g is a subtraction of two
   // rounded figures), so this is exact — no epsilon, no "verschil van € 0" from a float.
-  const filedDelta = filed && data ? data.saldo - filed.saldo : 0
+  // [SUPPLETIE-FANTOOM] Het verschil komt van de SERVER, uit de onafgeronde cijfers. Hier stond
+  // `data.saldo - filed.saldo`: het concept-5g (de som van de per rubriek afgeronde bedragen) min
+  // een saldo dat in één keer was afgerond. Twee verschillende bewerkingen, dus op een kwartaal
+  // waar niemand iets aan veranderde stond hier tot een paar euro — en dan las de eigenaar dat er
+  // iets "bij komt" op een aangifte die hij al had ingediend.
+  const filedDelta = filed?.saldoDelta ?? 0
+  // [AANGIFTE-INGEDIEND] De banner als sleutels — welke zin, beslist door een pure functie.
+  // `filed` kan null zijn; dan wordt de banner hieronder toch niet gerenderd en is dit een
+  // onschuldige nulwaarde die nergens terechtkomt.
+  const bericht = filedNotice({ saldo: filed?.saldo ?? 0, delta: filedDelta })
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -295,26 +311,31 @@ export default function AangifteClient({ hasAccountant = null }: {
         {/* `data &&` is not decoration: filedDelta is 0 without it, and 0 is the sentence "komt
             precies overeen" — a claim we cannot make while the concept itself is not loaded. */}
         {filed && data && (
-          <div style={{ background: filedDelta !== 0 ? M3.errorContainer : M3.surfaceVariant, color: filedDelta !== 0 ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+          <div style={{ background: bericht.diverges ? M3.errorContainer : M3.surfaceVariant, color: bericht.diverges ? M3.error : M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
+            {/* [AANGIFTE-INGEDIEND] Welke zin hier staat, wordt buiten dit component beslist.
+                De banner doet VIER uitspraken uit twee ONAFHANKELIJKE tekens — het ingediende
+                saldo (betalen of terugkrijgen) en het verschil met de huidige berekening (erbij
+                of eraf) — en één verkeerd gekozen sleutel zegt "te betalen" boven een bedrag dat
+                de ondernemer juist terugkrijgt. Dat is geen opmaakfout maar een verkeerde
+                uitspraak over geld, op het scherm dat hij opent om te zien of zijn ingediende
+                aangifte nog klopt. Die keuze is nu een pure functie met een tabeltest.
+                [TAAL] En hele zinnen. Hier stonden zes Nederlandse brokken op een scherm dat wél
+                in de vertaalronde zit, en één zin was zelfs GESPLITST: t('aang.jeHebt') gevolgd
+                door het letterlijke 'te betalen'. Dat werkt alleen in het Nederlands, en de helft
+                die niet in de catalogus staat blijft in élke taal Nederlands. */}
             <strong style={{ fontWeight: 700 }}>
-              Dit kwartaal is al ingediend ({formatDateNL(filed.filedAt)})
+              {t(bericht.titelKey, { datum: formatDateNL(filed.filedAt) })}
             </strong>
-            {filedDelta === 0 ? (
-              <div style={{ marginTop: 4 }}>
-                De berekening hieronder komt (nog) precies overeen met wat je hebt ingediend:
-                5g {eur.format(Math.abs(filed.saldo))} {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'}.
-              </div>
-            ) : (
-              <div style={{ marginTop: 4 }}>
-                {t('aang.jeHebt')} <strong>{eur.format(Math.abs(filed.saldo))}</strong> {filed.saldo >= 0 ? 'te betalen' : 'terug te ontvangen'} ingediend.
-                Met je huidige gegevens komt daar <strong>{eur.format(Math.abs(filedDelta))}</strong>{' '}
-                {filedDelta > 0 ? 'bij' : 'af'} — de cijfers hieronder zijn de HUIDIGE berekening, niet je aangifte.
-                Wat je daarmee doet (verrekenen of een suppletie) beslis je op de Waarheid-pagina.
-                <div style={{ marginTop: 6 }}>
-                  <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
-                    {t('aang.verschil')}
-                  </Link>
-                </div>
+            <div style={{ marginTop: 4 }}>
+              {bericht.lines.map((r, i) => (
+                <span key={r.key}>{i > 0 ? ' ' : ''}{t(r.key, { bedrag: eur.format(r.bedrag) })}</span>
+              ))}
+            </div>
+            {bericht.diverges && (
+              <div style={{ marginTop: 6 }}>
+                <Link href={`/dashboard/waarheid?year=${year}&quarter=${quarter}`} style={{ color: 'inherit', fontWeight: 700, textDecoration: 'underline' }}>
+                  {t('aang.verschil')}
+                </Link>
               </div>
             )}
           </div>
@@ -495,7 +516,10 @@ export default function AangifteClient({ hasAccountant = null }: {
                         {l.clientName ?? l.vatNumber}
                       </div>
                       <div style={{ fontSize: 12.5, color: M3.neutral, fontFamily: FONT_NUM }}>
-                        {l.vatNumber} · {l.invoiceCount} {l.invoiceCount === 1 ? 'factuur' : 'facturen'}
+                        {/* [TAAL] Het zelfstandig naamwoord is geen parameter — zie AGENTS.md. */}
+                        {l.invoiceCount === 1
+                          ? t('aang.ic.factuurEen', { btw: l.vatNumber })
+                          : t('aang.ic.factuurMeer', { btw: l.vatNumber, aantal: l.invoiceCount })}
                       </div>
                     </div>
                     <span style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>

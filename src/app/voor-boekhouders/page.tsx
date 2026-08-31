@@ -24,8 +24,20 @@
 // be found out in a demo. Every one of those four is verified in code, not remembered:
 // docs/MARKTPOSITIE_2026.md re-verified them on 14 August 2026 and src/lib/ubl-export.ts:7 still
 // says what it says. Since 25 August 2026 the XAF/RGS answer is YES with a stated limit: the
-// export lives in src/lib/xaf-export.ts, validates against the official 3.2 XSD, and carries
-// verified RGS references on the main accounts only — the FAQ text below says exactly that much.
+// export lives in src/lib/xaf-export.ts and carries verified RGS references on the main accounts
+// only — the FAQ text below says exactly that much.
+//
+// [XAF-GEEN-XSD] That comment used to say the export "validates against the official 3.2 XSD",
+// and the FAQ said so to the reader. It does not, and it never did: there is no .xsd anywhere in
+// this repo, no validator runs, and xaf-export.test.ts asserts the output with regexes. The claim
+// came from a sentence in a comment and was believed by the sentence below it.
+//
+// What the file DOES verify is real and is now what the FAQ says instead: every journal entry
+// balances before it is written, the file-level debit/credit assertion stands between the journals
+// and the download, and an entry that cannot be balanced is REFUSED rather than patched
+// (xaf-export.ts:521,554). That is a stronger claim than schema-validity in the only way that
+// matters to an accountant — a schema-valid file can still carry a wrong number — and it has the
+// advantage of being true. The limit is stated out loud, like the other three.
 // Same day, the Peppol answer became "beide bestaan": UblBuildOptions.peppol builds the BIS 3.0
 // identity of the same invoice ([SI-UBL], conformance-tested), while sending over the network
 // still needs an access-point contract — and the FAQ says that limit out loud too.
@@ -179,11 +191,15 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
   {
     vraag: 'Is er een XAF-auditbestand of RGS-rekeningschema?',
     antwoord:
-      'Ja: per klant en per jaar is er een XML Auditfile Financieel 3.2 (gevalideerd tegen het ' +
-      'officiële schema), met verkoopboek, inkoopboek, bank, kas en dagomzet als sluitende ' +
-      'boekingen. De hoofdrekeningen dragen hun RGS-referentiecode; wat de app niet kan ' +
-      'plaatsen staat benoemd op Vraagposten in plaats van gegokt op een rekening. Een volledig ' +
-      'RGS-schema op detailniveau is er nog niet.',
+      'Ja: per klant en per jaar is er een XML Auditfile Financieel 3.2, met verkoopboek, ' +
+      'inkoopboek, bank, kas en dagomzet als sluitende boekingen. Elke journaalpost telt ' +
+      'debet = credit voordat hij in het bestand komt, het bestandstotaal sluit, en een post die ' +
+      'niet sluitend te maken is wordt GEWEIGERD in plaats van rechtgetrokken — die staat er dan ' +
+      'als document bij, niet als verzonnen boeking. Wat wij niet doen: het bestand tegen de ' +
+      'officiële XSD laten valideren; dat controleer je zelf bij het inlezen. De hoofdrekeningen ' +
+      'dragen hun RGS-referentiecode; wat de app niet kan plaatsen staat benoemd op ' +
+      'Vraagposten in plaats van gegokt op een rekening. ' +
+      'Een volledig RGS-schema op detailniveau is er nog niet.',
   },
   {
     vraag: 'Is de UBL-export Peppol/SI-UBL?',
@@ -265,6 +281,39 @@ export default function VoorBoekhoudersPage() {
             </section>
           ))}
         </div>
+
+        {/* ── [CARD-RECON] De pinomzet ─────────────────────────────
+            Waarom deze sectie bestaat: MARKTPOSITIE_2026.md §1 stelt vast dat wat dit product
+            werkelijk onderscheidt "op geen enkele featurelijst staat — ook niet op die van
+            hemzelf". Dit IS die lijst, en dit is precies de lezer die het aangaat: een kantoor
+            met horeca- of winkelklanten.
+
+            Onder de regel bovenaan dit bestand — alleen wat er is. De motor is
+            src/lib/card-reconcile.ts (Leg A en Leg B, met tests), de bedrading staat in
+            docs/RECONCILIATION_TRIANGLE.md. Wat daar onder "nog open" valt, staat hier niet, en
+            er staat nergens dat het al bij honderd kantoren draait. */}
+        <section style={{ ...card, marginBottom: 32 }}>
+          <h2 style={h2}>Voor klanten die veel pinnen</h2>
+          <p style={body}>
+            De kassa boekt de pinomzet <strong>bruto</strong>. De acquirer betaalt{' '}
+            <strong>netto</strong> uit — een dag later, met het weekend samengevoegd. Wie die twee
+            rechtstreeks vergelijkt, moet het verschil in een marge laten vallen, en dat verschil
+            zijn de transactiekosten. Die verdwijnen dan uit de kosten: de winst staat te hoog en
+            de btw erover wordt niet teruggevraagd.
+          </p>
+          <p style={body}>
+            BoekBrug zet de afrekening van de betaalterminal ertussen en maakt er twee exacte
+            vergelijkingen van. <strong>Kassa tegen terminal</strong>: allebei bruto, dus een
+            verschil is een echt verschil — een ontbrekende bon of een terminal die niet klopt,
+            geen afrondingsruis. En <strong>terminal tegen bank</strong>: dat verschil ís de
+            transactiekostenpost, en die wordt als kosten geboekt in plaats van weggestreept.
+          </p>
+          <p style={{ ...body, margin: 0 }}>
+            Is de bankuitbetaling er nog niet, dan zegt het scherm dat de pinomzet klopt en dat de
+            uitbetaling nog niet gekoppeld is. Er wordt geen bedrag ingevuld dat niemand heeft
+            gezien.
+          </p>
+        </section>
 
         {/* ── De grens ────────────────────────────────────────────
             This is the section an office reads twice. It is also the one that is hardest to

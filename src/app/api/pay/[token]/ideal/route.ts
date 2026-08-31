@@ -17,7 +17,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { toPublicPayView, type BetaalverzoekInvoice } from '@/lib/betaalverzoek'
 import { creditedOnInvoice } from '@/lib/credited-invoices'
 import { getMollieConnection } from '@/lib/mollie-connection'
-import { createMolliePaymentLink, mollieAmountValue, linkIsStale } from '@/lib/mollie'
+import { createMolliePaymentLink, mollieAmountValue, linkIsStale, placeholderVerdict } from '@/lib/mollie'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { SITE_URL } from '@/lib/site'
 
@@ -98,7 +98,7 @@ export async function POST(
   // nooit een halve boeking.
   const { data: existing, error: linkErr } = await linkPipe
     .from('mollie_payment_links')
-    .select('id, link_id, checkout_url, amount_value, status')
+    .select('id, link_id, checkout_url, amount_value, status, created_at')
     .eq('user_id', ownerId)
     .eq('invoice_id', invoiceId)
     .eq('status', 'open')
@@ -106,12 +106,28 @@ export async function POST(
   if (linkErr) {
     return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
   }
-  const existingRow = existing as { id: string; link_id: string; checkout_url: string; amount_value: string; status: string } | null
+  const existingRow = existing as { id: string; link_id: string; checkout_url: string; amount_value: string; status: string; created_at: string | null } | null
   // [MOLLIE-C7] Een placeholder-rij (aanmaak halverwege gestrand: pending-linkid, lege URL) mag
   // NOOIT worden hergebruikt — hij gaf { url: '' } met een 200 terug en blokkeerde iDEAL op deze
   // factuur voorgoed, want de unieke open-index hield elke nieuwe aanmaak tegen. Zo'n rij wordt
   // hier opgeruimd en de aanmaak begint opnieuw.
+  //
+  // [MOLLIE-C7-RACE] …maar alleen als hij ECHT gestrand is. Een placeholder is precies wat deze
+  // route zelf neerzet vlak vóór de aanroep naar Mollie, dus tijdens die netwerkronde is de rij
+  // niet stuk maar in gebruik. Hem dan verwijderen laat de andere aanvraag zijn checkout-URL
+  // uitdelen voor een rij die niet meer bestaat — de klant betaalt en de webhook boekt niets, want
+  // op een onbekende rij antwoordt hij `ok: true` en stopt Mollie met opnieuw proberen. Zie
+  // placeholderVerdict voor de hele keten.
   if (existingRow && (existingRow.checkout_url === '' || existingRow.link_id.startsWith('pending-'))) {
+    if (placeholderVerdict(existingRow.created_at, new Date()) === 'in_flight') {
+      // Dezelfde uitkomst die de 23505-tak hieronder al koos voor exact deze toestand: er is nu
+      // iemand mee bezig, dus even opnieuw proberen is het eerlijke antwoord. De pagina toont
+      // intussen gewoon IBAN en QR, dus de klant staat nooit stil.
+      return NextResponse.json(
+        { error: 'We zijn deze betaling net aan het klaarzetten. Probeer het over een halve minuut nog eens, of maak het bedrag over met de gegevens op deze pagina.' },
+        { status: 409 },
+      )
+    }
     await linkPipe.from('mollie_payment_links').delete().eq('id', existingRow.id).eq('user_id', ownerId)
   } else if (existingRow && !linkIsStale(existingRow.amount_value, view.amount)) {
     return NextResponse.json({ url: existingRow.checkout_url })
@@ -172,11 +188,25 @@ export async function POST(
     return NextResponse.json({ error: 'Online betalen is nu niet beschikbaar. Gebruik de overschrijfgegevens op de pagina.' }, { status: 503 })
   }
 
-  const { error: updErr } = await linkPipe
+  // [MOLLIE-C7-RACE] `.select('id')` erbij, en dat is niet cosmetisch: een UPDATE die NUL rijen
+  // raakt is in PostgREST geen fout. Zonder deze telling deelde de route haar checkout-URL uit
+  // nadat een gelijktijdige aanvraag haar rij had verwijderd — en die rij is precies wat de
+  // webhook nodig heeft om de betaling te kunnen boeken. Eén regel geraakt, of geen URL.
+  const { data: updated, error: updErr } = await linkPipe
     .from('mollie_payment_links')
     .update({ link_id: created.id, checkout_url: created.checkoutUrl })
     .eq('id', rowId)
     .eq('user_id', ownerId)
+    .select('id')
+  if (!updErr && (updated?.length ?? 0) === 0) {
+    // De rij is onder ons weggehaald. De link bestaat wel bij Mollie, dus hem NIET uitdelen is het
+    // enige wat een onboekbare betaling nog voorkomt: een link die niemand krijgt, betaalt niemand.
+    console.error('[MOLLIE] linkrij verdween tijdens aanmaak', { invoiceId, rowId })
+    return NextResponse.json(
+      { error: 'We zijn deze betaling net aan het klaarzetten. Probeer het over een halve minuut nog eens, of maak het bedrag over met de gegevens op deze pagina.' },
+      { status: 409 },
+    )
+  }
   if (updErr) {
     // De link bestaat bij Mollie maar onze rij kent hem niet → de webhook zou hem nooit kunnen
     // verifiëren. Niet uitdelen — en de placeholder-rij WEG, anders bezet hij de unieke

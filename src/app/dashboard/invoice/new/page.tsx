@@ -59,6 +59,7 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 // [KLANT-EXTRA] Zelfde bovengrens als het document en de schrijfroute — zie de kop daarvan.
 import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
+import { failureText } from '@/lib/server-message'
 
 // [PDF-VOORBEELD][PDF-LAZY] Het voorbeeld is één lazy brok — de renderer (~1,4 MB) én het
 // document zitten samen in PdfPreviewButton.tsx, en dit scherm haalt dat bestand pas op wanneer de
@@ -888,7 +889,7 @@ function NewInvoicePageContent() {
         // geweigerd, en de route zegt WELKE. Dat stil laten verdwijnen zou betekenen dat de
         // ondernemer denkt dat "22" nu bij deze regel hoort terwijl het bij een andere staat —
         // en dan haalt hij later de verkeerde regel binnen.
-        setCodeError(typeof j?.error === 'string' && j.error ? j.error : t('nieuw.fout.catalogus'))
+        setCodeError(failureText(res.status, j, t('nieuw.fout.catalogus')))
       }
     } catch {
       setCodeError(t('nieuw.fout.catalogus'))
@@ -1053,7 +1054,7 @@ function NewInvoicePageContent() {
     })
     const draftJson = await draftRes.json().catch(() => ({}))
     if (!draftRes.ok || !draftJson?.invoiceId) {
-      setError(draftJson?.error || t('nieuw.fout.omzetten')); setConvertingOfferte(false); return
+      setError(failureText(draftRes.status, draftJson, t('nieuw.fout.omzetten'))); setConvertingOfferte(false); return
     }
     const factuur = { id: draftJson.invoiceId as string }
 
@@ -1074,7 +1075,7 @@ function NewInvoicePageContent() {
       const result = await res.json().catch(() => ({}))
       setShowConvertDialog(false)
       if (!res.ok) {
-        setError(result.error || t('nieuw.fout.verstuurConcept'))
+        setError(failureText(res.status, result, t('nieuw.fout.verstuurConcept')))
         setConvertingOfferte(false)
         router.replace(`/dashboard/invoice/${factuur.id}`)
         return
@@ -1263,7 +1264,7 @@ function NewInvoicePageContent() {
     })
     const draftJson = await draftRes.json().catch(() => ({}))
     if (!draftRes.ok || !draftJson?.invoiceId) {
-      setError(draftJson?.error || t('nieuw.fout.aanmaken'))
+      setError(failureText(draftRes.status, draftJson, t('nieuw.fout.aanmaken')))
       setLoading(false); return
     }
     const invoice = { id: draftJson.invoiceId as string }
@@ -1320,7 +1321,7 @@ function NewInvoicePageContent() {
           // error and let the user fix + retry, ON THIS SCREEN. De regel eronder deed precies het
           // omgekeerde: navigeren, waardoor deze melding nooit iemand bereikte. Zie
           // `afgekeurdConcept` bij de state.
-          setError(result.error || t('nieuw.fout.versturen'))
+          setError(failureText(res.status, result, t('nieuw.fout.versturen')))
           setAfgekeurdConcept(invoice.id)
           setLoading(false)
           return
@@ -1376,7 +1377,7 @@ function NewInvoicePageContent() {
         const res = await fetch(`/api/invoice/${invoice.id}/send-offerte`, { method: 'POST' })
         const result = await res.json().catch(() => ({}))
         if (!res.ok) {
-          setError(typeof result?.error === 'string' && result.error ? result.error : t('nieuw.fout.versturen'))
+          setError(failureText(res.status, result, t('nieuw.fout.versturen')))
           setLoading(false)
           router.replace(`/dashboard/invoice/${invoice.id}`)
           return

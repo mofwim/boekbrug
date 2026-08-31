@@ -207,3 +207,91 @@ test("[DOORLOPEND] a total is only given when both halves of the check ran", () 
   // One hole (2) plus one burned at the end (4 allocated, 3 issued).
   assert.equal(totalUnaccounted(both), 2);
 });
+
+// ─── [REEKS-ZONDER-FACTUUR] Een reeks waarin nooit iets is geschreven ────────────────────────────
+//
+// De serie-lus loopt over emmers die uit de FACTUREN zijn gebouwd, dus een reeks zonder ook maar
+// één factuur heeft geen emmer — en burnedAtEnd, de enige controle die het EINDE van een reeks
+// ziet, wordt er nooit voor uitgerekend. `series.every(...)` over een lege lijst is `true`, dus de
+// uitslag was "je nummering klopt" over nummers die zijn toegekend en nooit geschreven.
+//
+// Gemeten in de productiedatabase toen dit werd geschreven: twee eigenaren met een
+// creditnota-teller op 1 en 2 en nul creditnota's. Drie toegekende nummers die nergens staan.
+
+test("[REEKS-ZONDER-FACTUUR] a counter with no invoices at all is reported, not passed over", () => {
+  const report = checkContinuity({
+    invoices: [{ invoice_number: "20260001", invoice_type: "factuur" }],
+    formats: [
+      { type: "factuur", template: "{year}{seq}", padding: 4 },
+      { type: "creditnota", template: "CR-{year}{seq}", padding: 4 },
+    ],
+    // The shape production actually has: invoices in one series, a counter standing above zero in
+    // a series that holds nothing.
+    counters: [
+      { type: "factuur", year: 2026, last_seq: 1 },
+      { type: "creditnota", year: 2026, last_seq: 2 },
+    ],
+  });
+
+  assert.equal(report.clean, false, "two allocated creditnota numbers with no creditnota is not clean");
+  const cn = report.series.find((s) => s.type === "creditnota");
+  assert.ok(cn, "the creditnota series is absent entirely — which is how it stayed invisible");
+  assert.equal(cn.burnedAtEnd, 2, "every number the counter issued is burned: nothing was written under it");
+  assert.equal(cn.issued, 0);
+  assert.equal(cn.first, null, "0 would be a claim about a number that does not exist");
+  assert.equal(cn.last, null);
+  assert.deepEqual(cn.missing, [], "there is no interior to have holes in");
+});
+
+test("[REEKS-ZONDER-FACTUUR] a truly untouched administration is still clean", () => {
+  // No invoices AND no counter above zero: nothing has been allocated, so nothing is unaccounted
+  // for. This is the case where 'clean' is the honest answer, and it must survive the fix.
+  const report = checkContinuity({
+    invoices: [],
+    formats: [{ type: "factuur", template: "{year}{seq}", padding: 4 }],
+    counters: [{ type: "factuur", year: 2026, last_seq: 0 }],
+  });
+  assert.equal(report.clean, true);
+  assert.equal(report.series.length, 0);
+});
+
+test("[REEKS-ZONDER-FACTUUR] a counter for a type this report does not judge is left alone", () => {
+  // pro_forma is not a fiscal document and has no doorlopende reeks — the same rule the
+  // invoice loop already follows. A counter for it must not invent a series here either.
+  const report = checkContinuity({
+    invoices: [],
+    formats: [{ type: "factuur", template: "{year}{seq}", padding: 4 }],
+    counters: [{ type: "pro_forma", year: 2026, last_seq: 7 }],
+  });
+  assert.equal(report.series.length, 0);
+  assert.equal(report.clean, true);
+});
+
+test("[REEKS-ZONDER-FACTUUR] unreadable counters do not become series", () => {
+  const report = checkContinuity({
+    invoices: [],
+    formats: [{ type: "factuur", template: "{year}{seq}", padding: 4 }],
+    // last_seq absent or nonsensical says nothing about how many numbers were issued, and a series
+    // invented from it would be a number on a screen with nothing behind it.
+    counters: [
+      { type: "factuur", year: 2025, last_seq: null as unknown as number },
+      { type: "factuur", year: 2024, last_seq: -3 },
+    ],
+  });
+  assert.equal(report.series.length, 0);
+});
+
+test("[REEKS-ZONDER-FACTUUR] totalUnaccounted counts the empty series too", () => {
+  const report = checkContinuity({
+    invoices: [{ invoice_number: "20260001", invoice_type: "factuur" }],
+    formats: [
+      { type: "factuur", template: "{year}{seq}", padding: 4 },
+      { type: "creditnota", template: "CR-{year}{seq}", padding: 4 },
+    ],
+    counters: [
+      { type: "factuur", year: 2026, last_seq: 1 },
+      { type: "creditnota", year: 2026, last_seq: 2 },
+    ],
+  });
+  assert.equal(totalUnaccounted(report), 2, "the number the owner would quote to his accountant");
+});

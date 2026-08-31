@@ -25,6 +25,8 @@ import {
   withPrototypeGuard,
   assertWithinParseLimit,
   MAX_PARSE_BYTES,
+  NotASpreadsheetError,
+  sheetBytesToMatrix,
 } from "./xlsx-adapter";
 
 let passed = 0;
@@ -242,6 +244,34 @@ check(
     `nothing imports SheetJS directly — the adapter is the only door${offenders.length ? " (found: " + offenders.join(", ") + ")" : ""}`,
     offenders.length === 0,
   );
+}
+
+// ── [GEEN-SPREADSHEET] A PDF is a different kind of file, not a broken sheet ──────────────────
+//
+// Real files from a Dutch POS, uploaded by the owner: a KASBOEK grootboek export as .xlsx and the
+// SAME report as .pdf. SheetJS accepted the PDF and returned 296 rows parsed out of binary noise
+// (2.569 from a 315KB kassarapport). Nothing booked them — parseLedgerSheet found no
+// Datum/Ontvangen/Uitgaven header and returned null — but the owner was told "Geen herkenbare
+// grootboek-export gevonden" about a file that IS one and DOES carry those columns. The refusal
+// named the wrong reason, which sends someone to check the wrong thing.
+console.log("\n[GEEN-SPREADSHEET] een pdf is geen kapotte spreadsheet");
+{
+  const throws = (bytes: Uint8Array, mime: string): boolean => {
+    try { sheetBytesToMatrix(bytes); return false; }
+    catch (e) { return e instanceof NotASpreadsheetError && e.mime === mime; }
+  };
+  check("a PDF is refused by format, and names it",
+    throws(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25]), "application/pdf"));
+  check("a JPEG too — the same mistake with a camera",
+    throws(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), "image/jpeg"));
+  check("and a PNG",
+    throws(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]), "image/png"));
+
+  // CSV sniffs as null and must reach SheetJS untouched: it is a format the import documents.
+  const csv = new TextEncoder().encode("Datum;Ontvangen;Uitgaven\n29-08-2026;280,95;0,00\n");
+  let csvRows = 0;
+  try { csvRows = sheetBytesToMatrix(csv).length; } catch { csvRows = -1; }
+  check("a csv still parses — the guard refuses only what it names", csvRows >= 2);
 }
 
 console.log(`\n[SEC-XLSX] ${passed} passed, ${failed} failed\n`);

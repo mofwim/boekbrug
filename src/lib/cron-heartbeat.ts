@@ -138,18 +138,39 @@ export function cronsNeedingAttention(
 /**
  * De Nederlandse uitleg bij een oordeel — en, belangrijker, wat het waarschijnlijk IS.
  *
- * De twee meest voorkomende oorzaken staan er letterlijk in, want dat scheelt een halfuur zoeken:
- * een ontbrekende CRON_SECRET (elke cron antwoordt dan 401 en doet niets) en Vercel Hobby, waar
- * een cron die vaker dan één keer per dag draait de DEPLOY laat falen.
+ * ── WAAROM ER EEN TWEEDE ARGUMENT BIJ IS GEKOMEN ──
+ *
+ * Bij "nooit gedraaid" stond hier één vaste zin: de oorzaak is "vrijwel altijd dat CRON_SECRET niet
+ * in de omgeving staat — dan antwoordt elke cron 401 en doet niets". Dat is een goede gok als álle
+ * taken stilstaan, en aantoonbaar onjuist zodra er één stilstaat tussen tien die wél draaien.
+ *
+ * En zo stond het op het scherm: acht taken op "ok", met tijden van een paar uur geleden, en
+ * daarnaast de bewering dat de sleutel waarmee die acht net waren binnengekomen ontbrak. Het
+ * scherm sprak zichzelf tegen, en de zin stuurde de lezer naar omgevingsvariabelen die in orde
+ * waren — een halfuur zoeken op precies de plek waar niets te vinden is, wat het tegendeel is van
+ * wat deze functie belooft.
+ *
+ * `othersRan` is daarom geen extraatje maar het bewijs waar de zin op hoort te rusten: draaide er
+ * in dezelfde periode een andere cron, dan zijn de sleutel én vercel.json bewezen in orde en ligt
+ * het aan deze taak zelf. Niet meegegeven → de oude, algemene zin, want dan is er niets bekend.
  */
-export function cronHealthNote(job: CronJob, health: CronHealth): string {
+export function cronHealthNote(
+  job: CronJob,
+  health: CronHealth,
+  /** Draaide er ÉÉN andere cron in dezelfde periode? Bewijs, geen sfeerbeeld. */
+  othersRan?: boolean,
+): string {
   switch (health) {
     case "ok":
       return `${job}: draait zoals bedoeld.`;
     case "nog-niet-langs":
       return `${job}: zijn beurt is nog niet langsgekomen sinds we begonnen met meten. Dat is geen storing — kom terug na zijn volgende geplande moment.`;
     case "nooit-gedraaid":
-      return `${job}: heeft NOOIT gedraaid. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
+      // Andere crons draaiden wél → de sleutel en vercel.json zijn bewezen in orde, en de lezer
+      // naar de omgeving sturen kost hem een halfuur op de verkeerde plek.
+      return othersRan === true
+        ? `${job}: heeft NOOIT gedraaid, terwijl andere taken in dezelfde periode wél zijn langsgekomen. CRON_SECRET en vercel.json zijn daarmee in orde — het ligt aan deze taak zelf. Kijk of hij vóór zijn hartslagregel al terugkeert (bijvoorbeeld omdat er niets is ingesteld om te doen), en of zijn pad in vercel.json klopt.`
+        : `${job}: heeft NOOIT gedraaid, en geen enkele andere taak ook. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak dan vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
     case "afgebroken":
       return `${job}: begonnen maar nooit afgerond — het proces is halverwege gestopt (time-out of crash). Wat hij tot dat punt had gedaan, staat wél in de database.`;
     case "gefaald":
@@ -234,5 +255,53 @@ export async function finishCronRun(
     }
   } catch (e) {
     console.error("[CRON-HARTSLAG] afsluiten mislukt", { runId, error: String(e) });
+  }
+}
+
+/**
+ * [CRON-EENMAAL] Heeft deze cron vandaag (Amsterdamse dag) al een GESLAAGDE ronde gedraaid?
+ *
+ * ── WAAROM DIT BESTAAT ──
+ * `beginCronRun`/`finishCronRun` is een HARTSLAG, geen slot. Hij schrijft op dát er gedraaid is;
+ * hij houdt een tweede ronde nergens tegen. Voor het meeste werk hier is dat prima, want het is
+ * convergerend: reconcile boekt wat nog niet geboekt is en vindt bij een tweede ronde niets meer,
+ * en recurring en reminders worden door een unieke index in de database fysiek tegengehouden.
+ *
+ * Maar een MELDING is geen van beide. Er is geen unieke index op `notifications` (nagekeken: die
+ * tabel heeft alleen haar primaire sleutel), en een tweede ronde stuurt hem gewoon nog een keer.
+ * Twee crons rustten hun idempotentie daarom op een aanname over de PLANNER — hun eigen kop zegt
+ * het met zoveel woorden: "runs exactly once per quarter IS its idempotency — no dedup state".
+ * Dat is een eigenschap van Vercel, niet van deze code: een cron-platform levert 'at least once',
+ * een functie die time-out krijgt wordt opnieuw geprobeerd, en de route is met het secret ook met
+ * de hand aan te roepen. Dan krijgt een ondernemer dezelfde aangifteherinnering twee keer.
+ *
+ * ── DE FAALRICHTING ──
+ * Best effort, en bewust naar ÉÉN VERZENDING TE VEEL: een onleesbare of ontbrekende cron_runs-tabel
+ * blokkeert nooit het werk. Deze wacht is een hoffelijkheid bovenop een hoffelijkheid — hij mag
+ * geen aangiftedeadline tegenhouden omdat een logtabel hikt.
+ *
+ * Eén implementatie, want vier kopieën van dezelfde vraag drijven uit elkaar en dan is er één cron
+ * waar de tweede ronde wél doorheen komt.
+ */
+export async function alreadyRanToday(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  job: CronJob,
+  /** Middernacht van de Amsterdamse dag, als UTC-instant (amsterdamMidnightUtc). */
+  dayStartUtc: Date,
+): Promise<boolean> {
+  try {
+    const { data, error } = await client
+      .from("cron_runs")
+      .select("id")
+      .eq("job", job)
+      .eq("ok", true)
+      .gte("started_at", dayStartUtc.toISOString())
+      .limit(1);
+    // Een leesfout is geen bewijs dat er niet gedraaid is — en fail-open is hier de juiste kant.
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
   }
 }

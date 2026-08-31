@@ -65,6 +65,15 @@ export function reportHandledFailure(input: {
 }): void {
   const { tag, message, severity, context } = input;
   console.error(`[${tag}] ${message}`, context ?? {});
+  // [STORINGSBEELD] …en een streepje in de tabel die de beheerpagina leest. ALLEEN tag en ernst:
+  // geen message, geen context. Zie system_events.sql — drie kolommen kunnen niets lekken, en de
+  // vraag die die pagina stelt ("welke storing, hoe vaak, wanneer voor het laatst") heeft de tekst
+  // niet nodig. De zin staat hierboven in de log en hieronder in Sentry, waar de toegang bij past.
+  //
+  // Losgelaten met opzet: deze functie is void en wordt aangeroepen middenin foutafhandeling. Erop
+  // wachten zou de melding traag maken; hem laten gooien zou de kop van dit bestand breken —
+  // melden mag nooit de oorzaak van een tweede storing worden.
+  void recordSystemEvent(tag, severity);
   try {
     Sentry.captureMessage(`[${tag}] ${message}`, {
       level: SENTRY_LEVEL[severity],
@@ -73,5 +82,23 @@ export function reportHandledFailure(input: {
     });
   } catch {
     // Zie de kop: melden mag nooit de oorzaak van een tweede storing worden.
+  }
+}
+
+/**
+ * Write the bare fact — which tag, how severe, when — to system_events.
+ *
+ * Never throws, never awaited by the caller, and deliberately carries NOTHING else. A missing table
+ * (the migration ships after the code) is not a failure: the log and Sentry already have the event.
+ */
+async function recordSystemEvent(tag: string, severity: HandledSeverity): Promise<void> {
+  try {
+    const { createPipelineClient } = await import("./supabase-pipeline");
+    // system_events staat niet in de gegenereerde types (handmatig toegepaste migratie) — dezelfde
+    // versoepelde cast die cron_runs en btw_filings gebruiken.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (createPipelineClient() as any).from("system_events").insert({ tag, severity });
+  } catch {
+    // Zie de kop van dit bestand.
   }
 }

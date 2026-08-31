@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { ownedStoragePath } from "@/lib/storage-path";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 import { readPdfTextLayer } from "@/lib/pdf-text";
@@ -115,7 +116,15 @@ export async function POST(req: NextRequest) {
             .eq("user_id", user.id).in("id", chunk)
             .order("id", { ascending: true }).range(from, to),
       );
-      for (const d of docs) if (d.file_url) docPaths.set(d.id, d.file_url);
+      // [SEC-STORAGE-PATH] The read above proves the RECORD is this user's; `file_url` is still
+      // ordinary text on a row they may UPDATE, and the download below runs on the service-role
+      // client, which bypasses the bucket policy. An unattributable key is dropped here, so the
+      // invoice simply has no document to re-read — the same state as a row without one, which
+      // this route already handles.
+      for (const d of docs) {
+        const pad = ownedStoragePath(d.file_url, user.id);
+        if (pad) docPaths.set(d.id, pad);
+      }
     } catch (e) {
       console.error("[NAREKENEN] document lookup failed", { userId: user.id, error: e instanceof Error ? e.message : String(e) });
       return NextResponse.json({ error: "lookup_failed" }, { status: 503 });

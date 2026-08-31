@@ -16,6 +16,7 @@
 // daySourceConflict keeps a day from being claimed by both.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isMissingRelation } from "@/lib/pg-missing";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { validateManualDay, daySourceConflict, buildTurnoverRow, korTillRefusal } from "@/lib/till-day";
 import { bookTurnoverRows } from "@/lib/turnover-book";
@@ -47,7 +48,7 @@ async function readDayClaims(
   date: string,
 ) {
   const cash = await liveCashEntries(supabase);
-  const [{ data: turnoverRow }, cashRes, tillRes] = await Promise.all([
+  const [{ data: turnoverRow, error: turnoverErr }, cashRes, tillRes] = await Promise.all([
     supabase.from("daily_turnover").select("source").eq("user_id", userId)
       .eq("turnover_date", date).maybeSingle(),
     // [KAS-ZACHT] Only the movements that still count — see the same note in /api/till/sale.
@@ -69,6 +70,29 @@ async function readDayClaims(
     // this day, which is exactly what a count of zero says. The Kassa's own route makes no such
     // allowance: without the table it genuinely cannot work, and should say so rather than pretend.
     tillSaleCount: tillRes.error ? 0 : tillRes.count ?? 0,
+    // [NO-SILENT-EMPTY] The two reads with no such allowance. A failed daily_turnover read gives a
+    // null row and a failed cash count gives 0 — which are exactly the values that mean "nothing
+    // claims this day", i.e. "no conflict". So a hiccup opened the guard, and what the guard
+    // prevents is silent: the upsert on (user_id, turnover_date) switches the day's cash 'omzet'
+    // entries off in every engine at once with nothing on any screen saying so.
+    //
+    // [KASSA-STIL] till_sales hoort hier WEL in, en de zin hierboven zei al waarom: "a missing
+    // table is a known, reasoned zero; a failed read is not." Die twee stonden in het commentaar
+    // uit elkaar en in de code op één hoop — `tillRes.error ? 0 : …` behandelt een ontbrekende
+    // tabel en een time-out identiek, en alleen de eerste is een antwoord.
+    //
+    // Wat een verkeerde nul kost: daySourceConflict weigert een handmatig getypte dag zodra er
+    // vandaag al op de Kassa is aangeslagen ("Je hebt vandaag al verkopen aangeslagen op de
+    // Kassa"). Valt die telling stil op nul, dan komt die weigering niet, en de getypte dag wordt
+    // over de aangeslagen dag heen geüpsert op (user_id, turnover_date). Een winkel die € 1.210
+    // heeft aangeslagen en er € 500 bij typt, houdt € 500 over: € 586,78 omzet en € 123,22 BTW uit
+    // rubriek 1a/1b weg, zonder dat enig scherm zegt dat er een getal is vervangen.
+    //
+    // De deploy-uitzondering blijft precies wat hij was: een ONTBREKENDE tabel telt nog steeds als
+    // nul en houdt de route leesbaar, want dan heeft er nooit een Kassa gedraaid. till_sales
+    // bestaat inmiddels in productie, dus dat venster is dicht en elke overgebleven fout is de
+    // andere soort.
+    readable: !turnoverErr && !cashRes.error && (!tillRes.error || isMissingRelation(tillRes.error.message)),
   };
 }
 
@@ -101,7 +125,16 @@ export async function POST(req: NextRequest) {
   if (kor) return NextResponse.json({ error: kor }, { status: 400 });
 
   try {
-    const conflict = daySourceConflict(await readDayClaims(supabase, user.id, resolved.date));
+    const claims = await readDayClaims(supabase, user.id, resolved.date);
+    // [NO-SILENT-EMPTY] Refused rather than waved through — same reasoning as /api/till/sale, and
+    // the same cost: one retry, against a day of turnover silently switched off.
+    if (!claims.readable) {
+      return NextResponse.json(
+        { error: "We konden de omzet van deze dag niet controleren. Probeer het zo meteen opnieuw." },
+        { status: 503 },
+      );
+    }
+    const conflict = daySourceConflict(claims);
     if (conflict) return NextResponse.json({ error: conflict }, { status: 409 });
 
     const row = buildTurnoverRow(resolved.date, day.gross);

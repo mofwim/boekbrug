@@ -78,6 +78,59 @@ export function linkIsStale(storedAmountValue: string, currentOpenAmount: number
   return current === null || current !== storedAmountValue;
 }
 
+/**
+ * [MOLLIE-C7-RACE] Hoe lang een placeholder-rij het voordeel van de twijfel krijgt.
+ *
+ * Ruim genomen, met opzet: de aanroep naar Mollie heeft geen eigen timeout, dus wat hem begrenst
+ * is de request-timeout van het platform. Te KRAP kiezen verwijdert een rij waar op dat moment
+ * nog een klant aan hangt; te ruim laat een écht gestrande rij twee minuten langer staan en de
+ * klant ziet zolang "probeer het zo nog eens". Die twee fouten zijn niet elkaars gelijke.
+ */
+export const PLACEHOLDER_GRACE_MS = 2 * 60 * 1000;
+
+/** Wat er met een gevonden placeholder-rij moet gebeuren. */
+export type PlaceholderVerdict = "in_flight" | "stranded";
+
+/**
+ * Is deze placeholder-rij gestrand, of is er op dit moment iemand mee bezig?
+ *
+ * ── WAAROM DIT EEN VRAAG IS EN GEEN FEIT ──
+ *
+ * Een placeholder (link_id `pending-…`, lege checkout_url) is precies wat de aanmaakroute ZELF
+ * neerzet vlak voordat hij Mollie belt. Tijdens die netwerkronde is de rij niet stuk — hij is in
+ * gebruik. Toch werd elke placeholder als "halverwege gestrand" opgeruimd, en dat opruimen is een
+ * DELETE.
+ *
+ * Wat er dan gebeurt, met twee tabbladen die tegelijk op "Betaal met iDEAL" drukken:
+ *
+ *   A zet zijn placeholder neer en belt Mollie.
+ *   B vindt A's rij, noemt hem gestrand, en verwijdert hem.
+ *   A komt terug van Mollie en werkt zijn rij bij — nul rijen geraakt, en PostgREST meldt daar
+ *     geen fout over, dus A deelt zijn checkout-URL gewoon uit.
+ *   De klant betaalt via die URL. Mollie belt de webhook met ?link=<A's rij-id>. Die rij bestaat
+ *     niet meer, en de webhook antwoordt op een onbekende rij `ok: true` — waarna Mollie stopt
+ *     met opnieuw proberen.
+ *
+ * De klant heeft betaald, de factuur staat open, en er is nergens een spoor. Dat is de duurste
+ * vorm die "stil verkeerd" in dit product kan aannemen: niet een verkeerd bedrag, maar geld dat
+ * binnen is en in de boekhouding niet bestaat.
+ *
+ * Merk op dat de route de tegenovergestelde lezing al kende: de 23505-tak zegt met zoveel woorden
+ * dat een lege checkout_url betekent dat de winnaar zelf nog bezig is. Twee plekken lazen hetzelfde
+ * teken en trokken de omgekeerde conclusie.
+ *
+ * Een rij zonder leesbare datum heet IN FLIGHT. Niet weten hoe oud iets is, is geen reden om het
+ * weg te gooien — en dit is de kant waar de fout onherstelbaar is.
+ */
+export function placeholderVerdict(createdAt: unknown, now: Date): PlaceholderVerdict {
+  const t = typeof createdAt === "string" || createdAt instanceof Date ? new Date(createdAt).getTime() : NaN;
+  if (!Number.isFinite(t)) return "in_flight";
+  const age = now.getTime() - t;
+  // Een rij met een datum in de TOEKOMST (klokverschil tussen database en server) is ook geen
+  // bewijs van stranding — negatieve leeftijd valt vanzelf onder de grens.
+  return age > PLACEHOLDER_GRACE_MS ? "stranded" : "in_flight";
+}
+
 // ── HTTP-laag ────────────────────────────────────────────────────────────────────────────────────
 
 const MOLLIE_API = "https://api.mollie.com/v2";

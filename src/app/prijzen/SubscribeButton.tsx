@@ -16,6 +16,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { failureText } from '@/lib/server-message'
 
 export default function SubscribeButton() {
   const router = useRouter()
@@ -42,7 +43,7 @@ export default function SubscribeButton() {
       const body = await res.json().catch(() => ({}))
 
       if (!res.ok || !body?.url) {
-        setError(body?.error || 'Er ging iets mis. Probeer het opnieuw.')
+        setError(failureText(res.status, body, 'Er ging iets mis. Probeer het opnieuw.'))
         setBusy(false)
         return
       }

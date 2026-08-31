@@ -138,7 +138,13 @@ export function NummeringUitslag({
         <p key={`${s.type}-${s.year ?? "x"}`} className="text-sm text-amber-900 leading-relaxed">
           <span className="font-semibold">{seriesLabel(s, t)}</span>{" "}
           {s.missing.length > 0 && t("doorlopend.ontbreekt", { nummers: s.missing.join(", ") })}{" "}
-          {(s.burnedAtEnd ?? 0) > 0 && t("doorlopend.eindeReeks", { aantal: s.burnedAtEnd as number })}{" "}
+          {/* [REEKS-ZONDER-FACTUUR] Twee zinnen, want het zijn twee dingen. "Aan het eind van de
+              reeks" veronderstelt een reeks; issued 0 betekent dat er nooit iets in geschreven is,
+              en dat is een ander bericht met een ander antwoord erop. */}
+          {(s.burnedAtEnd ?? 0) > 0 &&
+            (s.issued === 0
+              ? t("doorlopend.reeksLeeg", { aantal: s.burnedAtEnd as number })
+              : t("doorlopend.eindeReeks", { aantal: s.burnedAtEnd as number }))}{" "}
           {s.duplicates.length > 0 && t("doorlopend.dubbel", { nummers: s.duplicates.join(", ") })}
         </p>
       ))}

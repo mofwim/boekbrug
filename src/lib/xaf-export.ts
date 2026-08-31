@@ -215,6 +215,18 @@ interface Entry {
   lines: Line[];
 }
 
+/**
+ * [XAF-NIET-STIL] Tekst die veilig binnen een XML-commentaar past.
+ *
+ * `--` is binnen een commentaar verboden en `-->` sluit het af: één reden met een dubbel
+ * koppelteken zou het hele auditbestand breken op de dag dat die reden voor het eerst voorkomt.
+ * Geen enkele reden in dit bestand bevat er vandaag een — en dat is precies waarom dit een functie
+ * is en geen aanname: de volgende reden hoeft dit niet te weten om veilig te zijn.
+ */
+export function xmlCommentSafe(text: string): string {
+  return text.replace(/-{2,}/g, "-");
+}
+
 /** Snap a header-derived rate to the Dutch set, or null when it is not one of them. */
 export function snapRate(ex: number, btw: number): number | null {
   if (cents(btw) === 0) return 0;
@@ -561,6 +573,46 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   const year = input.year;
   const out: string[] = [];
   out.push(`<?xml version="1.0" encoding="utf-8"?>`);
+  // [XAF-NIET-STIL] Wat NIET in dit bestand staat, staat erin.
+  //
+  // Elke weigering hierboven — geen datum, tarief niet herleidbaar, boeking balanceert niet —
+  // haalt een post uit het auditbestand. Het bestand komt dan korter binnen en zegt niets, en dat
+  // is precies het gevaarlijke geval: een auditbestand dat ONVOLLEDIG is ziet er exact zo uit als
+  // een dat compleet is. De boekhouder importeert het, de aansluiting met de aangifte klopt niet,
+  // en niemand weet waarom.
+  //
+  // Het aantal reisde al mee in een HTTP-header (X-Xaf-Skipped) — en beide plekken die dit bestand
+  // ophalen zijn een gewone <a href>-downloadlink. Een browser die een bestand downloadt toont
+  // geen responsheaders. Die kop bereikte dus niemand, en kon dat ook niet.
+  //
+  // Een XML-commentaar hoort niet tot de XAF-grammatica en wordt door elke importeur genegeerd,
+  // dus het bestand blijft geldig — maar iedere mens die het openslaat ziet het meteen, boven aan
+  // regel twee. Het is het enige kanaal dat zowel de machine als de mens overleeft.
+  if (skipped.length > 0) {
+    const perReden = new Map<string, number>();
+    for (const s of skipped) perReden.set(s.reason, (perReden.get(s.reason) ?? 0) + 1);
+    out.push(`<!--`);
+    out.push(`  LET OP: ${skipped.length} post(en) staan NIET in dit auditbestand.`);
+    for (const [reden, aantal] of [...perReden].sort((a, b) => b[1] - a[1])) {
+      out.push(`    ${aantal}x  ${xmlCommentSafe(reden)}`);
+    }
+    out.push(`  Dit bestand sluit daardoor niet aan op de aangifte over dezelfde periode.`);
+    out.push(`-->`);
+  }
+  // [XAF-REGIME] Dezelfde plek, om dezelfde reden. Deze notities zeggen onder welk BTW-stelsel de
+  // datums in dit bestand gelezen moeten worden en wat er NIET in gesplitst is — uitspraken die
+  // bepalen hoe álles hieronder telt. Ze stonden achter </company>, helemaal onderaan: technisch
+  // in het bestand, praktisch achter duizenden regels journaalposten. Een lezer die het bestand
+  // opent moet ze zien vóór hij aan de cijfers begint, niet erna.
+  //
+  // xmlCommentSafe en niet esc(): dit is een XML-COMMENTAAR. Daar sluit een dubbel koppelteken het
+  // commentaar (en maakt het bestand ongeldig), terwijl &amp; er juist letterlijk als "&amp;"
+  // komt te staan. De twee ontsnappingen lossen tegengestelde problemen op.
+  if (input.regimeNotes.length > 0) {
+    out.push(`<!--`);
+    for (const note of input.regimeNotes) out.push(`  ${xmlCommentSafe(note)}`);
+    out.push(`-->`);
+  }
   out.push(`<auditfile xmlns="http://www.auditfiles.nl/XAF/3.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
   out.push("<header>");
   out.push(el("fiscalYear", String(year)));
@@ -586,7 +638,8 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   if (input.company.address || input.company.city) {
     out.push("<streetAddress>");
     if (input.company.address) out.push(el("streetname", esc(input.company.address)));
-    if (input.company.city) out.push(el("city", esc(input.company.city)));
+    // [XAF-LENGTE] Ook een String50 in het schema, en ook door de ondernemer zelf ingetypt.
+    if (input.company.city) out.push(el("city", esc(input.company.city.slice(0, 50))));
     if (input.company.postalCode) out.push(el("postalCode", esc(input.company.postalCode)));
     out.push(el("country", "NL"));
     out.push("</streetAddress>");
@@ -595,7 +648,17 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   for (const [name, id] of [...custId, ...supId]) {
     out.push("<customerSupplier>");
     out.push(el("custSupID", esc(id)));
-    out.push(el("custSupName", esc(name)));
+    // [XAF-LENGTE] Geknipt op 50 tekens, en op de RUWE waarde — precies zoals docRef hieronder.
+    //
+    // custSupName is in XAF 3.2 een String50. Eén klant met een lange statutaire naam (een VvE, een
+    // stichting: boven de vijftig tekens is doodgewoon) liet het HELE bestand afketsen bij elke
+    // importeur die tegen het XSD valideert. De boekhouder krijgt dan niets — geen kleinere
+    // administratie, maar geen administratie — en de ondernemer betaalt een middag handwerk.
+    //
+    // Knippen VOOR het escapen, niet erna: "&amp;" is één teken op papier en vijf in de string, en
+    // een knip op de vijftigste STRING-positie hakt zo'n entiteit doormidden. Dat levert geen te
+    // lange naam meer op maar wel ongeldige XML — dezelfde fout, luidruchtiger.
+    out.push(el("custSupName", esc(name.slice(0, 50))));
     out.push(el("custSupTp", id.startsWith("D") ? "C" : "S"));
     out.push("</customerSupplier>");
   }
@@ -682,9 +745,6 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</transactions>");
   out.push("</company>");
-  for (const note of input.regimeNotes) {
-    out.push(`<!-- BoekBrug LET OP: ${esc(note)} -->`);
-  }
   if (skipped.length > 0) {
     const listed = skipped.slice(0, 50).map((s) => `${s.source}:${s.id} (${s.reason})`).join("; ");
     out.push(`<!-- BoekBrug: ${skipped.length} regel(s) niet opgenomen - ${esc(listed)}${skipped.length > 50 ? "; ..." : ""} -->`);

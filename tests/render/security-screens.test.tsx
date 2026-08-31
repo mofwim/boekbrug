@@ -182,6 +182,32 @@ test("[DOORLOPEND] half a check is never reported as a whole one", () => {
   })();
 });
 
+test("[REEKS-ZONDER-FACTUUR] a series with nothing in it gets its own sentence", () => {
+  return (async () => {
+    const { NummeringUitslag } = await import("../../src/components/beveiliging/NummeringPaneel");
+    const { translator } = await import("../../src/lib/i18n/t");
+    // The production shape: invoices in one series, and a creditnota counter standing above zero
+    // with no creditnota under it. "Aan het eind van de reeks" presupposes a reeks; this one has
+    // none, and the owner's answer to it ("that was a draft I threw away") is a different answer.
+    const html = renderToStaticMarkup(
+      React.createElement(NummeringUitslag, {
+        report: {
+          series: [
+            series(),
+            series({ type: "creditnota", first: null, last: null, issued: 0, burnedAtEnd: 2 }),
+          ],
+          unreadable: [], clean: false, unaccounted: 2, countersRead: true,
+        },
+        t: translator("nl"),
+      }),
+    );
+    assert.match(html, /geen enkel document in deze reeks/, "the empty-series sentence must be the one shown");
+    assert.doesNotMatch(html, /teller staat hoger dan je hoogste factuur/,
+      "the end-of-series sentence talks about a highest invoice this series does not have");
+    assert.match(html, /Creditnota/, "the owner must know WHICH series");
+  })();
+});
+
 // ─── [GELD-INVARIANT] Do the books agree with themselves? ────────────────────────────
 
 // money-invariants.ts was complete, considered and tested — and nothing called it. No screen, no
@@ -428,6 +454,11 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
           links: [{ accountantName: "B. Boekhouder", clientName: "Kiwi Food Market", since: "2026-04-01" }],
           counts: { total: 2, owners: 1, accountants: 1, links: 1 },
         },
+        systeem: { readable: true, allWell: true, attention: [], crons: [
+          { job: "reminders", health: "ok", lastRunAt: "2026-09-04T07:00:00Z", hoursAgo: 2, note: null, needsAttention: false } as const,
+        ] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /Kiwi Food Market/);
@@ -438,16 +469,125 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
   })();
 });
 
+test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentage", () => {
+  // De vondst waar dit paneel uit voortkomt: vijf creditnota's van één leverancier, in één zitting
+  // rechtgezet. Als percentage was dat 0,9% en dus onzichtbaar; per leverancier is het één sjabloon
+  // dat de lezer niet aankan. Het scherm moet die NAAM tonen, anders is er niets gewonnen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: {
+          read: 586,
+          amountCorrected: 5,
+          ibanCorrected: 0,
+          afterPayment: 0,
+          troubleSuppliers: [{ supplierName: "Dutch Sweets Company B.V.", corrected: 5, read: 12 }],
+          recent: [
+            {
+              invoiceId: "i1", supplierName: "Dutch Sweets Company B.V.",
+              atMs: Date.UTC(2026, 7, 3, 9, 20), what: "bedrag" as const,
+              amountBefore: "33.87", amountAfter: "-33.87",
+              ibanBefore: null, ibanAfter: null, afterPayment: false,
+            },
+          ],
+        },
+      }),
+    );
+    // Op de KOP en op het aantal, niet alleen op de naam: die naam staat ook in de lijst met
+    // losse correcties eronder, dus een match daarop bleef groen terwijl de groepering per
+    // leverancier — het hele punt van dit paneel — was weggehaald. Dat is precies gemeten.
+    assert.match(html, /Leveranciers met meer dan één verbetering/,
+      "de groepering per leverancier is waarom dit paneel bestaat");
+    assert.match(html, /Dutch Sweets Company/, "de leverancier hoort met naam op het scherm");
+    assert.match(html, /<td[^>]*>12<\/td>/,
+      "…met de noemer erbij: 5 van 12 is iets anders dan 5 van 400");
+    assert.match(html, /33\.87/, "…met wat er stond naast wat het werd");
+    assert.match(html, /586/);
+    assert.match(html, /niemand opmerkte/, "de eerlijkheidszin hoort erbij: dit is de fout die IEMAND zag");
+  })();
+});
+
+test("[LEESKWALITEIT] niet kunnen kijken leest nooit als nul fouten", () => {
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
+      }),
+    );
+    assert.match(html, /niet te lezen/, "een mislukte meting moet zichzelf zo noemen");
+    assert.doesNotMatch(html, /Gevonden foutpercentage/, "…en zeker geen percentage tonen");
+  })();
+});
+
 test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () => {
   return (async () => {
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
       }),
     );
     assert.match(html, /Nog geen accounts/);
     assert.match(html, /Nog geen koppelingen/);
+  })();
+});
+
+test("[BEHEER-GEZOND] een gestopte cron staat bovenaan, met hoe lang al", () => {
+  // Een gestopte cron geeft geen foutmelding en verandert niets aan het scherm: geen herinneringen
+  // meer, geen bankregels meer, geen betaaltermijn die op tijd wordt gemeld — terwijl de rest van
+  // deze pagina er normaal uitziet. Dit blok is het enige dat zo'n storing kan tonen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    // `as const` zodat job en health de smalle types houden die CronStatus vraagt.
+    const gestopt = {
+      job: "reminders", health: "te-lang-stil", lastRunAt: "2026-08-31T07:00:00Z", hoursAgo: 96,
+      note: "Deze taak hoort dagelijks te draaien.", needsAttention: true,
+    } as const;
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: false, attention: [gestopt], crons: [
+          gestopt,
+          // "nog nooit" is een echt antwoord, en het antwoord op "is deze nieuwe cron ooit gedraaid?"
+          { job: "payment-due", health: "nog-niet-langs", lastRunAt: null, hoursAgo: null, note: null, needsAttention: false } as const,
+        ] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
+      }),
+    );
+    assert.match(html, /aandacht nodig/);
+    assert.match(html, /reminders/);
+    assert.match(html, /96 uur/, "hoe lang al, niet alleen dat");
+    assert.match(html, /nog nooit/, "een taak die nooit draaide zegt dat, in plaats van een leeg vakje");
+  })();
+});
+
+test("[NO-SILENT-EMPTY] een onleesbare hartslag is geen groene", () => {
+  // Op de pagina die bestaat om te zeggen of de machine draait, mag "we konden niet kijken" nooit
+  // als "alles goed" renderen — dat is precies de stille storing die dit blok moet tonen.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: false, allWell: false, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
+      }),
+    );
+    assert.match(html, /niet te lezen/);
+    assert.doesNotMatch(html, /achtergrondtaken draaien</, "een onleesbare hartslag meldt geen gezonde machine");
   })();
 });
 

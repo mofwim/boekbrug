@@ -431,7 +431,19 @@ export async function runBankAutoConfirm(args: {
     //     keeps NULL accountant_status matchable (NEQ alone would exclude NULL rows in SQL).
     const { data: payData, error: payErr } = await payClient
       .from("invoices")
-      .update({ status: "paid", payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date || null })
+      // [PARTIAL-PAY] amount_paid gaat MEE. Deze update zette wel de status op 'paid' en liet de
+      // kolom op 0 staan, terwijl de koppeling hieronder het volle bedrag als amount_applied
+      // vastlegt. De schermen liegen daar niet van — openAmount leest de status eerst — maar de
+      // geldinvariant `amount_paid = Σ amount_applied` is dan geschonden, en money-invariants
+      // meldt dat als `payments_without_paid` op /dashboard/klaar: het scherm waar de eigenaar
+      // beslist zijn kwartaal weg te geven. Gemeten in de productiedatabase: veertien facturen,
+      // samen € 5.321,68, allemaal keurig betaald en allemaal daar als verschil gemeld.
+      //
+      // Een vals alarm op precies het paneel dat vertrouwen moet kopen is duurder dan geen paneel.
+      // Deze pas boekt alleen volledig openstaande facturen op hun hele totaal (zie de filter op
+      // amount_paid === 0 hierboven), dus dat totaal is exact wat er is voldaan — hetzelfde
+      // bedrag dat de koppeling krijgt, uit dezelfde uitdrukking.
+      .update({ status: "paid", amount_paid: Math.abs(Number(inv.total_inc_btw ?? 0)), payment_method: "bank", marked_paid_at: new Date().toISOString(), payment_date: m.transaction.date || null })
       .eq("id", invoiceId)
       .neq("status", "paid")
       .or("accountant_status.is.null,accountant_status.neq.verwerkt")
@@ -476,7 +488,9 @@ export async function runBankAutoConfirm(args: {
       // via pay-toggle). A double fault is rare; an invisible double fault is a lost truth.
       const { error: rbErr } = await payClient
         .from("invoices")
-        .update({ status: inv.status, payment_method: null, marked_paid_at: null, payment_date: null })
+        // amount_paid gaat mee terug, anders laat een geslaagde terugdraai een factuur achter die
+        // niet meer betaald is en toch een bedrag draagt — de spiegelfout van de regel hierboven.
+        .update({ status: inv.status, amount_paid: inv.amount_paid ?? 0, payment_method: null, marked_paid_at: null, payment_date: null })
         .eq("id", invoiceId)
         .eq("status", "paid");
       if (rbErr) {
@@ -499,9 +513,21 @@ export async function runBankAutoConfirm(args: {
     // invoices.amount_paid as SUM(amount_applied) on every later unlink/undo, so a NULL here would
     // silently zero a genuinely settled invoice. This pass only ever books fully-open invoices
     // (amount_paid === 0, line 97) at their full total, so the applied amount is that total.
-    await recordPaymentLinks(pipeline, userId, txId, [invoiceId], {
+    // [LINKS-WRITE-HONEST] De boolean wordt gelezen. Hij bestaat om gelezen te worden, en dit was
+    // de vierde plek die hem liet vallen. Zonder koppelrij herleidt recompute_invoice_amount_paid
+    // amount_paid bij de volgende ontkoppeling of terugdraai als Σ amount_applied, vindt niets, en
+    // zet deze zojuist betaalde factuur terug op haar volle bedrag: geld dat binnen is, als schuld.
+    const linksRecorded = await recordPaymentLinks(pipeline, userId, txId, [invoiceId], {
       [invoiceId]: Math.abs(Number(inv.total_inc_btw ?? 0)),
     });
+    if (!linksRecorded) {
+      reportHandledFailure({
+        tag: "BANK-TX-INVOICES",
+        message: "payment link not recorded for an auto-confirmed invoice — the reversal index is incomplete",
+        severity: "data-integrity",
+        context: { userId, invoiceId, txId },
+      });
+    }
 
     confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier, paymentDate: m.transaction.date || null });
     await logAuditAction({

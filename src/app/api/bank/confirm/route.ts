@@ -47,6 +47,7 @@ import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
 import { allocatedOnLine } from "@/lib/bank-line-budget";
+import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction } from "@/lib/audit";
@@ -737,6 +738,29 @@ export async function POST(req: NextRequest) {
     ? { status: "matched" as const, invoice_id: invoiceId }
     : { invoice_id: invoiceId };
 
+  // [HANDMATIG-OVERGENOMEN] auto_match_reason means one thing: the APP booked this line on amount
+  // and supplier name alone, and nobody has checked it. readiness counts exactly the rows carrying
+  // it while status='matched', and turns that count into "loop ze na vóór je de aangifte indient"
+  // on the quarter-close board.
+  //
+  // The moment a human takes the row over, that sentence is false. Only the explicit "Klopt,
+  // gecontroleerd" tap cleared it, so an unlink left the flag on the row and the next manual
+  // confirm carried it back into 'matched' — and the board then warned the owner about a link the
+  // owner made by hand. A false item on the one screen that exists to be believed.
+  //
+  // Its OWN update, deliberately, and best-effort. The column arrives with a hand-applied
+  // migration (bank_auto_match_reason.sql), and folding it into the write above would turn a
+  // lagging migration into a broken unlink — the same reasoning readiness gives for reading it
+  // separately. A stale amber flag is a nuisance; a route that refuses to run is not.
+  const clearAutoReason = async () => {
+    await (pipeline
+      .from("bank_transactions")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update({ auto_match_reason: null } as any)
+      .eq("id", transactionId)
+      .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
+  };
+
   const { data: linkData, error: linkErr } = await pipeline
     .from("bank_transactions")
     .update(linkUpdate)
@@ -744,6 +768,9 @@ export async function POST(req: NextRequest) {
     .eq("user_id", user.id)
     .eq("status", "pending") // only touch a still-pending tx; never overwrite a matched link
     .select("id"); // [BANK-LINK-RACE] know whether the link actually landed (0 rows ⇒ tx grabbed)
+  // [HANDMATIG-OVERGENOMEN] Only once the link really landed: a 0-row write means another
+  // request took the line, and clearing the flag on somebody else's link would hide THEIR warning.
+  if (!linkErr && linkData && linkData.length > 0) await clearAutoReason();
 
   if (linkErr) {
     console.error("[BOEK-016] transaction link failed after payment:", linkErr.message);
@@ -824,25 +851,30 @@ export async function POST(req: NextRequest) {
   // is dat een niet-uitgevoerde controle zélf een spoor achterlaat, zodat "geen alarm" niet twee
   // dingen tegelijk kan betekenen.
   try {
-    const { data: sumRows, error: sumErr } = await pipeline
-      .from("bank_tx_invoices")
-      .select("amount_applied")
-      .eq("user_id", user.id)
-      .eq("transaction_id", transactionId);
-    if (sumErr) throw new Error(sumErr.message);
-    const appliedSum = (sumRows ?? []).reduce((t, r) => t + Math.max(0, Number(r.amount_applied ?? 0)), 0);
-    if (appliedSum > payAmount + 0.01) {
+    // [LIJN-BUDGET] Via de gedeelde, GETEKENDE som. Hier stond een eigen optelling van
+    // magnitudes (`t + Math.max(0, amount_applied)`) — per FACTUUR juist, per REGEL niet: een
+    // creditnota geeft geld terug aan de regel, dus een regel van € 850 die bestaat uit een
+    // inkoopfactuur van € 1.000 en een credit van € 150 telde € 1.150 en zou alarm slaan over een
+    // boeking die precies klopt. Vandaag draagt geen enkele regel beide tegelijk, dus het was nog
+    // geen vals alarm — maar een geldwaarschuwing die één keer ten onrechte afgaat, is de tweede
+    // keer een die je wegklikt.
+    const verdict = await readOverApplied({
+      client: pipeline, userId: user.id, transactionId, txAmount: payAmount,
+    });
+    if (!verdict) throw new Error("over-application check could not run");
+    if (verdict.over) {
       await logAuditAction({
         userId: user.id,
         action: "bank.overapplied",
         entityType: "bank_transaction",
         entityId: transactionId,
-        newValue: { transaction_amount: payAmount, applied_sum: round2(appliedSum), invoice_id: invoiceId },
+        newValue: { transaction_amount: payAmount, applied_sum: verdict.appliedSum, invoice_id: invoiceId },
       });
+      const bericht = overAppliedNotice(verdict);
       await createNotification({
         userId: user.id,
-        title: "Controleer deze betaling",
-        body: `Op een betaling van € ${payAmount.toFixed(2)} is samen € ${appliedSum.toFixed(2)} aan facturen geboekt — dat is meer dan er binnenkwam. Ontkoppel de koppeling die niet klopt onder "Bevestigd".`,
+        title: bericht.title,
+        body: bericht.body,
         type: "payment",
         link: "/dashboard/bank",
       });

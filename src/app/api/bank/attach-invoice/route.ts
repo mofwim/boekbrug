@@ -38,6 +38,10 @@ import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
 import { normalizeToIso, findSemanticDuplicate, normalizeInvoiceNumber, normalizeVendor } from "@/lib/safecore";
 import { collectPossibleDuplicate } from "@/lib/possible-duplicate-collect";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
+import { reportHandledFailure } from "@/lib/report-handled";
+import { allocatedOnLine } from "@/lib/bank-line-budget";
+import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
+import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { readingPromptHint } from "@/lib/reading-memory";
 import { makeOwnInvoiceLookup } from "@/lib/own-invoice-lookup";
 // [DECLARED-INVOICE] Invoice numbers the payment names, whether or not we hold them.
@@ -612,9 +616,19 @@ async function runAttachInvoice(req: NextRequest) {
   // over-application alarm lives in /api/bank/confirm and never runs here, so nothing noticed.
   //
   // Fail CLOSED on a failed read: not knowing the budget is not permission to overdraw it.
+  // [LIJN-BUDGET] SIGNED, through the one module that owns this sum — this route was the fifth
+  // reader and the only one still adding magnitudes. Per INVOICE the magnitude is right; per LINE
+  // it is not, because a credit on the line GIVES money back to it. A €850 debit made of a €1.000
+  // supplier invoice and a €150 supplier credit reads €1.150 applied instead of €850, so the line
+  // looks €300 poorer than it is and this route refuses an attachment it could well afford.
+  // (spendsTheLine decides that per invoice; a creditnota is not inherently one or the other.)
+  //
+  // It also needs the INVOICE rows, and that is not overhead: a link with a NULL amount_applied
+  // predates the column and settled its invoice in full, so the invoice's own total is what it
+  // took. Reading NULL as 0 — which the magnitude sum did — lets the same euros be spent twice.
   const { data: priorLinks, error: priorErr } = await pipeline
     .from("bank_tx_invoices")
-    .select("amount_applied")
+    .select("invoice_id, amount_applied")
     .eq("transaction_id", transactionId);
   if (priorErr) {
     return NextResponse.json(
@@ -622,11 +636,39 @@ async function runAttachInvoice(req: NextRequest) {
       { status: 503 },
     );
   }
-  const alreadyApplied = (priorLinks ?? []).reduce(
-    (sum, l) => sum + Math.abs(Number((l as { amount_applied: number | null }).amount_applied) || 0),
-    0,
-  );
-  const budgetLeft = Math.max(0, bankAmount - alreadyApplied);
+  const priorRows = (priorLinks ?? []) as Array<{ invoice_id: string; amount_applied: number | null }>;
+  let priorInvoices: Array<{ id: string; direction: string | null; invoice_type: string | null; total_inc_btw: number | null }> = [];
+  if (priorRows.length > 0) {
+    try {
+      // [IN-CHUNK] Chunked and paged: a line spread over many invoices must not lose siblings to
+      // the ~1000-row cap or a 414, because a short read makes the budget look LARGER.
+      priorInvoices = await fetchAllRowsForIds(priorRows.map((r) => r.invoice_id), (chunk, from, to) =>
+        pipeline
+          .from("invoices")
+          .select("id, direction, invoice_type, total_inc_btw")
+          .in("id", chunk)
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "We konden niet controleren hoeveel van deze betaling al is toegewezen. Probeer het zo opnieuw." },
+        { status: 503 },
+      );
+    }
+  }
+  const spent = allocatedOnLine(priorRows, priorInvoices, Number(tx.amount) || 0);
+  // A sibling link whose invoice we could not read is unmeasurable, not zero. Counting it as zero
+  // makes the budget too large, which is the direction that lets the same euros be spent twice —
+  // so fail CLOSED, exactly as the failed read above does.
+  if (spent.unknownInvoiceIds.length > 0) {
+    return NextResponse.json(
+      { error: "We konden niet controleren hoeveel van deze betaling al is toegewezen. Probeer het zo opnieuw." },
+      { status: 503 },
+    );
+  }
+  const budgetLeft = Math.max(0, bankAmount - spent.allocated);
   if (budgetLeft <= 0.005) {
     return NextResponse.json(
       {
@@ -764,12 +806,80 @@ async function runAttachInvoice(req: NextRequest) {
   // link with a NULL amount makes this invoice — created 'paid' by this very payment — recompute to
   // amount_paid 0 and re-open at its full total. The invoice is created fully settled by this
   // transaction, so the applied amount is its own total.
-  await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
+  // [LINKS-WRITE-HONEST] The boolean is read. recordPaymentLinks returns one so a failed write can
+  // be reported, and this route — the one that CREATES an already-'paid' invoice out of a bank
+  // line — threw it away. Without the join row, recompute_invoice_amount_paid re-derives
+  // amount_paid as SUM(amount_applied) over the surviving links on the next unlink or undo, finds
+  // none, and re-opens this invoice at its full total: money that was received, standing as owed.
+  const linksRecorded = await recordPaymentLinks(pipeline, user.id, transactionId, [invoice.id], {
     // [BANK-BUDGET] The applied amount is what the LINE gave, which is not always the invoice's
     // total: on partial coverage the invoice stays open for the remainder, and Σ amount_applied
     // over this transaction can never exceed the money that actually moved.
     [invoice.id]: appliedNow,
   });
+
+  if (!linksRecorded) {
+    // Not fatal to the request — the invoice exists and is paid, which is the truth of what
+    // happened — but the reversal index is now incomplete, and that is invisible by construction.
+    reportHandledFailure({
+      tag: "BANK-TX-INVOICES",
+      message: "payment link not recorded for an invoice created paid from a bank line",
+      severity: "data-integrity",
+      context: { userId: user.id, invoiceId: invoice.id, transactionId },
+    });
+  }
+
+  // [BANK-OVERAPPLIED-LOUD] De derde deur. /api/bank/allocate gaat door een atomaire RPC die het
+  // budget onder een rijvergrendeling herberekent, en /api/bank/confirm herleest de som ná de
+  // eigen schrijving en slaat alarm. Deze route had geen van beide: ze leest het budget in JS en
+  // schrijft daarna een gewone insert, dus twee gelijktijdige verzoeken — of één die met een
+  // confirm overlapt — lezen allebei dezelfde "al toegewezen" en schrijven allebei.
+  //
+  // En dit is de deur waar dat het meest kost: ze MAAKT een factuur die meteen op 'betaald' staat.
+  // Over-besteden betekent hier een factuur die is voldaan uit geld dat de regel niet had, op een
+  // rij die niemand nog met een document kan vergelijken.
+  //
+  // De race sluiten kan alleen een atomaire RPC (gedocumenteerd als uitgesteld). Wat hier bij komt
+  // is dezelfde belofte als bij confirm: de stand kan nooit STIL verkeerd zijn.
+  try {
+    const verdict = await readOverApplied({
+      client: pipeline, userId: user.id, transactionId, txAmount: bankAmount,
+    });
+    if (!verdict) throw new Error("over-application check could not run");
+    if (verdict.over) {
+      await logAuditAction({
+        userId: user.id,
+        action: "bank.overapplied",
+        entityType: "bank_transaction",
+        entityId: transactionId,
+        newValue: { transaction_amount: bankAmount, applied_sum: verdict.appliedSum, invoice_id: invoice.id },
+      });
+      const bericht = overAppliedNotice(verdict);
+      await createNotification({
+        userId: user.id,
+        title: bericht.title,
+        body: bericht.body,
+        type: "payment",
+        link: "/dashboard/bank",
+      });
+    }
+  } catch (e) {
+    // Best effort: de boeking staat er al en mag hier niet meer sneuvelen. Maar een controle die
+    // NIET heeft gedraaid is zelf een feit over deze transactie, dus die wordt opgeschreven —
+    // anders betekent "geen alarm" twee dingen tegelijk.
+    console.error("[BANK-OVERAPPLIED-LOUD] over-application check did not run", { transactionId, e });
+    await logAuditAction({
+      userId: user.id,
+      action: "bank.overapplied_check_failed",
+      entityType: "bank_transaction",
+      entityId: transactionId,
+      newValue: {
+        transaction_amount: bankAmount,
+        invoice_id: invoice.id,
+        reason: e instanceof Error ? e.message : "sum read failed",
+      },
+    }).catch(() => { /* het spoor is de laatste redmiddel; het mag de boeking niet kosten */ });
+  }
 
   // 11. Notification (non-blocking) — service_role by rule.
   await createNotification({

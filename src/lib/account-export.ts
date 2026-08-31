@@ -18,7 +18,8 @@
 
 import JSZip from "jszip";
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchAllRows } from "./supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
+import { ownedStoragePath } from "./storage-path";
 import { toExportRowFull, invoicesToCsv, fmtAmountNL, type InvRow } from "./export";
 import { csvCell } from "./csv-safe";
 import { isMissingRelation } from "./pg-missing";
@@ -48,6 +49,12 @@ export interface AccountExportSummary {
    * not look" has to travel with the result instead of collapsing into a count of 0.
    */
   btwFilingsAvailable: boolean;
+  /**
+   * [EXPORT-REGISTERS] Row count per register that went into the ZIP, keyed by its FILE name.
+   * Keyed by file rather than by table so the manifest and the archive cannot drift: whoever
+   * opens the ZIP in 2032 reads a number next to a file they can point at.
+   */
+  registerCounts: Record<string, number>;
   skipped: { name: string; reason: string }[];
   generatedAt: string; // ISO
 }
@@ -83,6 +90,72 @@ export interface ExportFile {
   bytes: Uint8Array;
 }
 
+/**
+ * [EXPORT-REGISTERS] The tables an owner FILLED, which the export left behind.
+ *
+ * What was in the ZIP before this: invoices as a CSV of their headers, the documents, the profile,
+ * and the four ledgers. What was not: the invoice LINES, the customer register, the supplier
+ * register, the price list, the hours, the vehicles, the reminder trail, and the links that say
+ * which bank payment settled which invoice.
+ *
+ * That is not a smaller export, it is a different claim. facturen.csv carries a total and a client
+ * NAME; the lines that make up that total, and the address and btw-nummer the invoice was actually
+ * addressed to, live in invoice_lines and clients. An owner who leaves BoekBrug with this ZIP can
+ * see WHAT was invoiced and to whom by name, and can reconstruct nothing — not one invoice, not
+ * one reconciliation. The bewaarplicht that manifest.json hands back to them (art. 52 AWR, seven
+ * years) is a duty to keep an administration that can be inspected, and headers are not one.
+ *
+ * It matters more than it looks because /api/account/delete GATES deletion on this export having
+ * been made and confirmed. So the app's own answer to "take your data and go" was the incomplete
+ * file, and taking it was the step that unlocked destroying the rest.
+ *
+ * Everything here is keyed on user_id, except invoice_lines, which hangs off the owner's invoices.
+ * Verbatim JSON like the ledgers above: a column added later still leaves with the account.
+ */
+export interface ExportRegisters {
+  /** invoice_lines for the owner's own invoices — what each invoice actually says. */
+  invoiceLines: unknown[];
+  /** clients — the customer register: address, e-mail, KVK/BTW, payment term. */
+  clients: unknown[];
+  /** suppliers — the supplier register, with the IBANs the matcher books on. */
+  suppliers: unknown[];
+  /** supplier_aliases — the other names one supplier writes on its invoices. */
+  supplierAliases: unknown[];
+  /** articles — the owner's own price list. */
+  articles: unknown[];
+  /** time_entries — hours worked, invoiced and not yet invoiced. */
+  timeEntries: unknown[];
+  /** vehicles — the cars behind the kilometeradministratie. */
+  vehicles: unknown[];
+  /** invoice_reminders — when each reminder went out. The WIK trail; nothing else records it. */
+  invoiceReminders: unknown[];
+  /** bank_tx_invoices — which bank line paid which invoice. The reconciliation itself. */
+  bankInvoiceLinks: unknown[];
+  /** folders — how the owner organised their own documents. */
+  folders: unknown[];
+  /** counterpart_memory — the categorisation the owner taught the app, answer by answer. */
+  counterpartMemory: unknown[];
+  /** email_sender_rules — "mail from this sender is always an invoice", set by the owner. */
+  emailSenderRules: unknown[];
+  /** email_skipped_attachments — what the mailbox delivered and the app did NOT import, and why. */
+  emailSkipped: unknown[];
+  /** invoice_counters — where the owner's invoice numbering stands. Continuity after leaving. */
+  invoiceCounters: unknown[];
+  /** pay_bundles / pay_bundle_invoices — the payment batches the owner assembled. */
+  payBundles: unknown[];
+  payBundleInvoices: unknown[];
+  /** feedback — what the owner wrote to us. Their words, so theirs to take. */
+  feedback: unknown[];
+}
+
+/** Empty registers — the shape, with nothing in it. Used as the default in assemble. */
+export const EMPTY_REGISTERS: ExportRegisters = {
+  invoiceLines: [], clients: [], suppliers: [], supplierAliases: [], articles: [],
+  timeEntries: [], vehicles: [], invoiceReminders: [], bankInvoiceLinks: [],
+  folders: [], counterpartMemory: [], emailSenderRules: [], emailSkipped: [],
+  invoiceCounters: [], payBundles: [], payBundleInvoices: [], feedback: [],
+};
+
 interface AssembleInput {
   userId: string;
   profile: unknown; // profile row, dumped verbatim as JSON
@@ -111,6 +184,8 @@ interface AssembleInput {
   btwFilings?: BtwFilingRow[];
   /** Defaults to true. Pass false when the btw_filings read failed — see the summary field. */
   btwFilingsAvailable?: boolean;
+  /** [EXPORT-REGISTERS] The tables the owner filled. Defaults to empty. */
+  registers?: Partial<ExportRegisters>;
   skipped?: { name: string; reason: string }[];
 }
 
@@ -250,6 +325,7 @@ export async function assembleAccountExportZip(
   const messages = input.messages ?? [];
   const btwFilings = input.btwFilings ?? [];
   const btwFilingsAvailable = input.btwFilingsAvailable ?? true;
+  const registers: ExportRegisters = { ...EMPTY_REGISTERS, ...(input.registers ?? {}) };
   const skipped = [...(input.skipped ?? [])];
   const zip = new JSZip();
 
@@ -300,6 +376,40 @@ export async function assembleAccountExportZip(
     zip.file("KASSAVERKOPEN-NIET-GELEZEN.txt", TILL_SALES_UNREADABLE_NOTE);
   }
   zip.file("berichten.json", JSON.stringify(messages, null, 2));
+
+  // 4b. [EXPORT-REGISTERS] The tables the owner FILLED — see the type for why their absence made
+  //     this a different export rather than a smaller one. Dutch file names, like every other file
+  //     in this ZIP: the reader is the owner, their accountant, or an inspector.
+  //
+  //     Written unconditionally, empty list and all. An empty registers file is an honest answer
+  //     here in a way the btw-aangiftes one is not: the read THREW if it failed (readAll above),
+  //     so reaching this line means the answer is known. The absence of a FILE is what nobody can
+  //     interpret — that is the rule the whole module is built on.
+  const REGISTER_FILES: Array<[keyof ExportRegisters, string]> = [
+    ["invoiceLines", "factuurregels.json"],
+    ["clients", "klanten.json"],
+    ["suppliers", "leveranciers.json"],
+    ["supplierAliases", "leveranciers-schrijfwijzen.json"],
+    ["articles", "artikelen.json"],
+    ["timeEntries", "uren.json"],
+    ["vehicles", "voertuigen.json"],
+    ["invoiceReminders", "herinneringen.json"],
+    ["bankInvoiceLinks", "bank-factuur-koppelingen.json"],
+    ["folders", "mappen.json"],
+    ["counterpartMemory", "tegenpartij-geheugen.json"],
+    ["emailSenderRules", "mail-afzenderregels.json"],
+    ["emailSkipped", "mail-niet-ingelezen.json"],
+    ["invoiceCounters", "factuurnummering.json"],
+    ["payBundles", "betaalbundels.json"],
+    ["payBundleInvoices", "betaalbundel-facturen.json"],
+    ["feedback", "mijn-feedback.json"],
+  ];
+  const registerCounts: Record<string, number> = {};
+  for (const [key, fileName] of REGISTER_FILES) {
+    const rows = registers[key];
+    zip.file(fileName, JSON.stringify(rows, null, 2));
+    registerCounts[fileName] = rows.length;
+  }
   // [EXPORT-FILED] Verbatim alongside the CSV: the CSV is what a human reads, this is the
   // guarantee that a column added to btw_filings later still leaves the account with it. Same
   // rule as the CSV — an unreadable ledger ships as no file, never as an empty one.
@@ -318,6 +428,7 @@ export async function assembleAccountExportZip(
     messageCount: messages.length,
     btwFilingCount: btwFilingsAvailable ? btwFilings.length : 0,
     btwFilingsAvailable,
+    registerCounts,
     skipped,
     generatedAt: new Date().toISOString(),
   };
@@ -326,7 +437,10 @@ export async function assembleAccountExportZip(
     JSON.stringify(
       {
         beschrijving:
-          "Export van je BoekBrug-account: facturen, ingediende BTW-aangiftes, documenten, profiel, bank, kas (met het spoor van verwijderde kasboekingen en beginsaldo-wijzigingen), dagomzet en berichten.",
+          "Export van je BoekBrug-account: facturen met hun regels, je klanten- en leveranciersbestand, " +
+          "ingediende BTW-aangiftes, documenten, profiel, bank (met de koppelingen naar je facturen), " +
+          "kas (met het spoor van verwijderde kasboekingen en beginsaldo-wijzigingen), dagomzet, uren, " +
+          "artikelen, voertuigen, herinneringen en berichten.",
         bewaarplicht:
           "Je bewaarplicht van 7 jaar (art. 52 AWR) rust op jou als ondernemer en loopt door nadat je stopt met BoekBrug. Bewaar deze export.",
         gegenereerd_op: summary.generatedAt,
@@ -342,6 +456,21 @@ export async function assembleAccountExportZip(
         aantal_btw_aangiftes: summary.btwFilingCount,
         // [EXPORT-FILED] false ⇒ het aantal hierboven is géén nul-meting maar een mislukte lezing.
         btw_aangiftes_gelezen: summary.btwFilingsAvailable,
+        // [EXPORT-REGISTERS] Per bestand het aantal regels dat erin ging. Nul is hier een echt
+        // antwoord: een mislukte lezing had de export laten falen, niet leeggemaakt.
+        aantallen_per_bestand: summary.registerCounts,
+        // Wat er BEWUST niet in zit, en waarom — zodat een leeg vakje geen open vraag wordt.
+        niet_meegeleverd: {
+          afgeleide_overzichten:
+            "Bestanden die de app zelf uitrekent uit wat hierboven staat (dagstaten, " +
+            "afletteringsoverzichten, kwartaalpakketten) zitten er niet in: ze zijn geen aparte " +
+            "gegevens, ze zijn een weergave van deze.",
+          logboek:
+            "Het volledige audit-logboek zit er niet in; alleen het kasspoor, omdat een " +
+            "verwijderde kasboeking nergens anders meer bestaat. De rest van het logboek is een " +
+            "beveiligingsregistratie met IP-adressen, en dat is een aparte vraag met een eigen " +
+            "antwoord — stel hem via privacy@boekbrug.nl.",
+        },
         overgeslagen_bestanden: summary.skipped,
       },
       null,
@@ -359,8 +488,11 @@ export async function assembleAccountExportZip(
 
 // ─── Orchestrator (fetch + parallel download, then assemble) ────────────────────
 
+// [EXPORT-REGISTERS] `id` leads the list, and it is not cosmetic: invoice_lines is the one table
+// in this export that is not keyed on user_id. Without the owner's invoice ids there is no way to
+// ask for the lines, which is a large part of why they were never in the ZIP.
 const INVOICE_FIELDS =
-  "invoice_number, client_name, client_email, client_address, " +
+  "id, invoice_number, client_name, client_email, client_address, " +
   "client_postal_code, client_city, status, direction, total_ex_btw, " +
   "btw_amount, total_inc_btw, invoice_date, due_date, created_at, " +
   "invoice_type";
@@ -421,10 +553,28 @@ export async function buildAccountExportZip(args: {
   // chunked/streamed downloads. Not optimizing before measurement.
   const downloaded = await Promise.all(
     docs.map(async (d) => {
+      // [SEC-STORAGE-PATH] The row proves the RECORD is this user's; it does not prove the record
+      // POINTS at their bytes. `file_url` is ordinary text on a row the owner may UPDATE
+      // (documents_update_own is a whole-row policy), and `supabase` here is service_role — which
+      // bypasses the bucket policy that stops a session client reading another tenant's folder.
+      // Without this line, pasting another owner's key onto one's own document row and then asking
+      // for the AVG-export downloaded their file into the requester's ZIP.
+      //
+      // Refused rather than failed: an unattributable key is skipped like any unreadable file, and
+      // the export already discloses every skip below, so the owner is told rather than quietly
+      // handed a shorter ZIP.
+      const path = ownedStoragePath(d.file_url, userId);
+      if (!path) {
+        return {
+          ok: false as const,
+          name: d.file_name,
+          reason: "overgeslagen — dit bestand hoort niet bij dit account",
+        };
+      }
       try {
         const { data, error } = await supabase.storage
           .from("documents")
-          .download(d.file_url);
+          .download(path);
         if (error || !data) {
           return {
             ok: false as const,
@@ -435,7 +585,7 @@ export async function buildAccountExportZip(args: {
         const bytes = new Uint8Array(await data.arrayBuffer());
         return {
           ok: true as const,
-          file: { path: d.file_url, name: d.file_name, bytes },
+          file: { path, name: d.file_name, bytes },
         };
       } catch (e) {
         return {
@@ -514,6 +664,67 @@ export async function buildAccountExportZip(args: {
         .order("id", { ascending: true }).range(from, to)),
   ]);
 
+  // [EXPORT-REGISTERS] The tables the owner filled. Same rule as the ledgers above: a failed read
+  // THROWS. An export that quietly ships without someone's customer register is the harm this whole
+  // file is written against, and it is worse here than elsewhere because /api/account/delete treats
+  // a confirmed export as permission to destroy the original.
+  //
+  // Every one is scoped to userId except invoice_lines, which hangs off the owner's own invoice ids
+  // — chunked, because an owner with thousands of invoices cannot ask for them in one `in()`.
+  const invoiceIds = invoices
+    .map((inv) => (inv as unknown as { id?: string | null }).id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  const [
+    invoiceLineRows, clientRows, supplierRows, supplierAliasRows, articleRows,
+    timeEntryRows, vehicleRows, reminderRows, bankLinkRows, folderRows, memoryRows,
+    senderRuleRows, skippedMailRows, counterRows, bundleRows, bundleInvoiceRows, feedbackRows,
+  ] = await Promise.all([
+    invoiceIds.length === 0
+      ? Promise.resolve([] as unknown[])
+      : (async () => {
+          try {
+            return await fetchAllRowsForIds<unknown, string>(invoiceIds, (chunk, from, to) =>
+              supabase.from("invoice_lines").select("*").in("invoice_id", chunk)
+                .order("id", { ascending: true }).range(from, to));
+          } catch (e) {
+            throw new Error(`[BOEK-032] invoice_lines query failed: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        })(),
+    readAll("clients", (from, to) =>
+      supabase.from("clients").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("suppliers", (from, to) =>
+      supabase.from("suppliers").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("supplier_aliases", (from, to) =>
+      supabase.from("supplier_aliases").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("articles", (from, to) =>
+      supabase.from("articles").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("time_entries", (from, to) =>
+      supabase.from("time_entries").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("vehicles", (from, to) =>
+      supabase.from("vehicles").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("invoice_reminders", (from, to) =>
+      supabase.from("invoice_reminders").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("bank_tx_invoices", (from, to) =>
+      supabase.from("bank_tx_invoices").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("folders", (from, to) =>
+      supabase.from("folders").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("counterpart_memory", (from, to) =>
+      supabase.from("counterpart_memory").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("email_sender_rules", (from, to) =>
+      supabase.from("email_sender_rules").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("email_skipped_attachments", (from, to) =>
+      supabase.from("email_skipped_attachments").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("invoice_counters", (from, to) =>
+      supabase.from("invoice_counters").select("*").eq("user_id", userId).range(from, to)),
+    readAll("pay_bundles", (from, to) =>
+      supabase.from("pay_bundles").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("pay_bundle_invoices", (from, to) =>
+      supabase.from("pay_bundle_invoices").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("feedback", (from, to) =>
+      supabase.from("feedback").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+  ]);
+
   // [EXPORT-FILED] btw_filings, read apart from the four above because it answers a different
   // question on failure. The other ledgers are recomputable from what is already in this ZIP; a
   // FILED quarter is not recomputable from anything, because a later invoice moves the live
@@ -586,5 +797,24 @@ export async function buildAccountExportZip(args: {
     messages: msgRows,
     btwFilings: btwFilingRows,
     btwFilingsAvailable,
+    registers: {
+      invoiceLines: invoiceLineRows,
+      clients: clientRows,
+      suppliers: supplierRows,
+      supplierAliases: supplierAliasRows,
+      articles: articleRows,
+      timeEntries: timeEntryRows,
+      vehicles: vehicleRows,
+      invoiceReminders: reminderRows,
+      bankInvoiceLinks: bankLinkRows,
+      folders: folderRows,
+      counterpartMemory: memoryRows,
+      emailSenderRules: senderRuleRows,
+      emailSkipped: skippedMailRows,
+      invoiceCounters: counterRows,
+      payBundles: bundleRows,
+      payBundleInvoices: bundleInvoiceRows,
+      feedback: feedbackRows,
+    },
   });
 }

@@ -14,7 +14,8 @@
 // so a creditnota (negative header) nets correctly.
 
 import type { PipelineClient } from "./supabase-pipeline";
-import { fetchAllRows } from "./supabase-paginate";
+import { columnIsAbsent } from "@/lib/column-probe";
+import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 import {
   buildQuarterSettlements,
   type HeaderWithPaid,
@@ -93,8 +94,21 @@ export async function fetchSettlementEvents(
       .eq("user_id", ownerId)
       .order("id", { ascending: true }).range(from, to) as never,
   );
+  // [KAS-PROBE] The fallback fires ONLY on a genuinely absent column. It used to fire on any
+  // rejection, and the two are nothing alike: a statement timeout, a 5xx on page two or a pooler
+  // refusal would silently re-read WITHOUT paid_on, and paid_on is the date a manual instalment is
+  // dated by. Losing it does not lose a field — under the kasstelsel it takes every cash and manual
+  // instalment out of the quarter it belongs to, so the BTW owed on it is under-declared (or the
+  // voorbelasting on the purchase side is lost), and undatedPaidCount then blocks the filing over
+  // rows that were perfectly datable a second earlier.
+  //
+  // The window the fallback was written for is closed: bank_tx_invoices.paid_on exists in
+  // production. Same rule and same helper as the five capability probes — see column-probe.ts.
   const links = await fetchLinks("invoice_id, transaction_id, amount_applied, paid_on")
-    .catch(() => fetchLinks("invoice_id, transaction_id, amount_applied"))
+    .catch((e: unknown) => {
+      if (!columnIsAbsent(e as { code?: string; message?: string }, "paid_on")) throw e;
+      return fetchLinks("invoice_id, transaction_id, amount_applied");
+    })
     .catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_tx_invoices fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
   const linkedIds = new Set(links.map((l) => l.invoice_id).filter(Boolean));
 
@@ -128,9 +142,25 @@ export async function fetchSettlementEvents(
   const txIds = [...new Set(links.map((l) => l.transaction_id).filter((id): id is string => !!id))];
   const txDate = new Map<string, string>();
   if (txIds.length > 0) {
-    const txRows = await fetchAllRows<{ id: string; date: string | null }>((from, to) => pipeline
-      .from("bank_transactions").select("id, date").in("id", txIds)
-      .order("id", { ascending: true }).range(from, to),
+    // [ID-CHUNK] fetchAllRowsForIds, not fetchAllRows with a bare `.in()`. The two solve different
+    // ceilings and only one of them was closed here: fetchAllRows re-issues `.range()` for the
+    // ~1000-row RESPONSE cap, but it rebuilds the same full id list in the URL on every page, so
+    // the REQUEST-line ceiling is untouched.
+    //
+    // And this id list is the worst case in the app. `links` above is read by user_id with no date
+    // filter — its own comment says "ALL of the owner's bank↔invoice links" — so txIds is every
+    // bank transaction that ever settled one of this owner's invoices, all-time. At ~37 URL bytes
+    // per uuid a few hundred settled invoices already outgrow the request line, and the 414 is not
+    // a degraded read: it throws, and the concept BTW-aangifte, the resultaat screen, readiness and
+    // the closing package all lose their settlement dating at once, permanently, for the owners
+    // with the longest history.
+    //
+    // payment-evidence-collect.ts:62 does this identical three-step read the right way already.
+    const txRows = await fetchAllRowsForIds<{ id: string; date: string | null }, string>(
+      txIds,
+      (chunk, from, to) => pipeline
+        .from("bank_transactions").select("id, date").in("id", chunk)
+        .order("id", { ascending: true }).range(from, to),
     ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] bank_transactions fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
     for (const t of txRows) if (t.date) txDate.set(t.id, t.date.slice(0, 10));
   }

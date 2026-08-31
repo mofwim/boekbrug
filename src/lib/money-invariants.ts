@@ -84,6 +84,7 @@ export interface TransactionRow {
 export type ViolationKind =
   | "paid_without_payments"
   | "payments_without_paid"
+  | "paid_amount_never_written"
   | "overpaid"
   | "negative_paid"
   | "status_paid_but_open"
@@ -155,6 +156,12 @@ export function findMoneyViolations(input: {
     const total = Math.abs(num(inv.totalIncBtw));
     const paid = num(inv.amountPaid);
     const linkInfo = byInvoice.get(inv.id);
+    // [BEDRAG-NOOIT-GESCHREVEN] Set below. It suppresses exactly one FURTHER finding — the
+    // status/amount one — because that is the same single cause said a second way, and two lines
+    // for one unwritten column is how a panel starts looking worse than the books are. It
+    // deliberately suppresses nothing else: the invoice's own arithmetic and its creditnota sign
+    // have nothing to do with which payment column was written, and must still be checked here.
+    let amountNeverWritten = false;
 
     // ── The money that is claimed paid, against the payments that exist ──
     if (paid < -MONEY_EPSILON) {
@@ -181,7 +188,41 @@ export function findMoneyViolations(input: {
     // hand (pay-toggle, no bank line) legitimately has money paid and no links at all.
     if (linkInfo && !linkInfo.hadNull) {
       const gap = round2(paid - linkInfo.sum);
-      if (Math.abs(gap) > MONEY_EPSILON) {
+
+      // [BEDRAG-NOOIT-GESCHREVEN] One shape of that gap is not two sources disagreeing, and
+      // reporting it as if it were costs more than it explains.
+      //
+      // The invoice says 'paid'. Its bank links cover the total EXACTLY. And amount_paid is zero.
+      // All three of those agree that the money arrived in full; the only thing that happened is
+      // that one column was never written. runBankAutoConfirm's pay write set status,
+      // payment_method, marked_paid_at and payment_date and skipped amount_paid, while the link it
+      // wrote on the next line recorded the whole sum. That cause is fixed — but the rows it left
+      // behind do not heal themselves, because amount_paid is only ever re-derived per invoice, on
+      // a pay-toggle, an unlink or a statement delete. Nothing sweeps.
+      //
+      // Why it earns its own kind rather than a footnote: this file's finding goes on
+      // /dashboard/klaar, the screen where an owner decides whether to hand the quarter to their
+      // accountant. Fourteen invoices and EUR 5.321,68 of "verschil" there, every euro of it
+      // correctly received, is precisely the false alarm that teaches someone to stop reading the
+      // panel — including on the day it means something. It is still reported, because a column
+      // that disagrees with the books IS wrong and silence would be worse. It is reported for what
+      // it is.
+      //
+      // Nothing is repaired here. That rule stands and scripts/money-audit.ts argues it in full.
+      // What this changes is the argument's premise, honestly and only for this group: there is no
+      // side to pick, so the decision in front of the human is small rather than forensic.
+      const fullyCovered = total > MONEY_EPSILON && Math.abs(linkInfo.sum - total) <= MONEY_EPSILON;
+      amountNeverWritten = claimsPaid(inv) && Math.abs(paid) <= MONEY_EPSILON && fullyCovered;
+      if (amountNeverWritten) {
+        out.push({
+          kind: "paid_amount_never_written",
+          entityId: inv.id,
+          euros: round2(total),
+          message:
+            `${inv.invoiceNumber ?? "Een factuur"} van ${eur(total)} is volledig betaald en de bankregels ` +
+            `dekken hem precies — alleen het veld "betaald bedrag" is nooit weggeschreven. Er ontbreekt geen geld.`,
+        });
+      } else if (Math.abs(gap) > MONEY_EPSILON) {
         out.push({
           kind: gap > 0 ? "paid_without_payments" : "payments_without_paid",
           entityId: inv.id,
@@ -199,7 +240,7 @@ export function findMoneyViolations(input: {
     // and an "open" invoice that has been fully covered and keeps chasing a customer who paid.
     if (total > MONEY_EPSILON) {
       const covered = paid >= total - MONEY_EPSILON;
-      if (claimsPaid(inv) && !covered) {
+      if (claimsPaid(inv) && !covered && !amountNeverWritten) {
         out.push({
           kind: "status_paid_but_open",
           entityId: inv.id,
@@ -233,7 +274,24 @@ export function findMoneyViolations(input: {
     // is not wrong, and inventing a violation from a gap is how an audit stops being believed.
     if (inv.totalExBtw != null && inv.btwAmount != null && inv.totalIncBtw != null) {
       const gap = round2(num(inv.totalExBtw) + num(inv.btwAmount) - num(inv.totalIncBtw));
-      if (Math.abs(gap) > 0.01) {
+      // [SPLIT-ONBEKEND] Beide op nul naast een totaal dat er wél is, is GEEN rekenfout. Het is
+      // dezelfde toestand als NULL — "we hebben alleen het totaal gelezen" — en de regel hierboven
+      // zegt zelf dat afwezig niet fout is, "want een schending verzinnen uit een gat is hoe een
+      // audit ophoudt geloofd te worden".
+      //
+      // Dat gebeurde ook. Gemeten in de productiedatabase: drie facturen stonden zo (nog in
+      // verwerking, de lezer was er nog niet aan toe), en de audit meldde ze met de zin "Dit getal
+      // staat in je aangifte" — over een splitsing die nog helemaal niet is gelezen. Eén enkele
+      // echte rekenbreuk stond ertussen, en die verdient het om niet in drie valse te verdwijnen.
+      //
+      // Op een factuur die WEL meetelt is een ontbrekende splitsing overigens een echt probleem
+      // (de voorbelasting leest dan stil nul) — maar dat is een ander feit met een andere zin, en
+      // niet iets om onder "de optelling klopt niet" te verstoppen.
+      const splitNeverRead =
+        Math.abs(num(inv.totalExBtw)) <= MONEY_EPSILON &&
+        Math.abs(num(inv.btwAmount)) <= MONEY_EPSILON &&
+        Math.abs(num(inv.totalIncBtw)) > MONEY_EPSILON;
+      if (Math.abs(gap) > 0.01 && !splitNeverRead) {
         out.push({
           kind: "btw_arithmetic",
           entityId: inv.id,

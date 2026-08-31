@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { checkEnv, envVerdict, missingEnv } from "@/lib/deploy-health";
-import { CRON_JOBS, judgeCron, cronHealthNote, type CronJob, type CronRunRow } from "@/lib/cron-heartbeat";
+import { CRON_JOBS, judgeCron, cronHealthNote, type CronJob, type CronRunRow, type CronHealth } from "@/lib/cron-heartbeat";
 import { SITE_URL, siteUrlIssue } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -103,7 +103,10 @@ export async function GET(req: NextRequest) {
   // Hier valt het meeste te zien: een cron die nooit heeft gedraaid verraadt een bedradingsfout
   // die verder nergens zichtbaar is.
   const nu = Date.now();
-  const crons: Array<{ job: string; health: string; laatst: string | null; toelichting?: string }> = [];
+  // [HARTSLAG-BEWIJS] `job` en `health` als hun echte types, niet als string: de uitleg wordt na de
+  // lus opgebouwd en cronHealthNote wil de union — met `string` zou dat een cast vragen, en een cast
+  // hier zou precies de typefout verbergen die een verkeerde taaknaam in een diagnose zet.
+  const crons: Array<{ job: CronJob; health: CronHealth; laatst: string | null; toelichting?: string }> = [];
   let cronsLeesbaar = true;
 
   // [MEETVENSTER] Sinds wanneer wordt er überhaupt vastgelegd? Zonder dat getal liegt het oordeel
@@ -150,12 +153,17 @@ export async function GET(req: NextRequest) {
       break;
     }
     const health = judgeCron(job, run, nu, watchingSince);
-    crons.push({
-      job,
-      health,
-      laatst: run?.started_at ?? null,
-      ...(health === "ok" ? {} : { toelichting: cronHealthNote(job, health) }),
-    });
+    crons.push({ job, health, laatst: run?.started_at ?? null });
+  }
+
+  // [HARTSLAG-BEWIJS] De uitleg pas NA de lus, want ze rust op een feit dat pas dan bekend is:
+  // draaide er ÉÉN taak, dan zijn CRON_SECRET en vercel.json aantoonbaar in orde en mag de zin bij
+  // een taak die nooit draaide de lezer niet naar de omgeving sturen. Het beheerscherm deed dat
+  // wel — acht taken op "ok" met tijden van uren geleden, en ernaast de bewering dat de sleutel
+  // waarmee die acht waren binnengekomen ontbrak.
+  const anyCronRan = crons.some((c) => !!c.laatst);
+  for (const c of crons) {
+    if (c.health !== "ok") c.toelichting = cronHealthNote(c.job, c.health, anyCronRan);
   }
 
   // 'nog-niet-langs' is een lege waarneming, geen storing — zie judgeCron.

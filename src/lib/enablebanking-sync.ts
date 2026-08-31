@@ -98,6 +98,17 @@ export interface AccountSyncResult {
   errorCode: EnableBankingErrorCode | null;
   /** True when the account was skipped because it was read recently (rate-limit guard). */
   skippedTooSoon: boolean;
+  /**
+   * [CSV-MUNT] True when the account was skipped because the bank holds it in another currency.
+   *
+   * Separate from `skippedTooSoon` because they mean different things to the owner, and separate
+   * from `error` because nothing failed. It exists as a FIELD rather than as "a warning with a
+   * certain wording" for the same reason `errorCode` does: the connection-level decision below
+   * ("did anything read cleanly?") must never be made by matching a Dutch sentence. Without it, a
+   * dollar account that we deliberately never read would count as a clean read and quietly mark a
+   * connection with an expired consent as healthy.
+   */
+  skippedForeignCurrency: boolean;
 }
 
 export interface ConnectionSyncResult {
@@ -273,10 +284,30 @@ async function syncOneAccount(args: {
     error: null,
     errorCode: null,
     skippedTooSoon: false,
+    skippedForeignCurrency: false,
   };
 
   if (!force && !isAccountDue(account.lastSyncedAt, now)) {
     return { ...base, skippedTooSoon: true };
+  }
+
+  // [CSV-MUNT] Een rekening die de bank zelf in een andere munt aanmeldt, wordt niet opgehaald.
+  //
+  // Niet als fout: er is niets kapot, en de verbinding hoort niet op "error" te springen omdat
+  // iemand naast zijn euro-rekening een dollarrekening heeft. Wel als waarschuwing, want stil
+  // overslaan is precies zo misleidend als stil verkeerd boeken — het paneel zou dan "0 nieuwe
+  // transacties" zeggen over een rekening waar wél iets op gebeurde. En het scheelt de eigenaar
+  // een van zijn paar dagelijkse leesbeurten bij de bank, die hier niets kan opleveren.
+  const accountCurrency = (account.currency || "").toUpperCase();
+  if (accountCurrency && accountCurrency !== "EUR") {
+    return {
+      ...base,
+      skippedForeignCurrency: true,
+      warnings: [
+        `Deze rekening staat bij de bank in ${accountCurrency}. Deze boekhouding werkt in euro's, ` +
+        `dus we halen er geen transacties op — anders zouden die bedragen als euro's worden geboekt.`,
+      ],
+    };
   }
 
   const { dateFrom, dateTo } = syncWindow(account, connection, now);
@@ -382,7 +413,7 @@ export async function syncBankConnection(args: {
       status: dead ? "expired" : "error",
       lastError: errored[0].error,
     });
-  } else if (result.accounts.some((a) => !a.error && !a.skippedTooSoon)) {
+  } else if (result.accounts.some((a) => !a.error && !a.skippedTooSoon && !a.skippedForeignCurrency)) {
     // At least one account read cleanly — the connection is alive again whatever it said before.
     if (connection.status !== "linked") {
       await setConnectionStatus({ connectionId: connection.id, status: "linked", lastError: null });

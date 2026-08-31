@@ -178,6 +178,70 @@ console.log("\n— turnover (retail Z-report) de-dup vs pos_income + cash —");
   check("bank omzet without rate is flagged too (not just cash)", r.cashOmzetZonderBtw === 850);
 }
 
+// ─── [KAS-TERUGGAAF] Een teruggaaf op een kassadag is geen dubbeltelling ──────
+//
+// De dubbeltelling waar de covered-regel over gaat is: de eigenaar noteert de dagopbrengst die de
+// Z-bon al telde nóg een keer als kasregel. Een TERUGGAAF is dat niet — er is geen tweede notering
+// van dezelfde ontvangst, en daily_turnover.cash_amount is een positief ontvangstenbedrag dat een
+// uitbetaling niet kan voorstellen. Hem overslaan laat de omzet staan op het bedrag vóór de
+// teruggaaf. De opmerking in de engine zegt zelf dat teruggaven "the normal way a till goes the
+// other way" zijn; precies dat geval viel weg.
+console.log("\n— [KAS-NULTARIEF] 0% is een antwoord, geen ontbrekend antwoord —");
+{
+  // /api/cash accepteert 0 uitdrukkelijk als geldig tarief, en de database bewaart 0 en NULL
+  // apart. Toch viel 0% in de tak voor "geen tarief opgegeven": de omzet bereikte geen enkele
+  // rubriek, en cashOmzetZonderBtw — die de gereedheid BLOKKEERT — telde hem mee. De eigenaar die
+  // het juiste invulde kon zijn kwartaal niet afronden, en de enige uitweg was liegen over het
+  // tarief.
+  const cash: ResultCashEntry[] = [
+    { direction: "in", amount: 300, category: "omzet", btw_rate: 0, date: "2026-05-02" },
+    { direction: "in", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+    { direction: "in", amount: 80, category: "omzet", btw_rate: null, date: "2026-05-02" },
+  ];
+  const r = computeResult([], [], cash, []);
+  check("de 0%-verkoop telt als omzet", near(r.omzet, 300 + 100 + 80));
+  check("…en draagt geen btw", near(r.btwVerschuldigd, 21));
+  // De emmer is wat hem in aangifte.ts naar rubriek 1e brengt.
+  const nul = r.salesByRate.find((x) => x.rate === 0);
+  check("de 0%-omzet krijgt een eigen tariefemmer (die 1e voedt)", !!nul && near(nul.omzet, 300));
+  check("…met nul btw erin", !!nul && near(nul.btw, 0));
+  // En alleen de ECHT ongetarifeerde regel blokkeert nog.
+  check("alleen de regel zonder tarief blokkeert de gereedheid", near(r.cashOmzetZonderBtw, 80));
+}
+
+console.log("\n— [KAS-TERUGGAAF] een kasteruggaaf op een gedekte dag telt wél mee —");
+{
+  const turnover: DailyTurnover[] = [{
+    turnover_date: "2026-04-04",
+    base_0: 0, base_9: 0, base_21: 1000, btw_9: 0, btw_21: 210,
+    total_incl: 1210, pin_amount: 0, cash_amount: 1210, other_amount: 0,
+  }];
+  const cash: ResultCashEntry[] = [
+    // Dezelfde dag, en de eigenaar betaalt € 121 contant terug aan een klant.
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-04-04" },
+    // En de her-notering van de dagopbrengst zelf: DIE is de dubbeltelling en blijft eruit.
+    { direction: "in", amount: 1210, category: "omzet", btw_rate: 21, date: "2026-04-04" },
+  ];
+  const r = computeResult([], [], cash, turnover);
+  // Z-bon: 1000 netto. Teruggaaf: −121 incl. = −100 netto. De her-notering telt niet mee.
+  check("de teruggaaf verlaagt de omzet (1000 − 100)", near(r.omzet, 900));
+  check("…en de her-notering van dezelfde dag doet dat niet", !near(r.omzet, 900 - 1000));
+  // De BTW gaat mee dezelfde kant op: 210 − 21.
+  check("de af te dragen BTW daalt mee", near(r.btwVerschuldigd, 189));
+}
+
+console.log("\n— [KAS-TERUGGAAF] zonder kassadag verandert er niets —");
+{
+  // De regressiecontrole: op een dag die de Z-bon NIET dekt gedroeg een teruggaaf zich altijd al
+  // goed, en die uitkomst mag deze reparatie niet verschuiven.
+  const cash: ResultCashEntry[] = [
+    { direction: "in", amount: 1210, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+    { direction: "out", amount: 121, category: "omzet", btw_rate: 21, date: "2026-05-02" },
+  ];
+  const r = computeResult([], [], cash, []);
+  check("verkoop min teruggaaf, netto", near(r.omzet, 1000 - 100));
+}
+
 console.log("\n— [BTW-TRUTH] bank omzet without a rate must not silently declare €0 BTW —");
 {
   // A plain 'omzet' bank credit and an uncovered pos_income line: both revenue, no rate.

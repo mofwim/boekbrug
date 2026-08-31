@@ -142,7 +142,14 @@ export type UblErrorCode =
   // [SI-UBL-EAS] The buyer HAS a VAT number, but from a country whose VAT-number EAS code is not
   // in our verified table. Stamping 9944 (NL:VAT) on a DE number would hand the network an
   // address that can never resolve — the file validates and then silently goes nowhere.
-  | "CLIENT_PEPPOL_EAS_UNSUPPORTED";
+  | "CLIENT_PEPPOL_EAS_UNSUPPORTED"
+  // [LAND-ONBEKEND] The buyer states a VAT number that is shaped like a foreign one and belongs to
+  // no EU member state — GB, CHE, a US EIN typed into the field. BT-55 is mandatory (BR-11) and
+  // this app holds no country column anywhere, so the only value available is the NL fallback —
+  // which would put "country: NL" on the same document as "VAT number: GB123456789". A file that
+  // contradicts itself about where the buyer is, is worse than no file: it validates, it arrives,
+  // and the receiving system books a domestic Dutch supply.
+  | "CLIENT_COUNTRY_UNKNOWN";
 
 export class UblValidationError extends Error {
   code: UblErrorCode;
@@ -198,6 +205,34 @@ function money(n: number): string {
  *
  * `eu_suspect` therefore does NOT count — the reverse charge does not fire on it either.
  */
+/**
+ * [LAND-ONBEKEND] Does this row state a foreign VAT number this app cannot place in a country?
+ *
+ * The narrow case, and deliberately narrow. A buyer with NO VAT number keeps the NL fallback —
+ * that is every domestic consumer invoice this app has ever written, and nothing about them
+ * changes. A buyer with an NL number is Dutch. A buyer with an EU number gets that member state.
+ *
+ * What is left is a number that LOOKS like a VAT identifier from somewhere else: two letters that
+ * are not NL and not an EU prefix, followed by the alphanumerics of a real identifier. GB, CHE,
+ * NO, plus whatever a UK or Swiss customer's own number happens to be. For those, and only those,
+ * the document would otherwise state a Dutch buyer beside a British VAT number.
+ *
+ * Not caught, on purpose: text somebody typed into the field ("zie bijlage", a phone number). It
+ * does not have the shape of a VAT identifier, it is not evidence of a country, and refusing an
+ * invoice over it would block a domestic sale for a typo.
+ */
+export function foreignVatOutsideEu(clientVatNumber: string | null | undefined): boolean {
+  const v = normalizeVatNumber(clientVatNumber);
+  if (!v) return false;
+  // Two letters, then an identifier that contains at least one DIGIT. Every VAT number in the
+  // world does; a phrase somebody typed into the field does not, and "zie bijlage" normalises to
+  // ZIEBIJLAGE — two letters and eight alphanumerics, which a shape check without the digit rule
+  // happily reads as a foreign VAT number and refuses a domestic invoice over.
+  if (!/^[A-Z]{2}[A-Z0-9]{4,13}$/.test(v)) return false;
+  if (!/\d/.test(v.slice(2))) return false;
+  return classifyVatNumber(v).kind === "none";
+}
+
 export function buyerCountryCode(clientVatNumber: string | null | undefined): string {
   const shape = classifyVatNumber(clientVatNumber);
   if (shape.kind !== "eu") return "NL";
@@ -283,9 +318,27 @@ export type VatKind = "taxed" | "exempt" | "reverse_charge";
  * printed on a document a Dutch counterparty reads — and because naming the article is what makes
  * the claim checkable.
  */
-export function taxExemptionReason(category: UblTaxCategory): string | null {
+export function taxExemptionReason(category: UblTaxCategory, intraCommunity = false): string | null {
   if (category === "E") return "Vrijgesteld van btw op grond van artikel 11 Wet OB 1968";
-  if (category === "AE") return "Btw verlegd — artikel 12 lid 5 Wet OB 1968";
+  // [AE-GROND] AE has TWO origins in this file and they are two different articles of law.
+  //
+  // A DOMESTIC verlegging — bouw, onderaanneming, schroot — rests on art. 12 lid 5 Wet OB, which
+  // is the delegation the Uitvoeringsbesluit hangs on. An INTRACOMMUNAUTAIRE supply to a VAT-
+  // registered buyer in another member state does not: it is art. 138 BTW-richtlijn (art. 9 lid 2
+  // sub b jo. tabel II Wet OB on the Dutch side), and the buyer accounts for it under art. 196.
+  //
+  // One string served both, so every intracommunautaire e-factuur this app has ever produced
+  // carried a Dutch DOMESTIC article as the legal ground for a cross-border reverse charge. No
+  // euro moves on it — the amounts and the AE category are right either way — but it is a false
+  // legal statement on a fiscal document that a foreign accountant reads, and it is the sentence
+  // their software quotes back when the booking is questioned.
+  //
+  // Defaulted to false so every existing caller keeps the domestic text it had.
+  if (category === "AE") {
+    return intraCommunity
+      ? "Btw verlegd — intracommunautaire levering, artikel 138 BTW-richtlijn"
+      : "Btw verlegd — artikel 12 lid 5 Wet OB 1968";
+  }
   return null;
 }
 
@@ -563,6 +616,20 @@ export function buildInvoiceUbl(
   const buyerPeppol = opts?.peppol ? peppolEndpointForVat(header.client_btw_number) : null;
   if (opts?.peppol && !buyerPeppol) {
     throw new UblValidationError("CLIENT_PEPPOL_EAS_UNSUPPORTED", "UBL export blocked: CLIENT_PEPPOL_EAS_UNSUPPORTED");
+  }
+
+  // [LAND-ONBEKEND] BT-55 is mandatory and this app has no country column, so the only value it
+  // can offer a non-EU buyer is the NL fallback. On a row that ALSO states a British or Swiss VAT
+  // number, that produces one document making two contradictory claims about where the buyer sits
+  // — and the contradiction is invisible: the file validates, arrives, and is booked as a domestic
+  // Dutch supply by a system that trusts the country element over the number beside it.
+  //
+  // Refusing is the same choice this file already makes one line up for a Peppol address it cannot
+  // scheme, and for the same reason: a file that LOOKS deliverable and is wrong costs more than a
+  // refusal that says why. It applies to EVERY build, not only the Peppol one — the plain UBL file
+  // is attached to the customer's own invoice mail, so it reaches a foreign accountant either way.
+  if (foreignVatOutsideEu(header.client_btw_number)) {
+    throw new UblValidationError("CLIENT_COUNTRY_UNKNOWN", "UBL export blocked: CLIENT_COUNTRY_UNKNOWN");
   }
 
   // [E-FACTUUR-VERLEGD] One question, asked once, for the whole document — and asked of the same
@@ -893,7 +960,11 @@ export function buildInvoiceUbl(
     // the UBL sequence, and a document with the right content in the wrong order is rejected just
     // as hard as one with the wrong content.
     // [KOR-E] A KOR exemption names its own article — art. 11 would claim a different law.
-    const reason = g.korExempt ? KOR_EXEMPTION_REASON : taxExemptionReason(g.category);
+    // [AE-GROND] `docReverseCharged` IS the intracommunautaire case and nothing else:
+    // isReverseChargedInvoice returns true only for a buyer with an EU (non-NL) VAT number on a
+    // zero-BTW factuur outside the KOR. A DOMESTIC verlegging reaches AE by the other road — the
+    // owner writing "btw verlegd" on a line — and keeps art. 12 lid 5, which is its real ground.
+    const reason = g.korExempt ? KOR_EXEMPTION_REASON : taxExemptionReason(g.category, docReverseCharged);
     if (reason) cat.ele(NS.cbc, "TaxExemptionReason").txt(reason);
     cat.ele(NS.cac, "TaxScheme").ele(NS.cbc, "ID").txt("VAT");
   }

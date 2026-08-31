@@ -74,6 +74,8 @@ export async function POST(_req: NextRequest) {
         fileCount: summary.fileCount,
         skippedCount: summary.skipped.length,
         generatedAt: summary.generatedAt,
+        // [EXPORT-REGISTERS] The receipt names what the archive holds, not a subset of it.
+        registerCounts: summary.registerCounts,
       });
       if (rowId) {
         await pipeline

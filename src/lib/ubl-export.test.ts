@@ -772,9 +772,74 @@ test("[SI-UBL-EAS] a VAT country outside the verified table refuses the Peppol v
       (err as unknown as { code: string }).code === "CLIENT_PEPPOL_EAS_UNSUPPORTED",
     "guessing a scheme fails silently after delivery succeeds — refusal is the only honest answer",
   );
-  // The lenient default document is untouched by the refusal: same buyer, no peppol flag.
-  const { xml } = buildInvoiceUbl(header({ client_btw_number: "XX99999999" }), [line()], supplier);
+  // The lenient default document is untouched by the Peppol refusal — shown on a buyer the
+  // ordinary path can still describe honestly. Poland is an EU member state whose EAS code is not
+  // in the verified table above, so the Peppol variant refuses while the country is perfectly
+  // knowable: classifyVatNumber places PL, and BT-55 gets PL rather than the NL fallback.
+  //
+  // The fixture used to be "XX99999999", and that no longer works — nor should it. [LAND-ONBEKEND]
+  // now refuses a foreign-shaped VAT number this app cannot place in a country on EVERY build,
+  // because the alternative is a file stating Country=NL beside that number. That is the test two
+  // down; this one is about the Peppol refusal not spreading to the ordinary path.
+  assert.throws(
+    () => buildInvoiceUbl(header({ client_btw_number: "PL1234567890" }), [line()], supplier, { peppol: true }),
+    (err: unknown) => (err as { code?: string })?.code === "CLIENT_PEPPOL_EAS_UNSUPPORTED",
+  );
+  const { xml } = buildInvoiceUbl(header({ client_btw_number: "PL1234567890" }), [line()], supplier);
   assert.match(xml, /<cbc:UBLVersionID>2\.1</, "the ordinary export still serves this customer");
+  assert.match(xml, /<cbc:IdentificationCode>PL</, "…and states the country it really knows");
+});
+
+test("[LAND-ONBEKEND] a VAT number from outside the EU refuses the whole e-factuur, not just Peppol", () => {
+  // BT-55 (buyer country) is mandatory under BR-11 and this app holds no country column anywhere,
+  // so the only value it can offer is the NL fallback. On a row that also states a British VAT
+  // number that produces ONE document making two contradictory claims about where the buyer sits
+  // — and the contradiction is invisible: it validates, it arrives, and the receiving system books
+  // a domestic Dutch supply. The plain UBL is attached to the customer's own invoice mail, so it
+  // reaches their accountant whether or not Peppol was asked for; refusing only the Peppol variant
+  // would have left the harmful file as the DEFAULT.
+  for (const nummer of ["GB123456789", "CHE116281304", "NO974760673"]) {
+    assert.throws(
+      () => buildInvoiceUbl(header({ client_btw_number: nummer }), [line()], supplier),
+      (err: unknown) => (err as { code?: string })?.code === "CLIENT_COUNTRY_UNKNOWN",
+      `${nummer} would otherwise ship as a Dutch buyer`,
+    );
+  }
+
+  // And the refusal is NARROW. Every one of these still exports exactly as it did.
+  const zonder = buildInvoiceUbl(header({ client_btw_number: null }), [line()], supplier);
+  assert.match(zonder.xml, /<cbc:IdentificationCode>NL</,
+    "a consumer with no VAT number keeps the NL fallback — that is most invoices this app writes");
+  const nl = buildInvoiceUbl(header({ client_btw_number: "NL123456789B01" }), [line()], supplier);
+  assert.match(nl.xml, /<cbc:IdentificationCode>NL</);
+  const de = buildInvoiceUbl(header({ client_btw_number: "DE123456789" }), [line()], supplier);
+  assert.match(de.xml, /<cbc:IdentificationCode>DE</);
+  // Text somebody typed into the field is not evidence of a country, and must not block a sale.
+  const rommel = buildInvoiceUbl(header({ client_btw_number: "zie bijlage" }), [line()], supplier);
+  assert.match(rommel.xml, /<cbc:IdentificationCode>NL</,
+    "a typo is not a foreign country — refusing over one would block a domestic invoice");
+});
+
+test("[AE-GROND] an intracommunautaire reverse charge cites art. 138, a domestic one art. 12 lid 5", () => {
+  // One string served both, so every intracommunautaire e-factuur this app produced named a Dutch
+  // DOMESTIC verleggingsartikel as the legal ground for a cross-border reverse charge. No euro
+  // moves on it — the amounts and the AE category are right either way — but it is the sentence a
+  // foreign accountant's software quotes back when the booking is questioned.
+  const eu = buildInvoiceUbl(
+    header({ client_btw_number: "DE123456789", btw_amount: 0, total_inc_btw: 100, total_ex_btw: 100 }),
+    [line({ btw_rate: 0, line_total: 100, unit_price: 100, quantity: 1 })], supplier,
+  );
+  assert.match(eu.xml, /<cbc:TaxExemptionReason>Btw verlegd — intracommunautaire levering, artikel 138 BTW-richtlijn</);
+  assert.doesNotMatch(eu.xml, /artikel 12 lid 5/, "the domestic delegation is not the ground here");
+
+  // The domestic road to AE — the owner writing "btw verlegd" on a line, no EU buyer — keeps the
+  // article that really is its ground.
+  const binnenland = buildInvoiceUbl(
+    header({ client_btw_number: "NL123456789B01", btw_amount: 0, total_inc_btw: 100, total_ex_btw: 100 }),
+    [line({ btw_rate: 0, line_total: 100, unit_price: 100, quantity: 1, description: "Onderaanneming, btw verlegd" })],
+    supplier,
+  );
+  assert.match(binnenland.xml, /<cbc:TaxExemptionReason>Btw verlegd — artikel 12 lid 5 Wet OB 1968</);
 });
 
 test("[CREDIT-VERVALDATUM] a creditnota carries its due date as PaymentDueDate — CreditNote-2 has no cbc:DueDate", () => {

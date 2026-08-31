@@ -38,6 +38,7 @@ import { fetchSettlementEvents, resolveOwnerSchemeSpan } from "./kas-payment-eve
 import type { VatScheme } from "./vat-scheme";
 // [RUBRIEK-SPLIT] Omzet per BTW rate, read from the invoice's own lines.
 import { fetchRateShares } from "./btw-rate-split-fetch";
+import { readExcludedBankIds } from "./bank-ignored-excluded";
 import { collectVatExemption, fetchVatDeductions } from "./vat-exemption-collect";
 import {
   assembleRangeResult, effDirOf, isoShiftDays, SETTLEMENT_BUFFER_DAYS,
@@ -124,7 +125,11 @@ export async function computeResultForRange(args: {
   // predicate makes the two legs agree by construction; it also costs one query fewer.
   const bankBufRows = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, invoice_id, date, description, counterpart_name")
+    // [GENEGEERD-TELT] id en status rijden mee. De REDEN staat niet in deze select maar in een eigen,
+    // wegvallende lezing (readExcludedBankIds) — ignore_reason komt uit een met de hand toegepaste
+    // migratie, en een kolom die PostgREST niet kent weigert de hele select. Dat zou van een
+    // achterlopende migratie een resultaatscherm zonder bankregels maken.
+    .select("id, amount, category, invoice_id, date, description, counterpart_name, status")
     .eq("user_id", ownerId)
     .gte("date", startBuffer)
     .lte("date", endBuffer)
@@ -257,6 +262,10 @@ export async function computeResultForRange(args: {
     rateSharesByInvoice,
     exemptExByInvoice,
     bankBufRows,
+    // [GENEGEERD-TELT] De reden waarom een regel is genegeerd, apart gelezen omdat ignore_reason
+    // uit een met de hand toegepaste migratie komt (zie bank-ignored-excluded). Valt weg naar leeg,
+    // wat daar het ware antwoord is: zonder die kolom kan geen regel een reden dragen.
+    excludedBankIds: await readExcludedBankIds({ client: pipeline, userId: ownerId, start: startBuffer, end: endBuffer }),
     cashRows,
     turnoverRows,
     eftRows,

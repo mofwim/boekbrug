@@ -18,6 +18,7 @@ import {
   effectiveDirection,
   datelessWarning,
   sharedOutsideWarning,
+  pickPaymentDate,
   type PackageInvoice,
   type PaymentDateInfo,
 } from "./closing-package";
@@ -37,6 +38,7 @@ function invoice(over: Partial<PackageInvoice>): PackageInvoice {
     btw_amount: over.btw_amount ?? 21,
     total_inc_btw: over.total_inc_btw ?? 121,
     invoice_date: over.invoice_date ?? "2026-02-10",
+    payment_date: over.payment_date ?? null,
     due_date: over.due_date ?? "2026-03-10",
     pdf_url: over.pdf_url ?? null,
     document_id: over.document_id ?? null,
@@ -781,4 +783,107 @@ test("[VERANTWOORDING] the cover page is in the ZIP, named for its quarter", () 
 test("[VERANTWOORDING] the LEESMIJ points at it, in the list of things to read", () => {
   assert.match(leesmij(), /Verantwoording-…pdf/);
   assert.match(leesmij(), /in je dossier/, "and says what it is for — a page to file, not another export");
+});
+
+// ─── [XAF-IN-PAKKET] The auditfile the accountant's mail has been promising ────────────────────
+
+test("[XAF-IN-PAKKET] the auditfile goes into the ZIP, named for its window", async () => {
+  // The defect: email.ts told every accountant the package "bevat de PDF's, een CSV-overzicht en
+  // het XAF 3.2-auditbestand", and told them in the next paragraph "je hebt hiervoor geen account
+  // nodig" — while buildXafFile's only caller was /api/xaf, behind a login. A promise the reader
+  // cannot collect.
+  const { zipBytes, summary } = await assembleClosingPackageZip({
+    ...emptyAssemble,
+    quarter: 2 as const,
+    auditfile: {
+      xml: "<?xml version=\"1.0\"?><auditfile/>",
+      entryCount: 143,
+      skippedCount: 0,
+      throughDate: "2026-06-30",
+    },
+  });
+  const zip = await JSZip.loadAsync(zipBytes);
+
+  // Named for the WINDOW, not for the quarter. "Auditfile-2026-Q2" invites a second import on top
+  // of Q1's; "tm-Q2" says what it is.
+  const file = zip.file("Auditfile-2026-tm-Q2.xaf");
+  assert.ok(file, "the auditfile is in the archive under its window-bearing name");
+  assert.match(await file!.async("string"), /auditfile/);
+
+  // The manifest carries the same fact, so the mail can be checked against it rather than trusted.
+  const overzicht = JSON.parse(await zip.file("overzicht.json")!.async("string"));
+  assert.equal(overzicht.auditbestand.fileName, "Auditfile-2026-tm-Q2.xaf");
+  assert.equal(overzicht.auditbestand.entryCount, 143);
+  assert.equal(summary.auditfile?.throughDate, "2026-06-30");
+
+  // And LEESMIJ.txt says the one thing that costs an accountant an evening if nobody says it.
+  const leesmij = await zip.file("LEESMIJ.txt")!.async("string");
+  assert.match(leesmij, /HET AUDITBESTAND/);
+  assert.match(leesmij, /van 1 januari tot en met 2026-06-30/);
+  assert.match(leesmij, /VERVANGT dit bestand/);
+});
+
+test("[XAF-IN-PAKKET] no auditfile means no file and a said-out-loud absence — never an empty one", async () => {
+  // An empty .xaf imports as an empty administration. The absence is stated in the one file the
+  // accountant actually opens, because the mail announced this file by name.
+  const { zipBytes, summary } = await assembleClosingPackageZip({ ...emptyAssemble, auditfile: null });
+  const zip = await JSZip.loadAsync(zipBytes);
+  assert.equal(zip.file("Auditfile-2026-tm-Q1.xaf"), null, "no half auditfile ships");
+  assert.equal(summary.auditfile, null);
+  assert.equal(JSON.parse(await zip.file("overzicht.json")!.async("string")).auditbestand, null);
+  assert.match(await zip.file("LEESMIJ.txt")!.async("string"), /kon voor dit kwartaal niet worden samengesteld/);
+});
+
+test("[XAF-IN-PAKKET] a refused booking is reported, not hidden", async () => {
+  // xaf-export refuses an entry it cannot balance rather than patching it — the right call, and
+  // invisible unless the count reaches a person. The document is still in the package, so the
+  // accountant can book it by hand; they just have to know which.
+  const leesmij = buildLeesmij({
+    quarterLabel: "Q2 2026",
+    clientName: "Kiwi Food Market",
+    outgoingCount: 3,
+    incomingCount: 40,
+    eInvoiceCount: 0,
+    bankStatementIncluded: true,
+    auditfile: { entryCount: 143, skippedCount: 2, throughDate: "2026-06-30", fileName: "Auditfile-2026-tm-Q2.xaf" },
+    warnings: [],
+  });
+  assert.match(leesmij, /2 boekingen zijn NIET in het bestand opgenomen/);
+  assert.match(leesmij, /staan wel als document in dit pakket/);
+});
+
+
+// ── [PAYDATE-ECHT] Welke dag het pakket afdrukt, en of dat een schatting is ──
+//
+// De boekhouder leest deze datum op pagina 1 van elke betaalde factuur en in overzicht.csv, en
+// onder het kasstelsel bepaalt hij in welk kwartaal de voorbelasting valt. Hij mag dus niet iets
+// anders zeggen dan de aangifte die in dezelfde zip zit.
+
+test("[PAYDATE-ECHT] een gekoppelde bankregel wint, en is geen schatting", () => {
+  assert.deepEqual(
+    pickPaymentDate("2026-06-30T00:00:00Z", { payment_date: "2026-06-28", marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-06-30", estimated: false },
+  );
+});
+
+test("[PAYDATE-ECHT] zonder bankregel telt de ingevulde betaaldatum, niet het vastlegmoment", () => {
+  // Het gemeten geval: contant betaald op 30 juni, ingevoerd op 3 juli. Hier stond 03-07 met
+  // "(geschat)" erbij — een Q3-datum op een betaling die de aangifte in dezelfde zip in Q2 boekt.
+  assert.deepEqual(
+    pickPaymentDate(null, { payment_date: "2026-06-30", marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-06-30", estimated: false },
+  );
+});
+
+test("[PAYDATE-ECHT] het vastlegmoment blijft de laatste terugval, en blijft geschat", () => {
+  // Het IS een schatting: het zegt wanneer iemand het invoerde, niet wanneer het geld bewoog.
+  assert.deepEqual(
+    pickPaymentDate(null, { payment_date: null, marked_paid_at: "2026-07-03T09:00:00Z" }),
+    { date: "2026-07-03", estimated: true },
+  );
+});
+
+test("[PAYDATE-ECHT] en zonder enige bron liegt het pakket geen datum", () => {
+  assert.deepEqual(pickPaymentDate(null, {}), { date: null, estimated: true });
+  assert.deepEqual(pickPaymentDate(null, { payment_date: null, marked_paid_at: null }), { date: null, estimated: true });
 });

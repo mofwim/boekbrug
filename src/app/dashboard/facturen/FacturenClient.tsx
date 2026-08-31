@@ -406,7 +406,7 @@ export default function FacturenClient({
       })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        showToast(typeof json?.error === 'string' ? json.error : t('lijst.download.mislukt'))
+        showToast(failureText(res.status, json, t('lijst.download.mislukt')))
         return
       }
       const blob = await res.blob()
@@ -891,7 +891,7 @@ export default function FacturenClient({
         showToast(t(key, { date: fmtDate(json?.schedule?.next_run_date ?? null) }))
         await loadSchedules()
       } else {
-        showToast(json?.detail || t('lijst.fout.herhalen'))
+        showToast(failureText(res.status, json, t('lijst.fout.herhalen')))
       }
     } catch {
       showToast(t('lijst.fout.herhalen'))
@@ -909,7 +909,7 @@ export default function FacturenClient({
         await loadSchedules()
       } else {
         const j = await res.json().catch(() => ({}))
-        showToast(j?.detail || t('lijst.fout.stoppen'))
+        showToast(failureText(res.status, j, t('lijst.fout.stoppen')))
       }
     } catch { showToast(t('lijst.fout.stoppen')) }
   }
@@ -930,7 +930,7 @@ export default function FacturenClient({
         await loadSchedules()
       } else {
         const j = await res.json().catch(() => ({}))
-        showToast(j?.detail || (active ? t('lijst.fout.hervatten') : t('lijst.fout.pauzeren')))
+        showToast(failureText(res.status, j, active ? t('lijst.fout.hervatten') : t('lijst.fout.pauzeren')))
       }
     } catch { showToast(active ? t('lijst.fout.hervatten') : t('lijst.fout.pauzeren')) }
   }
@@ -993,7 +993,7 @@ export default function FacturenClient({
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         // The server checked the same rules against fresher data and said no. Show ITS reason.
-        showToast(json?.detail || t('lijst.fout.verwijderenVervers'))
+        showToast(failureText(res.status, json, t('lijst.fout.verwijderenVervers')))
         await refresh()
         return
       }
@@ -1033,7 +1033,7 @@ export default function FacturenClient({
         // De route weigert met een eigen zin per reden (geen e-mailadres, geen regels, al omgezet).
         // Die tonen, niet vervangen door "mislukt": vier redenen vragen vier verschillende dingen
         // van de ondernemer.
-        showToast(typeof json?.error === 'string' && json.error ? json.error : t('lijst.fout.offerteVersturen'))
+        showToast(failureText(res.status, json, t('lijst.fout.offerteVersturen')))
       }
     } catch {
       showToast(t('lijst.fout.versturenStraks'))
@@ -1088,7 +1088,7 @@ export default function FacturenClient({
         // [BOEK-RESEND] rollback to the ORIGINAL status (draft for a first send,
         // sent/overdue for a resend) — never wrongly downgrade a sent invoice.
         updateOptimistic(ctx.id, { status: ctx.prevStatus })
-        showToast(err.error || t('lijst.fout.verzenden'))
+        showToast(failureText(res.status, err, t('lijst.fout.verzenden')))
       } else {
         // [BOEK-031 FIX] Get generated invoice_number + invoice_type from API response
         // Pro forma → factuur conversion: both number and type change

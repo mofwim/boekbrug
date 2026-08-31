@@ -1,5 +1,5 @@
 // [SEC-STORAGE-PATH] Pure node test — run: npx tsx src/lib/storage-path.test.ts
-import { toStoragePath, storagePathOwner, pathBelongsToOwner } from "./storage-path";
+import { toStoragePath, storagePathOwner, pathBelongsToOwner, ownedStoragePath } from "./storage-path";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -64,6 +64,38 @@ console.log("\n— THE GUARD: a path the caller wrote may only be signed for its
     pathBelongsToOwner(`${ME}extra/incoming/x.pdf`, ME) === false);
   check("a folder that merely CONTAINS the uuid deeper down is not ownership",
     pathBelongsToOwner(`${VICTIM}/${ME}/x.pdf`, ME) === false);
+}
+
+console.log("\n— THE CHOKE POINT: normalise and attribute in one call —");
+{
+  // The two-step form is two expressions, and the bug this replaces was always the SECOND one
+  // missing: four service_role callers normalised (or did not) and then downloaded anyway.
+  check("my own key comes back as a key", ownedStoragePath(`${ME}/incoming/bon.pdf`, ME) === `${ME}/incoming/bon.pdf`);
+  check("a legacy signed URL of mine is normalised on the way through",
+    ownedStoragePath(`https://x/storage/v1/object/sign/documents/${ME}/facturen/001.pdf?token=t`, ME)
+      === `${ME}/facturen/001.pdf`);
+
+  // THE ATTACK, end to end: documents_update_own and invoices_zzp_update are whole-row policies,
+  // so the owner may point their own row at anyone's key. Only this call stands between that and
+  // a service_role download.
+  check("another tenant's key on my own row → null, not a path",
+    ownedStoragePath(`${VICTIM}/facturen/001.pdf`, ME) === null);
+  check("…including when it arrives as a legacy URL",
+    ownedStoragePath(`https://x/storage/v1/object/public/documents/${VICTIM}/incoming/bon.pdf`, ME) === null);
+  check("traversal out of my own folder → null",
+    ownedStoragePath(`${ME}/../${VICTIM}/facturen/001.pdf`, ME) === null);
+
+  // Everything unprovable fails CLOSED — the caller skips the file rather than guessing.
+  check("a legacy key with no owner segment → null", ownedStoragePath("incoming/bon.pdf", ME) === null);
+  check("an empty stored value → null", ownedStoragePath("", ME) === null && ownedStoragePath(null, ME) === null);
+  check("a missing owner never matches", ownedStoragePath(`${ME}/incoming/bon.pdf`, null) === null);
+  check("it agrees with the two-step form it replaces", [
+    `${ME}/incoming/bon.pdf`, `${VICTIM}/incoming/bon.pdf`, "incoming/bon.pdf", "",
+    `https://x/storage/v1/object/sign/documents/${ME}/a.pdf?t=1`,
+  ].every((v) => {
+    const pad = toStoragePath(v);
+    return ownedStoragePath(v, ME) === (pathBelongsToOwner(pad, ME) ? pad : null);
+  }));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

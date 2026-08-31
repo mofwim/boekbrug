@@ -99,8 +99,25 @@ export async function DELETE(req: NextRequest) {
     );
   }
 
-  const { error: delErr } = await deleteDocument(id, user.id);
-  if (delErr) return NextResponse.json({ error: delErr }, { status: 500 });
+  const { error: delErr, code, references } = await deleteDocument(id, user.id);
+  if (delErr) {
+    // [BEWIJS-VAST] Three different answers, because they ask three different things of the owner.
+    // A 409 means "detach the booking first" and he can act on it; a 503 means "we could not check"
+    // and he should simply try again; a 500 is ours. One status for all three would have him
+    // looking for a booking that is not there.
+    const status = code === "referenced" ? 409 : code === "check-failed" ? 503 : 500;
+    // The reasons travel as KEYS plus a count, never as a finished Dutch sentence for the screen
+    // to print. A component that prints a server string is a component holding a language of its
+    // own, and this one is opened by owners whose interface is Arabic (AGENTS.md).
+    return NextResponse.json(
+      {
+        error: delErr,
+        code: code ?? null,
+        references: (references ?? []).map((r) => ({ key: r.key, count: r.count })),
+      },
+      { status },
+    );
+  }
 
   await logAuditAction({
     userId: user.id,

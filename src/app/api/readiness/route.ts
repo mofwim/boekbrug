@@ -20,6 +20,7 @@ import { buildTurnoverClosing } from "@/lib/turnover-closing";
 import { buildAangifte, type AangifteCompleteness } from "@/lib/aangifte";
 // [RUBRIEK-SPLIT] One helper, three surfaces — see the call site for why readiness needs it too.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
+import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
 import { needsDocument } from "@/lib/bank-identity";
@@ -99,7 +100,10 @@ export async function GET(req: NextRequest) {
   // ── 2) Bank — transactions DATED in the quarter, and how many still need a bon ──
   const bank = await fetchAllRows((from, to) => pipeline
     .from("bank_transactions")
-    .select("amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
+    // [GENEGEERD-TELT] id erbij — status stond er al. De reden komt uit readExcludedBankIds, want
+    // zonder de reden is elke genegeerde regel hetzelfde, en "hier komt geen factuur bij" (huur,
+    // lease) is juist een echte kost die MOET blijven tellen.
+    .select("id, amount, category, category_confirmed, invoice_id, date, status, description, counterpart_name")
     .eq("user_id", ownerId).gte("date", start).lte("date", end)
     .order("id", { ascending: true }).range(from, to));
   // [KAS-AUTO-BOOK] Bank lines this quarter that the app booked onto an invoice on amount + supplier
@@ -406,7 +410,10 @@ export async function GET(req: NextRequest) {
   // Card takings reconciled to a Z-report are excluded via the shared toResultBankTx mapper
   // (settleDate + coveredDates), which also catches an acquirer payout the owner mis-tapped
   // as 'omzet' so readiness agrees exactly with /api/result and /api/aangifte.
-  const bankTx: ResultBankTx[] = bank.map(toResultBankTx);
+  // [GENEGEERD-TELT] Zie aangifte: de reden komt uit een eigen, wegvallende lezing, en de pijl is
+  // expliciet omdat `.map(toResultBankTx)` de index als verzameling zou doorgeven.
+  const excludedBankIds = await readExcludedBankIds({ client: pipeline, userId: ownerId, start, end });
+  const bankTx: ResultBankTx[] = bank.map((b) => toResultBankTx(b, excludedBankIds));
   const coveredBudget = new Map(
     allTurnover
       .filter((t) => turnoverNetOmzet(t) > 0 || (t.total_incl ?? 0) > 0)
@@ -475,10 +482,22 @@ export async function GET(req: NextRequest) {
   if (turnover.length > 0) {
     try {
       const endBuffer = shiftDays(end, 5);
-      const { data: eftRows } = await pipeline
+      // [EFT-READ-ERROR] Paged AND ordered, like the sibling read in compute-result-range.ts:172
+      // that was fixed for exactly this. Unpaged, a retail owner past ~1000 settlement rows in a
+      // quarter loses an arbitrary subset — and this feeds reconcileTriangle on the ONE screen that
+      // decides whether the quarter may go to the accountant. A missing settlement day turns a real
+      // 'gross_mismatch' (the till's PIN total disagreeing with the terminal's) into 'incomplete',
+      // so the risk row the panel exists to raise is never pushed and the day passes as 'klaar'.
+      // Unordered, the subset is not even stable between two loads of the same screen.
+      const eftRows = await fetchAllRows<{
+        settlement_date: string; terminal_id: string | null; period_nr: string | null; shift_nr: string | null;
+        period_start: string | null; period_end: string | null; first_trx: string | null; last_trx: string | null;
+        gross_total: number | null; tx_count: number | null; by_scheme: unknown;
+      }>((from, to) => pipeline
         .from("eft_settlements")
         .select("settlement_date, terminal_id, period_nr, shift_nr, period_start, period_end, first_trx, last_trx, gross_total, tx_count, by_scheme")
-        .eq("user_id", ownerId).gte("settlement_date", start).lte("settlement_date", end);
+        .eq("user_id", ownerId).gte("settlement_date", start).lte("settlement_date", end)
+        .order("id", { ascending: true }).range(from, to) as never);
       const eftSettlements: EftSettlement[] = (eftRows ?? []).map((e) => ({
         terminalId: e.terminal_id, periodNr: e.period_nr, shiftNr: e.shift_nr,
         periodStart: e.period_start, periodEnd: e.period_end, firstTrx: e.first_trx, lastTrx: e.last_trx,

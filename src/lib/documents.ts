@@ -7,6 +7,8 @@ import { trashedDuplicateCleared } from "./trashed-dedup";
 import { randomUUID } from "crypto";
 import { createServerSupabaseClient } from "./supabase-server";
 import { inferDocType } from "./documents-utils";
+import { readDocumentReferences, referencesRefusal } from "./document-references";
+import type { DocumentReference } from "./document-references";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHashFromFile } from "./content-hash";
 import { logAuditAction } from "./audit";
@@ -380,10 +382,19 @@ export async function getDocumentUrl(filePath: string): Promise<string | null> {
 // ─── Delete ────────────────────────────────────────────────────────────────────
 
 /** Delete a document from storage + DB */
+/**
+ * [BEWIJS-VAST] Why a delete was refused, as a code rather than by matching the Dutch sentence.
+ *
+ * `referenced` is a 409 — the owner can act on it. `check-failed` is a 503 — nothing is wrong with
+ * his file, we simply could not verify, and telling him to try again is honest where a 409 would
+ * send him hunting for a booking that does not exist.
+ */
+export type DeleteRefusal = "referenced" | "check-failed";
+
 export async function deleteDocument(
   documentId: string,
   userId: string
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; code?: DeleteRefusal; references?: DocumentReference[] }> {
   const supabase = await createServerSupabaseClient();
 
   const { data: doc } = await supabase
@@ -394,6 +405,32 @@ export async function deleteDocument(
     .single();
 
   if (!doc) return { error: "Niet gevonden" };
+
+  // [BEWIJS-VAST] Nothing that the boekhouding still points at is deleted here.
+  //
+  // The guard sits in this function rather than in the route that calls it, because the route is
+  // not the property. Eight foreign keys reference this row; seven are ON DELETE SET NULL and one
+  // is CASCADE, so the delete SUCCEEDS and takes the link (or the coverage record) with it — no
+  // error, no audit line, and afterwards no way to tell an invoice that never had a scan from one
+  // whose scan was thrown away. A second caller of deleteDocument would have to rediscover all of
+  // that; a guard here cannot be walked around by adding one.
+  const refs = await readDocumentReferences({ client: supabase, documentId });
+  if (!refs.ok) {
+    // The probe did not run. Refusing is the only answer that cannot destroy evidence: reading a
+    // failed count as "no references" is exactly the case this check exists for.
+    console.error("[BEWIJS-VAST] reference check failed, refusing delete", { documentId, failed: refs.failed });
+    return {
+      error:
+        "We konden niet nagaan of je boekhouding nog naar dit bestand verwijst, dus is het niet " +
+        "verwijderd. Probeer het straks opnieuw — het bestand staat nog in je prullenbak.",
+      code: "check-failed",
+    };
+  }
+  if (refs.references.length > 0) {
+    // Both shapes: the Dutch sentence for the API's `error` (a log, a curl, an older client) and
+    // the catalogue keys for the screen, which renders them in the owner's own language.
+    return { error: referencesRefusal(refs.references), code: "referenced", references: refs.references };
+  }
 
   // [I#2] Delete the DB row FIRST and abort on failure — a failed row-delete then
   // touches no storage (no orphaned object). [L8] scope by user_id for defense-in-depth.

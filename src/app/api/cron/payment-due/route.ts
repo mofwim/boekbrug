@@ -23,11 +23,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
-import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
+import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { createNotification } from "@/lib/notifications";
 import { sendPushToUser } from "@/lib/push";
 import { wasAutoIncasso } from "@/lib/auto-incasso";
+// [EEN-DEFINITIE] De boeking en de aanmaning stellen dezelfde vraag; die staat één keer.
+import { belongsToIncassoSupplier, type IncassoSupplier } from "@/lib/incasso-settle";
 import { incassoSupported } from "@/lib/incasso-settle";
 import { noticesFor, type PayableInvoice } from "@/lib/payment-due-notice";
 
@@ -55,21 +57,9 @@ export async function GET(req: NextRequest) {
   const today = amsterdamToday();
 
   // [EENMAAL] Zie de kop. Zelfde vorm als /api/cron/ochtend.
-  try {
-    // cron_runs staat niet in de gegenereerde types (handmatig toegepaste migratie) — dezelfde
-    // versoepelde cast die de hartslagmodule zelf gebruikt.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: eerdere } = await (pipeline as any)
-      .from("cron_runs")
-      .select("id")
-      .eq("job", "payment-due")
-      .eq("ok", true)
-      .gte("started_at", amsterdamMidnightUtc(today).toISOString())
-      .limit(1);
-    if (Array.isArray(eerdere) && eerdere.length > 0) {
-      return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
-    }
-  } catch { /* zie de kop — falen richting één extra verzending */ }
+  if (await alreadyRanToday(pipeline, "payment-due", amsterdamMidnightUtc(today))) {
+    return NextResponse.json({ ok: true, alreadyRan: true, sent: 0 });
+  }
 
   cronRunId = await beginCronRun(pipeline, "payment-due", cronStartedAt);
 
@@ -101,18 +91,29 @@ export async function GET(req: NextRequest) {
     // de kaart aanzet. De factuurvlag blijft ernaast staan: een al geboekte incasso hoort evenmin
     // opgeëist te worden, en twee bronnen die beide "laat met rust" zeggen kosten niets.
     const incassoSuppliers = new Set<string>();
+    const incassoByOwner = new Map<string, IncassoSupplier[]>();
     if (await incassoSupported(pipeline)) {
       // [NO-SILENT-EMPTY] Een mislukte lezing mag hier NOOIT als "niemand incasseert" doorgaan:
       // dat is precies het antwoord dat iedereen een betaalverzoek stuurt voor geld dat al
       // onderweg is. Een dag zonder herinneringen is oneindig veel goedkoper dan een dag met
       // verkeerde. Vandaar: gooien, en de run eindigt in de catch hieronder als mislukt.
-      const sups = await fetchAllRows<{ id: string }>((from, to) => pipeline
+      const sups = await fetchAllRows<{ id: string; user_id: string | null; name: string | null; name_key: string | null }>((from, to) => pipeline
         .from("suppliers")
-        .select("id")
+        .select("id, user_id, name, name_key")
         .eq("auto_incasso", true)
         .order("id", { ascending: true })
         .range(from, to));
-      for (const s of sups) incassoSuppliers.add(s.id);
+      for (const s of sups) {
+        incassoSuppliers.add(s.id);
+        // [AUTO-INCASSO-BRON] …and the same rows again in the shape the BOOKING module's own
+        // decision takes, per owner. See the note at autoDebit below for why the id alone was not
+        // enough. Scoped by user_id because this cron reads every owner's suppliers at once, while
+        // readIncassoSuppliers (which builds exactly this list for one owner) cannot be reused here.
+        if (!s.user_id) continue;
+        const list = incassoByOwner.get(s.user_id) ?? [];
+        list.push({ id: s.id, name: s.name ?? "", nameKey: s.name_key });
+        incassoByOwner.set(s.user_id, list);
+      }
     }
 
     const rows = await fetchAllRows<{
@@ -147,8 +148,22 @@ export async function GET(req: NextRequest) {
         // [AUTO-INCASSO-BRON] De schakelaar op de LEVERANCIER is de waarheid — zie de toelichting
         // bij incassoSuppliers hierboven. De factuurvlag staat ernaast en dekt de factuur die al
         // als geïncasseerd is geboekt.
+        //
+        // [EEN-DEFINITIE] En het is nu LETTERLIJK dezelfde vraag als die de boeking stelt, want dit
+        // was hem twee keer gespeld. Deze regel las alleen supplier_id; belongsToIncassoSupplier —
+        // wat incasso-settle gebruikt om te bepalen of hij de factuur automatisch als betaald boekt
+        // — valt terug op de naamsleutel wanneer supplier_id leeg is of naar een niet-gemarkeerde
+        // rij wijst. Dat is geen detail: de kop van díe functie legt uit dat de naamsleutel juist de
+        // rijen bereikt die vóór het leveranciersregister zijn geïmporteerd, "op een scherm vol
+        // jarenoude huurfacturen de meeste".
+        //
+        // Een factuur in dat gat werd dus wél automatisch afgeschreven én aangemaand alsof niemand
+        // incasseert. Wat dat kost staat al in de toelichting hierboven, in eigen woorden: "de
+        // eigenaar maakt dan een tweede keer over en moet dat bij zijn leverancier terugvragen."
+        // Gemeten op de productiedatabase op het moment van deze wijziging: twee facturen stonden
+        // in dat gat.
         autoDebit:
-          (!!r.supplier_id && incassoSuppliers.has(r.supplier_id)) || wasAutoIncasso(r.field_confidence),
+          !!belongsToIncassoSupplier(r, incassoByOwner.get(owner) ?? []) || wasAutoIncasso(r.field_confidence),
       };
       perOwner.set(owner, [...(perOwner.get(owner) ?? []), payable]);
     }

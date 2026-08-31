@@ -86,7 +86,7 @@ export function ZzpDashboard(
   const [vragenCount, setVragenCount]             = useState<number>(0)
 
   async function loadGlobal() {
-    const [{ data: link }, { data: notifData, error: notifErr }, { count }, { count: vragen }] = await Promise.all([
+    const [{ data: link }, { data: notifData, error: notifErr }, { count, error: berichtenErr }, { count: vragen, error: vragenErr }] = await Promise.all([
       supabase.from('accountant_clients').select('accountant_id').eq('zzper_id', profile.id).maybeSingle(),
       supabase.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('receiver_id', profile.id).eq('read', false),
@@ -107,15 +107,26 @@ export function ZzpDashboard(
       setNotifError(null)
       setNotifications(notifData ?? [])
     }
-    setUnreadMessages(count || 0)
-    setVragenCount(vragen || 0)
+    // [NO-SILENT-EMPTY] Dezelfde redenering als bij de meldingen hierboven, voor de twee tellers
+    // eronder: nul betekent op dit scherm "er ligt niets voor je", en een mislukte telling weet dat
+    // niet. Een badge die wegblijft is stil; een badge die 0 zegt is een bewering — en de tweede
+    // teller gaat over een openstaande VRAAG van de boekhouder, waar niet op reageren geld kost.
+    setUnreadMessages(berichtenErr ? 0 : count || 0)
+    setVragenCount(vragenErr ? 0 : vragen || 0)
+    if (berichtenErr || vragenErr) {
+      console.error('[NO-SILENT-EMPTY] tellers op het startscherm niet te lezen', {
+        berichten: berichtenErr?.message, vragen: vragenErr?.message,
+      })
+    }
 
     // [BOEK-029] BOEK-011: fetch pending incoming invoices count
     try {
       const res = await fetch('/api/email/sync')
       if (res.ok) {
         const json = await res.json()
-        setPendingCount(json.pending_count ?? 0)
+        // null = niet geteld (de route zegt dat nu expliciet); dan blijft de badge weg in plaats
+        // van "0 wacht op verificatie" te beweren.
+        setPendingCount(typeof json.pending_count === 'number' ? json.pending_count : 0)
       }
     } catch {
       // silent — badge blijft 0

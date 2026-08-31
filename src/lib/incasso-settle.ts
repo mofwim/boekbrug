@@ -44,6 +44,7 @@ import {
   type IncassoHold,
 } from '@/lib/auto-incasso'
 import { round2 } from './invoice-totals'
+import { columnExists } from '@/lib/column-probe'
 
  
 type Client = SupabaseClient<Database>
@@ -88,17 +89,12 @@ const BAILED: IncassoSettleSummary = { ok: false, booked: [], held: [] }
  * empty answer that reads like "you have none". Cached after the first success: the column cannot
  * disappear, and the probe is one round trip per process otherwise.
  */
-let incassoColumnKnown = false
 export async function incassoSupported(supabase: Client): Promise<boolean> {
-  if (incassoColumnKnown) return true
-  try {
-    const { error } = await supabase.from('suppliers').select('auto_incasso').limit(1)
-    if (error) return false
-    incassoColumnKnown = true
-    return true
-  } catch {
-    return false
-  }
+  // [KAS-PROBE] One definition, in column-probe.ts. This probe answering NO to a transient read is
+  // indistinguishable from "nobody collects by direct debit" — and the payment-due ladder then duns
+  // invoices the bank is already collecting, so the owner pays a second time. The [NO-SILENT-EMPTY]
+  // note in that route forbids exactly this, and guarded the read one line BELOW the probe.
+  return columnExists(supabase, 'suppliers', 'auto_incasso', 'the reminder ladder would dun invoices already being collected')
 }
 
 /** The suppliers this owner marked as collecting automatically. */

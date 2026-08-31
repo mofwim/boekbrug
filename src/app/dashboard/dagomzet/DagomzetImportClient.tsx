@@ -22,6 +22,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
 import type { CardPayoutLine } from '@/lib/day-card-takings'
+import { failureText } from '@/lib/server-message'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -79,7 +80,7 @@ export default function DagomzetImportClient(
       if (json?.wrongKind === 'ledger') { await previewLedger(file); return }
       // Clear the remembered name on a failed read: the upload label reads
       // "Ander bestand kiezen (x.xls)" off it, which claimed a file was loaded when none was.
-      if (!res.ok) { setFileName(null); setError(json.detail ?? json.error ?? t('dzi.konNietLezen')); return }
+      if (!res.ok) { setFileName(null); setError(failureText(res.status, json, t('dzi.konNietLezen'))); return }
       setPreview({ rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError(t('dzi.fout.bestand'))
@@ -92,7 +93,7 @@ export default function DagomzetImportClient(
       fd.append('file', file)
       const res = await fetch('/api/ledger/import', { method: 'POST', body: fd })
       const json = await res.json()
-      if (!res.ok || !json.ok) { setError(json.detail ?? json.error ?? t('dzi.konGrootboekNietLezen')); return }
+      if (!res.ok || !json.ok) { setError(failureText(res.status, json, t('dzi.konGrootboekNietLezen'))); return }
       setLedgerPreview({ kind: json.kind, accountNr: json.accountNr ?? null, title: json.title ?? null, rows: json.rows ?? [], warnings: json.warnings ?? [], count: json.count ?? 0 })
     } catch {
       setError(t('dzi.fout.grootboek'))
@@ -108,7 +109,7 @@ export default function DagomzetImportClient(
         body: JSON.stringify({ kind: ledgerPreview.kind, accountNr: ledgerPreview.accountNr, rows: ledgerPreview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.detail ?? json.error ?? t('dzi.fout.opslaan')); return }
+      if (!res.ok) { setError(failureText(res.status, json, t('dzi.fout.opslaan'))); return }
       setDone({ committed: json.committed ?? ledgerPreview.rows.length, ledger: ledgerPreview.kind })
       setLedgerPreview(null); setFileName(null)
     } catch {
@@ -126,7 +127,7 @@ export default function DagomzetImportClient(
         body: JSON.stringify({ rows: preview.rows }),
       })
       const json = await res.json()
-      if (!res.ok) { setError(json.detail ?? json.error ?? t('dzi.fout.opslaan')); return }
+      if (!res.ok) { setError(failureText(res.status, json, t('dzi.fout.opslaan'))); return }
       setDone({ committed: json.committed ?? preview.rows.length })
       setPreview(null); setFileName(null); setRefreshTick((t) => t + 1)
     } catch {

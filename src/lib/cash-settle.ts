@@ -32,6 +32,8 @@ import { chunkIds, fetchAllRows } from "@/lib/supabase-paginate";
 import { reportHandledFailure } from "@/lib/report-handled";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
+// [KAS-PROBE] One definition for "does this database have that column yet" — see the module header.
+import { columnExists } from "@/lib/column-probe";
 
 // [CASH-INSTALMENT][DEPLOY-SAFE] Per-instalment kasboek entries need cash_entries.settlement_id
 // (cash_settlement_per_instalment.sql). Code ships before a migration is applied — that is normal
@@ -46,19 +48,25 @@ import { liveCashEntries } from "@/lib/cash-live";
 //
 // Cached only when TRUE: a false answer must stay re-checkable, or a server instance that started
 // before the migration would keep the old behaviour until it happened to restart.
-let settlementColumnKnown = false;
 
+/**
+ * [DEPLOY-SAFE][KAS-PROBE] Does cash_entries carry settlement_id?
+ *
+ * A NO here is not a small answer. It switches this module into the pre-instalment model, and in
+ * that model `existing` is read WITHOUT settlement_id — so every drawer entry of an invoice keys to
+ * the same AGGREGATE_KEY, the first is kept and healed to the aggregate amount on the last cash
+ * date, and computeCashSettlementSync marks EVERY OTHER ONE a duplicate and hard-deletes it. An
+ * invoice paid in three till handovers loses two real cash movements and has the third re-dated
+ * onto a day the money did not move — which, across a quarter boundary, is a BTW period.
+ *
+ * The discrimination that makes that safe now lives in column-probe.ts, because this was never one
+ * module's problem: five probes were written from the same eight lines and every one of them read
+ * a statement timeout as a missing column. That file states the rule and what each caller's reduced
+ * mode costs.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function cashInstalmentsSupported(supabase: SupabaseClient<any>): Promise<boolean> {
-  if (settlementColumnKnown) return true;
-  try {
-    const { error } = await supabase.from("cash_entries").select("settlement_id").limit(1);
-    if (error) return false;
-    settlementColumnKnown = true;
-    return true;
-  } catch {
-    return false;
-  }
+  return columnExists(supabase, "cash_entries", "settlement_id", "per-instalment drawer entries would be deleted as duplicates");
 }
 
 /**
@@ -158,6 +166,24 @@ export async function reconcileCashWithRetry(supabase: SupabaseClient<any>, user
       context: { userId, error: e instanceof Error ? e.message : String(e) },
     });
   }
+}
+
+/**
+ * [KAS-RICHTING] The invoice direction the drawer will be booked from, and a report when the row
+ * did not actually say. See the note at the call site for why this defaults rather than refuses.
+ */
+function readableDirection(
+  value: string | null | undefined,
+  where: { userId: string; invoiceId: string },
+): "incoming" | "outgoing" {
+  if (value === "outgoing" || value === "incoming") return value;
+  reportHandledFailure({
+    tag: "CASH-SETTLE",
+    message: "a cash-settled invoice has no readable direction — the drawer movement was booked as a purchase, and if it was a sale the kas balance is now wrong by twice its amount",
+    severity: "data-integrity",
+    context: { ...where, direction: value ?? null },
+  });
+  return "incoming";
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -287,7 +313,25 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
   const paid = ([...invRows, ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
     .map((r) => ({
       ...r,
-      direction: r.direction === "outgoing" ? "outgoing" : "incoming",
+      // [KAS-RICHTING] Anything that is not "outgoing" is read as "incoming" — a purchase paid from
+      // the till, the overwhelmingly common case. That default is a GUESS, and on this particular
+      // field a wrong guess is the most expensive kind there is: settlementDirection turns it into
+      // the drawer's direction, so a cash SALE booked as a purchase moves the balance the wrong way
+      // and the book is out by TWICE the amount, on the one figure whose entire purpose is that it
+      // reconciles against the cash actually in the drawer.
+      //
+      // The default stays, because the alternative is worse. Dropping the invoice from `paid`
+      // would not mean "leave it alone": computeCashSettlementSync deletes every linked entry whose
+      // invoice is absent from the paid set, so refusing to guess would REMOVE a real cash movement
+      // instead of merely mis-signing it. Between an entry that might point the wrong way and no
+      // entry at all, the entry is recoverable.
+      //
+      // What was missing is that the guess was silent. `direction` is nullable in the schema with
+      // no default and no check constraint, so nothing but the write paths keeps it honest — and
+      // the day one of them forgets, this line quietly decides which way somebody's money went. It
+      // is clean today: 605 invoices, 586 incoming, 19 outgoing, not one null. So this reports
+      // rather than repairs, and it will be the thing that tells us the day that stops being true.
+      direction: readableDirection(r.direction, { userId, invoiceId: r.id }),
       // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
       // back to the legacy gross − amount_paid inference for pre-instalment invoices).
       cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,

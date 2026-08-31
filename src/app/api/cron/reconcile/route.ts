@@ -76,8 +76,9 @@ export async function GET(req: NextRequest) {
   let pendingTx: { user_id: string | null }[];
   let kasInv: { sender_id: string | null; receiver_id: string | null }[];
   let betaling: { user_id: string | null }[];
+  let kasTermijn: { user_id: string | null }[];
   try {
-    [pendingTx, kasInv, betaling] = await Promise.all([
+    [pendingTx, kasInv, betaling, kasTermijn] = await Promise.all([
       fetchAllRows<{ user_id: string | null }>((from, to) =>
         pipeline.from("bank_transactions").select("user_id").eq("status", "pending")
           .order("id", { ascending: true }).range(from, to)),
@@ -92,6 +93,26 @@ export async function GET(req: NextRequest) {
         // live rows only, so a deleted 'betaling' row would nominate its owner on every run forever.
         liveCash.only(pipeline.from("cash_entries").select("user_id").eq("category", "betaling"))
           .order("id", { ascending: true }).range(from, to)),
+      // [MANUAL-PARTIAL-PAY] The fourth reason, and the one the three above cannot produce.
+      //
+      // Who has cash to reconcile is a DEFINITION, written once in loadCashSettlementState: status
+      // paid + method kas, UNION anything holding a kas instalment. This discovery only ever
+      // spelled the first half. An owner who took €200 of a €500 invoice from the till has an
+      // invoice that is still OPEN — so it is not status 'paid', and the read above cannot see it.
+      //
+      // Set 3 usually rescues them, because the synchronous reconcile at pay time writes a
+      // 'betaling' entry and every later run finds them by it. But the cron IS the net under that
+      // synchronous call: the case it exists for is precisely the one where the call failed. An
+      // owner whose first cash instalment failed to reconcile has no drawer entry to be found by,
+      // no pending bank lines, and no paid-kas invoice — so the hourly pass never visits them and
+      // the money stays out of the kasboek until they happen to open the Kas page.
+      //
+      // Nobody is in that state today (13 kas instalments, all on invoices the first read already
+      // catches). This closes the hole before the first one is.
+      fetchAllRows<{ user_id: string | null }>((from, to) =>
+        pipeline.from("bank_tx_invoices").select("user_id")
+          .eq("method", "kas").is("transaction_id", null)
+          .order("id", { ascending: true }).range(from, to)),
     ]);
   } catch (e) {
     console.error("[CRON-RECONCILE] user discovery failed — aborting run (will retry next schedule)", e);
@@ -103,6 +124,7 @@ export async function GET(req: NextRequest) {
   for (const r of pendingTx) if (r.user_id) userIds.add(r.user_id);
   for (const r of kasInv) { if (r.receiver_id) userIds.add(r.receiver_id); if (r.sender_id) userIds.add(r.sender_id); }
   for (const r of betaling) if (r.user_id) userIds.add(r.user_id);
+  for (const r of kasTermijn) if (r.user_id) userIds.add(r.user_id);
 
   // [AUTO-INCASSO] A fourth reason to visit an owner, and one the three above cannot produce: an
   // owner whose invoices are all collected automatically has no pending bank lines, no cash-paid

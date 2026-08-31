@@ -78,7 +78,27 @@ export default async function UrenPage() {
       })
       return null
     })
-  const urencriterium: UrencriteriumStatus = assessUrencriterium({ hoursSoFar: hoursThisYear, today, year })
+  // [NIET-BIJGEHOUDEN] Heeft deze ondernemer hier ooit een uur geregistreerd, in welk jaar dan ook?
+  //
+  // Zonder deze vraag kreeg iedereen met een leeg urenregister het volle oordeel: "je hebt nog
+  // 1.225 uur te gaan… houd er rekening mee dat de zelfstandigenaftrek kan vervallen." Voor iemand
+  // die vast prijs factureert, zijn uren in een spreadsheet bijhoudt of er helemaal geen aanspraak
+  // op maakt, is dat een rode waarschuwing over de grootste aftrek die hij heeft, op grond van
+  // niets. Toen dit werd geschreven had ELKE eigenaar in de productiedatabase nul uren staan.
+  //
+  // Over ALLE jaren, niet dit jaar: wie vorig jaar uren bijhield en dit jaar nog niets invulde,
+  // gebruikt de functie wél, en voor hem is een lege januari een echt signaal.
+  //
+  // Een mislukte peiling wordt null en verandert niets: liever een waarschuwing die misschien
+  // terecht is dan een storing die er stilletjes een wegneemt.
+  let everRegistered: boolean | null = null
+  try {
+    const probe = await supabase.from('time_entries').select('id').limit(1)
+    everRegistered = probe.error ? null : (probe.data?.length ?? 0) > 0
+  } catch {
+    everRegistered = null
+  }
+  const urencriterium: UrencriteriumStatus = assessUrencriterium({ hoursSoFar: hoursThisYear, today, year, everRegistered })
   // Een klantenlijst die niet laadt is hinderlijk maar niet gevaarlijk: de keuzelijst is dan leeg
   // en "geen klant" blijft werken. De UREN zijn het enige waarvan een leesfout gemeld moet worden.
   const clients = (clientsRes.data ?? []) as UrenClientCard[]

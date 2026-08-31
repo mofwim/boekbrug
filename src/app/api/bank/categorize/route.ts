@@ -124,7 +124,10 @@ export async function GET(req: NextRequest) {
 
   // The TRUE remaining count — an exact head-count, independent of the page size.
   // This is what governs "alles gecategoriseerd": only 0 here means truly done.
-  const { count: totalRemaining } = await supabase
+  // [NO-SILENT-EMPTY] Dit getal beslist "alles gecategoriseerd": alleen 0 is klaar. Een mislukte
+  // telling werd via `?? 0` diezelfde nul, dus een hapering meldde een schone bankpagina terwijl
+  // er regels lagen te wachten — de enige conclusie die dit scherm nooit ten onrechte mag trekken.
+  const { count: totalRemaining, error: totalRemainingErr } = await supabase
     .from("bank_transactions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
@@ -180,6 +183,9 @@ export async function GET(req: NextRequest) {
     memEntries.push({ key: m.counterpart_key, category: m.category });
   }
 
+  // [LEVERANCIER-BEWIJS] Which counterparts the owner already holds invoices from.
+  const supplierKeys = await knownSupplierKeys(supabase, user.id);
+
   let confidentAvailable = 0;
   const items = txs.map((t) => {
     const key = counterpartKey(t.counterpart_name);
@@ -187,7 +193,7 @@ export async function GET(req: NextRequest) {
     // No EXACT memory? Borrow from a similar counterpart the owner categorized before — a
     // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
     const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
-    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar);
+    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false);
     if (suggestion.confident) confidentAvailable++;
     return {
       id: t.id,
@@ -209,10 +215,14 @@ export async function GET(req: NextRequest) {
     items,
     // items.length is only this page; totalRemaining is the honest DB-wide count.
     count: items.length,
-    total_remaining: totalRemaining ?? items.length,
+    // Onleesbaar → items.length, en dat is precies wat de zin eronder nodig heeft: dan zegt
+    // has_more niet "je bent klaar" maar "we weten het niet zeker", en de UI blijft doorvragen.
+    total_remaining: totalRemainingErr ? items.length : totalRemaining ?? items.length,
     // How many on THIS page could be auto-applied (a hint for the bulk button).
     confident_available: confidentAvailable,
-    has_more: (totalRemaining ?? 0) > items.length,
+    // [NO-SILENT-EMPTY] Een mislukte telling mag geen "alles gecategoriseerd" worden. Zolang
+    // deze pagina vol is, is er waarschijnlijk meer — dat is de veilige kant: verder kijken.
+    has_more: totalRemainingErr ? items.length >= PAGE_SIZE : (totalRemaining ?? 0) > items.length,
   });
 }
 
@@ -334,6 +344,9 @@ async function bulkApply(
   }
   const memMap = new Map<string, string>();
   for (const m of mem) memMap.set(m.counterpart_key, m.category);
+  // [LEVERANCIER-BEWIJS] The sweep applies only CONFIDENT suggestions, and a supplier the owner
+  // holds invoices from makes an outgoing line confident — so the sweep now reaches them too.
+  const supplierKeys = await knownSupplierKeys(supabase, userId);
 
   // Pull the uncategorized lines (capped) and decide per line.
   // [BULK-PAGINATE] `.limit(BULK_MAX)` did NOT deliver BULK_MAX rows. PostgREST caps a response at
@@ -363,7 +376,7 @@ async function bulkApply(
   for (const t of txs) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory);
+    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
     if (!s.confident) { skipped++; continue; }
 
     // Auto-applied, NOT individually confirmed by the owner → category_confirmed:false
@@ -380,7 +393,7 @@ async function bulkApply(
   }
 
   // The honest remaining total after the sweep.
-  const { count: remaining } = await supabase
+  const { count: remaining, error: remainingErr } = await supabase
     .from("bank_transactions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
@@ -392,8 +405,40 @@ async function bulkApply(
     ok: true,
     applied,
     skipped,          // left untouched because the suggestion was only a sign-guess
-    remaining: remaining ?? 0,
+    // null = niet geteld. Nul zou "klaar" betekenen, en dat weet deze lezing niet.
+    remaining: remainingErr ? null : remaining ?? 0,
   });
+}
+
+/**
+ * [LEVERANCIER-BEWIJS] The counterpart keys of every supplier this owner already holds invoices
+ * from — the evidence behind a "proven cost" suggestion.
+ *
+ * A suppliers row exists only because an invoice from that party was read, matched and kept, so
+ * the set is a statement the administration can back up rather than a guess about a name. Keyed
+ * through counterpartKey, the same normaliser the bank lines go through, so "GROOTHANDEL M.H.
+ * BAL V.O.F." on an invoice and "GROOTHANDEL M.H. BAL" on a statement are one party.
+ *
+ * Best-effort: a set that cannot be read means no proof and therefore no confident suggestion —
+ * the screen still lists every line that needs an answer, which is the behaviour without it.
+ */
+async function knownSupplierKeys(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+): Promise<Set<string>> {
+  const keys = new Set<string>();
+  try {
+    const rows = await fetchAllRows<{ name: string | null }>((from, to) =>
+      supabase.from("suppliers").select("name").eq("user_id", userId)
+        .order("id", { ascending: true }).range(from, to));
+    for (const r of rows) {
+      const k = counterpartKey(r.name);
+      if (k) keys.add(k);
+    }
+  } catch (e) {
+    console.error("[LEVERANCIER-BEWIJS] supplier read failed — no proven-cost suggestions this run", e);
+  }
+  return keys;
 }
 
 // Train per-counterpart memory from an explicit user confirmation.

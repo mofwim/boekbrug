@@ -524,7 +524,7 @@ export async function PUT(
   // lines exist), mints a legal number, and renders a PDF with an empty table — a numbered
   // invoice, for a real amount, itemising nothing. Restoring the old lines keeps the draft
   // internally consistent (old lines, and the caller knows the save failed).
-  const { data: previousLines } = await supabase
+  const { data: previousLines, error: previousErr } = await supabase
     .from('invoice_lines')
     // [UNIT] '*' zodat de eenheid meekomt in het TERUGZETPAD. Zou hij hier ontbreken, dan
     // zou een mislukte opslag de regels herstellen ZONDER eenheid — een stille wijziging bij
@@ -532,7 +532,32 @@ export async function PUT(
     .select('*')
     .eq('invoice_id', id)
 
-  await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+  // [EDIT-LINES-SAFE] The DELETE's error was dropped, and this is a delete-then-insert. A failed
+  // delete followed by a successful insert leaves BOTH line sets on the invoice — and /api/invoice/send
+  // recomputes the totals from the lines whenever lines exist, so the number that gets a legal
+  // invoice number and goes to the customer is roughly double what the owner typed. Nothing on the
+  // edit screen would show it: the header totals it just saved are the ones the owner entered.
+  //
+  // Refused rather than inserted on top. The header totals were already committed above, so they
+  // are put back the same way the insert-failure branch below puts them back — the draft is then
+  // exactly as it was, and the caller is told the save failed.
+  //
+  // previousErr matters for the same reason it matters below: without the old lines there is
+  // nothing to restore WITH, so a save may not be attempted on a snapshot that was never read.
+  const { error: delErr } = await supabase.from('invoice_lines').delete().eq('invoice_id', id)
+  if (delErr || previousErr) {
+    await supabase
+      .from('invoices')
+      .update({
+        total_ex_btw: existing.total_ex_btw,
+        btw_amount: existing.btw_amount,
+        total_inc_btw: existing.total_inc_btw,
+      } as never)
+      .eq('id', id)
+      .eq('sender_id', ownerId)
+      .eq('status', existing.status ?? 'draft')
+    return NextResponse.json({ error: 'Opslaan mislukt (regels)' }, { status: 500 })
+  }
   const { error: insErr } = await supabase
     .from('invoice_lines')
     // [UNIT] `unit` gaat alleen mee als de kolom bestaat. Zonder deze terugval faalde het

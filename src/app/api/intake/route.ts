@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { createNotification } from "@/lib/notifications"
 import {
   verifyInvoiceFromPdf,
@@ -110,6 +111,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit
 import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
 // [TZ] The owner's day, not the server's — see amsterdamToday().
 import { amsterdamToday } from "@/lib/format-nl";
+import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -1325,6 +1327,12 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       // terugval — dezelfde regel als op de e-mailwegen, zodat één bedrijf één rij blijft.
       supplier_id: leverancier.supplierId,
       client_name: leverancier.supplierName || v.vendor || "Onbekende afzender",
+      // [BTW-NUMMER-BEWAARD] Op een inkoopfactuur is client_btw_number het nummer van de
+      // LEVERANCIER — dezelfde rij draagt zijn naam in client_name. Het werd gelezen en nergens
+      // opgeslagen, waardoor de EU-inkopenlijst (icp.ts, rubriek 4b) voor iedereen leeg bleef.
+      // Alleen een geldige VORM landt hier; een misvormd nummer blijft staan in
+      // _vendor_btw_printed, waar de controlelijst de ondernemer erover vertelt.
+      client_btw_number: supplierBtwForInvoice(fieldConfidence._vendor_btw_printed as string | undefined, v.vendor_btw ?? null),
       invoice_date: invoiceDate,
       // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null. The
       // backbone of the "Vandaag" screen; null is honest when nothing is stated.
@@ -1831,13 +1839,17 @@ async function handleUblInvoice(
   // [LEVERANCIER-INTAKE] Ook een e-factuur heeft een leverancier. Dit pad schreef vendor_iban wel
   // en supplier_id niet, en een Peppol-XML is net zo goed door te sturen als een PDF — dus loopt
   // hij langs dezelfde twee stappen in dezelfde volgorde: eerst de IBAN-controle, dan de
-  // registratie. De XML draagt geen KVK of btw-nummer, dus die gaan als null mee; de naam en het
-  // rekeningnummer zijn wat dit document over zijn afzender zegt.
+  // registratie. De XML draagt geen KVK, dus die gaat als null mee.
+  //
+  // [BTW-NUMMER-BEWAARD] Het btw-nummer gaat wél mee. Deze regel stond hier op null omdat de
+  // parser het nummer niet las, niet omdat de XML het niet draagt — PartyTaxScheme/CompanyID
+  // staat op vrijwel elke e-factuur. Het is geen SLEUTEL in de registratie (dat zijn IBAN en KVK),
+  // dus dit kan een leverancier niet verkeerd samenvoegen; het vult alleen een leeg veld.
   const leverancier = await resolveSupplierAtIntake(pipeline, userId, {
     name: v.supplierName,
     iban: v.vendorIban ?? null,
     kvk: null,
-    btw: null,
+    btw: v.supplierVatNumber ?? null,
   })
   if (Object.keys(leverancier.safecore).length > 0) {
     fieldConfidence._safecore = mergeSafecore(fieldConfidence, leverancier.safecore)
@@ -1853,6 +1865,10 @@ async function handleUblInvoice(
       source: "upload",
       supplier_id: leverancier.supplierId,
       client_name: leverancier.supplierName || v.supplierName || "Onbekende afzender",
+      // [BTW-NUMMER-BEWAARD] Een e-factuur STAAT het btw-nummer van de leverancier, in een eigen
+      // element — geen OCR, geen gok. Juist dit pad draagt de buitenlandse leveranciers waarvan de
+      // verlegde BTW in rubriek 4b hoort; zonder deze regel bleef die lijst leeg.
+      client_btw_number: supplierBtwForInvoice(v.supplierVatNumber),
       invoice_date: v.invoiceDate,
       due_date: v.dueDate,
       // [BON-NUMMER] Leeg blijft leeg — dezelfde regel als het camerapad hierboven, dat zijn
@@ -2258,19 +2274,44 @@ async function reconcileSupplierStatement(args: {
     ? new Date(new Date(`${anchor}T00:00:00Z`).getTime() - 90 * 86_400_000).toISOString().slice(0, 10)
     : new Date(Date.now() - 550 * 86_400_000).toISOString().slice(0, 10)
 
-  const { data: invRows } = await supabase
-    .from("invoices")
-    .select("id, invoice_number, invoice_date, total_inc_btw, status, client_name")
-    .eq("receiver_id", userId)
-    .eq("direction", "incoming")
-    .gte("invoice_date", from)
-    .order("invoice_date", { ascending: false })
-    .limit(2000)
-
-  const rows = (invRows ?? []) as unknown as Array<{
+  // [NO-SILENT-EMPTY] Dit is de lijst met wat wij WEL hebben. Een mislukte lezing werd hier een
+  // lege lijst, en dan meldt reconcileStatement élke regel op het leveranciersoverzicht als een
+  // factuur die wij missen — met een totaalbedrag eronder. De ondernemer gaat die bonnen dan
+  // opvragen en opnieuw inboeken bij een leverancier die ze allang gestuurd heeft: dubbele
+  // inkoopfacturen, dubbele voorbelasting.
+  //
+  // Er is geen halve waarheid mogelijk. Terug is `null`, en dat is een stand die deze route al
+  // kent: het bestand wordt gewoon opgeslagen zonder vergelijkingsvenster. Niets beweren is hier
+  // het juiste antwoord — het overzicht blijft in Mijn bestanden staan en kan opnieuw.
+  //
+  // [VOL-GELEZEN] En gepagineerd: `.limit(2000)` werd stil ~1000 bij PostgREST, dus een
+  // administratie met meer inkoopfacturen in het venster kreeg juist de OUDSTE eruit gefilterd —
+  // en precies die worden dan als "ontbreekt" gemeld.
+  let rows: Array<{
     id: string; invoice_number: string | null; invoice_date: string | null
     total_inc_btw: number | null; status: string | null; client_name: string | null
   }>
+  try {
+    rows = await fetchAllRows<{
+      id: string; invoice_number: string | null; invoice_date: string | null
+      total_inc_btw: number | null; status: string | null; client_name: string | null
+    }>((lo, hi) => supabase
+      .from("invoices")
+      .select("id, invoice_number, invoice_date, total_inc_btw, status, client_name")
+      .eq("receiver_id", userId)
+      .eq("direction", "incoming")
+      .gte("invoice_date", from)
+      .order("id", { ascending: true })
+      .range(lo, hi) as unknown as PromiseLike<{ data: Array<{
+        id: string; invoice_number: string | null; invoice_date: string | null
+        total_inc_btw: number | null; status: string | null; client_name: string | null
+      }> | null; error: { message: string } | null }>)
+  } catch (e) {
+    console.error("[STATEMENT-RECONCILE] eigen facturen niet te lezen — geen vergelijking gemeld", {
+      userId, documentId, error: e instanceof Error ? e.message : String(e),
+    })
+    return null
+  }
 
   // Alleen de facturen van DEZE leverancier vergelijken. Zonder bruikbare leveranciersnaam
   // vergelijken we tegen alles: een regel die we dan nergens terugvinden ontbreekt echt, en

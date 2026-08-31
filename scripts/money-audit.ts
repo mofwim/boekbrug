@@ -69,6 +69,7 @@ const HEADINGS: Record<string, string> = {
   overpaid: 'Meer betaald dan de factuur waard is',
   paid_without_payments: 'Als betaald geboekt zonder bankregel die het dekt',
   payments_without_paid: 'Bankregels gekoppeld die de factuur niet toont',
+  paid_amount_never_written: 'Volledig betaald — alleen het bedrag is nooit weggeschreven (er ontbreekt geen geld)',
   status_paid_but_open: 'Staat op betaald terwijl er geld open is',
   status_open_but_covered: 'Helemaal betaald maar staat nog open',
   btw_arithmetic: 'ex + btw is niet inc — dit getal staat in de aangifte',
@@ -227,6 +228,18 @@ async function main() {
     return onlyUser ? q.eq('user_id', onlyUser) : q
   }
 
+  // [EEN-EIGENAAR] `invoices` heeft GEEN user_id-kolom — een factuur hangt aan sender_id OF
+  // receiver_id, en dat is precies waarom recompute_invoice_amount_paid diezelfde twee kolommen
+  // gebruikt. De gedeelde `scope` hierboven klopt voor bank_tx_invoices en bank_transactions (die
+  // hebben user_id wél) en was voor facturen simpelweg fout: PostgREST antwoordt 42703, de
+  // facturenlezing eronder heeft als enige geen .catch(), fetchAllRows gooit, en het script stopt
+  // vóór het iets heeft gelezen. `--user <uuid>` — de aanroep die in de kop van dit bestand staat,
+  // en de enige manier om deze audit op één administratie te draaien wanneer een ondernemer een
+  // verkeerd getal meldt — heeft dus nooit gewerkt.
+  function scopeInvoices<T extends { or(filter: string): T }>(q: T): T {
+    return onlyUser ? q.or(`sender_id.eq.${onlyUser},receiver_id.eq.${onlyUser}`) : q
+  }
+
   console.log('\n[GELD-INVARIANT] lezen…')
 
   const invoices = await fetchAllRows<{
@@ -236,7 +249,7 @@ async function main() {
     // [EIGEN-FACTUUR] Who the supplier is said to be, and where its money was to go.
     client_name: string | null; vendor_iban: string | null; receiver_id: string | null
   }>((from, to) =>
-    scope(pipeline
+    scopeInvoices(pipeline
       .from('invoices')
       .select('id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, amount_paid, client_name, vendor_iban, receiver_id'))
       .order('id', { ascending: true })
@@ -253,11 +266,19 @@ async function main() {
       .range(from, to),
   ).catch(() => [] as RawLink[])
 
-  const transactions = await fetchAllRows<{ id: string; amount: number | null }>((from, to) =>
-    scope(pipeline.from('bank_transactions').select('id, amount'))
+  // [BANK-VS-FACTUUR] status en invoice_id horen erbij, en stonden er niet. money-invariants slaat
+  // een bankregel over zodra `(t.status ?? '') !== 'matched'` — met een ontbrekende status is dat
+  // ELKE regel, dus matched_tx_unpaid_invoice kon nooit afgaan. Precies de toestand die de
+  // TransactionRow-typen beschrijven: "a caller that does not read these columns simply does not
+  // get the matched-line check". Dat is de juiste regel; hier was hij alleen stil ingeroepen door
+  // een select die twee kolommen te kort kwam, terwijl het script eronder wél een volledigheids-
+  // uitspraak doet.
+  type RawTx = { id: string; amount: number | null; status: string | null; invoice_id: string | null }
+  const transactions = await fetchAllRows<RawTx>((from, to) =>
+    scope(pipeline.from('bank_transactions').select('id, amount, status, invoice_id'))
       .order('id', { ascending: true })
       .range(from, to),
-  ).catch(() => [] as { id: string; amount: number | null }[])
+  ).catch(() => [] as RawTx[])
 
   const invRows: InvoiceRow[] = invoices.map((r) => ({
     id: r.id,
@@ -269,13 +290,21 @@ async function main() {
     btwAmount: r.btw_amount,
     totalIncBtw: r.total_inc_btw,
     amountPaid: r.amount_paid,
+    // [DUBBELE-FACTUUR] Zonder deze regel deed de dubbele-inkoopfactuurcontrole niets: hij begint
+    // met `const ven = vendorKey(inv.clientName)` en slaat de factuur over zodra die leeg is —
+    // en clientName was undefined op ELKE rij, terwijl de kolom hierboven gewoon werd gelezen.
+    // De FAMZFOOD-zaak waar die controle voor is geschreven ("26/3958" naast "26 / 3958") kon
+    // door deze audit dus niet gevonden worden.
+    clientName: r.client_name,
   }))
   const linkRows: LinkRow[] = links.map((r) => ({
     transactionId: r.transaction_id,
     invoiceId: r.invoice_id,
     amountApplied: r.amount_applied,
   }))
-  const txRows: TransactionRow[] = transactions.map((r) => ({ id: r.id, amount: r.amount }))
+  const txRows: TransactionRow[] = transactions.map((r) => ({
+    id: r.id, amount: r.amount, status: r.status, invoiceId: r.invoice_id,
+  }))
 
   console.log(
     `  ${invRows.length} facturen · ${linkRows.length} betalingskoppelingen · ${txRows.length} bankregels` +
@@ -434,6 +463,28 @@ async function main() {
   console.log('  schrijft een onwaar getal over een waar heen en wist het bewijs dat ze ooit')
   console.log('  verschilden. Op een kwartaal dat al is ingediend is dat geen bug maar een')
   console.log('  correctie die niemand kan terugvinden.\n')
+
+  // [BEDRAG-NOOIT-GESCHREVEN] Eén groep hierboven is de uitzondering op de premisse, niet op de
+  // regel. Daar spreken de bronnen elkaar niet tegen: de factuur staat op betaald, de bankregels
+  // dekken hem precies, en alleen amount_paid is nooit weggeschreven. Er valt niets te kiezen.
+  // Dit script repareert hem nog steeds niet — het zegt alleen wat de reparatie IS, zodat de
+  // afweging die een mens moet maken klein blijft in plaats van forensisch.
+  const nooitGeschreven = byKind.get('paid_amount_never_written') ?? []
+  if (nooitGeschreven.length > 0) {
+    const som = Math.round(nooitGeschreven.reduce((s, v) => s + v.euros, 0) * 100) / 100
+    console.log(`  Uitzondering: ${nooitGeschreven.length}× "${HEADINGS.paid_amount_never_written}"`)
+    console.log(`  (samen € ${som.toFixed(2)}). Hier spreken de bronnen elkaar NIET tegen — status,`)
+    console.log('  bankregels en bedrag zeggen alledrie dat de factuur volledig betaald is, en er is')
+    console.log('  alleen één kolom niet geschreven. De oorzaak zit sinds 30 augustus dicht in')
+    console.log('  bank-auto-confirm.ts; de rijen die er al waren herstellen zichzelf niet, want')
+    console.log('  amount_paid wordt alleen per factuur opnieuw afgeleid (pay-toggle, ontkoppelen,')
+    console.log('  afschrift verwijderen). De reparatie is per factuur de RPC die de app zelf')
+    console.log('  overal gebruikt:\n')
+    console.log('     select recompute_invoice_amount_paid(<user_id>, <invoice_id>);\n')
+    console.log('  Draai hem pas als je de lijst hierboven hebt bekeken. Hij zet amount_paid op de')
+    console.log('  som van de gekoppelde bankregels, begrensd op het factuurbedrag — precies wat')
+    console.log('  elke ontkoppeling ook doet.\n')
+  }
 
   // A non-zero exit makes this usable in CI or a cron without anyone having to read the output.
   process.exitCode = 1

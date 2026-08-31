@@ -50,29 +50,58 @@ test("[KAS-ZACHT] the filter is IS NULL, matching the partial index", () => {
   assert.deepEqual(q.calls[0], ["deleted_at", null]);
 });
 
-test("[KAS-ZACHT] a failed probe answers NO, and stays re-checkable", async () => {
-  // Two failure shapes, one answer. An error from PostgREST (the column does not exist) and a thrown
-  // read both mean "we cannot rely on it", never "assume it is there".
+test("[KAS-ZACHT] an ABSENT column answers NO, and stays re-checkable", async () => {
+  // This assertion used to cover two failure shapes with one answer — "an error from PostgREST and
+  // a thrown read both mean we cannot rely on it, never assume it is there". The first half stands
+  // and is kept. The second half is now the opposite, and that is a deliberate reversal, so here is
+  // the argument.
+  //
+  // The two failures do not mean the same thing. 42703 is the database saying the column is not
+  // there; a thrown read is the database being unwell, which says nothing about the schema. And the
+  // two wrong answers do not cost the same:
+  //
+  //   a wrong NO  → no filter is applied, so every soft-deleted cash movement returns to omzet,
+  //                 kosten, the drawer, readiness and the aangifte — silently, and the DELETE door
+  //                 becomes a hard delete;
+  //   a wrong YES → `.is("deleted_at", null)` on a database without the column fails the read, and
+  //                 the page or the aangifte says so.
+  //
+  // On a book whose cardinal sin is a confident wrong number, loud beats silent. And the window the
+  // old answer protected is closed: cash_entries.deleted_at exists in production, so a NO from a
+  // timeout can only be wrong now. The deploy safety itself is untouched — a real 42703 still
+  // answers NO, which is the case below and the case the migration window actually produces.
   let calls = 0;
-  const erroring = {
+  const absent = {
     from() { return this; },
     select() { return this; },
     limit() { calls++; return Promise.resolve({ error: { message: '42703 column "deleted_at" does not exist' } }); },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
-  assert.equal(await cashSoftDeleteSupported(erroring), false);
-  const throwing = {
-    from() { return this; },
-    select() { return this; },
-    limit() { calls++; throw new Error("network"); },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
-  assert.equal(await cashSoftDeleteSupported(throwing), false);
+  assert.equal(await cashSoftDeleteSupported(absent), false);
 
   // A NEGATIVE answer must not be cached: a server instance that started before the migration would
   // otherwise keep the old behaviour until it happened to restart, which is how a feature silently
-  // stays off in production for a week. (The positive answer IS cached — same trade as
-  // cashInstalmentsSupported.)
-  assert.equal(await cashSoftDeleteSupported(erroring), false);
-  assert.equal(calls, 3, "it asked again rather than trusting the earlier no");
+  // stays off in production for a week. (The positive answer IS cached — same trade throughout.)
+  assert.equal(await cashSoftDeleteSupported(absent), false);
+  assert.equal(calls, 2, "it asked again rather than trusting the earlier no");
+});
+
+test("[KAS-ZACHT] a read that merely FAILED does not un-remove the drawer", async () => {
+  // The other half of the reversal, asserted rather than implied. A thrown read and a timeout are
+  // the database being unwell; answering NO to them is what put removed cash back into the books.
+  const throwing = {
+    from() { return this; },
+    select() { return this; },
+    limit(): never { throw new Error("network"); },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  assert.equal(await cashSoftDeleteSupported(throwing), true, "a network failure was read as an absent column");
+
+  const timingOut = {
+    from() { return this; },
+    select() { return this; },
+    limit() { return Promise.resolve({ error: { code: "57014", message: "canceling statement due to statement timeout" } }); },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  assert.equal(await cashSoftDeleteSupported(timingOut), true, "a statement timeout was read as an absent column");
 });

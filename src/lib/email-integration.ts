@@ -15,6 +15,7 @@ import { textToPdf } from '@/lib/text-to-pdf'
 // [DOORGESTUURD] Read the attachments out of an e-mail that arrived as an attachment.
 import { extractMimeAttachments, mimeHeader, uniqueAttachmentName, type EmbeddedAttachment } from '@/lib/mime-attachments'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
+import { ownedStoragePath } from '@/lib/storage-path'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from '@/lib/content-hash'
 import { escapeLikeValue } from '@/lib/sanitize'
@@ -101,6 +102,7 @@ import type { Database } from '@/types/database.types'
 import { amsterdamToday } from '@/lib/format-nl'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
+import { supplierBtwForInvoice } from "./vendor-identity"
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -4415,6 +4417,13 @@ export async function syncUserEmails(
           source: 'email',
           supplier_id: supplier?.id ?? null,
           client_name: supplier?.name || rawVendorName,
+          // [BTW-NUMMER-BEWAARD] Zie intake/route.ts: op een inkoopfactuur is client_btw_number
+          // het nummer van de LEVERANCIER. Het werd gelezen en nergens bewaard, waardoor de
+          // EU-inkopenlijst (icp.ts, rubriek 4b) voor elk account leeg bleef.
+          client_btw_number: supplierBtwForInvoice(
+            (fieldConfidenceValue as { _vendor_btw_printed?: string } | null)?._vendor_btw_printed,
+            classification.vendorBtw ?? null,
+          ),
           client_email: extractEmail(attachment.from),
           invoice_date: invoiceDate,
           // [EXTRACT-DUE-DATE] explicit due date → invoice_date + term → null.
@@ -4483,7 +4492,13 @@ export async function syncUserEmails(
             await insertPipeline.from('documents').delete().eq('id', documentId)
           }
           if (pdfUrl) {
-            await supabase.storage.from('documents').remove([pdfUrl])
+            // [SEC-STORAGE-PATH] `pdfUrl` is `storagePath` on the normal path — a key this sync
+            // just built — but on the hash-collision branch above it is `recovered.file_url`, read
+            // from a row the owner may UPDATE. This client is service_role, so it bypasses the
+            // bucket policy, and this call DELETES. An unattributable key is left alone: an
+            // orphaned object is reclaimable by the retention sweep, another tenant's bill is not.
+            const teVerwijderen = ownedStoragePath(pdfUrl, userId)
+            if (teVerwijderen) await supabase.storage.from('documents').remove([teVerwijderen])
           }
           // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
           // sync re-fetches and retries this email … unless this attachment has now failed

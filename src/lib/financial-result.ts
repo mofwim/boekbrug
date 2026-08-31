@@ -106,6 +106,12 @@ export interface ResultBankTx {
   // so the covered-day check widens to a short backward window — never forward, so it
   // can never suppress (hide) revenue on a day that carries its own exact takings date.
   settleExact?: boolean;
+  // [GENEGEERD-TELT] TRUE wanneer de eigenaar deze regel opzij zette met een reden die zegt dat het
+  // geld niet in zijn boeken hoort (privé, dubbel, niet van mij). De engine slaat zo'n regel over:
+  // hij is geen kost, geen omzet en geen voorbelasting. Gezet door toResultBankTx, zodat alle zes
+  // de geldschermen dezelfde regel gebruiken en niet uit elkaar kunnen lopen — precies zoals de
+  // pos-settlement-beslissing hierboven.
+  excludedByOwner?: boolean;
 }
 export interface ResultCashEntry {
   direction: "in" | "out";
@@ -128,6 +134,12 @@ export interface RawBankRow {
   date: string | null;
   description: string | null;
   counterpart_name?: string | null; // banks often put the acquirer/PSP name here, not in description
+  // [GENEGEERD-TELT] Het id, zodat een regel herkend kan worden in de verzameling die
+  // readExcludedBankIds teruggeeft. OPTIONEEL, en de afwezigheid betekent "gewoon meetellen" —
+  // niet "uitsluiten". Een select die dit vergeet houdt daarmee het gedrag van vóór deze regel,
+  // wat een bekende fout is; de andere kant op zou hij stilzwijgend echte kosten uit de boeken
+  // laten verdwijnen, en dat is een fout die niemand ooit terugvindt.
+  id?: string | null;
 }
 
 /**
@@ -142,10 +154,14 @@ export interface RawBankRow {
  * the till on the settled day. settleDate is the printed DAT. takings date when present, else
  * the booking date (settleExact=false → computeResult widens a short backward window only).
  */
-export function toResultBankTx(b: RawBankRow): ResultBankTx {
+export function toResultBankTx(b: RawBankRow, excludedIds?: ReadonlySet<string>): ResultBankTx {
   const amt = b.amount ?? 0;
   const posSettlement = b.category === "pos_income" || (amt >= 0 && isPosPayoutDescription(b.description, b.counterpart_name ?? null));
   const parsedTakings = posSettlement ? parsePosSettlement(b.description).date : null;
+  // [GENEGEERD-TELT] De verzameling komt uit readExcludedBankIds, die de REDEN leest — alleen een
+  // reden die over de AARD van het bedrag gaat sluit uit. Zie ignoredLineCountsInBooks voor waarom
+  // 'geen_factuur' (huur, lease, abonnement) juist blijft tellen. Geen verzameling meegegeven, of
+  // een rij zonder id: meetellen, precies zoals hiervoor.
   return {
     amount: b.amount,
     category: b.category,
@@ -153,6 +169,7 @@ export function toResultBankTx(b: RawBankRow): ResultBankTx {
     posSettlement,
     settleDate: posSettlement ? (parsedTakings ?? b.date) : null,
     settleExact: posSettlement ? parsedTakings != null : false,
+    excludedByOwner: b.id != null && excludedIds != null && excludedIds.has(b.id),
   };
 }
 
@@ -505,6 +522,13 @@ export function computeResult(
   //    The category → P&L role comes from the single source of truth (bank-categories),
   //    so pos_income (card-terminal / PSP takings) lands on revenue like omzet.
   for (const t of bankTx) {
+    // [GENEGEERD-TELT] De eigenaar heeft van deze regel gezegd dat het geld niet in zijn boeken
+    // hoort — privé, dubbel, of niet van hem. Vóór dit stond zo'n regel gewoon in de kosten en zijn
+    // BTW in de voorbelasting: een aftrek waarvan de eigenaar zelf had gemeld dat er geen recht op
+    // bestond, of een tweede helping van een kost die hij al had gemeld als dubbel. Vóór de
+    // categorie-tak, want een genegeerde regel hoort ook niet als vraagpost geteld te worden: hij
+    // is niet onverklaard, hij is verklaard en hij hoort er niet.
+    if (t.excludedByOwner) continue;
     if (t.invoice_id) continue;   // payment of an already-counted invoice
     if (!t.category) {
       // [VRAAGPOST] Not guessed into a total — and no longer dropped in silence either.
@@ -608,11 +632,38 @@ export function computeResult(
       // Fail-SAFE on a missing date: a store that USES turnover (covered non-empty) has
       // its cash sales inside the Z-report, so a dateless cash omzet is treated as covered
       // rather than double-counted; a ZZP (no turnover → covered empty) still counts it.
-      if (c.date ? covered.has(c.date) : covered.size > 0) continue;
+      // [KAS-TERUGGAAF] Alleen geld dat BINNENKOMT kan de dubbeltelling zijn waar deze regel over
+      // gaat. De redenering erboven is: de eigenaar heeft de dagopbrengst die de Z-bon al telde
+      // nóg een keer als kasregel genoteerd. Een TERUGGAAF is dat niet — daar is geen tweede
+      // notering van dezelfde ontvangst, en daily_turnover.cash_amount is een positief
+      // ontvangstenbedrag dat een uitbetaling helemaal niet kan voorstellen.
+      //
+      // Hem toch overslaan haalt dus een echte beweging weg: de omzet blijft staan op het bedrag
+      // vóór de teruggaaf. En de opmerking twee regels hierboven zegt zelf dat teruggaven "the
+      // normal way a till goes the other way" zijn — precies het geval dat hier wegviel.
+      //
+      // De kosten-tak hiernaast doet dit al goed (een kas-UITGAVE op een kassadag telt gewoon);
+      // dit trekt 'omzet' met diezelfde lijn recht.
+      if (c.direction !== "out" && (c.date ? covered.has(c.date) : covered.size > 0)) continue;
       // Money IN is the sale; money OUT under 'omzet' is a refund OF a sale.
       const amt = c.direction === "out" ? -magnitude : magnitude;
-      if (c.btw_rate && c.btw_rate > 0) {
-        const net = amt / (1 + c.btw_rate / 100);
+      // [KAS-NULTARIEF] 0% is een ANTWOORD, geen ontbrekend antwoord.
+      //
+      // De voorwaarde was `c.btw_rate && c.btw_rate > 0`, dus een bewust op 0% geboekte
+      // contante verkoop viel in de tak eronder — die hem optelt bij `cashOmzetZonderBtw`, de
+      // teller die "omzet zonder tarief" heet. Twee dingen tegelijk fout:
+      //
+      //   · de omzet bereikt GEEN rubriek. Een 0-emmer met €0 btw gaat in aangifte.ts recht naar
+      //     rubriek 1e ("Leveringen/diensten belast met 0% of niet bij u belast"), precies waar
+      //     zo'n verkoop hoort — maar hij kwam nooit in een emmer terecht;
+      //   · en `cashOmzetZonderBtw` BLOKKEERT de gereedheid (readiness/route.ts). De eigenaar
+      //     die het juiste heeft ingevuld kon zijn kwartaal dus niet afronden, en de enige
+      //     uitweg was het tarief veranderen in iets wat niet waar is.
+      //
+      // /api/cash accepteert 0 uitdrukkelijk als geldige keuze ([0, 9, 21]), en de database
+      // bewaart 0 en NULL apart. Alleen NULL betekent "niet ingevuld".
+      if (c.btw_rate != null) {
+        const net = c.btw_rate > 0 ? amt / (1 + c.btw_rate / 100) : amt;
         omzet += net;
         btwVerschuldigd += amt - net;
         addSale(c.btw_rate, net, amt - net);
@@ -620,7 +671,10 @@ export function computeResult(
         // declared exempt owner this is turnover we booked as taxed WITHOUT being able to ask.
         // Counted, so the concept names it. (An UNRATED cash sale is already surfaced by
         // cashOmzetZonderBtw and reaches no rubriek, so it needs no second warning.)
-        if (exemptOn) onclassificeerbareOmzet += net;
+        // Alleen bij een tarief BOVEN nul: de zin hierboven gaat over omzet die we als BELAST
+        // hebben geboekt zonder het te kunnen vragen. Bij 0% is er niets belast, dus daar valt
+        // ook niets onclassificeerbaars over te melden.
+        if (exemptOn && c.btw_rate > 0) onclassificeerbareOmzet += net;
       } else {
         omzet += amt;
         cashOmzetZonderBtw += amt; // no rate → counted as revenue, flagged for BTW

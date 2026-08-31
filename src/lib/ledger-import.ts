@@ -99,6 +99,21 @@ function parseDate(v: Cell): string | null {
     const iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
     return isRealCalendarDate(iso) ? iso : null;
   }
+  // [PDF-ALS-BLAD] A two-digit year, which is what the POS prints on its grootboek: "29/08/26".
+  // The .xlsx of the same report carries a real date and never needed this; the PDF does, and
+  // without it a perfectly readable export parses its header and yields zero rows.
+  //
+  // 20YY, never 19YY. That is a choice about a century and it is made the way this app already
+  // makes it everywhere else: payment-date.ts sets PAYMENT_DATE_FLOOR at 2000-01-01 because no
+  // bookkeeping in this product predates it. Reading "26" as 1926 would produce a date that is
+  // valid, absurd, and silently outside every window the app computes over — the worst kind of
+  // wrong. Anchored LAST, so a four-digit year is always taken literally and this can never
+  // reinterpret one.
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2})(?!\d)/);
+  if (m) {
+    const iso = `20${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    return isRealCalendarDate(iso) ? iso : null;
+  }
   return null;
 }
 

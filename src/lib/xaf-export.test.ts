@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildXafFile, snapRate, type XafInput } from "./xaf-export";
+import { buildXafFile, snapRate, xmlCommentSafe, type XafInput } from "./xaf-export";
 
 function baseInput(): XafInput {
   return {
@@ -245,4 +245,152 @@ test("[XAF-DIFF] the cash journal agrees with the result engine, category by cat
   assert.equal(Math.round(-net("4000") * 100) / 100, Math.round(engine.kosten * 100) / 100, "kosten agree");
   // voorbelasting: only the documented bon claims (10.50).
   assert.equal(Math.round(-net("1400") * 100) / 100, Math.round(engine.btwVoorbelasting * 100) / 100, "voorbelasting agrees");
+});
+
+test("[XAF-LENGTE] a long customer name is clamped, because one of them refuses the WHOLE file", () => {
+  // custSupName is a String50 in XAF 3.2. A single customer with a long statutory name — a VvE, a
+  // stichting; over fifty characters is ordinary — made every XSD-validating importer reject the
+  // entire auditfile. The accountant then gets nothing at all: not a smaller administration, no
+  // administration, and an afternoon of hand-typing that the package exists to prevent.
+  const input = baseInput();
+  const langeNaam = "Vereniging van Eigenaren Residentie Beatrixpark te Amsterdam-Zuid";
+  assert.ok(langeNaam.length > 50, "the fixture is actually too long");
+  input.sales.push({
+    id: "inv-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: langeNaam,
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  const r = buildXafFile(input);
+  const naam = /<custSupName>(.*?)<\/custSupName>/.exec(r.xml)?.[1] ?? "";
+  assert.ok(naam.length > 0, "the customer is still in the file");
+  assert.ok(naam.length <= 50, `custSupName is ${naam.length} characters, the schema allows 50`);
+  assert.ok(langeNaam.startsWith(naam), "…and it is the start of the real name, not something else");
+
+  // The clamp is on the RAW value, before escaping. "&" is one character on paper and five in the
+  // string, so cutting at the fiftieth string position would slice an entity in half — no longer
+  // too long, and no longer valid XML either. Same failure, louder.
+  const metAmpersand = "Stichting Onderwijs & Opvang Midden-Nederland en Omstreken Regio Oost";
+  assert.ok(metAmpersand.length > 50);
+  const input2 = baseInput();
+  input2.sales.push({
+    id: "inv-2", invoiceNumber: "20260002", invoiceDate: "2026-03-11", clientName: metAmpersand,
+    totalExBtw: 100, btwAmount: 21, invoiceType: "factuur", rateLines: null,
+  });
+  const xml2 = buildXafFile(input2).xml;
+  const naam2 = /<custSupName>(.*?)<\/custSupName>/.exec(xml2)?.[1] ?? "";
+  assert.doesNotMatch(naam2, /&(?!(amp|lt|gt|quot|apos);)/, "no half-written entity survived the cut");
+  assert.match(naam2, /&amp;/, "…and the ampersand that IS in the first fifty characters is whole");
+
+  // The company's own city is the same String50 and the same typed-by-hand risk.
+  const input3 = baseInput();
+  input3.company.city = "Sint Anthonis gemeente Land van Cuijk provincie Noord-Brabant";
+  assert.ok(input3.company.city.length > 50);
+  const stad = /<city>(.*?)<\/city>/.exec(buildXafFile(input3).xml)?.[1] ?? "";
+  assert.ok(stad.length <= 50, `city is ${stad.length} characters`);
+});
+
+// ── [XAF-NIET-STIL] Wat er NIET in staat, staat erin ───────────────────────────────────────────
+//
+// Een auditbestand dat onvolledig is ziet er precies zo uit als een dat compleet is. De boekhouder
+// importeert het, de aansluiting met de aangifte klopt niet, en niemand weet waarom. Het aantal
+// reisde al mee in een HTTP-header — en beide plekken die dit bestand ophalen zijn een gewone
+// downloadlink, waar een browser geen responsheaders van toont. Die kop bereikte dus niemand.
+
+test("[XAF-NIET-STIL] een geweigerde post staat als waarschuwing boven in het bestand", () => {
+  const input = baseInput();
+  // Twee die het wél halen, zodat het bestand niet leeg is en de waarschuwing niet het enige is.
+  input.sales.push({
+    id: "ok-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: "Vermeulen BV",
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  // Geen factuurdatum → niet in een periode te plaatsen.
+  input.sales.push({
+    id: "weg-1", invoiceNumber: "20260002", invoiceDate: null, clientName: "Vermeulen BV",
+    totalExBtw: 500, btwAmount: 105, invoiceType: "factuur", rateLines: null,
+  });
+  // Tarief niet herleidbaar: 500 → 75 is 15%, en dat is geen Nederlands tarief.
+  input.sales.push({
+    id: "weg-2", invoiceNumber: "20260003", invoiceDate: "2026-04-01", clientName: "Vermeulen BV",
+    totalExBtw: 500, btwAmount: 75, invoiceType: "factuur", rateLines: null,
+  });
+
+  const r = buildXafFile(input);
+  assert.equal(r.skipped.length, 2, "twee posten geweigerd");
+
+  // Het bestand zegt het zelf, vóór het <auditfile>-element.
+  const kop = r.xml.slice(0, r.xml.indexOf("<auditfile"));
+  assert.match(kop, /LET OP: 2 post\(en\) staan NIET in dit auditbestand/);
+  assert.match(kop, /geen factuurdatum/);
+  assert.match(kop, /btw-tarief niet herleidbaar/);
+  assert.match(kop, /sluit daardoor niet aan op de aangifte/,
+    "de gevolgzin hoort erbij — een telling zonder betekenis leest als ruis");
+
+  // En het blijft een geldig XAF-document: het commentaar staat buiten de grammatica.
+  assert.match(r.xml, /^<\?xml version="1\.0" encoding="utf-8"\?>/);
+  assert.ok(r.xml.indexOf("<!--") < r.xml.indexOf("<auditfile"), "boven het document, niet erin");
+  assert.ok(r.xml.indexOf("-->") < r.xml.indexOf("<auditfile"), "en het is afgesloten");
+  assert.equal(r.totalDebit, r.totalCredit, "de rest van het bestand blijft in balans");
+});
+
+test("[XAF-NIET-STIL] een compleet bestand zwijgt", () => {
+  // Zwijgen is hier het juiste antwoord: een regel "0 overgeslagen" boven elk bestand is ruis, en
+  // ruis is precies wat een waarschuwing waardeloos maakt op de dag dat ze wél iets betekent.
+  const input = baseInput();
+  input.sales.push({
+    id: "ok-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: "Vermeulen BV",
+    totalExBtw: 1000, btwAmount: 210, invoiceType: "factuur", rateLines: null,
+  });
+  const r = buildXafFile(input);
+  assert.equal(r.skipped.length, 0);
+  assert.doesNotMatch(r.xml, /LET OP/);
+  assert.ok(!r.xml.slice(0, r.xml.indexOf("<auditfile")).includes("<!--"));
+});
+
+test("[XAF-NIET-STIL] een reden met streepjes kan het commentaar niet afsluiten", () => {
+  // Rechtstreeks op de functie, niet op de huidige redenen. Geen enkele reden in dit bestand
+  // bevat vandaag een `--`, dus een test die alleen de gebouwde uitvoer bekijkt kan niet falen —
+  // en een test die niet kan falen bewaakt niets. Dit is wat er straks misgaat, nu al gesteld.
+  assert.equal(xmlCommentSafe("geen datum"), "geen datum", "gewone tekst blijft heel");
+  assert.equal(xmlCommentSafe("bedrag -- nul"), "bedrag - nul");
+  assert.equal(xmlCommentSafe("balans --> stuk"), "balans -> stuk", "de afsluiter kan niet ontstaan");
+  assert.equal(xmlCommentSafe("a-----b"), "a-b");
+  assert.ok(!xmlCommentSafe("x -- y --- z").includes("--"));
+  // …en de em-dash die de echte redenen wél gebruiken is geen koppelteken en blijft dus staan.
+  assert.equal(xmlCommentSafe("geen factuurdatum — niet te plaatsen"), "geen factuurdatum — niet te plaatsen");
+});
+
+// ─── [XAF-REGIME] De notities staan waar ze gelezen worden ───────────────────────────────────────
+
+test("[XAF-REGIME] the regime notes stand ABOVE the auditfile, not behind its transactions", () => {
+  // Ze zeggen onder welk BTW-stelsel de datums in dit bestand gelezen moeten worden en wat er niet
+  // in gesplitst is — uitspraken die bepalen hoe alles eronder telt. Achter </company> stonden ze
+  // technisch in het bestand en praktisch achter duizenden regels journaalposten.
+  const r = buildXafFile({
+    ...baseInput(),
+    regimeNotes: ["Deze onderneming voert het KASSTELSEL. De journaalposten staan op factuurdatum."],
+  });
+  const noteAt = r.xml.indexOf("KASSTELSEL");
+  const openAt = r.xml.indexOf("<auditfile");
+  assert.ok(noteAt >= 0, "the regime note is not in the file at all");
+  assert.ok(noteAt < openAt, "the regime note sits after the opening tag — a reader meets it last");
+});
+
+test("[XAF-REGIME] a note with a double hyphen cannot break the file", () => {
+  // Een XML-commentaar eindigt bij `--`. esc() ontsnapt & < >, en juist niet dit — en in een
+  // commentaar is esc() bovendien verkeerd om: &amp; komt er letterlijk als "&amp;" te staan.
+  const r = buildXafFile({
+    ...baseInput(),
+    regimeNotes: ["Stelsel -- let op -- gewijzigd per 1 juli & daarna"],
+  });
+  // Het commentaar ZELF begint met `<!--` en eindigt met `-->`, dus de test moet naar de INHOUD
+  // kijken en niet naar de afbakening. (Eerste versie deed dat niet en viel over zijn eigen
+  // openingsteken — een test die zijn eigen delimiters aanziet voor de fout die hij zoekt.)
+  const body = r.xml.slice(r.xml.indexOf("<!--") + 4, r.xml.indexOf("-->"));
+  assert.doesNotMatch(body, /--/, "a raw double hyphen inside the comment makes the XML invalid");
+  assert.doesNotMatch(body, /&amp;/, "escaping & inside a comment shows the reader '&amp;' instead of '&'");
+  assert.match(body, /& daarna/, "the ampersand must survive as itself");
+});
+
+test("[XAF-REGIME] no notes means no empty comment block", () => {
+  const r = buildXafFile({ ...baseInput(), regimeNotes: [] });
+  assert.doesNotMatch(r.xml.slice(0, r.xml.indexOf("<auditfile")), /<!--/);
 });

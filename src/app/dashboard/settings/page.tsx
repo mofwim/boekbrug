@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
+import { amsterdamToday } from '@/lib/format-nl'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PushNotificationCard } from '@/components/settings/PushNotificationCard'
@@ -219,8 +220,21 @@ export default function SettingsPage() {
     // start (a clean boundary — no mid-quarter straddle): the current + future quarters compute
     // kas, past quarters stay factuur and are never retroactively rewritten. Keep the existing
     // since-date if already on kas. (A different agreed start-date is an accountant matter.)
-    const now = new Date()
-    const qStart = `${now.getFullYear()}-${String(Math.floor(now.getMonth() / 3) * 3 + 1).padStart(2, '0')}-01`
+    // [TZ-KLANT] De grens van het kwartaal in EUROPE/AMSTERDAM, niet in de tijdzone van het
+    // apparaat. Dit is een 'use client'-bestand, dus `new Date().getMonth()` is de maand van de
+    // BROWSER — en de twee lopen uiteen op precies de uren waarin deze datum het meeste doet.
+    //
+    // Op 1 april 01:00 Amsterdam is het bij een ondernemer met een klok op UTC−5 nog 31 maart.
+    // Zijn apparaat zegt dan maart, `qStart` wordt 2026-01-01, en het kwartaal dat hij zojuist
+    // heeft afgesloten wordt met terugwerkende kracht op kasstelsel gezet — precies wat de regel
+    // hierboven zegt nooit te mogen gebeuren ("past quarters stay factuur and are never
+    // retroactively rewritten"). Hetzelfde geldt voor de vrijstelling: die gaat dan in over een
+    // kwartaal dat al is aangegeven.
+    //
+    // amsterdamToday() werkt in de browser net zo goed als op de server: het is Intl met een vaste
+    // timeZone, niet de systeemklok.
+    const vandaag = amsterdamToday()
+    const qStart = `${vandaag.slice(0, 4)}-${String(Math.floor((Number(vandaag.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}-01`
     let since = vatSchemeSince
     if (vatScheme === 'kas' && (profile?.vat_scheme !== 'kas' || !since)) since = qStart
     // [VRIJGESTELD] Same anchoring, same reason: a declaration takes effect from the START of
@@ -346,7 +360,7 @@ export default function SettingsPage() {
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setNumberingError(d?.error || t('inst.opslaanMislukt'))
+        setNumberingError(failureText(res.status, d, t('inst.opslaanMislukt')))
         if (d?.locked) setNumberingLocked(true)
       } else {
         setNumberingNext(d.next ?? '')
@@ -375,7 +389,7 @@ export default function SettingsPage() {
     const data = await res.json()
 
     if (!res.ok) {
-      setErrorInvite(data.error || t('inst.uitnodigingMislukt'))
+      setErrorInvite(failureText(res.status, data, t('inst.uitnodigingMislukt')))
     } else if (data.warning === 'email_failed') {
       // [INVITE-HONEST] The invitation row was created but the e-mail did NOT go out (Resend
       // rejected it / no API key). Don't claim "verstuurd" — tell the owner to share the link
@@ -408,7 +422,7 @@ export default function SettingsPage() {
       setMayConfirm(false)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('inst.ontkoppelenMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('inst.ontkoppelenMislukt')), { tone: 'error' })
     }
   }
 
@@ -450,7 +464,7 @@ export default function SettingsPage() {
       else setMayConfirm(!aan)
     } else {
       const data = await res.json().catch(() => ({}))
-      toast(data.error || t('inst.wijzigenMislukt'), { tone: 'error' })
+      toast(failureText(res.status, data, t('inst.wijzigenMislukt')), { tone: 'error' })
     }
     setMandaatBezig(null)
   }

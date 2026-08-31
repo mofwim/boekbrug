@@ -26,7 +26,12 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { useRouter } from 'next/navigation'
 import { M3, R, EL1, COLUMN } from '@/lib/design/tokens'
 import { UNITS, DEFAULT_UNIT_CODE, unitLabel } from '@/lib/units'
+// [BTW-ROUND] Eén sommatie voor de drie wettelijke bedragen — dezelfde die de server gebruikt.
+import { computeInvoiceTotals } from '@/lib/invoice-totals'
+// [DATE-NL] dd-mm-jjjj, ongeacht de browsertaal.
+import DateFieldNL from '@/components/ui/DateFieldNL'
 import VraagMachtiging, { type KoppelKlant } from './VraagMachtiging'
+import { failureText } from '@/lib/server-message'
 
 /** Eén klant die deze boekhouder gemachtigd heeft. */
 export interface GemachtigdeKlant {
@@ -101,18 +106,24 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
 
   const klant = useMemo(() => klanten.find((k) => k.id === klantId) ?? null, [klanten, klantId])
 
-  // Zelfde rekensom als draft-totals.ts, alleen om te TONEN. De server rekent hem opnieuw en die
-  // uitkomst telt — een browser die zijn eigen totaal mag opsturen is precies wat /api/invoice/draft
-  // heeft afgeschaft.
+  // [BTW-ROUND] Via computeInvoiceTotals, niet via een eigen lus. "Alleen om te TONEN" was het
+  // argument voor de kopie die hier stond, en precies dat argument is waarom het misgaat: de
+  // server rekent hem opnieuw met de gedeelde functie, en die twee lopen op een factuur met
+  // gemengde tarieven een cent uiteen (gemeten: 23,88 tegen 23,89). Het bedrag dat de boekhouder
+  // op zijn scherm ziet is dan niet het bedrag op de factuur die de klant krijgt — en dat is de
+  // enige plek waar een cent verschil een vraag oplevert die niemand kan beantwoorden.
+  //
+  // Dezelfde reden waarom de twee eigenaars-editors deze kopie al kwijt zijn. Dit scherm stond
+  // buiten de poort die dat bewaakt: die liep langs drie met de hand getypte bestanden.
   const totalen = useMemo(() => {
-    let ex = 0
-    let btw = 0
-    for (const r of regels) {
-      const regelEx = naarGetal(r.quantity) * naarGetal(r.unit_price)
-      ex += regelEx
-      btw += (regelEx * r.btw_rate) / 100
-    }
-    return { ex, btw, inc: ex + btw }
+    const t = computeInvoiceTotals(
+      regels.map((r) => ({
+        quantity: naarGetal(r.quantity),
+        unit_price: naarGetal(r.unit_price),
+        btw_rate: r.btw_rate,
+      })),
+    )
+    return { ex: t.total_ex_btw, btw: t.btw_amount, inc: t.total_inc_btw }
   }, [regels])
 
   function pasRegelAan(i: number, veld: keyof Regel, waarde: string | number) {
@@ -153,7 +164,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const conceptData = await concept.json().catch(() => ({}))
       if (!concept.ok || !conceptData?.invoiceId) {
-        throw new Error(conceptData?.error || t('bh.fact.foutConcept'))
+        throw new Error(failureText(concept.status, conceptData, t('bh.fact.foutConcept')))
       }
 
       // Stap 2 — uitgeven. Hier valt het nummer uit de reeks van de KLANT (art. 35), krijgt hij
@@ -165,7 +176,7 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
       })
       const verzondenData = await verzonden.json().catch(() => ({}))
       if (!verzonden.ok) {
-        throw new Error(verzondenData?.error || t('bh.fact.foutVersturen'))
+        throw new Error(failureText(verzonden.status, verzondenData, t('bh.fact.foutVersturen')))
       }
 
       router.push(`/dashboard/invoice/${conceptData.invoiceId}`)
@@ -328,7 +339,11 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
             </div>
             <div>
               <label style={label} htmlFor="factuurdatum">{t('bh.fact.labelDatum')}</label>
-              <input id="factuurdatum" type="date" style={veld} value={factuurdatum} onChange={(e) => setFactuurdatum(e.target.value)} />
+              {/* [DATE-NL] Geen native date-input: die zet zijn segmenten in de volgorde van de
+                  BROWSER-locale, dus een boekhouder met een Engelse browser typt 03-08 waar hij
+                  3 augustus bedoelt en er staat 8 maart op de factuur. Dit scherm stond buiten de
+                  poort die dat afvangt — die keek alleen in src/app. */}
+              <DateFieldNL id="factuurdatum" style={veld} value={factuurdatum} onChange={setFactuurdatum} aria-label={t('bh.fact.labelDatum')} />
             </div>
           </div>
         </div>

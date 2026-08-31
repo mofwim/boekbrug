@@ -22,6 +22,9 @@ export interface KlantInvoice {
   id: string; invoice_number: string | null; invoice_date: string | null
   due_date: string | null; status: string | null; total_inc_btw: number | null
   payment_date: string | null
+  // [DEEL-CREDIT] What the totals above the history are computed from — the same three columns
+  // summarise() and openAmount() read everywhere else in this app.
+  amount_paid: number | null; invoice_type: string | null; original_invoice_id: string | null
 }
 interface Client {
   id: string; name: string; email: string | null; kvk_number: string | null

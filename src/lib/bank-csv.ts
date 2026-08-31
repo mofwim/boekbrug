@@ -162,6 +162,12 @@ interface ColumnMap {
   typeCode: number;    // ING Code / Mutatiesoort, or -1
   mandate: number;     // Rabo Machtigingskenmerk, or -1
   creditor: number;    // Rabo Incassant ID, or -1
+  // [CSV-MUNT] The column that says which currency the amounts are in. Rabobank calls it "Munt",
+  // ABN AMRO "muntsoort", international exports "Currency". It was never mapped, and the parser
+  // hard-coded "EUR" for every file — so bank-ingest's refusal of a non-euro statement, which
+  // reads exactly this value, could not fire for a single CSV. A dollar statement was booked as
+  // euros: $ 1.000,00 landed as € 1.000,00 in kosten, in de matching and in the afletterset.
+  currency: number;    // Rabo Munt / ABN muntsoort / Currency, or -1
 }
 
 // A header matches a role if ANY of its regexes hit. Order matters: we resolve
@@ -224,7 +230,14 @@ function mapColumns(headers: string[]): ColumnMap {
   const mandate = find(/machtigingskenmerk|machtiging ?id|mandaat|mandate/);
   const creditor = find(/incassant|creditor ?id|crediteur ?id/);
 
-  return { date, amount, sign, name, iban, ownIban, descCols, typeCode, mandate, creditor };
+  // [CSV-MUNT] "Valuta" is the one word that means two things in a Dutch bank export: the CURRENCY
+  // ("Valuta: EUR") and the value date ("Valutadatum"). The date role above excludes /valuta/ for
+  // exactly that reason, so this role must exclude the date words back — otherwise a
+  // "Valutadatum" column would be read as the file's currency and every code check would compare
+  // against "24-".  A koers-/rate-column names a currency too but holds a NUMBER, not a code.
+  const currency = find(/munt|muntsoort|currency|valuta/, /datum|date|koers|rate|exchange|omreken/);
+
+  return { date, amount, sign, name, iban, ownIban, descCols, typeCode, mandate, creditor, currency };
 }
 
 // ─── Row → BankTransaction ────────────────────────────────────────────────────
@@ -245,12 +258,39 @@ function applySignFlag(amount: number, flag: string): number {
   return amount;
 }
 
+/**
+ * [CSV-MUNT] A cell → an ISO 4217 code, or null when it is not one.
+ *
+ * The rule is ONE run of letters, and it is exactly three long. That reads every notation a real
+ * export uses — "EUR", "eur", " EUR ", "EUR.", "EUR 1.000,00", "1.000,00 EUR" — and rejects the
+ * two things that would make a description decide what money a file is in:
+ *
+ *   · "n.v.t." reduces to three LETTERS but is three runs, not one. Stripping every non-letter
+ *     first (the first version of this function) turned it into the currency "NVT", and a
+ *     currency that is not EUR is a refused import — a whole euro statement bounced over a
+ *     bank's way of writing "not applicable".
+ *   · "US Dollar", "Betaling aan leverancier" — more than one run. A currency is a code here,
+ *     never a word, because the only thing downstream does with it is compare it to "EUR".
+ *
+ * Erring towards null is safe on both sides: a cell we cannot read as a code leaves the file's
+ * default in place, and a file that genuinely is in dollars says so in a column we DO read.
+ */
+export function readCurrencyCode(value: string): string | null {
+  const runs = (value || "").toUpperCase().match(/[A-Z]+/g) ?? [];
+  return runs.length === 1 && runs[0].length === 3 ? runs[0] : null;
+}
+
 function rowToTransaction(row: string[], map: ColumnMap, currency: string): BankTransaction | null {
   const date = parseBankDate(cell(row, map.date));
   const rawAmount = parseBankAmount(cell(row, map.amount));
   if (!date || rawAmount == null) return null;
 
   const amount = map.sign >= 0 ? applySignFlag(rawAmount, cell(row, map.sign)) : rawAmount;
+
+  // [CSV-MUNT] Per ROW, not per file. A statement can carry one currency per line (and CAMT
+  // genuinely does, per <Ntry>), so the refusal downstream reads the lines as well as the header.
+  // No column, or a cell that is not a code → the file's default, which is what it was before.
+  const rowCurrency = map.currency >= 0 ? (readCurrencyCode(cell(row, map.currency)) ?? currency) : currency;
 
   const description = map.descCols
     .map((i) => cell(row, i))
@@ -275,7 +315,7 @@ function rowToTransaction(row: string[], map: ColumnMap, currency: string): Bank
   return {
     date,
     amount,
-    currency,
+    currency: rowCurrency,
     description,
     counterpartName,
     counterpartIban,
@@ -370,7 +410,10 @@ export function parseBankCsv(content: string): ParseResult {
     };
   }
 
-  const currency = "EUR";
+  // [CSV-MUNT] The fallback, not the answer. A file without a currency column says nothing about
+  // its currency, and nothing can detect an undeclared foreign one — so an unmarked file stays
+  // euros, exactly as before. What changes is the file that DOES say: it is now believed.
+  const defaultCurrency = "EUR";
   const transactions: BankTransaction[] = [];
   let ownIban: string | null = null;
   let dropped = 0;
@@ -386,7 +429,7 @@ export function parseBankCsv(content: string): ParseResult {
       const v = cell(row, map.ownIban).replace(/\s/g, "");
       if (/^[A-Z]{2}\d{2}[A-Z0-9]{4,}$/.test(v)) ownIban = v;
     }
-    const tx = rowToTransaction(row, map, currency);
+    const tx = rowToTransaction(row, map, defaultCurrency);
     if (tx) {
       transactions.push(tx);
       if (map.sign >= 0) {
@@ -407,6 +450,13 @@ export function parseBankCsv(content: string): ParseResult {
       `${onbeslisteVlag} rij(en) hadden een Af/Bij-vlag die we niet herkennen — de richting is daar uit het bedrag zelf gelezen. Controleer die regels even.`,
     );
   }
+
+  // [CSV-MUNT] Eén munt in het hele bestand → dat is de valuta van het afschrift. Meerdere →
+  // geen enkele mag zich als de valuta van het afschrift voordoen; de regels dragen hun eigen
+  // munt en de weigering verderop leest die. "EUR" hier bij twijfel is niet een gok dat het
+  // euro's zijn, maar het ontbreken van een afschriftbrede uitspraak.
+  const seenCurrencies = [...new Set(transactions.map((t) => t.currency).filter(Boolean))];
+  const currency = seenCurrencies.length === 1 ? seenCurrencies[0] : defaultCurrency;
 
   return { format: "CSV", accountIban: ownIban, accountName: null, currency, transactions, parseErrors: errors };
 }
@@ -432,7 +482,13 @@ export const EXPORT_HEADERS = [
  *  are kept as NUMBERS so Excel/SheetJS treats them numerically; the sign column
  *  is a human-readable Bij/Af. Sorted oldest-first. */
 export function toExportMatrix(result: ParseResult): (string | number)[][] {
-  const rows: (string | number)[][] = [[...EXPORT_HEADERS]];
+  // [CSV-MUNT] De kop noemt de munt van HET BESTAND, niet altijd de euro. Deze omzetter staat op
+  // een publieke pagina en wordt door iedereen gebruikt; "Bedrag (EUR)" boven dollarbedragen zetten
+  // is een onjuiste uitspraak over geld in het bestand dat de bezoeker meeneemt naar zijn eigen
+  // boekhouding. Bij een bestand zonder muntkolom staat er EUR, precies zoals hiervoor.
+  const cur = (result.currency || "EUR").toUpperCase();
+  const headers = EXPORT_HEADERS.map((h) => (h === "Bedrag (EUR)" ? `Bedrag (${cur})` : h));
+  const rows: (string | number)[][] = [headers];
   const sorted = [...result.transactions].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   for (const t of sorted) {
     rows.push([

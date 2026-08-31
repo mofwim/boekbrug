@@ -42,6 +42,7 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import { failureText } from '@/lib/server-message'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -216,7 +217,7 @@ export default function InvoiceCorrectionModal({
         // [UI-HONESTY] Say what the server said. Its refusals are permanent states with a way out
         // named in them ("reverse the payment first", "ask your accountant", "that number already
         // exists") — a generic "try again" would send the owner at a button that cannot work.
-        onMessage(typeof data.error === 'string' ? data.error : t('corr.mislukt'))
+        onMessage(failureText(res.status, data, t('corr.mislukt')))
         return
       }
       // Only now does the caller's list follow. Writing it optimistically would show a corrected

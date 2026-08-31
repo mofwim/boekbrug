@@ -61,6 +61,8 @@ export interface IncassoInvoice extends HealthInput {
   due_date: string | null
   client_name: string | null
   amount_paid?: number | null
+  // [INCASSO-ONGEDAAN] field_confidence is NOT redeclared here: HealthInput already carries it,
+  // and the decision below reads it to see the marker this module itself writes.
 }
 
 /**
@@ -82,6 +84,7 @@ export type IncassoHold =
   | 'iban-changed'      // [IBAN-WISSEL] the fraud signature — the LAST thing to auto-pay
   | 'multiple-invoices' // one of several invoices in the file was read; the rest exist nowhere
   | 'arithmetic'        // the breakdown does not add up, so the amount itself is not a fact
+  | 'undone'            // [INCASSO-ONGEDAAN] we booked this once and the owner put it back open
 
 /** Dutch, because the owner reads it. One sentence per hold, said the way a person would. */
 export const INCASSO_HOLD_REASON: Record<IncassoHold, string> = {
@@ -93,6 +96,7 @@ export const INCASSO_HOLD_REASON: Record<IncassoHold, string> = {
   'not-yet-due': 'de vervaldatum is nog niet geweest — het geld staat nog op je rekening',
   'no-amount': 'er staat geen bedrag op deze factuur',
   'duplicate': 'deze factuur lijkt op een factuur die je al hebt — kijk er eerst zelf naar',
+  'undone': 'je hebt deze afschrijving zelf teruggezet op openstaand — we boeken hem niet opnieuw',
   'iban-changed': 'het rekeningnummer van deze leverancier is veranderd — controleer dit eerst zelf',
   'multiple-invoices': 'er lijken meerdere facturen in dit bestand te zitten',
   'arithmetic': 'de bedragen op deze factuur kloppen niet met elkaar',
@@ -117,6 +121,28 @@ export type IncassoDecision =
 export function incassoDecision(inv: IncassoInvoice, today: string): IncassoDecision {
   if (inv.direction !== 'incoming') return { settle: false, hold: 'not-incoming' }
   if (inv.status !== 'received') return { settle: false, hold: 'not-open' }
+  // [INCASSO-ONGEDAAN] We already booked this one, and it is open again. Somebody put it back.
+  //
+  // The marker is written only AFTER a successful booking, so carrying it while standing at
+  // 'received' can mean exactly one thing: the payment we assumed was reversed — by the owner
+  // (which is what the cron's own notification tells them to do after a storno: "kloppen ze niet?
+  // Zet ze terug op openstaand"), or by the accountant.
+  //
+  // Without this check that correction does not survive the hour. The idempotency key is derived
+  // from the invoice and its vervaldatum, so it is identical on every run — but it is STORED in
+  // the bank_tx_invoices row, and the undo deletes that row. The replay lookup then misses, the
+  // selection still matches (status 'received', direction incoming), and the pass books the whole
+  // balance again. Hourly, indefinitely, until the owner switches the supplier off entirely.
+  //
+  // What that costs is not a duplicate: amount_paid is clamped, so the books stay self-consistent
+  // while asserting a payment that never happened. The invoice leaves 'nog te betalen', and under
+  // the kasstelsel the restored payment_date — the vervaldatum — decides which quarter the
+  // voorbelasting is claimed in, so it is deducted on money that never left the account.
+  //
+  // Holding is the safe side, and it is the side this whole function already takes: the invoice
+  // stays open and visible, and the owner is told why instead of watching it flip back.
+  if (wasAutoIncasso(inv.field_confidence)) return { settle: false, hold: 'undone' }
+
   if (inv.accountant_status === 'verwerkt') return { settle: false, hold: 'verwerkt' }
 
   // [CREDIT-SAFE] The same single answer the manage screen reads. A creditnota — or an invoice

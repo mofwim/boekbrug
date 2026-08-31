@@ -18,6 +18,11 @@ import { getSessionUser } from "@/lib/session-user";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { isBeheerder, buildBeheerOverview } from "@/lib/beheer";
+// [BEHEER-GEZOND] Draaien de achtergrondtaken nog? Dat oordeel bestond al (judgeCron) en had één
+// lezer: een endpoint dat je moet curlen. Hier kijkt een mens ernaar.
+import { readSystemHealth, readEventSummary } from "@/lib/beheer-health";
+// [LEESKWALITEIT] Hoe vaak moest een mens de lezer verbeteren, en bij welke leverancier.
+import { readReaderQuality } from "@/lib/reader-quality";
 import { decidePlan } from "@/lib/subscription";
 import { BeheerScherm } from "./BeheerScherm";
 
@@ -30,6 +35,14 @@ export default async function BeheerPage() {
   if (!user || !isBeheerder(user.email)) notFound();
 
   const pipeline = createPipelineClient();
+
+  // [BEHEER-GEZOND] Eén lezer voor de hartslag, gedeeld met de cron die het alarm mailt — twee
+  // lezers van dezelfde tabel drijven uit elkaar, en dan staat deze pagina groen terwijl de mail
+  // iets anders rekende. De klok wordt daar gelezen, niet hier: in een servercomponent is dat een
+  // onzuivere aanroep tijdens de render.
+  const systeem = await readSystemHealth(pipeline);
+  // [STORINGSBEELD] Wat er de laatste week misging. Zelfde vorm: één lezer, klok daarbinnen.
+  const storingen = await readEventSummary(pipeline);
 
   // [PAGINATION] Both reads paged: the day this app has more than ~1000 accounts is exactly the
   // day the operator page matters most, and a silently truncated user list on an operator screen
@@ -83,11 +96,16 @@ export default async function BeheerPage() {
   // Eén klokstand voor de hele lijst — en buiten de render-expressie, want een servercomponent
   // is ook een component en de lint-regel over onzuivere functies geldt er onverkort.
   const nowMs = new Date().getTime();
+
+  // [LEESKWALITEIT] Over 90 dagen, en over ELK account — dit is de enige plek waar de lezer over
+  // administraties heen te beoordelen is. Faalt de lezing, dan komt er null uit en zegt het paneel
+  // dat het niet kon kijken, in plaats van een geruststellende nul.
+  const leeskwaliteit = await readReaderQuality(pipeline, { nowMs, windowDays: 90, recentLimit: 12 });
   const overview = buildBeheerOverview(
     rows,
     links,
     (p) => decidePlan({ role: p.role, subscriptionStatus: p.subscriptionStatus, currentPeriodEnd: p.currentPeriodEnd, nowMs }).plan,
   );
 
-  return <BeheerScherm overview={overview} />;
+  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} leeskwaliteit={leeskwaliteit} />;
 }

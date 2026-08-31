@@ -136,3 +136,369 @@ Two things are not yet true, and neither is hidden in this repo — both were al
 before this audit and are confirmed by it. The system has never been proven end-to-end against a
 live database, and it reads one acquirer format. The first is a day of work with credentials. The
 second is ten real files away, and no more code will substitute for them.
+
+---
+
+## 8. Re-measured, 30 August 2026 — §6 items 2 and 4 worked, by the same method
+
+Same two questions as §0: does a test import it, and does it perform I/O. Nothing below is an
+impression.
+
+**§6 item 2 was already done.** `result-range-assemble.ts` exists (459 lines, 17 tests) and
+`compute-result-range.ts` is down to 268 lines. The extraction this audit asked for happened in
+commit 8b90230, which named the problem exactly: _"The engine behind 'je financiële waarheid' had
+no behavioural test, and could not have one."_
+
+**§6 item 4 splits in two, and one half was reachable.** The I/O halves of `cash-settle.ts` and
+`incasso-settle.ts` still need a database. But the *decisions* they carry do not, and those were
+the untested part that mattered:
+
+| Decision | Where | What a wrong answer does |
+| --- | --- | --- |
+| `belongsToIncassoSupplier` | `incasso-settle.ts` | books an invoice nobody paid |
+| `incassoClientKey` | `incasso-settle.ts` | the idempotency lock; an unstable key double-books |
+| `pnlRole` / `categoryLabel` | `bank-categories.ts` | sends a confirmed bank line to the wrong side of the P&L, or nowhere |
+| quarter boundary | `snelstart-queue` vs `kasboek` | puts a euro in the wrong btw-aangifte |
+| `buildPaymentLinkRows` | `bank-tx-links.ts` | a NULL `amount_applied` re-opens a settled invoice at its full total |
+
+The last one needed the same extraction as item 2, on a module this audit did not list:
+`bank-tx-links.ts` writes the rows `invoices.amount_paid` is derived from, and everything in it
+did I/O except that single decision. It is `buildPaymentLinkRows` now — same logic, testable.
+
+Each of the five was verified by breaking it and watching the new test fail: a drifted quarter end,
+a weakened amount guard, a removed honesty line. A test that has never failed has not been shown to
+work.
+
+**What this did NOT change, and the reason to be careful reading it.** Two claims in §5 and §7
+stand untouched, and they are the two that matter commercially:
+
+* the system has still never been proven end-to-end against a live database;
+* `eft-parser.ts` still reads one acquirer format.
+
+Neither is a coverage problem and neither is closed by more tests. §6 items 1 and 3 remain exactly
+as written.
+
+**One correction to how §5 reads.** "The real risk is coverage, not correctness" is right about the
+assembly and misleading about the whole. Coverage here is not organised by module: it lives in
+source-level gates in `lifecycle-gates.test.ts` and in files named after the GUARD rather than the
+module — `credit-backstop.test.ts` and `ex-incl-fix.test.ts` test functions that live in `ai.ts`,
+which itself has no `ai.test.ts`. Counting test files per module therefore understates it. Three of
+the modules that looked untested on that count turned out to be covered, and one file written on
+that assumption had to be deleted again. Measure by "which decision is asserted", not by "which
+file has a neighbour".
+
+---
+
+## 9. The four defects the adversarial pass found, closed 31 August 2026
+
+§8 measured the *coverage* gap. This section is the other kind of finding: places where the code
+was wrong, not merely unwatched. All four came out of a fan-out audit over the money path whose
+findings were then verified one at a time against production data before a line was changed —
+because a plausible finding that nobody checked is how an audit starts costing more than it saves.
+
+Two of the four are gone. Two were real in shape and reachable by nobody today; both are recorded
+here as *measured*, not as *dismissed*.
+
+| # | Where | What it did | State |
+| --- | --- | --- | --- |
+| A | `auto-incasso.ts` | an auto-collection the owner reversed was re-booked within the hour, forever | **fixed** |
+| B | `cash-settle.ts` | a failed read was misread as "the column is gone", deleting real cash movements | **fixed** |
+| C | `cash-settle.ts` | an unreadable invoice direction is guessed, silently | **guess kept, now reported** |
+| D | `cron/reconcile` | an owner who paid only part in cash was invisible to the hourly pass | **fixed** |
+
+**A — the undo that did not survive the hour.** The idempotency key is derived from the invoice and
+its vervaldatum, so it is identical on every run. But it is *stored* in the `bank_tx_invoices` row,
+and the undo deletes that row — so the correction removed the very record that made the booking
+unrepeatable. Nothing in the undo path knew what an incasso was; nothing in the settle path read
+the marker it writes itself. `amount_paid` is clamped, so the books stayed self-consistent while
+asserting a payment that never happened, and under the kasstelsel the restored `payment_date`
+decided the quarter — voorbelasting claimed on money that never left the account.
+
+**B — the probe that could not tell two things apart.** Documented in full in its own commit. The
+short version: `settlement_id` exists in production, so the deploy window the fallback was written
+for has closed, and every `false` the probe could still return was a false one — each costing two
+hard-deleted cash movements and a third re-dated across a possible quarter end.
+
+**C — why the guess stays.** Refusing to guess is worse than guessing here, and that is worth
+writing down so nobody "fixes" it later: `computeCashSettlementSync` deletes every linked entry
+whose invoice is absent from the paid set, so dropping an invoice with an unreadable direction
+would *remove* a real cash movement rather than merely mis-sign it. The column is nullable with no
+default and no check constraint, and is clean today — 605 invoices, 586 incoming, 19 outgoing, not
+one null. The report is what will say the day that changes.
+
+**D — the hole in the safety net.** "Who has cash to reconcile" is a definition written once and
+spelled twice; the second spelling, in the cron, had only half of it. The half it lost was exactly
+the case the cron exists for — the owner whose synchronous reconcile failed and who therefore has
+no drawer entry to be discovered by.
+
+### What this changes about §5 and §7
+
+Nothing in §7. The verdict there is about the arithmetic and it still holds; none of these four was
+an arithmetic error. All four were the same shape, and it is the shape §5 predicted: **a decision
+taken correctly in one place and not read in another.** A key that is stable but stored where an
+undo deletes it. A probe whose two possible failures mean opposite things. A definition spelled
+twice. That is the assembly layer, not the engines — which is precisely where §3 said the risk was.
+
+§6 items 1 and 3 remain open and are still not closable from here: one needs a live database pass,
+the other needs real acquirer files.
+
+---
+
+## 10. One signature, hunted deliberately — 31 August 2026
+
+§9 ended on the observation that all four defects shared a shape: **not an arithmetic error, but a
+decision taken correctly in one place and not read in another.** That is a searchable signature, so
+this pass searched for it on purpose rather than asking again for "bugs" — one seam class per
+reader (idempotency keys, markers, definitions spelled twice, capability probes, undo paths,
+coercions, rounding, period assignment, truncation, owner scoping), each finding then put to three
+independent skeptics instructed to refute.
+
+The refute rate is the useful number: **most findings did not survive.** Nothing below is included
+because an agent asserted it.
+
+### Fixed, each verified against production before a line was changed
+
+| What | Where | Why it was the signature |
+| --- | --- | --- |
+| A reversed auto-incasso re-booked hourly | `auto-incasso.ts` | the idempotency key was stable, and stored in the row the undo deletes |
+| "Opnieuw inlezen" erased the guard for it | `reimport-carry.ts` | the marker that replaced the key was not on the carry allow-list |
+| Four more probes read "busy" as "column gone" | `column-probe.ts` | one question, five spellings, five copies of one bug |
+| € 5.321,68 of phantom discrepancy | `money-invariants.ts` | the write path was fixed; the rows it left were not |
+| Three audit checks that could never fire | `scripts/money-audit.ts` | the checks were right; the caller fed them two columns short |
+| Auto-collected AND dunned, on the same invoice | `cron/payment-due` | "which supplier collects this?" was spelled twice, and the spellings disagree |
+| A slow query moved cash payments into the wrong BTW quarter | `kas-payment-events-fetch.ts` | the probe defect a sixth time, wearing a try/catch instead of a boolean |
+| The board warned about a link the owner made by hand | `bank/unlink`, `bank/confirm` | a marker with one writer, one clearer, and two paths that should have cleared it |
+| Two reads that said "nothing here" before finishing | `verkoop/page.tsx`, `incoming/missing` | a recovery written, argued for, and unreachable because the read never threw |
+
+The payment-due one is the sharpest of the set, because the disagreement is
+load-bearing in both directions: `belongsToIncassoSupplier` falls through to the
+supplier's name key — deliberately, since that is what reaches invoices imported
+before the supplier registry existed — while the reminder ladder matched on
+`supplier_id` alone. An invoice in that gap is collected by the bank *and* claimed
+by the ladder, and the route's own comment already said what that costs: "de
+eigenaar maakt dan een tweede keer over en moet dat bij zijn leverancier
+terugvragen." Two invoices were sitting in it.
+
+The probe cluster is worth reading as the lesson. I fixed ONE of them by hand, wrote it up, and the
+signature-hunt then found the same eight lines in four more files — including one whose own
+`[NO-SILENT-EMPTY]` comment forbids exactly the outcome its probe produced, and which defended the
+read one line *below* the probe that gates it. A rule guarded by a hand-written list is not
+guarded; a rule with five spellings is five rules.
+
+### Verified and NOT fixed, with the reason
+
+**The turnover import can overwrite a day the owner already claimed.** `daySourceConflict`
+(`till-day.ts:296`) is the guard for "one day, one source". It has exactly two readers — both manual
+doors (`till/sale`, `turnover/day`). The single writer, `turnover-book.ts:105`, upserts on
+`(user_id, turnover_date)` without consulting it; `till-book.ts:95` says so in its own comment. So a
+Z-report import can claim a day that already carries hand-entered cash `omzet` rows, and the
+covered-day rule then skips those rows as presumed duplicates — the hand-entered turnover leaves the
+books silently.
+
+Structure verified here (two readers, one writer, and the writer's own admission). Not fixed for two
+reasons, both worth stating rather than quietly deferring: it needs a product decision (should an
+import refuse such a day, warn, or merge — and what does the owner see?), and another session was
+editing this exact area the same night, including the covered-day rule itself. A collision in cash
+accounting bought nothing that waiting does not.
+
+**A concurrent partial creditnota can pass a gross-only database guard.** Three skeptics
+independently traced this end to end: `creditnota_partial.sql:40` drops the unique index that
+serialised this path, and the replacement trigger sums document totals rather than per-line
+quantities, while the per-line ceiling is enforced in the route between a read and an insert. Two
+simultaneous requests for the same line both land.
+
+Carried here on skeptic agreement, NOT on my own end-to-end reading, and that distinction is the
+point of writing it down. It also needs a migration, and a migration against a production database
+while nobody is awake is not a thing to do on an agent's say-so.
+
+### For the owner, not for the code
+
+The revived duplicate check finds **eleven groups of live purchase invoices** sharing a supplier and
+an invoice number modulo punctuation — one of them three copies — including the pair the check was
+written for: `26/1876` and `26 / 1876`, same date, same € 665,02, both paid.
+
+Ten of the eleven were created between 5 and 19 July, and `possible-duplicate-collect.ts` landed on
+19 August. So they are residue and not a detector failure — the detector did not miss them, it did
+not exist. Each surviving copy counts its total into kosten and its BTW into voorbelasting a second
+time, so this is real exposure and not a display problem. Nothing was touched: which of two invoices
+is the real one is a judgement about somebody's administration, and §6's rule holds.
+
+### Still open from this pass, in the order I would take them
+
+Each survived three skeptics. None has been changed, and the reason differs:
+
+1. **A concurrent partial creditnota passes a gross-only database guard**
+   (`creditnota_partial.sql:74`). Needs a migration; not something to apply to a
+   production database on an agent's own judgement.
+2. **An undone bank booking is re-made within the hour** (`bank/unlink`). The same
+   defect as the auto-incasso one, and the module header's promise — "fully
+   reversible (owner can unlink)" — is what it breaks. Needs a design choice
+   (a new column, or overloading `auto_match_reason`) with effects on the readiness
+   board, and `bank-auto-confirm.ts` was being edited by another session the same
+   night.
+3. **A turnover import can claim a day the owner already filled by hand**
+   (`turnover-book.ts:105`). Verified structurally: `daySourceConflict` has two
+   readers, both manual doors, and the single writer consults neither. Needs a
+   product decision about what the owner sees.
+4. **The filed aangifte rounds once where the concept rounds per rubriek**
+   (`aangifte/route.ts:465`), producing a €1 phantom suppletie prompt on an
+   unchanged return.
+5. **An ignored bank line keeps counting in the P&L** (`bank/ignore`). Marking a
+   duplicate 'dubbel' hides it from the matcher and leaves its cost in kosten and
+   its BTW in voorbelasting.
+
+The pattern across everything fixed tonight is worth keeping in front of whoever
+picks these up: **not one was an arithmetic error.** Every single one was a fact
+established correctly in one place and not read in another — a key stored where an
+undo deletes it, a marker not on a carry list, a definition spelled twice, a
+recovery path that could not be reached, a probe whose two failures mean opposite
+things. The engines were never the risk. The seams are.
+
+## 11. A second pass, in parallel — 31 August 2026
+
+Written by a session working alongside §10, on the same night. It found no arithmetic error either,
+and that is now two independent passes reaching the same conclusion by different routes.
+
+The shape here was slightly different from §10's. Where that pass hunted one signature — a fact
+established in one place and not read in another — this one kept running into a second: **a check
+that could not fire.** A guard that answers "fine" to every input is not a weak guard, it is the
+reason nobody looks any more.
+
+### Fixed, each verified against production before a line was changed
+
+**A dollar statement was booked as euros, on both doors that write bank transactions.**
+`bank-ingest` has refused non-euro statements from the start, reading `parsed.currency` — and
+`parseBankCsv` wrote the literal `"EUR"` into that field for every file it parsed, whatever the
+file's own Munt/Valuta/Currency column said. The refusal could not fire for a single CSV. The bank
+FEED (Enable Banking, whose own sample data is Danish) had no check at all, and that is the worse
+door: it runs on a cron with nobody watching. `bank_transactions` has no currency column, so a
+foreign line stored as a number is thereafter indistinguishable from euros. Also closed for CAMT,
+which carries `Ccy` per `<Ntry>` and could declare EUR at the top while holding dollar lines.
+
+**Emptying the prullenbak could leave a booking without its bewijsstuk.** Eight foreign keys point
+at `documents`; seven are `ON DELETE SET NULL` and one is `CASCADE`. The delete SUCCEEDED and took
+the link with it — no error, no audit line, and afterwards no way to tell an invoice that never had
+a scan from one whose scan was thrown away. The CASCADE one is worse than it looks:
+`bank_statement_periods.document_id` deletes the COVERAGE record, and coverage is an input to
+`computeDrawerBalance` and the financial result, so an owner could watch his kasresultaat change
+because he emptied his bin. Refused now, with the reason, from inside `deleteDocument` rather than
+from the route that happens to call it.
+
+**Two iDEAL clicks at once could take a customer's payment and book nothing.** The create route
+puts down a placeholder row immediately before calling Mollie; the cleanup treated every placeholder
+as stranded and DELETED it. A concurrent request then handed out a checkout URL for a row that no
+longer existed, the customer paid, and the webhook answered `ok: true` on an unknown row — after
+which Mollie stops retrying. Money in the bank, nothing in the books, no trace. The route already
+knew the right reading: its 23505 branch says an empty checkout_url means the winner is still busy.
+Two places read the same sign and drew opposite conclusions.
+
+**A second cashier ringing up mid-rebuild made the day's turnover short a whole ticket.**
+`rebuildTillDay` reads a day's sales and writes an ABSOLUTE total; a ticket landing between those
+two steps is lost from `daily_turnover` while staying visible in `till_sales`, so every screen still
+looks right. Fixed by convergence rather than a lock — a rebuild is idempotent, which is the
+module's own stated reason for rebuilding instead of applying a delta.
+
+**Three owners were told their numbering was unbroken over numbers that were never written.**
+`checkContinuity` builds its series from the invoices, so a series with no invoice has no bucket and
+`burnedAtEnd` — the only check that sees the END of a series — is never computed for it.
+`series.every(...)` over an empty list is `true`. Measured: two owners with a creditnota counter at
+1 and 2 and zero creditnota's. The ordinary cause is a discarded draft, which is a perfectly good
+answer — the owner just has to be asked before he can give it.
+
+**A bank line the owner marked private kept its cost in kosten and its BTW in voorbelasting.**
+Three of the five ignore reasons (`prive`, `dubbel`, `niet_van_mij`) are statements that the money
+does not belong in the books; the route's own comment called the reason "een NOTITIE, geen besluit".
+The fourth, `geen_factuur` (rent, lease, a subscription), is a real cost and MUST keep counting —
+which is why this is a rule per reason and not a filter on status. The consequence now stands
+visibly under both pickers, derived from the rule so the sentence cannot drift from what happens.
+
+**The filed aangifte produced a €1 phantom suppletie on an unchanged return.** §10 item 4, closed.
+The concept's 5g is the SUM of per-rubriek rounded amounts (what the paper form asks for); the
+filed snapshot's raw total was rounded ONCE, with `Math.round` where the rubrieken beside it use a
+symmetric rounding. The screen subtracted the two displays. The real suppletie machinery
+(`computeFilingDivergence`) compared raw with raw all along and was never wrong — only the sentence
+was.
+
+**The auditfile never said which VAT scheme its dates should be read under.** It books on invoice
+date, correct under both schemes — but under the kasstelsel the BTW is due in the quarter of
+PAYMENT, and nothing in the file said so. The regimeNotes already declared the KOR and the undivided
+0% turnover; the scheme is the only one of the three that moves the timing of everything. They also
+moved from behind `</company>` to above `<auditfile>`, where a reader meets them before the figures
+rather than after several thousand journal lines.
+
+### The method, since it is the transferable part
+
+Every one of these was verified against the production database before anything was changed, and
+several turned out to be **latent** — the mechanism real, the damage not yet done. Those are said as
+such rather than dressed up. Three had already fired: the three burned creditnota numbers, and
+(from §10) the eleven duplicate purchase invoices.
+
+Every gate added here was checked by deliberately reintroducing the defect and confirming it bites.
+That caught four gates of mine that would have passed over the very thing they claimed to pin —
+including one that looked for a report within 900 characters of a branch and found an unrelated one
+further down the file, and one whose `[^)]*` could not cross a `new Date()`. A gate that reads the
+wrong region reports nothing and calls itself green.
+
+### Still open after both passes
+
+§10's list stands, minus item 4 (closed above). Item 1 still needs a migration, item 2 a design
+choice, item 3 a product decision, item 5 is closed above. Two operational items also remain and
+are the owner's to do, not an agent's: applying
+`supabase/migrations/accountant_amount_guard_restore.sql` (a security regression plus a mandate
+tightening), and deciding what to do about the 14 invoices whose `amount_paid` is 0 while their
+links cover the total exactly — `recompute_invoice_amount_paid` would repair them, but that writes
+to real books.
+
+### §11 continued — the later half of the same night
+
+**Two doors for "mark this invoice paid" disagreed.** `/api/email/confirm`'s 'pay' action wrote the
+status and not `amount_paid`; pay-toggle, the bank confirmation and the auto-confirm all write both.
+Five purchase invoices sit in production as paid/bank/0/no-links. The aangifte is unaffected —
+`isSettled` reads `amount_paid > 0 || status === 'paid'` precisely for legacy rows — but the money
+audit reports them with a sentence describing the wrong thing.
+
+**The money audit was crying wolf.** `btw_arithmetic` reported three live invoices as "ex 0 + btw 0
+is not € 1.040,12 — dit getal staat in je aangifte", about a split the reader has not reached yet.
+The check's own comment forbids exactly this ("een schending verzinnen uit een gat is hoe een audit
+ophoudt geloofd te worden") and covered NULL but not zero. One genuine break exists in the books
+(€ 176,40) and deserved not to be lost among three false ones.
+
+**The three screens a return is filed from had no render coverage** — aangifte, klaar, waarheid —
+which is the class AGENTS.md opens with. Verified by reintroducing that exact defect.
+
+**Every owner was told their zelfstandigenaftrek might lapse.** All nine have zero time entries, so
+all nine got the full red warning about the largest deduction a zzp'er has. urencriterium.ts's own
+rule 3 draws the line this crossed: only registered hours count, and that is a statement about the
+registration, "the difference between a fact and an accusation".
+
+### Checked and found SOUND — recorded so nobody re-investigates
+
+**The UBL creditnota flip.** `ubl-export.ts` negates quantity and line total while keeping the unit
+price a magnitude, and that is correct: Peppol BIS 3.0 states a credit note's amounts positive with
+type code 381, and BR-27 forbids a negative `cbc:PriceAmount`. `CR-20260002` in production has the
+shape that would break a naive reading (negative quantity AND negative line total) and comes out
+right. The `?? 1` default cannot express a negated line, but no invoice_line in production has a
+null quantity, and the module's comment reasons about that default deliberately.
+
+**The cash-drawer axis.** My first pass reported two owners below zero. That was my error: it summed
+`cash_entries` alone, and till takings enter the drawer through `daily_turnover` without a
+cash_entries row. Corrected, one owner's low point is +€59 (not −€41) and the other's is −€892,86
+(not −€2.804,45). The remaining negative is real, and the app already detects it — `drawer_negative`
+reports it and the filing gate blocks on it. No code defect; the owner's data has a question in it.
+
+### One complete feature that nothing calls
+
+`src/lib/found-money.ts` — `foundMoney()`, fully written and tested, imported by nothing. It turns
+the one figure the reconciliation genuinely FINDS (the acquirer commission that was silently
+inflating profit) into something an owner learns about. Its own header says why that matters: the
+figure "reaches exactly one place: a stat tile on /dashboard/waarheid, alive for as long as that
+screen is open", and "for an owner who does not open that screen it is work the app did that nobody
+will ever learn about".
+
+Not wired here, and the reason is the same one §10 gives for its item 3: WHERE this surfaces is a
+product decision, not a wiring task. It puts a new claim about money in front of the owner, and the
+module itself is careful about the framing (MARKTPOSITIE_2026.md §5: lead with "your profit is
+overstated", never with "we found you € 340"). It takes a `RangeResult`, which
+`computeResultForRange` already produces, so wiring it anywhere is a few lines once the destination
+is chosen. Two other modules are also uncalled — `deck.ts` (buildDeck) and `recon-confirm-client.ts`
+(confirmReconPayment) — and were not investigated further.

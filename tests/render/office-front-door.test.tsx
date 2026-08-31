@@ -120,6 +120,30 @@ test("[KANTOOR-VOORDEUR] nothing on the page is promised for later", () => {
   }
 });
 
+test("[CARD-RECON] the pin section keeps the sentence that makes it trustworthy", () => {
+  // MARKTPOSITIE_2026.md §1 says the real differentiator "appears on no feature list — including
+  // his own". This section is the fix, and it is aimed at the reader who checks: a bookkeeper
+  // responsible for somebody else's administration.
+  //
+  // Two things in it must survive a later rewrite, and both read like clutter to an editor
+  // shortening a page — which is exactly why they are asserted rather than trusted.
+  const html = render();
+
+  // 1. The reason it matters at all. Without gross-versus-net there is no problem to solve, and
+  //    the section becomes a feature nobody asked for.
+  assert.match(html, /bruto/i, "the pin section no longer says the till books gross");
+  assert.match(html, /netto/i, "the pin section no longer says the acquirer pays net");
+
+  // 2. The honesty guard from card-reconcile.ts: a missing bank payout is reported as not yet
+  //    matched, never filled in with a plausible number. To a professional reader this sentence
+  //    is the difference between a tool they can sign off on and one they cannot.
+  assert.match(
+    html,
+    /geen bedrag ingevuld dat niemand heeft gezien/i,
+    "the pin section dropped the promise that no unseen amount is invented",
+  );
+});
+
 test("[KANTOOR-VOORDEUR] the four questions an office asks are answered with a no", () => {
   // XAF, RGS, filing and Peppol. These are on the page because they are the ones that end a
   // conversation when they surface late, and every one of them is a "nee" today. If one becomes a

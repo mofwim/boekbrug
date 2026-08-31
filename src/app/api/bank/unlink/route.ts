@@ -18,6 +18,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
+import { reportHandledFailure } from "@/lib/report-handled";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { logAuditAction } from "@/lib/audit";
 
@@ -168,6 +169,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "conflict" }, { status: 409 });
   }
 
+  // [HANDMATIG-OVERGENOMEN] auto_match_reason means one thing: the APP booked this line on amount
+  // and supplier name alone, and nobody has checked it. readiness counts exactly the rows carrying
+  // it while status='matched', and turns that count into "loop ze na vóór je de aangifte indient"
+  // on the quarter-close board.
+  //
+  // The moment a human takes the row over, that sentence is false. Only the explicit "Klopt,
+  // gecontroleerd" tap cleared it, so an unlink left the flag on the row and the next manual
+  // confirm carried it back into 'matched' — and the board then warned the owner about a link the
+  // owner made by hand. A false item on the one screen that exists to be believed.
+  //
+  // Its OWN update, deliberately, and best-effort. The column arrives with a hand-applied
+  // migration (bank_auto_match_reason.sql), and folding it into the write above would turn a
+  // lagging migration into a broken unlink — the same reasoning readiness gives for reading it
+  // separately. A stale amber flag is a nuisance; a route that refuses to run is not.
+  await (pipeline
+    .from("bank_transactions")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update({ auto_match_reason: null } as any)
+    .eq("id", transactionId)
+    .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
+
   // 4. Restore the invoice. SESSION client so the B.4 trigger has auth context. incoming →
   //    'received', else 'sent'. 'overdue' is never stored (recomputed from due_date), and
   //    'processing' invoices are excluded from matching (isEligible), so by construction the
@@ -235,7 +257,14 @@ export async function POST(req: Request) {
 
   // [BANK-TX-INVOICES] The bank line is detached but the row survives (status pending), so the FK
   // cascade does NOT fire — clear the join row explicitly so a re-book starts from a clean index.
-  await clearPaymentLinks(pipeline, user.id, transactionId);
+  // [LINKS-WRITE-HONEST] The boolean is READ. clearPaymentLinks returns it precisely so a failed
+  // delete can be reported, and both call sites in this route threw it away — which inverts the
+  // recompute below rather than merely losing a log line. That recompute derives
+  // `amount_paid = Σ bank_tx_invoices.amount_applied` from the links that SURVIVE, so a failed
+  // clear makes it restore the amount the optimistic decrement just took off: the unlink answers
+  // ok, the invoice stays paid for money no longer on any bank line, and the detached line is
+  // free to be booked again. The same euros, twice.
+  const linksCleared = await clearPaymentLinks(pipeline, user.id, transactionId);
 
   // [PARTIAL-PAY] Authoritatively reconcile amount_paid to the SURVIVING links, under a row lock.
   // The JS decrement above is a fast optimistic write; this atomic recompute is order-independent,
@@ -257,6 +286,16 @@ export async function POST(req: Request) {
       invoiceId, userId: user.id, transactionId, message: recomputeErr.message,
     });
   }
+  if (!linksCleared) {
+    // Loud, and never only in a console line an hourly job nobody reads: this is the state where
+    // an invoice claims money that has no bank line behind it any more.
+    reportHandledFailure({
+      tag: "BANK-TX-INVOICES",
+      message: "payment links survived an unlink — the invoice still counts money that was detached",
+      severity: "data-integrity",
+      context: { userId: user.id, invoiceId, transactionId },
+    });
+  }
 
   await logAuditAction({
     userId: user.id,
@@ -269,6 +308,8 @@ export async function POST(req: Request) {
       // [PARTIAL-PAY-INVARIANT] So an accountant reconstructing this a year later can see that the
       // authoritative recompute did not run, rather than wondering why a balance drifted.
       ...(recomputeErr ? { recompute_failed: true } : {}),
+      // …and the same for the links, which is the failure that makes the recompute lie.
+      ...(linksCleared ? {} : { links_not_cleared: true }),
     },
   });
 
@@ -446,7 +487,12 @@ async function unlinkBatch(args: {
   }
 
   // [BANK-TX-INVOICES] Row survives the detach (status pending) → clear its join rows explicitly.
-  await clearPaymentLinks(pipeline, userId, transactionId);
+  // [LINKS-WRITE-HONEST] The boolean is read here too, and the stakes are HIGHER than on the
+  // single path: every invoice in this batch was forced to amount_paid = 0 on the promise that the
+  // recompute below reconciles it. That recompute sums the SURVIVING links — so a failed clear
+  // does not leave the batch as it was, it restores every one of them to fully paid while this
+  // route answers ok and the detached bank line is offered for re-booking.
+  const linksCleared = await clearPaymentLinks(pipeline, userId, transactionId);
 
   // [PARTIAL-PAY] Authoritatively reconcile amount_paid for EVERY invoice this payment had a
   // link to — the id-linked set, not only `restored`. The difference is exactly the invoices
@@ -467,6 +513,14 @@ async function unlinkBatch(args: {
   // The try/catch could never fire: supabase-js returns { data, error } on an RPC and does not
   // throw. So the failure was not merely tolerated, it was unobservable.
   const affected = new Set<string>([...idSet, ...restored.map((r) => r.id)]);
+  if (!linksCleared) {
+    reportHandledFailure({
+      tag: "BANK-TX-INVOICES",
+      message: "payment links survived a batch unlink — every invoice in it still counts detached money",
+      severity: "data-integrity",
+      context: { userId, transactionId, invoices: affected.size },
+    });
+  }
   const staleBalances: string[] = [];
   for (const id of affected) {
     const { error: recErr } = await pipeline.rpc("recompute_invoice_amount_paid", { p_user_id: userId, p_invoice_id: id });
@@ -509,6 +563,7 @@ async function unlinkBatch(args: {
       // than only in a log line — this is a money invariant, and an accountant reading this row a
       // year later should not have to guess why a figure drifted.
       ...(staleBalances.length ? { recompute_failed_for: staleBalances } : {}),
+      ...(linksCleared ? {} : { links_not_cleared: true }),
     },
   });
 
