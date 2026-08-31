@@ -138,18 +138,39 @@ export function cronsNeedingAttention(
 /**
  * De Nederlandse uitleg bij een oordeel — en, belangrijker, wat het waarschijnlijk IS.
  *
- * De twee meest voorkomende oorzaken staan er letterlijk in, want dat scheelt een halfuur zoeken:
- * een ontbrekende CRON_SECRET (elke cron antwoordt dan 401 en doet niets) en Vercel Hobby, waar
- * een cron die vaker dan één keer per dag draait de DEPLOY laat falen.
+ * ── WAAROM ER EEN TWEEDE ARGUMENT BIJ IS GEKOMEN ──
+ *
+ * Bij "nooit gedraaid" stond hier één vaste zin: de oorzaak is "vrijwel altijd dat CRON_SECRET niet
+ * in de omgeving staat — dan antwoordt elke cron 401 en doet niets". Dat is een goede gok als álle
+ * taken stilstaan, en aantoonbaar onjuist zodra er één stilstaat tussen tien die wél draaien.
+ *
+ * En zo stond het op het scherm: acht taken op "ok", met tijden van een paar uur geleden, en
+ * daarnaast de bewering dat de sleutel waarmee die acht net waren binnengekomen ontbrak. Het
+ * scherm sprak zichzelf tegen, en de zin stuurde de lezer naar omgevingsvariabelen die in orde
+ * waren — een halfuur zoeken op precies de plek waar niets te vinden is, wat het tegendeel is van
+ * wat deze functie belooft.
+ *
+ * `othersRan` is daarom geen extraatje maar het bewijs waar de zin op hoort te rusten: draaide er
+ * in dezelfde periode een andere cron, dan zijn de sleutel én vercel.json bewezen in orde en ligt
+ * het aan deze taak zelf. Niet meegegeven → de oude, algemene zin, want dan is er niets bekend.
  */
-export function cronHealthNote(job: CronJob, health: CronHealth): string {
+export function cronHealthNote(
+  job: CronJob,
+  health: CronHealth,
+  /** Draaide er ÉÉN andere cron in dezelfde periode? Bewijs, geen sfeerbeeld. */
+  othersRan?: boolean,
+): string {
   switch (health) {
     case "ok":
       return `${job}: draait zoals bedoeld.`;
     case "nog-niet-langs":
       return `${job}: zijn beurt is nog niet langsgekomen sinds we begonnen met meten. Dat is geen storing — kom terug na zijn volgende geplande moment.`;
     case "nooit-gedraaid":
-      return `${job}: heeft NOOIT gedraaid. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
+      // Andere crons draaiden wél → de sleutel en vercel.json zijn bewezen in orde, en de lezer
+      // naar de omgeving sturen kost hem een halfuur op de verkeerde plek.
+      return othersRan === true
+        ? `${job}: heeft NOOIT gedraaid, terwijl andere taken in dezelfde periode wél zijn langsgekomen. CRON_SECRET en vercel.json zijn daarmee in orde — het ligt aan deze taak zelf. Kijk of hij vóór zijn hartslagregel al terugkeert (bijvoorbeeld omdat er niets is ingesteld om te doen), en of zijn pad in vercel.json klopt.`
+        : `${job}: heeft NOOIT gedraaid, en geen enkele andere taak ook. Op dit project (Vercel Pro, waar crons per minuut mogen) is de oorzaak dan vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan antwoordt elke cron 401 en doet niets. Kijk anders of vercel.json wel is meegedeployd. (Op Hobby zou een cron vaker dan 1x per dag de deploy laten falen; hier speelt dat niet.)`;
     case "afgebroken":
       return `${job}: begonnen maar nooit afgerond — het proces is halverwege gestopt (time-out of crash). Wat hij tot dat punt had gedaan, staat wél in de database.`;
     case "gefaald":

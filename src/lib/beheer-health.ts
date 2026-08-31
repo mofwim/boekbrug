@@ -65,6 +65,12 @@ export function buildSystemHealth(
 ): SystemHealth {
   if (!readable) return { readable: false, crons: [], attention: [], allWell: false };
 
+  // [HARTSLAG-BEWIJS] Draaide er ÉÉN taak? Dan zijn CRON_SECRET en vercel.json bewezen in orde, en
+  // mag de uitleg bij een taak die nooit draaide de lezer niet naar de omgeving sturen. Het scherm
+  // deed dat wel: acht taken op "ok" met tijden van uren geleden, en ernaast de bewering dat de
+  // sleutel waarmee die acht waren binnengekomen ontbrak.
+  const othersRan = (Object.keys(CRON_JOBS) as CronJob[]).some((j) => !!latestByJob[j]?.started_at);
+
   const crons: CronStatus[] = (Object.keys(CRON_JOBS) as CronJob[]).map((job) => {
     const run = latestByJob[job] ?? null;
     const health = judgeCron(job, run, nowMs, watchingSince);
@@ -74,7 +80,7 @@ export function buildSystemHealth(
       health,
       lastRunAt: run?.started_at ?? null,
       hoursAgo: Number.isFinite(startedMs) ? Math.max(0, Math.round((nowMs - startedMs) / HOUR)) : null,
-      note: health === "ok" ? null : cronHealthNote(job, health),
+      note: health === "ok" ? null : cronHealthNote(job, health, othersRan),
       // 'nog-niet-langs' betekent: hij is sinds we meten nog niet aan de beurt geweest. Dat is een
       // lege waarneming en geen storing — precies de reden dat judgeCron hem apart benoemt.
       needsAttention: health !== "ok" && health !== "nog-niet-langs",

@@ -243,3 +243,41 @@ test("[CRON-EENMAAL] een client die gooit laat de cron ook door", async () => {
   const kapot = { from: () => { throw new Error("verbinding weg"); } };
   assert.equal(await alreadyRanToday(kapot, "ochtend", DAG), false);
 });
+
+// ─── [HARTSLAG-BEWIJS] Een diagnose die het scherm zelf tegenspreekt ─────────────────────────────
+//
+// Het beheerscherm toonde acht taken op "ok", met tijden van een paar uur geleden, en daarnaast bij
+// bank-sync: "de oorzaak is vrijwel altijd dat CRON_SECRET niet in de omgeving staat — dan
+// antwoordt elke cron 401 en doet niets". Die acht waren net binnengekomen mét die sleutel. Het
+// scherm sprak zichzelf tegen, en de zin stuurde de lezer een halfuur naar omgevingsvariabelen die
+// in orde waren — het tegendeel van wat deze functie belooft te doen.
+
+test("[HARTSLAG-BEWIJS] met andere draaiende taken wijst de uitleg NIET naar de omgeving", () => {
+  const note = cronHealthNote("bank-sync", "nooit-gedraaid", true);
+  // De sleutel NOEMEN is juist goed — je uitgesloten oorzaak benoemen is wat een diagnose doet.
+  // Wat niet mag, is de lezer erheen sturen. (De eerste versie van deze test verbood het woord en
+  // sloeg daarmee de zin af die precies het goede zei.)
+  assert.match(note, /CRON_SECRET en vercel\.json zijn daarmee in orde/, "de uitgesloten oorzaak moet als uitgesloten worden benoemd");
+  assert.match(note, /andere taken/, "het bewijs hoort in de zin te staan, niet alleen de conclusie");
+  assert.match(note, /deze taak zelf/, "en de lezer moet weten waar hij dan WEL moet kijken");
+});
+
+test("[HARTSLAG-BEWIJS] staat alles stil, dan is de oude gok juist en blijft hij staan", () => {
+  const note = cronHealthNote("bank-sync", "nooit-gedraaid", false);
+  assert.match(note, /CRON_SECRET/, "als geen enkele taak draaide is de sleutel wél de waarschijnlijke oorzaak");
+});
+
+test("[HARTSLAG-BEWIJS] zonder bewijs blijft de algemene zin staan", () => {
+  // Niets meegegeven = niets bekend. Dan mag de functie geen van beide beweren en houdt ze de
+  // uitleg die het meest voorkomt — precies wat ze deed voordat het bewijs bestond.
+  const note = cronHealthNote("bank-sync", "nooit-gedraaid");
+  assert.match(note, /CRON_SECRET/);
+});
+
+test("[HARTSLAG-BEWIJS] elk oordeel houdt een uitleg, met of zonder bewijs", () => {
+  for (const h of ["nooit-gedraaid", "afgebroken", "gefaald", "te-lang-stil", "nog-niet-langs", "ok"] as const) {
+    for (const others of [true, false, undefined]) {
+      assert.ok(cronHealthNote("reconcile", h, others).length > 10, `${h}/${String(others)} heeft uitleg nodig`);
+    }
+  }
+});

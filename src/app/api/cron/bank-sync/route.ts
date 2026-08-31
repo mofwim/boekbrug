@@ -65,14 +65,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  if (!isEnableBankingConfigured()) {
-    // Not an error: a server without bank credentials simply has no feed to run. Saying so
-    // plainly beats a heartbeat that reads as a failure every single day.
-    return NextResponse.json({ ok: true, configured: false, connections: 0 });
-  }
-
-  // Only after the gate: an unauthorised probe must not write a heartbeat row.
+  // Only after the gate: an unauthorised probe must not write a heartbeat row. But BEFORE the
+  // configuration check below, and that order is the whole fix.
+  //
+  // [HARTSLAG-NIETS-TE-DOEN] Die check zat hiervóór en gaf een vroege 200 terug. De bedoeling stond
+  // er ook bij: "a server without bank credentials simply has no feed to run. Saying so plainly
+  // beats a heartbeat that reads as a failure every single day." Het effect was precies andersom.
+  // Zonder hartslagregel kan het beheerscherm niet zien dát hij draaide, dus stond er "heeft NOOIT
+  // gedraaid" — in het rood, elke dag, over een taak die iedere ochtend om 05:00 keurig langskomt
+  // en niets te doen heeft. Dat is dezelfde fout die dit project overal bestrijdt: een afwezig
+  // spoor gelezen als een mislukking.
+  //
+  // Nu schrijft hij zijn regel wél, en sluit hem af met wat er is gebeurd: niets, omdat er niets
+  // te doen was. Dat is een antwoord; "nooit gedraaid" was er geen.
   cronRunId = await beginCronRun(createPipelineClient(), "bank-sync", cronStartedAt);
+
+  if (!isEnableBankingConfigured()) {
+    const niets = { ok: true, configured: false, connections: 0 };
+    await finishCronRun(createPipelineClient(), cronRunId, { ok: true, result: niets });
+    return NextResponse.json(niets);
+  }
 
   const pipeline = createPipelineClient();
 
