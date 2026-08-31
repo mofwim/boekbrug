@@ -70,7 +70,25 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ error: 'lookup failed' }, { status: 503 })
   }
-  if (!row) return NextResponse.json({ ok: true })
+  if (!row) {
+    // [MOLLIE-C7-RACE] Mollie belt over een link waarvan wij de rij niet (meer) hebben. Die rij is
+    // het enige wat de betaling boekbaar maakt — zonder haar is er geen factuur, geen bedrag om
+    // tegen te verifiëren en geen idempotentie-sleutel. Er is dus niets te boeken, en Mollie nog
+    // eens laten bellen verandert daar niets aan: 200 zodat hij stopt.
+    //
+    // Maar niet stil. De kop van dit bestand belooft het met zoveel woorden — "nooit een stille
+    // 200" — en juist hier is de stilte het duurst: er is geld binnengekomen dat in de boekhouding
+    // niet bestaat, en dat verschil valt op geen enkel scherm op. Sinds de aanmaakroute haar rij
+    // niet meer onder een gelijktijdige aanvraag vandaan laat verwijderen, hoort dit niet meer voor
+    // te komen — en dat is precies waarom het gemeld moet worden als het toch gebeurt.
+    console.error('[MOLLIE] webhook voor een onbekende linkrij', { rowId })
+    reportHandledFailure({
+      tag: 'MOLLIE', severity: 'data-integrity',
+      message: 'Mollie belde over een betaallink waarvan de rij niet meer bestaat — een betaling kan zijn gedaan zonder dat er iets is geboekt.',
+      context: { rowId },
+    })
+    return NextResponse.json({ ok: true })
+  }
   const link = row as { id: string; user_id: string; invoice_id: string; link_id: string; amount_value: string; status: string }
 
   // Al verwerkt → klaar. Een 'superseded' rij slaat deze poort BEWUST niet over: de oude link

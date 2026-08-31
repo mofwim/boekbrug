@@ -20814,3 +20814,78 @@ test("[BEWIJS-VAST] the screen renders the reason from keys, not from the server
       "know, so a server ahead of an open tab would print `prul.ref.dagstaat.meer` on screen",
   );
 });
+
+// ─── [MOLLIE-C7-RACE] Een betaalde factuur die niemand boekt ──────────────────────────
+//
+// De duurste stille fout die dit product kan maken is niet een verkeerd bedrag — het is geld dat
+// binnen is en in de boekhouding niet bestaat. Deze keten deed dat, in vier stappen:
+//
+//   A zet zijn placeholder-rij neer en belt Mollie.
+//   B vindt A's rij, noemt hem "halverwege gestrand", en VERWIJDERT hem.
+//   A komt terug en werkt zijn rij bij — nul rijen geraakt, en daar meldt PostgREST geen fout
+//     over, dus A deelt zijn checkout-URL gewoon uit.
+//   De klant betaalt. Mollie belt de webhook met ?link=<A's rij-id>, die rij bestaat niet meer, en
+//     de webhook antwoordt op een onbekende rij `ok: true` — waarna Mollie stopt met bellen.
+//
+// De factuur staat open, de klant heeft betaald, en er is nergens een spoor. De route kende de
+// juiste lezing trouwens al: de 23505-tak zegt met zoveel woorden dat een lege checkout_url
+// betekent dat de winnaar zelf nog bezig is. Twee plekken lazen hetzelfde teken en trokken de
+// omgekeerde conclusie.
+
+test("[MOLLIE-C7-RACE] a placeholder is only cleaned up once it can no longer be in flight", () => {
+  const src = code("src/app/api/pay/[token]/ideal/route.ts");
+
+  const del = src.indexOf("'mollie_payment_links').delete()");
+  assert.ok(del > 0, "the placeholder cleanup vanished — [MOLLIE-C7] is what it exists for");
+  assert.match(
+    // `[^)]*` between the parens would be wrong here and it is worth naming why: the argument
+    // list contains `new Date()`, so a negated-paren class stops at the FIRST `)` and never
+    // reaches the comparison. That exact shape has made a gate in this file read a hole before.
+    src, /placeholderVerdict\([\s\S]{0,100}?=== 'in_flight'/,
+    "the cleanup deletes every placeholder again, including the one a concurrent request put down " +
+      "half a second ago and is still holding. That delete is what makes a paid invoice unbookable.",
+  );
+  // En de leeftijd moet gelezen KUNNEN worden: zonder created_at in de select is elke rij
+  // ongedateerd, en dan is het oordeel altijd hetzelfde — de poort zou passeren terwijl er niets
+  // meer wordt opgeruimd.
+  assert.match(
+    src, /select\('id, link_id, checkout_url, amount_value, status, created_at'\)/,
+    "created_at is no longer read, so every placeholder is undatable — the verdict then never says " +
+      "'stranded' and [MOLLIE-C7]'s cleanup silently stops happening",
+  );
+});
+
+test("[MOLLIE-C7-RACE] the checkout URL is handed out only when its row survived", () => {
+  const src = code("src/app/api/pay/[token]/ideal/route.ts");
+
+  // Een UPDATE die nul rijen raakt is in PostgREST geen fout. `if (updErr)` alleen leest een
+  // verdwenen rij daarom als succes — en die rij is precies wat de webhook nodig heeft.
+  assert.match(
+    src, /\.select\('id'\)[\s\S]{0,240}?updated\?\.length \?\? 0\) === 0/,
+    "the final update no longer counts the rows it hit. A row deleted by a concurrent request " +
+      "then reads as success, the URL goes out, and the payment that follows can never be booked.",
+  );
+});
+
+test("[MOLLIE-C7-RACE] a webhook for a row we no longer have is never a silent 200", () => {
+  const src = code("src/app/api/mollie/webhook/route.ts");
+
+  // Dit bestand belooft het in zijn eigen kop: "nooit een stille 200". Juist hier is de stilte het
+  // duurst — er is betaald, er is niets geboekt, en het verschil staat op geen enkel scherm.
+  // NIET op een venster van zoveel tekens na `if (!row)`. Dat was de eerste versie, en die
+  // passeerde toen de tak weer een stille 200 werd: er staat verderop in dit bestand nóg een
+  // reportHandledFailure, en die viel binnen het venster. Een poort die het verkeerde stuk leest
+  // meldt niets en heet groen — precies de vorm die dit hele bestand probeert te vermijden.
+  //
+  // Dus: de exacte regressie, en de melding aan haar eigen tekst.
+  assert.doesNotMatch(
+    src, /if \(!row\) return NextResponse\.json\(\{ ok: true \}\)/,
+    "an unknown link row answers ok:true again without a word. Mollie stops retrying after that " +
+      "200, so it is the last moment anything could notice that money arrived and nothing was booked.",
+  );
+  assert.match(
+    src, /Mollie belde over een betaallink waarvan de rij niet meer bestaat/,
+    "the report for an unknown link row is gone — that row is the only thing that could have made " +
+      "the payment bookable, so its absence is the whole event",
+  );
+});
