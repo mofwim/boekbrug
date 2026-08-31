@@ -12699,6 +12699,54 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[PRIVACY-WAAR] the privacy notice says what the code actually grants the accountant", () => {
+  // Gemeten op 31-08-2026. De gepubliceerde verklaring zei tegen elke gebruiker:
+  //
+  //     "✅ Betaalde facturen (status = 'paid')  ❌ Niet-bevestigde inkomende facturen blijven privé"
+  //
+  // De gegenereerde kolom `shared` deelt sent, received ÉN paid. En het Bevestigen-scherm leest
+  // inkomende facturen met status 'processing' via de service-role client — precies wat de zin
+  // hierboven privé noemde. De FUNCTIE is in orde en staat achter een aparte machtiging; de
+  // VERKLARING was er nooit op bijgewerkt en was dus een onwaarheid tegen de eigen gebruikers.
+  //
+  // Deze poort houdt de tekst aan de code vast, zoals de [TAAL]-poorten de woordenlijst
+  // vasthouden. Verandert de zichtbaarheid, dan valt hij om — en dat is de bedoeling: een
+  // privacyverklaring die stilletjes achterloopt op de policy is precies wat hier misging.
+  const tekst = readFileSync("src/content/legal/privacyverklaring.ts", "utf8");
+  const schema = readFileSync("database.sql", "utf8");
+
+  // 1. Wat maakt een factuur zichtbaar voor de boekhouder? Lees het uit de kolom zelf.
+  const gen = /shared boolean GENERATED ALWAYS AS \(status = ANY \(ARRAY\[([^\]]+)\]\)\)/.exec(schema);
+  assert.ok(gen, "de gegenereerde kolom `shared` moet leesbaar zijn, anders meet deze poort niets");
+  const statussen = [...gen[1].matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+  assert.ok(statussen.length >= 2, `only ${statussen.length} statuses parsed — the scan is broken`);
+
+  // Elke status die zichtbaarheid geeft, moet in de verklaring genoemd staan. Nederlandse woorden
+  // mogen — het is een tekst voor een ondernemer — maar de technische status staat er ook bij.
+  for (const st of statussen) {
+    assert.ok(tekst.includes(`\`${st}\``),
+      `status '${st}' makes an invoice visible to the accountant, and the privacy notice does not ` +
+      "name it. Users are being told less than what is shared");
+  }
+
+  // 2. De oude onwaarheid mag niet terugkomen: 'alleen betaalde facturen' was aantoonbaar onjuist.
+  assert.ok(!/Betaalde facturen\*\* \(status = 'paid'\)/.test(tekst),
+    "the notice claimed only paid invoices are shared; sent and received are shared too");
+
+  // 3. De bevestigingsmachtiging opent de wachtrij. Zwijgt de verklaring daarover, dan belooft ze
+  //    privacy die het scherm elke dag weerlegt.
+  const mandaat = readFileSync("src/lib/accountant-mandate.ts", "utf8");
+  assert.match(mandaat, /"facturen" \| "bevestigen"/, "the two mandate kinds must stay readable here");
+  assert.match(tekst, /bevestigen/i,
+    "the 'bevestigen' mandate lets the accountant see incoming invoices still in the queue — the " +
+    "notice must say so, because without it the notice promises the opposite");
+  assert.match(tekst, /machtiging/i, "…and name it as something the owner grants separately");
+
+  // 4. Een gewijzigde verklaring die zichzelf ongewijzigd noemt, is de volgende onwaarheid.
+  assert.doesNotMatch(tekst, /\*\*Versie:\*\* 1\.0/,
+    "the notice was corrected; its own version line must move with it");
+});
+
 test("[CREDIT-WOORD] the printed word is read, flagged and acted on — all three", () => {
   // De duurste leesfout die deze administratie in een jaar maakte, was er één soort: een
   // creditnota geboekt als schuld, waarbij de btw bij de teruggave werd OPGETELD in plaats van
