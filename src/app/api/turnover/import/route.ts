@@ -12,6 +12,7 @@
 // preview warnings are shown to the owner, and only the owner's confirmed rows are stored.
 
 import { NextRequest, NextResponse } from "next/server";
+import { isMissingRelation } from "@/lib/pg-missing";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { sheetBytesToMatrix, NotASpreadsheetError } from "@/lib/xlsx-adapter";
 // [PDF-ALS-BLAD] A PDF grootboek/Z-rapport laid back out as the table it was printed from.
@@ -301,6 +302,44 @@ export async function DELETE(req: NextRequest) {
     );
   }
   if (!existing) return NextResponse.json({ error: "geen dagomzet op deze datum" }, { status: 404 });
+
+  // [KASSA-DAG-WEG] Een door de Kassa opgebouwde dag mag hier niet verdwijnen.
+  //
+  // De rij in daily_turnover is het ENIGE geldbedrag van zo'n dag: till-book.ts bouwt hem uit de
+  // tickets (salesToTurnoverRow → bookTurnoverRows) en niets leest till_sales voor omzet of BTW.
+  // Verdwijnt de rij, dan blijven de tickets staan en verdwijnt de dag uit rubriek 1a/1b, uit het
+  // resultaat en uit de kasbalans — bij 40 tickets van samen € 1.815 is dat € 1.500 omzet en € 315
+  // BTW weg, waarvan € 600 contant dat de lade wél heeft gezien. Niets bouwt hem opnieuw op: de
+  // Kassa herbouwt de dag alleen wanneer er een NIEUW ticket wordt aangeslagen.
+  //
+  // En op het scherm is zo'n dag niet te onderscheiden van een met de hand getypte dag — beide
+  // dragen dezelfde `source` — dus de eigenaar tikt het prullenbakje in 'Beheer dagen' zonder te
+  // kunnen weten dat hij hier iets anders weghaalt dan hij zelf heeft ingevuld.
+  //
+  // Dezelfde regel als daySourceConflict hanteert: één dag, één bron, en de eigenaar ruimt de bron
+  // op die hij bedoelde. Een MISLUKTE telling weigert ook — verwijderen is onomkeerbaar, dus
+  // "ik weet het niet" hoort hier aan de veilige kant te vallen. Een ONTBREKENDE tabel telt als
+  // nul: dan heeft er nooit een Kassa gedraaid.
+  const tillRes = await supabase
+    .from("till_sales").select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).eq("sale_date", date);
+  if (tillRes.error && !isMissingRelation(tillRes.error.message)) {
+    return NextResponse.json(
+      { error: "We konden niet nagaan of deze dag op de Kassa is aangeslagen. Er is niets verwijderd — probeer het zo meteen opnieuw." },
+      { status: 503 },
+    );
+  }
+  if ((tillRes.count ?? 0) > 0) {
+    return NextResponse.json(
+      {
+        error:
+          `Deze dag is opgebouwd uit ${tillRes.count} kassabon${(tillRes.count ?? 0) === 1 ? "" : "nen"}. ` +
+          "Als je hem hier weghaalt verdwijnt de omzet en de BTW van die dag uit je boeken terwijl de bonnen blijven staan. " +
+          "Corrigeer de bonnen op de Kassa; het dagtotaal volgt dan vanzelf.",
+      },
+      { status: 409 },
+    );
+  }
 
   const { error } = await supabase
     .from("daily_turnover").delete().eq("user_id", user.id).eq("turnover_date", date);

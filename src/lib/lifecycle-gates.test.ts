@@ -10497,8 +10497,19 @@ test("[EEN-DAG-EEN-BRON] a guard that cannot see is not permission", () => {
   // reasoned zero (the migration ships after the code), a failed read is not.
   assert.match(code("src/app/api/turnover/day/route.ts"),
     /tillSaleCount: tillRes\.error \? 0 : tillRes\.count \?\? 0,/);
-  assert.match(code("src/app/api/turnover/day/route.ts"), /readable: !turnoverErr && !cashRes\.error,/,
-    "…so till_sales is deliberately not part of `readable`");
+  // [KASSA-STIL] En die tweede helft — "a failed read is not" — stond wél in de zin hierboven en
+  // niet in de code. `tillRes.error ? 0 : …` gaf een ontbrekende tabel en een time-out hetzelfde
+  // antwoord, en daySourceConflict leest een nul hier als "er is vandaag niets aangeslagen". Dan
+  // komt de weigering niet en wordt een met de hand getypt dagtotaal over een aangeslagen Kassadag
+  // heen geüpsert: op € 1.210 aangeslagen tegen € 500 getypt is dat € 586,78 omzet en € 123,22 BTW
+  // uit rubriek 1a/1b, zonder dat enig scherm zegt dat er een getal is vervangen.
+  //
+  // De uitzondering blijft dus bestaan en blijft alleen staan — maar nu als uitzondering voor een
+  // ONTBREKENDE tabel, niet voor elke fout. till_sales bestaat inmiddels in productie, dus elke
+  // overgebleven fout is de andere soort.
+  assert.match(code("src/app/api/turnover/day/route.ts"),
+    /readable: !turnoverErr && !cashRes\.error && \(!tillRes\.error \|\| isMissingRelation\(tillRes\.error\.message\)\),/,
+    "een MISLUKTE till_sales-lezing telt weer als 'geen kassaverkopen' — dat is geen antwoord maar een hapering");
 });
 
 test("[NO-SILENT-EMPTY] every counted read binds its error, because zero is a claim", () => {
