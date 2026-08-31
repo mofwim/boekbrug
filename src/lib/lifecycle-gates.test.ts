@@ -21252,3 +21252,71 @@ test("[SUPPLETIE-FANTOOM] the filed snapshot is rounded by the same rule as the 
   assert.match(block, /euro\(Number\(r\.btw_verschuldigd\)/, "5a of the filing no longer uses the shared rounding");
   assert.match(block, /euro\(rawSaldo\)/, "5g of the filing no longer uses the shared rounding");
 });
+
+// ─── [ONB-WAAROM · ONB-IBAN] De twee stiltes in de onboarding ─────────────────────────
+//
+// EEN. "Volgende" ging grijs en er stond nergens waarom. Bij het KVK-nummer was dat aantoonbaar
+// onherstelbaar: de zin "KVK-nummer moet uit 8 cijfers bestaan" wordt gezet in handleNext, en
+// handleNext KAN niet draaien, want de knop die hem aanroept is precies daarom uitgeschakeld. De
+// uitleg stond in code die deze gebruiker nooit bereikt. Hij tikt zeven cijfers, de knop dooft, en
+// hij mag raden welk veld het is — in stap één van het product.
+//
+// TWEE. "Je bent klaar 🎉" zonder IBAN. De vier velden die wél werden gecontroleerd zijn die van
+// art. 35a, waar de verstuurroute op weigert. De IBAN staat daar niet bij, dus de factuur gaat
+// gewoon de deur uit — met "IBAN: —" op de PDF (invoice-pdf.tsx:451) en zonder de zin "op onze
+// bankrekening" (:365). Een juridisch geldige factuur die de klant niet kan betalen, overhandigd
+// aan iemand die net heeft gelezen dat hij klaar is.
+
+test("[ONB-WAAROM] a disabled Volgende always carries its reason", () => {
+  const src = code("src/components/onboarding/OnboardingWizard.tsx");
+
+  // Eén uitdrukking, twee gebruiken: de reden bepaalt of de knop uit gaat. Zo kunnen ze niet uit
+  // elkaar lopen — een knop die om reden X uit staat terwijl er reden Y onder staat is erger dan
+  // stilte.
+  assert.match(
+    src, /const isNextDisabled = nextBlockedReason !== null;/,
+    "the disabled state is computed separately from the reason again, so the button can go grey " +
+      "for something the sentence under it does not mention — or for nothing it mentions at all",
+  );
+  assert.match(
+    src, /\{nextBlockedReason && \(/,
+    "the reason is no longer rendered. The KVK sentence lives in handleNext, which cannot run " +
+      "while the button that calls it is disabled, so nothing reaches the screen at all.",
+  );
+  assert.match(
+    src, /role="status"/,
+    "the reason lost its live region — a disabled button with no announced explanation is a dead " +
+      "end for a screen reader in particular",
+  );
+});
+
+test("[ONB-IBAN] finishing without an account number is not a celebration", () => {
+  const wizard = code("src/components/onboarding/OnboardingWizard.tsx");
+
+  assert.match(
+    wizard, /missingIban=\{!company\.iban\.trim\(\)\}/,
+    "the done step no longer asks whether an IBAN was entered",
+  );
+  assert.match(
+    wizard, /needsMore \|\| noIban \? "👍" : "🎉"/,
+    "an invoice nobody can pay gets the party emoji again — which is the whole defect, not the " +
+      "decoration on it",
+  );
+  // En een EIGEN zin: "voordat je facturen kunt versturen" is hier onwaar (versturen kan wél) en
+  // stuurt de ondernemer naar het verkeerde veld.
+  assert.match(
+    wizard, /onb\.klaarNogBetaald/,
+    "the IBAN case borrows the send-blocked sentence again, which says something untrue about it",
+  );
+});
+
+test("[ONB-IBAN] the wizard does not claim the IBAN is needed to SEND", () => {
+  // Het is niet nodig om te versturen — art. 35a noemt het niet en de verstuurroute controleert het
+  // niet. Het is nodig om BETAALD te worden. Dat verschil bepaalt waar de ondernemer gaat zoeken.
+  assert.doesNotMatch(
+    MESSAGES["onb.alleenNaamUitleg"].nl, /IBAN heb je nodig om facturen te versturen/,
+    "the wizard says the IBAN is required to send invoices. It is not — the send route does not " +
+      "check it and art. 35a does not list it. It is required to get paid, which is a different " +
+      "sentence and a different next step.",
+  );
+});

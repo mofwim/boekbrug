@@ -10911,6 +10911,37 @@ export const MESSAGES = {
   // alleen in een title-attribuut — een tooltip die op een telefoon niet bestaat, terwijl drie van
   // de vijf knoppen een bedrag uit de kosten en de btw halen. De redenen worden als LABELS
   // ingevuld, precies zoals ze op de knoppen staan.
+  // [ONB-WAAROM] Waarom "Volgende" uit staat. Deze zinnen bestonden wél — als setKvkError in
+  // handleNext — maar handleNext kán niet draaien wanneer de knop die hem aanroept juist daarom is
+  // uitgeschakeld. De uitleg stond in code die de gebruiker nooit bereikt: hij tikt zeven cijfers,
+  // de knop dooft, en het scherm zwijgt.
+  'onb.blokBedrijfsnaam': {
+    nl: 'Vul je bedrijfsnaam in om verder te gaan.',
+    ar: 'أدخل اسم شركتك للمتابعة.',
+    en: 'Fill in your company name to continue.',
+  },
+  'onb.blokKvk': {
+    nl: 'Een KVK-nummer bestaat uit 8 cijfers. Laat het veld leeg als je het nu niet bij de hand hebt.',
+    ar: 'رقم غرفة التجارة (KVK) يتكوّن من 8 أرقام. اترك الحقل فارغًا إن لم يكن لديك الآن.',
+    en: 'A KVK number is 8 digits. Leave the field empty if you do not have it to hand.',
+  },
+  'onb.blokNummering': {
+    nl: 'Dit factuurnummer kunnen we niet lezen. Gebruik bijvoorbeeld 2026001.',
+    ar: 'تعذّر قراءة رقم الفاتورة هذا. استخدم مثلًا 2026001.',
+    en: 'We cannot read this invoice number. Use 2026001, for example.',
+  },
+  // [ONB-IBAN] Geen wettelijk gebrek en daarom niet in de lijst hierboven — maar wel het verschil
+  // tussen een factuur die aankomt en een factuur die betaald wordt.
+  'onb.geenIban': {
+    nl: 'Je hebt nog geen rekeningnummer ingevuld. Je facturen mogen wel de deur uit, maar er staat dan geen IBAN op — je klant kan hem niet betalen. Vul je IBAN aan bij Instellingen.',
+    ar: 'لم تُدخل رقم حساب بعد. يمكن إرسال فواتيرك، لكنها ستخرج بدون IBAN — ولن يتمكّن عميلك من دفعها. أضف الـ IBAN من الإعدادات.',
+    en: 'You have not entered a bank account number yet. Your invoices can still go out, but they will carry no IBAN — your customer cannot pay them. Add your IBAN under Instellingen.',
+  },
+  'onb.tipZoekbalk': {
+    nl: '💡 Tip: gebruik de zoekbalk om elke factuur in seconden terug te vinden',
+    ar: '💡 نصيحة: استخدم شريط البحث للعثور على أي فاتورة في ثوانٍ',
+    en: '💡 Tip: use the search bar to find any invoice in seconds',
+  },
   'bank.redenGevolg': {
     nl: '{uit} halen dit bedrag ook uit je kosten en btw. Bij {in} blijft het gewoon meetellen.',
     en: '{uit} also take this amount out of your costs and VAT. With {in} it keeps counting as before.',
@@ -11050,6 +11081,13 @@ export const MESSAGES = {
     ar: 'يمكنك البدء فوراً. أمر واحد متبقٍ قبل أن تتمكن من إرسال الفواتير:',
     en: 'You can get started right away. One more thing before you can send invoices:',
   },
+  // [ONB-IBAN] Versturen KAN, betaald worden niet. Een eigen zin naast klaarNogEen, want "voordat
+  // je facturen kunt versturen" is hier onwaar en stuurt de ondernemer naar het verkeerde veld.
+  'onb.klaarNogBetaald': {
+    nl: 'Je kunt meteen aan de slag. Eén ding nog voordat je klanten je kunnen betalen:',
+    ar: 'يمكنك البدء فوراً. أمر واحد متبقٍ قبل أن يتمكن عملاؤك من الدفع لك:',
+    en: 'You can get started right away. One more thing before your customers can pay you:',
+  },
   'onb.klaarIngericht': {
     nl: 'BoekBrug is ingericht en klaar voor gebruik.',
     ar: 'تم إعداد BoekBrug وهو جاهز للاستخدام.',
@@ -11060,9 +11098,9 @@ export const MESSAGES = {
   'onb.eersteWordt': { nl: 'Je eerste factuur wordt:', ar: 'ستكون فاتورتك الأولى:', en: 'Your first invoice will be:' },
   'onb.volgendeNummer': { nl: 'De volgende: {number}', ar: 'والتالية: {number}', en: 'The next one: {number}' },
   'onb.alleenNaamUitleg': {
-    nl: 'Alleen de naam is verplicht om verder te gaan. BTW-nummer, adres en IBAN heb je nodig om facturen te versturen — vul ze nu in (dat mag ook later in Instellingen).',
-    ar: 'الاسم وحده إلزامي للمتابعة. تحتاج إلى رقم btw والعنوان وiban لإرسال الفواتير — أدخلها الآن (أو لاحقاً في «الإعدادات»).',
-    en: 'Only the name is required to continue. You need the VAT number, address and IBAN to send invoices — fill them in now (or later under Settings).',
+    nl: 'Alleen de naam is verplicht om verder te gaan. BTW-nummer en adres heb je nodig om facturen te versturen, en je IBAN om betaald te worden — vul ze nu in (dat mag ook later in Instellingen).',
+    ar: 'الاسم وحده إلزامي للمتابعة. تحتاج إلى رقم btw والعنوان لإرسال الفواتير، وإلى الـ iban كي تصلك المدفوعات — أدخلها الآن (أو لاحقاً في «الإعدادات»).',
+    en: 'Only the name is required to continue. You need the VAT number and address to send invoices, and your IBAN to get paid — fill them in now (or later under Settings).',
   },
   // Short field NAMES for the missing-fields list — the label keys are full questions.
   'onb.veldBedrijfsnaam': { nl: 'bedrijfsnaam', ar: 'اسم الشركة', en: 'company name' },
