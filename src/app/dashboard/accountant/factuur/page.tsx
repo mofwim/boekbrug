@@ -41,6 +41,12 @@ export default async function AccountantFactuurPage({
       .from('accountant_invoice_mandates')
       .select('zzper_id')
       .eq('accountant_id', user.id)
+      // [MANDAAT-SOORT] Alleen de factuurmachtiging hoort in deze keuzelijst. Zonder dit filter
+      // stond een klant die alleen 'bevestigen' had gegeven ertussen — en die keuze kon niet
+      // slagen: de databasetrigger weigert hem alsnog (has_active_invoice_mandate filtert wél op
+      // kind). Een aanbod dat de server daarna afwijst is geen streng scherm maar een verkeerd
+      // scherm: de boekhouder typt een hele factuur voordat hij het hoort.
+      .eq('kind', 'facturen')
       .is('revoked_at', null),
 
     // [VRAAG-MACHTIGING] Alle GEKOPPELDE klanten, ook (juist) die zonder machtiging. Zonder deze

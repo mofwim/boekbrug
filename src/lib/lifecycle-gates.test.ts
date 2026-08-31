@@ -10013,6 +10013,83 @@ test("[VOL-GELEZEN] het verkoopbord telt alle facturen, niet de nieuwste tweehon
     "[NO-SILENT-EMPTY] een onleesbare lijst zegt dat, en telt niet als nul");
 });
 
+test("[MANDAAT-SOORT] every read of the mandate table says WHICH mandate", () => {
+  // Er zijn twee machtigingen en ze betekenen verschillende dingen: 'facturen' laat een boekhouder
+  // NAMENS de klant factureren, 'bevestigen' laat hem de INKOOPfacturen van de klant bevestigen.
+  // De database weet dat — has_active_invoice_mandate en has_active_confirm_mandate filteren allebei
+  // op `kind`. Twee schermen lazen dezelfde tabel zonder.
+  //
+  // Wat dat kostte op /dashboard/accountant/debiteuren: een klant die alleen 'bevestigen' had
+  // gegeven — toestemming die over zijn inkoop gaat — kwam in de gemandateerde lijst terecht, en
+  // dat scherm toont zijn hele debiteurenpositie: elke openstaande verkoopfactuur, met bedrag,
+  // met klantnaam, en met de knop om die klant een herinnering te sturen. Toestemming voor het
+  // ene ding, toegang tot het andere.
+  //
+  // En op /dashboard/accountant/factuur het spiegelbeeld: diezelfde klant stond in de keuzelijst
+  // "namens wie factureer ik", waar de trigger de boeking daarna alsnog weigert. Geen lek, maar
+  // een aanbod dat niet kan slagen — de boekhouder typt een hele factuur voordat hij het hoort.
+  //
+  // De REVOKE-schrijvingen filteren bewust niet: bij een ontkoppeling moeten álle machtigingen
+  // vervallen, en een kind-filter zou daar juist een rij laten staan.
+  //
+  // Er staat verderop een tweede poort met dezelfde tag ("an invoicing mandate is read as one, and
+  // only one"). Die pint de UITDRUKKINGEN in acting-for-server.ts, waar dezelfde fout eerder is
+  // gerepareerd. Deze hier loopt de BOOM af en vindt de plekken die geen enkele assertie noemt —
+  // de twee schermen hierboven stonden in geen van beide lijsten. Samen: de een zegt hoe de
+  // bekende plek is bedraad, de ander vindt de volgende.
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+  // Eén uitzondering, met haar reden, en niet meer dan één: de terugval van vóór de migratie.
+  // `kind` komt met accountant_confirm_mandate.sql, en een SELECT op een kolom die nog niet bestaat
+  // laat de hele lezing mislukken — wat daar de FACTUURtoegang van een boekhouder zou kosten. In
+  // een schema zónder die kolom bestaat het onderscheid ook niet: elke machtiging is er een
+  // factuurmachtiging, want 'bevestigen' is met die kolom meegekomen. In de productiedatabase
+  // bestaat de kolom, dus deze tak is daar dood.
+  const SOORTLOOS_MAG = new Map<string, string>([
+    ["src/lib/acting-for-server.ts",
+      "de [DEPLOY-SAFE] terugval voor een schema van vóór accountant_confirm_mandate.sql, waar de " +
+      "kolom `kind` nog niet bestaat en het onderscheid dus ook niet"],
+  ]);
+  const zonderSoort: string[] = [];
+  let lezingen = 0;
+  let uitgezonderd = 0;
+  for (const f of loop("src")) {
+    if (f.includes("database.types")) continue;
+    const src = code(f);
+    for (const m of src.matchAll(/\.from\(['"]accountant_invoice_mandates['"]\)/g)) {
+      // De keten loopt tot de VOLGENDE .from(, niet tot de eerstvolgende lege regel: code() haalt
+      // commentaar weg en laat daar witregels achter, en een eerdere versie sneed daardoor de
+      // .eq('kind', …) eraf van een query die het juist wél goed doet. Een poort die een correcte
+      // plek beschuldigt, wordt genegeerd — en dan bewaakt ze niets meer.
+      const rest = src.slice(m.index ?? 0);
+      const volgende = rest.indexOf(".from(", 6);
+      const keten = rest.slice(0, volgende === -1 ? 600 : Math.min(volgende, 600));
+      // Alleen LEZINGEN. Een update (intrekken) en een insert (verlenen) horen hier niet.
+      if (/\.update\(|\.insert\(|\.upsert\(|\.delete\(/.test(keten)) continue;
+      lezingen++;
+      if (!/\bkind\b/.test(keten)) {
+        if (SOORTLOOS_MAG.has(f)) { uitgezonderd++; continue; }
+        zonderSoort.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.ok(lezingen >= 5, `only ${lezingen} mandate reads seen; the scan must be broken`);
+  // De uitzondering moet ook echt geraakt worden. Een lijst die naar niets wijst is een lijst die
+  // niemand opruimt, en dan verbergt ze op een dag wél iets.
+  assert.equal(uitgezonderd, 1,
+    `${uitgezonderd} reads used the exemption; it names exactly one and must keep doing so`);
+  assert.deepEqual(zonderSoort, [],
+    "these read accountant_invoice_mandates without naming a kind, so a mandate granted for one " +
+    "thing counts as permission for the other:\n  " + zonderSoort.join("\n  "));
+});
+
 test("[ACC-DENY-LIJST] no redefinition of the accountant guard may quietly drop a column", () => {
   // Wat er is gebeurd, en het is de gevaarlijkste vorm die een migratiemap zonder volgorde kent.
   //
