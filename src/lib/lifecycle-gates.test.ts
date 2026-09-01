@@ -21,6 +21,8 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
+// [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
+import { HOLD_LABELS } from "./hold-reasons";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12741,6 +12743,37 @@ test("[WAAROM-VASTGEHOUDEN] both branches of the auto-advance decision are writt
     "loses exactly the detail it exists for");
   assert.ok(new Set(redenen).size === redenen.length,
     "two refusals share one tag, so they cannot be told apart in the measurement");
+});
+
+test("[WAAROM-VASTGEHOUDEN] every refusal tag has a sentence an operator can act on", () => {
+  // De werklijst op het beheerscherm rangschikt machinecodes. `no_reliable_total` is voor de code
+  // precies genoeg en voor de mens die moet besluiten wat hij als volgende bouwt, niets.
+  //
+  // Dit is een SCAN, geen tweede lijst. Twee met de hand bijgehouden lijsten kloppen eeuwig met
+  // elkaar en nooit met de werkelijkheid — dat is vandaag twee keer misgegaan. Deze poort leest de
+  // bestanden die de codes MAKEN, en een nieuwe weigering zonder zin laat hem vallen.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    const src = code(f);
+    for (const m of src.matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15,
+    `only ${gevonden.size} refusal tags found across ${bronnen.length} files; the scan stopped ` +
+    "matching what it is supposed to watch, which leaves the check green and blind");
+  for (const tag of gevonden) {
+    assert.ok(HOLD_LABELS[tag],
+      `refusal tag "${tag}" has no sentence in HOLD_LABELS. It would still be counted and shown — ` +
+      "as the raw tag — but the operator ranking exists to say which fix buys back the most time, " +
+      "and a machine word answers a different question than the one being asked");
+  }
 });
 
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
