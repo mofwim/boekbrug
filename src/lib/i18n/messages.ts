@@ -4547,6 +4547,13 @@ export const MESSAGES = {
     ar: 'معاملة غير معروفة',
     en: 'Unknown transaction',
   },
+  // [WAAROM-WACHT-CAT] Het label voor een geheugen dat de ANDERE kant op wijst. Kort, want de
+  // hele zin staat eronder — maar niet hetzelfde woord als een geheugen waar de app zeker van is.
+  'cat.onthoudenAndersom': {
+    nl: 'onthouden, maar andersom',
+    ar: 'محفوظة، لكن بالاتجاه المعاكس',
+    en: 'remembered, but the other way',
+  },
   'cat.onthouden': {
     nl: 'onthouden',
     ar: 'محفوظة',
@@ -13724,6 +13731,27 @@ export const MESSAGES = {
     ar: 'هذا الطرف لا يرد في فواتيرك المفتوحة. إن لم تكن له فاتورة — إيجار أو قرض أو أمر شخصي — فامنح السطر تصنيفاً مرة واحدة.',
     en: 'This counterparty does not appear in your open invoices. If no invoice belongs to it — rent, a loan, private — give the line a category once.',
   },
+  // ── /bank/categoriseren: waarom de app deze regel niet zelf codeert ───────────────────────
+  //
+  // De eerste zin bestaat omdat het label erboven "onthouden" zei — ook wanneer het geheugen de
+  // ANDERE kant op wees. De suggestie die de app zelf wantrouwt zag er precies uit als degene die
+  // ze het meest vertrouwt, en de eigenaar kon het verschil niet zien.
+  'wacht.catGeheugenAndereKant': {
+    nl: 'Deze tegenpartij ken je, maar toen ging het geld de andere kant op. Een teruggestort bedrag is geen omzet en een terugbetaling is geen kost — kies zelf.',
+    ar: 'هذا الطرف معروف لديك، لكن المال حينها سار في الاتجاه الآخر. المبلغ المُعاد ليس إيراداً والاسترداد ليس تكلفة — اختر بنفسك.',
+    en: 'You know this counterparty, but last time the money went the other way. A refund is not turnover and a repayment is not a cost — choose yourself.',
+  },
+  'wacht.catLijktMaarNietDezelfde': {
+    nl: 'Deze lijkt op een tegenpartij die je eerder hebt ingedeeld, maar het is niet dezelfde. Twee zaken met dezelfde naam zijn niet één bedrijf.',
+    ar: 'يشبه هذا طرفاً صنّفته سابقاً، لكنه ليس نفسه. محلّان بالاسم ذاته ليسا شركة واحدة.',
+    en: 'This resembles a counterparty you categorised before, but it is not the same one. Two shops sharing a name are not one business.',
+  },
+  'wacht.catNooitGezien': {
+    nl: 'Deze tegenpartij ben je nog niet eerder tegengekomen. Het voorstel hieronder gaat alleen op plus of min af — daarom vult de app hem niet zelf in.',
+    ar: 'لم تصادف هذا الطرف من قبل. الاقتراح أدناه يعتمد على الإشارة فقط — لذلك لا يملؤه التطبيق بنفسه.',
+    en: 'You have not come across this counterparty before. The suggestion below goes on the sign alone — which is why the app does not fill it in for you.',
+  },
+
   'wacht.bankNietsOpen': {
     nl: 'Er staat op dit moment geen enkele factuur open om aan te koppelen.',
     ar: 'لا توجد حالياً أي فاتورة مفتوحة ليُربط بها.',

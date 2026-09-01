@@ -25,6 +25,7 @@ import { DOCUMENT_REFERRERS } from "./document-references";
 import { HOLD_LABELS } from "./hold-reasons";
 // [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
 import { explainableReasons, explainWaiting } from "./why-waiting";
+import { categoryHint } from "./category-wait";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12834,6 +12835,33 @@ test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none o
     "the match route must compute the reason, or the card has nothing to render");
   assert.match(bankRoute, /waitReason:/,
     "…and put it on the DTO the screen reads");
+
+  // ── En het categorisatiescherm ────────────────────────────────────────────────────────────
+  const catBron = code("src/lib/category-wait.ts");
+  const catUnie = catBron.slice(catBron.indexOf("export type CategoryWaitReason ="));
+  const catTags = [...catUnie.slice(0, catUnie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(catTags.length >= 3,
+    `only ${catTags.length} category reasons found; the scan stopped matching its own union`);
+  for (const tag of catTags) {
+    assert.ok(uitlegbaar.has(tag), `category reason "${tag}" reaches the screen with no sentence`);
+  }
+  const catRoute = code("src/app/api/bank/categorize/route.ts");
+  assert.match(catRoute, /judgeCategoryWait\(/, "the categorize route must compute the reason");
+  assert.match(catRoute, /wait_reason:/, "…and put it on the DTO the screen reads");
+
+  // En het label dat loog. Een geheugen dat de ANDERE kant op wijst mag nooit hetzelfde woord
+  // krijgen als een geheugen waar de app zeker van is — dat was de hele bevinding.
+  assert.notEqual(
+    categoryHint({ source: "memory", waitReason: "memory_contradicts_direction", confident: false }).key,
+    categoryHint({ source: "memory", waitReason: null, confident: true }).key,
+    "a contradicted memory and a trusted one must not share a label: the suggestion the app " +
+    "distrusts would look exactly like the one it trusts most, on a screen about money direction",
+  );
+  assert.doesNotMatch(
+    code("src/app/dashboard/bank/categoriseren/CategoriseClient.tsx"),
+    /t\('cat\.onthouden'\)/,
+    "the screen must choose its label through categoryHint, where the distinction is tested",
+  );
 });
 
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {

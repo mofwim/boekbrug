@@ -100,6 +100,14 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   counterparty_has_no_open_invoice_this_amount: "wacht.bankGeenBedrag",
   counterparty_unknown_here: "wacht.bankOnbekendePartij",
   nothing_open_at_all: "wacht.bankNietsOpen",
+
+  // ── /bank/categoriseren ────────────────────────────────────────────────────────────────────
+  //
+  // Waarom de app deze regel niet zelf codeert. De eerste is de belangrijkste: het label boven de
+  // regel zegt "onthouden" — óók wanneer het geheugen de andere kant op wijst.
+  memory_contradicts_direction: "wacht.catGeheugenAndereKant",
+  resembles_another_counterparty: "wacht.catLijktMaarNietDezelfde",
+  counterparty_never_seen: "wacht.catNooitGezien",
 };
 
 export interface WaitingExplanation {
