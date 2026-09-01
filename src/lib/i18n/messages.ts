@@ -13736,6 +13736,26 @@ export const MESSAGES = {
   // De eerste zin bestaat omdat het label erboven "onthouden" zei — ook wanneer het geheugen de
   // ANDERE kant op wees. De suggestie die de app zelf wantrouwt zag er precies uit als degene die
   // ze het meest vertrouwt, en de eigenaar kon het verschil niet zien.
+  // ── [KAS-ACHTER-BANK] Wat de bankpas met opzet niet boekte ────────────────────────────────
+  //
+  // Onder het kasstelsel is de betaaldatum btw-timing. Een match op bedrag + naam zonder gedrukt
+  // factuurnummer, in een kwartaal dat AL is aangegeven, zou een fout naar de Belastingdienst
+  // schrijven in plaats van in de administratie — en die is alleen met een suppletie te
+  // herstellen. De app laat die dus aan de eigenaar. Dat is de app die het goed doet, en de
+  // eigenaar hoorde het nergens.
+  'bank.kas.aangegeven': {
+    nl: '{count} betaling(en) heeft de app met opzet niet zelf geboekt: die horen bij een kwartaal dat je al hebt aangegeven. Onder het kasstelsel bepaalt de betaaldatum de btw, dus die keuze is aan jou.',
+    ar: '{count} دفعة/دفعات لم يقيّدها التطبيق بنفسه عن قصد: فهي تخصّ ربعاً قدّمت إقراره بالفعل. في نظام الأساس النقدي تُحدّد تاريخُ الدفع ضريبةَ btw، فالقرار لك.',
+    en: 'The app deliberately did not book {count} payment(s) itself: they belong to a quarter you have already filed. Under the cash scheme the payment date decides the btw, so that call is yours.',
+  },
+  // De gevaarlijke stand: niet "we hebben besloten", maar "we konden het niet nagaan". Zonder deze
+  // zin ziet een stilgevallen controle er precies zo uit als een rustige dag.
+  'bank.kas.onbekend': {
+    nl: 'Van {count} betaling(en) konden we niet nagaan of dat kwartaal al is aangegeven, dus die zijn niet automatisch geboekt. Dat is géén bevestiging dat er iets mis is — maar de app heeft hier bewust niets besloten.',
+    ar: 'تعذّر علينا التحقّق، بشأن {count} دفعة/دفعات، ممّا إذا كان ذلك الربع قد قُدّم إقراره، لذا لم تُقيَّد تلقائياً. هذا ليس تأكيداً بوجود خطأ — لكن التطبيق لم يقرّر هنا شيئاً عن قصد.',
+    en: 'For {count} payment(s) we could not check whether that quarter has already been filed, so they were not booked automatically. That is not a confirmation that anything is wrong — but the app deliberately decided nothing here.',
+  },
+
   // ── [KAS-ACHTER] De kaslade waarvan de koppeling niet kon bijwerken ───────────────────────
   //
   // Het saldo is het getal waar een winkelier zijn lade tegenaan telt. Een verouderd saldo dat er

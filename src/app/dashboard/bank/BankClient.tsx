@@ -273,6 +273,12 @@ export default function BankClient() {
   // [BANK-AUTO-CONFIRM] "Quiet by default": the app books the near-certain matches itself.
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoDoneCount, setAutoDoneCount] = useState<number | null>(null)
+  // [KAS-ACHTER-BANK] Wat de pas BEWUST niet heeft geboekt. Onder het kasstelsel is de betaaldatum
+  // btw-timing: een match op bedrag + naam (geen gedrukt factuurnummer) in een kwartaal dat al is
+  // aangegeven laat de app aan de eigenaar, omdat een verkeerde keuze daar buiten de app terechtkomt
+  // en alleen met een suppletie te herstellen is. Een goede beslissing — die tot nu toe alleen in
+  // een serverlog stond, terwijl de eigenaar naar precies die regels zat te kijken.
+  const [kasRefusals, setKasRefusals] = useState<{ filed_quarter?: number; unknown_filing?: number } | null>(null)
   // [BANK-AUTO-RUN] Guard so the app auto-handles the near-certain payments ONCE per page
   // load, the moment they appear — the owner should never have to press a button for a
   // payment the app is already certain of. Set before the async call so a re-render mid-flight
@@ -533,6 +539,7 @@ export default function BankClient() {
       const json = await res.json()
       if (res.ok) {
         setAutoDoneCount(json.count ?? 0)
+        setKasRefusals((json.kasRefusals ?? null) as { filed_quarter?: number; unknown_filing?: number } | null)
         await runMatch() // the handled ones leave "Te bevestigen"
       } else {
         showToast(t('bank.fout.automatisch'))
@@ -2038,6 +2045,35 @@ export default function BankClient() {
           </div>
           {autoDoneCount > 0 && safeAutoCount === 0 && (
             <div style={{ fontSize: 12.5, color: '#0B5345', marginTop: 2 }}>{t('bank.rustig')}</div>
+          )}
+        </div>
+      )}
+
+      {/* [KAS-ACHTER-BANK] En wat de app met opzet niet heeft geboekt.
+          
+          Twee standen, en ze verschillen wezenlijk. `filed_quarter` is de app die het goed doet:
+          het kwartaal is aangegeven, dus een gok op bedrag + naam zou een fout naar de
+          Belastingdienst schrijven in plaats van in de administratie. `unknown_filing` is de app
+          die het NIET WEET — de btw_filings-lezing faalde — en dat is de gevaarlijke stand, want
+          "niets geboekt" ziet er dan precies zo uit als een rustige dag. [NO-SILENT-EMPTY]
+          
+          Onder de teller, niet ernaast: "0 geboekt" en "3 met opzet overgeslagen" is samen één
+          verhaal, en dit is de tweede helft ervan. */}
+      {kasRefusals && ((kasRefusals.filed_quarter ?? 0) > 0 || (kasRefusals.unknown_filing ?? 0) > 0) && (
+        <div style={{
+          marginTop: 10, borderRadius: R.lg, padding: '13px 16px',
+          background: (kasRefusals.unknown_filing ?? 0) > 0 ? '#FEF7E0' : M3.surfaceVariant,
+          border: `1px solid ${(kasRefusals.unknown_filing ?? 0) > 0 ? '#F9E3A2' : M3.outlineVariant}`,
+        }}>
+          {(kasRefusals.filed_quarter ?? 0) > 0 && (
+            <div style={{ fontSize: 13, color: '#3c4043', lineHeight: 1.5 }}>
+              {t('bank.kas.aangegeven', { count: kasRefusals.filed_quarter ?? 0 })}
+            </div>
+          )}
+          {(kasRefusals.unknown_filing ?? 0) > 0 && (
+            <div style={{ fontSize: 13, color: '#6B5200', lineHeight: 1.5, marginTop: (kasRefusals.filed_quarter ?? 0) > 0 ? 6 : 0 }}>
+              {t('bank.kas.onbekend', { count: kasRefusals.unknown_filing ?? 0 })}
+            </div>
           )}
         </div>
       )}

@@ -12864,6 +12864,36 @@ test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none o
   );
 });
 
+test("[KAS-ACHTER-BANK] what the pass deliberately did not book reaches the owner, not only a log", () => {
+  // De regel onderaan runBankAutoConfirm stond er al: "refusals this run", naar console.info. De
+  // eigenaar zat naar precies die regels te kijken en kreeg geen woord. Deze poort houdt de weg
+  // van de beslissing naar het scherm open — hij loopt over drie bestanden en elk ervan kan hem
+  // in z'n eentje afknippen zonder dat er iets rood wordt.
+  const pas = code("src/lib/bank-auto-confirm.ts");
+  assert.match(pas, /refusalsOut/,
+    "the pass must be able to hand its refusals back; eleven callers depend on the array it " +
+    "returns, so this travels as an out-parameter rather than a wider return type");
+  assert.match(pas, /Object\.assign\(args\.refusalsOut, kasRefusals\)/,
+    "…and must actually fill it, with the same tally the log line prints");
+
+  const route = code("src/app/api/bank/auto-confirm/route.ts");
+  assert.match(route, /refusalsOut:/, "the route must ask for the tally");
+  assert.match(route, /kasRefusals\s*[,}]/, "…and put it in the response");
+
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /json\.kasRefusals/, "the screen must read it");
+  // De twee standen zijn niet inwisselbaar: 'filed_quarter' is de app die het goed doet,
+  // 'unknown_filing' is de app die het niet WEET. Zou het scherm er één zin van maken, dan leest
+  // een stilgevallen controle als een weloverwogen beslissing.
+  assert.match(scherm, /bank\.kas\.aangegeven/);
+  assert.match(scherm, /bank\.kas\.onbekend/);
+  assert.notEqual(MESSAGES["bank.kas.aangegeven"].nl, MESSAGES["bank.kas.onbekend"].nl,
+    "a deliberate refusal and a check that could not run must never say the same thing");
+  for (const k of ["bank.kas.aangegeven", "bank.kas.onbekend"] as const) {
+    assert.match(MESSAGES[k].nl, /\{count\}/, `${k} must name how many, or it is a mood, not a fact`);
+  }
+});
+
 test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {
   // De kaslade is het enige scherm waar een getal tegen een fysieke stapel geld wordt gelegd. De
   // route wist al dat de sync-pas gebald was — de regel stond er, met de diagnose ernaast — en

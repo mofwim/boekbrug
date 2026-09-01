@@ -79,10 +79,30 @@ type PayClient = SupabaseClient<any>;
  * confirm-route invariants per match, and rolls the invoice back on a link race so it never
  * leaves a paid invoice with no bank line. Returns the bookings made (empty if none).
  */
+/**
+ * [KAS-ACHTER-BANK] How many bookings this run declined for a kasstelsel reason, per reason.
+ *
+ * An out-parameter rather than a wider return type, and that is a deliberate trade: eleven call
+ * sites depend on the array that comes back, and widening it to carry a number that exactly one
+ * screen reads would touch all eleven for the benefit of one. Callers that do not pass an object
+ * behave exactly as they did.
+ */
+export interface KasRefusalTally {
+  filed_quarter?: number;
+  unknown_filing?: number;
+  no_payment_date?: number;
+}
+
 export async function runBankAutoConfirm(args: {
   payClient: PayClient;
   pipeline: PipelineClient;
   userId: string;
+  /**
+   * Filled with this run's kasstelsel refusals when supplied. The owner-facing counterpart of the
+   * log line at the bottom of this function: "the app deliberately did not book these" is a thing
+   * the person waiting for it is entitled to know, and until now only the server log was told.
+   */
+  refusalsOut?: KasRefusalTally;
 }): Promise<AutoConfirmed[]> {
   const { payClient, pipeline, userId } = args;
 
@@ -620,6 +640,10 @@ export async function runBankAutoConfirm(args: {
   if (kasRefusals.filed_quarter || kasRefusals.no_payment_date) {
     console.info("[KAS-AUTO-BOOK] refusals this run", { userId, ...kasRefusals });
   }
+  // [KAS-ACHTER-BANK] …and out to the caller, so a screen can say it instead of a log file. The
+  // owner is looking at exactly these lines wondering why the app left them; "your quarter is
+  // already filed, so this one is yours to decide" is the answer, and it was being thrown away.
+  if (args.refusalsOut) Object.assign(args.refusalsOut, kasRefusals);
 
   return confirmed;
 }
