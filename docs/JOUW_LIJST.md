@@ -10,6 +10,71 @@ is af, getest en gepusht; wat hier staat is de rest.*
 
 ---
 
+## −1. Wat er in de nacht van 1 september van deze lijst af is gegaan
+
+*Deze nacht was er voor het eerst directe toegang tot de productiedatabase. Alles hieronder is
+gedaan én nagemeten; wat eronder staat vanaf punt 0 blijft gelden, behalve waar hier staat dat het
+af is. Alles is teruggezet in `supabase/migrations/`, dus de code en de database zeggen weer
+hetzelfde.*
+
+**☑ De migratielijst is leeg**
+
+Van de vier die nog openstonden bleken er twee al toegepast (`accountant_discount_guard`,
+`accountant_clients_insert_consent` — de open insert-policy op `accountant_clients` is weg, dus dat
+gat is dicht). De andere twee zijn nu toegepast:
+
+- `verwerkt_freeze_level` — vooraf gemeten: er stonden NUL facturen op `verwerkt`, dus deze kon op
+  de dag zelf niets tegenhouden dat werkt. Hij staat er voor de eerste factuur die je boekhouder
+  verwerkt.
+- `creditnota_per_rate_ceiling` — dit was de migratie waarvan in de kop stond dat hij als enige
+  nooit tegen een database was nagemeten. Dat is nu wel gebeurd, in een proef die zichzelf
+  terugdraaide (17 factuurregels vóór, 17 ná): een gewone regel mocht door, een terechte
+  creditregel van 600 van 1000 mocht door, en de tweede 600 werd geweigerd met precies de code
+  die de app al omzet in een leesbare melding.
+
+**☑ De adviseur van Supabase: 271 meldingen → 103**
+
+- **157 policies riepen `auth.uid()` per RIJ aan.** Nu één keer, via `(select auth.uid())`.
+  Dezelfde uitkomst, en het verschil groeit met je administratie — dít was het antwoord op "hoe
+  moet dat dan bij een groot bedrijf". Vooraf ging de hele oude stand naar
+  `rls_backup.policies_20260901`; achteraf is elke policy teruggerekend en vergeleken: 162 vóór,
+  162 ná, 0 verdwenen, 0 nieuw, 0 met een andere betekenis. En daarna een echte proef als
+  ingelogde eigenaar: van 610 facturen zag hij zijn eigen 554 en 0 vreemde.
+- **7 dubbele indexen weg.** Elke rij die je schrijft onderhield ze allebei.
+- **De bedragbewaker draait op een vast zoekpad**, en zes triggerbewakers hangen niet langer als
+  `/rest/v1/rpc/...` aan de buitenkant.
+
+**☑ De storing van 27 augustus was al gerepareerd**
+
+In het foutenlog van Vercel stond er één, drie keer, bij één gebruiker: een 500 op `/api/intake`.
+Die is op 27 augustus al opgelost én afgedekt met een poort. Sindsdien nul fouten — ook in de twee
+uur ná al het bovenstaande.
+
+### Wat hier BEWUST niet is gedaan
+
+- **33 meldingen "multiple permissive policies".** Beleid samenvoegen VERANDERT wie wat mag; dat is
+  geen mechanische ingreep maar een besluit per tabel. Dit hoort overdag, met iemand die meekijkt.
+- **19 refererende sleutels zonder index.** Een index toevoegen kost bij élke schrijfactie iets.
+  Welke van de negentien het waard zijn, hangt af van wat er echt wordt opgevraagd — dat is een
+  meting, geen lijstje afwerken.
+- **49 "ongebruikte" indexen.** "Ongebruikt" betekent hier "niet gebruikt sinds de teller voor het
+  laatst op nul ging". In een jonge database is dat geen bewijs.
+
+### Wat ALLEEN JIJ nog kunt doen
+
+1. **Leaked Password Protection aanzetten** — Supabase → Authentication → Policies. Eén schakelaar;
+   hij toetst nieuwe wachtwoorden aan HaveIBeenPwned. De enige beveiligingsmelding die overblijft
+   en die van buitenaf niet te zetten is.
+2. **`CRON_SECRET` vervangen** (zie hieronder, punt 0) — nog steeds open, en zonder geldige waarde
+   doen alle zes de crons stil niets.
+3. **`BEHEER_EMAILS=mofwim@gmail.com`** in Vercel, anders is `/dashboard/beheer` voor jou een 404.
+4. **Google-toestemmingsscherm** (naam van de app) — zie `docs/AUTH_SETUP_GUIDE.md §A.1`.
+5. **DMARC van `p=none` naar `p=quarantine`**, als de rapporten een week schoon zijn.
+6. **`rls_backup.policies_20260901` mag weg** zodra de wijziging een tijdje meedraait. Hij staat
+   buiten de PostgREST-gevel en is alleen met de service-rol te lezen; hij is er als herstelpunt.
+
+---
+
 ## 0. Vóór de eerste tester — augustus 2026
 
 *Deze lijst is van 29 juli. Sindsdien zijn er **43 migraties** bijgekomen en is er drie weken aan
