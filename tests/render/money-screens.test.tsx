@@ -1896,6 +1896,63 @@ test("[CHECKLIST] the verify queue shows the checks too — it is where the invo
   assert.match(html, /Klopt er iets niet/, "and the owner is told what the button is for");
 });
 
+test("[WAAROM-WACHT] a spotless card that still waits says why, and a flagged one does not say it twice", async () => {
+  // Dit is de kaart waar het om gaat: classifyImportHealth vindt niets, het scherm zet er een
+  // groen "klaar om te bevestigen" boven — en tóch staat hij te wachten. Met field_confidence:
+  // null (elke rij van vóór deze meting) blijft dat onzichtbaar, dus de fixture draagt de reden.
+  const { InvoiceCard } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  const maak = (fc: Record<string, unknown> | null, over: Record<string, unknown> = {}) => {
+    const base = {
+      id: "w1", client_name: "Hano Groothandel", client_email: null, invoice_type: "factuur",
+      total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121, amount_paid: 0,
+      invoice_date: "2026-08-20", invoice_number: "F-9001", source: "upload",
+      pdf_url: "u1/x.pdf", document_id: null, created_at: "2026-08-20T10:00:00Z",
+      folder_id: null, folder_name: null, field_confidence: fc,
+      direction: "incoming", status: "processing", accountant_status: null, ...over,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { ...base, health: classifyImportHealth(base as any) };
+  };
+  const teken = (invoice: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(InvoiceCard as any, {
+          invoice, mode: "pending", expanded: true,
+          onToggle() {}, onConfirmPaid() {}, onEdit() {}, onIgnore() {}, onRestore() {},
+        }))),
+  );
+
+  // 1. De schone kaart mét vastgelegde reden: de zin staat er, en het is een ZIN.
+  const wacht = teken(maak({ _auto_hold: { at: "2026-08-20T10:00:01Z", reason: "no_reliable_total" } }));
+  assert.match(wacht, /Waarom wacht deze op jou/, "the card must say why it is still here");
+  assert.match(wacht, /Er is geen betrouwbaar totaalbedrag gelezen/);
+  assert.doesNotMatch(wacht, /no_reliable_total/,
+    "the machine tag may never reach the owner — it is the thing the sentence replaces");
+
+  // 2. De eigen schakelaar noemt de schakelaar zoals hij op het instellingenscherm staat.
+  const keuze = teken(maak({ _auto_hold: { at: "x", reason: "owner_reviews_everything" } }));
+  assert.match(keuze, /Duidelijke facturen automatisch inboeken/,
+    "an owner who forgot they flipped the switch has no other way to find out");
+
+  // 3. Niets vastgelegd (elke oude rij) ⇒ geen regel, geen gok.
+  assert.doesNotMatch(teken(maak(null)), /Waarom wacht deze op jou/);
+
+  // 4. En een kaart die het al uitlegt, legt het niet twee keer uit. Deze rekent niet op: de
+  //    amberen "Even controleren" staat er al, dus de tweede uitleg hoort te zwijgen.
+  const gemarkeerd = teken(maak(
+    { _auto_hold: { at: "x", reason: "no_reliable_total" } },
+    { total_ex_btw: 100, btw_amount: 21, total_inc_btw: 999 },
+  ));
+  assert.match(gemarkeerd, /Even controleren/, "the flagged card keeps its own amber panel");
+  assert.doesNotMatch(gemarkeerd, /Waarom wacht deze op jou/,
+    "two explanations of one delay is how a calm screen becomes a nagging one");
+});
+
 test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
   const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
   const { buildDebtorBoard } = await import("../../src/lib/accountant-debtors");

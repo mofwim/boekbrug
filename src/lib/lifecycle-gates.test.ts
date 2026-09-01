@@ -23,6 +23,8 @@ import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
 import { HOLD_LABELS } from "./hold-reasons";
+// [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
+import { explainableReasons, explainWaiting } from "./why-waiting";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12773,6 +12775,41 @@ test("[WAAROM-VASTGEHOUDEN] every refusal tag has a sentence an operator can act
       `refusal tag "${tag}" has no sentence in HOLD_LABELS. It would still be counted and shown — ` +
       "as the raw tag — but the operator ranking exists to say which fix buys back the most time, " +
       "and a machine word answers a different question than the one being asked");
+  }
+});
+
+test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none of them is a code", () => {
+  // Dezelfde scan als de poort hierboven, maar voor de andere lezer. Het beheerpaneel mag een
+  // onbekende code tonen als zichzelf — daar is het informatie. Op de kaart van de eigenaar is
+  // `no_reliable_total` geen uitleg maar ruis, dus toont why-waiting.ts daar niets. En "niets"
+  // is precies de stand die stil kan verbergen dat een veelvoorkomend geval nooit is uitgelegd —
+  // vandaar deze poort.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    for (const m of code(f).matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15, `only ${gevonden.size} refusal tags found; the scan went blind`);
+
+  const uitlegbaar = new Set(explainableReasons());
+  for (const tag of gevonden) {
+    assert.ok(uitlegbaar.has(tag),
+      `refusal tag "${tag}" reaches the owner's queue with no sentence, so that card explains ` +
+      "nothing at all — the owner re-reads a document that was read correctly and learns nothing");
+  }
+
+  // …en geen enkele zin die eruit komt mag alsnog een machinewoord zijn.
+  for (const tag of uitlegbaar) {
+    const zin = explainWaiting(tag, {}, "nl");
+    assert.ok(zin && !/[a-z]{3,}_[a-z_]{3,}/.test(zin.text),
+      `the sentence for "${tag}" reads like a machine tag, which is the thing it replaces`);
   }
 });
 

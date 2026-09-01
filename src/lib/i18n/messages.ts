@@ -13574,6 +13574,136 @@ export const MESSAGES = {
     en: 'They go out under their name and BTW number, in their continuous invoice series. Below is only what you created yourself.',
   },
 
+  // ─── [WAAROM-WACHT] Waarom wacht DIT document op mij ────────────────────────────────────────
+  //
+  // Eén zin per weigering, en elke zin wijst één ding aan: welk veld te bekijken, of welke
+  // schakelaar om te zetten. De ergste kaart is niet de gemarkeerde — die draagt al een badge en
+  // een lijst redenen. De ergste is de kaart met een groen "klaar om te bevestigen" die tóch
+  // wacht: daar staat vandaag niets, dus leest de eigenaar een document dat goed gelezen is nog
+  // een keer, vindt niets, tikt bevestigen en heeft niets geleerd. Driehonderd keer.
+  //
+  // De machinecode komt hier nooit op het scherm. Een weigering zonder zin toont niets — zie
+  // why-waiting.ts en de poort die elke code van een zin voorziet.
+
+  // De enige regel hier die géén leesprobleem beschrijft maar een KEUZE, en dus als enige een
+  // uitweg noemt. De schakelaar wordt genoemd zoals hij op het instellingenscherm geschreven
+  // staat, in dezelfde taal als de rest van dat scherm — anders zoekt de eigenaar naar een woord
+  // dat nergens in de interface voorkomt.
+  'ink.waaromWacht': {
+    nl: 'Waarom wacht deze op jou',
+    ar: 'لماذا تنتظرك هذه',
+    en: 'Why this one is waiting for you',
+  },
+
+  'wacht.eigenKeuze': {
+    nl: 'Wacht op jou omdat "Duidelijke facturen automatisch inboeken" uit staat. Zet het aan bij Instellingen als dit voortaan vanzelf mag.',
+    ar: 'ينتظرك لأن "قيد الفواتير الواضحة تلقائياً" متوقّف. فعّله في الإعدادات إن أردت أن يجري هذا من تلقاء نفسه.',
+    en: 'Waiting for you because "Book clear invoices automatically" is off. Turn it on in Settings if this may happen by itself from now on.',
+  },
+
+  // De geldvelden — de zinnen die zeggen WAAR je moet kijken.
+  'wacht.geenTotaal': {
+    nl: 'Er is geen betrouwbaar totaalbedrag gelezen. Vul het bedrag zelf in.',
+    ar: 'لم يُقرأ مبلغ إجمالي موثوق. أدخل المبلغ بنفسك.',
+    en: 'No reliable total was read. Fill in the amount yourself.',
+  },
+  'wacht.totaalBerekend': {
+    nl: 'Het totaal is berekend, niet van het document gelezen. Vergelijk het even.',
+    ar: 'الإجمالي محسوب، لا مقروء من المستند. قارنه سريعاً.',
+    en: 'The total was calculated, not read off the document. Compare it.',
+  },
+  'wacht.totaalNietInTekst': {
+    nl: 'Het gelezen totaal staat niet zo in de tekst van dit document. Vergelijk het bedrag met wat er gedrukt staat.',
+    ar: 'الإجمالي المقروء لا يرد هكذا في نص هذا المستند. قارن المبلغ بما هو مطبوع.',
+    en: 'The total that was read does not appear that way in this document. Compare it with what is printed.',
+  },
+  'wacht.totaalVerkeerdePlek': {
+    nl: 'Het bedrag staat niet waar een totaal hoort te staan — mogelijk is een subtotaal gelezen.',
+    ar: 'المبلغ ليس في الموضع الذي يُطبع فيه الإجمالي عادةً — ربما قُرئ مبلغ جزئي.',
+    en: 'The amount is not where a total is normally printed — a subtotal may have been read.',
+  },
+  'wacht.btwAnders': {
+    nl: 'De btw-verdeling op het document is anders dan wat er gelezen is.',
+    ar: 'توزيع btw على المستند يختلف عمّا قُرئ.',
+    en: 'The btw split on the document differs from what was read.',
+  },
+  'wacht.btwNul': {
+    nl: 'De btw is nul, maar er staat geen 0% op het document.',
+    ar: 'قيمة btw صفر، لكن لا يوجد 0% على المستند.',
+    en: 'The btw is zero, but the document does not state 0%.',
+  },
+  'wacht.eFactuurAnders': {
+    nl: 'De e-factuur van de leverancier noemt andere bedragen dan er gelezen is.',
+    ar: 'الفاتورة الإلكترونية من المورّد تذكر مبالغ غير التي قُرئت.',
+    en: "The supplier's e-invoice states different amounts than were read.",
+  },
+  'wacht.bedragOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over het bedrag. Vergelijk het met het document.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من المبلغ. قارنه بالمستند.',
+    en: 'The reader was not certain enough about the amount. Compare it with the document.',
+  },
+
+  // De lezing als geheel.
+  'wacht.lezingOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over dit document. Kijk het bedrag en de datum na.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من هذا المستند. راجع المبلغ والتاريخ.',
+    en: 'The reader was not certain enough about this document. Check the amount and the date.',
+  },
+  'wacht.gegevensOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over de leverancier, het factuurnummer of de datum.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من المورّد أو رقم الفاتورة أو التاريخ.',
+    en: 'The reader was not certain enough about the supplier, the invoice number or the date.',
+  },
+  'wacht.aandacht': {
+    nl: 'Er staat iets in deze factuur dat eerst nagekeken moet worden.',
+    ar: 'في هذه الفاتورة ما يجب مراجعته أولاً.',
+    en: 'Something in this invoice has to be checked first.',
+  },
+
+  // Wat het document IS.
+  'wacht.geenFactuur': {
+    nl: 'Dit lijkt geen factuur. Kijk even of het hier hoort.',
+    ar: 'لا يبدو هذا فاتورة. تحقّق إن كان مكانه هنا.',
+    en: 'This does not look like an invoice. Check whether it belongs here.',
+  },
+  'wacht.overzicht': {
+    nl: 'Dit lijkt een rekeningoverzicht, geen factuur.',
+    ar: 'يبدو هذا كشف حساب، لا فاتورة.',
+    en: 'This looks like a statement, not an invoice.',
+  },
+  'wacht.herinnering': {
+    nl: 'Dit lijkt een herinnering van een factuur die je misschien al hebt.',
+    ar: 'يبدو هذا تذكيراً بفاتورة قد تكون لديك أصلاً.',
+    en: 'This looks like a reminder for an invoice you may already have.',
+  },
+  'wacht.creditnota': {
+    nl: 'Dit lijkt een creditnota. Die boekt de app nooit vanzelf.',
+    ar: 'يبدو هذا إشعار دائن. لا يقيّده التطبيق تلقائياً أبداً.',
+    en: 'This looks like a credit note. The app never books those by itself.',
+  },
+
+  // Hoe het binnenkwam.
+  'wacht.uitMailtekst': {
+    nl: 'Dit komt uit de tekst van een e-mail, niet uit een bijlage.',
+    ar: 'هذا مأخوذ من نص رسالة بريد، لا من مرفق.',
+    en: 'This comes from the text of an e-mail, not from an attachment.',
+  },
+  'wacht.meerdereFacturen': {
+    nl: 'Er zaten meerdere facturen in één bestand.',
+    ar: 'كان في الملف الواحد أكثر من فاتورة.',
+    en: 'There were several invoices in one file.',
+  },
+  'wacht.tochToegevoegd': {
+    nl: 'Je hebt deze toegevoegd terwijl hij op een dubbele leek.',
+    ar: 'أضفتَ هذه رغم أنها بدت مكرّرة.',
+    en: 'You added this one although it looked like a duplicate.',
+  },
+  'wacht.nietInAanmerking': {
+    nl: 'Deze kwam niet in aanmerking om vanzelf geboekt te worden.',
+    ar: 'لم تكن هذه مؤهّلة للقيد التلقائي.',
+    en: 'This one was not eligible to be booked automatically.',
+  },
+
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES
