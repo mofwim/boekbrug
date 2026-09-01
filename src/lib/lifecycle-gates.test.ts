@@ -12709,6 +12709,40 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[WAAROM-VASTGEHOUDEN] both branches of the auto-advance decision are written down", () => {
+  // Gemeten op één echte administratie over een jaar: 350 van de 590 inkomende documenten hadden
+  // een mensenhand nodig, en 296 daarvan droegen geen énkele vlag die verklaarde waarom.
+  //
+  // Niet omdat de app het niet wist. beslisAutoAdvance rekent voor elke weigering een precieze
+  // reden uit — zeventien stuks — en het type noemt dat veld zelf "machine tag for
+  // audit/telemetry". Hij werd alleen op de GESLAAGDE tak opgeschreven; bij een weigering
+  // berekend en weggegooid, precies op het moment dat de app besluit de eigenaar een minuut te
+  // kosten.
+  //
+  // Eén tak schrijven en de andere niet is hoe dit verdween, dus dat is wat hier vastligt: beide
+  // paden, beide takken. Zonder deze meting is elke volgende versnelling een gok.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    const src = code(f);
+    assert.match(src, /_auto_verified/, `${f}: the passing branch must stay written down`);
+    assert.match(src, /_auto_hold/,
+      `${f}: the REFUSING branch must be written down too. The reason is computed either way; ` +
+      "discarding it on refusal makes the most expensive question in the product unanswerable");
+    // …en met de reden erin, niet als kale vlag: "vastgehouden" zonder waarom is net zo blind.
+    assert.match(src, /_auto_hold[\s\S]{0,160}?reason: autoAdv\.reason/,
+      `${f}: the hold must carry the machine tag, or it says only that something happened`);
+  }
+
+  // De redenen zelf moeten blijven bestaan waar ze worden gemaakt — een lege string terugbrengen
+  // zou de poort hierboven groen laten en de meting alsnog waardeloos maken.
+  const beslis = code("src/lib/auto-advance.ts");
+  const redenen = [...beslis.matchAll(/advance: false, reason: ["`']([a-z_]+)/g)].map((m) => m[1]);
+  assert.ok(redenen.length >= 10,
+    `only ${redenen.length} refusal reasons found; the decision was flattened and the measurement ` +
+    "loses exactly the detail it exists for");
+  assert.ok(new Set(redenen).size === redenen.length,
+    "two refusals share one tag, so they cannot be told apart in the measurement");
+});
+
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
   // De regel stond al in invoice/draft/route.ts, in zoveel woorden: "Een factuurkop zonder regels
   // is erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent."

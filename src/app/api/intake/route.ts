@@ -1311,6 +1311,22 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  } else {
+    // [WAAROM-VASTGEHOUDEN] En de andere tak, die er niet was.
+    //
+    // Gemeten op één echte administratie over een jaar: van de 590 inkomende documenten hadden er
+    // 350 een mensenhand nodig, en 296 daarvan droegen GEEN enkele vlag die verklaarde waarom. Niet
+    // omdat de app het niet wist — beslisAutoAdvance rekent voor élke weigering een precieze reden
+    // uit, zeventien stuks, en het type noemt dat veld zelf "machine tag for audit/telemetry".
+    //
+    // Alleen werd hij uitsluitend op de GESLAAGDE tak opgeschreven. Bij een weigering werd hij
+    // berekend en weggegooid — precies op het moment dat de app besluit de eigenaar een minuut te
+    // kosten. De duurste vraag in dit product ("waarom kost dit mij tijd?") was daarmee wél
+    // beantwoordbaar door de code en niet beantwoordbaar uit de data.
+    //
+    // Dit verandert niets aan wat er gebeurt. Het schrijft alleen op wat er gebeurde, zodat de
+    // volgende verbetering op een meting rust in plaats van op een vermoeden.
+    fieldConfidence._auto_hold = { at: new Date().toISOString(), reason: autoAdv.reason };
   }
   // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is proven
   // by the paper (settlePlan). Either one alone books something nobody checked.

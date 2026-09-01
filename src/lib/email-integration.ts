@@ -4377,6 +4377,15 @@ export async function syncUserEmails(
           ...(fieldConfidenceValue ?? {}),
           _auto_verified: { at: new Date().toISOString(), reason: autoAdv.reason },
         }
+      } else {
+        // [WAAROM-VASTGEHOUDEN] Dezelfde asymmetrie als op het intakepad, en om dezelfde reden
+        // weggehaald: de reden van een WEIGERING werd berekend en weggegooid, terwijl juist die
+        // bepaalt hoeveel tijd de eigenaar aan zijn wachtrij kwijt is. Zie intake/route.ts voor de
+        // meting die dit aanwees — 296 van 350 aanrakingen zonder enige vastgelegde oorzaak.
+        fieldConfidenceValue = {
+          ...(fieldConfidenceValue ?? {}),
+          _auto_hold: { at: new Date().toISOString(), reason: autoAdv.reason },
+        }
       }
       // [MAILTEKST] Where this document came from, on the row. The queue prints a line about it,
       // and the accountant can see that the "document" is a rendering of an e-mail rather than the
