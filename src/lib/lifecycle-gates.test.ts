@@ -12864,6 +12864,32 @@ test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none o
   );
 });
 
+test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {
+  // De kaslade is het enige scherm waar een getal tegen een fysieke stapel geld wordt gelegd. De
+  // route wist al dat de sync-pas gebald was — de regel stond er, met de diagnose ernaast — en
+  // schreef het naar een log. Deze poort houdt de weg naar het scherm open.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(route, /settlementsCurrent:\s*settleSync\.ok/,
+    "the cash read must report whether the settlement pass actually ran; a stale saldo that looks " +
+    "current is the most dangerous shape this screen can take");
+
+  const scherm = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(scherm, /json\.settlementsCurrent !== false/,
+    "read it tolerantly: an older server (or a cached response) sends nothing, and a false alarm " +
+    "about money gets clicked away and then protects nothing");
+  assert.match(scherm, /const \[settlementsCurrent, setSettlementsCurrent\] = useState\(true\)/,
+    "…and the default must be the quiet one, or every first paint accuses the drawer");
+  assert.match(scherm, /!loadError && !settlementsCurrent/,
+    "the two states are exclusive: a failed load already shows '—', and two notices about one " +
+    "problem is how a calm screen becomes a nagging one");
+  assert.match(scherm, /kas\.achter\.kop/);
+  assert.match(scherm, /kas\.achter\.uitleg/);
+
+  for (const k of ["kas.achter.kop", "kas.achter.uitleg"] as const) {
+    assert.ok((MESSAGES[k]?.nl ?? "").length > 10, `${k} must carry a real Dutch sentence`);
+  }
+});
+
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
   // De regel stond al in invoice/draft/route.ts, in zoveel woorden: "Een factuurkop zonder regels
   // is erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent."

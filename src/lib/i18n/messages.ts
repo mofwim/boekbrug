@@ -13736,6 +13736,22 @@ export const MESSAGES = {
   // De eerste zin bestaat omdat het label erboven "onthouden" zei — ook wanneer het geheugen de
   // ANDERE kant op wees. De suggestie die de app zelf wantrouwt zag er precies uit als degene die
   // ze het meest vertrouwt, en de eigenaar kon het verschil niet zien.
+  // ── [KAS-ACHTER] De kaslade waarvan de koppeling niet kon bijwerken ───────────────────────
+  //
+  // Het saldo is het getal waar een winkelier zijn lade tegenaan telt. Een verouderd saldo dat er
+  // actueel uitziet is de gevaarlijkste vorm die dat scherm kan aannemen — en de code wist het al:
+  // de regel die dit meldt stond er, schreef naar een log, en zei het nergens tegen de eigenaar.
+  'kas.achter.kop': {
+    nl: 'De koppeling met je facturen kon niet bijwerken',
+    ar: 'تعذّر تحديث الربط مع فواتيرك',
+    en: 'The link with your invoices could not update',
+  },
+  'kas.achter.uitleg': {
+    nl: 'De boekingen hieronder kloppen — het zijn echte regels. Maar facturen die je contant hebt betaald zijn deze keer niet verwerkt, dus het saldo kan achterlopen. Probeer het zo opnieuw; blijft dit staan, laat het ons dan weten.',
+    ar: 'القيود أدناه صحيحة — إنها سطور حقيقية. لكن الفواتير التي دفعتها نقداً لم تُعالَج هذه المرة، لذا قد يكون الرصيد متأخراً. أعد المحاولة بعد قليل؛ وإن بقي الأمر، فأخبرنا.',
+    en: 'The entries below are real. But invoices you paid in cash were not processed this time, so the balance may be behind. Try again in a moment; if this stays, let us know.',
+  },
+
   'wacht.catGeheugenAndereKant': {
     nl: 'Deze tegenpartij ken je, maar toen ging het geld de andere kant op. Een teruggestort bedrag is geen omzet en een terugbetaling is geen kost — kies zelf.',
     ar: 'هذا الطرف معروف لديك، لكن المال حينها سار في الاتجاه الآخر. المبلغ المُعاد ليس إيراداً والاسترداد ليس تكلفة — اختر بنفسك.',

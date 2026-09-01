@@ -168,6 +168,12 @@ export default function KasClient() {
   // €0,00 saldo + "Nog geen kasboekingen" — a false money figure indistinguishable
   // from a fresh account (locked constraint #3: no false reassurance).
   const [loadError, setLoadError] = useState(false)
+  // [KAS-ACHTER] Kon de koppeling met de facturen bijwerken? `false` betekent dat de sync-pas
+  // gebald heeft: hij las iets wat hij niet kon vertrouwen en heeft niets aangemaakt, hersteld of
+  // teruggedraaid. De rijen hieronder blijven echt; het saldo kan achterlopen op de facturen die
+  // contant zijn betaald. Standaard `true`, zodat een oudere server (of een cache) dit scherm niet
+  // ten onrechte laat waarschuwen — een vals alarm op geld went, en dan wordt het weggeklikt.
+  const [settlementsCurrent, setSettlementsCurrent] = useState(true)
 
   const [direction, setDirection] = useState<'in' | 'out'>('in')
   const [amount, setAmount] = useState('')
@@ -359,7 +365,7 @@ export default function KasClient() {
     try {
       const res = await fetch('/api/cash')
       const json = await res.json()
-      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false) }
+      if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false); setSettlementsCurrent(json.settlementsCurrent !== false) }
       else { setLoadError(true) }
     } catch { setLoadError(true) } finally { setLoading(false) }
   }
@@ -391,7 +397,7 @@ export default function KasClient() {
         const res = await fetch('/api/cash')
         const json = await res.json()
         if (!cancelled) {
-          if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false) }
+          if (res.ok) { setEntries(json.entries ?? []); setBalance(json.balance ?? 0); setOpeningBalance(json.openingBalance ?? 0); setLoadError(false); setSettlementsCurrent(json.settlementsCurrent !== false) }
           else { setLoadError(true) }
         }
       } catch { if (!cancelled) setLoadError(true) } finally { if (!cancelled) setLoading(false) }
@@ -573,6 +579,27 @@ export default function KasClient() {
               type="button"
               onClick={() => { setLoading(true); void load() }}
               style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: 'none', background: M3.primary, color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}
+            >
+              {t('inkoop.opnieuwProberen')}
+            </button>
+          </div>
+        )}
+
+        {/* [KAS-ACHTER] De koppeling met de facturen kon niet bijwerken.
+            
+            Niet naast de laadfout: die zegt al dat er geen cijfer is, en twee meldingen over één
+            probleem is hoe een rustig scherm een zeurend scherm wordt. Dit is de andere stand —
+            de rijen zijn er WÉL en het saldo staat er WÉL, alleen loopt het mogelijk achter op de
+            facturen die contant zijn betaald. Amber, niet rood: er is niets stuk aan de boekingen
+            die je ziet. */}
+        {!loadError && !settlementsCurrent && (
+          <div style={{ margin: '16px 0 0', background: '#FEF7E0', border: '1px solid #F9E3A2', borderRadius: 14, padding: '14px 16px' }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: '#5C4400' }}>{t('kas.achter.kop')}</div>
+            <div style={{ fontSize: 13, color: '#6B5200', marginTop: 4, lineHeight: 1.5 }}>{t('kas.achter.uitleg')}</div>
+            <button
+              type="button"
+              onClick={() => { setLoading(true); void load() }}
+              style={{ marginTop: 10, padding: '8px 16px', borderRadius: 10, border: '1px solid #E0A94F', background: '#fff', color: '#5C4400', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}
             >
               {t('inkoop.opnieuwProberen')}
             </button>

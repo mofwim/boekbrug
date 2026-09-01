@@ -49,6 +49,12 @@ export async function GET() {
   if (!settleSync.ok) {
     console.error("[CASH-SETTLE] reconcile bailed before the kasboek read — settlements may be stale", { userId: user.id });
   }
+  // [KAS-ACHTER] …en de eigenaar hoort het ook. De regel hierboven bestond al, met de diagnose er
+  // letterlijk naast ("nothing anywhere said so"), en schreef naar een log dat niemand opent. Het
+  // saldo hieronder is het getal waar een winkelier zijn lade tegenaan telt; een verouderd saldo
+  // dat er actueel uitziet is de gevaarlijkste vorm die dit scherm kan aannemen. De rijen blijven
+  // staan — het zijn echte boekingen — maar het scherm zegt erbij dat de koppeling met de
+  // facturen niet heeft kunnen bijwerken.
 
   // [SEARCH-FULL-LEDGER] Return the WHOLE cash book, not the newest 500. The in-page zoekbalk filters
   // this array client-side (op omschrijving / categorie / bedrag), so a 500-row slice made every entry
@@ -114,7 +120,7 @@ export async function GET() {
       .map((t) => ({ date: t.turnover_date, cash_amount: t.cash_amount })),
   });
 
-  return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length });
+  return NextResponse.json({ ok: true, entries, balance, openingBalance: opening, count: entries.length, settlementsCurrent: settleSync.ok });
 }
 
 export async function POST(req: NextRequest) {
