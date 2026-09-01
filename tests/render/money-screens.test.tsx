@@ -1953,6 +1953,56 @@ test("[WAAROM-WACHT] a spotless card that still waits says why, and a flagged on
     "two explanations of one delay is how a calm screen becomes a nagging one");
 });
 
+test("[WAAROM-WACHT-BANK] a line with no invoice says WHICH of the four things is going on", async () => {
+  // Het tabblad had één alinea voor álle regels. Deze test bestaat om te bewijzen dat de vier
+  // gevallen verschillende zinnen krijgen — met één regel als invoer klopt elke implementatie.
+  const { TxCard } = await import("../../src/app/dashboard/bank/BankClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const teken = (over: Record<string, unknown>) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(TxCard as any, {
+          s: {
+            transactionId: "t1", date: "2026-08-20", amount: -450.5, description: "SEPA Overboeking",
+            counterpart: "Hano Groothandel B.V.", reference: "26702781", outcome: "none",
+            best: null, candidates: [], ...over,
+          },
+          selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+          confirmedNumbers: [], batchEligible: false, batchChecked: false,
+          onBatchToggle() {}, onSelect() {}, onConfirm() {}, onAttach() {}, onIgnore() {},
+          onRestore() {}, onOpenFile() {}, onCorrect() {},
+        }))),
+  );
+
+  // 1. De duurste regel op dit scherm: de factuur ligt nog in een la.
+  const ontbreekt = teken({ waitReason: "reference_not_in_administration" });
+  assert.match(ontbreekt, /factuurnummer dat niet in je administratie staat/);
+  assert.doesNotMatch(ontbreekt, /reference_not_in_administration/,
+    "the machine tag may never reach the owner");
+
+  // 2. Een ander geval krijgt een ANDERE zin — anders zegt het paneel niets nieuws.
+  const kiezen = teken({ waitReason: "several_invoices_this_amount" });
+  assert.match(kiezen, /meerdere facturen open met precies dit bedrag/);
+  assert.notEqual(
+    kiezen.includes("factuurnummer dat niet in je administratie staat"), true,
+    "the four reasons must not collapse back into one paragraph",
+  );
+
+  // 3. Niets te zeggen ⇒ niets gezegd. Geen verzonnen uitleg op een geldscherm.
+  assert.doesNotMatch(teken({ waitReason: null }), /Deze tegenpartij komt niet voor/);
+
+  // 4. En naast een somsuggestie zwijgt hij: die IS al een uitleg, met een knop eronder.
+  const som = teken({
+    waitReason: "several_invoices_this_amount",
+    sumMatch: { invoiceIds: ["a", "b"], invoiceNumbers: ["A1", "B1"], total: 450.5, amounts: [200.5, 250] },
+  });
+  assert.doesNotMatch(som, /meerdere facturen open met precies dit bedrag/,
+    "two explanations of one line is how a calm screen becomes a nagging one");
+});
+
 test("[RENDER-GATE] the debtor board renders, and stays honest about what it cannot do", async () => {
   const { default: AccountantDebiteuren } = await import("../../src/modules/accountant/pages/AccountantDebiteuren");
   const { buildDebtorBoard } = await import("../../src/lib/accountant-debtors");

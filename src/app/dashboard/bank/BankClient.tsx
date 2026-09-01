@@ -18,6 +18,9 @@ import { namedInvoiceNumbers, missingNamedInvoices, missingInvoiceNoticeText } f
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
+// [WAAROM-WACHT-BANK] Eén zin per regel die zichzelf niet koppelde. De component draagt zelf
+// geen taal — dezelfde woordenlijst als de verificatiewachtrij, zie why-waiting.ts.
+import { explainWaiting } from '@/lib/why-waiting'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { categoryLabel } from '@/lib/bank-categories'
 import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel, ignoreReasonGroups } from '@/lib/bank-ignore-reason'
@@ -178,6 +181,9 @@ interface Suggestion {
   // [CREDIT-VERREKEN] `amounts` is signed per member, so the card can print the subtraction it
   // is claiming. Optional: an older cached response has none, and then it reads as it always did.
   sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number; amounts?: number[] } | null
+  // [WAAROM-WACHT-BANK] Machinecode van de server: waarom deze regel niets vond. Null wanneer er
+  // niets eerlijks te zeggen valt, en dan zegt de kaart niets — zie bank-waiting-reason.ts.
+  waitReason?: string | null
 }
 interface MatchResponse {
   ok: boolean
@@ -2564,7 +2570,10 @@ function Empty({ done }: { done: boolean }) {
   )
 }
 
-function TxCard({
+// Geëxporteerd om dezelfde reden als InvoiceCard in de verificatiewachtrij: de takken van deze
+// kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
+// roepen een component nooit aan.
+export function TxCard({
   s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove, onMatchChecked,
 }: {
   s: Suggestion
@@ -2592,7 +2601,10 @@ function TxCard({
   /** [KAS-AUTO-BOOK] "Klopt" on the amount-only flag — the answer the warning never had. */
   onMatchChecked?: () => void
 }) {
-  const t = translator(useLocale())
+  // [WAAROM-WACHT-BANK] De taal apart: de zin over deze regel komt uit een pure module en draagt
+  // zijn eigen leesrichting mee, zodat een Arabische kaart niet half links uitlijnt.
+  const taal = useLocale()
+  const t = translator(taal)
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
   // [BANK-DETAILS] Like the ING app, the card shows a clean name and lets the
@@ -3356,6 +3368,39 @@ function TxCard({
                   {t('bank.fout.geenFactuur')}
                 </div>
               )}
+              {/* [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde.
+              
+                  Het tabblad "Geen factuur" had één alinea voor álle regels, en die was over elke
+                  regel waar en over geen enkele nuttig. De redenen eronder vragen tegengestelde
+                  handelingen: een factuur TOEVOEGEN (de betaling noemt een nummer dat we niet
+                  kennen), er één KIEZEN (meerdere met hetzelfde bedrag), wachten op een deelbetaling,
+                  of de regel één keer een categorie geven.
+              
+                  Niet naast de somsuggestie: die IS al een uitleg mét een knop eronder, en twee
+                  uitleggen van één regel is hoe een rustig scherm een zeurend scherm wordt. Niet op
+                  het Genegeerd- of Gekoppeld-tabblad: daar is de vraag al beantwoord. En niets
+                  wanneer de server niets kon zeggen — een verzonnen uitleg op een geldscherm is
+                  erger dan de leegte die de eigenaar al had. */}
+              {(() => {
+                if (isIgnoredTab || isDoneTab || s.sumMatch) return null
+                const uitleg = explainWaiting(s.waitReason ?? null, {}, taal)
+                if (!uitleg) return null
+                return (
+                  <div
+                    dir={uitleg.dir}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 6,
+                      padding: '9px 11px', borderRadius: R.md, marginBottom: 10,
+                      background: M3.surfaceVariant, color: '#3c4043',
+                      fontSize: 12.5, lineHeight: 1.5, textAlign: 'start',
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>help</span>
+                    <span>{uitleg.text}</span>
+                  </div>
+                )
+              })()}
+
               {/* [BANK-ATTACH] Attach the document(s) for this payment. Shown on
                   BOTH debit (expense → inkoopfactuur) and credit (income/refund →
                   verkoopfactuur) — income also has documents worth linking (a

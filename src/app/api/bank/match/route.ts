@@ -23,6 +23,8 @@ import {
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
+// [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde — dezelfde pool als de matcher.
+import { judgeBankWait } from "@/lib/bank-waiting-reason";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 // [GEHEUGEN] The owner's own confirmations, read back — see match-memory.ts for what it means.
 import { loadMatchMemory } from "@/lib/match-memory-server";
@@ -497,6 +499,23 @@ export async function GET() {
       // [CIRKEL] This debit matches an invoice still in the verify queue → not missing either; the
       // UI links straight to its verify step instead of asking the owner to upload it again.
       explainedByQueued: txId != null ? queuedExplained.get(txId) ?? null : null,
+      // [WAAROM-WACHT-BANK] Waarom deze regel niet zichzelf koppelde, als machinecode — het scherm
+      // maakt er een zin van via why-waiting.ts. Alleen voor regels die NIETS vonden: bij een
+      // kandidatenlijst is die lijst het antwoord. Dezelfde `invoices` als de matcher kreeg, want
+      // een uitleg die op een andere verzameling rekent legt een besluit uit dat nooit genomen is.
+      waitReason:
+        m.outcome === "none" && !isLinked
+          ? judgeBankWait(
+              {
+                amount: m.transaction.amount,
+                counterpartName: m.transaction.counterpartName,
+                counterpartIban: m.transaction.counterpartIban ?? null,
+                reference: m.transaction.reference,
+                description: m.transaction.description,
+              },
+              invoices,
+            )
+          : null,
       // [BANK-SUM-SUGGEST] Unique same-supplier sum tie (or null). Suggestion only — see above.
       sumMatch,
     };

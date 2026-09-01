@@ -89,6 +89,17 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   // The honest catch-all: the app knows it did not qualify and cannot say more than that. Better
   // than silence — "this one was not eligible" at least tells the owner the app looked.
   not_eligible: "wacht.nietInAanmerking",
+
+  // ── /bank ──────────────────────────────────────────────────────────────────────────────────
+  //
+  // Dezelfde vraag, één scherm verder, en de tags komen uit bank-waiting-reason.ts. Ze horen in
+  // DEZE lijst en niet in een tweede: één zin per reden voor de hele app was het punt, en een
+  // aparte woordenlijst per scherm is precies hoe de ene helft vertaald raakt en de andere niet.
+  reference_not_in_administration: "wacht.bankNummerOnbekend",
+  several_invoices_this_amount: "wacht.bankMeerdereZelfdeBedrag",
+  counterparty_has_no_open_invoice_this_amount: "wacht.bankGeenBedrag",
+  counterparty_unknown_here: "wacht.bankOnbekendePartij",
+  nothing_open_at_all: "wacht.bankNietsOpen",
 };
 
 export interface WaitingExplanation {

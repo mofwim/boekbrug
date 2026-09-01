@@ -12811,6 +12811,29 @@ test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none o
     assert.ok(zin && !/[a-z]{3,}_[a-z_]{3,}/.test(zin.text),
       `the sentence for "${tag}" reads like a machine tag, which is the thing it replaces`);
   }
+
+  // ── En hetzelfde één scherm verder ────────────────────────────────────────────────────────
+  //
+  // /bank kent zijn eigen redenen (bank-waiting-reason.ts) en ze horen in DEZELFDE woordenlijst.
+  // Een aparte lijst per scherm is precies hoe de ene helft vertaald raakt en de andere niet.
+  const bankBron = code("src/lib/bank-waiting-reason.ts");
+  const unie = bankBron.slice(bankBron.indexOf("export type BankWaitReason ="));
+  const bankTags = [...unie.slice(0, unie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(bankTags.length >= 4,
+    `only ${bankTags.length} bank reasons found; the scan stopped matching the union it watches`);
+  for (const tag of bankTags) {
+    assert.ok(uitlegbaar.has(tag),
+      `bank reason "${tag}" has no sentence, so that line falls back to the one paragraph the ` +
+      "whole tab shares — true of every line in it and useful about none of them");
+  }
+
+  // En de weg ernaartoe: de route moet het oordeel ook echt meesturen. Een uitleg die nergens
+  // wordt berekend is onzichtbaar op precies dezelfde manier als een uitleg die niet bestaat.
+  const bankRoute = code("src/app/api/bank/match/route.ts");
+  assert.match(bankRoute, /judgeBankWait\(/,
+    "the match route must compute the reason, or the card has nothing to render");
+  assert.match(bankRoute, /waitReason:/,
+    "…and put it on the DTO the screen reads");
 });
 
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {

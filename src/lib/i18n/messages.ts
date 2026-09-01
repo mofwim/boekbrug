@@ -13698,6 +13698,38 @@ export const MESSAGES = {
     ar: 'أضفتَ هذه رغم أنها بدت مكرّرة.',
     en: 'You added this one although it looked like a duplicate.',
   },
+  // ── /bank: waarom deze regel zichzelf niet koppelde ───────────────────────────────────────
+  //
+  // Het tabblad "Geen factuur" had één alinea voor álle regels, en die was over elke regel waar
+  // en over geen enkele nuttig. De vier redenen eronder vragen tegengestelde handelingen: een
+  // factuur TOEVOEGEN, er één KIEZEN, wachten op een deelbetaling, of de regel één keer een
+  // categorie geven.
+  'wacht.bankNummerOnbekend': {
+    nl: 'De betaling noemt een factuurnummer dat niet in je administratie staat. Waarschijnlijk is die factuur er nog niet — voeg hem toe, dan koppelt deze regel zichzelf.',
+    ar: 'الدفعة تذكر رقم فاتورة غير موجود في إدارتك. على الأرجح لم تُضَف تلك الفاتورة بعد — أضفها، وعندها يرتبط هذا السطر من تلقاء نفسه.',
+    en: 'The payment quotes an invoice number that is not in your administration. That invoice is probably not entered yet — add it and this line links itself.',
+  },
+  'wacht.bankMeerdereZelfdeBedrag': {
+    nl: 'Er staan meerdere facturen open met precies dit bedrag. Kies welke het is — raden doet de app niet.',
+    ar: 'هناك أكثر من فاتورة مفتوحة بالمبلغ نفسه تماماً. اختر أيّها — التطبيق لا يخمّن.',
+    en: 'Several open invoices carry exactly this amount. Pick the right one — the app does not guess.',
+  },
+  'wacht.bankGeenBedrag': {
+    nl: 'Van deze tegenpartij staan wel facturen open, maar geen met dit bedrag. Vaak is dit een deelbetaling of een factuur die nog moet komen.',
+    ar: 'لهذا الطرف فواتير مفتوحة، لكن ليس بهذا المبلغ. غالباً دفعة جزئية أو فاتورة لم تصل بعد.',
+    en: 'This counterparty has open invoices, but none for this amount. Often a part payment, or an invoice still to come.',
+  },
+  'wacht.bankOnbekendePartij': {
+    nl: 'Deze tegenpartij komt niet voor in je openstaande facturen. Hoort er geen factuur bij — huur, een lening, privé — geef de regel dan één keer een categorie.',
+    ar: 'هذا الطرف لا يرد في فواتيرك المفتوحة. إن لم تكن له فاتورة — إيجار أو قرض أو أمر شخصي — فامنح السطر تصنيفاً مرة واحدة.',
+    en: 'This counterparty does not appear in your open invoices. If no invoice belongs to it — rent, a loan, private — give the line a category once.',
+  },
+  'wacht.bankNietsOpen': {
+    nl: 'Er staat op dit moment geen enkele factuur open om aan te koppelen.',
+    ar: 'لا توجد حالياً أي فاتورة مفتوحة ليُربط بها.',
+    en: 'There is currently no open invoice to link this to.',
+  },
+
   'wacht.nietInAanmerking': {
     nl: 'Deze kwam niet in aanmerking om vanzelf geboekt te worden.',
     ar: 'لم تكن هذه مؤهّلة للقيد التلقائي.',
