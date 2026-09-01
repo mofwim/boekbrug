@@ -69,6 +69,9 @@ import PaymentEvidenceLine from '@/components/invoice/PaymentEvidenceLine'
 // [CREDIT-BEWIJS] Which credit notes are behind the "gecrediteerd" chip — see the row below.
 import { buildCreditEvidenceLine } from '@/lib/credit-evidence'
 import CreditEvidenceLine from '@/components/invoice/CreditEvidenceLine'
+// [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
+// open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
+import { onRowTap } from '@/lib/row-tap'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -1437,9 +1440,9 @@ export default function FacturenClient({
                       (only for open verkoopfacturen); otherwise it expands. */}
                   <div
                     className="inv-row"
-                    onClick={() => selectMode
+                    onClick={onRowTap(() => selectMode
                       ? toggleSelect(inv)
-                      : setExpandedId(expanded ? null : inv.id)}
+                      : setExpandedId(expanded ? null : inv.id))}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
                     style={{ background: selected[inv.id] ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : rowBg, padding: '14px 16px', cursor: 'pointer', transition: 'background 0.4s ease' }}

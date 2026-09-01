@@ -13008,6 +13008,79 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
 // De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
 // functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
 // haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [TEKST-SELECTIE] Selecting text in a row is not a tap on the row ───────────────────────────
+//
+// Reported with a screenshot: on /dashboard/incoming/manage the owner dragged across an invoice
+// number to copy it and the card opened and closed under the cursor. Every invoice list in this
+// app has the same shape — the whole row carries the onClick that expands it — so the drag ends
+// in a click on the row. It landed on the value an owner copies most often (into a transfer's
+// description, into an e-mail to the supplier) and can least retype from memory.
+//
+// The gate names no screens. It derives the set from the source twice over: an onClick whose body
+// expands a row (setExpandedId) and an onClick on the shared .inv-row element. A sixth list built
+// tomorrow out of either shape fails this on the day it is written.
+test("[TEKST-SELECTIE] a row that expands on click lets its text be selected", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // The value of every onClick={...} attribute, with its braces balanced — a regex cannot do this
+  // and a truncated handler would silently pass the check below.
+  const handlers = (src: string): string[] => {
+    const out: string[] = [];
+    for (let i = src.indexOf("onClick={"); i >= 0; i = src.indexOf("onClick={", i + 1)) {
+      let depth = 0;
+      for (let j = i + "onClick=".length; j < src.length; j++) {
+        if (src[j] === "{") depth++;
+        else if (src[j] === "}") {
+          depth--;
+          if (depth === 0) { out.push(src.slice(i + "onClick={".length, j)); break; }
+        }
+      }
+    }
+    return out;
+  };
+
+  let gecontroleerd = 0;
+  for (const file of walk("src")) {
+    const src = code(file);
+    for (const h of handlers(src)) {
+      // Shape 1: this click TOGGLES a row — `setExpandedId(x ? null : id)`. A bare
+      // `setExpandedId(null)` is a reset (switching tabs closes whatever was open) and has no
+      // text under the cursor to protect, so it is deliberately not in the set.
+      if (!/setExpandedId\([^)]*\?[^)]*:/.test(h)) continue;
+      gecontroleerd++;
+      assert.ok(h.trimStart().startsWith("onRowTap("),
+        `${file}: a click that expands a row is not wrapped in onRowTap — dragging across the ` +
+        `invoice number toggles the card open and shut while the owner tries to copy it`);
+    }
+    // Shape 2: the shared row element itself. Its handler may be a bare prop (onToggle), so the
+    // setExpandedId scan above cannot see it.
+    for (const m of src.matchAll(/className="inv-row"([\s\S]{0,400}?)onClick=\{([\s\S]{0,80}?)[\s\S]{0,4}?\n/g)) {
+      gecontroleerd++;
+      assert.match(m[2].trimStart(), /^onRowTap\(/,
+        `${file}: the .inv-row header takes a click without the text-selection guard`);
+    }
+  }
+  assert.ok(gecontroleerd >= 5, `only ${gecontroleerd} row handlers found — the scan is broken`);
+
+  // …and the rule itself stays one rule, in one place, with both halves intact.
+  const regel = code("src/lib/row-tap.ts");
+  assert.match(regel, /return g\.selectionInsideRow \|\| g\.clickCount > 1;/,
+    "both halves: a drag-select leaves a selection, and a double-click's FIRST click does not");
+  assert.match(regel, /row\.contains\(el\)/,
+    "the selection must be anchored INSIDE this row — a leftover selection elsewhere must not swallow a tap");
+  // Movement is deliberately not part of it: a finger that slides a few pixels is an ordinary tap,
+  // and a row that refuses to open is a worse bug than the one this fixes.
+  assert.doesNotMatch(regel, /movedPx|SLOP/, "a pixel threshold would break sloppy taps on a phone");
+});
+
 test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measured by its body", () => {
   const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
   const deel1 = sql.slice(sql.indexOf("-- ── DEEL 1"), sql.indexOf("-- ── DEEL 2"));

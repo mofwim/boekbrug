@@ -112,6 +112,9 @@ import { translator } from '@/lib/i18n/t'
 // in one tray — the same on Uploaden. See src/lib/page-order.ts for why a plain sort is wrong.
 import { usePageTray } from '@/lib/use-page-tray'
 import PageTray from '@/components/intake/PageTray'
+// [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
+// open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
+import { onRowTap } from '@/lib/row-tap'
 
 function friendlySkipReason(reason: string, t: ReturnType<typeof translator>): string {
   const r = (reason || "").toLowerCase();
@@ -2297,7 +2300,7 @@ export function InvoiceCard({
       {/* Header — always visible, tappable */}
       <button
         className="inv-row"
-        onClick={selectMode ? onSelect : onToggle}
+        onClick={onRowTap(selectMode ? onSelect : onToggle)}
         // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so the
         // stack-on-mobile media query can override them; the flex:1 main pushes the side
         // cluster right, so justify-content:space-between is no longer needed here.

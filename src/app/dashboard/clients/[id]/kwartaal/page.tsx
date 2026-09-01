@@ -24,6 +24,9 @@ import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { isOverdue } from '@/components/invoice/InvoiceRow'
+// [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
+// open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
+import { onRowTap } from '@/lib/row-tap'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -620,9 +623,9 @@ export default function KwartaalPage() {
                     {/* Main row — click to expand inline */}
                     <div
                       className="px-4 py-3 cursor-pointer active:opacity-80 transition-opacity"
-                      onClick={() => {
+                      onClick={onRowTap(() => {
                         setExpandedId(isExpanded ? null : invoice.id)
-                      }}
+                      })}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
