@@ -13026,6 +13026,152 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
     "a hard-coded schema is exactly the bug this replaced");
 });
 
+// ─── [MIGRATIE-JOURNAAL] Bestaan is geen bewijs zodra twee migraties hetzelfde schrijven ────────
+//
+// Negen migratiebestanden herdefiniëren prevent_accountant_amount_changes. De probe vroeg of de
+// FUNCTIE bestaat — en dat deed ze al sinds de eerste van de negen. Dus meldde dit rapport ze alle
+// negen als TOEGEPAST, terwijl de productiedatabase de beschermde kolommen `vat_deduction`,
+// `discount_type` en `discount_value` miste: een gekoppelde boekhouder kon rubriek 5b van zijn
+// klant verzetten met het volledige btw_amount van een factuur, en de korting waaruit de bedragen
+// op de e-factuur worden afgeleid. Twee beveiligingsmigraties lagen weken klaar en gemeld, en het
+// enige gereedschap dat "wat moet er nog?" beantwoordt zei dat ze gedraaid waren.
+//
+// Dat is de kwaal uit de kop van dat bestand, één niveau dieper: niet de VRAAG liep achter op de
+// map, maar het ANTWOORD op de vraag.
+//
+// De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
+// functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
+// haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [TEKST-SELECTIE] Selecting text in a row is not a tap on the row ───────────────────────────
+//
+// Reported with a screenshot: on /dashboard/incoming/manage the owner dragged across an invoice
+// number to copy it and the card opened and closed under the cursor. Every invoice list in this
+// app has the same shape — the whole row carries the onClick that expands it — so the drag ends
+// in a click on the row. It landed on the value an owner copies most often (into a transfer's
+// description, into an e-mail to the supplier) and can least retype from memory.
+//
+// The gate names no screens. It derives the set from the source twice over: an onClick whose body
+// expands a row (setExpandedId) and an onClick on the shared .inv-row element. A sixth list built
+// tomorrow out of either shape fails this on the day it is written.
+test("[TEKST-SELECTIE] a row that expands on click lets its text be selected", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // The value of every onClick={...} attribute, with its braces balanced — a regex cannot do this
+  // and a truncated handler would silently pass the check below.
+  const handlers = (src: string): string[] => {
+    const out: string[] = [];
+    for (let i = src.indexOf("onClick={"); i >= 0; i = src.indexOf("onClick={", i + 1)) {
+      let depth = 0;
+      for (let j = i + "onClick=".length; j < src.length; j++) {
+        if (src[j] === "{") depth++;
+        else if (src[j] === "}") {
+          depth--;
+          if (depth === 0) { out.push(src.slice(i + "onClick={".length, j)); break; }
+        }
+      }
+    }
+    return out;
+  };
+
+  let gecontroleerd = 0;
+  for (const file of walk("src")) {
+    const src = code(file);
+    for (const h of handlers(src)) {
+      // Shape 1: this click TOGGLES a row — `setExpandedId(x ? null : id)`. A bare
+      // `setExpandedId(null)` is a reset (switching tabs closes whatever was open) and has no
+      // text under the cursor to protect, so it is deliberately not in the set.
+      if (!/setExpandedId\([^)]*\?[^)]*:/.test(h)) continue;
+      gecontroleerd++;
+      assert.ok(h.trimStart().startsWith("onRowTap("),
+        `${file}: a click that expands a row is not wrapped in onRowTap — dragging across the ` +
+        `invoice number toggles the card open and shut while the owner tries to copy it`);
+    }
+    // Shape 2: the shared row element itself. Its handler may be a bare prop (onToggle), so the
+    // setExpandedId scan above cannot see it.
+    for (const m of src.matchAll(/className="inv-row"([\s\S]{0,400}?)onClick=\{([\s\S]{0,80}?)[\s\S]{0,4}?\n/g)) {
+      gecontroleerd++;
+      assert.match(m[2].trimStart(), /^onRowTap\(/,
+        `${file}: the .inv-row header takes a click without the text-selection guard`);
+    }
+  }
+  assert.ok(gecontroleerd >= 5, `only ${gecontroleerd} row handlers found — the scan is broken`);
+
+  // …and the rule itself stays one rule, in one place, with both halves intact.
+  const regel = code("src/lib/row-tap.ts");
+  assert.match(regel, /return g\.selectionInsideRow \|\| g\.clickCount > 1;/,
+    "both halves: a drag-select leaves a selection, and a double-click's FIRST click does not");
+  assert.match(regel, /row\.contains\(el\)/,
+    "the selection must be anchored INSIDE this row — a leftover selection elsewhere must not swallow a tap");
+  // Movement is deliberately not part of it: a finger that slides a few pixels is an ordinary tap,
+  // and a row that refuses to open is a worse bug than the one this fixes.
+  assert.doesNotMatch(regel, /movedPx|SLOP/, "a pixel threshold would break sloppy taps on a phone");
+});
+
+test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measured by its body", () => {
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const deel1 = sql.slice(sql.indexOf("-- ── DEEL 1"), sql.indexOf("-- ── DEEL 2"));
+
+  // Elke probe-regel, uit de gegenereerde lijst.
+  const rows = [...deel1.matchAll(/\('([^']+)', '([a-z_]+)', '([^']+)', (?:null|'([^']*)'), '([^']+)'\)/g)]
+    .map((m) => ({ bestand: m[1], soort: m[2], object: m[3], merken: m[4] ?? null }));
+  assert.ok(rows.length > 100, `only ${rows.length} probe rows parsed — this gate would prove nothing`);
+
+  // DE REGEL: een functienaam die op bestaan wordt bevraagd, mag maar door één bestand komen.
+  const bestaansProbes = new Map<string, string[]>();
+  for (const r of rows.filter((r) => r.soort === "function")) {
+    if (!bestaansProbes.has(r.object)) bestaansProbes.set(r.object, []);
+    bestaansProbes.get(r.object)!.push(r.bestand);
+  }
+  // …behalve waar de definities niets delen om op te meten. Dat staat met zoveel woorden in de
+  // lijst zelf, dus de uitzondering is niet stil en niet met de hand: ze moet daar zijn uitgelegd.
+  for (const [fn, files] of bestaansProbes) {
+    if (files.length < 2) continue;
+    assert.match(
+      sql, new RegExp(`${fn}\\b[\\s\\S]{0,900}GEEN INHOUDSMETING`),
+      `${fn} is probed by mere existence from ${files.length} files (${files.join(", ")}) — the second ` +
+      `and every one after it are proven by the first, so a security guard that never ran reads as applied`,
+    );
+  }
+
+  // De familie waar het om begon: alle definities meten mee op de drie kolommen die in productie
+  // ontbraken, en niemand van hen valt terug op bestaan.
+  const guard = rows.filter((r) => r.object === "prevent_accountant_amount_changes");
+  assert.ok(guard.length >= 8, `${guard.length} files define the accountant guard — expected the whole family`);
+  // Every file that DEFINES it must carry the body probe. The six-probe cap sorted alphabetically
+  // and cut exactly the sharpest measurement: vat_exemption.sql's six ordinary column/constraint
+  // probes filled the slots and its body probe fell out — a silent truncation of the same kind as
+  // the defect this whole test exists for. Derived from the folder, so a tenth file is covered too.
+  const definieert = readdirSync("supabase/migrations")
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => /create\s+(or\s+replace\s+)?function\s+(public\.)?"?prevent_accountant_amount_changes/i
+      .test(readFileSync(`supabase/migrations/${f}`, "utf8").replace(/--[^\n]*/g, " ")));
+  for (const f of definieert) {
+    assert.ok(guard.some((r) => r.bestand === f),
+      `${f} rewrites the accountant guard but carries no body probe — its half of the measurement was cut`);
+  }
+  for (const r of guard) {
+    assert.equal(r.soort, "function_body", `${r.bestand} still proves the guard by its existence`);
+    for (const kolom of [".vat_deduction", ".discount_type", ".discount_value", ".vendor_iban"]) {
+      assert.ok(r.merken?.split(",").includes(kolom),
+        `${r.bestand} does not measure ${kolom} — the column production was missing`);
+    }
+  }
+
+  // En de query moet de body echt lezen. Een 'function_body' die stiekem op bestaan terugvalt is
+  // hetzelfde alarm dat nooit afgaat.
+  assert.match(sql, /when 'function_body' then exists \(/);
+  assert.match(sql, /not exists \(select 1 from unnest\(string_to_array\(p\.tabel, ','\)\) mk/);
+  assert.match(sql, /where position\(mk in f\.prosrc\) = 0\)\)/);
+});
+
 test("[MIGRATIE-JOURNAAL] every ignored object is named, reasoned, and really created", () => {
   // NIETS_BEWIJZEND is de enige plek waar met de hand een meting wordt uitgezet. Dat maakt het de
   // enige plek waar een falende migratie zich kan verstoppen — dus staat er een prijs op: het

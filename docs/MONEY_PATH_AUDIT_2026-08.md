@@ -635,3 +635,108 @@ in silently and correctly stopped being filled in.
 The copy lives in `bank-already-booked-notice.ts` rather than in the component, and the reason→copy
 map is a `Record` over the hold union rather than a switch with a default: a third hold reason stops
 compiling until it has words, where a default branch would have shipped it wearing the wrong ones.
+
+---
+
+## 13. The checker said the guards were applied. They were not. — 31 August 2026
+
+`docs/WELKE_MIGRATIES_STAAN_ER.sql` answers the one operational question that matters between a
+written migration and a protected database: **what still needs applying?** It reported a clean
+sheet — 114 migrations, 2 open. Both of those were already known.
+
+It was wrong, and wrong in the direction that costs the most.
+
+`prevent_accountant_amount_changes` is written by **nine** migration files. The probe asked whether
+the FUNCTION exists — and it has, since the first of those nine. So all nine reported TOEGEPAST,
+while the function running in production was missing three protected columns:
+
+| Column | What an accountant could move without it |
+| --- | --- |
+| `vat_deduction` | rubriek 5b of the client's aangifte, by the invoice's whole `btw_amount` — on € 10.000 + 21% that is € 2.100, silently, in the return that goes to the Belastingdienst |
+| `discount_type` | the invoice-level discount the e-factuur's amounts are derived from |
+| `discount_value` | the same |
+
+Both guards were written weeks ago, both were reported to the owner as "written, not applied", and
+the one tool that answers "did I apply it?" said yes. That is not a migration that was forgotten —
+it is a measurement that could not see what it claimed to check.
+
+This is the same defect the file's own header is about, one level down. That header records the
+question drifting behind the folder ("de VRAAG staat hier met de hand in"), which was fixed by
+generating it. Nobody asked whether the ANSWER could drift: **existence stops being evidence the
+moment a second file writes the same object.** Eight functions in this repo are written by more
+than one migration, covering about twenty files.
+
+### What the probe measures now
+
+For a function with more than one definer, the generated query reads the deployed body and checks
+every `NEW.`/`OLD.` column reference that **every** current definition contains — what the folder
+unanimously says belongs in that function, whichever file you happen to open. Run against
+production it returns exactly `.discount_type, .discount_value, .vat_deduction`.
+
+The intersection and not the union, deliberately: a union would carry a column one definition
+deliberately dropped, and then an alarm goes off that can never be cleared — which teaches everyone
+to click it away, the failure this file's own header warns about twice.
+
+Where several definitions share no column reference at all (a non-trigger function), the list says
+so in words rather than falling silent: *"GEEN INHOUDSMETING — Deel 1 valt hier terug op het bestaan
+van de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft."*
+
+The gate derives its rule from the generated list rather than from a list of functions someone
+maintains: **no function name may be probed by mere existence from more than one file**, unless the
+list itself explains why it cannot be measured. A tenth redefinition of anything fails it on the
+day it is written.
+
+### Also closed
+
+`src/lib/recon-confirm-client.ts` was deleted. The audit recorded it as "a complete feature nothing
+calls"; it is not a feature, it is a second spelling of `useInvoiceReconciliation.confirmMatch`,
+which two screens do call — and the worse of the two: it reports a 409 `invoice_already_paid` as
+`'error'`, so an invoice the auto-confirm had already booked would have shown the owner "mislukt".
+`deck.ts` is not uncalled either: `scripts/generate-deck.mts` builds from it.
+
+### Applied to production, 31 August 2026 — with the owner's approval
+
+`accountant_discount_guard.sql` (which carries the full 24-column deny list, including
+`vat_deduction`) was applied. Checked before applying, because a `CREATE OR REPLACE FUNCTION`
+silently resets what it does not restate: the live function was `SECURITY INVOKER`, no
+`search_path`, `VOLATILE` — exactly what the file produces, so nothing was lost. Verified after:
+
+| Check | Result |
+| --- | --- |
+| the file's own CONTROLE block (4 assertions) | all true |
+| `vendor_iban` / `payment_reference` / `document_id` still protected | yes |
+| both mandate exceptions (opstellen, bevestigen) still reachable | yes |
+| trigger still attached to `invoices` | yes, 1 |
+| `security definer` / `search_path` / volatility | unchanged |
+| the new body probe, the one that reported the hole an hour earlier | TOEGEPAST, nothing missing |
+
+And then the guard was made to **bite**, in a transaction that always aborts: acting as a uid that
+is neither sender nor receiver and holds no mandate, `vat_deduction`, `discount_value` and
+`vendor_iban` were each GEWEIGERD; acting as the invoice's own receiver, `vat_deduction` was
+TOEGESTAAN — so `/dashboard/incoming/manage`, the one screen that writes that column, still works.
+The proof left nothing behind; the row it ran against is byte-for-byte as it was.
+
+A deployed text is not a working rule. The difference is one query, and it is the query nobody runs.
+
+### One truncation found while verifying the fix itself
+
+The generator caps a migration at six probes, chosen alphabetically. `vat_exemption.sql` has six
+ordinary column and constraint probes, so `function_body` — which sorts after both — fell off the
+end. A cap that cuts exactly the sharpest measurement is a silent truncation of the same kind as
+the defect it was written for, so a body probe now survives the cap unconditionally and the gate
+walks the folder: every file that rewrites the guard must carry one.
+
+(The finding before it was mine, not the tool's: I read the emitted marker list with a `grep` that
+dropped its first field and briefly believed `amount_paid` had gone missing. It had not — all 24
+columns were there. Worth recording, because it is the third time this week that the thing which
+looked broken was the measurement rather than the thing measured.)
+
+### Still open, and now accurately reported
+
+- `bank_auto_book_blocked.sql` and `creditnota_per_rate_ceiling.sql` — the two the checker always
+  named correctly (they create objects that do not exist yet).
+- `accountant_vat_deduction_guard.sql` reads TOEGEPAST now and that is correct: its columns are in
+  the deployed body. The two files are two spellings of one deny list, which is the convention this
+  family documents — whichever runs last, the list is whole.
+- The 14 invoices with `amount_paid = 0` whose links cover the total (7 incoming € 1.071,89,
+  7 outgoing € 4.249,79): approved for repair via `recompute_invoice_amount_paid`, not yet run.
