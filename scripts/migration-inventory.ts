@@ -172,6 +172,54 @@ const ALLEEN_SERVICE_ROLE = [
 const lijst = (namen: string[]) => namen.map((n) => `'${n}'`).join(", ");
 
 const STAND_CONTROLE: Record<string, Stand> = {
+  "accountant_guard_fixed_search_path.sql": {
+    soort: "controle",
+    vraag: "de bedragbewaker draait met een vast zoekpad",
+    sql: `exists (select 1 from pg_proc p
+                    join pg_namespace n on n.oid = p.pronamespace
+                   where n.nspname = 'public'
+                     and p.proname = 'prevent_accountant_amount_changes'
+                     and 'search_path=public' = any(p.proconfig))`,
+  },
+  "drop_duplicate_indexes.sql": {
+    soort: "controle",
+    vraag: "geen twee indexen meer met precies dezelfde vorm op dezelfde tabel",
+    sql: `not exists (
+           select 1
+             from (select i.indrelid, i.indisunique,
+                          regexp_replace(pg_get_indexdef(i.indexrelid), '^CREATE (UNIQUE )?INDEX \\S+ ', '') as vorm
+                     from pg_index i
+                     join pg_class c on c.oid = i.indexrelid
+                     join pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = 'public') d
+            group by indrelid, indisunique, vorm
+           having count(*) > 1)`,
+  },
+  "revoke_execute_on_trigger_functions.sql": {
+    soort: "controle",
+    vraag: "geen enkele triggerbewaker hangt nog als /rest/v1/rpc aan de buitenkant",
+    sql: `not exists (
+           select 1 from pg_proc p
+             join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname in ('assert_credit_within_rate', 'prevent_verwerkt_invoice_changes',
+                                'prevent_accountant_amount_changes', 'guard_paid_when_verwerkt',
+                                'assert_bookkeeping_date_sane', 'invoices_search_vector_update')
+              and (p.proacl is null
+                   or exists (select 1 from aclexplode(p.proacl) a
+                               where a.grantee in ('anon'::regrole, 'authenticated'::regrole, 0))))`,
+  },
+  "rls_initplan_wrap_auth_calls.sql": {
+    soort: "controle",
+    vraag: "geen policy roept auth.uid() nog per rij aan, en geen enkele is dubbel gewikkeld",
+    sql: `not exists (
+           select 1 from pg_policies
+            where schemaname = 'public'
+              and ( (coalesce(qual,'')       like '%auth.uid()%' and coalesce(qual,'')       not like '%SELECT auth.uid()%')
+                 or (coalesce(with_check,'') like '%auth.uid()%' and coalesce(with_check,'') not like '%SELECT auth.uid()%')
+                 or coalesce(qual,'')       like '%SELECT ( SELECT auth.%'
+                 or coalesce(with_check,'') like '%SELECT ( SELECT auth.%' ))`,
+  },
   "BRIDGE-D_soft_delete_test_pollution.sql": {
     soort: "controle",
     vraag: "de zes testdocumenten staan in de prullenbak",

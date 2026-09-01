@@ -41,8 +41,11 @@
 -- een betaling vastleggen op een verwerkte factuur kon sowieso al niet. Wie iets moet wijzigen
 -- vraagt de boekhouder eerst de verwerking ongedaan te maken — precies wat de foutmelding zegt.
 --
--- ── TOEPASSEN ──
--- Draai dit in de SQL-editor van Supabase. De controle onderaan moet `true` geven.
+-- ── TOEGEPAST ──
+-- ✅ Op de productiedatabase gezet op 1 september 2026. Vooraf gemeten wat het zou kosten: er
+-- stonden op dat moment NUL facturen met accountant_status = 'verwerkt', dus deze uitbreiding kon
+-- op de dag zelf niets tegenhouden dat vandaag werkt. Ze is er voor de eerste factuur die een
+-- boekhouder verwerkt — en dat is precies het moment waarop je hem niet meer wilt moeten regelen.
 
 CREATE OR REPLACE FUNCTION public.prevent_verwerkt_invoice_changes()
 RETURNS trigger
