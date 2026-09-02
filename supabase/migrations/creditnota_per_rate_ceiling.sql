@@ -34,10 +34,20 @@
 -- is, dus hij kan geen enkele creditnota tegenhouden die vandaag terecht wordt geaccepteerd. Dat is
 -- de eigenschap die hem veilig maakt om toe te passen: hij vangt de race, en verder niets.
 --
--- ⚠️ NIET TOEGEPAST door de assistent — en van de migraties die ik vannacht heb geschreven is dit
--- de enige die ik niet tegen een database heb kunnen nameten. Lees hem, en draai hem op een moment
--- dat je een creditnota kunt maken om te controleren dat een NORMALE nog gewoon lukt. Zonder hem
--- verandert er niets: het brutoplafond blijft staan en de app-regel blijft doen wat hij nu doet.
+-- ✅ TOEGEPAST op de productiedatabase op 1 september 2026 — en dit is de migratie waarvan hier
+-- ooit stond dat ze als enige niet tegen een database was nagemeten. Dat is nu wel gebeurd, met
+-- een proef die zichzelf terugdraaide (niets is bewaard gebleven; de regeltelling was 17 vóór en
+-- 17 ná):
+--
+--     A. een gewone factuurregel               → toegestaan
+--     B. een creditnotakop binnen het bruto     → toegestaan
+--     C. een terechte creditregel (600 van 1000)→ toegestaan
+--     D. nog eens 600, samen 1200 van 1000      → GEWEIGERD, SQLSTATE 23514
+--
+-- D is precies het gat uit het voorbeeld hierboven, en 23514 is precies de code die
+-- /api/invoice/creditnota al omzet in een leesbare 409 ("neemt meer terug dan…"). Vooraf gemeten:
+-- geen enkele bestaande creditnota overschrijdt zijn tariefplafond, dus deze poort weigert niets
+-- wat er al staat.
 
 CREATE OR REPLACE FUNCTION public.assert_credit_within_rate()
  RETURNS trigger

@@ -15,6 +15,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // [VERVANG-OVERAL] Eén regel voor "is er een gemarkeerde tweeling?" — gedeeld met de betaalpagina.
 import { supersedeTargetOf } from "@/lib/supersede-target";
+// [WAAROM-WACHT] De zin die zegt waarom DIT document nog op de eigenaar wacht. De component
+// draagt zelf geen taal — zie why-waiting.ts.
+import { waitingReasonOf, explainWaiting } from "@/lib/why-waiting";
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -2033,7 +2036,10 @@ export function InvoiceCard({
   // [READING-MEMORY] One sentence, or nothing. Never a number — see reading-memory.ts.
   readingHint?: string | null;
 }) {
-  const t = translator(useLocale())
+  // [WAAROM-WACHT] De taal apart, want één regel op deze kaart heeft hem zelf nodig: de zin die
+  // zegt waarom dit document wacht komt uit een pure module en draagt zijn eigen richting mee.
+  const taal = useLocale()
+  const t = translator(taal)
   const dialog = useDialog();
   const toast = useToast();
   const router = useRouter();
@@ -2516,6 +2522,52 @@ export function InvoiceCard({
               </div>
             </div>
           )}
+
+          {/* [WAAROM-WACHT] En de kaart die er goed uitziet en tóch wacht.
+              
+              De gemarkeerde factuur hierónder krijgt al een badge en een lijst redenen; die weet
+              de eigenaar te lezen. Het gat zat bij de kaart met een groen "klaar om te bevestigen"
+              die evengoed op een tik staat te wachten: daar stond niets, dus las de eigenaar een
+              document dat goed gelezen wás nog een keer, vond niets, tikte bevestigen en leerde
+              niets. Van de 590 documenten in één echte administratie waren er 350 zo'n tik waard.
+              
+              Alleen wanneer geen andere badge het al uitlegt — twee uitleggen van één vertraging
+              is hoe een rustig scherm een zeurend scherm wordt. En alleen als de reden ook echt is
+              vastgelegd: een rij van vóór deze meting draagt er geen, en dan staat er niets in
+              plaats van een gok. */}
+          {mode === "pending" && (() => {
+            const uitleg = explainWaiting(
+              waitingReasonOf(invoice.field_confidence),
+              { alreadyExplained: invoice.health.flags.ibanChanged || invoice.health.level === "needs-review" },
+              taal,
+            );
+            if (!uitleg) return null;
+            // De eigen keuze krijgt een andere kleur dan een leesprobleem: het eerste is iets om
+            // om te zetten, het tweede iets om na te kijken. Allebei kalm — er is niets mis.
+            const keuze = uitleg.kind === "setting";
+            return (
+              <div
+                dir={uitleg.dir}
+                style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  padding: "12px 14px", marginBottom: 14,
+                  background: keuze ? "#eef4ff" : "#f1f3f4", borderRadius: 12,
+                  border: `1px solid ${keuze ? "#cddcff" : "#e0e3e6"}`,
+                  textAlign: "start",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1.3 }}>{keuze ? "⚙️" : "⏳"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: keuze ? "#274690" : "#3c4043", marginBottom: 4 }}>
+                    {t('ink.waaromWacht')}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: keuze ? "#274690" : "#5f6368", lineHeight: 1.5 }}>
+                    {uitleg.text}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
               plain-language reason(s) the system is unsure, sourced from the

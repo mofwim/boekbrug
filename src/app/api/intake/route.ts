@@ -73,7 +73,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 // [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
 import { readPdfTextLayer } from "@/lib/pdf-text"
 // [GEGROND] The stored verdict on whether the total is printed on the document.
-import { groundingOf } from '@/lib/amount-grounding'
+import { groundingOf, moneyGroundedInText } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead } from '@/lib/e-invoice'
 import { reconcileCashWithRetry } from "@/lib/cash-settle"
@@ -1291,6 +1291,10 @@ async function runIntake(req: NextRequest) {
           // [GEGROND] What the document's own text says about the total the reader reported. The
           // only signal here that does not come from the reader — see amount-grounding.ts.
           totalGrounding: groundingOf(v.field_confidence),
+          // [GEGROND-STAAT-IN] En of het document zijn eigen drie bedragen letterlijk draagt. Dit
+          // vervangt één ontbrekend signaal — de zelfscore van het model op het bedrag — en niets
+          // anders; zie moneyGroundedInText() in amount-grounding.ts.
+          moneyGroundedInText: moneyGroundedInText(v.field_confidence),
 // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
 totalPlacement: placementOf(v.field_confidence),
 // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
@@ -1311,6 +1315,22 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  } else {
+    // [WAAROM-VASTGEHOUDEN] En de andere tak, die er niet was.
+    //
+    // Gemeten op één echte administratie over een jaar: van de 590 inkomende documenten hadden er
+    // 350 een mensenhand nodig, en 296 daarvan droegen GEEN enkele vlag die verklaarde waarom. Niet
+    // omdat de app het niet wist — beslisAutoAdvance rekent voor élke weigering een precieze reden
+    // uit, zeventien stuks, en het type noemt dat veld zelf "machine tag for audit/telemetry".
+    //
+    // Alleen werd hij uitsluitend op de GESLAAGDE tak opgeschreven. Bij een weigering werd hij
+    // berekend en weggegooid — precies op het moment dat de app besluit de eigenaar een minuut te
+    // kosten. De duurste vraag in dit product ("waarom kost dit mij tijd?") was daarmee wél
+    // beantwoordbaar door de code en niet beantwoordbaar uit de data.
+    //
+    // Dit verandert niets aan wat er gebeurt. Het schrijft alleen op wat er gebeurde, zodat de
+    // volgende verbetering op een meting rust in plaats van op een vermoeden.
+    fieldConfidence._auto_hold = { at: new Date().toISOString(), reason: autoAdv.reason };
   }
   // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is proven
   // by the paper (settlePlan). Either one alone books something nobody checked.

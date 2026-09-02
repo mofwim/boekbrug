@@ -21,6 +21,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [WAAROM-WACHT-CAT] Waarom de app deze regel niet zelf codeert — zie category-wait.ts.
+import { judgeCategoryWait } from "@/lib/category-wait";
 import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
 // [ZELFDE-TEGENPARTIJ] Which other pending lines the owner just answered for without knowing it.
 import { linesForCounterpart } from "@/lib/counterpart-spread";
@@ -230,6 +232,10 @@ export async function GET(req: NextRequest) {
       already_booked: alreadyBooked,
       // On a 'similar' suggestion: the memorized counterpart it resembles (for a "lijkt op …" hint).
       suggested_similar_to: suggestion.similarTo ?? null,
+      // [WAAROM-WACHT-CAT] Machinecode: waarom de app hem niet zelf invult. Geoordeeld op de
+      // SUGGESTIE, vóór de dubbelboekingsrem erin gevouwen wordt — een regel waarvan het geld al
+      // geboekt is draagt zijn eigen uitleg en heeft dit classificatieprobleem niet.
+      wait_reason: judgeCategoryWait(suggestion),
     };
   });
 

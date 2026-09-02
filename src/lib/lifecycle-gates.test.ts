@@ -23,6 +23,13 @@ import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
 import { destinationsFor } from "./nav-destinations";
+// [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
+import { HOLD_LABELS } from "./hold-reasons";
+// [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
+import { explainableReasons, explainWaiting } from "./why-waiting";
+import { categoryHint } from "./category-wait";
+// [GEGROND-STAAT-IN] De getuige die mag invallen voor een ontbrekende zelfscore — en alleen die.
+import { moneyGroundedInText } from "./amount-grounding";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12706,6 +12713,243 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
     assert.ok(blok.includes(f), `${f} creates nothing and must be listed as undeterminable`);
     // …en dus NIET als probe, want dan zou hij voor eeuwig 'OPEN' heten.
     assert.ok(!sql.includes(`  ('${f}'`), `${f} must not be given an invented fingerprint`);
+  }
+});
+
+test("[WAAROM-VASTGEHOUDEN] both branches of the auto-advance decision are written down", () => {
+  // Gemeten op één echte administratie over een jaar: 350 van de 590 inkomende documenten hadden
+  // een mensenhand nodig, en 296 daarvan droegen geen énkele vlag die verklaarde waarom.
+  //
+  // Niet omdat de app het niet wist. beslisAutoAdvance rekent voor elke weigering een precieze
+  // reden uit — zeventien stuks — en het type noemt dat veld zelf "machine tag for
+  // audit/telemetry". Hij werd alleen op de GESLAAGDE tak opgeschreven; bij een weigering
+  // berekend en weggegooid, precies op het moment dat de app besluit de eigenaar een minuut te
+  // kosten.
+  //
+  // Eén tak schrijven en de andere niet is hoe dit verdween, dus dat is wat hier vastligt: beide
+  // paden, beide takken. Zonder deze meting is elke volgende versnelling een gok.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    const src = code(f);
+    assert.match(src, /_auto_verified/, `${f}: the passing branch must stay written down`);
+    assert.match(src, /_auto_hold/,
+      `${f}: the REFUSING branch must be written down too. The reason is computed either way; ` +
+      "discarding it on refusal makes the most expensive question in the product unanswerable");
+    // …en met de reden erin, niet als kale vlag: "vastgehouden" zonder waarom is net zo blind.
+    assert.match(src, /_auto_hold[\s\S]{0,160}?reason: autoAdv\.reason/,
+      `${f}: the hold must carry the machine tag, or it says only that something happened`);
+  }
+
+  // De redenen zelf moeten blijven bestaan waar ze worden gemaakt — een lege string terugbrengen
+  // zou de poort hierboven groen laten en de meting alsnog waardeloos maken.
+  const beslis = code("src/lib/auto-advance.ts");
+  const redenen = [...beslis.matchAll(/advance: false, reason: ["`']([a-z_]+)/g)].map((m) => m[1]);
+  assert.ok(redenen.length >= 10,
+    `only ${redenen.length} refusal reasons found; the decision was flattened and the measurement ` +
+    "loses exactly the detail it exists for");
+  assert.ok(new Set(redenen).size === redenen.length,
+    "two refusals share one tag, so they cannot be told apart in the measurement");
+});
+
+test("[WAAROM-VASTGEHOUDEN] every refusal tag has a sentence an operator can act on", () => {
+  // De werklijst op het beheerscherm rangschikt machinecodes. `no_reliable_total` is voor de code
+  // precies genoeg en voor de mens die moet besluiten wat hij als volgende bouwt, niets.
+  //
+  // Dit is een SCAN, geen tweede lijst. Twee met de hand bijgehouden lijsten kloppen eeuwig met
+  // elkaar en nooit met de werkelijkheid — dat is vandaag twee keer misgegaan. Deze poort leest de
+  // bestanden die de codes MAKEN, en een nieuwe weigering zonder zin laat hem vallen.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    const src = code(f);
+    for (const m of src.matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15,
+    `only ${gevonden.size} refusal tags found across ${bronnen.length} files; the scan stopped ` +
+    "matching what it is supposed to watch, which leaves the check green and blind");
+  for (const tag of gevonden) {
+    assert.ok(HOLD_LABELS[tag],
+      `refusal tag "${tag}" has no sentence in HOLD_LABELS. It would still be counted and shown — ` +
+      "as the raw tag — but the operator ranking exists to say which fix buys back the most time, " +
+      "and a machine word answers a different question than the one being asked");
+  }
+});
+
+test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none of them is a code", () => {
+  // Dezelfde scan als de poort hierboven, maar voor de andere lezer. Het beheerpaneel mag een
+  // onbekende code tonen als zichzelf — daar is het informatie. Op de kaart van de eigenaar is
+  // `no_reliable_total` geen uitleg maar ruis, dus toont why-waiting.ts daar niets. En "niets"
+  // is precies de stand die stil kan verbergen dat een veelvoorkomend geval nooit is uitgelegd —
+  // vandaar deze poort.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    for (const m of code(f).matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15, `only ${gevonden.size} refusal tags found; the scan went blind`);
+
+  const uitlegbaar = new Set(explainableReasons());
+  for (const tag of gevonden) {
+    assert.ok(uitlegbaar.has(tag),
+      `refusal tag "${tag}" reaches the owner's queue with no sentence, so that card explains ` +
+      "nothing at all — the owner re-reads a document that was read correctly and learns nothing");
+  }
+
+  // …en geen enkele zin die eruit komt mag alsnog een machinewoord zijn.
+  for (const tag of uitlegbaar) {
+    const zin = explainWaiting(tag, {}, "nl");
+    assert.ok(zin && !/[a-z]{3,}_[a-z_]{3,}/.test(zin.text),
+      `the sentence for "${tag}" reads like a machine tag, which is the thing it replaces`);
+  }
+
+  // ── En hetzelfde één scherm verder ────────────────────────────────────────────────────────
+  //
+  // /bank kent zijn eigen redenen (bank-waiting-reason.ts) en ze horen in DEZELFDE woordenlijst.
+  // Een aparte lijst per scherm is precies hoe de ene helft vertaald raakt en de andere niet.
+  const bankBron = code("src/lib/bank-waiting-reason.ts");
+  const unie = bankBron.slice(bankBron.indexOf("export type BankWaitReason ="));
+  const bankTags = [...unie.slice(0, unie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(bankTags.length >= 4,
+    `only ${bankTags.length} bank reasons found; the scan stopped matching the union it watches`);
+  for (const tag of bankTags) {
+    assert.ok(uitlegbaar.has(tag),
+      `bank reason "${tag}" has no sentence, so that line falls back to the one paragraph the ` +
+      "whole tab shares — true of every line in it and useful about none of them");
+  }
+
+  // En de weg ernaartoe: de route moet het oordeel ook echt meesturen. Een uitleg die nergens
+  // wordt berekend is onzichtbaar op precies dezelfde manier als een uitleg die niet bestaat.
+  const bankRoute = code("src/app/api/bank/match/route.ts");
+  assert.match(bankRoute, /judgeBankWait\(/,
+    "the match route must compute the reason, or the card has nothing to render");
+  assert.match(bankRoute, /waitReason:/,
+    "…and put it on the DTO the screen reads");
+
+  // ── En het categorisatiescherm ────────────────────────────────────────────────────────────
+  const catBron = code("src/lib/category-wait.ts");
+  const catUnie = catBron.slice(catBron.indexOf("export type CategoryWaitReason ="));
+  const catTags = [...catUnie.slice(0, catUnie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(catTags.length >= 3,
+    `only ${catTags.length} category reasons found; the scan stopped matching its own union`);
+  for (const tag of catTags) {
+    assert.ok(uitlegbaar.has(tag), `category reason "${tag}" reaches the screen with no sentence`);
+  }
+  const catRoute = code("src/app/api/bank/categorize/route.ts");
+  assert.match(catRoute, /judgeCategoryWait\(/, "the categorize route must compute the reason");
+  assert.match(catRoute, /wait_reason:/, "…and put it on the DTO the screen reads");
+
+  // En het label dat loog. Een geheugen dat de ANDERE kant op wijst mag nooit hetzelfde woord
+  // krijgen als een geheugen waar de app zeker van is — dat was de hele bevinding.
+  assert.notEqual(
+    categoryHint({ source: "memory", waitReason: "memory_contradicts_direction", confident: false }).key,
+    categoryHint({ source: "memory", waitReason: null, confident: true }).key,
+    "a contradicted memory and a trusted one must not share a label: the suggestion the app " +
+    "distrusts would look exactly like the one it trusts most, on a screen about money direction",
+  );
+  assert.doesNotMatch(
+    code("src/app/dashboard/bank/categoriseren/CategoriseClient.tsx"),
+    /t\('cat\.onthouden'\)/,
+    "the screen must choose its label through categoryHint, where the distinction is tested",
+  );
+});
+
+test("[KAS-ACHTER-BANK] what the pass deliberately did not book reaches the owner, not only a log", () => {
+  // De regel onderaan runBankAutoConfirm stond er al: "refusals this run", naar console.info. De
+  // eigenaar zat naar precies die regels te kijken en kreeg geen woord. Deze poort houdt de weg
+  // van de beslissing naar het scherm open — hij loopt over drie bestanden en elk ervan kan hem
+  // in z'n eentje afknippen zonder dat er iets rood wordt.
+  const pas = code("src/lib/bank-auto-confirm.ts");
+  assert.match(pas, /refusalsOut/,
+    "the pass must be able to hand its refusals back; eleven callers depend on the array it " +
+    "returns, so this travels as an out-parameter rather than a wider return type");
+  assert.match(pas, /Object\.assign\(args\.refusalsOut, kasRefusals\)/,
+    "…and must actually fill it, with the same tally the log line prints");
+
+  const route = code("src/app/api/bank/auto-confirm/route.ts");
+  assert.match(route, /refusalsOut:/, "the route must ask for the tally");
+  assert.match(route, /kasRefusals\s*[,}]/, "…and put it in the response");
+
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /json\.kasRefusals/, "the screen must read it");
+  // De twee standen zijn niet inwisselbaar: 'filed_quarter' is de app die het goed doet,
+  // 'unknown_filing' is de app die het niet WEET. Zou het scherm er één zin van maken, dan leest
+  // een stilgevallen controle als een weloverwogen beslissing.
+  assert.match(scherm, /bank\.kas\.aangegeven/);
+  assert.match(scherm, /bank\.kas\.onbekend/);
+  assert.notEqual(MESSAGES["bank.kas.aangegeven"].nl, MESSAGES["bank.kas.onbekend"].nl,
+    "a deliberate refusal and a check that could not run must never say the same thing");
+  for (const k of ["bank.kas.aangegeven", "bank.kas.onbekend"] as const) {
+    assert.match(MESSAGES[k].nl, /\{count\}/, `${k} must name how many, or it is a mood, not a fact`);
+  }
+});
+
+test("[GEGROND-STAAT-IN] the witness reaches BOTH doors, and stays the narrow one", () => {
+  // Dit is een GELDPOORT die wijder is gezet. De reden dat dat verantwoord is, staat of valt met
+  // drie dingen, en alle drie kunnen stilletjes verdwijnen bij een latere opruiming.
+  //
+  // 1. Beide schrijvers moeten het signaal doorgeven. Doet er één het niet, dan boekt dezelfde
+  //    factuur wél vanzelf via de upload en niet via de mail — en dat verschil is onzichtbaar.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(code(f), /moneyGroundedInText: moneyGroundedInText\(/,
+      `${f}: passes no document evidence, so this door is dead on that path while it is open on ` +
+      "the other — the same invoice would then book itself through one entrance and not the other");
+  }
+
+  // 2. OCR mag nooit invallen voor de zelfscore van het model. amount-grounding.ts zegt het zelf:
+  //    die getuige is "a model, from the same family as the extractor… Corroboration, not proof".
+  //    Laat je hem toe, dan beoordeelt het model zijn eigen lezing — precies de cirkel die dat
+  //    bestand bestaat om te doorbreken.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found", source: "ocr" } }), false,
+    "the OCR witness may corroborate, never stand in for the model's own confidence");
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found" } }), true);
+  // …en het blijft ALLE DRIE. Eén ontbrekend bedrag is niet de getuige waar deze deur om vraagt.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "absent" } }), false);
+
+  // 3. De boeking moet zeggen door WELKE deur ze kwam, anders is "hoe vaak vuurde de nieuwe deur,
+  //    en kwam er iets van terug als correctie" geen vraag maar een gok.
+  const beslis = code("src/lib/auto-advance.ts");
+  assert.match(beslis, /clean_grounded_in_document/,
+    "a booking that leaned on the document instead of a score must carry its own name");
+  assert.ok(/grondedInPlaatsVanScore \? "clean_grounded_in_document" : "clean_high_confidence"/.test(beslis),
+    "the two doors may not collapse back into one reason — the ternary that tells them apart is gone");
+});
+
+test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {
+  // De kaslade is het enige scherm waar een getal tegen een fysieke stapel geld wordt gelegd. De
+  // route wist al dat de sync-pas gebald was — de regel stond er, met de diagnose ernaast — en
+  // schreef het naar een log. Deze poort houdt de weg naar het scherm open.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(route, /settlementsCurrent:\s*settleSync\.ok/,
+    "the cash read must report whether the settlement pass actually ran; a stale saldo that looks " +
+    "current is the most dangerous shape this screen can take");
+
+  const scherm = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(scherm, /json\.settlementsCurrent !== false/,
+    "read it tolerantly: an older server (or a cached response) sends nothing, and a false alarm " +
+    "about money gets clicked away and then protects nothing");
+  assert.match(scherm, /const \[settlementsCurrent, setSettlementsCurrent\] = useState\(true\)/,
+    "…and the default must be the quiet one, or every first paint accuses the drawer");
+  assert.match(scherm, /!loadError && !settlementsCurrent/,
+    "the two states are exclusive: a failed load already shows '—', and two notices about one " +
+    "problem is how a calm screen becomes a nagging one");
+  assert.match(scherm, /kas\.achter\.kop/);
+  assert.match(scherm, /kas\.achter\.uitleg/);
+
+  for (const k of ["kas.achter.kop", "kas.achter.uitleg"] as const) {
+    assert.ok((MESSAGES[k]?.nl ?? "").length > 10, `${k} must carry a real Dutch sentence`);
   }
 });
 

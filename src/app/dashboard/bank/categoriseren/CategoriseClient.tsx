@@ -14,6 +14,9 @@ import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { rowMatchesQuery } from '@/lib/search'
 import { useLocale } from '@/lib/i18n/use-locale'
+// [WAAROM-WACHT-CAT] Eén zin per reden, uit dezelfde woordenlijst als de wachtrij en /bank.
+import { explainWaiting } from '@/lib/why-waiting'
+import { categoryHint } from '@/lib/category-wait'
 import { translator } from '@/lib/i18n/t'
 import { linesForCounterpart } from '@/lib/counterpart-spread'
 // [DUBBEL-GEDEKT] The words for a line the app refuses to fill in live apart from the screen.
@@ -37,6 +40,9 @@ interface Item {
   suggested_similar_to?: string | null
   // [DUBBEL-GEDEKT] Why the app refuses to fill this one in: a paid invoice already carries the
   // amount, or it is a Mollie payout of invoices already settled. null = nothing in the way.
+  // [WAAROM-WACHT-CAT] Machinecode van de server: waarom de app deze regel niet zelf codeert.
+  // Null wanneer de suggestie zeker is — die wacht niet op uitleg maar op een tik.
+  wait_reason?: string | null
   already_booked?: 'paid-invoice' | 'mollie-payout' | null
   confirmed?: boolean
 }
@@ -358,13 +364,23 @@ export default function CategoriseClient() {
                     </div>
                     <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>
                       {formatDate(it.date)}
+                      {/* [WAAROM-WACHT-CAT] Het label stond hier als geneste ternary en zei
+                          "onthouden" óók wanneer het geheugen de ANDERE kant op wees: de enige
+                          suggestie die de app zelf wantrouwt zag eruit als degene die ze het
+                          meest vertrouwt. De keuze zit nu in category-wait.ts, waar hij te
+                          testen is, en oordeelt op wait_reason — niet op suggested_confident,
+                          dat de dubbelboekingsrem erin vouwt. */}
                       {mode === 'review'
                         ? ` · ${it.confirmed ? t('cat.doorJou') : t('cat.automatisch')}`
-                        : it.suggested_source === 'memory'
-                          ? ` · ${t('cat.onthouden')}`
-                          : it.suggested_source === 'similar'
-                            ? ` · ${it.suggested_similar_to ? t('cat.lijktOp', { name: prettyKey(it.suggested_similar_to) }) : t('cat.lijktOpEerdere')}`
-                            : ` · ${it.suggested_confident ? t('cat.herkend') : t('cat.voorstel')}`}
+                        : ` · ${(() => {
+                            const hint = categoryHint({
+                              source: it.suggested_source,
+                              waitReason: it.wait_reason,
+                              similarTo: it.suggested_similar_to ? prettyKey(it.suggested_similar_to) : null,
+                              confident: it.suggested_confident,
+                            })
+                            return hint.name ? t(hint.key, { name: hint.name }) : t(hint.key)
+                          })()}`}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: M3.onSurface, whiteSpace: 'nowrap' }}>
@@ -381,6 +397,29 @@ export default function CategoriseClient() {
                     <div dir={notice.dir} style={{ marginTop: 10, padding: '10px 12px', borderRadius: 12, background: '#FEF7E0', border: '1px solid #F9E3A2', textAlign: 'start' }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#5C4400' }}>{notice.title}</div>
                       <div style={{ fontSize: 12.5, color: '#6B5200', marginTop: 3, lineHeight: 1.45 }}>{notice.body}</div>
+                    </div>
+                  )
+                })()}
+
+                {/* [WAAROM-WACHT-CAT] En waarom de app hem niet zelf invult.
+                    
+                    Niet naast de dubbel-gedekt-notitie: die legt de regel al uit, met een andere
+                    en zwaardere reden. Twee uitleggen van één regel is hoe een rustig scherm een
+                    zeurend scherm wordt — dezelfde regel als in de verificatiewachtrij. */}
+                {(() => {
+                  if (it.already_booked) return null
+                  const uitleg = explainWaiting(it.wait_reason ?? null, {}, locale)
+                  if (!uitleg) return null
+                  return (
+                    <div
+                      dir={uitleg.dir}
+                      style={{
+                        marginTop: 10, padding: '9px 11px', borderRadius: 12,
+                        background: '#F1F3F4', border: '1px solid #E0E3E6',
+                        fontSize: 12.5, lineHeight: 1.45, color: '#3c4043', textAlign: 'start',
+                      }}
+                    >
+                      {uitleg.text}
                     </div>
                   )
                 })()}

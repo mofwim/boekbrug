@@ -1,0 +1,15 @@
+-- supabase/migrations/accountant_guard_fixed_search_path.sql
+-- [ZOEKPAD] De bedragbewaker draaide met een search_path die de aanroeper kon zetten.
+-- BoekBrug · 1 september 2026 · TOEGEPAST op de productiedatabase.
+--
+-- prevent_accountant_amount_changes is SECURITY DEFINER en riep has_active_invoice_mandate()
+-- ONGEKWALIFICEERD aan. Wie een eigen schema vóór public in het zoekpad krijgt met een functie van
+-- die naam, laat de bewaker van de bedragen zijn eigen antwoord geven. auth.uid() draagt zijn
+-- schema al in de naam en is zo niet te kapen; deze ene aanroep wel.
+--
+-- Zijn zusterfunctie prevent_verwerkt_invoice_changes stond al vast op public. Dit was het enige
+-- verschil tussen de twee, en het stond in de beveiligingsadviseur van Supabase als WARN.
+--
+-- Na het toepassen bewezen met een teruggedraaide proef: de eigenaar mag zijn eigen factuur nog
+-- opslaan, en een vreemde krijgt nog steeds "only the invoice owner can modify amounts".
+ALTER FUNCTION public.prevent_accountant_amount_changes() SET search_path = public;

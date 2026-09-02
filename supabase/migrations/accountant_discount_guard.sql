@@ -30,9 +30,10 @@
 -- lijst plus alle vijf de uitzonderingen. Dit bestand is dat lichaam, letterlijk overgenomen, met
 -- alleen de twee regels erbij — zodat er geen uitzondering per ongeluk kan sneuvelen.
 --
--- ── TOEPASSEN ──
--- Draai dit in de SQL-editor van Supabase. Daarna de controle onderaan; alle vier moeten `true`
--- geven.
+-- ── TOEGEPAST ──
+-- ✅ Stond op 1 september 2026 al in de productiedatabase: pg_get_functiondef van
+-- prevent_accountant_amount_changes noemt discount_type. Bij diezelfde controle bleek ook
+-- accountant_clients_insert_consent.sql toegepast — de open insert-policy is weg.
 
 CREATE OR REPLACE FUNCTION public.prevent_accountant_amount_changes()
 RETURNS trigger

@@ -32,7 +32,7 @@
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
 --   DEEL 1  de 115 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 9 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 2  de 13 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -61,7 +61,6 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('accountant_invoice_mandate.sql', 'index', 'accountant_invoice_mandates_accountant', null, 'public'),
   ('accountant_invoice_mandate.sql', 'policy', 'accountant_invoice_mandates_select', 'accountant_invoice_mandates', 'public'),
   ('accountant_invoice_mandate.sql', 'policy', 'invoice_lines_mandate_read', 'invoice_lines', 'public'),
-  ('accountant_subject_status.sql', 'index', 'accountant_subject_status_unique', null, 'public'),
   ('accountant_subject_status.sql', 'policy', 'acc_status_client_read_document', 'accountant_subject_status', 'public'),
   ('accountant_subject_status.sql', 'table', 'accountant_subject_status', null, 'public'),
   ('accountant_vat_deduction_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
@@ -529,7 +528,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 124
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 13 van de 128
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -568,6 +567,14 @@ with controle(bestand, vraag, toegepast) as (
       and policyname = 'accountant_clients_update')
   )
   union all
+  select 'accountant_guard_fixed_search_path.sql'::text, 'de bedragbewaker draait met een vast zoekpad'::text, (
+    exists (select 1 from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'prevent_accountant_amount_changes'
+      and 'search_path=public' = any(p.proconfig))
+  )
+  union all
   select 'bank_tx_invoices_amount.sql'::text, 'de dubbele kolom `amount` is weg en `amount_applied` staat er'::text, (
     exists (select 1 from information_schema.columns
              where table_schema = 'public' and table_name = 'bank_tx_invoices'
@@ -575,6 +582,19 @@ with controle(bestand, vraag, toegepast) as (
     and not exists (select 1 from information_schema.columns
                      where table_schema = 'public' and table_name = 'bank_tx_invoices'
                        and column_name = 'amount')
+  )
+  union all
+  select 'drop_duplicate_indexes.sql'::text, 'geen twee indexen meer met precies dezelfde vorm op dezelfde tabel'::text, (
+    not exists (
+    select 1
+      from (select i.indrelid, i.indisunique,
+                   regexp_replace(pg_get_indexdef(i.indexrelid), '^CREATE (UNIQUE )?INDEX \S+ ', '') as vorm
+              from pg_index i
+              join pg_class c on c.oid = i.indexrelid
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'public') d
+     group by indrelid, indisunique, vorm
+    having count(*) > 1)
   )
   union all
   select 'function_search_path.sql'::text, 'elk van de negen functies heeft een vastgezet search_path'::text, (
@@ -586,6 +606,29 @@ with controle(bestand, vraag, toegepast) as (
                          'invoices_search_vector_update', 'documents_search_vector_update',
                          'set_updated_at', 'touch_updated_at', 'get_accountant_for_zzper')
        and coalesce(array_to_string(p.proconfig, ','), '') not like '%search_path=%')
+  )
+  union all
+  select 'revoke_execute_on_trigger_functions.sql'::text, 'geen enkele triggerbewaker hangt nog als /rest/v1/rpc aan de buitenkant'::text, (
+    not exists (
+    select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('assert_credit_within_rate', 'prevent_verwerkt_invoice_changes',
+                         'prevent_accountant_amount_changes', 'guard_paid_when_verwerkt',
+                         'assert_bookkeeping_date_sane', 'invoices_search_vector_update')
+       and (p.proacl is null
+            or exists (select 1 from aclexplode(p.proacl) a
+                        where a.grantee in ('anon'::regrole, 'authenticated'::regrole, 0))))
+  )
+  union all
+  select 'rls_initplan_wrap_auth_calls.sql'::text, 'geen policy roept auth.uid() nog per rij aan, en geen enkele is dubbel gewikkeld'::text, (
+    not exists (
+    select 1 from pg_policies
+     where schemaname = 'public'
+       and ( (coalesce(qual,'')       like '%auth.uid()%' and coalesce(qual,'')       not like '%SELECT auth.uid()%')
+          or (coalesce(with_check,'') like '%auth.uid()%' and coalesce(with_check,'') not like '%SELECT auth.uid()%')
+          or coalesce(qual,'')       like '%SELECT ( SELECT auth.%'
+          or coalesce(with_check,'') like '%SELECT ( SELECT auth.%' ))
   )
   union all
   select 'rpc_anon_revoke.sql'::text, 'geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated'::text, (
@@ -653,6 +696,7 @@ where direction = 'incoming'
 -- lijst kan maken: hem nog een keer draaien.
 --
 --   accountant_invoice_mandate.sql → index accountant_invoice_mandates_one_active
+--   accountant_subject_status.sql → index accountant_subject_status_unique
 --   accountant_subject_status.sql → policy acc_status_owner_all
 --   cash_settlement_invoice_link.sql → index cash_entries_one_settlement_per_invoice
 --   creditnota_one_per_original.sql → index invoices_one_creditnota_per_original
