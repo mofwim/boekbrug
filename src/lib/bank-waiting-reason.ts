@@ -91,25 +91,48 @@ export function judgeBankWait(
   if (line.amount === null || !Number.isFinite(line.amount)) return null;
   const eps = DEFAULT_OPTIONS.amountEpsilon;
 
-  // 1. A quoted number that is nowhere in the administration. First, because it is the only
-  //    reason here whose answer is "the invoice is missing" rather than "pick one" — and the
-  //    owner is the only person who can fix that. Only claimed when the payment actually printed
-  //    a number: silence is not a missing invoice.
-  const quoted = parseReferenceNumbers(line.reference);
-  if (quoted.length > 0) {
-    const anyKnown = openInvoices.some((inv) =>
-      referenceMatches({ reference: line.reference, description: line.description ?? "" }, inv.invoice_number),
-    );
-    if (!anyKnown) return "reference_not_in_administration";
-  }
-
   const sameAmount = openInvoices.filter((inv) => amountMatches(line.amount as number, remaining(inv), eps));
+  const vanDezePartij = openInvoices.filter((inv) => sameParty(line, inv));
+
+  // 1. A quoted number that is nowhere in the administration, FROM A PARTY WE ALREADY HOLD
+  //    INVOICES FROM. First, because it is the only reason here whose answer is "the invoice is
+  //    missing" rather than "pick one", and the owner is the only person who can fix that.
+  //
+  //    ── WHY THE PARTY CONDITION IS NOT OPTIONAL ──
+  //
+  //    The first version of this rule asked only "did the payment quote a number, and is that
+  //    number unknown". Checked against production, that fires on almost everything: a
+  //    betalingskenmerk from the Belastingdienst, a pension fund's scheme reference, a water
+  //    company's customer number, a marketplace order id, a landlord whose payment reference is
+  //    the tenant's own name. isReferenceNumberToken accepts any token of four characters
+  //    containing a digit — deliberately, because for MATCHING a wide net costs nothing.
+  //
+  //    For an ACCUSATION it costs everything. "This payment names an invoice you have not entered"
+  //    is a sentence about the owner's own diligence, and saying it about a tax payment is not
+  //    vague, it is false. A worklist that is wrong most of the time gets dismissed once and then
+  //    protects nothing — the same reasoning as the gate that must bite.
+  //
+  //    So the claim is only made where it can be defended: this counterparty ALREADY has open
+  //    invoices in this administration, and this payment quotes a number that is not among them.
+  //    Everything else falls through to reason 5, whose sentence — rent, a loan, private, give it
+  //    a category once — is the true answer for the Belastingdienst and the pension fund.
+  //
+  //    Conservative on purpose: a supplier whose every invoice happens to be settled is not in the
+  //    open pool, so a genuinely missing invoice from them stays unnamed. Silence is the right
+  //    error to make here; a false accusation is not.
+  if (vanDezePartij.length > 0) {
+    const quoted = parseReferenceNumbers(line.reference);
+    if (quoted.length > 0) {
+      const anyKnown = openInvoices.some((inv) =>
+        referenceMatches({ reference: line.reference, description: line.description ?? "" }, inv.invoice_number),
+      );
+      if (!anyKnown) return "reference_not_in_administration";
+    }
+  }
 
   // 2. More than one open invoice for exactly this amount. The app may not guess between them —
   //    that is a rule, not a limitation — and the owner settles it in one tap.
   if (sameAmount.length > 1) return "several_invoices_this_amount";
-
-  const vanDezePartij = openInvoices.filter((inv) => sameParty(line, inv));
 
   // 3. Known party, open invoices, none for this amount. Usually a part payment or an invoice
   //    that has not arrived — either way the owner knows which, and nothing else does.
