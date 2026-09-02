@@ -119,6 +119,8 @@ needs real files, not more code.
 
 1. **A live `upload → DB → /api/result` pass.** The proof `RECONCILIATION_TRIANGLE.md` names as
    final and that no amount of unit testing substitutes for. Needs a running Supabase.
+   _(2 September 2026: the instrument now exists — `scripts/verify-live-chain.mts`, §16. The
+   measurement still has not been taken; this item stays open until someone runs it.)_
 2. **A pure seam in `compute-result-range.ts`.** Extract the windowing and aggregation from the
    fetching, the way `truth-lens.ts` was extracted during the July audit — the same move, on the
    larger module, with the same payoff.
@@ -846,3 +848,87 @@ then its answer, then the icon subset. Each was found only by measuring the thin
 reading what was written about it. The generator, the icon list and the guard columns are all
 derived from source now — and this entry exists because the second of those was written by me,
 two days ago, with a blind spot I did not look for until an unrelated check tripped over it.
+
+## 16. §6 item 1 has an instrument now — but not yet a measurement — 2 September 2026
+
+`§6` has listed the same thing at number one since this file was written: _"a live `upload → DB →
+/api/result` pass. The proof `RECONCILIATION_TRIANGLE.md` names as final and that no amount of unit
+testing substitutes for. Needs a running Supabase."_ It stayed at number one through every
+re-measurement since, because each pass could only confirm it was still open.
+
+It is worth being precise about why no test in this repo covers it. `npm run gates` never calls
+Supabase once: `tsc`, the unit tests, the render tests and `next build` are all static, and the
+Playwright sweep only walks the public pages, which is where the middleware lets it in without a
+session. So there has never been a check that says whether the figures an owner reads on their
+screen belong to the rows sitting under them in the database.
+
+`scripts/verify-live-chain.mts` is that check. It logs in as an owner, reads the raw rows back
+through RLS, calls `/api/result`, `/api/aangifte` and `/api/truth` with the session, and compares what
+they say using **plain arithmetic** — adding, subtracting, comparing — never by calling an engine:
+
+- `invoices.amount_paid` equals the sum of `bank_tx_invoices.amount_applied` for that invoice;
+- `resultaat` = `omzet` − `kosten`, and `btwSaldo` = `verschuldigd` − `voorbelasting`;
+- the rate buckets add up to `btwVerschuldigd`;
+- every figure is a finite number (an `NaN` travels silently through every later sum);
+- the BTW is at most 30% of the turnover — the incl./excl. swap, which is invisible otherwise
+  because both numbers look plausible on their own;
+- `5g` = `5a` − `5b` on the concept aangifte, and the rubrieken add up to `5a`;
+- the aangifte and the result do not name two different amounts for the same quarter;
+- and `/api/truth` — the screen an owner opens beside the result — names the same six figures
+  for the same quarter. `/api/result` promises that in its own header ("the same function over
+  a different window"); the promise lives in a comment and was checked nowhere.
+
+**What it does not prove:** that the calculation rules are right. The unit tests do that, and they
+are good. This aims at the layer between the database and the API answer — the assembly — because
+that is where every defect of the past week actually was: a key that was correct but stored in the
+row that undoing removes; a definition spelled twice; a read that returned "nothing found" because
+it had been truncated.
+
+**Read-only, on purpose.** It runs against a real database. A script that creates rows to delete
+them afterwards leaves something behind on every interrupted run, and the first time somebody aims
+it at a live administratie by accident it stops being a test and becomes a booking. Existing rows
+answer the same question.
+
+### Three defects in the instrument, before it measured anything
+
+Each one would have made the tool lie, and in the same direction — toward a false alarm about money.
+
+1. **The session cookie was invented rather than written.** The first version sent
+   `Authorization: Bearer …` and a hand-rolled `cookie: sb-access-token=…`. The routes read their
+   session with `@supabase/ssr` (`supabase-server.ts`), which uses a project-scoped cookie name and
+   a `base64-` encoding it chunks itself — so that header authenticates nobody. Every check below it
+   would have gone red with a 401, over something with no money in it at all. It now lets the same
+   library write the cookie into an in-memory jar, so the encoding cannot drift from what the route
+   reads back. Proven offline, without a network: the cookie the script sends is parsed by a second
+   `createServerClient`, which recovers the same user id.
+
+2. **A 401 counted as a failed check.** That is the worse half of (1) and survives independently of
+   it: a verifier that cannot distinguish _"I could not look"_ from _"your books are wrong"_ is
+   worse than no verifier, because it sends somebody hunting through an administratie for a fault
+   that is a missing cookie. `401`/`403` now stop the run with an explicit "nothing was checked,
+   this says nothing about the bookkeeping", and exit 2 — never a red line.
+
+3. **The two raw reads were unpaged.** PostgREST truncates at ~1000 rows in silence
+   (`supabase-paginate.ts`), so on a busy administratie the tool would have read the first thousand
+   payment links and reported properly-paid invoices as half paid. That is one of the three defect
+   classes the script's own preamble names as this week's causes — written straight into the
+   instrument built to find them. Both reads now go through `fetchAllRows`.
+
+### What is still open
+
+Item 1 is **not** closed. What exists is the instrument; the measurement has not been taken. This
+container cannot reach `cedrndplmydqcmbszfmp.supabase.co` — the organisation's egress policy denies
+it — so the script has never run against live data. It passes `tsc`, `eslint` and the full gate set,
+and its cookie encoding is proven by an offline round-trip, and that is all that can honestly be
+claimed for it here.
+
+To take the measurement, on a machine that can reach the database:
+
+```bash
+npx next build && npx next start -p 3100
+CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/verify-live-chain.mts
+```
+
+Exit 0 means the live app and the rows underneath it agree. Exit 1 names what disagreed, and where
+to look: not in the engines, which have their own tests, but in which rows are read and how they are
+put together. Exit 2 means the check could not run — which is not a statement about money.
