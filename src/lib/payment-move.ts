@@ -15,6 +15,13 @@ export interface MoveTargetCandidate {
   id: string;
   status?: string | null;
   direction?: string | null;
+  /**
+   * [MOVE-CREDITNOTA] 'creditnota' or not. Optional only because an older caller may not select
+   * it — and an absent type reads as "not a creditnota", which is the permissive answer. That is
+   * why the ROUTE selects it explicitly rather than relying on this default: a guard whose input
+   * is missing does not fail loudly, it simply says yes.
+   */
+  invoice_type?: string | null;
   invoice_number?: string | null;
   client_name?: string | null;
   invoice_date?: string | null;
@@ -65,6 +72,16 @@ export function canReceivePayment(
   if (!new Set(["received", "sent", "overdue"]).has(target.status ?? "")) {
     return { ok: false, reason: "not_payable" };
   }
+  // [MOVE-CREDITNOTA] A creditnota is money the business OWES back — a NEGATIVE document, settled
+  // by paying out or by offsetting, never by receiving. The guard below reads the total through
+  // abs(), so a creditnota of −100 looks like an invoice with 100 still open, and a received
+  // payment moved onto it marked it 'paid' while the sales invoice it really belonged to silently
+  // lost the money. Measured against a real Postgres — see
+  // supabase/migrations/invoice_move_payment_creditnota_guard.sql.
+  //
+  // Only the TARGET. A creditnota may still be the SOURCE, so a payment wrongly attached to one
+  // can be moved back off it — which is the door out of exactly this mistake.
+  if ((target.invoice_type ?? "") === "creditnota") return { ok: false, reason: "creditnota_target" };
   if (Math.abs(Number(target.total_inc_btw ?? 0)) <= 0) return { ok: false, reason: "no_total" };
   if (payment.transaction_id && alreadyLinkedInvoiceIds.has(target.id)) {
     return { ok: false, reason: "already_linked" };
@@ -145,6 +162,11 @@ export function moveFailureText(rawMessage: string | null | undefined, code?: st
   }
   if (m.includes("not payable")) {
     return "Die factuur kan nog geen betaling ontvangen. Controleer hem eerst in de wachtrij.";
+  }
+  // [MOVE-CREDITNOTA] Matched on the RPC's own fragment, so the sentence is the same whether the
+  // refusal came from the database or from the route's own check ahead of it.
+  if (m.includes("target is a creditnota")) {
+    return "Dat is een creditnota: daarop krijg jij geen geld, die betaal je terug of verreken je. Kies de factuur waar deze betaling wél bij hoort.";
   }
   if (m.includes("has no total")) {
     return "Die factuur heeft geen bedrag om te voldoen.";

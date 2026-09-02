@@ -32,6 +32,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+// [PAYDATE-REDERIVE] After a reversal the invoice's payment date must describe the money that is
+// still on it. The migration that would do this in the database is not applied — see the module.
+import { rederivePaymentDate } from "@/lib/payment-date-rederive";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
@@ -376,6 +379,9 @@ export async function POST(req: NextRequest) {
         driftUnhealed += 1;
         console.error("[PARTIAL-PAY] recompute after statement delete failed", { invoiceId, error: recErr.message });
       }
+      // [PAYDATE-REDERIVE] Deleting a statement takes its bank lines with it; the date on every
+      // invoice they settled must now describe the payments that survived, not the ones that went.
+      await rederivePaymentDate(pipeline, user.id, invoiceId);
     }
     if (driftUnhealed > 0) {
       // The statement is gone and cannot come back, so this is not a rollback situation — but the

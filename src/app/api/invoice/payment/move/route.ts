@@ -34,7 +34,10 @@ import { requireOwner } from '@/lib/owner-only'
 export const dynamic = "force-dynamic";
 
 const INVOICE_FIELDS =
-  "id, status, direction, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status";
+  // [MOVE-CREDITNOTA] invoice_type rides along, and it is not decoration: canReceivePayment reads
+  // an ABSENT type as "not a creditnota", which is the permissive answer. A column we forget to
+  // ask for therefore turns the guard off without failing anywhere.
+  "id, status, direction, invoice_type, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status";
 
 // ── GET — what can move, and where to ─────────────────────────────────────────────────────────
 
@@ -258,6 +261,48 @@ export async function POST(req: NextRequest) {
   const { linkId, targetInvoiceId } = body;
   if (!linkId || !targetInvoiceId) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
+  }
+
+  // ── [MOVE-CREDITNOTA] The one guard that is NOT in the database yet ──────────────────────────
+  //
+  // The header above says the pre-checks here keep the picker honest and are never the guard,
+  // because the RPC re-reads and re-decides everything under a row lock. That is the design, and
+  // it holds for every check but this one: invoice_move_payment_creditnota_guard.sql has not been
+  // applied, and the deployed function reads the target's total through abs() and never looks at
+  // invoice_type. Measured: a EUR 100 payment moved onto a 'sent' creditnota (total -100) came
+  // back amount_paid=100, status='paid', while the sales invoice the payment really belonged to
+  // silently lost it.
+  //
+  // So this is a belt, worn until the migration lands — and it is safe to wear precisely because
+  // it can only REFUSE. A read that is seconds stale costs a refusal of a move that would have
+  // been fine; it can never permit one the RPC would not. The moment the migration is applied this
+  // check becomes the second of two, saying the same sentence (moveFailureText matches the RPC's
+  // own fragment), and nothing about it has to change.
+  const { data: target, error: targetErr } = await supabase
+    .from("invoices")
+    .select("id, invoice_type")
+    .eq("id", targetInvoiceId)
+    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+    .maybeSingle();
+  if (targetErr) {
+    // [NO-SILENT-EMPTY] A failed read is not "it is not a creditnota". Refuse rather than fall
+    // through to an RPC that, today, cannot make this judgement itself.
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText(null) },
+      { status: 409 },
+    );
+  }
+  if (!target) {
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText("target invoice not found / not owned") },
+      { status: 409 },
+    );
+  }
+  if ((target as { invoice_type?: string | null }).invoice_type === "creditnota") {
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText("target is a creditnota") },
+      { status: 409 },
+    );
   }
 
   // Session client so the RPC's caller guard sees a real auth.uid() — the same contract

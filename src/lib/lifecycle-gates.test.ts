@@ -23780,3 +23780,113 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   assert.match(scherm, /\{merge\.explanation\}/, "the panel says out loud what it will and will not propose");
   assert.match(scherm, /\{offer\.evidence\}/, "…and quotes the identifier, so the owner can check it");
 });
+
+// ── [MOVE-CREDITNOTA] ─────────────────────────────────────────────────────────────────────────
+//
+// A creditnota is money the business OWES back. It is settled by paying out or by offsetting, and
+// never by RECEIVING money. move_invoice_payment guarded the target's direction, status, fit and
+// ownership — and read its total through abs(), so a creditnota of −100 looked exactly like an
+// invoice with 100 still open. Measured against a real Postgres: a EUR 100 payment moved onto a
+// 'sent' creditnota came back amount_paid=100, status='paid', while the sales invoice the payment
+// really belonged to silently lost it.
+//
+// The database fix exists (invoice_move_payment_creditnota_guard.sql) and is NOT applied — the
+// migration report said otherwise because its probe reads NEW./OLD. column references, which only
+// a trigger function has. So the guard lives in the route as well, and this gate holds both halves
+// of it: the check itself, and the column it needs to be able to make it.
+test("[MOVE-CREDITNOTA] a refund is never settled by receiving money", () => {
+  const beslissing = code("src/lib/payment-move.ts");
+  const deur = code("src/app/api/invoice/payment/move/route.ts");
+
+  // 1. The picker refuses it, so it is never offered — an offered row is one the owner taps.
+  assert.match(beslissing, /if \(\(target\.invoice_type \?\? ""\) === "creditnota"\) return \{ ok: false, reason: "creditnota_target" \}/,
+    "canReceivePayment no longer refuses a creditnota target");
+  // …asked before the total is measured, because it is the abs() on that total that hides it.
+  const typeAt = beslissing.indexOf('=== "creditnota"');
+  const totalAt = beslissing.indexOf('reason: "no_total"');
+  assert.ok(typeAt > 0 && totalAt > typeAt, "the type is read before the total that disguises it");
+
+  // 2. The route refuses it too, and BEFORE the write. The RPC's own guard is not deployed, so
+  //    without this there is nothing between the owner and the booking.
+  assert.match(deur, /invoice_type === "creditnota"/, "the route makes the judgement itself");
+  const guardAt = deur.indexOf('invoice_type === "creditnota"');
+  const rpcAt = deur.indexOf('supabase.rpc("move_invoice_payment"');
+  assert.ok(guardAt > 0 && rpcAt > guardAt, "…before the RPC, not after it");
+  // [NO-SILENT-EMPTY] A failed read is not "it is not a creditnota".
+  assert.match(deur, /if \(targetErr\) \{/, "a target that could not be read is refused, not assumed innocent");
+
+  // 3. The silent half: canReceivePayment reads an ABSENT invoice_type as "not a creditnota",
+  //    which is the permissive answer. A route that stops selecting the column therefore turns
+  //    both checks off without failing anywhere.
+  assert.match(deur, /const INVOICE_FIELDS =\s*(?:\/\/[^\n]*\n\s*)*"[^"]*\binvoice_type\b/,
+    "the route stopped selecting invoice_type — the guard now answers yes to everything");
+
+  // 4. One sentence for one refusal. The route's own check and the RPC's (once applied) must reach
+  //    the owner as the same words, or the same event reads as two different problems.
+  assert.match(beslissing, /m\.includes\("target is a creditnota"\)/,
+    "moveFailureText no longer recognises the RPC's own fragment");
+  const sql = readFileSync("supabase/migrations/invoice_move_payment_creditnota_guard.sql", "utf8");
+  assert.match(sql, /target is a creditnota/,
+    "the migration's message changed — the route's sentence is matched on it");
+});
+
+// ── [PAYDATE-REDERIVE] ────────────────────────────────────────────────────────────────────────
+//
+// Invoice A is settled in two instalments — EUR 1.000 on 1 May, EUR 2.000 on 15 June — and the
+// owner undoes the FIRST one. amount_paid is re-derived correctly; payment_date goes on saying
+// 1 May, the date of the money that just left. Under the KASSTELSEL that date decides which
+// QUARTER the payment counts in, so the figure comes out wrong with no warning anywhere.
+//
+// Every reversal path in this app carried its own `payment_date: stillHasPayment ? … : null`, and
+// a comment saying the recompute re-derives it a few lines down. It does not:
+// invoice_payment_date_rederive.sql adds that derivation and has not been applied — the migration
+// report said otherwise because its probe reads the NEW./OLD. references only a TRIGGER function
+// has, and this is an ordinary function. So the comments described a fix that never landed.
+//
+// The rule this gate holds is a CLASS, not a list: a path that re-derives the AMOUNT must also
+// re-derive the DATE. A sixth reversal path written next month is caught by it too.
+test("[PAYDATE-REDERIVE] every path that re-derives the amount re-derives the date with it", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+  const recomputers: string[] = [];
+  const missing: string[] = [];
+  for (const file of walk("src/app/api")) {
+    const src = code(file);
+    if (!src.includes("recompute_invoice_amount_paid")) continue;
+    // Mentioning it in a comment is not calling it — code() has already stripped those.
+    if (!/\.rpc\(\s*["']recompute_invoice_amount_paid["']/.test(src)) continue;
+    recomputers.push(file);
+    if (!/rederivePaymentDate\(/.test(src)) missing.push(file);
+  }
+  // A reader that finds nothing passes forever on exactly the gate claiming a class cannot return.
+  assert.ok(recomputers.length >= 3,
+    `[PAYDATE-REDERIVE] only ${recomputers.length} reversal paths were examined — it is the READER that broke`);
+  assert.deepEqual(missing, [],
+    "a reversal path re-derives amount_paid and leaves payment_date naming money that is gone — " +
+    "call rederivePaymentDate (src/lib/payment-date-rederive.ts) right after the recompute");
+
+  // And the derivation is the SQL's, so the two agree the day the migration is applied rather than
+  // fighting over the same column. Both halves of the ordering are pinned: earliest first, and an
+  // undated link last — reverse either and an invoice takes the date of the wrong payment.
+  const module_ = code("src/lib/payment-date-rederive.ts");
+  assert.match(module_, /if \(ad === null && bd !== null\) return 1/, "an undated link sorts LAST, as NULLS LAST");
+  assert.match(module_, /return ad < bd \? -1 : 1/, "…and among dated ones the EARLIEST wins");
+  assert.match(module_, /localeCompare\(b\.created_at \?\? ''\)/, "…with created_at breaking a same-day tie, as the SQL does");
+  // Nothing derivable writes NOTHING. Writing null instead would blank the recorded date of an
+  // invoice whose payment predates bank_tx_invoices and is invisible to this query.
+  assert.match(module_, /if \(!derived\) return null/, "no surviving dated link → both columns are left alone");
+  // Never fatal: the amount is already correct when this runs, so a failure may not refuse a
+  // reversal that has, in the part that matters, succeeded.
+  assert.match(module_, /\} catch \(e\) \{[\s\S]*?return null\s*\n\s*\}/, "a failure costs the date, never the reversal");
+
+  const sql = readFileSync("supabase/migrations/invoice_payment_date_rederive.sql", "utf8");
+  assert.match(sql, /ORDER BY coalesce\(l\.paid_on, bt\.date\) NULLS LAST, l\.created_at/,
+    "the SQL's ordering changed — the TypeScript above mirrors it and would now disagree");
+});

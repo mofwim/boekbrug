@@ -200,3 +200,46 @@ test("[KASBOEK-LEZEN] de uploaddeur herkent het kasboek en boekt er niets van", 
   assert.match(detect, /\^beginsaldo\$[\s\S]{0,120}?\^eindsaldo\$/, "de herkenning eist begin- én eindsaldo niet meer");
   assert.match(detect, /if \(hasSaldi\) return "kasboek";/);
 });
+
+test("[KAS-TEKEN] een negatief bedrag is een correctie, geen uitgave", () => {
+  // Het blad zoals een winkelier het schrijft: een teruggave van 50, met een minteken, in de kolom
+  // Uitgaven. Math.abs() maakte daar 50 van die de lade UIT ging in plaats van 50 die erin kwam —
+  // de fout is 100 en hij keert de richting om. Erger nog: matchKasboekDays vergelijkt file.spent
+  // met wat de app die dag aan uitgaven kent en meldde dus 50 euro uitgave die "in BoekBrug
+  // ontbreekt", terwijl er 50 euro binnenkwam.
+  const blad: Cell[][] = [KOP, dag(46113, 100, -50, "Retour leverancier", 0, 150)];
+  const r = parseKasboekSheet(blad)!;
+  assert.equal(r.rows[0].received, 50, "de teruggave staat als ONTVANGST in de boeken");
+  assert.equal(r.rows[0].spent, 0, "…en niet als uitgave");
+  assert.equal(
+    r.rows[0].opening + r.rows[0].received - r.rows[0].spent, r.rows[0].closing,
+    "beginsaldo + ontvangsten − uitgaven = eindsaldo, met de bedragen zoals ze nu staan",
+  );
+  // De regel klopt na de verplaatsing, dus de rekenwaarschuwing hoort weg te blijven: een melding
+  // naast een verkeerd getal was geen rem — de eigenaar keek naar zijn eigen blad, zag netjes −50
+  // staan, en boekte het "ontbrekende" gat weg.
+  assert.equal(r.warnings.some((w) => w.code === "regel_telt_niet_op"), false);
+  // Maar hij hoort wél te weten hoe zijn blad gelezen is, juist omdat er niets aan te zien is.
+  const gemeld = r.warnings.find((w) => w.code === "negatief_bedrag");
+  assert.ok(gemeld, "een negatief bedrag wordt benoemd");
+  assert.match(gemeld!.message, /50\.00/, "…met het bedrag erbij, zodat het na te kijken is");
+  assert.match(gemeld!.message, /Uitgaven/, "…en de kolom waar het stond");
+});
+
+test("[KAS-TEKEN] een negatieve ontvangst is een uitgave — dezelfde vergelijking, andere kolom", () => {
+  const blad: Cell[][] = [KOP, dag(46114, 150, 0, null, -30, 120)];
+  const r = parseKasboekSheet(blad)!;
+  assert.equal(r.rows[0].spent, 30);
+  assert.equal(r.rows[0].received, 0);
+  assert.equal(r.rows[0].opening + r.rows[0].received - r.rows[0].spent, r.rows[0].closing);
+  assert.equal(r.warnings.some((w) => w.code === "regel_telt_niet_op"), false);
+});
+
+test("[KAS-TEKEN] een gewone dag verandert door niets van dit alles", () => {
+  // De enige manier om te weten dat de reparatie de 99% niet raakt.
+  const blad: Cell[][] = [KOP, dag(46115, 120, 60, "inkoop", 400, 460)];
+  const r = parseKasboekSheet(blad)!;
+  assert.equal(r.rows[0].spent, 60);
+  assert.equal(r.rows[0].received, 400);
+  assert.deepEqual(r.warnings, [], "een blad dat optelt mag niets te melden hebben");
+});
