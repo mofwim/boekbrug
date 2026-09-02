@@ -26,6 +26,8 @@ import { HOLD_LABELS } from "./hold-reasons";
 // [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
 import { explainableReasons, explainWaiting } from "./why-waiting";
 import { categoryHint } from "./category-wait";
+// [GEGROND-STAAT-IN] De getuige die mag invallen voor een ontbrekende zelfscore — en alleen die.
+import { moneyGroundedInText } from "./amount-grounding";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12892,6 +12894,37 @@ test("[KAS-ACHTER-BANK] what the pass deliberately did not book reaches the owne
   for (const k of ["bank.kas.aangegeven", "bank.kas.onbekend"] as const) {
     assert.match(MESSAGES[k].nl, /\{count\}/, `${k} must name how many, or it is a mood, not a fact`);
   }
+});
+
+test("[GEGROND-STAAT-IN] the witness reaches BOTH doors, and stays the narrow one", () => {
+  // Dit is een GELDPOORT die wijder is gezet. De reden dat dat verantwoord is, staat of valt met
+  // drie dingen, en alle drie kunnen stilletjes verdwijnen bij een latere opruiming.
+  //
+  // 1. Beide schrijvers moeten het signaal doorgeven. Doet er één het niet, dan boekt dezelfde
+  //    factuur wél vanzelf via de upload en niet via de mail — en dat verschil is onzichtbaar.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(code(f), /moneyGroundedInText: moneyGroundedInText\(/,
+      `${f}: passes no document evidence, so this door is dead on that path while it is open on ` +
+      "the other — the same invoice would then book itself through one entrance and not the other");
+  }
+
+  // 2. OCR mag nooit invallen voor de zelfscore van het model. amount-grounding.ts zegt het zelf:
+  //    die getuige is "a model, from the same family as the extractor… Corroboration, not proof".
+  //    Laat je hem toe, dan beoordeelt het model zijn eigen lezing — precies de cirkel die dat
+  //    bestand bestaat om te doorbreken.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found", source: "ocr" } }), false,
+    "the OCR witness may corroborate, never stand in for the model's own confidence");
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found" } }), true);
+  // …en het blijft ALLE DRIE. Eén ontbrekend bedrag is niet de getuige waar deze deur om vraagt.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "absent" } }), false);
+
+  // 3. De boeking moet zeggen door WELKE deur ze kwam, anders is "hoe vaak vuurde de nieuwe deur,
+  //    en kwam er iets van terug als correctie" geen vraag maar een gok.
+  const beslis = code("src/lib/auto-advance.ts");
+  assert.match(beslis, /clean_grounded_in_document/,
+    "a booking that leaned on the document instead of a score must carry its own name");
+  assert.ok(/grondedInPlaatsVanScore \? "clean_grounded_in_document" : "clean_high_confidence"/.test(beslis),
+    "the two doors may not collapse back into one reason — the ternary that tells them apart is gone");
 });
 
 test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {

@@ -73,7 +73,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 // [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
 import { readPdfTextLayer } from "@/lib/pdf-text"
 // [GEGROND] The stored verdict on whether the total is printed on the document.
-import { groundingOf } from '@/lib/amount-grounding'
+import { groundingOf, moneyGroundedInText } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead } from '@/lib/e-invoice'
 import { reconcileCashWithRetry } from "@/lib/cash-settle"
@@ -1291,6 +1291,10 @@ async function runIntake(req: NextRequest) {
           // [GEGROND] What the document's own text says about the total the reader reported. The
           // only signal here that does not come from the reader — see amount-grounding.ts.
           totalGrounding: groundingOf(v.field_confidence),
+          // [GEGROND-STAAT-IN] En of het document zijn eigen drie bedragen letterlijk draagt. Dit
+          // vervangt één ontbrekend signaal — de zelfscore van het model op het bedrag — en niets
+          // anders; zie moneyGroundedInText() in amount-grounding.ts.
+          moneyGroundedInText: moneyGroundedInText(v.field_confidence),
 // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
 totalPlacement: placementOf(v.field_confidence),
 // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.

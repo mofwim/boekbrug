@@ -51,7 +51,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 // [PDF-TEXT] The text layer both checks read, shared with the intake door.
 import { readPdfTextLayer } from '@/lib/pdf-text'
 // [GEGROND] The stored verdict on whether the total is printed on the document.
-import { groundingOf } from '@/lib/amount-grounding'
+import { groundingOf, moneyGroundedInText } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead, looksLikeInvoiceXml, isEInvoiceXmlMime, E_INVOICE_XML_MIME } from '@/lib/e-invoice'
 // [EERLIJK-GEBRUIK] De maandteller. Zie de toelichting bij de poort in syncUserEmails: dit was
@@ -4355,6 +4355,10 @@ export async function syncUserEmails(
             // the only signal here that does not come from the reader. Both auto-booking doors
             // must ask it: a gate on one door is not a gate.
             totalGrounding: groundingOf(classification.fieldConfidence),
+            // [GEGROND-STAAT-IN] En of het document zijn eigen drie bedragen letterlijk draagt. Dit
+            // vervangt één ontbrekend signaal — de zelfscore van het model op het bedrag — en niets
+            // anders; zie moneyGroundedInText() in amount-grounding.ts.
+            moneyGroundedInText: moneyGroundedInText(classification.fieldConfidence),
             // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
             totalPlacement: placementOf(classification.fieldConfidence),
             // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
