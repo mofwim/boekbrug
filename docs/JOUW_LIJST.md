@@ -10,6 +10,44 @@ is af, getest en gepusht; wat hier staat is de rest.*
 
 ---
 
+## −2. Eén punt erbij, van 2 september: het demowachtwoord
+
+**☐ Draai het wachtwoord van `demo@boekbrug.nl`**
+
+Supabase → Authentication → Users → `demo@boekbrug.nl` → wachtwoord opnieuw instellen. Zet de
+nieuwe waarde in je wachtwoordkluis en nergens anders.
+
+Waarom het erbij komt: dit account bestaat expres, met een werkend wachtwoord, omdat Google Play
+zijn reviewers ermee moet kunnen inloggen en omdat de winkelfoto's op een eigen administratie
+worden geschoten in plaats van op die van een echt bedrijf. Allebei goede redenen. Wat er niet uit
+volgt is dat het wachtwoord vóluit in de repository staat — en deze repository is openbaar. Het
+stond op vijf plekken, waarvan drie er op 2 september bij kwamen, door twee verschillende sessies
+op dezelfde dag. De afspraak om het weg te laten bestond al (`PLAY_STORE_LISTING.md` schreef altijd
+`SHOT_PASSWORD=…`); er was alleen niets dat hem afdwong. Nu wel.
+
+**Dit punt is minder dringend dan het klinkt, en dat is gemeten en niet gehoopt:**
+
+- Er heeft nog nooit iemand mee ingelogd (`last_sign_in_at` was leeg).
+- Het account kan sinds 2 september geen mail meer versturen en geen documenten meer laten inlezen
+  — de twee dingen die geld kosten of bij een vreemde in de bus belanden.
+- En het ziet niemand anders. Dat is nagemeten op de productiedatabase, in een proef die
+  terugdraaide: van 612 facturen zag het er 17, allemaal zijn eigen; een wijziging op de 555 rijen
+  van jouw administratie raakte er nul; en een poging om een factuur ín jouw boeken te schrijven
+  werd geweigerd. Andersom net zo: jij ziet zijn rijen niet.
+
+Draai hem dus met een gerust hart, niet met haast. Het oude wachtwoord blijft in de
+geschiedenis van de repository staan — daar is niets meer aan te doen, en daarom is het account
+afgeschermd in plaats van alleen hernoemd.
+
+`scripts/seed-demo-account.sql` leest het wachtwoord nu uit `DEMO_PASSWORD` en weigert te draaien
+zonder. Aanroepen als:
+
+```bash
+DEMO_PASSWORD="$NIEUW" psql "$DATABASE_URL" -v demo_pw="$DEMO_PASSWORD" -f scripts/seed-demo-account.sql
+```
+
+---
+
 ## −1. Wat er in de nacht van 1 september van deze lijst af is gegaan
 
 *Deze nacht was er voor het eerst directe toegang tot de productiedatabase. Alles hieronder is
