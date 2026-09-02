@@ -11,6 +11,9 @@ import {
   isTransientAiError,
   isAiApiError,
 } from "./ai";
+// [LEVERANCIER-STAAT-IN-HET-LOGO] The one confidence line — the tests read it rather than a fourth
+// copy of 0.7, so a change to the threshold moves the assertions with it.
+import { LOW_CONFIDENCE } from "./confidence";
 
 let passed = 0, failed = 0;
 function check(name: string, cond: boolean) {
@@ -107,8 +110,11 @@ check("legacy 'amount' field as total + missing split → re-read",
   needsVisualReread({ is_invoice: true, invoice_number: "123", amount: 500 }) === true);
 
 console.log("\n— [VISUAL-REREAD] a clean read is NOT re-read (no wasted strong call) —");
+// [LEVERANCIER-STAAT-IN-HET-LOGO] The vendor was added to this fixture, not the rule loosened to
+// fit it: an invoice with no supplier name on it is not a "full clean" read, and it is exactly the
+// case where looking at the page can still answer the question. A clean invoice HAS a sender.
 check("full clean invoice → no re-read",
-  needsVisualReread({ is_invoice: true, invoice_number: "26302362", total_inc_btw: 344.48, total_ex_btw: 316.04, btw_amount: 28.44, field_confidence: { amount: 0.95 } }) === false);
+  needsVisualReread({ is_invoice: true, invoice_number: "26302362", vendor: "Groothandel Noord B.V.", total_inc_btw: 344.48, total_ex_btw: 316.04, btw_amount: 28.44, field_confidence: { amount: 0.95, vendor: 0.95 } }) === false);
 check("not an invoice → no re-read",
   needsVisualReread({ is_invoice: false, invoice_number: null, total_inc_btw: 100 }) === false);
 check("no total at all → no re-read (handled by the raw fallback, not here)",
@@ -135,6 +141,37 @@ check("400 bad request → API error", isAiApiError(new Error("Claude API error 
 check("429 → API error too (covered by both predicates)", isAiApiError(new Error("Claude API error 429")) === true);
 check("a plain read/parse error is NOT an API error (stays FALLBACK)", isAiApiError(new Error("Unexpected token < in JSON")) === false);
 check("null → NOT an API error", isAiApiError(null) === false);
+
+console.log("\n— [LEVERANCIER-STAAT-IN-HET-LOGO] a supplier the reader is unsure of is worth a second look —");
+{
+  // Invoice 26004628. Its whole text layer is 199 characters and the company that sent it is in
+  // none of them: the PDF carries four embedded images and the letterhead is one of them. What the
+  // text DOES hold is "T.H.T. datum Jim Ketels 01-09-2026 09:38" — a deliverer's stamp — so the
+  // reader answered the vendor question with the only name on offer and scored itself LOW. The
+  // amounts were read perfectly, so every other trigger stayed silent and the app went straight to
+  // asking the owner, without once looking at the page where the answer is printed as pixels.
+  const ketels = {
+    is_invoice: true, invoice_number: "26004628", vendor: "Jim Ketels",
+    total_inc_btw: 42.29, total_ex_btw: 38.80, btw_amount: 3.49,
+    field_confidence: { amount: 0.95, vendor: 0.4 },
+  };
+  check("a low vendor score sends the reader back to the page",
+    needsVisualReread(ketels) === true);
+  check("…and it is the VENDOR that does it, not the amounts",
+    needsVisualReread({ ...ketels, field_confidence: { amount: 0.95, vendor: 0.95 } }) === false);
+  check("no vendor at all asks the same question",
+    needsVisualReread({ ...ketels, vendor: "  ", field_confidence: { amount: 0.95 } }) === true);
+  // The line is the one the screen's own ⚠️ uses. A re-read on a different threshold would either
+  // warn about invoices it had already fixed, or fix invoices it never warned about.
+  check("exactly at the threshold is still trusted",
+    needsVisualReread({ ...ketels, field_confidence: { amount: 0.95, vendor: LOW_CONFIDENCE } }) === false);
+  check("…and a hair below it is not",
+    needsVisualReread({ ...ketels, field_confidence: { amount: 0.95, vendor: LOW_CONFIDENCE - 0.01 } }) === true);
+  // A reader that reports no vendor score at all says nothing about the vendor — and a name it
+  // did produce is not made suspect by the absence of a number.
+  check("a missing score on a named vendor is not a reason to spend a call",
+    needsVisualReread({ ...ketels, field_confidence: { amount: 0.95 } }) === false);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

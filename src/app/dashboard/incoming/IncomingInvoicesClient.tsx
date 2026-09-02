@@ -58,6 +58,9 @@ import InvoiceDocumentSheet from "@/components/invoice/InvoiceDocumentSheet";
 // [LEVERANCIER-KIEZEN] The supplier name field, with the owner's own suppliers under it —
 // so a correction lands ON an existing company instead of founding a second one.
 import SupplierNameInput, { type SupplierChoice } from "@/components/invoice/SupplierNameInput";
+// [LEVERANCIER-STAAT-IN-HET-LOGO] The confidence line, from the leaf both the reader and this
+// screen read — never a fourth copy of 0.7. See confidence.ts.
+import { LOW_CONFIDENCE } from "@/lib/confidence";
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from "@/lib/reimport-eligibility";
 // [DATE-NL] A date the owner TYPES, in the order they read it. The native control puts the
@@ -1127,7 +1130,11 @@ export function ConfirmPaidModal({
   // it was unsure about. Threshold 0.7: below = ask the user to confirm. An empty
   // field (guard nulled it → conf 0) also flags. These are SOFT (never block).
   const fc = invoice.field_confidence;
-  const LOW = 0.7;
+  // [LEVERANCIER-STAAT-IN-HET-LOGO] One threshold, imported. This was a third copy of 0.7 —
+  // beside import-health's and the visual re-read's — and the three answer the same question in
+  // sequence: below this line the app looks at the page again, and only if it is STILL unsure does
+  // this ⚠️ appear. Two different lines would put a warning on invoices the app had already fixed.
+  const LOW = LOW_CONFIDENCE;
   const vendorLow = (fc?.vendor ?? 1) < LOW || !vendor.trim();
   const numberLow = (fc?.invoice_number ?? 1) < LOW || numberFlag;
   const dateLow = (fc?.invoice_date ?? 1) < LOW;

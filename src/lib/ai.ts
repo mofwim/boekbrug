@@ -88,6 +88,10 @@ import { detectDepositGap } from './statiegeld';
 // incoming invoice that had no check at all. See the header of that file for the read that
 // showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
 import { groundVendorName } from './vendor-grounding';
+// [LEVERANCIER-STAAT-IN-HET-LOGO] The one line between "the reader is sure" and "look again, and
+// if it is still unsure, ask". Shared with the health verdict and the queue's own ⚠️ banner — see
+// the comment on the constant itself.
+import { LOW_CONFIDENCE } from './confidence';
 // [E-FACTUUR] De cijfers die de leverancier zelf in machinevorm meestuurt — geen lezing, maar de
 // factuur zelf. Sterker dan elke controle hierboven, want er zit geen interpretatie tussen.
 import { extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, isEInvoiceXmlMime, type EInvoiceFigures } from './e-invoice';
@@ -387,8 +391,40 @@ export function fixMisSummedBtw(
 // columns the flattened text loses). Only fires on something the model already called an invoice
 // AND for which it found a total (a truly-empty read is handled by the existing raw-PDF fallback,
 // not here) — so the re-read is spent recovering the fields most often lost on complex layouts:
-// the invoice number, the ex/BTW split, or an amount the reader itself scored low. No model-cost
-// increase (same Haiku), just a second pass that sees the page. Pure + testable.
+// the invoice number, the ex/BTW split, an amount the reader itself scored low, or the SUPPLIER.
+// No model-cost increase (same Haiku), just a second pass that sees the page. Pure + testable.
+//
+// ── [LEVERANCIER-STAAT-IN-HET-LOGO] Why the vendor belongs on this list ──────────────────────
+//
+// Invoice 26004628. Its whole text layer is 199 characters, and the company that sent it is in
+// none of them: the PDF (Creator: Exact Online) carries four embedded IMAGES and the letterhead is
+// one of them. What the text DOES contain is "T.H.T. datum Jim Ketels 01-09-2026 09:38" — a
+// deliverer's stamp — so the reader answered the vendor question with the only name on offer, and
+// scored itself LOW while doing it. The real sender is W. Ketels en Zoon Eierhandel, and it is on
+// the page: as pixels.
+//
+// Every guard downstream held. The receiver rule correctly excluded the owner's own name; the
+// registry did not overwrite what was read; vendor-grounding could not object, because "Jim
+// Ketels" IS printed in that text. Nothing was wrong except the one thing nobody asked: whether
+// the text we handed the model could answer the question we asked of it.
+//
+// extractPdfTextIfTextLayer answers that with MIN_CHARS/MIN_DIGITS — 168 chars and 73 digits, so
+// it passes. But those thresholds measure the VOLUME of text, and volume is a proxy: it separates
+// a scan with stray characters from a real text layer, which is what it was written for, and says
+// nothing about whether the letterhead came along. Raising them would trade this miss for a
+// different arbitrary line.
+//
+// So the vendor is answered where the other weak fields already are: by the model's own score.
+// field_confidence.vendor is documented in the prompt as "how certain you are the vendor (sender)
+// is correct", it is the same signal the screen already shows the owner as "De AI was niet zeker
+// over de leverancier", and it was LOW on this invoice. The app's answer to that was to ask the
+// human — without first trying the one thing that can actually answer it, which is looking at the
+// page. The raw path SEES the logo.
+//
+// The threshold is 0.7, the same number the queue's own banner uses (vendorLow in
+// IncomingInvoicesClient). One threshold: a re-read that fires on a different line than the
+// warning would either warn about invoices it silently fixed, or fix invoices it never warned
+// about.
 export function needsVisualReread(
   p:
     | {
@@ -398,7 +434,8 @@ export function needsVisualReread(
         total_ex_btw?: number | null;
         btw_amount?: number | null;
         amount?: number | null;
-        field_confidence?: { amount?: number } | null;
+        field_confidence?: { amount?: number; vendor?: number } | null;
+        vendor?: string | null;
       }
     | null
     | undefined,
@@ -410,9 +447,17 @@ export function needsVisualReread(
   const missingNumber = !p.invoice_number || !String(p.invoice_number).trim();
   const missingBreakdown = !(isNum(p.total_ex_btw) && isNum(p.btw_amount));
   const amountScore = p.field_confidence?.amount;
-  const lowAmountConfidence = isNum(amountScore) && amountScore < 0.7;
-  return missingNumber || missingBreakdown || lowAmountConfidence;
+  const lowAmountConfidence = isNum(amountScore) && amountScore < LOW_CONFIDENCE;
+  // [LEVERANCIER-STAAT-IN-HET-LOGO] A vendor the reader is unsure of, or none at all. Both are the
+  // same question — "who sent this?" — asked of a page whose answer may only exist as pixels.
+  const vendorScore = p.field_confidence?.vendor;
+  const weakVendor =
+    (isNum(vendorScore) && vendorScore < LOW_CONFIDENCE) ||
+    !String(p.vendor ?? "").trim();
+  return missingNumber || missingBreakdown || lowAmountConfidence || weakVendor;
 }
+
+
 
 // Base system prompt — shared by all functions
 const SYSTEM_BASE = `You are an AI assistant for BoekBrug, a financial workflow platform in the Netherlands.

@@ -24105,3 +24105,131 @@ test("[PAYDATE-REDERIVE] every path that re-derives the amount re-derives the da
   assert.match(sql, /ORDER BY coalesce\(l\.paid_on, bt\.date\) NULLS LAST, l\.created_at/,
     "the SQL's ordering changed — the TypeScript above mirrors it and would now disagree");
 });
+
+// ── [LEVERANCIER-STAAT-IN-HET-LOGO] ───────────────────────────────────────────────────────────
+//
+// Invoice 26004628. Its entire text layer is 199 characters, and the company that sent it is in
+// none of them: the PDF carries four embedded IMAGES and the letterhead is one. What the text does
+// hold is "T.H.T. datum Jim Ketels 01-09-2026 09:38" — a deliverer's stamp — so the reader answered
+// "who sent this?" with the only name on offer, and scored itself LOW while doing it. The real
+// sender is on the page, as pixels.
+//
+// Every guard downstream held. The receiver rule excluded the owner's own name; the registry did
+// not overwrite what was read; vendor-grounding could not object, because "Jim Ketels" IS printed
+// in that text. The one question nobody asked is whether the text handed to the model could answer
+// the question asked of it — extractPdfTextIfTextLayer measures the VOLUME of text (chars/digits),
+// and volume is a proxy: it separates a scan from a text layer, and says nothing about whether the
+// letterhead came along.
+//
+// So the vendor is answered where the other weak fields already are: by the reader's own score,
+// which sends it back to look at the PAGE before anyone is asked to type a name from memory.
+test("[LEVERANCIER-STAAT-IN-HET-LOGO] an unsure supplier sends the reader back to the page", () => {
+  const lezer = code("src/lib/ai.ts");
+
+  // 1. The vendor is a re-read trigger, on the reader's own score and on a name that is not there.
+  assert.match(lezer, /const vendorScore = p\.field_confidence\?\.vendor;/,
+    "needsVisualReread no longer looks at the vendor's own confidence");
+  assert.match(lezer, /vendorScore < LOW_CONFIDENCE\) \|\|\s*\n\s*!String\(p\.vendor \?\? ""\)\.trim\(\)/,
+    "…or at a vendor that is missing entirely");
+  assert.match(lezer, /missingNumber \|\| missingBreakdown \|\| lowAmountConfidence \|\| weakVendor/,
+    "…and it is one of the reasons the answer is yes");
+
+  // 2. ONE threshold. This number lived in three files, under a comment promising they were "kept
+  //    identical" — a promise a person keeps, not a property the code has. They answer one question
+  //    in sequence: below the line the app looks at the page again, and only if it is STILL unsure
+  //    does the ⚠️ appear and the owner get asked. Two lines would warn about invoices the app had
+  //    already fixed, or fix invoices it never warned about.
+  const leaf = code("src/lib/confidence.ts");
+  assert.match(leaf, /export const LOW_CONFIDENCE = 0\.7/, "the line itself lives here");
+  assert.doesNotMatch(leaf, /^\s*import\s/m,
+    "confidence.ts must import NOTHING — a screen holds it, and a dependency here would pull a " +
+    "whole reading pipeline into the browser bundle, which is why the copies existed at all");
+
+  for (const reader of [
+    "src/lib/ai.ts",
+    "src/lib/import-health.ts",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+  ]) {
+    assert.match(code(reader), /import \{ LOW_CONFIDENCE \} from ['"](?:\.\/|@\/lib\/)confidence['"]/,
+      `${reader} no longer reads the shared confidence line — a fourth copy of 0.7 is how the ` +
+      "re-read and the warning stop agreeing about what 'uncertain' means");
+  }
+
+  // 3. And nobody compares a per-field score against a number written on the spot. Scoped to
+  //    field_confidence deliberately: 0.7 is a legitimate and UNRELATED threshold elsewhere (folder
+  //    classification, bank matching), and a gate that flagged those would be one nobody could keep.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    const src = code(file);
+    if (!src.includes("field_confidence")) continue;
+    for (const m of src.matchAll(/field_confidence(?:\s*(?:\?\.|\.)\s*[A-Za-z_]+)+\s*[<>]=?\s*(0?\.\d+)/g)) {
+      offenders.push(`${file}: field_confidence … ${m[0].slice(-8)}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `a per-field score compared against a literal instead of LOW_CONFIDENCE:\n  ${offenders.join("\n  ")}`);
+});
+
+// ── [RPC-ANON-REVOKE] ─────────────────────────────────────────────────────────────────────────
+//
+// rpc_anon_revoke.sql takes EXECUTE on seven server-only functions away from `authenticated`,
+// because no call site reaches them with a session client. Three other migrations are
+// CREATE OR REPLACE files that end with `GRANT EXECUTE … TO authenticated, service_role` on one of
+// those seven — so every time one of them is (re-)applied, it hands the right back.
+//
+// That is exactly what happened: applying invoice_payment_date_rederive.sql on 2 September left
+// has_function_privilege('authenticated', 'recompute_invoice_amount_paid', 'EXECUTE') = true, and
+// the inventory reported rpc_anon_revoke.sql OPEN. The grant was noticed and approved on its own
+// merits; that it REVERSES a hardening migration was not.
+//
+// The right itself is close to harmless — the function refuses when auth.uid() is not the owner.
+// What is not harmless is a security check that is permanently red, which is a check nobody reads.
+//
+// The rule this gate holds is not a list of today's three files: a migration that grants one of
+// these functions to `authenticated` must SAY SO, with this marker, in its own header. Then a
+// fourth one cannot be written in silence, and whoever runs it knows to re-run the revoke.
+test("[RPC-ANON-REVOKE] a migration that re-opens the server-only door says so in its own header", () => {
+  const grens = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+
+  // The seven, read out of the migration itself — never a second list here that could drift.
+  const blok = grens.slice(grens.indexOf("ALLEEN de server aanroept"));
+  const serverOnly = [...blok.matchAll(/^\s*'([a-z_]+)',?$/gm)].map((m) => m[1]);
+  assert.ok(serverOnly.length >= 5,
+    `[RPC-ANON-REVOKE] only ${serverOnly.length} server-only functions were read out of the ` +
+    "migration — it is the READER that broke, not the code");
+  assert.ok(serverOnly.includes("recompute_invoice_amount_paid"));
+
+  const offenders: string[] = [];
+  for (const file of readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    if (file === "rpc_anon_revoke.sql") continue;
+    const sql = readFileSync(`supabase/migrations/${file}`, "utf8");
+    // A GRANT to `authenticated` on one of the seven. Comments are left in on purpose: a grant
+    // commented out is still a grant the next person uncomments.
+    const grants = [...sql.matchAll(/GRANT EXECUTE ON FUNCTION public\.([a-z_]+)\s*\([^)]*\)\s*TO ([^;]+);/g)]
+      .filter((m) => serverOnly.includes(m[1]) && /\bauthenticated\b/.test(m[2]))
+      .map((m) => m[1]);
+    if (grants.length === 0) continue;
+    if (!sql.includes("[RPC-ANON-REVOKE]")) {
+      offenders.push(`${file} grants ${[...new Set(grants)].join(", ")} to authenticated`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    "this migration hands a server-only function back to `authenticated`, undoing " +
+    "rpc_anon_revoke.sql, and says nothing about it. Put a [RPC-ANON-REVOKE] note in its header " +
+    "naming the function and telling the reader to re-run rpc_anon_revoke.sql afterwards:\n  " +
+    offenders.join("\n  "));
+
+  // And the revoke itself names the files that undo it, so the pointer exists in both directions.
+  for (const f of ["invoice_partial_payments.sql", "invoice_payment_date_rederive.sql", "bank_confirm_atomic.sql"]) {
+    assert.ok(grens.includes(f), `rpc_anon_revoke.sql no longer names ${f} as one of its undoers`);
+  }
+});
