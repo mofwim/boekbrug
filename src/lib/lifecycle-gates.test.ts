@@ -7811,6 +7811,11 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
     // back in one entry at a time.
     "src/components/nav/DashboardChrome.tsx",
+    // [LEVERANCIER-KIEZEN] The supplier name field and the form around it. Both render inside the
+    // two incoming screens above, and both are new enough that a Dutch sentence typed straight
+    // into them would look perfectly finished — in Dutch.
+    "src/components/invoice/SupplierNameInput.tsx",
+    "src/components/invoice/SupplierPinModal.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -22809,4 +22814,62 @@ test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the se
   const refuseAt = scherm.indexOf("zonderOmschrijving >= 0");
   const draftAt = scherm.indexOf("/api/invoice/draft");
   assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
+});
+
+// ── [LEVERANCIER-KIEZEN] ──────────────────────────────────────────────────────────────────────
+//
+// A supplier is not typed into this app the way a customer is. A customer is CHOSEN: /dashboard/
+// klanten has a form and /dashboard/invoice/new has a picker, so the owner names them once and
+// selects them forever after. A supplier ARRIVES, on paper, and suppliers.name is whatever the
+// reader made of a letterhead — so the only place a human ever names one is a correction field on
+// an invoice.
+//
+// That field is an identity key, not a label. learnSupplierAlias resolves the corrected name
+// through supplierNameKey: a key that matches links the invoice to the company the owner already
+// has, and a key that misses creates a SECOND supplier row — after which /dashboard/leveranciers
+// shows one company twice with the outstanding balance split between the halves. Retyping a name
+// from memory is precisely how you miss by one character.
+//
+// So both doors show what is there. This gate holds the two halves that go quiet without failing:
+// a picker whose list nobody passes is an empty picker forever, and it looks exactly like a
+// picker that simply found nothing.
+test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers the owner has", () => {
+  // 1. The verify queue's modal — the door the owner meets first, on every misread invoice.
+  const wachtrij = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(wachtrij, /<SupplierNameInput\s/, "the queue's leverancier field is the picker");
+  assert.match(wachtrij, /value=\{vendor\}\s*\n\s*onChange=\{setVendor\}/,
+    "…driving the same vendor state the confirm sends, not a second copy of it");
+
+  // 2. The supplier form at the foot of the document sheet — the deeper door, reachable from BOTH
+  //    incoming screens. A picker at one door only is a feature the owner cannot rely on.
+  const formulier = code("src/components/invoice/SupplierPinModal.tsx");
+  assert.match(formulier, /<SupplierNameInput/, "the supplier form's name field is the picker too");
+
+  // 3. And the lists actually travel. This is the half that fails silently: every prop below is
+  //    optional by design (an older render must behave exactly as before), so a page that stops
+  //    reading its suppliers type-checks, renders, and shows an empty panel forever.
+  for (const page of [
+    "src/app/dashboard/incoming/page.tsx",
+    "src/app/dashboard/incoming/manage/page.tsx",
+  ]) {
+    const src = code(page);
+    assert.match(src, /from\(["']suppliers["']\)\s*\n?\s*\.select\(["']id, name, iban["']\)/,
+      `${page} no longer reads the suppliers the picker offers`);
+    assert.match(src, /suppliers=\{/, `${page} reads them and does not hand them over`);
+    // [NO-SILENT-EMPTY] An empty list and a failed read are different sentences on the screen, and
+    // only one of them may say "confirming makes a new supplier". A page that stopped telling the
+    // two apart would send `false` here and quietly invite a duplicate of a company the owner has.
+    assert.match(src, /suppliersUnavailable=\{/, `${page} cannot tell a failed read from an empty list`);
+  }
+
+  // 4. The two sentences are two keys. One key for both states is how they become the same claim.
+  const veld = code("src/components/invoice/SupplierNameInput.tsx");
+  assert.match(veld, /t\('lev\.kies\.nietGeladen'\)/, "the failed read says so");
+  assert.match(veld, /t\('lev\.kies\.nieuw'\)/, "…and an empty answer from a list that WAS read says so");
+  // The order matters, not just the presence: `unavailable` is checked FIRST, so a read that
+  // failed can never fall through to the sentence about creating a new supplier.
+  const unavailableAt = veld.indexOf("if (unavailable)");
+  const nieuwAt = veld.indexOf("lev.kies.nieuw");
+  assert.ok(unavailableAt > 0 && nieuwAt > unavailableAt,
+    "a failed read must be answered before anything is claimed about the name");
 });

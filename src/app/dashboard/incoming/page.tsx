@@ -16,6 +16,10 @@ import {
 import { fetchAllRows } from "@/lib/supabase-paginate";
 // [READING-MEMORY] Which suppliers this owner keeps having to correct — built from the audit trail.
 import { readingHintFor, vendorKey } from "@/lib/reading-memory";
+
+// [LEVERANCIER-KIEZEN] The suppliers the owner already has, for the name field in the verify
+// modal. The cap lives with the matching it feeds — one number, two screens.
+import { SUPPLIER_PICK_LIMIT } from "@/lib/supplier-suggest";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 
 export const dynamic = "force-dynamic";
@@ -152,6 +156,7 @@ export default async function IncomingPage() {
     confirmedPaidRes,
     allFoldersRes,
     readingMemory,
+    suppliersRes,
   ] = await Promise.all([
     // [BOEK-011] De rol, voor het Logo Universal Click-patroon.
     supabase.from("profiles").select("role").eq("id", user.id).single(),
@@ -230,6 +235,17 @@ export default async function IncomingPage() {
     // lezing (reading-memory-source.ts), zodat dit scherm en het betaalscherm niet elk iets anders
     // over dezelfde leverancier beweren.
     loadReadingMemory(supabase, user.id),
+
+    // [LEVERANCIER-KIEZEN] De leveranciers die deze eigenaar al heeft, zodat het naamveld in de
+    // controlemodal laat zien wat er is in plaats van blanco papier te zijn. Alleen id, naam en
+    // rekeningnummer: het veld toont een naam en, om twee bijna gelijke namen uit elkaar te
+    // houden, het rekeningnummer eronder.
+    supabase
+      .from("suppliers")
+      .select("id, name, iban")
+      .eq("user_id", user.id)
+      .order("name")
+      .limit(SUPPLIER_PICK_LIMIT),
   ]);
 
   const { data: profile } = profileRes;
@@ -247,6 +263,20 @@ export default async function IncomingPage() {
     readFailed.push("bevestigde facturen");
   }
   const { data: allFolders } = allFoldersRes;
+
+  // [LEVERANCIER-KIEZEN] [NO-SILENT-EMPTY] Een mislukte lezing is NIET "je hebt geen leveranciers".
+  // Het verschil is zichtbaar op het scherm: bij een lege lijst zegt het veld dat bevestigen een
+  // nieuwe leverancier aanmaakt, bij een mislukte lezing zegt het dat de lijst niet geladen kon
+  // worden. Het gaat bewust NIET in readFailed: dat vaandel maakt de wachtrij zelf onbetrouwbaar,
+  // en een suggestielijst die ontbreekt zegt niets over de facturen erin.
+  const { data: supplierRows, error: suppliersErr } = suppliersRes;
+  if (suppliersErr) {
+    console.error("[LEVERANCIER-KIEZEN] supplier list read failed", {
+      userId: user.id, error: suppliersErr.message,
+    });
+  }
+  const suppliers = ((supplierRows ?? []) as { id: string; name: string; iban: string | null }[])
+    .filter((s) => typeof s.name === "string" && s.name.trim() !== "");
 
   const userRole: "zzper" | "accountant" =
     profile?.role === "accountant" ? "accountant" : "zzper";
@@ -401,6 +431,8 @@ export default async function IncomingPage() {
       userRole={userRole}
       readingHints={readingHints}
       readFailed={readFailed}
+      suppliers={suppliers}
+      suppliersUnavailable={!!suppliersErr}
     />
   );
 }

@@ -592,6 +592,34 @@ export const MESSAGES = {
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
     en: 'The supplier could not be saved. Try again in a moment.',
   },
+  // [LEVERANCIER-KIEZEN] De lijst die meeloopt terwijl je een leveranciersnaam typt. De zinnen
+  // gaan over het GEVOLG van kiezen — één leverancier in plaats van twee — want dat is het enige
+  // wat de eigenaar er later van merkt: zijn crediteurenstand staat op één naam of op twee.
+  'lev.kies.kop': {
+    nl: 'Leveranciers die je al hebt',
+    ar: 'موردون لديك بالفعل',
+    en: 'Suppliers you already have',
+  },
+  'lev.kies.meer': {
+    nl: 'Nog {n} meer — typ verder om te verfijnen',
+    ar: 'وهناك {n} آخرون — تابع الكتابة للتضييق',
+    en: '{n} more — keep typing to narrow it down',
+  },
+  'lev.kies.nieuw': {
+    nl: 'Nog geen leverancier met deze naam. Bevestigen maakt er een nieuwe van.',
+    ar: 'لا يوجد مورّد بهذا الاسم بعد. التأكيد سيُنشئ مورّداً جديداً.',
+    en: 'No supplier with this name yet. Confirming will create a new one.',
+  },
+  'lev.kies.nietGeladen': {
+    nl: 'De lijst met leveranciers kon niet worden geladen — je kunt de naam gewoon typen.',
+    ar: 'تعذّر تحميل قائمة الموردين — يمكنك كتابة الاسم كالمعتاد.',
+    en: 'The supplier list could not be loaded — you can still type the name.',
+  },
+  'lev.kies.veld': {
+    nl: 'Leverancier — kies een bestaande of typ een nieuwe naam',
+    ar: 'المورّد — اختر واحداً موجوداً أو اكتب اسماً جديداً',
+    en: 'Supplier — pick an existing one or type a new name',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },
