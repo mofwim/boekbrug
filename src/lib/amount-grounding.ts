@@ -387,8 +387,26 @@ export function groundingText(g: MoneyGrounding): string | null {
  * flag at all — and 182 had NO per-amount confidence from the model whatsoever. The reader knew
  * who, when and which number, said nothing was wrong, and the document was held anyway, because
  * the money gate is fail-closed on a missing score and falls back to demanding a VERY high overall
- * confidence. That is the gate working exactly as written. It is also 55 documents in two months
- * (~330 a year, one shop) of a human confirming a reading that nothing disagreed with.
+ * confidence. That is the gate working exactly as written.
+ *
+ * ── AND THEN THE SAME DATA, BROKEN DOWN BY WEEK, SAID SOMETHING ELSE ──
+ *
+ * All 181 of those documents arrived by e-mail between 5 and 14 July — the fortnight the backlog
+ * was first fed in — and NOT ONE document since 20 July has lacked an amount score. Six weeks, zero.
+ *
+ * So the honest account of this function is: it recovers 44 documents that are already in the
+ * queue, and on that administration its forward effect today is ZERO, because the condition it
+ * answers stopped occurring. It is kept, and it was worth writing, for two reasons and not a third:
+ * a fail-closed gate that refuses on a missing signal will meet a missing signal again the next
+ * time a reader changes, and the rule costs nothing when the signal is present. It is NOT kept
+ * because it is currently saving anybody time. Whoever reads this next should believe the second
+ * paragraph, not the first — the first is what an average over a bulk import looks like.
+ *
+ * The bucket that IS live is different and deliberately left shut: of 34 documents held since
+ * 20 July, 20 carry a real warning flag, 7 have a total the text does not contain, and 14 are
+ * photographs — of which 7 have all three amounts corroborated by the OCR witness and no flag at
+ * all. Admitting that witness here would open those 7 (~60 a year). Narrowing 2 below explains why
+ * it stays shut; this is the price of that decision, stated so it can be argued with.
  *
  * The evidence to close that gap was already on the row and unused. `_grounding` records, per
  * figure, whether that exact number occurs in the characters of the document itself. That is not
