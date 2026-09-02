@@ -1745,11 +1745,16 @@ test("[BON-AUTO] the paid-suggestion block still holds everything it is NOT sett
   // hole opened for a settled bon must be exactly that: a pen-marked INVOICE (suggestPaid via a
   // handwritten mark, never a till line) must still be held, or money already gone stands as a
   // debt behind an "automatisch geverifieerd" tag.
-  assert.match(
-    code("src/lib/email-integration.ts"),
-    /!classification\.uncertain && \(!pay\.suggestPaid \|\| settlePlan\.settle\)/,
-    "the e-mail door's hole must be settle-shaped, not open",
-  );
+  // [WAAROM-VASTGEHOUDEN] De vorm is veranderd, de regel niet. Eén uitdrukking gaf twee heel
+  // verschillende oorzaken dezelfde naam 'uncertain' — de lezer die twijfelde, én een perfect
+  // gelezen factuur met een betaalspoor — en de eigenaar las daar "de lezer was niet zeker genoeg"
+  // bij een document waarover niemand twijfelde. Nu twee takken, twee namen. Wat hier bewaakt
+  // wordt is ongewijzigd: een betaalspoor dat niet in dezelfde stap wordt afgerekend, boekt niet.
+  const mail = code("src/lib/email-integration.ts");
+  assert.match(mail, /pay\.suggestPaid && !settlePlan\.settle\s*\n\s*\? \{ advance: false, reason: 'paid_mark_not_settled' \}/,
+    "the e-mail door's hole must be settle-shaped, not open");
+  assert.match(mail, /: !classification\.uncertain\s*\n\s*\? shouldAutoAdvanceInvoice\(/,
+    "…and an uncertain read must still never reach the quality gates at all");
   assert.match(
     code("src/app/api/intake/route.ts"),
     /\(!decision\.suggestPaid \|\| settlePlan\.settle\)/,

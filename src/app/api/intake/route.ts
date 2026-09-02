@@ -1313,6 +1313,13 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
           },
         })
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
+  // [OVERALL-BEWAARD] De overall zekerheid van de lezer, op de rij — bij ELKE inkomende factuur,
+  // niet alleen bij een weigering. Hij bestond tot nu toe alleen in het geheugen tijdens de import:
+  // gate-yield.ts zegt in zijn slotalinea letterlijk dat twee poorten daardoor niet te beoordelen
+  // zijn, en precies die twee zijn de overgebleven verdachten bij een factuur die verder alles goed
+  // heeft — 0,95 tot 1,00 op elk veld, sluitende optelling, geen enkele vlag, en tóch vastgehouden.
+  // Eén getal opslaan maakt de duurste onbeantwoordbare vraag in dit product beantwoordbaar.
+  fieldConfidence._auto_confidence = typeof v.confidence === "number" ? v.confidence : null;
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
   } else {

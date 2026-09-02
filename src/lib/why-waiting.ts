@@ -82,6 +82,7 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   creditnota: "wacht.creditnota",
 
   // How it arrived.
+  paid_mark_not_settled: "wacht.betaalspoor",
   from_email_body: "wacht.uitMailtekst",
   multiple_invoices_in_file: "wacht.meerdereFacturen",
   forced_duplicate: "wacht.tochToegevoegd",
