@@ -102,3 +102,84 @@ export function activeHref(pathname: string, items: readonly Destination[]): str
   }
   return best?.href ?? null;
 }
+
+// ── The desktop rail: the whole home screen, not four of it ─────────────────────────────────────
+//
+// The four above are a PHONE constraint, and the file that held them says so out loud: "Four and
+// not six on purpose — M3 allows up to five, and past that the labels stop fitting on a 320px
+// screen". A 240px rail down the side of a desktop has no such problem, and the first version of
+// it shipped with four items anyway — which put a rail next to a home screen carrying fifteen
+// tiles and made the rail look like a worse way to reach the same place.
+//
+// So the rail carries what the home screen carries, in the home screen's own groups. The labels
+// are the home screen's OWN catalogue keys (start.tegel.*, start.waarheid, start.conceptBtw,
+// start.jaar) rather than new ones: the rail and the tile then cannot come to call the same
+// destination two different things, in any language.
+//
+// The four primary destinations stay a SUBSET of this — asserted in the tests, because that is the
+// invariant that keeps the phone and the desktop describing one app. What the rail may not do is
+// carry a destination the home screen does not have; the [ZIJBALK] gate walks ZzpDashboard for
+// exactly that.
+
+export interface RailSection {
+  /** The home screen's own section heading, or null for the top group. */
+  heading: MessageKey | null;
+  items: Destination[];
+}
+
+/**
+ * What the rail shows, per role.
+ *
+ * NOT the vehicle trade's Voertuigen tile: the rail is mounted in the dashboard layout, which
+ * reads `vak` for the counter trade and nothing else, and one more profile read on every screen in
+ * the app is a poor price for one row. It stays a home tile. Said here rather than left as a
+ * silent absence.
+ *
+ * The accountant's rail is still the four primary destinations, and that is a product decision not
+ * yet made rather than an oversight: their home carries a different set of tools, and which of
+ * them deserve a permanent rail is their question, not this module's.
+ */
+export function railSectionsFor(role: Role | null, counter = false): RailSection[] {
+  if (role === "accountant") return [{ heading: null, items: ACCOUNTANT }];
+
+  const administratie: Destination[] = [
+    { href: "/dashboard/facturen", label: "start.tegel.facturen", icon: "receipt_long", also: ["/dashboard/invoice"] },
+    { href: "/dashboard/incoming", label: "start.tegel.inkomend", icon: "inbox", also: ["/dashboard/upload"] },
+    { href: "/dashboard/incoming/manage", label: "start.tegel.inkoop", icon: "request_quote" },
+    { href: "/dashboard/leveranciers", label: "start.tegel.leveranciers", icon: "local_shipping" },
+    { href: "/dashboard/bank", label: "start.tegel.bank", icon: "account_balance" },
+    { href: "/dashboard/kas", label: "start.tegel.kas", icon: "payments" },
+    { href: "/dashboard/dagomzet", label: "start.tegel.dagomzet", icon: "point_of_sale" },
+    { href: "/dashboard/artikelen", label: "start.tegel.artikelen", icon: "inventory_2" },
+    { href: "/dashboard/uren", label: "start.tegel.uren", icon: "schedule" },
+  ];
+  // [VAK-BRUG] The counter owner reaches the Kassa thirty times a day; it leads their phone bar for
+  // that reason and belongs at the top of their rail for the same one.
+  if (counter) administratie.unshift({ href: "/dashboard/kassa", label: "nav.kassa", icon: "storefront" });
+
+  return [
+    { heading: null, items: [OWNER[0]] },
+    { heading: "start.administratie", items: administratie },
+    {
+      heading: "start.cijfers",
+      items: [
+        { href: "/dashboard/waarheid", label: "start.waarheid", icon: "monitoring" },
+        { href: "/dashboard/aangifte", label: "start.conceptBtw", icon: "receipt" },
+        { href: "/dashboard/jaar", label: "start.jaar", icon: "calendar_month" },
+      ],
+    },
+    {
+      heading: "start.meer",
+      items: [
+        { href: "/dashboard/werkplek", label: "start.tegel.werkplek", icon: "work" },
+        { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
+        { href: "/dashboard/settings/team", label: "start.tegel.team", icon: "group_add" },
+      ],
+    },
+  ];
+}
+
+/** Every destination the rail shows, flattened — for activeHref and for the tests. */
+export function railDestinations(role: Role | null, counter = false): Destination[] {
+  return railSectionsFor(role, counter).flatMap((s) => s.items);
+}

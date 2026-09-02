@@ -2,6 +2,14 @@
 // [ZIJBALK] The desktop navigation rail — the counterpart to BottomNav, at the other end of the
 // width range.
 //
+// ── WHAT IT CARRIES ──
+//
+// The whole home screen, in the home screen's own groups — not the phone bar's four. Four is a
+// 320px constraint and the rail has 240px of its own; a rail showing four items beside a home
+// screen of fifteen tiles is a worse way to reach the same places. The labels are the home
+// screen's OWN catalogue keys, so a tile and a rail row cannot come to call one destination two
+// different things. The four primary destinations remain a subset — see nav-destinations.ts.
+//
 // ── WHY THIS EXISTS ──
 //
 // The phone has real navigation: four role-aware destinations, translated labels, an active pill.
@@ -36,7 +44,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { M3, FONT } from '@/lib/design/tokens'
 import type { Role } from '@/lib/navigation'
-import { destinationsFor, activeHref } from '@/lib/nav-destinations'
+import { railSectionsFor, railDestinations, activeHref } from '@/lib/nav-destinations'
 
 export function DashboardRail({ role, counter = false }: { role: Role | null; counter?: boolean }) {
   const pathname = usePathname()
@@ -45,8 +53,11 @@ export function DashboardRail({ role, counter = false }: { role: Role | null; co
   if (!pathname) return null
 
   const t = translator(taal)
-  const items = destinationsFor(role, counter)
-  const active = activeHref(pathname, items)
+  const sections = railSectionsFor(role, counter)
+  // Over EVERY destination the rail shows, not per section: longest-match must be able to see the
+  // whole set, or /dashboard/incoming/manage would light Inkomend in its own group and Inkoopfacturen
+  // in the next one at the same time.
+  const active = activeHref(pathname, railDestinations(role, counter))
 
   return (
     <nav
@@ -73,67 +84,93 @@ export function DashboardRail({ role, counter = false }: { role: Role | null; co
         // the rail below 1024px — and an inline declaration outranks a class rule. BottomNav
         // carries the same note for the same reason, after the bar once showed at 1280px.
         flexDirection: 'column',
-        gap: 4,
+        gap: 2,
+        // Fifteen rows do not fit a 700px laptop viewport. The rail scrolls on its own rather than
+        // clipping its last group — which would silently remove Team and Bestanden from the app on
+        // exactly the screens that are short.
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
         fontFamily: FONT,
       }}
     >
-      {items.map((item) => {
-        const isActive = active === item.href
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={isActive ? 'page' : undefined}
-            className="dash-rail-item pressable"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              // Logical padding: in Arabic the icon leads from the right.
-              padding: '10px 14px',
-              marginInline: 8,
-              borderRadius: 999,
-              textDecoration: 'none',
-              // The M3 active indicator is the pill itself here, not a colour change alone:
-              // colour on its own is invisible to a red-green colourblind reader.
-              background: isActive ? M3.primaryContainer : 'transparent',
-              transition: 'background var(--dur-fast) var(--ease-standard)',
-              // Well past the 44px minimum — a nav rail is not a place to aim carefully.
-              minHeight: 44,
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              aria-hidden
+      {sections.map((section, si) => (
+        <div key={section.heading ?? `s${si}`} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {section.heading && (
+            <div
               style={{
-                fontSize: 22,
-                flexShrink: 0,
-                color: isActive ? M3.onPrimaryContainer : M3.onSurfaceVariant,
-                fontVariationSettings: isActive
-                  ? "'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24"
-                  : undefined,
-              }}
-            >
-              {item.icon}
-            </span>
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: isActive ? 700 : 500,
-                color: isActive ? M3.onPrimaryContainer : M3.onSurfaceVariant,
-                lineHeight: 1.2,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                // [RTL] The words run from the start of the writing direction, whichever that is.
+                // The home screen's own section label, in the rail. Same words, same grouping —
+                // an owner who learned the home screen already knows this list.
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+                color: M3.onSurfaceVariant,
+                padding: '14px 22px 4px',
+                // [RTL] The heading runs from the start of the writing direction.
                 textAlign: 'start',
               }}
             >
-              {t(item.label)}
-            </span>
-          </Link>
-        )
-      })}
+              {t(section.heading)}
+            </div>
+          )}
+          {section.items.map((item) => {
+            const isActive = active === item.href
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={isActive ? 'page' : undefined}
+                className="dash-rail-item pressable"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '9px 14px',
+                  marginInline: 8,
+                  borderRadius: 999,
+                  textDecoration: 'none',
+                  // The M3 active indicator is the pill itself, not a colour change alone: colour
+                  // on its own is invisible to a red-green colourblind reader.
+                  background: isActive ? M3.primaryContainer : 'transparent',
+                  transition: 'background var(--dur-fast) var(--ease-standard)',
+                  // Past the 44px minimum — a nav rail is not a place to aim carefully.
+                  minHeight: 40,
+                }}
+              >
+                <span
+                  className="material-symbols-outlined"
+                  aria-hidden
+                  style={{
+                    fontSize: 21,
+                    flexShrink: 0,
+                    color: isActive ? M3.onPrimaryContainer : M3.onSurfaceVariant,
+                    fontVariationSettings: isActive
+                      ? "'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24"
+                      : undefined,
+                  }}
+                >
+                  {item.icon}
+                </span>
+                <span
+                  style={{
+                    fontSize: 13.5,
+                    fontWeight: isActive ? 700 : 500,
+                    color: isActive ? M3.onPrimaryContainer : M3.onSurfaceVariant,
+                    lineHeight: 1.2,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    // [RTL] The words run from the start of the writing direction, whichever it is.
+                    textAlign: 'start',
+                  }}
+                >
+                  {t(item.label)}
+                </span>
+              </Link>
+            )
+          })}
+        </div>
+      ))}
     </nav>
   )
 }
