@@ -846,3 +846,60 @@ then its answer, then the icon subset. Each was found only by measuring the thin
 reading what was written about it. The generator, the icon list and the guard columns are all
 derived from source now — and this entry exists because the second of those was written by me,
 two days ago, with a blind spot I did not look for until an unrelated check tripped over it.
+
+### Both applied, 2 September 2026 — with the owner's approval
+
+`invoice_move_payment_creditnota_guard.sql` and `invoice_payment_date_rederive.sql` are on
+production. Checked before, measured before, verified after.
+
+**Before.** Both are one `CREATE OR REPLACE` in a transaction plus a `COMMENT` and a
+`REVOKE`/`GRANT`. Signatures match the deployed ones exactly — `(uuid,uuid,uuid)` and `(uuid,uuid)`
+— so they replace rather than create an overload. Both declare `SECURITY DEFINER` and
+`search_path = public`, which is what the live functions already carried, so nothing was reset by
+restating it.
+
+**One thing beyond the fix, named rather than slipped through.** `invoice_payment_date_rederive.sql`
+grants `EXECUTE` to `authenticated`; the deployed function had only `postgres` and `service_role`,
+and every live caller uses the service role. The widening is defensible — the function refuses when
+`auth.uid()` is not the owner, and it can only re-derive from links that already exist — but it is a
+change, so it was put to the owner as a choice rather than applied quietly. Approved as written: the
+file is the record, and editing it to differ from what a human would run in the SQL editor creates
+two spellings of one migration.
+
+**Measured before turning the date logic on.** Of 404 invoices carrying links, exactly **1** would
+get a different `payment_date` if the function ran over all of them, and **0** would move to a
+different quarter. There are **0** kasstelsel owners of 9, so the quarter question does not bite
+anyone today in any case. The function only runs on reversal paths, so nothing changed
+retroactively; what changed is what future reversals do.
+
+**The creditnota exposure was latent, not fired.** 12 creditnota's are in a status that makes them a
+valid move target and 405 payments are movable, so the door stood open — but the one creditnota
+carrying `amount_paid > 0` turned out to be a genuine € 1.123,14 Metro Markets refund, matched to a
+real credit on the statement. Nothing in the books had gone wrong yet.
+
+**After.**
+
+| Check | Result |
+| --- | --- |
+| deployed `move_invoice_payment` body vs the file | md5 `527f1d0d…707`, 11.464 chars — **byte-identical** |
+| deployed `recompute_invoice_amount_paid` body vs the file | md5 `5490918f…f44`, 2.125 chars — **byte-identical** |
+| signatures, `SECURITY DEFINER`, `search_path` | unchanged |
+| `EXECUTE` grants | as the files declare |
+| the body probe that reported both OPEN an hour earlier | both TOEGEPAST |
+
+And the guard was made to **bite**, in a transaction that always aborts: moving a real payment onto
+a payable creditnota was **refused, and refused for the creditnota reason**; the same payment moved
+onto an ordinary invoice was **allowed**. So it stops the thing it was written for without
+over-refusing the ordinary case. Nothing persisted — 405 links before and after, the Metro Markets
+creditnota untouched, no invoice paid above its total.
+
+The hash comparison is the part worth keeping as a habit: a 12 KB money function had to be pasted by
+hand into the migration tool, and "it looks right" is not a check. Computing the file's body hash
+first turns a transcription slip from something you hope you would notice into something that cannot
+pass.
+
+### Still open after this
+
+Only `bank_auto_book_blocked.sql` — the column and index do not exist. The code is deploy-safe
+without it, and it needs a design choice about what the readiness board shows, so it is not a
+paste-and-run.
