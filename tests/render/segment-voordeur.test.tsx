@@ -36,6 +36,18 @@ test("[SEGMENT-VOORDEUR] elke deur rendert zijn eigen belofte, stappen en grenze
       assert.ok(html.includes(n), `${pagina.slug}: grens "${n.slice(0, 40)}…" staat er niet`);
     }
 
+    // [SEGMENT-VAK] Het vak moet in de échte uitvoer staan, niet alleen in de gegevens. Een
+    // component die het veld leest en niet in de href zet, ziet er in de broncode correct uit en
+    // levert een aanmeldlink op die niets doorgeeft — de fout die vak-profile.ts beschrijft.
+    if (pagina.vak) {
+      assert.ok(html.includes(`/register?vak=${pagina.vak}`),
+        `${pagina.slug}: de aanmeldknop draagt vak "${pagina.vak}" niet mee`);
+    } else {
+      assert.ok(!/\/register\?vak=/.test(html),
+        `${pagina.slug}: geeft een vak door dat deze deur niet kent`);
+      assert.ok(html.includes('href="/register"'), `${pagina.slug}: geen kale aanmeldlink`);
+    }
+
     // De uitweg staat er twee keer, boven en onder — een lange pagina zonder knop onderaan
     // dwingt de lezer terug te scrollen op precies het moment dat hij overtuigd is.
     assert.ok((html.match(/Gratis beginnen/g) ?? []).length >= 2,

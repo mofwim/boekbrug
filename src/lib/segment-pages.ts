@@ -46,6 +46,20 @@ export interface SegmentStep {
 export interface SegmentPage {
   /** URL segment under /voor-… */
   slug: string;
+  /**
+   * [SEGMENT-VAK] The trade this door hands over to /register, or absent when we do not know it.
+   *
+   * NOT a new mechanism: vak-profile.ts already carries a trade from the public funnel into the
+   * app, and three places behind the login read it — the price-list seeds and the BTW warning on
+   * /dashboard/artikelen, the vehicles tile, and whether the Kassa leads the bar. A door that
+   * knows its reader's trade and then links to a bare /register throws that away at the one
+   * moment the visitor volunteered it. That is the bug account-purpose.ts records having had.
+   *
+   * Must be a slug parseVak() accepts, and the gate checks it. A typo would not fail loudly on
+   * its own: it parses to null and means "unknown", which is a normal and workable state, so it
+   * would be invisible. That is exactly why it is worth a test.
+   */
+  vak?: string;
   /** Browser title and H1. */
   naam: string;
   title: string;
@@ -68,6 +82,16 @@ export interface SegmentPage {
 export const SEGMENT_PAGES: readonly SegmentPage[] = [
   {
     slug: 'winkel',
+    // GEEN vak, en dat is een besluit en geen gat. VAKKEN kent geen 'winkel', en er een verzinnen
+    // zou een prijslijst én een BTW-tarief moeten bedenken voor een groep die van alles verkoopt:
+    // eten 9%, de rest 21%. Een verkeerd voorgevuld tarief is precies de fout die pas bij de
+    // aangifte bovenkomt, als de bon allang over de toonbank is. Niets weten is hier goedkoop.
+    //
+    // Het kost deze bezoeker ook niets: /dashboard/kas en /dashboard/dagomzet — de twee schermen
+    // die deze pagina belooft — staan in ieders balk, ongeacht vak. Alleen de Kassa vóóraan komt
+    // uit sellsOverCounter, en of een winkelier daar hoort is een echte productvraag (hij
+    // beantwoordt "wisselt het geld van hand op het moment van het werk?" met een luider ja dan de
+    // kapper) — maar daar hoort een vak bij dat klopt, en dat is een aparte beslissing.
     naam: 'winkels, horeca en groothandel-inkoop',
     title: 'BoekBrug voor winkel en horeca — honderden inkoopfacturen, zonder avondwerk',
     description:
@@ -124,6 +148,12 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
   },
   {
     slug: 'bouw',
+    // De deur heet 'bouw', het vak heet 'bouw-klus'. Bewust niet gelijkgetrokken: de slug staat in
+    // een URL die we naar buiten brengen, de vaknaam in een gegevenstabel die elf vakken beschrijft.
+    // Wie hier binnenkomt leest de verleggingsregeling bij zijn prijslijst in plaats van in een
+    // naheffing: werk je voor een aannemer, dan breng je géén BTW in rekening en vermeld je 'BTW
+    // verlegd' met diens nummer — en dat is iets anders dan 0%.
+    vak: 'bouw-klus',
     naam: 'bouw, klus en installatie',
     title: 'BoekBrug voor de bouw — van uren en materiaal naar één factuur',
     description:
@@ -180,6 +210,11 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
   },
   {
     slug: 'schoonmaak',
+    // Dezelfde slug, en dat is geen toeval: vak-sjablonen.ts kent dit vak al, inclusief de regel
+    // die pas op de aangifte zichtbaar wordt — schoonmaken BINNEN een woning is 9%, kantoren en de
+    // buitenkant 21%. Die waarschuwing komt nu bij de prijslijst te staan in plaats van bij het
+    // kwartaal.
+    vak: 'schoonmaak',
     naam: 'schoonmaakbedrijven',
     title: 'BoekBrug voor de schoonmaak — vaste klanten, facturen die zichzelf klaarzetten',
     description:

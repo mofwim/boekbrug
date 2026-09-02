@@ -13,6 +13,7 @@ import Link from 'next/link'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import type { SegmentPage } from '@/lib/segment-pages'
+import { VAK_PARAM } from '@/lib/vak-profile'
 
 const wrap: React.CSSProperties = { maxWidth: 880, margin: '0 auto', padding: '0 16px' }
 
@@ -56,6 +57,14 @@ const btnGhost: React.CSSProperties = {
 }
 
 export default function SegmentVoordeur({ pagina }: { pagina: SegmentPage }) {
+  // [SEGMENT-VAK] Het vak reist mee in de aanmeldlink, via dezelfde parameter die
+  // /factuur-maken/<vak> al gebruikt — één patroon voor één idee, zoals vak-profile.ts vraagt.
+  // Zonder vak is dit letterlijk de oude link: geen lege parameter, want parseVak leest die als
+  // "onbekend" en dat is hetzelfde resultaat langs een omweg die niets zegt.
+  const aanmeldHref = pagina.vak
+    ? `/register?${VAK_PARAM}=${encodeURIComponent(pagina.vak)}`
+    : '/register'
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
@@ -74,7 +83,7 @@ export default function SegmentVoordeur({ pagina }: { pagina: SegmentPage }) {
         <p style={{ ...body, fontSize: 18, marginBottom: 24 }}>{pagina.probleem}</p>
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-          <Link href="/register" style={btnPrimary}>Gratis beginnen</Link>
+          <Link href={aanmeldHref} style={btnPrimary}>Gratis beginnen</Link>
           <Link href="/prijzen" style={btnGhost}>Wat het kost</Link>
         </div>
         <p style={{ fontSize: 13, color: '#80868b', margin: '0 0 40px' }}>
@@ -136,7 +145,7 @@ export default function SegmentVoordeur({ pagina }: { pagina: SegmentPage }) {
             Stuur er tien documenten in en kijk wat er overblijft. Dat is een eerlijker antwoord dan
             welke pagina dan ook.
           </p>
-          <Link href="/register" style={btnPrimary}>Gratis beginnen</Link>
+          <Link href={aanmeldHref} style={btnPrimary}>Gratis beginnen</Link>
         </div>
 
       </main>

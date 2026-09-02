@@ -32,6 +32,7 @@ import { categoryHint } from "./category-wait";
 import { moneyGroundedInText } from "./amount-grounding";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
+import { parseVak, sellsOverCounter } from "./vak-profile";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12992,11 +12993,60 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
 
   // Elke link op de deur wijst naar een pagina die bestaat. Dezelfde regel als hierboven, maar dan
   // voor de uitweg: een landingspagina met een dode "Gratis beginnen" is erger dan geen pagina.
-  const hrefs = [...code("src/components/SegmentVoordeur.tsx").matchAll(/href="(\/[^"#?]*)/g)]
-    .map((m) => m[1]).filter((h) => h !== "/");
+  //
+  // Leest twee vormen, en dat is geleerd in plaats van bedacht: toen de aanmeldknop van een vaste
+  // href een berekende werd (`href={aanmeldHref}`, om het vak mee te dragen), zag de eerste versie
+  // van deze scan alleen /prijzen nog en viel om op zijn eigen ondergrens. Dat was terecht — hij
+  // was half blind geworden — maar het laat zien hoe stil een linkcontrole kapot gaat: hij blijft
+  // groen zolang er tóevallig genoeg letterlijke links overblijven.
+  const bron = code("src/components/SegmentVoordeur.tsx");
+  const hrefs = [
+    ...[...bron.matchAll(/href="(\/[^"#?]*)/g)].map((m) => m[1]),
+    // De berekende variant: `/register?...` of `/register`, opgebouwd uit één basispad.
+    ...[...bron.matchAll(/`(\/[a-z-]+)(?:\?|`)/g)].map((m) => m[1]),
+    ...[...bron.matchAll(/: '(\/[a-z-]+)'/g)].map((m) => m[1]),
+  ].filter((h) => h !== "/");
+  assert.ok(hrefs.includes("/register"),
+    "de aanmeldknop wijst niet meer naar /register — of de scan leest de berekende vorm niet meer");
   assert.ok(hrefs.length >= 2, "de deur heeft geen knoppen meer — of de scan leest ze niet");
   for (const h of new Set(hrefs)) {
     assert.ok(existsSync(`src/app${h}/page.tsx`), `SegmentVoordeur linkt naar ${h}, en dat bestaat niet`);
+  }
+});
+
+test("[SEGMENT-VAK] een deur die een vak noemt, geeft het ook echt door", () => {
+  // vak-profile.ts bestaat omdat een kapper die via /factuur-maken/kapper binnenkwam zijn vak
+  // kwijtraakte op het moment van registreren: "de app vergeet dat hij kapper is... precies op het
+  // moment dat het het nuttigst wordt". Mijn drie deuren deden hetzelfde — ze linkten naar een kaal
+  // /register terwijl twee ervan het vak wél kennen.
+  //
+  // Wat het doorgeven oplevert, achter de login: de prijslijstregels én de let_op-tekst op
+  // /dashboard/artikelen, de voertuigentegel, en of de Kassa vooraan in de balk staat.
+  for (const p of SEGMENT_PAGES) {
+    if (p.vak === undefined) continue;
+
+    // DE reden dat deze test bestaat. Een typefout in een vaknaam faalt nergens: parseVak leest
+    // hem als null, null betekent "vak onbekend", en dat is de gewone toestand van elk bestaand
+    // account. De deur zou dus een parameter meesturen die stilzwijgend niets doet — exact de fout
+    // die account-purpose.ts van /bewaarplicht optekent ("die parameter deed niets").
+    assert.equal(parseVak(p.vak), p.vak,
+      `${p.slug}: vak "${p.vak}" bestaat niet in VAKKEN. parseVak maakt er null van, de deur stuurt ` +
+      "dan een parameter mee die niets doet, en niets in de app laat dat ooit zien");
+
+    // …en hij moet daadwerkelijk in de link staan. Het gegeven kloppend houden terwijl de knop hem
+    // niet meeneemt is dezelfde stille fout, één stap verderop.
+    assert.match(code("src/components/SegmentVoordeur.tsx"), /VAK_PARAM/,
+      "SegmentVoordeur draagt het vak niet meer over aan /register");
+  }
+
+  // Een deur mag /dashboard/kassa niet als stap beloven zonder een vak dat aan de toonbank staat:
+  // dat scherm staat alleen vooraan in de balk bij sellsOverCounter(). Het is bereikbaar via de
+  // URL, dus dit is geen kapot scherm — het is een belofte die de lezer nergens terugvindt.
+  for (const p of SEGMENT_PAGES) {
+    if (!p.stappen.some((st) => st.route === "kassa")) continue;
+    assert.ok(sellsOverCounter(p.vak ?? null),
+      `${p.slug}: belooft de Kassa, maar het vak van deze deur staat niet in COUNTER_TRADES — dan ` +
+      "staat dat scherm niet in de balk en zoekt de lezer zich suf naar wat hem beloofd is");
   }
 });
 
