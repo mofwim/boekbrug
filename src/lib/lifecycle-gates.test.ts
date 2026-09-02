@@ -13262,6 +13262,84 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
 // De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
 // functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
 // haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [ICOON-SUBSET] Every icon the app renders must be in the font it loads ─────────────────────
+//
+// layout.tsx subsets the Material Symbols font to the glyphs the app uses — 313 KB down to 9 KB,
+// which is worth having. The price is that a name outside that list renders as ITS OWN TEXT: the
+// Leveranciers tile said LOCAL_SHIPPING in 24px capitals where its lorry should be.
+//
+// The file already carried a warning about it, in capitals, three lines long. It was not enough,
+// and the proof is that THREE icons had already shipped broken before anyone looked: local_shipping
+// on the owner's home screen, edit_note and schedule_send on the accountant's. A hand-kept list
+// guarding an automatic behaviour fails exactly this way — quietly, on one screen, in a place
+// nobody re-reads. Which is the same shape as the migration checker in §13 and the destination
+// lists in [ZIJBALK]: the rule was real, the list beside it was not maintained.
+//
+// So the names are derived from the source instead. What this CANNOT see is a name assembled at
+// runtime (`icon={row.icon}`, a ternary) — said out loud rather than counted as coverage.
+test("[ICOON-SUBSET] no icon renders as its own name", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const files = walk("src");
+
+  const layout = readFileSync("src/app/layout.tsx", "utf8");
+  const namen = /icon_names=([a-z0-9_,]+)/.exec(layout);
+  assert.ok(namen, "layout.tsx no longer subsets the icon font — this gate has nothing to check against");
+  const subset = new Set(namen[1].split(","));
+  assert.ok(subset.size > 50, `the subset holds ${subset.size} names — the scan is broken`);
+
+  // Which components speak Material Symbols: the ones DECLARED in a file that renders the class.
+  // Derived, because the tile components (AdminTile, ToolTile, …) each live beside the span they
+  // draw — and the tools pages' <FileDrop icon="pencil"> is a different icon system entirely
+  // (hand-drawn SVG paths in components/tools/Icon.tsx), which is why it must not be swept in.
+  const iconComponents = new Set<string>();
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    if (!src.includes("material-symbols-outlined")) continue;
+    for (const m of src.matchAll(/(?:function|const)\s+([A-Z][A-Za-z0-9]*)\s*[(=]/g)) iconComponents.add(m[1]);
+  }
+  assert.ok(iconComponents.size > 5, `only ${iconComponents.size} icon components found — the scan is broken`);
+
+  const gebruikt = new Map<string, string>();
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    // 1. A literal inside the span itself. Braces excluded on purpose: `{item.icon}` is a variable,
+    //    and a gate that pretended to read it would be claiming coverage it does not have.
+    for (const m of src.matchAll(/material-symbols-outlined[^>]*>\s*([a-z_0-9]+)\s*</g)) gebruikt.set(m[1], f);
+    // 2. `icon: "name"` in a data literal — every one of these in this app is a Material Symbol,
+    //    which the guard below keeps true.
+    for (const m of src.matchAll(/\bicon:\s*['"]([a-z_0-9]+)['"]/g)) gebruikt.set(m[1], f);
+    // 3. `<AdminTile icon="name">` — only for components that actually draw the class.
+    for (const m of src.matchAll(/<([A-Z][A-Za-z0-9]*)\s[^>]*?\bicon=['"]([a-z_0-9]+)['"]/g)) {
+      if (iconComponents.has(m[1])) gebruikt.set(m[2], f);
+    }
+  }
+  assert.ok(gebruikt.size > 40, `only ${gebruikt.size} icon names read off the source — the scan is broken`);
+
+  const ontbreekt = [...gebruikt].filter(([naam]) => !subset.has(naam));
+  assert.deepEqual(
+    ontbreekt.map(([naam, f]) => `${naam} (${f})`), [],
+    "these render as their own name in 24px capitals — add them to icon_names in layout.tsx, and " +
+    "check the whole list still answers 200 (one wrong name is a 400, and then EVERY icon breaks)",
+  );
+
+  // The guard that keeps rule 2 true: no file may carry `icon:` data literals AND the tools' own
+  // SVG icon set, or this gate would start demanding Material Symbols for names like "pencil".
+  for (const f of files) {
+    const src = readFileSync(f, "utf8");
+    if (!/\bicon:\s*['"][a-z_0-9]+['"]/.test(src)) continue;
+    assert.ok(!/from\s+['"]@\/components\/tools\/Icon['"]/.test(src),
+      `${f} mixes the two icon systems, which makes this gate ask the wrong question of one of them`);
+  }
+});
+
 // ─── [ZIJBALK] Two navigation bars, one list of destinations ────────────────────────────────────
 //
 // The phone had real navigation — four role-aware destinations, translated labels, an active pill.
