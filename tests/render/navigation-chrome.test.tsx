@@ -49,14 +49,27 @@ test("[ZIJBALK] the rail renders every destination, for every role", async () =>
   pathname = "/dashboard";
   const owner = draw(<DashboardRail role="zzper" />);
   assert.ok(owner.length > 0, "an empty rail is a dashboard with no navigation on it");
-  for (const href of ["/dashboard", "/dashboard/facturen", "/dashboard/incoming", "/dashboard/bestanden"]) {
+  // The whole home screen, not the phone bar's four.
+  for (const href of [
+    "/dashboard", "/dashboard/facturen", "/dashboard/incoming", "/dashboard/incoming/manage",
+    "/dashboard/leveranciers", "/dashboard/bank", "/dashboard/kas", "/dashboard/dagomzet",
+    "/dashboard/artikelen", "/dashboard/uren", "/dashboard/waarheid", "/dashboard/aangifte",
+    "/dashboard/jaar", "/dashboard/werkplek", "/dashboard/bestanden", "/dashboard/settings/team",
+  ]) {
     assert.ok(owner.includes(`href="${href}"`), `the owner's rail is missing ${href}`);
   }
+  // The home screen's own group headings, in the home screen's own words.
+  for (const kop of ["MIJN ADMINISTRATIE", "CIJFERS", "MEER"]) {
+    assert.ok(owner.toUpperCase().includes(kop), `the rail lost the "${kop}" grouping`);
+  }
 
-  // [VAK-BRUG] The counter trade swaps the second destination — and only the second.
+  // [VAK-BRUG] The counter trade leads with the Kassa — and unlike the phone bar it does not have
+  // to give anything up for it: a rail has room, and that owner still bills a fleet customer.
   const counter = draw(<DashboardRail role="zzper" counter />);
   assert.ok(counter.includes('href="/dashboard/kassa"'), "a counter trade leads with the Kassa");
-  assert.ok(!counter.includes('href="/dashboard/facturen"'), "…and Facturen moves to the home tiles");
+  assert.ok(counter.includes('href="/dashboard/facturen"'), "…without losing Facturen, which the phone bar had to drop");
+  assert.ok(counter.indexOf('href="/dashboard/kassa"') < counter.indexOf('href="/dashboard/facturen"'),
+    "…and the Kassa comes first, which is the whole point for this owner");
 
   pathname = "/dashboard/accountant";
   const accountant = draw(<DashboardRail role="accountant" />);
@@ -72,12 +85,24 @@ test("[ZIJBALK] the rail says where you are, and admits when it does not know", 
   assert.ok(marked[0].includes('href="/dashboard/facturen"'),
     "the current destination is marked for a screen reader, not by colour alone");
 
-  // Kas belongs to no destination. Nothing lit is the honest answer — a bar that misreports your
-  // position is worse than one that admits it does not cover this screen.
+  // The rail reaches Kas now, so it says so — this is what widening it bought.
   pathname = "/dashboard/kas";
-  const onKas = draw(<DashboardRail role="zzper" />);
-  assert.ok(!onKas.includes('aria-current="page"'), "no destination may claim a screen it does not own");
-  assert.ok(onKas.includes('href="/dashboard"'), "…and every destination still renders");
+  const onKas = links(draw(<DashboardRail role="zzper" />)).filter((a) => a.includes('aria-current="page"'));
+  assert.equal(onKas.length, 1);
+  assert.ok(onKas[0].includes('href="/dashboard/kas"'));
+
+  // Longest match, ACROSS groups: /dashboard/incoming/manage is Inkoopfacturen in one group and a
+  // child of Inkomend in another. Scoring per group would light both at once.
+  pathname = "/dashboard/incoming/manage";
+  const onManage = links(draw(<DashboardRail role="zzper" />)).filter((a) => a.includes('aria-current="page"'));
+  assert.equal(onManage.length, 1, "two groups both claimed the screen");
+  assert.ok(onManage[0].includes('href="/dashboard/incoming/manage"'), "the deeper destination wins");
+
+  // A screen in no group at all still marks nothing — a bar that misreports your position is worse
+  // than one that admits it does not cover this screen.
+  pathname = "/dashboard/beveiliging";
+  assert.ok(!draw(<DashboardRail role="zzper" />).includes('aria-current="page"'),
+    "no destination may claim a screen it does not own");
 });
 
 test("[ZIJBALK] the rail holds no language and no physical side of its own", async () => {
@@ -120,9 +145,15 @@ test("[ZIJBALK] the phone bar still renders too — the same destinations, the o
   pathname = "/dashboard/incoming";
   const bar = draw(<BottomNav role="zzper" />);
   assert.ok(bar.length > 0);
-  const rail = draw(<DashboardRail role="zzper" />);
-  // Same truth, two renderers: every destination one draws, the other draws.
-  const hrefs = (html: string) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]).sort();
-  assert.deepEqual(hrefs(bar), hrefs(rail),
-    "the two bars have drifted apart — the app would mean different things at different widths");
+  const hrefs = (html: string) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  // The rail is a SUPERSET, not a copy: the phone shows four because 320px allows four, and those
+  // four must be part of the whole. A primary destination missing from the rail is the app meaning
+  // different things at different widths, which is the drift this whole arrangement exists to stop.
+  for (const [role, counter] of [["zzper", false], ["zzper", true], ["accountant", false]] as const) {
+    const inBar = hrefs(draw(<BottomNav role={role} counter={counter} />));
+    const inRail = new Set(hrefs(draw(<DashboardRail role={role} counter={counter} />)));
+    for (const href of inBar) {
+      assert.ok(inRail.has(href), `${role}${counter ? " (counter)" : ""}: ${href} is on the phone bar and not on the rail`);
+    }
+  }
 });

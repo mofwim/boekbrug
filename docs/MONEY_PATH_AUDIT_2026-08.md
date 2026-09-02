@@ -740,3 +740,53 @@ looked broken was the measurement rather than the thing measured.)
   family documents — whichever runs last, the list is whole.
 - The 14 invoices with `amount_paid = 0` whose links cover the total (7 incoming € 1.071,89,
   7 outgoing € 4.249,79): approved for repair via `recompute_invoice_amount_paid`, not yet run.
+
+---
+
+## 14. The 14 invoices, repaired — 2 September 2026
+
+Approved by the owner, run against production, verified both ways.
+
+Fourteen invoices sat `status = 'paid'` with bank links covering their total exactly and
+`amount_paid = 0`. Six belong to a real owner, eight to the demo dossier. The aangifte was never
+affected — `isSettled` reads `amount_paid > 0 || status === 'paid'` precisely for rows like these —
+but every screen and check that reads `amount_paid` saw zero, and the money audit described them
+with a sentence about the wrong thing.
+
+### What was checked before writing
+
+- **The deployed function, not the file.** `recompute_invoice_amount_paid` is written by TWO
+  migrations. The one live in production is `invoice_partial_payments.sql`'s: it writes
+  `amount_paid` and nothing else. `invoice_payment_date_rederive.sql`, which also re-derives
+  `payment_date`, **has not been applied** — which the new body probe from §13 reports correctly,
+  and which mattered here: a repair that moved fourteen payment dates is a different act entirely.
+- **Every trigger on `invoices`.** Six, all BEFORE. The two `verwerkt` guards do not fire
+  (`accountant_status` is null on all fourteen), the creditnota ceiling does not fire (all fourteen
+  are `factuur`), and the accountant guard's first exception passes for a service-role caller.
+- **The scheme.** Both owners are `vat_scheme = 'factuur'`, so BTW follows the invoice date and
+  `amount_paid` cannot move a quarter even in principle.
+
+### How it was run
+
+One statement, therefore one transaction — all fourteen or none. The defect was **re-asserted per
+row inside that statement** (`amount_paid = 0` AND links covering the total), so a row that had
+stopped matching between the measurement and the write would have excluded itself instead of being
+written blindly.
+
+### Verified after
+
+The same aggregate query, before and after, over both owners by direction and quarter:
+
+| Column | Result |
+| --- | --- |
+| `som_inc`, `som_btw` (the aangifte's inputs) | **byte-identical in all 8 groups** |
+| `openstaand` | byte-identical |
+| row counts | byte-identical |
+| `amount_paid` over the invoice total | 0 before, 0 after |
+| `som_betaald` | +297,12 · +401,99 · +774,77 · +3.847,80 = **€ 5.321,68**, exactly the measured set |
+
+And app-wide afterwards: **0** invoices still matching the defect, **0** whose `amount_paid`
+disagrees with its links by more than a cent, **0** claiming more paid than their total.
+
+No tax figure moved. That is the claim the before/after pair exists to support, and it is the only
+reason a repair to real books was worth running at all.

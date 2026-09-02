@@ -22,7 +22,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
-import { destinationsFor } from "./nav-destinations";
+import { destinationsFor, railDestinations } from "./nav-destinations";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
 import { HOLD_LABELS } from "./hold-reasons";
 // [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
@@ -13316,7 +13316,7 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
       "come to disagree about what this app contains, depending on the width of the screen");
     assert.match(code(bar), /from ['"]@\/lib\/nav-destinations['"]/,
       `${bar} draws a <nav> without reading the shared destinations`);
-    assert.match(code(bar), /destinationsFor\(/, `${bar} picks its own destinations for a role`);
+    assert.match(code(bar), /(?:destinationsFor|railSectionsFor)\(/, `${bar} picks its own destinations for a role`);
     assert.match(code(bar), /activeHref\(/, `${bar} decides for itself which one is current`);
     // [TAAL] The bar is on every screen, so a hard-coded word here is the one piece of Dutch an
     // owner reading another language can never get away from.
@@ -13349,6 +13349,34 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   assert.ok(layout.indexOf('className="dash-content"', shellAt) > shellAt, "…and so does the page");
   // The rail is fixed, so it must be mounted OUTSIDE the element that pads for it.
   assert.ok(layout.indexOf("<DashboardRail") < shellAt, "a fixed rail inside its own padding sits 240px in from the edge");
+
+  // ── The rail may not invent a destination the home screen does not have ────────────────────
+  //
+  // The rail carries the whole home screen now, and that is the risk: a rail is easy to add a row
+  // to, and a row here is a claim that the app has a place. So every rail destination must be
+  // either one of the primary four or a route the OWNER'S HOME actually links to — read out of
+  // ZzpDashboard rather than from a list kept beside it.
+  const home = code("src/app/dashboard/zzp/ZzpDashboard.tsx");
+  const homeRoutes = new Set(
+    [...home.matchAll(/router\.push\(['"`](\/dashboard[^'"`?]*)/g)].map((m) => m[1]),
+  );
+  assert.ok(homeRoutes.size > 10, `only ${homeRoutes.size} routes read off the home screen — the scan is broken`);
+  const primair = new Set([
+    ...destinationsFor("zzper").map((d) => d.href),
+    ...destinationsFor("zzper", true).map((d) => d.href),
+  ]);
+  for (const counter of [false, true]) {
+    for (const d of railDestinations("zzper", counter)) {
+      assert.ok(
+        primair.has(d.href) || homeRoutes.has(d.href),
+        `the rail offers ${d.href}, which is neither a primary destination nor anywhere on the ` +
+        "owner's home screen — a rail row is a claim that the app has a place",
+      );
+    }
+  }
+  // …and the other way: the rail must not have quietly dropped a whole section.
+  assert.ok(railDestinations("zzper").length >= 15,
+    "the rail is back to a handful of destinations beside a home screen full of tiles");
 
   // ── And nothing else fixed to the start edge may sit under it ──────────────────────────────
   //
