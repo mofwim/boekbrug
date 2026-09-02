@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 115 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 116 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 14 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -112,6 +112,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('bank_ignore_reason.sql', 'column', 'ignore_reason', 'bank_transactions', 'public'),
   ('bank_ignore_reason.sql', 'constraint', 'bank_transactions_ignore_reason_check', null, 'public'),
   ('bank_ignore_reason.sql', 'index', 'idx_bank_tx_ignore_reason', null, 'public'),
+  ('bank_match_rejections.sql', 'index', 'bank_match_rejections_unique', null, 'public'),
+  ('bank_match_rejections.sql', 'index', 'bank_match_rejections_user', null, 'public'),
+  ('bank_match_rejections.sql', 'policy', 'bank_match_rejections_delete_own', 'bank_match_rejections', 'public'),
+  ('bank_match_rejections.sql', 'policy', 'bank_match_rejections_insert_own', 'bank_match_rejections', 'public'),
+  ('bank_match_rejections.sql', 'policy', 'bank_match_rejections_select_own', 'bank_match_rejections', 'public'),
+  ('bank_match_rejections.sql', 'table', 'bank_match_rejections', null, 'public'),
   ('bank_statement_periods.sql', 'index', 'idx_bsp_user_iban_start', null, 'public'),
   ('bank_statement_periods.sql', 'policy', 'bsp_owner_read', 'bank_statement_periods', 'public'),
   ('bank_statement_periods.sql', 'table', 'bank_statement_periods', null, 'public'),
@@ -528,7 +534,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 129
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 130
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
