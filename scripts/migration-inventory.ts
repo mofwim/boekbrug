@@ -415,6 +415,8 @@ function functieBodies(sql: string): Map<string, string> {
  */
 function herdefinitieMerken(alle: { bestand: string; sql: string }[]): {
   merken: Map<string, string[]>;
+  /** Functies zonder gedeelde kolom, waar één versie de nieuwste blijkt: alleen ZIJ wordt gemeten. */
+  nieuwste: Map<string, { bestand: string; merken: string[] }>;
   onbeslist: { functie: string; bestanden: string[] }[];
 } {
   const perFunctie = new Map<string, Map<string, string>>();
@@ -425,6 +427,7 @@ function herdefinitieMerken(alle: { bestand: string; sql: string }[]): {
     }
   }
   const merken = new Map<string, string[]>();
+  const nieuwste = new Map<string, { bestand: string; merken: string[] }>();
   const onbeslist: { functie: string; bestanden: string[] }[] = [];
   for (const [naam, byFile] of [...perFunctie].sort((a, b) => a[0].localeCompare(b[0]))) {
     if (byFile.size < 2) continue;
@@ -436,13 +439,54 @@ function herdefinitieMerken(alle: { bestand: string; sql: string }[]): {
       gedeeld = gedeeld === null ? kolommen : new Set([...tot].filter((k) => kolommen.has(k)));
     }
     const lijst = [...(gedeeld ?? [])].sort();
-    if (lijst.length === 0) {
+    if (lijst.length > 0) {
+      merken.set(naam, lijst.map((k) => `.${k}`));
+      continue;
+    }
+
+    // ── Geen gedeelde kolomverwijzing: geen triggerfunctie ──────────────────────────────────────
+    //
+    // De doorsnede is per definitie BLIND voor wat alleen de nieuwste versie toevoegt, en dat is
+    // precies wat je wilt weten. Twee migraties stonden daardoor als TOEGEPAST gemeld terwijl ze
+    // niet gedraaid waren: invoice_payment_date_rederive.sql (recompute_invoice_amount_paid leidt
+    // de betaaldatum niet opnieuw af) en invoice_move_payment_creditnota_guard.sql (een betaling
+    // verplaatsen kent de creditnota niet). Die tweede is een geldpoort.
+    //
+    // Zonder volgorde in de map is "de nieuwste" niet gegeven — maar in deze familie is ze wel af
+    // te leiden: elke herdefinitie draagt de vorige mee en voegt toe, dus de nieuwste is de versie
+    // wier tokens een ECHTE bovenverzameling van alle andere zijn. Is er zo'n unieke maximale
+    // versie, dan wordt zij gemeten op wat alleen zij toevoegt; is die er niet, dan zwijgt de
+    // lijst er expliciet over in plaats van te gokken.
+    const tokensVan = (body: string): Set<string> =>
+      new Set([...body.matchAll(/[a-z_][a-z0-9_]{3,}/gi)].map((m) => m[0].toLowerCase()));
+    const perBestand = new Map([...byFile].map(([f, b]) => [f, tokensVan(b)] as const));
+    let maximaal: string | null = null;
+    for (const [f, toks] of perBestand) {
+      const isBoven = [...perBestand].every(([g, andere]) =>
+        g === f || ([...andere].every((t) => toks.has(t)) && toks.size > andere.size));
+      if (isBoven) { maximaal = maximaal === null ? f : "" ; }
+    }
+    if (!maximaal) {
       onbeslist.push({ functie: naam, bestanden: [...byFile.keys()].sort() });
       continue;
     }
-    merken.set(naam, lijst.map((k) => `.${k}`));
+    const anderen = new Set<string>();
+    for (const [f, toks] of perBestand) if (f !== maximaal) for (const t of toks) anderen.add(t);
+    // Een merkteken moet ergens naar VERWIJZEN. `false`, `order` en `limit` zijn ook uniek aan een
+    // versie en zeggen niets; een naam met een underscore of van acht tekens is een identifier.
+    // Vorm, geen woordenlijst — een lijst met verboden woorden loopt achter zoals elke andere.
+    const uniek = [...perBestand.get(maximaal)!]
+      .filter((t) => !anderen.has(t))
+      .filter((t) => t.includes("_") || t.length >= 8)
+      .sort();
+    if (uniek.length === 0) {
+      onbeslist.push({ functie: naam, bestanden: [...byFile.keys()].sort() });
+      continue;
+    }
+    // Hooguit drie: één ontbrekend merkteken zegt al genoeg, en de lijst blijft leesbaar.
+    nieuwste.set(naam, { bestand: maximaal, merken: uniek.slice(0, 3) });
   }
-  return { merken, onbeslist };
+  return { merken, nieuwste, onbeslist };
 }
 
 /**
@@ -489,7 +533,7 @@ const bestanden = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 const gelezen = bestanden.map((f) => ({ bestand: f, sql: stripSql(readFileSync(`${DIR}/${f}`, "utf8")) }));
 const weggegooid = supersededNames(gelezen);
 // Functies die meer dan één bestand schrijft: daar bewijst BESTAAN niets. Zie herdefinitieMerken().
-const { merken: functieMerken, onbeslist: onbesliste } = herdefinitieMerken(gelezen);
+const { merken: functieMerken, nieuwste: functieNieuwste, onbeslist: onbesliste } = herdefinitieMerken(gelezen);
 
 const rijen: string[] = [];
 const zonderVingerafdruk: string[] = [];
@@ -506,8 +550,15 @@ for (const { bestand, sql } of gelezen) {
     // bestaan — anders melden acht herdefinities elkaar als bewijs. De merktekens reizen in het
     // tabel-veld mee; de query eronder splitst ze weer.
     .map((p) => {
-      const mk = p.soort === "function" ? functieMerken.get(p.object.toLowerCase()) : undefined;
-      return mk ? { ...p, soort: "function_body" as Soort, tabel: mk.join(",") } : p;
+      if (p.soort !== "function") return p;
+      const mk = functieMerken.get(p.object.toLowerCase());
+      if (mk) return { ...p, soort: "function_body" as Soort, tabel: mk.join(",") };
+      // Geen gedeelde kolom, maar wél een aanwijsbaar nieuwste versie: alleen DIE wordt op haar
+      // eigen toevoeging gemeten. De oudere bestanden houden hun bestaansprobe — zij zijn
+      // ingehaald, niet ongedraaid, en dat verschil hoort niet als OPEN te lezen.
+      const nw = functieNieuwste.get(p.object.toLowerCase());
+      if (nw && nw.bestand === bestand) return { ...p, soort: "function_body" as Soort, tabel: nw.merken.join(",") };
+      return p;
     });
   const verloren = probes.filter((p) => weggegooid.has(p.object.toLowerCase()));
   for (const p of verloren) opgeruimd.push(`${bestand} → ${p.soort} ${p.object}`);

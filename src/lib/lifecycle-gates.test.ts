@@ -13257,6 +13257,43 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
 // De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
 // functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
 // haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [TWA-DOC] The Android guide may not describe a stage the code has passed ───────────────────
+//
+// The guide told a reader to pick `nl.boekbrug.app` as the package name, that push notifications
+// were greenfield, and that /.well-known/assetlinks.json returns `[]` until two env vars are set.
+// All three had stopped being true: the package is `nl.boekbrug.twa` and signed, push is built
+// end to end, and the assetlinks handler carries the package and the upload key IN CODE.
+//
+// A document describing a passed stage is not neutral — it sends whoever picks the work up next to
+// redo something, or tells them a check has been made that has not. That is not hypothetical here:
+// the same shape in WELKE_MIGRATIES_STAAN_ER.sql reported two security migrations as applied while
+// production was missing three protected columns (§13 of the money-path audit).
+//
+// Only the mechanically checkable claims are gated. Prose cannot be, and pretending otherwise
+// would be its own version of this bug.
+test("[TWA-DOC] the Android guide's facts still match the code", () => {
+  const doc = readFileSync("docs/ANDROID_TWA_GUIDE.md", "utf8");
+  const route = code("src/app/api/well-known/assetlinks/route.ts");
+
+  // The package name the handler actually publishes.
+  const pkg = /DEFAULT_PACKAGE = "([a-z0-9_.]+)"/.exec(route);
+  assert.ok(pkg, "the assetlinks handler no longer declares a default package");
+  assert.ok(doc.includes(pkg[1]), `the guide never mentions ${pkg[1]}, which is the package that ships`);
+  assert.ok(!/nl\.boekbrug\.app\b/.test(doc),
+    "the guide still names nl.boekbrug.app — a package that was never built, and renaming one is a new app on the Play Store, not a rename");
+
+  // The endpoint is complete without env vars: a built-in fingerprint says so.
+  assert.match(route, /DEFAULT_FINGERPRINTS = \[/, "the handler no longer carries a built-in fingerprint");
+  assert.ok(!/Until the vars are set it returns/.test(doc),
+    "the guide still claims the endpoint returns [] until the env vars are set; it returns the built-in statement");
+
+  // Push exists. If the worker handles it, the guide may not call it greenfield.
+  const sw = readFileSync("public/sw.js", "utf8");
+  const heeftPush = /addEventListener\(\s*["']push["']/.test(sw);
+  assert.ok(heeftPush, "the service worker lost its push handler — then the guide's old text was right and this gate is wrong");
+  assert.ok(!/This is greenfield/.test(doc), "push is built; the guide still calls it greenfield");
+});
+
 // ─── [ICOON-SUBSET] Every icon the app renders must be in the font it loads ─────────────────────
 //
 // layout.tsx subsets the Material Symbols font to the glyphs the app uses — 313 KB down to 9 KB,
@@ -13619,6 +13656,38 @@ test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measure
       assert.ok(r.merken?.split(",").includes(kolom),
         `${r.bestand} does not measure ${kolom} — the column production was missing`);
     }
+  }
+
+  // ── En de meting mag niet stoppen bij triggerfuncties ──────────────────────────────────────
+  //
+  // De eerste versie mat alleen NEW./OLD.-kolommen, dus alleen triggerfuncties. Vijf functies
+  // vielen daardoor terug op bestaan — en twee migraties stonden als TOEGEPAST gemeld terwijl ze
+  // niet gedraaid waren: invoice_payment_date_rederive.sql en, erger,
+  // invoice_move_payment_creditnota_guard.sql, een geldpoort. Een blinde vlek in de meter die ik
+  // net had gebouwd, en precies daar waar het geld zit.
+  //
+  // Nu wordt ook de NIEUWSTE versie van een niet-triggerfunctie gemeten, afgeleid uit de map: de
+  // versie wier tokens een echte bovenverzameling van alle andere zijn. De regel hieronder eist
+  // dat die afleiding blijft werken voor de twee waar ze voor gebouwd is.
+  for (const [bestand, fn] of [
+    ["invoice_payment_date_rederive.sql", "recompute_invoice_amount_paid"],
+    ["invoice_move_payment_creditnota_guard.sql", "move_invoice_payment"],
+  ]) {
+    const rij = rows.find((r) => r.bestand === bestand && r.object === fn);
+    assert.ok(rij, `${bestand} has no probe for ${fn} at all`);
+    assert.equal(rij!.soort, "function_body",
+      `${bestand} is measured by the EXISTENCE of ${fn}, which its predecessor already created — ` +
+      "so an unapplied migration reads as applied, which is how a money guard went missing");
+    assert.ok((rij!.merken ?? "").length > 3, `${bestand} carries no markers to measure`);
+  }
+  // De oudere versie van diezelfde functie houdt haar bestaansprobe: ingehaald is niet ongedraaid,
+  // en OPEN zou daar het verkeerde woord zijn.
+  for (const [bestand, fn] of [
+    ["invoice_partial_payments.sql", "recompute_invoice_amount_paid"],
+    ["invoice_move_payment.sql", "move_invoice_payment"],
+  ]) {
+    const rij = rows.find((r) => r.bestand === bestand && r.object === fn);
+    if (rij) assert.equal(rij.soort, "function", `${bestand} was superseded, not left unrun`);
   }
 
   // En de query moet de body echt lezen. Een 'function_body' die stiekem op bestaan terugvalt is
