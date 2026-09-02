@@ -22,22 +22,74 @@ import { M3, R, FONT, FONT_NUM } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { CorroborationPanel, SupplierBalancePanel } from '@/lib/supplier-balance-copy'
+// [LEVERANCIER-SAMENVOEGEN] De aangeboden samenvoegingen komen kant-en-klaar binnen: welke paren
+// mogen (supplier-merge.ts) en welke zin daarbij hoort (supplier-merge-copy.ts) worden allebei
+// buiten dit component beslist. Hier staat alleen hoe het eruitziet en wat de knop aanroept.
+import type { MergePanel } from '@/lib/supplier-merge-copy'
+import { mergeDoneText, mergeRefusalText } from '@/lib/supplier-merge-copy'
+import { failureText } from '@/lib/server-message'
 
 export default function LeveranciersClient({
   balance,
   corroboration,
+  merge = null,
   asOf,
   today,
 }: {
   /** Null = de lezing is mislukt. Nooit een leeg paneel: zie de zin die dan verschijnt. */
   balance: SupplierBalancePanel | null
   corroboration: CorroborationPanel | null
+  /**
+   * [LEVERANCIER-SAMENVOEGEN] De paren die aantoonbaar één bedrijf zijn, of null.
+   *
+   * Null is de gewone toestand — én de toestand na een mislukte lezing, en dat is met opzet
+   * dezelfde: een paneel dat er niet is stelt niets voor, terwijl een paneel op halve gegevens
+   * een samenvoeging kan voorstellen waarvan het evidence juist in het ontbrekende deel stond.
+   */
+  merge?: MergePanel | null
   asOf: string
   today: string
 }) {
-  const t = translator(useLocale())
+  const locale = useLocale()
+  const t = translator(locale)
   const router = useRouter()
   const [gekozen, setGekozen] = useState(asOf)
+  // Welke rij bezig is, en wat de server terugzei. Eén regel onder het paneel, want dat antwoord
+  // gaat over wat er NU in de boeken staat — geen zin die weg mag glijden in een toast.
+  const [busyWith, setBusyWith] = useState<string | null>(null)
+  const [answer, setAnswer] = useState<string | null>(null)
+
+  const mergeSuppliers = async (
+    survivorId: string, mergedAwayId: string, mergedAwayName: string, survivorName: string,
+  ) => {
+    if (busyWith) return
+    setBusyWith(mergedAwayId)
+    setAnswer(null)
+    try {
+      const res = await fetch('/api/supplier/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ survivorId, mergedAwayId }),
+      })
+      const json = (await res.json().catch(() => ({}))) as { reason?: string; error?: string }
+      if (!res.ok) {
+        // [SERVER-ZIN] De server beslist opnieuw op wat hij zelf leest, en zijn WEIGERING noemt de
+        // reden. "Kon niet" over een samenvoeging nodigt uit tot een poging die nooit kan slagen.
+        setAnswer(
+          json.reason
+            ? mergeRefusalText(json.reason as Parameters<typeof mergeRefusalText>[0], locale)
+            : failureText(res.status, json, mergeRefusalText(null, locale)),
+        )
+        return
+      }
+      setAnswer(mergeDoneText(mergedAwayName, survivorName, locale))
+      router.refresh()
+    } catch {
+      setAnswer(mergeRefusalText(null, locale))
+    } finally {
+      setBusyWith(null)
+    }
+  }
 
   if (!balance) {
     // [NO-SILENT-EMPTY] Een mislukte lezing is geen nul. "Er staat niets open" is hier het
@@ -106,6 +158,64 @@ export default function LeveranciersClient({
         <span style={{ fontSize: 14.5, color: M3.neutral }}>{balance.totaalLabel}</span>
         <strong style={{ fontSize: 26, fontFamily: FONT_NUM, color: M3.onSurface }}>{balance.totaal}</strong>
       </div>
+
+      {/* [LEVERANCIER-SAMENVOEGEN] Boven de lijst, want het gaat over WELKE regels die lijst heeft.
+          De explanation staat er altijd bij: hij zegt hardop dat de app alleen paren voorstelt die een
+          KVK-nummer of een rekeningnummer delen, en dat een naam die op elkaar lijkt geen evidence
+          is. Dat is niet netjesheid — het is het verschil tussen een knop die de eigenaar mag
+          vertrouwen en een knop die twee bedrijven tot één maakt. */}
+      {merge && (
+        <section dir={merge.dir} style={{
+          background: '#FEF7E0', border: '1px solid #FDE293', borderRadius: R.lg,
+          padding: 16, marginBottom: 18,
+        }}>
+          <h2 style={{ fontSize: 15.5, fontWeight: 700, color: '#7C5800', margin: '0 0 4px' }}>
+            {merge.heading}
+          </h2>
+          <p style={{ fontSize: 12.5, color: '#7C5800', lineHeight: 1.55, margin: '0 0 12px' }}>
+            {merge.explanation}
+          </p>
+          {merge.offers.map((offer) => (
+            <div key={offer.mergedAwayId} style={{
+              background: '#fff', borderRadius: R.md, padding: 12, marginBottom: 8,
+              display: 'flex', flexWrap: 'wrap', gap: 10,
+              alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ flex: 1, minWidth: 200, textAlign: 'start' }}>
+                <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+                  {offer.mergedAwayName}
+                </p>
+                <p style={{ fontSize: 12.5, color: M3.neutral, margin: '2px 0 0', lineHeight: 1.5 }}>
+                  {offer.effect}
+                </p>
+                {/* Het evidence zelf, met het nummer erin. De eigenaar houdt het tegen de twee
+                    facturen die voor hem liggen; hij hoeft de app niet te geloven. */}
+                <p style={{ fontSize: 12, color: '#7C5800', margin: '4px 0 0', fontFamily: FONT_NUM }}>
+                  {offer.evidence}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyWith !== null}
+                onClick={() => mergeSuppliers(offer.survivorId, offer.mergedAwayId, offer.mergedAwayName, offer.survivorName)}
+                style={{
+                  padding: '9px 18px', borderRadius: R.full,
+                  background: busyWith ? M3.neutral : M3.primary, color: '#fff', border: 'none',
+                  fontSize: 13.5, fontWeight: 600, fontFamily: FONT,
+                  cursor: busyWith ? 'default' : 'pointer', flexShrink: 0,
+                }}
+              >
+                {busyWith === offer.mergedAwayId ? merge.busy : merge.action}
+              </button>
+            </div>
+          ))}
+          {answer && (
+            <p style={{ fontSize: 13, color: '#7C5800', lineHeight: 1.55, margin: '8px 0 0' }}>
+              {answer}
+            </p>
+          )}
+        </section>
+      )}
 
       {balance.leeg && (
         <p style={{ fontSize: 15, color: M3.neutral, lineHeight: 1.6 }}>{balance.leeg}</p>

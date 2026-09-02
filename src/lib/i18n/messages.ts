@@ -620,6 +620,73 @@ export const MESSAGES = {
     ar: 'المورّد — اختر واحداً موجوداً أو اكتب اسماً جديداً',
     en: 'Supplier — pick an existing one or type a new name',
   },
+  // [LEVERANCIER-SAMENVOEGEN] Twee rijen die één bedrijf zijn. De uitleg noemt de VOORWAARDE
+  // hardop, want dat is wat deze knop veilig maakt: de app stelt alleen paren voor die al een
+  // KVK-nummer of een rekeningnummer delen. Een naam die op elkaar lijkt hoort er niet bij — dat
+  // is precies het paar (BALKIP B.V. / GROOTHANDEL M.H. BAL V.O.F.) dat nooit voorgesteld mag
+  // worden, en de eigenaar moet kunnen zien dat de app dat weet.
+  'lev.merge.kop': {
+    nl: 'Twee leveranciers die één bedrijf zijn',
+    ar: 'مورّدان هما شركة واحدة',
+    en: 'Two suppliers that are one company',
+  },
+  'lev.merge.uitleg': {
+    nl: 'Alleen voorgesteld als beide hetzelfde KVK-nummer of hetzelfde rekeningnummer dragen. Een naam die op elkaar lijkt is geen bewijs: twee verschillende bedrijven kunnen zo heten.',
+    ar: 'لا يُقترح إلا إذا حمل الاثنان رقم KVK نفسه أو رقم الحساب نفسه. تشابه الاسم ليس دليلاً: قد تحمل شركتان مختلفتان اسماً متشابهاً.',
+    en: 'Only proposed when both carry the same KVK number or the same bank account. A name that looks alike is not proof: two different companies can be called that.',
+  },
+  'lev.merge.bewijs.kvk': {
+    nl: 'Zelfde KVK-nummer: {waarde}',
+    ar: 'رقم KVK نفسه: {waarde}',
+    en: 'Same KVK number: {waarde}',
+  },
+  'lev.merge.bewijs.iban': {
+    nl: 'Zelfde rekeningnummer: {waarde}',
+    ar: 'رقم الحساب نفسه: {waarde}',
+    en: 'Same account number: {waarde}',
+  },
+  'lev.merge.gevolgEen': {
+    nl: '1 factuur komt te staan onder {naam}',
+    ar: 'فاتورة واحدة ستُنقل إلى {naam}',
+    en: '1 invoice moves under {naam}',
+  },
+  'lev.merge.gevolgN': {
+    nl: '{n} facturen komen te staan onder {naam}',
+    ar: '{n} فاتورة ستُنقل إلى {naam}',
+    en: '{n} invoices move under {naam}',
+  },
+  'lev.merge.gevolgGeen': {
+    nl: 'Er staan geen facturen meer onder {oud} — alleen de naam verdwijnt',
+    ar: 'لم تعد هناك فواتير تحت {oud} — الاسم وحده سيختفي',
+    en: 'No invoices are left under {oud} — only the name disappears',
+  },
+  'lev.merge.knop': { nl: 'Samenvoegen', ar: 'دمج', en: 'Merge' },
+  'lev.merge.bezig': { nl: 'Bezig met samenvoegen...', ar: 'جارٍ الدمج...', en: 'Merging...' },
+  'lev.merge.klaar': {
+    nl: '{oud} staat nu onder {nieuw}',
+    ar: '{oud} صار تحت {nieuw}',
+    en: '{oud} now sits under {nieuw}',
+  },
+  'lev.merge.fout': {
+    nl: 'Samenvoegen is niet gelukt. Er is niets veranderd.',
+    ar: 'لم ينجح الدمج. لم يتغيّر شيء.',
+    en: 'The merge did not go through. Nothing was changed.',
+  },
+  'lev.merge.geweigerd.kvk': {
+    nl: 'Deze twee dragen elk een eigen KVK-nummer — dat zijn twee bedrijven.',
+    ar: 'كلٌّ من هذين يحمل رقم KVK خاصاً به — إذاً هما شركتان.',
+    en: 'These two each carry their own KVK number — that is two companies.',
+  },
+  'lev.merge.geweigerd.rekening': {
+    nl: 'Deze twee dragen elk een eigen rekeningnummer. Haal er eerst één weg bij de leverancier zelf.',
+    ar: 'كلٌّ من هذين يحمل رقم حساب خاصاً به. احذف أحدهما أولاً من بيانات المورّد نفسه.',
+    en: 'These two each carry their own account number. Remove one at the supplier itself first.',
+  },
+  'lev.merge.geweigerd.oud': {
+    nl: 'Dit scherm is verouderd — ververs de pagina en kijk opnieuw.',
+    ar: 'هذه الشاشة قديمة — حدّث الصفحة وانظر من جديد.',
+    en: 'This screen is out of date — refresh the page and look again.',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },
@@ -12067,6 +12134,7 @@ export const MESSAGES = {
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
   'log.supplier.auto_incasso_off': { nl: 'Automatische incasso bij een leverancier uitgezet', en: 'Direct debit switched off for a supplier', ar: 'أُوقف الاستقطاع التلقائي لمورّد' },
+  'log.supplier.merged': { nl: 'Twee leveranciers samengevoegd tot één', en: 'Two suppliers merged into one', ar: 'دُمج مورّدان في واحد' },
   'log.document.uploaded': { nl: 'Bestand geüpload', en: 'File uploaded', ar: 'رُفع ملف' },
   'log.document.duplicate_blocked': { nl: 'Dubbel bestand geweigerd', en: 'Duplicate file refused', ar: 'رُفض ملف مكرر' },
   'log.document.deleted': { nl: 'Bestand verwijderd', en: 'File deleted', ar: 'حُذف ملف' },

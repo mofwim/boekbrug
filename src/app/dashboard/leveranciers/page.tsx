@@ -37,6 +37,11 @@ import { counterpartKey } from '@/lib/bank-identity'
 import { supplierBalances, type SettlementRow, type SupplierInvoiceRow } from '@/lib/supplier-balances'
 import { corroboratePayments, type PaymentClaim, type SupplierDebit } from '@/lib/payment-corroboration'
 import { buildCorroborationPanel, buildSupplierBalancePanel } from '@/lib/supplier-balance-copy'
+// [LEVERANCIER-SAMENVOEGEN] Welke twee rijen aantoonbaar één bedrijf zijn — en welke niet. De
+// beslissing is puur (supplier-merge.ts) en kijkt nooit naar namen; hier worden alleen de rijen
+// gelezen die ze nodig heeft.
+import { findMergeCandidates, type MergeSupplier } from '@/lib/supplier-merge'
+import { buildSupplierMergePanel } from '@/lib/supplier-merge-copy'
 import { getServerLocale } from '@/lib/i18n/server'
 import LeveranciersClient from './LeveranciersClient'
 
@@ -51,6 +56,10 @@ interface InvoiceRow {
   invoice_type: string | null
   total_inc_btw: number | null
   amount_paid: number | null
+  // [LEVERANCIER-SAMENVOEGEN] Het rekeningnummer dat op DIT papier stond. suppliers heeft een
+  // UNIQUE (user_id, iban), dus twee rijen kunnen nooit allebei hetzelfde nummer dragen — het
+  // bewijs dat ze één partij zijn moet dus uit de facturen komen.
+  vendor_iban: string | null
 }
 
 interface LinkRow {
@@ -96,7 +105,7 @@ export default async function Page({
     invoiceRows = await fetchAllRows<InvoiceRow>((from, to) =>
       supabase
         .from('invoices')
-        .select('id, invoice_number, client_name, supplier_id, invoice_date, due_date, status, invoice_type, total_inc_btw, amount_paid')
+        .select('id, invoice_number, client_name, supplier_id, invoice_date, due_date, status, invoice_type, total_inc_btw, amount_paid, vendor_iban')
         .eq('receiver_id', user.id)
         .eq('direction', 'incoming')
         .neq('status', 'archived')
@@ -184,6 +193,55 @@ export default async function Page({
 
   const balance = supplierBalances({ invoices, asOf, settlements })
 
+  // ── [LEVERANCIER-SAMENVOEGEN] Twee rijen die aantoonbaar één bedrijf zijn ────────────────
+  //
+  // De registry, de aliassen en de naamkiezer repareren de TOEKOMST: de volgende factuur van een
+  // bedrijf dat de eigenaar ooit corrigeerde komt onder de juiste rij. Geen van drieën raakt het
+  // VERLEDEN aan. Twee rijen die al bestaan blijven twee, dit scherm tekent twee regels, en het
+  // openstaande bedrag staat verdeeld over de helften.
+  //
+  // Wat hier gebeurt is alleen LEZEN en VOORSTELLEN. De eigenaar kan geen paar zelf samenstellen:
+  // de app biedt uitsluitend paren aan die al een KVK-nummer of een rekeningnummer delen, en de
+  // server beslist bij het indrukken opnieuw op wat hij zelf leest. Zonder die twee halve
+  // grendels zou dit precies het paar kunnen aanbieden dat nooit aangeboden mag worden — BALKIP
+  // B.V. naast GROOTHANDEL M.H. BAL V.O.F., twee bedrijven met één familienaam.
+  //
+  // Een mislukte lezing levert GEEN paneel op, en dat is de goede kant om op te falen: het paneel
+  // dat er niet is stelt niets voor, terwijl een paneel op halve gegevens een samenvoeging kan
+  // voorstellen waarvan het bewijs juist in het ontbrekende deel stond.
+  let mergePanel: ReturnType<typeof buildSupplierMergePanel> = null
+  if (!readFailed) {
+    try {
+      const { data: supplierRows, error: supplierErr } = await supabase
+        .from('suppliers')
+        .select('id, name, iban, kvk_number, btw_number, created_at')
+        .eq('user_id', user.id)
+      if (supplierErr) throw new Error(supplierErr.message)
+      const candidates: MergeSupplier[] = ((supplierRows ?? []) as {
+        id: string; name: string; iban: string | null; kvk_number: string | null
+        btw_number: string | null; created_at: string
+      }[]).map((row) => {
+        const mine = invoiceRows.filter((i) => i.supplier_id === row.id)
+        return {
+          id: row.id,
+          name: row.name,
+          iban: row.iban,
+          kvk: row.kvk_number,
+          btw: row.btw_number,
+          createdAt: row.created_at,
+          invoiceCount: mine.length,
+          invoiceIbans: mine.map((i) => i.vendor_iban ?? '').filter((v) => v.length > 0),
+        }
+      })
+      mergePanel = buildSupplierMergePanel(findMergeCandidates(candidates), locale)
+    } catch (e) {
+      console.error('[LEVERANCIER-SAMENVOEGEN] the suppliers could not be read — no offers shown', {
+        userId: user.id, error: e instanceof Error ? e.message : String(e),
+      })
+      mergePanel = null
+    }
+  }
+
   // ── De dekking: precies zo ver als de bankregels reiken ──────────────────────────────────
   // Niet uit bank_statement_periods: die tabel kent alleen de afschriften die als BESTAND zijn
   // ingelezen, en op deze administratie beslaat dat één maand van de acht. De eerlijke uitspraak
@@ -222,6 +280,7 @@ export default async function Page({
     <LeveranciersClient
       balance={buildSupplierBalancePanel(balance, locale, today)}
       corroboration={buildCorroborationPanel(corroboration, locale)}
+      merge={mergePanel}
       asOf={asOf}
       today={today}
     />

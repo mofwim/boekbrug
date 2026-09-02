@@ -23627,3 +23627,87 @@ test("[TIJDVAK-KWARTAAL] the quarterly deadline stays off the owner's screens", 
     "tijdvak that owner is on — for a monthly filer that date is three deadlines late",
   );
 });
+
+// ── [LEVERANCIER-SAMENVOEGEN] ─────────────────────────────────────────────────────────────────
+//
+// The one button in the supplier module that REWRITES already-booked invoices: it moves them from
+// one supplier to another and renames them, and invoices.client_name is the identity key the
+// IBAN-change check, the incasso mandate, the creditnota signal and the crediteurenstand all
+// resolve through. A wrong merge is not untidy — it is a crediteurenstand for a legal entity that
+// does not exist, and a BTW return built on it.
+//
+// The pair it must never offer is in this repo already. From vendor-grounding.ts: an invoice from
+// BALKIP B.V. — own letterhead, own KVK, own IBAN, sent from info@balkip.nl — was imported as
+// "GROOTHANDEL M.H. BAL V.O.F.". One family name, two companies. An owner glancing at those two
+// lines would confirm a merge; the app must never offer it.
+//
+// So the guard is not "be careful", it is structural, and this gate holds the structure.
+test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are asked first", () => {
+  const beslissing = code("src/lib/supplier-merge.ts");
+
+  // 1. The module cannot match on names, because it cannot SEE a name key. Every name normalizer
+  //    in this codebase is named here so that importing one goes red — a rule about the class,
+  //    not a list of today's mistakes.
+  for (const naamsleutel of ["vendorCoreKey", "supplierNameKey", "normalizeVendor", "foldText", "counterpartKey"]) {
+    assert.doesNotMatch(
+      beslissing, new RegExp(`\\b${naamsleutel}\\b`),
+      `supplier-merge.ts reaches for ${naamsleutel} — a resemblance between names is exactly what may not decide this`,
+    );
+  }
+  // …and it does hold the two identifiers that ARE the company.
+  assert.match(beslissing, /import \{ identityIban, normalizeKvk \} from '@\/lib\/supplier-registry'/,
+    "the registry's own normalizers, not second copies of them");
+
+  // 2. The order inside planSupplierMerge is the whole safety argument: a veto asked AFTER the
+  //    evidence is a veto that never fires on the pair that already matched.
+  const kvkVeto = beslissing.indexOf("reason: 'different-kvk'");
+  const ibanVeto = beslissing.indexOf("reason: 'two-accounts'");
+  const eersteBewijs = beslissing.indexOf("evidence: 'kvk'");
+  assert.ok(kvkVeto > 0 && ibanVeto > 0 && eersteBewijs > 0, "all three branches still exist");
+  assert.ok(kvkVeto < eersteBewijs, "two KVK numbers are two companies — asked before anything can agree");
+  assert.ok(ibanVeto < eersteBewijs, "two own accounts are refused before a shared one can be found");
+
+  // 3. The owner cannot compose a pair. findMergeCandidates is the only source of pairs, and it
+  //    spends each row once — three rows of one company is two merges, and the second must be
+  //    planned on what the first left behind.
+  assert.match(beslissing, /const spoken = new Set<string>\(\)/, "a row already spoken for is not offered twice");
+
+  // 4. The server decides again on what IT reads. A screen can be minutes old, and in those
+  //    minutes an import can give one row the KVK that makes it a different company.
+  const deur = code("src/app/api/supplier/merge/route.ts");
+  assert.match(deur, /const plan = planSupplierMerge\(a, b\)/, "the plan is computed server-side");
+  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, created_at'\)/,
+    "…on rows it read itself, not on anything the browser sent");
+  assert.match(deur, /if \(!plan\.ok\) \{/, "…and a refusal is a refusal");
+  // The PAIR is the server's judgement; the DIRECTION is the owner's. Both halves are pinned:
+  // the asked ids must BE the pair the plan approved (nothing else can be merged), and the row
+  // written to is the one the owner confirmed — never re-picked here. Re-picking would refuse a
+  // good merge forever, because this route and the screen count invoices differently on purpose
+  // (an archived invoice must still move, and is not on the screen's list).
+  assert.match(deur, /plan\.survivorId !== askedSurvivor && plan\.mergedAwayId !== askedSurvivor/,
+    "the asked pair must be the pair the plan approved");
+  assert.match(deur, /const survivor = found\.find\(\(s\) => s\.id === askedSurvivor\)!/,
+    "…and the name that survives is the one the owner read, not one re-picked after they confirmed");
+  const planAt = deur.indexOf("const plan = planSupplierMerge");
+  const firstWrite = deur.indexOf(".update({ supplier_id: survivor.id");
+  assert.ok(planAt > 0 && firstWrite > planAt, "nothing is written before the decision is made");
+
+  // 5. The row is deleted only once nothing points at it. invoices.supplier_id is ON DELETE SET
+  //    NULL, so deleting a row that still had invoices would detach them from every supplier —
+  //    worse than the duplicate the call came to fix.
+  const countAt = deur.indexOf("count: leftover");
+  const deleteAt = deur.indexOf("from('suppliers').delete()");
+  assert.ok(countAt > 0 && deleteAt > countAt, "the leftover count is taken BEFORE the delete");
+  assert.match(deur, /if \(countErr \|\| \(leftover \?\? 0\) > 0\) \{/,
+    "…and a failed count is treated as 'there may still be invoices', not as zero");
+
+  // 6. The screen offers only what the server proposed — there is no free pairing anywhere.
+  const scherm = code("src/app/dashboard/leveranciers/LeveranciersClient.tsx");
+  assert.match(scherm, /mergeSuppliers\(offer\.survivorId, offer\.mergedAwayId, offer\.mergedAwayName, offer\.survivorName\)/,
+    "every id sent came out of an offer this screen was handed");
+  assert.doesNotMatch(scherm, /findMergeCandidates|planSupplierMerge/,
+    "the screen decides nothing about who is one company");
+  // And the rule the button rests on is on the screen, not only in this file.
+  assert.match(scherm, /\{merge\.explanation\}/, "the panel says out loud what it will and will not propose");
+  assert.match(scherm, /\{offer\.evidence\}/, "…and quotes the identifier, so the owner can check it");
+});
