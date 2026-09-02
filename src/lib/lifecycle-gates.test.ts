@@ -32,7 +32,9 @@ import { categoryHint } from "./category-wait";
 import { moneyGroundedInText } from "./amount-grounding";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
+import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
+import { demoRefusalFor } from "./demo-tenant";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -13012,6 +13014,67 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
   for (const h of new Set(hrefs)) {
     assert.ok(existsSync(`src/app${h}/page.tsx`), `SegmentVoordeur linkt naar ${h}, en dat bestaat niet`);
   }
+});
+
+test("[DEMO-DICHT] elke route die mail verstuurt of geld kost, is dicht voor het demoaccount", () => {
+  // Het wachtwoord van demo@boekbrug.nl staat in een PUBLIEKE repository en staat daar voorgoed —
+  // roteren helpt tegen het vorige wachtwoord, niet tegen `git log -p`. De bescherming is dus geen
+  // geheim maar een grens, en een grens die met de hand wordt bijgehouden verloopt. Vandaag ging
+  // dat twee keer mis (de icoonsubset, en PUBLIC_PATHS tegenover drie landingspagina's die naar
+  // /login stuurden), dus deze poort LEIDT de verzameling af uit de broncode.
+  //
+  // De regel: importeert een API-route @/lib/email of @/lib/ai, dan gaat er post naar buiten of
+  // geld naar het model, en dan hoort hij achter demoRefusalFor().
+  const routes = execSync(
+    "grep -rl -e \"@/lib/email\" -e \"@/lib/ai\" src/app/api --include=route.ts || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean);
+  assert.ok(routes.length >= 15, `de scan vond maar ${routes.length} routes — leest hij nog wel mee?`);
+
+  const ongedekt: string[] = [];
+  for (const file of routes) {
+    const pathname = "/" + file.replace(/^src\/app\//, "").replace(/\/route\.ts$/, "")
+      .replace(/\[([^\]]+)\]/g, "id");
+
+    // Cronroutes draaien op een bearer token (CRON_SECRET), niet op een sessie: het demoaccount
+    // heeft dat token niet en de middleware kijkt naar de sessiegebruiker. Die uitzondering wordt
+    // hier BEWEZEN in plaats van aangenomen — een cronroute zonder tokencontrole is geen
+    // uitzondering maar een gat.
+    if (file.includes("/api/cron/")) {
+      assert.match(code(file), /CRON_SECRET/,
+        `${file} staat onder /api/cron maar controleert geen CRON_SECRET — dan is "cron" geen ` +
+        "reden om hem buiten de demogrens te laten");
+      continue;
+    }
+    // Een webhook wordt door de leverancier aangeroepen en draagt geen sessie, dus hij is nooit
+    // "het demoaccount dat iets doet". Ook die uitzondering wordt bewezen: zonder handtekening
+    // over de body is het geen webhook maar een open deur, en dan telt het argument niet.
+    if (/\/api\/[^/]+\/webhook\//.test(file)) {
+      assert.match(code(file), /signature|svix|WEBHOOK_SECRET/i,
+        `${file} heet een webhook maar controleert geen handtekening — dan is "de leverancier belt ` +
+        'aan" geen reden om hem buiten de demogrens te laten');
+      continue;
+    }
+
+    if (demoRefusalFor(pathname, "POST") === null) ongedekt.push(pathname);
+  }
+
+  assert.deepEqual(ongedekt, [],
+    "deze routes versturen mail of kosten geld en staan open voor een account waarvan het " +
+    `wachtwoord openbaar is: ${ongedekt.join(", ")}. Zet ze in demo-tenant.ts`);
+});
+
+test("[DEMO-DICHT] het wachtwoord van het demoaccount staat nergens meer als platte tekst", () => {
+  // docs/PLAY_STORE_LISTING.md schreef altijd al `SHOT_PASSWORD=…`. Een tweede document nam het
+  // op 2 september voluit over, en zo raakt een afspraak stilletjes kwijt: niets brak, niets werd
+  // rood, het stond er gewoon.
+  const treffers = execSync(
+    "grep -rl 'BoekBrugDemo2026' --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next . || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean).filter((f) => !f.includes("lifecycle-gates.test.ts"));
+  assert.deepEqual(treffers, [],
+    `het demowachtwoord staat voluit in: ${treffers.join(", ")}. Het hoort uit een omgevingsvariabele ` +
+    "te komen — deze repository is openbaar");
 });
 
 test("[SEGMENT-VAK] een deur die een vak noemt, geeft het ook echt door", () => {
