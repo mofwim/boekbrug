@@ -119,6 +119,8 @@ needs real files, not more code.
 
 1. **A live `upload → DB → /api/result` pass.** The proof `RECONCILIATION_TRIANGLE.md` names as
    final and that no amount of unit testing substitutes for. Needs a running Supabase.
+   _(2 September 2026: the instrument now exists — `scripts/verify-live-chain.mts`, §16. The
+   measurement still has not been taken; this item stays open until someone runs it.)_
 2. **A pure seam in `compute-result-range.ts`.** Extract the windowing and aggregation from the
    fetching, the way `truth-lens.ts` was extracted during the July audit — the same move, on the
    larger module, with the same payoff.
@@ -846,3 +848,144 @@ then its answer, then the icon subset. Each was found only by measuring the thin
 reading what was written about it. The generator, the icon list and the guard columns are all
 derived from source now — and this entry exists because the second of those was written by me,
 two days ago, with a blind spot I did not look for until an unrelated check tripped over it.
+
+### Both applied, 2 September 2026 — with the owner's approval
+
+`invoice_move_payment_creditnota_guard.sql` and `invoice_payment_date_rederive.sql` are on
+production. Checked before, measured before, verified after.
+
+**Before.** Both are one `CREATE OR REPLACE` in a transaction plus a `COMMENT` and a
+`REVOKE`/`GRANT`. Signatures match the deployed ones exactly — `(uuid,uuid,uuid)` and `(uuid,uuid)`
+— so they replace rather than create an overload. Both declare `SECURITY DEFINER` and
+`search_path = public`, which is what the live functions already carried, so nothing was reset by
+restating it.
+
+**One thing beyond the fix, named rather than slipped through.** `invoice_payment_date_rederive.sql`
+grants `EXECUTE` to `authenticated`; the deployed function had only `postgres` and `service_role`,
+and every live caller uses the service role. The widening is defensible — the function refuses when
+`auth.uid()` is not the owner, and it can only re-derive from links that already exist — but it is a
+change, so it was put to the owner as a choice rather than applied quietly. Approved as written: the
+file is the record, and editing it to differ from what a human would run in the SQL editor creates
+two spellings of one migration.
+
+**Measured before turning the date logic on.** Of 404 invoices carrying links, exactly **1** would
+get a different `payment_date` if the function ran over all of them, and **0** would move to a
+different quarter. There are **0** kasstelsel owners of 9, so the quarter question does not bite
+anyone today in any case. The function only runs on reversal paths, so nothing changed
+retroactively; what changed is what future reversals do.
+
+**The creditnota exposure was latent, not fired.** 12 creditnota's are in a status that makes them a
+valid move target and 405 payments are movable, so the door stood open — but the one creditnota
+carrying `amount_paid > 0` turned out to be a genuine € 1.123,14 Metro Markets refund, matched to a
+real credit on the statement. Nothing in the books had gone wrong yet.
+
+**After.**
+
+| Check | Result |
+| --- | --- |
+| deployed `move_invoice_payment` body vs the file | md5 `527f1d0d…707`, 11.464 chars — **byte-identical** |
+| deployed `recompute_invoice_amount_paid` body vs the file | md5 `5490918f…f44`, 2.125 chars — **byte-identical** |
+| signatures, `SECURITY DEFINER`, `search_path` | unchanged |
+| `EXECUTE` grants | as the files declare |
+| the body probe that reported both OPEN an hour earlier | both TOEGEPAST |
+
+And the guard was made to **bite**, in a transaction that always aborts: moving a real payment onto
+a payable creditnota was **refused, and refused for the creditnota reason**; the same payment moved
+onto an ordinary invoice was **allowed**. So it stops the thing it was written for without
+over-refusing the ordinary case. Nothing persisted — 405 links before and after, the Metro Markets
+creditnota untouched, no invoice paid above its total.
+
+The hash comparison is the part worth keeping as a habit: a 12 KB money function had to be pasted by
+hand into the migration tool, and "it looks right" is not a check. Computing the file's body hash
+first turns a transcription slip from something you hope you would notice into something that cannot
+pass.
+
+### Still open after this
+
+Only `bank_auto_book_blocked.sql` — the column and index do not exist. The code is deploy-safe
+without it, and it needs a design choice about what the readiness board shows, so it is not a
+paste-and-run.
+
+## 16. §6 item 1 has an instrument now — but not yet a measurement — 2 September 2026
+
+`§6` has listed the same thing at number one since this file was written: _"a live `upload → DB →
+/api/result` pass. The proof `RECONCILIATION_TRIANGLE.md` names as final and that no amount of unit
+testing substitutes for. Needs a running Supabase."_ It stayed at number one through every
+re-measurement since, because each pass could only confirm it was still open.
+
+It is worth being precise about why no test in this repo covers it. `npm run gates` never calls
+Supabase once: `tsc`, the unit tests, the render tests and `next build` are all static, and the
+Playwright sweep only walks the public pages, which is where the middleware lets it in without a
+session. So there has never been a check that says whether the figures an owner reads on their
+screen belong to the rows sitting under them in the database.
+
+`scripts/verify-live-chain.mts` is that check. It logs in as an owner, reads the raw rows back
+through RLS, calls `/api/result`, `/api/aangifte` and `/api/truth` with the session, and compares what
+they say using **plain arithmetic** — adding, subtracting, comparing — never by calling an engine:
+
+- `invoices.amount_paid` equals the sum of `bank_tx_invoices.amount_applied` for that invoice;
+- `resultaat` = `omzet` − `kosten`, and `btwSaldo` = `verschuldigd` − `voorbelasting`;
+- the rate buckets add up to `btwVerschuldigd`;
+- every figure is a finite number (an `NaN` travels silently through every later sum);
+- the BTW is at most 30% of the turnover — the incl./excl. swap, which is invisible otherwise
+  because both numbers look plausible on their own;
+- `5g` = `5a` − `5b` on the concept aangifte, and the rubrieken add up to `5a`;
+- the aangifte and the result do not name two different amounts for the same quarter;
+- and `/api/truth` — the screen an owner opens beside the result — names the same six figures
+  for the same quarter. `/api/result` promises that in its own header ("the same function over
+  a different window"); the promise lives in a comment and was checked nowhere.
+
+**What it does not prove:** that the calculation rules are right. The unit tests do that, and they
+are good. This aims at the layer between the database and the API answer — the assembly — because
+that is where every defect of the past week actually was: a key that was correct but stored in the
+row that undoing removes; a definition spelled twice; a read that returned "nothing found" because
+it had been truncated.
+
+**Read-only, on purpose.** It runs against a real database. A script that creates rows to delete
+them afterwards leaves something behind on every interrupted run, and the first time somebody aims
+it at a live administratie by accident it stops being a test and becomes a booking. Existing rows
+answer the same question.
+
+### Three defects in the instrument, before it measured anything
+
+Each one would have made the tool lie, and in the same direction — toward a false alarm about money.
+
+1. **The session cookie was invented rather than written.** The first version sent
+   `Authorization: Bearer …` and a hand-rolled `cookie: sb-access-token=…`. The routes read their
+   session with `@supabase/ssr` (`supabase-server.ts`), which uses a project-scoped cookie name and
+   a `base64-` encoding it chunks itself — so that header authenticates nobody. Every check below it
+   would have gone red with a 401, over something with no money in it at all. It now lets the same
+   library write the cookie into an in-memory jar, so the encoding cannot drift from what the route
+   reads back. Proven offline, without a network: the cookie the script sends is parsed by a second
+   `createServerClient`, which recovers the same user id.
+
+2. **A 401 counted as a failed check.** That is the worse half of (1) and survives independently of
+   it: a verifier that cannot distinguish _"I could not look"_ from _"your books are wrong"_ is
+   worse than no verifier, because it sends somebody hunting through an administratie for a fault
+   that is a missing cookie. `401`/`403` now stop the run with an explicit "nothing was checked,
+   this says nothing about the bookkeeping", and exit 2 — never a red line.
+
+3. **The two raw reads were unpaged.** PostgREST truncates at ~1000 rows in silence
+   (`supabase-paginate.ts`), so on a busy administratie the tool would have read the first thousand
+   payment links and reported properly-paid invoices as half paid. That is one of the three defect
+   classes the script's own preamble names as this week's causes — written straight into the
+   instrument built to find them. Both reads now go through `fetchAllRows`.
+
+### What is still open
+
+Item 1 is **not** closed. What exists is the instrument; the measurement has not been taken. This
+container cannot reach `cedrndplmydqcmbszfmp.supabase.co` — the organisation's egress policy denies
+it — so the script has never run against live data. It passes `tsc`, `eslint` and the full gate set,
+and its cookie encoding is proven by an offline round-trip, and that is all that can honestly be
+claimed for it here.
+
+To take the measurement, on a machine that can reach the database:
+
+```bash
+npx next build && npx next start -p 3100
+CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/verify-live-chain.mts
+```
+
+Exit 0 means the live app and the rows underneath it agree. Exit 1 names what disagreed, and where
+to look: not in the engines, which have their own tests, but in which rows are read and how they are
+put together. Exit 2 means the check could not run — which is not a statement about money.

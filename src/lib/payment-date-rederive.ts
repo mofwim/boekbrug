@@ -13,12 +13,17 @@
 // money into a quarter it never belonged to, and it does so without a warning anywhere: the figure
 // simply comes out wrong.
 //
-// The reversal paths already say in their own comments that they leave the stale date on purpose,
-// "because recompute_invoice_amount_paid re-derives it a few lines down". It does not.
-// invoice_payment_date_rederive.sql adds that derivation and HAS NOT BEEN APPLIED — the migration
-// report said otherwise because its probe reads the NEW./OLD. column references only a TRIGGER
-// function has, and this is an ordinary function. So every one of those comments describes a fix
-// that never landed, which is worse than no comment: it is a reason to stop looking.
+// The reversal paths say in their own comments that they leave the stale date on purpose, "because
+// recompute_invoice_amount_paid re-derives it a few lines down". For months it did not:
+// invoice_payment_date_rederive.sql adds that derivation and was reported applied when it was not —
+// the migration inventory's probe reads the NEW./OLD. column references only a TRIGGER function
+// has, and this is an ordinary function. So every one of those comments described a fix that had
+// never landed, which is worse than no comment: it is a reason to stop looking.
+//
+// The migration is applied now, and verified byte-identical against its file. This stays beside it
+// rather than being deleted, for the reason the episode itself demonstrated: TWICE this week a
+// function was believed deployed and was not, and both discoveries were accidents. One SELECT and
+// one UPDATE per reversal is a fair price for a date that decides a BTW quarter.
 //
 // ── WHY THE DERIVATION LIVES IN ONE PLACE ──
 //
@@ -26,9 +31,9 @@
 // sites each carrying their own `payment_date: stillHasPayment ? inv.payment_date : null` is five
 // chances to disagree. One derivation, called by all of them, is one truth.
 //
-// It is byte-for-byte the rule the SQL will apply once the migration is run — the earliest
-// surviving link, its own date if it has one, else its bank transaction's, ties broken by
-// created_at. So the two agree the day they both exist, and the day after this can be deleted.
+// It is byte-for-byte the rule the SQL applies — the earliest surviving link, its own date if it
+// has one, else its bank transaction's, ties broken by created_at. The two therefore write the same
+// value, and the gate on this pins the SQL's own ORDER BY so they cannot drift apart in silence.
 //
 // ── AND WHY NOTHING IS WRITTEN WHEN NOTHING SURVIVES ──
 //

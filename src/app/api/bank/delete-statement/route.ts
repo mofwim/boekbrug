@@ -33,7 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 // [PAYDATE-REDERIVE] After a reversal the invoice's payment date must describe the money that is
-// still on it. The migration that would do this in the database is not applied — see the module.
+// still on it. The database does this too now; this stands beside it — see the module for why.
 import { rederivePaymentDate } from "@/lib/payment-date-rederive";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx } from "@/lib/bank-tx-links";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";

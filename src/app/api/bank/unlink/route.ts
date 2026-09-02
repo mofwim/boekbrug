@@ -17,7 +17,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 // [PAYDATE-REDERIVE] After a reversal the invoice's payment date must describe the money that is
-// still on it. The migration that would do this in the database is not applied — see the module.
+// still on it. The database does this too now; this stands beside it — see the module for why.
 import { rederivePaymentDate } from "@/lib/payment-date-rederive";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
@@ -309,10 +309,11 @@ export async function POST(req: Request) {
       invoiceId, userId: user.id, transactionId, message: recomputeErr.message,
     });
   }
-  // [PAYDATE-REDERIVE] …and the DATE that money now has. The comment on the reversal above says
-  // the recompute re-derives it; the migration that would (invoice_payment_date_rederive.sql) is
-  // not applied, so it does not — and under the kasstelsel payment_date decides the QUARTER.
-  // Best-effort by the same contract as the recompute: a failure costs the date, not the reversal.
+  // [PAYDATE-REDERIVE] …and the DATE that money now has. The comment on the reversal above claimed
+  // the recompute re-derives it, and for months it did not — the migration saying so was reported
+  // applied while it was not. It is applied now and this stands beside it, because under the
+  // kasstelsel payment_date decides the QUARTER and the app has twice been wrong about what is
+  // deployed. Best-effort like the recompute: a failure costs the date, never the reversal.
   await rederivePaymentDate(pipeline, user.id, invoiceId);
   if (!linksCleared) {
     // Loud, and never only in a console line an hourly job nobody reads: this is the state where

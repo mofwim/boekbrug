@@ -263,21 +263,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
-  // ── [MOVE-CREDITNOTA] The one guard that is NOT in the database yet ──────────────────────────
+  // ── [MOVE-CREDITNOTA] The second of two, and deliberately kept ───────────────────────────────
   //
-  // The header above says the pre-checks here keep the picker honest and are never the guard,
-  // because the RPC re-reads and re-decides everything under a row lock. That is the design, and
-  // it holds for every check but this one: invoice_move_payment_creditnota_guard.sql has not been
-  // applied, and the deployed function reads the target's total through abs() and never looks at
-  // invoice_type. Measured: a EUR 100 payment moved onto a 'sent' creditnota (total -100) came
-  // back amount_paid=100, status='paid', while the sales invoice the payment really belonged to
-  // silently lost it.
+  // A creditnota is money the business OWES back; it is settled by paying out or by offsetting,
+  // never by RECEIVING. move_invoice_payment guarded direction, status, fit and ownership and read
+  // the target's total through abs(), so a creditnota of -100 looked exactly like an invoice with
+  // 100 still open. Measured: a EUR 100 payment moved onto a 'sent' creditnota came back
+  // amount_paid=100, status='paid', while the sales invoice it really belonged to lost it.
   //
-  // So this is a belt, worn until the migration lands — and it is safe to wear precisely because
-  // it can only REFUSE. A read that is seconds stale costs a refusal of a move that would have
-  // been fine; it can never permit one the RPC would not. The moment the migration is applied this
-  // check becomes the second of two, saying the same sentence (moveFailureText matches the RPC's
-  // own fragment), and nothing about it has to change.
+  // invoice_move_payment_creditnota_guard.sql is applied and verified byte-identical, so the RPC
+  // now refuses this itself and this check is the second of two. It stays anyway, and the reason is
+  // not caution in general: TWICE this week a function was believed deployed and was not — the
+  // migration inventory's probe reads the NEW./OLD. references only a trigger function has, and
+  // this very guard was one of the two it reported as applied. Both times the discovery was luck.
+  // One SELECT in front of a booking that cannot be undone by looking at it is a fair price for
+  // not depending on that luck again.
+  //
+  // It is safe to keep for the same reason it was safe to add: it can only REFUSE. A read seconds
+  // stale costs a refusal of a move that would have been fine; it can never permit one the RPC
+  // would not. And it says the same sentence the database does — moveFailureText matches the RPC's
+  // own fragment, so one event never reads as two different problems.
   const { data: target, error: targetErr } = await supabase
     .from("invoices")
     .select("id, invoice_type")

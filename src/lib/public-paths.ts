@@ -86,6 +86,15 @@ export const PUBLIC_PATHS = [
   // maakt. Veilig tegen de prefix-regel — het portaal zelf heet /dashboard/accountant en begint
   // dus niet met deze string.
   "/voor-boekhouders",
+  // [SEGMENT-VOORDEUR] Dezelfde reden, drie keer: dit zijn voordeuren voor iemand die nog geen
+  // account heeft. Ze stonden in sitemap.xml en stuurden élke bezoeker én élke crawler naar
+  // /login — de rooktest ving dat met drie keer "→ 307", en dat is precies waarvoor hij bestaat.
+  // Botsen niet met de prefixregel: de schermen in de app heten /dashboard/*.
+  // De poort [SEGMENT-VOORDEUR] leidt deze eis voortaan uit SEGMENT_PAGES af, zodat een vierde
+  // deur niet opnieuw op een handmatig bijgehouden lijst hoeft te wachten.
+  "/voor-winkel",
+  "/voor-bouw",
+  "/voor-schoonmaak",
   // [BELOFTE-BEWIJS] De beveiligingspagina. Openbaar omdat hij bedoeld is voor wie nog GEEN account
   // heeft — dat is precies de lezer die de vraag stelt. Botst niet met de prefixregel: het scherm
   // in de app heet /dashboard/beveiliging en begint dus niet met deze string.
