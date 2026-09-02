@@ -61,10 +61,9 @@ const VIDEO = { width: 540, height: 960 };
 const OUT_SIZE = { width: 1080, height: 1920 };
 
 // ── Merk ──────────────────────────────────────────────────────────────────────
-// Dezelfde drie kleuren en hetzelfde lettertype als de deck-generator en de store-assets, uit
+// Dezelfde kleur en hetzelfde lettertype als de deck-generator en de store-assets, uit
 // dezelfde map. Een clip die een andere blauw gebruikt dan de slide ernaast leest als een andere
 // firma.
-const INK = "#0f1216";
 const BLUE = "#1a73e8";
 const FONT_DIR = path.join(process.cwd(), "scripts", "fonts");
 const font = (f: string) => readFileSync(path.join(FONT_DIR, f)).toString("base64");
@@ -248,6 +247,34 @@ const CLIPS: Clip[] = [
       await say({ text: "Klaar om over te typen<br>bij de Belastingdienst.<br><b>boekbrug.nl</b>", ms: 2200, hold: true });
     },
   },
+  {
+    name: "07-bank-matchen",
+    auth: true,
+    path: "/dashboard/bank",
+    hook: "Wie heeft er betaald?",
+    run: async (p, say) => {
+      await say({ text: "Je bankafschrift erin —<br>en dan het saaie werk", ms: 1900 });
+      await p.mouse.wheel(0, 380);
+      await p.waitForTimeout(900);
+      await say({ text: "De app koppelt betalingen<br>aan je facturen", ms: 2000 });
+      await p.mouse.wheel(0, 420);
+      await p.waitForTimeout(900);
+      await say({ text: "Jij kijkt na wat zij<br>niet zeker weet.<br><b>boekbrug.nl</b>", ms: 2300, hold: true });
+    },
+  },
+  {
+    name: "08-naar-je-boekhouder",
+    auth: true,
+    path: "/dashboard/brug",
+    hook: "Elk kwartaal een map vol pdf's mailen",
+    run: async (p, say) => {
+      await say({ text: "Elk kwartaal dezelfde mail<br>met dezelfde bijlagen.", ms: 2000 });
+      await p.mouse.wheel(0, 400);
+      await p.waitForTimeout(900);
+      await say({ text: "Facturen, bonnen, bank en<br>je concept-aangifte — in één bestand", ms: 2300 });
+      await say({ text: "Eén keer klikken.<br><b>boekbrug.nl</b>", ms: 2100, hold: true });
+    },
+  },
 ];
 
 // ── Opnemen ───────────────────────────────────────────────────────────────────
@@ -318,7 +345,15 @@ const exe = chromiumPath();
 if (exe) console.log(`[CLIPS] chromium: ${exe}`);
 const browser = await chromium.launch({ executablePath: exe });
 const ff = ffmpeg();
-console.log(ff ? `[CLIPS] ffmpeg:   ${ff}` : `[CLIPS] ffmpeg niet gevonden — clips blijven .webm`);
+if (ff) {
+  console.log(`[CLIPS] ffmpeg:   ${ff}`);
+} else {
+  // Geen harde afhankelijkheid: ffmpeg-static is ~80 MB en de meeste mensen die dit repo klonen
+  // maken geen clips. Maar .webm is op Instagram en TikTok geen bruikbaar bestand, dus de melding
+  // moet zeggen wat je moet doen in plaats van alleen wat er mist.
+  console.log(`[CLIPS] ffmpeg niet gevonden — de clips blijven .webm (niet overal te uploaden).`);
+  console.log(`[CLIPS] Voor .mp4:  npm i -D ffmpeg-static   en draai dit opnieuw.`);
+}
 console.log(`[CLIPS] base:     ${BASE}`);
 
 let sessionOk = false;
@@ -378,6 +413,18 @@ for (const clip of CLIPS) {
   const page = await ctx.newPage();
   await page.goto(BASE + clip.path, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
+  // Elk /dashboard-scherm bepaalt de sessie op de SERVER (dashboard/layout.tsx en de pagina zelf),
+  // dus een sessie die daar niet aankomt stuurt je naar /login vóór er één byte HTML is. Zonder
+  // deze controle levert dat een keurige clip op van het inlogscherm — het soort fout dat je pas
+  // ziet als hij al gepost is.
+  if (clip.auth && /\/login/.test(page.url())) {
+    console.error(`[CLIPS] ✗ ${clip.name}: /dashboard stuurde door naar /login.`);
+    console.error(`[CLIPS]   De browser moet de Supabase-host kunnen bereiken, en SHOT_EMAIL/`);
+    console.error(`[CLIPS]   SHOT_PASSWORD moeten van de DEMO-tenant zijn (seed-demo-account.sql).`);
+    await ctx.close();
+    rmSync(tmp, { recursive: true, force: true });
+    continue;
+  }
   await installCaption(page, "boekbrug.nl");
   const say = sayer(page);
   // De hook staat stil vóór er iets beweegt: dat is de anderhalve seconde waarin iemand besluit

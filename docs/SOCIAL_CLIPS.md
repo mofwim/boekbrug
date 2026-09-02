@@ -28,6 +28,19 @@ verzonnen gegevens voor precies dit doel — dezelfde die Play Console als testa
 SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=BoekBrugDemo2026! npx tsx scripts/record-clips.mts
 ```
 
+Dat levert vier clips extra op: **klaar**, **aangifte**, **bank** en **brug** — de vier schermen
+waar het product zijn belofte waarmaakt.
+
+Twee dingen die je één keer nodig hebt:
+
+```bash
+npm i -D ffmpeg-static     # anders blijven de clips .webm, en dat accepteert Instagram niet
+```
+
+En de sessie wordt op de SERVER bepaald (`dashboard/layout.tsx` en elke pagina zelf), dus de machine
+waar je dit draait moet de Supabase-host kunnen bereiken. Lukt dat niet, dan zegt het script dat met
+zoveel woorden en slaat de dashboard-clips over — het filmt nooit stilletjes het inlogscherm.
+
 Zonder die twee variabelen draaien alleen de vier publieke clips. Die hebben geen account nodig en
 draaien overal — ook op een CI-doos die de Supabase-host niet mag bereiken (inloggen gebeurt in de
 BROWSER, dus die moet erbij kunnen; zie dezelfde noot in `PLAY_STORE_LISTING.md`).
