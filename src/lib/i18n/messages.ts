@@ -4604,6 +4604,31 @@ export const MESSAGES = {
     ar: 'النتائج في كل المجلدات: {count}',
     en: '{count} results in all folders',
   },
+  // [NUMMER-KOPIEREN] Eén tik kopieert een waarde die je anders met de hand moet selecteren.
+  // {wat} is het SOORT waarde en {waarde} de waarde zelf — geen zelfstandig naamwoord middenin een
+  // zin dat per taal anders vervoegt, maar een label en een getal naast elkaar.
+  'kopieer.aria': {
+    nl: '{wat} {waarde} kopiëren',
+    ar: 'نسخ {wat} {waarde}',
+    en: 'Copy {wat} {waarde}',
+  },
+  'kopieer.gelukt': {
+    nl: 'Gekopieerd',
+    ar: 'تم النسخ',
+    en: 'Copied',
+  },
+  'kopieer.mislukt': {
+    nl: 'Kopiëren lukte niet — je kunt het nummer nog wel selecteren.',
+    ar: 'تعذّر النسخ — لا يزال بإمكانك تحديد الرقم يدوياً.',
+    en: 'Copying failed — you can still select the number by hand.',
+  },
+  // Het SOORT waarde, voor de schermlezer. Eigen sleutel per soort: "Factuurnummer" en "IBAN"
+  // vervoegen niet hetzelfde en een van de twee zou in het Arabisch scheef staan.
+  'kopieer.wat.factuurnummer': {
+    nl: 'Factuurnummer',
+    ar: 'رقم الفاتورة',
+    en: 'Invoice number',
+  },
   // [DUBBEL-GEDEKT] Waarom deze regel niet is ingevuld. Vier zinnen, elk een eigen sleutel: een
   // zelfstandig naamwoord in een zin is geen parameter (AGENTS.md), en deze twee gevallen zeggen
   // iets anders — de ene gaat over één factuur, de andere over een hele uitbetaling.
