@@ -25,6 +25,7 @@ import {
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 // [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde — dezelfde pool als de matcher.
 import { judgeBankWait } from "@/lib/bank-waiting-reason";
+import { settledOnly, quotedSettledInvoice, type QuotedInvoiceRow } from "@/lib/bank-quoted-invoice";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 // [GEHEUGEN] The owner's own confirmations, read back — see match-memory.ts for what it means.
 import { loadMatchMemory } from "@/lib/match-memory-server";
@@ -330,8 +331,22 @@ export async function GET() {
     .filter((m) => m.outcome === "none" && (m.transaction.amount ?? 0) < 0 && m.transaction.transactionId)
     .map((m) => m.transaction);
 
-  // …and the paid sweep itself is skipped when there is nothing to explain.
-  const paidInvRows = unexplained.length === 0 ? [] : await fetchAllRows((from, to) =>
+  // [AL-GEBOEKT] …and one more set of lines needs those same paid rows: the ones that DID get a
+  // candidate list. Both explain passes are gated on `outcome === "none"` because of a single
+  // assumption written into this route — *bij een kandidatenlijst is die lijst het antwoord*. That
+  // is true until the list is wrong, which is exactly what a screenshot from /bank showed: a
+  // € 797,86 payment quoting `USTD//2919045/` offered three invoices of € 2.449, € 2.822 and
+  // € 3.008, because invoice 2919045 (€ 797,86, same supplier) was already paid and therefore
+  // ineligible. Confirming one of those books this payment against a different, genuinely open
+  // bill. So a pending debit that quotes anything at all gets the paid rows too — the check itself
+  // is a string test over the SETTLED slice, not another O(n·m) scoring pass ([CIRKEL-PERF]).
+  const quotedCheckNeeded = result.matches.some(
+    (m) =>
+      (m.transaction.amount ?? 0) < 0 &&
+      m.transaction.transactionId &&
+      (m.transaction.reference || m.transaction.description),
+  );
+  const paidInvRows = unexplained.length === 0 && !quotedCheckNeeded ? [] : await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
       // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
@@ -374,6 +389,9 @@ export async function GET() {
     const c = (m.candidates ?? []).find((cand) => strongExplain(cand.signals, isReceipt(cand.invoiceId)));
     return c ? { invoiceId: c.invoiceId } : null;
   };
+
+  // [AL-GEBOEKT] The settled slice, built once for every line rather than per line.
+  const settledForQuote = settledOnly((paidInvRows ?? []) as QuotedInvoiceRow[]);
 
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0 && unexplained.length > 0) {
@@ -514,6 +532,21 @@ export async function GET() {
                 description: m.transaction.description,
               },
               invoices,
+            )
+          : null,
+      // [AL-GEBOEKT] The invoice this payment NAMES, when that invoice exists and is already
+      // settled. Not a candidate and never confirmable: it is the answer to "why is nothing here
+      // right", and the screen shows it INSTEAD of the chooser. Computed for every pending debit,
+      // including the ones that have candidates — those are the dangerous ones.
+      quotedSettled:
+        (m.transaction.amount ?? 0) < 0 && !isLinked
+          ? quotedSettledInvoice(
+              {
+                amount: m.transaction.amount,
+                reference: m.transaction.reference,
+                description: m.transaction.description,
+              },
+              settledForQuote,
             )
           : null,
       // [BANK-SUM-SUGGEST] Unique same-supplier sum tie (or null). Suggestion only — see above.

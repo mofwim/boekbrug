@@ -3768,6 +3768,80 @@ export const MESSAGES = {
     ar: 'أي جزء يخص {number}؟',
     en: 'Which part belongs on {number}?',
   },
+  // [WAAROM-DEZE] De zes signalen die de kaart wél berekende en niet kon tonen. WHY_KEY dekte er
+  // vier van de tien, dus juist de STERKSTE redenen (het rekeningnummer, het geheugen van de
+  // ondernemer zelf) waren onzichtbaar en een kandidaat leek op "datum dichtbij" te zijn gekozen.
+  // Dat is [NO-SILENT-EMPTY] toegepast op een uitleg: de reden bestond, werd berekend, en kwam er
+  // als de zwakste beschikbare uit.
+  'bank.why.iban': {
+    nl: 'zelfde rekeningnummer', ar: 'رقم الحساب نفسه', en: 'same account number', tr: 'aynı hesap numarası',
+  },
+  'bank.why.supplierIban': {
+    nl: 'rekening van deze leverancier', ar: 'حساب هذا المورّد', en: "this supplier's account", tr: 'bu tedarikçinin hesabı',
+  },
+  'bank.why.memory': {
+    nl: 'zo koppelde je het eerder', ar: 'هكذا ربطتها سابقاً', en: 'you linked it this way before', tr: 'daha önce böyle eşleştirdiniz',
+  },
+  'bank.why.prepared': {
+    nl: 'je zette deze factuur klaar om te betalen', ar: 'جهّزت هذه الفاتورة للدفع', en: 'you queued this invoice for payment', tr: 'bu faturayı ödemeye hazırladınız',
+  },
+  'bank.why.nearAmount': {
+    nl: 'bedrag ligt dicht bij het openstaande', ar: 'المبلغ قريب من المتبقّي', en: 'amount is close to the open one', tr: 'tutar açık tutara yakın',
+  },
+  'bank.why.partialAmount': {
+    nl: 'kleiner dan het openstaande bedrag', ar: 'أقل من المبلغ المتبقّي', en: 'smaller than the open amount', tr: 'açık tutardan küçük',
+  },
+  // [WAAROM-DEZE] En de kop van de kiezer, als GEEN kandidaat op bedrag matcht. "Meerdere facturen
+  // passen bij deze betaling" is dan onwaar: ze staan open bij dezelfde partij, meer niet.
+  'bank.vergelijkGeenBedrag': {
+    nl: 'Geen van deze facturen heeft dit bedrag. Ze staan wel open bij dezelfde leverancier — kies alleen als je zeker weet welke erbij hoort.',
+    ar: 'لا توجد فاتورة بهذا المبلغ. لكنها مفتوحة لدى المورّد نفسه — لا تختر إلا إذا كنت متأكداً.',
+    en: 'None of these invoices has this amount. They are open with the same supplier — only choose if you are sure which one belongs to it.',
+    tr: 'Bu faturaların hiçbiri bu tutarda değil. Aynı tedarikçide açıklar — yalnızca hangisinin ait olduğundan eminseniz seçin.',
+  },
+  // [AL-GEBOEKT] De betaling noemt een factuur die al is afgeboekt.
+  'bank.alGeboekt.titel': {
+    nl: 'Deze betaling hoort bij een factuur die al is afgeboekt',
+    ar: 'هذه الدفعة تخصّ فاتورة مُرحّلة بالفعل',
+    en: 'This payment belongs to an invoice that is already booked',
+    tr: 'Bu ödeme, hâlihazırda işlenmiş bir faturaya ait',
+  },
+  'bank.alGeboekt.regel': {
+    nl: 'Factuur {nummer} · {partij}',
+    ar: 'فاتورة {nummer} · {partij}',
+    en: 'Invoice {nummer} · {partij}',
+    tr: 'Fatura {nummer} · {partij}',
+  },
+  'bank.alGeboekt.zelfdeBedrag': {
+    nl: 'Het bedrag komt tot op de cent overeen. Er valt hier niets te kiezen — controleer alleen of deze factuur niet twee keer is betaald.',
+    ar: 'المبلغ مطابق حتى السنت. لا يوجد ما تختاره هنا — تحقّق فقط من أن الفاتورة لم تُدفع مرتين.',
+    en: 'The amount agrees to the cent. There is nothing to choose here — just check that this invoice was not paid twice.',
+    tr: 'Tutar kuruşuna kadar aynı. Burada seçilecek bir şey yok — yalnızca faturanın iki kez ödenmediğini kontrol edin.',
+  },
+  'bank.alGeboekt.anderBedrag': {
+    nl: 'Het bedrag van deze betaling is anders dan dat van de factuur. Mogelijk een deelbetaling of een tweede termijn — kijk zelf welke van de twee klopt.',
+    ar: 'مبلغ هذه الدفعة يختلف عن مبلغ الفاتورة. قد تكون دفعة جزئية أو قسطاً ثانياً — تحقّق أيّهما الصحيح.',
+    en: 'This payment is for a different amount than the invoice. Possibly an instalment or a second term — check which of the two is right.',
+    tr: 'Bu ödemenin tutarı faturadan farklı. Taksit veya ikinci bir ödeme olabilir — hangisinin doğru olduğunu kontrol edin.',
+  },
+  'bank.alGeboekt.verwerkt': {
+    nl: 'Je boekhouder heeft deze factuur al verwerkt. Neem contact op voordat je hier iets verandert.',
+    ar: 'محاسبك عالج هذه الفاتورة بالفعل. تواصل معه قبل تغيير أي شيء هنا.',
+    en: 'Your accountant has already processed this invoice. Contact them before changing anything here.',
+    tr: 'Muhasebeciniz bu faturayı zaten işledi. Burada bir şey değiştirmeden önce onunla görüşün.',
+  },
+  'bank.alGeboekt.waaromGeenKeuze': {
+    nl: 'Daarom staan er geen facturen om uit te kiezen: de andere facturen van deze leverancier horen bij andere betalingen.',
+    ar: 'لهذا لا توجد فواتير للاختيار: فواتير هذا المورّد الأخرى تخصّ دفعات أخرى.',
+    en: 'That is why no invoices are offered: this supplier\'s other invoices belong to other payments.',
+    tr: 'Bu yüzden seçilecek fatura yok: bu tedarikçinin diğer faturaları başka ödemelere ait.',
+  },
+  'bank.alGeboekt.bekijk': {
+    nl: 'Bekijk factuur',
+    ar: 'عرض الفاتورة',
+    en: 'View invoice',
+    tr: 'Faturayı görüntüle',
+  },
   'bank.why.amount': {
     nl: 'bedrag komt overeen',
     ar: 'المبلغ مطابق',

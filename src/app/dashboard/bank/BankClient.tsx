@@ -184,6 +184,13 @@ interface Suggestion {
   // [WAAROM-WACHT-BANK] Machinecode van de server: waarom deze regel niets vond. Null wanneer er
   // niets eerlijks te zeggen valt, en dan zegt de kaart niets — zie bank-waiting-reason.ts.
   waitReason?: string | null
+  // [AL-GEBOEKT] De factuur die deze betaling NOEMT, wanneer die al is afgeboekt. Geen kandidaat en
+  // niet te bevestigen: dit is het antwoord op "waarom klopt er hier niets", en het vervangt de
+  // kiezer in plaats van eronder te staan — zie bank-quoted-invoice.ts.
+  quotedSettled?: {
+    invoiceId: string; invoiceNumber: string; amount: number | null
+    clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
+  } | null
 }
 interface MatchResponse {
   ok: boolean
@@ -3563,18 +3570,32 @@ export function TxCard({
         </div>
       )}
 
-      {!wasMulti && s.outcome === 'auto' && s.best && (
+      {!wasMulti && !s.quotedSettled && s.outcome === 'auto' && s.best && (
         <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} />
       )}
 
-      {!wasMulti && s.outcome === 'choice' && (
+      {/* [AL-GEBOEKT] Deze betaling noemt een factuur die al is afgeboekt. Dan is er niets te
+          kiezen, en een kiezer tónen is hier het gevaar: elke kandidaat eronder is een ANDERE,
+          nog openstaande factuur, en bevestigen zou die als betaald wegzetten met geld dat er
+          niet voor was. De kiezer verdwijnt dus; deze zin komt ervoor in de plaats. */}
+      {!wasMulti && s.quotedSettled && (
+        <AlGeboektKaart q={s.quotedSettled} onOpenFile={onOpenFile} />
+      )}
+
+      {!wasMulti && !s.quotedSettled && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
               invoice number to match on (e.g. a recurring incasso), so several invoices
               fit. Comparing bedrag + datum is how the owner picks the right one — the old
               bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
+          {/* [WAAROM-DEZE] "Meerdere facturen passen bij deze betaling" is een bewering, en hij is
+              onwaar zodra geen enkele kandidaat op BEDRAG matcht — dan staan er facturen van
+              dezelfde leverancier, meer niet. Dat verschil is precies wat een ondernemer met een
+              schermafbeelding kwam melden. */}
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
-            {t('bank.vergelijk')} <strong>{t('bank.vergelijkBedrag')}</strong> {t('bank.vergelijkEn')} <strong>{t('bank.vergelijkDatum')}</strong> {t('bank.vergelijkKies')}
+            {s.candidates.some((c) => Array.isArray(c.signals) && c.signals.includes('amount'))
+              ? <>{t('bank.vergelijk')} <strong>{t('bank.vergelijkBedrag')}</strong> {t('bank.vergelijkEn')} <strong>{t('bank.vergelijkDatum')}</strong> {t('bank.vergelijkKies')}</>
+              : t('bank.vergelijkGeenBedrag')}
           </div>
           {s.candidates.map((c) => {
             const isSel = selectedInvoiceId === c.invoiceId
@@ -3680,12 +3701,78 @@ function fmtInvoiceDate(iso: string | null): string {
 // [BANK-CHOICE-CLARITY] Plain-language reason a candidate is offered, from the engine's own
 // match signals — so "why is this here?" is answered instead of a bare invoice number.
 // [TAAL] Keys, not sentences: the module is shared, the language belongs to the caller's `t`.
+// [WAAROM-DEZE] Alle TIEN signalen, en dat aantal is het punt. Deze tabel had er vier, dus een
+// kandidaat die op het REKENINGNUMMER van de leverancier was gevonden — het sterkste bewijs dat er
+// is na een factuurnummer — toonde alleen "datum dichtbij", de zwakste reden in de rij. Zo ontstaat
+// precies de indruk die een ondernemer met een schermafbeelding kwam melden: dat het scherm maar
+// wat aanbiedt. De reden was er wel, hij werd berekend, en hij kwam er niet uit.
+//
+// Een nieuw signaal in bank-matching.ts zonder regel hier valt terug op stilte; de poort
+// [WAAROM-DEZE] in lifecycle-gates houdt de twee lijsten daarom tegen elkaar aan.
 const WHY_KEY = {
   amount: 'bank.why.amount',
   counterpart: 'bank.why.counterpart',
   date: 'bank.why.date',
   reference: 'bank.why.reference',
+  iban: 'bank.why.iban',
+  supplier_iban: 'bank.why.supplierIban',
+  memory: 'bank.why.memory',
+  prepared: 'bank.why.prepared',
+  near_amount: 'bank.why.nearAmount',
+  partial_amount: 'bank.why.partialAmount',
 } as const
+
+// [AL-GEBOEKT] De kaart die in de plaats komt van de kiezer.
+//
+// Waarom dit een KAART is en geen chip onder de kandidaten: het is geen extra hint bij een keuze,
+// het is het bericht dat de keuze niet bestaat. Onder de oude kiezer stonden alleen andere,
+// openstaande facturen van dezelfde leverancier — en een tik daarop boekt deze betaling op een
+// rekening die niemand betaald heeft. Zo'n knop hoort er niet naast te staan.
+//
+// [TAAL] Alle tekst uit messages.ts; dit component draagt geen eigen taal.
+function AlGeboektKaart({
+  q, onOpenFile,
+}: {
+  q: NonNullable<Suggestion['quotedSettled']>
+  onOpenFile?: (invoiceId: string) => void
+}) {
+  const t = translator(useLocale())
+  const uitleg = q.lockedByAccountant
+    ? t('bank.alGeboekt.verwerkt')
+    : q.amountAgrees
+      ? t('bank.alGeboekt.zelfdeBedrag')
+      : t('bank.alGeboekt.anderBedrag')
+  return (
+    <div style={{
+      marginTop: 10, padding: '12px 14px', borderRadius: 12,
+      background: '#e8f0fe', border: '1px solid #c6dafc',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#174ea6', marginBottom: 4 }}>
+        {t('bank.alGeboekt.titel')}
+      </div>
+      <div style={{ fontSize: 13, color: '#202124', marginBottom: 6 }}>
+        {t('bank.alGeboekt.regel', { nummer: q.invoiceNumber, partij: q.clientName ?? '' })}
+        {q.amount != null && ` · ${eur.format(Math.abs(q.amount))}`}
+      </div>
+      <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5, marginBottom: 4 }}>{uitleg}</div>
+      <div style={{ fontSize: 12, color: '#5f6368', lineHeight: 1.5 }}>
+        {t('bank.alGeboekt.waaromGeenKeuze')}
+      </div>
+      {onOpenFile && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpenFile(q.invoiceId) }}
+          style={{
+            marginTop: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            color: '#1a73e8', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+          }}
+        >
+          {t('bank.alGeboekt.bekijk')}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void }) {
   const t = translator(useLocale())

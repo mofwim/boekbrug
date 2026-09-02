@@ -13019,6 +13019,58 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
   }
 });
 
+test("[WAAROM-DEZE] elk matchsignaal kan op het bankscherm worden uitgelegd", () => {
+  // Gemeld met een schermafbeelding: kandidaten die "maar wat" leken. Eén oorzaak daarvan was dat
+  // WHY_KEY vier van de tien signalen kende. Een kandidaat die op het rekeningnummer van de
+  // leverancier was gevonden — sterker bewijs bestaat er niet, op een factuurnummer na — toonde
+  // alleen "datum dichtbij". De uitleg bestond, werd berekend, en kwam er als de zwakste
+  // beschikbare uit; dat is [NO-SILENT-EMPTY] op een uitleg in plaats van op een fout.
+  //
+  // Afgeleid uit het type, niet uit een lijst ernaast: dat is de derde keer vandaag dat een
+  // handmatig bijgehouden lijst naast een automatische regel verlopen bleek.
+  const bron = code("src/lib/bank-matching.ts");
+  const blok = bron.slice(bron.indexOf("export type MatchSignal ="));
+  const signalen = [...blok.slice(0, blok.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(signalen.length >= 10, `de scan vond maar ${signalen.length} signalen — leest hij het type nog?`);
+
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  const tabel = scherm.slice(scherm.indexOf("const WHY_KEY = {"));
+  const gedekt = new Set([...tabel.slice(0, tabel.indexOf("} as const")).matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]));
+
+  const ongedekt = signalen.filter((sig) => !gedekt.has(sig));
+  assert.deepEqual(ongedekt, [],
+    `deze matchsignalen kan het bankscherm niet uitleggen: ${ongedekt.join(", ")}. Een kandidaat die ` +
+    "op zo'n reden is gevonden toont dan de zwakste reden die hij toevallig óók heeft, en leest als " +
+    "een gok. Zet ze in WHY_KEY met een zin in messages.ts");
+
+  // …en elke sleutel die WHY_KEY noemt moet bestaan, anders staat er straks een sleutel op het scherm.
+  for (const sleutel of [...tabel.slice(0, tabel.indexOf("} as const")).matchAll(/'(bank\.why\.[A-Za-z]+)'/g)].map((m) => m[1])) {
+    assert.match(code("src/lib/i18n/messages.ts"), new RegExp(`'${sleutel.replace(/\./g, "\\.")}'`),
+      `${sleutel} staat in WHY_KEY maar niet in messages.ts`);
+  }
+});
+
+test("[AL-GEBOEKT] de kiezer staat uit zodra de betaling een afgeboekte factuur noemt", () => {
+  // De gevaarlijke helft van de melding: onder de kop stonden facturen van dezelfde leverancier die
+  // NIET bij deze betaling hoorden. Eén tik boekt dan een openstaande rekening af met geld dat er
+  // niet voor was. De render-test tests/render/bank-al-geboekt.test.tsx bewijst het gedrag; deze
+  // poort houdt de bedrading vast, want die is met één weggehaalde `!` weer stuk.
+  // Per REGEL, en niet met indexOf over het hele bestand: de eerste versie hiervan vond
+  // `s.outcome === 'choice'` in een filter zeshonderd regels hoger en keek dáár terug. Hij faalde
+  // dus op correcte code — precies de poort die wordt weggeklikt en daarna niets meer bewaakt.
+  const regels = code("src/app/dashboard/bank/BankClient.tsx").split("\n");
+  const takken = regels.filter((r) => /s\.outcome === '(choice|auto)'/.test(r) && r.includes("&& ("));
+  assert.ok(takken.length >= 2, `maar ${takken.length} rendertakken gevonden — is de kaart herschreven?`);
+  for (const tak of takken) {
+    assert.match(tak, /!s\.quotedSettled/,
+      `deze rendertak kijkt niet of de betaling een al afgeboekte factuur noemt, dus de kiezer komt ` +
+      `terug: ${tak.trim().slice(0, 80)}`);
+  }
+  // En de server moet het veld überhaupt sturen.
+  assert.match(code("src/app/api/bank/match/route.ts"), /quotedSettled:/,
+    "de matchroute stuurt quotedSettled niet meer mee — dan staat de kiezer er in productie weer");
+});
+
 test("[RLS-AAN] een migratie die een tabel maakt, zet er row level security op", () => {
   // Gemeten op productie op 2 september, als het demoaccount met een openbaar wachtwoord:
   //   · 612 facturen in de database, 17 zichtbaar, 0 van iemand anders;

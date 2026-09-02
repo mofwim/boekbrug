@@ -933,8 +933,28 @@ export function deriveDueDate(
   termDays: number | null | undefined
 ): string | null {
   // 1. Explicit due date wins — normalize whatever shape the AI returned.
+  //
+  // [VERVALDATUM-ONMOGELIJK] …but only when it is possible. A due date BEFORE the invoice date
+  // cannot be a due date: nobody is asked to pay a bill before it is written.
+  //
+  // Gemeten op productie: 36 facturen stonden zo in de administratie, alle 36 van één leverancier,
+  // wekelijks, met de vervaldatum stelselmatig precies 4 of 5 dagen vóór de factuurdatum. Dat is
+  // geen ruis maar één documentindeling die verkeerd wordt gelezen — vrijwel zeker de leverdatum of
+  // het einde van de leverweek, die op dat papier bovenaan staat waar op ander papier de
+  // vervaldatum staat. Deze functie nam dat over zoals het kwam.
+  //
+  // Het gevolg staat op het scherm van de ondernemer: 36 rekeningen die zichzelf als te laat
+  // aanmelden op de dag dat ze binnenkomen. Wie daar vaak genoeg op kijkt en ziet dat het niet
+  // klopt, kijkt op een dag ook langs de rekening die wél te laat is.
+  //
+  // Welke van de twee datums fout is, valt hier niet uit te maken — maar de factuurdatum draagt
+  // meer: hij bepaalt het BTW-tijdvak en wordt elders al gecontroleerd. Dus de vervaldatum
+  // sneuvelt, en de betaaltermijn hieronder krijgt alsnog zijn kans. Levert die niets op, dan is
+  // het antwoord "geen vervaldatum" — precies wat stap 3 hieronder al voorschrijft: liever niets
+  // zeggen dan iets verzinnen.
   const explicit = normalizeToIso(dueDateRaw)
-  if (explicit) return explicit
+  const baseForSanity = normalizeToIso(invoiceDateIso)
+  if (explicit && !(baseForSanity && explicit < baseForSanity)) return explicit
 
   // 2. Compute from invoice_date + term when both are usable.
   const baseIso = normalizeToIso(invoiceDateIso)
