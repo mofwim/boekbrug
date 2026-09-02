@@ -985,7 +985,7 @@ To take the measurement, on a machine that can reach the database:
 
 ```bash
 npx next build && npx next start -p 3100
-CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/verify-live-chain.mts
+CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=… npx tsx scripts/verify-live-chain.mts
 ```
 
 Exit 0 means the live app and the rows underneath it agree. Exit 1 names what disagreed, and where
