@@ -32,6 +32,65 @@ test("[WAAROM-WACHT-BANK] a quoted number nowhere in the administration is named
     "even with an invoice at exactly this amount, a quoted unknown number is the better answer");
 });
 
+// ── De regels waarop dit de eerste keer fout ging ──────────────────────────────────────────────
+//
+// De eerste versie vroeg alleen "noemt de betaling een nummer, en is dat nummer onbekend". Tegen de
+// productiedatabase gehouden vuurde dat op vrijwel alles: isReferenceNumberToken accepteert elk
+// token van vier tekens met een cijfer erin. Deze vier regels komen letterlijk uit die database, en
+// bij alle vier zou het scherm hebben gezegd "je hebt deze factuur nog niet toegevoegd" — over een
+// belastingbetaling, een pensioenpremie, een waterrekening en de huur. Niet vaag: onwaar.
+
+test("[WAAROM-WACHT-BANK] a Belastingdienst payment reference is not a missing invoice", () => {
+  const r = judgeBankWait(
+    regel({ counterpartName: "Belastingdienst", counterpartIban: "NL86INGB0002445588",
+            reference: "2583366276601070", amount: -952 }),
+    [factuur()],
+  );
+  assert.notEqual(r, "reference_not_in_administration",
+    "a betalingskenmerk is not an invoice number, and no invoice for it will ever exist");
+  assert.equal(r, "counterparty_unknown_here",
+    "…and the sentence that IS true here is the one about rent, a loan or a category");
+});
+
+test("[WAAROM-WACHT-BANK] a pension fund, a water company and a landlord get the same answer", () => {
+  const gevallen: Array<[string, string, string]> = [
+    ["Stichting Bedrijfstakpensioenfonds", "E100732098, PN000026665", "een pensioenregeling"],
+    ["Brabant Water N.V.", "610015412, 5049NM", "een klantnummer plus een postcode"],
+    ["atalantix vastgoed cv", "Kiwi food market", "de huurder zijn eigen naam als kenmerk"],
+    ["Joybuy", "7180154135428871, 1058102890000040830", "bestelnummers van een marktplaats"],
+  ];
+  for (const [naam, kenmerk, wat] of gevallen) {
+    const r = judgeBankWait(
+      regel({ counterpartName: naam, counterpartIban: "NL02RABO0999888777", reference: kenmerk, amount: -300 }),
+      [factuur()],
+    );
+    assert.notEqual(r, "reference_not_in_administration",
+      `${wat} (${naam}) is not an invoice number — accusing the owner of a missing invoice here is false`);
+  }
+});
+
+test("[WAAROM-WACHT-BANK] but a supplier we DO hold invoices from is still named", () => {
+  // De regel moet nog steeds vuren waar hij verdedigbaar is: van deze partij staan facturen open,
+  // en de betaling noemt een nummer dat daar niet bij zit.
+  const r = judgeBankWait(
+    regel({ counterpartName: "Hano Groothandel B.V.", reference: "26702781", amount: -450 }),
+    [factuur({ invoice_number: "2026001", total_inc_btw: 450 })],
+  );
+  assert.equal(r, "reference_not_in_administration");
+});
+
+test("[WAAROM-WACHT-BANK] a settled-up supplier stays silent rather than guessing", () => {
+  // Bewust conservatief: een leverancier waarvan toevallig alles betaald is, staat niet in de open
+  // pool, dus een échte ontbrekende factuur van hem blijft ongenoemd. Zwijgen is hier de goede
+  // fout; een valse beschuldiging niet.
+  const r = judgeBankWait(
+    regel({ counterpartName: "Alles Betaald B.V.", counterpartIban: "NL02RABO0111222333",
+            reference: "99887766", amount: -450 }),
+    [factuur()],
+  );
+  assert.notEqual(r, "reference_not_in_administration");
+});
+
 test("[WAAROM-WACHT-BANK] a quoted number that IS known is not a missing invoice", () => {
   const r = judgeBankWait(
     regel({ reference: "2026001", amount: -999 }),
