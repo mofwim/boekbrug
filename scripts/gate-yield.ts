@@ -253,7 +253,11 @@ async function main() {
   for (const g of UNMEASURABLE) console.log(`         ${g}\n           ${GATES[g]}`)
   console.log(`\n  The overall AI confidence lives only in memory at import time. Whether these gates`)
   console.log(`  earn their keep is a real question; this script is simply not the instrument that`)
-  console.log(`  can answer it. Persisting the score would make them measurable.`)
+  console.log(`  can answer it — but from 01-09-2026 another one is. [WAAROM-VASTGEHOUDEN] stores the`)
+  console.log(`  REFUSAL ITSELF on the row (field_confidence._auto_hold.reason), so the two confidence`)
+  console.log(`  gates are now countable from the moment they fire, without a replay and without the`)
+  console.log(`  score. See the "Waarom kost dit handwerk" panel on /dashboard/beheer. Rows imported`)
+  console.log(`  before that date carry no reason and are counted apart there, never guessed at.`)
 
   console.log(`\n  Caveat, stated rather than hidden: the document-KIND flags (statement / reminder /`)
   console.log(`  credit note) are not all recoverable from a stored row, so their gates are`)

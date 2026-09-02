@@ -16,6 +16,7 @@ import { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } from 'pdf-lib'
 import {
   extractEmbeddedInvoiceXml,
   extractEmbeddedInvoiceXmlDetailed, parseEInvoice, eInvoiceContradicts, looksLikeInvoiceXml,
+  isEuroDocument,
   eInvoiceSettlesAmounts,
 } from './e-invoice'
 
@@ -544,4 +545,121 @@ test('[LEES] a factur-x.xml that will not inflate is REPORTED present, never sil
   const leeg = await extractEmbeddedInvoiceXmlDetailed(Buffer.from(await plain.save()))
   assert.equal(leeg.xml, null)
   assert.equal(leeg.unreadablePresent, false)
+})
+
+test('[VOORUITBETALING] a deposit already paid does not shrink the voorbelasting', () => {
+  // A conformant Peppol invoice with a EUR 200 deposit on it. EN 16931 keeps the two figures
+  // apart on purpose:
+  //   BR-CO-15  TaxInclusiveAmount = TaxExclusiveAmount + TaxAmount        1210 = 1000 + 210
+  //   BR-CO-16  PayableAmount      = TaxInclusiveAmount - PrepaidAmount    1010 = 1210 -  200
+  // This parser preferred the PAYABLE and defined the tax as payable - ex, so it read btw 10 on an
+  // invoice that states 210 — EUR 200 of deductible BTW gone from rubriek 5b, on a document that
+  // stands the money gates down and auto-books, so no human ever sees the figure.
+  const withDeposit = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <cbc:ID>F-2026-88</cbc:ID>
+  <cbc:IssueDate>2026-03-10</cbc:IssueDate>
+  <cac:AccountingSupplierParty><cac:Party><cbc:ID>NL001234567B01</cbc:ID></cac:Party></cac:AccountingSupplierParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">1000.00</cbc:TaxExclusiveAmount>
+    <cbc:TaxInclusiveAmount currencyID="EUR">1210.00</cbc:TaxInclusiveAmount>
+    <cbc:PrepaidAmount currencyID="EUR">200.00</cbc:PrepaidAmount>
+    <cbc:PayableAmount currencyID="EUR">1010.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  const got = parseEInvoice(withDeposit)
+  assert.equal(got?.totalExBtw, 1000)
+  assert.equal(got?.btwAmount, 210, 'the BTW the supplier states, not the payable minus the net')
+  assert.equal(got?.totalIncBtw, 1210, 'the invoice gross, not what is left to pay')
+
+  // A larger deposit used to flip the sign on an ordinary purchase invoice.
+  const bigger = parseEInvoice(withDeposit.replace('200.00', '500.00').replace('1010.00', '710.00'))
+  assert.equal(bigger?.btwAmount, 210, 'a bigger deposit is still not negative BTW')
+  assert.equal(bigger?.totalIncBtw, 1210)
+})
+
+test('[VOORUITBETALING] a producer that omits BT-112 is still read exactly', () => {
+  // Not conformant, but readable: BR-CO-16 run backwards recovers the gross from the payable.
+  const noInclusive = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <cbc:ID>F-2026-89</cbc:ID>
+  <cbc:IssueDate>2026-03-10</cbc:IssueDate>
+  <cac:AccountingSupplierParty><cac:Party><cbc:ID>NL001234567B01</cbc:ID></cac:Party></cac:AccountingSupplierParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">1000.00</cbc:TaxExclusiveAmount>
+    <cbc:PrepaidAmount currencyID="EUR">200.00</cbc:PrepaidAmount>
+    <cbc:PayableAmount currencyID="EUR">1010.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  assert.equal(parseEInvoice(noInclusive)?.btwAmount, 210)
+  assert.equal(parseEInvoice(noInclusive)?.totalIncBtw, 1210)
+})
+
+test('[VOORUITBETALING] a rounding line moves the payable, not the invoice', () => {
+  // BR-CO-16 has a third term: PayableAmount = TaxInclusiveAmount - PrepaidAmount + Rounding.
+  // A supplier who rounds the amount due to whole cents (or to 0,05 in some templates) states it
+  // in BT-114, and the reconstruction has to SUBTRACT it. Nothing exercised that sign until a
+  // negative control flipped it and every test still passed — so the line was unproven.
+  const rounded = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <cbc:ID>F-2026-90</cbc:ID>
+  <cbc:IssueDate>2026-03-10</cbc:IssueDate>
+  <cac:AccountingSupplierParty><cac:Party><cbc:ID>NL001234567B01</cbc:ID></cac:Party></cac:AccountingSupplierParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxExclusiveAmount currencyID="EUR">1000.00</cbc:TaxExclusiveAmount>
+    <cbc:PayableRoundingAmount currencyID="EUR">0.03</cbc:PayableRoundingAmount>
+    <cbc:PayableAmount currencyID="EUR">1210.03</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`
+  assert.equal(parseEInvoice(rounded)?.totalIncBtw, 1210, 'the three cents belong to the payment, not the invoice')
+  assert.equal(parseEInvoice(rounded)?.btwAmount, 210)
+
+  // And both terms at once, which is the case that gets the signs wrong if either is guessed.
+  const both = rounded
+    .replace('<cbc:PayableRoundingAmount currencyID="EUR">0.03</cbc:PayableRoundingAmount>',
+             '<cbc:PrepaidAmount currencyID="EUR">200.00</cbc:PrepaidAmount>\n    <cbc:PayableRoundingAmount currencyID="EUR">0.03</cbc:PayableRoundingAmount>')
+    .replace('1210.03', '1010.03')
+  assert.equal(parseEInvoice(both)?.totalIncBtw, 1210)
+  assert.equal(parseEInvoice(both)?.btwAmount, 210)
+})
+
+test('[VOORUITBETALING] the ordinary invoice — no deposit, no rounding — is untouched', () => {
+  // The whole point of the change is that it moves nothing on a normal file: with no PrepaidAmount
+  // and no PayableRoundingAmount, BR-CO-16 says the payable IS the gross.
+  const plain = ubl({ inc: '1210.00', ex: '1000.00' })
+  const got = parseEInvoice(plain)
+  assert.equal(got?.totalExBtw, 1000)
+  assert.equal(got?.btwAmount, 210)
+  assert.equal(got?.totalIncBtw, 1210)
+})
+
+test('[EURO-ALLEEN] the rule is one rule, and it is the one both doors use', () => {
+  // An absent currency is accepted — some producers omit the attribute, and a Dutch supplier
+  // billing a Dutch customer in euros is what that almost always means.
+  assert.equal(isEuroDocument(null), true)
+  assert.equal(isEuroDocument(undefined), true)
+  assert.equal(isEuroDocument(''), true)
+  assert.equal(isEuroDocument('   '), true)
+  // A STATED euro, in any casing or with the whitespace a producer leaves in.
+  assert.equal(isEuroDocument('EUR'), true)
+  assert.equal(isEuroDocument('eur'), true)
+  assert.equal(isEuroDocument(' EUR '), true)
+  // Everything else is a currency this app cannot book.
+  for (const cur of ['USD', 'SEK', 'GBP', 'CHF', 'usd', 'DKK', 'NOK', 'PLN']) {
+    assert.equal(isEuroDocument(cur), false, `${cur} is not euro`)
+  }
+})
+
+test('[EURO-ALLEEN] a foreign-currency invoice is refused, not booked at the same number', () => {
+  // Measured before this: USD 10.000 was refused by parseEInvoice and booked as EUR 10.000 by the
+  // standalone-.xml door — including its voorbelasting, claimed in rubriek 5b at a euro amount
+  // nobody ever paid. The amounts are internally consistent and the file validates against Peppol,
+  // so nothing else in the building can catch it.
+  const foreign = (cur: string) => ubl({ inc: '10000.00', ex: '10000.00', cur })
+  assert.equal(parseEInvoice(foreign('USD')), null)
+  assert.equal(parseEInvoice(foreign('SEK')), null)
+  assert.equal(parseEInvoice(foreign('GBP')), null)
+  // …and the euro one still reads exactly as before.
+  const euro = parseEInvoice(foreign('EUR'))
+  assert.equal(euro?.totalIncBtw, 10000)
 })

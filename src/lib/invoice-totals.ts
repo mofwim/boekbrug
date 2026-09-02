@@ -32,7 +32,16 @@ export type BtwRate = (typeof BTW_RATES)[number];
  * ernaar te vragen, niet te gokken.
  */
 export function isValidBtwRate(rate: unknown): rate is BtwRate {
-  if (rate == null || rate === "") return false;
+  // [TARIEF-STRIKT] The header above names three values that must not pass — null, undefined and
+  // "" — and the guard used to name exactly those. That is one short of the problem: Number()
+  // turns `" "`, `[]` and `false` into 0 as well, and 0 is a REAL rate. Measured: all three were
+  // accepted as a legal 0% tarief by this very function.
+  //
+  // So the question is not "which values do I know to refuse" but "what IS a rate": a number (a
+  // JSON body, a database row) or the text of one (a form field). Nothing else — and that closes
+  // the class instead of naming three more members of it.
+  if (typeof rate !== "number" && typeof rate !== "string") return false;
+  if (typeof rate === "string" && rate.trim() === "") return false;
   const n = Number(rate);
   return Number.isFinite(n) && (BTW_RATES as readonly number[]).includes(n);
 }

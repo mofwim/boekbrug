@@ -377,6 +377,74 @@ export function groundingText(g: MoneyGrounding): string | null {
  * it blocks nothing. A malformed blob must never invent a refusal any more than it may invent an
  * approval.
  */
+/**
+ * [GEGROND-STAAT-IN] Are ALL THREE money figures literally printed in the document's own text?
+ *
+ * ── WHY THIS QUESTION EXISTS, AND WHY IT IS ASKED SO NARROWLY ──
+ *
+ * Measured in production over two months on one shop: of 265 incoming documents the app held back,
+ * 246 cleared the confidence bar on vendor, date AND invoice number, only 21 carried any warning
+ * flag at all — and 182 had NO per-amount confidence from the model whatsoever. The reader knew
+ * who, when and which number, said nothing was wrong, and the document was held anyway, because
+ * the money gate is fail-closed on a missing score and falls back to demanding a VERY high overall
+ * confidence. That is the gate working exactly as written.
+ *
+ * ── AND THEN THE SAME DATA, BROKEN DOWN BY WEEK, SAID SOMETHING ELSE ──
+ *
+ * All 181 of those documents arrived by e-mail between 5 and 14 July — the fortnight the backlog
+ * was first fed in — and NOT ONE document since 20 July has lacked an amount score. Six weeks, zero.
+ *
+ * So the honest account of this function is: it recovers 44 documents that are already in the
+ * queue, and on that administration its forward effect today is ZERO, because the condition it
+ * answers stopped occurring. It is kept, and it was worth writing, for two reasons and not a third:
+ * a fail-closed gate that refuses on a missing signal will meet a missing signal again the next
+ * time a reader changes, and the rule costs nothing when the signal is present. It is NOT kept
+ * because it is currently saving anybody time. Whoever reads this next should believe the second
+ * paragraph, not the first — the first is what an average over a bulk import looks like.
+ *
+ * The bucket that IS live is different and deliberately left shut: of 34 documents held since
+ * 20 July, 20 carry a real warning flag, 7 have a total the text does not contain, and 14 are
+ * photographs — of which 7 have all three amounts corroborated by the OCR witness and no flag at
+ * all. Admitting that witness here would open those 7 (~60 a year). Narrowing 2 below explains why
+ * it stays shut; this is the price of that decision, stated so it can be argued with.
+ *
+ * The evidence to close that gap was already on the row and unused. `_grounding` records, per
+ * figure, whether that exact number occurs in the characters of the document itself. That is not
+ * the model's opinion of the model — it is the one witness in this whole file that is not.
+ *
+ * ── THE THREE NARROWINGS, EACH ONE LOAD-BEARING ──
+ *
+ * 1. ALL THREE, not the total alone. `verdictBlocksAutoBooking` weighs the total because a total
+ *    the paper does not contain is the dangerous shape. Here the question is the opposite one —
+ *    may we PROCEED — so it takes the strongest form: excl, btw and incl each found. Combined with
+ *    the arithmetic gate that already ran (excl + btw = incl, enforced by classifyImportHealth),
+ *    three independently printed numbers that also add up is a far harder thing to be wrong about
+ *    than one printed number.
+ *
+ * 2. 'text' ONLY — never 'ocr'. The header of this file says it plainly: the OCR witness "is a
+ *    model, from the same family as the extractor… Corroboration, not proof." Letting it stand in
+ *    for the model's own confidence would be the model vouching for itself, which is the precise
+ *    circularity this module exists to break. A missing `source` reads as 'text', because that is
+ *    what those rows were.
+ *
+ * 3. It substitutes for ONE missing signal and widens nothing else. Every other gate — document
+ *    kind, duplicates, the IBAN change, placement, the printed BTW split, the supplier's own
+ *    e-invoice, the overall confidence floor, and the per-field bar on vendor/number/date — runs
+ *    first and unchanged. This does not lower a bar; it accepts a stronger witness in place of an
+ *    absent weaker one.
+ */
+export function moneyGroundedInText(fieldConfidence: unknown): boolean {
+  if (!fieldConfidence || typeof fieldConfidence !== 'object') return false
+  const g = (fieldConfidence as Record<string, unknown>)._grounding
+  if (!g || typeof g !== 'object') return false
+  const b = g as Record<string, unknown>
+  const src = b.source
+  // Absent means 'text' — see the note on MoneyGrounding.source. Anything else, including a value
+  // this build does not recognise, answers no: an unknown witness is not a stronger one.
+  if (!(src === undefined || src === null || src === 'text')) return false
+  return b.totalIncBtw === 'found' && b.totalExBtw === 'found' && b.btwAmount === 'found'
+}
+
 export function groundingOf(fieldConfidence: unknown): GroundingVerdict | null {
   if (!fieldConfidence || typeof fieldConfidence !== 'object') return null
   const g = (fieldConfidence as Record<string, unknown>)._grounding

@@ -79,6 +79,16 @@ export interface AutoAdvanceSignals {
    * not run must never read as one that failed.
    */
   eInvoiceContradicts?: boolean | null;
+  /**
+   * [GEGROND-STAAT-IN] Are excl, btw AND incl each literally printed in the document's own text?
+   *
+   * The one witness in this decision that is not the reader grading itself. It stands in for a
+   * MISSING per-amount confidence and for nothing else — see the block further down, and the long
+   * note on moneyGroundedInText() in amount-grounding.ts for why it is asked this narrowly.
+   *
+   * Optional and defaulting to absent, so every existing caller behaves exactly as it did.
+   */
+  moneyGroundedInText?: boolean | null;
   health: HealthInput; // the same input classifyImportHealth reads
 }
 
@@ -228,9 +238,26 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
     : [];
   // [E-FACTUUR-BESLECHT] Skipped entirely when the supplier settled the amounts — this whole
   // block is the model grading its own reading of the money, and there is no reading to grade.
+  // [GEGROND-STAAT-IN] Set when the DOCUMENT ITSELF, rather than a confidence score, carried the
+  // money. Kept so the booking can say which door it came through — see the reason at the bottom.
+  let grondedInPlaatsVanScore = false;
   if (!amountsSettled) {
     if (moneyScores.length > 0) {
       if (Math.min(...moneyScores) < HIGH_CONF) return { advance: false, reason: "amount_confidence_below_high_bar" };
+    } else if (s.moneyGroundedInText === true) {
+      // [GEGROND-STAAT-IN] No money score, but excl, btw AND incl are each literally printed in the
+      // document's own characters — and classifyImportHealth has already proved they add up.
+      //
+      // This is not a lowered bar. The fallback it replaces asks the MODEL how sure it is about the
+      // whole document; this asks the PAPER about the three numbers that become money, and gets
+      // three yeses that also reconcile. Of the two, the self-report is the weaker witness — that is
+      // the entire argument of amount-grounding.ts, written there before this door existed.
+      //
+      // What still refuses, unchanged and ahead of this line: a total the text does not contain, a
+      // total in the wrong place on the page, a printed BTW split that disagrees, the supplier's own
+      // e-invoice disagreeing, a duplicate, a changed IBAN, a statement, a reminder, a credit note,
+      // an overall confidence under the floor, and any per-field score below the bar.
+      grondedInPlaatsVanScore = true;
     } else if (!(typeof s.confidence === "number" && s.confidence >= VERY_HIGH_OVERALL)) {
       return { advance: false, reason: "no_amount_confidence_and_overall_not_very_high" };
     }
@@ -244,5 +271,9 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
     }
   }
 
-  return { advance: true, reason: "clean_high_confidence" };
+  // Two doors, two names. A booking that leaned on the document instead of on a money score is
+  // countable from that moment on — so "how often did the new door fire, and did any of those come
+  // back as a correction" is a query, not a guess. Widening a money gate without being able to ask
+  // that afterwards is how you find out from a customer instead of from a dashboard.
+  return { advance: true, reason: grondedInPlaatsVanScore ? "clean_grounded_in_document" : "clean_high_confidence" };
 }

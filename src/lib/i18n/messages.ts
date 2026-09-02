@@ -414,6 +414,7 @@ export const MESSAGES = {
   'start.tegel.facturen': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
   'start.tegel.inkomend': { nl: 'Inkomend', ar: 'الوارد', en: 'Incoming' },
   'start.tegel.inkoop': { nl: 'Inkoopfacturen', ar: 'فواتير المشتريات', en: 'Purchase invoices' },
+  'start.tegel.leveranciers': { nl: 'Leveranciers', ar: 'المورّدون', en: 'Suppliers', tr: 'Tedarikçiler' },
   'start.tegel.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'start.tegel.kas': { nl: 'Kas', ar: 'الصندوق', en: 'Cash drawer' },
   'start.cijfers': { nl: 'Cijfers & aangifte', ar: 'الأرقام والإقرار', en: 'Figures & filing' },
@@ -3614,6 +3615,29 @@ export const MESSAGES = {
     ar: 'معاملة بنكية واحدة لم تُصنَّف بعد',
     en: '1 bank transaction not yet categorised',
   },
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er buiten de boeken staat, niet alleen hoeveel regels.
+  // Voor een winkelier is "299 banktransacties" een klus; "€ 266.834 aan uitgaven" is zijn geld —
+  // en dat waren precies de twee getallen bij één eigenaar toen dit werd geschreven.
+  //
+  // UIT en IN blijven apart. financial-result.ts houdt ze om dezelfde reden gescheiden: "€ 10.000
+  // in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist' terwijl het twee
+  // onverklaarde feiten zijn." Aparte zinnen per geval, want een bedrag dat er niet is hoort ook
+  // niet als "€ 0,00" in de zin te staan.
+  'bank.uncatGeld.beide': {
+    nl: 'Daarin staat {uit} aan uitgaven en {in} aan ontvangsten.',
+    ar: 'يشمل ذلك {uit} من المصروفات و{in} من المقبوضات.',
+    en: 'That includes {uit} in payments out and {in} in payments in.',
+  },
+  'bank.uncatGeld.uit': {
+    nl: 'Daarin staat {uit} aan uitgaven.',
+    ar: 'يشمل ذلك {uit} من المصروفات.',
+    en: 'That includes {uit} in payments out.',
+  },
+  'bank.uncatGeld.in': {
+    nl: 'Daarin staat {in} aan ontvangsten.',
+    ar: 'يشمل ذلك {in} من المقبوضات.',
+    en: 'That includes {in} in payments in.',
+  },
   'bank.uncatUitleg': {
     nl: 'Dit geld telt nog niet mee in je winst & verlies en BTW. Geef het een categorie →',
     ar: 'هذا المال لا يُحتسب بعد في ربحك وخسارتك ولا في الضريبة. أعطه تصنيفاً ←',
@@ -4430,6 +4454,29 @@ export const MESSAGES = {
     ar: 'النتائج في كل المجلدات: {count}',
     en: '{count} results in all folders',
   },
+  // [DUBBEL-GEDEKT] Waarom deze regel niet is ingevuld. Vier zinnen, elk een eigen sleutel: een
+  // zelfstandig naamwoord in een zin is geen parameter (AGENTS.md), en deze twee gevallen zeggen
+  // iets anders — de ene gaat over één factuur, de andere over een hele uitbetaling.
+  'cat.alGeboekt.factuur': {
+    nl: 'Een betaalde factuur verklaart dit bedrag al.',
+    ar: 'هناك فاتورة مدفوعة تفسّر هذا المبلغ بالفعل.',
+    en: 'A paid invoice already accounts for this amount.',
+  },
+  'cat.alGeboekt.factuurUitleg': {
+    nl: 'Waarschijnlijk is dit de betaling ervan. Kies alleen een categorie als het echt een tweede uitgave is — anders staat de kost twee keer in je winst & verlies.',
+    ar: 'على الأرجح هذه هي عملية دفعها. لا تختر تصنيفاً إلا إذا كانت فعلاً نفقة ثانية — وإلا ستُسجَّل التكلفة مرتين في أرباحك وخسائرك.',
+    en: 'This is most likely the payment of it. Only pick a category if it really is a second expense — otherwise the cost lands in your profit and loss twice.',
+  },
+  'cat.alGeboekt.mollie': {
+    nl: 'Dit lijkt een uitbetaling van Mollie.',
+    ar: 'يبدو أنّ هذا تحويل من Mollie.',
+    en: 'This looks like a Mollie payout.',
+  },
+  'cat.alGeboekt.mollieUitleg': {
+    nl: 'De facturen die erin zitten staan al als betaald in je boeken. Kies alleen een categorie als je zeker weet dat dit iets anders is.',
+    ar: 'الفواتير التي يشملها مسجَّلة أصلاً كمدفوعة في دفاترك. لا تختر تصنيفاً إلا إذا كنت واثقاً أنّ هذا شيء آخر.',
+    en: 'The invoices inside it are already marked paid in your books. Only pick a category if you are sure this is something else.',
+  },
   'cat.automatisch': {
     nl: 'automatisch ingevuld',
     ar: 'عُبّئت تلقائياً',
@@ -4499,6 +4546,13 @@ export const MESSAGES = {
     nl: 'Onbekende transactie',
     ar: 'معاملة غير معروفة',
     en: 'Unknown transaction',
+  },
+  // [WAAROM-WACHT-CAT] Het label voor een geheugen dat de ANDERE kant op wijst. Kort, want de
+  // hele zin staat eronder — maar niet hetzelfde woord als een geheugen waar de app zeker van is.
+  'cat.onthoudenAndersom': {
+    nl: 'onthouden, maar andersom',
+    ar: 'محفوظة، لكن بالاتجاه المعاكس',
+    en: 'remembered, but the other way',
   },
   'cat.onthouden': {
     nl: 'onthouden',
@@ -13064,6 +13118,11 @@ export const MESSAGES = {
   'bh.fact.foutKiesKlant': { nl: 'Kies eerst voor welke klant je factureert.', ar: 'اختر أولاً العميل الذي تصدر الفاتورة نيابةً عنه.', en: 'First choose which client you are invoicing for.' },
   'bh.fact.foutOntvanger': { nl: 'Vul in aan wie de factuur gericht is.', ar: 'أدخل الجهة التي توجَّه إليها الفاتورة.', en: 'Fill in who the invoice is addressed to.' },
   'bh.fact.foutRegel': { nl: 'Vul minstens één regel in met een omschrijving en een bedrag.', ar: 'أدخل سطراً واحداً على الأقل مع وصف ومبلغ.', en: 'Fill in at least one line with a description and an amount.' },
+  // [REGEL-ZONDER-OMSCHRIJVING] Een regel met een bedrag en geen omschrijving werd stil weggelaten
+  // uit de factuur terwijl hij WEL in het totaal op het scherm stond. Het factuurnummer is dan al
+  // vergeven en de klant betaalt het lagere bedrag; herstellen kost een creditnota. Weigeren dus,
+  // met het regelnummer erbij — "er klopt iets niet" zonder te zeggen wát is geen foutmelding.
+  'bh.fact.foutOmschrijving': { nl: 'Regel {nummer} heeft wel een bedrag maar geen omschrijving. Vul hem in of maak het bedrag leeg — anders staat er straks een ander totaal op de factuur dan hier op het scherm.', ar: 'السطر {nummer} فيه مبلغ بلا وصف. أكمِله أو امسح المبلغ — وإلا سيظهر على الفاتورة إجمالي غير الذي تراه هنا.', en: 'Line {nummer} carries an amount but no description. Fill it in or clear the amount — otherwise the invoice will show a different total from the one on screen.', tr: '{nummer}. satırda tutar var ama açıklama yok. Doldurun ya da tutarı silin; aksi hâlde faturada ekrandakinden farklı bir toplam çıkar.' },
   'bh.fact.foutConcept': { nl: 'Het concept kon niet worden aangemaakt.', ar: 'تعذّر إنشاء المسودة.', en: 'The draft could not be created.' },
   'bh.fact.foutVersturen': { nl: 'Het concept staat klaar, maar versturen lukte niet. Probeer het opnieuw vanaf de factuur zelf.', ar: 'المسودة جاهزة، لكن الإرسال لم ينجح. حاول مرة أخرى من الفاتورة نفسها.', en: 'The draft is ready, but sending failed. Try again from the invoice itself.' },
   'bh.fact.foutOnbekend': { nl: 'Er ging iets mis. Probeer het opnieuw.', ar: 'حدث خطأ ما. حاول مرة أخرى.', en: 'Something went wrong. Try again.' },
@@ -13099,6 +13158,14 @@ export const MESSAGES = {
   'bh.bev.rij.zonderNummer': { nl: 'zonder nummer', ar: 'بدون رقم', en: 'without number' },
   'bh.bev.rij.datumOnbekend': { nl: 'datum onbekend', ar: 'تاريخ غير معروف', en: 'date unknown' },
   'bh.bev.rij.waarvanBtw': { nl: 'waarvan {bedrag} btw', ar: 'منها {bedrag} btw', en: 'of which {bedrag} btw' },
+  // [CREDIT-BEVESTIG] Waarom deze rij niet te bevestigen is, en wat de boekhouder in plaats
+  // daarvan doet. De reden staat erbij, want "kan niet" zonder waarom is een doodlopend scherm.
+  'bh.bev.rij.creditTegenTeken': {
+    nl: 'Dit is een creditnota met een positief bedrag. Zo bevestigd telt hij als kosten en vraagt hij btw terug die er juist af hoort. Vraag de ondernemer het bedrag te corrigeren — daarna kun je hem bevestigen.',
+    ar: 'هذا إشعار دائن بمبلغ موجب. تأكيده هكذا يجعله يُحتسب كتكلفة ويسترجع ضريبة يجب طرحها. اطلب من صاحب العمل تصحيح المبلغ، ثم يمكنك تأكيده.',
+    en: 'This is a credit note carrying a positive amount. Confirmed as it stands it counts as a cost and reclaims VAT that ought to be deducted instead. Ask the owner to correct the amount — then you can confirm it.',
+    tr: 'Bu, pozitif tutarlı bir alacak dekontudur. Bu hâliyle onaylanırsa gider sayılır ve düşülmesi gereken KDV\'yi geri ister. Tutarı düzeltmesini işletme sahibinden isteyin; sonra onaylayabilirsiniz.',
+  },
   'bh.bev.rij.twijfels': { nl: 'Dit konden wij niet zeker lezen: {twijfels}. Controleer het aan het document zelf voor je bevestigt.', ar: 'لم نتمكن من قراءة هذا بثقة: {twijfels}. تحقّق منه في المستند نفسه قبل أن تؤكد.', en: 'We could not read this with certainty: {twijfels}. Check it against the document itself before you confirm.' },
   'bh.bev.rij.vraagVerstuurd': { nl: 'Vraag verstuurd', ar: 'تم إرسال السؤال', en: 'Question sent' },
   'bh.bev.rij.kloptNiet': { nl: 'Klopt niet — vraag stellen', ar: 'غير صحيح — اطرح سؤالًا', en: 'Not correct — ask a question' },
@@ -13512,6 +13579,234 @@ export const MESSAGES = {
     nl: 'Ze gaan uit op hun naam en BTW-nummer, met hun doorlopende factuurnummers. Hieronder staat alleen wat jij zelf hebt gemaakt.',
     ar: 'تصدر باسمهم ورقم BTW الخاص بهم، وبأرقام فواتيرهم المتسلسلة. وفي الأسفل يظهر ما أنشأتَه أنت فقط.',
     en: 'They go out under their name and BTW number, in their continuous invoice series. Below is only what you created yourself.',
+  },
+
+  // ─── [WAAROM-WACHT] Waarom wacht DIT document op mij ────────────────────────────────────────
+  //
+  // Eén zin per weigering, en elke zin wijst één ding aan: welk veld te bekijken, of welke
+  // schakelaar om te zetten. De ergste kaart is niet de gemarkeerde — die draagt al een badge en
+  // een lijst redenen. De ergste is de kaart met een groen "klaar om te bevestigen" die tóch
+  // wacht: daar staat vandaag niets, dus leest de eigenaar een document dat goed gelezen is nog
+  // een keer, vindt niets, tikt bevestigen en heeft niets geleerd. Driehonderd keer.
+  //
+  // De machinecode komt hier nooit op het scherm. Een weigering zonder zin toont niets — zie
+  // why-waiting.ts en de poort die elke code van een zin voorziet.
+
+  // De enige regel hier die géén leesprobleem beschrijft maar een KEUZE, en dus als enige een
+  // uitweg noemt. De schakelaar wordt genoemd zoals hij op het instellingenscherm geschreven
+  // staat, in dezelfde taal als de rest van dat scherm — anders zoekt de eigenaar naar een woord
+  // dat nergens in de interface voorkomt.
+  'ink.waaromWacht': {
+    nl: 'Waarom wacht deze op jou',
+    ar: 'لماذا تنتظرك هذه',
+    en: 'Why this one is waiting for you',
+  },
+
+  'wacht.eigenKeuze': {
+    nl: 'Wacht op jou omdat "Duidelijke facturen automatisch inboeken" uit staat. Zet het aan bij Instellingen als dit voortaan vanzelf mag.',
+    ar: 'ينتظرك لأن "قيد الفواتير الواضحة تلقائياً" متوقّف. فعّله في الإعدادات إن أردت أن يجري هذا من تلقاء نفسه.',
+    en: 'Waiting for you because "Book clear invoices automatically" is off. Turn it on in Settings if this may happen by itself from now on.',
+  },
+
+  // De geldvelden — de zinnen die zeggen WAAR je moet kijken.
+  'wacht.geenTotaal': {
+    nl: 'Er is geen betrouwbaar totaalbedrag gelezen. Vul het bedrag zelf in.',
+    ar: 'لم يُقرأ مبلغ إجمالي موثوق. أدخل المبلغ بنفسك.',
+    en: 'No reliable total was read. Fill in the amount yourself.',
+  },
+  'wacht.totaalBerekend': {
+    nl: 'Het totaal is berekend, niet van het document gelezen. Vergelijk het even.',
+    ar: 'الإجمالي محسوب، لا مقروء من المستند. قارنه سريعاً.',
+    en: 'The total was calculated, not read off the document. Compare it.',
+  },
+  'wacht.totaalNietInTekst': {
+    nl: 'Het gelezen totaal staat niet zo in de tekst van dit document. Vergelijk het bedrag met wat er gedrukt staat.',
+    ar: 'الإجمالي المقروء لا يرد هكذا في نص هذا المستند. قارن المبلغ بما هو مطبوع.',
+    en: 'The total that was read does not appear that way in this document. Compare it with what is printed.',
+  },
+  'wacht.totaalVerkeerdePlek': {
+    nl: 'Het bedrag staat niet waar een totaal hoort te staan — mogelijk is een subtotaal gelezen.',
+    ar: 'المبلغ ليس في الموضع الذي يُطبع فيه الإجمالي عادةً — ربما قُرئ مبلغ جزئي.',
+    en: 'The amount is not where a total is normally printed — a subtotal may have been read.',
+  },
+  'wacht.btwAnders': {
+    nl: 'De btw-verdeling op het document is anders dan wat er gelezen is.',
+    ar: 'توزيع btw على المستند يختلف عمّا قُرئ.',
+    en: 'The btw split on the document differs from what was read.',
+  },
+  'wacht.btwNul': {
+    nl: 'De btw is nul, maar er staat geen 0% op het document.',
+    ar: 'قيمة btw صفر، لكن لا يوجد 0% على المستند.',
+    en: 'The btw is zero, but the document does not state 0%.',
+  },
+  'wacht.eFactuurAnders': {
+    nl: 'De e-factuur van de leverancier noemt andere bedragen dan er gelezen is.',
+    ar: 'الفاتورة الإلكترونية من المورّد تذكر مبالغ غير التي قُرئت.',
+    en: "The supplier's e-invoice states different amounts than were read.",
+  },
+  'wacht.bedragOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over het bedrag. Vergelijk het met het document.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من المبلغ. قارنه بالمستند.',
+    en: 'The reader was not certain enough about the amount. Compare it with the document.',
+  },
+
+  // De lezing als geheel.
+  'wacht.lezingOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over dit document. Kijk het bedrag en de datum na.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من هذا المستند. راجع المبلغ والتاريخ.',
+    en: 'The reader was not certain enough about this document. Check the amount and the date.',
+  },
+  'wacht.gegevensOnzeker': {
+    nl: 'De lezer was niet zeker genoeg over de leverancier, het factuurnummer of de datum.',
+    ar: 'لم يكن القارئ واثقاً بما يكفي من المورّد أو رقم الفاتورة أو التاريخ.',
+    en: 'The reader was not certain enough about the supplier, the invoice number or the date.',
+  },
+  'wacht.aandacht': {
+    nl: 'Er staat iets in deze factuur dat eerst nagekeken moet worden.',
+    ar: 'في هذه الفاتورة ما يجب مراجعته أولاً.',
+    en: 'Something in this invoice has to be checked first.',
+  },
+
+  // Wat het document IS.
+  'wacht.geenFactuur': {
+    nl: 'Dit lijkt geen factuur. Kijk even of het hier hoort.',
+    ar: 'لا يبدو هذا فاتورة. تحقّق إن كان مكانه هنا.',
+    en: 'This does not look like an invoice. Check whether it belongs here.',
+  },
+  'wacht.overzicht': {
+    nl: 'Dit lijkt een rekeningoverzicht, geen factuur.',
+    ar: 'يبدو هذا كشف حساب، لا فاتورة.',
+    en: 'This looks like a statement, not an invoice.',
+  },
+  'wacht.herinnering': {
+    nl: 'Dit lijkt een herinnering van een factuur die je misschien al hebt.',
+    ar: 'يبدو هذا تذكيراً بفاتورة قد تكون لديك أصلاً.',
+    en: 'This looks like a reminder for an invoice you may already have.',
+  },
+  'wacht.creditnota': {
+    nl: 'Dit lijkt een creditnota. Die boekt de app nooit vanzelf.',
+    ar: 'يبدو هذا إشعار دائن. لا يقيّده التطبيق تلقائياً أبداً.',
+    en: 'This looks like a credit note. The app never books those by itself.',
+  },
+
+  // Hoe het binnenkwam.
+  // Deze regel deelde tot nu toe zijn naam met 'uncertain', en las dus als "de lezer was niet zeker
+  // genoeg" — over een factuur die perfect gelezen is en alleen een betaalspoor draagt. Dat stuurde
+  // de eigenaar het verkeerde veld in.
+  'wacht.betaalspoor': {
+    nl: 'Op dit document staat dat het al betaald is, maar de betaling is hier niet vastgelegd. Geef aan hoe het betaald is, dan is het klaar.',
+    ar: 'على هذا المستند ما يفيد أنه مدفوع، لكن الدفعة لم تُسجَّل هنا. حدِّد كيف دُفع، وينتهي الأمر.',
+    en: 'This document says it has already been paid, but the payment is not recorded here. Say how it was paid and it is done.',
+  },
+
+  'wacht.uitMailtekst': {
+    nl: 'Dit komt uit de tekst van een e-mail, niet uit een bijlage.',
+    ar: 'هذا مأخوذ من نص رسالة بريد، لا من مرفق.',
+    en: 'This comes from the text of an e-mail, not from an attachment.',
+  },
+  'wacht.meerdereFacturen': {
+    nl: 'Er zaten meerdere facturen in één bestand.',
+    ar: 'كان في الملف الواحد أكثر من فاتورة.',
+    en: 'There were several invoices in one file.',
+  },
+  'wacht.tochToegevoegd': {
+    nl: 'Je hebt deze toegevoegd terwijl hij op een dubbele leek.',
+    ar: 'أضفتَ هذه رغم أنها بدت مكرّرة.',
+    en: 'You added this one although it looked like a duplicate.',
+  },
+  // ── /bank: waarom deze regel zichzelf niet koppelde ───────────────────────────────────────
+  //
+  // Het tabblad "Geen factuur" had één alinea voor álle regels, en die was over elke regel waar
+  // en over geen enkele nuttig. De vier redenen eronder vragen tegengestelde handelingen: een
+  // factuur TOEVOEGEN, er één KIEZEN, wachten op een deelbetaling, of de regel één keer een
+  // categorie geven.
+  'wacht.bankNummerOnbekend': {
+    nl: 'De betaling noemt een factuurnummer dat niet in je administratie staat. Waarschijnlijk is die factuur er nog niet — voeg hem toe, dan koppelt deze regel zichzelf.',
+    ar: 'الدفعة تذكر رقم فاتورة غير موجود في إدارتك. على الأرجح لم تُضَف تلك الفاتورة بعد — أضفها، وعندها يرتبط هذا السطر من تلقاء نفسه.',
+    en: 'The payment quotes an invoice number that is not in your administration. That invoice is probably not entered yet — add it and this line links itself.',
+  },
+  'wacht.bankMeerdereZelfdeBedrag': {
+    nl: 'Er staan meerdere facturen open met precies dit bedrag. Kies welke het is — raden doet de app niet.',
+    ar: 'هناك أكثر من فاتورة مفتوحة بالمبلغ نفسه تماماً. اختر أيّها — التطبيق لا يخمّن.',
+    en: 'Several open invoices carry exactly this amount. Pick the right one — the app does not guess.',
+  },
+  'wacht.bankGeenBedrag': {
+    nl: 'Van deze tegenpartij staan wel facturen open, maar geen met dit bedrag. Vaak is dit een deelbetaling of een factuur die nog moet komen.',
+    ar: 'لهذا الطرف فواتير مفتوحة، لكن ليس بهذا المبلغ. غالباً دفعة جزئية أو فاتورة لم تصل بعد.',
+    en: 'This counterparty has open invoices, but none for this amount. Often a part payment, or an invoice still to come.',
+  },
+  'wacht.bankOnbekendePartij': {
+    nl: 'Deze tegenpartij komt niet voor in je openstaande facturen. Hoort er geen factuur bij — huur, een lening, privé — geef de regel dan één keer een categorie.',
+    ar: 'هذا الطرف لا يرد في فواتيرك المفتوحة. إن لم تكن له فاتورة — إيجار أو قرض أو أمر شخصي — فامنح السطر تصنيفاً مرة واحدة.',
+    en: 'This counterparty does not appear in your open invoices. If no invoice belongs to it — rent, a loan, private — give the line a category once.',
+  },
+  // ── /bank/categoriseren: waarom de app deze regel niet zelf codeert ───────────────────────
+  //
+  // De eerste zin bestaat omdat het label erboven "onthouden" zei — ook wanneer het geheugen de
+  // ANDERE kant op wees. De suggestie die de app zelf wantrouwt zag er precies uit als degene die
+  // ze het meest vertrouwt, en de eigenaar kon het verschil niet zien.
+  // ── [KAS-ACHTER-BANK] Wat de bankpas met opzet niet boekte ────────────────────────────────
+  //
+  // Onder het kasstelsel is de betaaldatum btw-timing. Een match op bedrag + naam zonder gedrukt
+  // factuurnummer, in een kwartaal dat AL is aangegeven, zou een fout naar de Belastingdienst
+  // schrijven in plaats van in de administratie — en die is alleen met een suppletie te
+  // herstellen. De app laat die dus aan de eigenaar. Dat is de app die het goed doet, en de
+  // eigenaar hoorde het nergens.
+  'bank.kas.aangegeven': {
+    nl: '{count} betaling(en) heeft de app met opzet niet zelf geboekt: die horen bij een kwartaal dat je al hebt aangegeven. Onder het kasstelsel bepaalt de betaaldatum de btw, dus die keuze is aan jou.',
+    ar: '{count} دفعة/دفعات لم يقيّدها التطبيق بنفسه عن قصد: فهي تخصّ ربعاً قدّمت إقراره بالفعل. في نظام الأساس النقدي تُحدّد تاريخُ الدفع ضريبةَ btw، فالقرار لك.',
+    en: 'The app deliberately did not book {count} payment(s) itself: they belong to a quarter you have already filed. Under the cash scheme the payment date decides the btw, so that call is yours.',
+  },
+  // De gevaarlijke stand: niet "we hebben besloten", maar "we konden het niet nagaan". Zonder deze
+  // zin ziet een stilgevallen controle er precies zo uit als een rustige dag.
+  'bank.kas.onbekend': {
+    nl: 'Van {count} betaling(en) konden we niet nagaan of dat kwartaal al is aangegeven, dus die zijn niet automatisch geboekt. Dat is géén bevestiging dat er iets mis is — maar de app heeft hier bewust niets besloten.',
+    ar: 'تعذّر علينا التحقّق، بشأن {count} دفعة/دفعات، ممّا إذا كان ذلك الربع قد قُدّم إقراره، لذا لم تُقيَّد تلقائياً. هذا ليس تأكيداً بوجود خطأ — لكن التطبيق لم يقرّر هنا شيئاً عن قصد.',
+    en: 'For {count} payment(s) we could not check whether that quarter has already been filed, so they were not booked automatically. That is not a confirmation that anything is wrong — but the app deliberately decided nothing here.',
+  },
+
+  // ── [KAS-ACHTER] De kaslade waarvan de koppeling niet kon bijwerken ───────────────────────
+  //
+  // Het saldo is het getal waar een winkelier zijn lade tegenaan telt. Een verouderd saldo dat er
+  // actueel uitziet is de gevaarlijkste vorm die dat scherm kan aannemen — en de code wist het al:
+  // de regel die dit meldt stond er, schreef naar een log, en zei het nergens tegen de eigenaar.
+  'kas.achter.kop': {
+    nl: 'De koppeling met je facturen kon niet bijwerken',
+    ar: 'تعذّر تحديث الربط مع فواتيرك',
+    en: 'The link with your invoices could not update',
+  },
+  'kas.achter.uitleg': {
+    nl: 'De boekingen hieronder kloppen — het zijn echte regels. Maar facturen die je contant hebt betaald zijn deze keer niet verwerkt, dus het saldo kan achterlopen. Probeer het zo opnieuw; blijft dit staan, laat het ons dan weten.',
+    ar: 'القيود أدناه صحيحة — إنها سطور حقيقية. لكن الفواتير التي دفعتها نقداً لم تُعالَج هذه المرة، لذا قد يكون الرصيد متأخراً. أعد المحاولة بعد قليل؛ وإن بقي الأمر، فأخبرنا.',
+    en: 'The entries below are real. But invoices you paid in cash were not processed this time, so the balance may be behind. Try again in a moment; if this stays, let us know.',
+  },
+
+  'wacht.catGeheugenAndereKant': {
+    nl: 'Deze tegenpartij ken je, maar toen ging het geld de andere kant op. Een teruggestort bedrag is geen omzet en een terugbetaling is geen kost — kies zelf.',
+    ar: 'هذا الطرف معروف لديك، لكن المال حينها سار في الاتجاه الآخر. المبلغ المُعاد ليس إيراداً والاسترداد ليس تكلفة — اختر بنفسك.',
+    en: 'You know this counterparty, but last time the money went the other way. A refund is not turnover and a repayment is not a cost — choose yourself.',
+  },
+  'wacht.catLijktMaarNietDezelfde': {
+    nl: 'Deze lijkt op een tegenpartij die je eerder hebt ingedeeld, maar het is niet dezelfde. Twee zaken met dezelfde naam zijn niet één bedrijf.',
+    ar: 'يشبه هذا طرفاً صنّفته سابقاً، لكنه ليس نفسه. محلّان بالاسم ذاته ليسا شركة واحدة.',
+    en: 'This resembles a counterparty you categorised before, but it is not the same one. Two shops sharing a name are not one business.',
+  },
+  'wacht.catNooitGezien': {
+    nl: 'Deze tegenpartij ben je nog niet eerder tegengekomen. Het voorstel hieronder gaat alleen op plus of min af — daarom vult de app hem niet zelf in.',
+    ar: 'لم تصادف هذا الطرف من قبل. الاقتراح أدناه يعتمد على الإشارة فقط — لذلك لا يملؤه التطبيق بنفسه.',
+    en: 'You have not come across this counterparty before. The suggestion below goes on the sign alone — which is why the app does not fill it in for you.',
+  },
+
+  'wacht.bankNietsOpen': {
+    nl: 'Er staat op dit moment geen enkele factuur open om aan te koppelen.',
+    ar: 'لا توجد حالياً أي فاتورة مفتوحة ليُربط بها.',
+    en: 'There is currently no open invoice to link this to.',
+  },
+
+  'wacht.nietInAanmerking': {
+    nl: 'Deze kwam niet in aanmerking om vanzelf geboekt te worden.',
+    ar: 'لم تكن هذه مؤهّلة للقيد التلقائي.',
+    en: 'This one was not eligible to be booked automatically.',
   },
 
 } satisfies Record<string, Message>

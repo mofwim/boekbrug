@@ -179,7 +179,11 @@ export async function filedQuarterImpacts(args: {
   let unknown = false;
 
   for (const { year, quarter } of wanted.values()) {
-    const { row, failed } = await readFiling(args.pipeline, args.ownerId, year, quarter);
+    // [SUPPLETIE-EEN-ANTWOORD] Mét het al doorgeschoven bedrag: de zin hieronder noemt anders het
+    // BRUTO verschil en de route die daarbij hoort, terwijl de knop die de eigenaar daarna indrukt
+    // over het RESTANT beslist. Twee antwoorden op één vraag, op het scherm dat over een ingediende
+    // aangifte gaat.
+    const { row, failed } = await readFilingWithCarry(args.pipeline, args.ownerId, year, quarter);
     if (failed) { unknown = true; continue; }
     if (!row) continue; // not filed — the books may move freely, which is the ordinary case
 
@@ -203,7 +207,7 @@ export async function filedQuarterImpacts(args: {
       btwVerschuldigd: current.btwVerschuldigd,
       btwVoorbelasting: current.btwVoorbelasting,
       btwSaldo: current.btwSaldo,
-    });
+    }, Number(row.carried_saldo) || 0);
     // Only a quarter that actually MOVED is an impact. A correction that leaves the totals where
     // they were (a supplier name, a typo in an invoice number) raises no obligation, and announcing
     // one would teach the owner to click this warning away.
@@ -230,8 +234,12 @@ const EUR = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" 
 
 export function describeFiledQuarterImpact(impact: FiledQuarterImpact): string {
   const d = impact.divergence;
-  const saldo = Math.abs(d.btwSaldoDelta);
-  const richting = d.btwSaldoDelta > 0 ? "meer" : "minder";
+  // [SUPPLETIE-EEN-ANTWOORD] Het RESTANT, niet het bruto verschil. Een kwartaal dat € 1.400 bewoog
+  // en waarvan € 900 al is doorgeschoven, gaat over € 500 — en dat is ook het bedrag waarop de
+  // route hierboven is bepaald. De zin noemde het bruto bedrag naast een route die over het
+  // restant ging, dus de ondernemer las een instructie bij een getal dat er niet bij hoorde.
+  const saldo = Math.abs(d.outstanding);
+  const richting = d.outstanding > 0 ? "meer" : "minder";
 
   if (!d.btwChanged) {
     // [DIVERGENCE-SPLIT] Real and easy to hit: a 0%-BTW cost, or a correction where verschuldigd
@@ -437,7 +445,7 @@ interface FilingRowWithCarry extends FilingRow {
  * A missing COLUMN falls back to the bare read — the correction is then offered as if nothing had
  * been carried, which in an environment where nothing CAN have been carried is exactly right.
  */
-async function readFilingWithCarry(
+export async function readFilingWithCarry(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any,
   userId: string,

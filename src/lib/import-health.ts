@@ -234,6 +234,11 @@ export interface FieldConfidence {
     // klopt de rekensom juist wél en is het rekeningnummer het enige signaal — dus een controle
     // die stil is overgeslagen mag niet als een geslaagde controle ogen.
     iban_check_unavailable?: boolean
+    // [CREDIT-WOORD] Bij de intake gezet toen het WOORD "creditnota" (of een variant) in de KOP van
+    // het document stond terwijl de lezing er een gewone factuur van maakte. De tweede
+    // deterministische greep naast de nummerprefix, en de enige die ook werkt bij een leverancier
+    // die zijn creditnota's in dezelfde nummerreeks zet. Zie creditWordInHeader.
+    credit_word_in_header?: boolean
     // [MULTI-INVOICE] Written at import time when one uploaded PDF carried several different
     // labelled invoice numbers, each with its own settlement. The reader returns ONE invoice, so
     // the rest were silently lost — the reason below names the numbers so the owner can go and
@@ -729,6 +734,20 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     flags.creditPrefix = true
     reasons.push(
       `het nummer begint met ${numberPrefix(inv.invoice_number)} — controleer of dit een creditnota is; ` +
+      'die hoort met een minbedrag in de boeken'
+    )
+  }
+
+  // [CREDIT-WOORD] Tweede greep op dezelfde fout, en de enige die ook werkt als de leverancier zijn
+  // creditnota's in de gewone nummerreeks zet — dan zegt het nummer niets en de kop alles. Zelfde
+  // voorwaarden als hierboven: alleen zolang de rij nog als schuld staat, want een rij die al
+  // negatief of al 'creditnota' is, heeft de vraag beantwoord.
+  if (storedSafecore?.credit_word_in_header === true &&
+      inv.invoice_type !== 'creditnota' &&
+      !(Number(inv.total_inc_btw ?? 0) < 0)) {
+    flags.creditPrefix = true
+    reasons.push(
+      'in de kop van dit document staat het woord "creditnota" — controleer of dat klopt; ' +
       'die hoort met een minbedrag in de boeken'
     )
   }

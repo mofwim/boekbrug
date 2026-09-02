@@ -31,8 +31,8 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 113 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 9 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 1  de 115 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 2  de 13 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -44,28 +44,28 @@
 -- ── DEEL 1 ──────────────────────────────────────────────────────────
 
 with probe(bestand, soort, object, tabel, schema) as (values
+  ('account_purpose_archief.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('account_purpose_archief.sql', 'column', 'account_purpose', 'profiles', 'public'),
   ('account_purpose_archief.sql', 'constraint', 'profiles_account_purpose_check', null, 'public'),
-  ('account_purpose_archief.sql', 'function', 'handle_new_user', null, 'public'),
-  ('accountant_amount_guard_restore.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
+  ('accountant_amount_guard_restore.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('accountant_confirm_mandate.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'confirmed_by', 'invoices', 'public'),
   ('accountant_confirm_mandate.sql', 'column', 'kind', 'accountant_invoice_mandates', 'public'),
   ('accountant_confirm_mandate.sql', 'constraint', 'accountant_invoice_mandates_kind_check', null, 'public'),
   ('accountant_confirm_mandate.sql', 'function', 'has_active_confirm_mandate', null, 'public'),
   ('accountant_confirm_mandate.sql', 'function', 'has_active_invoice_mandate', null, 'public'),
-  ('accountant_confirm_mandate.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
+  ('accountant_discount_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('accountant_invoice_mandate.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('accountant_invoice_mandate.sql', 'function', 'has_active_invoice_mandate', null, 'public'),
   ('accountant_invoice_mandate.sql', 'function', 'next_invoice_seq', null, 'public'),
-  ('accountant_invoice_mandate.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
   ('accountant_invoice_mandate.sql', 'index', 'accountant_invoice_mandates_accountant', null, 'public'),
   ('accountant_invoice_mandate.sql', 'policy', 'accountant_invoice_mandates_select', 'accountant_invoice_mandates', 'public'),
   ('accountant_invoice_mandate.sql', 'policy', 'invoice_lines_mandate_read', 'invoice_lines', 'public'),
-  ('accountant_subject_status.sql', 'index', 'accountant_subject_status_unique', null, 'public'),
   ('accountant_subject_status.sql', 'policy', 'acc_status_client_read_document', 'accountant_subject_status', 'public'),
   ('accountant_subject_status.sql', 'table', 'accountant_subject_status', null, 'public'),
-  ('accountant_vat_deduction_guard.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
-  ('accountant_write_guard_fix.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
-  ('accountant_write_holes.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
+  ('accountant_vat_deduction_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('accountant_write_guard_fix.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('accountant_write_holes.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('accountant_write_holes.sql', 'index', 'idx_invoices_invoice_date', null, 'public'),
   ('accountant_write_holes.sql', 'index', 'idx_invoices_receiver_id', null, 'public'),
   ('accountant_write_holes.sql', 'index', 'idx_invoices_sender_id', null, 'public'),
@@ -241,8 +241,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('intake_claims.sql', 'index', 'uq_intake_claims_user_key', null, 'public'),
   ('intake_claims.sql', 'table', 'intake_claims', null, 'public'),
   ('invitations_rls_scoped_read.sql', 'policy', 'invitee or inviter can read invitations', 'invitations', 'public'),
-  ('invoice_accountant_write_guard.sql', 'function', 'prevent_accountant_amount_changes', null, 'public'),
-  ('invoice_accountant_write_guard.sql', 'function', 'prevent_verwerkt_invoice_changes', null, 'public'),
+  ('invoice_accountant_write_guard.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('invoice_accountant_write_guard.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('invoice_archive_reason.sql', 'column', 'archive_reason', 'invoices', 'public'),
   ('invoice_archive_reason.sql', 'column', 'archived_at', 'invoices', 'public'),
   ('invoice_archive_reason.sql', 'constraint', 'invoices_archive_reason_check', null, 'public'),
@@ -327,14 +327,14 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_user', null, 'public'),
   ('pay_bundles.sql', 'index', 'pay_bundle_invoices_unique_pair', null, 'public'),
   ('pay_bundles.sql', 'policy', 'pay_bundle_invoices_delete_own', 'pay_bundle_invoices', 'public'),
+  ('profile_vak.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('profile_vak.sql', 'column', 'vak', 'profiles', 'public'),
-  ('profile_vak.sql', 'function', 'handle_new_user', null, 'public'),
   ('push_subscriptions.sql', 'index', 'idx_push_subscriptions_user', null, 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'table', 'push_subscriptions', null, 'public'),
   ('regime_kor.sql', 'column', 'kor_active', 'profiles', 'public'),
-  ('register_profile_from_metadata.sql', 'function', 'handle_new_user', null, 'public'),
+  ('register_profile_from_metadata.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('repair_mandate_policies.sql', 'column', 'purge_warning_sent_at', 'deletion_requests', 'public'),
   ('repair_mandate_policies.sql', 'index', 'deletion_requests_unwarned_idx', null, 'public'),
   ('repair_mandate_policies.sql', 'policy', 'invoice_lines_mandate_read', 'invoice_lines', 'public'),
@@ -396,12 +396,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('urenregistratie.sql', 'policy', 'time_entries_insert_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_select_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_update_own', 'time_entries', 'public'),
+  ('vat_exemption.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('vat_exemption.sql', 'column', 'vat_deduction', 'invoices', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_activity', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_since', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_treatment', 'invoice_lines', 'public'),
   ('vat_exemption.sql', 'constraint', 'invoice_lines_vat_treatment_check', null, 'public'),
-  ('vat_exemption.sql', 'constraint', 'invoices_vat_deduction_check', null, 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles', 'public'),
   ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public'),
@@ -410,7 +410,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vehicles.sql', 'policy', 'vehicles_insert_own', 'vehicles', 'public'),
   ('vehicles.sql', 'policy', 'vehicles_select_own', 'vehicles', 'public'),
   ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
-  ('vehicles.sql', 'table', 'vehicles', null, 'public')
+  ('vehicles.sql', 'table', 'vehicles', null, 'public'),
+  ('verwerkt_freeze_level.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public')
 ),
 bevonden as (
   select p.*,
@@ -421,6 +422,14 @@ bevonden as (
              where table_schema = p.schema and table_name = p.tabel and column_name = p.object)
       when 'function' then exists (select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace
              where n.nspname = p.schema and f.proname = p.object)
+      -- Een functie die meer dan één migratie herschrijft: haar BESTAAN bewijst alleen dat
+      -- de eerste van die migraties gedraaid heeft. Gemeten wordt daarom de body — elke
+      -- kolomverwijzing die de map unaniem in deze functie verwacht, moet erin staan.
+      when 'function_body' then exists (
+             select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace
+             where n.nspname = p.schema and f.proname = p.object
+               and not exists (select 1 from unnest(string_to_array(p.tabel, ',')) mk
+                               where position(mk in f.prosrc) = 0))
       when 'index' then exists (select 1 from pg_indexes
              where schemaname = p.schema and indexname = p.object)
       when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)
@@ -437,14 +446,89 @@ select
        else 'OPEN' end                                        as stand,
   bestand,
   count(*) filter (where aanwezig) || ' / ' || count(*)       as objecten_gevonden,
-  string_agg(case when not aanwezig then soort || ' ' || schema || '.' || object end, ', ') as ontbreekt
+  string_agg(case when not aanwezig then
+    case when soort = 'function_body'
+         then 'function ' || schema || '.' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'
+         else soort || ' ' || schema || '.' || object end end, ', ')                as ontbreekt
 from bevonden
 group by bestand
 -- GEDEELTELIJK eerst, dan OPEN, dan de rest: de regels waar iets aan te doen is, bovenaan.
 order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;
 
+-- ── WAT DEEL 1 OVER DEZE FUNCTIES WÉL EN NIET ZEGT ──────────────────
+--
+--   9 functies worden door meer dan één migratie geschreven. Voor die functies zegt TOEGEPAST: de
+--   body in de database bevat elke kolomverwijzing die de map er unaniem in verwacht. Het zegt NIET
+--   welk van die bestanden hem daar gezet heeft — en dat is niet vast te stellen, want een CREATE OR
+--   REPLACE laat geen spoor van zijn herkomst achter. OPEN betekent hier dus: de functie in de
+--   database loopt achter op de map, en de migraties hieronder zijn samen het antwoord.
+--
+--   apply_manual_payment
+--     · invoice_manual_payment_idempotency_scope.sql
+--     · invoice_manual_payments.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+--   book_bank_batch
+--     · bank_confirm_atomic.sql
+--     · book_bank_batch_atomic.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+--   handle_new_user
+--     · account_purpose_archief.sql
+--     · profile_vak.sql
+--     · register_profile_from_metadata.sql
+--
+--   has_active_invoice_mandate
+--     · accountant_confirm_mandate.sql
+--     · accountant_invoice_mandate.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+--   move_invoice_payment
+--     · invoice_move_payment.sql
+--     · invoice_move_payment_creditnota_guard.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+--   next_invoice_seq
+--     · accountant_invoice_mandate.sql
+--     · company_members_sales_role.sql
+--     · factuur_b_numbering.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+--   prevent_accountant_amount_changes
+--     · accountant_amount_guard_restore.sql
+--     · accountant_confirm_mandate.sql
+--     · accountant_discount_guard.sql
+--     · accountant_invoice_mandate.sql
+--     · accountant_vat_deduction_guard.sql
+--     · accountant_write_guard_fix.sql
+--     · accountant_write_holes.sql
+--     · invoice_accountant_write_guard.sql
+--     · vat_exemption.sql
+--
+--   prevent_verwerkt_invoice_changes
+--     · invoice_accountant_write_guard.sql
+--     · verwerkt_freeze_level.sql
+--
+--   recompute_invoice_amount_paid
+--     · invoice_partial_payments.sql
+--     · invoice_payment_date_rederive.sql
+--     GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is
+--     niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan van
+--     de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.
+--
+
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 9 van de 122
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 13 van de 128
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -483,6 +567,14 @@ with controle(bestand, vraag, toegepast) as (
       and policyname = 'accountant_clients_update')
   )
   union all
+  select 'accountant_guard_fixed_search_path.sql'::text, 'de bedragbewaker draait met een vast zoekpad'::text, (
+    exists (select 1 from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'prevent_accountant_amount_changes'
+      and 'search_path=public' = any(p.proconfig))
+  )
+  union all
   select 'bank_tx_invoices_amount.sql'::text, 'de dubbele kolom `amount` is weg en `amount_applied` staat er'::text, (
     exists (select 1 from information_schema.columns
              where table_schema = 'public' and table_name = 'bank_tx_invoices'
@@ -490,6 +582,19 @@ with controle(bestand, vraag, toegepast) as (
     and not exists (select 1 from information_schema.columns
                      where table_schema = 'public' and table_name = 'bank_tx_invoices'
                        and column_name = 'amount')
+  )
+  union all
+  select 'drop_duplicate_indexes.sql'::text, 'geen twee indexen meer met precies dezelfde vorm op dezelfde tabel'::text, (
+    not exists (
+    select 1
+      from (select i.indrelid, i.indisunique,
+                   regexp_replace(pg_get_indexdef(i.indexrelid), '^CREATE (UNIQUE )?INDEX \S+ ', '') as vorm
+              from pg_index i
+              join pg_class c on c.oid = i.indexrelid
+              join pg_namespace n on n.oid = c.relnamespace
+             where n.nspname = 'public') d
+     group by indrelid, indisunique, vorm
+    having count(*) > 1)
   )
   union all
   select 'function_search_path.sql'::text, 'elk van de negen functies heeft een vastgezet search_path'::text, (
@@ -501,6 +606,29 @@ with controle(bestand, vraag, toegepast) as (
                          'invoices_search_vector_update', 'documents_search_vector_update',
                          'set_updated_at', 'touch_updated_at', 'get_accountant_for_zzper')
        and coalesce(array_to_string(p.proconfig, ','), '') not like '%search_path=%')
+  )
+  union all
+  select 'revoke_execute_on_trigger_functions.sql'::text, 'geen enkele triggerbewaker hangt nog als /rest/v1/rpc aan de buitenkant'::text, (
+    not exists (
+    select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('assert_credit_within_rate', 'prevent_verwerkt_invoice_changes',
+                         'prevent_accountant_amount_changes', 'guard_paid_when_verwerkt',
+                         'assert_bookkeeping_date_sane', 'invoices_search_vector_update')
+       and (p.proacl is null
+            or exists (select 1 from aclexplode(p.proacl) a
+                        where a.grantee in ('anon'::regrole, 'authenticated'::regrole, 0))))
+  )
+  union all
+  select 'rls_initplan_wrap_auth_calls.sql'::text, 'geen policy roept auth.uid() nog per rij aan, en geen enkele is dubbel gewikkeld'::text, (
+    not exists (
+    select 1 from pg_policies
+     where schemaname = 'public'
+       and ( (coalesce(qual,'')       like '%auth.uid()%' and coalesce(qual,'')       not like '%SELECT auth.uid()%')
+          or (coalesce(with_check,'') like '%auth.uid()%' and coalesce(with_check,'') not like '%SELECT auth.uid()%')
+          or coalesce(qual,'')       like '%SELECT ( SELECT auth.%'
+          or coalesce(with_check,'') like '%SELECT ( SELECT auth.%' ))
   )
   union all
   select 'rpc_anon_revoke.sql'::text, 'geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated'::text, (
@@ -568,6 +696,7 @@ where direction = 'incoming'
 -- lijst kan maken: hem nog een keer draaien.
 --
 --   accountant_invoice_mandate.sql → index accountant_invoice_mandates_one_active
+--   accountant_subject_status.sql → index accountant_subject_status_unique
 --   accountant_subject_status.sql → policy acc_status_owner_all
 --   cash_settlement_invoice_link.sql → index cash_entries_one_settlement_per_invoice
 --   creditnota_one_per_original.sql → index invoices_one_creditnota_per_original

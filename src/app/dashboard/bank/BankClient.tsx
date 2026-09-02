@@ -18,6 +18,9 @@ import { namedInvoiceNumbers, missingNamedInvoices, missingInvoiceNoticeText } f
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
+// [WAAROM-WACHT-BANK] Eén zin per regel die zichzelf niet koppelde. De component draagt zelf
+// geen taal — dezelfde woordenlijst als de verificatiewachtrij, zie why-waiting.ts.
+import { explainWaiting } from '@/lib/why-waiting'
 import { isPosPayoutDescription } from '@/lib/bank-identity'
 import { categoryLabel } from '@/lib/bank-categories'
 import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel, ignoreReasonGroups } from '@/lib/bank-ignore-reason'
@@ -178,6 +181,9 @@ interface Suggestion {
   // [CREDIT-VERREKEN] `amounts` is signed per member, so the card can print the subtraction it
   // is claiming. Optional: an older cached response has none, and then it reads as it always did.
   sumMatch?: { invoiceIds: string[]; invoiceNumbers: (string | null)[]; total: number; amounts?: number[] } | null
+  // [WAAROM-WACHT-BANK] Machinecode van de server: waarom deze regel niets vond. Null wanneer er
+  // niets eerlijks te zeggen valt, en dan zegt de kaart niets — zie bank-waiting-reason.ts.
+  waitReason?: string | null
 }
 interface MatchResponse {
   ok: boolean
@@ -252,6 +258,11 @@ export default function BankClient() {
   // [P1-UNCATEGORIZED] Count of bank lines with NO category (not tied to an invoice). Money on
   // these lines is silently absent from the W&V/BTW until categorized — surface it, never hide it.
   const [uncatCount, setUncatCount] = useState(0)
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld daarin zit, uit en in apart. `null` = de server kon het
+  // niet optellen — nooit 0, want dat zou beweren dat er geen geld buiten de boeken staat over een
+  // som die niet gelukt is.
+  const [uncatOut, setUncatOut] = useState<number | null>(null)
+  const [uncatIn, setUncatIn] = useState<number | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
   // [BANK-BATCH-CONFIRM] Bulk-confirm only for strong 'auto' single-invoice matches
   // (each already carries an unambiguous best candidate from the bank statement).
@@ -262,6 +273,12 @@ export default function BankClient() {
   // [BANK-AUTO-CONFIRM] "Quiet by default": the app books the near-certain matches itself.
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoDoneCount, setAutoDoneCount] = useState<number | null>(null)
+  // [KAS-ACHTER-BANK] Wat de pas BEWUST niet heeft geboekt. Onder het kasstelsel is de betaaldatum
+  // btw-timing: een match op bedrag + naam (geen gedrukt factuurnummer) in een kwartaal dat al is
+  // aangegeven laat de app aan de eigenaar, omdat een verkeerde keuze daar buiten de app terechtkomt
+  // en alleen met een suppletie te herstellen is. Een goede beslissing — die tot nu toe alleen in
+  // een serverlog stond, terwijl de eigenaar naar precies die regels zat te kijken.
+  const [kasRefusals, setKasRefusals] = useState<{ filed_quarter?: number; unknown_filing?: number } | null>(null)
   // [BANK-AUTO-RUN] Guard so the app auto-handles the near-certain payments ONCE per page
   // load, the moment they appear — the owner should never have to press a button for a
   // payment the app is already certain of. Set before the async call so a re-render mid-flight
@@ -522,6 +539,7 @@ export default function BankClient() {
       const json = await res.json()
       if (res.ok) {
         setAutoDoneCount(json.count ?? 0)
+        setKasRefusals((json.kasRefusals ?? null) as { filed_quarter?: number; unknown_filing?: number } | null)
         await runMatch() // the handled ones leave "Te bevestigen"
       } else {
         showToast(t('bank.fout.automatisch'))
@@ -612,7 +630,11 @@ export default function BankClient() {
         // [P1-UNCATEGORIZED] The exact head-count of still-uncategorized bank lines.
         const cat = await fetch('/api/bank/categorize')
         const catJson = await cat.json().catch(() => ({}))
-        if (!cancelled && cat.ok) setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
+        if (!cancelled && cat.ok) {
+          setUncatCount(Number(catJson.total_remaining ?? 0) || 0)
+          setUncatOut(typeof catJson.remaining_out === 'number' ? catJson.remaining_out : null)
+          setUncatIn(typeof catJson.remaining_in === 'number' ? catJson.remaining_in : null)
+        }
       } catch {
         /* silent — empty state shows the upload card */
       } finally {
@@ -1760,6 +1782,21 @@ export default function BankClient() {
             <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: '#7A4F00' }}>
               {uncatCount === 1 ? t('bank.uncatEen') : t('bank.uncat', { count: uncatCount })}
             </span>
+            {/* [BANK-GELD-NIET-GEBOEKT] Het BEDRAG, tussen het aantal en de uitleg. "299
+                banktransacties" is een klus; "€ 266.834 aan uitgaven" is zijn geld — en dat is wat
+                er werkelijk buiten zijn winst & verlies staat. Uit en in blijven apart: netto zou
+                € 10.000 in en € 10.000 uit lezen als "er mist niets", terwijl het twee onverklaarde
+                feiten zijn (zie financial-result.ts). Kon de server niet optellen, dan staat hier
+                niets — een te laag bedrag is erger dan geen bedrag. */}
+            {(uncatOut ?? 0) + (uncatIn ?? 0) > 0 && (
+              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#7A4F00', marginTop: 2 }}>
+                {(uncatOut ?? 0) > 0 && (uncatIn ?? 0) > 0
+                  ? t('bank.uncatGeld.beide', { uit: eur.format(uncatOut as number), in: eur.format(uncatIn as number) })
+                  : (uncatOut ?? 0) > 0
+                    ? t('bank.uncatGeld.uit', { uit: eur.format(uncatOut as number) })
+                    : t('bank.uncatGeld.in', { in: eur.format(uncatIn as number) })}
+              </span>
+            )}
             <span style={{ display: 'block', fontSize: 12, color: '#7A4F00', marginTop: 1 }}>
               {t('bank.uncatUitleg')}
             </span>
@@ -2012,6 +2049,35 @@ export default function BankClient() {
         </div>
       )}
 
+      {/* [KAS-ACHTER-BANK] En wat de app met opzet niet heeft geboekt.
+          
+          Twee standen, en ze verschillen wezenlijk. `filed_quarter` is de app die het goed doet:
+          het kwartaal is aangegeven, dus een gok op bedrag + naam zou een fout naar de
+          Belastingdienst schrijven in plaats van in de administratie. `unknown_filing` is de app
+          die het NIET WEET — de btw_filings-lezing faalde — en dat is de gevaarlijke stand, want
+          "niets geboekt" ziet er dan precies zo uit als een rustige dag. [NO-SILENT-EMPTY]
+          
+          Onder de teller, niet ernaast: "0 geboekt" en "3 met opzet overgeslagen" is samen één
+          verhaal, en dit is de tweede helft ervan. */}
+      {kasRefusals && ((kasRefusals.filed_quarter ?? 0) > 0 || (kasRefusals.unknown_filing ?? 0) > 0) && (
+        <div style={{
+          marginTop: 10, borderRadius: R.lg, padding: '13px 16px',
+          background: (kasRefusals.unknown_filing ?? 0) > 0 ? '#FEF7E0' : M3.surfaceVariant,
+          border: `1px solid ${(kasRefusals.unknown_filing ?? 0) > 0 ? '#F9E3A2' : M3.outlineVariant}`,
+        }}>
+          {(kasRefusals.filed_quarter ?? 0) > 0 && (
+            <div style={{ fontSize: 13, color: '#3c4043', lineHeight: 1.5 }}>
+              {t('bank.kas.aangegeven', { count: kasRefusals.filed_quarter ?? 0 })}
+            </div>
+          )}
+          {(kasRefusals.unknown_filing ?? 0) > 0 && (
+            <div style={{ fontSize: 13, color: '#6B5200', lineHeight: 1.5, marginTop: (kasRefusals.filed_quarter ?? 0) > 0 ? 6 : 0 }}>
+              {t('bank.kas.onbekend', { count: kasRefusals.unknown_filing ?? 0 })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* [BANK-TABS] Tabs — only once we have data with at least one transaction */}
       {data && (toConfirm.length + noMatch.length + posList.length + confirmedList.length + (ignoredList?.length ?? 0)) > 0 && (
         <>
@@ -2123,7 +2189,15 @@ export default function BankClient() {
               identity: kost, huur, fee, transfer…) with NO link anywhere — reachable only
               by typing the URL. Surface it here, where uncategorised "geen factuur" lines
               live, so those costs can actually reach the W&V/BTW. */}
-          {bankTab === 'none' && noMatch.length > 0 && (
+          {/* [BANK-LEGE-LINK] Op uncatCount, niet op noMatch. Een regel zonder factuur kan al een
+              categorie hebben — dan is er niets te categoriseren en leidde deze link naar een leeg
+              scherm. Dat is niet alleen nutteloos: het is dezelfde teleurstelling als een tabblad
+              zonder inhoud, en op deze plek verliest hij het vertrouwen in de banner bovenaan die
+              hetzelfde scherm aanbiedt wanneer er WÉL werk is.
+              De link blijft naast de banner bestaan, en dat is geen dubbeling om weg te halen: de
+              banner staat bovenaan de pagina en deze staat waar de ondernemer op dat moment kijkt.
+              Twee wegen naar dezelfde handeling is normaal; een weg naar niets is dat niet. */}
+          {bankTab === 'none' && uncatCount > 0 && (
             <Link
               href="/dashboard/bank/categoriseren"
               style={{
@@ -2532,7 +2606,10 @@ function Empty({ done }: { done: boolean }) {
   )
 }
 
-function TxCard({
+// Geëxporteerd om dezelfde reden als InvoiceCard in de verificatiewachtrij: de takken van deze
+// kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
+// roepen een component nooit aan.
+export function TxCard({
   s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove, onMatchChecked,
 }: {
   s: Suggestion
@@ -2560,7 +2637,10 @@ function TxCard({
   /** [KAS-AUTO-BOOK] "Klopt" on the amount-only flag — the answer the warning never had. */
   onMatchChecked?: () => void
 }) {
-  const t = translator(useLocale())
+  // [WAAROM-WACHT-BANK] De taal apart: de zin over deze regel komt uit een pure module en draagt
+  // zijn eigen leesrichting mee, zodat een Arabische kaart niet half links uitlijnt.
+  const taal = useLocale()
+  const t = translator(taal)
   const isCredit = s.amount >= 0
   const amountColor = isCredit ? M3.success : M3.error
   // [BANK-DETAILS] Like the ING app, the card shows a clean name and lets the
@@ -3324,6 +3404,39 @@ function TxCard({
                   {t('bank.fout.geenFactuur')}
                 </div>
               )}
+              {/* [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde.
+              
+                  Het tabblad "Geen factuur" had één alinea voor álle regels, en die was over elke
+                  regel waar en over geen enkele nuttig. De redenen eronder vragen tegengestelde
+                  handelingen: een factuur TOEVOEGEN (de betaling noemt een nummer dat we niet
+                  kennen), er één KIEZEN (meerdere met hetzelfde bedrag), wachten op een deelbetaling,
+                  of de regel één keer een categorie geven.
+              
+                  Niet naast de somsuggestie: die IS al een uitleg mét een knop eronder, en twee
+                  uitleggen van één regel is hoe een rustig scherm een zeurend scherm wordt. Niet op
+                  het Genegeerd- of Gekoppeld-tabblad: daar is de vraag al beantwoord. En niets
+                  wanneer de server niets kon zeggen — een verzonnen uitleg op een geldscherm is
+                  erger dan de leegte die de eigenaar al had. */}
+              {(() => {
+                if (isIgnoredTab || isDoneTab || s.sumMatch) return null
+                const uitleg = explainWaiting(s.waitReason ?? null, {}, taal)
+                if (!uitleg) return null
+                return (
+                  <div
+                    dir={uitleg.dir}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 6,
+                      padding: '9px 11px', borderRadius: R.md, marginBottom: 10,
+                      background: M3.surfaceVariant, color: '#3c4043',
+                      fontSize: 12.5, lineHeight: 1.5, textAlign: 'start',
+                    }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>help</span>
+                    <span>{uitleg.text}</span>
+                  </div>
+                )
+              })()}
+
               {/* [BANK-ATTACH] Attach the document(s) for this payment. Shown on
                   BOTH debit (expense → inkoopfactuur) and credit (income/refund →
                   verkoopfactuur) — income also has documents worth linking (a

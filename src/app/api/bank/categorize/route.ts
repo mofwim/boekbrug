@@ -14,16 +14,28 @@
 //        transfer, tax payment or private withdrawal can't be silently booked as a
 //        deductible cost. لا اختراعات: the machine only fills what it actually knows.
 //
-// User-scoped via the RLS server client (auth.uid()). No amount arithmetic here — a
-// category is a task/identity, not a money claim.
+// User-scoped via the RLS server client (auth.uid()). A category is a task/identity, not a money
+// claim, so nothing here computes a total — but it does READ amounts, because [DUBBEL-GEDEKT]
+// needs them: a confident suggestion over money a paid invoice already explains is withheld by
+// both machine writers below, exactly as the nightly pass withholds it.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+// [WAAROM-WACHT-CAT] Waarom de app deze regel niet zelf codeert — zie category-wait.ts.
+import { judgeCategoryWait } from "@/lib/category-wait";
 import { counterpartKey, suggestIdentity, bestSimilarMemory, type MemoryEntry } from "@/lib/bank-identity";
 // [ZELFDE-TEGENPARTIJ] Which other pending lines the owner just answered for without knowing it.
 import { linesForCounterpart } from "@/lib/counterpart-spread";
 import { ALLOWED_CATEGORIES, EXCLUDED_CATEGORIES, type BankCategory } from "@/lib/bank-categories";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { round2 } from "@/lib/invoice-totals";
+// [DUBBEL-GEDEKT] The one rule about money a paid invoice already explains. Both machine writers
+// below ask it — the cron pass (bank-auto-categorize.ts) asks the same one.
+import { readDoubleBookingGuard, type DoubleBookingGuard } from "@/lib/bank-double-booking";
+// mollie_payment_links carries RLS with zero policies by design, so the guard's Mollie probe needs
+// the service role. Scoped to this owner's user_id, like every other privileged read in a
+// user-facing route here.
+import { createPipelineClient } from "@/lib/supabase-pipeline";
 
 // How many rows one GET page returns (the review list). The true remaining total is
 // reported separately via an exact head-count, so a capped page never reads as "done".
@@ -186,6 +198,12 @@ export async function GET(req: NextRequest) {
   // [LEVERANCIER-BEWIJS] Which counterparts the owner already holds invoices from.
   const supplierKeys = await knownSupplierKeys(supabase, user.id);
 
+  // [DUBBEL-GEDEKT] What is already in the books. The sweep and the nightly pass withhold these
+  // lines; this screen must not silently PROPOSE what they refuse to write — a pre-selected
+  // 'kosten' chip on a cost the owner already booked is one tap away from the same double count,
+  // and the owner has no way of knowing. So a held line arrives labelled, with nothing chosen.
+  const guard = await doubleBookingGuard(supabase, user.id, txs);
+
   let confidentAvailable = 0;
   const items = txs.map((t) => {
     const key = counterpartKey(t.counterpart_name);
@@ -194,7 +212,10 @@ export async function GET(req: NextRequest) {
     // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
     const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
     const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false);
-    if (suggestion.confident) confidentAvailable++;
+    const alreadyBooked = guard.hold(suggestion.category, t);
+    // A held line is not among the "N zekere" the button offers, because the button will not write
+    // it. Counting it there would promise a number the sweep cannot deliver.
+    if (suggestion.confident && !alreadyBooked) confidentAvailable++;
     return {
       id: t.id,
       date: t.date,
@@ -203,18 +224,71 @@ export async function GET(req: NextRequest) {
       description: t.description,
       suggested: suggestion.category,
       suggested_source: suggestion.source,
-      // Only confident suggestions are eligible for the one-click bulk apply.
-      suggested_confident: suggestion.confident,
+      // Only confident suggestions are eligible for the one-click bulk apply — and a line whose
+      // money is already booked is not, whatever the classifier thinks of the counterpart.
+      suggested_confident: suggestion.confident && !alreadyBooked,
+      // Why the app will not fill this one in: a paid invoice already carries the amount, or it is
+      // a Mollie payout of invoices already settled. null = nothing in the way.
+      already_booked: alreadyBooked,
       // On a 'similar' suggestion: the memorized counterpart it resembles (for a "lijkt op …" hint).
       suggested_similar_to: suggestion.similarTo ?? null,
+      // [WAAROM-WACHT-CAT] Machinecode: waarom de app hem niet zelf invult. Geoordeeld op de
+      // SUGGESTIE, vóór de dubbelboekingsrem erin gevouwen wordt — een regel waarvan het geld al
+      // geboekt is draagt zijn eigen uitleg en heeft dit classificatieprobleem niet.
+      wait_reason: judgeCategoryWait(suggestion),
     };
   });
+
+  // [BANK-GELD-NIET-GEBOEKT] Hoevéél geld er nog buiten de boeken staat, niet alleen hoeveel
+  // regels. Voor een winkelier is "299 banktransacties" een klus; "€ 266.834 aan uitgaven staat
+  // nog niet in je winst & verlies" is zijn geld. Gemeten in de productiedatabase toen dit werd
+  // geschreven: precies die twee getallen, bij één eigenaar.
+  //
+  // UIT en IN apart, en dat is geen opmaakkeuze. financial-result.ts houdt deze twee om dezelfde
+  // reden gescheiden: "€ 10.000 in en € 10.000 uit netten tot nul en zouden lezen als 'niets mist'
+  // terwijl het twee onverklaarde feiten zijn."
+  //
+  // Een onvolledige som is erger dan geen som — dan staat er een bedrag op het scherm dat kleiner
+  // is dan de werkelijkheid, over precies het geld dat nog niet meetelt. fetchAllRows gooit bij een
+  // mislukte pagina, en dan blijft dit null en toont het scherm alleen het aantal.
+  let remainingOut: number | null = null;
+  let remainingIn: number | null = null;
+  try {
+    const bedragen = await fetchAllRows<{ amount: number | null }>((from, to) =>
+      supabase
+        .from("bank_transactions")
+        .select("amount")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .is("invoice_id", null)
+        .is("category", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    let uit = 0;
+    let inn = 0;
+    for (const r of bedragen) {
+      const a = Number(r.amount) || 0;
+      if (a < 0) uit += -a;
+      else inn += a;
+    }
+    remainingOut = round2(uit);
+    remainingIn = round2(inn);
+  } catch (e) {
+    console.warn("[BANK-GELD-NIET-GEBOEKT] som van ongecategoriseerde regels mislukt", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 
   return NextResponse.json({
     ok: true,
     items,
     // items.length is only this page; totalRemaining is the honest DB-wide count.
     count: items.length,
+    // [BANK-GELD-NIET-GEBOEKT] null = we konden het niet optellen. Nooit 0: dat zou "er staat geen
+    // geld buiten je boeken" beweren over een som die niet gelukt is.
+    remaining_out: remainingOut,
+    remaining_in: remainingIn,
     // Onleesbaar → items.length, en dat is precies wat de zin eronder nodig heeft: dan zegt
     // has_more niet "je bent klaar" maar "we weten het niet zeker", en de UI blijft doorvragen.
     total_remaining: totalRemainingErr ? items.length : totalRemaining ?? items.length,
@@ -285,23 +359,31 @@ export async function POST(req: NextRequest) {
   // must not wear their confirmation. Best-effort — a failed spread must never cost the owner the
   // answer they did give, which is already committed above.
   let alsoApplied = 0;
+  let heldDouble = 0;
   try {
-    const pending = await fetchAllRows<{ id: string; counterpart_name: string | null; category: string | null }>((from, to) =>
+    const pending = await fetchAllRows<{ id: string; counterpart_name: string | null; category: string | null; amount: number | null; description: string | null; date: string | null }>((from, to) =>
       supabase
         .from("bank_transactions")
-        .select("id, counterpart_name, category")
+        // amount/description/date are the double-booking guard's inputs, not display fields.
+        .select("id, counterpart_name, category, amount, description, date")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .is("invoice_id", null)
         .is("category", null)
         .order("id", { ascending: true })
         .range(from, to));
-    const ids = linesForCounterpart(pending, tx.counterpart_name, transactionId);
-    for (const id of ids) {
+    const ids = new Set(linesForCounterpart(pending, tx.counterpart_name, transactionId));
+    const spreading = pending.filter((p) => ids.has(p.id));
+    // [DUBBEL-GEDEKT] The owner answered for ONE line; these are the inference. An inferred cost
+    // over money a paid invoice already explains is the same double booking the sweep and the
+    // nightly pass refuse — same rule, asked here too.
+    const guard = await doubleBookingGuard(supabase, user.id, spreading);
+    for (const p of spreading) {
+      if (guard.hold(category, p)) { heldDouble++; continue; }
       const { error } = await supabase
         .from("bank_transactions")
         .update({ category, category_source: "memory", category_confirmed: false })
-        .eq("id", id)
+        .eq("id", p.id)
         .eq("user_id", user.id)
         .is("category", null); // guard: never clobber a category set meanwhile
       if (!error) alsoApplied++;
@@ -310,7 +392,7 @@ export async function POST(req: NextRequest) {
     console.error("[ZELFDE-TEGENPARTIJ] spreading the answer failed — the answer itself stands", e);
   }
 
-  return NextResponse.json({ ok: true, alsoApplied });
+  return NextResponse.json({ ok: true, alsoApplied, heldDouble });
 }
 
 // ─── Bulk apply: fill ONLY the confident suggestions, leave the rest for the owner ──
@@ -356,11 +438,13 @@ async function bulkApply(
   // nothing left to do. Page past the cap the way every other bulk read in the app does, then
   // apply BULK_MAX ourselves so the runaway-account guard still means what it says. `remaining`
   // below is an exact head-count either way, so a capped sweep stays honest about the tail.
-  const rows = (await fetchAllRows<{ id: string; amount: number | null; counterpart_name: string | null; description: string | null }>(
+  const rows = (await fetchAllRows<{ id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }>(
     (from, to) =>
       supabase
         .from("bank_transactions")
-        .select("id, amount, counterpart_name, description")
+        // `date` is not decoration: the double-booking guard below needs it to tell this month's
+        // € 250 from the one a paid invoice settled a fortnight ago.
+        .select("id, amount, counterpart_name, description, date")
         .eq("user_id", userId)
         .eq("status", "pending")
         .is("invoice_id", null)
@@ -370,14 +454,24 @@ async function bulkApply(
   )).slice(0, BULK_MAX);
 
   const txs = rows ?? [];
+
+  // [DUBBEL-GEDEKT] What is already in the books. This is the sweep the OWNER presses, and it ran
+  // without this guard while the nightly pass had it — the same rule, written twice, guarded once.
+  const guard = await doubleBookingGuard(supabase, userId, txs);
+
   let applied = 0;
   let skipped = 0;
+  let held = 0;
 
   for (const t of txs) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
     const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
     if (!s.confident) { skipped++; continue; }
+    // Confident and still not written: a paid invoice already carries this money, or it is a
+    // Mollie payout of invoices Mollie already settled. Booking it here books it twice. The line
+    // stays on this screen, which is how the owner is asked to link it instead.
+    if (guard.hold(s.category, t)) { held++; skipped++; continue; }
 
     // Auto-applied, NOT individually confirmed by the owner → category_confirmed:false
     // so it stays reviewable. category_source records who suggested it (memory/ai).
@@ -404,10 +498,39 @@ async function bulkApply(
   return NextResponse.json({
     ok: true,
     applied,
-    skipped,          // left untouched because the suggestion was only a sign-guess
+    skipped,          // left untouched: a sign-only guess, or money already in the books
+    // Of those, the ones a confident suggestion WANTED to write and the guard refused.
+    held_double: held,
     // null = niet geteld. Nul zou "klaar" betekenen, en dat weet deze lezing niet.
     remaining: remainingErr ? null : remaining ?? 0,
   });
+}
+
+/**
+ * [DUBBEL-GEDEKT] The double-booking guard, wired for a user-facing route.
+ *
+ * Two clients, one rule. The paid invoices come through the caller's own RLS client — an owner
+ * may read their own invoices, so nothing privileged is needed for the read that carries the
+ * money. `mollie_payment_links` is the exception: it has RLS on with zero policies (every access
+ * in this app goes through the service role), so an RLS read would return an empty set and the
+ * Mollie hold would silently never fire. A service-role client scoped to THIS user_id answers it.
+ *
+ * If that client cannot be built (missing env), the guard is told so rather than handed a client
+ * that reads nothing: it then reports molliePayoutKnown:false, and the paid-invoice half — the
+ * half with € 31.188,87 behind it — still runs.
+ */
+async function doubleBookingGuard(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  userId: string,
+  lines: readonly { amount: number | null }[],
+): Promise<DoubleBookingGuard> {
+  let molliePipeline: ReturnType<typeof createPipelineClient> | null = null;
+  try {
+    molliePipeline = createPipelineClient();
+  } catch (e) {
+    console.warn("[MOLLIE-UITBETALING] no service-role client — the payout hold cannot be evaluated", e);
+  }
+  return readDoubleBookingGuard({ invoiceClient: supabase, molliePipeline, userId, lines });
 }
 
 /**

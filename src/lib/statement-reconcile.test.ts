@@ -221,5 +221,75 @@ console.log("\n[STATEMENT-RECONCILE] lege invoer");
   check("de samenvatting zegt dat er geen regels waren", /Geen factuurregels/.test(summarizeReconcile(r)));
 }
 
+// ── [TWEE-BOEKEN] Twee boekhoudingen over dezelfde factuur, en ze zijn het oneens ───────────────
+//
+// De zaak: het pakket van een groothandel toonde factuur 2034488 als OPEN en vervallen. In
+// BoekBrug stond hij op 'betaald', afgevinkt met de hand. Die regel belandde in `matched` en de
+// app meldde "alle facturen op dit overzicht heb je al" — het ENE externe document dat de eigen
+// boeken tegenspreekt, gelezen als bevestiging, met € 1.165,73 eraan.
+console.log("\n[TWEE-BOEKEN] de leverancier ziet open wat wij betaald noemen");
+{
+  const r = reconcileStatement({
+    lines: [line({ invoice_number: "2034488", amount: 1165.73, date: "2026-08-15" })],
+    booked: [booked({ id: "a", invoice_number: "2034488", total_inc_btw: 1165.73, invoice_date: "2026-08-15", status: "paid" })],
+  });
+  check("de factuur is nog steeds GEVONDEN — dat deel van het antwoord blijft waar", r.matched.length === 1);
+  check("…en staat óók in de tegenspraak", r.alsoPaid.length === 1);
+  check("een lijst zonder betaalregels leest als openstaande posten", r.looksLikeOpenItems === true);
+
+  const zin = summarizeReconcile(r, "CAN Vleesgroothandel B.V.");
+  check("de app zegt NIET meer dat alles in orde is",
+    !/Alle 1 facturen op dit overzicht van CAN Vleesgroothandel B\.V\. heb je al\.$/.test(zin));
+  check("zonder bankregel vraagt hij om een controle", /geen bankregel die die betaling draagt/.test(zin));
+  check("…en zegt niet dat de leverancier achterloopt", !/nog niet verwerkt/.test(zin));
+
+  // Het nummer hoort op het bestand: een zin met alleen een aantal erin is geen zin waarmee
+  // iemand kan gaan zoeken.
+  check("de notitie noemt het nummer", /2034488/.test(reconcileNote(r, "CAN")));
+}
+
+console.log("\n[TWEE-BOEKEN] mét bankbewijs is het een andere zin");
+{
+  const r = reconcileStatement({
+    lines: [line({ invoice_number: "2034488", amount: 1165.73 })],
+    booked: [booked({ id: "a", invoice_number: "2034488", total_inc_btw: 1165.73, status: "paid", paymentHasBankProof: true })],
+  });
+  const zin = summarizeReconcile(r);
+  check("het geld is aantoonbaar vertrokken, dus loopt de leverancier achter", /nog niet verwerkt/.test(zin));
+  check("…en er wordt niet om een controle gevraagd", !/geen bankregel/.test(zin));
+}
+
+console.log("\n[TWEE-BOEKEN] wat GEEN tegenspraak is");
+{
+  // Een PERIODEoverzicht toont onze eigen betalingen als regels. Daarop is een betaalde factuur
+  // het normaalste van de wereld, en alarm slaan zou elke maand vals zijn.
+  const periode = reconcileStatement({
+    lines: [
+      line({ invoice_number: "2034488", amount: 1165.73 }),
+      line({ invoice_number: null, amount: -1165.73, kind: "payment", description: "Betaling ontvangen" }),
+    ],
+    booked: [booked({ id: "a", invoice_number: "2034488", total_inc_btw: 1165.73, status: "paid" })],
+  });
+  check("een betaalregel maakt er een periodeoverzicht van", periode.looksLikeOpenItems === false);
+  check("de tegenspraak wordt dan niet gemeld", !/nog open/.test(summarizeReconcile(periode)));
+  check("…maar staat wel in het resultaat, voor wie er iets mee wil", periode.alsoPaid.length === 1);
+
+  // Een factuur die wij nog OPEN hebben staan is geen tegenspraak — beide partijen zijn het eens.
+  const eens = reconcileStatement({
+    lines: [line({ invoice_number: "2034534", amount: 1217.92 })],
+    booked: [booked({ id: "b", invoice_number: "2034534", total_inc_btw: 1217.92, status: "received" })],
+  });
+  check("open bij ons én bij hen is geen tegenspraak", eens.alsoPaid.length === 0);
+  check("en dan mag de app wél zeggen dat alles er is", /heb je al\./.test(summarizeReconcile(eens)));
+
+  // Zonder informatie over het bewijs valt alles terug op de voorzichtige zin — de goede kant om
+  // op te falen, want die vraagt om een controle die de eigenaar toch al zelf kan doen.
+  const onbekend = reconcileStatement({
+    lines: [line({ invoice_number: "2034488", amount: 1165.73 })],
+    booked: [booked({ id: "a", invoice_number: "2034488", total_inc_btw: 1165.73, status: "paid" })],
+  });
+  check("geen bewijsveld ⇒ behandeld als afgevinkt", /geen bankregel/.test(summarizeReconcile(onbekend)));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

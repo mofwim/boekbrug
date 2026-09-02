@@ -244,7 +244,13 @@ BEGIN
      -- andersom net zo makkelijk. Hij stond in GEEN enkele versie van deze lijst. Hij staat in élke
      -- herdefinitie omdat in deze map niet vast te stellen is welke als laatste draait — één oude
      -- die na de nieuwe draait zou hem anders weer uit de bescherming halen.
-     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)
+     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)       OR
+     -- [KORTING-SLOT] Geen bedragen maar de INVOER waaruit bedragen worden herrekend:
+     -- buildInvoiceUbl leidt PayableAmount en TaxAmount af uit parseDiscount(discount_type,
+     -- discount_value), en PUT /api/invoice/[id] herberekent daaruit total_ex_btw, btw_amount en
+     -- total_inc_btw. Een uitkomst beschermen en de invoer open laten is geen bescherming.
+     (NEW.discount_type       IS DISTINCT FROM OLD.discount_type)       OR
+     (NEW.discount_value      IS DISTINCT FROM OLD.discount_value)
   THEN
     RAISE EXCEPTION
       'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',

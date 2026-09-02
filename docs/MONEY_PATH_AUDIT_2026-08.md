@@ -560,3 +560,233 @@ session the same night. Worth recording because the useful discipline is the sam
 everything above: **check the current code and the live database before acting on a finding, however
 confident it sounds.** Two of twenty-two were already done, one migration's deny list turned out to
 be six files wide, and one of my own SQL statements had a bug I only found by re-reading it.
+
+---
+
+## 12. The guard that only one of three writers had — 31 August 2026
+
+An earlier pass found that a bill the owner marked paid by hand puts its cost in the books before
+its bank debit ever arrives; the matcher excludes paid invoices, so the debit finds no candidate,
+and a confident memory hit codes it `kosten` — the same cost twice, in the resultaat and in the
+closing package. The fix landed in `bank-auto-categorize.ts` and was documented there at length.
+
+It was documented in the one place it was not most needed. Three code paths write a category the
+owner did not answer for personally, all running the same classifier over the same rows:
+
+| Writer | Reached by | Had the guard |
+| --- | --- | --- |
+| `applyLearnedBankCategories` | import, cron, `/bank` load | yes |
+| `bulkApply` | **the "N zekere invullen" button** | no |
+| the `[ZELFDE-TEGENPARTIJ]` spread | confirming one line of a party | no |
+
+The unguarded pair includes the one the owner presses.
+
+### Measured before changing anything
+
+Across production, 53 uncategorised bank lines — together **€ 31.188,87** — sit against a paid
+invoice that already explains them (same direction, same amount to the cent, settled within a
+fortnight). Of those, **45 (€ 22.821,96)** would be confidently coded `kosten` by one press of the
+button, at one owner. Nothing downstream would have flagged it: readiness counts *excluded*
+categories, and a doubled `kosten` is not excluded, it is deductible.
+
+### What changed
+
+The decision moved to `src/lib/bank-double-booking.ts` and the three writers ask it. Not copied —
+copying it is what produced the defect. Two details were only visible once it was shared:
+
+- **The spread and the sweep never read the line's date.** Without it every magnitude match reads
+  as undatable, which the rule resolves toward holding — safe, but it would have frozen the sweep
+  the owner presses. Both reads now select `date`, and the gate says why.
+- **`mollie_payment_links` has RLS on with zero policies**, by design: every other access in the
+  app goes through the service role. A guard wired with the caller's RLS client would have read an
+  empty set, and "no rows" is indistinguishable from "this owner has no Mollie" — the payout hold
+  would have been silently off on exactly the path that needed it. The route hands the probe a
+  service-role client scoped to that `user_id`, and a probe that could not run reports
+  `molliePayoutKnown: false` instead of an answer.
+
+### The gate names no writers
+
+A list of writers is what went missing the first time: the second and third were written later, by
+someone reading the first. `[DUBBEL-GEDEKT]` in `lifecycle-gates.test.ts` derives the set from the
+source instead — every update that stamps `category_confirmed: false` onto `bank_transactions` is,
+by the app's own convention, a machine's inference rather than the owner's answer, which writes
+`true` — and requires each one to consult the guard inside the loop that reaches it.
+
+Verified by negative control, including the one that matters: a fourth writer added in a brand-new
+file the gate had never heard of fails it on the day it is written.
+
+### The half that only appeared once the first half worked
+
+Blocking the machines opened a quieter door. A held line lands on the categorisatie screen looking
+exactly like a line nobody could classify — same card, a `kosten` chip already selected, a confirm
+button under it. One tap books the cost a second time, with the app's own suggestion saying it was
+right, and the owner has no way of knowing.
+
+So the screen was given what the server knows: the hold arrives as `already_booked`, the line is
+excluded from the "N zekere invullen" hint (the sweep will not write it; promising it there is a
+number that cannot be delivered), and it reaches the owner with **nothing chosen**, under a sentence
+naming what already carries the amount. They may still pick `kosten` — two identical costs a
+fortnight apart are possible — but they have to mean it.
+
+The friction this adds is measurably nil: of the 53 held lines, 45 were the ones the button would
+have coded and the other 8 were never going to be auto-coded at all. Nothing that used to be filled
+in silently and correctly stopped being filled in.
+
+The copy lives in `bank-already-booked-notice.ts` rather than in the component, and the reason→copy
+map is a `Record` over the hold union rather than a switch with a default: a third hold reason stops
+compiling until it has words, where a default branch would have shipped it wearing the wrong ones.
+
+---
+
+## 13. The checker said the guards were applied. They were not. — 31 August 2026
+
+`docs/WELKE_MIGRATIES_STAAN_ER.sql` answers the one operational question that matters between a
+written migration and a protected database: **what still needs applying?** It reported a clean
+sheet — 114 migrations, 2 open. Both of those were already known.
+
+It was wrong, and wrong in the direction that costs the most.
+
+`prevent_accountant_amount_changes` is written by **nine** migration files. The probe asked whether
+the FUNCTION exists — and it has, since the first of those nine. So all nine reported TOEGEPAST,
+while the function running in production was missing three protected columns:
+
+| Column | What an accountant could move without it |
+| --- | --- |
+| `vat_deduction` | rubriek 5b of the client's aangifte, by the invoice's whole `btw_amount` — on € 10.000 + 21% that is € 2.100, silently, in the return that goes to the Belastingdienst |
+| `discount_type` | the invoice-level discount the e-factuur's amounts are derived from |
+| `discount_value` | the same |
+
+Both guards were written weeks ago, both were reported to the owner as "written, not applied", and
+the one tool that answers "did I apply it?" said yes. That is not a migration that was forgotten —
+it is a measurement that could not see what it claimed to check.
+
+This is the same defect the file's own header is about, one level down. That header records the
+question drifting behind the folder ("de VRAAG staat hier met de hand in"), which was fixed by
+generating it. Nobody asked whether the ANSWER could drift: **existence stops being evidence the
+moment a second file writes the same object.** Eight functions in this repo are written by more
+than one migration, covering about twenty files.
+
+### What the probe measures now
+
+For a function with more than one definer, the generated query reads the deployed body and checks
+every `NEW.`/`OLD.` column reference that **every** current definition contains — what the folder
+unanimously says belongs in that function, whichever file you happen to open. Run against
+production it returns exactly `.discount_type, .discount_value, .vat_deduction`.
+
+The intersection and not the union, deliberately: a union would carry a column one definition
+deliberately dropped, and then an alarm goes off that can never be cleared — which teaches everyone
+to click it away, the failure this file's own header warns about twice.
+
+Where several definitions share no column reference at all (a non-trigger function), the list says
+so in words rather than falling silent: *"GEEN INHOUDSMETING — Deel 1 valt hier terug op het bestaan
+van de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft."*
+
+The gate derives its rule from the generated list rather than from a list of functions someone
+maintains: **no function name may be probed by mere existence from more than one file**, unless the
+list itself explains why it cannot be measured. A tenth redefinition of anything fails it on the
+day it is written.
+
+### Also closed
+
+`src/lib/recon-confirm-client.ts` was deleted. The audit recorded it as "a complete feature nothing
+calls"; it is not a feature, it is a second spelling of `useInvoiceReconciliation.confirmMatch`,
+which two screens do call — and the worse of the two: it reports a 409 `invoice_already_paid` as
+`'error'`, so an invoice the auto-confirm had already booked would have shown the owner "mislukt".
+`deck.ts` is not uncalled either: `scripts/generate-deck.mts` builds from it.
+
+### Applied to production, 31 August 2026 — with the owner's approval
+
+`accountant_discount_guard.sql` (which carries the full 24-column deny list, including
+`vat_deduction`) was applied. Checked before applying, because a `CREATE OR REPLACE FUNCTION`
+silently resets what it does not restate: the live function was `SECURITY INVOKER`, no
+`search_path`, `VOLATILE` — exactly what the file produces, so nothing was lost. Verified after:
+
+| Check | Result |
+| --- | --- |
+| the file's own CONTROLE block (4 assertions) | all true |
+| `vendor_iban` / `payment_reference` / `document_id` still protected | yes |
+| both mandate exceptions (opstellen, bevestigen) still reachable | yes |
+| trigger still attached to `invoices` | yes, 1 |
+| `security definer` / `search_path` / volatility | unchanged |
+| the new body probe, the one that reported the hole an hour earlier | TOEGEPAST, nothing missing |
+
+And then the guard was made to **bite**, in a transaction that always aborts: acting as a uid that
+is neither sender nor receiver and holds no mandate, `vat_deduction`, `discount_value` and
+`vendor_iban` were each GEWEIGERD; acting as the invoice's own receiver, `vat_deduction` was
+TOEGESTAAN — so `/dashboard/incoming/manage`, the one screen that writes that column, still works.
+The proof left nothing behind; the row it ran against is byte-for-byte as it was.
+
+A deployed text is not a working rule. The difference is one query, and it is the query nobody runs.
+
+### One truncation found while verifying the fix itself
+
+The generator caps a migration at six probes, chosen alphabetically. `vat_exemption.sql` has six
+ordinary column and constraint probes, so `function_body` — which sorts after both — fell off the
+end. A cap that cuts exactly the sharpest measurement is a silent truncation of the same kind as
+the defect it was written for, so a body probe now survives the cap unconditionally and the gate
+walks the folder: every file that rewrites the guard must carry one.
+
+(The finding before it was mine, not the tool's: I read the emitted marker list with a `grep` that
+dropped its first field and briefly believed `amount_paid` had gone missing. It had not — all 24
+columns were there. Worth recording, because it is the third time this week that the thing which
+looked broken was the measurement rather than the thing measured.)
+
+### Still open, and now accurately reported
+
+- `bank_auto_book_blocked.sql` and `creditnota_per_rate_ceiling.sql` — the two the checker always
+  named correctly (they create objects that do not exist yet).
+- `accountant_vat_deduction_guard.sql` reads TOEGEPAST now and that is correct: its columns are in
+  the deployed body. The two files are two spellings of one deny list, which is the convention this
+  family documents — whichever runs last, the list is whole.
+- The 14 invoices with `amount_paid = 0` whose links cover the total (7 incoming € 1.071,89,
+  7 outgoing € 4.249,79): approved for repair via `recompute_invoice_amount_paid`, not yet run.
+
+---
+
+## 14. The 14 invoices, repaired — 2 September 2026
+
+Approved by the owner, run against production, verified both ways.
+
+Fourteen invoices sat `status = 'paid'` with bank links covering their total exactly and
+`amount_paid = 0`. Six belong to a real owner, eight to the demo dossier. The aangifte was never
+affected — `isSettled` reads `amount_paid > 0 || status === 'paid'` precisely for rows like these —
+but every screen and check that reads `amount_paid` saw zero, and the money audit described them
+with a sentence about the wrong thing.
+
+### What was checked before writing
+
+- **The deployed function, not the file.** `recompute_invoice_amount_paid` is written by TWO
+  migrations. The one live in production is `invoice_partial_payments.sql`'s: it writes
+  `amount_paid` and nothing else. `invoice_payment_date_rederive.sql`, which also re-derives
+  `payment_date`, **has not been applied** — which the new body probe from §13 reports correctly,
+  and which mattered here: a repair that moved fourteen payment dates is a different act entirely.
+- **Every trigger on `invoices`.** Six, all BEFORE. The two `verwerkt` guards do not fire
+  (`accountant_status` is null on all fourteen), the creditnota ceiling does not fire (all fourteen
+  are `factuur`), and the accountant guard's first exception passes for a service-role caller.
+- **The scheme.** Both owners are `vat_scheme = 'factuur'`, so BTW follows the invoice date and
+  `amount_paid` cannot move a quarter even in principle.
+
+### How it was run
+
+One statement, therefore one transaction — all fourteen or none. The defect was **re-asserted per
+row inside that statement** (`amount_paid = 0` AND links covering the total), so a row that had
+stopped matching between the measurement and the write would have excluded itself instead of being
+written blindly.
+
+### Verified after
+
+The same aggregate query, before and after, over both owners by direction and quarter:
+
+| Column | Result |
+| --- | --- |
+| `som_inc`, `som_btw` (the aangifte's inputs) | **byte-identical in all 8 groups** |
+| `openstaand` | byte-identical |
+| row counts | byte-identical |
+| `amount_paid` over the invoice total | 0 before, 0 after |
+| `som_betaald` | +297,12 · +401,99 · +774,77 · +3.847,80 = **€ 5.321,68**, exactly the measured set |
+
+And app-wide afterwards: **0** invoices still matching the defect, **0** whose `amount_paid`
+disagrees with its links by more than a cent, **0** claiming more paid than their total.
+
+No tax figure moved. That is the claim the before/after pair exists to support, and it is the only
+reason a repair to real books was worth running at all.

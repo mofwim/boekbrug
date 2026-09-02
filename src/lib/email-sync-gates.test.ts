@@ -182,8 +182,13 @@ test("[BON-EMAIL] a paid suggestion is never auto-booked as an unpaid debt", () 
   // [MAILTEKST] The window is wider than it was because a body-rendered invoice is refused first,
   // between `const autoAdv` and this clause. The invariant is unchanged: a paid suggestion still
   // has to appear in the same expression that decides whether to auto-advance.
+  // [WAAROM-VASTGEHOUDEN] De vorm is veranderd, de invariant niet. `!pay.suggestPaid` zat in
+  // dezelfde uitdrukking als `!classification.uncertain`, en die twee gaven één naam aan twee heel
+  // verschillende oorzaken — de lezer die twijfelde, en een perfect gelezen factuur met een
+  // betaalspoor. De eigenaar las daarbij "de lezer was niet zeker genoeg" over een document
+  // waarover niemand twijfelde. Nu een eigen tak met een eigen naam, vóór de kwaliteitspoorten.
   assert.match(
-    SYNC, /const autoAdv[\s\S]{0,600}?!pay\.suggestPaid/,
+    SYNC, /const autoAdv[\s\S]{0,700}?pay\.suggestPaid && !settlePlan\.settle\s*\n\s*\? \{ advance: false, reason: 'paid_mark_not_settled' \}/,
     "the sync's auto-advance must be held back by a paid suggestion, as the camera path is",
   );
   // And the refusal that now precedes it: mail we assembled into a document never books itself.

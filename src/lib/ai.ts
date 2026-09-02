@@ -2026,8 +2026,14 @@ Return JSON only.`;
 
       // [E-FACTUUR] Before any of the reading checks: does this PDF carry the invoice a SECOND
       // time, as structured XML the supplier produced? Factur-X and ZUGFeRD are ordinary-looking
-      // PDFs that do exactly that, and NL makes Peppol e-invoicing mandatory over €800k turnover
-      // from 2027 and for everyone from 2028 — so this arrives now and will only arrive more.
+      // PDFs that do exactly that, and a Dutch buyer already receives them: German suppliers send
+      // ZUGFeRD now, French ones Factur-X, Belgian ones Peppol UBL since January 2026. So this
+      // arrives today and will only arrive more.
+      //
+      // [E-FACTUUR-DATUM] What used to stand here was a Dutch mandate year, written once from an
+      // unnamed source and copied into eight files. It is not true, and the sourced answer lives in
+      // exactly one place — the header of src/lib/e-invoice.ts. The argument above needs no
+      // deadline, which is precisely why it survives one being wrong.
       //
       // It is not another way of reading the page. Everything else here checks a READING; this is
       // the supplier's own statement of the money, in a form with nothing to interpret. When it is

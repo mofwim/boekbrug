@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict, asCreditAmounts,
-  creditStance, payableAsDebt, looksLikeCreditnotaByNumber,
+  creditStance, payableAsDebt, looksLikeCreditnotaByNumber, creditWordInHeader,
 } from "./creditnota-signal";
 
 /** The real case: this wholesaler sends CR credit notes alongside RE invoices. */
@@ -327,4 +327,51 @@ test("[CREDIT-PREFIX-GATE] quiet on everything that merely starts with letters",
       `${JSON.stringify(n)} must not be read as a credit number`,
     );
   }
+});
+
+// ─── [CREDIT-WOORD] Het woord op het papier ─────────────────────────────────────
+
+test("[CREDIT-WOORD] de kop die deze hele controle heeft veroorzaakt", () => {
+  // Het echte document, zoals de tekstlaag het oplevert: het model gaf hierop is_credit_note=false.
+  const kop =
+    "Dutch Sweets Company B.V.\nPostbus 1234, 5000 AA Tilburg\n\n" +
+    "CREDITFACTUUR\n\nNummer: CR0301267\nDatum: 16-07-2026\n\n" +
+    "Totaal bedrag (EUR) : € -33,87\n";
+  assert.equal(creditWordInHeader(kop), true);
+});
+
+test("[CREDIT-WOORD] 'creditnota' in de voorwaarden onderaan is GEEN creditnota", () => {
+  // Dit is de reden dat alleen de kop telt. Deze zin staat op een groot deel van alle gewone
+  // inkoopfacturen; er hier op afgaan zou het alarm waardeloos maken door het te vaak te laten
+  // afgaan — en dat is erger dan de fout die het moest vangen.
+  const factuur =
+    "Hano Groothandel B.V.\nFACTUUR\nNummer: 2026-0912\nDatum: 03-08-2026\n" +
+    "Vervaldatum: 17-08-2026\nKlantnummer: 88213\n" +
+    "Levering week 31, diverse artikelen\n".repeat(12) +
+    "\nBETALINGSVOORWAARDEN\nBetaling binnen 14 dagen. Bij retour van goederen " +
+    "ontvangt u een creditnota op het hier vermelde rekeningnummer.\n";
+  assert.ok(factuur.length > 600, "de zin moet echt buiten de kop vallen, anders meet dit niets");
+  assert.equal(creditWordInHeader(factuur), false);
+});
+
+test("[CREDIT-WOORD] een ontkenning in de kop is geen aankondiging", () => {
+  assert.equal(creditWordInHeader("FACTUUR\nDit is geen creditnota.\nNummer 2026-1"), false);
+});
+
+test("[CREDIT-WOORD] varianten en spelling", () => {
+  assert.equal(creditWordInHeader("CREDITNOTA\n"), true);
+  assert.equal(creditWordInHeader("Credit Nota nr. 5\n"), true);
+  assert.equal(creditWordInHeader("CREDIT NOTE\n"), true);
+  assert.equal(creditWordInHeader("creditnote 9\n"), true);
+});
+
+test("[CREDIT-WOORD] losse woorden die er alleen op lijken, tellen niet", () => {
+  assert.equal(creditWordInHeader("FACTUUR\nCreditcard betaling ontvangen\n"), false);
+  assert.equal(creditWordInHeader("FACTUUR\nKredietbeperking 2%\n"), false);
+  assert.equal(creditWordInHeader("FACTUUR\nCreditering volgt separaat\n"), false);
+});
+
+test("[CREDIT-WOORD] geen tekstlaag is geen bewijs van het tegendeel", () => {
+  assert.equal(creditWordInHeader(null), false);
+  assert.equal(creditWordInHeader(""), false);
 });

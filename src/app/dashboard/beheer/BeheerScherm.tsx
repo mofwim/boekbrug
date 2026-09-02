@@ -6,6 +6,7 @@
 import type { BeheerOverview } from "@/lib/beheer";
 import type { SystemHealth, EventSummary } from "@/lib/beheer-health";
 import { caughtErrorPct, type ReaderQuality } from "@/lib/reader-quality";
+import { handsOffPct, type HoldSummary } from "@/lib/hold-reasons";
 
 const CARD: React.CSSProperties = { background: "#fff", border: "1px solid #E0E0E0", borderRadius: 12, padding: "16px 20px" };
 const TH: React.CSSProperties = { textAlign: "start", fontSize: 12, fontWeight: 600, color: "#5F6368", padding: "6px 10px", borderBottom: "1px solid #E0E0E0" };
@@ -142,6 +143,103 @@ function Leeskwaliteit({ q }: { q: ReaderQuality | null }) {
 }
 
 /**
+ * [WAAROM-VASTGEHOUDEN] Welke weigering kost de eigenaar de meeste minuten.
+ *
+ * Dit paneel is geen kwaliteitscijfer. Een weigering is de app die voorzichtig doet, en
+ * voorzichtig doen is goed — geen enkele regel hieronder is een fout. Het is een WERKLIJST,
+ * geordend naar tijd: bovenaan staat de reden die, één keer opgelost, de meeste uren teruggeeft.
+ *
+ * Waarom dat hier hoort en niet in een query: op één echte administratie had 59% van de inkomende
+ * documenten een mensenhand nodig, en dat werd pas zichtbaar toen iemand toevallig ging tellen.
+ * De belofte van dit product is "doe jouw werk, de rest doen wij" — dan is dit percentage de
+ * belofte zelf, en hoort het te staan waar de operator kijkt.
+ */
+function Vastgehouden({ s }: { s: HoldSummary | null }) {
+  // [NO-SILENT-EMPTY] Niets kunnen meten is geen lege wachtrij. "Er is geen werk" is precies het
+  // antwoord dat je niet mag geven als je de vraag niet hebt kunnen stellen.
+  if (!s) {
+    return (
+      <section style={{ ...CARD, borderColor: "#B3261E" }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: "#B3261E", margin: "0 0 6px" }}>Handwerk is niet te meten</h2>
+        <p style={{ fontSize: 12.5, color: "#5F6368", margin: 0, lineHeight: 1.5 }}>
+          De vraag kon niet gesteld worden. Dat is géén bevestiging dat de wachtrij leeg is.
+        </p>
+      </section>
+    );
+  }
+
+  const vanzelf = handsOffPct(s);
+  return (
+    <section style={CARD}>
+      <h2 style={{ fontSize: 15, fontWeight: 600, color: "#202124", margin: "0 0 4px" }}>Waarom kost dit handwerk</h2>
+      <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 14px", lineHeight: 1.5 }}>
+        Van de inkomende documenten van de laatste 90 dagen: hoeveel de app zelf heeft geboekt, en
+        waarom de rest op een mens moest wachten. Elke regel hieronder is een minuut per document —
+        de bovenste regel is de eerstvolgende verbetering die het meeste tijd teruggeeft.
+      </p>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <Tel n={s.total} label="documenten binnen" />
+        <Tel n={s.advanced} label="vanzelf geboekt" />
+        <div style={{ ...CARD, minWidth: 120, borderColor: s.held > s.advanced ? "#B3261E" : "#E0E0E0" }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: s.held > s.advanced ? "#B3261E" : "#202124" }}>{s.held}</div>
+          <div style={{ fontSize: 12.5, color: "#5F6368" }}>handwerk</div>
+        </div>
+      </div>
+
+      {vanzelf !== null && (
+        <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 14px" }}>
+          Vanzelf verwerkt: <strong style={{ color: "#202124" }}>{vanzelf.toFixed(1)}%</strong>.
+        </p>
+      )}
+
+      {/* [NO-SILENT-EMPTY] Vastgehouden zonder vastgelegde reden staat APART en nooit in de
+          ranglijst: alles van vóór deze meting draagt er geen, en dat mag geen categorie worden
+          die eruitziet alsof hij verklaard is. Loopt hij weer op, dan is een pad gestopt met
+          opschrijven — en dan is de ranglijst eronder stil onvolledig. */}
+      {s.unrecorded > 0 && (
+        <div style={{ ...CARD, borderColor: "#E37400", background: "#FEF7E0", marginBottom: 14 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "#202124" }}>
+            {s.unrecorded} van de {s.held} zonder vastgelegde reden
+          </div>
+          <div style={{ fontSize: 12, color: "#5F6368", marginTop: 4, lineHeight: 1.5 }}>
+            Deze tellen niet mee in de lijst hieronder. Documenten van vóór deze meting dragen geen
+            reden; dat aantal hoort vanzelf te dalen. Stijgt het, dan schrijft een pad zijn reden
+            niet meer op en is de lijst hieronder onvolledig zonder dat te zeggen.
+          </div>
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead><tr><th style={TH}>Reden</th><th style={TH}>Aantal</th><th style={TH}>Aandeel</th><th style={TH}>Vooral bij</th></tr></thead>
+          <tbody>
+            {s.reasons.map((r) => (
+              <tr key={r.reason}>
+                <td style={TD}>
+                  <div>{r.label}</div>
+                  <div style={{ fontSize: 11, color: "#9AA0A6", fontFamily: "monospace" }}>{r.reason}</div>
+                </td>
+                <td style={TD}>{r.count}</td>
+                <td style={TD}>{r.sharePct.toFixed(1)}%</td>
+                <td style={TD}>
+                  {r.topSuppliers.length === 0
+                    ? <span style={{ color: "#9AA0A6" }}>verspreid</span>
+                    : r.topSuppliers.map((l) => `${l.supplierName} (${l.count})`).join(", ")}
+                </td>
+              </tr>
+            ))}
+            {s.reasons.length === 0 && (
+              <tr><td style={TD} colSpan={4}>Geen enkele vastgelegde reden in deze periode.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/**
  * [BEHEER-GEZOND] Draaien de achtergrondtaken nog?
  *
  * Bovenaan, vóór de accounts, en dat is geen smaak: een gestopte cron geeft geen foutmelding en
@@ -250,7 +348,7 @@ function Storingen({ storingen }: { storingen: EventSummary }) {
   );
 }
 
-export function BeheerScherm({ overview, systeem, storingen, leeskwaliteit }: { overview: BeheerOverview; systeem: SystemHealth; storingen: EventSummary; leeskwaliteit: ReaderQuality | null }) {
+export function BeheerScherm({ overview, systeem, storingen, leeskwaliteit, vastgehouden }: { overview: BeheerOverview; systeem: SystemHealth; storingen: EventSummary; leeskwaliteit: ReaderQuality | null; vastgehouden: HoldSummary | null }) {
   const { users, links, counts } = overview;
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20, fontFamily: "'Roboto', -apple-system, sans-serif" }}>
@@ -293,6 +391,7 @@ export function BeheerScherm({ overview, systeem, storingen, leeskwaliteit }: { 
         </div>
       </section>
 
+      <Vastgehouden s={vastgehouden} />
       <Leeskwaliteit q={leeskwaliteit} />
 
       <section style={CARD}>

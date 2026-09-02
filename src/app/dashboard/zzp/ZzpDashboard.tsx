@@ -284,6 +284,15 @@ export function ZzpDashboard(
                   passed through, since this tile jumps straight to the manage surface. */}
               <AdminTile icon="request_quote" tint="#E37400" label={t('start.tegel.inkoop')}
                 onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
+              {/* [LEVERANCIER-DEUR] Precies de fout die [UREN-DEUR] hieronder beschrijft, opnieuw
+                  gemaakt en meteen hersteld: /dashboard/leveranciers werd gebouwd, vertaald,
+                  getest en door de render-gate gehaald, en had NUL inkomende links. Alleen de
+                  titelbalk kende het pad — en die geeft een scherm een kop zodra je er BENT, niet
+                  een weg ernaartoe.
+                  Naast Inkoopfacturen, want dit is de optelsom van precies die stapel: wat er per
+                  leverancier nog openstaat, en wat daarvan vervallen is. */}
+              <AdminTile icon="local_shipping" tint="#B26A00" label={t('start.tegel.leveranciers')}
+                onClick={() => router.push('/dashboard/leveranciers')} />
               <AdminTile icon="account_balance" tint="#1A73E8" label={t('start.tegel.bank')}
                 onClick={() => router.push('/dashboard/bank')} />
               <AdminTile icon="payments" tint="#00897B" label={t('start.tegel.kas')}

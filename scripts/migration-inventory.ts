@@ -53,12 +53,15 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const DIR = "supabase/migrations";
 
-type Soort = "table" | "column" | "function" | "index" | "constraint" | "policy";
+type Soort = "table" | "column" | "function" | "function_body" | "index" | "constraint" | "policy";
 interface Probe {
   soort: Soort;
   /** De naam waarop de catalogus wordt bevraagd. Bij een kolom: de kolomnaam. */
   object: string;
-  /** Alleen bij een kolom: de tabel waar hij op zit. */
+  /**
+   * Bij een kolom: de tabel waar hij op zit.
+   * Bij een 'function_body': de merktekens, met komma's gescheiden — zie herdefinitieProbes().
+   */
   tabel?: string;
   /**
    * Het schema. Bijna altijd 'public' — en die "bijna" was een echte fout.
@@ -169,6 +172,54 @@ const ALLEEN_SERVICE_ROLE = [
 const lijst = (namen: string[]) => namen.map((n) => `'${n}'`).join(", ");
 
 const STAND_CONTROLE: Record<string, Stand> = {
+  "accountant_guard_fixed_search_path.sql": {
+    soort: "controle",
+    vraag: "de bedragbewaker draait met een vast zoekpad",
+    sql: `exists (select 1 from pg_proc p
+                    join pg_namespace n on n.oid = p.pronamespace
+                   where n.nspname = 'public'
+                     and p.proname = 'prevent_accountant_amount_changes'
+                     and 'search_path=public' = any(p.proconfig))`,
+  },
+  "drop_duplicate_indexes.sql": {
+    soort: "controle",
+    vraag: "geen twee indexen meer met precies dezelfde vorm op dezelfde tabel",
+    sql: `not exists (
+           select 1
+             from (select i.indrelid, i.indisunique,
+                          regexp_replace(pg_get_indexdef(i.indexrelid), '^CREATE (UNIQUE )?INDEX \\S+ ', '') as vorm
+                     from pg_index i
+                     join pg_class c on c.oid = i.indexrelid
+                     join pg_namespace n on n.oid = c.relnamespace
+                    where n.nspname = 'public') d
+            group by indrelid, indisunique, vorm
+           having count(*) > 1)`,
+  },
+  "revoke_execute_on_trigger_functions.sql": {
+    soort: "controle",
+    vraag: "geen enkele triggerbewaker hangt nog als /rest/v1/rpc aan de buitenkant",
+    sql: `not exists (
+           select 1 from pg_proc p
+             join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname in ('assert_credit_within_rate', 'prevent_verwerkt_invoice_changes',
+                                'prevent_accountant_amount_changes', 'guard_paid_when_verwerkt',
+                                'assert_bookkeeping_date_sane', 'invoices_search_vector_update')
+              and (p.proacl is null
+                   or exists (select 1 from aclexplode(p.proacl) a
+                               where a.grantee in ('anon'::regrole, 'authenticated'::regrole, 0))))`,
+  },
+  "rls_initplan_wrap_auth_calls.sql": {
+    soort: "controle",
+    vraag: "geen policy roept auth.uid() nog per rij aan, en geen enkele is dubbel gewikkeld",
+    sql: `not exists (
+           select 1 from pg_policies
+            where schemaname = 'public'
+              and ( (coalesce(qual,'')       like '%auth.uid()%' and coalesce(qual,'')       not like '%SELECT auth.uid()%')
+                 or (coalesce(with_check,'') like '%auth.uid()%' and coalesce(with_check,'') not like '%SELECT auth.uid()%')
+                 or coalesce(qual,'')       like '%SELECT ( SELECT auth.%'
+                 or coalesce(with_check,'') like '%SELECT ( SELECT auth.%' ))`,
+  },
   "BRIDGE-D_soft_delete_test_pollution.sql": {
     soort: "controle",
     vraag: "de zes testdocumenten staan in de prullenbak",
@@ -309,6 +360,92 @@ function probesOf(sql: string): Probe[] {
 }
 
 /**
+ * De body van elke functie die dit bestand definieert, op naam.
+ *
+ * Het dollar-teken mag een label dragen ($function$, $fn$, $$) en dat wisselt per bestand, dus de
+ * sluiter wordt uit de opener afgeleid in plaats van op $$ gegokt — accountant_vat_deduction_guard
+ * gebruikt $function$, en een probe die alleen $$ kende zag die body niet.
+ */
+function functieBodies(sql: string): Map<string, string> {
+  const uit = new Map<string, string>();
+  for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:([a-z0-9_]+)\.)?"?([a-z0-9_]+)"?\s*\(/gi)) {
+    const rest = sql.slice(m.index! + m[0].length);
+    const open = /\$([a-z0-9_]*)\$/i.exec(rest);
+    if (!open) continue;
+    const na = rest.slice(open.index + open[0].length);
+    const eind = na.indexOf(open[0]);
+    if (eind < 0) continue;
+    const naam = m[2].toLowerCase();
+    uit.set(naam, (uit.get(naam) ?? "") + na.slice(0, eind));
+  }
+  return uit;
+}
+
+/**
+ * ── WAAROM EEN HERDEFINITIE EEN ANDERE PROBE NODIG HEEFT ──
+ *
+ * Negen migratiebestanden herdefiniëren prevent_accountant_amount_changes. Acht ervan konden
+ * elkaar niet bewijzen: de probe vroeg of de FUNCTIE bestaat, en dat deed ze al sinds de eerste.
+ * Dus meldde dit rapport ze alle negen als TOEGEPAST — terwijl in de productiedatabase de
+ * beschermde kolommen `vat_deduction`, `discount_type` en `discount_value` ontbraken. Twee
+ * beveiligingsmigraties lagen weken klaar, gemeld aan de eigenaar, en het enige gereedschap dat
+ * de vraag "wat moet er nog?" beantwoordt zei dat ze gedraaid waren.
+ *
+ * Dat is precies de kwaal waar de kop van dit bestand over gaat, één niveau dieper: niet de VRAAG
+ * liep achter op de map, maar het ANTWOORD op de vraag. Bestaan is geen bewijs zodra meer dan één
+ * bestand hetzelfde object schrijft.
+ *
+ * ── WAT ER NU WORDT GEMETEN ──
+ *
+ * De KOLOMVERWIJZINGEN (`NEW.x` / `OLD.x`) die ELKE huidige definitie van die functie bevat. Dat
+ * is wat de map vandaag unaniem zegt dat er in die functie hoort te staan, ongeacht welk bestand
+ * je opslaat. Mist de body in de database er ook maar één van, dan loopt de functie achter op de
+ * map en zeggen alle bestanden die haar definiëren dat.
+ *
+ * De doorsnede en niet de vereniging, met opzet: de vereniging zou een kolom bevatten die één
+ * bestand bewust heeft LATEN VALLEN, en dan gaat er een alarm af dat nooit meer uitgaat — en een
+ * alarm dat altijd afgaat leert iedereen om het weg te klikken.
+ *
+ * Het merkteken is `.kolomnaam` mét de punt, zodat een kolomnaam die in een TOELICHTING wordt
+ * genoemd ("de kolom vat_deduction bepaalt…") niet meetelt als bewijs dat de code er staat.
+ *
+ * Functies die door één bestand worden gedefinieerd houden de gewone bestaansprobe: daar IS het
+ * bestaan het bewijs. Functies met meerdere definities maar zonder gedeelde kolomverwijzing (geen
+ * triggerfunctie) houden hem ook — met een regel in DEEL 3, zodat de lijst zegt wat ze niet weet.
+ */
+function herdefinitieMerken(alle: { bestand: string; sql: string }[]): {
+  merken: Map<string, string[]>;
+  onbeslist: { functie: string; bestanden: string[] }[];
+} {
+  const perFunctie = new Map<string, Map<string, string>>();
+  for (const { bestand, sql } of alle) {
+    for (const [naam, body] of functieBodies(sql)) {
+      if (!perFunctie.has(naam)) perFunctie.set(naam, new Map());
+      perFunctie.get(naam)!.set(bestand, body);
+    }
+  }
+  const merken = new Map<string, string[]>();
+  const onbeslist: { functie: string; bestanden: string[] }[] = [];
+  for (const [naam, byFile] of [...perFunctie].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (byFile.size < 2) continue;
+    let gedeeld: Set<string> | null = null;
+    for (const body of byFile.values()) {
+      const kolommen = new Set<string>();
+      for (const k of body.matchAll(/\b(?:new|old)\.([a-z0-9_]+)/gi)) kolommen.add(k[1].toLowerCase());
+      const tot: Set<string> = gedeeld ?? kolommen;
+      gedeeld = gedeeld === null ? kolommen : new Set([...tot].filter((k) => kolommen.has(k)));
+    }
+    const lijst = [...(gedeeld ?? [])].sort();
+    if (lijst.length === 0) {
+      onbeslist.push({ functie: naam, bestanden: [...byFile.keys()].sort() });
+      continue;
+    }
+    merken.set(naam, lijst.map((k) => `.${k}`));
+  }
+  return { merken, onbeslist };
+}
+
+/**
  * Objecten die door een ANDER bestand worden weggegooid dan het bestand dat ze aanmaakt.
  *
  * Het onderscheid is de hele kunst hier. `DROP POLICY IF EXISTS x; CREATE POLICY x` in ÉÉN bestand
@@ -351,6 +488,8 @@ function supersededNames(alle: { bestand: string; sql: string }[]): Set<string> 
 const bestanden = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 const gelezen = bestanden.map((f) => ({ bestand: f, sql: stripSql(readFileSync(`${DIR}/${f}`, "utf8")) }));
 const weggegooid = supersededNames(gelezen);
+// Functies die meer dan één bestand schrijft: daar bewijst BESTAAN niets. Zie herdefinitieMerken().
+const { merken: functieMerken, onbeslist: onbesliste } = herdefinitieMerken(gelezen);
 
 const rijen: string[] = [];
 const zonderVingerafdruk: string[] = [];
@@ -361,9 +500,15 @@ const nietsBewijzend: string[] = [];
 for (const { bestand, sql } of gelezen) {
   const probes = probesOf(sql);
   const genegeerd = new Map((NIETS_BEWIJZEND[bestand] ?? []).map((o) => [o.object.toLowerCase(), o.reden]));
-  const bruikbaar = probes.filter(
-    (p) => !weggegooid.has(p.object.toLowerCase()) && !genegeerd.has(p.object.toLowerCase()),
-  );
+  const bruikbaar = probes
+    .filter((p) => !weggegooid.has(p.object.toLowerCase()) && !genegeerd.has(p.object.toLowerCase()))
+    // Een functie die meerdere bestanden herschrijven wordt op haar INHOUD bevraagd, niet op haar
+    // bestaan — anders melden acht herdefinities elkaar als bewijs. De merktekens reizen in het
+    // tabel-veld mee; de query eronder splitst ze weer.
+    .map((p) => {
+      const mk = p.soort === "function" ? functieMerken.get(p.object.toLowerCase()) : undefined;
+      return mk ? { ...p, soort: "function_body" as Soort, tabel: mk.join(",") } : p;
+    });
   const verloren = probes.filter((p) => weggegooid.has(p.object.toLowerCase()));
   for (const p of verloren) opgeruimd.push(`${bestand} → ${p.soort} ${p.object}`);
   for (const [obj, reden] of genegeerd) nietsBewijzend.push(`${bestand} → ${obj}\n--       ${reden}`);
@@ -373,10 +518,17 @@ for (const { bestand, sql } of gelezen) {
     continue;
   }
   // Hooguit zes, en deterministisch gekozen, zodat de gegenereerde SQL niet wappert tussen runs.
-  const gekozen = bruikbaar
+  //
+  // Behalve een 'function_body': die overleeft het plafond altijd. Hij bestaat juist omdát bestaan
+  // niet genoeg was, en het plafond koos alfabetisch — dus bij vat_exemption.sql vulden zes gewone
+  // kolom- en constraint-probes de zes plekken en viel de body-meting eruit. Een plafond dat precies
+  // de scherpste meting afkapt, is een stille afknotting van hetzelfde soort als de kwaal.
+  const gesorteerd = bruikbaar
     .slice()
-    .sort((a, b) => (a.soort + a.object).localeCompare(b.soort + b.object))
-    .slice(0, 6);
+    .sort((a, b) => (a.soort + a.object).localeCompare(b.soort + b.object));
+  const body = gesorteerd.filter((p) => p.soort === "function_body");
+  const rest = gesorteerd.filter((p) => p.soort !== "function_body");
+  const gekozen = [...body, ...rest.slice(0, Math.max(0, 6 - body.length))];
   for (const p of gekozen) {
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
     rijen.push(
@@ -502,6 +654,14 @@ zeg("      when 'column' then exists (select 1 from information_schema.columns")
 zeg("             where table_schema = p.schema and table_name = p.tabel and column_name = p.object)");
 zeg("      when 'function' then exists (select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace");
 zeg("             where n.nspname = p.schema and f.proname = p.object)");
+zeg("      -- Een functie die meer dan één migratie herschrijft: haar BESTAAN bewijst alleen dat");
+zeg("      -- de eerste van die migraties gedraaid heeft. Gemeten wordt daarom de body — elke");
+zeg("      -- kolomverwijzing die de map unaniem in deze functie verwacht, moet erin staan.");
+zeg("      when 'function_body' then exists (");
+zeg("             select 1 from pg_proc f join pg_namespace n on n.oid = f.pronamespace");
+zeg("             where n.nspname = p.schema and f.proname = p.object");
+zeg("               and not exists (select 1 from unnest(string_to_array(p.tabel, ',')) mk");
+zeg("                               where position(mk in f.prosrc) = 0))");
 zeg("      when 'index' then exists (select 1 from pg_indexes");
 zeg("             where schemaname = p.schema and indexname = p.object)");
 zeg("      when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)");
@@ -518,12 +678,59 @@ zeg("       when bool_or(aanwezig)  then 'GEDEELTELIJK  <-- KIJK HIER'");
 zeg("       else 'OPEN' end                                        as stand,");
 zeg("  bestand,");
 zeg("  count(*) filter (where aanwezig) || ' / ' || count(*)       as objecten_gevonden,");
-zeg("  string_agg(case when not aanwezig then soort || ' ' || schema || '.' || object end, ', ') as ontbreekt");
+zeg("  string_agg(case when not aanwezig then");
+zeg("    case when soort = 'function_body'");
+zeg("         then 'function ' || schema || '.' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'");
+zeg("         else soort || ' ' || schema || '.' || object end end, ', ')                as ontbreekt");
 zeg("from bevonden");
 zeg("group by bestand");
 zeg("-- GEDEELTELIJK eerst, dan OPEN, dan de rest: de regels waar iets aan te doen is, bovenaan.");
 zeg("order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 2 end, bestand;");
 zeg();
+// ── WAT DEZE LIJST NIET KAN ZEGGEN ──────────────────────────────────────────
+//
+// Een lijst die zwijgt over wat ze niet weet, is de lijst waar dit bestand tegen is geschreven.
+// Voor een functie die meer dan één migratie schrijft, meet DEEL 1 de INHOUD van de functie tegen
+// wat de map unaniem verwacht — niet wélk van die bestanden hem geschreven heeft. Dat verschil
+// hoort in het rapport te staan, en niet in iemands hoofd.
+{
+  const perFunctie = new Map<string, string[]>();
+  for (const { bestand, sql } of gelezen) {
+    for (const naam of functieBodies(sql).keys()) {
+      if (!perFunctie.has(naam)) perFunctie.set(naam, []);
+      perFunctie.get(naam)!.push(bestand);
+    }
+  }
+  const meervoudig = [...perFunctie].filter(([, fs]) => fs.length > 1).sort((a, b) => a[0].localeCompare(b[0]));
+  if (meervoudig.length > 0) {
+    zeg("-- ── WAT DEEL 1 OVER DEZE FUNCTIES WÉL EN NIET ZEGT ──────────────────");
+    zeg("--");
+    for (const r of wikkel(
+      `${meervoudig.length} functies worden door meer dan één migratie geschreven. Voor die functies zegt ` +
+      "TOEGEPAST: de body in de database bevat elke kolomverwijzing die de map er unaniem in verwacht. " +
+      "Het zegt NIET welk van die bestanden hem daar gezet heeft — en dat is niet vast te stellen, want " +
+      "een CREATE OR REPLACE laat geen spoor van zijn herkomst achter. OPEN betekent hier dus: de functie " +
+      "in de database loopt achter op de map, en de migraties hieronder zijn samen het antwoord.", 96)) {
+      zeg(`--   ${r}`);
+    }
+    zeg("--");
+    for (const [naam, fs] of meervoudig) {
+      const merk = functieMerken.get(naam);
+      zeg(`--   ${naam}`);
+      for (const f of [...new Set(fs)].sort()) zeg(`--     · ${f}`);
+      if (!merk) {
+        for (const r of wikkel(
+          "GEEN INHOUDSMETING: deze definities delen geen enkele NEW./OLD.-kolomverwijzing, dus er is " +
+          "niets dat de map unaniem in deze functie verwacht. Deel 1 valt hier terug op het bestaan " +
+          "van de functie, en dat bewijst alleen dat de EERSTE van deze migraties gedraaid heeft.", 92)) {
+          zeg(`--     ${r}`);
+        }
+      }
+      zeg("--");
+    }
+    zeg();
+  }
+}
 zeg("-- =====================================================================");
 zeg(`-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: ${zonderVingerafdruk.length} van de ${bestanden.length}`);
 zeg("-- =====================================================================");

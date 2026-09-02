@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { withCrashNet } from "@/lib/route-crash-net"
 import { createServerSupabaseClient } from "@/lib/supabase-server"
 import { createPipelineClient } from "@/lib/supabase-pipeline"
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { createNotification } from "@/lib/notifications"
 import {
   verifyInvoiceFromPdf,
@@ -73,7 +73,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 // [PDF-TEXT] Shared with the e-mail door, so both run the same text-layer checks.
 import { readPdfTextLayer } from "@/lib/pdf-text"
 // [GEGROND] The stored verdict on whether the total is printed on the document.
-import { groundingOf } from '@/lib/amount-grounding'
+import { groundingOf, moneyGroundedInText } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead } from '@/lib/e-invoice'
 import { reconcileCashWithRetry } from "@/lib/cash-settle"
@@ -101,6 +101,7 @@ import { loadReadingMemory } from "@/lib/reading-memory-source"
 import { archivedDuplicateMessage, archivedInvoiceById, archivedInvoiceForDocument } from "@/lib/archived-duplicate"
 // [IBAN-WISSEL] Bekende leverancier, ander rekeningnummer → needs-review (en dus nooit auto-boeken).
 import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier"
+import { creditWordInHeader } from "@/lib/creditnota-signal"
 // [EXTRACT-DUE-DATE] shared due-date derivation (explicit → invoice_date+term →
 // null). Same single source of truth as the email path; never duplicated.
 import { deriveDueDate } from "@/lib/safecore"
@@ -1195,6 +1196,18 @@ async function runIntake(req: NextRequest) {
   // factuur nooit automatisch als kosten geboekt worden — precies wat je bij fraude wilt. Een
   // doorgestuurde vervalste factuur komt net zo goed via dit pad binnen als via de mailsync.
   //
+  // [CREDIT-WOORD] Staat het woord in de KOP van het papier? Dit is de enige creditcontrole die
+  // noch het model noch het nummer nodig heeft, en precies de twee die faalden op CR0301267: het
+  // model gaf is_credit_note=false, en een leverancier die zijn creditnota's in de gewone reeks
+  // nummert laat ook de prefixpoort niets zien. De kop stond er wél op.
+  //
+  // Alleen vlaggen, nooit een bedrag omdraaien — classifyImportHealth maakt er needs-review van en
+  // de eigenaar beslist. En alleen als de lezing er géén creditnota van maakte: anders zou het
+  // document een vraag stellen die het zelf al heeft beantwoord.
+  if (v.is_credit_note !== true && creditWordInHeader(pdfText)) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, { credit_word_in_header: true })
+  }
+
   // [LEVERANCIER-INTAKE] Eén stap voor allebei: de IBAN-controle EN de leverancier, in die
   // volgorde. Gemeten in productie: dit pad schreef wel vendor_iban op de factuur maar liet
   // supplier_id leeg, terwijl de e-mailwegen dat wel invulden — de leverancier van een factuur
@@ -1278,6 +1291,10 @@ async function runIntake(req: NextRequest) {
           // [GEGROND] What the document's own text says about the total the reader reported. The
           // only signal here that does not come from the reader — see amount-grounding.ts.
           totalGrounding: groundingOf(v.field_confidence),
+          // [GEGROND-STAAT-IN] En of het document zijn eigen drie bedragen letterlijk draagt. Dit
+          // vervangt één ontbrekend signaal — de zelfscore van het model op het bedrag — en niets
+          // anders; zie moneyGroundedInText() in amount-grounding.ts.
+          moneyGroundedInText: moneyGroundedInText(v.field_confidence),
 // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
 totalPlacement: placementOf(v.field_confidence),
 // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
@@ -1296,8 +1313,31 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
           },
         })
       : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
+  // [OVERALL-BEWAARD] De overall zekerheid van de lezer, op de rij — bij ELKE inkomende factuur,
+  // niet alleen bij een weigering. Hij bestond tot nu toe alleen in het geheugen tijdens de import:
+  // gate-yield.ts zegt in zijn slotalinea letterlijk dat twee poorten daardoor niet te beoordelen
+  // zijn, en precies die twee zijn de overgebleven verdachten bij een factuur die verder alles goed
+  // heeft — 0,95 tot 1,00 op elk veld, sluitende optelling, geen enkele vlag, en tóch vastgehouden.
+  // Eén getal opslaan maakt de duurste onbeantwoordbare vraag in dit product beantwoordbaar.
+  fieldConfidence._auto_confidence = typeof v.confidence === "number" ? v.confidence : null;
   if (autoAdv.advance) {
     fieldConfidence._auto_verified = { at: new Date().toISOString(), reason: autoAdv.reason };
+  } else {
+    // [WAAROM-VASTGEHOUDEN] En de andere tak, die er niet was.
+    //
+    // Gemeten op één echte administratie over een jaar: van de 590 inkomende documenten hadden er
+    // 350 een mensenhand nodig, en 296 daarvan droegen GEEN enkele vlag die verklaarde waarom. Niet
+    // omdat de app het niet wist — beslisAutoAdvance rekent voor élke weigering een precieze reden
+    // uit, zeventien stuks, en het type noemt dat veld zelf "machine tag for audit/telemetry".
+    //
+    // Alleen werd hij uitsluitend op de GESLAAGDE tak opgeschreven. Bij een weigering werd hij
+    // berekend en weggegooid — precies op het moment dat de app besluit de eigenaar een minuut te
+    // kosten. De duurste vraag in dit product ("waarom kost dit mij tijd?") was daarmee wél
+    // beantwoordbaar door de code en niet beantwoordbaar uit de data.
+    //
+    // Dit verandert niets aan wat er gebeurt. Het schrijft alleen op wat er gebeurde, zodat de
+    // volgende verbetering op een meting rust in plaats van op een vermoeden.
+    fieldConfidence._auto_hold = { at: new Date().toISOString(), reason: autoAdv.reason };
   }
   // [BON-AUTO] Both halves must hold: the READ is trustworthy (autoAdv) and the PAYMENT is proven
   // by the paper (settlePlan). Either one alone books something nobody checked.
@@ -1609,6 +1649,22 @@ async function handleUblInvoice(
   // Need at least a number OR a gross total to be worth booking as an invoice; else it's not a
   // recognisable e-invoice → let the safe document store keep it.
   if (!v.invoiceNumber && v.totalIncBtw == null) return null
+
+  // [EURO-ALLEEN] The same refusal the OTHER door onto these bytes already made.
+  //
+  // A Peppol invoice attached to a PDF goes through parseEInvoice, whose complete() has refused a
+  // stated non-euro currency for as long as it has existed — "silently treating 1 200 SEK as
+  // EUR 1 200 is the kind of error that survives every other check in the building". The identical
+  // invoice uploaded as a standalone .xml comes here instead, and this reader extracted
+  // DocumentCurrencyCode into v.currency and then never looked at it. Measured on one file through
+  // both doors: USD 10.000 refused there, booked as EUR 10.000 here — with its voorbelasting
+  // claimed in rubriek 5b at a euro amount nobody ever paid.
+  //
+  // Returning null is not discarding it: the caller falls through to the document store, so the
+  // file is kept, findable and safe — it is simply not booked as an invoice whose amounts this app
+  // cannot honour. That is exactly what the other door does with the same bytes.
+  const { isEuroDocument } = await import("@/lib/e-invoice")
+  if (!isEuroDocument(v.currency)) return null
 
   const hash = computeContentHash(buffer)
   // Byte-hash dedup (same file re-uploaded) — surface the existing one instead of a second row.
@@ -2318,12 +2374,45 @@ async function reconcileSupplierStatement(args: {
   // dat is de enige claim die we in dat geval doen (zie hieronder — geen `notOnStatement`).
   const vendorKey = supplierNameKey(read.vendor)
   const scoped = vendorKey ? rows.filter((r) => supplierNameKey(r.client_name) === vendorKey) : rows
+
+  // [TWEE-BOEKEN] Welke van die betalingen een BANKREGEL onder zich heeft.
+  //
+  // Het verschil beslist welke zin de eigenaar leest. Staat een factuur nog open op het overzicht
+  // van de leverancier terwijl de bank de betaling laat zien, dan is het geld aantoonbaar
+  // vertrokken en loopt de leverancier achter — vervelend, niet duur. Is het een handmatige
+  // afvinking, dan heeft alléén de leverancier bewijs, en dan is dit het geval waarin er een
+  // tweede keer betaald wordt of een aanmaning binnenkomt voor iets dat in de app groen staat.
+  //
+  // Best-effort: mislukt deze lezing, dan is er geen bewijs bekend en valt alles terug op de
+  // voorzichtige zin. Dat is de goede kant om op te falen — hij vraagt om een controle die de
+  // eigenaar hoe dan ook zelf kan doen.
+  const bankProof = new Set<string>()
+  if (scoped.length > 0) {
+    try {
+      const links = await fetchAllRowsForIds<{ invoice_id: string | null; transaction_id: string | null }, string>(
+        scoped.map((r) => r.id),
+        (chunk, lo, hi) => supabase
+          .from("bank_tx_invoices")
+          .select("invoice_id, transaction_id")
+          .in("invoice_id", chunk)
+          .order("id", { ascending: true })
+          .range(lo, hi),
+      )
+      for (const l of links) if (l.invoice_id && l.transaction_id) bankProof.add(l.invoice_id)
+    } catch (e) {
+      console.error("[TWEE-BOEKEN] betaalbewijs niet te lezen — de voorzichtige zin blijft staan", {
+        userId, documentId, error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
   const booked: BookedInvoice[] = scoped.map((r) => ({
     id: r.id,
     invoice_number: r.invoice_number,
     invoice_date: r.invoice_date,
     total_inc_btw: r.total_inc_btw,
     status: r.status ?? "processing",
+    paymentHasBankProof: bankProof.has(r.id),
   }))
 
   const result = reconcileStatement({

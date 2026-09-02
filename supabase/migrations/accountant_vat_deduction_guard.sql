@@ -115,7 +115,13 @@ BEGIN
      -- [VRIJGESTELD] De vierde, die er nooit in heeft gestaan. Hij verzet rubriek 5b: 'direct_exempt'
      -- schuift de voorbelasting van deze inkoop van aftrekbaar naar geblokkeerd, en terug net zo
      -- makkelijk. Dat is geen boekhoudkundige nuance maar het bedrag dat de klant terugkrijgt.
-     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)
+     (NEW.vat_deduction       IS DISTINCT FROM OLD.vat_deduction)       OR
+     -- [KORTING-SLOT] Geen bedragen maar de INVOER waaruit bedragen worden herrekend:
+     -- buildInvoiceUbl leidt PayableAmount en TaxAmount af uit parseDiscount(discount_type,
+     -- discount_value), en PUT /api/invoice/[id] herberekent daaruit total_ex_btw, btw_amount en
+     -- total_inc_btw. Een uitkomst beschermen en de invoer open laten is geen bescherming.
+     (NEW.discount_type       IS DISTINCT FROM OLD.discount_type)       OR
+     (NEW.discount_value      IS DISTINCT FROM OLD.discount_value)
   THEN
     RAISE EXCEPTION
       'Permission denied: only the invoice owner can modify amounts, dates, status or payment fields (invoice_id: %)',

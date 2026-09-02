@@ -63,6 +63,25 @@ export interface FilingDivergence {
   resultaatChanged: boolean;
   /** (current omzet − kosten) − (filed omzet − kosten). Positive = more profit than filed. */
   resultaatDelta: number;
+  /**
+   * [SUPPLETIE-EEN-ANTWOORD] What is STILL owed after what has already been declared — and the
+   * route that applies to that remainder.
+   *
+   * These two used to exist only in filed-quarter.ts, on the path that ACTS (the carry button and
+   * its API). The three surfaces that TELL the owner which route applies — the quarter screen's
+   * banner, the Waarheid banner and the sentence in filed-quarter.ts — all read `needsSuppletie`
+   * instead, which was `|btwSaldoDelta| > 1000`: the GROSS divergence, blind to every cent already
+   * carried into a later aangifte.
+   *
+   * So the app could tell an owner "dien een suppletie in" about a correction it had itself already
+   * helped them declare, and the button beside that sentence would correctly offer a carry. One
+   * question, two answers, on the screen whose whole job is to be trusted about a filed return.
+   *
+   * `carriedSaldo` defaults to 0, and with 0 these are exactly the old numbers — a quarter that has
+   * carried nothing is unchanged, which is most of them.
+   */
+  outstanding: number;
+  route: CorrectionRoute;
 }
 
 // A change smaller than half a cent is rounding noise, never a real divergence.
@@ -80,7 +99,12 @@ export const SUPPLETIE_THRESHOLD = 1000;
  * btwSaldoDelta means you now owe MORE than you filed). `changed` is true when any component moved
  * beyond rounding noise; `needsSuppletie` when the BTW-saldo moved by more than €1.000.
  */
-export function computeFilingDivergence(filed: FilingFigures, current: FilingFigures): FilingDivergence {
+export function computeFilingDivergence(
+  filed: FilingFigures,
+  current: FilingFigures,
+  /** [SUPPLETIE-EEN-ANTWOORD] What has already been declared out of this quarter's divergence. */
+  carriedSaldo: number | null | undefined = 0,
+): FilingDivergence {
   const omzetDelta = round2(current.omzet - filed.omzet);
   const kostenDelta = round2(current.kosten - filed.kosten);
   const btwVerschuldigdDelta = round2(current.btwVerschuldigd - filed.btwVerschuldigd);
@@ -98,6 +122,12 @@ export function computeFilingDivergence(filed: FilingFigures, current: FilingFig
     Math.abs(btwVoorbelastingDelta) > EPS ||
     Math.abs(btwSaldoDelta) > EPS;
 
+  // [SUPPLETIE-EEN-ANTWOORD] One measurement, and everything downstream reads it. `needsSuppletie`
+  // is now DERIVED from the route rather than computed a second time from the gross delta — that
+  // second computation is exactly how the banner and the button came to disagree.
+  const outstanding = outstandingCorrection(btwSaldoDelta, carriedSaldo);
+  const route = correctionRoute(outstanding);
+
   return {
     changed,
     omzetDelta,
@@ -105,7 +135,9 @@ export function computeFilingDivergence(filed: FilingFigures, current: FilingFig
     btwVerschuldigdDelta,
     btwVoorbelastingDelta,
     btwSaldoDelta,
-    needsSuppletie: Math.abs(btwSaldoDelta) > SUPPLETIE_THRESHOLD,
+    outstanding,
+    route,
+    needsSuppletie: route === "suppletie",
     btwChanged: Math.abs(btwSaldoDelta) > EPS,
     resultaatChanged: Math.abs(resultaatDelta) > EPS,
     resultaatDelta,

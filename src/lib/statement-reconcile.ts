@@ -52,6 +52,23 @@ export interface BookedInvoice {
   total_inc_btw: number | null;
   /** 'processing' (wachtrij) | 'received' (geboekt, te betalen) | 'paid' | 'archived' (genegeerd). */
   status: string;
+  /**
+   * [TWEE-BOEKEN] Waarom er een BEWIJS-veld naast de status staat.
+   *
+   * Een leverancier stuurt een openstaande-postenlijst met factuur 2034488 erop. Wij hebben hem
+   * als 'paid'. Die twee spreken elkaar tegen, en tot nu toe belandde die regel in `matched` en
+   * meldde de app "alle facturen op dit overzicht heb je al" — het ENE externe document dat de
+   * eigen boeken tegenspreekt, gelezen als bevestiging.
+   *
+   * Maar niet elke tegenspraak weegt even zwaar, en het verschil is precies dit veld. Staat er een
+   * BANKREGEL onder de betaling, dan is het geld aantoonbaar vertrokken en loopt de leverancier
+   * hoogstwaarschijnlijk achter met verwerken. Is het een handmatige afvinking, dan is er aan onze
+   * kant alleen een herinnering — en dan is de leverancier de enige partij met bewijs.
+   *
+   * true = een bankregel draagt de betaling. false = afgevinkt, of niet betaald.
+   * Weglaten ⇒ false: zonder informatie is er geen bewijs, en dat is de voorzichtige kant.
+   */
+  paymentHasBankProof?: boolean;
 }
 
 export type MatchHow = "number" | "number_tail" | "amount_date";
@@ -89,6 +106,29 @@ export interface ReconcileResult {
   period: { from: string; to: string } | null;
   /** Som van de ontbrekende bedragen (absolute waarden), voor één eerlijke kopregel. */
   missingAmount: number;
+  /**
+   * [TWEE-BOEKEN] Regels die de leverancier NOG NOEMT terwijl wij ze als betaald hebben staan.
+   *
+   * Twee boekhoudingen over dezelfde factuur, en ze zijn het oneens. Dit is de enige controle in
+   * de app waarbij een BUITENSTAANDER de eigen boeken tegenspreekt — de bank kan alleen zeggen wat
+   * er van de rekening ging, niet of de leverancier het heeft ontvangen en verwerkt.
+   *
+   * Een deelverzameling van `matched`, nooit in plaats daarvan: de factuur IS gevonden, dat deel
+   * van het antwoord blijft waar. Alleen de conclusie "dus is het in orde" vervalt.
+   */
+  alsoPaid: MatchedPair[];
+  /**
+   * Ziet dit overzicht eruit als een OPENSTAANDE-POSTENLIJST?
+   *
+   * Waarom dit erbij hoort en niet weggelaten kan worden: op een periodeoverzicht (alle facturen
+   * van mei, betaald en onbetaald) is een betaalde factuur volstrekt normaal en zou `alsoPaid`
+   * elke maand vals alarm slaan. Op een openstaande-postenlijst is dezelfde regel een tegenspraak.
+   *
+   * Het onderscheid rust op één waarneembaar feit, geen gok: een periodeoverzicht toont ONZE
+   * betalingen als regels ('payment'), een openstaandelijst per definitie niet. Geen betaalregels
+   * en wel factuurregels ⇒ openstaandelijst.
+   */
+  looksLikeOpenItems: boolean;
 }
 
 export interface ReconcileInput {
@@ -269,7 +309,20 @@ export function reconcileStatement(input: ReconcileInput): ReconcileResult {
     missing.reduce((sum, l) => sum + (l.amount != null && Number.isFinite(l.amount) ? Math.abs(l.amount) : 0), 0)
   );
 
-  return { matched, missing, archived, notOnStatement, skipped, unreadable, period, missingAmount };
+  // [TWEE-BOEKEN] Een openstaandelijst toont geen betalingen; een periodeoverzicht wel. Dat ene
+  // waarneembare verschil beslist of een betaalde factuur op deze lijst een tegenspraak is of het
+  // normaalste van de wereld — en het is af te lezen, niet te raden.
+  const looksLikeOpenItems =
+    candidates.length > 0 && !(input.lines ?? []).some((l) => l.kind === "payment");
+
+  // Gevonden, betaald, en de leverancier noemt hem nog. Deelverzameling van `matched`: de factuur
+  // is echt gevonden, alleen de conclusie "dus is het in orde" vervalt.
+  const alsoPaid = matched.filter((m) => m.invoice.status === "paid");
+
+  return {
+    matched, missing, archived, notOnStatement, skipped, unreadable, period, missingAmount,
+    alsoPaid, looksLikeOpenItems,
+  };
 }
 
 /** Een door de lezer aangeleverde periode; alleen geldig als beide kanten echte ISO-datums zijn. */
@@ -308,14 +361,46 @@ export function summarizeReconcile(r: ReconcileResult, vendor?: string | null): 
       : `Geen factuurregels gevonden op dit overzicht${who}.`;
   }
   const parts: string[] = [];
-  if (r.missing.length === 0) {
+  // [TWEE-BOEKEN] "Alle facturen heb je al" mag niet meer als de leverancier iets nog open ziet
+  // dat jij als betaald hebt staan. Dat was de zin die het enige externe document dat de eigen
+  // boeken tegensprak, las als bevestiging — en die daarna niemand meer nakeek.
+  const tegenspraak = r.looksLikeOpenItems ? r.alsoPaid : [];
+  if (r.missing.length === 0 && tegenspraak.length === 0) {
     parts.push(`Alle ${compared} facturen op dit overzicht${who} heb je al.`);
+  } else if (r.missing.length === 0) {
+    parts.push(`Alle ${compared} facturen op dit overzicht${who} heb je al — maar niet allemaal met dezelfde stand.`);
   } else {
     parts.push(
       r.missing.length === 1
         ? `1 van de ${compared} facturen op dit overzicht${who} heb je niet.`
         : `${r.missing.length} van de ${compared} facturen op dit overzicht${who} heb je niet.`
     );
+  }
+  // De tegenspraak zelf, vóór de genegeerde en de onleesbare regels: dit is de enige regel op dit
+  // overzicht waar geld aan hangt dat de eigenaar denkt kwijt te zijn.
+  //
+  // Twee zinnen, want de bewijslast verschilt. Draagt de betaling een BANKREGEL, dan is het geld
+  // aantoonbaar vertrokken en loopt de leverancier waarschijnlijk achter — een geruststelling met
+  // een actie erin. Is het een handmatige afvinking, dan heeft alleen de leverancier bewijs, en
+  // dan is dit precies het geval waarin de eigenaar een tweede keer betaalt of een aanmaning krijgt
+  // voor iets dat in zijn eigen app groen staat.
+  if (tegenspraak.length > 0) {
+    const metBank = tegenspraak.filter((m) => m.invoice.paymentHasBankProof === true).length;
+    const zonderBank = tegenspraak.length - metBank;
+    if (zonderBank > 0) {
+      parts.push(
+        zonderBank === 1
+          ? "1 factuur die jij hebt afgevinkt als betaald, staat hier nog open — en er is geen bankregel die die betaling draagt. Controleer of hij echt betaald is."
+          : `${zonderBank} facturen die jij hebt afgevinkt als betaald, staan hier nog open — en er is geen bankregel die die betalingen draagt. Controleer of ze echt betaald zijn.`
+      );
+    }
+    if (metBank > 0) {
+      parts.push(
+        metBank === 1
+          ? "1 factuur staat hier nog open terwijl jouw bank de betaling wél laat zien. Waarschijnlijk heeft je leverancier hem nog niet verwerkt."
+          : `${metBank} facturen staan hier nog open terwijl jouw bank die betalingen wél laat zien. Waarschijnlijk heeft je leverancier ze nog niet verwerkt.`
+      );
+    }
   }
   if (r.archived.length > 0) {
     parts.push(
@@ -341,10 +426,19 @@ export function summarizeReconcile(r: ReconcileResult, vendor?: string | null): 
  */
 export function reconcileNote(r: ReconcileResult, vendor?: string | null): string {
   const head = summarizeReconcile(r, vendor);
-  if (r.missing.length === 0) return head;
+  // [TWEE-BOEKEN] De nummers van de tegenspraak horen op het bestand, om dezelfde reden als de
+  // ontbrekende: een zin met een aantal erin is geen zin waarmee iemand kan gaan zoeken.
+  const tegenspraak = r.looksLikeOpenItems ? r.alsoPaid : [];
+  const betwist = tegenspraak.length > 0
+    ? ` Nog open bij de leverancier, betaald in je administratie: ${tegenspraak
+        .map((m) => m.invoice.invoice_number?.trim() || m.line.invoice_number?.trim() || "zonder nummer")
+        .slice(0, 12)
+        .join(", ")}.`
+    : "";
+  if (r.missing.length === 0) return head + betwist;
   const numbers = r.missing
     .map((l) => l.invoice_number?.trim() || (l.date ? `zonder nummer (${l.date})` : "zonder nummer"))
     .slice(0, 12);
   const more = r.missing.length > numbers.length ? ` en nog ${r.missing.length - numbers.length}` : "";
-  return `${head} Ontbreekt: ${numbers.join(", ")}${more}.`;
+  return `${head}${betwist} Ontbreekt: ${numbers.join(", ")}${more}.`;
 }

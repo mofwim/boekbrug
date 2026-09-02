@@ -23,6 +23,8 @@ import { isBeheerder, buildBeheerOverview } from "@/lib/beheer";
 import { readSystemHealth, readEventSummary } from "@/lib/beheer-health";
 // [LEESKWALITEIT] Hoe vaak moest een mens de lezer verbeteren, en bij welke leverancier.
 import { readReaderQuality } from "@/lib/reader-quality";
+// [WAAROM-VASTGEHOUDEN] En waarom de rest niet vanzelf ging — de werklijst op tijd geordend.
+import { readHoldReasons } from "@/lib/hold-reasons";
 import { decidePlan } from "@/lib/subscription";
 import { BeheerScherm } from "./BeheerScherm";
 
@@ -101,11 +103,14 @@ export default async function BeheerPage() {
   // administraties heen te beoordelen is. Faalt de lezing, dan komt er null uit en zegt het paneel
   // dat het niet kon kijken, in plaats van een geruststellende nul.
   const leeskwaliteit = await readReaderQuality(pipeline, { nowMs, windowDays: 90, recentLimit: 12 });
+  // [WAAROM-VASTGEHOUDEN] Zelfde venster, zelfde regel: null betekent "niet kunnen kijken", en
+  // het paneel zegt dat dan hardop in plaats van een lege wachtrij te tonen.
+  const vastgehouden = await readHoldReasons(pipeline, { nowMs, windowDays: 90 });
   const overview = buildBeheerOverview(
     rows,
     links,
     (p) => decidePlan({ role: p.role, subscriptionStatus: p.subscriptionStatus, currentPeriodEnd: p.currentPeriodEnd, nowMs }).plan,
   );
 
-  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} leeskwaliteit={leeskwaliteit} />;
+  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} leeskwaliteit={leeskwaliteit} vastgehouden={vastgehouden} />;
 }

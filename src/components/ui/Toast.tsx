@@ -124,8 +124,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             aria-atomic="false"
             style={{
               position: 'fixed',
-              left: 0,
-              right: 0,
+              // [ZIJBALK] Logical sides, and the start one clears the desktop rail — otherwise a
+              // confirmation centres itself over the full window and sits half behind the rail.
+              // --rail-w is 0px below 1024px, so this is a no-op on a phone.
+              insetInlineStart: 'var(--rail-w)',
+              insetInlineEnd: 0,
               // Clears the home indicator, and sits above the FABs (which are
               // at 24 + inset) so a confirmation never hides behind the button
               // that triggered it.

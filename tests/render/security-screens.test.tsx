@@ -446,6 +446,7 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: {
           users: [
             { id: "a", name: "Kiwi Food Market", email: "kiwi@x.nl", role: "zzp", createdAt: "2026-01-05", plan: "plus" },
@@ -469,6 +470,43 @@ test("[BEHEER] het operatorscherm rendert de accounts en koppelingen die het kri
   })();
 });
 
+test("[WAAROM-VASTGEHOUDEN] de werklijst zet de duurste reden bovenaan en verzwijgt het onverklaarde deel niet", () => {
+  // De twee dingen die dit paneel moet doen en die met een lege lijst allebei onzichtbaar zijn:
+  // de reden BOVENAAN (dat is de eerstvolgende verbetering) en het onverklaarde restant APART
+  // (dat is wat de ranglijst NIET dekt). Met [] als invoer klopt elke implementatie.
+  return (async () => {
+    const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
+    const html = renderToStaticMarkup(
+      React.createElement(BeheerScherm, {
+        overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
+        systeem: { readable: true, allWell: true, attention: [], crons: [] },
+        storingen: { readable: true, days: 7, groups: [], total: 0 },
+        leeskwaliteit: null,
+        vastgehouden: {
+          total: 590, advanced: 240, held: 350, recorded: 54, unrecorded: 296,
+          reasons: [
+            {
+              reason: "no_reliable_total",
+              label: "Het totaalbedrag was niet betrouwbaar te lezen",
+              count: 40, sharePct: 11.4,
+              topSuppliers: [{ supplierName: "Dutch Sweets Company B.V.", count: 12 }],
+            },
+            { reason: "creditnota", label: "Het document is een creditnota — die gaan nooit vanzelf door", count: 14, sharePct: 4, topSuppliers: [] },
+          ],
+        },
+      }),
+    );
+    const duurste = html.indexOf("Het totaalbedrag was niet betrouwbaar te lezen");
+    const goedkoper = html.indexOf("Het document is een creditnota");
+    assert.ok(duurste >= 0 && goedkoper >= 0, "beide redenen staan op het scherm");
+    assert.ok(duurste < goedkoper, "de duurste reden staat bovenaan — daar begint de volgende verbetering");
+    assert.match(html, /296 van de 350 zonder vastgelegde reden/,
+      "het onverklaarde deel moet apart staan; opgeteld bij de lijst zou het lijken alsof het werk verklaard is");
+    assert.match(html, /Dutch Sweets Company B\.V\./,
+      "een reden die zich op één leverancier ophoopt is een sjabloon, en dat is de naam die het werk bespaart");
+  })();
+});
+
 test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentage", () => {
   // De vondst waar dit paneel uit voortkomt: vijf creditnota's van één leverancier, in één zitting
   // rechtgezet. Als percentage was dat 0,9% en dus onzichtbaar; per leverancier is het één sjabloon
@@ -477,6 +515,7 @@ test("[LEESKWALITEIT] het paneel noemt de leverancier, niet alleen een percentag
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: true, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
@@ -520,6 +559,7 @@ test("[LEESKWALITEIT] niet kunnen kijken leest nooit als nul fouten", () => {
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: true, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
@@ -536,6 +576,7 @@ test("[BEHEER] een leeg overzicht zegt dat, in plaats van een kale tabel", () =>
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: true, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },
@@ -560,6 +601,7 @@ test("[BEHEER-GEZOND] een gestopte cron staat bovenaan, met hoe lang al", () => 
     } as const;
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: true, allWell: false, attention: [gestopt], crons: [
           gestopt,
@@ -584,6 +626,7 @@ test("[NO-SILENT-EMPTY] een onleesbare hartslag is geen groene", () => {
     const { BeheerScherm } = await import("../../src/app/dashboard/beheer/BeheerScherm");
     const html = renderToStaticMarkup(
       React.createElement(BeheerScherm, {
+        vastgehouden: null,
         overview: { users: [], links: [], counts: { total: 0, owners: 0, accountants: 0, links: 0 } },
         systeem: { readable: false, allWell: false, attention: [], crons: [] },
         storingen: { readable: true, days: 7, groups: [], total: 0 },

@@ -33,6 +33,7 @@ import { createNotification } from '@/lib/notifications'
 import { canConfirmForClientServer } from '@/lib/acting-for-server'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { logAuditAction, getClientIP } from '@/lib/audit'
+import { creditnotaSignConflict } from '@/lib/creditnota-signal'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,7 +73,8 @@ export async function POST(request: NextRequest) {
     // service_role, want dan zou de trigger hieronder worden overgeslagen — en die is het punt.
     const { data: factuur, error: leesErr } = await supabase
       .from('invoices')
-      .select('id, receiver_id, direction, status, invoice_number, client_name, total_inc_btw')
+      // [CREDIT-BEVESTIG] invoice_type hoort erbij, en het ontbrak. Zie de weigering hieronder.
+      .select('id, receiver_id, direction, status, invoice_number, client_name, total_inc_btw, invoice_type')
       .eq('id', factuurId)
       .maybeSingle()
 
@@ -95,6 +97,40 @@ export async function POST(request: NextRequest) {
       // Al bevestigd, al betaald, of genegeerd. Geen fout van de boekhouder — een verouderd scherm.
       return NextResponse.json(
         { error: 'Deze factuur staat niet meer klaar om te bevestigen — ververs het scherm.' },
+        { status: 409 },
+      )
+    }
+
+    // ── [CREDIT-BEVESTIG] Een creditnota met een POSITIEF bedrag mag hier niet doorheen ──────
+    //
+    // De lezer levert dit met opzet zo aan. ai.ts:1633 zegt het letterlijk tegen het model: staat er
+    // "creditnota" boven en drukt het stuk positieve bedragen af, geef ze dan positief terug — het
+    // systeem houdt hem tegen voor een mens. De meeste Nederlandse creditnota's drukken hun bedragen
+    // positief af, dus dit is de GEWONE vorm, geen randgeval.
+    //
+    // Beide deuren van de ONDERNEMER repareren dat teken voordat er iets geboekt wordt
+    // (api/email/confirm/[id] en api/invoice/[id]/amounts, allebei via asCreditAmounts). Deze deur
+    // las invoice_type niet eens. En daarna leest niemand het meer: /api/aangifte selecteert
+    // direction, status, total_ex_btw en btw_amount — nooit invoice_type — en telt ze rauw op.
+    //
+    // Wat dat kost, met een echt bedrag: een creditnota van € 51,80 incl. (€ 47,52 ex + € 4,28 btw),
+    // positief afgedrukt, hier bevestigd. Rubriek 5b krijgt +€ 4,28 waar −€ 4,28 hoort: € 8,56
+    // teveel teruggevraagde voorbelasting per creditnota, en € 95,04 teveel kosten. In het VOORDEEL
+    // van de ondernemer op de aangifte — dus precies de richting die een naheffing wordt. Hij tekent
+    // hem, en de beroepsaansprakelijkheid van de boekhouder ligt eronder.
+    //
+    // WEIGEREN, niet repareren, om drie redenen die alle drie al in dit bestand staan: de trigger
+    // (uitzondering 5) laat langs deze weg alleen `status` en `confirmed_by` door; de kop van deze
+    // route zegt dat een boekhouder de cijfers van zijn klant niet herschrijft maar ernaar vraagt;
+    // en /dashboard/accountant/opvragen is precies de deur om dat te doen.
+    if (creditnotaSignConflict({ invoiceType: factuur.invoice_type, totalIncBtw: factuur.total_inc_btw })) {
+      return NextResponse.json(
+        {
+          error:
+            'Dit is een creditnota met een positief bedrag. Zo bevestigd telt hij als kosten en ' +
+            'trekt hij btw terug die er juist af hoort. Vraag de ondernemer het bedrag te ' +
+            'corrigeren — daarna kun je hem bevestigen.',
+        },
         { status: 409 },
       )
     }
