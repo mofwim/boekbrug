@@ -790,3 +790,59 @@ disagrees with its links by more than a cent, **0** claiming more paid than thei
 
 No tax figure moved. That is the claim the before/after pair exists to support, and it is the only
 reason a repair to real books was worth running at all.
+
+---
+
+## 15. The blind spot in the checker I had just built — 2 September 2026
+
+§13 replaced an existence probe with a body probe, because nine migrations write one function and
+existence could not tell them apart. It measured the `NEW.`/`OLD.` column references every current
+definition shares — which works for a **trigger** function and for nothing else.
+
+Five of the eight multi-definer functions are not triggers. They fell back to existence, and the
+report said TOEGEPAST about **two migrations that had not run**:
+
+| Migration | What is missing from production | Why it matters |
+| --- | --- | --- |
+| `invoice_move_payment_creditnota_guard.sql` | `move_invoice_payment` does not read `invoice_type` | **A money guard.** Its own header records the reproduction: a € 100 payment moved onto a creditnota (total −100, status 'sent') came back `amount_paid = 100`, `status = 'paid'` — while the sales invoice the payment really belonged to silently lost it |
+| `invoice_payment_date_rederive.sql` | `recompute_invoice_amount_paid` does not re-derive `payment_date` | Under kasstelsel, a payment's date decides its quarter |
+
+The second was found by accident, checking which version of that function was deployed before
+running the 14-invoice repair — and it was luck that it was checked at all. The first was found
+only because that accident prompted this sweep.
+
+### Why the intersection could not see them
+
+Deliberately: the intersection is what every definition agrees on, and what a newer version **adds**
+is by definition not in it. That property is what stops a permanent false alarm; it is also exactly
+what hides an unapplied upgrade.
+
+So for a function with no shared column reference, the newest version is now **derived** rather than
+assumed absent. This folder has no ordering, but this family has a convention — each redefinition
+carries the previous one and adds — so the newest is the version whose tokens are a strict superset
+of every other's. Where such a version exists it is measured on what only it adds; where none does
+(`book_bank_batch`, whose two files are kept byte-identical on purpose) the list says so in words.
+The older files keep their existence probe: superseded is not the same as unrun, and OPEN would be
+the wrong word for them.
+
+A marker has to refer to something. `false`, `order` and `limit` are unique to a version and say
+nothing, so a marker must contain an underscore or be eight characters — a rule about shape, not a
+list of forbidden words, because a list of forbidden words goes stale like every other list.
+
+### What is actually still open, as of this sweep
+
+- `bank_auto_book_blocked.sql` — the column and index do not exist. Known and correctly reported all
+  along; the code is deploy-safe without it.
+- `invoice_move_payment_creditnota_guard.sql` — **new**, and the one with money behind it.
+- `invoice_payment_date_rederive.sql` — **new**.
+
+And one that closed itself: `creditnota_per_rate_ceiling.sql` is now applied — `assert_credit_within_rate`
+exists. It was open at the previous sweep, so somebody ran it in between.
+
+### The pattern, for the third time in three days
+
+A rule that is real, and a list beside it that nobody maintains: the migration inventory's question,
+then its answer, then the icon subset. Each was found only by measuring the thing itself instead of
+reading what was written about it. The generator, the icon list and the guard columns are all
+derived from source now — and this entry exists because the second of those was written by me,
+two days ago, with a blind spot I did not look for until an unrelated check tripped over it.
