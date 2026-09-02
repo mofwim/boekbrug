@@ -167,6 +167,32 @@ export function incassoClientKey(invoiceId: string, paidOn: string): string {
  * database's own 'verwerkt' trigger fires with a real auth.uid(). Both are correct; passing it in
  * keeps this pass usable from either without a second implementation.
  */
+/**
+ * [AUTO-INCASSO] Is this booking refusal one the RPC is RIGHT to make, or something to shout about?
+ *
+ * apply_manual_payment refuses by raising, and its refusals fall into two groups that must be
+ * treated differently — which makes this a decision, not a log level:
+ *
+ *   EXPECTED — the invoice was already paid or covered, an accountant locked it (verwerkt), or its
+ *   status moved out from under this pass. None of those is wrong: the invoice simply stays open
+ *   and visible, which is the safe side of every one of them. Shouting about them hourly is how the
+ *   two that matter get buried.
+ *
+ *   EVERYTHING ELSE — a caller booking for the wrong owner, an invoice with no total, an
+ *   idempotency key that belongs to a DIFFERENT booking. That last one is the double-booking guard
+ *   firing, and swallowing it would hide the exact failure this pass is most dangerous for.
+ *
+ * It was a bare `msg.includes` chain inline, matched against strings that live in a different file
+ * (supabase/migrations/invoice_manual_payments.sql). Reword one of those and a normal race starts
+ * being logged as a failure every hour; add a real failure containing the word "already" and it is
+ * swallowed. incasso-settle.test.ts asserts this against the messages READ OUT OF THE MIGRATION,
+ * so a rewording fails a test instead of quietly changing what the owner's log says.
+ */
+export function isExpectedBookingRefusal(message: string | null | undefined): boolean {
+  const msg = (message ?? '').toLowerCase()
+  return msg.includes('already') || msg.includes('verwerkt') || msg.includes('not payable')
+}
+
 export async function settleIncassoForUser(
   supabase: Client,
   payClient: Client,
@@ -223,11 +249,7 @@ export async function settleIncassoForUser(
         p_client_key: incassoClientKey(inv.id, decision.paymentDate),
       })
       if (error) {
-        // Every refusal here is one the RPC is right to make (already paid, verwerkt, a status
-        // that moved under us). It is not this pass's job to argue with the row lock — the invoice
-        // simply stays open and visible, which is the safe side of every one of those cases.
-        const msg = (error.message ?? '').toLowerCase()
-        if (!msg.includes('already') && !msg.includes('verwerkt') && !msg.includes('not payable')) {
+        if (!isExpectedBookingRefusal(error.message)) {
           console.error('[AUTO-INCASSO] booking failed', { userId, invoiceId: inv.id, error: error.message })
         }
         continue

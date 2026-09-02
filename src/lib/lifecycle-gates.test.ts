@@ -21,6 +21,9 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
+// [PAY-KEY-SCOPE] The triage this gate checks against is a function now, so the gate asks it
+// instead of parsing it out of source — see the test.
+import { isExpectedBookingRefusal } from "./incasso-settle";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
 import { destinationsFor, railDestinations } from "./nav-destinations";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
@@ -32,7 +35,9 @@ import { categoryHint } from "./category-wait";
 import { moneyGroundedInText } from "./amount-grounding";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
+import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
+import { demoRefusalFor } from "./demo-tenant";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -8085,22 +8090,22 @@ test("[PAY-KEY-SCOPE] a spent key is refused by name, in words no caller triages
   const refusal = /RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] (idempotency key[^']*)'/.exec(live);
   assert.ok(refusal, "a key spent on another booking must be refused by name, not left to the unique index");
 
-  // incasso-settle.ts triages this RPC's errors by substring: anything containing 'already' is
-  // treated as an already-paid/already-covered and logged NOWHERE. A refusal meaning the booking
-  // did not happen may not land there — that is the silence this repo exists not to produce.
-  const settle = code("src/lib/incasso-settle.ts");
-  // The window is the `const msg = …` line through the `if` that triages on it — non-greedy to
-  // the `if`, not to the first newline, which is what an earlier version of this gate stopped at
-  // and why it parsed an empty list.
-  const triage = /const msg = \(error\.message[\s\S]{0,400}?if \([\s\S]{0,300}?\) \{/.exec(settle)?.[0] ?? "";
-  const benign = [...triage.matchAll(/msg\.includes\('([^']+)'\)/g)].map((m) => m[1]);
-  assert.ok(benign.length >= 2, `expected incasso-settle's benign-substring list, parsed: ${benign.join(", ")}`);
-  for (const word of benign) {
-    assert.ok(
-      !refusal[1].toLowerCase().includes(word.toLowerCase()),
-      `the refusal "${refusal[1]}" contains "${word}", which incasso-settle swallows without logging`,
-    );
-  }
+  // incasso-settle.ts triages this RPC's errors: the ones it is right to make (already paid,
+  // already covered, verwerkt, a status that moved) are logged NOWHERE, so the invoice simply
+  // stays open and visible. A refusal meaning the booking did NOT happen may not land there —
+  // that is the silence this repo exists not to produce, and this one is the double-booking guard
+  // firing on the pass that books payments nobody typed.
+  //
+  // This gate used to parse the benign-substring list out of incasso-settle's source with a
+  // regex, because the triage was a bare `msg.includes` chain inline. It is
+  // `isExpectedBookingRefusal` now, so the gate ASKS the predicate instead of guessing at it — a
+  // parse that goes stale reads as a pass, which is how this gate would have stopped guarding
+  // anything the moment the chain moved. (It did move; this is that moment.)
+  assert.equal(
+    isExpectedBookingRefusal(`[MANUAL-PARTIAL-PAY] ${refusal[1]}`),
+    false,
+    `the refusal "${refusal[1]}" is triaged as benign — incasso-settle would swallow the double-booking guard firing`,
+  );
 });
 
 test("[PAY-KEY-SCOPE] the SQL contract runs against the FIXED function, not the shipped bug", () => {
@@ -13012,6 +13017,67 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
   for (const h of new Set(hrefs)) {
     assert.ok(existsSync(`src/app${h}/page.tsx`), `SegmentVoordeur linkt naar ${h}, en dat bestaat niet`);
   }
+});
+
+test("[DEMO-DICHT] elke route die mail verstuurt of geld kost, is dicht voor het demoaccount", () => {
+  // Het wachtwoord van demo@boekbrug.nl staat in een PUBLIEKE repository en staat daar voorgoed —
+  // roteren helpt tegen het vorige wachtwoord, niet tegen `git log -p`. De bescherming is dus geen
+  // geheim maar een grens, en een grens die met de hand wordt bijgehouden verloopt. Vandaag ging
+  // dat twee keer mis (de icoonsubset, en PUBLIC_PATHS tegenover drie landingspagina's die naar
+  // /login stuurden), dus deze poort LEIDT de verzameling af uit de broncode.
+  //
+  // De regel: importeert een API-route @/lib/email of @/lib/ai, dan gaat er post naar buiten of
+  // geld naar het model, en dan hoort hij achter demoRefusalFor().
+  const routes = execSync(
+    "grep -rl -e \"@/lib/email\" -e \"@/lib/ai\" src/app/api --include=route.ts || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean);
+  assert.ok(routes.length >= 15, `de scan vond maar ${routes.length} routes — leest hij nog wel mee?`);
+
+  const ongedekt: string[] = [];
+  for (const file of routes) {
+    const pathname = "/" + file.replace(/^src\/app\//, "").replace(/\/route\.ts$/, "")
+      .replace(/\[([^\]]+)\]/g, "id");
+
+    // Cronroutes draaien op een bearer token (CRON_SECRET), niet op een sessie: het demoaccount
+    // heeft dat token niet en de middleware kijkt naar de sessiegebruiker. Die uitzondering wordt
+    // hier BEWEZEN in plaats van aangenomen — een cronroute zonder tokencontrole is geen
+    // uitzondering maar een gat.
+    if (file.includes("/api/cron/")) {
+      assert.match(code(file), /CRON_SECRET/,
+        `${file} staat onder /api/cron maar controleert geen CRON_SECRET — dan is "cron" geen ` +
+        "reden om hem buiten de demogrens te laten");
+      continue;
+    }
+    // Een webhook wordt door de leverancier aangeroepen en draagt geen sessie, dus hij is nooit
+    // "het demoaccount dat iets doet". Ook die uitzondering wordt bewezen: zonder handtekening
+    // over de body is het geen webhook maar een open deur, en dan telt het argument niet.
+    if (/\/api\/[^/]+\/webhook\//.test(file)) {
+      assert.match(code(file), /signature|svix|WEBHOOK_SECRET/i,
+        `${file} heet een webhook maar controleert geen handtekening — dan is "de leverancier belt ` +
+        'aan" geen reden om hem buiten de demogrens te laten');
+      continue;
+    }
+
+    if (demoRefusalFor(pathname, "POST") === null) ongedekt.push(pathname);
+  }
+
+  assert.deepEqual(ongedekt, [],
+    "deze routes versturen mail of kosten geld en staan open voor een account waarvan het " +
+    `wachtwoord openbaar is: ${ongedekt.join(", ")}. Zet ze in demo-tenant.ts`);
+});
+
+test("[DEMO-DICHT] het wachtwoord van het demoaccount staat nergens meer als platte tekst", () => {
+  // docs/PLAY_STORE_LISTING.md schreef altijd al `SHOT_PASSWORD=…`. Een tweede document nam het
+  // op 2 september voluit over, en zo raakt een afspraak stilletjes kwijt: niets brak, niets werd
+  // rood, het stond er gewoon.
+  const treffers = execSync(
+    "grep -rl 'BoekBrugDemo2026' --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.next . || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean).filter((f) => !f.includes("lifecycle-gates.test.ts"));
+  assert.deepEqual(treffers, [],
+    `het demowachtwoord staat voluit in: ${treffers.join(", ")}. Het hoort uit een omgevingsvariabele ` +
+    "te komen — deze repository is openbaar");
 });
 
 test("[SEGMENT-VAK] een deur die een vak noemt, geeft het ook echt door", () => {

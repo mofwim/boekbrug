@@ -15,7 +15,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { belongsToIncassoSupplier, incassoClientKey, type IncassoSupplier } from "./incasso-settle";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { belongsToIncassoSupplier, incassoClientKey, isExpectedBookingRefusal, type IncassoSupplier } from "./incasso-settle";
 
 const marked = (id: string, name: string, nameKey: string | null): IncassoSupplier => ({ id, name, nameKey });
 
@@ -116,4 +119,87 @@ test("[AUTO-INCASSO] a supplier with no name key never matches by name", () => {
 test("[AUTO-INCASSO] an unrelated invoice is left alone", () => {
   const suppliers = [marked("s1", "Eneco", "eneco")];
   assert.equal(belongsToIncassoSupplier({ client_name: "Albert Heijn", supplier_id: null }, suppliers), null);
+});
+
+// ── [AUTO-INCASSO] Which booking refusals are worth waking somebody for ──────
+//
+// A third decision, and the one with the longest reach: it does not change a euro by itself, it
+// changes whether anyone HEARS about a euro. The strings it matches on live in SQL, in another
+// file, so the test reads them from there — a reworded message must fail here rather than quietly
+// flip an hourly race into an error, or a real failure into silence.
+
+/**
+ * Every refusal apply_manual_payment can raise, read per DEFINING FILE.
+ *
+ * Two migrations define this function — the original and the idempotency-scope rewrite — and both
+ * carry the whole set of messages. Unioning them was the first thing this test did and it was
+ * wrong: reword a refusal in the live definition and the superseded file still carries the old
+ * spelling, so the check passed while the predicate had stopped matching anything real. A
+ * mutation run is what found that; it is not a hypothetical.
+ *
+ * So the messages are read per file and required in ALL of them. Two spellings of one refusal
+ * drifting apart is the same defect from the other side.
+ */
+const RPC_FILES = ["invoice_manual_payments.sql", "invoice_manual_payment_idempotency_scope.sql"];
+
+function rpcRefusalsByFile(): Array<{ file: string; messages: string[] }> {
+  return RPC_FILES.map((file) => {
+    const sql = readFileSync(path.join(process.cwd(), "supabase", "migrations", file), "utf-8");
+    const messages = [...sql.matchAll(/RAISE EXCEPTION '(\[MANUAL-PARTIAL-PAY\][^']*)'/g)].map((m) => m[1]);
+    assert.ok(messages.length > 0, `${file} no longer defines apply_manual_payment's refusals`);
+    return { file, messages };
+  });
+}
+
+/** The union, for asking "could the RPC ever say this?" */
+function rpcRefusals(): string[] {
+  return [...new Set(rpcRefusalsByFile().flatMap((f) => f.messages))];
+}
+
+test("[AUTO-INCASSO] the refusals the RPC is right to make stay out of the log", () => {
+  // Four states in which the invoice simply stays open and visible — the safe side of each. An
+  // hourly cron logging these buries the ones that mean something.
+  const expected = [
+    "[MANUAL-PARTIAL-PAY] invoice already fully paid",
+    "[MANUAL-PARTIAL-PAY] invoice already covered",
+    "[MANUAL-PARTIAL-PAY] invoice locked by accountant (verwerkt)",
+    "[MANUAL-PARTIAL-PAY] invoice status received is not payable",
+  ];
+  const byFile = rpcRefusalsByFile();
+  for (const msg of expected) {
+    assert.ok(isExpectedBookingRefusal(msg), `"${msg}" is now logged as a failure every hour`);
+    // …and it is still a message the RPC can actually produce, in EVERY file that defines it. A
+    // pattern kept alive for a refusal that no longer exists is how this predicate would rot
+    // without anything failing.
+    for (const { file, messages } of byFile) {
+      assert.ok(
+        messages.some((r) => r.replace(/%/g, "received") === msg),
+        `${file} no longer raises "${msg}" — this pattern is matching nothing there`,
+      );
+    }
+  }
+});
+
+test("[AUTO-INCASSO] every OTHER refusal the RPC can raise is shouted about", () => {
+  // The sharpest one is the idempotency key belonging to a different booking: that is the
+  // double-booking guard firing, on the pass that books payments nobody typed. Swallowing it
+  // would hide the exact failure this module is most dangerous for.
+  const benign = /already|verwerkt|not payable/i;
+  for (const raw of rpcRefusals()) {
+    const msg = raw.replace(/%/g, "received");
+    if (benign.test(msg)) continue;
+    assert.equal(isExpectedBookingRefusal(msg), false, `"${msg}" is now swallowed — nobody will hear it`);
+  }
+  // Named explicitly, so the guard has a test that fails by name rather than only in a loop.
+  assert.equal(isExpectedBookingRefusal("[MANUAL-PARTIAL-PAY] idempotency key belongs to a different booking"), false);
+  assert.equal(isExpectedBookingRefusal("[MANUAL-PARTIAL-PAY] invoice not found / not owned"), false);
+  assert.equal(isExpectedBookingRefusal("[MANUAL-PARTIAL-PAY] invoice has no total to settle"), false);
+});
+
+test("[AUTO-INCASSO] a missing message is not evidence that a refusal was harmless", () => {
+  // An error with no message at all is the least understood case there is, and defaulting it to
+  // "expected" would silence exactly the failures nobody has seen before.
+  for (const empty of [null, undefined, ""]) {
+    assert.equal(isExpectedBookingRefusal(empty), false);
+  }
 });
