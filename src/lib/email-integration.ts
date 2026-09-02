@@ -4335,7 +4335,13 @@ export async function syncUserEmails(
         ? { advance: false, reason: 'owner_reviews_everything' }
         : attachment.fromBody === true
         ? { advance: false, reason: 'from_email_body' }
-        : !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
+        // [WAAROM-VASTGEHOUDEN] Twee oorzaken, twee redenen. Deze regel gaf ze allebei de naam
+        // 'uncertain', en de zin die de eigenaar daarbij leest is "de lezer was niet zeker genoeg
+        // over deze bijlage" — over een factuur die perfect gelezen is en alleen een betaalspoor
+        // draagt. Dat is niet vaag maar onwaar, en het stuurt hem het verkeerde veld in.
+        : pay.suggestPaid && !settlePlan.settle
+        ? { advance: false, reason: 'paid_mark_not_settled' }
+        : !classification.uncertain
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,
@@ -4376,6 +4382,11 @@ export async function syncUserEmails(
             },
           })
         : { advance: false, reason: 'uncertain' }
+      // [OVERALL-BEWAARD] Zie de gelijknamige noot in intake/route.ts — op élke rij, beide paden.
+      fieldConfidenceValue = {
+        ...(fieldConfidenceValue ?? {}),
+        _auto_confidence: typeof classification.confidence === 'number' ? classification.confidence : null,
+      }
       if (autoAdv.advance) {
         fieldConfidenceValue = {
           ...(fieldConfidenceValue ?? {}),

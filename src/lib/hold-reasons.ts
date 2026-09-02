@@ -96,6 +96,7 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
   // deze regel bovenaan, dan verandert geen enkele leesverbetering iets aan het handwerk — dan is
   // het de schakelaar. Dat verschil verzwijgen zou de hele lijst verkeerd laten lezen.
   owner_reviews_everything: "De eigenaar heeft \"ik kijk zelf naar alles\" aanstaan — dit is een keuze, geen leesprobleem",
+  paid_mark_not_settled: "Het document draagt een betaalspoor dat in dezelfde stap niet is afgerekend",
   from_email_body: "Het document komt uit de tekst van een e-mail, niet uit een bijlage",
   uncertain: "De lezer was niet zeker genoeg over deze bijlage",
   forced_duplicate: "De eigenaar voegde een mogelijke dubbele factuur toch toe — dat blijft altijd handwerk",

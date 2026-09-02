@@ -13690,6 +13690,15 @@ export const MESSAGES = {
   },
 
   // Hoe het binnenkwam.
+  // Deze regel deelde tot nu toe zijn naam met 'uncertain', en las dus als "de lezer was niet zeker
+  // genoeg" — over een factuur die perfect gelezen is en alleen een betaalspoor draagt. Dat stuurde
+  // de eigenaar het verkeerde veld in.
+  'wacht.betaalspoor': {
+    nl: 'Op dit document staat dat het al betaald is, maar de betaling is hier niet vastgelegd. Geef aan hoe het betaald is, dan is het klaar.',
+    ar: 'على هذا المستند ما يفيد أنه مدفوع، لكن الدفعة لم تُسجَّل هنا. حدِّد كيف دُفع، وينتهي الأمر.',
+    en: 'This document says it has already been paid, but the payment is not recorded here. Say how it was paid and it is done.',
+  },
+
   'wacht.uitMailtekst': {
     nl: 'Dit komt uit de tekst van een e-mail, niet uit een bijlage.',
     ar: 'هذا مأخوذ من نص رسالة بريد، لا من مرفق.',
