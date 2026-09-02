@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { deliveryFailure } from '@/lib/invoice-delivery'
 import { failureText } from '@/lib/server-message'
 import { isInvoiceEditable, isQuote } from '@/lib/invoice-editable'
 import { paymentTermText, parsePaymentTerm, dueDateFromTerm, termFromDates, COMMON_PAYMENT_TERMS, MAX_PAYMENT_TERM_DAYS, longPaymentTermNotice } from '@/lib/payment-term'
@@ -452,9 +453,15 @@ export default function InvoiceEditPage() {
       return
     }
 
+    // [VERSTUURD-EERLIJK] A 200 with a warning is a legally issued invoice the customer never
+    // received. This path navigated to the detail page WITHOUT ?delivery=, so not even the
+    // recovery banner appeared — the owner saw their new invoice number and nothing else.
+    // Carrying the warning in the URL is what the detail page already knows how to read.
+    const bezorgFout = deliveryFailure(await sendRes.json().catch(() => ({})))
+
     // 3. Success — refresh server data + navigate to detail
     router.refresh()
-    router.replace(`/dashboard/invoice/${invoiceId}`)
+    router.replace(`/dashboard/invoice/${invoiceId}${bezorgFout ? `?delivery=${bezorgFout}` : ''}`)
   }
 
   // [SUBNAV] Title (+ invoice number) in the shared header; called before the

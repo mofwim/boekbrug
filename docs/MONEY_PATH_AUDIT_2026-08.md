@@ -1329,3 +1329,87 @@ nothing at all — which is exactly the trap [KOPIE-EERLIJK] fell into one test 
 
 Four controls: each of the two call sites reverted, a new unguarded download added elsewhere, and
 the scan blinded. All four fail; before the narrowing, the first two did not.
+
+
+---
+
+## 21. "Verstuurd" on an invoice that never left — 2 September 2026
+
+Third pass with the same question, and the biggest answer yet. §19 asked who claims a copy they
+were not given; §20 asked who saves a file from an answer they never checked. This one asks: **who
+tells the owner an invoice went out?**
+
+### Why `res.ok` is the wrong question here
+
+`/api/invoice/send` does the irreversible thing before the fallible one. It mints a number out of
+the legal sequence — which cannot be un-minted, because Dutch invoice numbering must be gap-free —
+and only then renders the PDF and hands it to the mail provider. A failure at that last step has
+nothing to roll back, so the route answers **HTTP 200 with a `warning`**. That design is right.
+
+Which makes `res.ok` **true on a failed delivery**. And an owner who believes an invoice was sent
+does not chase it: the invoice is legally issued, the customer never saw it, and the money never
+arrives.
+
+### Four of seven
+
+| call site | pdf_failed | email_failed |
+|---|---|---|
+| `invoice/new` ×2 | yes | yes |
+| `facturen/FacturenClient` | yes | yes |
+| `invoice/[id]` send-draft | yes | **no** |
+| `invoice/[id]` **resend** | **no** | **no** |
+| `invoice/[id]/edit` save+send | **no** | **no** |
+| `accountant/AccountantFactuur` | **no** | **no** |
+
+The resend is the sharpest. It is the one screen whose entire job is recovering from a failed
+e-mail, and on a resend that ALSO failed it ran `setDismissedDelivery(true)` and
+`router.replace(pathname)` — deleting the `?delivery=` banner that was the owner's only warning —
+and then showed a green "opnieuw verstuurd". The screen for recovering from the failure was hiding
+the evidence of the second one.
+
+The save-and-send path navigated to the detail page without `?delivery=`, so not even the banner
+appeared. The accountant path parsed the response body and never looked at `warning` — and that
+number came out of the **client's** legal sequence.
+
+### It had already been fixed twice
+
+`FacturenClient` still carries the note: *"email_failed is the SAME class of half-success and was
+falling through to the 'verzonden ✓' branch … /dashboard/invoice/new already handled both warnings
+together; this page did not."* Two screens, fixed one at a time, each discovering the previous one
+had been fixed. A fifth would have been found the same way.
+
+And `invoice-sent-notice.ts` states the invariant in its own header — *"a send that does not fully
+succeed never reaches here"* — which was simply untrue of half its callers. A documented
+precondition nothing enforced.
+
+### What changed
+
+`src/lib/invoice-delivery.ts` answers one question: given the route's response, did it actually go
+out? Every one of the seven call sites asks it, including the three that were already right — those
+were the ones spelling the rule out for themselves in lists of warning names, which is precisely how
+the other four ended up with SUBSETS of that list.
+
+`WARNING_DELIVERY` classifies every `warning` any route can return, and a gate reads those literals
+out of `src/app/api/` and fails when one is unclassified. A seventh warning cannot be added without
+someone answering "does this mean the customer got nothing?". `discount_not_stored` is the proof
+that the answer is not always yes — it is a real problem on a different screen, and the invoice
+still went out.
+
+### The gate was wrong twice before it was right, in the same way as the last two
+
+**First:** it required `deliveryFailure` once per FILE. `invoice/[id]/page.tsx` sends twice — a
+draft and a resend — so deleting the resend's check left the gate green, covered by the send-draft
+handler in the same file. It is now per-call-site, and the controls fail with the exact line.
+
+That is the **third** scope error of this identical shape in one day: [KOPIE-EERLIJK] held two
+different components named CopyButton to one contract; [EXPORT-EERLIJK] let a neighbouring
+function's `res.ok` satisfy a check for a different call site; this one let one handler cover for
+another. The rule to take away: **whenever a file holds two of the thing being checked, a
+file-level assertion lets one cover for the other.** All three were found the same way — by
+reintroducing the defect and watching the gate not notice.
+
+**Second:** the exhaustiveness check found six warning values where my own grep had found four. The
+grep was line-based; two routes write `warning:` and the value on separate lines. The fifth
+measurement blind spot in three days, and the first one caught by a gate rather than by hand.
+
+Six controls, six distinct failures.

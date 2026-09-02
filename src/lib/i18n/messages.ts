@@ -4829,6 +4829,14 @@ export const MESSAGES = {
     ar: 'تعذّر فتح ملف PDF الأصلي',
     en: 'The original PDF could not be opened',
   },
+  // [VERSTUURD-EERLIJK] De PDF-variant hiernaast bestond al; deze niet, en dat is precies waarom
+  // vier van de zeven verzendknoppen "verstuurd" zeiden terwijl de mail was blijven staan. Eigen
+  // sleutel per oorzaak: bij de ene is er geen document, bij de andere wel — maar niemand kreeg het.
+  'detail.fout.mailNietVerstuurd': {
+    nl: 'De factuur kreeg een nummer, maar de e-mail is niet verstuurd — de klant heeft niets ontvangen. Verstuur opnieuw.',
+    ar: 'أخذت الفاتورة رقماً، لكن البريد الإلكتروني لم يُرسَل — لم يستلم العميل شيئاً. أعد الإرسال.',
+    en: 'The invoice got a number, but the e-mail was not sent — the client received nothing. Send again.',
+  },
   'detail.fout.pdfNietGemaakt': {
     nl: 'De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.',
     ar: 'أخذت الفاتورة رقماً، لكن تعذّر إنشاء ملف PDF — لم يستلم العميل شيئاً. أعد الإرسال.',

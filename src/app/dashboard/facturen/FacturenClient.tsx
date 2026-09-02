@@ -6,6 +6,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { deliveryFailure } from '@/lib/invoice-delivery'
 import { failureText } from '@/lib/server-message'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
@@ -1116,9 +1117,14 @@ export default function FacturenClient({
         // so the old test missed it. The owner was told a legally-numbered invoice had reached
         // their customer when nothing left the building. /dashboard/invoice/new already handled
         // both warnings together; this page did not.
-        if (result.warning === 'pdf_failed' || result.warning === 'email_failed' || result.delivered === false) {
+        // [VERSTUURD-EERLIJK] The three spellings above — two warning names and the older
+        // `delivered === false` — were this screen's own copy of the rule, and the comment above
+        // records what that cost: the same defect had to be found here after it was fixed on
+        // /dashboard/invoice/new. One module answers now, and the message is all this screen picks.
+        const bezorgFout = deliveryFailure(result)
+        if (bezorgFout) {
           showToast(
-            result.warning === 'email_failed'
+            bezorgFout === 'email_failed'
               ? (displayNumber
                   ? t('lijst.emailNietVerstuurd', { number: displayNumber })
                   : t('lijst.emailNietVerstuurdZonder'))

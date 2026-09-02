@@ -13914,6 +13914,102 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   );
 });
 
+// ─── [VERSTUURD-EERLIJK] "Verstuurd" is only said when it actually went out ────────────────────
+//
+// /api/invoice/send does the irreversible thing before the fallible one. It mints a number out of
+// the legal sequence — un-mintable, because Dutch invoice numbering must be gap-free — and only
+// then renders the PDF and hands it to the mail provider. A failure there has nothing to roll back,
+// so the route answers HTTP 200 with a `warning`.
+//
+// So `res.ok` is TRUE on a failed delivery, and a screen that checks only `res.ok` tells the owner
+// their invoice is on its way while nothing left the building. An owner who believes an invoice was
+// sent does not chase it: the invoice is legally issued, the customer never saw it, and the money
+// never arrives.
+//
+// FOUR of the app's seven send call sites got this wrong, and the sharpest was the RESEND handler —
+// the one screen whose entire job is recovering from a failed e-mail. On a resend that also failed
+// it set dismissedDelivery and stripped ?delivery= from the URL, deleting the owner's only warning,
+// and showed a green "opnieuw verstuurd".
+//
+// This had already been fixed twice, screen by screen. FacturenClient still carries the note:
+// "/dashboard/invoice/new already handled both warnings together; this page did not." A fifth
+// screen would have been found the same way — a real rule with a hand-kept list of screens beside
+// it, for the fourth time in this repo's history.
+test("[VERSTUURD-EERLIJK] every screen that sends an invoice asks whether it was delivered", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // 1. The senders, derived: any screen that POSTs to the send route. Not a list of file names —
+  //    a list is exactly what failed here twice.
+  const zenders = walk("src").filter((f) => /fetch\(\s*['"`]\/api\/invoice\/send['"`]/.test(code(f)));
+  assert.ok(zenders.length >= 5, `only ${zenders.length} screens found that send an invoice — the scan is broken`);
+
+  for (const f of zenders) {
+    const src = code(f);
+    // 2. Each SEND, not each file. Per-call-site, because a file-level rule cannot tell one call
+    //    site from another: invoice/[id]/page.tsx sends twice — a draft and a resend — and the
+    //    first version of this gate stayed green when the resend's check was deleted, because the
+    //    send-draft handler in the same file still had one. That is the third scope of this exact
+    //    shape found today ([EXPORT-EERLIJK] borrowed the neighbouring function's guard;
+    //    [KOPIE-EERLIJK] held two different components to one contract). Whenever a file holds two
+    //    of the thing being checked, a file-level assertion lets one cover for the other.
+    const regels = src.split("\n");
+    const zendRegels = regels
+      .map((r, i) => (/fetch\(\s*['"`]\/api\/invoice\/send['"`]/.test(r) ? i : -1))
+      .filter((i) => i >= 0);
+    for (const i of zendRegels) {
+      // To the next send in this file, or 60 lines — every real handler here resolves in ~35.
+      const eind = Math.min(...zendRegels.filter((j) => j > i).concat(i + 60), regels.length);
+      const handler = regels.slice(i, eind).join("\n");
+      assert.match(handler, /deliveryFailure\(/,
+        `${f}:${i + 1}: sends an invoice without asking whether it was delivered — res.ok is true on a failed send`);
+    }
+    // 3. …and must keep the answer. `deliveryFailure(x)` as a bare statement is the same defect
+    //    with an import in front of it (see [KOPIE-EERLIJK], same rule, same reason).
+    for (const m of [...src.matchAll(/deliveryFailure\(/g)]) {
+      const before = src.slice(0, m.index).replace(/\s+$/, "");
+      assert.ok(/[=(!?,:]$|&&$|\|\|$|\breturn$/.test(before),
+        `${f}: the answer to "was it delivered" is thrown away`);
+    }
+    // 4. No screen may still hard-code the warning strings. Two of the four were wrong precisely
+    //    because they named a SUBSET of them; leaving the literals around invites the next subset.
+    assert.doesNotMatch(src, /warning\s*===\s*['"]pdf_failed['"]|warning\s*===\s*['"]email_failed['"]/,
+      `${f}: still tests the warning strings itself instead of asking the one module`);
+  }
+
+  // 5. The classification stays exhaustive. Every `warning:` literal any API route can return must
+  //    be named in WARNING_DELIVERY, so a fifth warning cannot be added without someone answering
+  //    "does this mean the customer got nothing?". Derived from the routes, not maintained by hand —
+  //    `discount_not_stored` is the proof that the answer is not always yes.
+  const geretourneerd = new Set<string>();
+  // walk() above only collects .tsx; the API routes are .ts, so they get their own walk.
+  const routeFiles = (function ts(dir: string): string[] {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...ts(p));
+      else if (/\.ts$/.test(p) && !/\.test\.ts$/.test(p)) out.push(p);
+    }
+    return out;
+  })("src/app/api");
+  for (const f of routeFiles) {
+    for (const m of code(f).matchAll(/warning:\s*['"]([a-z_]+)['"]/g)) geretourneerd.add(m[1]);
+  }
+  assert.ok(geretourneerd.size >= 4, `only ${geretourneerd.size} warning values found in the routes — the scan is broken`);
+  const kaart = code("src/lib/invoice-delivery.ts");
+  for (const w of [...geretourneerd].sort()) {
+    assert.match(kaart, new RegExp(`\\b${w}:`),
+      `a route returns warning '${w}' and invoice-delivery.ts does not say whether it means the customer got nothing`);
+  }
+});
+
 // ─── [EXPORT-EERLIJK] A failed request never becomes a file with the books' name on it ─────────
 //
 // Found by asking the [KOPIE-EERLIJK] question again, one step further out: who else turns a

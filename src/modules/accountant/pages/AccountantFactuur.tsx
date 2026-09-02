@@ -20,6 +20,7 @@
 
 import { useMemo, useState } from 'react'
 // [TZ] One clock for every door — see the note at amsterdamToday().
+import { deliveryFailure } from '@/lib/invoice-delivery'
 import { amsterdamToday } from '@/lib/format-nl'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
@@ -197,7 +198,13 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
         throw new Error(failureText(verzonden.status, verzondenData, t('bh.fact.foutVersturen')))
       }
 
-      router.push(`/dashboard/invoice/${conceptData.invoiceId}`)
+      // [VERSTUURD-EERLIJK] The number came out of the CLIENT's legal sequence and cannot be given
+      // back, so a failed delivery still answers 200. This page read the body and never looked at
+      // `warning`: the accountant was redirected to the invoice as though it had been sent, while
+      // their client's customer had received nothing. The detail page reads ?delivery= and shows
+      // the recovery banner with the resend button.
+      const bezorgFout = deliveryFailure(verzondenData)
+      router.push(`/dashboard/invoice/${conceptData.invoiceId}${bezorgFout ? `?delivery=${bezorgFout}` : ''}`)
     } catch (e) {
       setFout(e instanceof Error ? e.message : t('bh.fact.foutOnbekend'))
       setBezig(false)

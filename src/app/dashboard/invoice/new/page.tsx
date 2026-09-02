@@ -11,6 +11,7 @@ import {
   readHandoff, clearHandoff, hasInvoiceContent, isMeaningfulLine, describeHandoff,
   type FactuurHandoff,
 } from '@/lib/factuur-handoff'
+import { deliveryFailure } from '@/lib/invoice-delivery'
 import { createClient } from '@/lib/supabase'
 // [MIN-REGEL] Where the minus sign may live on a line, and when a document stops being a factuur
 // — see negative-line.ts.
@@ -1080,8 +1081,12 @@ function NewInvoicePageContent() {
         router.replace(`/dashboard/invoice/${factuur.id}`)
         return
       }
-      if (result.warning === 'pdf_failed' || result.warning === 'email_failed') {
-        router.replace(`/dashboard/invoice/${factuur.id}?delivery=${result.warning}`)
+      // [VERSTUURD-EERLIJK] This screen had it right before any other did — and still spelled the
+      // rule out itself, in a list of warning names. That is how the other screens ended up with
+      // SUBSETS of the same list. The question is asked once now, in invoice-delivery.ts.
+      const bezorgFout = deliveryFailure(result)
+      if (bezorgFout) {
+        router.replace(`/dashboard/invoice/${factuur.id}?delivery=${bezorgFout}`)
         return
       }
       // [VERSTUURD] Dezelfde gebeurtenis, dus dezelfde bevestiging: ook hier is een genummerde
@@ -1328,8 +1333,10 @@ function NewInvoicePageContent() {
         }
 
         // Soft warnings: invoice IS legally issued, delivery needs a retry.
-        if (result.warning === 'pdf_failed' || result.warning === 'email_failed') {
-          router.replace(`/dashboard/invoice/${invoice.id}?delivery=${result.warning}`)
+        // [VERSTUURD-EERLIJK] Asked of the one module — see the sibling call above.
+        const bezorgFout = deliveryFailure(result)
+        if (bezorgFout) {
+          router.replace(`/dashboard/invoice/${invoice.id}?delivery=${bezorgFout}`)
           return
         }
 
