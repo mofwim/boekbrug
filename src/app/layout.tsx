@@ -128,7 +128,7 @@ export default function RootLayout({
 
         {/* [Design System] Material Symbols — icon font, CDN.
             PERFORMANCE: icon_names= subsets the font to ONLY the glyphs the app
-            uses (96 icons), cutting the download from ~313 KB to ~9 KB (~97%).
+            uses (121 icons), cutting the download from ~313 KB to ~9 KB (~97%).
             display=block keeps the font invisible while loading then swaps in,
             so users never see the raw ligature text ("arrow_back") flash.
 
@@ -136,11 +136,19 @@ export default function RootLayout({
             material-symbols icon anywhere in the app, ADD its name to the
             icon_names list below — otherwise it renders as its raw text name.
             The list is validated: an unknown name makes Google return HTTP 400
-            (all icons break), so keep names exact and alphabetical. */}
+            (all icons break), so keep names exact and alphabetical.
+
+            This warning was not enough on its own, and that is why there is now a
+            gate. THREE icons had already shipped rendering as their own names —
+            local_shipping on the home screen's Leveranciers tile, edit_note and
+            schedule_send on the accountant's home. A hand-kept list guarding an
+            automatic behaviour fails exactly this way: quietly, on one screen, in
+            a place nobody re-reads. [ICOON-SUBSET] in lifecycle-gates now derives
+            every name the app renders and requires it to be here. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,account_tree,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,autorenew,bar_chart,block,bolt,calculate,call_split,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,date_range,delete,delete_forever,description,directions_car,done_all,download,drive_file_move,drive_file_rename_outline,edit,error,error_outline,event,event_available,expand_less,expand_more,fact_check,flag,folder,folder_open,folder_special,forum,forward_to_inbox,grid_view,group,groups,help,history,home,hourglass_empty,image,inbox,info,insert_drive_file,inventory,inventory_2,label,label_important,link,link_off,lock,mark_email_unread,monitoring,more_vert,notifications,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,price_check,qr_code_2,radio_button_unchecked,receipt_long,refresh,request_quote,restart_alt,restore,rule,schedule,search,search_off,send,settings,share,shield,star,storefront,swap_horiz,swap_vert,sync_alt,sync_problem,task_alt,toggle_off,toggle_on,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=account_balance,account_tree,add,add_a_photo,arrow_back,arrow_downward,arrow_forward,arrow_upward,attach_file,auto_awesome,autorenew,bar_chart,block,bolt,calculate,calendar_month,call_split,check,check_circle,checklist,chevron_left,chevron_right,close,content_copy,content_cut,create_new_folder,cut,date_range,delete,delete_forever,description,directions_car,done_all,download,drive_file_move,drive_file_rename_outline,edit,edit_note,error,error_outline,event,event_available,expand_less,expand_more,fact_check,flag,folder,folder_open,folder_special,forum,forward_to_inbox,grid_view,group,group_add,groups,help,history,home,hourglass_empty,image,inbox,info,insert_drive_file,inventory,inventory_2,label,label_important,link,link_off,local_shipping,lock,mark_email_unread,monitoring,more_vert,notifications,open_in_new,payments,pending,people,person,person_add,photo_camera,picture_as_pdf,point_of_sale,price_check,qr_code_2,radio_button_unchecked,receipt,receipt_long,refresh,request_quote,restart_alt,restore,rule,schedule,schedule_send,search,search_off,send,settings,share,shield,star,storefront,swap_horiz,swap_vert,sync_alt,sync_problem,task_alt,toggle_off,toggle_on,undo,upload,upload_file,uppercase,verified,view_list,visibility,visibility_off,warning,work&display=block"
           rel="stylesheet"
         />
       </head>
