@@ -2133,7 +2133,7 @@ function NewInvoicePageContent() {
             )}
 
             {/* [DS] Fixed bottom bar — safe area — full-width pill — 48px min */}
-            <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
+            <div style={{ position: 'fixed', bottom: 0, insetInlineStart: 'var(--rail-w)', insetInlineEnd: 0, backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,0,0,0.06)', padding: '12px 16px', paddingBottom: 'calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))', zIndex: 10 }}>
               {/* [BAR-ALIGN] The bar centred its content at the column's OUTER
                   width while the form spends 16px of that on its gutters, so the
                   send button sat one gutter wider than every field above it. */}

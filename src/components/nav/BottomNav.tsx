@@ -30,86 +30,12 @@ import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { M3, FONT } from '@/lib/design/tokens'
 import type { Role } from '@/lib/navigation'
+import { destinationsFor, activeHref } from '@/lib/nav-destinations'
 
-type Destination = {
-  href: string
-  label: MessageKey
-  icon: string
-  /** Extra paths that should light this tab up (children of the destination). */
-  also?: string[]
-  /**
-   * Match this destination on the exact path only, never on its descendants.
-   * Set on the home tab: `/dashboard` is a prefix of EVERY dashboard route, so
-   * without this it claimed all of them — standing on Kas, Waarheid, Berichten
-   * or Instellingen lit up "Start", which tells the user they are somewhere they
-   * are not. A tab bar that misreports your position is worse than one that
-   * admits it does not cover this screen.
-   */
-  exact?: boolean
-}
-
-// Chosen from what each role's home screen puts first, so the bar shortcuts the
-// journeys people already take rather than inventing a new hierarchy.
-// [TAAL] `label` is a catalogue KEY, not a word. The bar is on every screen, so it is the first
-// thing an owner reads in their own language — and the sentence in the send confirmation fills
-// itself from nav.invoices, so the two can never name the tab differently.
-// [VAK-BRUG] The counter trade's bar. Four destinations again, and three of them the same — only
-// the second changes, and that one change is the whole point.
-//
-// A kapper is paid EUR 25 by someone who walks out. He sends no invoice and has no "client", and
-// the bar on every screen of his app led with Facturen and Inkomend: a list he never adds to, and
-// an inbox for bills he barely gets. The Kassa he would use thirty times a day was a card inside
-// the home screen. The first thing he read, everywhere, was that this app is for somebody else.
-//
-// Facturen is not gone — it is one tap away on the home tiles, which is exactly what this file's
-// own header says they are for ("everything else stays reachable from the home tiles"). A garage
-// that bills a fleet customer still finds it there. What moved is which of the two is one tap and
-// which is two, and for this owner the counter is the frequent one by an order of magnitude.
-//
-// Inkomend stays: a barber does receive wholesaler bills, and that queue is where his voorbelasting
-// comes from.
-const OWNER_COUNTER: Destination[] = [
-  { href: '/dashboard', label: 'nav.start', icon: 'home', exact: true },
-  { href: '/dashboard/kassa', label: 'nav.kassa', icon: 'storefront' },
-  { href: '/dashboard/incoming', label: 'nav.incoming', icon: 'inbox', also: ['/dashboard/upload'] },
-  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
-]
-
-const OWNER: Destination[] = [
-  { href: '/dashboard', label: 'nav.start', icon: 'home', exact: true },
-  { href: '/dashboard/facturen', label: 'nav.invoices', icon: 'receipt_long', also: ['/dashboard/invoice'] },
-  { href: '/dashboard/incoming', label: 'nav.incoming', icon: 'inbox', also: ['/dashboard/upload'] },
-  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
-]
-
-const ACCOUNTANT: Destination[] = [
-  { href: '/dashboard/accountant', label: 'nav.start', icon: 'home', exact: true },
-  { href: '/dashboard/clients/beheer', label: 'nav.clients', icon: 'people', also: ['/dashboard/clients'] },
-  { href: '/dashboard/quarterly', label: 'nav.quarter', icon: 'bar_chart' },
-  { href: '/dashboard/bestanden', label: 'nav.files', icon: 'folder_open' },
-]
-
-/**
- * Which tab owns this path. Longest match wins, so /dashboard/facturen beats a
- * shorter prefix instead of both lighting up.
- *
- * Returns null when the current screen belongs to no destination — Kas, Brug,
- * Waarheid, Instellingen and the rest are reached from the home tiles, not from
- * this bar. Nothing lit is the honest answer there; see `exact` above for the
- * bug that made "Start" claim them all.
- */
-function activeHref(pathname: string, items: Destination[]): string | null {
-  let best: { href: string; len: number } | null = null
-  for (const item of items) {
-    for (const prefix of [item.href, ...(item.also ?? [])]) {
-      const hit = item.exact
-        ? pathname === prefix
-        : pathname === prefix || pathname.startsWith(prefix + '/')
-      if (hit && (!best || prefix.length > best.len)) best = { href: item.href, len: prefix.length }
-    }
-  }
-  return best?.href ?? null
-}
+// [NAV-BESTEMMINGEN] The destinations themselves live in src/lib/nav-destinations.ts now, because
+// this bar is no longer the only thing that renders them — DashboardRail draws the same four down
+// the side of a desktop screen. Two bars reading two lists is how they drift apart, and then the
+// app quietly means different things depending on the width of the screen.
 
 export function BottomNav({ role, counter = false }: { role: Role | null; counter?: boolean }) {
   const pathname = usePathname()
@@ -118,9 +44,7 @@ export function BottomNav({ role, counter = false }: { role: Role | null; counte
   if (!pathname) return null
 
   const t = translator(taal)
-  // An accountant's bar never varies by trade — the trade describes the OWNER, and the accountant
-  // works across many of them. Same reasoning as the Dutch-only accountant module in AGENTS.md.
-  const items = role === 'accountant' ? ACCOUNTANT : counter ? OWNER_COUNTER : OWNER
+  const items = destinationsFor(role, counter)
   const active = activeHref(pathname, items)
 
   return (

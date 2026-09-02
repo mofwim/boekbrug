@@ -24,7 +24,10 @@ export function BulkBar({ selectedCount, onShare, onMove, onDelete, onStar, onCl
   return (
     <div style={{
       // [SAFE-AREA] Clears the home indicator now that viewportFit:cover is on.
-      position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))", left: "50%",
+      position: "fixed", bottom: "calc(24px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
+      // [ZIJBALK] Centred over the CONTENT, not the window: with a 240px rail, plain 50% puts this
+      // bar 120px left of the list it belongs to. --rail-w is 0px below the breakpoint.
+      left: "calc(50% + var(--rail-w) / 2)",
       transform: "translateX(-50%)",
       zIndex: 100,
       display: "flex", alignItems: "center", gap: 4,

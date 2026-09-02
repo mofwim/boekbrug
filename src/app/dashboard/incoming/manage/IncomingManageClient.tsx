@@ -3670,7 +3670,7 @@ export default function IncomingManageClient({
           Enabled when the pure builder approves (≥2 open rows, same IBAN). ── */}
       {selectMode && selectPurpose === 'undo' && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
+          position: 'fixed', insetInlineStart: 'calc(16px + var(--rail-w))', insetInlineEnd: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,
           background: '#fff', borderRadius: R.lg, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
           padding: '12px 16px', fontFamily: FONT,
@@ -3705,7 +3705,7 @@ export default function IncomingManageClient({
 
       {selectMode && selectPurpose === 'pay' && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
+          position: 'fixed', insetInlineStart: 'calc(16px + var(--rail-w))', insetInlineEnd: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           // [BAR-ALIGN] Same 648 as before, now derived from the column — this bar
           // was already the one that lined up with the list.
           maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,

@@ -40,7 +40,12 @@ export default function GlobalSearchLauncher() {
   // bottom-right on facturen/klanten/werkplek — a bottom-right search FAB overlapped them.
   return (
     <div style={{
-      position: "fixed", insetInlineStart: 20, zIndex: 150,
+      position: "fixed", zIndex: 150,
+      // [ZIJBALK] Clears the desktop rail the same way `bottom` clears the phone bar below:
+      // --rail-w is 0px under 1024px, so this one expression is correct at every width. Without
+      // it this button sat on the rail's bottom corner — the same defect as the FAB that hid
+      // behind the bottom bar, at the other edge.
+      insetInlineStart: "calc(20px + var(--rail-w))",
       // [MOBILE-FAB] Boven de BottomNav via de gedeelde --bottom-nav-h (0px op
       // desktop, 64px op mobiel). Op de vaste `bottom: 20` stond deze knop op een
       // telefoon ACHTER die balk — alleen een streepje blauw stak uit de linkerrand,

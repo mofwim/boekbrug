@@ -8,6 +8,8 @@ import GlobalSearchLauncher from '@/components/search/GlobalSearchLauncher'
 import DashboardChrome from '@/components/nav/DashboardChrome'
 import { SubPageHeaderProvider } from '@/components/nav/SubPageHeaderContext'
 import { BottomNav } from '@/components/nav/BottomNav'
+// [ZIJBALK] The desktop counterpart to BottomNav — same destinations, down the side.
+import { DashboardRail } from '@/components/nav/DashboardRail'
 import { sellsOverCounter } from '@/lib/vak-profile'
 import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
@@ -111,6 +113,11 @@ export default async function DashboardLayout({
           dynamic title/actions into it. The provider wraps both the bar and
           {children} so a page's useSubPageHeader() registration reaches the bar.
           The bar is placed before {children} so its sticky bar sits at top. */}
+      {/* [ZIJBALK] The desktop navigation rail. Fixed, so it is mounted OUTSIDE the shell that
+          pads for it — a fixed element inside its own padding would sit 240px in from the edge.
+          Same visibility rule as the phone bar: hidden for a verkoopmedewerker, whose
+          destinations would bounce him back (see the note on DashboardChrome below). */}
+      {profile && !isMedewerker && <DashboardRail role={subnavRole} counter={counterTrade} />}
       <SubPageHeaderProvider>
         {/* [MEDEWERKER] De balk rendert nu WEL voor hem, met zijn eigen thuis.
             Hij werd verborgen om een goede reden — een menu vol links die je terugwerpen is erger
@@ -120,10 +127,17 @@ export default async function DashboardLayout({
             een geïnstalleerde PWA is er ook geen browserknop. De enige uitweg was de app afsluiten.
             De onderbalk en de zoekknop blijven verborgen: díe zijn wél menu's, en hun bestemmingen
             werpen hem terug. */}
-        {profile && <DashboardChrome role={isMedewerker ? 'medewerker' : subnavRole} />}
-        {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
-            so the last row of a list is not left sitting behind it. */}
-        <div className="dash-content">{children}</div>
+        {/* [ZIJBALK] The shell clears the rail's width, so the sub-page header and the page
+            below it both centre in what is LEFT of the screen rather than sliding under the
+            rail. It wraps BOTH: the header is sticky and lives outside .dash-content, so padding
+            only the content would have left that one bar running behind the rail. --rail-w is 0px
+            below 1024px, which makes this a no-op at every width the rail is not shown at. */}
+        <div className="dash-shell">
+          {profile && <DashboardChrome role={isMedewerker ? 'medewerker' : subnavRole} />}
+          {/* [MOBILE] .dash-content reserves room for the bottom bar below 640px,
+              so the last row of a list is not left sitting behind it. */}
+          <div className="dash-content">{children}</div>
+        </div>
       </SubPageHeaderProvider>
       {/* [SEARCH] Global search — reachable on every dashboard page (see component
           for where it hides). Only mounts for a logged-in profile. */}

@@ -1916,7 +1916,7 @@ export default function FacturenClient({
           selecting. Enabled at ≥2 facturen of the same klant. ── */}
       {selectMode && (
         <div style={{
-          position: 'fixed', left: 16, right: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
+          position: 'fixed', insetInlineStart: 'calc(16px + var(--rail-w))', insetInlineEnd: 16, bottom: `calc(20px + var(--bottom-nav-h) + env(safe-area-inset-bottom))`,
           // [BAR-ALIGN] Same 648 as before, now derived from the column instead of
           // spelled out — this bar was the one that already lined up with the list.
           maxWidth: columnInner(COLUMN.work), margin: '0 auto', zIndex: 60,

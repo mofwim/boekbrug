@@ -21,6 +21,8 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
+// [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
+import { destinationsFor } from "./nav-destinations";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -6065,26 +6067,24 @@ test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules wi
   // The destination it duplicated must still be reachable, or removing the shortcut would have
   // taken the only permanent route to the verification queue with it.
   //
-  // Found by CONTENT, not by path. The first draft of this gate read "src/components/BottomNav.tsx"
-  // — a path that does not exist (it is components/nav/BottomNav.tsx), and a gate pinned to a
-  // guessed path is the recurring defect in this file: it either throws, or worse, quietly matches
-  // nothing and passes forever.
-  const walk = (dir: string): string[] => {
-    const out: string[] = [];
-    for (const e of readdirSync(dir)) {
-      const p = `${dir}/${e}`;
-      if (statSync(p).isDirectory()) out.push(...walk(p));
-      else if (p.endsWith(".tsx")) out.push(p);
-    }
-    return out;
-  };
-  const navEntry = /\{ href: '\/dashboard\/incoming', label: '[^']+', icon: 'inbox'/;
-  const carriers = walk("src/components").filter((f) => navEntry.test(readFileSync(f, "utf8")));
-  assert.ok(
-    carriers.length > 0,
-    "no navigation component still routes to /dashboard/incoming with the inbox icon — removing " +
-      "the toolbar shortcut is only safe because the bottom nav carries the same destination",
-  );
+  // Asked of the DESTINATIONS THEMSELVES, not of a literal in a component.
+  //
+  // Two earlier drafts of this check were pinned to a spelling: the first to a path that does not
+  // exist ("src/components/BottomNav.tsx" — it is components/nav/), the second to the exact text
+  // `{ href: '/dashboard/incoming', label: '…', icon: 'inbox'`, which stopped matching the day
+  // [ZIJBALK] moved that list to src/lib/nav-destinations.ts and changed its quotes. A gate pinned
+  // to a spelling either throws or, worse, quietly matches nothing and passes forever.
+  //
+  // The list is a plain module with no React in it, so the gate can simply READ it.
+  const owner = destinationsFor("zzper");
+  const counter = destinationsFor("zzper", true);
+  for (const [naam, lijst] of [["invoice trade", owner], ["counter trade", counter]] as const) {
+    assert.ok(
+      lijst.some((d) => d.href === "/dashboard/incoming"),
+      `the ${naam} navigation no longer carries /dashboard/incoming — removing the toolbar ` +
+        "shortcut is only safe because the bars carry the same destination",
+    );
+  }
 });
 
 // ─── [FOCUS-KOP] A deep link must land on the invoice, not in the middle of it ──────────────────
@@ -13008,6 +13008,141 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
 // De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
 // functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
 // haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [ZIJBALK] Two navigation bars, one list of destinations ────────────────────────────────────
+//
+// The phone had real navigation — four role-aware destinations, translated labels, an active pill.
+// The desktop had ONE text link ("Vandaag" for an owner, "Klanten" for an accountant) and nothing
+// else, so the device with the most room had the least navigation. The rail closes that.
+//
+// It renders the SAME destinations as the phone bar, and this gate is about the word "same". Two
+// bars reading two lists is how they drift: one gains a destination the other never hears about,
+// and the app quietly means different things depending on the width of the screen. So the list
+// lives in one module and the bars are renderers — and the gate DERIVES that from the folder
+// rather than naming the two files, because a third bar is exactly the thing that would be
+// written without reading this.
+test("[ZIJBALK] the navigation's destinations are declared once and rendered twice", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // THE BARS, derived two ways rather than named: a component that draws a <nav> AND is either in
+  // the navigation folder or typed on a Role. Both halves are structural, and the union is what
+  // makes it hard to slip out of — a third bar written elsewhere still carries a Role, because
+  // dashboard navigation differs per role and public navigation does not (public-header.tsx and
+  // the blog's ArticleLayout draw a <nav> too, and neither has a viewer).
+  const bars = walk("src").filter((f) => {
+    if (!/\.tsx$/.test(f)) return false;
+    const src = code(f);
+    if (!/<nav\b/.test(src)) return false;
+    return f.startsWith("src/components/nav/") || /\bRole\b/.test(src);
+  });
+  assert.deepEqual(
+    bars.slice().sort(),
+    ["src/components/nav/BottomNav.tsx", "src/components/nav/DashboardRail.tsx"],
+    "the set of navigation bars changed — a new one must read the shared destinations, and this " +
+    "line is where you say you have checked that it does",
+  );
+
+  // What a destination IS, structurally: an object literal carrying a /dashboard href, a label and
+  // an icon. The scope is what makes this precise — inside a BAR such a literal is a destination
+  // declared twice; elsewhere it is something else entirely and none of this gate's business.
+  // Two false positives taught that: a snackbar's one-off `{ href, label }` link in KasClient, and
+  // the account dropdown's `{ label, href, icon }` rows (Instellingen, Beveiliging) — a menu of
+  // secondary actions, not the destinations the app claims to have.
+  const declaresDestination = (src: string): boolean =>
+    [...src.matchAll(/\{[^{}]*\}/g)].some((m) =>
+      /href:\s*['"]\/dashboard/.test(m[0]) && /\blabel:/.test(m[0]) && /\bicon:/.test(m[0]));
+  assert.ok(declaresDestination(code("src/lib/nav-destinations.ts")),
+    "the shared module declares no destinations at all — this scan proves nothing");
+
+  for (const bar of bars) {
+    assert.ok(!declaresDestination(code(bar)),
+      `${bar} declares destinations of its own — that is how the phone bar and the desktop rail ` +
+      "come to disagree about what this app contains, depending on the width of the screen");
+    assert.match(code(bar), /from ['"]@\/lib\/nav-destinations['"]/,
+      `${bar} draws a <nav> without reading the shared destinations`);
+    assert.match(code(bar), /destinationsFor\(/, `${bar} picks its own destinations for a role`);
+    assert.match(code(bar), /activeHref\(/, `${bar} decides for itself which one is current`);
+    // [TAAL] The bar is on every screen, so a hard-coded word here is the one piece of Dutch an
+    // owner reading another language can never get away from.
+    assert.match(code(bar), /t\(item\.label\)/, `${bar} must render its labels through the catalogue`);
+  }
+
+  // Neither bar may set `display` on its own <nav>: an inline declaration outranks the class rule
+  // in globals.css that hides it outside its width, and that is not theoretical — the phone bar
+  // once showed at 1280px with --bottom-nav-h correctly collapsed to 0.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  for (const [cls, mq] of [[".bottom-nav", "max-width: 640px"], [".dash-rail", "min-width: 1024px"]]) {
+    assert.ok(css.includes(cls), `${cls} has no rule in globals.css — nothing hides it outside its range`);
+    assert.ok(css.includes(mq), `${mq} is gone, so ${cls} no longer has a breakpoint`);
+  }
+  // The rail's width reaches the content as a variable that is 0 where the rail is not drawn, so
+  // the shell can add it unconditionally — the same shape --bottom-nav-h uses at the other end.
+  assert.match(css, /--rail-w: 0px;/, "the rail's width must collapse to zero below its breakpoint");
+  assert.match(css, /--rail-w: 240px;/, "…and have a real value at it");
+  // [RTL] Logical sides only. A physical side is wrong in exactly one language, and it is the one
+  // nobody checks — this is the shell that holds every screen in the app.
+  assert.match(css, /\.dash-shell \{\s*padding-inline-start: var\(--rail-w\);/,
+    "the shell clears the rail with a LOGICAL side, or Arabic pushes the page the wrong way");
+
+  // And the shell wraps the sub-page header as well as the page: that bar is sticky and lives
+  // outside .dash-content, so padding only the content left it running behind the rail.
+  const layout = code("src/app/dashboard/layout.tsx");
+  const shellAt = layout.indexOf('className="dash-shell"');
+  assert.ok(shellAt > 0, "the dashboard layout no longer has a shell to clear the rail");
+  assert.ok(layout.indexOf("<DashboardChrome", shellAt) > shellAt, "the sub-page header sits inside the shell");
+  assert.ok(layout.indexOf('className="dash-content"', shellAt) > shellAt, "…and so does the page");
+  // The rail is fixed, so it must be mounted OUTSIDE the element that pads for it.
+  assert.ok(layout.indexOf("<DashboardRail") < shellAt, "a fixed rail inside its own padding sits 240px in from the edge");
+
+  // ── And nothing else fixed to the start edge may sit under it ──────────────────────────────
+  //
+  // A rail is not just a rail: it takes 240px away from every element that pins itself to the
+  // start of the screen, and those elements are scattered across the app. Found by reading, once:
+  // the global search button (insetInlineStart: 20 — it landed on the rail's bottom corner), the
+  // toast region, and four sticky action bars on the money screens, each running under the rail
+  // with its first 240px hidden.
+  //
+  // Reading is what must not be relied on next time. The rule is the one --bottom-nav-h already
+  // established at the other edge: whatever pins to an edge the chrome occupies adds the chrome's
+  // variable, which is 0px where the chrome is not drawn — one expression, correct at every width.
+  const startPinned: string[] = [];
+  for (const file of walk("src")) {
+    if (!/\.tsx$/.test(file)) continue;
+    const src = code(file);
+    // The navigation chrome itself is exempt, and only it: the rail IS the chrome, and the phone
+    // bar is hidden at every width the rail is drawn at, so the two can never meet. Taken from the
+    // derived `bars` set above rather than from a pair of file names.
+    if (bars.includes(file) || file.endsWith("DashboardRail.tsx")) continue;
+    // Every fixed element and what it pins itself to. `[^{}]` so the window cannot run past the
+    // end of one style object into the next thing in the file — it did, and dragged in a CSS
+    // template string whose `left: 0` lives inside `@media (max-width: 1023px)`, i.e. only at
+    // widths where the rail does not exist.
+    for (const m of src.matchAll(/position:\s*['"]fixed['"][^{}]{0,400}/g)) {
+      const pin = /(?:insetInlineStart|left):\s*(?:['"`][^'"`]*['"`]|\d+)/.exec(m[0]);
+      if (!pin) continue;
+      // A percentage is CENTRING, not pinning to the edge, and whether it should centre over the
+      // window (a modal, correctly) or over the content (a floating bar) is a judgement this gate
+      // cannot make from CSS. Both of the app's content-centred bars were corrected by hand;
+      // MoveModal centres over the window on purpose, as a modal should.
+      if (/%/.test(pin[0])) continue;
+      if (!/--rail-w/.test(pin[0])) startPinned.push(`${file}: ${pin[0]}`);
+    }
+  }
+  assert.deepEqual(
+    startPinned, [],
+    "these are pinned to the start edge without clearing the desktop rail, so on a wide screen " +
+    "their first 240px sit behind it — add var(--rail-w), which is 0px below the breakpoint:\n  " +
+    startPinned.join("\n  "),
+  );
+});
+
 // ─── [TEKST-SELECTIE] Selecting text in a row is not a tap on the row ───────────────────────────
 //
 // Reported with a screenshot: on /dashboard/incoming/manage the owner dragged across an invoice

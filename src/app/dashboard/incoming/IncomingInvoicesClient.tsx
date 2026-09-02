@@ -4717,7 +4717,7 @@ export default function IncomingInvoicesClient({
       {tab === "pending" && selectMode && selected.size > 0 && !bulkRunning && !bulkIgnoreRunning && (
         <div
           style={{
-            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
+            position: "fixed", insetInlineStart: "var(--rail-w)", insetInlineEnd: 0, bottom: 0, zIndex: 1500,
             padding: "12px 16px calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
             background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
             borderTop: "1px solid #e0e0e0",
