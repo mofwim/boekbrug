@@ -24379,3 +24379,77 @@ test("[AFSCHRIFT-NOEMT] the invoice the bank names outranks the invoice the app 
   assert.match(scherm, /s\.referencedInvisible\.amountAgrees && s\.referencedInvisible\.status !== 'archived' && \(/,
     "…and it must stay conditioned on the amount agreeing on a PAID invoice, or it warns where it cannot know");
 });
+
+// ── [NIET-DEZE-FACTUUR] ───────────────────────────────────────────────────────────────────────
+//
+// The bank card offered one invoice and one button — Bevestig betaling — and there was no way to
+// say the suggestion was WRONG. Reported on a card proposing invoice FAC/2026/00296 for a payment
+// whose own description reads "26 00623", a different invoice, under a green check. The owner
+// could confirm it or leave the line sitting, and leaving it means the same pair is offered again
+// on every visit.
+//
+// The rule that makes the answer safe is one line: a refusal REMOVES a suggestion and never
+// PROMOTES one. The runner-up was the runner-up because its evidence was weaker; answering "no" by
+// pre-selecting the next-best is arguing rather than listening. So an 'auto' whose winner is
+// refused becomes a 'choice' — shown, never pre-chosen — and a line with nothing left is 'none'.
+test("[NIET-DEZE-FACTUUR] a refusal removes a suggestion and never promotes one", () => {
+  const beslissing = code("src/lib/bank-rejections.ts");
+  const deur = code("src/app/api/bank/match/route.ts");
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // 1. The rule itself, on both sides of the wire. Two implementations that could disagree about
+  //    what a refusal does is how a screen shows one thing and a reload shows another.
+  assert.match(beslissing, /return \{ outcome: 'choice', best: null, candidates: kept, removed: true \}/,
+    "a refused winner must leave a CHOICE with nothing pre-selected");
+  assert.match(beslissing, /if \(kept\.length === 0\) return \{ outcome: 'none', best: null, candidates: \[\], removed: true \}/,
+    "…and an emptied line must say so honestly");
+  assert.match(scherm, /outcome: kept\.length === 0 \? 'none' : bestGone \? 'choice' : s\.outcome/,
+    "the screen's optimistic update must apply the same rule the server does");
+
+  // 2. A refusal is about a PAIR. Flattened to a set of invoice ids it would hide that invoice on
+  //    every other bank line as well — the one mistake here that is worse than the problem.
+  assert.match(beslissing, /export function rejectionsByTransaction/);
+  assert.match(deur, /rejectedByTx\.get\(txId\)/, "the route must look the refusals up per transaction");
+  assert.doesNotMatch(beslissing, /counterpartKey|clientName|supplier/,
+    "bank-rejections.ts reasons about a supplier — a refusal may never become a judgement about one");
+
+  // 3. Applied FIRST, so the outcome, the reference verdict and what the screen pre-selects are all
+  //    computed on what is actually still on offer.
+  const applyAt = deur.indexOf("applyRejections(raw");
+  const refAt = deur.indexOf("referencedInvisibleInvoice(");
+  assert.ok(applyAt > 0 && refAt > applyAt,
+    "refusals must be applied before anything else reads best/candidates/outcome");
+
+  // 4. There is a way back. A refusal nobody can undo is the same trap as a confirm nobody can
+  //    undo — which is the complaint that started this.
+  assert.match(scherm, /const undoRejectSuggestion = useCallback/, "the undo is gone");
+  assert.match(scherm, /t\('bank\.nietDeze\.terug'\)/, "…and its button with it");
+
+  // 5. [NO-SILENT-EMPTY] While the table is not applied the app must not claim it remembered.
+  const poort = code("src/app/api/bank/reject/route.ts");
+  assert.match(poort, /return NextResponse\.json\(\{ ok: true, stored: false \}\)/,
+    "the route must report that nothing was stored when the table is not there");
+  assert.match(scherm, /json\.stored \? t\('bank\.nietDeze\.weg'\) : t\('bank\.nietDeze\.nietBewaard'\)/,
+    "…and the screen must say which of the two happened");
+  // Nothing here touches money: no link row, no status change. It removes a SUGGESTION.
+  assert.doesNotMatch(poort, /bank_tx_invoices|amount_paid|status: ['"]paid['"]/,
+    "the refusal route writes something other than a refusal");
+});
+
+// ── [AFHANDELEN-NOEMT] ────────────────────────────────────────────────────────────────────────
+//
+// "1 zekere betaling klaar om af te handelen", and a button. What it does is book money against
+// invoices and mark them paid — and the panel said only HOW MANY, so the one question an owner has
+// before pressing it ("which ones, and is the wrong one in there?") had no answer on the page.
+test("[AFHANDELEN-NOEMT] the bulk button names what it will book, before it books it", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const safeAutoRows = toConfirm\.filter\(\(s\) => isServerAutoBookable\(s\)\)/,
+    "the panel must hold the ROWS, not only their count");
+  assert.match(scherm, /safeAutoRows\.map\(\(s\) => \(/, "…and draw one line per payment");
+  assert.match(scherm, /t\('bank\.auto\.wordtGeboektOp', \{ nummer: s\.best\?\.invoiceNumber \?\? '—' \}\)/,
+    "…naming the invoice each one will be booked on");
+  // The count still comes from the same list, so the number above the rows can never disagree with
+  // the rows themselves.
+  assert.match(scherm, /const safeAutoCount = safeAutoRows\.length/,
+    "the count must be derived from the list it labels");
+});

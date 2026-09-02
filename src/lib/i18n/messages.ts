@@ -3040,6 +3040,31 @@ export const MESSAGES = {
     ar: 'دفعة مؤكدة واحدة جاهزة للمعالجة',
     en: '1 certain payment ready to handle',
   },
+  // [AFHANDELEN-NOEMT] Eén regel per betaling die deze knop gaat boeken, mét het factuurnummer.
+  // De knop markeert facturen als betaald; tot nu toe stond er alleen HOEVEEL, en de enige vraag
+  // die een ondernemer ervoor heeft — "welke, en zit de verkeerde ertussen?" — had geen antwoord
+  // op het scherm.
+  // [NIET-DEZE-FACTUUR] De knop die tot nu toe niet bestond. De kaart bood één factuur en één
+  // knop — Bevestig betaling — en er was geen manier om te zeggen dat het voorstel FOUT was. De
+  // zin zegt wat er gebeurt, niet wat de app ervan vindt: het voorstel verdwijnt, er wordt niets
+  // geboekt, en het is terug te draaien.
+  'bank.nietDeze': { nl: 'Niet deze factuur', ar: 'ليست هذه الفاتورة', en: 'Not this invoice' },
+  'bank.nietDeze.weg': {
+    nl: 'Weggehaald — deze factuur wordt niet meer voorgesteld bij deze betaling.',
+    ar: 'أُزيلت — لن تُقترح هذه الفاتورة بعد الآن لهذه الدفعة.',
+    en: 'Removed — this invoice is no longer suggested for this payment.',
+  },
+  'bank.nietDeze.terug': { nl: 'Ongedaan maken', ar: 'تراجع', en: 'Undo' },
+  'bank.nietDeze.nietBewaard': {
+    nl: 'Weggehaald voor nu. De app kan dit nog niet onthouden, dus na verversen staat hij er weer.',
+    ar: 'أُزيلت الآن فقط. لا يستطيع التطبيق تذكّر هذا بعد، فستعود بعد تحديث الصفحة.',
+    en: 'Removed for now. The app cannot remember this yet, so it will be back after a refresh.',
+  },
+  'bank.auto.wordtGeboektOp': {
+    nl: 'wordt geboekt op factuur {nummer}',
+    ar: 'ستُقيَّد على الفاتورة {nummer}',
+    en: 'will be booked on invoice {nummer}',
+  },
   'bank.auto.uitleg': {
     nl: 'Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.',
     ar: 'الفواتير التي يظهر رقمها ومبلغها تماماً في كشف حسابك أعالجها بنفسي — أربطها وأوسمها كمدفوعة. الباقي أتركه لك، ويمكنك التراجع عن أي ربط لاحقاً.',
