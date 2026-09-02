@@ -1326,6 +1326,32 @@ export function parseReferenceNumbers(reference: string | null): string[] {
  * "045, 26302050" was two numbers on screen and one on the server — the row was hidden from bulk
  * confirm for a reason the server did not share.
  */
+/**
+ * Is this token shaped like an invoice number? Four characters with a digit in them — and that is
+ * as wide as it looks, on purpose.
+ *
+ * ── WIDE FOR MATCHING AND FOR REFUSING. NARROW FOR CLAIMING. ──
+ *
+ * A wide net costs nothing where a wrong candidate is simply never confirmed, and it costs nothing
+ * where an unresolved token makes the app HOLD BACK — bank-batch-reconcile.ts returns null on one,
+ * which is the conservative direction. Both are correct uses and both are in this codebase.
+ *
+ * It costs everything the moment the same token becomes a STATEMENT to the owner. Measured against
+ * the production database: of 251 open debits carrying a reference, 183 quote a token that matches
+ * no invoice — and they are a Belastingdienst betalingskenmerk, a pension fund's scheme reference,
+ * a water company's customer number plus a postcode, a marketplace order id, and a landlord whose
+ * payment reference is the tenant's own name. Telling an owner "this payment names an invoice you
+ * have not entered" about a tax payment is not vague, it is false, and a worklist wrong most of the
+ * time is dismissed once and then protects nothing.
+ *
+ * Two places already learned this the hard way and each solved it in the right register:
+ * BankClient hides tokens the owner ✗-dismisses rather than insisting they are invoices (its
+ * comment names Brabant Water), and bank-waiting-reason.ts only claims a missing invoice for a
+ * counterparty that already has open invoices here.
+ *
+ * So: reuse this freely to match or to hesitate. Before reusing it to TELL the owner something,
+ * add the evidence that makes the sentence defensible.
+ */
 export function isReferenceNumberToken(part: string): boolean {
   const norm = normalizeRef(part.trim());
   return norm.length >= 4 && /\d/.test(norm);

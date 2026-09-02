@@ -78,22 +78,47 @@ const ACTION_TRAIL_KEYS: readonly string[] = [
 ];
 
 /**
- * De sleutels binnen `_safecore` die over de RELATIE met een andere factuur gaan.
- * Deze overleven een re-import ALTIJD: opnieuw naar dít document kijken zegt niets over de
- * vraag of er elders een tweeling ligt, en de route zoekt die tweeling niet opnieuw op.
+ * [SAFECORE-BLIJFT] De enige sleutels in `_safecore` die de VERSE lezing bezit.
+ *
+ * Alles wat hier NIET in staat, blijft staan. Dat is de omgekeerde regel van hiervoor, en de
+ * omkering is de hele correctie.
+ *
+ * Wat er stond: een witte lijst van relatie- en rekensleutels, en `_safecore` werd verder van nul
+ * opgebouwd. Elke andere waarschuwing verdampte dus bij één druk op "Opnieuw inlezen" — en de
+ * herleesroute leidt er géén van opnieuw af:
+ *
+ *   · iban_changed / _from / _to     het rekeningnummer van deze leverancier is gewijzigd
+ *   · iban_check_unavailable         die controle kon niet draaien
+ *   · multiple_invoices              dit bestand droeg meer dan één factuur
+ *   · one_invoice_unverified         we konden dit document niet nakijken
+ *   · credit_word_in_header          "creditnota" stond in de kop
+ *
+ * En het is erger dan een gat: invoice-checks.ts zegt bij een ontbrekende iban_changed niet niets,
+ * maar het TEGENDEEL — "ongewijzigd ten opzichte van eerdere facturen" — op een factuur waarvan
+ * het rekeningnummer wél veranderde. Het ene signaal dat tussen de eigenaar en een omgeleide
+ * betaling staat, wordt dan omgedraaid tot een geruststelling.
+ *
+ * Een witte lijst vergeet; een zwarte lijst kan alleen te veel bewaren. Bij een waarschuwing is
+ * te veel bewaren de goedkope kant: die ziet de eigenaar en klikt hij weg. De andere kant ziet
+ * niemand.
+ *
+ * Wat de verse lezing wél bezit, en waarom:
+ *   · het rekenoordeel — verse bedragen geven een vers oordeel, inclusief het OPHEFFEN van een
+ *     oude hold. Zonder dat kan een terecht gecorrigeerde factuur nooit meer schoon worden.
+ *   · de herinneringsvlag — deze knop bestaat er juist voor om een ten onrechte gezette
+ *     "dit is een herinnering" weer weg te halen. Meedragen maakt hem onherstelbaar.
+ *
+ * De relatiesleutels (possible_duplicate*, dedup*) hoeven hier niet meer bij naam te staan: ze
+ * overleven nu omdat álles overleeft. [SUPERSEDE] blijft daarmee even hard gedekt als voorheen.
  */
-const RELATION_KEYS = [
-  "possible_duplicate",
-  "possible_duplicate_of",
-  // [SUPERSEDE] The twin's id. It is what drives the "Deze vervangt factuur X" button, and a
-  // re-import can no more re-derive it than the rest of this list. Without it, one tap on
-  // "Opnieuw inlezen" made the button disappear while the WARNING stayed — exactly the silent
-  // vanishing this file exists to prevent.
-  "possible_duplicate_id",
-  "possible_duplicate_reason",
-  "dedup",
-  "dedup_reason",
-] as const;
+const FRESH_OWNS: ReadonlySet<string> = new Set([
+  "arithmetic_ok",
+  "reason",
+  "flags",
+  "held_at",
+  "reminder",
+  "reminder_of",
+]);
 
 /** Het rekenoordeel zoals evaluateArithmetic het teruggeeft. */
 export interface ArithmeticVerdict {
@@ -157,10 +182,10 @@ export function buildReimportFieldConfidence(input: ReimportCarryInput): Record<
   // ── _safecore, per soort waarheid opnieuw samengesteld ──────────────────────────────────
   const safecore: Record<string, unknown> = {};
 
-  // (2) De relatie-signalen overleven altijd — zie de kop.
+  // (2) Alles wat er stond blijft staan — behalve wat de verse lezing bezit. Zie FRESH_OWNS.
   if (priorSafecore) {
-    for (const k of RELATION_KEYS) {
-      if (k in priorSafecore) safecore[k] = priorSafecore[k];
+    for (const k of Object.keys(priorSafecore)) {
+      if (!FRESH_OWNS.has(k)) safecore[k] = priorSafecore[k];
     }
   }
 

@@ -95,6 +95,13 @@
      edge can add this unconditionally and be correct at both sizes, with no
      second media query of its own. Real value set below the breakpoint. */
   --bottom-nav-h: 0px;
+
+  /* [ZIJBALK] How much room the desktop navigation rail takes. 0 below 1024px,
+     where the rail is not rendered at all — so the shell can add this
+     unconditionally and be correct at every width, with no second rule of its
+     own. Exactly the shape --bottom-nav-h uses at the other end of the range.
+     Real value set at the breakpoint below. */
+  --rail-w: 0px;
 }
 
 /* [QUARTERLY-FIX] Tailwind 4 changed the default border colour from v3's
@@ -628,6 +635,38 @@ input::placeholder, textarea::placeholder {
      means the final invoice in a list sits half-hidden behind the bar. */
   .dash-content {
     padding-bottom: var(--bottom-nav-h);
+  }
+}
+
+/* ── Desktop navigation rail ─────────────────────────────────────────────────── */
+/* [ZIJBALK] The counterpart to .bottom-nav, at the other end of the width range.
+   Hidden by default and shown from 1024px, which is the first width where a
+   240px rail and the 680px money column (COLUMN.work) both fit with room to
+   breathe. Below it nothing changes: the phone bar owns < 640px and the
+   header's text link owns the band between.
+
+   `display` lives here and NOT inline on the component, because an inline
+   declaration outranks a class rule — the bottom bar once showed at 1280px for
+   exactly that reason. */
+.dash-rail {
+  display: none;
+}
+
+/* [ZIJBALK] The shell carries the rail's width as padding so the content column
+   centres in what is LEFT, instead of under the rail. Logical, not padding-left:
+   in Arabic the rail sits on the right and a physical side would push the page
+   the wrong way — the one language nobody checks. */
+.dash-shell {
+  padding-inline-start: var(--rail-w);
+}
+
+@media (min-width: 1024px) {
+  .dash-rail {
+    display: flex;
+  }
+
+  :root {
+    --rail-w: 240px;
   }
 }
 

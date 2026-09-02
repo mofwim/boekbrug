@@ -21,6 +21,15 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
+// [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
+import { destinationsFor, railDestinations } from "./nav-destinations";
+// [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
+import { HOLD_LABELS } from "./hold-reasons";
+// [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
+import { explainableReasons, explainWaiting } from "./why-waiting";
+import { categoryHint } from "./category-wait";
+// [GEGROND-STAAT-IN] De getuige die mag invallen voor een ontbrekende zelfscore — en alleen die.
+import { moneyGroundedInText } from "./amount-grounding";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -1738,11 +1747,16 @@ test("[BON-AUTO] the paid-suggestion block still holds everything it is NOT sett
   // hole opened for a settled bon must be exactly that: a pen-marked INVOICE (suggestPaid via a
   // handwritten mark, never a till line) must still be held, or money already gone stands as a
   // debt behind an "automatisch geverifieerd" tag.
-  assert.match(
-    code("src/lib/email-integration.ts"),
-    /!classification\.uncertain && \(!pay\.suggestPaid \|\| settlePlan\.settle\)/,
-    "the e-mail door's hole must be settle-shaped, not open",
-  );
+  // [WAAROM-VASTGEHOUDEN] De vorm is veranderd, de regel niet. Eén uitdrukking gaf twee heel
+  // verschillende oorzaken dezelfde naam 'uncertain' — de lezer die twijfelde, én een perfect
+  // gelezen factuur met een betaalspoor — en de eigenaar las daar "de lezer was niet zeker genoeg"
+  // bij een document waarover niemand twijfelde. Nu twee takken, twee namen. Wat hier bewaakt
+  // wordt is ongewijzigd: een betaalspoor dat niet in dezelfde stap wordt afgerekend, boekt niet.
+  const mail = code("src/lib/email-integration.ts");
+  assert.match(mail, /pay\.suggestPaid && !settlePlan\.settle\s*\n\s*\? \{ advance: false, reason: 'paid_mark_not_settled' \}/,
+    "the e-mail door's hole must be settle-shaped, not open");
+  assert.match(mail, /: !classification\.uncertain\s*\n\s*\? shouldAutoAdvanceInvoice\(/,
+    "…and an uncertain read must still never reach the quality gates at all");
   assert.match(
     code("src/app/api/intake/route.ts"),
     /\(!decision\.suggestPaid \|\| settlePlan\.settle\)/,
@@ -1967,8 +1981,11 @@ test("[ONBEREIKBAAR] a byte fetch that will never succeed must not freeze the ma
 test("[E-FACTUUR] the supplier's own figures are read, and they outrank the reading", () => {
   // A Factur-X or ZUGFeRD PDF carries the invoice a SECOND time as XML the supplier produced, and
   // the app was photographing it like any other page while the exact figures sat unread inside the
-  // same bytes. NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for
-  // everyone from 2028, so this arrives now and will only arrive more.
+  // same bytes. [E-FACTUUR-DATUM] No year here: the one place in this repo that answers "when does
+  // the Netherlands make this mandatory" with sources is the header of src/lib/e-invoice.ts, and it
+  // says in as many words that the 2027/2028 sentence which used to stand here is not true. The
+  // reason this matters today is not a deadline: German suppliers send ZUGFeRD now, French ones
+  // Factur-X, Belgian ones Peppol UBL since January 2026, and a Dutch buyer receives all three.
   const ai = code("src/lib/ai.ts");
   assert.match(
     ai, /extractEmbeddedInvoiceXmlDetailed\(Buffer\.from\(cleanBase64\(fileBase64\), 'base64'\)\)/,
@@ -2130,8 +2147,9 @@ test("[MAILTEKST] the text conversion keeps table cells apart", () => {
 });
 
 test("[E-FACTUUR-XML] ONE reader books a Peppol invoice, and BOTH doors reach it", () => {
-  // NL makes Peppol e-invoicing mandatory over €800k turnover from 2027 and for everyone from
-  // 2028, and suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
+  // [E-FACTUUR-DATUM] No year here either — see e-invoice.ts's header for the sourced answer, and
+  // for why the 2027/2028 sentence that used to stand here was written from nothing. What is true
+  // without any date: suppliers send UBL alongside their PDF today. The app could EXPORT UBL and could not
   // read one.
   //
   // It is read in verifyInvoiceFromPdf — the reader BOTH doors call — and not at a door. The first
@@ -6061,26 +6079,24 @@ test("[KOP-KLEINER] the redundant Verificatie shortcut is gone, and its rules wi
   // The destination it duplicated must still be reachable, or removing the shortcut would have
   // taken the only permanent route to the verification queue with it.
   //
-  // Found by CONTENT, not by path. The first draft of this gate read "src/components/BottomNav.tsx"
-  // — a path that does not exist (it is components/nav/BottomNav.tsx), and a gate pinned to a
-  // guessed path is the recurring defect in this file: it either throws, or worse, quietly matches
-  // nothing and passes forever.
-  const walk = (dir: string): string[] => {
-    const out: string[] = [];
-    for (const e of readdirSync(dir)) {
-      const p = `${dir}/${e}`;
-      if (statSync(p).isDirectory()) out.push(...walk(p));
-      else if (p.endsWith(".tsx")) out.push(p);
-    }
-    return out;
-  };
-  const navEntry = /\{ href: '\/dashboard\/incoming', label: '[^']+', icon: 'inbox'/;
-  const carriers = walk("src/components").filter((f) => navEntry.test(readFileSync(f, "utf8")));
-  assert.ok(
-    carriers.length > 0,
-    "no navigation component still routes to /dashboard/incoming with the inbox icon — removing " +
-      "the toolbar shortcut is only safe because the bottom nav carries the same destination",
-  );
+  // Asked of the DESTINATIONS THEMSELVES, not of a literal in a component.
+  //
+  // Two earlier drafts of this check were pinned to a spelling: the first to a path that does not
+  // exist ("src/components/BottomNav.tsx" — it is components/nav/), the second to the exact text
+  // `{ href: '/dashboard/incoming', label: '…', icon: 'inbox'`, which stopped matching the day
+  // [ZIJBALK] moved that list to src/lib/nav-destinations.ts and changed its quotes. A gate pinned
+  // to a spelling either throws or, worse, quietly matches nothing and passes forever.
+  //
+  // The list is a plain module with no React in it, so the gate can simply READ it.
+  const owner = destinationsFor("zzper");
+  const counter = destinationsFor("zzper", true);
+  for (const [naam, lijst] of [["invoice trade", owner], ["counter trade", counter]] as const) {
+    assert.ok(
+      lijst.some((d) => d.href === "/dashboard/incoming"),
+      `the ${naam} navigation no longer carries /dashboard/incoming — removing the toolbar ` +
+        "shortcut is only safe because the bars carry the same destination",
+    );
+  }
 });
 
 // ─── [FOCUS-KOP] A deep link must land on the invoice, not in the middle of it ──────────────────
@@ -12710,6 +12726,243 @@ test("[MIGRATIE-JOURNAAL] a migration that creates nothing is named, never guess
   }
 });
 
+test("[WAAROM-VASTGEHOUDEN] both branches of the auto-advance decision are written down", () => {
+  // Gemeten op één echte administratie over een jaar: 350 van de 590 inkomende documenten hadden
+  // een mensenhand nodig, en 296 daarvan droegen geen énkele vlag die verklaarde waarom.
+  //
+  // Niet omdat de app het niet wist. beslisAutoAdvance rekent voor elke weigering een precieze
+  // reden uit — zeventien stuks — en het type noemt dat veld zelf "machine tag for
+  // audit/telemetry". Hij werd alleen op de GESLAAGDE tak opgeschreven; bij een weigering
+  // berekend en weggegooid, precies op het moment dat de app besluit de eigenaar een minuut te
+  // kosten.
+  //
+  // Eén tak schrijven en de andere niet is hoe dit verdween, dus dat is wat hier vastligt: beide
+  // paden, beide takken. Zonder deze meting is elke volgende versnelling een gok.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    const src = code(f);
+    assert.match(src, /_auto_verified/, `${f}: the passing branch must stay written down`);
+    assert.match(src, /_auto_hold/,
+      `${f}: the REFUSING branch must be written down too. The reason is computed either way; ` +
+      "discarding it on refusal makes the most expensive question in the product unanswerable");
+    // …en met de reden erin, niet als kale vlag: "vastgehouden" zonder waarom is net zo blind.
+    assert.match(src, /_auto_hold[\s\S]{0,160}?reason: autoAdv\.reason/,
+      `${f}: the hold must carry the machine tag, or it says only that something happened`);
+  }
+
+  // De redenen zelf moeten blijven bestaan waar ze worden gemaakt — een lege string terugbrengen
+  // zou de poort hierboven groen laten en de meting alsnog waardeloos maken.
+  const beslis = code("src/lib/auto-advance.ts");
+  const redenen = [...beslis.matchAll(/advance: false, reason: ["`']([a-z_]+)/g)].map((m) => m[1]);
+  assert.ok(redenen.length >= 10,
+    `only ${redenen.length} refusal reasons found; the decision was flattened and the measurement ` +
+    "loses exactly the detail it exists for");
+  assert.ok(new Set(redenen).size === redenen.length,
+    "two refusals share one tag, so they cannot be told apart in the measurement");
+});
+
+test("[WAAROM-VASTGEHOUDEN] every refusal tag has a sentence an operator can act on", () => {
+  // De werklijst op het beheerscherm rangschikt machinecodes. `no_reliable_total` is voor de code
+  // precies genoeg en voor de mens die moet besluiten wat hij als volgende bouwt, niets.
+  //
+  // Dit is een SCAN, geen tweede lijst. Twee met de hand bijgehouden lijsten kloppen eeuwig met
+  // elkaar en nooit met de werkelijkheid — dat is vandaag twee keer misgegaan. Deze poort leest de
+  // bestanden die de codes MAKEN, en een nieuwe weigering zonder zin laat hem vallen.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    const src = code(f);
+    for (const m of src.matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15,
+    `only ${gevonden.size} refusal tags found across ${bronnen.length} files; the scan stopped ` +
+    "matching what it is supposed to watch, which leaves the check green and blind");
+  for (const tag of gevonden) {
+    assert.ok(HOLD_LABELS[tag],
+      `refusal tag "${tag}" has no sentence in HOLD_LABELS. It would still be counted and shown — ` +
+      "as the raw tag — but the operator ranking exists to say which fix buys back the most time, " +
+      "and a machine word answers a different question than the one being asked");
+  }
+});
+
+test("[WAAROM-WACHT] every refusal the owner can meet has a sentence, and none of them is a code", () => {
+  // Dezelfde scan als de poort hierboven, maar voor de andere lezer. Het beheerpaneel mag een
+  // onbekende code tonen als zichzelf — daar is het informatie. Op de kaart van de eigenaar is
+  // `no_reliable_total` geen uitleg maar ruis, dus toont why-waiting.ts daar niets. En "niets"
+  // is precies de stand die stil kan verbergen dat een veelvoorkomend geval nooit is uitgelegd —
+  // vandaar deze poort.
+  const bronnen = [
+    "src/lib/auto-advance.ts",
+    "src/app/api/intake/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  const gevonden = new Set<string>();
+  for (const f of bronnen) {
+    for (const m of code(f).matchAll(/advance: false[^}]*\}/g)) {
+      const staart = m[0].slice(m[0].indexOf("reason:"));
+      for (const tag of staart.matchAll(/["'`]([a-z][a-z0-9_]*)["'`]/g)) gevonden.add(tag[1]);
+    }
+  }
+  assert.ok(gevonden.size >= 15, `only ${gevonden.size} refusal tags found; the scan went blind`);
+
+  const uitlegbaar = new Set(explainableReasons());
+  for (const tag of gevonden) {
+    assert.ok(uitlegbaar.has(tag),
+      `refusal tag "${tag}" reaches the owner's queue with no sentence, so that card explains ` +
+      "nothing at all — the owner re-reads a document that was read correctly and learns nothing");
+  }
+
+  // …en geen enkele zin die eruit komt mag alsnog een machinewoord zijn.
+  for (const tag of uitlegbaar) {
+    const zin = explainWaiting(tag, {}, "nl");
+    assert.ok(zin && !/[a-z]{3,}_[a-z_]{3,}/.test(zin.text),
+      `the sentence for "${tag}" reads like a machine tag, which is the thing it replaces`);
+  }
+
+  // ── En hetzelfde één scherm verder ────────────────────────────────────────────────────────
+  //
+  // /bank kent zijn eigen redenen (bank-waiting-reason.ts) en ze horen in DEZELFDE woordenlijst.
+  // Een aparte lijst per scherm is precies hoe de ene helft vertaald raakt en de andere niet.
+  const bankBron = code("src/lib/bank-waiting-reason.ts");
+  const unie = bankBron.slice(bankBron.indexOf("export type BankWaitReason ="));
+  const bankTags = [...unie.slice(0, unie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(bankTags.length >= 4,
+    `only ${bankTags.length} bank reasons found; the scan stopped matching the union it watches`);
+  for (const tag of bankTags) {
+    assert.ok(uitlegbaar.has(tag),
+      `bank reason "${tag}" has no sentence, so that line falls back to the one paragraph the ` +
+      "whole tab shares — true of every line in it and useful about none of them");
+  }
+
+  // En de weg ernaartoe: de route moet het oordeel ook echt meesturen. Een uitleg die nergens
+  // wordt berekend is onzichtbaar op precies dezelfde manier als een uitleg die niet bestaat.
+  const bankRoute = code("src/app/api/bank/match/route.ts");
+  assert.match(bankRoute, /judgeBankWait\(/,
+    "the match route must compute the reason, or the card has nothing to render");
+  assert.match(bankRoute, /waitReason:/,
+    "…and put it on the DTO the screen reads");
+
+  // ── En het categorisatiescherm ────────────────────────────────────────────────────────────
+  const catBron = code("src/lib/category-wait.ts");
+  const catUnie = catBron.slice(catBron.indexOf("export type CategoryWaitReason ="));
+  const catTags = [...catUnie.slice(0, catUnie.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(catTags.length >= 3,
+    `only ${catTags.length} category reasons found; the scan stopped matching its own union`);
+  for (const tag of catTags) {
+    assert.ok(uitlegbaar.has(tag), `category reason "${tag}" reaches the screen with no sentence`);
+  }
+  const catRoute = code("src/app/api/bank/categorize/route.ts");
+  assert.match(catRoute, /judgeCategoryWait\(/, "the categorize route must compute the reason");
+  assert.match(catRoute, /wait_reason:/, "…and put it on the DTO the screen reads");
+
+  // En het label dat loog. Een geheugen dat de ANDERE kant op wijst mag nooit hetzelfde woord
+  // krijgen als een geheugen waar de app zeker van is — dat was de hele bevinding.
+  assert.notEqual(
+    categoryHint({ source: "memory", waitReason: "memory_contradicts_direction", confident: false }).key,
+    categoryHint({ source: "memory", waitReason: null, confident: true }).key,
+    "a contradicted memory and a trusted one must not share a label: the suggestion the app " +
+    "distrusts would look exactly like the one it trusts most, on a screen about money direction",
+  );
+  assert.doesNotMatch(
+    code("src/app/dashboard/bank/categoriseren/CategoriseClient.tsx"),
+    /t\('cat\.onthouden'\)/,
+    "the screen must choose its label through categoryHint, where the distinction is tested",
+  );
+});
+
+test("[KAS-ACHTER-BANK] what the pass deliberately did not book reaches the owner, not only a log", () => {
+  // De regel onderaan runBankAutoConfirm stond er al: "refusals this run", naar console.info. De
+  // eigenaar zat naar precies die regels te kijken en kreeg geen woord. Deze poort houdt de weg
+  // van de beslissing naar het scherm open — hij loopt over drie bestanden en elk ervan kan hem
+  // in z'n eentje afknippen zonder dat er iets rood wordt.
+  const pas = code("src/lib/bank-auto-confirm.ts");
+  assert.match(pas, /refusalsOut/,
+    "the pass must be able to hand its refusals back; eleven callers depend on the array it " +
+    "returns, so this travels as an out-parameter rather than a wider return type");
+  assert.match(pas, /Object\.assign\(args\.refusalsOut, kasRefusals\)/,
+    "…and must actually fill it, with the same tally the log line prints");
+
+  const route = code("src/app/api/bank/auto-confirm/route.ts");
+  assert.match(route, /refusalsOut:/, "the route must ask for the tally");
+  assert.match(route, /kasRefusals\s*[,}]/, "…and put it in the response");
+
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /json\.kasRefusals/, "the screen must read it");
+  // De twee standen zijn niet inwisselbaar: 'filed_quarter' is de app die het goed doet,
+  // 'unknown_filing' is de app die het niet WEET. Zou het scherm er één zin van maken, dan leest
+  // een stilgevallen controle als een weloverwogen beslissing.
+  assert.match(scherm, /bank\.kas\.aangegeven/);
+  assert.match(scherm, /bank\.kas\.onbekend/);
+  assert.notEqual(MESSAGES["bank.kas.aangegeven"].nl, MESSAGES["bank.kas.onbekend"].nl,
+    "a deliberate refusal and a check that could not run must never say the same thing");
+  for (const k of ["bank.kas.aangegeven", "bank.kas.onbekend"] as const) {
+    assert.match(MESSAGES[k].nl, /\{count\}/, `${k} must name how many, or it is a mood, not a fact`);
+  }
+});
+
+test("[GEGROND-STAAT-IN] the witness reaches BOTH doors, and stays the narrow one", () => {
+  // Dit is een GELDPOORT die wijder is gezet. De reden dat dat verantwoord is, staat of valt met
+  // drie dingen, en alle drie kunnen stilletjes verdwijnen bij een latere opruiming.
+  //
+  // 1. Beide schrijvers moeten het signaal doorgeven. Doet er één het niet, dan boekt dezelfde
+  //    factuur wél vanzelf via de upload en niet via de mail — en dat verschil is onzichtbaar.
+  for (const f of ["src/app/api/intake/route.ts", "src/lib/email-integration.ts"]) {
+    assert.match(code(f), /moneyGroundedInText: moneyGroundedInText\(/,
+      `${f}: passes no document evidence, so this door is dead on that path while it is open on ` +
+      "the other — the same invoice would then book itself through one entrance and not the other");
+  }
+
+  // 2. OCR mag nooit invallen voor de zelfscore van het model. amount-grounding.ts zegt het zelf:
+  //    die getuige is "a model, from the same family as the extractor… Corroboration, not proof".
+  //    Laat je hem toe, dan beoordeelt het model zijn eigen lezing — precies de cirkel die dat
+  //    bestand bestaat om te doorbreken.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found", source: "ocr" } }), false,
+    "the OCR witness may corroborate, never stand in for the model's own confidence");
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "found" } }), true);
+  // …en het blijft ALLE DRIE. Eén ontbrekend bedrag is niet de getuige waar deze deur om vraagt.
+  assert.equal(moneyGroundedInText({ _grounding: { totalIncBtw: "found", totalExBtw: "found", btwAmount: "absent" } }), false);
+
+  // 3. De boeking moet zeggen door WELKE deur ze kwam, anders is "hoe vaak vuurde de nieuwe deur,
+  //    en kwam er iets van terug als correctie" geen vraag maar een gok.
+  const beslis = code("src/lib/auto-advance.ts");
+  assert.match(beslis, /clean_grounded_in_document/,
+    "a booking that leaned on the document instead of a score must carry its own name");
+  assert.ok(/grondedInPlaatsVanScore \? "clean_grounded_in_document" : "clean_high_confidence"/.test(beslis),
+    "the two doors may not collapse back into one reason — the ternary that tells them apart is gone");
+});
+
+test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {
+  // De kaslade is het enige scherm waar een getal tegen een fysieke stapel geld wordt gelegd. De
+  // route wist al dat de sync-pas gebald was — de regel stond er, met de diagnose ernaast — en
+  // schreef het naar een log. Deze poort houdt de weg naar het scherm open.
+  const route = code("src/app/api/cash/route.ts");
+  assert.match(route, /settlementsCurrent:\s*settleSync\.ok/,
+    "the cash read must report whether the settlement pass actually ran; a stale saldo that looks " +
+    "current is the most dangerous shape this screen can take");
+
+  const scherm = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(scherm, /json\.settlementsCurrent !== false/,
+    "read it tolerantly: an older server (or a cached response) sends nothing, and a false alarm " +
+    "about money gets clicked away and then protects nothing");
+  assert.match(scherm, /const \[settlementsCurrent, setSettlementsCurrent\] = useState\(true\)/,
+    "…and the default must be the quiet one, or every first paint accuses the drawer");
+  assert.match(scherm, /!loadError && !settlementsCurrent/,
+    "the two states are exclusive: a failed load already shows '—', and two notices about one " +
+    "problem is how a calm screen becomes a nagging one");
+  assert.match(scherm, /kas\.achter\.kop/);
+  assert.match(scherm, /kas\.achter\.uitleg/);
+
+  for (const k of ["kas.achter.kop", "kas.achter.uitleg"] as const) {
+    assert.ok((MESSAGES[k]?.nl ?? "").length > 10, `${k} must carry a real Dutch sentence`);
+  }
+});
+
 test("[CREDIT-REGELS-OF-NIETS] no route mints a document and then ignores its own lines", () => {
   // De regel stond al in invoice/draft/route.ts, in zoveel woorden: "Een factuurkop zonder regels
   // is erger dan geen factuur: hij telt mee in overzichten en is leeg als je hem opent."
@@ -12991,6 +13244,315 @@ test("[MIGRATIE-JOURNAAL] a policy is looked for in the schema it actually lives
   assert.match(sql, /where schemaname = p\.schema and tablename = p\.tabel and policyname = p\.object/);
   assert.doesNotMatch(sql, /where schemaname = 'public' and policyname/,
     "a hard-coded schema is exactly the bug this replaced");
+});
+
+// ─── [MIGRATIE-JOURNAAL] Bestaan is geen bewijs zodra twee migraties hetzelfde schrijven ────────
+//
+// Negen migratiebestanden herdefiniëren prevent_accountant_amount_changes. De probe vroeg of de
+// FUNCTIE bestaat — en dat deed ze al sinds de eerste van de negen. Dus meldde dit rapport ze alle
+// negen als TOEGEPAST, terwijl de productiedatabase de beschermde kolommen `vat_deduction`,
+// `discount_type` en `discount_value` miste: een gekoppelde boekhouder kon rubriek 5b van zijn
+// klant verzetten met het volledige btw_amount van een factuur, en de korting waaruit de bedragen
+// op de e-factuur worden afgeleid. Twee beveiligingsmigraties lagen weken klaar en gemeld, en het
+// enige gereedschap dat "wat moet er nog?" beantwoordt zei dat ze gedraaid waren.
+//
+// Dat is de kwaal uit de kop van dat bestand, één niveau dieper: niet de VRAAG liep achter op de
+// map, maar het ANTWOORD op de vraag.
+//
+// De regel hieronder wordt AFGELEID uit de gegenereerde lijst zelf, niet uit een lijst van
+// functies die iemand bijhoudt: geen enkele functienaam mag door meer dan één bestand op louter
+// haar bestaan worden bevraagd. Een tiende herdefinitie van wat dan ook valt hier morgen om.
+// ─── [ZIJBALK] Two navigation bars, one list of destinations ────────────────────────────────────
+//
+// The phone had real navigation — four role-aware destinations, translated labels, an active pill.
+// The desktop had ONE text link ("Vandaag" for an owner, "Klanten" for an accountant) and nothing
+// else, so the device with the most room had the least navigation. The rail closes that.
+//
+// It renders the SAME destinations as the phone bar, and this gate is about the word "same". Two
+// bars reading two lists is how they drift: one gains a destination the other never hears about,
+// and the app quietly means different things depending on the width of the screen. So the list
+// lives in one module and the bars are renderers — and the gate DERIVES that from the folder
+// rather than naming the two files, because a third bar is exactly the thing that would be
+// written without reading this.
+test("[ZIJBALK] the navigation's destinations are declared once and rendered twice", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // THE BARS, derived two ways rather than named: a component that draws a <nav> AND is either in
+  // the navigation folder or typed on a Role. Both halves are structural, and the union is what
+  // makes it hard to slip out of — a third bar written elsewhere still carries a Role, because
+  // dashboard navigation differs per role and public navigation does not (public-header.tsx and
+  // the blog's ArticleLayout draw a <nav> too, and neither has a viewer).
+  const bars = walk("src").filter((f) => {
+    if (!/\.tsx$/.test(f)) return false;
+    const src = code(f);
+    if (!/<nav\b/.test(src)) return false;
+    return f.startsWith("src/components/nav/") || /\bRole\b/.test(src);
+  });
+  assert.deepEqual(
+    bars.slice().sort(),
+    ["src/components/nav/BottomNav.tsx", "src/components/nav/DashboardRail.tsx"],
+    "the set of navigation bars changed — a new one must read the shared destinations, and this " +
+    "line is where you say you have checked that it does",
+  );
+
+  // What a destination IS, structurally: an object literal carrying a /dashboard href, a label and
+  // an icon. The scope is what makes this precise — inside a BAR such a literal is a destination
+  // declared twice; elsewhere it is something else entirely and none of this gate's business.
+  // Two false positives taught that: a snackbar's one-off `{ href, label }` link in KasClient, and
+  // the account dropdown's `{ label, href, icon }` rows (Instellingen, Beveiliging) — a menu of
+  // secondary actions, not the destinations the app claims to have.
+  const declaresDestination = (src: string): boolean =>
+    [...src.matchAll(/\{[^{}]*\}/g)].some((m) =>
+      /href:\s*['"]\/dashboard/.test(m[0]) && /\blabel:/.test(m[0]) && /\bicon:/.test(m[0]));
+  assert.ok(declaresDestination(code("src/lib/nav-destinations.ts")),
+    "the shared module declares no destinations at all — this scan proves nothing");
+
+  for (const bar of bars) {
+    assert.ok(!declaresDestination(code(bar)),
+      `${bar} declares destinations of its own — that is how the phone bar and the desktop rail ` +
+      "come to disagree about what this app contains, depending on the width of the screen");
+    assert.match(code(bar), /from ['"]@\/lib\/nav-destinations['"]/,
+      `${bar} draws a <nav> without reading the shared destinations`);
+    assert.match(code(bar), /(?:destinationsFor|railSectionsFor)\(/, `${bar} picks its own destinations for a role`);
+    assert.match(code(bar), /activeHref\(/, `${bar} decides for itself which one is current`);
+    // [TAAL] The bar is on every screen, so a hard-coded word here is the one piece of Dutch an
+    // owner reading another language can never get away from.
+    assert.match(code(bar), /t\(item\.label\)/, `${bar} must render its labels through the catalogue`);
+  }
+
+  // Neither bar may set `display` on its own <nav>: an inline declaration outranks the class rule
+  // in globals.css that hides it outside its width, and that is not theoretical — the phone bar
+  // once showed at 1280px with --bottom-nav-h correctly collapsed to 0.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  for (const [cls, mq] of [[".bottom-nav", "max-width: 640px"], [".dash-rail", "min-width: 1024px"]]) {
+    assert.ok(css.includes(cls), `${cls} has no rule in globals.css — nothing hides it outside its range`);
+    assert.ok(css.includes(mq), `${mq} is gone, so ${cls} no longer has a breakpoint`);
+  }
+  // The rail's width reaches the content as a variable that is 0 where the rail is not drawn, so
+  // the shell can add it unconditionally — the same shape --bottom-nav-h uses at the other end.
+  assert.match(css, /--rail-w: 0px;/, "the rail's width must collapse to zero below its breakpoint");
+  assert.match(css, /--rail-w: 240px;/, "…and have a real value at it");
+  // [RTL] Logical sides only. A physical side is wrong in exactly one language, and it is the one
+  // nobody checks — this is the shell that holds every screen in the app.
+  assert.match(css, /\.dash-shell \{\s*padding-inline-start: var\(--rail-w\);/,
+    "the shell clears the rail with a LOGICAL side, or Arabic pushes the page the wrong way");
+
+  // And the shell wraps the sub-page header as well as the page: that bar is sticky and lives
+  // outside .dash-content, so padding only the content left it running behind the rail.
+  const layout = code("src/app/dashboard/layout.tsx");
+  const shellAt = layout.indexOf('className="dash-shell"');
+  assert.ok(shellAt > 0, "the dashboard layout no longer has a shell to clear the rail");
+  assert.ok(layout.indexOf("<DashboardChrome", shellAt) > shellAt, "the sub-page header sits inside the shell");
+  assert.ok(layout.indexOf('className="dash-content"', shellAt) > shellAt, "…and so does the page");
+  // The rail is fixed, so it must be mounted OUTSIDE the element that pads for it.
+  assert.ok(layout.indexOf("<DashboardRail") < shellAt, "a fixed rail inside its own padding sits 240px in from the edge");
+
+  // ── The rail may not invent a destination the home screen does not have ────────────────────
+  //
+  // The rail carries the whole home screen now, and that is the risk: a rail is easy to add a row
+  // to, and a row here is a claim that the app has a place. So every rail destination must be
+  // either one of the primary four or a route the OWNER'S HOME actually links to — read out of
+  // ZzpDashboard rather than from a list kept beside it.
+  const home = code("src/app/dashboard/zzp/ZzpDashboard.tsx");
+  const homeRoutes = new Set(
+    [...home.matchAll(/router\.push\(['"`](\/dashboard[^'"`?]*)/g)].map((m) => m[1]),
+  );
+  assert.ok(homeRoutes.size > 10, `only ${homeRoutes.size} routes read off the home screen — the scan is broken`);
+  const primair = new Set([
+    ...destinationsFor("zzper").map((d) => d.href),
+    ...destinationsFor("zzper", true).map((d) => d.href),
+  ]);
+  for (const counter of [false, true]) {
+    for (const d of railDestinations("zzper", counter)) {
+      assert.ok(
+        primair.has(d.href) || homeRoutes.has(d.href),
+        `the rail offers ${d.href}, which is neither a primary destination nor anywhere on the ` +
+        "owner's home screen — a rail row is a claim that the app has a place",
+      );
+    }
+  }
+  // …and the other way: the rail must not have quietly dropped a whole section.
+  assert.ok(railDestinations("zzper").length >= 15,
+    "the rail is back to a handful of destinations beside a home screen full of tiles");
+
+  // ── And nothing else fixed to the start edge may sit under it ──────────────────────────────
+  //
+  // A rail is not just a rail: it takes 240px away from every element that pins itself to the
+  // start of the screen, and those elements are scattered across the app. Found by reading, once:
+  // the global search button (insetInlineStart: 20 — it landed on the rail's bottom corner), the
+  // toast region, and four sticky action bars on the money screens, each running under the rail
+  // with its first 240px hidden.
+  //
+  // Reading is what must not be relied on next time. The rule is the one --bottom-nav-h already
+  // established at the other edge: whatever pins to an edge the chrome occupies adds the chrome's
+  // variable, which is 0px where the chrome is not drawn — one expression, correct at every width.
+  const startPinned: string[] = [];
+  for (const file of walk("src")) {
+    if (!/\.tsx$/.test(file)) continue;
+    const src = code(file);
+    // The navigation chrome itself is exempt, and only it: the rail IS the chrome, and the phone
+    // bar is hidden at every width the rail is drawn at, so the two can never meet. Taken from the
+    // derived `bars` set above rather than from a pair of file names.
+    if (bars.includes(file) || file.endsWith("DashboardRail.tsx")) continue;
+    // Every fixed element and what it pins itself to. `[^{}]` so the window cannot run past the
+    // end of one style object into the next thing in the file — it did, and dragged in a CSS
+    // template string whose `left: 0` lives inside `@media (max-width: 1023px)`, i.e. only at
+    // widths where the rail does not exist.
+    for (const m of src.matchAll(/position:\s*['"]fixed['"][^{}]{0,400}/g)) {
+      const pin = /(?:insetInlineStart|left):\s*(?:['"`][^'"`]*['"`]|\d+)/.exec(m[0]);
+      if (!pin) continue;
+      // A percentage is CENTRING, not pinning to the edge, and whether it should centre over the
+      // window (a modal, correctly) or over the content (a floating bar) is a judgement this gate
+      // cannot make from CSS. Both of the app's content-centred bars were corrected by hand;
+      // MoveModal centres over the window on purpose, as a modal should.
+      if (/%/.test(pin[0])) continue;
+      if (!/--rail-w/.test(pin[0])) startPinned.push(`${file}: ${pin[0]}`);
+    }
+  }
+  assert.deepEqual(
+    startPinned, [],
+    "these are pinned to the start edge without clearing the desktop rail, so on a wide screen " +
+    "their first 240px sit behind it — add var(--rail-w), which is 0px below the breakpoint:\n  " +
+    startPinned.join("\n  "),
+  );
+});
+
+// ─── [TEKST-SELECTIE] Selecting text in a row is not a tap on the row ───────────────────────────
+//
+// Reported with a screenshot: on /dashboard/incoming/manage the owner dragged across an invoice
+// number to copy it and the card opened and closed under the cursor. Every invoice list in this
+// app has the same shape — the whole row carries the onClick that expands it — so the drag ends
+// in a click on the row. It landed on the value an owner copies most often (into a transfer's
+// description, into an e-mail to the supplier) and can least retype from memory.
+//
+// The gate names no screens. It derives the set from the source twice over: an onClick whose body
+// expands a row (setExpandedId) and an onClick on the shared .inv-row element. A sixth list built
+// tomorrow out of either shape fails this on the day it is written.
+test("[TEKST-SELECTIE] a row that expands on click lets its text be selected", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // The value of every onClick={...} attribute, with its braces balanced — a regex cannot do this
+  // and a truncated handler would silently pass the check below.
+  const handlers = (src: string): string[] => {
+    const out: string[] = [];
+    for (let i = src.indexOf("onClick={"); i >= 0; i = src.indexOf("onClick={", i + 1)) {
+      let depth = 0;
+      for (let j = i + "onClick=".length; j < src.length; j++) {
+        if (src[j] === "{") depth++;
+        else if (src[j] === "}") {
+          depth--;
+          if (depth === 0) { out.push(src.slice(i + "onClick={".length, j)); break; }
+        }
+      }
+    }
+    return out;
+  };
+
+  let gecontroleerd = 0;
+  for (const file of walk("src")) {
+    const src = code(file);
+    for (const h of handlers(src)) {
+      // Shape 1: this click TOGGLES a row — `setExpandedId(x ? null : id)`. A bare
+      // `setExpandedId(null)` is a reset (switching tabs closes whatever was open) and has no
+      // text under the cursor to protect, so it is deliberately not in the set.
+      if (!/setExpandedId\([^)]*\?[^)]*:/.test(h)) continue;
+      gecontroleerd++;
+      assert.ok(h.trimStart().startsWith("onRowTap("),
+        `${file}: a click that expands a row is not wrapped in onRowTap — dragging across the ` +
+        `invoice number toggles the card open and shut while the owner tries to copy it`);
+    }
+    // Shape 2: the shared row element itself. Its handler may be a bare prop (onToggle), so the
+    // setExpandedId scan above cannot see it.
+    for (const m of src.matchAll(/className="inv-row"([\s\S]{0,400}?)onClick=\{([\s\S]{0,80}?)[\s\S]{0,4}?\n/g)) {
+      gecontroleerd++;
+      assert.match(m[2].trimStart(), /^onRowTap\(/,
+        `${file}: the .inv-row header takes a click without the text-selection guard`);
+    }
+  }
+  assert.ok(gecontroleerd >= 5, `only ${gecontroleerd} row handlers found — the scan is broken`);
+
+  // …and the rule itself stays one rule, in one place, with both halves intact.
+  const regel = code("src/lib/row-tap.ts");
+  assert.match(regel, /return g\.selectionInsideRow \|\| g\.clickCount > 1;/,
+    "both halves: a drag-select leaves a selection, and a double-click's FIRST click does not");
+  assert.match(regel, /row\.contains\(el\)/,
+    "the selection must be anchored INSIDE this row — a leftover selection elsewhere must not swallow a tap");
+  // Movement is deliberately not part of it: a finger that slides a few pixels is an ordinary tap,
+  // and a row that refuses to open is a worse bug than the one this fixes.
+  assert.doesNotMatch(regel, /movedPx|SLOP/, "a pixel threshold would break sloppy taps on a phone");
+});
+
+test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measured by its body", () => {
+  const sql = readFileSync("docs/WELKE_MIGRATIES_STAAN_ER.sql", "utf8");
+  const deel1 = sql.slice(sql.indexOf("-- ── DEEL 1"), sql.indexOf("-- ── DEEL 2"));
+
+  // Elke probe-regel, uit de gegenereerde lijst.
+  const rows = [...deel1.matchAll(/\('([^']+)', '([a-z_]+)', '([^']+)', (?:null|'([^']*)'), '([^']+)'\)/g)]
+    .map((m) => ({ bestand: m[1], soort: m[2], object: m[3], merken: m[4] ?? null }));
+  assert.ok(rows.length > 100, `only ${rows.length} probe rows parsed — this gate would prove nothing`);
+
+  // DE REGEL: een functienaam die op bestaan wordt bevraagd, mag maar door één bestand komen.
+  const bestaansProbes = new Map<string, string[]>();
+  for (const r of rows.filter((r) => r.soort === "function")) {
+    if (!bestaansProbes.has(r.object)) bestaansProbes.set(r.object, []);
+    bestaansProbes.get(r.object)!.push(r.bestand);
+  }
+  // …behalve waar de definities niets delen om op te meten. Dat staat met zoveel woorden in de
+  // lijst zelf, dus de uitzondering is niet stil en niet met de hand: ze moet daar zijn uitgelegd.
+  for (const [fn, files] of bestaansProbes) {
+    if (files.length < 2) continue;
+    assert.match(
+      sql, new RegExp(`${fn}\\b[\\s\\S]{0,900}GEEN INHOUDSMETING`),
+      `${fn} is probed by mere existence from ${files.length} files (${files.join(", ")}) — the second ` +
+      `and every one after it are proven by the first, so a security guard that never ran reads as applied`,
+    );
+  }
+
+  // De familie waar het om begon: alle definities meten mee op de drie kolommen die in productie
+  // ontbraken, en niemand van hen valt terug op bestaan.
+  const guard = rows.filter((r) => r.object === "prevent_accountant_amount_changes");
+  assert.ok(guard.length >= 8, `${guard.length} files define the accountant guard — expected the whole family`);
+  // Every file that DEFINES it must carry the body probe. The six-probe cap sorted alphabetically
+  // and cut exactly the sharpest measurement: vat_exemption.sql's six ordinary column/constraint
+  // probes filled the slots and its body probe fell out — a silent truncation of the same kind as
+  // the defect this whole test exists for. Derived from the folder, so a tenth file is covered too.
+  const definieert = readdirSync("supabase/migrations")
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => /create\s+(or\s+replace\s+)?function\s+(public\.)?"?prevent_accountant_amount_changes/i
+      .test(readFileSync(`supabase/migrations/${f}`, "utf8").replace(/--[^\n]*/g, " ")));
+  for (const f of definieert) {
+    assert.ok(guard.some((r) => r.bestand === f),
+      `${f} rewrites the accountant guard but carries no body probe — its half of the measurement was cut`);
+  }
+  for (const r of guard) {
+    assert.equal(r.soort, "function_body", `${r.bestand} still proves the guard by its existence`);
+    for (const kolom of [".vat_deduction", ".discount_type", ".discount_value", ".vendor_iban"]) {
+      assert.ok(r.merken?.split(",").includes(kolom),
+        `${r.bestand} does not measure ${kolom} — the column production was missing`);
+    }
+  }
+
+  // En de query moet de body echt lezen. Een 'function_body' die stiekem op bestaan terugvalt is
+  // hetzelfde alarm dat nooit afgaat.
+  assert.match(sql, /when 'function_body' then exists \(/);
+  assert.match(sql, /not exists \(select 1 from unnest\(string_to_array\(p\.tabel, ','\)\) mk/);
+  assert.match(sql, /where position\(mk in f\.prosrc\) = 0\)\)/);
 });
 
 test("[MIGRATIE-JOURNAAL] every ignored object is named, reasoned, and really created", () => {
@@ -18106,7 +18668,7 @@ test("[STATIEGELD-GAT] de vondst overleeft een mislukte herlezing, net als de be
   const carry = code("src/lib/reimport-carry.ts");
   const lijst = carry.slice(
     carry.indexOf("const AMOUNT_EXPLAINING_KEYS"),
-    carry.indexOf("const RELATION_KEYS"),
+    carry.indexOf("const FRESH_OWNS"),
   );
   assert.ok(lijst.length > 0, "de lijst met bedrag-verklarende sleutels is verplaatst of hernoemd");
   assert.match(lijst, /"_statiegeld"/, "de statiegeld-vondst staat niet tussen de verklaringen die blijven");
@@ -22872,4 +23434,118 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
   const nieuwAt = veld.indexOf("lev.kies.nieuw");
   assert.ok(unavailableAt > 0 && nieuwAt > unavailableAt,
     "a failed read must be answered before anything is claimed about the name");
+});
+
+// ─── [E-FACTUUR-DATUM] One file owns the timetable; everywhere else states no year ──────────────
+//
+// A sentence — "the Netherlands makes Peppol e-invoicing mandatory over €800k turnover from 2027
+// and for everyone from 2028" — was written once from an unnamed source and then copied into eight
+// places: ai.ts, email-integration.ts, ubl-export.ts, icp.ts, three test files and this one. A
+// later session read it here, cited it back as a fact about the world, and proposed a strategy on
+// top of it. A claim does not become verified by being committed.
+//
+// e-invoice.ts checked it against the record and says plainly that it is not true: B2G has been
+// obligatory since 2017, domestic B2B is not law and not yet a bill, and the first hard EU date is
+// 1 July 2030 for cross-border. That file carries the sources and the instruction to re-check.
+//
+// So it is the only file allowed to name a year for this. Everywhere else states the thing that is
+// true without one — German suppliers send ZUGFeRD now, French ones Factur-X, Belgian ones Peppol
+// UBL since January 2026, and a Dutch buyer receives all three today. That argument needs no
+// deadline, which is exactly why it survives one being wrong.
+//
+// No customer-facing surface ever carried a year, and none may start: this gate covers src/ whole.
+test("[E-FACTUUR-DATUM] only e-invoice.ts names a Dutch e-invoicing mandate year", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // A line that names a year AND ties it to this obligation. Both halves are required: "2027" on
+  // its own is a date fixture, and "verplicht" on its own is any other rule in the app.
+  const YEAR = /\b(2026|2027|2028|2029|2030)\b/;
+  const MANDATE = /peppol|e-?factur|e-?invoic/i;
+  const OBLIGATION = /mandator|mandate|verplicht|800k|€\s?800/i;
+
+  // Judged on a WINDOW around each mention, not on a line. The legal texts are stored as one
+  // enormous single-line string, so a line-wide test found "2026" in its Laatst-bijgewerkt header,
+  // "factuur" three thousand characters later and "verplicht" somewhere else again, and reported a
+  // mandate claim that nobody had written. Proximity is the thing being asserted.
+  const WINDOW = 160;
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    // The authority itself, and this gate, which has to quote the sentence to forbid it.
+    if (file.endsWith("src/lib/e-invoice.ts")) continue;
+    if (file.endsWith("src/lib/lifecycle-gates.test.ts")) continue;
+    const text = readFileSync(file, "utf8");
+    for (const hit of text.matchAll(new RegExp(MANDATE.source, "gi"))) {
+      const at = hit.index ?? 0;
+      const near = text.slice(Math.max(0, at - WINDOW), at + WINDOW);
+      if (YEAR.test(near) && OBLIGATION.test(near)) {
+        offenders.push(`${file}: …${near.replace(/\s+/g, " ").slice(0, 120)}…`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders, [],
+    "a Dutch e-invoicing mandate year outside e-invoice.ts — that file holds the sourced answer, " +
+    "and every copy of a date is a copy that will still say 2027 when the answer has changed",
+  );
+
+  // And the authority still IS one: it carries the correction and its sources.
+  const authority = readFileSync("src/lib/e-invoice.ts", "utf8");
+  assert.match(authority, /That is not true/, "the file states the correction it was written for");
+  assert.match(authority, /1 July 2030/, "…names the one hard EU date");
+  assert.match(authority, /Sources:/, "…and cites where that came from");
+  assert.match(authority, /Re-check before quoting/, "…and says it is a moving file");
+});
+
+// ─── [TIJDVAK-KWARTAAL] A deadline the app cannot know is not shown to the person it binds ──────
+//
+// Quarterly is baked in end to end: `quarter` is typed 1|2|3|4, btw_filings has a CHECK on it and
+// a UNIQUE (user_id, year, quarter), and there is no profile field, setting or screen where an
+// owner can state a different tijdvak. Every FIGURE a monthly filer sees is nevertheless correctly
+// labelled "Q2 2026" — so what they are handed is inconveniently grouped, not mislabelled.
+//
+// One thing would be genuinely wrong for them, and it is not a figure: the DEADLINE. A monthly
+// filer's aangifte is due at the end of the month after each month, so a countdown to 31 July is
+// three deadlines too late — on a date that carries a verzuimboete.
+//
+// Both callers today are accountant surfaces, where the reader knows their client's tijdvak. This
+// gate keeps it there. Supporting monthly properly is a product decision with its own migration,
+// and widening this function is not it.
+test("[TIJDVAK-KWARTAAL] the quarterly deadline stays off the owner's screens", () => {
+  const service = code("src/modules/accountant/accountant.service.ts");
+  assert.match(service, /export function getAangifteDeadline/);
+  // The assumption is written where the function is, not only in a gate nobody reads while coding.
+  const doc = readFileSync("src/modules/accountant/accountant.service.ts", "utf8");
+  assert.match(doc, /\[TIJDVAK-KWARTAAL\]/, "the function states what it assumes");
+  assert.match(doc, /their deadline is the last day of the month after each MONTH/,
+    "…and what it would cost the filer it does not fit");
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !p.includes(".test.")) out.push(p);
+    }
+    return out;
+  };
+
+  const owner: string[] = [];
+  for (const file of walk("src/app/dashboard")) {
+    // The accountant's own surfaces are exactly where this belongs.
+    if (file.includes("/dashboard/accountant/")) continue;
+    if (code(file).includes("getAangifteDeadline")) owner.push(file);
+  }
+  assert.deepEqual(
+    owner, [],
+    "an owner-facing screen counts down to a quarterly deadline while the app never asks which " +
+    "tijdvak that owner is on — for a monthly filer that date is three deadlines late",
+  );
 });

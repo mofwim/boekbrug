@@ -51,7 +51,7 @@ import { detectMultipleInvoices, cannotVerifySingleInvoice, mergeMultipleInvoice
 // [PDF-TEXT] The text layer both checks read, shared with the intake door.
 import { readPdfTextLayer } from '@/lib/pdf-text'
 // [GEGROND] The stored verdict on whether the total is printed on the document.
-import { groundingOf } from '@/lib/amount-grounding'
+import { groundingOf, moneyGroundedInText } from '@/lib/amount-grounding'
 import { placementOf, btwContradictionOf } from '@/lib/document-verify'
 import { eInvoiceContradictsRead, looksLikeInvoiceXml, isEInvoiceXmlMime, E_INVOICE_XML_MIME } from '@/lib/e-invoice'
 // [EERLIJK-GEBRUIK] De maandteller. Zie de toelichting bij de poort in syncUserEmails: dit was
@@ -1000,7 +1000,9 @@ async function fetchMessageAttachments(
           continue
         }
         // [E-FACTUUR-XML] Een .xml kan de factuur ZELF zijn: Peppol/NLCIUS stuurt hem zo, en dat
-        // wordt in Nederland verplicht — boven € 800k omzet vanaf 2027, voor iedereen vanaf 2028.
+        // wordt in Nederland ooit verplicht. GEEN datum hier: de enige plek in dit repo die deze
+        // vraag met bronnen beantwoordt is de kop van src/lib/e-invoice.ts, en dit bestand had er
+        // een eigen jaartal naast staan dat daar met zoveel woorden onwaar wordt genoemd.
         // De bytes gaan mee; of het echt een e-factuur is, beslist de inhoud verderop en niet de
         // extensie. Parseert hij niet volledig, dan valt hij terug op de melding hieronder.
         if (/\.(?:xml|ubl)$/i.test(filename)) {
@@ -4333,7 +4335,13 @@ export async function syncUserEmails(
         ? { advance: false, reason: 'owner_reviews_everything' }
         : attachment.fromBody === true
         ? { advance: false, reason: 'from_email_body' }
-        : !classification.uncertain && (!pay.suggestPaid || settlePlan.settle)
+        // [WAAROM-VASTGEHOUDEN] Twee oorzaken, twee redenen. Deze regel gaf ze allebei de naam
+        // 'uncertain', en de zin die de eigenaar daarbij leest is "de lezer was niet zeker genoeg
+        // over deze bijlage" — over een factuur die perfect gelezen is en alleen een betaalspoor
+        // draagt. Dat is niet vaag maar onwaar, en het stuurt hem het verkeerde veld in.
+        : pay.suggestPaid && !settlePlan.settle
+        ? { advance: false, reason: 'paid_mark_not_settled' }
+        : !classification.uncertain
         ? shouldAutoAdvanceInvoice({
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,
@@ -4353,6 +4361,10 @@ export async function syncUserEmails(
             // the only signal here that does not come from the reader. Both auto-booking doors
             // must ask it: a gate on one door is not a gate.
             totalGrounding: groundingOf(classification.fieldConfidence),
+            // [GEGROND-STAAT-IN] En of het document zijn eigen drie bedragen letterlijk draagt. Dit
+            // vervangt één ontbrekend signaal — de zelfscore van het model op het bedrag — en niets
+            // anders; zie moneyGroundedInText() in amount-grounding.ts.
+            moneyGroundedInText: moneyGroundedInText(classification.fieldConfidence),
             // [DOCCHECK] And WHERE that total sits — the check that tells a real total from a subtotal.
             totalPlacement: placementOf(classification.fieldConfidence),
             // [DOCCHECK-SPLIT] And whether the paper prints a DIFFERENT btw split than the one read.
@@ -4370,10 +4382,24 @@ export async function syncUserEmails(
             },
           })
         : { advance: false, reason: 'uncertain' }
+      // [OVERALL-BEWAARD] Zie de gelijknamige noot in intake/route.ts — op élke rij, beide paden.
+      fieldConfidenceValue = {
+        ...(fieldConfidenceValue ?? {}),
+        _auto_confidence: typeof classification.confidence === 'number' ? classification.confidence : null,
+      }
       if (autoAdv.advance) {
         fieldConfidenceValue = {
           ...(fieldConfidenceValue ?? {}),
           _auto_verified: { at: new Date().toISOString(), reason: autoAdv.reason },
+        }
+      } else {
+        // [WAAROM-VASTGEHOUDEN] Dezelfde asymmetrie als op het intakepad, en om dezelfde reden
+        // weggehaald: de reden van een WEIGERING werd berekend en weggegooid, terwijl juist die
+        // bepaalt hoeveel tijd de eigenaar aan zijn wachtrij kwijt is. Zie intake/route.ts voor de
+        // meting die dit aanwees — 296 van 350 aanrakingen zonder enige vastgelegde oorzaak.
+        fieldConfidenceValue = {
+          ...(fieldConfidenceValue ?? {}),
+          _auto_hold: { at: new Date().toISOString(), reason: autoAdv.reason },
         }
       }
       // [MAILTEKST] Where this document came from, on the row. The queue prints a line about it,

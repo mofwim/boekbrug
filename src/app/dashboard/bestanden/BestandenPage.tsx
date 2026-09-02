@@ -1087,7 +1087,9 @@ export function BestandenPage({ role }: BestandenPageProps = {}) {
       {/* ── Clipboard indicator ── */}
       {clipboardDisplay && (
         <div style={{
-          position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)",
+          position: "fixed", bottom: 90,
+          // [ZIJBALK] Centred over the content, not the window — see BulkBar.
+          left: "calc(50% + var(--rail-w) / 2)", transform: "translateX(-50%)",
           zIndex: 50, display: "flex", alignItems: "center", gap: 8,
           background: T.onSurface, color: "white",
           padding: "8px 16px", borderRadius: T.xl, boxShadow: T.elev2,

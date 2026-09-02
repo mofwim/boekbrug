@@ -20,6 +20,9 @@ import { useDialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
+// open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
+import { onRowTap } from '@/lib/row-tap'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
@@ -335,7 +338,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                   }}
                 >
                   {/* Main row */}
-                  <div onClick={() => setExpandedId(expanded ? null : client.id)}
+                  <div onClick={onRowTap(() => setExpandedId(expanded ? null : client.id))}
                     style={{ background: '#fff', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
                     {/* Avatar */}
                     <div style={{ width: 42, height: 42, borderRadius: R.full, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, color: '#fff', flexShrink: 0 }}>

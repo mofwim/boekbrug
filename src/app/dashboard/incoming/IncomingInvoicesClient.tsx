@@ -15,6 +15,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 // [VERVANG-OVERAL] Eén regel voor "is er een gemarkeerde tweeling?" — gedeeld met de betaalpagina.
 import { supersedeTargetOf } from "@/lib/supersede-target";
+// [WAAROM-WACHT] De zin die zegt waarom DIT document nog op de eigenaar wacht. De component
+// draagt zelf geen taal — zie why-waiting.ts.
+import { waitingReasonOf, explainWaiting } from "@/lib/why-waiting";
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
@@ -115,6 +118,9 @@ import { translator } from '@/lib/i18n/t'
 // in one tray — the same on Uploaden. See src/lib/page-order.ts for why a plain sort is wrong.
 import { usePageTray } from '@/lib/use-page-tray'
 import PageTray from '@/components/intake/PageTray'
+// [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
+// open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
+import { onRowTap } from '@/lib/row-tap'
 
 function friendlySkipReason(reason: string, t: ReturnType<typeof translator>): string {
   const r = (reason || "").toLowerCase();
@@ -2065,7 +2071,10 @@ export function InvoiceCard({
   // [NO-SILENT-EMPTY] That read failed — a different sentence from an empty list.
   suppliersUnavailable?: boolean;
 }) {
-  const t = translator(useLocale())
+  // [WAAROM-WACHT] De taal apart, want één regel op deze kaart heeft hem zelf nodig: de zin die
+  // zegt waarom dit document wacht komt uit een pure module en draagt zijn eigen richting mee.
+  const taal = useLocale()
+  const t = translator(taal)
   const dialog = useDialog();
   const toast = useToast();
   const router = useRouter();
@@ -2334,7 +2343,7 @@ export function InvoiceCard({
       {/* Header — always visible, tappable */}
       <button
         className="inv-row"
-        onClick={selectMode ? onSelect : onToggle}
+        onClick={onRowTap(selectMode ? onSelect : onToggle)}
         // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so the
         // stack-on-mobile media query can override them; the flex:1 main pushes the side
         // cluster right, so justify-content:space-between is no longer needed here.
@@ -2550,6 +2559,52 @@ export function InvoiceCard({
               </div>
             </div>
           )}
+
+          {/* [WAAROM-WACHT] En de kaart die er goed uitziet en tóch wacht.
+              
+              De gemarkeerde factuur hierónder krijgt al een badge en een lijst redenen; die weet
+              de eigenaar te lezen. Het gat zat bij de kaart met een groen "klaar om te bevestigen"
+              die evengoed op een tik staat te wachten: daar stond niets, dus las de eigenaar een
+              document dat goed gelezen wás nog een keer, vond niets, tikte bevestigen en leerde
+              niets. Van de 590 documenten in één echte administratie waren er 350 zo'n tik waard.
+              
+              Alleen wanneer geen andere badge het al uitlegt — twee uitleggen van één vertraging
+              is hoe een rustig scherm een zeurend scherm wordt. En alleen als de reden ook echt is
+              vastgelegd: een rij van vóór deze meting draagt er geen, en dan staat er niets in
+              plaats van een gok. */}
+          {mode === "pending" && (() => {
+            const uitleg = explainWaiting(
+              waitingReasonOf(invoice.field_confidence),
+              { alreadyExplained: invoice.health.flags.ibanChanged || invoice.health.level === "needs-review" },
+              taal,
+            );
+            if (!uitleg) return null;
+            // De eigen keuze krijgt een andere kleur dan een leesprobleem: het eerste is iets om
+            // om te zetten, het tweede iets om na te kijken. Allebei kalm — er is niets mis.
+            const keuze = uitleg.kind === "setting";
+            return (
+              <div
+                dir={uitleg.dir}
+                style={{
+                  display: "flex", alignItems: "flex-start", gap: 8,
+                  padding: "12px 14px", marginBottom: 14,
+                  background: keuze ? "#eef4ff" : "#f1f3f4", borderRadius: 12,
+                  border: `1px solid ${keuze ? "#cddcff" : "#e0e3e6"}`,
+                  textAlign: "start",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1.3 }}>{keuze ? "⚙️" : "⏳"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: keuze ? "#274690" : "#3c4043", marginBottom: 4 }}>
+                    {t('ink.waaromWacht')}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: keuze ? "#274690" : "#5f6368", lineHeight: 1.5 }}>
+                    {uitleg.text}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* [IMPORT-MONITOR] Part 3 — the WHY. For a flagged invoice, show the
               plain-language reason(s) the system is unsure, sourced from the
@@ -4761,7 +4816,7 @@ export default function IncomingInvoicesClient({
       {tab === "pending" && selectMode && selected.size > 0 && !bulkRunning && !bulkIgnoreRunning && (
         <div
           style={{
-            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1500,
+            position: "fixed", insetInlineStart: "var(--rail-w)", insetInlineEnd: 0, bottom: 0, zIndex: 1500,
             padding: "12px 16px calc(12px + var(--bottom-nav-h) + env(safe-area-inset-bottom))",
             background: "rgba(255,255,255,0.96)", backdropFilter: "blur(8px)",
             borderTop: "1px solid #e0e0e0",
