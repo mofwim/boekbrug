@@ -4541,10 +4541,24 @@ export const MESSAGES = {
     ar: 'تم النسخ',
     en: 'Copied',
   },
+  // [KOPIE-EERLIJK] The sentence names the HAZARD, not the inconvenience. A refused write does not
+  // empty the clipboard — it leaves the previous value there — and these screens copy IBANs,
+  // amounts and payment references. "It didn't work" would let the owner paste anyway; "the
+  // previous one is still on there" tells them why they must not.
+  //
+  // No parameter, deliberately: naming the field would put a noun inside a sentence (AGENTS.md),
+  // and the field name adds nothing here — what matters is that the clipboard is stale.
   'kopieer.mislukt': {
-    nl: 'Kopiëren lukte niet — je kunt het nummer nog wel selecteren.',
-    ar: 'تعذّر النسخ — لا يزال بإمكانك تحديد الرقم يدوياً.',
-    en: 'Copying failed — you can still select the number by hand.',
+    nl: 'Kopiëren lukte niet — op je klembord staat nog het vorige.',
+    ar: 'تعذّر النسخ — لا يزال في الحافظة ما نسخته قبل ذلك.',
+    en: 'Copying failed — your clipboard still holds the previous value.',
+  },
+  // The same fact as a button label, for the buttons that swap their own text instead of raising a
+  // message. Short, because it replaces "Kopiëren" in place.
+  'kopieer.nietGelukt': {
+    nl: 'Niet gelukt',
+    ar: 'لم ينجح',
+    en: 'Failed',
   },
   // Het SOORT waarde, voor de schermlezer. Eigen sleutel per soort: "Factuurnummer" en "IBAN"
   // vervoegen niet hetzelfde en een van de twee zou in het Arabisch scheef staan.

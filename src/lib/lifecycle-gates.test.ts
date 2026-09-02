@@ -13914,6 +13914,94 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   );
 });
 
+// ─── [KOPIE-EERLIJK] Nobody reports a copy they were not told happened ─────────────────────────
+//
+// Found while wiring the copy button below: SIX screens each rolled their own clipboard helper, and
+// five of them said "gekopieerd" whether or not the write worked.
+//
+//     try { await navigator.clipboard.writeText(value) } catch { /* may be blocked */ }
+//     setCopied(label)                                   // ← runs either way
+//
+// That is not cosmetic. A refused clipboard write does not empty the clipboard; it leaves the
+// PREVIOUS value on it. The values these screens copy are the IBAN, the amount and the payment
+// reference — the three fields of a bank transfer. Copy supplier A's IBAN, open supplier B's sheet,
+// tap copy, get refused: the app says "IBAN gekopieerd" and the clipboard still holds A's. The owner
+// pastes it into their bank and pays the wrong supplier, with every screen agreeing it went well.
+//
+// Refusal is ordinary here — an unfocused document, a non-secure context, a denied permission, an
+// in-app WebView — and this app ships to Android as a TWA, which IS the WebView case.
+//
+// The gate does not list the screens. It asserts there is exactly ONE writer, found by scanning
+// src/ for the API itself, and that every caller keeps the answer. The honesty is then proven once,
+// in clipboard.test.ts, instead of six times in six components — which is what nobody did.
+test("[KOPIE-EERLIJK] one module writes the clipboard, and no screen claims a copy it was not given", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // 1. Exactly one file may touch the API. `code()` strips comments first, so a file that only
+  //    DESCRIBES the old shape (clipboard.ts does, and so does the screen that carried it) is not a
+  //    writer. Written as a set comparison rather than a count: a seventh writer appearing while a
+  //    sixth is removed would keep any count green.
+  //
+  //    The scan looks for `navigator.clipboard` — the API itself — and NOT for a
+  //    `.writeText(...)` chained onto it. Two reasons, both learned in this pass. The eighth site
+  //    found was `navigator.clipboard?.writeText(...)`: optional chaining, which a literal
+  //    `clipboard.writeText` search walks straight past, and which is how it survived the first
+  //    sweep. And the first version of THIS line matched the chain — so it found nothing at all,
+  //    clipboard.ts included, because that module binds the API to a local before writing. A
+  //    seventh writer would have been invisible to it. The boundary is the API, not the call shape.
+  const writers = walk("src").filter((f) => /navigator\s*\.\s*clipboard/.test(code(f)));
+  assert.deepEqual(writers, ["src/lib/clipboard.ts"],
+    `the clipboard is written from more than one place: ${writers.join(", ")}`);
+
+  // 2. That one module answers honestly. `true` is returned ONLY after the write resolves, and
+  //    every other path — a rejection, a missing API, an empty value — is `false`.
+  const lib = code("src/lib/clipboard.ts");
+  assert.match(lib, /await clipboard\.writeText\(text\);\s*return true;/,
+    "the success is no longer returned from the resolved write");
+  assert.match(lib, /catch \{\s*return false;\s*\}/, "a refused write must be false, not a throw");
+  assert.match(lib, /if \(!clipboard\?\.writeText\) return false;/,
+    "a context without the clipboard API must be false, not a crash");
+  assert.match(lib, /if \(!text\) return false;/,
+    "copying nothing must not report a success — it would leave the previous value in place");
+
+  // 3. Every caller keeps the answer. `await copyToClipboard(x)` standing alone as a statement is
+  //    the original bug with a new import: the write is attempted, the outcome discarded, and the
+  //    line after it says "gekopieerd" regardless.
+  const callers = walk("src").filter((f) => /from ["']@\/lib\/clipboard["']/.test(code(f)));
+  assert.ok(callers.length >= 6, `only ${callers.length} screens copy through the one module — the scan is broken`);
+  for (const f of callers) {
+    const src = code(f);
+    for (const m of [...src.matchAll(/await copyToClipboard\(/g)]) {
+      const before = src.slice(0, m.index).replace(/\s+$/, "");
+      // The kept forms: assigned, passed as an argument, made an object property, negated, or fed
+      // to a conditional. NOT `{` — a bare block is exactly the shape being ruled out.
+      assert.ok(/[=(!?,:]$|&&$|\|\|$|\breturn$/.test(before),
+        `${f}: "await copyToClipboard(…)" stands alone — whether the copy worked is thrown away`);
+    }
+  }
+
+  // 4. And the words exist for the answer being false. A caller that can only SAY "gekopieerd" is
+  //    back where this started however carefully it branches.
+  const cat = code("src/lib/i18n/messages.ts");
+  for (const key of ["kopieer.mislukt", "kopieer.nietGelukt"]) {
+    assert.ok(cat.includes(`'${key}'`), `${key} is not in the catalogue`);
+  }
+  const gebruikt = callers.filter((f) => /kopieer\.(mislukt|nietGelukt)/.test(code(f)));
+  // Six screens copy; the public pay page says it in hard-coded Dutch (it is the invoice in web
+  // form — the never-translated list), and tools/ui.tsx carries its own default prop for the same
+  // reason. The rest read the catalogue.
+  assert.ok(gebruikt.length >= 4,
+    `only ${gebruikt.length} of ${callers.length} copying screens can say the write failed`);
+});
+
 // ─── [NUMMER-KOPIEREN] A copy button inside a row must not open the row ─────────────────────────
 //
 // [TEKST-SELECTIE] fixed the side effect of the owner's report — dragging across an invoice number
@@ -13929,14 +14017,17 @@ test("[NUMMER-KOPIEREN] the copy button stops the click and never claims an unve
   // 1. The click must not reach the card. Without this, copying opens the very row being read past.
   assert.match(btn, /e\.stopPropagation\(\)/, "the copy click reaches the row and expands it");
 
-  // 2. The confirmation comes AFTER the write resolves. `await` before the success toast is the
-  //    whole guarantee: a rejected clipboard (no permission, insecure context, lost focus) would
-  //    otherwise still say "Gekopieerd", and the owner pastes nothing into a payment reference.
+  // 2. The confirmation comes only from an answer, never from having tried. This used to read the
+  //    inline `await navigator.clipboard.writeText` here; [KOPIE-EERLIJK] moved the write into one
+  //    module for all six copying screens, and this gate failed when it did — correctly, because
+  //    the guarantee it was pinning had moved. It now pins the guarantee where it lives: the button
+  //    asks copyToClipboard whether the write HAPPENED, and both answers reach the owner.
   const okAt = btn.indexOf("kopieer.gelukt");
-  const awaitAt = btn.indexOf("await navigator.clipboard.writeText");
-  assert.ok(awaitAt > 0, "the button no longer awaits the clipboard write");
+  const awaitAt = btn.indexOf("await copyToClipboard(");
+  assert.ok(awaitAt > 0, "the button no longer asks the one clipboard module whether the write happened");
   assert.ok(okAt > awaitAt, "the success message is emitted before the write is known to have happened");
-  assert.match(btn, /catch \{[\s\S]{0,200}kopieer\.mislukt/, "a refused write must say so, not fall silent");
+  assert.match(btn, /ok \? t\('kopieer\.gelukt'\) : t\('kopieer\.mislukt'\)/,
+    "the toast no longer branches on the answer — a refused write must say so, not fall silent");
 
   // 3. Nothing to copy → no button. A button that copies "" is a button that lies.
   assert.match(btn, /if \(!tekst\) return null/, "an empty value still renders a copy button");

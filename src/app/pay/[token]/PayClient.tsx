@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 // [SERVER-ZIN] Een machinecode is geen zin — ook niet voor de betalende klant van de klant.
+import { copyToClipboard } from '@/lib/clipboard'
 import { failureText } from '@/lib/server-message'
 
 interface PayItem {
@@ -46,7 +47,10 @@ export default function PayClient({ token }: { token: string }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [qr, setQr] = useState('')
-  const [copied, setCopied] = useState('')
+  // [KOPIE-EERLIJK] Read by the owner's CUSTOMER, who copies an IBAN and an amount into their own
+  // banking app. A refused write used to say "Gekopieerd" anyway, over a clipboard still holding
+  // whatever they copied last. The outcome is carried, not assumed.
+  const [copied, setCopied] = useState<{ label: string; ok: boolean } | null>(null)
   // [MOLLIE] De klant komt terug van iDEAL vóórdat de webhook verwerkt kan zijn — dan is
   // "betaal nu" tonen verwarrend. De ?ideal=terug-hint overbrugt die seconden eerlijk.
   const [idealBusy, setIdealBusy] = useState(false)
@@ -114,9 +118,8 @@ export default function PayClient({ token }: { token: string }) {
   }, [token])
 
   async function copy(value: string, label: string) {
-    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
-    setCopied(label)
-    setTimeout(() => setCopied(''), 1500)
+    setCopied({ label, ok: await copyToClipboard(value) })
+    setTimeout(() => setCopied(null), 1500)
   }
 
   return (
@@ -224,17 +227,24 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: 18, padding: 20, boxShadow: '0 2px 14px rgba(0,0,0,0.04)' }}>{children}</div>
 }
 
-function CopyRow({ label, value, raw, onCopy, copied, last }: {
-  label: string; value: string; raw: string; onCopy: (v: string, l: string) => void; copied: string; last?: boolean
+// Exported for tests/render: the three states of this row are the only visible difference between
+// "your customer has the IBAN" and "your customer has the PREVIOUS IBAN", and nothing else on this
+// page can reach them — the data arrives in an effect, which server rendering never runs.
+export function CopyRow({ label, value, raw, onCopy, copied, last }: {
+  label: string; value: string; raw: string; onCopy: (v: string, l: string) => void
+  copied: { label: string; ok: boolean } | null; last?: boolean
 }) {
+  // [TAAL] Dutch, hard-coded, on purpose: this page is the invoice in web form, read by the owner's
+  // Dutch customer and their accountant — the never-translated list in AGENTS.md.
+  const state = copied?.label === label ? copied : null;
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #f8f9fa' }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 12, color: '#5f6368' }}>{label}</div>
         <div style={{ fontSize: 15, fontWeight: 600, color: '#202124', wordBreak: 'break-all' }}>{value}</div>
       </div>
-      <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f8f9fa', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: copied === label ? '#137333' : '#1a73e8', cursor: 'pointer' }}>
-        {copied === label ? 'Gekopieerd' : 'Kopieer'}
+      <button onClick={() => onCopy(raw, label)} style={{ flexShrink: 0, background: '#f8f9fa', border: 'none', borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, color: state ? (state.ok ? '#137333' : '#c5221f') : '#1a73e8', cursor: 'pointer' }}>
+        {!state ? 'Kopieer' : state.ok ? 'Gekopieerd' : 'Niet gelukt'}
       </button>
     </div>
   )

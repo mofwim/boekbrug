@@ -75,6 +75,7 @@ import { onRowTap } from '@/lib/row-tap'
 // [NUMMER-KOPIEREN] Eén tik kopieert het factuurnummer — de waarde die een eigenaar het vaakst
 // overneemt en het minst uit het hoofd kent. Zie CopyButton.tsx.
 import { CopyButton } from '@/components/ui/CopyButton'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -275,7 +276,9 @@ export default function FacturenClient({
   useCloseOnBack(!!bundle, () => setBundle(null))
   const [bundleLoading, setBundleLoading] = useState(false)
   const [bundleQr, setBundleQr] = useState('')
-  const [bundleCopied, setBundleCopied] = useState(false)
+  // [KOPIE-EERLIJK] null = not tapped, true = on the clipboard, false = the write was refused and
+  // the clipboard still holds whatever it held. This is a payment link to a customer.
+  const [bundleCopied, setBundleCopied] = useState<boolean | null>(null)
 
   const selectedList = Object.values(selected)
   const selectedSum = selectedList.reduce((s, r) => s + r.amount, 0)
@@ -490,8 +493,8 @@ export default function FacturenClient({
   }
 
   async function bundleCopy(value: string) {
-    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
-    setBundleCopied(true); setTimeout(() => setBundleCopied(false), 1500)
+    setBundleCopied(await copyToClipboard(value))
+    setTimeout(() => setBundleCopied(null), 1500)
   }
 
   // ── [BRIDGE-NOTIF] Deep-link focus from a notification (?focus={invoiceId}) ──
@@ -2032,7 +2035,8 @@ export default function FacturenClient({
                 style={{ flex: 1, background: 'transparent', fontSize: 13, color: '#3C4043', border: 'none', outline: 'none', padding: '0 6px', minWidth: 0 }} />
               <button onClick={() => bundleCopy(bundle.url)}
                 style={{ flexShrink: 0, background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontFamily: FONT }}>
-                {bundleCopied ? t('lijst.gekopieerd') : t('lijst.kopieerLink')}
+                {bundleCopied === null ? t('lijst.kopieerLink')
+                  : bundleCopied ? t('lijst.gekopieerd') : t('kopieer.nietGelukt')}
               </button>
             </div>
 
