@@ -233,6 +233,15 @@ const STAND_CONTROLE: Record<string, Stand> = {
                          'f15a973a-30d1-4404-bff0-6d4eade2c93d')
               and trashed is not true)`,
   },
+  "anon_mandate_oracle_revoke.sql": {
+    soort: "controle",
+    vraag: "anon kan de drie machtigings-/eigendomsvragen niet meer stellen — en de klantcheck die {public}-policies nodig hebben staat er nog wél",
+    sql: `not has_function_privilege('anon', 'public.has_active_invoice_mandate(uuid,uuid)', 'EXECUTE')
+          and not has_function_privilege('anon', 'public.has_active_confirm_mandate(uuid,uuid)', 'EXECUTE')
+          and not has_function_privilege('anon', 'public.audit_row_is_about_me(text,uuid,uuid)', 'EXECUTE')
+          and has_function_privilege('authenticated', 'public.has_active_invoice_mandate(uuid,uuid)', 'EXECUTE')
+          and has_function_privilege('anon', 'public.is_my_accountant_client(uuid)', 'EXECUTE')`,
+  },
   "accountant_clients_insert_consent.sql": {
     soort: "controle",
     vraag: "de oude insert-policy is weg — een boekhouder koppelt zichzelf niet meer aan een klant",
