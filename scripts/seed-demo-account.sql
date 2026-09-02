@@ -22,10 +22,23 @@
 
 begin;
 
+-- Het wachtwoord komt van de aanroeper (-v demo_pw=...), nooit uit dit bestand.
+\if :{?demo_pw}
+  set local demo.password = :'demo_pw';
+\else
+  \echo 'DEMO_PASSWORD ontbreekt. Aanroepen als: psql "$DATABASE_URL" -v demo_pw="$DEMO_PASSWORD" -f scripts/seed-demo-account.sql'
+  \quit
+\endif
+
 do $$
 declare
   demo_id  uuid := 'd3d3d3d3-0000-4000-8000-000000000001';
-  demo_pw  text := 'BoekBrugDemo2026!';
+  -- [DEMO-DICHT] Geen letterlijk wachtwoord meer: deze repository is openbaar en git vergeet
+  -- niets, dus een wachtwoord dat hier ooit stond is voorgoed openbaar. Het komt nu uit de
+  -- omgeving, en het ontbreken ervan is een harde stop en geen stille standaardwaarde — anders
+  -- zet dit script overal hetzelfde bekende wachtwoord terug zonder dat iemand het merkt.
+  --   DEMO_PASSWORD=... psql "$DATABASE_URL" -v demo_pw="$DEMO_PASSWORD" -f scripts/seed-demo-account.sql
+  demo_pw  text := nullif(current_setting('demo.password', true), '');
   c_bakker uuid := 'd3d3d3d3-0000-4000-8000-00000000c001';
   c_praktijk uuid := 'd3d3d3d3-0000-4000-8000-00000000c002';
   c_cafe   uuid := 'd3d3d3d3-0000-4000-8000-00000000c003';
@@ -33,6 +46,10 @@ declare
   s_tank   uuid := 'd3d3d3d3-0000-4000-8000-00000000e002';
   s_telecom uuid := 'd3d3d3d3-0000-4000-8000-00000000e003';
 begin
+
+  if demo_pw is null then
+    raise exception 'DEMO_PASSWORD ontbreekt — het demowachtwoord hoort niet in dit bestand te staan';
+  end if;
 
   ----------------------------------------------------------------------------
   -- 1. The account. The on_auth_user_created trigger writes the profile row.

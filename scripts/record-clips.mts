@@ -6,7 +6,7 @@
 //   npx tsx scripts/record-clips.mts              # in een andere
 //
 // Run (óók de /dashboard-clips):
-//   SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=BoekBrugDemo2026! npx tsx scripts/record-clips.mts
+//   SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=… npx tsx scripts/record-clips.mts   (wachtwoord uit de kluis — deze repo is openbaar)
 //
 // Environment:
 //   CLIP_BASE_URL   default http://127.0.0.1:3100

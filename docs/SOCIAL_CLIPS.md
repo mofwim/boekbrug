@@ -25,8 +25,15 @@ bankscherm toont IBAN's en omschrijvingen. `scripts/seed-demo-account.sql` maakt
 verzonnen gegevens voor precies dit doel — dezelfde die Play Console als testaccount wil.
 
 ```bash
-SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=BoekBrugDemo2026! npx tsx scripts/record-clips.mts
+SHOT_EMAIL=demo@boekbrug.nl SHOT_PASSWORD=… npx tsx scripts/record-clips.mts
 ```
+
+Het wachtwoord staat hier niet, en dat is geen slordigheid maar de afspraak die
+`docs/PLAY_STORE_LISTING.md` al volgde: deze repository is openbaar. Het staat in de
+wachtwoordkluis, en `scripts/seed-demo-account.sql` leest het uit `DEMO_PASSWORD`.
+Het account is bovendien afgeschermd — zie `src/lib/demo-tenant.ts`: er gaat geen mail
+naar buiten en er wordt niets ingelezen, want een openbaar wachtwoord beschermt zichzelf
+niet.
 
 Dat levert vier clips extra op: **klaar**, **aangifte**, **bank** en **brug** — de vier schermen
 waar het product zijn belofte waarmaakt.

@@ -32,7 +32,7 @@
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
 --   DEEL 1  de 115 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 13 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 2  de 14 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -528,7 +528,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 13 van de 128
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 129
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -573,6 +573,14 @@ with controle(bestand, vraag, toegepast) as (
     where n.nspname = 'public'
       and p.proname = 'prevent_accountant_amount_changes'
       and 'search_path=public' = any(p.proconfig))
+  )
+  union all
+  select 'anon_mandate_oracle_revoke.sql'::text, 'anon kan de drie machtigings-/eigendomsvragen niet meer stellen — en de klantcheck die {public}-policies nodig hebben staat er nog wél'::text, (
+    not has_function_privilege('anon', 'public.has_active_invoice_mandate(uuid,uuid)', 'EXECUTE')
+    and not has_function_privilege('anon', 'public.has_active_confirm_mandate(uuid,uuid)', 'EXECUTE')
+    and not has_function_privilege('anon', 'public.audit_row_is_about_me(text,uuid,uuid)', 'EXECUTE')
+    and has_function_privilege('authenticated', 'public.has_active_invoice_mandate(uuid,uuid)', 'EXECUTE')
+    and has_function_privilege('anon', 'public.is_my_accountant_client(uuid)', 'EXECUTE')
   )
   union all
   select 'bank_tx_invoices_amount.sql'::text, 'de dubbele kolom `amount` is weg en `amount_applied` staat er'::text, (

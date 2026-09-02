@@ -127,6 +127,8 @@ needs real files, not more code.
 3. **Broaden `eft-parser.ts`.** Blocked on real settlement files; cannot be invented.
 4. **Behavioural tests for `cash-settle` / `incasso-settle`** (829 lines between them), which will
    likely need the same extraction as (2) first.
+   _(2 September 2026: closed — §18. The extraction was indeed needed, and it was assembly rather
+   than I/O that had been mistaken for untestable.)_
 
 ## 7. The honest verdict
 
@@ -983,9 +985,163 @@ To take the measurement, on a machine that can reach the database:
 
 ```bash
 npx next build && npx next start -p 3100
-CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/verify-live-chain.mts
+CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=… npx tsx scripts/verify-live-chain.mts
 ```
 
 Exit 0 means the live app and the rows underneath it agree. Exit 1 names what disagreed, and where
 to look: not in the engines, which have their own tests, but in which rows are read and how they are
 put together. Exit 2 means the check could not run — which is not a statement about money.
+
+---
+
+## 17. Three questions anyone on the internet could ask — 2 September 2026
+
+Applying DDL is the moment to run the database linter, and it had not been run in this pass. It
+found a class nobody had looked at: **a function created without an explicit `REVOKE` is granted to
+`PUBLIC`, and `PUBLIC` includes `anon`** — the role behind every unauthenticated request to
+`/rest/v1/rpc/*`.
+
+Three `SECURITY DEFINER` helpers were callable by anyone, and all three take the identity they
+answer about as a **parameter** instead of reading `auth.uid()`:
+
+| Function | What a stranger could ask |
+| --- | --- |
+| `has_active_invoice_mandate(accountant, client)` | does this accountant hold an invoicing mandate over this client? |
+| `has_active_confirm_mandate(accountant, client)` | …and a confirmation mandate? |
+| `audit_row_is_about_me(type, entity_id, viewer)` | **is this invoice owned by this person?** |
+
+`SECURITY DEFINER` means they answer with the owner's rights, so RLS never sees the question. The
+third is the sharpest: an invoice id plus a user id returns a yes/no about who owns which document,
+and an invoice id is not a secret — it travels in a payment link.
+
+UUIDs are not guessable, so this was not a mass leak. It was also not an access control: "hard to
+guess" is a property of the input, not a rule about who may ask.
+
+### What made it safe to close — and what would have broken it
+
+All three are used **only** inside policies whose role list is `{authenticated}`
+(`audit_logs_about_me`, `invoices_mandate_confirm_read/write`, `invoices_mandate_draft_issue/read`,
+`invoice_lines_mandate_read`). A policy expression runs with the privileges of the role evaluating
+it, so removing anon's `EXECUTE` cannot break a policy anon never evaluates. No code in `src/` calls
+any of them over RPC — zero call sites, checked.
+
+**`is_my_accountant_client` was left alone, deliberately, and that is the half worth remembering.**
+It looks like the same shape and it is not: four `{public}` policies call it —
+`invoices_accountant_read`, `invoices_accountant_update_v2`, `invoice_lines_select_accountant`,
+`documents_accountant_read` — so an anonymous `SELECT` on `invoices` or `documents` **evaluates it**.
+Revoking would have turned those reads into a permission error instead of an empty result. It is
+also not an oracle: it reads `auth.uid()`, which is NULL for a stranger, so it always answers false.
+`acting_for_owner()` is the same case, used by seven policies.
+
+Proven before applying, in a transaction that always aborts: the revoke flips anon's access from
+`true` to `false`, signed-in access stays `true`, `is_my_accountant_client` keeps its grant — and an
+anonymous `SELECT count(*) FROM invoices`, the query that evaluates the `{public}` policy, returned
+**0 rows and no error**. That last line is the whole reason to run the experiment rather than reason
+about it.
+
+Verified after applying: all three closed to anon, all three still open to `authenticated` and
+`service_role`, and the client check still public.
+
+Reversal is one line per function (`GRANT EXECUTE … TO anon`), so this narrows and nothing else.
+
+### What the linter flagged that is NOT a defect
+
+- **Seven money RPCs executable by `authenticated`** (`apply_bank_payment`, `book_bank_batch`,
+  `move_invoice_payment`, `apply_manual_payment`, `allocate_bank_payment`,
+  `recompute_invoice_amount_paid`, `next_invoice_seq`). By design — the app calls them from user
+  sessions, and every one refuses when `auth.uid()` is not the owner it was handed. Recorded so the
+  next reader does not "fix" it. `recompute_invoice_amount_paid` appears on that list because
+  today's migration put it there.
+- **Five tables with RLS on and no policies** (`ai_spend_daily`, `cron_runs`, `intake_claims`,
+  `mollie_payment_links`, `system_events`). RLS on with no policy denies everything, which is
+  exactly the intent: these are service-role only. `mollie_payment_links` is the one §12 already
+  had to work around.
+- `pg_trgm` in the `public` schema — hardening, not a hole.
+
+### Still open, and still the owner's
+
+**Leaked Password Protection is still disabled.** Confirmed by the linter today, not from memory.
+One toggle in the Supabase dashboard; it checks new passwords against HaveIBeenPwned.
+## 18. §6 item 4, the half that was left — 2 September 2026
+
+§8 answered half of item 4 and said so plainly: the *decisions* `cash-settle.ts` and
+`incasso-settle.ts` carry were extracted and asserted, _"the I/O halves still need a database."_
+That sentence was true about the I/O and wrong about what was left beside it.
+
+What stayed behind in `loadCashSettlementState` is not I/O. It is **assembly** — three reads merged
+into the one shape `computeCashSettlementSync` is allowed to act on — welded to the awaits that
+produced them, and therefore reachable by no test. The same shape §8 found in `bank-tx-links.ts`,
+in the module this audit's own table calls the largest untested money surface.
+
+It is `cash-settle-assemble.ts` now: four decisions, none of which touch a database, each of which
+can be silently wrong about somebody's money while the arithmetic downstream stays perfect.
+
+| Decision | What a wrong answer does |
+| --- | --- |
+| how much cash an invoice holds | the old `gross − amount_paid` returned €0 for a fully cash-paid invoice, and a €0 settlement is not "leave it alone" — the reconcile **deletes the drawer entry** |
+| whether it holds any at all | `cash_paid: 0` and `cash_paid: undefined` are different answers. `settlementGross` treats any non-null value as the whole truth, so a 0 written where nothing is known removes a real movement |
+| which day the money moved | per-instalment each handover keeps its own; without the column the aggregate is dated by the **last** cash day, not by the invoice's `payment_date` — which can be the day a *bank* instalment landed, and one quarter over that is a different aangifte |
+| which way it moved | an unreadable direction books as a purchase, so a cash **sale** leaves the drawer out by twice the amount |
+
+16 tests, each named for the cost rather than the field. Every one was verified by breaking the
+decision and watching that test — the one named for it — fail: the `undefined` collapsed to `0`,
+`Math.abs` removed, the last cash day taken as the last row read instead of the latest, the
+aggregate re-dated onto the invoice, instalments handed over without the column to write them
+against, the timestamp left untruncated, the direction guess made silently, and a link with no
+invoice turned into one. Eight mutations, eight named failures.
+
+**One gate stopped being a gate.** `cash-settle-reach.test.ts` pinned the direction guess by
+grepping this file, with its reason attached: _"the value never reaches this far — loadCashSettlementState
+is I/O to its last line."_ That premise expired the moment `readableDirection` became a pure export,
+so the grep is a behavioural test now and the source gate is reduced to the half that genuinely
+cannot be reached: that the I/O module still hands the assembly something to report with.
+
+### incasso-settle: measured, not assumed
+
+The decisions §8 named there were already extracted, and the settle loop's remaining inline
+judgement is not about a euro — it is about whether anyone **hears** about one. `apply_manual_payment`
+refuses by raising, and its eleven refusals split in two: four the RPC is right to make (already
+paid, already covered, locked by an accountant, a status that moved) where the invoice simply stays
+open and visible, and seven that are real — a caller booking for the wrong owner, an invoice with no
+total, and an **idempotency key belonging to a different booking**, which is the double-booking guard
+firing on the one pass that books payments nobody typed.
+
+That split was a bare `msg.includes` chain, matched against strings that live in SQL in another
+file. It is `isExpectedBookingRefusal` now, and its test reads the messages **out of the migrations**
+rather than restating them: reword one and a test fails, instead of a normal hourly race quietly
+becoming an error in the log — or a real failure quietly becoming silence.
+
+**One thing measured and deliberately left alone.** `Array.isArray(applyRows) ? applyRows[0] : undefined`
+looked like a place a booked payment could fall out of the report. It is not: the function is
+`RETURNS TABLE(...)`, so PostgREST always yields an array, and every refusal path raises rather than
+returning zero rows. Handling an object there would be inventing a case that cannot occur.
+
+### The sixth caller that threw the answer away
+
+`bank_auto_book_blocked.sql` is the one migration still open, and both sides of it were written
+deploy-safe: `bank-auto-confirm.ts` probes for the column before filtering on it, and
+`/api/bank/unlink` writes the blockade best-effort so a lagging migration can never break an
+unlink. The write was `await (… as PromiseLike<unknown>)`, which discards the answer — and that
+discards **two** answers at once:
+
+* the column is not there yet — expected, harmless, and the entire reason the write stands apart;
+* the write **failed** while the column is there — the blockade is not recorded, the next cron
+  round makes the same booking again, and under kasstelsel that invoice's BTW lands in the wrong
+  quarter. After the owner tapped Ontkoppelen and read that it was undone.
+
+That is exactly the discrimination `column-probe.ts` was built for, and this is the sixth caller
+straightened out the same way: an absent column stays silent, anything else reaches
+`reportHandledFailure`. Gated as a rule — the error is bound, `columnIsAbsent` is imported rather
+than re-spelled, and a non-absent error reaches the reporter — and verified by breaking each of
+those three in turn.
+
+### The mutation run found a defect in my own test
+
+The fourth control — reword a refusal in the SQL and watch the test catch it — came back **NOT
+CAUGHT**. Two migrations define `apply_manual_payment` (the original and the idempotency-scope
+rewrite) and both carry the full set of messages; the test unioned them, so the superseded file's
+old spelling covered for the live one. The messages are read per defining file now and required in
+all of them, because two spellings of one refusal drifting apart is the same defect from the other
+side. It is the third time in this document that a check written to measure something turned out to
+be measuring the wrong copy of it — and the only reason this one was found is that the mutation was
+run instead of assumed.

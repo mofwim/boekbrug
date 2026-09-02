@@ -23,7 +23,14 @@
 // this function actually produced.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeCashSettlementSync, type SettleableInvoice, type CashInstalment } from "@/lib/cash";
+import { computeCashSettlementSync, type SettleableInvoice } from "@/lib/cash";
+// [KAS-SAMENSTELLING] The pure half of this reconcile — how three reads become one shape, and what
+// each of those four decisions costs when it is wrong. Imported, never copied: the cron discovers
+// owners by the same definition. See the module header there.
+import {
+  assembleSettleableInvoices, indexCashInstalments, openCashInvoiceIds,
+  type CashInvoiceRow, type KasLinkRow,
+} from "@/lib/cash-settle-assemble";
 // [PAGINATION] PostgREST truncates at ~1000 rows SILENTLY. Everywhere else that is an
 // understatement; here it feeds a DESTRUCTIVE pass — see the note above the reads below.
 import { chunkIds, fetchAllRows } from "@/lib/supabase-paginate";
@@ -169,21 +176,18 @@ export async function reconcileCashWithRetry(supabase: SupabaseClient<any>, user
 }
 
 /**
- * [KAS-RICHTING] The invoice direction the drawer will be booked from, and a report when the row
- * did not actually say. See the note at the call site for why this defaults rather than refuses.
+ * [KAS-RICHTING] Say out loud that the direction had to be guessed.
+ *
+ * The guess itself lives in cash-settle-assemble.ts, with the argument for why it defaults rather
+ * than refuses. This is the half that cannot live in a pure module: somebody has to be told.
  */
-function readableDirection(
-  value: string | null | undefined,
-  where: { userId: string; invoiceId: string },
-): "incoming" | "outgoing" {
-  if (value === "outgoing" || value === "incoming") return value;
+function reportUnreadableDirection(where: { userId: string; invoiceId: string }, value: unknown): void {
   reportHandledFailure({
     tag: "CASH-SETTLE",
     message: "a cash-settled invoice has no readable direction — the drawer movement was booked as a purchase, and if it was a sale the kas balance is now wrong by twice its amount",
     severity: "data-integrity",
-    context: { ...where, direction: value ?? null },
+    context: { ...where, direction: (value ?? null) as string | null },
   });
-  return "incoming";
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -216,7 +220,7 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
   // real cash outflows vanish from the book the Belastingdienst reads, and the drawer balance
   // is overstated by their sum. They are never recreated, because creation is driven from the
   // same truncated set. A trader with more than a thousand till-settled invoices hits this.
-  const kasLinkRows = await fetchAllRows<{ id: string; invoice_id: string; amount_applied: number | null; paid_on: string | null }>(
+  const kasLinkRows = await fetchAllRows<KasLinkRow>(
     (from, to) => supabase
       .from("bank_tx_invoices")
       .select("id, invoice_id, amount_applied, paid_on")
@@ -226,22 +230,9 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
       .order("id", { ascending: true })
       .range(from, to),
   );
-  const cashByInvoice = new Map<string, number>();
-  const instalmentsByInvoice = new Map<string, CashInstalment[]>();
-  const lastCashDate = new Map<string, string>();
-  for (const l of kasLinkRows) {
-    if (!l.invoice_id) continue;
-    const amount = Math.abs(Number(l.amount_applied) || 0);
-    cashByInvoice.set(l.invoice_id, (cashByInvoice.get(l.invoice_id) ?? 0) + amount);
-    const list = instalmentsByInvoice.get(l.invoice_id) ?? [];
-    list.push({ id: l.id, amount, paid_on: l.paid_on ? l.paid_on.slice(0, 10) : null });
-    instalmentsByInvoice.set(l.invoice_id, list);
-    // Kept for the pre-migration model: it dates its one entry by the last cash instalment.
-    const day = l.paid_on ? l.paid_on.slice(0, 10) : null;
-    if (day && (!lastCashDate.get(l.invoice_id) || day > lastCashDate.get(l.invoice_id)!)) {
-      lastCashDate.set(l.invoice_id, day);
-    }
-  }
+  // How much cash, on which days, per invoice — one derivation, read by both the query that finds
+  // the still-open cash holders below and the assembly at the end.
+  const cashIndex = indexCashInstalments(kasLinkRows);
 
   // [CASH-CREDITNOTA] invoice_type rides along, and without it the fix in cash.ts cannot reach a
   // single real row: settlementDirection would see `undefined` and fall back to the sign alone,
@@ -265,7 +256,7 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
   // invoices" — the same destructive shape as truncation. 200 ids per chunk keeps both the URL
   // and each response well under their caps.
   const knownIds = new Set(invRows.map((r) => r.id));
-  const openCashIds = [...cashByInvoice.keys()].filter((id) => !knownIds.has(id));
+  const openCashIds = openCashInvoiceIds(cashIndex, knownIds);
   const openCashRows: unknown[] = [];
   const ID_CHUNK = 200;
   for (let i = 0; i < openCashIds.length; i += ID_CHUNK) {
@@ -310,40 +301,22 @@ export async function loadCashSettlementState(supabase: SupabaseClient<any>, use
       .range(from, to) as unknown as PromiseLike<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>,
   );
 
-  const paid = ([...invRows, ...openCashRows] as Array<Record<string, unknown> & { id: string; direction?: string | null; payment_date?: string | null }>)
-    .map((r) => ({
-      ...r,
-      // [KAS-RICHTING] Anything that is not "outgoing" is read as "incoming" — a purchase paid from
-      // the till, the overwhelmingly common case. That default is a GUESS, and on this particular
-      // field a wrong guess is the most expensive kind there is: settlementDirection turns it into
-      // the drawer's direction, so a cash SALE booked as a purchase moves the balance the wrong way
-      // and the book is out by TWICE the amount, on the one figure whose entire purpose is that it
-      // reconciles against the cash actually in the drawer.
-      //
-      // The default stays, because the alternative is worse. Dropping the invoice from `paid`
-      // would not mean "leave it alone": computeCashSettlementSync deletes every linked entry whose
-      // invoice is absent from the paid set, so refusing to guess would REMOVE a real cash movement
-      // instead of merely mis-signing it. Between an entry that might point the wrong way and no
-      // entry at all, the entry is recoverable.
-      //
-      // What was missing is that the guess was silent. `direction` is nullable in the schema with
-      // no default and no check constraint, so nothing but the write paths keeps it honest — and
-      // the day one of them forgets, this line quietly decides which way somebody's money went. It
-      // is clean today: 605 invoices, 586 incoming, 19 outgoing, not one null. So this reports
-      // rather than repairs, and it will be the thing that tells us the day that stops being true.
-      direction: readableDirection(r.direction, { userId, invoiceId: r.id }),
-      // [MANUAL-PARTIAL-PAY] Authoritative cash portion (undefined → settlementGross falls
-      // back to the legacy gross − amount_paid inference for pre-instalment invoices).
-      cash_paid: cashByInvoice.has(r.id) ? cashByInvoice.get(r.id) : undefined,
-      // [CASH-INSTALMENT] …and the instalments behind it, each of which becomes its own drawer
-      // movement on its own day. The invoice's payment_date is only the fallback: it can be the
-      // day a BANK instalment landed, which is a different day from any cash handover.
-      cash_instalments: perInstalment ? instalmentsByInvoice.get(r.id) : undefined,
-      // [DEPLOY-SAFE] In the old model the single entry is dated by the LAST cash instalment —
-      // the day the till last moved — which is what it always did. With per-instalment entries
-      // each one carries its own date and this is only the fallback.
-      payment_date: (perInstalment ? null : lastCashDate.get(r.id)) ?? r.payment_date ?? null,
-    })) as SettleableInvoice[];
+  // [KAS-SAMENSTELLING] Four decisions about somebody's money — how much cash, whether any at
+  // all, on which day, and which way — none of which is I/O. They live in cash-settle-assemble.ts
+  // with what each one costs when it is wrong, and they are asserted there against rows rather
+  // than read out of this file's source.
+  //
+  // `direction` is the one that keeps a foot in here: the guess is pure, but a guess nobody hears
+  // about is how this line would quietly decide which way somebody's money went. The field is
+  // nullable in the schema with no default and no check constraint, so nothing but the write paths
+  // keeps it honest. It is clean today — 605 invoices, 586 incoming, 19 outgoing, not one null —
+  // and this reports rather than repairs, so it will be what tells us the day that stops being true.
+  const paid = assembleSettleableInvoices({
+    invoiceRows: [...invRows, ...openCashRows] as CashInvoiceRow[],
+    index: cashIndex,
+    perInstalment,
+    onUnreadableDirection: (invoiceId, value) => reportUnreadableDirection({ userId, invoiceId }, value),
+  });
   // The projection differs by capability, so PostgREST's inferred row type does too — read it
   // back through `unknown` rather than teach the type system about a runtime-chosen select.
   const existing = (entryRows ?? []) as unknown as Array<{ id: string; invoice_id: string | null; settlement_id?: string | null; amount?: number | null; entry_date?: string | null; direction?: "in" | "out" | null }>;

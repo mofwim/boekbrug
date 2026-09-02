@@ -11,6 +11,7 @@ import { canAccessScreen } from "@/lib/acting-for";
 // is how /eerlijk-gebruik ended up in the footer of every public page, in sitemap.xml and in the
 // terms as "volledig openbaar" while this guard redirected every logged-out visitor to /login.
 import { isPublic } from "@/lib/public-paths";
+import { isDemoTenant, demoRefusalFor, demoRefusalMessage } from "@/lib/demo-tenant";
 
 // [2FA] The rule itself is NOT in this file. See the block at the point of use below and the
 // header of src/lib/mfa.ts: this file has no tests of its own, and this is the one decision in the
@@ -194,6 +195,28 @@ export async function middleware(request: NextRequest) {
           { status: 403 },
         ),
       );
+    }
+
+    // [DEMO-DICHT] The demo account's password is published on purpose (Play Console reviewers,
+    // store screenshots) and is in a PUBLIC git history for good. So it is fenced by capability
+    // rather than by secrecy: it may type and edit all it likes, but nothing leaves the building
+    // and nothing is paid for. See demo-tenant.ts for where that line is and why.
+    //
+    // It sits HERE, and not in each route, for the reason the icon subset and PUBLIC_PATHS both
+    // demonstrated today: a rule that has to be remembered at twenty call sites is a rule that is
+    // eventually forgotten at one, silently. Middleware runs on every /api/* request; a route
+    // added next month is covered before it is written.
+    if (user && isDemoTenant(user.id)) {
+      const refusal = demoRefusalFor(request.nextUrl.pathname, request.method);
+      if (refusal) {
+        return withRefreshedCookies(
+          response,
+          NextResponse.json(
+            { error: "demo_account", reason: refusal, message: demoRefusalMessage(refusal) },
+            { status: 403 },
+          ),
+        );
+      }
     }
     return response;
   }

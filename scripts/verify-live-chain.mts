@@ -4,7 +4,9 @@
 //
 // Run (op een machine die de Supabase-host kan bereiken):
 //   npx next build && npx next start -p 3100
-//   CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/verify-live-chain.mts
+//   CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=… npx tsx scripts/verify-live-chain.mts
+//   (het wachtwoord staat in de kluis, niet hier — [DEMO-DICHT]: deze repository is openbaar,
+//    en het demoaccount mag sinds src/lib/demo-tenant.ts geen mail versturen of documenten lezen)
 //
 // Environment:
 //   CHAIN_BASE_URL   default http://127.0.0.1:3100
