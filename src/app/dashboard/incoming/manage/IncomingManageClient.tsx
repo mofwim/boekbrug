@@ -141,6 +141,7 @@ import { onRowTap } from '@/lib/row-tap'
 // [NUMMER-KOPIEREN] Eén tik kopieert het factuurnummer — de waarde die een eigenaar het vaakst
 // overneemt en het minst uit het hoofd kent. Zie CopyButton.tsx.
 import { CopyButton } from '@/components/ui/CopyButton'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -3779,7 +3780,7 @@ export default function IncomingManageClient({
             setBundleCheck(null)
             setBundlePayRows(rows)
           }}
-          onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
+          onCopied={(what, ok) => showToast(ok ? t('ink.gekopieerd', { what }) : t('kopieer.mislukt'))}
         />
       )}
 
@@ -4161,7 +4162,7 @@ export default function IncomingManageClient({
             setPrepareCtx(null)
             if (inv) requestPay(inv)
           }}
-          onCopied={(what) => showToast(t('ink.gekopieerd', { what }))}
+          onCopied={(what, ok) => showToast(ok ? t('ink.gekopieerd', { what }) : t('kopieer.mislukt'))}
           onCorrectKenmerk={() => { const inv = prepareCtx; setPrepareCtx(null); if (inv) openCorrection(inv) }}
           // [PAPIER-BIJ-DE-BETALING] setPrepareCtx blijft staan: het documentblad valt eroverheen
           // en laat bij het sluiten het bedrag en de betaalnotitie ongemoeid. Dit blad hier sluiten
@@ -4965,7 +4966,7 @@ function PreparePaymentSheet({
   inv: IncomingRow
   onClose: () => void
   onConfirmPaid: () => void
-  onCopied: (what: string) => void
+  onCopied: (what: string, ok: boolean) => void
   /** [KENMERK-VAN-WIE] Opens the correction editor on this invoice — see the Kenmerk row below. */
   onCorrectKenmerk: () => void
   /**
@@ -5050,13 +5051,12 @@ function PreparePaymentSheet({
     // [BETAALNOTITIE] …en `reference` erbij, om dezelfde reden: de QR is wat de bankapp leest.
   }, [inv.id, amount, reference])
 
+  // [KOPIE-EERLIJK] This copies the IBAN, the amount and the payment reference — the three fields
+  // of a bank transfer. The catch used to call onCopied() too, so a REFUSED write still said "IBAN
+  // gekopieerd" while the clipboard still held the PREVIOUS supplier's IBAN. Now the outcome
+  // travels with the label and the sheet's owner decides what to say.
   async function copy(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value)
-      onCopied(label)
-    } catch {
-      onCopied(label) // best-effort; clipboard may be blocked in some contexts
-    }
+    onCopied(label, await copyToClipboard(value))
   }
 
   return (
@@ -5255,7 +5255,7 @@ function BundelBetalenSheet({
   built: BundelBetalingResult
   onClose: () => void
   onConfirmPaid: () => void
-  onCopied: (what: string) => void
+  onCopied: (what: string, ok: boolean) => void
 }) {
   const t = translator(useLocale())
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
@@ -5283,13 +5283,12 @@ function BundelBetalenSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [built.epcPayload])
 
+  // [KOPIE-EERLIJK] This copies the IBAN, the amount and the payment reference — the three fields
+  // of a bank transfer. The catch used to call onCopied() too, so a REFUSED write still said "IBAN
+  // gekopieerd" while the clipboard still held the PREVIOUS supplier's IBAN. Now the outcome
+  // travels with the label and the sheet's owner decides what to say.
   async function copy(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value)
-      onCopied(label)
-    } catch {
-      onCopied(label) // best-effort; clipboard may be blocked in some contexts
-    }
+    onCopied(label, await copyToClipboard(value))
   }
 
   return (

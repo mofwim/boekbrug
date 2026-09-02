@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import { copyToClipboard } from '@/lib/clipboard'
 import { createClient } from '@/lib/supabase'
 import { rowMatchesQuery } from '@/lib/search'
 import { DashboardHeader } from '@/app/dashboard/_shared'
@@ -150,6 +151,11 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState<{ subject: string; body: string } | null>(null)
+  // [KOPIE-EERLIJK] null = not tapped. This button used to be a floating promise —
+  // `navigator.clipboard?.writeText(...)` with nothing awaited — so a refused write said nothing at
+  // all and rejected into the void. The accountant tapped Kopiëren, pasted, and got whatever they
+  // had copied before.
+  const [aiCopied, setAiCopied] = useState<boolean | null>(null)
 
   // ── Init ──
   useEffect(() => {
@@ -666,9 +672,13 @@ export default function AccountantHome({ profile, overview, workQueues, clients,
                 <p style={{ fontWeight: 600, margin: '0 0 8px' }}>{t('bh.home.ai.onderwerp', { onderwerp: aiResult.subject })}</p>
                 <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: '0 0 12px' }}>{aiResult.body}</p>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => navigator.clipboard?.writeText(aiResult.body)}
-                    style={{ backgroundColor: '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-                    {t('bh.home.ai.kopieren')}
+                  <button onClick={async () => {
+                    setAiCopied(await copyToClipboard(aiResult.body))
+                    setTimeout(() => setAiCopied(null), 1500)
+                  }}
+                    style={{ backgroundColor: aiCopied === false ? '#C5221F' : '#1A73E8', color: '#FFFFFF', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                    {aiCopied === null ? t('bh.home.ai.kopieren')
+                      : aiCopied ? t('kopieer.gelukt') : t('kopieer.nietGelukt')}
                   </button>
                   <button onClick={() => { setAiResult(null); setAiPrompt('') }}
                     style={{ backgroundColor: '#F8F9FA', color: '#202124', border: '1px solid #dadce0', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
