@@ -137,6 +137,9 @@ import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-collect'  
 // [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
 // open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
 import { onRowTap } from '@/lib/row-tap'
+// [NUMMER-KOPIEREN] Eén tik kopieert het factuurnummer — de waarde die een eigenaar het vaakst
+// overneemt en het minst uit het hoofd kent. Zie CopyButton.tsx.
+import { CopyButton } from '@/components/ui/CopyButton'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -2881,6 +2884,10 @@ export default function IncomingManageClient({
                         <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 500, color: '#5F6368', fontFamily: FONT_NUM, whiteSpace: 'nowrap' }}>
                           {inv.invoice_number ?? '—'}
                         </span>
+                        {/* [NUMMER-KOPIEREN] Naast het nummer, niet eronder: de kopregel wrapt al
+                            (zie hierboven) en een knop op een eigen regel zou de rijhoogte van
+                            elke rij verhogen voor iets wat je zelden nodig hebt. */}
+                        <CopyButton value={inv.invoice_number} what={t('kopieer.wat.factuurnummer')} />
                         <span
                           title={inv.client_name ?? undefined}
                           style={{ minWidth: 0, fontSize: 14, fontWeight: 600, color: M3.onSurface, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}

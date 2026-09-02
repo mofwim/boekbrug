@@ -13862,6 +13862,79 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   );
 });
 
+// ─── [NUMMER-KOPIEREN] A copy button inside a row must not open the row ─────────────────────────
+//
+// [TEKST-SELECTIE] fixed the side effect of the owner's report — dragging across an invoice number
+// no longer toggles the card. It did not fix the GOAL, which was to copy the number; selecting text
+// inside a tappable card on a phone is still fiddly, and this app ships to Android as a TWA, so the
+// phone is the product for most owners.
+//
+// The button therefore sits INSIDE the row whose onClick expands it. Two things it must never do:
+// open that row, and claim a success the clipboard did not give it.
+test("[NUMMER-KOPIEREN] the copy button stops the click and never claims an unverified success", () => {
+  const btn = code("src/components/ui/CopyButton.tsx");
+
+  // 1. The click must not reach the card. Without this, copying opens the very row being read past.
+  assert.match(btn, /e\.stopPropagation\(\)/, "the copy click reaches the row and expands it");
+
+  // 2. The confirmation comes AFTER the write resolves. `await` before the success toast is the
+  //    whole guarantee: a rejected clipboard (no permission, insecure context, lost focus) would
+  //    otherwise still say "Gekopieerd", and the owner pastes nothing into a payment reference.
+  const okAt = btn.indexOf("kopieer.gelukt");
+  const awaitAt = btn.indexOf("await navigator.clipboard.writeText");
+  assert.ok(awaitAt > 0, "the button no longer awaits the clipboard write");
+  assert.ok(okAt > awaitAt, "the success message is emitted before the write is known to have happened");
+  assert.match(btn, /catch \{[\s\S]{0,200}kopieer\.mislukt/, "a refused write must say so, not fall silent");
+
+  // 3. Nothing to copy → no button. A button that copies "" is a button that lies.
+  assert.match(btn, /if \(!tekst\) return null/, "an empty value still renders a copy button");
+
+  // 4. [TAAL] The bar is on money screens; the words come from the catalogue, never hard-coded.
+  assert.doesNotMatch(btn, /'(Gekopieerd|Kopiëren)/, "a Dutch literal in the component");
+  for (const key of ["kopieer.aria", "kopieer.gelukt", "kopieer.mislukt"]) {
+    assert.ok(btn.includes(key), `${key} is not rendered by the component`);
+  }
+
+  // …and every screen that offers it names WHAT is being copied, so a screen reader hears more
+  // than "copy" — this button is an icon, so its aria-label is the only thing announcing it.
+  //
+  // Scope, derived per file rather than assumed: this repo has TWO components called CopyButton.
+  // This one, and the public tools' one (src/components/tools/ui.tsx), which renders its own
+  // visible word ("Kopiëren") and therefore needs no `what` — a rule applied to every <CopyButton
+  // in the tree would be holding two different components to one contract, which is how the first
+  // run of this gate failed. So each usage is resolved against the import standing in its own
+  // file, and a <CopyButton that resolves to NEITHER module — a third one, or a local definition —
+  // fails here rather than silently inheriting whichever contract autocomplete offered.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const importsFrom = (src: string, mod: string) =>
+    src.includes(`from '${mod}'`) || src.includes(`from "${mod}"`);
+  let gebruikt = 0;
+  for (const f of walk("src")) {
+    const src = code(f);
+    const tags = [...src.matchAll(/<CopyButton\b[^>]*>/g)].map((m) => m[0]);
+    if (tags.length === 0) continue;
+    const vanGeld = importsFrom(src, "@/components/ui/CopyButton");
+    const vanTools = importsFrom(src, "@/components/tools/ui");
+    assert.ok(vanGeld || vanTools,
+      `${f}: <CopyButton> here resolves to no known component — a third copy button, bound by no contract`);
+    if (!vanGeld) continue; // the tools' button says its own name in words; a different contract
+    for (const tag of tags) {
+      gebruikt++;
+      assert.match(tag, /\bwhat=\{/, `${f}: a copy button without a "what" says only "copy" to a screen reader`);
+      assert.match(tag, /\bvalue=\{/, `${f}: a copy button without a value`);
+    }
+  }
+  assert.ok(gebruikt >= 3, `only ${gebruikt} copy buttons wired — the scan is broken`);
+});
+
 // ─── [TEKST-SELECTIE] Selecting text in a row is not a tap on the row ───────────────────────────
 //
 // Reported with a screenshot: on /dashboard/incoming/manage the owner dragged across an invoice

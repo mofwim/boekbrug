@@ -72,6 +72,9 @@ import CreditEvidenceLine from '@/components/invoice/CreditEvidenceLine'
 // [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
 // open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
 import { onRowTap } from '@/lib/row-tap'
+// [NUMMER-KOPIEREN] Eén tik kopieert het factuurnummer — de waarde die een eigenaar het vaakst
+// overneemt en het minst uit het hoofd kent. Zie CopyButton.tsx.
+import { CopyButton } from '@/components/ui/CopyButton'
 
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -1461,6 +1464,7 @@ export default function FacturenClient({
                     <div className="inv-row-main">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
+                        <CopyButton value={inv.invoice_number} what={t('kopieer.wat.factuurnummer')} />
                         <InvoiceTypeBadge type={invoiceType} />
                         {/* Status chip — [OVERDUE-DERIVED] 'overdue' is never STORED (see the
                             note in api/bank/unlink): it is derived from sent + due_date in the
@@ -1893,6 +1897,7 @@ export default function FacturenClient({
                     <div style={{ background: '#fff', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'default' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontSize: 14, fontWeight: 600, color: M3.onSurface, fontFamily: FONT_NUM }}>{inv.invoice_number ?? '—'}</p>
+                        <CopyButton value={inv.invoice_number} what={t('kopieer.wat.factuurnummer')} />
                         {inv.replaced_by_number && (
                           <p style={{ fontSize: 12, color: '#5F6368' }}>{t('lijst.vervangenDoor', { number: inv.replaced_by_number })}</p>
                         )}
