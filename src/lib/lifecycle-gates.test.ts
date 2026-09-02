@@ -21,6 +21,9 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
 import { DOCUMENT_REFERRERS } from "./document-references";
+// [PAY-KEY-SCOPE] The triage this gate checks against is a function now, so the gate asks it
+// instead of parsing it out of source — see the test.
+import { isExpectedBookingRefusal } from "./incasso-settle";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
 import { destinationsFor, railDestinations } from "./nav-destinations";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
@@ -8085,22 +8088,22 @@ test("[PAY-KEY-SCOPE] a spent key is refused by name, in words no caller triages
   const refusal = /RAISE EXCEPTION '\[MANUAL-PARTIAL-PAY\] (idempotency key[^']*)'/.exec(live);
   assert.ok(refusal, "a key spent on another booking must be refused by name, not left to the unique index");
 
-  // incasso-settle.ts triages this RPC's errors by substring: anything containing 'already' is
-  // treated as an already-paid/already-covered and logged NOWHERE. A refusal meaning the booking
-  // did not happen may not land there — that is the silence this repo exists not to produce.
-  const settle = code("src/lib/incasso-settle.ts");
-  // The window is the `const msg = …` line through the `if` that triages on it — non-greedy to
-  // the `if`, not to the first newline, which is what an earlier version of this gate stopped at
-  // and why it parsed an empty list.
-  const triage = /const msg = \(error\.message[\s\S]{0,400}?if \([\s\S]{0,300}?\) \{/.exec(settle)?.[0] ?? "";
-  const benign = [...triage.matchAll(/msg\.includes\('([^']+)'\)/g)].map((m) => m[1]);
-  assert.ok(benign.length >= 2, `expected incasso-settle's benign-substring list, parsed: ${benign.join(", ")}`);
-  for (const word of benign) {
-    assert.ok(
-      !refusal[1].toLowerCase().includes(word.toLowerCase()),
-      `the refusal "${refusal[1]}" contains "${word}", which incasso-settle swallows without logging`,
-    );
-  }
+  // incasso-settle.ts triages this RPC's errors: the ones it is right to make (already paid,
+  // already covered, verwerkt, a status that moved) are logged NOWHERE, so the invoice simply
+  // stays open and visible. A refusal meaning the booking did NOT happen may not land there —
+  // that is the silence this repo exists not to produce, and this one is the double-booking guard
+  // firing on the pass that books payments nobody typed.
+  //
+  // This gate used to parse the benign-substring list out of incasso-settle's source with a
+  // regex, because the triage was a bare `msg.includes` chain inline. It is
+  // `isExpectedBookingRefusal` now, so the gate ASKS the predicate instead of guessing at it — a
+  // parse that goes stale reads as a pass, which is how this gate would have stopped guarding
+  // anything the moment the chain moved. (It did move; this is that moment.)
+  assert.equal(
+    isExpectedBookingRefusal(`[MANUAL-PARTIAL-PAY] ${refusal[1]}`),
+    false,
+    `the refusal "${refusal[1]}" is triaged as benign — incasso-settle would swallow the double-booking guard firing`,
+  );
 });
 
 test("[PAY-KEY-SCOPE] the SQL contract runs against the FIXED function, not the shipped bug", () => {

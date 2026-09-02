@@ -127,6 +127,8 @@ needs real files, not more code.
 3. **Broaden `eft-parser.ts`.** Blocked on real settlement files; cannot be invented.
 4. **Behavioural tests for `cash-settle` / `incasso-settle`** (829 lines between them), which will
    likely need the same extraction as (2) first.
+   _(2 September 2026: closed — §18. The extraction was indeed needed, and it was assembly rather
+   than I/O that had been mistaken for untestable.)_
 
 ## 7. The honest verdict
 
@@ -1060,3 +1062,86 @@ Reversal is one line per function (`GRANT EXECUTE … TO anon`), so this narrows
 
 **Leaked Password Protection is still disabled.** Confirmed by the linter today, not from memory.
 One toggle in the Supabase dashboard; it checks new passwords against HaveIBeenPwned.
+## 18. §6 item 4, the half that was left — 2 September 2026
+
+§8 answered half of item 4 and said so plainly: the *decisions* `cash-settle.ts` and
+`incasso-settle.ts` carry were extracted and asserted, _"the I/O halves still need a database."_
+That sentence was true about the I/O and wrong about what was left beside it.
+
+What stayed behind in `loadCashSettlementState` is not I/O. It is **assembly** — three reads merged
+into the one shape `computeCashSettlementSync` is allowed to act on — welded to the awaits that
+produced them, and therefore reachable by no test. The same shape §8 found in `bank-tx-links.ts`,
+in the module this audit's own table calls the largest untested money surface.
+
+It is `cash-settle-assemble.ts` now: four decisions, none of which touch a database, each of which
+can be silently wrong about somebody's money while the arithmetic downstream stays perfect.
+
+| Decision | What a wrong answer does |
+| --- | --- |
+| how much cash an invoice holds | the old `gross − amount_paid` returned €0 for a fully cash-paid invoice, and a €0 settlement is not "leave it alone" — the reconcile **deletes the drawer entry** |
+| whether it holds any at all | `cash_paid: 0` and `cash_paid: undefined` are different answers. `settlementGross` treats any non-null value as the whole truth, so a 0 written where nothing is known removes a real movement |
+| which day the money moved | per-instalment each handover keeps its own; without the column the aggregate is dated by the **last** cash day, not by the invoice's `payment_date` — which can be the day a *bank* instalment landed, and one quarter over that is a different aangifte |
+| which way it moved | an unreadable direction books as a purchase, so a cash **sale** leaves the drawer out by twice the amount |
+
+16 tests, each named for the cost rather than the field. Every one was verified by breaking the
+decision and watching that test — the one named for it — fail: the `undefined` collapsed to `0`,
+`Math.abs` removed, the last cash day taken as the last row read instead of the latest, the
+aggregate re-dated onto the invoice, instalments handed over without the column to write them
+against, the timestamp left untruncated, the direction guess made silently, and a link with no
+invoice turned into one. Eight mutations, eight named failures.
+
+**One gate stopped being a gate.** `cash-settle-reach.test.ts` pinned the direction guess by
+grepping this file, with its reason attached: _"the value never reaches this far — loadCashSettlementState
+is I/O to its last line."_ That premise expired the moment `readableDirection` became a pure export,
+so the grep is a behavioural test now and the source gate is reduced to the half that genuinely
+cannot be reached: that the I/O module still hands the assembly something to report with.
+
+### incasso-settle: measured, not assumed
+
+The decisions §8 named there were already extracted, and the settle loop's remaining inline
+judgement is not about a euro — it is about whether anyone **hears** about one. `apply_manual_payment`
+refuses by raising, and its eleven refusals split in two: four the RPC is right to make (already
+paid, already covered, locked by an accountant, a status that moved) where the invoice simply stays
+open and visible, and seven that are real — a caller booking for the wrong owner, an invoice with no
+total, and an **idempotency key belonging to a different booking**, which is the double-booking guard
+firing on the one pass that books payments nobody typed.
+
+That split was a bare `msg.includes` chain, matched against strings that live in SQL in another
+file. It is `isExpectedBookingRefusal` now, and its test reads the messages **out of the migrations**
+rather than restating them: reword one and a test fails, instead of a normal hourly race quietly
+becoming an error in the log — or a real failure quietly becoming silence.
+
+**One thing measured and deliberately left alone.** `Array.isArray(applyRows) ? applyRows[0] : undefined`
+looked like a place a booked payment could fall out of the report. It is not: the function is
+`RETURNS TABLE(...)`, so PostgREST always yields an array, and every refusal path raises rather than
+returning zero rows. Handling an object there would be inventing a case that cannot occur.
+
+### The sixth caller that threw the answer away
+
+`bank_auto_book_blocked.sql` is the one migration still open, and both sides of it were written
+deploy-safe: `bank-auto-confirm.ts` probes for the column before filtering on it, and
+`/api/bank/unlink` writes the blockade best-effort so a lagging migration can never break an
+unlink. The write was `await (… as PromiseLike<unknown>)`, which discards the answer — and that
+discards **two** answers at once:
+
+* the column is not there yet — expected, harmless, and the entire reason the write stands apart;
+* the write **failed** while the column is there — the blockade is not recorded, the next cron
+  round makes the same booking again, and under kasstelsel that invoice's BTW lands in the wrong
+  quarter. After the owner tapped Ontkoppelen and read that it was undone.
+
+That is exactly the discrimination `column-probe.ts` was built for, and this is the sixth caller
+straightened out the same way: an absent column stays silent, anything else reaches
+`reportHandledFailure`. Gated as a rule — the error is bound, `columnIsAbsent` is imported rather
+than re-spelled, and a non-absent error reaches the reporter — and verified by breaking each of
+those three in turn.
+
+### The mutation run found a defect in my own test
+
+The fourth control — reword a refusal in the SQL and watch the test catch it — came back **NOT
+CAUGHT**. Two migrations define `apply_manual_payment` (the original and the idempotency-scope
+rewrite) and both carry the full set of messages; the test unioned them, so the superseded file's
+old spelling covered for the live one. The messages are read per defining file now and required in
+all of them, because two spellings of one refusal drifting apart is the same defect from the other
+side. It is the third time in this document that a check written to measure something turned out to
+be measuring the wrong copy of it — and the only reason this one was found is that the mutation was
+run instead of assumed.

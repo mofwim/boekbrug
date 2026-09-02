@@ -19,6 +19,9 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
 import { reportHandledFailure } from "@/lib/report-handled";
+// [AUTO-BOEK-ONGEDAAN] "de kolom is er nog niet" en "de schrijving mislukte" zijn twee
+// verschillende antwoorden, en maar één ervan is ongevaarlijk — zie column-probe.ts.
+import { columnIsAbsent } from "@/lib/column-probe";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { logAuditAction } from "@/lib/audit";
 
@@ -200,15 +203,36 @@ export async function POST(req: Request) {
   // it" — die belofte hield geen uur stand.
   //
   // Eigen update en best-effort, om dezelfde reden als de wis hierboven: de kolom komt uit een met
-  // de hand toegepaste migratie (bank_auto_book_blocked.sql). Zolang die niet is gedraaid faalt
-  // deze schrijving stil en gedraagt alles zich als vandaag — maar het ontkoppelen zelf mag er
-  // nooit op stuklopen.
-  await (pipeline
+  // de hand toegepaste migratie (bank_auto_book_blocked.sql), en het ontkoppelen zelf mag er nooit
+  // op stuklopen.
+  //
+  // Maar niet stil. Dit was een `await (… as PromiseLike<unknown>)` die het antwoord weggooide, en
+  // dat gooide twee verschillende antwoorden tegelijk weg:
+  //
+  //   · de kolom bestaat nog niet → verwacht, ongevaarlijk, en alles gedraagt zich als vandaag.
+  //     Dat is de hele reden dat deze schrijving apart staat, en daar hoort niemand iets van te
+  //     horen.
+  //   · de schrijving MISLUKTE terwijl de kolom er wel is → de blokkade is niet vastgelegd, dus de
+  //     eerstvolgende cron-ronde legt dezelfde koppeling terug. De eigenaar heeft net "Ontkoppelen"
+  //     getikt en gelezen dat het ongedaan is; binnen het uur staat het er weer, en onder het
+  //     kasstelsel staat de BTW van die factuur dan in het verkeerde kwartaal.
+  //
+  // Precies dat onderscheid is waarvoor column-probe.ts bestaat, en het is in deze sessie al vijf
+  // keer op deze manier rechtgezet. Hier is het de zesde.
+  const { error: blockErr } = await (pipeline
     .from("bank_transactions")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .update({ auto_book_blocked_at: new Date().toISOString() } as any)
     .eq("id", transactionId)
-    .eq("user_id", user.id) as unknown as PromiseLike<unknown>);
+    .eq("user_id", user.id) as unknown as PromiseLike<{ error: { message: string; code?: string } | null }>);
+  if (blockErr && !columnIsAbsent(blockErr, "auto_book_blocked_at")) {
+    reportHandledFailure({
+      tag: "AUTO-BOEK-ONGEDAAN",
+      message: "de eigenaar draaide een automatische boeking terug, maar dat kon niet worden vastgelegd — de cron boekt hem binnen het uur opnieuw",
+      severity: "data-integrity",
+      context: { userId: user.id, transactionId, error: blockErr.message },
+    });
+  }
 
   // 4. Restore the invoice. SESSION client so the B.4 trigger has auth context. incoming →
   //    'received', else 'sent'. 'overdue' is never stored (recomputed from due_date), and

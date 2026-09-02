@@ -12,6 +12,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { columnIsAbsent, columnExists, resetColumnProbeCacheForTests } from "./column-probe";
 
 // ── columnIsAbsent, the discrimination itself ───────────────────────────────
@@ -116,4 +119,48 @@ test("[KAS-PROBE] a code-less Error from fetchAllRows is still classified correc
       `"${message}" would have dropped paid_on and re-dated every cash instalment`,
     );
   }
+});
+
+// ── [AUTO-BOEK-ONGEDAAN] The sixth caller, which threw the answer away ──────
+//
+// A source gate, and only because the write is I/O to its last line: /api/bank/unlink records that
+// the owner undid an automatic booking, so the cron does not make it again within the hour. That
+// write is deliberately best-effort — a lagging migration must never break an unlink — and it was
+// `await (… as PromiseLike<unknown>)`, which discards the answer entirely.
+//
+// Discarding it collapses the same two answers this whole module exists to separate: "the column
+// is not there yet" (expected, and the reason the write stands apart) and "the write failed"
+// (the blockade is not recorded, so the cron re-books it, and under kasstelsel that invoice's BTW
+// lands in the wrong quarter — after the owner tapped Ontkoppelen and read that it was undone).
+//
+// Pinned as a RULE, not a spelling: the error is inspected, an absent column stays silent, and
+// anything else reaches the reporter. Three gates written in this repo pinned spellings instead,
+// and each one failed the very fix its own comment asked for.
+
+test("[AUTO-BOEK-ONGEDAAN] the unlink write tells an absent column apart from a failed one", () => {
+  const src = readFileSync(path.join(process.cwd(), "src", "app", "api", "bank", "unlink", "route.ts"), "utf-8");
+
+  // The write's error is bound rather than dropped …
+  assert.match(
+    src,
+    /const \{ error: \w+ \}\s*=\s*await[\s\S]{0,400}?auto_book_blocked_at/,
+    "the auto_book_blocked_at write discards its answer again — a failed blockade is now indistinguishable from a lagging migration",
+  );
+  // … the absent-column case is recognised through THIS module, not re-spelled …
+  assert.match(
+    src,
+    /columnIsAbsent\([\s\S]{0,80}?auto_book_blocked_at/,
+    "the unlink route no longer uses columnIsAbsent — a statement timeout would read as 'the migration has not run'",
+  );
+  // … and everything that is not that reaches somebody.
+  assert.match(
+    src,
+    /!columnIsAbsent\([\s\S]{0,120}?\)\s*\)\s*\{[\s\S]{0,200}?reportHandledFailure/,
+    "a failed blockade is swallowed again — the cron will re-book it and nobody will know",
+  );
+  assert.match(
+    src,
+    /import \{ columnIsAbsent \} from "@\/lib\/column-probe"/,
+    "the discrimination is spelled locally instead of imported — that is how five copies of it drifted apart the first time",
+  );
 });

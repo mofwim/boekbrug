@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { buildCashSettlements, type SettleableInvoice } from "./cash";
+import { readableDirection } from "./cash-settle-assemble";
 
 const read = (...p: string[]) => readFileSync(path.join(process.cwd(), ...p), "utf-8");
 
@@ -44,20 +45,36 @@ test("[KAS-RICHTING] and a direction nobody can read books it as a purchase — 
 });
 
 test("[KAS-RICHTING] the reconcile does not take that guess silently", () => {
-  // A source gate, because the value never reaches this far: loadCashSettlementState is I/O to its
-  // last line, and the branch is unreachable on today's data (605 invoices, not one null). What
-  // can be pinned is that the call site still goes through the reporting helper rather than back
-  // to a bare ternary — which is precisely the edit a later reader would make to "simplify" it.
+  // This USED to be a source gate, with the reason written next to it: "the value never reaches
+  // this far — loadCashSettlementState is I/O to its last line". That premise has expired.
+  // readableDirection is a pure export in cash-settle-assemble.ts now, so the guess can be watched
+  // being made instead of being grepped for, which is a stronger thing to know.
+  const heard: unknown[] = [];
+  for (const bad of [null, undefined, "", "OUTGOING", "uitgaand", "sale"]) {
+    assert.equal(readableDirection(bad, (v) => heard.push(v)), "incoming", `${JSON.stringify(bad)} no longer defaults to a purchase`);
+  }
+  assert.equal(heard.length, 6, "a guess was made without anyone being told — that is the whole defect");
+  for (const good of ["incoming", "outgoing"]) {
+    assert.equal(readableDirection(good, () => assert.fail("a readable direction was reported as a guess")), good);
+  }
+});
+
+test("[KAS-RICHTING] …and the reconcile is what turns hearing it into telling somebody", () => {
+  // The half that stays a source gate, and only this half: a pure function cannot report, so the
+  // wiring from the guess to reportHandledFailure lives in the I/O module and is unreachable from
+  // here. Pinned as a RULE — the callback is passed and it reaches the reporter — rather than as a
+  // spelling, because the last three gates written in this repo pinned spellings and each one
+  // failed the very fix its own comment asked for.
   const src = read("src", "lib", "cash-settle.ts");
   assert.match(
     src,
-    /direction: readableDirection\(r\.direction, \{ userId, invoiceId: r\.id \}\)/,
-    "the direction coercion no longer goes through readableDirection",
+    /onUnreadableDirection:[\s\S]{0,200}?reportUnreadableDirection/,
+    "the assembly no longer hands the reconcile anything to report an unreadable direction with",
   );
   assert.match(
     src,
-    /function readableDirection[\s\S]{0,600}?reportHandledFailure/,
-    "readableDirection no longer reports an unreadable direction",
+    /function reportUnreadableDirection[\s\S]{0,600}?reportHandledFailure/,
+    "the direction report no longer reaches the failure reporter — the guess is silent again",
   );
 });
 
