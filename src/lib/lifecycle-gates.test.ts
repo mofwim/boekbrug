@@ -24233,3 +24233,83 @@ test("[RPC-ANON-REVOKE] a migration that re-opens the server-only door says so i
     assert.ok(grens.includes(f), `rpc_anon_revoke.sql no longer names ${f} as one of its undoers`);
   }
 });
+
+// ── [AFSCHRIFT-NOEMT] ─────────────────────────────────────────────────────────────────────────
+//
+// Measured three times on real books, on 2 September 2026:
+//
+//   17-08  −€  797,86  reference "2919045"  → invoice 2919045 (HVO Meat), €797,86, PAID
+//   17-08  −€1.056,87  reference "2034382"  → invoice 2034382 (CAN Vlees), €1.056,87, PAID
+//   27-07  −€   40,00  reference "26 00623" → invoice FAC/26-26/00623, €40,00, PAID
+//
+// Each was already settled by a manual instalment with the same amount on the same day. What the
+// screen offered instead: three invoices of €2.449 / €2.822 / €3.008; a PARTIAL payment leaving
+// €161,05 open forever; and a different €40 invoice under a green check. Every one of those
+// confirms books a second payment for money that moved once. Across the account, 43 unlinked lines
+// name a paid invoice of exactly their own amount (€30.580,56) and 10 name an archived one.
+//
+// The cause is not scoring. /api/bank/match reads `.neq("status","paid")` and isEligible drops
+// paid/archived/draft/processing BEFORE a signal is computed — so the reference the bank printed,
+// the strongest evidence in the system, is never entered into the comparison. The route already
+// owns a pass that scores paid invoices ([BANK-PAID-EXPLAINED]) and its own comment bounds it to
+// lines with `outcome === 'none'`: all three cases had a weak candidate, so it never reached them.
+//
+// The question is now asked first, and this gate holds the three places it can be silenced again.
+test("[AFSCHRIFT-NOEMT] the invoice the bank names outranks the invoice the app guessed", () => {
+  const beslissing = code("src/lib/bank-reference-settled.ts");
+  const deur = code("src/app/api/bank/match/route.ts");
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // 1. ONE definition of "a reference". The parser and the normalizer are injected from the
+  //    matcher — a second opinion here is how the screen and the server start disagreeing about
+  //    what the bank wrote.
+  assert.match(beslissing, /parseReferenceNumbers: \(reference: string \| null\) => string\[\]/,
+    "the matcher's own parser must be handed in, never re-implemented");
+  assert.doesNotMatch(beslissing, /\bsplit\(","\)|isReferenceNumberToken/,
+    "bank-reference-settled.ts is parsing references itself again");
+  // A number without the amount is NAMED, never "explained": a reference can carry a customer or
+  // order number, and this module is read by a screen that tells the owner money is accounted for.
+  assert.match(beslissing, /amountAgrees: Number\.isFinite\(total\) && Math\.abs\(total - lineAmount\) < CENT/);
+
+  // 2. The server asks it, of the invoices the matcher may not offer, and only when the suggestion
+  //    is NOT already resting on that same reference (agreement is not a contradiction).
+  // Anchored on THIS read's own column list, not on `.eq("status","paid")` — that line occurs
+  // three times in this route, so matching it proved nothing about the one that answers the
+  // question. (The control refused to fire, which is how the vacuity was found.)
+  assert.match(
+    deur,
+    /\.select\("id, invoice_number, total_inc_btw, amount_paid, status, client_name, invoice_date"\)\s*\n\s*\.eq\("status", "paid"\)/,
+    "the route no longer reads the paid invoices the reference has to be compared against",
+  );
+  assert.match(deur, /const OFFERABLE = new Set\(\["received", "sent", "overdue"\]\)/,
+    "…nor the archived/draft/processing ones the matcher also drops");
+  assert.match(deur, /const winnerHasRef = Array\.isArray\(m\.best\?\.signals\) && m\.best!\.signals\.includes\("reference"\)/,
+    "the question must be skipped when the bank already agrees with the winner");
+  assert.match(deur, /referenceOutranksSuggestion\(verdict, m\.best\?\.invoiceId \?\? null\) \? verdict : null/,
+    "…and the outranking rule must live in the module, not in an assumption here");
+
+  // 3. The screen. Three separate ways this became a one-tap confirm on the wrong invoice, and all
+  //    three are held: the pre-selection that makes the button live, the card's own fallback to the
+  //    winner, and the bulk action that books without showing anything at all.
+  assert.match(scherm, /if \(s\.outcome === 'auto' && s\.best && !s\.referencedInvisible\) pre\[s\.transactionId\] = s\.best\.invoiceId/,
+    "the winner is pre-selected again while the bank names another invoice");
+  assert.match(scherm, /\(s\.outcome === 'auto' && !s\.referencedInvisible \? s\.best : null\)/,
+    "the card falls back to the winner again — that is what drew the green check and the partial-payment line");
+  assert.match(scherm, /if \(s\.referencedInvisible\) return false/,
+    "isServerAutoBookable no longer excludes it — 'zekere betaling' would talk over the bank");
+  // And the sentence itself is on the screen, with the number in it.
+  assert.match(scherm, /t\('bank\.noemt\.kop', \{ nummer: s\.referencedInvisible\.invoiceNumber \}\)/,
+    "the panel must quote the number, so the owner checks their own statement and not our confidence");
+
+  // 4. Three facts, three sentences. "Already paid for exactly this amount" is a claim about money;
+  //    "on Ignored" is a claim about a choice the owner made; "a different amount" is neither and
+  //    may not borrow the certainty of either.
+  for (const key of ["bank.noemt.betaald", "bank.noemt.genegeerd", "bank.noemt.andersBedrag"]) {
+    assert.ok(scherm.includes(`'${key}'`), `${key} is no longer rendered — the three facts have collapsed into one`);
+  }
+  // The warning about a double payment belongs to the money case ALONE.
+  const waarschuwing = scherm.indexOf("bank.noemt.controleer");
+  assert.ok(waarschuwing > 0, "the double-payment warning is gone");
+  assert.match(scherm, /s\.referencedInvisible\.amountAgrees && s\.referencedInvisible\.status !== 'archived' && \(/,
+    "…and it must stay conditioned on the amount agreeing on a PAID invoice, or it warns where it cannot know");
+});

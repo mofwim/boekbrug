@@ -45,6 +45,10 @@
 //
 // Pure. Run: npx tsx --test src/lib/bank-reference-settled.test.ts
 
+// [CENT] Rounding to cents is defined in exactly one place in this app. What is left open on an
+// invoice is money, and money rounded a second way is money that disagrees with itself.
+import { round2 } from '@/lib/invoice-totals'
+
 /** One invoice the matcher will not offer — paid, archived, or otherwise out of the running. */
 export interface InvisibleInvoice {
   id: string
@@ -139,7 +143,7 @@ export function referencedInvisibleInvoice(
         clientName: (inv.clientName ?? '').trim() || null,
         invoiceDate: inv.invoiceDate ?? null,
         status: (inv.status ?? '').trim(),
-        stillOpen: Math.max(0, Math.round((total - paid) * 100) / 100),
+        stillOpen: Math.max(0, round2(total - paid)),
         amountAgrees: Number.isFinite(total) && Math.abs(total - lineAmount) < CENT,
       },
     })

@@ -3212,3 +3212,118 @@ test("[BANK-STAND] the bank screen says what is waiting, and says nothing while 
   // En de oude vaste zin is weg: die beschreef wat het scherm DOET, elke dag hetzelfde.
   assert.doesNotMatch(html, /Koppel je bank of upload je bankafschrift\. We koppelen/, "the static intro is back");
 });
+
+// ── [AFSCHRIFT-NOEMT] ─────────────────────────────────────────────────────────────────────────
+//
+// Measured three times on real books. The bank line printed an invoice number, that invoice was
+// already settled for exactly this amount, and the screen offered a DIFFERENT one — once under a
+// green check ("Dit bedrag komt overeen met je bankafschrift"), once as a partial payment that
+// would have left EUR 161,05 open forever. The matcher never saw the named invoice: paid and
+// archived rows are dropped before a single signal is scored, so the strongest evidence there is
+// was never entered into the comparison.
+//
+// Nothing else can see this panel. It only renders for a state the server produces, and the
+// Playwright sweep never logs in — so a render is the only gate that can read what the owner reads
+// before the money-moving tap.
+test("[AFSCHRIFT-NOEMT] the bank naming another invoice leads the card, and takes the confirm with it", async () => {
+  const { TxCard } = await import("../../src/app/dashboard/bank/BankClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  // HVO Meat, 17-08-2026, −797,86, reference "2919045". Invoice 2919045 is EUR 797,86 and paid;
+  // the three invoices offered on screen were EUR 2.449,64 / 2.822,27 / 3.008,71.
+  const draw = (over: Record<string, unknown>) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(TxCard as any, {
+          s: {
+            transactionId: "t1", date: "2026-08-17", amount: -797.86, description: "2919045",
+            counterpart: "HVO Meat", reference: "2919045", outcome: "auto",
+            best: {
+              invoiceId: "wrong", invoiceNumber: "3420623", clientName: "HVO Meat",
+              amount: 2449.64, date: "2026-08-21", signals: ["amount", "counterpart", "date"],
+            },
+            candidates: [{
+              invoiceId: "wrong", invoiceNumber: "3420623", clientName: "HVO Meat",
+              amount: 2449.64, date: "2026-08-21", signals: ["amount", "counterpart", "date"],
+            }],
+            ...over,
+          },
+          selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+          confirmedNumbers: [], batchEligible: false, batchChecked: false,
+          onBatchToggle() {}, onSelect() {}, onConfirm() {}, onAttach() {}, onIgnore() {},
+          onRestore() {}, onOpenFile() {}, onCorrect() {},
+        }))),
+  );
+
+  const named = {
+    invoiceId: "hvo", invoiceNumber: "2919045", clientName: "HVO Meat",
+    invoiceDate: "2026-07-17", status: "paid", stillOpen: 0, amountAgrees: true,
+  };
+  const html = draw({ referencedInvisible: named });
+  const text = html.replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+
+  // What the bank said is on the screen, with the number in it — the owner checks their own
+  // statement, not the app's confidence.
+  assert.match(text, /Je afschrift noemt factuur 2919045/);
+  assert.match(text, /HVO Meat/);
+  assert.match(text, /al als betaald/, "…and what that means for this line");
+  assert.match(text, /tweede betaling/, "…and what confirming would do");
+
+  // The green "this amount matches your statement" claim is gone — it was the sentence that made a
+  // guess look settled, and it is the exact sentence in the screenshot.
+  assert.doesNotMatch(text, /Dit bedrag komt overeen met je bankafschrift/);
+  // And the partial-payment offer with it. This is the CAN Vleesgroothandel card: "€ 1.056,87
+  // wordt geboekt. Daarna staat nog € 161,05 open" — on an invoice nobody had paid, for money
+  // already accounted for. It is drawn from the SELECTED candidate, and there is no longer one.
+  assert.doesNotMatch(text, /Deelbetaling/);
+
+  // Without the verdict the card behaves exactly as it always did. A fix that quietly emptied every
+  // card would be its own defect, and this is the assertion that would catch it.
+  const zonder = draw({}).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+  assert.match(zonder, /Dit bedrag komt overeen met je bankafschrift/);
+  assert.match(zonder, /Deelbetaling/, "the ordinary card still says what the confirm will do");
+});
+
+test("[AFSCHRIFT-NOEMT] three different facts get three different sentences", async () => {
+  const { TxCard } = await import("../../src/app/dashboard/bank/BankClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const draw = (named: Record<string, unknown>) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(TxCard as any, {
+          s: {
+            transactionId: "t1", date: "2026-08-17", amount: -797.86, description: "2919045",
+            counterpart: "HVO Meat", reference: "2919045", outcome: "choice",
+            best: null, candidates: [], referencedInvisible: named,
+          },
+          selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+          confirmedNumbers: [], batchEligible: false, batchChecked: false,
+          onBatchToggle() {}, onSelect() {}, onConfirm() {}, onAttach() {}, onIgnore() {},
+          onRestore() {}, onOpenFile() {}, onCorrect() {},
+        }))),
+  ).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+  const base = { invoiceId: "x", invoiceNumber: "2919045", clientName: "HVO Meat", invoiceDate: "2026-07-17" };
+
+  // Already paid for this exact amount: a claim about MONEY, and the only one that may warn.
+  const betaald = draw({ ...base, status: "paid", stillOpen: 0, amountAgrees: true });
+  assert.match(betaald, /al als betaald/);
+  assert.match(betaald, /tweede betaling/);
+
+  // On Ignored: a claim about a CHOICE the owner made — nothing is paid, so nothing may say it is.
+  const genegeerd = draw({ ...base, status: "archived", stillOpen: 250, amountAgrees: true });
+  assert.match(genegeerd, /Genegeerd/);
+  assert.doesNotMatch(genegeerd, /al als betaald/, "archived is not paid");
+  assert.doesNotMatch(genegeerd, /tweede betaling/, "…so confirming here is not a double payment");
+
+  // A different amount: the bank names it, and that is ALL that may be said. Borrowing the
+  // certainty of the first case is how a warning stops being read.
+  const anders = draw({ ...base, status: "paid", stillOpen: 0, amountAgrees: false });
+  assert.match(anders, /is niet dit bedrag/);
+  assert.doesNotMatch(anders, /tweede betaling/);
+});

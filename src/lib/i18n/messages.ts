@@ -828,6 +828,36 @@ export const MESSAGES = {
 
   'bank.koppelen': { nl: 'Koppelen', ar: 'ربط', en: 'Link' },
   'bank.bevestig': { nl: 'Bevestig', ar: 'أكِّد', en: 'Confirm' },
+  // [AFSCHRIFT-NOEMT] Je bank noemt een factuur die de app niet kon aanbieden. De zinnen zeggen
+  // eerst WAT er staat (het nummer, uit het afschrift van de eigenaar zelf), dan wat dat betekent —
+  // nooit andersom. Gemeten: drie regels boden een ANDERE factuur aan, één onder een groen vinkje
+  // en één als deelbetaling; bevestigen had een tweede betaling geboekt voor geld dat één keer is
+  // gegaan.
+  'bank.noemt.kop': {
+    nl: 'Je afschrift noemt factuur {nummer}',
+    ar: 'كشفك يسمّي الفاتورة {nummer}',
+    en: 'Your statement names invoice {nummer}',
+  },
+  'bank.noemt.betaald': {
+    nl: 'Die staat al als betaald, voor precies dit bedrag. Deze bankregel is dus vrijwel zeker díé betaling — en niet een van de facturen hieronder.',
+    ar: 'وهي مسجّلة عندك كمدفوعة بهذا المبلغ بالضبط. فهذا البند البنكي هو على الأرجح تلك الدفعة نفسها — لا إحدى الفواتير أدناه.',
+    en: 'It is already marked paid, for exactly this amount. So this bank line is almost certainly THAT payment — not one of the invoices below.',
+  },
+  'bank.noemt.genegeerd': {
+    nl: 'Die staat op Genegeerd. Zolang dat zo is kan de app hem niet aanbieden — haal hem terug als deze betaling er wél bij hoort.',
+    ar: 'وهي في «المتجاهَلة». وما دامت كذلك لا يستطيع التطبيق عرضها — أعِدها إن كانت هذه الدفعة تخصّها.',
+    en: 'It is on Ignored. While it is, the app cannot offer it — bring it back if this payment belongs to it.',
+  },
+  'bank.noemt.andersBedrag': {
+    nl: 'Het bedrag op die factuur is niet dit bedrag, dus zeker is het niet — maar je bank noemt hem, en de facturen hieronder noemt hij niet.',
+    ar: 'مبلغ تلك الفاتورة ليس هذا المبلغ، فليس الأمر مؤكداً — لكنّ بنكك يسمّيها، ولا يسمّي أياً من الفواتير أدناه.',
+    en: 'That invoice is not for this amount, so it is not certain — but your bank names it, and it names none of the invoices below.',
+  },
+  'bank.noemt.controleer': {
+    nl: 'Controleer dit eerst. Bevestigen boekt een tweede betaling voor geld dat één keer is gegaan.',
+    ar: 'تحقّق من هذا أولاً. التأكيد سيقيّد دفعة ثانية لمالٍ تحرّك مرة واحدة.',
+    en: 'Check this first. Confirming books a second payment for money that moved once.',
+  },
   'bank.bevestigBetaling': { nl: 'Bevestig betaling', ar: 'أكِّد الدفعة', en: 'Confirm the payment' },
   'bank.alBevestigd': { nl: 'Al bevestigd ✓', ar: 'مؤكَّدة مسبقاً ✓', en: 'Already confirmed ✓' },
   'bank.selecteerBevestigen': { nl: 'Selecteer voor bevestigen', ar: 'حدّد للتأكيد', en: 'Select to confirm' },

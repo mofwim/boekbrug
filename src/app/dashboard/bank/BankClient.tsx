@@ -87,6 +87,11 @@ function isReadableBankFile(name: string): boolean {
 // whether it is worth asking, and what to tell the owner is waiting.
 function isServerAutoBookable(s: Suggestion): boolean {
   if (s.outcome !== 'auto' || !s.best) return false
+  // [AFSCHRIFT-NOEMT] The statement names an invoice this suggestion is not. That is the one
+  // sentence a bulk action may never talk over: "zekere betaling" means the bank agrees, and here
+  // the bank is pointing somewhere else. Measured — one of the three lines that named an
+  // already-paid invoice reached this screen with a suggestion the server called 'auto'.
+  if (s.referencedInvisible) return false
   const sig = s.best.signals
   if (!sig.includes('amount')) return false // the amount is the money-truth — required by both tiers
   const certain = sig.includes('reference') || sig.includes('iban')
@@ -167,6 +172,18 @@ interface Suggestion {
   // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line already booked on invoices.
   // null = nothing linked yet, or links older than amount_applied (then we say nothing).
   appliedAmount?: number | null
+  // [AFSCHRIFT-NOEMT] The invoice this line's own reference NAMES, when the matcher could not
+  // offer it (paid, archived). Null in the ordinary case — and when the suggestion below already
+  // rests on that same reference, which is agreement, not a contradiction.
+  referencedInvisible?: {
+    invoiceId: string
+    invoiceNumber: string
+    clientName: string | null
+    invoiceDate: string | null
+    status: string
+    stillOpen: number
+    amountAgrees: boolean
+  } | null
   // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
   explainedByPaid?: boolean
   // [CIRKEL] This debit matches an invoice STILL IN THE VERIFY QUEUE — the document exists, one
@@ -618,7 +635,12 @@ export default function BankClient() {
           setData(mrJson)
           const pre: Record<string, string> = {}
           for (const s of mrJson.suggestions) {
-            if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
+            // [AFSCHRIFT-NOEMT] Pre-selecting the winner is what makes "Bevestig betaling" one tap.
+            // It may not be one tap while the statement names an invoice the app could not offer:
+            // that is precisely the card in the screenshot — a green check over a bill the bank
+            // never mentioned, with a live confirm under it. The owner can still select this
+            // candidate by tapping it; nothing is taken away except the accident.
+            if (s.outcome === 'auto' && s.best && !s.referencedInvisible) pre[s.transactionId] = s.best.invoiceId
           }
           setSelected(pre)
         }
@@ -2679,7 +2701,11 @@ export function TxCard({
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
   const doneNumbers = s.coveredNumbers ?? []
   const selectedCand =
-    s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
+    s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ??
+    // [AFSCHRIFT-NOEMT] No silent fallback to the winner while the bank names something else: that
+    // fallback is what put a confirmable amount under a green check on a bill the statement never
+    // mentioned. An explicit tap on a candidate still selects it — that path is untouched.
+    (s.outcome === 'auto' && !s.referencedInvisible ? s.best : null)
 
   // [BANK-MULTI-CONFIRM] A transaction whose reference lists more than one invoice
   // number covers several invoices. Instead of "pick ONE" (which silently drops the
@@ -3563,8 +3589,41 @@ export function TxCard({
         </div>
       )}
 
+      {/* ── [AFSCHRIFT-NOEMT] What the BANK says this payment is ────────────────────────────────
+          Measured three times on real books: the statement printed an invoice number, that invoice
+          was already settled for exactly this amount, and the screen offered a DIFFERENT one — once
+          under a green check, once as a partial payment that would have left EUR 161,05 open
+          forever. The matcher never saw the named invoice: paid and archived rows are dropped
+          before a single signal is scored, so the strongest evidence there is never entered.
+          It leads the card, above the guesses, and it takes the confirm with it. */}
+      {!wasMulti && s.referencedInvisible && (
+        <div style={{
+          marginTop: 10, padding: '11px 12px', borderRadius: R.md,
+          background: '#FEEFC3', color: '#7A4F00', border: '1px solid #FDE293',
+          fontSize: 12.5, lineHeight: 1.5, textAlign: 'start',
+        }}>
+          <p style={{ margin: 0, fontWeight: 700 }}>
+            {t('bank.noemt.kop', { nummer: s.referencedInvisible.invoiceNumber })}
+            {s.referencedInvisible.clientName ? ` · ${s.referencedInvisible.clientName}` : ''}
+          </p>
+          <p style={{ margin: '4px 0 0' }}>
+            {/* Three different facts, three different sentences. "Already paid for exactly this
+                amount" is a claim about money; "on Ignored" is a claim about a choice the owner
+                made; "a different amount" is neither, and may not borrow the certainty of either. */}
+            {!s.referencedInvisible.amountAgrees
+              ? t('bank.noemt.andersBedrag')
+              : s.referencedInvisible.status === 'archived'
+                ? t('bank.noemt.genegeerd')
+                : t('bank.noemt.betaald')}
+          </p>
+          {s.referencedInvisible.amountAgrees && s.referencedInvisible.status !== 'archived' && (
+            <p style={{ margin: '6px 0 0', fontWeight: 600 }}>{t('bank.noemt.controleer')}</p>
+          )}
+        </div>
+      )}
+
       {!wasMulti && s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} />
+        <CandidateRow cand={s.best} selected={!s.referencedInvisible} emphasis={!s.referencedInvisible} onOpenFile={onOpenFile} onCorrect={onCorrect} />
       )}
 
       {!wasMulti && s.outcome === 'choice' && (
@@ -3646,7 +3705,11 @@ export function TxCard({
         )
       })()}
 
-      {/* Confirm */}
+      {/* Confirm.
+          [AFSCHRIFT-NOEMT] While the statement names an invoice the app could not offer, this is
+          not a one-tap confirm. The owner may still choose a candidate deliberately — the button
+          comes back the moment they select one — but nothing is pre-selected, so the tap can no
+          longer happen on the way past. */}
       {!wasMulti && s.outcome !== 'none' && (
         <button
           disabled={!selectedInvoiceId || processing}
