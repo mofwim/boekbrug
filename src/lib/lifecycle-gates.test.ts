@@ -13019,6 +13019,55 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
   }
 });
 
+test("[RLS-AAN] een migratie die een tabel maakt, zet er row level security op", () => {
+  // Gemeten op productie op 2 september, als het demoaccount met een openbaar wachtwoord:
+  //   · 612 facturen in de database, 17 zichtbaar, 0 van iemand anders;
+  //   · 1551 banktransacties, 15 zichtbaar, 0 van iemand anders;
+  //   · een UPDATE op de 555 rijen van de echte eigenaar raakte er 0;
+  //   · een INSERT met andermans receiver_id werd geweigerd — 42501, new row violates row-level
+  //     security policy.
+  // En de tegenproef: als de echte eigenaar zijn 555 facturen zichtbaar, waarvan 0 van de demo. De
+  // scheiding is dus identiteitsafhankelijk en geldt beide kanten op. Alle 35 tabellen in `public`
+  // hebben RLS aan staan.
+  //
+  // Dat is de stand van vandaag, en die stand is precies wat een test hoort vast te houden. Het
+  // risico is niet dat de policies van nu fout zijn — dat is gemeten — maar dat de tabel van
+  // volgende maand zonder RLS naar productie gaat. Dan is er geen foutmelding en geen leeg scherm:
+  // alles werkt, en iedereen ziet alles. seed-demo-account.sql leunt er in zoveel woorden op
+  // ("RLS already isolates it, so the screenshots are clean by construction") en sinds het
+  // wachtwoord van dat account openbaar is, is die aanname het enige wat tussen een vreemde en
+  // 612 facturen van een echt bedrijf staat.
+  //
+  // Deze poort kan geen database bevragen (de build draait zonder secrets, LIVE_GAAN.md §0), dus
+  // hij leest de migraties. scripts/verify-tenant-isolation.mts doet de echte proef tegen een
+  // levende database, en de meting hierboven komt daarvandaan.
+  const zonderRls: string[] = [];
+  for (const file of readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql"))) {
+    // Commentaar eerst weg. De eerste versie van deze scan las de ZIN "Idempotent: CREATE TABLE IF
+    // NOT EXISTS + guarded policies" in accountant_subject_status.sql als een tabel met de naam
+    // "if" — een poort die een toelichting aanziet voor code beschuldigt uiteindelijk iets dat
+    // klopt, en dat is de soort poort die wordt weggeklikt.
+    const sql = code(`supabase/migrations/${file}`)
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .split("\n").map((r) => r.replace(/--.*$/, "")).join("\n");
+
+    const gemaakt = [...sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?([A-Za-z0-9_]+)/gi)]
+      .map((m) => m[1].toLowerCase());
+    if (gemaakt.length === 0) continue;
+
+    const aan = new Set(
+      [...sql.matchAll(/ALTER\s+TABLE\s+(?:public\.)?([A-Za-z0-9_]+)\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gi)]
+        .map((m) => m[1].toLowerCase()),
+    );
+    for (const t of gemaakt) if (!aan.has(t)) zonderRls.push(`${file}: ${t}`);
+  }
+
+  assert.deepEqual(zonderRls, [],
+    "deze migraties maken een tabel en zetten er geen row level security op. Zonder RLS is de " +
+    "tabel voor iedere ingelogde gebruiker leesbaar, en dat valt nergens op — er breekt niets, er " +
+    `is geen foutmelding, iedereen ziet gewoon alles: ${zonderRls.join(", ")}`);
+});
+
 test("[DEMO-DICHT] elke route die mail verstuurt of geld kost, is dicht voor het demoaccount", () => {
   // Het wachtwoord van demo@boekbrug.nl staat in een PUBLIEKE repository en staat daar voorgoed —
   // roteren helpt tegen het vorige wachtwoord, niet tegen `git log -p`. De bescherming is dus geen
