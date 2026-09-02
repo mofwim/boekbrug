@@ -30,6 +30,8 @@ import { explainableReasons, explainWaiting } from "./why-waiting";
 import { categoryHint } from "./category-wait";
 // [GEGROND-STAAT-IN] De getuige die mag invallen voor een ontbrekende zelfscore — en alleen die.
 import { moneyGroundedInText } from "./amount-grounding";
+// [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
+import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -12930,6 +12932,166 @@ test("[GEGROND-STAAT-IN] the witness reaches BOTH doors, and stays the narrow on
     "a booking that leaned on the document instead of a score must carry its own name");
   assert.ok(/grondedInPlaatsVanScore \? "clean_grounded_in_document" : "clean_high_confidence"/.test(beslis),
     "the two doors may not collapse back into one reason — the ternary that tells them apart is gone");
+});
+
+test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exists", () => {
+  // Een landingspagina is de enige plek in dit product waar een belofte kan blijven staan nadat
+  // het scherm eronder is verdwenen — niemand die aan /dashboard/uren werkt komt langs een
+  // marketingtekst. /voor-boekhouders stelt de regel al ("ONLY WHAT EXISTS. No binnenkort"); dit
+  // is die regel als test in plaats van als voornemen.
+  for (const route of claimedRoutes()) {
+    assert.ok(existsSync(`src/app/dashboard/${route}/page.tsx`),
+      `een segmentpagina belooft /dashboard/${route}, en dat scherm bestaat niet. Haal de belofte ` +
+      "weg of bouw het scherm — een pagina die iets belooft dat er niet is, kost het hele kanaal");
+  }
+
+  for (const p of SEGMENT_PAGES) {
+    // De deur zelf.
+    assert.ok(existsSync(`src/app/voor-${p.slug}/page.tsx`), `route /voor-${p.slug} ontbreekt`);
+    // …en in de sitemap, want anders bestaat hij voor niemand. De publieke rooktest loopt élke
+    // URL uit sitemap.xml af, dus deze regel levert meteen een echte laadcontrole op.
+    assert.match(code("src/app/sitemap.ts"), new RegExp(`/voor-${p.slug}\``),
+      `/voor-${p.slug} staat niet in de sitemap`);
+    // …en de middleware moet hem doorlaten. Dit is de derde bron uit public-surface.spec.ts, maar
+    // dan in een unit-test: de rooktest ving deze fout pas als láátste stap van `npm run gates`,
+    // na een volledige build. Alle drie de deuren stonden in de sitemap en gaven een 307 naar
+    // /login — onzichtbaar voor iedere bezoeker en iedere crawler, en het scherm zelf mankeerde
+    // niets. Een lijst die met de hand wordt bijgehouden naast een automatische regel faalt altijd
+    // zo; deze regel leidt de eis af uit SEGMENT_PAGES in plaats van hem te herhalen.
+    // isPublic() en niet de lijst zelf: dit is de beslissing die de middleware werkelijk neemt,
+    // prefixregel en al, in plaats van een kopie van de gegevens waarop hij stoelt.
+    assert.ok(isPublic(`/voor-${p.slug}`),
+      `/voor-${p.slug} komt niet door de middleware — elke uitgelogde bezoeker krijgt /login, en ` +
+      "dat is precies de lezer voor wie deze pagina geschreven is");
+
+    // [NO-SILENT-EMPTY], toegepast op marketing: de eerlijke sectie mag nooit leeg zijn. Een
+    // pagina die alleen kan opsommen wat wél kan, is een pagina waar de lezer bij het eerste
+    // gemis achter komt in plaats van vooraf.
+    assert.ok(p.nietDit.length > 0,
+      `${p.slug}: geen enkele "wat dit niet doet" — dat is geen product zonder grenzen, dat is een ` +
+      "pagina die ze verzwijgt");
+    assert.ok(p.stappen.length >= 3, `${p.slug}: te weinig stappen om iets uit te leggen`);
+    // De belofte is de H1. Hij mag niet over boekhouden gaan maar over wat de lezer terugkrijgt.
+    assert.doesNotMatch(p.belofte.toLowerCase(), /boekhoud/,
+      `${p.slug}: de kop verkoopt "boekhouding". Niemand wordt wakker met die wens — verkoop de ` +
+      "stapel die weggaat");
+  }
+
+  // Drie deuren, drie slugs, geen dubbele.
+  const slugs = SEGMENT_PAGES.map((p) => p.slug);
+  assert.equal(new Set(slugs).size, slugs.length, "twee segmenten delen een slug");
+
+  // De route moet zijn EIGEN pagina ophalen. segmentBySlug() geeft undefined terug bij een
+  // hernoemde slug, en de routes gebruiken `!` — dus een hernoeming zonder deze regel levert geen
+  // typefout op maar een lege pagina in productie.
+  for (const p of SEGMENT_PAGES) {
+    assert.match(code(`src/app/voor-${p.slug}/page.tsx`), new RegExp(`segmentBySlug\\('${p.slug}'\\)`),
+      `src/app/voor-${p.slug}/page.tsx haalt niet zijn eigen segment op — na een hernoeming van de ` +
+      "slug rendert deze route niets, en geen enkele typecontrole ziet dat");
+  }
+
+  // Elke link op de deur wijst naar een pagina die bestaat. Dezelfde regel als hierboven, maar dan
+  // voor de uitweg: een landingspagina met een dode "Gratis beginnen" is erger dan geen pagina.
+  const hrefs = [...code("src/components/SegmentVoordeur.tsx").matchAll(/href="(\/[^"#?]*)/g)]
+    .map((m) => m[1]).filter((h) => h !== "/");
+  assert.ok(hrefs.length >= 2, "de deur heeft geen knoppen meer — of de scan leest ze niet");
+  for (const h of new Set(hrefs)) {
+    assert.ok(existsSync(`src/app${h}/page.tsx`), `SegmentVoordeur linkt naar ${h}, en dat bestaat niet`);
+  }
+});
+
+test("[SEGMENT-VOORDEUR] geen enkele deur belooft dat een factuur zichzelf verstuurt", () => {
+  // Dit is de fout die IK op deze pagina's maakte, en de reden dat de poort hierboven hem niet
+  // ving: /dashboard/facturen BESTAAT, dus "hij gaat er elke periode zelf uit" haalde elke check.
+  // Het scherm bestaat alleen, en doet iets anders.
+  //
+  // invoice_schedules.sql legt de beslissing vast en waarom: elke run levert een CONCEPT op, nooit
+  // een verstuurde factuur — een nummer wordt alléén bij versturen uitgegeven (art. 35 Wet OB,
+  // vooruit en zonder gaten), en "een verkeerde factuur die vanzelf de deur uit gaat is een brief
+  // die de ondernemer nooit schreef en niet terug kan halen". Het dialoogvenster in de app zegt
+  // dat met zoveel woorden. De landingspagina zei het tegenovergestelde.
+  //
+  // ── WAAROM DEZE POORT ONTKENNINGEN MOET LEZEN ──
+  //
+  // De eerste versie hiervan zocht simpelweg naar "factuur … zelf … verstuur". Die versie deed
+  // twee dingen fout tegelijk, en de negatieve controle liet allebei zien:
+  //   · hij MISTE de echte zin ("Hij gaat er elke periode zelf uit" — geen woord "verstuur");
+  //   · en hij BESCHULDIGDE de goede zin ("de app stuurt nooit uit zichzelf een factuur"), want
+  //     precies de tekst die de grens uitlegt bevat alle woorden van de leugen.
+  // De tweede fout is de ergste. Een poort die correct gedrag aanwijst wordt weggeklikt, en
+  // beschermt daarna niets meer. Dus: per deelzin, en een deelzin met een ontkenning erin is een
+  // uitleg van de grens, geen belofte.
+  //
+  // En de andere grens: HERINNERINGEN gaan wél vanzelf de deur uit (cron/reminders, na een opt-in
+  // die standaard uit staat). Een herinnering is geen factuur — hij mint geen nummer en schept
+  // geen verplichting. Deze regel eist daarom een factuur als onderwerp.
+  const AUTOMATISCH = /\b(zelf|vanzelf|zichzelf|automatisch)\b/i;
+  const DE_DEUR_UIT =
+    /\b(verstuur\w*|verstuurd|verzend\w*|verzonden)\b|\b(gaat|gaan|ging|gingen)\b[^,;]{0,30}\b(uit|eruit)\b|\beruit\b/i;
+  const OVER_EEN_FACTUUR = /\b(factuur|facturen|hij|hem)\b/i;
+  // Een deelzin met een ontkenning legt de grens uit in plaats van hem te overtreden.
+  const ONTKENNING = /\b(nooit|niet|geen|zonder)\b/i;
+
+  /** True als deze ene zin belooft dat een factuur uit zichzelf de deur uit gaat. */
+  function beloofdZelfVersturen(zin: string): boolean {
+    return zin
+      .split(/[.;]|\s—\s/)
+      .some((deel) =>
+        !ONTKENNING.test(deel) &&
+        OVER_EEN_FACTUUR.test(deel) &&
+        AUTOMATISCH.test(deel) &&
+        DE_DEUR_UIT.test(deel));
+  }
+
+  // De poort bewijst zichzelf. Zonder deze twee lijsten kan de regel stilletjes blind worden —
+  // en dan blijft de test groen op precies de zin waarvoor hij geschreven is. De eerste regel
+  // hieronder is de zin die ik werkelijk verzonden had.
+  const MOET_VALLEN = [
+    "Hij gaat er elke periode zelf uit, en wie te laat is krijgt automatisch een herinnering.",
+    "De factuur wordt op de afgesproken dag aangemaakt en verstuurd, automatisch.",
+    "Je facturen worden automatisch verzonden naar je klant.",
+    "Elke maand gaat de factuur er vanzelf uit.",
+  ];
+  const MOET_BLIJVEN_STAAN = [
+    // De uitleg van de grens — bevat alle woorden van de leugen, en is het tegenovergestelde.
+    "Versturen doe jij — de app stuurt nooit uit zichzelf een factuur naar je klant, want een " +
+      "verkeerde factuur die vanzelf de deur uit gaat krijg je niet meer terug.",
+    "Een terugkerende factuur wordt als concept klaargezet, niet verstuurd: die knop houd jij.",
+    // Herinneringen gaan wél vanzelf: geen factuur, geen nummer, geen verplichting.
+    "Zet je herinneringen aan, dan mailt BoekBrug wie te laat is — oplopend, en nooit twee keer dezelfde.",
+    // Inboeken is niet versturen.
+    "Een factuur waar niets op aan te merken valt, boekt zichzelf.",
+  ];
+  for (const zin of MOET_VALLEN) {
+    assert.ok(beloofdZelfVersturen(zin),
+      `de regel ziet "${zin.slice(0, 60)}…" niet meer als een belofte dat een factuur zichzelf ` +
+      "verstuurt — hij is blind geworden voor precies de fout waarvoor hij bestaat");
+  }
+  for (const zin of MOET_BLIJVEN_STAAN) {
+    assert.ok(!beloofdZelfVersturen(zin),
+      `de regel beschuldigt "${zin.slice(0, 60)}…", en die zin is juist. Een poort die goed gedrag ` +
+      "aanwijst wordt weggeklikt en beschermt daarna niets meer — maak hem preciezer, niet breder");
+  }
+
+  for (const p of SEGMENT_PAGES) {
+    const zinnen = [p.title, p.description, p.probleem, p.belofte,
+      ...p.stappen.flatMap((s) => [s.title, s.body])];
+    for (const zin of zinnen) {
+      assert.ok(!beloofdZelfVersturen(zin),
+        `${p.slug}: "${zin.slice(0, 90)}…" belooft dat een factuur zichzelf verstuurt. Dat doet de ` +
+        "app niet en gaat hij ook niet doen — zie invoice_schedules.sql. Schrijf op wat er wél " +
+        "gebeurt: het concept staat klaar, de ondernemer drukt op versturen");
+    }
+
+    // En als de pagina de herhaalfunctie verkoopt, moet de grens erbij staan. Zonder deze regel
+    // kan elke zin op zich kloppen en de lezer tóch met de verkeerde verwachting beginnen.
+    const kopie = zinnen.join(" ");
+    if (/terugkerend|elke (periode|maand|week)|herhaal/i.test(kopie)) {
+      assert.match([...p.nietDit, kopie].join(" "), /concept|drukt? op versturen|die knop houd jij/i,
+        `${p.slug}: de pagina verkoopt terugkerende facturen zonder ergens te zeggen dat er een ` +
+        "concept klaarstaat en dat versturen een tik van de ondernemer blijft");
+    }
+  }
 });
 
 test("[KAS-ACHTER] a drawer whose settlements could not update says so, and errs quiet", () => {
