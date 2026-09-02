@@ -840,6 +840,14 @@ list of forbidden words, because a list of forbidden words goes stale like every
 - `invoice_move_payment_creditnota_guard.sql` — **new**, and the one with money behind it.
 - `invoice_payment_date_rederive.sql` — **new**.
 
+> **All three are applied as of 2 September 2026** — the owner ran them. Verified against production
+> rather than assumed: both functions' `prosrc` md5 matches the repo file byte for byte
+> (`527f1d0d…` and `5490918f…`), and `bank_transactions.auto_book_blocked_at` exists with its
+> comment and its partial index `bank_transactions_auto_book_open_idx`. That last one also closes
+> the loop in code: `/api/bank/unlink` writes the timestamp and `bank-auto-confirm` filters on it,
+> and `column-probe.ts` caches only a YES — a NO is re-probed — so the guard took effect on the
+> next cron run with no deploy. Nothing is open in this list any more.
+
 And one that closed itself: `creditnota_per_rate_ceiling.sql` is now applied — `assert_credit_within_rate`
 exists. It was open at the previous sweep, so somebody ran it in between.
 
@@ -1145,3 +1153,111 @@ all of them, because two spellings of one refusal drifting apart is the same def
 side. It is the third time in this document that a check written to measure something turned out to
 be measuring the wrong copy of it — and the only reason this one was found is that the mutation was
 run instead of assumed.
+
+
+---
+
+## 19. Five screens said "gekopieerd" over a clipboard that had refused — 2 September 2026
+
+The owner's original report was small: dragging across an invoice number to copy it made the card
+open and shut under the cursor. `row-tap.ts` answered that, and a copy button answered the goal
+behind it. Building the button meant asking who else copies, and the answer was worse than the
+report.
+
+**Seven places wrote to the clipboard. Five of them told the owner it had worked regardless.**
+
+```ts
+try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
+setCopied(label)                                    // ← runs either way
+```
+
+and in the two payment sheets, the same thing said out loud:
+
+```ts
+} catch {
+  onCopied(label) // best-effort; clipboard may be blocked in some contexts
+}
+```
+
+### Why this is a money defect and not a cosmetic one
+
+A refused clipboard write does not empty the clipboard. It leaves the **previous** value on it.
+
+The values these screens copy are the IBAN, the amount and the payment reference — the three fields
+of a bank transfer. So: copy supplier A's IBAN from their payment sheet. Open supplier B's sheet and
+tap copy; the write is refused. The screen says *"IBAN gekopieerd ✓"*. The clipboard still holds A's
+IBAN. The owner pastes it into their banking app and pays the wrong supplier, with every screen they
+looked at agreeing that the right thing was on the clipboard.
+
+Refusal is not exotic. `writeText` rejects on an unfocused document, outside a secure context, on a
+denied permission, and in several in-app WebViews — and this app ships to Android as a Trusted Web
+Activity, which is the WebView case. The failure mode was aimed at the delivery channel the product
+actually uses.
+
+The two link-copying screens are the same shape with a different payload: a **payment link**. A
+stale clipboard there sends customer B the link to customer A's invoice.
+
+### What changed
+
+One module writes the clipboard now — `src/lib/clipboard.ts` — and it returns whether the write
+happened. `true` comes only from the resolved path; a rejection, a missing API and an empty value
+are all `false`. Every screen branches on the answer and has words for both outcomes.
+
+The failure sentence names the hazard rather than the inconvenience: *"Kopiëren lukte niet — op je
+klembord staat nog het vorige."* "It didn't work" would let an owner paste anyway. It carries no
+parameter, deliberately — naming the field would put a noun inside a sentence, which AGENTS.md
+forbids for exactly the languages this app now ships in, and the field name adds nothing next to the
+fact that the clipboard is stale.
+
+The honesty is proven **once**, in `clipboard.test.ts`, instead of six times in six components —
+which is precisely what nobody did.
+
+### The eighth site, and why the gate scans for the API instead of the call
+
+The first sweep grepped `clipboard.writeText` and found seven. An eighth was
+`navigator.clipboard?.writeText(...)` in the accountant module — optional chaining, which that
+pattern walks straight past. It was also a floating promise: nothing awaited, no feedback at all,
+success or failure.
+
+Then the gate's own first version made the mirror-image mistake. It matched the
+`navigator.clipboard.writeText` chain and found **zero** writers — including `clipboard.ts`, which
+binds the API to a local before writing. Written as a count that would have been a green gate over
+an empty set. It was written as a set comparison against the one file expected to appear, so it
+failed loudly instead.
+
+The rule is now: **exactly one file in `src/` may name `navigator.clipboard`**, found by scanning
+the tree; every caller must keep the answer (`await copyToClipboard(…)` standing alone as a
+statement is the original bug with a new import); and the catalogue must carry the words for a
+failure. Comments are stripped before matching, so a file that only *describes* the old shape — this
+document's own examples, and the comment left at the site that carried it — is not a writer.
+
+### Verified by breaking it
+
+Six mutations, six distinct failures: a second writer reintroduced; the helper returning `true` from
+its catch; a caller discarding the result; an empty value reported as copied; the refused state
+printing "Gekopieerd" again; and one row's copy state colouring the other three. The last two are
+caught by a new render test over the **public** payment page, `/pay/[token]` — the screen the
+owner's customers open to pay, which had no render coverage at all because its data arrives in an
+effect the server never runs and the smoke test cannot reach a token-bearing URL.
+
+### The gate that caught the fix
+
+`[NUMMER-KOPIEREN]`, written an hour earlier for the copy button, went red on this change. It had
+pinned the button's own `await navigator.clipboard.writeText` as the proof that no success is
+claimed before the write resolves — and that line had just moved into the shared module. The gate
+was right to fail: the guarantee it names had relocated, and nothing in the button proved it any
+more. It now pins the guarantee where it lives, that the toast branches on the answer
+`copyToClipboard` gives back.
+
+Worth recording how it was nearly missed. While iterating, the gates were run filtered
+(`--test-name-pattern="KOPIE-EERLIJK"`), which is fast and reports a clean `# pass 1 # fail 0` —
+from a file where another test was failing the whole time. The filtered run is a debugging tool, not
+evidence. Only the unfiltered file is.
+
+### The pattern, again
+
+Every miss in this section was a measurement that could not see where the defect lived: a grep blind
+to optional chaining, then a gate blind to a local variable, then a test run filtered down to the
+one test that was passing. That is the fourth, fifth and sixth time in this document. The habit that
+caught all three is the same one: **run the mutation, and run it against everything, do not assume
+the check works.**

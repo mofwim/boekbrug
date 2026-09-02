@@ -24,6 +24,7 @@
 //     clipboard sends the owner to paste nothing into a payment.
 
 import { useState } from 'react'
+import { copyToClipboard } from '@/lib/clipboard'
 import { useToast } from './Toast'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -53,16 +54,12 @@ export function CopyButton({ value, what }: {
         e.stopPropagation()
         e.preventDefault()
         setBusy(true)
-        try {
-          await navigator.clipboard.writeText(tekst)
-          toast(t('kopieer.gelukt'), { tone: 'success' })
-        } catch {
-          // Honest: the clipboard refused, so the owner has nothing to paste. Telling them now
-          // costs one sentence; telling them nothing costs a wrong payment reference.
-          toast(t('kopieer.mislukt'), { tone: 'error' })
-        } finally {
-          setBusy(false)
-        }
+        // [KOPIE-EERLIJK] The answer comes from the one module that writes the clipboard, and it is
+        // the truth: false means nothing was copied and the clipboard still holds the PREVIOUS
+        // value. Saying "gekopieerd" over that sends the owner to paste the wrong thing.
+        const ok = await copyToClipboard(tekst)
+        toast(ok ? t('kopieer.gelukt') : t('kopieer.mislukt'), { tone: ok ? 'success' : 'error' })
+        setBusy(false)
       }}
       style={{
         flexShrink: 0,

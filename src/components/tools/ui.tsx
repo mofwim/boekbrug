@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Icon from "./Icon";
+import { copyToClipboard } from "@/lib/clipboard";
 
 export { formatBytes } from "@/lib/tools/image";
 export { Icon };
@@ -240,22 +241,27 @@ export function Segmented<T extends string>({
   );
 }
 
+// [KOPIE-EERLIJK] The public tools' copy button. It used to swallow a refused write and simply not
+// change, which reads as "nothing happened" — a fair guess, but the owner cannot tell it apart from
+// a slow tap. It now says so, through the same one module every other copy in this app goes through.
 export function CopyButton({
   text,
   label = "Kopiëren",
   copiedLabel = "Gekopieerd",
+  failedLabel = "Niet gelukt",
   className = "btn btn-quiet",
 }: {
   text: string;
   label?: string;
   copiedLabel?: string;
+  failedLabel?: string;
   className?: string;
 }) {
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!done) return undefined;
-    const timer = setTimeout(() => setDone(false), 1800);
+    if (done === null) return undefined;
+    const timer = setTimeout(() => setDone(null), 1800);
     return () => clearTimeout(timer);
   }, [done]);
 
@@ -265,16 +271,11 @@ export function CopyButton({
       className={className}
       disabled={!text}
       onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setDone(true);
-        } catch {
-          // Clipboard permission refused — the text is on screen to select.
-        }
+        setDone(await copyToClipboard(text));
       }}
     >
-      <Icon name={done ? "check" : "file"} size={15} />
-      {done ? copiedLabel : label}
+      <Icon name={done === true ? "check" : "file"} size={15} />
+      {done === null ? label : done ? copiedLabel : failedLabel}
     </button>
   );
 }

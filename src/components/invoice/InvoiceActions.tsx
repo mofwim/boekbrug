@@ -6,6 +6,7 @@
 
 import { useState } from 'react'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
+import { copyToClipboard } from '@/lib/clipboard'
 import { failureText } from '@/lib/server-message'
 import { isInvoiceEditable } from '@/lib/invoice-editable'
 import { createPortal } from 'react-dom'
@@ -52,7 +53,10 @@ export function InvoiceActions({ invoiceId, invoiceNumber, status, direction, in
   const [bvLoading, setBvLoading] = useState(false)
   const [bvError, setBvError] = useState('')
   const [bvQr, setBvQr] = useState('')
-  const [bvCopied, setBvCopied] = useState('')
+  // [KOPIE-EERLIJK] The OUTCOME, not just which row was tapped. A refused clipboard write used to
+  // land here as a success, and this value is a payment link: the owner pastes it to a customer,
+  // and a stale clipboard sends customer B the link to customer A's invoice.
+  const [bvCopied, setBvCopied] = useState<{ label: string; ok: boolean } | null>(null)
 
   //const canDelete = DELETABLE_STATUSES.includes(status)
 // [OFFERTE-BEWERKBAAR] Dezelfde regel als de PUT-route, uit één module — anders kan de knop
@@ -86,8 +90,8 @@ const canRequestPayment =
     }
   }
   async function bvCopy(value: string, label: string) {
-    try { await navigator.clipboard.writeText(value) } catch { /* clipboard may be blocked */ }
-    setBvCopied(label); setTimeout(() => setBvCopied(''), 1500)
+    const ok = await copyToClipboard(value)
+    setBvCopied({ label, ok }); setTimeout(() => setBvCopied(null), 1500)
   }
 
 
@@ -210,7 +214,8 @@ const canRequestPayment =
                 onClick={() => bvCopy(bv.url, 'link')}
                 className="shrink-0 bg-[#1a73e8] hover:bg-[#1967d2] text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
               >
-                {bvCopied === 'link' ? t('act.bv.gekopieerd') : t('act.bv.kopieer')}
+                {bvCopied?.label !== 'link' ? t('act.bv.kopieer')
+                  : bvCopied.ok ? t('act.bv.gekopieerd') : t('kopieer.nietGelukt')}
               </button>
             </div>
 
