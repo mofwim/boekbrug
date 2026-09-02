@@ -24575,3 +24575,94 @@ test("[AFHANDELEN-NOEMT] the bulk button names what it will book, before it book
   assert.match(scherm, /const safeAutoCount = safeAutoRows\.length/,
     "the count must be derived from the list it labels");
 });
+
+// ── [DOC-VERSE-LINK] ──────────────────────────────────────────────────────────────────────────
+//
+// Reported: "Origineel PDF doet niets" on invoice 720154 — a camera-scanned purchase invoice whose
+// file is perfectly present (pdf_url and document_id both set). The button did nothing at all, and
+// showed no error either.
+//
+// It fetched a signed url and then called window.open(url). After an `await` the call is no longer
+// inside the user gesture, so the browser blocks it — and it blocks it by returning null, not by
+// throwing. The catch never ran, so the error sentence never appeared. A blue button that does
+// nothing and says nothing is worse than one that fails loudly: the owner concludes the document is
+// gone.
+//
+// The same button carried a second fuse: the url was signed on the fetch and lives 300 seconds.
+// fileOpenHref (document-preview.ts) carries NO url — it points at our own route, which signs at
+// the moment of the tap and redirects. The document sheet and the pay screen were both moved to it
+// after the same report; the invoice detail screen was the one nobody came back to.
+//
+// So the rule is a class: an invoice's original file is opened by a LINK, never by a fetched url
+// handed to window.open.
+test("[DOC-VERSE-LINK] the original file is opened by a link, never by a fetched url", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  let bekeken = 0;
+  for (const file of walk("src")) {
+    const src = code(file);   // comments stripped: two files carry a historical note about the old
+                              // behaviour, and a note is not a call.
+    // The population is every screen that reaches an invoice's original file AT ALL — by the route
+    // path or through the helper. Counting only the raw path would shrink the moment a screen is
+    // fixed, so the anti-vacuity check would weaken exactly as the codebase improved. (Measured:
+    // the first version of this gate did that, and failed on its own first run.)
+    const reachesFile = src.includes("api/email/file") || src.includes("fileOpenHref");
+    if (!reachesFile) continue;
+    bekeken++;
+    if (src.includes("api/email/file") && /window\.open\s*\(/.test(src)) offenders.push(file);
+  }
+  // A reader that finds nothing passes forever on exactly the gate claiming a class cannot return.
+  assert.ok(bekeken >= 3,
+    `[DOC-VERSE-LINK] only ${bekeken} screens reach the file route — it is the READER that broke`);
+  assert.deepEqual(offenders, [],
+    "this screen fetches the invoice file's url and hands it to window.open. After an await that " +
+    "call is outside the user gesture, so the browser blocks it silently — nothing opens and " +
+    "nothing is said. Use fileOpenHref(invoiceId) in an <a href>, which signs at click time:\n  " +
+    offenders.join("\n  "));
+
+  // And the screen that was reported uses it.
+  const detail = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(detail, /href=\{fileOpenHref\(invoiceId\)\}/,
+    "the invoice detail screen no longer opens the original through the shared link helper");
+  assert.match(detail, /import \{ fileOpenHref \} from '@\/lib\/document-preview'/);
+});
+
+// ── [GEEN-REGELS] ─────────────────────────────────────────────────────────────────────────────
+//
+// Reported on invoice 720154, a camera-scanned purchase invoice: the "Factuurregels" card drew five
+// column headers and nothing under them. Nothing is missing — this app stores the AMOUNTS of an
+// imported purchase invoice, not its lines, and the lines are on the paper. But a header over an
+// empty table reads as "the lines are gone", which is the one thing it does not mean.
+//
+// This is a GATE and not a render test on purpose, and the reason is worth writing down: a render
+// test was written first and could not fail. The detail screen returns early while it loads, so
+// renderToStaticMarkup never reaches the lines card at all — the assertion passed just as happily
+// with the header drawn unconditionally. Proven by putting the defect back; the test stayed green.
+// Extracting the card into its own component would make a real render test possible, and until
+// someone does that, the honest instrument is the source.
+test("[GEEN-REGELS] no column headers are drawn over rows that do not exist", () => {
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+
+  // The header is conditional on there being rows…
+  assert.match(scherm, /\{lines\.length > 0 && \(\s*\n\s*<div className="inv-lines-head"/,
+    "the invoice lines header is drawn again regardless of whether there are lines");
+  // …and the empty case says what WAS kept, which is a different sentence from "no lines".
+  assert.match(scherm, /\{lines\.length === 0 && \(/, "the empty case is no longer answered at all");
+  assert.match(scherm, /isIncoming \? t\('detail\.regels\.alleenBedragen'\) : t\('detail\.regels\.geen'\)/,
+    "an imported purchase invoice must say its amounts were kept and the lines are on the original — " +
+    "'there are no lines' is true of a sales invoice and untrue of this one");
+
+  // The order matters: the sentence sits where the table would have been, not under it.
+  const zin = scherm.indexOf("lines.length === 0");
+  const kop = scherm.indexOf('className="inv-lines-head"');
+  assert.ok(zin > 0 && kop > zin, "the explanation belongs where the table head was, not after it");
+});

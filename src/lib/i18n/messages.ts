@@ -4886,11 +4886,6 @@ export const MESSAGES = {
     ar: 'فشلت إعادة الإرسال',
     en: 'Resending failed',
   },
-  'detail.fout.origineelPdf': {
-    nl: 'Origineel PDF kon niet worden geopend',
-    ar: 'تعذّر فتح ملف PDF الأصلي',
-    en: 'The original PDF could not be opened',
-  },
   'detail.fout.pdfNietGemaakt': {
     nl: 'De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.',
     ar: 'أخذت الفاتورة رقماً، لكن تعذّر إنشاء ملف PDF — لم يستلم العميل شيئاً. أعد الإرسال.',
@@ -4952,6 +4947,20 @@ export const MESSAGES = {
     nl: 'De factuur is opnieuw verzonden.',
     ar: 'أُعيد إرسال الفاتورة.',
     en: 'The invoice was sent again.',
+  },
+  // [GEEN-REGELS] Een kop met kolommen en nul rijen leest als "de regels zijn kwijt". Bij een
+  // ingelezen inkoopfactuur is er niets kwijt: de app bewaart er de BEDRAGEN van, en de regels
+  // staan op het papier. Dat is een andere zin dan "deze factuur heeft geen regels", en alleen de
+  // eerste is waar.
+  'detail.regels.alleenBedragen': {
+    nl: 'Van deze factuur zijn alleen de bedragen vastgelegd. De regels staan op het origineel.',
+    ar: 'من هذه الفاتورة سُجِّلت المبالغ فقط. البنود موجودة في الأصل.',
+    en: 'Only the amounts of this invoice were recorded. The lines are on the original.',
+  },
+  'detail.regels.geen': {
+    nl: 'Er staan geen regels op deze factuur.',
+    ar: 'لا توجد بنود على هذه الفاتورة.',
+    en: 'There are no lines on this invoice.',
   },
   'detail.origineelPdf': {
     nl: 'Origineel PDF',
