@@ -989,3 +989,74 @@ CHAIN_EMAIL=demo@boekbrug.nl CHAIN_PASSWORD=BoekBrugDemo2026! npx tsx scripts/ve
 Exit 0 means the live app and the rows underneath it agree. Exit 1 names what disagreed, and where
 to look: not in the engines, which have their own tests, but in which rows are read and how they are
 put together. Exit 2 means the check could not run — which is not a statement about money.
+
+---
+
+## 17. Three questions anyone on the internet could ask — 2 September 2026
+
+Applying DDL is the moment to run the database linter, and it had not been run in this pass. It
+found a class nobody had looked at: **a function created without an explicit `REVOKE` is granted to
+`PUBLIC`, and `PUBLIC` includes `anon`** — the role behind every unauthenticated request to
+`/rest/v1/rpc/*`.
+
+Three `SECURITY DEFINER` helpers were callable by anyone, and all three take the identity they
+answer about as a **parameter** instead of reading `auth.uid()`:
+
+| Function | What a stranger could ask |
+| --- | --- |
+| `has_active_invoice_mandate(accountant, client)` | does this accountant hold an invoicing mandate over this client? |
+| `has_active_confirm_mandate(accountant, client)` | …and a confirmation mandate? |
+| `audit_row_is_about_me(type, entity_id, viewer)` | **is this invoice owned by this person?** |
+
+`SECURITY DEFINER` means they answer with the owner's rights, so RLS never sees the question. The
+third is the sharpest: an invoice id plus a user id returns a yes/no about who owns which document,
+and an invoice id is not a secret — it travels in a payment link.
+
+UUIDs are not guessable, so this was not a mass leak. It was also not an access control: "hard to
+guess" is a property of the input, not a rule about who may ask.
+
+### What made it safe to close — and what would have broken it
+
+All three are used **only** inside policies whose role list is `{authenticated}`
+(`audit_logs_about_me`, `invoices_mandate_confirm_read/write`, `invoices_mandate_draft_issue/read`,
+`invoice_lines_mandate_read`). A policy expression runs with the privileges of the role evaluating
+it, so removing anon's `EXECUTE` cannot break a policy anon never evaluates. No code in `src/` calls
+any of them over RPC — zero call sites, checked.
+
+**`is_my_accountant_client` was left alone, deliberately, and that is the half worth remembering.**
+It looks like the same shape and it is not: four `{public}` policies call it —
+`invoices_accountant_read`, `invoices_accountant_update_v2`, `invoice_lines_select_accountant`,
+`documents_accountant_read` — so an anonymous `SELECT` on `invoices` or `documents` **evaluates it**.
+Revoking would have turned those reads into a permission error instead of an empty result. It is
+also not an oracle: it reads `auth.uid()`, which is NULL for a stranger, so it always answers false.
+`acting_for_owner()` is the same case, used by seven policies.
+
+Proven before applying, in a transaction that always aborts: the revoke flips anon's access from
+`true` to `false`, signed-in access stays `true`, `is_my_accountant_client` keeps its grant — and an
+anonymous `SELECT count(*) FROM invoices`, the query that evaluates the `{public}` policy, returned
+**0 rows and no error**. That last line is the whole reason to run the experiment rather than reason
+about it.
+
+Verified after applying: all three closed to anon, all three still open to `authenticated` and
+`service_role`, and the client check still public.
+
+Reversal is one line per function (`GRANT EXECUTE … TO anon`), so this narrows and nothing else.
+
+### What the linter flagged that is NOT a defect
+
+- **Seven money RPCs executable by `authenticated`** (`apply_bank_payment`, `book_bank_batch`,
+  `move_invoice_payment`, `apply_manual_payment`, `allocate_bank_payment`,
+  `recompute_invoice_amount_paid`, `next_invoice_seq`). By design — the app calls them from user
+  sessions, and every one refuses when `auth.uid()` is not the owner it was handed. Recorded so the
+  next reader does not "fix" it. `recompute_invoice_amount_paid` appears on that list because
+  today's migration put it there.
+- **Five tables with RLS on and no policies** (`ai_spend_daily`, `cron_runs`, `intake_claims`,
+  `mollie_payment_links`, `system_events`). RLS on with no policy denies everything, which is
+  exactly the intent: these are service-role only. `mollie_payment_links` is the one §12 already
+  had to work around.
+- `pg_trgm` in the `public` schema — hardening, not a hole.
+
+### Still open, and still the owner's
+
+**Leaked Password Protection is still disabled.** Confirmed by the linter today, not from memory.
+One toggle in the Supabase dashboard; it checks new passwords against HaveIBeenPwned.
