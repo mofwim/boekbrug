@@ -13914,6 +13914,85 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   );
 });
 
+// ─── [EXPORT-EERLIJK] A failed request never becomes a file with the books' name on it ─────────
+//
+// Found by asking the [KOPIE-EERLIJK] question again, one step further out: who else turns a
+// server answer into something the owner keeps without checking that the answer was a success?
+//
+// `fetch` does not reject on 4xx or 5xx. So this:
+//
+//     const res = await fetch(`/api/export?${params}`);
+//     const csv = await res.text();                         // ← the ERROR body
+//     downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`); // ← saved under the books' name
+//
+// hands the owner a file called boekbrug-Q3-2026.csv containing a JSON error or an expired
+// session's login page. They open it in Excel and see one row of nonsense, or they do not open it
+// at all and forward it to their accountant. There was no catch either, so a dropped connection
+// was completely silent — the spinner stopped and nothing happened.
+//
+// What made it certain this was an oversight rather than a decision: the ZIP export four lines
+// ABOVE it in the same file already checked `res.ok` and raised a toast. Every other download in
+// the app did too — the closing package (four call sites), the UBL XML, the bulk-invoice ZIP.
+// Two CSV exports out of nine downloads did not.
+//
+// The gate names no screens. It finds every place that turns a response into something kept —
+// blob(), text() feeding a download, createObjectURL — and requires the status to have been
+// consulted first.
+test("[EXPORT-EERLIJK] no download is written from a response whose status was never checked", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // A "keep" is the moment a body stops being a response and becomes a file the owner has.
+  const KEEPS = /\b(\w+)\.blob\(\)|downloadCsv\(|triggerDownload\(/;
+  const overtredingen: string[] = [];
+  // Counted, and asserted below. An empty violations list is only good news if the scan actually
+  // looked at something — rename downloadCsv and this gate would otherwise pass over nothing at
+  // all, which is the exact trap [KOPIE-EERLIJK] fell into one test above.
+  let bekeken = 0;
+  for (const f of walk("src")) {
+    const src = code(f);
+    if (!src.includes("await fetch(")) continue;
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!KEEPS.test(lines[i])) continue;
+      // Walk back to the fetch this body came from, and require a status check strictly BETWEEN
+      // that fetch and this line.
+      //
+      // The NEAREST preceding fetch, not the first one in the window — and the check searched only
+      // after it. The first version of this took a 30-line window and searched the whole of it,
+      // which reached into the function ABOVE. That neighbour also names its response `res` and
+      // does check `res.ok`, so a guard belonging to unrelated code satisfied this one: reverting
+      // the defect this gate was written for left it green. It is the same shape as the migration
+      // test in §18 that unioned two definitions of one function and let the superseded copy cover
+      // for the live one. A window that can see a second call site is not measuring this one.
+      const window = lines.slice(Math.max(0, i - 30), i);
+      let start = -1;
+      let naam = "";
+      for (let j = window.length - 1; j >= 0; j--) {
+        const m = /(?:const|let|var)\s+(\w+)\s*=\s*await fetch\(/.exec(window[j]);
+        if (m) { start = j; naam = m[1]; break; }
+      }
+      if (start < 0) continue; // not fed by a fetch — a locally built Blob, a File the owner picked
+      bekeken++;
+      const tussen = window.slice(start).join("\n");
+      // `res.ok`, `res.status`, and `res?.ok` — the third spelling is in this repo twice, and a
+      // pattern without it is how the first sweep for this walked past two guarded call sites.
+      if (new RegExp(`\\b${naam}\\s*\\??\\.\\s*(ok|status)\\b`).test(tussen)) continue;
+      overtredingen.push(`${f}:${i + 1}`);
+    }
+  }
+  assert.deepEqual(overtredingen, [],
+    `a response body is saved as a file without checking the request succeeded: ${overtredingen.join(", ")}`);
+  assert.ok(bekeken >= 10, `the scan found only ${bekeken} downloads fed by a fetch — it has gone blind`);
+});
+
 // ─── [KOPIE-EERLIJK] Nobody reports a copy they were not told happened ─────────────────────────
 //
 // Found while wiring the copy button below: SIX screens each rolled their own clipboard helper, and

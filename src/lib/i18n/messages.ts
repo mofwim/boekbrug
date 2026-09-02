@@ -8712,6 +8712,19 @@ export const MESSAGES = {
     ar: 'على {bedrag}',
     en: 'over {bedrag}',
   },
+  // [EXPORT-EERLIJK] De CSV-export van het kwartaal. Twee zinnen, net als bij het pakket
+  // hieronder: de ene zegt dat de SERVER nee zei, de andere dat het bericht er nooit kwam. Voor
+  // wie het leest is dat een ander volgende stap — opnieuw proberen, of eerst je verbinding.
+  'kw.exportMislukt': {
+    nl: 'Export mislukt — er is niets gedownload',
+    ar: 'فشل التصدير — لم يُنزَّل أي ملف',
+    en: 'Export failed — nothing was downloaded',
+  },
+  'kw.exportVerbinding': {
+    nl: 'Export mislukt — controleer je verbinding',
+    ar: 'فشل التصدير — تحقّق من اتصالك',
+    en: 'Export failed — check your connection',
+  },
   'kw.pakketMislukt': {
     nl: 'Pakket genereren mislukt — probeer opnieuw',
     ar: 'فشل إنشاء الحزمة — حاول مرة أخرى',

@@ -208,13 +208,25 @@ function ZzpView({ role }: { role: Role }) {
     }
   }
 
+  // [EXPORT-EERLIJK] The status is checked before the body becomes a file. Without this,
+  // `res.text()` on a 500 or an expired session is the ERROR BODY — and it was saved under the
+  // name of the quarter's books. The owner ends up with boekbrug-Q3-2026.csv holding a JSON error
+  // or a login page, opens it in Excel, or hands it to their accountant unopened. There was also
+  // no catch, so a dropped connection was completely silent: the spinner stopped, nothing
+  // downloaded, nothing said. The ZIP export directly above this one already did it right.
   async function handleExport() {
     setExporting(true);
     try {
       const params = new URLSearchParams({ year: String(year), quarter: String(quarter) });
       const res = await fetch(`/api/export?${params}`);
+      if (!res.ok) {
+        toast(t('kw.exportMislukt'), { tone: "error" });
+        return;
+      }
       const csv = await res.text();
       downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);
+    } catch {
+      toast(t('kw.exportVerbinding'), { tone: "error" });
     } finally {
       setExporting(false);
     }
@@ -679,8 +691,17 @@ function AccountantView({ role }: { role: Role }) {
         clientId: selectedClientId,
       });
       const res = await fetch(`/api/export?${params}`);
+      // [EXPORT-EERLIJK] Same rule as the owner's own export — and this one matters more: it is an
+      // accountant exporting a CLIENT's quarter, so a saved error body travels one step further
+      // from the person who could recognise it.
+      if (!res.ok) {
+        toast(t('kw.exportMislukt'), { tone: "error" });
+        return;
+      }
       const csv = await res.text();
       downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);
+    } catch {
+      toast(t('kw.exportVerbinding'), { tone: "error" });
     } finally {
       setExporting(false);
     }

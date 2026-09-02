@@ -1261,3 +1261,71 @@ to optional chaining, then a gate blind to a local variable, then a test run fil
 one test that was passing. That is the fourth, fifth and sixth time in this document. The habit that
 caught all three is the same one: **run the mutation, and run it against everything, do not assume
 the check works.**
+
+
+---
+
+## 20. The same question, one step further out — 2 September 2026
+
+§19 asked "who else writes to the clipboard?" and found five screens claiming a success nobody gave
+them. The question generalises: **who else turns a server's answer into something the owner keeps,
+without checking the answer was a success?**
+
+`fetch` does not reject on 4xx or 5xx. So a response body is a perfectly good string whether it is
+the quarter's books or a stack trace.
+
+### The sweep, and what it mostly found
+
+265 `await fetch(` call sites in client code. Sorted by whether the status is ever consulted, and
+then read by hand rather than trusted to the pattern:
+
+- The 16 that discard the response are almost all deliberate, and say so in a comment on the line:
+  *"non-blocking — payment already succeeded"*, *"optimistic; reload on next mount"*, *"silent —
+  optimistic already applied"*. Those are reasoned, not forgotten.
+- The bound ones that never check are reads that degrade to an empty list on purpose.
+- Two of the flagged sites turned out to be guarded four lines past my window, and two more used
+  `res?.ok`, which my pattern walked past — optional chaining, for the second time in two days.
+
+So the sweep is mostly a confirmation that this codebase is disciplined here. One thing was not.
+
+### The one that was real
+
+```ts
+const res = await fetch(`/api/export?${params}`);
+const csv = await res.text();                          // ← the ERROR body
+downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);  // ← saved under the books' name
+```
+
+On a 500 or an expired session, the owner gets a file called `boekbrug-Q3-2026.csv` holding a JSON
+error or a login page. They open it in Excel and see one row of nonsense — or they do not open it,
+and forward it to their accountant. There was no `catch` either, so a dropped connection was
+entirely silent: the spinner stopped and nothing happened at all.
+
+Two call sites. The second is worse: an accountant exporting a CLIENT's quarter, so the file travels
+one more step from anyone who would recognise it.
+
+What settles that this was an oversight and not a decision: **the ZIP export four lines above it in
+the same file already checked `res.ok` and raised a toast.** So did every other download in the app
+— the closing package at four call sites, the UBL XML, the bulk-invoice ZIP. Two CSV exports out of
+nine downloads were the exception, in the one file that contained both the right way and the wrong
+way.
+
+### The gate, and the control that caught the gate
+
+The rule is derived: find every place a response becomes something kept (`blob()`, `downloadCsv`,
+`triggerDownload`), walk back to the fetch that fed it, and require the status to have been
+consulted in between.
+
+**The first version of that gate passed over the reintroduced defect.** It took a 30-line window and
+searched all of it — and 30 lines back reaches into the function ABOVE, which names its own response
+`res` and does check `res.ok`. A guard belonging to unrelated code satisfied the check for this one.
+That is the same shape as the migration test in §18 that unioned two definitions of one function and
+let the superseded copy cover for the live one. It now binds to the NEAREST preceding fetch and
+searches only the slice after it.
+
+It also counts what it examined and fails below ten. An empty violations list is only good news if
+the scan looked at something; rename `downloadCsv` and the previous version would have passed over
+nothing at all — which is exactly the trap [KOPIE-EERLIJK] fell into one test above.
+
+Four controls: each of the two call sites reverted, a new unguarded download added elsewhere, and
+the scan blinded. All four fail; before the narrowing, the first two did not.
