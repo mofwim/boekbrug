@@ -40,6 +40,34 @@ export interface ReadinessSignals {
   // owner should eyeball them before closing (a confidently-consistent misread has no other
   // human catch). Surfaced as a RISK, not a gap. Optional (undefined → 0 → no nudge).
   autoVerifiedCount?: number;
+  // [DUBBEL-TERUGKIJKEN] Facturen die twee keer in de boeken staan — dezelfde rekening, twee
+  // boekingen, dus dezelfde BTW twee keer afgetrokken.
+  //
+  // Waarom dit hier hoort en niet alleen bij de intake: de dubbelcontrole draait op het moment dat
+  // een document BINNENKOMT, en hij bestaat pas sinds 18 augustus. Alles wat daarvóór is
+  // ingelezen, of in bulk is geïmporteerd, is nooit langs die poort gekomen — en er is niets dat
+  // ooit terugkijkt. Op deze administratie leverde de terugblik er zes op, waarvan twee met een
+  // ander bedrag onder hetzelfde nummer (€ 222,05 naast € 239,47) en één nummer dat drie keer
+  // voorkomt. Geen van de zes draagt een vlag, want de vlag bestond nog niet toen ze binnenkwamen.
+  //
+  // Een RISICO en geen gat: de app mag niet zelf beslissen welke van de twee de echte is. Dat
+  // staat op het papier, niet in de database — zie existing-duplicates.ts. Optioneel, dus een
+  // oudere aanroeper telt gewoon nul en er verandert niets.
+  //
+  // ── DE GRENS VAN DEZE KAART, EXPLICIET ──
+  // Dit telt alleen de dubbelen van DIT kwartaal, want dat is wat dit rapport is. Op deze
+  // administratie liggen de zes in Q1 (drie) en Q2 (drie), dus wie het scherm in Q3 opent ziet
+  // hier niets — hij ziet ze zodra hij Q1 of Q2 kiest, en dat is ook precies het moment waarop ze
+  // ertoe doen: bij het afsluiten van dat kwartaal.
+  //
+  // Dat is een bewuste keuze en geen omissie, maar hij is het waard om op te schrijven, want
+  // "staat op de klaar-kaart" en "je ziet het vandaag" zijn niet hetzelfde. Wie ALLE dubbelen in
+  // één keer wil zien, draait scripts/find-existing-duplicates.mts over de hele administratie.
+  doubleBookedCount?: number;
+  // De nummers zelf, zodat de zin ze kan noemen. Zonder dit stuurt de kaart de ondernemer naar een
+  // lijst van zeshonderd facturen met de mededeling dat er zes fout zijn — dan is de melding het
+  // werk, niet de oplossing.
+  doubleBookedNumbers?: string[];
 
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
@@ -295,6 +323,34 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         // The detail names the tab, so the link opens that tab (?filter=auto) instead of
         // the full ledger the owner would then have to filter by hand.
         fix: { label: "Bekijk", href: "/dashboard/incoming/manage?filter=auto" },
+      });
+    }
+  }
+
+  // ── [DUBBEL-TERUGKIJKEN] Dezelfde rekening, twee keer geboekt ──────────────────────────────
+  {
+    const dubbel = s.doubleBookedCount ?? 0;
+    // Hooguit vier bij naam: een zin met dertig factuurnummers wordt niet gelezen.
+    const alle = s.doubleBookedNumbers ?? [];
+    const namen = alle.slice(0, 4).map((n) => `factuur ${n}`);
+    if (alle.length > 4) namen.push(`en ${alle.length - 4} andere`);
+    if (dubbel > 0) {
+      risks.push({
+        severity: "risk",
+        title:
+          dubbel === 1
+            ? "1 factuur staat twee keer in je boeken"
+            : `${dubbel} facturen staan twee keer in je boeken`,
+        detail:
+          "Dezelfde rekening is twee keer geboekt, dus dezelfde BTW is twee keer afgetrokken. " +
+          (namen.length > 0 ? `Het gaat om ${namen.join(", ")}. ` : "") +
+          "Welke van de twee de echte is, staat op het papier — de app verandert er niets aan. " +
+          "Zoek het nummer op, leg ze naast elkaar en archiveer de dubbele.",
+        // Géén ?filter=dubbel: dat tabblad bestaat niet, en een onbekende filterwaarde valt terug
+        // op "Alle". De ondernemer zou dan in het volledige grootboek landen met de mededeling dat
+        // er ergens zes fout zijn — precies de dode belofte waar [SEGMENT-VOORDEUR] een poort voor
+        // heeft. De nummers staan hierboven; die zijn hier het gereedschap.
+        fix: { label: "Naar de facturen", href: "/dashboard/incoming/manage" },
       });
     }
   }
