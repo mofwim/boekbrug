@@ -34,7 +34,10 @@ import { requireOwner } from '@/lib/owner-only'
 export const dynamic = "force-dynamic";
 
 const INVOICE_FIELDS =
-  "id, status, direction, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status";
+  // [MOVE-CREDITNOTA] invoice_type rides along, and it is not decoration: canReceivePayment reads
+  // an ABSENT type as "not a creditnota", which is the permissive answer. A column we forget to
+  // ask for therefore turns the guard off without failing anywhere.
+  "id, status, direction, invoice_type, invoice_number, client_name, invoice_date, total_inc_btw, amount_paid, accountant_status";
 
 // ── GET — what can move, and where to ─────────────────────────────────────────────────────────
 
@@ -258,6 +261,53 @@ export async function POST(req: NextRequest) {
   const { linkId, targetInvoiceId } = body;
   if (!linkId || !targetInvoiceId) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
+  }
+
+  // ── [MOVE-CREDITNOTA] The second of two, and deliberately kept ───────────────────────────────
+  //
+  // A creditnota is money the business OWES back; it is settled by paying out or by offsetting,
+  // never by RECEIVING. move_invoice_payment guarded direction, status, fit and ownership and read
+  // the target's total through abs(), so a creditnota of -100 looked exactly like an invoice with
+  // 100 still open. Measured: a EUR 100 payment moved onto a 'sent' creditnota came back
+  // amount_paid=100, status='paid', while the sales invoice it really belonged to lost it.
+  //
+  // invoice_move_payment_creditnota_guard.sql is applied and verified byte-identical, so the RPC
+  // now refuses this itself and this check is the second of two. It stays anyway, and the reason is
+  // not caution in general: TWICE this week a function was believed deployed and was not — the
+  // migration inventory's probe reads the NEW./OLD. references only a trigger function has, and
+  // this very guard was one of the two it reported as applied. Both times the discovery was luck.
+  // One SELECT in front of a booking that cannot be undone by looking at it is a fair price for
+  // not depending on that luck again.
+  //
+  // It is safe to keep for the same reason it was safe to add: it can only REFUSE. A read seconds
+  // stale costs a refusal of a move that would have been fine; it can never permit one the RPC
+  // would not. And it says the same sentence the database does — moveFailureText matches the RPC's
+  // own fragment, so one event never reads as two different problems.
+  const { data: target, error: targetErr } = await supabase
+    .from("invoices")
+    .select("id, invoice_type")
+    .eq("id", targetInvoiceId)
+    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+    .maybeSingle();
+  if (targetErr) {
+    // [NO-SILENT-EMPTY] A failed read is not "it is not a creditnota". Refuse rather than fall
+    // through to an RPC that, today, cannot make this judgement itself.
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText(null) },
+      { status: 409 },
+    );
+  }
+  if (!target) {
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText("target invoice not found / not owned") },
+      { status: 409 },
+    );
+  }
+  if ((target as { invoice_type?: string | null }).invoice_type === "creditnota") {
+    return NextResponse.json(
+      { error: "move_failed", detail: moveFailureText("target is a creditnota") },
+      { status: 409 },
+    );
   }
 
   // Session client so the RPC's caller guard sees a real auth.uid() — the same contract

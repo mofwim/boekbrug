@@ -600,6 +600,101 @@ export const MESSAGES = {
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
     en: 'The supplier could not be saved. Try again in a moment.',
   },
+  // [LEVERANCIER-KIEZEN] De lijst die meeloopt terwijl je een leveranciersnaam typt. De zinnen
+  // gaan over het GEVOLG van kiezen — één leverancier in plaats van twee — want dat is het enige
+  // wat de eigenaar er later van merkt: zijn crediteurenstand staat op één naam of op twee.
+  'lev.kies.kop': {
+    nl: 'Leveranciers die je al hebt',
+    ar: 'موردون لديك بالفعل',
+    en: 'Suppliers you already have',
+  },
+  'lev.kies.meer': {
+    nl: 'Nog {n} meer — typ verder om te verfijnen',
+    ar: 'وهناك {n} آخرون — تابع الكتابة للتضييق',
+    en: '{n} more — keep typing to narrow it down',
+  },
+  'lev.kies.nieuw': {
+    nl: 'Nog geen leverancier met deze naam. Bevestigen maakt er een nieuwe van.',
+    ar: 'لا يوجد مورّد بهذا الاسم بعد. التأكيد سيُنشئ مورّداً جديداً.',
+    en: 'No supplier with this name yet. Confirming will create a new one.',
+  },
+  'lev.kies.nietGeladen': {
+    nl: 'De lijst met leveranciers kon niet worden geladen — je kunt de naam gewoon typen.',
+    ar: 'تعذّر تحميل قائمة الموردين — يمكنك كتابة الاسم كالمعتاد.',
+    en: 'The supplier list could not be loaded — you can still type the name.',
+  },
+  'lev.kies.veld': {
+    nl: 'Leverancier — kies een bestaande of typ een nieuwe naam',
+    ar: 'المورّد — اختر واحداً موجوداً أو اكتب اسماً جديداً',
+    en: 'Supplier — pick an existing one or type a new name',
+  },
+  // [LEVERANCIER-SAMENVOEGEN] Twee rijen die één bedrijf zijn. De uitleg noemt de VOORWAARDE
+  // hardop, want dat is wat deze knop veilig maakt: de app stelt alleen paren voor die al een
+  // KVK-nummer of een rekeningnummer delen. Een naam die op elkaar lijkt hoort er niet bij — dat
+  // is precies het paar (BALKIP B.V. / GROOTHANDEL M.H. BAL V.O.F.) dat nooit voorgesteld mag
+  // worden, en de eigenaar moet kunnen zien dat de app dat weet.
+  'lev.merge.kop': {
+    nl: 'Twee leveranciers die één bedrijf zijn',
+    ar: 'مورّدان هما شركة واحدة',
+    en: 'Two suppliers that are one company',
+  },
+  'lev.merge.uitleg': {
+    nl: 'Alleen voorgesteld als beide hetzelfde KVK-nummer of hetzelfde rekeningnummer dragen. Een naam die op elkaar lijkt is geen bewijs: twee verschillende bedrijven kunnen zo heten.',
+    ar: 'لا يُقترح إلا إذا حمل الاثنان رقم KVK نفسه أو رقم الحساب نفسه. تشابه الاسم ليس دليلاً: قد تحمل شركتان مختلفتان اسماً متشابهاً.',
+    en: 'Only proposed when both carry the same KVK number or the same bank account. A name that looks alike is not proof: two different companies can be called that.',
+  },
+  'lev.merge.bewijs.kvk': {
+    nl: 'Zelfde KVK-nummer: {waarde}',
+    ar: 'رقم KVK نفسه: {waarde}',
+    en: 'Same KVK number: {waarde}',
+  },
+  'lev.merge.bewijs.iban': {
+    nl: 'Zelfde rekeningnummer: {waarde}',
+    ar: 'رقم الحساب نفسه: {waarde}',
+    en: 'Same account number: {waarde}',
+  },
+  'lev.merge.gevolgEen': {
+    nl: '1 factuur komt te staan onder {naam}',
+    ar: 'فاتورة واحدة ستُنقل إلى {naam}',
+    en: '1 invoice moves under {naam}',
+  },
+  'lev.merge.gevolgN': {
+    nl: '{n} facturen komen te staan onder {naam}',
+    ar: '{n} فاتورة ستُنقل إلى {naam}',
+    en: '{n} invoices move under {naam}',
+  },
+  'lev.merge.gevolgGeen': {
+    nl: 'Er staan geen facturen meer onder {oud} — alleen de naam verdwijnt',
+    ar: 'لم تعد هناك فواتير تحت {oud} — الاسم وحده سيختفي',
+    en: 'No invoices are left under {oud} — only the name disappears',
+  },
+  'lev.merge.knop': { nl: 'Samenvoegen', ar: 'دمج', en: 'Merge' },
+  'lev.merge.bezig': { nl: 'Bezig met samenvoegen...', ar: 'جارٍ الدمج...', en: 'Merging...' },
+  'lev.merge.klaar': {
+    nl: '{oud} staat nu onder {nieuw}',
+    ar: '{oud} صار تحت {nieuw}',
+    en: '{oud} now sits under {nieuw}',
+  },
+  'lev.merge.fout': {
+    nl: 'Samenvoegen is niet gelukt. Er is niets veranderd.',
+    ar: 'لم ينجح الدمج. لم يتغيّر شيء.',
+    en: 'The merge did not go through. Nothing was changed.',
+  },
+  'lev.merge.geweigerd.kvk': {
+    nl: 'Deze twee dragen elk een eigen KVK-nummer — dat zijn twee bedrijven.',
+    ar: 'كلٌّ من هذين يحمل رقم KVK خاصاً به — إذاً هما شركتان.',
+    en: 'These two each carry their own KVK number — that is two companies.',
+  },
+  'lev.merge.geweigerd.rekening': {
+    nl: 'Deze twee dragen elk een eigen rekeningnummer. Haal er eerst één weg bij de leverancier zelf.',
+    ar: 'كلٌّ من هذين يحمل رقم حساب خاصاً به. احذف أحدهما أولاً من بيانات المورّد نفسه.',
+    en: 'These two each carry their own account number. Remove one at the supplier itself first.',
+  },
+  'lev.merge.geweigerd.oud': {
+    nl: 'Dit scherm is verouderd — ververs de pagina en kijk opnieuw.',
+    ar: 'هذه الشاشة قديمة — حدّث الصفحة وانظر من جديد.',
+    en: 'This screen is out of date — refresh the page and look again.',
+  },
   'ink.factuurBevestigen': { nl: 'Factuur bevestigen', ar: 'تأكيد الفاتورة', en: 'Confirm the invoice' },
   'ink.controleerBedragen': { nl: 'Controleer de bedragen. AI heeft ze automatisch uitgelezen.', ar: 'تحقّق من المبالغ — قرأها الذكاء الاصطناعي تلقائياً.', en: 'Check the amounts. AI read them automatically.' },
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },
@@ -2923,6 +3018,31 @@ export const MESSAGES = {
     ar: 'دفعة مؤكدة واحدة جاهزة للمعالجة',
     en: '1 certain payment ready to handle',
   },
+  // [AFHANDELEN-NOEMT] Eén regel per betaling die deze knop gaat boeken, mét het factuurnummer.
+  // De knop markeert facturen als betaald; tot nu toe stond er alleen HOEVEEL, en de enige vraag
+  // die een ondernemer ervoor heeft — "welke, en zit de verkeerde ertussen?" — had geen antwoord
+  // op het scherm.
+  // [NIET-DEZE-FACTUUR] De knop die tot nu toe niet bestond. De kaart bood één factuur en één
+  // knop — Bevestig betaling — en er was geen manier om te zeggen dat het voorstel FOUT was. De
+  // zin zegt wat er gebeurt, niet wat de app ervan vindt: het voorstel verdwijnt, er wordt niets
+  // geboekt, en het is terug te draaien.
+  'bank.nietDeze': { nl: 'Niet deze factuur', ar: 'ليست هذه الفاتورة', en: 'Not this invoice' },
+  'bank.nietDeze.weg': {
+    nl: 'Weggehaald — deze factuur wordt niet meer voorgesteld bij deze betaling.',
+    ar: 'أُزيلت — لن تُقترح هذه الفاتورة بعد الآن لهذه الدفعة.',
+    en: 'Removed — this invoice is no longer suggested for this payment.',
+  },
+  'bank.nietDeze.terug': { nl: 'Ongedaan maken', ar: 'تراجع', en: 'Undo' },
+  'bank.nietDeze.nietBewaard': {
+    nl: 'Weggehaald voor nu. De app kan dit nog niet onthouden, dus na verversen staat hij er weer.',
+    ar: 'أُزيلت الآن فقط. لا يستطيع التطبيق تذكّر هذا بعد، فستعود بعد تحديث الصفحة.',
+    en: 'Removed for now. The app cannot remember this yet, so it will be back after a refresh.',
+  },
+  'bank.auto.wordtGeboektOp': {
+    nl: 'wordt geboekt op factuur {nummer}',
+    ar: 'ستُقيَّد على الفاتورة {nummer}',
+    en: 'will be booked on invoice {nummer}',
+  },
   'bank.auto.uitleg': {
     nl: 'Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.',
     ar: 'الفواتير التي يظهر رقمها ومبلغها تماماً في كشف حسابك أعالجها بنفسي — أربطها وأوسمها كمدفوعة. الباقي أتركه لك، ويمكنك التراجع عن أي ربط لاحقاً.',
@@ -4832,11 +4952,6 @@ export const MESSAGES = {
     ar: 'فشلت إعادة الإرسال',
     en: 'Resending failed',
   },
-  'detail.fout.origineelPdf': {
-    nl: 'Origineel PDF kon niet worden geopend',
-    ar: 'تعذّر فتح ملف PDF الأصلي',
-    en: 'The original PDF could not be opened',
-  },
   // [VERSTUURD-EERLIJK] De PDF-variant hiernaast bestond al; deze niet, en dat is precies waarom
   // vier van de zeven verzendknoppen "verstuurd" zeiden terwijl de mail was blijven staan. Eigen
   // sleutel per oorzaak: bij de ene is er geen document, bij de andere wel — maar niemand kreeg het.
@@ -4906,6 +5021,20 @@ export const MESSAGES = {
     nl: 'De factuur is opnieuw verzonden.',
     ar: 'أُعيد إرسال الفاتورة.',
     en: 'The invoice was sent again.',
+  },
+  // [GEEN-REGELS] Een kop met kolommen en nul rijen leest als "de regels zijn kwijt". Bij een
+  // ingelezen inkoopfactuur is er niets kwijt: de app bewaart er de BEDRAGEN van, en de regels
+  // staan op het papier. Dat is een andere zin dan "deze factuur heeft geen regels", en alleen de
+  // eerste is waar.
+  'detail.regels.alleenBedragen': {
+    nl: 'Van deze factuur zijn alleen de bedragen vastgelegd. De regels staan op het origineel.',
+    ar: 'من هذه الفاتورة سُجِّلت المبالغ فقط. البنود موجودة في الأصل.',
+    en: 'Only the amounts of this invoice were recorded. The lines are on the original.',
+  },
+  'detail.regels.geen': {
+    nl: 'Er staan geen regels op deze factuur.',
+    ar: 'لا توجد بنود على هذه الفاتورة.',
+    en: 'There are no lines on this invoice.',
   },
   'detail.origineelPdf': {
     nl: 'Origineel PDF',
@@ -12181,6 +12310,7 @@ export const MESSAGES = {
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
   'log.supplier.auto_incasso_off': { nl: 'Automatische incasso bij een leverancier uitgezet', en: 'Direct debit switched off for a supplier', ar: 'أُوقف الاستقطاع التلقائي لمورّد' },
+  'log.supplier.merged': { nl: 'Twee leveranciers samengevoegd tot één', en: 'Two suppliers merged into one', ar: 'دُمج مورّدان في واحد' },
   'log.document.uploaded': { nl: 'Bestand geüpload', en: 'File uploaded', ar: 'رُفع ملف' },
   'log.document.duplicate_blocked': { nl: 'Dubbel bestand geweigerd', en: 'Duplicate file refused', ar: 'رُفض ملف مكرر' },
   'log.document.deleted': { nl: 'Bestand verwijderd', en: 'File deleted', ar: 'حُذف ملف' },

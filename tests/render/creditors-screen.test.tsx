@@ -150,3 +150,106 @@ test("[TAAL] the Arabic screen carries its direction and none of the Dutch", asy
   // The supplier's own name is data, not copy — it stays exactly as the invoice states it.
   assert.match(html, /CAN Vleesgroothandel/);
 });
+
+// ── [LEVERANCIER-SAMENVOEGEN] The one panel on this screen that WRITES ────────────────────────
+//
+// Everything else here reports. This offers a button that rewrites what already-booked invoices
+// say about who sent them, so what the owner reads before pressing it is part of the safety
+// argument, not decoration — and a render is the only thing that can see it.
+const REGISTRY = {
+  ketelsA: { id: "ka", name: "W.KETELS & ZN EIERHANDEL", kvk: "17123456", invoiceCount: 25 },
+  ketelsB: { id: "kb", name: "W. Ketels en Zoon Eierhandel", kvk: "17123456", invoiceCount: 3 },
+  bal: { id: "bal", name: "GROOTHANDEL M.H. BAL V.O.F.", kvk: "17123456", invoiceCount: 72 },
+  balkip: { id: "balkip", name: "BALKIP B.V.", kvk: "34129873", invoiceCount: 7 },
+};
+
+test("[LEVERANCIER-SAMENVOEGEN] the offer shows the proof, and says under which name the invoices land", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const { findMergeCandidates } = await import("../../src/lib/supplier-merge");
+  const { buildSupplierMergePanel } = await import("../../src/lib/supplier-merge-copy");
+
+  const plans = findMergeCandidates([REGISTRY.ketelsA, REGISTRY.ketelsB]);
+  assert.equal(plans.length, 1, "the fixture must reach the offer branch, or nothing below is tested");
+  const merge = buildSupplierMergePanel(plans, "nl");
+  assert.ok(merge, "…and produce a panel");
+
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "nl", TODAY),
+      corroboration: null, merge, asOf: TODAY, today: TODAY,
+    }),
+  );
+  // What the OWNER reads. Tags out, and the entities back to characters: React writes the & of
+  // "W.KETELS & ZN" as &amp;, and asserting against the raw markup would be asserting against a
+  // spelling no one is ever shown.
+  const text = html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ").trim();
+
+  // The identifier itself is on the screen. The owner checks it against the two invoices in front
+  // of them rather than taking the app's word for who these two companies are.
+  assert.match(text, /17123456/, "the proof is quoted, not summarised");
+  assert.match(text, /3 facturen/, "how many move");
+  assert.match(text, /W\.KETELS & ZN EIERHANDEL/, "and under which name they land");
+  // And the panel states its own rule, so an owner can see it is not matching on names.
+  assert.match(text, /KVK-nummer of hetzelfde rekeningnummer/);
+  assert.match(html, /Samenvoegen/, "the button is there");
+});
+
+test("[LEVERANCIER-SAMENVOEGEN] the one pair that may never be offered, is not", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const { findMergeCandidates } = await import("../../src/lib/supplier-merge");
+  const { buildSupplierMergePanel } = await import("../../src/lib/supplier-merge-copy");
+
+  // BALKIP B.V. and GROOTHANDEL M.H. BAL V.O.F. — one family name, two Chamber-of-Commerce
+  // numbers, two companies. vendor-grounding.ts exists because one was once read as the other.
+  const merge = buildSupplierMergePanel(findMergeCandidates([REGISTRY.bal, REGISTRY.balkip]), "nl");
+  assert.equal(merge, null, "no evidence, no offer");
+
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "nl", TODAY),
+      corroboration: null, merge, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.doesNotMatch(html, /Samenvoegen/, "and no button anywhere on the screen");
+
+  // A screen rendered before this panel existed passes null in the same way and looks unchanged.
+  const zonder = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "nl", TODAY),
+      corroboration: null, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.equal(zonder, html, "an absent panel and a refused one look the same, because they are");
+});
+
+test("[TAAL] the merge panel carries its own direction and none of the Dutch", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const { findMergeCandidates } = await import("../../src/lib/supplier-merge");
+  const { buildSupplierMergePanel } = await import("../../src/lib/supplier-merge-copy");
+
+  const merge = buildSupplierMergePanel(findMergeCandidates([REGISTRY.ketelsA, REGISTRY.ketelsB]), "ar");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "ar", TODAY),
+      corroboration: null, merge, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.doesNotMatch(html, /Samenvoegen/, "the button is really translated");
+  assert.doesNotMatch(html, /Zelfde KVK-nummer/, "…and so is the proof line");
+  // The number in it is not copy: it is the identifier, and it reads the same in every language.
+  assert.match(html, /17123456/);
+});

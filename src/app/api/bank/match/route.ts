@@ -22,6 +22,9 @@ import {
   normalizeRef,
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
+// [NIET-DEZE-FACTUUR] What the owner has already told us is wrong. A refusal removes a suggestion
+// and never promotes one — see the module.
+import { applyRejections, rejectionsByTransaction } from "@/lib/bank-rejections";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 // [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde — dezelfde pool als de matcher.
 import { judgeBankWait } from "@/lib/bank-waiting-reason";
@@ -121,6 +124,32 @@ export async function GET() {
       { error: "invoices_lookup_failed", detail: invErr.message },
       { status: 500 }
     );
+  }
+
+  // [NIET-DEZE-FACTUUR] The pairs this owner has refused. One read, grouped per transaction — a
+  // refusal is about a PAIR, and flattening it to a set of invoice ids would hide that invoice on
+  // every other line as well.
+  //
+  // [DEPLOY-SAFE] bank_match_rejections.sql is applied by hand; until it is, this read fails and an
+  // empty map means "nothing refused", which is exactly today's behaviour. Logged, not raised: the
+  // page is worth showing either way.
+  let rejectedByTx = new Map<string, Set<string>>();
+  try {
+    const rejectRows = await fetchAllRows<{ transaction_id: string | null; invoice_id: string | null }>(
+      (from, to) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (pipeline as any)
+          .from("bank_match_rejections")
+          .select("transaction_id, invoice_id")
+          .eq("user_id", user.id)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+    rejectedByTx = rejectionsByTransaction(rejectRows);
+  } catch (e) {
+    console.warn("[NIET-DEZE-FACTUUR] refusals could not be read — a refused suggestion may come back", {
+      userId: user.id, error: e instanceof Error ? e.message : String(e),
+    });
   }
 
   // [SUPPLIER-IBAN] The account each supplier is known to bill from, for the invoices whose own
@@ -460,8 +489,16 @@ export async function GET() {
   }));
 
   // 5. Shape a lean DTO for the UI. transactionId === bank_transactions.id.
-  const suggestions = result.matches.map((m) => {
-    const txId = m.transaction.transactionId;
+  const suggestions = result.matches.map((raw) => {
+    const txId = raw.transaction.transactionId;
+    // [NIET-DEZE-FACTUUR] Applied FIRST, so everything below — the outcome, the reference verdict,
+    // the sum suggestion, what the screen pre-selects — is computed on what is actually still on
+    // offer. Applying it later would leave a refused invoice deciding the shape of the card it is
+    // no longer in.
+    const pruned = txId != null ? applyRejections(raw, rejectedByTx.get(txId)) : null;
+    const m = pruned
+      ? { ...raw, outcome: pruned.outcome as typeof raw.outcome, best: pruned.best, candidates: pruned.candidates }
+      : raw;
     const isLinked = txId != null && partialLink.has(txId);
     // [BANK-SUM-SUGGEST] A payment that is EXACTLY the sum of 2..4 open invoices from EXACTLY
     // this counterparty, with nothing quoted, used to render as "Geen factuur" — the one case

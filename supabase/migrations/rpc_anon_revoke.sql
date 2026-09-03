@@ -61,6 +61,28 @@
 -- Idempotent. Draait veilig meerdere keren.
 
 -- ── 1. Niemand zonder account, voor alles wat iets verandert ────────────────────
+--
+-- ── WIE DEZE GRENS WEER OPENZET, EN WANNEER JE DIT BESTAND OPNIEUW MOET DRAAIEN ─────────────
+--
+-- Drie migraties eindigen met `GRANT EXECUTE … TO authenticated, service_role` op een functie die
+-- hieronder juist van `authenticated` wordt afgenomen. Het zijn CREATE OR REPLACE-bestanden, dus
+-- ze nemen die GRANT elke keer mee:
+--
+--   invoice_partial_payments.sql        → recompute_invoice_amount_paid
+--   invoice_payment_date_rederive.sql   → recompute_invoice_amount_paid
+--   bank_confirm_atomic.sql             → confirm_bank_payment
+--
+-- Gemeten op 2 september 2026, ná het toepassen van invoice_payment_date_rederive.sql:
+-- has_function_privilege('authenticated', 'recompute_invoice_amount_paid', 'EXECUTE') = true, en
+-- DEEL 2 van docs/WELKE_MIGRATIES_STAAN_ER.sql meldde dit bestand daarom als OPEN.
+--
+-- Het recht zelf is bijna ongevaarlijk (de functie weigert zodra auth.uid() niet de eigenaar is).
+-- Wat het WEL kost is een veiligheidscontrole die permanent rood staat, en dat is de soort melding
+-- die niemand meer leest — deze codebase heeft dat over drie andere waarschuwingen al opgeschreven.
+--
+-- Dus: draai dit bestand opnieuw na elk van de drie hierboven. Het is idempotent.
+--
+
 DO $$
 DECLARE
   fn text;

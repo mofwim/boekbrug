@@ -202,6 +202,11 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.package.link_shared", "log.package.link_downloaded", "log.package.link_revoked",
   "log.accountant.export_downloaded", "log.supplier.auto_incasso_on",
   "log.supplier.auto_incasso_off",
+  // [LEVERANCIER-SAMENVOEGEN] Twee leveranciersrijen tot één verklaard. Dit is de enige regel die
+  // terugvindbaar maakt WAAROM dat mocht — een gedeeld KVK-nummer of een gedeeld rekeningnummer —
+  // en dat is precies de vraag die iemand stelt als een crediteurenstand er anders uitziet dan
+  // vorige maand.
+  "log.supplier.merged",
   // Level 3 — Files
   "log.document.uploaded", "log.document.duplicate_blocked", "log.document.deleted",
   "log.document.bulk_deleted", "log.document.restored", "log.article.bulk_deleted",

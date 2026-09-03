@@ -55,6 +55,12 @@ import { type DepositGap } from "@/lib/statiegeld";
 import { round2 } from "@/lib/invoice-totals";
 // [DOC-INLINE] The paper, our reading and the checks on one screen — see the component header.
 import InvoiceDocumentSheet from "@/components/invoice/InvoiceDocumentSheet";
+// [LEVERANCIER-KIEZEN] The supplier name field, with the owner's own suppliers under it —
+// so a correction lands ON an existing company instead of founding a second one.
+import SupplierNameInput, { type SupplierChoice } from "@/components/invoice/SupplierNameInput";
+// [LEVERANCIER-STAAT-IN-HET-LOGO] The confidence line, from the leaf both the reader and this
+// screen read — never a fourth copy of 0.7. See confidence.ts.
+import { LOW_CONFIDENCE } from "@/lib/confidence";
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
 import { reimportDecision, reimportPromptText } from "@/lib/reimport-eligibility";
 // [DATE-NL] A date the owner TYPES, in the order they read it. The native control puts the
@@ -215,6 +221,13 @@ interface Props {
   // list. Non-empty qualifies EVERYTHING on this screen — the counts, the tabs, and above all the
   // absence of rows, which on this page renders as "Alles verwerkt".
   readFailed?: string[];
+  // [LEVERANCIER-KIEZEN] The suppliers this owner already has, for the name field in the verify
+  // modal. Optional: without them the field is the plain text box it has always been.
+  suppliers?: SupplierChoice[];
+  // [NO-SILENT-EMPTY] True when that read FAILED — which is a different sentence from an empty
+  // list, and the field says so. An empty list means "you have no suppliers yet"; this means "we
+  // could not look", and only one of those two may imply that confirming creates a new supplier.
+  suppliersUnavailable?: boolean;
 }
 
 type Tab = "pending" | "ignored" | "confirmed";
@@ -951,6 +964,9 @@ export function ConfirmPaidModal({
   // active — the card's "Bewerken" entry point skips the extra
   // "Gegevens aanpassen" tap. Optional: the normal Verifiëren flow is unchanged.
   startEditing = false,
+  // [LEVERANCIER-KIEZEN] The owner's own suppliers, shown under the name field while they type.
+  suppliers = [],
+  suppliersUnavailable = false,
 }: {
   invoice: IncomingInvoice;
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
@@ -971,6 +987,11 @@ export function ConfirmPaidModal({
   onCancel: () => void;
   // [QUEUE-EDIT-UX] open with edit fields active (card "Bewerken" entry point)
   startEditing?: boolean;
+  // [LEVERANCIER-KIEZEN] The suppliers to offer under the name field. Absent = the plain text
+  // field this modal has always had; the correction still saves exactly as before.
+  suppliers?: SupplierChoice[];
+  // [NO-SILENT-EMPTY] The list could not be READ — said out loud, never rendered as "none".
+  suppliersUnavailable?: boolean;
 }) {
   const t = translator(useLocale())
   // [DATE-GATE-FEEDBACK] This modal had no snackbar of its own — see nudgeForDate below.
@@ -1109,7 +1130,11 @@ export function ConfirmPaidModal({
   // it was unsure about. Threshold 0.7: below = ask the user to confirm. An empty
   // field (guard nulled it → conf 0) also flags. These are SOFT (never block).
   const fc = invoice.field_confidence;
-  const LOW = 0.7;
+  // [LEVERANCIER-STAAT-IN-HET-LOGO] One threshold, imported. This was a third copy of 0.7 —
+  // beside import-health's and the visual re-read's — and the three answer the same question in
+  // sequence: below this line the app looks at the page again, and only if it is STILL unsure does
+  // this ⚠️ appear. Two different lines would put a warning on invoices the app had already fixed.
+  const LOW = LOW_CONFIDENCE;
   const vendorLow = (fc?.vendor ?? 1) < LOW || !vendor.trim();
   const numberLow = (fc?.invoice_number ?? 1) < LOW || numberFlag;
   const dateLow = (fc?.invoice_date ?? 1) < LOW;
@@ -1547,17 +1572,25 @@ export function ConfirmPaidModal({
               )}
 
               {/* Vendor */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
-                <span style={{ fontSize: 14, color: vendorLow ? "#EA8600" : "#5f6368", flexShrink: 0, fontWeight: vendorLow ? 600 : 400 }}>
+              {/* [LEVERANCIER-KIEZEN] alignItems flex-start, not center: the picker under the field
+                  grows downward, and a centred label would drift down with it. */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, gap: 10 }}>
+                <span style={{ fontSize: 14, color: vendorLow ? "#EA8600" : "#5f6368", flexShrink: 0, fontWeight: vendorLow ? 600 : 400, marginTop: editing ? 8 : 0 }}>
                   {t('inkoop.leverancier')} {vendorLow && "⚠️"}
                 </span>
                 {editing ? (
-                  <input
-                    type="text"
+                  /* [LEVERANCIER-KIEZEN] The suppliers this owner already has, under the field
+                     while they type. Retyping a company name from memory is how one company ends
+                     up as two supplier rows with the crediteurenstand split between them — see the
+                     header of supplier-suggest.ts. */
+                  <SupplierNameInput
                     value={vendor}
-                    onChange={(e) => setVendor(e.target.value)}
-                    style={{
-                      flex: 1, minWidth: 0, padding: "6px 10px", fontSize: 15,
+                    onChange={setVendor}
+                    options={suppliers}
+                    unavailable={suppliersUnavailable}
+                    wrapperStyle={{ flex: 1, minWidth: 0 }}
+                    inputStyle={{
+                      padding: "6px 10px", fontSize: 15,
                       borderRadius: 8, border: "1.5px solid #1a73e8",
                       textAlign: "end", outline: "none",
                     }}
@@ -2016,6 +2049,11 @@ export function InvoiceCard({
   highlighted = false,
   // [READING-MEMORY] What the owner has repeatedly corrected at THIS supplier, if anything.
   readingHint,
+  // [LEVERANCIER-KIEZEN] Handed straight on to the document sheet, whose foot carries the second
+  // door where a supplier is named. The queue's verify modal is the first; a picker at one of the
+  // two would be a feature the owner cannot rely on.
+  suppliers = [],
+  suppliersUnavailable = false,
 }: {
   invoice: IncomingInvoice;
   mode: Tab;
@@ -2035,6 +2073,10 @@ export function InvoiceCard({
   highlighted?: boolean;
   // [READING-MEMORY] One sentence, or nothing. Never a number — see reading-memory.ts.
   readingHint?: string | null;
+  // [LEVERANCIER-KIEZEN] The owner's suppliers, for the supplier form in the document sheet.
+  suppliers?: SupplierChoice[];
+  // [NO-SILENT-EMPTY] That read failed — a different sentence from an empty list.
+  suppliersUnavailable?: boolean;
 }) {
   // [WAAROM-WACHT] De taal apart, want één regel op deze kaart heeft hem zelf nodig: de zin die
   // zegt waarom dit document wacht komt uit een pure module en draagt zijn eigen richting mee.
@@ -2275,6 +2317,8 @@ export function InvoiceCard({
           signed url and closes over nothing. */}
       {showDoc && (
         <InvoiceDocumentSheet
+          suppliers={suppliers}
+          suppliersUnavailable={suppliersUnavailable}
           invoice={{
             id: invoice.id,
             client_name: invoice.client_name,
@@ -3597,6 +3641,10 @@ export default function IncomingInvoicesClient({
   // [NO-SILENT-EMPTY] Defaults to empty, so an older server render behaves exactly as before —
   // but an EMPTY array means "every read succeeded", which is a claim, not an absence.
   readFailed = [],
+  // [LEVERANCIER-KIEZEN] Empty by default: an older server render, or a brand-new account, gets
+  // exactly the field this screen has always had.
+  suppliers = [],
+  suppliersUnavailable = false,
 }: Props) {
   const t = translator(useLocale())
   const dialog = useDialog();
@@ -4711,6 +4759,8 @@ export default function IncomingInvoicesClient({
                 // [READING-MEMORY] Keyed exactly as the server keyed it (trimmed + lowercased), so
                 // a supplier written with a trailing space is not treated as a second company.
                 readingHint={readingHints[(inv.client_name ?? "").trim().toLowerCase()]}
+                suppliers={suppliers}
+                suppliersUnavailable={suppliersUnavailable}
               />
             ))}
           </div>
@@ -4746,6 +4796,8 @@ export default function IncomingInvoicesClient({
       {confirmPaidFor && (
         <ConfirmPaidModal
           invoice={confirmPaidFor}
+          suppliers={suppliers}
+          suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
           onPay={(amounts, method, paymentDate) => handlePay(confirmPaidFor, amounts, method, paymentDate)}
           onCancel={() => setConfirmPaidFor(null)}
@@ -4759,6 +4811,8 @@ export default function IncomingInvoicesClient({
         <ConfirmPaidModal
           invoice={editFor}
           startEditing
+          suppliers={suppliers}
+          suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(editFor, amounts)}
           onPay={(amounts, method, paymentDate) => handlePay(editFor, amounts, method, paymentDate)}
           onCancel={() => setEditFor(null)}

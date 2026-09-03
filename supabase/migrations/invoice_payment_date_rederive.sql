@@ -32,6 +32,23 @@
 -- Idempotent / re-runnable.
 -- =====================================================================
 
+--
+-- ── [RPC-ANON-REVOKE] DIT BESTAND HEROPENT EEN DEUR DIE BEWUST DICHT IS ─────────────────────
+--
+-- De GRANT onderaan geeft `authenticated` EXECUTE op recompute_invoice_amount_paid — en rpc_anon_revoke.sql neemt dat
+-- recht juist WEG, omdat geen enkele call site die functie met een sessieclient aanroept. Wie dit
+-- bestand (opnieuw) in de SQL-editor draait, zet die deur dus weer open, en DEEL 2 van
+-- docs/WELKE_MIGRATIES_STAAN_ER.sql meldt rpc_anon_revoke.sql daarna als OPEN.
+--
+-- Gemeten: na het toepassen van invoice_payment_date_rederive.sql stond
+-- has_function_privilege('authenticated', 'recompute_invoice_amount_paid', 'EXECUTE') op true.
+--
+-- DUS: draai na dit bestand ALTIJD rpc_anon_revoke.sql opnieuw. Die is idempotent en herstelt de
+-- grens in één keer. De GRANT hieronder blijft staan zoals hij is — dit bestand is toegepast en
+-- byte-identiek geverifieerd, en het achteraf anders spellen dan wat er werkelijk gedraaid heeft
+-- is precies wat een migratiemap onbetrouwbaar maakt.
+--
+
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.recompute_invoice_amount_paid(

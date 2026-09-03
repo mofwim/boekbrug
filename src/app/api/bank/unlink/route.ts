@@ -16,6 +16,9 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+// [PAYDATE-REDERIVE] After a reversal the invoice's payment date must describe the money that is
+// still on it. The database does this too now; this stands beside it — see the module for why.
+import { rederivePaymentDate } from "@/lib/payment-date-rederive";
 import { parseReferenceNumbers, normalizeRef } from "@/lib/bank-matching";
 import { invoiceIdsForTransactions, invoicesClaimedByOtherTx, clearPaymentLinks } from "@/lib/bank-tx-links";
 import { reportHandledFailure } from "@/lib/report-handled";
@@ -330,6 +333,12 @@ export async function POST(req: Request) {
       invoiceId, userId: user.id, transactionId, message: recomputeErr.message,
     });
   }
+  // [PAYDATE-REDERIVE] …and the DATE that money now has. The comment on the reversal above claimed
+  // the recompute re-derives it, and for months it did not — the migration saying so was reported
+  // applied while it was not. It is applied now and this stands beside it, because under the
+  // kasstelsel payment_date decides the QUARTER and the app has twice been wrong about what is
+  // deployed. Best-effort like the recompute: a failure costs the date, never the reversal.
+  await rederivePaymentDate(pipeline, user.id, invoiceId);
   if (!linksCleared) {
     // Loud, and never only in a console line an hourly job nobody reads: this is the state where
     // an invoice claims money that has no bank line behind it any more.
@@ -574,6 +583,8 @@ async function unlinkBatch(args: {
         invoiceId: id, userId, transactionId, message: recErr.message,
       });
     }
+    // [PAYDATE-REDERIVE] Per invoice, for the same reason as the single path above.
+    await rederivePaymentDate(pipeline, userId, id);
   }
   // A partial invoice whose settlement just dropped to zero must not keep advertising a payment
   // method/date it no longer has — those fields would resurrect as "paid by bank on <date>" the

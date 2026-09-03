@@ -16,6 +16,9 @@ import { amsterdamToday } from "@/lib/format-nl";
 import { paymentDateOutOfWindow, PAYMENT_DATE_REFUSAL } from "@/lib/payment-date";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+// [PAYDATE-REDERIVE] After a reversal the invoice's payment date must describe the money that is
+// still on it. The database does this too now; this stands beside it — see the module for why.
+import { rederivePaymentDate } from "@/lib/payment-date-rederive";
 // [CASH-RETRY] The retry wrapper moved to cash-settle.ts so every door that turns a cash payment
 // into a drawer movement uses the same one — see its header for the four that did not.
 import { reconcileCashWithRetry, cashInstalmentsSupported } from "@/lib/cash-settle";
@@ -452,6 +455,8 @@ export async function POST(req: NextRequest) {
           invoiceId, userId: user.id, message: rbRecomputeErr.message,
         });
       }
+      // [PAYDATE-REDERIVE] The rollback restores the amount; the date has to come back with it.
+      await rederivePaymentDate(pipeline, user.id, invoiceId);
     } catch { /* the bank-state restore above is itself best-effort */ }
   };
 
@@ -595,6 +600,12 @@ export async function POST(req: NextRequest) {
     await rollbackBankState();
     return NextResponse.json({ error: "status_conflict", detail: "factuur is niet (meer) betaald" }, { status: 409 });
   }
+
+  // [PAYDATE-REDERIVE] The clear above is right for the case this path is written for — every link
+  // is gone, so there is no payment left to be dated. It is wrong for any invoice where one
+  // survived, and this restores the date for exactly that case: with nothing left to derive from,
+  // the re-derive writes nothing at all and the null stands.
+  await rederivePaymentDate(pipeline, user.id, invoiceId);
 
   await logAuditAction({
     userId: user.id, action: "invoice.status_changed", entityType: "invoice", entityId: invoiceId,

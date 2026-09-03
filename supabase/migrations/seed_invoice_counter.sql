@@ -46,6 +46,18 @@
 -- Depends on factuur_b_numbering.sql (invoice_counters).
 -- =====================================================================
 
+--
+-- ── [RPC-ANON-REVOKE] DIT BESTAND HEROPENT EEN DEUR DIE BEWUST DICHT IS ─────────────────────
+--
+-- De GRANT onderaan geeft `authenticated` EXECUTE op seed_invoice_counter, en rpc_anon_revoke.sql
+-- neemt dat recht juist WEG: "zijn eigen teller op 999999999 zetten" is geen functie die iemand
+-- hoort te hebben, en geen enkele call site roept deze met een sessieclient aan.
+--
+-- Vandaag staat het recht ingetrokken in productie — gemeten op 2 september 2026. Dat blijft zo
+-- zolang dit bestand niet opnieuw gedraaid wordt. Draai je het wél, draai dan daarna
+-- rpc_anon_revoke.sql opnieuw; die is idempotent en zet de grens in één keer terug.
+--
+
 BEGIN;
 
 -- ── Drop first, and drop EVERY overload ───────────────────────────────────────────────────────
