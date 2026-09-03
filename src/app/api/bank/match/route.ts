@@ -22,19 +22,13 @@ import {
   normalizeRef,
   type InvoiceForMatching,
 } from "@/lib/bank-matching";
-// [AFSCHRIFT-NOEMT] Which invoice does this bank line NAME? Asked of the invoices the matcher is
-// not allowed to see — see the module for the three cases that made it necessary.
-import {
-  referencedInvisibleInvoice,
-  referenceOutranksSuggestion,
-  type InvisibleInvoice,
-} from "@/lib/bank-reference-settled";
 // [NIET-DEZE-FACTUUR] What the owner has already told us is wrong. A refusal removes a suggestion
 // and never promotes one — see the module.
 import { applyRejections, rejectionsByTransaction } from "@/lib/bank-rejections";
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 // [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde — dezelfde pool als de matcher.
 import { judgeBankWait } from "@/lib/bank-waiting-reason";
+import { settledOnly, quotedSettledInvoice, type QuotedInvoiceRow } from "@/lib/bank-quoted-invoice";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 // [GEHEUGEN] The owner's own confirmations, read back — see match-memory.ts for what it means.
 import { loadMatchMemory } from "@/lib/match-memory-server";
@@ -131,65 +125,6 @@ export async function GET() {
       { status: 500 }
     );
   }
-
-  // ── [AFSCHRIFT-NOEMT] The invoices the matcher is not allowed to see ─────────────────────────
-  //
-  // The read above ends in `.neq("status", "paid")`, and isEligible drops archived/draft/processing
-  // on top of that. So the reference the bank PRINTED — the strongest evidence in the system — is
-  // never compared against the very invoices it names. It does not lose the scoring; it is never
-  // entered into it.
-  //
-  // Measured on this account: 43 unlinked bank lines name a PAID invoice of exactly their own
-  // amount (EUR 30.580,56), and 10 more name an archived one (EUR 10.503,71). Three of them were on
-  // screen offering a DIFFERENT invoice — one under a green check, one as a partial payment that
-  // would have left EUR 161,05 open forever. Each such confirm books a second payment for money
-  // that moved once.
-  //
-  // They are read HERE, separately, for one purpose: to answer "which invoice does this line NAME?"
-  // before anything is suggested. They are never scored and never offered as candidates — that is
-  // the line isEligible draws, and it stays drawn.
-  //
-  // [NO-SILENT-EMPTY] A failed read leaves the answer absent, which is exactly the behaviour that
-  // produced the three screenshots, so it is logged loudly. It may not fail the route: the rest of
-  // the page is still worth showing.
-  type InvisibleRow = {
-    id: string; invoice_number: string | null; total_inc_btw: number | null;
-    amount_paid: number | null; status: string | null;
-    client_name: string | null; invoice_date: string | null;
-  };
-  let paidRowsForRef: InvisibleRow[] = [];
-  try {
-    paidRowsForRef = await fetchAllRows<InvisibleRow>((from, to) =>
-      pipeline
-        .from("invoices")
-        .select("id, invoice_number, total_inc_btw, amount_paid, status, client_name, invoice_date")
-        .eq("status", "paid")
-        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-        .order("id", { ascending: true })
-        .range(from, to)
-    );
-  } catch (e) {
-    console.error(
-      "[AFSCHRIFT-NOEMT] the paid invoices could not be read — a line that names one falls back to " +
-      "the weaker suggestion it named nothing about",
-      { userId: user.id, error: e instanceof Error ? e.message : String(e) },
-    );
-  }
-  // Everything the matcher will not offer: the paid rows just read, plus the archived / draft /
-  // processing ones already in hand from the read above.
-  const OFFERABLE = new Set(["received", "sent", "overdue"]);
-  const invisibleInvoices: InvisibleInvoice[] = [
-    ...paidRowsForRef,
-    ...(invRows as InvisibleRow[]).filter((r) => !OFFERABLE.has(r.status ?? "")),
-  ].map((r) => ({
-    id: r.id,
-    invoiceNumber: r.invoice_number ?? null,
-    totalIncBtw: r.total_inc_btw ?? null,
-    amountPaid: r.amount_paid ?? null,
-    status: r.status ?? null,
-    clientName: r.client_name ?? null,
-    invoiceDate: r.invoice_date ?? null,
-  }));
 
   // [NIET-DEZE-FACTUUR] The pairs this owner has refused. One read, grouped per transaction — a
   // refusal is about a PAIR, and flattening it to a set of invoice ids would hide that invoice on
@@ -425,8 +360,22 @@ export async function GET() {
     .filter((m) => m.outcome === "none" && (m.transaction.amount ?? 0) < 0 && m.transaction.transactionId)
     .map((m) => m.transaction);
 
-  // …and the paid sweep itself is skipped when there is nothing to explain.
-  const paidInvRows = unexplained.length === 0 ? [] : await fetchAllRows((from, to) =>
+  // [AL-GEBOEKT] …and one more set of lines needs those same paid rows: the ones that DID get a
+  // candidate list. Both explain passes are gated on `outcome === "none"` because of a single
+  // assumption written into this route — *bij een kandidatenlijst is die lijst het antwoord*. That
+  // is true until the list is wrong, which is exactly what a screenshot from /bank showed: a
+  // € 797,86 payment quoting `USTD//2919045/` offered three invoices of € 2.449, € 2.822 and
+  // € 3.008, because invoice 2919045 (€ 797,86, same supplier) was already paid and therefore
+  // ineligible. Confirming one of those books this payment against a different, genuinely open
+  // bill. So a pending debit that quotes anything at all gets the paid rows too — the check itself
+  // is a string test over the SETTLED slice, not another O(n·m) scoring pass ([CIRKEL-PERF]).
+  const quotedCheckNeeded = result.matches.some(
+    (m) =>
+      (m.transaction.amount ?? 0) < 0 &&
+      m.transaction.transactionId &&
+      (m.transaction.reference || m.transaction.description),
+  );
+  const paidInvRows = unexplained.length === 0 && !quotedCheckNeeded ? [] : await fetchAllRows((from, to) =>
     pipeline
       .from("invoices")
       // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
@@ -469,6 +418,9 @@ export async function GET() {
     const c = (m.candidates ?? []).find((cand) => strongExplain(cand.signals, isReceipt(cand.invoiceId)));
     return c ? { invoiceId: c.invoiceId } : null;
   };
+
+  // [AL-GEBOEKT] The settled slice, built once for every line rather than per line.
+  const settledForQuote = settledOnly((paidInvRows ?? []) as QuotedInvoiceRow[]);
 
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0 && unexplained.length > 0) {
@@ -597,31 +549,6 @@ export async function GET() {
       // (null when nothing is linked or the links predate amount_applied — then the UI says
       // nothing rather than something wrong).
       appliedAmount: isLinked ? (appliedByTx.get(txId!) ?? null) : null,
-      // ── [AFSCHRIFT-NOEMT] Which invoice does the BANK say this is? ─────────────────────────
-      //
-      // Asked whenever the suggestion above does not already rest on the reference — which is
-      // every case where the app is guessing from an amount and a name. If the printed number
-      // names an invoice the matcher cannot see (paid, archived), that is the answer, and the
-      // screen must lead with it instead of offering a bill the statement never mentioned.
-      //
-      // Not asked when the winner ALREADY carries the reference signal: the bank agreeing with the
-      // matcher is the matcher's own evidence, and reporting it as an override would put a warning
-      // on the one case where everything is right.
-      referencedInvisible: (() => {
-        const winnerHasRef = Array.isArray(m.best?.signals) && m.best!.signals.includes("reference");
-        if (winnerHasRef) return null;
-        const verdict = referencedInvisibleInvoice(
-          m.transaction.reference,
-          m.transaction.amount,
-          invisibleInvoices,
-          parseReferenceNumbers,
-          normalizeRef,
-        );
-        // A verdict about the very invoice being offered is not a contradiction — and cannot be,
-        // since an offered invoice is by definition not in the invisible set. Asked anyway, so the
-        // rule lives in one place (referenceOutranksSuggestion) rather than in this assumption.
-        return referenceOutranksSuggestion(verdict, m.best?.invoiceId ?? null) ? verdict : null;
-      })(),
       // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
       explainedByPaid: txId != null && paidExplained.has(txId),
       // [CIRKEL] This debit matches an invoice still in the verify queue → not missing either; the
@@ -642,6 +569,21 @@ export async function GET() {
                 description: m.transaction.description,
               },
               invoices,
+            )
+          : null,
+      // [AL-GEBOEKT] The invoice this payment NAMES, when that invoice exists and is already
+      // settled. Not a candidate and never confirmable: it is the answer to "why is nothing here
+      // right", and the screen shows it INSTEAD of the chooser. Computed for every pending debit,
+      // including the ones that have candidates — those are the dangerous ones.
+      quotedSettled:
+        (m.transaction.amount ?? 0) < 0 && !isLinked
+          ? quotedSettledInvoice(
+              {
+                amount: m.transaction.amount,
+                reference: m.transaction.reference,
+                description: m.transaction.description,
+              },
+              settledForQuote,
             )
           : null,
       // [BANK-SUM-SUGGEST] Unique same-supplier sum tie (or null). Suggestion only — see above.

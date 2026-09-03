@@ -87,11 +87,12 @@ function isReadableBankFile(name: string): boolean {
 // whether it is worth asking, and what to tell the owner is waiting.
 function isServerAutoBookable(s: Suggestion): boolean {
   if (s.outcome !== 'auto' || !s.best) return false
-  // [AFSCHRIFT-NOEMT] The statement names an invoice this suggestion is not. That is the one
+  // [AL-GEBOEKT-KLEMT] The payment names an invoice that is already booked. That is the one
   // sentence a bulk action may never talk over: "zekere betaling" means the bank agrees, and here
-  // the bank is pointing somewhere else. Measured — one of the three lines that named an
-  // already-paid invoice reached this screen with a suggestion the server called 'auto'.
-  if (s.referencedInvisible) return false
+  // the bank is pointing at a bill that is settled — so every candidate this would book is a
+  // DIFFERENT, still-open invoice. Measured: one of the three lines that named an already-paid
+  // invoice reached this screen with a suggestion the server called 'auto'.
+  if (s.quotedSettled) return false
   const sig = s.best.signals
   if (!sig.includes('amount')) return false // the amount is the money-truth — required by both tiers
   const certain = sig.includes('reference') || sig.includes('iban')
@@ -172,18 +173,6 @@ interface Suggestion {
   // [BANK-ONE-PAYMENT-MANY-INVOICES] Euros of this bank line already booked on invoices.
   // null = nothing linked yet, or links older than amount_applied (then we say nothing).
   appliedAmount?: number | null
-  // [AFSCHRIFT-NOEMT] The invoice this line's own reference NAMES, when the matcher could not
-  // offer it (paid, archived). Null in the ordinary case — and when the suggestion below already
-  // rests on that same reference, which is agreement, not a contradiction.
-  referencedInvisible?: {
-    invoiceId: string
-    invoiceNumber: string
-    clientName: string | null
-    invoiceDate: string | null
-    status: string
-    stillOpen: number
-    amountAgrees: boolean
-  } | null
   // [BANK-PAID-EXPLAINED] This debit matches an already-PAID invoice → not a missing inkoopfactuur.
   explainedByPaid?: boolean
   // [CIRKEL] This debit matches an invoice STILL IN THE VERIFY QUEUE — the document exists, one
@@ -201,6 +190,13 @@ interface Suggestion {
   // [WAAROM-WACHT-BANK] Machinecode van de server: waarom deze regel niets vond. Null wanneer er
   // niets eerlijks te zeggen valt, en dan zegt de kaart niets — zie bank-waiting-reason.ts.
   waitReason?: string | null
+  // [AL-GEBOEKT] De factuur die deze betaling NOEMT, wanneer die al is afgeboekt. Geen kandidaat en
+  // niet te bevestigen: dit is het antwoord op "waarom klopt er hier niets", en het vervangt de
+  // kiezer in plaats van eronder te staan — zie bank-quoted-invoice.ts.
+  quotedSettled?: {
+    invoiceId: string; invoiceNumber: string; amount: number | null
+    clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
+  } | null
 }
 interface MatchResponse {
   ok: boolean
@@ -635,12 +631,12 @@ export default function BankClient() {
           setData(mrJson)
           const pre: Record<string, string> = {}
           for (const s of mrJson.suggestions) {
-            // [AFSCHRIFT-NOEMT] Pre-selecting the winner is what makes "Bevestig betaling" one tap.
-            // It may not be one tap while the statement names an invoice the app could not offer:
-            // that is precisely the card in the screenshot — a green check over a bill the bank
-            // never mentioned, with a live confirm under it. The owner can still select this
-            // candidate by tapping it; nothing is taken away except the accident.
-            if (s.outcome === 'auto' && s.best && !s.referencedInvisible) pre[s.transactionId] = s.best.invoiceId
+            // [AL-GEBOEKT-KLEMT] Pre-selecting the winner is what makes "Bevestig betaling" one tap.
+            // It may not be one tap once quotedSettled is set: the payment then names an invoice that
+            // is already booked, and every candidate under it is a DIFFERENT, still-open invoice. That
+            // is the card from the screenshot — a green check over a bill the statement never named,
+            // with a live confirm below it. Tapping a candidate still selects it; only the accident goes.
+            if (s.outcome === 'auto' && s.best && !s.quotedSettled) pre[s.transactionId] = s.best.invoiceId
           }
           setSelected(pre)
         }
@@ -2820,10 +2816,10 @@ export function TxCard({
   const doneNumbers = s.coveredNumbers ?? []
   const selectedCand =
     s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ??
-    // [AFSCHRIFT-NOEMT] No silent fallback to the winner while the bank names something else: that
-    // fallback is what put a confirmable amount under a green check on a bill the statement never
-    // mentioned. An explicit tap on a candidate still selects it — that path is untouched.
-    (s.outcome === 'auto' && !s.referencedInvisible ? s.best : null)
+    // [AL-GEBOEKT-KLEMT] No silent fallback to the winner while the payment names an already-booked
+    // invoice: that fallback is what put a confirmable amount under a green check on a bill the
+    // statement never mentioned. An explicit tap on a candidate still selects it — that path is untouched.
+    (s.outcome === 'auto' && !s.quotedSettled ? s.best : null)
 
   // [BANK-MULTI-CONFIRM] A transaction whose reference lists more than one invoice
   // number covers several invoices. Instead of "pick ONE" (which silently drops the
@@ -3707,13 +3703,6 @@ export function TxCard({
         </div>
       )}
 
-      {/* ── [AFSCHRIFT-NOEMT] What the BANK says this payment is ────────────────────────────────
-          Measured three times on real books: the statement printed an invoice number, that invoice
-          was already settled for exactly this amount, and the screen offered a DIFFERENT one — once
-          under a green check, once as a partial payment that would have left EUR 161,05 open
-          forever. The matcher never saw the named invoice: paid and archived rows are dropped
-          before a single signal is scored, so the strongest evidence there is never entered.
-          It leads the card, above the guesses, and it takes the confirm with it. */}
       {/* [NIET-DEZE-FACTUUR] The way back, where the suggestion was. */}
       {!wasMulti && onUndoReject && (
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -3730,44 +3719,37 @@ export function TxCard({
         </div>
       )}
 
-      {!wasMulti && s.referencedInvisible && (
-        <div style={{
-          marginTop: 10, padding: '11px 12px', borderRadius: R.md,
-          background: '#FEEFC3', color: '#7A4F00', border: '1px solid #FDE293',
-          fontSize: 12.5, lineHeight: 1.5, textAlign: 'start',
-        }}>
-          <p style={{ margin: 0, fontWeight: 700 }}>
-            {t('bank.noemt.kop', { nummer: s.referencedInvisible.invoiceNumber })}
-            {s.referencedInvisible.clientName ? ` · ${s.referencedInvisible.clientName}` : ''}
-          </p>
-          <p style={{ margin: '4px 0 0' }}>
-            {/* Three different facts, three different sentences. "Already paid for exactly this
-                amount" is a claim about money; "on Ignored" is a claim about a choice the owner
-                made; "a different amount" is neither, and may not borrow the certainty of either. */}
-            {!s.referencedInvisible.amountAgrees
-              ? t('bank.noemt.andersBedrag')
-              : s.referencedInvisible.status === 'archived'
-                ? t('bank.noemt.genegeerd')
-                : t('bank.noemt.betaald')}
-          </p>
-          {s.referencedInvisible.amountAgrees && s.referencedInvisible.status !== 'archived' && (
-            <p style={{ margin: '6px 0 0', fontWeight: 600 }}>{t('bank.noemt.controleer')}</p>
-          )}
-        </div>
+      {/* [AL-GEBOEKT] Not shown once the payment names an invoice that is already settled — see
+          AlGeboektKaart below and bank-quoted-invoice.ts. Two sessions answered this same question;
+          this is the answer that works on the real rows. The other one ([AFSCHRIFT-NOEMT]) read the
+          reference with parseReferenceNumbers, which splits on COMMAS, so `USTD//2919045/` became a
+          single token matching no invoice. It was dropped in the merge rather than kept beside it. */}
+      {!wasMulti && !s.quotedSettled && s.outcome === 'auto' && s.best && (
+        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} onReject={onReject} />
       )}
 
-      {!wasMulti && s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected={!s.referencedInvisible} emphasis={!s.referencedInvisible} onOpenFile={onOpenFile} onCorrect={onCorrect} onReject={onReject} />
+      {/* [AL-GEBOEKT] Deze betaling noemt een factuur die al is afgeboekt. Dan is er niets te
+          kiezen, en een kiezer tónen is hier het gevaar: elke kandidaat eronder is een ANDERE,
+          nog openstaande factuur, en bevestigen zou die als betaald wegzetten met geld dat er
+          niet voor was. De kiezer verdwijnt dus; deze zin komt ervoor in de plaats. */}
+      {!wasMulti && s.quotedSettled && (
+        <AlGeboektKaart q={s.quotedSettled} onOpenFile={onOpenFile} />
       )}
 
-      {!wasMulti && s.outcome === 'choice' && (
+      {!wasMulti && !s.quotedSettled && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
               invoice number to match on (e.g. a recurring incasso), so several invoices
               fit. Comparing bedrag + datum is how the owner picks the right one — the old
               bare "Factuur VHF…" list gave nothing to compare and read as a guess. */}
+          {/* [WAAROM-DEZE] "Meerdere facturen passen bij deze betaling" is een bewering, en hij is
+              onwaar zodra geen enkele kandidaat op BEDRAG matcht — dan staan er facturen van
+              dezelfde leverancier, meer niet. Dat verschil is precies wat een ondernemer met een
+              schermafbeelding kwam melden. */}
           <div style={{ fontSize: 12, color: '#5F6368', marginBottom: 2, lineHeight: 1.45 }}>
-            {t('bank.vergelijk')} <strong>{t('bank.vergelijkBedrag')}</strong> {t('bank.vergelijkEn')} <strong>{t('bank.vergelijkDatum')}</strong> {t('bank.vergelijkKies')}
+            {s.candidates.some((c) => Array.isArray(c.signals) && c.signals.includes('amount'))
+              ? <>{t('bank.vergelijk')} <strong>{t('bank.vergelijkBedrag')}</strong> {t('bank.vergelijkEn')} <strong>{t('bank.vergelijkDatum')}</strong> {t('bank.vergelijkKies')}</>
+              : t('bank.vergelijkGeenBedrag')}
           </div>
           {s.candidates.map((c) => {
             const isSel = selectedInvoiceId === c.invoiceId
@@ -3840,10 +3822,10 @@ export function TxCard({
       })()}
 
       {/* Confirm.
-          [AFSCHRIFT-NOEMT] While the statement names an invoice the app could not offer, this is
-          not a one-tap confirm. The owner may still choose a candidate deliberately — the button
-          comes back the moment they select one — but nothing is pre-selected, so the tap can no
-          longer happen on the way past. */}
+          [AL-GEBOEKT-KLEMT] While the payment names an invoice that is already booked, this is not a
+          one-tap confirm. The owner may still choose a candidate deliberately — the button comes back
+          the moment they select one — but nothing is pre-selected, so the tap can no longer happen on
+          the way past. */}
       {!wasMulti && s.outcome !== 'none' && (
         <button
           disabled={!selectedInvoiceId || processing}
@@ -3877,12 +3859,78 @@ function fmtInvoiceDate(iso: string | null): string {
 // [BANK-CHOICE-CLARITY] Plain-language reason a candidate is offered, from the engine's own
 // match signals — so "why is this here?" is answered instead of a bare invoice number.
 // [TAAL] Keys, not sentences: the module is shared, the language belongs to the caller's `t`.
+// [WAAROM-DEZE] Alle TIEN signalen, en dat aantal is het punt. Deze tabel had er vier, dus een
+// kandidaat die op het REKENINGNUMMER van de leverancier was gevonden — het sterkste bewijs dat er
+// is na een factuurnummer — toonde alleen "datum dichtbij", de zwakste reden in de rij. Zo ontstaat
+// precies de indruk die een ondernemer met een schermafbeelding kwam melden: dat het scherm maar
+// wat aanbiedt. De reden was er wel, hij werd berekend, en hij kwam er niet uit.
+//
+// Een nieuw signaal in bank-matching.ts zonder regel hier valt terug op stilte; de poort
+// [WAAROM-DEZE] in lifecycle-gates houdt de twee lijsten daarom tegen elkaar aan.
 const WHY_KEY = {
   amount: 'bank.why.amount',
   counterpart: 'bank.why.counterpart',
   date: 'bank.why.date',
   reference: 'bank.why.reference',
+  iban: 'bank.why.iban',
+  supplier_iban: 'bank.why.supplierIban',
+  memory: 'bank.why.memory',
+  prepared: 'bank.why.prepared',
+  near_amount: 'bank.why.nearAmount',
+  partial_amount: 'bank.why.partialAmount',
 } as const
+
+// [AL-GEBOEKT] De kaart die in de plaats komt van de kiezer.
+//
+// Waarom dit een KAART is en geen chip onder de kandidaten: het is geen extra hint bij een keuze,
+// het is het bericht dat de keuze niet bestaat. Onder de oude kiezer stonden alleen andere,
+// openstaande facturen van dezelfde leverancier — en een tik daarop boekt deze betaling op een
+// rekening die niemand betaald heeft. Zo'n knop hoort er niet naast te staan.
+//
+// [TAAL] Alle tekst uit messages.ts; dit component draagt geen eigen taal.
+function AlGeboektKaart({
+  q, onOpenFile,
+}: {
+  q: NonNullable<Suggestion['quotedSettled']>
+  onOpenFile?: (invoiceId: string) => void
+}) {
+  const t = translator(useLocale())
+  const uitleg = q.lockedByAccountant
+    ? t('bank.alGeboekt.verwerkt')
+    : q.amountAgrees
+      ? t('bank.alGeboekt.zelfdeBedrag')
+      : t('bank.alGeboekt.anderBedrag')
+  return (
+    <div style={{
+      marginTop: 10, padding: '12px 14px', borderRadius: 12,
+      background: '#e8f0fe', border: '1px solid #c6dafc',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#174ea6', marginBottom: 4 }}>
+        {t('bank.alGeboekt.titel')}
+      </div>
+      <div style={{ fontSize: 13, color: '#202124', marginBottom: 6 }}>
+        {t('bank.alGeboekt.regel', { nummer: q.invoiceNumber, partij: q.clientName ?? '' })}
+        {q.amount != null && ` · ${eur.format(Math.abs(q.amount))}`}
+      </div>
+      <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5, marginBottom: 4 }}>{uitleg}</div>
+      <div style={{ fontSize: 12, color: '#5f6368', lineHeight: 1.5 }}>
+        {t('bank.alGeboekt.waaromGeenKeuze')}
+      </div>
+      {onOpenFile && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpenFile(q.invoiceId) }}
+          style={{
+            marginTop: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            color: '#1a73e8', fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+          }}
+        >
+          {t('bank.alGeboekt.bekijk')}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect, onReject }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void; onReject?: (invoiceId: string) => void }) {
   const t = translator(useLocale())

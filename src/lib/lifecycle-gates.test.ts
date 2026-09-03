@@ -13024,6 +13024,96 @@ test("[SEGMENT-VOORDEUR] every promise on a segment page names a screen that exi
   }
 });
 
+test("[WAAROM-DEZE] elk matchsignaal kan op het bankscherm worden uitgelegd", () => {
+  // Gemeld met een schermafbeelding: kandidaten die "maar wat" leken. Eén oorzaak daarvan was dat
+  // WHY_KEY vier van de tien signalen kende. Een kandidaat die op het rekeningnummer van de
+  // leverancier was gevonden — sterker bewijs bestaat er niet, op een factuurnummer na — toonde
+  // alleen "datum dichtbij". De uitleg bestond, werd berekend, en kwam er als de zwakste
+  // beschikbare uit; dat is [NO-SILENT-EMPTY] op een uitleg in plaats van op een fout.
+  //
+  // Afgeleid uit het type, niet uit een lijst ernaast: dat is de derde keer vandaag dat een
+  // handmatig bijgehouden lijst naast een automatische regel verlopen bleek.
+  const bron = code("src/lib/bank-matching.ts");
+  const blok = bron.slice(bron.indexOf("export type MatchSignal ="));
+  const signalen = [...blok.slice(0, blok.indexOf(";")).matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(signalen.length >= 10, `de scan vond maar ${signalen.length} signalen — leest hij het type nog?`);
+
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  const tabel = scherm.slice(scherm.indexOf("const WHY_KEY = {"));
+  const gedekt = new Set([...tabel.slice(0, tabel.indexOf("} as const")).matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]));
+
+  const ongedekt = signalen.filter((sig) => !gedekt.has(sig));
+  assert.deepEqual(ongedekt, [],
+    `deze matchsignalen kan het bankscherm niet uitleggen: ${ongedekt.join(", ")}. Een kandidaat die ` +
+    "op zo'n reden is gevonden toont dan de zwakste reden die hij toevallig óók heeft, en leest als " +
+    "een gok. Zet ze in WHY_KEY met een zin in messages.ts");
+
+  // …en elke sleutel die WHY_KEY noemt moet bestaan, anders staat er straks een sleutel op het scherm.
+  for (const sleutel of [...tabel.slice(0, tabel.indexOf("} as const")).matchAll(/'(bank\.why\.[A-Za-z]+)'/g)].map((m) => m[1])) {
+    assert.match(code("src/lib/i18n/messages.ts"), new RegExp(`'${sleutel.replace(/\./g, "\\.")}'`),
+      `${sleutel} staat in WHY_KEY maar niet in messages.ts`);
+  }
+});
+
+test("[AL-GEBOEKT] de kiezer staat uit zodra de betaling een afgeboekte factuur noemt", () => {
+  // De gevaarlijke helft van de melding: onder de kop stonden facturen van dezelfde leverancier die
+  // NIET bij deze betaling hoorden. Eén tik boekt dan een openstaande rekening af met geld dat er
+  // niet voor was. De render-test tests/render/bank-al-geboekt.test.tsx bewijst het gedrag; deze
+  // poort houdt de bedrading vast, want die is met één weggehaalde `!` weer stuk.
+  // Per REGEL, en niet met indexOf over het hele bestand: de eerste versie hiervan vond
+  // `s.outcome === 'choice'` in een filter zeshonderd regels hoger en keek dáár terug. Hij faalde
+  // dus op correcte code — precies de poort die wordt weggeklikt en daarna niets meer bewaakt.
+  const regels = code("src/app/dashboard/bank/BankClient.tsx").split("\n");
+  const takken = regels.filter((r) => /s\.outcome === '(choice|auto)'/.test(r) && r.includes("&& ("));
+  assert.ok(takken.length >= 2, `maar ${takken.length} rendertakken gevonden — is de kaart herschreven?`);
+  for (const tak of takken) {
+    assert.match(tak, /!s\.quotedSettled/,
+      `deze rendertak kijkt niet of de betaling een al afgeboekte factuur noemt, dus de kiezer komt ` +
+      `terug: ${tak.trim().slice(0, 80)}`);
+  }
+  // En de server moet het veld überhaupt sturen.
+  assert.match(code("src/app/api/bank/match/route.ts"), /quotedSettled:/,
+    "de matchroute stuurt quotedSettled niet meer mee — dan staat de kiezer er in productie weer");
+});
+
+// ── [AL-GEBOEKT-KLEMT] ────────────────────────────────────────────────────────────────────────
+//
+// [AL-GEBOEKT] removes the CHOOSER when the payment names an invoice that is already booked. It
+// does not, by itself, remove the three ways that payment still gets booked without a choice:
+//
+//   1. the winner is PRE-SELECTED on load, which is what makes "Bevestig betaling" one tap;
+//   2. selectedCand falls back to `s.best` when nothing was selected, so the confirm has a target
+//      even though the owner never picked one;
+//   3. isServerAutoBookable still counts the row, so the bulk "N zekere betalingen" books it
+//      without the card ever being opened.
+//
+// Any one of them books an open invoice with money that belonged to a bill already settled — which
+// is the whole harm the card exists to prevent. Two sessions arrived at the same verdict from
+// different directions and the guards were merged onto the surviving one; this gate holds them
+// there, because each is one deleted `!` away from being gone with nothing else complaining.
+test("[AL-GEBOEKT-KLEMT] an already-booked payment is not pre-selected, not confirmed and not bulk-booked", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // 1. Nothing is pre-selected while the payment names a settled invoice.
+  assert.match(scherm, /if \(s\.outcome === 'auto' && s\.best && !s\.quotedSettled\) pre\[s\.transactionId\] = s\.best\.invoiceId/,
+    "the pre-selection runs again on a payment that names an already-booked invoice — that is the " +
+    "green check over a bill the statement never named, with a live confirm under it");
+
+  // 2. No silent fallback to the winner. An explicit tap still selects a candidate; that path is
+  //    deliberately untouched, so the owner keeps every deliberate action.
+  assert.match(scherm, /\(s\.outcome === 'auto' && !s\.quotedSettled \? s\.best : null\)/,
+    "selectedCand falls back to the winner again, so the confirm has a target nobody chose");
+
+  // 3. The bulk action skips the row. Read from the predicate itself, not from the file, so a guard
+  //    that moved somewhere else cannot pass this by accident.
+  const blok = scherm.slice(scherm.indexOf("function isServerAutoBookable"));
+  const lijf = blok.slice(0, blok.indexOf("\n}"));
+  assert.match(lijf, /if \(s\.quotedSettled\) return false/,
+    "isServerAutoBookable counts an already-booked payment again — the bulk books it without the " +
+    "card ever being opened");
+  assert.ok(lijf.length < 2000, `the predicate scan ran past its function (${lijf.length} chars)`);
+});
+
 test("[RLS-AAN] een migratie die een tabel maakt, zet er row level security op", () => {
   // Gemeten op productie op 2 september, als het demoaccount met een openbaar wachtwoord:
   //   · 612 facturen in de database, 17 zichtbaar, 0 van iemand anders;
@@ -13865,6 +13955,223 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
     "their first 240px sit behind it — add var(--rail-w), which is 0px below the breakpoint:\n  " +
     startPinned.join("\n  "),
   );
+});
+
+// ─── [WAARSCHUWING-GEHOORD] A warning nobody listens to is not a warning ───────────────────────
+//
+// A route that answers 200 with a `warning` has done something PARTLY, and saying so is the honest
+// choice — better than a 500 over work that mostly succeeded, and far better than silence. But the
+// honesty only reaches the owner if a screen reads it, and two of the app's six warnings had no
+// reader at all:
+//
+//   · `discount_not_stored` — /api/invoice/draft wrote the row WITHOUT its discount columns, so
+//     the draft stands at the full price. The route says so in its own comment — "Gezegd, niet
+//     verzwegen. De factuur staat er dan voor de volle prijs" — and nothing read it. The owner
+//     agreed ten percent off with a customer and the customer would be billed the whole amount.
+//     Worse, both screens that create a draft go straight on to SEND, which mints the legal
+//     number: by the time anyone could notice, the full-price invoice is issued and crediting is
+//     the only way back. It is caught before the send now.
+//   · `storage_orphan` — a file left in the bucket after its row was deleted. Nothing an owner can
+//     act on. That is a perfectly good answer; it just has to be a decision somebody made.
+//
+// So both facts about every warning live in api-warnings.ts, and this gate keeps that registry
+// honest in both directions: no warning a route can return may be missing from it, and no warning
+// it marks as the owner's may go unread.
+test("[WAARSCHUWING-GEHOORD] every warning a route returns is classified, and the owner's are read", () => {
+  const files = (dir: string, ext: RegExp): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...files(p, ext));
+      else if (ext.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // What the routes can actually say. Read from the whole file, not line by line: two routes write
+  // `warning:` and the value on separate lines, and a line-based sweep found four of the six.
+  const geretourneerd = new Map<string, string>();
+  for (const f of files("src/app/api", /\.ts$/)) {
+    for (const m of code(f).matchAll(/warning:\s*['"]([a-z_]+)['"]/g)) geretourneerd.set(m[1], f);
+  }
+  assert.ok(geretourneerd.size >= 6, `only ${geretourneerd.size} warning values found in the routes — the scan is broken`);
+
+  const registry = code("src/lib/api-warnings.ts");
+  const schermen = files("src", /\.tsx$/);
+
+  for (const [w, route] of [...geretourneerd].sort()) {
+    // 1. Classified at all. A seventh warning cannot appear without someone answering both
+    //    questions about it — which is the whole reason two of the six went unheard for months.
+    assert.match(registry, new RegExp(`\\n  ${w}: \\{`),
+      `${route} returns warning '${w}' and api-warnings.ts does not say what it means or who hears it`);
+
+    // 2. If it is the owner's, somebody reads it. Derived: a screen naming the string.
+    const blok = new RegExp(`\\n  ${w}: \\{[\\s\\S]*?\\n  \\},`).exec(registry)?.[0] ?? "";
+    if (!/gehoordDoor: "screen"/.test(blok)) {
+      // Marked "log" instead — then the reason must be written down. "Nobody needs to know" is a
+      // defensible answer exactly once it has been argued for.
+      assert.match(blok, /why: "[^"]{40,}"/,
+        `'${w}' is marked as not the owner's business without saying why`);
+      continue;
+    }
+    const lezers = schermen.filter((f) => code(f).includes(`'${w}'`) || code(f).includes(`"${w}"`));
+    assert.ok(lezers.length > 0,
+      `${route} returns warning '${w}' for the owner and no screen reads it — the route is telling nobody`);
+  }
+});
+
+// ─── [VERSTUURD-EERLIJK] "Verstuurd" is only said when it actually went out ────────────────────
+//
+// /api/invoice/send does the irreversible thing before the fallible one. It mints a number out of
+// the legal sequence — un-mintable, because Dutch invoice numbering must be gap-free — and only
+// then renders the PDF and hands it to the mail provider. A failure there has nothing to roll back,
+// so the route answers HTTP 200 with a `warning`.
+//
+// So `res.ok` is TRUE on a failed delivery, and a screen that checks only `res.ok` tells the owner
+// their invoice is on its way while nothing left the building. An owner who believes an invoice was
+// sent does not chase it: the invoice is legally issued, the customer never saw it, and the money
+// never arrives.
+//
+// FOUR of the app's seven send call sites got this wrong, and the sharpest was the RESEND handler —
+// the one screen whose entire job is recovering from a failed e-mail. On a resend that also failed
+// it set dismissedDelivery and stripped ?delivery= from the URL, deleting the owner's only warning,
+// and showed a green "opnieuw verstuurd".
+//
+// This had already been fixed twice, screen by screen. FacturenClient still carries the note:
+// "/dashboard/invoice/new already handled both warnings together; this page did not." A fifth
+// screen would have been found the same way — a real rule with a hand-kept list of screens beside
+// it, for the fourth time in this repo's history.
+test("[VERSTUURD-EERLIJK] every screen that sends an invoice asks whether it was delivered", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx$/.test(p) && !/\.test\.tsx$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // 1. The senders, derived: any screen that POSTs to the send route. Not a list of file names —
+  //    a list is exactly what failed here twice.
+  const zenders = walk("src").filter((f) => /fetch\(\s*['"`]\/api\/invoice\/send['"`]/.test(code(f)));
+  assert.ok(zenders.length >= 5, `only ${zenders.length} screens found that send an invoice — the scan is broken`);
+
+  for (const f of zenders) {
+    const src = code(f);
+    // 2. Each SEND, not each file. Per-call-site, because a file-level rule cannot tell one call
+    //    site from another: invoice/[id]/page.tsx sends twice — a draft and a resend — and the
+    //    first version of this gate stayed green when the resend's check was deleted, because the
+    //    send-draft handler in the same file still had one. That is the third scope of this exact
+    //    shape found today ([EXPORT-EERLIJK] borrowed the neighbouring function's guard;
+    //    [KOPIE-EERLIJK] held two different components to one contract). Whenever a file holds two
+    //    of the thing being checked, a file-level assertion lets one cover for the other.
+    const regels = src.split("\n");
+    const zendRegels = regels
+      .map((r, i) => (/fetch\(\s*['"`]\/api\/invoice\/send['"`]/.test(r) ? i : -1))
+      .filter((i) => i >= 0);
+    for (const i of zendRegels) {
+      // To the next send in this file, or 60 lines — every real handler here resolves in ~35.
+      const eind = Math.min(...zendRegels.filter((j) => j > i).concat(i + 60), regels.length);
+      const handler = regels.slice(i, eind).join("\n");
+      assert.match(handler, /deliveryFailure\(/,
+        `${f}:${i + 1}: sends an invoice without asking whether it was delivered — res.ok is true on a failed send`);
+    }
+    // 3. …and must keep the answer. `deliveryFailure(x)` as a bare statement is the same defect
+    //    with an import in front of it (see [KOPIE-EERLIJK], same rule, same reason).
+    for (const m of [...src.matchAll(/deliveryFailure\(/g)]) {
+      const before = src.slice(0, m.index).replace(/\s+$/, "");
+      assert.ok(/[=(!?,:]$|&&$|\|\|$|\breturn$/.test(before),
+        `${f}: the answer to "was it delivered" is thrown away`);
+    }
+    // 4. No screen may still hard-code the warning strings. Two of the four were wrong precisely
+    //    because they named a SUBSET of them; leaving the literals around invites the next subset.
+    assert.doesNotMatch(src, /warning\s*===\s*['"]pdf_failed['"]|warning\s*===\s*['"]email_failed['"]/,
+      `${f}: still tests the warning strings itself instead of asking the one module`);
+  }
+
+  // 5. Keeping the classification exhaustive is [WAARSCHUWING-GEHOORD]'s job now — it owns that
+  //    rule for every warning in the app, not only the delivery ones, and it also checks the half
+  //    this gate never could: that a warning meant for the owner is actually read somewhere.
+});
+
+// ─── [EXPORT-EERLIJK] A failed request never becomes a file with the books' name on it ─────────
+//
+// Found by asking the [KOPIE-EERLIJK] question again, one step further out: who else turns a
+// server answer into something the owner keeps without checking that the answer was a success?
+//
+// `fetch` does not reject on 4xx or 5xx. So this:
+//
+//     const res = await fetch(`/api/export?${params}`);
+//     const csv = await res.text();                         // ← the ERROR body
+//     downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`); // ← saved under the books' name
+//
+// hands the owner a file called boekbrug-Q3-2026.csv containing a JSON error or an expired
+// session's login page. They open it in Excel and see one row of nonsense, or they do not open it
+// at all and forward it to their accountant. There was no catch either, so a dropped connection
+// was completely silent — the spinner stopped and nothing happened.
+//
+// What made it certain this was an oversight rather than a decision: the ZIP export four lines
+// ABOVE it in the same file already checked `res.ok` and raised a toast. Every other download in
+// the app did too — the closing package (four call sites), the UBL XML, the bulk-invoice ZIP.
+// Two CSV exports out of nine downloads did not.
+//
+// The gate names no screens. It finds every place that turns a response into something kept —
+// blob(), text() feeding a download, createObjectURL — and requires the status to have been
+// consulted first.
+test("[EXPORT-EERLIJK] no download is written from a response whose status was never checked", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // A "keep" is the moment a body stops being a response and becomes a file the owner has.
+  const KEEPS = /\b(\w+)\.blob\(\)|downloadCsv\(|triggerDownload\(/;
+  const overtredingen: string[] = [];
+  // Counted, and asserted below. An empty violations list is only good news if the scan actually
+  // looked at something — rename downloadCsv and this gate would otherwise pass over nothing at
+  // all, which is the exact trap [KOPIE-EERLIJK] fell into one test above.
+  let bekeken = 0;
+  for (const f of walk("src")) {
+    const src = code(f);
+    if (!src.includes("await fetch(")) continue;
+    const lines = src.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!KEEPS.test(lines[i])) continue;
+      // Walk back to the fetch this body came from, and require a status check strictly BETWEEN
+      // that fetch and this line.
+      //
+      // The NEAREST preceding fetch, not the first one in the window — and the check searched only
+      // after it. The first version of this took a 30-line window and searched the whole of it,
+      // which reached into the function ABOVE. That neighbour also names its response `res` and
+      // does check `res.ok`, so a guard belonging to unrelated code satisfied this one: reverting
+      // the defect this gate was written for left it green. It is the same shape as the migration
+      // test in §18 that unioned two definitions of one function and let the superseded copy cover
+      // for the live one. A window that can see a second call site is not measuring this one.
+      const window = lines.slice(Math.max(0, i - 30), i);
+      let start = -1;
+      let naam = "";
+      for (let j = window.length - 1; j >= 0; j--) {
+        const m = /(?:const|let|var)\s+(\w+)\s*=\s*await fetch\(/.exec(window[j]);
+        if (m) { start = j; naam = m[1]; break; }
+      }
+      if (start < 0) continue; // not fed by a fetch — a locally built Blob, a File the owner picked
+      bekeken++;
+      const tussen = window.slice(start).join("\n");
+      // `res.ok`, `res.status`, and `res?.ok` — the third spelling is in this repo twice, and a
+      // pattern without it is how the first sweep for this walked past two guarded call sites.
+      if (new RegExp(`\\b${naam}\\s*\\??\\.\\s*(ok|status)\\b`).test(tussen)) continue;
+      overtredingen.push(`${f}:${i + 1}`);
+    }
+  }
+  assert.deepEqual(overtredingen, [],
+    `a response body is saved as a file without checking the request succeeded: ${overtredingen.join(", ")}`);
+  assert.ok(bekeken >= 10, `the scan found only ${bekeken} downloads fed by a fetch — it has gone blind`);
 });
 
 // ─── [KOPIE-EERLIJK] Nobody reports a copy they were not told happened ─────────────────────────
@@ -24513,86 +24820,6 @@ test("[RPC-ANON-REVOKE] a migration that re-opens the server-only door says so i
   }
 });
 
-// ── [AFSCHRIFT-NOEMT] ─────────────────────────────────────────────────────────────────────────
-//
-// Measured three times on real books, on 2 September 2026:
-//
-//   17-08  −€  797,86  reference "2919045"  → invoice 2919045 (HVO Meat), €797,86, PAID
-//   17-08  −€1.056,87  reference "2034382"  → invoice 2034382 (CAN Vlees), €1.056,87, PAID
-//   27-07  −€   40,00  reference "26 00623" → invoice FAC/26-26/00623, €40,00, PAID
-//
-// Each was already settled by a manual instalment with the same amount on the same day. What the
-// screen offered instead: three invoices of €2.449 / €2.822 / €3.008; a PARTIAL payment leaving
-// €161,05 open forever; and a different €40 invoice under a green check. Every one of those
-// confirms books a second payment for money that moved once. Across the account, 43 unlinked lines
-// name a paid invoice of exactly their own amount (€30.580,56) and 10 name an archived one.
-//
-// The cause is not scoring. /api/bank/match reads `.neq("status","paid")` and isEligible drops
-// paid/archived/draft/processing BEFORE a signal is computed — so the reference the bank printed,
-// the strongest evidence in the system, is never entered into the comparison. The route already
-// owns a pass that scores paid invoices ([BANK-PAID-EXPLAINED]) and its own comment bounds it to
-// lines with `outcome === 'none'`: all three cases had a weak candidate, so it never reached them.
-//
-// The question is now asked first, and this gate holds the three places it can be silenced again.
-test("[AFSCHRIFT-NOEMT] the invoice the bank names outranks the invoice the app guessed", () => {
-  const beslissing = code("src/lib/bank-reference-settled.ts");
-  const deur = code("src/app/api/bank/match/route.ts");
-  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
-
-  // 1. ONE definition of "a reference". The parser and the normalizer are injected from the
-  //    matcher — a second opinion here is how the screen and the server start disagreeing about
-  //    what the bank wrote.
-  assert.match(beslissing, /parseReferenceNumbers: \(reference: string \| null\) => string\[\]/,
-    "the matcher's own parser must be handed in, never re-implemented");
-  assert.doesNotMatch(beslissing, /\bsplit\(","\)|isReferenceNumberToken/,
-    "bank-reference-settled.ts is parsing references itself again");
-  // A number without the amount is NAMED, never "explained": a reference can carry a customer or
-  // order number, and this module is read by a screen that tells the owner money is accounted for.
-  assert.match(beslissing, /amountAgrees: Number\.isFinite\(total\) && Math\.abs\(total - lineAmount\) < CENT/);
-
-  // 2. The server asks it, of the invoices the matcher may not offer, and only when the suggestion
-  //    is NOT already resting on that same reference (agreement is not a contradiction).
-  // Anchored on THIS read's own column list, not on `.eq("status","paid")` — that line occurs
-  // three times in this route, so matching it proved nothing about the one that answers the
-  // question. (The control refused to fire, which is how the vacuity was found.)
-  assert.match(
-    deur,
-    /\.select\("id, invoice_number, total_inc_btw, amount_paid, status, client_name, invoice_date"\)\s*\n\s*\.eq\("status", "paid"\)/,
-    "the route no longer reads the paid invoices the reference has to be compared against",
-  );
-  assert.match(deur, /const OFFERABLE = new Set\(\["received", "sent", "overdue"\]\)/,
-    "…nor the archived/draft/processing ones the matcher also drops");
-  assert.match(deur, /const winnerHasRef = Array\.isArray\(m\.best\?\.signals\) && m\.best!\.signals\.includes\("reference"\)/,
-    "the question must be skipped when the bank already agrees with the winner");
-  assert.match(deur, /referenceOutranksSuggestion\(verdict, m\.best\?\.invoiceId \?\? null\) \? verdict : null/,
-    "…and the outranking rule must live in the module, not in an assumption here");
-
-  // 3. The screen. Three separate ways this became a one-tap confirm on the wrong invoice, and all
-  //    three are held: the pre-selection that makes the button live, the card's own fallback to the
-  //    winner, and the bulk action that books without showing anything at all.
-  assert.match(scherm, /if \(s\.outcome === 'auto' && s\.best && !s\.referencedInvisible\) pre\[s\.transactionId\] = s\.best\.invoiceId/,
-    "the winner is pre-selected again while the bank names another invoice");
-  assert.match(scherm, /\(s\.outcome === 'auto' && !s\.referencedInvisible \? s\.best : null\)/,
-    "the card falls back to the winner again — that is what drew the green check and the partial-payment line");
-  assert.match(scherm, /if \(s\.referencedInvisible\) return false/,
-    "isServerAutoBookable no longer excludes it — 'zekere betaling' would talk over the bank");
-  // And the sentence itself is on the screen, with the number in it.
-  assert.match(scherm, /t\('bank\.noemt\.kop', \{ nummer: s\.referencedInvisible\.invoiceNumber \}\)/,
-    "the panel must quote the number, so the owner checks their own statement and not our confidence");
-
-  // 4. Three facts, three sentences. "Already paid for exactly this amount" is a claim about money;
-  //    "on Ignored" is a claim about a choice the owner made; "a different amount" is neither and
-  //    may not borrow the certainty of either.
-  for (const key of ["bank.noemt.betaald", "bank.noemt.genegeerd", "bank.noemt.andersBedrag"]) {
-    assert.ok(scherm.includes(`'${key}'`), `${key} is no longer rendered — the three facts have collapsed into one`);
-  }
-  // The warning about a double payment belongs to the money case ALONE.
-  const waarschuwing = scherm.indexOf("bank.noemt.controleer");
-  assert.ok(waarschuwing > 0, "the double-payment warning is gone");
-  assert.match(scherm, /s\.referencedInvisible\.amountAgrees && s\.referencedInvisible\.status !== 'archived' && \(/,
-    "…and it must stay conditioned on the amount agreeing on a PAID invoice, or it warns where it cannot know");
-});
-
 // ── [NIET-DEZE-FACTUUR] ───────────────────────────────────────────────────────────────────────
 //
 // The bank card offered one invoice and one button — Bevestig betaling — and there was no way to
@@ -24626,11 +24853,11 @@ test("[NIET-DEZE-FACTUUR] a refusal removes a suggestion and never promotes one"
   assert.doesNotMatch(beslissing, /counterpartKey|clientName|supplier/,
     "bank-rejections.ts reasons about a supplier — a refusal may never become a judgement about one");
 
-  // 3. Applied FIRST, so the outcome, the reference verdict and what the screen pre-selects are all
-  //    computed on what is actually still on offer.
+  // 3. Applied FIRST, so the outcome, the already-booked verdict and what the screen pre-selects
+  //    are all computed on what is actually still on offer.
   const applyAt = deur.indexOf("applyRejections(raw");
-  const refAt = deur.indexOf("referencedInvisibleInvoice(");
-  assert.ok(applyAt > 0 && refAt > applyAt,
+  const quoteAt = deur.indexOf("quotedSettledInvoice(");
+  assert.ok(applyAt > 0 && quoteAt > applyAt,
     "refusals must be applied before anything else reads best/candidates/outcome");
 
   // 4. There is a way back. A refusal nobody can undo is the same trap as a confirm nobody can

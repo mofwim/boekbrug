@@ -28,6 +28,7 @@ import { pnlRole } from "@/lib/bank-categories";
 import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
+import { vindBestaandeDubbelen } from "@/lib/existing-duplicates";
 import { loadDrawerWitness } from "@/lib/drawer-witness";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
@@ -285,7 +286,7 @@ export async function GET(req: NextRequest) {
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
+    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, invoice_date, created_at, client_btw_number, sender_id, receiver_id, field_confidence")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));
@@ -335,6 +336,36 @@ export async function GET(req: NextRequest) {
   // [AUTO-ADVANCE] Invoices the app auto-verified (booked, but the owner should eyeball them
   // at quarter close). field_confidence is jsonb; the _auto_verified marker is set by the
   // intake/email auto-advance path.
+  // [DUBBEL-TERUGKIJKEN] Dezelfde rekening twee keer in de boeken. De intakecontrole draait op
+  // BINNENKOMST en bestaat pas sinds 18 augustus, dus alles wat daarvoor is ingelezen is er nooit
+  // langs geweest en niets kijkt ooit terug. Hier wel, één keer per kwartaal, over de rijen die
+  // hierboven toch al zijn opgehaald — geen extra query.
+  //
+  // Op binnenkomst gesorteerd, want dat is het contract van vindBestaandeDubbelen: elke factuur
+  // wordt beoordeeld tegen wat er lág toen hij binnenkwam, zodat de terugblik dezelfde tweede
+  // boeking aanwijst die de intake zou hebben aangewezen — en niet de eerste, die niets fout deed.
+  const dubbelKandidaten = invRaw
+    .filter((i) => effDir(i as never) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")))
+    .map((i) => ({
+      id: String(i.id),
+      invoice_number: (i as { invoice_number: string | null }).invoice_number,
+      client_name: (i as { client_name: string | null }).client_name,
+      invoice_date: (i as { invoice_date: string | null }).invoice_date,
+      total_inc_btw: (i as { total_inc_btw: number | null }).total_inc_btw,
+      created_at: (i as { created_at: string | null }).created_at,
+    }))
+    .sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+  const dubbelen = vindBestaandeDubbelen(dubbelKandidaten);
+  const doubleBookedCount = dubbelen.length;
+  // De nummers waar het om gaat, ontdubbeld: bij drie boekingen van één nummer (Enka had er drie)
+  // hoeft de zin dat nummer niet twee keer te noemen.
+  const doubleBookedNumbers = [...new Set(
+    dubbelen.map((d) => {
+      const rij = dubbelKandidaten.find((k) => k.id === d.id);
+      return rij?.invoice_number ?? null;
+    }).filter((n): n is string => !!n),
+  )];
+
   const autoVerifiedCount = invRaw.filter((i) => {
     const fc = i.field_confidence as Record<string, unknown> | null;
     return !!(fc && typeof fc === "object" && fc._auto_verified);
@@ -674,6 +705,8 @@ export async function GET(req: NextRequest) {
     invoicesWithEvidence,
     unverifiedInvoiceCount,
     autoVerifiedCount,
+    doubleBookedCount,
+    doubleBookedNumbers,
     // [EVIDENCE] De exacte factuurnummers zonder PDF. summarizeClosingPackage bouwt deze
     // lijst al (closing-package.ts:935) en gooide hem weg; readiness.ts:201-204 had de tak
     // die hem afdrukt al geschreven, maar die was onbereikbaar achter een lege array.

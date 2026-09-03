@@ -286,6 +286,14 @@ export const MESSAGES = {
 
   'nieuw.fout.velden': { nl: 'Vul de rood gemarkeerde velden in', ar: 'املأ الحقول المُعلَّمة بالأحمر', en: 'Fill in the fields marked red' },
   'nieuw.fout.btwKlant': { nl: 'Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)', ar: 'رقم ضريبة القيمة المضافة للعميل يبدو غير صحيح (المتوقّع: NL123456789B01)', en: "The client's VAT number looks wrong (expected: NL123456789B01)" },
+  // [WAARSCHUWING-GEHOORD] Het concept is opgeslagen zonder de korting, dus de factuur zou voor
+  // de volle prijs de deur uit gaan. Gezegd VOORDAT het nummer valt: daarna is de factuur wettelijk
+  // uitgegeven en is crediteren de enige weg terug.
+  'nieuw.fout.kortingNietOpgeslagen': {
+    nl: 'De korting is niet opgeslagen — deze factuur zou voor de volle prijs verstuurd worden. Er is nog niets verstuurd; probeer het opnieuw.',
+    ar: 'لم يُحفَظ الخصم — كانت هذه الفاتورة سترسَل بالسعر الكامل. لم يُرسَل شيء بعد؛ حاول مرة أخرى.',
+    en: 'The discount was not saved — this invoice would go out at the full price. Nothing has been sent; please try again.',
+  },
   'nieuw.fout.aanmaken': { nl: 'Aanmaken mislukt — probeer opnieuw', ar: 'فشل الإنشاء — حاول مرة أخرى', en: 'Could not create it — please try again' },
   'nieuw.fout.versturen': { nl: 'Verzenden mislukt — de factuur is opgeslagen als concept', ar: 'فشل الإرسال — حُفظت الفاتورة كمسودة', en: 'Sending failed — the invoice was saved as a draft' },
   'nieuw.fout.omzetten': { nl: 'Omzetten mislukt', ar: 'فشل التحويل', en: 'Conversion failed' },
@@ -828,36 +836,6 @@ export const MESSAGES = {
 
   'bank.koppelen': { nl: 'Koppelen', ar: 'ربط', en: 'Link' },
   'bank.bevestig': { nl: 'Bevestig', ar: 'أكِّد', en: 'Confirm' },
-  // [AFSCHRIFT-NOEMT] Je bank noemt een factuur die de app niet kon aanbieden. De zinnen zeggen
-  // eerst WAT er staat (het nummer, uit het afschrift van de eigenaar zelf), dan wat dat betekent —
-  // nooit andersom. Gemeten: drie regels boden een ANDERE factuur aan, één onder een groen vinkje
-  // en één als deelbetaling; bevestigen had een tweede betaling geboekt voor geld dat één keer is
-  // gegaan.
-  'bank.noemt.kop': {
-    nl: 'Je afschrift noemt factuur {nummer}',
-    ar: 'كشفك يسمّي الفاتورة {nummer}',
-    en: 'Your statement names invoice {nummer}',
-  },
-  'bank.noemt.betaald': {
-    nl: 'Die staat al als betaald, voor precies dit bedrag. Deze bankregel is dus vrijwel zeker díé betaling — en niet een van de facturen hieronder.',
-    ar: 'وهي مسجّلة عندك كمدفوعة بهذا المبلغ بالضبط. فهذا البند البنكي هو على الأرجح تلك الدفعة نفسها — لا إحدى الفواتير أدناه.',
-    en: 'It is already marked paid, for exactly this amount. So this bank line is almost certainly THAT payment — not one of the invoices below.',
-  },
-  'bank.noemt.genegeerd': {
-    nl: 'Die staat op Genegeerd. Zolang dat zo is kan de app hem niet aanbieden — haal hem terug als deze betaling er wél bij hoort.',
-    ar: 'وهي في «المتجاهَلة». وما دامت كذلك لا يستطيع التطبيق عرضها — أعِدها إن كانت هذه الدفعة تخصّها.',
-    en: 'It is on Ignored. While it is, the app cannot offer it — bring it back if this payment belongs to it.',
-  },
-  'bank.noemt.andersBedrag': {
-    nl: 'Het bedrag op die factuur is niet dit bedrag, dus zeker is het niet — maar je bank noemt hem, en de facturen hieronder noemt hij niet.',
-    ar: 'مبلغ تلك الفاتورة ليس هذا المبلغ، فليس الأمر مؤكداً — لكنّ بنكك يسمّيها، ولا يسمّي أياً من الفواتير أدناه.',
-    en: 'That invoice is not for this amount, so it is not certain — but your bank names it, and it names none of the invoices below.',
-  },
-  'bank.noemt.controleer': {
-    nl: 'Controleer dit eerst. Bevestigen boekt een tweede betaling voor geld dat één keer is gegaan.',
-    ar: 'تحقّق من هذا أولاً. التأكيد سيقيّد دفعة ثانية لمالٍ تحرّك مرة واحدة.',
-    en: 'Check this first. Confirming books a second payment for money that moved once.',
-  },
   'bank.bevestigBetaling': { nl: 'Bevestig betaling', ar: 'أكِّد الدفعة', en: 'Confirm the payment' },
   'bank.alBevestigd': { nl: 'Al bevestigd ✓', ar: 'مؤكَّدة مسبقاً ✓', en: 'Already confirmed ✓' },
   'bank.selecteerBevestigen': { nl: 'Selecteer voor bevestigen', ar: 'حدّد للتأكيد', en: 'Select to confirm' },
@@ -3918,6 +3896,80 @@ export const MESSAGES = {
     ar: 'أي جزء يخص {number}؟',
     en: 'Which part belongs on {number}?',
   },
+  // [WAAROM-DEZE] De zes signalen die de kaart wél berekende en niet kon tonen. WHY_KEY dekte er
+  // vier van de tien, dus juist de STERKSTE redenen (het rekeningnummer, het geheugen van de
+  // ondernemer zelf) waren onzichtbaar en een kandidaat leek op "datum dichtbij" te zijn gekozen.
+  // Dat is [NO-SILENT-EMPTY] toegepast op een uitleg: de reden bestond, werd berekend, en kwam er
+  // als de zwakste beschikbare uit.
+  'bank.why.iban': {
+    nl: 'zelfde rekeningnummer', ar: 'رقم الحساب نفسه', en: 'same account number', tr: 'aynı hesap numarası',
+  },
+  'bank.why.supplierIban': {
+    nl: 'rekening van deze leverancier', ar: 'حساب هذا المورّد', en: "this supplier's account", tr: 'bu tedarikçinin hesabı',
+  },
+  'bank.why.memory': {
+    nl: 'zo koppelde je het eerder', ar: 'هكذا ربطتها سابقاً', en: 'you linked it this way before', tr: 'daha önce böyle eşleştirdiniz',
+  },
+  'bank.why.prepared': {
+    nl: 'je zette deze factuur klaar om te betalen', ar: 'جهّزت هذه الفاتورة للدفع', en: 'you queued this invoice for payment', tr: 'bu faturayı ödemeye hazırladınız',
+  },
+  'bank.why.nearAmount': {
+    nl: 'bedrag ligt dicht bij het openstaande', ar: 'المبلغ قريب من المتبقّي', en: 'amount is close to the open one', tr: 'tutar açık tutara yakın',
+  },
+  'bank.why.partialAmount': {
+    nl: 'kleiner dan het openstaande bedrag', ar: 'أقل من المبلغ المتبقّي', en: 'smaller than the open amount', tr: 'açık tutardan küçük',
+  },
+  // [WAAROM-DEZE] En de kop van de kiezer, als GEEN kandidaat op bedrag matcht. "Meerdere facturen
+  // passen bij deze betaling" is dan onwaar: ze staan open bij dezelfde partij, meer niet.
+  'bank.vergelijkGeenBedrag': {
+    nl: 'Geen van deze facturen heeft dit bedrag. Ze staan wel open bij dezelfde leverancier — kies alleen als je zeker weet welke erbij hoort.',
+    ar: 'لا توجد فاتورة بهذا المبلغ. لكنها مفتوحة لدى المورّد نفسه — لا تختر إلا إذا كنت متأكداً.',
+    en: 'None of these invoices has this amount. They are open with the same supplier — only choose if you are sure which one belongs to it.',
+    tr: 'Bu faturaların hiçbiri bu tutarda değil. Aynı tedarikçide açıklar — yalnızca hangisinin ait olduğundan eminseniz seçin.',
+  },
+  // [AL-GEBOEKT] De betaling noemt een factuur die al is afgeboekt.
+  'bank.alGeboekt.titel': {
+    nl: 'Deze betaling hoort bij een factuur die al is afgeboekt',
+    ar: 'هذه الدفعة تخصّ فاتورة مُرحّلة بالفعل',
+    en: 'This payment belongs to an invoice that is already booked',
+    tr: 'Bu ödeme, hâlihazırda işlenmiş bir faturaya ait',
+  },
+  'bank.alGeboekt.regel': {
+    nl: 'Factuur {nummer} · {partij}',
+    ar: 'فاتورة {nummer} · {partij}',
+    en: 'Invoice {nummer} · {partij}',
+    tr: 'Fatura {nummer} · {partij}',
+  },
+  'bank.alGeboekt.zelfdeBedrag': {
+    nl: 'Het bedrag komt tot op de cent overeen. Er valt hier niets te kiezen — controleer alleen of deze factuur niet twee keer is betaald.',
+    ar: 'المبلغ مطابق حتى السنت. لا يوجد ما تختاره هنا — تحقّق فقط من أن الفاتورة لم تُدفع مرتين.',
+    en: 'The amount agrees to the cent. There is nothing to choose here — just check that this invoice was not paid twice.',
+    tr: 'Tutar kuruşuna kadar aynı. Burada seçilecek bir şey yok — yalnızca faturanın iki kez ödenmediğini kontrol edin.',
+  },
+  'bank.alGeboekt.anderBedrag': {
+    nl: 'Het bedrag van deze betaling is anders dan dat van de factuur. Mogelijk een deelbetaling of een tweede termijn — kijk zelf welke van de twee klopt.',
+    ar: 'مبلغ هذه الدفعة يختلف عن مبلغ الفاتورة. قد تكون دفعة جزئية أو قسطاً ثانياً — تحقّق أيّهما الصحيح.',
+    en: 'This payment is for a different amount than the invoice. Possibly an instalment or a second term — check which of the two is right.',
+    tr: 'Bu ödemenin tutarı faturadan farklı. Taksit veya ikinci bir ödeme olabilir — hangisinin doğru olduğunu kontrol edin.',
+  },
+  'bank.alGeboekt.verwerkt': {
+    nl: 'Je boekhouder heeft deze factuur al verwerkt. Neem contact op voordat je hier iets verandert.',
+    ar: 'محاسبك عالج هذه الفاتورة بالفعل. تواصل معه قبل تغيير أي شيء هنا.',
+    en: 'Your accountant has already processed this invoice. Contact them before changing anything here.',
+    tr: 'Muhasebeciniz bu faturayı zaten işledi. Burada bir şey değiştirmeden önce onunla görüşün.',
+  },
+  'bank.alGeboekt.waaromGeenKeuze': {
+    nl: 'Daarom staan er geen facturen om uit te kiezen: de andere facturen van deze leverancier horen bij andere betalingen.',
+    ar: 'لهذا لا توجد فواتير للاختيار: فواتير هذا المورّد الأخرى تخصّ دفعات أخرى.',
+    en: 'That is why no invoices are offered: this supplier\'s other invoices belong to other payments.',
+    tr: 'Bu yüzden seçilecek fatura yok: bu tedarikçinin diğer faturaları başka ödemelere ait.',
+  },
+  'bank.alGeboekt.bekijk': {
+    nl: 'Bekijk factuur',
+    ar: 'عرض الفاتورة',
+    en: 'View invoice',
+    tr: 'Faturayı görüntüle',
+  },
   'bank.why.amount': {
     nl: 'bedrag komt overeen',
     ar: 'المبلغ مطابق',
@@ -4899,6 +4951,14 @@ export const MESSAGES = {
     nl: 'Opnieuw versturen mislukt',
     ar: 'فشلت إعادة الإرسال',
     en: 'Resending failed',
+  },
+  // [VERSTUURD-EERLIJK] De PDF-variant hiernaast bestond al; deze niet, en dat is precies waarom
+  // vier van de zeven verzendknoppen "verstuurd" zeiden terwijl de mail was blijven staan. Eigen
+  // sleutel per oorzaak: bij de ene is er geen document, bij de andere wel — maar niemand kreeg het.
+  'detail.fout.mailNietVerstuurd': {
+    nl: 'De factuur kreeg een nummer, maar de e-mail is niet verstuurd — de klant heeft niets ontvangen. Verstuur opnieuw.',
+    ar: 'أخذت الفاتورة رقماً، لكن البريد الإلكتروني لم يُرسَل — لم يستلم العميل شيئاً. أعد الإرسال.',
+    en: 'The invoice got a number, but the e-mail was not sent — the client received nothing. Send again.',
   },
   'detail.fout.pdfNietGemaakt': {
     nl: 'De factuur kreeg een nummer, maar de PDF kon niet worden gemaakt — de klant heeft niets ontvangen. Verstuur opnieuw.',
@@ -8796,6 +8856,19 @@ export const MESSAGES = {
     nl: 'over {bedrag}',
     ar: 'على {bedrag}',
     en: 'over {bedrag}',
+  },
+  // [EXPORT-EERLIJK] De CSV-export van het kwartaal. Twee zinnen, net als bij het pakket
+  // hieronder: de ene zegt dat de SERVER nee zei, de andere dat het bericht er nooit kwam. Voor
+  // wie het leest is dat een ander volgende stap — opnieuw proberen, of eerst je verbinding.
+  'kw.exportMislukt': {
+    nl: 'Export mislukt — er is niets gedownload',
+    ar: 'فشل التصدير — لم يُنزَّل أي ملف',
+    en: 'Export failed — nothing was downloaded',
+  },
+  'kw.exportVerbinding': {
+    nl: 'Export mislukt — controleer je verbinding',
+    ar: 'فشل التصدير — تحقّق من اتصالك',
+    en: 'Export failed — check your connection',
   },
   'kw.pakketMislukt': {
     nl: 'Pakket genereren mislukt — probeer opnieuw',

@@ -1261,3 +1261,214 @@ to optional chaining, then a gate blind to a local variable, then a test run fil
 one test that was passing. That is the fourth, fifth and sixth time in this document. The habit that
 caught all three is the same one: **run the mutation, and run it against everything, do not assume
 the check works.**
+
+
+---
+
+## 20. The same question, one step further out — 2 September 2026
+
+§19 asked "who else writes to the clipboard?" and found five screens claiming a success nobody gave
+them. The question generalises: **who else turns a server's answer into something the owner keeps,
+without checking the answer was a success?**
+
+`fetch` does not reject on 4xx or 5xx. So a response body is a perfectly good string whether it is
+the quarter's books or a stack trace.
+
+### The sweep, and what it mostly found
+
+265 `await fetch(` call sites in client code. Sorted by whether the status is ever consulted, and
+then read by hand rather than trusted to the pattern:
+
+- The 16 that discard the response are almost all deliberate, and say so in a comment on the line:
+  *"non-blocking — payment already succeeded"*, *"optimistic; reload on next mount"*, *"silent —
+  optimistic already applied"*. Those are reasoned, not forgotten.
+- The bound ones that never check are reads that degrade to an empty list on purpose.
+- Two of the flagged sites turned out to be guarded four lines past my window, and two more used
+  `res?.ok`, which my pattern walked past — optional chaining, for the second time in two days.
+
+So the sweep is mostly a confirmation that this codebase is disciplined here. One thing was not.
+
+### The one that was real
+
+```ts
+const res = await fetch(`/api/export?${params}`);
+const csv = await res.text();                          // ← the ERROR body
+downloadCsv(csv, `boekbrug-Q${quarter}-${year}.csv`);  // ← saved under the books' name
+```
+
+On a 500 or an expired session, the owner gets a file called `boekbrug-Q3-2026.csv` holding a JSON
+error or a login page. They open it in Excel and see one row of nonsense — or they do not open it,
+and forward it to their accountant. There was no `catch` either, so a dropped connection was
+entirely silent: the spinner stopped and nothing happened at all.
+
+Two call sites. The second is worse: an accountant exporting a CLIENT's quarter, so the file travels
+one more step from anyone who would recognise it.
+
+What settles that this was an oversight and not a decision: **the ZIP export four lines above it in
+the same file already checked `res.ok` and raised a toast.** So did every other download in the app
+— the closing package at four call sites, the UBL XML, the bulk-invoice ZIP. Two CSV exports out of
+nine downloads were the exception, in the one file that contained both the right way and the wrong
+way.
+
+### The gate, and the control that caught the gate
+
+The rule is derived: find every place a response becomes something kept (`blob()`, `downloadCsv`,
+`triggerDownload`), walk back to the fetch that fed it, and require the status to have been
+consulted in between.
+
+**The first version of that gate passed over the reintroduced defect.** It took a 30-line window and
+searched all of it — and 30 lines back reaches into the function ABOVE, which names its own response
+`res` and does check `res.ok`. A guard belonging to unrelated code satisfied the check for this one.
+That is the same shape as the migration test in §18 that unioned two definitions of one function and
+let the superseded copy cover for the live one. It now binds to the NEAREST preceding fetch and
+searches only the slice after it.
+
+It also counts what it examined and fails below ten. An empty violations list is only good news if
+the scan looked at something; rename `downloadCsv` and the previous version would have passed over
+nothing at all — which is exactly the trap [KOPIE-EERLIJK] fell into one test above.
+
+Four controls: each of the two call sites reverted, a new unguarded download added elsewhere, and
+the scan blinded. All four fail; before the narrowing, the first two did not.
+
+
+---
+
+## 21. "Verstuurd" on an invoice that never left — 2 September 2026
+
+Third pass with the same question, and the biggest answer yet. §19 asked who claims a copy they
+were not given; §20 asked who saves a file from an answer they never checked. This one asks: **who
+tells the owner an invoice went out?**
+
+### Why `res.ok` is the wrong question here
+
+`/api/invoice/send` does the irreversible thing before the fallible one. It mints a number out of
+the legal sequence — which cannot be un-minted, because Dutch invoice numbering must be gap-free —
+and only then renders the PDF and hands it to the mail provider. A failure at that last step has
+nothing to roll back, so the route answers **HTTP 200 with a `warning`**. That design is right.
+
+Which makes `res.ok` **true on a failed delivery**. And an owner who believes an invoice was sent
+does not chase it: the invoice is legally issued, the customer never saw it, and the money never
+arrives.
+
+### Four of seven
+
+| call site | pdf_failed | email_failed |
+|---|---|---|
+| `invoice/new` ×2 | yes | yes |
+| `facturen/FacturenClient` | yes | yes |
+| `invoice/[id]` send-draft | yes | **no** |
+| `invoice/[id]` **resend** | **no** | **no** |
+| `invoice/[id]/edit` save+send | **no** | **no** |
+| `accountant/AccountantFactuur` | **no** | **no** |
+
+The resend is the sharpest. It is the one screen whose entire job is recovering from a failed
+e-mail, and on a resend that ALSO failed it ran `setDismissedDelivery(true)` and
+`router.replace(pathname)` — deleting the `?delivery=` banner that was the owner's only warning —
+and then showed a green "opnieuw verstuurd". The screen for recovering from the failure was hiding
+the evidence of the second one.
+
+The save-and-send path navigated to the detail page without `?delivery=`, so not even the banner
+appeared. The accountant path parsed the response body and never looked at `warning` — and that
+number came out of the **client's** legal sequence.
+
+### It had already been fixed twice
+
+`FacturenClient` still carries the note: *"email_failed is the SAME class of half-success and was
+falling through to the 'verzonden ✓' branch … /dashboard/invoice/new already handled both warnings
+together; this page did not."* Two screens, fixed one at a time, each discovering the previous one
+had been fixed. A fifth would have been found the same way.
+
+And `invoice-sent-notice.ts` states the invariant in its own header — *"a send that does not fully
+succeed never reaches here"* — which was simply untrue of half its callers. A documented
+precondition nothing enforced.
+
+### What changed
+
+`src/lib/invoice-delivery.ts` answers one question: given the route's response, did it actually go
+out? Every one of the seven call sites asks it, including the three that were already right — those
+were the ones spelling the rule out for themselves in lists of warning names, which is precisely how
+the other four ended up with SUBSETS of that list.
+
+`WARNING_DELIVERY` classifies every `warning` any route can return, and a gate reads those literals
+out of `src/app/api/` and fails when one is unclassified. A seventh warning cannot be added without
+someone answering "does this mean the customer got nothing?". `discount_not_stored` is the proof
+that the answer is not always yes — it is a real problem on a different screen, and the invoice
+still went out.
+
+### The gate was wrong twice before it was right, in the same way as the last two
+
+**First:** it required `deliveryFailure` once per FILE. `invoice/[id]/page.tsx` sends twice — a
+draft and a resend — so deleting the resend's check left the gate green, covered by the send-draft
+handler in the same file. It is now per-call-site, and the controls fail with the exact line.
+
+That is the **third** scope error of this identical shape in one day: [KOPIE-EERLIJK] held two
+different components named CopyButton to one contract; [EXPORT-EERLIJK] let a neighbouring
+function's `res.ok` satisfy a check for a different call site; this one let one handler cover for
+another. The rule to take away: **whenever a file holds two of the thing being checked, a
+file-level assertion lets one cover for the other.** All three were found the same way — by
+reintroducing the defect and watching the gate not notice.
+
+**Second:** the exhaustiveness check found six warning values where my own grep had found four. The
+grep was line-based; two routes write `warning:` and the value on separate lines. The fifth
+measurement blind spot in three days, and the first one caught by a gate rather than by hand.
+
+Six controls, six distinct failures.
+
+
+---
+
+## 22. Two warnings the app was saying to nobody — 2 September 2026
+
+Building §21's registry answered a question I had not asked: the map had to classify every
+`warning` any route can return, and once they were all in one place it was obvious that **two of
+the six had no reader anywhere in the app.**
+
+### `discount_not_stored`
+
+`/api/invoice/draft` writes the invoice row through `writeWithTrail`. If one of the discount
+columns is missing it falls back to writing the row **without all three**, and `trailWritten: false`
+is that signal. The route then says so, in as many words, in its own comment:
+
+```ts
+// [KORTING] Gezegd, niet verzwegen. De factuur staat er dan voor de volle prijs.
+...(korting && !trailWritten ? { warning: 'discount_not_stored' } : {}),
+```
+
+*Said, not concealed. The invoice then stands at the full price.* Nothing read it. The owner agrees
+ten percent off with a customer and the customer is billed the whole amount.
+
+And both screens that create a draft go straight on to **send**, which mints the legal number. So
+the window in which this could be noticed closed before anyone could look: by the time a full-price
+invoice exists it is legally issued, and crediting is the only way back. It is caught **before** the
+send now — the screen stops, says the discount was not saved and that nothing has gone out.
+
+**Measured, not assumed: this is latent, not fired.** All three columns (`discount_type`,
+`discount_value`, `created_by`) exist in production, so `writeWithTrail` never takes its fallback,
+and zero invoices carry a discount at all today. What was fixed is a gap that would open on the
+first deployment where a migration lags — the same category as the creditnota exposure in §11.
+
+### `storage_orphan`
+
+A file left in the bucket after its row was deleted. No money moved, no figure changed, and there is
+nothing an owner could do about it. Having no reader is the RIGHT answer here — it just has to be a
+decision somebody made and wrote down, rather than a gap that looks identical to the one above.
+
+### The registry, and why it replaced a second list
+
+`src/lib/api-warnings.ts` now carries both facts about every warning: what it means for delivery
+(§21's question) and who has to hear it. §21 had introduced its own list of the same six names —
+two lists of one vocabulary is how this area keeps failing — so `invoice-delivery.ts` reads the
+registry instead of keeping a copy.
+
+The gate holds it honest in both directions: no warning a route can return may be missing from the
+registry, and no warning marked as the owner's may go unread. A warning marked `"log"` must carry a
+reason of real length — "nobody needs to know" is defensible exactly once it has been argued for.
+
+### One control tested nothing, and said so
+
+NC112 added an unclassified warning to a route and the gate stayed green. The gate was fine: the
+route spells the literal with DOUBLE quotes and my mutation used single ones, so nothing was ever
+changed. A negative control that does not modify the file is not a control, and it looks exactly
+like a passing one. The re-run asserts the mutation landed (`grep -c` on the new name) before
+running the gate — and it then failed correctly, as did a second control writing the value on its
+own line, which is the shape that made my line-based grep find four of six in the first place.

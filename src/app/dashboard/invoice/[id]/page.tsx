@@ -6,6 +6,7 @@
 // [BOEK-031] Design System v1.0 applied — Material You (ZZP page) — May 2026
 
 import { useState, useEffect, useRef } from 'react'
+import { deliveryFailure } from '@/lib/invoice-delivery'
 import { M3, STICKY_BELOW_HEADER, columnInner, COLUMN } from '@/lib/design/tokens'
 // [KOMMA-INVOER] The one comma-safe money field — see its header for what type="number" did.
 import DecimalInput from '@/components/ui/DecimalInput'
@@ -221,6 +222,21 @@ export default function InvoiceDetailPage() {
       return
     }
 
+    // [VERSTUURD-EERLIJK] res.ok is TRUE on a failed delivery — the route already minted the
+    // number, so it answers 200 and names the failure in `warning`. This handler read neither, and
+    // it is the worst place in the app not to: on a resend that ALSO failed it set
+    // dismissedDelivery, stripping the ?delivery= banner that was the owner's only warning, and
+    // then showed a green "opnieuw verstuurd". The one screen whose whole job is recovering from a
+    // failed e-mail was hiding the evidence of the second failure.
+    const mislukt = deliveryFailure(await res.json().catch(() => ({})))
+    if (mislukt) {
+      setSendError(mislukt === 'email_failed'
+        ? t('detail.fout.mailNietVerstuurd')
+        : t('detail.fout.pdfNietGemaakt'))
+      setResending(false)
+      return // banner stays, URL keeps ?delivery= — nothing here has been resolved
+    }
+
     // Success — hide banner + clean ?delivery= from URL
     setDismissedDelivery(true)
     setResendSuccess(true)
@@ -393,8 +409,15 @@ export default function InvoiceDetailPage() {
 
     // [SEND-PDF-HONEST] pdf_failed = the number was issued but the PDF/email did NOT go out. Don't
     // silently close as if delivered — keep the modal open with an honest resend prompt.
-    if (responseData.warning === 'pdf_failed' || responseData.delivered === false) {
-      setSendError(t('detail.fout.pdfNietGemaakt'))
+    //
+    // [VERSTUURD-EERLIJK] This line used to name pdf_failed and `delivered === false` but NOT
+    // email_failed — exactly the half-fix FacturenClient carried until it was found there. The
+    // three spellings are one question now, and one module answers it.
+    const nietBezorgd = deliveryFailure(responseData)
+    if (nietBezorgd) {
+      setSendError(nietBezorgd === 'email_failed'
+        ? t('detail.fout.mailNietVerstuurd')
+        : t('detail.fout.pdfNietGemaakt'))
       setSending(false)
       return
     }
