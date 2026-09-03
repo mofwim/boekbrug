@@ -3212,3 +3212,4 @@ test("[BANK-STAND] the bank screen says what is waiting, and says nothing while 
   // En de oude vaste zin is weg: die beschreef wat het scherm DOET, elke dag hetzelfde.
   assert.doesNotMatch(html, /Koppel je bank of upload je bankafschrift\. We koppelen/, "the static intro is back");
 });
+

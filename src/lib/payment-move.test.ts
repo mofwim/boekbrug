@@ -140,6 +140,48 @@ console.log('\n— ranking: the top row is the one that gets tapped without read
   check('nothing eligible → an empty list, not a wrong suggestion', rankMoveTargets(payment, source, []).length === 0)
 }
 
+console.log('\n— [MOVE-CREDITNOTA] a refund is not settled by receiving money —')
+{
+  // Measured against a real Postgres before this guard existed: a EUR 100 payment moved onto a
+  // 'sent' creditnota (total -100) came back amount_paid=100, status='paid', and the sales invoice
+  // the payment really belonged to silently lost it. The total is read through abs(), so a
+  // creditnota of -100 looks exactly like an invoice with 100 still open — which is why every
+  // other guard here passes it.
+  const creditnota: MoveTargetCandidate = {
+    id: 'cn', status: 'sent', direction: 'outgoing', invoice_type: 'creditnota',
+    client_name: 'Klant', invoice_date: '2026-05-01', total_inc_btw: -100, amount_paid: 0,
+  }
+  const verdict = canReceivePayment(
+    { amount_applied: 100, invoice_id: 'src', transaction_id: 'tx' }, creditnota, 'outgoing',
+  )
+  check('a creditnota may not RECEIVE a payment', !verdict.ok)
+  check('…and the reason names what it is', !verdict.ok && verdict.reason === 'creditnota_target')
+
+  // Every other guard would have let it through — that is what makes this its own check rather
+  // than a consequence of one of the others.
+  const zonderType = { ...creditnota, invoice_type: 'factuur' }
+  check('…while the same row as an ordinary invoice passes', canReceivePayment(
+    { amount_applied: 100, invoice_id: 'src', transaction_id: 'tx' }, zonderType, 'outgoing',
+  ).ok)
+
+  // The picker must not offer what the write refuses: an offered row is one the owner will tap.
+  const offered = rankMoveTargets(
+    { id: 'p', invoice_id: 'src', amount_applied: 100, transaction_id: 'tx', paid_on: '2026-05-02' },
+    { id: 'src', status: 'sent', direction: 'outgoing', client_name: 'Klant', invoice_date: '2026-05-01', total_inc_btw: 100 },
+    [creditnota, { ...creditnota, id: 'ok', invoice_type: 'factuur', total_inc_btw: 100 }],
+  )
+  check('the picker offers the invoice and not the creditnota', offered.length === 1 && offered[0].id === 'ok')
+
+  // Only the TARGET. A payment wrongly attached to a creditnota must still be movable OFF it —
+  // that is the door out of exactly this mistake, and closing it would trap the money there.
+  const offBackToInvoice = canReceivePayment(
+    { amount_applied: 100, invoice_id: 'cn', transaction_id: 'tx' },
+    { id: 'inv', status: 'sent', direction: 'outgoing', invoice_type: 'factuur', total_inc_btw: 100, amount_paid: 0 },
+    'outgoing',
+  )
+  check('a creditnota may still be the SOURCE', offBackToInvoice.ok)
+}
+
 console.log('\n— every refusal reaches the owner as a sentence —')
 {
   const cases: [string, RegExp][] = [
@@ -150,6 +192,9 @@ console.log('\n— every refusal reaches the owner as a sentence —')
     ['[MOVE-PAYMENT] invoice locked by accountant (verwerkt)', /boekhouder/],
     ['[MOVE-PAYMENT] direction mismatch', /verkoopfactuur/],
     ['[MOVE-PAYMENT] target not payable', /wachtrij/],
+    // The RPC's own fragment, so the sentence is the same whether the refusal came from the
+    // database or from the route's check ahead of it.
+    ['[MOVE-PAYMENT] target is a creditnota — a refund is not settled by receiving money', /creditnota/],
     ['[MOVE-PAYMENT] target has no total to settle', /geen bedrag/],
     ['[MOVE-PAYMENT] target remaining 10 is less than payment 20', /overbetalen/],
     ['[MOVE-PAYMENT] source invoice not found / not owned', /bestaat niet meer/],

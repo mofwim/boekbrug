@@ -63,7 +63,7 @@ export interface KasboekImportRow {
 export interface KasboekImportWarning {
   /** 1-gebaseerd regelnummer zoals de eigenaar het in Excel ziet. 0 = over het hele blad. */
   row: number;
-  code: "regel_telt_niet_op" | "keten_breekt" | "datum_buiten_bereik" | "geen_regels";
+  code: "regel_telt_niet_op" | "keten_breekt" | "datum_buiten_bereik" | "geen_regels" | "negatief_bedrag";
   /** Nederlands, want de eigenaar en zijn boekhouder lezen dit. */
   message: string;
 }
@@ -201,8 +201,46 @@ export function parseKasboekSheet(matrix: Cell[][]): KasboekImportResult | null 
       continue;
     }
 
-    const spent = Math.abs(num(r[col.spent]) ?? 0);
-    const received = Math.abs(num(r[col.received]) ?? 0);
+    // ── [KAS-TEKEN] Een negatief bedrag is een CORRECTIE, geen uitgave ──────────────────────
+    //
+    // Hier stond Math.abs() op allebei de kolommen. Dat leest een kasboek verkeerd op de enige
+    // plek waar het ertoe doet: een teruggave die de winkelier als "-50" in de kolom Uitgaven
+    // schrijft, werd daarmee 50 die de lade UIT ging in plaats van 50 die erin kwam. De fout is
+    // niet 50 maar 100, en hij keert de richting om.
+    //
+    // Wat er daarna gebeurde maakte het erger, niet zichtbaarder. De regelcontrole hieronder
+    // (beginsaldo + ontvangsten − uitgaven = eindsaldo) klopte dan nét niet meer, dus er kwam een
+    // waarschuwing — en de regel werd tóch weggeschreven. matchKasboekDays vergelijkt file.spent
+    // met wat de app die dag aan uitgaven kent, en meldde dus 50 euro uitgave die "in BoekBrug
+    // ontbreekt" terwijl er 50 euro binnenkwam. Een waarschuwing naast een verkeerd getal is geen
+    // rem: de eigenaar leest de melding, kijkt naar zijn eigen blad waar netjes -50 staat, en
+    // boekt het gat weg.
+    //
+    // De oplossing is GEEN interpretatie. `beginsaldo + ontvangsten − uitgaven = eindsaldo` blijft
+    // exact dezelfde vergelijking als je een negatief bedrag naar de andere kolom verplaatst:
+    // −50 in Uitgaven is rekenkundig identiek aan +50 in Ontvangsten. Er wordt dus niets geraden en
+    // niets weggegooid — alleen in de kolom gezet waar de rest van deze pijplijn hem verwacht,
+    // want die rekent op twee niet-negatieve kolommen.
+    const rawSpent = num(r[col.spent]) ?? 0;
+    const rawReceived = num(r[col.received]) ?? 0;
+    let spent = rawSpent;
+    let received = rawReceived;
+    if (spent < 0) { received = round2(received - spent); spent = 0; }
+    if (received < 0) { spent = round2(spent - received); received = 0; }
+    if (rawSpent < 0 || rawReceived < 0) {
+      // Gemeld, niet geblokkeerd: de regel klopt na de verplaatsing, en de eigenaar hoort te weten
+      // hoe zijn eigen blad gelezen is — precies omdat er niets aan te zien zal zijn.
+      const kolom = rawSpent < 0 ? "Uitgaven" : "Ontvangsten";
+      const anders = rawSpent < 0 ? "ontvangst" : "uitgave";
+      warnings.push({
+        row: i + 1,
+        code: "negatief_bedrag",
+        message:
+          `Regel ${i + 1} (${date}): er staat een negatief bedrag in de kolom ${kolom}. ` +
+          `Dat is gelezen als een ${anders} van ${Math.abs(rawSpent < 0 ? rawSpent : rawReceived).toFixed(2)} — ` +
+          `het dagsaldo klopt daarmee. Controleer of dat is wat je bedoelde.`,
+      });
+    }
 
     // 1) Telt de regel zelf op?
     const verwacht = round2(opening + received - spent);

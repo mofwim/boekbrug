@@ -87,6 +87,12 @@ function isReadableBankFile(name: string): boolean {
 // whether it is worth asking, and what to tell the owner is waiting.
 function isServerAutoBookable(s: Suggestion): boolean {
   if (s.outcome !== 'auto' || !s.best) return false
+  // [AL-GEBOEKT-KLEMT] The payment names an invoice that is already booked. That is the one
+  // sentence a bulk action may never talk over: "zekere betaling" means the bank agrees, and here
+  // the bank is pointing at a bill that is settled — so every candidate this would book is a
+  // DIFFERENT, still-open invoice. Measured: one of the three lines that named an already-paid
+  // invoice reached this screen with a suggestion the server called 'auto'.
+  if (s.quotedSettled) return false
   const sig = s.best.signals
   if (!sig.includes('amount')) return false // the amount is the money-truth — required by both tiers
   const certain = sig.includes('reference') || sig.includes('iban')
@@ -625,7 +631,12 @@ export default function BankClient() {
           setData(mrJson)
           const pre: Record<string, string> = {}
           for (const s of mrJson.suggestions) {
-            if (s.outcome === 'auto' && s.best) pre[s.transactionId] = s.best.invoiceId
+            // [AL-GEBOEKT-KLEMT] Pre-selecting the winner is what makes "Bevestig betaling" one tap.
+            // It may not be one tap once quotedSettled is set: the payment then names an invoice that
+            // is already booked, and every candidate under it is a DIFFERENT, still-open invoice. That
+            // is the card from the screenshot — a green check over a bill the statement never named,
+            // with a live confirm below it. Tapping a candidate still selects it; only the accident goes.
+            if (s.outcome === 'auto' && s.best && !s.quotedSettled) pre[s.transactionId] = s.best.invoiceId
           }
           setSelected(pre)
         }
@@ -1447,7 +1458,89 @@ export default function BankClient() {
   // on supplier IBAN + exact sum — showed "0 zekere betalingen" and no card at all, while the
   // on-load pass had just booked them. Same predicate as that gate now, from one place, so the
   // two answers cannot drift apart again.
-  const safeAutoCount = toConfirm.filter((s) => isServerAutoBookable(s)).length
+  // [AFHANDELEN-NOEMT] The LIST, not just the count. What this button does is book money against
+  // invoices and mark them paid, and until now it said only how many — so the one question an owner
+  // has before pressing it ("which ones, and is the wrong one in there?") had no answer on the
+  // page. Reported after a card offered an invoice the bank statement never mentioned: the fear was
+  // not that the bulk is wrong, it was that there is no way to find out before it runs.
+  // ── [NIET-DEZE-FACTUUR] "This is not the invoice for this payment" ────────────────────────────
+  //
+  // Optimistic and local first: the suggestion disappears the moment it is tapped, because the one
+  // thing a refusal must never feel like is a request the app might refuse. Nothing is booked — no
+  // link is written, no invoice changes status — so there is no state to roll back if the write
+  // fails. What CAN fail is the remembering, and that is said out loud rather than assumed: while
+  // bank_match_rejections.sql is not applied the route answers stored:false and the toast says the
+  // suggestion will be back after a refresh, instead of a silent lie.
+  // What this session removed, kept so it can be put back. A refusal the owner cannot take back is
+  // the same trap as a confirm they cannot take back — and the whole complaint that started this
+  // was having only one irreversible button on the card.
+  const [undoReject, setUndoReject] = useState<Record<string, Candidate>>({})
+
+  const rejectSuggestion = useCallback(async (transactionId: string, invoiceId: string) => {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        suggestions: prev.suggestions.map((s) => {
+          if (s.transactionId !== transactionId) return s
+          const gone = (s.candidates ?? []).find((c) => c.invoiceId === invoiceId) ?? s.best
+          if (gone) setUndoReject((u) => ({ ...u, [transactionId]: gone }))
+          const kept = (s.candidates ?? []).filter((c) => c.invoiceId !== invoiceId)
+          const bestGone = s.best?.invoiceId === invoiceId
+          // The same rule the server applies (bank-rejections.ts): a refusal REMOVES a suggestion
+          // and never promotes one. The runner-up was the runner-up because its evidence was
+          // weaker, and answering "no" by pre-selecting the next-best is arguing, not listening.
+          return {
+            ...s,
+            candidates: kept,
+            best: bestGone ? null : s.best,
+            outcome: kept.length === 0 ? 'none' : bestGone ? 'choice' : s.outcome,
+          }
+        }),
+      }
+    })
+    // Nothing may stay selected on a card whose selection was just refused.
+    setSelected((sel) => (sel[transactionId] === invoiceId ? { ...sel, [transactionId]: '' } : sel))
+    try {
+      const res = await fetch('/api/bank/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId, invoiceId }),
+      })
+      const json = (await res.json().catch(() => ({}))) as { stored?: boolean }
+      showToast(res.ok && json.stored ? t('bank.nietDeze.weg') : t('bank.nietDeze.nietBewaard'))
+    } catch {
+      showToast(t('bank.nietDeze.nietBewaard'))
+    }
+  }, [t, showToast])
+
+  /** [NIET-DEZE-FACTUUR] Put a refused suggestion back. Same shape as the refusal: local first,
+   *  then the server, and the sentence tells the truth about whether it was remembered. */
+  const undoRejectSuggestion = useCallback(async (transactionId: string) => {
+    const cand = undoReject[transactionId]
+    if (!cand) return
+    setUndoReject((u) => { const next = { ...u }; delete next[transactionId]; return next })
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        suggestions: prev.suggestions.map((s) =>
+          s.transactionId === transactionId
+            ? { ...s, candidates: [cand, ...(s.candidates ?? [])], outcome: s.outcome === 'none' ? 'choice' : s.outcome }
+            : s),
+      }
+    })
+    // Restored as a CHOICE, never back to 'auto'. The owner has now said one thing about this pair
+    // and then unsaid it; that is a reason to show it again, not a reason to pre-select it.
+    await fetch('/api/bank/reject', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactionId, invoiceId: cand.invoiceId }),
+    }).catch(() => {})
+  }, [undoReject])
+
+  const safeAutoRows = toConfirm.filter((s) => isServerAutoBookable(s))
+  const safeAutoCount = safeAutoRows.length
 
   const tabs = [
     { key: 'confirm' as const, label: t('bank.tab.teBevestigen'), icon: 'fact_check', count: toConfirm.length },
@@ -2001,9 +2094,38 @@ export default function BankClient() {
                 : (safeAutoCount === 1 ? t('bank.auto.klaarEen') : t('bank.auto.klaar', { count: safeAutoCount }))}
             </div>
           </div>
-          <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 12px', lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12.5, color: '#3c4043', margin: '6px 0 10px', lineHeight: 1.5 }}>
             {t('bank.auto.uitleg')}
           </div>
+          {/* [AFHANDELEN-NOEMT] Exactly what will be booked, before it is. One row per payment:
+              the date and counterparty as the bank wrote them, the amount, and the invoice it will
+              be marked against. An owner who recognises a wrong pair here can stop — and one who
+              recognises nothing wrong has actually checked, instead of trusting a number. */}
+          {!autoRunning && (
+            <ul style={{
+              listStyle: 'none', margin: '0 0 12px', padding: 0,
+              display: 'flex', flexDirection: 'column', gap: 4,
+            }}>
+              {safeAutoRows.map((s) => (
+                <li key={s.transactionId} style={{
+                  background: '#fff', borderRadius: R.md, padding: '7px 10px',
+                  fontSize: 12, color: '#3c4043', lineHeight: 1.45, textAlign: 'start',
+                  display: 'flex', flexWrap: 'wrap', gap: '2px 8px', alignItems: 'baseline',
+                }}>
+                  <span style={{ fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {s.counterpart || t('verd.onbekendeTegenpartij')}
+                  </span>
+                  <span style={{ color: '#5F6368' }}>{s.date}</span>
+                  <span style={{ fontFamily: FONT_NUM, fontWeight: 600, marginInlineStart: 'auto' }}>
+                    {eur.format(Math.abs(s.amount))}
+                  </span>
+                  <span style={{ flexBasis: '100%', color: '#5F6368' }}>
+                    {t('bank.auto.wordtGeboektOp', { nummer: s.best?.invoiceNumber ?? '—' })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           {/* [BANK-AUTO-RUN] The app already books these on load; this button is only a manual
               re-trigger if the automatic pass was interrupted (e.g. a network hiccup). */}
           <button
@@ -2357,6 +2479,8 @@ export default function BankClient() {
                 onRestore={() => restoreTx(s.transactionId)}
                 onOpenFile={openInvoiceFile}
                 onCorrect={openCorrection}
+                onReject={(invId) => rejectSuggestion(s.transactionId, invId)}
+                onUndoReject={undoReject[s.transactionId] ? () => undoRejectSuggestion(s.transactionId) : undefined}
                 isDoneTab={bankTab === 'done'}
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
@@ -2617,10 +2741,15 @@ function Empty({ done }: { done: boolean }) {
 // kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
 // roepen een component nooit aan.
 export function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, isDoneTab, onUnlink, onMove, onMatchChecked,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked,
 }: {
   s: Suggestion
   selectedInvoiceId: string | undefined
+  /** [NIET-DEZE-FACTUUR] "This is not the invoice for this payment." Removes the suggestion; books
+   *  nothing. Optional: a screen that does not pass it simply has no such button. */
+  onReject?: (invoiceId: string) => void
+  /** [NIET-DEZE-FACTUUR] Put the last refused suggestion back. Absent when there is nothing to undo. */
+  onUndoReject?: () => void
   processing: boolean
   isIgnoredTab: boolean
   confirmedNumbers: string[]
@@ -2686,7 +2815,11 @@ export function TxCard({
   const refParts = allRefParts.filter((r) => !dismissedNumbers.has(normRef(r)))
   const doneNumbers = s.coveredNumbers ?? []
   const selectedCand =
-    s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ?? (s.outcome === 'auto' ? s.best : null)
+    s.candidates.find((c) => c.invoiceId === selectedInvoiceId) ??
+    // [AL-GEBOEKT-KLEMT] No silent fallback to the winner while the payment names an already-booked
+    // invoice: that fallback is what put a confirmable amount under a green check on a bill the
+    // statement never mentioned. An explicit tap on a candidate still selects it — that path is untouched.
+    (s.outcome === 'auto' && !s.quotedSettled ? s.best : null)
 
   // [BANK-MULTI-CONFIRM] A transaction whose reference lists more than one invoice
   // number covers several invoices. Instead of "pick ONE" (which silently drops the
@@ -3570,8 +3703,29 @@ export function TxCard({
         </div>
       )}
 
+      {/* [NIET-DEZE-FACTUUR] The way back, where the suggestion was. */}
+      {!wasMulti && onUndoReject && (
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#5F6368' }}>{t('bank.nietDeze.weg')}</span>
+          <button
+            onClick={onUndoReject}
+            style={{
+              border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+              fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px',
+            }}
+          >
+            {t('bank.nietDeze.terug')}
+          </button>
+        </div>
+      )}
+
+      {/* [AL-GEBOEKT] Not shown once the payment names an invoice that is already settled — see
+          AlGeboektKaart below and bank-quoted-invoice.ts. Two sessions answered this same question;
+          this is the answer that works on the real rows. The other one ([AFSCHRIFT-NOEMT]) read the
+          reference with parseReferenceNumbers, which splits on COMMAS, so `USTD//2919045/` became a
+          single token matching no invoice. It was dropped in the merge rather than kept beside it. */}
       {!wasMulti && !s.quotedSettled && s.outcome === 'auto' && s.best && (
-        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} />
+        <CandidateRow cand={s.best} selected emphasis onOpenFile={onOpenFile} onCorrect={onCorrect} onReject={onReject} />
       )}
 
       {/* [AL-GEBOEKT] Deze betaling noemt een factuur die al is afgeboekt. Dan is er niets te
@@ -3612,7 +3766,7 @@ export function TxCard({
                 borderRadius: R.md, padding: '8px 10px', cursor: 'pointer', fontFamily: FONT,
               }}
             >
-              <CandidateRow cand={c} selected={isSel} inline onOpenFile={onOpenFile} />
+              <CandidateRow cand={c} selected={isSel} inline onOpenFile={onOpenFile} onReject={onReject} />
             </div>
             )
           })}
@@ -3667,7 +3821,11 @@ export function TxCard({
         )
       })()}
 
-      {/* Confirm */}
+      {/* Confirm.
+          [AL-GEBOEKT-KLEMT] While the payment names an invoice that is already booked, this is not a
+          one-tap confirm. The owner may still choose a candidate deliberately — the button comes back
+          the moment they select one — but nothing is pre-selected, so the tap can no longer happen on
+          the way past. */}
       {!wasMulti && s.outcome !== 'none' && (
         <button
           disabled={!selectedInvoiceId || processing}
@@ -3774,7 +3932,7 @@ function AlGeboektKaart({
   )
 }
 
-function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void }) {
+function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect, onReject }: { cand: Candidate; selected?: boolean; emphasis?: boolean; inline?: boolean; onOpenFile?: (invoiceId: string) => void; onCorrect?: (invoiceId: string) => void; onReject?: (invoiceId: string) => void }) {
   const t = translator(useLocale())
   // [BANK-CHOICE-CLARITY] In the choice list, the engine's amount signal means this
   // invoice's total equals the bank amount — the strongest hint, so highlight it.
@@ -3830,6 +3988,24 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
               {t('bank.bekijkFactuur')}
             </button>
           )}
+          {/* [NIET-DEZE-FACTUUR] The button that did not exist. The card offered one invoice and
+              one confirm, so a wrong suggestion could only be accepted or left sitting — and left
+              sitting means the same wrong pair is offered again on every visit. Nothing is booked
+              by this; the suggestion goes, and it comes back with one tap. */}
+          {onReject && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onReject(cand.invoiceId) }}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: '#5F6368', padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>block</span>
+              {t('bank.nietDeze')}
+            </button>
+          )}
           {/* [FULL-CORRECTION] The moment a wrong figure is most likely to be SEEN: the owner is
               looking at the payment with the paper next to it. Same editor as the pay screen, same
               route, same guards — see InvoiceCorrectionModal. */}
@@ -3881,6 +4057,24 @@ function CandidateRow({ cand, selected, emphasis, inline, onOpenFile, onCorrect 
             >
               <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>description</span>
               {t('bank.bekijkFactuur')}
+            </button>
+          )}
+          {/* [NIET-DEZE-FACTUUR] The button that did not exist. The card offered one invoice and
+              one confirm, so a wrong suggestion could only be accepted or left sitting — and left
+              sitting means the same wrong pair is offered again on every visit. Nothing is booked
+              by this; the suggestion goes, and it comes back with one tap. */}
+          {onReject && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onReject(cand.invoiceId) }}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                border: 'none', background: 'none', cursor: 'pointer', fontFamily: FONT,
+                fontSize: 12, fontWeight: 600, color: '#5F6368', padding: '2px 4px',
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>block</span>
+              {t('bank.nietDeze')}
             </button>
           )}
         </div>

@@ -22,6 +22,8 @@ import { scanInvoices, type InvoiceScan, type ScanRow } from '@/lib/invoice-scan
 import { readingHintFor, vendorKey } from '@/lib/reading-memory'
 import { getSessionUser } from '@/lib/session-user'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
+// [LEVERANCIER-KIEZEN] The payload cap for the supplier picker — see supplier-suggest.ts.
+import { SUPPLIER_PICK_LIMIT } from '@/lib/supplier-suggest'
 import type { ComponentProps } from 'react'
 // [OPENSTAAND-BEWIJS] Is anything on the pay list already settled in the bank? See the block below.
 import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
@@ -87,7 +89,7 @@ export default async function Page({
   // scherm het halve verhaal ([NO-SILENT-EMPTY]). Met Promise.all zou de eerste mislukte lezing de
   // andere zes meesleuren en de pagina omvertrekken — precies het tegenovergestelde van wat die
   // blokken doen. settled() geeft de worp terug aan het blok dat hem hoort te vangen.
-  const [profileS, countS, scanS, memoryS, filedS, incassoS, paramsS] = await Promise.allSettled([
+  const [profileS, countS, scanS, memoryS, filedS, incassoS, supplierListS, paramsS] = await Promise.allSettled([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
 
     // [INVOICE-COUNTER] Het WARE aantal bevestigde inkoopfacturen — zie de toelichting verderop,
@@ -121,6 +123,16 @@ export default async function Page({
     // auto_incasso is added by auto_incasso.sql and not yet in the generated types.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (supabase as any).from('suppliers').select('name_key').eq('user_id', user.id).eq('auto_incasso', true) as Promise<{ data: { name_key: string | null }[] | null; error: { message: string } | null }>,
+
+    // [LEVERANCIER-KIEZEN] De leveranciers die deze eigenaar al heeft — voor het naamveld in het
+    // leveranciersformulier onderaan het documentblad. Een aparte lezing en niet de rij hierboven:
+    // die is gefilterd op auto_incasso, en dat is een handjevol van de lijst.
+    supabase
+      .from('suppliers')
+      .select('id, name, iban')
+      .eq('user_id', user.id)
+      .order('name')
+      .limit(SUPPLIER_PICK_LIMIT),
 
     searchParams,
   ])
@@ -292,6 +304,22 @@ export default async function Page({
     incassoKeys = null
   }
 
+  // [LEVERANCIER-KIEZEN] [NO-SILENT-EMPTY] Een mislukte lezing is niet "je hebt geen leveranciers":
+  // bij een lege lijst zegt het naamveld dat opslaan een nieuwe leverancier maakt, bij een mislukte
+  // lezing dat de lijst niet geladen kon worden. Alleen deze twee zinnen hangen eraan — de facturen
+  // op dit scherm staan er los van, dus dit gaat bewust niet in readFailed.
+  let supplierList: { id: string; name: string; iban: string | null }[] = []
+  let supplierListFailed = false
+  try {
+    const { data, error } = settled(supplierListS)
+    if (error) throw new Error(error.message)
+    supplierList = ((data ?? []) as { id: string; name: string; iban: string | null }[])
+      .filter((s) => typeof s.name === 'string' && s.name.trim() !== '')
+  } catch (e) {
+    console.error('[LEVERANCIER-KIEZEN] supplier list read failed', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+    supplierListFailed = true
+  }
+
   // [INBOX-CROWD-OUT] Deep-link guarantee: Vandaag routes here with ?focus={id}
   // (and ?action=pay). If that row still fell outside the fetched window (e.g. a
   // paid row beyond the 200 cap), fetch it by id so the focus/pay flow always
@@ -371,6 +399,8 @@ export default async function Page({
       bookScan={bookScan}
       readingHints={readingHints}
       incassoKeys={incassoKeys}
+      suppliers={supplierList}
+      suppliersUnavailable={supplierListFailed}
     />
   )
 }

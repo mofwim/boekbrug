@@ -7835,6 +7835,11 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
     // back in one entry at a time.
     "src/components/nav/DashboardChrome.tsx",
+    // [LEVERANCIER-KIEZEN] The supplier name field and the form around it. Both render inside the
+    // two incoming screens above, and both are new enough that a Dutch sentence typed straight
+    // into them would look perfectly finished — in Dutch.
+    "src/components/invoice/SupplierNameInput.tsx",
+    "src/components/invoice/SupplierPinModal.tsx",
   ];
   const leftovers: string[] = [];
 
@@ -13069,6 +13074,44 @@ test("[AL-GEBOEKT] de kiezer staat uit zodra de betaling een afgeboekte factuur 
   // En de server moet het veld überhaupt sturen.
   assert.match(code("src/app/api/bank/match/route.ts"), /quotedSettled:/,
     "de matchroute stuurt quotedSettled niet meer mee — dan staat de kiezer er in productie weer");
+});
+
+// ── [AL-GEBOEKT-KLEMT] ────────────────────────────────────────────────────────────────────────
+//
+// [AL-GEBOEKT] removes the CHOOSER when the payment names an invoice that is already booked. It
+// does not, by itself, remove the three ways that payment still gets booked without a choice:
+//
+//   1. the winner is PRE-SELECTED on load, which is what makes "Bevestig betaling" one tap;
+//   2. selectedCand falls back to `s.best` when nothing was selected, so the confirm has a target
+//      even though the owner never picked one;
+//   3. isServerAutoBookable still counts the row, so the bulk "N zekere betalingen" books it
+//      without the card ever being opened.
+//
+// Any one of them books an open invoice with money that belonged to a bill already settled — which
+// is the whole harm the card exists to prevent. Two sessions arrived at the same verdict from
+// different directions and the guards were merged onto the surviving one; this gate holds them
+// there, because each is one deleted `!` away from being gone with nothing else complaining.
+test("[AL-GEBOEKT-KLEMT] an already-booked payment is not pre-selected, not confirmed and not bulk-booked", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // 1. Nothing is pre-selected while the payment names a settled invoice.
+  assert.match(scherm, /if \(s\.outcome === 'auto' && s\.best && !s\.quotedSettled\) pre\[s\.transactionId\] = s\.best\.invoiceId/,
+    "the pre-selection runs again on a payment that names an already-booked invoice — that is the " +
+    "green check over a bill the statement never named, with a live confirm under it");
+
+  // 2. No silent fallback to the winner. An explicit tap still selects a candidate; that path is
+  //    deliberately untouched, so the owner keeps every deliberate action.
+  assert.match(scherm, /\(s\.outcome === 'auto' && !s\.quotedSettled \? s\.best : null\)/,
+    "selectedCand falls back to the winner again, so the confirm has a target nobody chose");
+
+  // 3. The bulk action skips the row. Read from the predicate itself, not from the file, so a guard
+  //    that moved somewhere else cannot pass this by accident.
+  const blok = scherm.slice(scherm.indexOf("function isServerAutoBookable"));
+  const lijf = blok.slice(0, blok.indexOf("\n}"));
+  assert.match(lijf, /if \(s\.quotedSettled\) return false/,
+    "isServerAutoBookable counts an already-booked payment again — the bulk books it without the " +
+    "card ever being opened");
+  assert.ok(lijf.length < 2000, `the predicate scan ran past its function (${lijf.length} chars)`);
 });
 
 test("[RLS-AAN] een migratie die een tabel maakt, zet er row level security op", () => {
@@ -24280,6 +24323,64 @@ test("[REGEL-ZONDER-OMSCHRIJVING] a priced line with no description stops the se
   assert.ok(refuseAt > 0 && draftAt > refuseAt, "it refuses before anything is minted");
 });
 
+// ── [LEVERANCIER-KIEZEN] ──────────────────────────────────────────────────────────────────────
+//
+// A supplier is not typed into this app the way a customer is. A customer is CHOSEN: /dashboard/
+// klanten has a form and /dashboard/invoice/new has a picker, so the owner names them once and
+// selects them forever after. A supplier ARRIVES, on paper, and suppliers.name is whatever the
+// reader made of a letterhead — so the only place a human ever names one is a correction field on
+// an invoice.
+//
+// That field is an identity key, not a label. learnSupplierAlias resolves the corrected name
+// through supplierNameKey: a key that matches links the invoice to the company the owner already
+// has, and a key that misses creates a SECOND supplier row — after which /dashboard/leveranciers
+// shows one company twice with the outstanding balance split between the halves. Retyping a name
+// from memory is precisely how you miss by one character.
+//
+// So both doors show what is there. This gate holds the two halves that go quiet without failing:
+// a picker whose list nobody passes is an empty picker forever, and it looks exactly like a
+// picker that simply found nothing.
+test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers the owner has", () => {
+  // 1. The verify queue's modal — the door the owner meets first, on every misread invoice.
+  const wachtrij = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(wachtrij, /<SupplierNameInput\s/, "the queue's leverancier field is the picker");
+  assert.match(wachtrij, /value=\{vendor\}\s*\n\s*onChange=\{setVendor\}/,
+    "…driving the same vendor state the confirm sends, not a second copy of it");
+
+  // 2. The supplier form at the foot of the document sheet — the deeper door, reachable from BOTH
+  //    incoming screens. A picker at one door only is a feature the owner cannot rely on.
+  const formulier = code("src/components/invoice/SupplierPinModal.tsx");
+  assert.match(formulier, /<SupplierNameInput/, "the supplier form's name field is the picker too");
+
+  // 3. And the lists actually travel. This is the half that fails silently: every prop below is
+  //    optional by design (an older render must behave exactly as before), so a page that stops
+  //    reading its suppliers type-checks, renders, and shows an empty panel forever.
+  for (const page of [
+    "src/app/dashboard/incoming/page.tsx",
+    "src/app/dashboard/incoming/manage/page.tsx",
+  ]) {
+    const src = code(page);
+    assert.match(src, /from\(["']suppliers["']\)\s*\n?\s*\.select\(["']id, name, iban["']\)/,
+      `${page} no longer reads the suppliers the picker offers`);
+    assert.match(src, /suppliers=\{/, `${page} reads them and does not hand them over`);
+    // [NO-SILENT-EMPTY] An empty list and a failed read are different sentences on the screen, and
+    // only one of them may say "confirming makes a new supplier". A page that stopped telling the
+    // two apart would send `false` here and quietly invite a duplicate of a company the owner has.
+    assert.match(src, /suppliersUnavailable=\{/, `${page} cannot tell a failed read from an empty list`);
+  }
+
+  // 4. The two sentences are two keys. One key for both states is how they become the same claim.
+  const veld = code("src/components/invoice/SupplierNameInput.tsx");
+  assert.match(veld, /t\('lev\.kies\.nietGeladen'\)/, "the failed read says so");
+  assert.match(veld, /t\('lev\.kies\.nieuw'\)/, "…and an empty answer from a list that WAS read says so");
+  // The order matters, not just the presence: `unavailable` is checked FIRST, so a read that
+  // failed can never fall through to the sentence about creating a new supplier.
+  const unavailableAt = veld.indexOf("if (unavailable)");
+  const nieuwAt = veld.indexOf("lev.kies.nieuw");
+  assert.ok(unavailableAt > 0 && nieuwAt > unavailableAt,
+    "a failed read must be answered before anything is claimed about the name");
+});
+
 // ─── [E-FACTUUR-DATUM] One file owns the timetable; everywhere else states no year ──────────────
 //
 // A sentence — "the Netherlands makes Peppol e-invoicing mandatory over €800k turnover from 2027
@@ -24392,4 +24493,494 @@ test("[TIJDVAK-KWARTAAL] the quarterly deadline stays off the owner's screens", 
     "an owner-facing screen counts down to a quarterly deadline while the app never asks which " +
     "tijdvak that owner is on — for a monthly filer that date is three deadlines late",
   );
+});
+
+// ── [LEVERANCIER-SAMENVOEGEN] ─────────────────────────────────────────────────────────────────
+//
+// The one button in the supplier module that REWRITES already-booked invoices: it moves them from
+// one supplier to another and renames them, and invoices.client_name is the identity key the
+// IBAN-change check, the incasso mandate, the creditnota signal and the crediteurenstand all
+// resolve through. A wrong merge is not untidy — it is a crediteurenstand for a legal entity that
+// does not exist, and a BTW return built on it.
+//
+// The pair it must never offer is in this repo already. From vendor-grounding.ts: an invoice from
+// BALKIP B.V. — own letterhead, own KVK, own IBAN, sent from info@balkip.nl — was imported as
+// "GROOTHANDEL M.H. BAL V.O.F.". One family name, two companies. An owner glancing at those two
+// lines would confirm a merge; the app must never offer it.
+//
+// So the guard is not "be careful", it is structural, and this gate holds the structure.
+test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are asked first", () => {
+  const beslissing = code("src/lib/supplier-merge.ts");
+
+  // 1. The module cannot match on names, because it cannot SEE a name key. Every name normalizer
+  //    in this codebase is named here so that importing one goes red — a rule about the class,
+  //    not a list of today's mistakes.
+  for (const naamsleutel of ["vendorCoreKey", "supplierNameKey", "normalizeVendor", "foldText", "counterpartKey"]) {
+    assert.doesNotMatch(
+      beslissing, new RegExp(`\\b${naamsleutel}\\b`),
+      `supplier-merge.ts reaches for ${naamsleutel} — a resemblance between names is exactly what may not decide this`,
+    );
+  }
+  // …and it does hold the two identifiers that ARE the company.
+  assert.match(beslissing, /import \{ identityIban, normalizeKvk \} from '@\/lib\/supplier-registry'/,
+    "the registry's own normalizers, not second copies of them");
+
+  // 2. The order inside planSupplierMerge is the whole safety argument: a veto asked AFTER the
+  //    evidence is a veto that never fires on the pair that already matched.
+  const kvkVeto = beslissing.indexOf("reason: 'different-kvk'");
+  const ibanVeto = beslissing.indexOf("reason: 'two-accounts'");
+  const eersteBewijs = beslissing.indexOf("evidence: 'kvk'");
+  assert.ok(kvkVeto > 0 && ibanVeto > 0 && eersteBewijs > 0, "all three branches still exist");
+  assert.ok(kvkVeto < eersteBewijs, "two KVK numbers are two companies — asked before anything can agree");
+  assert.ok(ibanVeto < eersteBewijs, "two own accounts are refused before a shared one can be found");
+
+  // 3. The owner cannot compose a pair. findMergeCandidates is the only source of pairs, and it
+  //    spends each row once — three rows of one company is two merges, and the second must be
+  //    planned on what the first left behind.
+  assert.match(beslissing, /const spoken = new Set<string>\(\)/, "a row already spoken for is not offered twice");
+
+  // 4. The server decides again on what IT reads. A screen can be minutes old, and in those
+  //    minutes an import can give one row the KVK that makes it a different company.
+  const deur = code("src/app/api/supplier/merge/route.ts");
+  assert.match(deur, /const plan = planSupplierMerge\(a, b\)/, "the plan is computed server-side");
+  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, created_at'\)/,
+    "…on rows it read itself, not on anything the browser sent");
+  assert.match(deur, /if \(!plan\.ok\) \{/, "…and a refusal is a refusal");
+  // The PAIR is the server's judgement; the DIRECTION is the owner's. Both halves are pinned:
+  // the asked ids must BE the pair the plan approved (nothing else can be merged), and the row
+  // written to is the one the owner confirmed — never re-picked here. Re-picking would refuse a
+  // good merge forever, because this route and the screen count invoices differently on purpose
+  // (an archived invoice must still move, and is not on the screen's list).
+  assert.match(deur, /plan\.survivorId !== askedSurvivor && plan\.mergedAwayId !== askedSurvivor/,
+    "the asked pair must be the pair the plan approved");
+  assert.match(deur, /const survivor = found\.find\(\(s\) => s\.id === askedSurvivor\)!/,
+    "…and the name that survives is the one the owner read, not one re-picked after they confirmed");
+  const planAt = deur.indexOf("const plan = planSupplierMerge");
+  const firstWrite = deur.indexOf(".update({ supplier_id: survivor.id");
+  assert.ok(planAt > 0 && firstWrite > planAt, "nothing is written before the decision is made");
+
+  // 5. The row is deleted only once nothing points at it. invoices.supplier_id is ON DELETE SET
+  //    NULL, so deleting a row that still had invoices would detach them from every supplier —
+  //    worse than the duplicate the call came to fix.
+  const countAt = deur.indexOf("count: leftover");
+  const deleteAt = deur.indexOf("from('suppliers').delete()");
+  assert.ok(countAt > 0 && deleteAt > countAt, "the leftover count is taken BEFORE the delete");
+  assert.match(deur, /if \(countErr \|\| \(leftover \?\? 0\) > 0\) \{/,
+    "…and a failed count is treated as 'there may still be invoices', not as zero");
+
+  // 6. The screen offers only what the server proposed — there is no free pairing anywhere.
+  const scherm = code("src/app/dashboard/leveranciers/LeveranciersClient.tsx");
+  assert.match(scherm, /mergeSuppliers\(offer\.survivorId, offer\.mergedAwayId, offer\.mergedAwayName, offer\.survivorName\)/,
+    "every id sent came out of an offer this screen was handed");
+  assert.doesNotMatch(scherm, /findMergeCandidates|planSupplierMerge/,
+    "the screen decides nothing about who is one company");
+  // And the rule the button rests on is on the screen, not only in this file.
+  assert.match(scherm, /\{merge\.explanation\}/, "the panel says out loud what it will and will not propose");
+  assert.match(scherm, /\{offer\.evidence\}/, "…and quotes the identifier, so the owner can check it");
+});
+
+// ── [MOVE-CREDITNOTA] ─────────────────────────────────────────────────────────────────────────
+//
+// A creditnota is money the business OWES back. It is settled by paying out or by offsetting, and
+// never by RECEIVING money. move_invoice_payment guarded the target's direction, status, fit and
+// ownership — and read its total through abs(), so a creditnota of −100 looked exactly like an
+// invoice with 100 still open. Measured against a real Postgres: a EUR 100 payment moved onto a
+// 'sent' creditnota came back amount_paid=100, status='paid', while the sales invoice the payment
+// really belonged to silently lost it.
+//
+// invoice_move_payment_creditnota_guard.sql is applied now and verified byte-identical. The guard
+// lives in the route as well, and stays there: the migration report had reported it applied while
+// it was not — its probe reads NEW./OLD. column references, which only a trigger function has — and
+// that was found by accident. This gate holds both halves of the code-side guard: the check itself,
+// and the column it needs in order to be able to make it.
+test("[MOVE-CREDITNOTA] a refund is never settled by receiving money", () => {
+  const beslissing = code("src/lib/payment-move.ts");
+  const deur = code("src/app/api/invoice/payment/move/route.ts");
+
+  // 1. The picker refuses it, so it is never offered — an offered row is one the owner taps.
+  assert.match(beslissing, /if \(\(target\.invoice_type \?\? ""\) === "creditnota"\) return \{ ok: false, reason: "creditnota_target" \}/,
+    "canReceivePayment no longer refuses a creditnota target");
+  // …asked before the total is measured, because it is the abs() on that total that hides it.
+  const typeAt = beslissing.indexOf('=== "creditnota"');
+  const totalAt = beslissing.indexOf('reason: "no_total"');
+  assert.ok(typeAt > 0 && totalAt > typeAt, "the type is read before the total that disguises it");
+
+  // 2. The route refuses it too, and BEFORE the write. The RPC's own guard is not deployed, so
+  //    without this there is nothing between the owner and the booking.
+  assert.match(deur, /invoice_type === "creditnota"/, "the route makes the judgement itself");
+  const guardAt = deur.indexOf('invoice_type === "creditnota"');
+  const rpcAt = deur.indexOf('supabase.rpc("move_invoice_payment"');
+  assert.ok(guardAt > 0 && rpcAt > guardAt, "…before the RPC, not after it");
+  // [NO-SILENT-EMPTY] A failed read is not "it is not a creditnota".
+  assert.match(deur, /if \(targetErr\) \{/, "a target that could not be read is refused, not assumed innocent");
+
+  // 3. The silent half: canReceivePayment reads an ABSENT invoice_type as "not a creditnota",
+  //    which is the permissive answer. A route that stops selecting the column therefore turns
+  //    both checks off without failing anywhere.
+  assert.match(deur, /const INVOICE_FIELDS =\s*(?:\/\/[^\n]*\n\s*)*"[^"]*\binvoice_type\b/,
+    "the route stopped selecting invoice_type — the guard now answers yes to everything");
+
+  // 4. One sentence for one refusal. The route's own check and the RPC's (once applied) must reach
+  //    the owner as the same words, or the same event reads as two different problems.
+  assert.match(beslissing, /m\.includes\("target is a creditnota"\)/,
+    "moveFailureText no longer recognises the RPC's own fragment");
+  const sql = readFileSync("supabase/migrations/invoice_move_payment_creditnota_guard.sql", "utf8");
+  assert.match(sql, /target is a creditnota/,
+    "the migration's message changed — the route's sentence is matched on it");
+});
+
+// ── [PAYDATE-REDERIVE] ────────────────────────────────────────────────────────────────────────
+//
+// Invoice A is settled in two instalments — EUR 1.000 on 1 May, EUR 2.000 on 15 June — and the
+// owner undoes the FIRST one. amount_paid is re-derived correctly; payment_date goes on saying
+// 1 May, the date of the money that just left. Under the KASSTELSEL that date decides which
+// QUARTER the payment counts in, so the figure comes out wrong with no warning anywhere.
+//
+// Every reversal path in this app carried its own `payment_date: stillHasPayment ? … : null`, and
+// a comment saying the recompute re-derives it a few lines down. For months it did not:
+// invoice_payment_date_rederive.sql adds that derivation and was reported applied while it was not
+// — the migration report's probe reads the NEW./OLD. references only a TRIGGER function has, and
+// this is an ordinary function. So the comments described a fix that had never landed. It is
+// applied now; the TypeScript below stays beside it because the app has twice believed a function
+// was deployed when it was not, and both discoveries were luck.
+//
+// The rule this gate holds is a CLASS, not a list: a path that re-derives the AMOUNT must also
+// re-derive the DATE. A sixth reversal path written next month is caught by it too.
+test("[PAYDATE-REDERIVE] every path that re-derives the amount re-derives the date with it", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+  const recomputers: string[] = [];
+  const missing: string[] = [];
+  for (const file of walk("src/app/api")) {
+    const src = code(file);
+    if (!src.includes("recompute_invoice_amount_paid")) continue;
+    // Mentioning it in a comment is not calling it — code() has already stripped those.
+    if (!/\.rpc\(\s*["']recompute_invoice_amount_paid["']/.test(src)) continue;
+    recomputers.push(file);
+    if (!/rederivePaymentDate\(/.test(src)) missing.push(file);
+  }
+  // A reader that finds nothing passes forever on exactly the gate claiming a class cannot return.
+  assert.ok(recomputers.length >= 3,
+    `[PAYDATE-REDERIVE] only ${recomputers.length} reversal paths were examined — it is the READER that broke`);
+  assert.deepEqual(missing, [],
+    "a reversal path re-derives amount_paid and leaves payment_date naming money that is gone — " +
+    "call rederivePaymentDate (src/lib/payment-date-rederive.ts) right after the recompute");
+
+  // And the derivation is the SQL's, so the two agree the day the migration is applied rather than
+  // fighting over the same column. Both halves of the ordering are pinned: earliest first, and an
+  // undated link last — reverse either and an invoice takes the date of the wrong payment.
+  const module_ = code("src/lib/payment-date-rederive.ts");
+  assert.match(module_, /if \(ad === null && bd !== null\) return 1/, "an undated link sorts LAST, as NULLS LAST");
+  assert.match(module_, /return ad < bd \? -1 : 1/, "…and among dated ones the EARLIEST wins");
+  assert.match(module_, /localeCompare\(b\.created_at \?\? ''\)/, "…with created_at breaking a same-day tie, as the SQL does");
+  // Nothing derivable writes NOTHING. Writing null instead would blank the recorded date of an
+  // invoice whose payment predates bank_tx_invoices and is invisible to this query.
+  assert.match(module_, /if \(!derived\) return null/, "no surviving dated link → both columns are left alone");
+  // Never fatal: the amount is already correct when this runs, so a failure may not refuse a
+  // reversal that has, in the part that matters, succeeded.
+  assert.match(module_, /\} catch \(e\) \{[\s\S]*?return null\s*\n\s*\}/, "a failure costs the date, never the reversal");
+
+  const sql = readFileSync("supabase/migrations/invoice_payment_date_rederive.sql", "utf8");
+  assert.match(sql, /ORDER BY coalesce\(l\.paid_on, bt\.date\) NULLS LAST, l\.created_at/,
+    "the SQL's ordering changed — the TypeScript above mirrors it and would now disagree");
+});
+
+// ── [LEVERANCIER-STAAT-IN-HET-LOGO] ───────────────────────────────────────────────────────────
+//
+// Invoice 26004628. Its entire text layer is 199 characters, and the company that sent it is in
+// none of them: the PDF carries four embedded IMAGES and the letterhead is one. What the text does
+// hold is "T.H.T. datum Jim Ketels 01-09-2026 09:38" — a deliverer's stamp — so the reader answered
+// "who sent this?" with the only name on offer, and scored itself LOW while doing it. The real
+// sender is on the page, as pixels.
+//
+// Every guard downstream held. The receiver rule excluded the owner's own name; the registry did
+// not overwrite what was read; vendor-grounding could not object, because "Jim Ketels" IS printed
+// in that text. The one question nobody asked is whether the text handed to the model could answer
+// the question asked of it — extractPdfTextIfTextLayer measures the VOLUME of text (chars/digits),
+// and volume is a proxy: it separates a scan from a text layer, and says nothing about whether the
+// letterhead came along.
+//
+// So the vendor is answered where the other weak fields already are: by the reader's own score,
+// which sends it back to look at the PAGE before anyone is asked to type a name from memory.
+test("[LEVERANCIER-STAAT-IN-HET-LOGO] an unsure supplier sends the reader back to the page", () => {
+  const lezer = code("src/lib/ai.ts");
+
+  // 1. The vendor is a re-read trigger, on the reader's own score and on a name that is not there.
+  assert.match(lezer, /const vendorScore = p\.field_confidence\?\.vendor;/,
+    "needsVisualReread no longer looks at the vendor's own confidence");
+  assert.match(lezer, /vendorScore < LOW_CONFIDENCE\) \|\|\s*\n\s*!String\(p\.vendor \?\? ""\)\.trim\(\)/,
+    "…or at a vendor that is missing entirely");
+  assert.match(lezer, /missingNumber \|\| missingBreakdown \|\| lowAmountConfidence \|\| weakVendor/,
+    "…and it is one of the reasons the answer is yes");
+
+  // 2. ONE threshold. This number lived in three files, under a comment promising they were "kept
+  //    identical" — a promise a person keeps, not a property the code has. They answer one question
+  //    in sequence: below the line the app looks at the page again, and only if it is STILL unsure
+  //    does the ⚠️ appear and the owner get asked. Two lines would warn about invoices the app had
+  //    already fixed, or fix invoices it never warned about.
+  const leaf = code("src/lib/confidence.ts");
+  assert.match(leaf, /export const LOW_CONFIDENCE = 0\.7/, "the line itself lives here");
+  assert.doesNotMatch(leaf, /^\s*import\s/m,
+    "confidence.ts must import NOTHING — a screen holds it, and a dependency here would pull a " +
+    "whole reading pipeline into the browser bundle, which is why the copies existed at all");
+
+  for (const reader of [
+    "src/lib/ai.ts",
+    "src/lib/import-health.ts",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+  ]) {
+    assert.match(code(reader), /import \{ LOW_CONFIDENCE \} from ['"](?:\.\/|@\/lib\/)confidence['"]/,
+      `${reader} no longer reads the shared confidence line — a fourth copy of 0.7 is how the ` +
+      "re-read and the warning stop agreeing about what 'uncertain' means");
+  }
+
+  // 3. And nobody compares a per-field score against a number written on the spot. Scoped to
+  //    field_confidence deliberately: 0.7 is a legitimate and UNRELATED threshold elsewhere (folder
+  //    classification, bank matching), and a gate that flagged those would be one nobody could keep.
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const offenders: string[] = [];
+  for (const file of walk("src")) {
+    const src = code(file);
+    if (!src.includes("field_confidence")) continue;
+    for (const m of src.matchAll(/field_confidence(?:\s*(?:\?\.|\.)\s*[A-Za-z_]+)+\s*[<>]=?\s*(0?\.\d+)/g)) {
+      offenders.push(`${file}: field_confidence … ${m[0].slice(-8)}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `a per-field score compared against a literal instead of LOW_CONFIDENCE:\n  ${offenders.join("\n  ")}`);
+});
+
+// ── [RPC-ANON-REVOKE] ─────────────────────────────────────────────────────────────────────────
+//
+// rpc_anon_revoke.sql takes EXECUTE on seven server-only functions away from `authenticated`,
+// because no call site reaches them with a session client. Three other migrations are
+// CREATE OR REPLACE files that end with `GRANT EXECUTE … TO authenticated, service_role` on one of
+// those seven — so every time one of them is (re-)applied, it hands the right back.
+//
+// That is exactly what happened: applying invoice_payment_date_rederive.sql on 2 September left
+// has_function_privilege('authenticated', 'recompute_invoice_amount_paid', 'EXECUTE') = true, and
+// the inventory reported rpc_anon_revoke.sql OPEN. The grant was noticed and approved on its own
+// merits; that it REVERSES a hardening migration was not.
+//
+// The right itself is close to harmless — the function refuses when auth.uid() is not the owner.
+// What is not harmless is a security check that is permanently red, which is a check nobody reads.
+//
+// The rule this gate holds is not a list of today's three files: a migration that grants one of
+// these functions to `authenticated` must SAY SO, with this marker, in its own header. Then a
+// fourth one cannot be written in silence, and whoever runs it knows to re-run the revoke.
+test("[RPC-ANON-REVOKE] a migration that re-opens the server-only door says so in its own header", () => {
+  const grens = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+
+  // The seven, read out of the migration itself — never a second list here that could drift.
+  const blok = grens.slice(grens.indexOf("ALLEEN de server aanroept"));
+  const serverOnly = [...blok.matchAll(/^\s*'([a-z_]+)',?$/gm)].map((m) => m[1]);
+  assert.ok(serverOnly.length >= 5,
+    `[RPC-ANON-REVOKE] only ${serverOnly.length} server-only functions were read out of the ` +
+    "migration — it is the READER that broke, not the code");
+  assert.ok(serverOnly.includes("recompute_invoice_amount_paid"));
+
+  const offenders: string[] = [];
+  for (const file of readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort()) {
+    if (file === "rpc_anon_revoke.sql") continue;
+    const sql = readFileSync(`supabase/migrations/${file}`, "utf8");
+    // A GRANT to `authenticated` on one of the seven. Comments are left in on purpose: a grant
+    // commented out is still a grant the next person uncomments.
+    const grants = [...sql.matchAll(/GRANT EXECUTE ON FUNCTION public\.([a-z_]+)\s*\([^)]*\)\s*TO ([^;]+);/g)]
+      .filter((m) => serverOnly.includes(m[1]) && /\bauthenticated\b/.test(m[2]))
+      .map((m) => m[1]);
+    if (grants.length === 0) continue;
+    if (!sql.includes("[RPC-ANON-REVOKE]")) {
+      offenders.push(`${file} grants ${[...new Set(grants)].join(", ")} to authenticated`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    "this migration hands a server-only function back to `authenticated`, undoing " +
+    "rpc_anon_revoke.sql, and says nothing about it. Put a [RPC-ANON-REVOKE] note in its header " +
+    "naming the function and telling the reader to re-run rpc_anon_revoke.sql afterwards:\n  " +
+    offenders.join("\n  "));
+
+  // And the revoke itself names the files that undo it, so the pointer exists in both directions.
+  for (const f of ["invoice_partial_payments.sql", "invoice_payment_date_rederive.sql", "bank_confirm_atomic.sql"]) {
+    assert.ok(grens.includes(f), `rpc_anon_revoke.sql no longer names ${f} as one of its undoers`);
+  }
+});
+
+// ── [NIET-DEZE-FACTUUR] ───────────────────────────────────────────────────────────────────────
+//
+// The bank card offered one invoice and one button — Bevestig betaling — and there was no way to
+// say the suggestion was WRONG. Reported on a card proposing invoice FAC/2026/00296 for a payment
+// whose own description reads "26 00623", a different invoice, under a green check. The owner
+// could confirm it or leave the line sitting, and leaving it means the same pair is offered again
+// on every visit.
+//
+// The rule that makes the answer safe is one line: a refusal REMOVES a suggestion and never
+// PROMOTES one. The runner-up was the runner-up because its evidence was weaker; answering "no" by
+// pre-selecting the next-best is arguing rather than listening. So an 'auto' whose winner is
+// refused becomes a 'choice' — shown, never pre-chosen — and a line with nothing left is 'none'.
+test("[NIET-DEZE-FACTUUR] a refusal removes a suggestion and never promotes one", () => {
+  const beslissing = code("src/lib/bank-rejections.ts");
+  const deur = code("src/app/api/bank/match/route.ts");
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // 1. The rule itself, on both sides of the wire. Two implementations that could disagree about
+  //    what a refusal does is how a screen shows one thing and a reload shows another.
+  assert.match(beslissing, /return \{ outcome: 'choice', best: null, candidates: kept, removed: true \}/,
+    "a refused winner must leave a CHOICE with nothing pre-selected");
+  assert.match(beslissing, /if \(kept\.length === 0\) return \{ outcome: 'none', best: null, candidates: \[\], removed: true \}/,
+    "…and an emptied line must say so honestly");
+  assert.match(scherm, /outcome: kept\.length === 0 \? 'none' : bestGone \? 'choice' : s\.outcome/,
+    "the screen's optimistic update must apply the same rule the server does");
+
+  // 2. A refusal is about a PAIR. Flattened to a set of invoice ids it would hide that invoice on
+  //    every other bank line as well — the one mistake here that is worse than the problem.
+  assert.match(beslissing, /export function rejectionsByTransaction/);
+  assert.match(deur, /rejectedByTx\.get\(txId\)/, "the route must look the refusals up per transaction");
+  assert.doesNotMatch(beslissing, /counterpartKey|clientName|supplier/,
+    "bank-rejections.ts reasons about a supplier — a refusal may never become a judgement about one");
+
+  // 3. Applied FIRST, so the outcome, the already-booked verdict and what the screen pre-selects
+  //    are all computed on what is actually still on offer.
+  const applyAt = deur.indexOf("applyRejections(raw");
+  const quoteAt = deur.indexOf("quotedSettledInvoice(");
+  assert.ok(applyAt > 0 && quoteAt > applyAt,
+    "refusals must be applied before anything else reads best/candidates/outcome");
+
+  // 4. There is a way back. A refusal nobody can undo is the same trap as a confirm nobody can
+  //    undo — which is the complaint that started this.
+  assert.match(scherm, /const undoRejectSuggestion = useCallback/, "the undo is gone");
+  assert.match(scherm, /t\('bank\.nietDeze\.terug'\)/, "…and its button with it");
+
+  // 5. [NO-SILENT-EMPTY] While the table is not applied the app must not claim it remembered.
+  const poort = code("src/app/api/bank/reject/route.ts");
+  assert.match(poort, /return NextResponse\.json\(\{ ok: true, stored: false \}\)/,
+    "the route must report that nothing was stored when the table is not there");
+  assert.match(scherm, /json\.stored \? t\('bank\.nietDeze\.weg'\) : t\('bank\.nietDeze\.nietBewaard'\)/,
+    "…and the screen must say which of the two happened");
+  // Nothing here touches money: no link row, no status change. It removes a SUGGESTION.
+  assert.doesNotMatch(poort, /bank_tx_invoices|amount_paid|status: ['"]paid['"]/,
+    "the refusal route writes something other than a refusal");
+});
+
+// ── [AFHANDELEN-NOEMT] ────────────────────────────────────────────────────────────────────────
+//
+// "1 zekere betaling klaar om af te handelen", and a button. What it does is book money against
+// invoices and mark them paid — and the panel said only HOW MANY, so the one question an owner has
+// before pressing it ("which ones, and is the wrong one in there?") had no answer on the page.
+test("[AFHANDELEN-NOEMT] the bulk button names what it will book, before it books it", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const safeAutoRows = toConfirm\.filter\(\(s\) => isServerAutoBookable\(s\)\)/,
+    "the panel must hold the ROWS, not only their count");
+  assert.match(scherm, /safeAutoRows\.map\(\(s\) => \(/, "…and draw one line per payment");
+  assert.match(scherm, /t\('bank\.auto\.wordtGeboektOp', \{ nummer: s\.best\?\.invoiceNumber \?\? '—' \}\)/,
+    "…naming the invoice each one will be booked on");
+  // The count still comes from the same list, so the number above the rows can never disagree with
+  // the rows themselves.
+  assert.match(scherm, /const safeAutoCount = safeAutoRows\.length/,
+    "the count must be derived from the list it labels");
+});
+
+// ── [DOC-VERSE-LINK] ──────────────────────────────────────────────────────────────────────────
+//
+// Reported: "Origineel PDF doet niets" on invoice 720154 — a camera-scanned purchase invoice whose
+// file is perfectly present (pdf_url and document_id both set). The button did nothing at all, and
+// showed no error either.
+//
+// It fetched a signed url and then called window.open(url). After an `await` the call is no longer
+// inside the user gesture, so the browser blocks it — and it blocks it by returning null, not by
+// throwing. The catch never ran, so the error sentence never appeared. A blue button that does
+// nothing and says nothing is worse than one that fails loudly: the owner concludes the document is
+// gone.
+//
+// The same button carried a second fuse: the url was signed on the fetch and lives 300 seconds.
+// fileOpenHref (document-preview.ts) carries NO url — it points at our own route, which signs at
+// the moment of the tap and redirects. The document sheet and the pay screen were both moved to it
+// after the same report; the invoice detail screen was the one nobody came back to.
+//
+// So the rule is a class: an invoice's original file is opened by a LINK, never by a fetched url
+// handed to window.open.
+test("[DOC-VERSE-LINK] the original file is opened by a link, never by a fetched url", () => {
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...walk(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders: string[] = [];
+  let bekeken = 0;
+  for (const file of walk("src")) {
+    const src = code(file);   // comments stripped: two files carry a historical note about the old
+                              // behaviour, and a note is not a call.
+    // The population is every screen that reaches an invoice's original file AT ALL — by the route
+    // path or through the helper. Counting only the raw path would shrink the moment a screen is
+    // fixed, so the anti-vacuity check would weaken exactly as the codebase improved. (Measured:
+    // the first version of this gate did that, and failed on its own first run.)
+    const reachesFile = src.includes("api/email/file") || src.includes("fileOpenHref");
+    if (!reachesFile) continue;
+    bekeken++;
+    if (src.includes("api/email/file") && /window\.open\s*\(/.test(src)) offenders.push(file);
+  }
+  // A reader that finds nothing passes forever on exactly the gate claiming a class cannot return.
+  assert.ok(bekeken >= 3,
+    `[DOC-VERSE-LINK] only ${bekeken} screens reach the file route — it is the READER that broke`);
+  assert.deepEqual(offenders, [],
+    "this screen fetches the invoice file's url and hands it to window.open. After an await that " +
+    "call is outside the user gesture, so the browser blocks it silently — nothing opens and " +
+    "nothing is said. Use fileOpenHref(invoiceId) in an <a href>, which signs at click time:\n  " +
+    offenders.join("\n  "));
+
+  // And the screen that was reported uses it.
+  const detail = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(detail, /href=\{fileOpenHref\(invoiceId\)\}/,
+    "the invoice detail screen no longer opens the original through the shared link helper");
+  assert.match(detail, /import \{ fileOpenHref \} from '@\/lib\/document-preview'/);
+});
+
+// ── [GEEN-REGELS] ─────────────────────────────────────────────────────────────────────────────
+//
+// Reported on invoice 720154, a camera-scanned purchase invoice: the "Factuurregels" card drew five
+// column headers and nothing under them. Nothing is missing — this app stores the AMOUNTS of an
+// imported purchase invoice, not its lines, and the lines are on the paper. But a header over an
+// empty table reads as "the lines are gone", which is the one thing it does not mean.
+//
+// This is a GATE and not a render test on purpose, and the reason is worth writing down: a render
+// test was written first and could not fail. The detail screen returns early while it loads, so
+// renderToStaticMarkup never reaches the lines card at all — the assertion passed just as happily
+// with the header drawn unconditionally. Proven by putting the defect back; the test stayed green.
+// Extracting the card into its own component would make a real render test possible, and until
+// someone does that, the honest instrument is the source.
+test("[GEEN-REGELS] no column headers are drawn over rows that do not exist", () => {
+  const scherm = code("src/app/dashboard/invoice/[id]/page.tsx");
+
+  // The header is conditional on there being rows…
+  assert.match(scherm, /\{lines\.length > 0 && \(\s*\n\s*<div className="inv-lines-head"/,
+    "the invoice lines header is drawn again regardless of whether there are lines");
+  // …and the empty case says what WAS kept, which is a different sentence from "no lines".
+  assert.match(scherm, /\{lines\.length === 0 && \(/, "the empty case is no longer answered at all");
+  assert.match(scherm, /isIncoming \? t\('detail\.regels\.alleenBedragen'\) : t\('detail\.regels\.geen'\)/,
+    "an imported purchase invoice must say its amounts were kept and the lines are on the original — " +
+    "'there are no lines' is true of a sales invoice and untrue of this one");
+
+  // The order matters: the sentence sits where the table would have been, not under it.
+  const zin = scherm.indexOf("lines.length === 0");
+  const kop = scherm.indexOf('className="inv-lines-head"');
+  assert.ok(zin > 0 && kop > zin, "the explanation belongs where the table head was, not after it");
 });

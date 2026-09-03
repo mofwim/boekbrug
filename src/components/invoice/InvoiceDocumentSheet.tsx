@@ -50,6 +50,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [LEVERANCIER-VASTLEGGEN] Eén keer opschrijven wie deze leverancier is — zie SupplierPinModal.
 import SupplierPinModal from '@/components/invoice/SupplierPinModal'
+import type { SupplierChoice } from '@/components/invoice/SupplierNameInput'
 import { failureText } from '@/lib/server-message'
 
 
@@ -77,9 +78,19 @@ export default function InvoiceDocumentSheet({
   onClose,
   onCorrect,
   onReplaceFile,
+  suppliers = [],
+  suppliersUnavailable = false,
 }: {
   invoice: DocumentSheetInvoice
   onClose: () => void
+  /**
+   * [LEVERANCIER-KIEZEN] The owner's suppliers, passed straight through to the supplier form at
+   * the foot of this sheet. Optional: a screen that does not have them opens the form with the
+   * plain name field it has always had.
+   */
+  suppliers?: SupplierChoice[]
+  /** [NO-SILENT-EMPTY] The list could not be READ — said so, never rendered as "you have none". */
+  suppliersUnavailable?: boolean
   /** "Klopt niet?" — hands the owner straight to the correction they just decided they need. */
   onCorrect: (() => void) | null
   /**
@@ -416,6 +427,8 @@ export default function InvoiceDocumentSheet({
       {pinning && (
         <SupplierPinModal
           invoice={{ id: invoice.id, client_name: invoice.client_name, vendor_iban: invoice.vendor_iban ?? null }}
+          suppliers={suppliers}
+          suppliersUnavailable={suppliersUnavailable}
           onClose={() => setPinning(false)}
           onSaved={(r) => {
             setPinning(false)

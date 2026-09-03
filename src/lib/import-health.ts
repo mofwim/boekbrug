@@ -44,10 +44,10 @@ import { looksLikeCreditnotaByNumber, numberPrefix } from '@/lib/creditnota-sign
 // [BTW-SPLIT] The per-rate block, and what it is worth as evidence. Pure; imports nothing back.
 import { classifyBtwSplit } from '@/lib/btw-split'
 
-// Confidence below this → ask the owner to confirm the field (BRIDGE-EXTRACT's
-// modal uses the same 0.7 threshold; kept identical so the surface and the modal
-// agree on what "uncertain" means).
-const LOW_CONFIDENCE = 0.7
+// [LEVERANCIER-STAAT-IN-HET-LOGO] One threshold, one file. Re-exported because this module's own
+// consumers have always read it from here — see confidence.ts for why it may not be copied.
+export { LOW_CONFIDENCE } from '@/lib/confidence'
+import { LOW_CONFIDENCE } from '@/lib/confidence'
 
 /** Dutch money formatting for an owner-facing reason. Local so this module stays dependency-free. */
 function formatEuro(v: number): string {

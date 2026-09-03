@@ -79,6 +79,7 @@ import { type DepositGap } from '@/lib/statiegeld'
 // [DOC-INLINE] The paper and our reading of it, on one screen — see the component's header for why
 // leaving the app to look at a pdf was the trust problem and not a convenience one.
 import InvoiceDocumentSheet from '@/components/invoice/InvoiceDocumentSheet'
+import type { SupplierChoice } from '@/components/invoice/SupplierNameInput'
 import {
   looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict,
   // [CREDIT-SAFE] One stance, read by every widget that would treat a row as a debt — the dunning
@@ -485,6 +486,9 @@ export default function IncomingManageClient({
   totalCount = null,
   readFailed = [], filedQuarters, bookScan = null, readingHints = {}, incassoKeys = [],
   openProof = null, paymentEvidence = {},
+  // [LEVERANCIER-KIEZEN] De leveranciers die de eigenaar al heeft, voor het naamveld in het
+  // leveranciersformulier onderaan het documentblad — hetzelfde veld als in de controlewachtrij.
+  suppliers = [], suppliersUnavailable = false,
 }: {
   // [VRIJGESTELD] vat_exempt_activity decides whether the cost-attribution control exists at all.
   // Optional, because the server reads the profile with select('*') and the column is simply not
@@ -532,6 +536,11 @@ export default function IncomingManageClient({
   // set — an empty set means "nobody is on incasso", and this screen answers that by putting the
   // Betalen button back on invoices the bank has already taken the money for.
   incassoKeys?: string[] | null
+  // [LEVERANCIER-KIEZEN] Aangeboden onder het naamveld. Leeg = nog geen leveranciers.
+  suppliers?: SupplierChoice[]
+  // [NO-SILENT-EMPTY] De lezing MISLUKTE — een andere zin dan een lege lijst, en het veld zegt
+  // welke van de twee het is.
+  suppliersUnavailable?: boolean
 }) {
   const taal = useLocale()
   // [BEWIJS-BEANTWOORDEN] Wat de ondernemer op het bewijspaneel al beantwoord heeft.
@@ -4336,6 +4345,8 @@ export default function IncomingManageClient({
       {/* [DOC-INLINE] The document, our reading of it, and the seven checks — see the component. */}
       {docCtx && (
         <InvoiceDocumentSheet
+          suppliers={suppliers}
+          suppliersUnavailable={suppliersUnavailable}
           invoice={{
             id: docCtx.id,
             client_name: docCtx.client_name,

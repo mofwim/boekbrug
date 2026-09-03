@@ -33,6 +33,10 @@ import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { failureText } from '@/lib/server-message'
+// [LEVERANCIER-KIEZEN] The name field offers the suppliers the owner already has. This form's own
+// server call resolves the name through supplierNameKey, so landing ON an existing spelling is
+// what merges two islands and landing beside it is what makes a third.
+import SupplierNameInput, { type SupplierChoice } from '@/components/invoice/SupplierNameInput'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -46,11 +50,17 @@ export default function SupplierPinModal({
   invoice,
   onClose,
   onSaved,
+  suppliers = [],
+  suppliersUnavailable = false,
 }: {
   invoice: SupplierPinInvoice
   onClose: () => void
   /** The name as it now stands, plus whatever sentence the server had to say about it. */
   onSaved: (result: { name: string; message: string | null }) => void
+  /** [LEVERANCIER-KIEZEN] The owner's suppliers, offered under the name field. */
+  suppliers?: SupplierChoice[]
+  /** [NO-SILENT-EMPTY] The list could not be read — a different sentence from "you have none". */
+  suppliersUnavailable?: boolean
 }) {
   const t = translator(useLocale())
   useCloseOnBack(true, onClose)
@@ -134,7 +144,24 @@ export default function SupplierPinModal({
         <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('lev.titel')}</p>
         <p style={{ fontSize: 13, color: '#5F6368', margin: '4px 0 16px', lineHeight: 1.45 }}>{t('lev.uitleg')}</p>
 
-        {field('name', t('lev.naam'), name, setName, t('lev.naam.hint'))}
+        {/* [LEVERANCIER-KIEZEN] The one field on this form whose value is an identity key. The
+            other three are checked by the server for SHAPE; this one is checked against nothing,
+            so what the owner can see beside it is the only guard there is. */}
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>{t('lev.naam')}</span>
+          <SupplierNameInput
+            value={name}
+            onChange={setName}
+            options={suppliers}
+            unavailable={suppliersUnavailable}
+            inputStyle={{
+              padding: '11px 12px', fontSize: 15,
+              borderRadius: 10, border: `1px solid ${error?.field === 'name' ? M3.error : '#d1d1d6'}`,
+              outline: 'none', color: '#202124', fontFamily: FONT,
+            }}
+          />
+          <span style={{ display: 'block', fontSize: 11.5, color: '#5F6368', marginTop: 4, lineHeight: 1.45 }}>{t('lev.naam.hint')}</span>
+        </label>
         {field('iban', t('lev.iban'), iban, setIban, t('lev.iban.hint'), 'NL00BANK0000000000')}
         {field('kvk', t('lev.kvk'), kvk, setKvk, t('lev.kvk.hint'), '12345678')}
         {field('btw', t('lev.btw'), btw, setBtw, t('lev.btw.hint'), 'NL000000000B00')}

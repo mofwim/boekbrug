@@ -244,6 +244,13 @@ export type AuditAction =
   // was the app allowed to assume this, and who said so".
   | 'supplier.auto_incasso_on'
   | 'supplier.auto_incasso_off'
+  // [LEVERANCIER-SAMENVOEGEN] Two supplier rows declared one company, and the invoices of one moved
+  // under the other's name. At this level because it REWRITES what already-booked invoices say
+  // about who sent them — the identity key the IBAN-change check, the incasso mandate and the
+  // crediteurenstand all resolve through. The row records WHY it was allowed (a shared KVK or a
+  // shared account, and the value itself), so "who decided these were one company, on what" has an
+  // answer that is not a name that looked similar.
+  | 'supplier.merged'
   // Level 3 — Files
   | 'document.uploaded'
   | 'document.duplicate_blocked'      // ← [BRIDGE-EXTRACT] byte-hash dedup: re-upload of identical file refused

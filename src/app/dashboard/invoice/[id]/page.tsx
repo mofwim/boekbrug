@@ -25,6 +25,9 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [AKKOORD-VERLOPEN] Of het akkoord ná de geldigheidsdatum binnenkwam — zie offerte-akkoord.ts.
 import { answeredAfterExpiry } from '@/lib/offerte-akkoord'
 import { formatDateNL } from '@/lib/format-nl'
+// [DOC-VERSE-LINK] Where "open the original" points: our own route, signed at the moment of the
+// tap. Never a url fetched in advance — see the header of document-preview.ts.
+import { fileOpenHref } from '@/lib/document-preview'
 // [DEEL-CREDIT] Hoeveel er is gecrediteerd en hoeveel er nog kan — dezelfde regels als de route.
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
 import { creditableRemaining, buildCreditSelection, type LineSelection } from '@/lib/partial-credit'
@@ -83,7 +86,6 @@ export default function InvoiceDetailPage() {
   // [ACC-INVOICE-VIEW] original-PDF fetch state — documents bucket is private,
   // so we fetch a fresh signed URL from the existing Wave 3 file route rather
   // than linking the raw (relative, expiring) pdf_url.
-  const [loadingOriginal, setLoadingOriginal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notFoundState, setNotFoundState] = useState(false)
   // [ACTING-FOR] De medewerker die deze factuur maakte — leeg als de eigenaar hem zelf maakte.
@@ -200,22 +202,6 @@ export default function InvoiceDetailPage() {
   // management surface). The documents bucket is private and pdf_url is stored
   // inconsistently (raw path or an expired signed URL), so we never link it
   // directly — we ask the route for a fresh signed URL keyed by invoice id.
-  async function openOriginal() {
-    setLoadingOriginal(true)
-    try {
-      const res = await fetch(`/api/email/file/${invoiceId}`)
-      if (!res.ok) throw new Error('not ok')
-      const data = await res.json().catch(() => ({}))
-      const url = data.url || data.signedUrl || data.signed_url
-      if (!url) throw new Error('no url')
-      window.open(url, '_blank', 'noopener,noreferrer')
-    } catch {
-      setSendError(t('detail.fout.origineelPdf'))
-    } finally {
-      setLoadingOriginal(false)
-    }
-  }
-
   async function handleResend() {
     setResending(true)
     setSendError(null)
@@ -785,9 +771,24 @@ export default function InvoiceDetailPage() {
                   />
                 )}
                 {isIncoming && invoice?.pdf_url && (
-                  <button
-                    onClick={openOriginal}
-                    disabled={loadingOriginal}
+                  /* [DOC-VERSE-LINK] A plain link, and it has to be one.
+                     
+                     This button used to fetch a signed url and then call window.open(). Both halves
+                     were wrong, and the second is why it did nothing at all: window.open() after an
+                     `await` is no longer inside the user gesture, so the browser blocks it — and it
+                     blocks it by returning null, not by throwing. So the catch never ran, the error
+                     sentence never appeared, and the owner tapped a blue button that did nothing.
+                     Reported on invoice 720154, a camera-scanned purchase invoice whose file is
+                     perfectly present.
+                     
+                     The first half was a stopwatch: the url was signed on the fetch and lives 300
+                     seconds. fileOpenHref carries NO url — it points at our own route, which signs
+                     at the moment of the tap and redirects. That is the same escape hatch the
+                     document sheet already uses; this screen simply never adopted it. */
+                  <a
+                    href={fileOpenHref(invoiceId)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
                       backgroundColor: '#1A73E8',
                       color: 'white',
@@ -796,13 +797,15 @@ export default function InvoiceDetailPage() {
                       padding: '8px 16px',
                       borderRadius: 9999,
                       border: 'none',
-                      cursor: loadingOriginal ? 'wait' : 'pointer',
-                      opacity: loadingOriginal ? 0.6 : 1,
+                      cursor: 'pointer',
+                      textDecoration: 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
                       transition: 'all 0.1s cubic-bezier(0.4,0,0.2,1)',
                     }}
                   >
-                    {loadingOriginal ? t('nieuw.actie.laden') : `↓ ${t('detail.origineelPdf')}`}
-                  </button>
+                    {`↓ ${t('detail.origineelPdf')}`}
+                  </a>
                 )}
               </>
             )}
@@ -1058,14 +1061,28 @@ export default function InvoiceDetailPage() {
             <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F3F4' }}>
               <h2 style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('nieuw.regels.factuur')}</h2>
             </div>
+            {/* [GEEN-REGELS] Geen kolomkoppen boven nul rijen.
+                
+                Gemeld op factuur 720154: een ingelezen inkoopfactuur heeft in deze app geen losse
+                regels — alleen de bedragen — en het scherm tekende er niettemin een tabelkop
+                boven. Een kop met vijf kolommen en niets eronder leest als "de regels zijn kwijt",
+                en dat is precies wat er NIET aan de hand is. De zin zegt wat er wél is vastgelegd
+                en waar de regels staan. */}
+            {lines.length === 0 && (
+              <p style={{ padding: '14px 20px', margin: 0, fontSize: 13, color: '#5F6368', lineHeight: 1.55 }}>
+                {isIncoming ? t('detail.regels.alleenBedragen') : t('detail.regels.geen')}
+              </p>
+            )}
             {/* Header row — [LINES-LAYOUT] raster + uitlijning staan in globals.css
                 (.inv-lines-*), niet inline: anders wint de inline style van de
                 media query en houdt de telefoon het brede raster. */}
+            {lines.length > 0 && (
             <div className="inv-lines-head" style={{ padding: '8px 20px', backgroundColor: '#F8F9FA' }}>
               {[t('nieuw.regel.omschrijving'), t('nieuw.regel.aantal'), t('detail.kolom.prijs'), 'BTW', t('ink.totaal')].map((h, i) => (
                 <p key={h} className={i === 0 ? 'inv-lines-desc' : 'inv-lines-total'} style={{ fontSize: 11, fontWeight: 600, color: '#70757a', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>{h}</p>
               ))}
             </div>
+            )}
             {lines.map((line, index) => (
               <div key={index} className="inv-lines-row" style={{ padding: '12px 20px', borderTop: '1px solid #F1F3F4' }}>
                 <p className="inv-lines-desc" style={{ fontSize: 14, color: '#202124', margin: 0 }}>{line.description}</p>
