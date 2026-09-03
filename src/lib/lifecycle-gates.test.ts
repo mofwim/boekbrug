@@ -14047,28 +14047,9 @@ test("[VERSTUURD-EERLIJK] every screen that sends an invoice asks whether it was
       `${f}: still tests the warning strings itself instead of asking the one module`);
   }
 
-  // 5. The classification stays exhaustive — see [WAARSCHUWING-GEHOORD] below, which owns that rule
-  //    now for every warning in the app, not only the delivery ones.
-  const geretourneerd = new Set<string>();
-  // walk() above only collects .tsx; the API routes are .ts, so they get their own walk.
-  const routeFiles = (function ts(dir: string): string[] {
-    const out: string[] = [];
-    for (const e of readdirSync(dir)) {
-      const p = `${dir}/${e}`;
-      if (statSync(p).isDirectory()) out.push(...ts(p));
-      else if (/\.ts$/.test(p) && !/\.test\.ts$/.test(p)) out.push(p);
-    }
-    return out;
-  })("src/app/api");
-  for (const f of routeFiles) {
-    for (const m of code(f).matchAll(/warning:\s*['"]([a-z_]+)['"]/g)) geretourneerd.add(m[1]);
-  }
-  assert.ok(geretourneerd.size >= 4, `only ${geretourneerd.size} warning values found in the routes — the scan is broken`);
-  const kaart = code("src/lib/invoice-delivery.ts");
-  for (const w of [...geretourneerd].sort()) {
-    assert.match(kaart, new RegExp(`\\b${w}:`),
-      `a route returns warning '${w}' and invoice-delivery.ts does not say whether it means the customer got nothing`);
-  }
+  // 5. Keeping the classification exhaustive is [WAARSCHUWING-GEHOORD]'s job now — it owns that
+  //    rule for every warning in the app, not only the delivery ones, and it also checks the half
+  //    this gate never could: that a warning meant for the owner is actually read somewhere.
 });
 
 // ─── [EXPORT-EERLIJK] A failed request never becomes a file with the books' name on it ─────────
