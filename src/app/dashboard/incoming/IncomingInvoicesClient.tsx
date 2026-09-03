@@ -393,6 +393,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalDuplicate = 0;
     let totalErrors = 0;
     let totalCouldNotRead = 0;
+    let totalKeptForBooking = 0;
     let anyUnbalanced = false;
     // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
     // didn't shrink, looping again would just repeat the same work. Stop and
@@ -425,6 +426,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           if (data.balance.balanced === false) anyUnbalanced = true;
         }
         totalCouldNotRead += data.couldNotRead ?? 0;
+        totalKeptForBooking += data.keptForBooking ?? 0;
         totalErrors += data.errors ?? 0;
         const remaining = data.remaining ?? 0;
 
@@ -477,6 +479,19 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             totalCouldNotRead === 1
               ? t('ink.sync.nietLezenEen')
               : t('ink.sync.nietLezenMeer', { n: totalCouldNotRead })
+          );
+        }
+        // [ARCHIEF-OPEN] A kept kassa/grootboek file is READ and waiting for one press of a
+        // button — a different sentence from "we couldn't read it", and it must be said HERE, in
+        // this run's summary, rather than as a standing counter somewhere. Nothing links a booked
+        // daily_turnover day back to the document it came from, so a standing "N klaar om te
+        // boeken" badge could never fall back to zero, and a counter that never reaches zero is
+        // noise the owner learns to skip past.
+        if (totalKeptForBooking > 0) {
+          message += ' ' + (
+            totalKeptForBooking === 1
+              ? t('ink.sync.kassaKlaarEen')
+              : t('ink.sync.kassaKlaarMeer', { n: totalKeptForBooking })
           );
         }
         setSyncResult(message);

@@ -3232,12 +3232,25 @@ test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcod
   // And the door that carried the drift keeps the constant, named. Absence of the literal alone
   // would also be satisfied by a door that stopped writing the column at all — which loses the file
   // in the same way, from the other side.
+  //
+  // [ARCHIEF-OPEN] The saver now takes the kind as a parameter, because a recognised till closing
+  // WAS read and must not be labelled could_not_read. That makes the DEFAULT the load-bearing
+  // part: both original callers pass nothing, so if the default ever stops being the constant,
+  // every unreadable attachment this door stores silently leaves the skipped panel — the original
+  // bug, reached through the new parameter instead of through a literal.
   const email = code("src/lib/email-integration.ts");
   assert.match(
     email,
-    /const saveUnreadableAttachment[\s\S]{0,2600}?ai_doc_type: DOC_TYPE_COULD_NOT_READ/,
-    "the e-mail door stores an unreadable attachment under the shared constant, so the skipped " +
-      "panel and the second-chance list both see it",
+    /aiDocType: string = DOC_TYPE_COULD_NOT_READ/,
+    "the e-mail door's saver no longer DEFAULTS to the shared constant. Its two unreadable-file " +
+      "callers pass no kind, so they now store something else — and the skipped panel and the " +
+      "second-chance list stop seeing those files, which is the bug this gate exists for",
+  );
+  assert.match(
+    email,
+    /const saveKeptAttachment[\s\S]{0,3200}?ai_doc_type: aiDocType/,
+    "the saver stopped writing ai_doc_type at all — a kept file then belongs to no panel, which " +
+      "loses it just as completely as writing the wrong value",
   );
   assert.match(
     email,
@@ -25055,4 +25068,182 @@ test("[GEEN-REGELS] no column headers are drawn over rows that do not exist", ()
   const zin = scherm.indexOf("lines.length === 0");
   const kop = scherm.indexOf('className="inv-lines-head"');
   assert.ok(zin > 0 && kop > zin, "the explanation belongs where the table head was, not after it");
+});
+
+// ── [ARCHIEF-OPEN] ────────────────────────────────────────────────────────────────────────────
+//
+// The e-mail door skipped every archive it received: 410 skipped attachments in production, 40 of
+// them archives, and 29 of those the daily till-closing zip. That zip is the CASH side of the card
+// income — without it daily_turnover has zero days in Q1 and Q3 while € 253.439 of pos_income
+// arrives, falls through as untaxed omzet, and blocks the quarter. So the zip is now replaced by
+// its contents BEFORE classification: one path, one reader, one set of duplicate gates.
+//
+// The dangerous half is the watermark, and it is dangerous in a way that has no symptom on the
+// screen. The completeness check below iterates the ORIGINALLY FETCHED attachments and demands
+// every key back; the zip is no longer among the classified ones, so its key can never be returned
+// by that loop. The message then reads as unfinished forever, the watermark never advances, and
+// the sync re-fetches the same batch on every run — starving every mailbox behind it. Proven by
+// removing the consumedKeys line: archive-expand.test.ts goes red on two tests.
+//
+// Three halves, and all three are load-bearing:
+//   1. classification must run over the EXPANDED list (else the whole feature does nothing);
+//   2. every archive touched must return its own key (else the watermark freezes);
+//   3. a refused archive must land in `unread` with its reason (else we rebuild the silent skip
+//      this task exists to remove — see [NO-SILENT-EMPTY]).
+test("[ARCHIEF-OPEN] an unpacked archive is classified, accounted for, and never silently dropped", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // 1 — the classifier is handed what came OUT of the archives, not the raw fetch.
+  assert.match(src, /const uitgepakt = await expandArchives\(freshAttachments\)/,
+    "the archives are no longer expanded before classification — every zip is skipped again");
+  assert.match(
+    src, /const classified: Classified\[\] = await mapConcurrent\(\s*attachmentsToClassify,/,
+    "classification reads the original attachment list again, so expanding the archives changes " +
+      "nothing: the zip still reaches the reader as a zip and is still refused",
+  );
+
+  // 2 — the watermark gets its keys back. This is the one that has no visible symptom.
+  assert.match(src, /for \(const k of uitgepakt\.consumedKeys\) completedKeys\.add\(k\)/,
+    "the keys of the archives that were replaced by their contents are not returned to " +
+      "completedKeys. The completeness check iterates the fetched attachments, so those keys can " +
+      "never come back on their own: the message reads as unfinished forever, the watermark " +
+      "stops advancing, and the sync re-fetches the same batch on every run");
+  // …and it happens BEFORE the check that reads the set, not after it.
+  const vullen = src.indexOf("uitgepakt.consumedKeys");
+  const lezen = src.indexOf("completedKeys.has(key)");
+  assert.ok(vullen > 0 && lezen > vullen,
+    "the archive keys are added AFTER the completeness check reads the set — which is the same " +
+      "as not adding them at all on this run");
+
+  // 3 — a refusal is spoken, not swallowed. Condition AND push in one match on purpose: written
+  // separately, this assertion survived `if (false) {` around the push it was checking for —
+  // proven, not guessed. An unreachable refusal reads exactly like the silent skip it replaced.
+  assert.match(
+    src, /if \(uitgepakt\.skipped\.length > 0\) \{\s*unread\.push\(\.\.\.uitgepakt\.skipped\.map\(/,
+    "a refused archive no longer reaches the unread panel — either the push is gone or the " +
+      "condition in front of it no longer tests what was skipped, and a refusal that cannot be " +
+      "reached is the same silent skip this task was opened to remove",
+  );
+  assert.match(src, /kind: 'unreadable-format' as const/,
+    "the refused archive lost the kind the panel groups it under, so it lands in no group at all");
+});
+
+// Opening the envelope is only half of it. What came OUT of the till-closing zip is a Z-report:
+// no supplier, no invoice number, nothing to pay — so a CORRECT classifier answers "not an
+// invoice", and that branch registers a skip and DROPS THE BYTES. Unpacked and then thrown away is
+// the same € 253.439 of unrated omzet as never unpacking it, with more steps.
+test("[ARCHIEF-OPEN] a not-an-invoice file a reader could book is kept, not dropped", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // The question is asked BEFORE the drop, and it is asked of the bytes.
+  const vraag = src.indexOf("judgeKeepable(");
+  const wegwerpen = src.indexOf("createPipelineClient()\n          .from('email_skipped_attachments')");
+  assert.ok(vraag > 0, "the keep question is gone — every till closing is discarded again");
+  assert.match(src, /const houden = await judgeKeepable\(\s*attachment\.filename,\s*Buffer\.from\(attachment\.data, 'base64'\),/,
+    "judgeKeepable is no longer handed the real bytes, so it can only judge by filename — which " +
+      "is the one thing it exists not to do: keep on the name and the next till brand is dropped");
+
+  // Kept means kept UNDER ITS OWN KIND. Storing it as could_not_read would drop it into the
+  // "Overgeslagen bij import" panel (which counts SKIPPED_DOC_TYPES) and tell the owner we failed
+  // to read a file we read fine.
+  assert.match(src, /await saveKeptAttachment\(attachment, houden\.reason, houden\.kind\)/,
+    "a recognised kassa/grootboek file is stored without its own kind — it then reads as " +
+      "'could not read' in the skipped panel, over a file the app read perfectly");
+
+  // And the watermark still closes, exactly as on every other branch here.
+  assert.match(src, /keptForBooking\+\+\s*\n\s*skipped\+\+\s*\n\s*completedKeys\.add\(wmKey\)/,
+    "the kept file does not close its watermark key and is not counted into `skipped` — the " +
+      "first freezes the sync, the second breaks the balance check that proves nothing was lost");
+});
+
+// Three defects found by walking my own wiring after the tests were green, none of which any gate
+// or test noticed. They share one shape: the archive step changes an INVARIANT the surrounding
+// code was written against, and the surrounding code keeps computing the old thing quietly.
+test("[ARCHIEF-OPEN] opening an archive does not break the three invariants around it", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // 1. COST. PHASE 0's known-key filter ran before the zip was opened, so it never saw the entries
+  // inside — their keys did not exist yet. Without a second pass the same till closing is sent to
+  // Claude on every sync while its message stays in the fetch window: paid for, rate-limited
+  // against, and thrown away at the duplicate gate each time.
+  assert.match(
+    src,
+    /const attachmentsToClassify = uitgepakt\.attachments\.filter\(\s*\(a\) => !knownKeys\.has\(`\$\{a\.messageId\}:\$\{a\.filename\}`\),/,
+    "the files that came out of an archive are no longer checked against the already-handled " +
+      "keys, so every sync re-reads the same till closing through the model for as long as the " +
+      "message stays in the fetch window",
+  );
+
+  // 2. RETRY. "The next sync retries it" is true for an attachment that holds the watermark and
+  // FALSE for an unpacked one: its parent is complete unconditionally, so the mark walks past and
+  // the zip is never fetched again. Keeping the bytes on the spot is the only honest answer.
+  assert.match(
+    src,
+    /if \(attachment\.fromArchive\) \{\s*await saveKeptAttachment\(attachment, 'could_not_read'\)/,
+    "a file unpacked from an archive whose read failed is left to a retry that cannot happen — " +
+      "the watermark has already passed its message, so the document is gone with no row " +
+      "anywhere saying so",
+  );
+  assert.match(code("src/lib/archive-expand.ts"), /fromArchive: true,/,
+    "the unpacked files no longer carry fromArchive, so the branch above can never run");
+
+  // 3. THE BALANCE. One zip fetched, three documents bucketed: against the fetched count that
+  // reads 3 ≠ 1 and the screen says "even controleren" after a perfectly normal sync — a false
+  // alarm on the one sentence whose whole job is to be believed when it reports a gap.
+  assert.match(src, /const processedThisBatch = attachmentsToClassify\.length/,
+    "the balance check counts fetched attachments again instead of the documents PHASE 2 walked, " +
+      "so any sync containing an archive reports itself as unbalanced");
+});
+
+test("[ARCHIEF-OPEN] the keep question is answered by the SAME readers that would book it", () => {
+  // Derive, don't list. The tempting implementation is a filename rule for the one export format
+  // production happens to send; it keeps today's file and silently drops the next till brand.
+  // Asking spreadsheet-ingest and daily-sales-report instead means "would the reprocess button
+  // pick this up?" has one answer in this codebase, and a new format is learned in one place.
+  const readers = code("src/lib/email-integration.ts");
+  for (const fn of ["planSpreadsheetIngest", "sheetBytesToMatrix", "looksLikeDailySalesReport"]) {
+    assert.ok(readers.includes(fn),
+      `the e-mail door stopped asking ${fn} — whatever it asks instead is a second opinion that ` +
+        `can drift away from what /api/documents/reprocess actually books`);
+  }
+
+  // The extension pre-filter must match the reader route's own, or the door builds a shelf of
+  // files nothing will ever book (or drops one it would have booked).
+  const keepable = code("src/lib/turnover-keepable.ts");
+  const reprocess = code("src/app/api/documents/reprocess/route.ts");
+  // Longest alternative first: /xls|xlsx/ matches "xls" INSIDE "xlsx" and the set silently loses
+  // a format — which would have made this gate pass over a real mismatch.
+  const exts = (t: string) => new Set((t.match(/xlsx|xls|csv|pdf/g) ?? []));
+  const deur = keepable.match(/\/\\\.\(([a-z|]+)\)\$\//)?.[1];
+  assert.ok(deur, "the extension pre-filter is gone from turnover-keepable");
+  const boekbaar = exts(reprocess.match(/const isSheet = [^\n]+\n\s*const isPdf = [^\n]+/)?.[0] ?? "");
+  assert.deepEqual(
+    new Set(deur!.split("|")), boekbaar,
+    "the formats the e-mail door keeps are no longer the formats /api/documents/reprocess reads",
+  );
+
+  // …and the envelope must let those same formats OUT. This was wrong on the first version:
+  // archive-attachment.ts allowed csv but not xls/xlsx, so a till exporting its Z-report as xlsx
+  // was refused at the zip with "dit bestandstype kunnen wij niet lezen" — about a format the app
+  // reads and books perfectly. A hand-kept allowlist is right for untrusted input; a hand-kept
+  // allowlist nobody checks is how the one file this task is about stays outside.
+  const envelop = code("src/lib/archive-attachment.ts");
+  const toegestaan = envelop.match(/const LEESBAAR = \/\\\.\(([a-z|]+)\)\$\/i;/)?.[1];
+  assert.ok(toegestaan, "the archive allowlist is gone from archive-attachment.ts");
+  for (const ext of boekbaar) {
+    assert.ok(toegestaan!.split("|").includes(ext),
+      `.${ext} is a format /api/documents/reprocess books, but the archive gate refuses it — a ` +
+        `till that puts its Z-report in the zip as .${ext} is turned away at the envelope, with a ` +
+        `refusal that says we cannot read a format we read fine`);
+  }
+
+  // And out of the envelope with a mime the reader recognises: application/octet-stream reaches
+  // sheetBytesToMatrix as "not a spreadsheet", so an unpacked xlsx would be unreadable anyway.
+  const uitpakker = code("src/lib/archive-expand.ts");
+  for (const ext of boekbaar) {
+    if (ext === "pdf") continue; // already mapped, and checked by the daily-sales path above
+    assert.match(uitpakker, new RegExp(`(^|[^a-z])${ext}:\\s*"`, "m"),
+      `an unpacked .${ext} leaves the archive without its own mime type, so the reader that ` +
+        `would have booked it does not recognise it — unpacked and still unreadable`);
+  }
 });

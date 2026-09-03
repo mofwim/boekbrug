@@ -7459,6 +7459,23 @@ export const MESSAGES = {
     ar: 'عدد الملفات التي لم نستطع قراءتها: {n} — إنها في ملفاتك، تحقّق منها.',
     en: '{n} files we could not read — they are in your files, take a quick look.',
   },
+  // [ARCHIEF-OPEN] Een kassa- of grootboekbestand kwam per e-mail binnen, is HERKEND en bewaard,
+  // en wacht op één druk op de knop. Bewust een andere zin dan 'nietLezen…': daar staat "we konden
+  // het niet lezen", hier staat "we hebben het gelezen en er is niets mee misgegaan". Een
+  // ondernemer die dat door elkaar haalt, gaat een bestand controleren dat niets mankeert — of erger,
+  // laat een dagafsluiting liggen omdat hij denkt dat er iets kapot is.
+  // De zin noemt de knop zoals hij op het scherm staat ("Boek opnieuw", op Uploaden), zodat er
+  // in geen enkele taal naar een woord gezocht wordt dat nergens in de app voorkomt.
+  'ink.sync.kassaKlaarEen': {
+    nl: '1 kassa- of grootboekbestand is bewaard — boek het met "Boek opnieuw" bij Uploaden.',
+    ar: 'تم حفظ ملف واحد للصندوق أو دفتر الأستاذ — سجّله عبر "Boek opnieuw" في صفحة Uploaden.',
+    en: '1 till or ledger file was kept — book it with "Boek opnieuw" on Uploaden.',
+  },
+  'ink.sync.kassaKlaarMeer': {
+    nl: '{n} kassa- of grootboekbestanden zijn bewaard — boek ze met "Boek opnieuw" bij Uploaden.',
+    ar: 'تم حفظ {n} من ملفات الصندوق أو دفتر الأستاذ — سجّلها عبر "Boek opnieuw" في صفحة Uploaden.',
+    en: '{n} till or ledger files were kept — book them with "Boek opnieuw" on Uploaden.',
+  },
   'ink.sync.nietsVerwerkt': {
     nl: 'Er kon nu niets verwerkt worden — probeer het later opnieuw',
     ar: 'تعذّرت المعالجة الآن — حاول لاحقاً',
