@@ -43,6 +43,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import {
   shouldSuggest,
+  SUPPLIER_BROWSE_LIMIT,
   suggestSuppliers,
   SUPPLIER_SUGGEST_LIMIT,
   type SupplierChoice,
@@ -100,6 +101,10 @@ export function SupplierSuggestionPanel({
       style={{
         marginTop: 6, background: '#fff', border: '1px solid #e0e0e0', borderRadius: 12,
         overflow: 'hidden', textAlign: 'start',
+        // [LEVERANCIER-BLADEREN] The browse list is the whole registry, so it scrolls rather than
+        // pushing the amounts and the confirm button off the screen. Harmless for the six-row
+        // typed panel, which never reaches this height — one rule instead of a mode.
+        maxHeight: 264, overflowY: 'auto',
       }}
     >
       <div style={{
@@ -177,6 +182,11 @@ export default function SupplierNameInput({
   const t = translator(useLocale())
   const boxRef = useRef<HTMLDivElement | null>(null)
   const [focused, setFocused] = useState(false)
+  // [LEVERANCIER-BLADEREN] The owner ASKED to see the list, rather than typing at it. Separate from
+  // `focused` because it survives what is already in the field: the case this exists for is a field
+  // the reader filled with something wrong, where typing narrows a list towards a name that is not
+  // the one being looked for.
+  const [browsing, setBrowsing] = useState(false)
   // Which row the keyboard is on. -1 = none; Enter then does what Enter always did in this form.
   const [active, setActive] = useState(-1)
   const listId = useId()
@@ -184,9 +194,12 @@ export default function SupplierNameInput({
   // A tap outside closes the panel. The sheet behind stops clicks, so blur alone is not enough on
   // every browser — and a panel left open over the amounts is a panel in the way.
   useEffect(() => {
-    if (!focused) return
+    if (!focused && !browsing) return
     const onDown = (e: MouseEvent | TouchEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setFocused(false)
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setFocused(false)
+        setBrowsing(false)
+      }
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('touchstart', onDown)
@@ -194,20 +207,29 @@ export default function SupplierNameInput({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('touchstart', onDown)
     }
-  }, [focused])
+  }, [focused, browsing])
 
-  const suggestion = suggestSuppliers(value, options, SUPPLIER_SUGGEST_LIMIT)
+  // [LEVERANCIER-BLADEREN] Browsing ignores what is in the field. That is the whole point: the
+  // reader wrote "Jim Ketels" off a delivery stamp, and filtering the registry by those words is
+  // filtering it by the mistake.
+  const suggestion = browsing
+    ? suggestSuppliers('', options, SUPPLIER_BROWSE_LIMIT)
+    : suggestSuppliers(value, options, SUPPLIER_SUGGEST_LIMIT)
   // The panel is for CHOOSING. When the field already holds a known supplier's name exactly there
-  // is nothing left to choose, so it stays shut instead of covering the form every time.
-  const open = shouldSuggest(value, focused) && !suggestion.settled
+  // is nothing left to choose, so it stays shut instead of covering the form every time — unless
+  // the owner opened it themselves, and then it is not the app's place to decide they are done.
+  const open = browsing
+    ? suggestion.matches.length > 0
+    : shouldSuggest(value, focused) && !suggestion.settled
   // Only once something has been typed, and only when there IS a list that missed it — on an empty
-  // registry the sentence would explain nothing.
-  const newNotice = options.length > 0 && value.trim() !== ''
+  // registry the sentence would explain nothing. Never while browsing: nothing was typed to miss.
+  const newNotice = !browsing && options.length > 0 && value.trim() !== ''
 
   const pick = (name: string) => {
     onChange(name)
     setActive(-1)
     setFocused(false)
+    setBrowsing(false)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -226,11 +248,17 @@ export default function SupplierNameInput({
     } else if (e.key === 'Escape') {
       setActive(-1)
       setFocused(false)
+      setBrowsing(false)
     }
   }
 
   return (
     <div ref={boxRef} style={{ position: 'relative', ...wrapperStyle }}>
+      {/* [LEVERANCIER-BLADEREN] The list had no door. It opened on focus and on two typed
+          characters, which is a feature an owner discovers only by accident — and the screenshot
+          that started this shows the field holding a reader's misreading with nothing on screen
+          saying a list of the owner's own 54 suppliers exists. So the list gets a button. */}
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: 6, minWidth: 0 }}>
       <input
         type="text"
         role="combobox"
@@ -246,8 +274,30 @@ export default function SupplierNameInput({
         onChange={(e) => { onChange(e.target.value); setActive(-1); setFocused(true) }}
         onFocus={() => setFocused(true)}
         onKeyDown={onKeyDown}
-        style={{ width: '100%', boxSizing: 'border-box', ...inputStyle }}
+        style={{ flex: 1, minWidth: 0, width: '100%', boxSizing: 'border-box', ...inputStyle }}
       />
+      {options.length > 0 && (
+        <button
+          type="button"
+          aria-label={t('lev.kies.toon')}
+          aria-expanded={browsing}
+          aria-controls={listId}
+          title={t('lev.kies.toon')}
+          // Without this the field blurs on the way down and the panel closes under the finger.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setBrowsing((b) => !b); setActive(-1) }}
+          style={{
+            flexShrink: 0, width: 34, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: '1.5px solid #1a73e8', borderRadius: 8, background: browsing ? '#e8f0fe' : '#fff',
+            color: '#1a73e8', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, padding: 0,
+          }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>
+            {browsing ? 'expand_less' : 'expand_more'}
+          </span>
+        </button>
+      )}
+      </div>
       {open && (
         <SupplierSuggestionPanel
           suggestion={suggestion}

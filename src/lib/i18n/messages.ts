@@ -623,6 +623,13 @@ export const MESSAGES = {
     ar: 'تعذّر تحميل قائمة الموردين — يمكنك كتابة الاسم كالمعتاد.',
     en: 'The supplier list could not be loaded — you can still type the name.',
   },
+  // [LEVERANCIER-BLADEREN] Het knopje dat de lijst opent. Een label, geen zin: het staat op een
+  // pictogram van 20 pixels, en een schermlezer moet er iets aan hebben.
+  'lev.kies.toon': {
+    nl: 'Toon je leveranciers',
+    ar: 'أظهر مورّديك',
+    en: 'Show your suppliers',
+  },
   'lev.kies.veld': {
     nl: 'Leverancier — kies een bestaande of typ een nieuwe naam',
     ar: 'المورّد — اختر واحداً موجوداً أو اكتب اسماً جديداً',

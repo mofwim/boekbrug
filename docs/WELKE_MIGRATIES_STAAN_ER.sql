@@ -32,7 +32,7 @@
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
 --   DEEL 1  de 116 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 14 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 2  de 15 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -534,7 +534,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 130
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 131
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -620,6 +620,19 @@ with controle(bestand, vraag, toegepast) as (
                          'invoices_search_vector_update', 'documents_search_vector_update',
                          'set_updated_at', 'touch_updated_at', 'get_accountant_for_zzper')
        and coalesce(array_to_string(p.proconfig, ','), '') not like '%search_path=%')
+  )
+  union all
+  select 'invoice_name_follows_taught_supplier.sql'::text, 'geen factuur toont nog een spelling die de eigenaar zelf aan zijn leverancier koppelde'::text, (
+    not exists (
+    select 1
+      from public.invoices i
+      join public.suppliers s on s.id = i.supplier_id
+      join public.supplier_aliases a
+        on a.user_id = i.receiver_id
+       and a.supplier_id = i.supplier_id
+       and lower(btrim(a.printed_name)) = lower(btrim(i.client_name))
+     where i.client_name is not null
+       and lower(btrim(i.client_name)) is distinct from lower(btrim(s.name)))
   )
   union all
   select 'revoke_execute_on_trigger_functions.sql'::text, 'geen enkele triggerbewaker hangt nog als /rest/v1/rpc aan de buitenkant'::text, (

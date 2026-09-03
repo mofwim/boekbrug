@@ -145,11 +145,59 @@ export async function knownIbanForVendor(
     }
 
     const cleanName = (vendor.name ?? '').trim()
+    const key = supplierNameKey(cleanName)
+    if (!key) return null
+
     // Een onbetrouwbare naam ("Onbekende afzender", een los woord) mag nooit twee echte
     // leveranciers op één hoop gooien — dan zou een normale factuur vals gevlagd worden.
     if (!isReliableSupplierName(cleanName)) return null
-    const key = supplierNameKey(cleanName)
-    if (!key) return null
+
+    // ── [LES-TELT-MEE] The name the OWNER mapped, before the name the reader printed ──
+    //
+    // This check reasons from the printed name, and the printed name is the one thing on the paper
+    // the app already knows can be wrong. Measured on this account: the owner has taught it three
+    // spellings ("Silifke / Hocaoglu" is oz & er food b.v; "CHUR MARKT BV" and "CHLIQI MARKT BV"
+    // are omur MARKT BV), and every one of them keys to nothing below. So the lookup found no
+    // account on record, reported a completed check with nothing to say, and the one signal that
+    // stands between the owner and a redirected payment was never raised — on exactly the invoices
+    // whose sender the app had already been TOLD it misreads.
+    //
+    // BEHIND the reliability guard, deliberately. Lifting it in front looked right — an alias is
+    // one exact key the owner wrote by hand — until the key itself is a placeholder: "Onbekende
+    // afzender" is what /api/intake writes when the reader found no sender at all, and an alias on
+    // that key would answer this fraud check with one company's IBAN for every unreadable invoice
+    // in the book. planSupplierAlias now refuses to store such a key; this guard is the second
+    // lock, for the ones stored before it did. It costs nothing real: "ketel", "Jim Ketels" and
+    // "Silifke / Hocaoglu" all clear the bar — it rejects placeholders and one-or-two-character
+    // junk, which is exactly what may never become a key.
+    //
+    // Same rule as the two lookups around it: a failed read LEAVES AS A THROW. A caught one would
+    // restore exactly the bug this function's header is about.
+    const { data: aliasRow, error: aliasErr } = await supabase
+      .from('supplier_aliases')
+      .select('supplier_id')
+      .eq('user_id', userId)
+      .eq('alias_key', key)
+      .limit(1)
+      .maybeSingle()
+    // 42P01 undefined_table — the migration is not applied here. That is "this owner has taught us
+    // nothing", which is the state every database was in before the table, and not a failed look.
+    if (aliasErr && (aliasErr as { code?: string }).code !== '42P01') throw new Error(aliasErr.message)
+    const aliasedId = (aliasRow as { supplier_id: string } | null)?.supplier_id
+    if (aliasedId) {
+      const { data: viaAlias, error: viaErr } = await supabase
+        .from('suppliers')
+        .select('iban')
+        .eq('user_id', userId)
+        .eq('id', aliasedId)
+        .not('iban', 'is', null)
+        .limit(1)
+        .maybeSingle()
+      if (viaErr) throw new Error(viaErr.message)
+      const hit = (viaAlias as { iban: string | null } | null)?.iban
+      if (hit) return normalizeIban(hit)
+    }
+
 
     // [IBAN-CHECK-HONEST] Same rule as the kvk lookup above.
     const { data, error } = await supabase
