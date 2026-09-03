@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 115 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 116 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 14 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -335,6 +335,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('push_subscriptions.sql', 'table', 'push_subscriptions', null, 'public'),
   ('regime_kor.sql', 'column', 'kor_active', 'profiles', 'public'),
   ('register_profile_from_metadata.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
+  ('reminders_on_by_default.sql', 'column', 'reminders_enabled_at', 'profiles', 'public'),
   ('repair_mandate_policies.sql', 'column', 'purge_warning_sent_at', 'deletion_requests', 'public'),
   ('repair_mandate_policies.sql', 'index', 'deletion_requests_unwarned_idx', null, 'public'),
   ('repair_mandate_policies.sql', 'policy', 'invoice_lines_mandate_read', 'invoice_lines', 'public'),
@@ -528,7 +529,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 129
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 14 van de 130
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

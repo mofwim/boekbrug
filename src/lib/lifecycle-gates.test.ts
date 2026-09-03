@@ -13071,6 +13071,78 @@ test("[AL-GEBOEKT] de kiezer staat uit zodra de betaling een afgeboekte factuur 
     "de matchroute stuurt quotedSettled niet meer mee — dan staat de kiezer er in productie weer");
 });
 
+test("[DEMO-DICHT] een cron die namens een eigenaar mailt, slaat het demoaccount over", () => {
+  // Het gat dat gisteren openbleef. De fence in de middleware kijkt naar de SESSIEGEBRUIKER, en
+  // een cron heeft er geen — die routes zijn dus nooit langs die fence gekomen. Gemeten op
+  // 3 september: het demoaccount, met een openbaar wachtwoord, was het ENIGE profiel met
+  // herinneringen aan, met een openstaande factuur aan een verzonnen fysiopraktijk. Nu
+  // herinneringen standaard aanstaan is dat geen theorie meer.
+  //
+  // De grens per cron: mailt hij een DERDE (de klant van de eigenaar), dan is het een brief die
+  // niet terug kan. Mailt hij de eigenaar zelf, dan is het een bounce naar een verzonnen adres —
+  // minder erg, maar bounces zijn precies wat [BEZORGING] heeft opgeruimd. Allebei overslaan dus,
+  // en welke cron dat moet doen wordt AFGELEID uit wie er mailt én over eigenaren loopt.
+  const crons = execSync(
+    "grep -rl '@/lib/email' src/app/api/cron --include=route.ts || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean);
+  assert.ok(crons.length >= 4, `maar ${crons.length} mailende crons gevonden — leest de scan nog mee?`);
+
+  const ongedekt: string[] = [];
+  for (const f of crons) {
+    const src = code(f);
+    // Alleen crons die zélf over profielen lopen kunnen een eigenaar overslaan. Een cron die op
+    // een rij begint die de demo nooit heeft (een mailbox, een betaalverzoek) heeft niets te doen.
+    if (!/from\("profiles"\)/.test(src)) continue;
+    // GEBRUIKT, niet alleen geïmporteerd. De eerste versie vroeg `src.includes("DEMO_TENANT_ID")`,
+    // en die was al waar door de import-regel alleen: de negatieve controle haalde de filterregel
+    // weg en de poort bleef groen. Een bewering die niet kan falen bewaakt niets — dezelfde les
+    // als de kandidaat die "datum dichtbij" toonde en de dimensie die undefined met undefined
+    // vergeleek. Dus: de identifier moet buiten de imports voorkomen, in een echte filterregel.
+    const zonderImports = src.split("\n").filter((r) => !/^\s*import\s/.test(r)).join("\n");
+    if (!/\.neq\(\s*"id"\s*,\s*DEMO_TENANT_ID\s*\)/.test(zonderImports)) ongedekt.push(f);
+  }
+  assert.deepEqual(ongedekt, [],
+    "deze crons lopen over eigenaren en versturen mail, maar slaan het demoaccount niet over — " +
+    `het wachtwoord daarvan is openbaar: ${ongedekt.join(", ")}`);
+});
+
+test("[HERINNER-AAN] de rem op de oude stapel zit in de cron, niet alleen in de functie", () => {
+  // Herinneringen staan sinds 3 september standaard AAN. De veiligheid daarvan hangt aan één
+  // argument dat de cron moet meegeven: reminderTierDue() geeft de HOOGST bereikte trap terug, dus
+  // zonder dat argument stuurt de eerste ronde van een net geregistreerd account de
+  // ingebrekestelling — mét incassokosten — naar iedereen in een geïmporteerde administratie.
+  //
+  // De unittests dekken de functie; ze kunnen niet zien of de aanroeper het argument nog meegeeft.
+  // Precies dat gat viel in de negatieve controle: het argument weghalen liet elke test groen.
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /remindersActiveSinceDay:/,
+    "de herinneringscron geeft het aanzetmoment niet meer mee — dan jaagt een nieuw account op " +
+    "zijn hele geïmporteerde stapel, met de zwaarste trap, in één ronde");
+  assert.match(cron, /reminders_enabled_at/,
+    "de cron leest reminders_enabled_at niet meer op, dus het moment kan nergens vandaan komen");
+
+  // En de schakelaar moet stempelen bij het AANZETTEN, anders is het moment altijd leeg en valt de
+  // rem terug op "geen rem".
+  assert.match(code("src/app/dashboard/settings/page.tsx"), /reminders_enabled_at: new Date\(\)\.toISOString\(\)/,
+    "het instellingenscherm zet reminders_enabled_at niet meer bij het aanzetten");
+});
+
+test("[HERINNER-AAN] de migratie zet de standaard om én vult het moment voor bestaande rijen", () => {
+  // Twee helften, en de tweede is de belangrijkste: zonder de backfill zou elke bestaande eigenaar
+  // een leeg moment krijgen. Dat is "geen rem", en dat is hier het VEILIGE antwoord (hun gedrag
+  // verandert niet) — maar de migratie hoort het expliciet te doen in plaats van erop te gokken.
+  // Géén STAND_CONTROLE-regel: deze migratie voegt een KOLOM toe en heeft daarmee een gewone
+  // vingerafdruk. scripts/migration-inventory.ts weigert allebei tegelijk, met de reden erbij —
+  // "twee metingen op hetzelfde gaan uit elkaar lopen". De eerste versie van deze poort zette hem
+  // er toch in en brak de generator.
+  const mig = code("supabase/migrations/reminders_on_by_default.sql");
+  assert.match(mig, /ALTER COLUMN reminders_enabled SET DEFAULT true/,
+    "de standaard gaat niet aan");
+  assert.match(mig, /UPDATE public\.profiles[\s\S]*reminders_enabled_at = COALESCE\(created_at/,
+    "bestaande rijen krijgen geen aanzetmoment, dus hun gedrag verandert stilzwijgend mee");
+});
+
 test("[RLS-AAN] een migratie die een tabel maakt, zet er row level security op", () => {
   // Gemeten op productie op 2 september, als het demoaccount met een openbaar wachtwoord:
   //   · 612 facturen in de database, 17 zichtbaar, 0 van iemand anders;

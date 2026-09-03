@@ -23,8 +23,11 @@
 //   * Best-effort per owner AND per invoice: one failure never stops the rest, and
 //     a failed send is recorded status='failed' (visible), never retried as a
 //     double-send.
-//   * Ships DARK: reminders_enabled defaults false, so until an owner turns it on
-//     this cron finds zero enabled owners and sends nothing.
+//   * [HERINNER-AAN] Sinds 3 september 2026 staat reminders_enabled standaard AAN. De rem zit
+//     niet meer in de schakelaar maar in de tijd: reminders_enabled_at zegt sinds wanneer, en
+//     reminderTierDue() jaagt alleen op facturen die NÁ dat moment vervielen. Zonder die regel
+//     stuurt de eerste ronde van een net geregistreerd account de zwaarste trap — de
+//     ingebrekestelling met incassokosten — naar iedereen in een geïmporteerde stapel.
 
 import { NextRequest, NextResponse } from "next/server";
 import { amsterdamToday } from "@/lib/format-nl";
@@ -32,6 +35,7 @@ import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
+import { DEMO_TENANT_ID } from "@/lib/demo-tenant";
 import {
   reminderTierDue,
   openstaandOf,
@@ -81,6 +85,8 @@ const PDF_BUCKET = "documents";
 type OwnerProfile = {
   id: string;
   reminder_offsets: number[] | null;
+  // [HERINNER-AAN] Sinds wanneer deze eigenaar herinneringen aan heeft staan.
+  reminders_enabled_at?: string | null;
   company_name: string | null;
   email: string | null;
   full_name: string | null;
@@ -169,8 +175,14 @@ export async function GET(req: NextRequest) {
         // [BETAALBLOK] `iban` erbij: elke herinneringstrap ging uit zonder één betaalgegeven, ook
         // de laatste — de wettelijke aanmaning die incassokosten aankondigt. Zonder dit veld is er
         // geen begunstigde en dus geen betaalblok.
-        .select("id, reminder_offsets, company_name, full_name, email, iban")
+        .select("id, reminder_offsets, reminders_enabled_at, company_name, full_name, email, iban")
         .eq("reminders_enabled", true)
+        // [DEMO-DICHT] Het demoaccount niet. Zijn wachtwoord is openbaar, en de fence in de
+        // middleware kijkt naar de SESSIEGEBRUIKER — een cron heeft er geen, dus die fence zag deze
+        // route nooit. Gemeten op 3 september: het demoaccount was het ENIGE profiel met
+        // herinneringen aan, met een openstaande "factuur" aan een verzonnen fysiopraktijk. Nu
+        // herinneringen standaard aanstaan is dat geen theorie meer.
+        .neq("id", DEMO_TENANT_ID)
         .order("id", { ascending: true })
         .range(from, to),
     );
@@ -359,6 +371,11 @@ export async function GET(req: NextRequest) {
     const offsets = owner.reminder_offsets && owner.reminder_offsets.length > 0
       ? owner.reminder_offsets
       : [14, 30];
+    // [HERINNER-AAN] Eén keer per eigenaar: sinds wanneer mag er gejaagd worden, als day-number.
+    // Null/ontbrekend → geen rem, precies het gedrag van vóór deze kolom bestond.
+    const activeSinceDay = dayNumberFromIso(
+      typeof owner.reminders_enabled_at === "string" ? owner.reminders_enabled_at.slice(0, 10) : null,
+    );
     const maxTier = Math.max(...offsets);
     const zzperName = owner.company_name?.trim() || owner.full_name?.trim() || "BoekBrug";
     const ownerInvoices = invoicesByOwner.get(ownerId) ?? [];
@@ -413,6 +430,10 @@ export async function GET(req: NextRequest) {
         amountPaid: inv.amount_paid,
         clientEmail: inv.client_email,
         remindersPaused: false,
+        // [HERINNER-AAN] De rem. Facturen die vervielen vóórdat deze eigenaar herinneringen
+        // aanzette blijven met rust — zie invoice-reminders.ts. Ontbreekt de kolom nog (migratie
+        // niet toegepast), dan is dit undefined en gedraagt de cron zich als voorheen.
+        remindersActiveSinceDay: activeSinceDay,
         // [CREDITNOTA-NO-CHASE] Withdrawn with a creditnota → stop chasing the customer.
         // [DEEL-CREDIT] …but only when the credits cover the WHOLE invoice. Credit one disputed
         // line of five and the other four are still owed; stopping there would mean the owner is

@@ -35,6 +35,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { DEMO_TENANT_ID } from "@/lib/demo-tenant";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import {
@@ -167,6 +168,8 @@ async function sendRetentionWarnings(
       const { data: profiel } = await pipeline
         .from("profiles")
         .select("email, full_name, company_name")
+        // [DEMO-DICHT] Zie de andere crons: het demoaccount krijgt geen post.
+        .neq("id", DEMO_TENANT_ID)
         .eq("id", row.user_id)
         .maybeSingle();
       const email = profiel?.email as string | undefined;

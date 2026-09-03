@@ -106,7 +106,16 @@ begin
     preferred_language = 'nl',
     invoice_number_template = 'F{jaar}-{nummer}',
     invoice_number_padding = 3,
-    reminders_enabled = true
+    -- [DEMO-DICHT] Uit, en dat is een correctie. Dit stond op true zodat de winkelfoto's een
+    -- ingericht account tonen — maar het demoaccount heeft een OPENBAAR wachtwoord, en de
+    -- herinneringscron stuurt post naar DERDEN. Op 3 september was dit het enige profiel in
+    -- productie met herinneringen aan, met een openstaande factuur aan een verzonnen
+    -- fysiopraktijk; trap 30 was al verstuurd naar een adres dat niet bestaat.
+    --
+    -- De fence uit demo-tenant.ts ving dat niet: die kijkt naar de sessiegebruiker en een cron
+    -- heeft er geen. De crons slaan het account nu over ([DEMO-DICHT] in lifecycle-gates bewaakt
+    -- dat), en deze regel is de tweede grendel — anders zet een verse seed het gewoon weer aan.
+    reminders_enabled = false
   where id = demo_id;
 
   ----------------------------------------------------------------------------

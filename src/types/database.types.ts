@@ -2083,6 +2083,7 @@ export type Database = {
           referral_accountant_id: string | null
           reminder_offsets: number[]
           reminders_enabled: boolean
+          reminders_enabled_at: string | null
           role: string | null
           subscription_plan: string | null
           subscription_stripe_id: string | null
@@ -2117,6 +2118,7 @@ export type Database = {
           referral_accountant_id?: string | null
           reminder_offsets?: number[]
           reminders_enabled?: boolean
+          reminders_enabled_at?: string | null
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
@@ -2151,6 +2153,7 @@ export type Database = {
           referral_accountant_id?: string | null
           reminder_offsets?: number[]
           reminders_enabled?: boolean
+          reminders_enabled_at?: string | null
           role?: string | null
           subscription_plan?: string | null
           subscription_stripe_id?: string | null
