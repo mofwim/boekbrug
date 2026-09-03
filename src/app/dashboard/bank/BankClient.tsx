@@ -93,6 +93,9 @@ function isServerAutoBookable(s: Suggestion): boolean {
   // DIFFERENT, still-open invoice. Measured: one of the three lines that named an already-paid
   // invoice reached this screen with a suggestion the server called 'auto'.
   if (s.quotedSettled) return false
+  // [SOM-KLOPT] Same rule over the whole named set. A payment whose named invoices add up to it is
+  // accounted for; anything this would book is a different, still-open bill.
+  if (s.quotedSet?.fullySettled) return false
   const sig = s.best.signals
   if (!sig.includes('amount')) return false // the amount is the money-truth — required by both tiers
   const certain = sig.includes('reference') || sig.includes('iban')
@@ -193,10 +196,26 @@ interface Suggestion {
   // [AL-GEBOEKT] De factuur die deze betaling NOEMT, wanneer die al is afgeboekt. Geen kandidaat en
   // niet te bevestigen: dit is het antwoord op "waarom klopt er hier niets", en het vervangt de
   // kiezer in plaats van eronder te staan — zie bank-quoted-invoice.ts.
-  quotedSettled?: {
-    invoiceId: string; invoiceNumber: string; amount: number | null
-    clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
+  quotedSettled?: QuotedRef | null
+  // [SOM-KLOPT] ALLE facturen die deze betaling noemt, en of ze samen precies dit bedrag zijn.
+  // quotedSettled hierboven antwoordt over ÉÉN factuur; een betaling van € 466,30 die
+  // "2601695, 2601826, 2601291" noemt (162,19 + 148,68 + 155,43) las daardoor als een bijna-match
+  // op de eerste, terwijl de som op de cent klopt. Zie bank-quoted-invoice.ts.
+  quotedSet?: {
+    settled: QuotedRef[]
+    /** Genoemd, aanwezig, nog OPEN — dit zijn echte kandidaten en de kiezer hoort te blijven. */
+    open: QuotedRef[]
+    unknownNumbers: string[]
+    total: number | null
+    coversPayment: boolean
+    /** Alles wat genoemd is, is geboekt — pas dán valt er werkelijk niets te kiezen. */
+    fullySettled: boolean
   } | null
+}
+/** Eén factuur die een betaling NOEMT, zoals /api/bank/match hem teruggeeft. */
+interface QuotedRef {
+  invoiceId: string; invoiceNumber: string; amount: number | null
+  clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
 }
 interface MatchResponse {
   ok: boolean
@@ -3158,7 +3177,16 @@ export function TxCard({
           shows a row that cannot be filled and no reason why — and "Koppelen" on an invoice that
           does not exist is a button that can only fail. Naming the bill and the consequence is
           what turns a dead end into one action: add the invoice, then come back. */}
-      {wasMulti && missingNamed.length > 0 && (
+      {/* [SOM-KLOPT] De multi-factuurweg had deze kaart helemaal niet, en dat is precies de regel
+          uit de melding: € 466,30 met "2601695, 2601826, 2601291" in de omschrijving kreeg de
+          slotjes-kiezer én "Facturen koppelen (3)" te zien, terwijl alle drie al waren afgeboekt
+          en samen exact dit bedrag zijn. Eerst zeggen wat er aan de hand is; pas daarna, als de
+          som NIET klopt, mag er iets te koppelen zijn. */}
+      {wasMulti && s.quotedSet && (
+        <SomKloptKaart set={s.quotedSet} betaling={s.amount} onOpenFile={onOpenFile} />
+      )}
+
+      {wasMulti && !s.quotedSet?.fullySettled && missingNamed.length > 0 && (
         <div style={{
           marginTop: 12, display: 'flex', alignItems: 'flex-start', gap: 8,
           padding: '10px 12px', borderRadius: R.md,
@@ -3169,7 +3197,7 @@ export function TxCard({
         </div>
       )}
 
-      {wasMulti && (
+      {wasMulti && !s.quotedSet?.fullySettled && (
         <div style={{ marginTop: 12 }}>
           {slots.length === 0 ? (
             /* Every number was dismissed as "not an invoice". Nothing left to link —
@@ -3732,11 +3760,16 @@ export function TxCard({
           kiezen, en een kiezer tónen is hier het gevaar: elke kandidaat eronder is een ANDERE,
           nog openstaande factuur, en bevestigen zou die als betaald wegzetten met geld dat er
           niet voor was. De kiezer verdwijnt dus; deze zin komt ervoor in de plaats. */}
-      {!wasMulti && s.quotedSettled && (
+      {/* [SOM-KLOPT] Meer dan één genoemde factuur → de kaart die OPTELT. De enkelvoudige kaart
+          blijft voor het geval dat er maar één is; hij zegt daar precies hetzelfde en korter. */}
+      {!wasMulti && s.quotedSet && s.quotedSet.settled.length + s.quotedSet.open.length > 1 && (
+        <SomKloptKaart set={s.quotedSet} betaling={s.amount} onOpenFile={onOpenFile} />
+      )}
+      {!wasMulti && s.quotedSettled && !(s.quotedSet && s.quotedSet.settled.length + s.quotedSet.open.length > 1) && (
         <AlGeboektKaart q={s.quotedSettled} onOpenFile={onOpenFile} />
       )}
 
-      {!wasMulti && !s.quotedSettled && s.outcome === 'choice' && (
+      {!wasMulti && !s.quotedSettled && !s.quotedSet?.fullySettled && s.outcome === 'choice' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* [BANK-CHOICE-CLARITY] Say WHY we're asking. The bank payment had no single
               invoice number to match on (e.g. a recurring incasso), so several invoices
@@ -3888,6 +3921,92 @@ const WHY_KEY = {
 // rekening die niemand betaald heeft. Zo'n knop hoort er niet naast te staan.
 //
 // [TAAL] Alle tekst uit messages.ts; dit component draagt geen eigen taal.
+// [SOM-KLOPT] Eén betaling, alle facturen die zij noemt, en de optelsom eronder.
+//
+// De aanleiding stond op één schermafbeelding: € 466,30 aan Al-Malika Bakkerij, omschrijving
+// "2601695, 2601826, 2601291", en de app zei "Geen factuur gevonden voor deze transactie", bood
+// drie facturen aan om te koppelen, en zette daaronder een kaart over ÉÉN van de drie met de
+// mededeling dat het bedrag niet overeenkwam. Die drie facturen zijn 162,19 + 148,68 + 155,43 =
+// 466,30 en stonden alle drie al betaald in de administratie.
+//
+// Deze kaart doet dus wat een mens met de bon in de hand doet: hij telt op, en zegt wat eruit komt.
+// Hij BOEKT niets — dat is [ZELF-EERST] — en hij verzwijgt niets: klopt de som niet, dan staat dat
+// er net zo duidelijk als wanneer hij wel klopt, want "bijna" is op een geldscherm geen antwoord.
+function SomKloptKaart({
+  set, betaling, onOpenFile,
+}: {
+  set: NonNullable<Suggestion['quotedSet']>
+  betaling: number | null
+  onOpenFile?: (invoiceId: string) => void
+}) {
+  const t = translator(useLocale())
+  const klopt = set.coversPayment
+  return (
+    <div style={{
+      marginTop: 10, padding: '12px 14px', borderRadius: 12,
+      background: '#e8f0fe', border: '1px solid #c6dafc',
+    }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#174ea6', marginBottom: 6 }}>
+        {/* De kop mag niet "al afgeboekt" zeggen zolang er nog een genoemde factuur openstaat —
+            dan is het de helft van de waarheid, en juist de helft die niets vraagt. */}
+        {set.fullySettled ? t('bank.somKlopt.titel') : t('bank.somKlopt.titelDeels')}
+      </div>
+      {/* De regels zelf. Elke factuur met haar bedrag, want de optelsom eronder moet na te rekenen
+          zijn — een totaal zonder de posten erboven is een bewering, geen bewijs. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 7 }}>
+        {[...set.settled, ...set.open].map((inv) => (
+          <div key={inv.invoiceId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#202124' }}>
+            <button
+              type="button"
+              onClick={(e: React.MouseEvent) => { e.stopPropagation(); onOpenFile?.(inv.invoiceId) }}
+              disabled={!onOpenFile}
+              style={{
+                background: 'none', border: 'none', padding: 0, textAlign: 'start',
+                cursor: onOpenFile ? 'pointer' : 'default', color: onOpenFile ? '#1a73e8' : '#202124',
+                fontSize: 13, fontFamily: 'inherit', minWidth: 0, overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              {t('bank.factuurNummer', { number: inv.invoiceNumber })}
+              {inv.clientName && <span style={{ color: '#5f6368' }}> · {inv.clientName}</span>}
+            </button>
+            {inv.amount != null && (
+              <span style={{ fontFamily: FONT_NUM, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {eur.format(Math.abs(inv.amount))}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5 }}>
+        {set.total == null
+          // Een factuur zonder bedrag maakt de som onbekend, niet nul. Dan mag de kaart niets
+          // beweren over kloppen — dat is dezelfde regel als [NO-SILENT-EMPTY] hierboven.
+          ? t('bank.alGeboekt.waaromGeenKeuze')
+          : klopt
+            ? t('bank.somKlopt.telt', { som: eur.format(Math.abs(set.total)) })
+            : t('bank.somKlopt.teltNiet', {
+                som: eur.format(Math.abs(set.total)),
+                betaling: betaling == null ? '—' : eur.format(Math.abs(betaling)),
+              })}
+      </div>
+      {/* [SOM-KLOPT] Genoemd, aanwezig, nog OPEN. Een andere zin dan "ontbreekt": deze factuur
+          staat er wél, en de kiezer eronder is precies de juiste knop ervoor. Zeggen dat hij
+          ontbreekt zou de ondernemer naar de schoenendoos sturen voor papier dat hij al heeft. */}
+      {set.open.length > 0 && (
+        <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5, marginTop: 5 }}>
+          {t('bank.somKlopt.nogOpen', { nummers: set.open.map((o) => o.invoiceNumber).join(', ') })}
+        </div>
+      )}
+      {set.unknownNumbers.length > 0 && (
+        <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5, marginTop: 5 }}>
+          {t('bank.somKlopt.ontbreekt', { nummers: set.unknownNumbers.join(', ') })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AlGeboektKaart({
   q, onOpenFile,
 }: {

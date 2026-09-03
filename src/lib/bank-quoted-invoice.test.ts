@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { settledOnly, quotedSettledInvoice, type QuotedInvoiceRow } from "./bank-quoted-invoice";
+import { settledOnly, quotedSettledInvoice, quotedInvoiceSet, type QuotedInvoiceRow } from "./bank-quoted-invoice";
 
 const inv = (o: Partial<QuotedInvoiceRow> & { id: string }): QuotedInvoiceRow => ({
   invoice_number: null, total_inc_btw: null, status: "received", client_name: null,
@@ -99,4 +99,131 @@ test("[AL-GEBOEKT] a settled duplicate is never masked by an open one with the s
   const r = quotedSettledInvoice({ amount: -40, reference: null, description: "USTD//700001/" }, idx);
   assert.ok(r, "de betaalde rij moet gevonden worden, ook met een open naamgenoot ernaast");
   assert.equal(r.invoiceId, "p");
+});
+
+// ── [SOM-KLOPT] ────────────────────────────────────────────────────────────────────────────────
+// Both cases below are production rows, not invented ones. They are the two screenshots that
+// opened this task, and the arithmetic in them is the whole rule.
+
+
+const alMalika = [
+  { id: "a", invoice_number: "2601695", total_inc_btw: 162.19, status: "paid", client_name: "Al-Malika Bakkerij B.V." },
+  { id: "b", invoice_number: "2601826", total_inc_btw: 148.68, status: "paid", client_name: "Al-Malika Bakkerij B.V." },
+  { id: "c", invoice_number: "2601291", total_inc_btw: 155.43, status: "paid", client_name: "Al-Malika Bakkerij B.V." },
+];
+
+test("[SOM-KLOPT] three named invoices that add up to the payment ARE the answer", () => {
+  // € 466,30 out, description "2601695, 2601826, 2601291". 162,19 + 148,68 + 155,43 = 466,30.
+  // The screen offered a chooser of three and a card about one of them saying the amount did not
+  // agree. Nothing was missing from the administration; the question had simply not been asked
+  // over the whole set.
+  const set = quotedInvoiceSet(
+    { amount: -466.3, reference: null, description: "2601695, 2601826, 2601291" },
+    alMalika,
+  );
+  assert.ok(set, "the payment names three settled invoices — this may not answer null");
+  assert.equal(set!.settled.length, 3);
+  assert.equal(Math.round(set!.total! * 100) / 100, 466.3);
+  assert.equal(set!.coversPayment, true, "the sum is exact to the cent; the payment is explained");
+  assert.deepEqual(set!.unknownNumbers, [], "every named number was found");
+});
+
+test("[SOM-KLOPT] one named invoice at the exact amount is equally the answer", () => {
+  // Royal Food Center, € 1.955,90, description "2600999". The banner said this number "staat niet
+  // in je administratie" directly above a card naming that very invoice.
+  const set = quotedInvoiceSet(
+    { amount: -1955.9, reference: null, description: "2600999" },
+    [{ id: "r", invoice_number: "2600999", total_inc_btw: 1955.9, status: "paid", client_name: "Royal Food Center V.o.F" }],
+  );
+  assert.equal(set?.coversPayment, true);
+  assert.equal(set?.settled.length, 1);
+});
+
+test("[SOM-KLOPT] a partial set says so instead of reading as complete", () => {
+  // Two of the three entered, one not. This is the common real case, and dressing it up as
+  // "settled" would book a payment against invoices that do not account for it.
+  const set = quotedInvoiceSet(
+    { amount: -466.3, reference: null, description: "2601695, 2601826, 2601291" },
+    alMalika.slice(0, 2),
+  );
+  assert.equal(set?.coversPayment, false, "two invoices cannot cover a three-invoice payment");
+  assert.deepEqual(set?.unknownNumbers, ["2601291"], "the missing number must be named");
+});
+
+test("[SOM-KLOPT] a creditnota subtracts, because that is what the supplier did with it", () => {
+  // Invoice 900,00 minus creditnota 100,00, settled in one transfer of 800,00 naming both.
+  // Adding the credit note would total 1000,00 and report a mismatch on the one arrangement
+  // where the owner has done everything right.
+  const set = quotedInvoiceSet(
+    { amount: -800, reference: null, description: "9001 9002" },
+    [
+      { id: "f", invoice_number: "9001", total_inc_btw: 900, status: "paid", client_name: "X" },
+      { id: "c", invoice_number: "9002", total_inc_btw: 100, status: "paid", client_name: "X", invoice_type: "creditnota" },
+    ],
+  );
+  assert.equal(set?.total, 800);
+  assert.equal(set?.coversPayment, true);
+});
+
+test("[SOM-KLOPT] a corrected invoice is counted once, not twice", () => {
+  // A corrected invoice keeps the supplier's number and the old row is archived. Both rows are
+  // 'settled', so a naive sum counts the same bill twice and turns a matching payment into a
+  // mismatch — production holds exactly this pair on 2601291.
+  const set = quotedInvoiceSet(
+    { amount: -155.43, reference: null, description: "2601291" },
+    [
+      { id: "new", invoice_number: "2601291", total_inc_btw: 155.43, status: "paid", client_name: "Al-Malika Bakkerij B.V." },
+      { id: "old", invoice_number: "2601291", total_inc_btw: 128.4, status: "archived", client_name: "Al-Malika Bakkerij B.V." },
+    ],
+  );
+  assert.equal(set?.total, 155.43, "the archived predecessor must not be added a second time");
+  assert.equal(set?.coversPayment, true);
+  assert.equal(set?.settled.length, 2, "…but both rows are still shown, so the owner sees why");
+});
+
+test("[SOM-KLOPT] a bare year in a description is never reported as a missing invoice", () => {
+  // "Huur juli 2026" would otherwise put 2026 in unresolvedNumbers on every rent payment, and
+  // coversPayment would then be false on a set that is in fact complete.
+  const set = quotedInvoiceSet(
+    { amount: -162.19, reference: null, description: "Betaling 2601695 termijn 2026" },
+    [alMalika[0]],
+  );
+  assert.deepEqual(set?.unknownNumbers, []);
+  assert.equal(set?.coversPayment, true);
+});
+
+test("[SOM-KLOPT] naming nothing settled answers null, leaving the matcher alone", () => {
+  assert.equal(quotedInvoiceSet({ amount: -50, reference: null, description: "huur" }, alMalika), null);
+});
+
+test("[SOM-KLOPT] a named invoice that is still OPEN is a candidate, not a missing one", () => {
+  // The bug in the first version of this module, caught by the render test one layer up. A payment
+  // names three invoices; two are booked and the third is in the administration and still open.
+  // Reporting that third one as "staat nog niet in je administratie" is the same false accusation
+  // this whole task started from, and taking the chooser away would strand a payment that has a
+  // perfectly good invoice waiting to be linked.
+  const set = quotedInvoiceSet(
+    { amount: -466.3, reference: null, description: "2601695, 2601826, 2601291" },
+    [
+      alMalika[0], alMalika[1],
+      { ...alMalika[2], status: "received" }, // open
+    ],
+  );
+  assert.equal(set?.settled.length, 2);
+  assert.equal(set?.open.length, 1, "the open invoice belongs in its own bucket");
+  assert.equal(set?.open[0].invoiceNumber, "2601291");
+  assert.deepEqual(set?.unknownNumbers, [], "it is NOT missing — it is right there, open");
+  assert.equal(set?.coversPayment, true, "and it still counts toward the total, which adds up");
+  assert.equal(set?.fullySettled, false,
+    "…but the question is not closed: that open invoice still has to be linked, so the chooser " +
+      "must stay. fullySettled is what decides that, never coversPayment on its own");
+});
+
+test("[SOM-KLOPT] everything named and booked, nothing else: then there is truly nothing to choose", () => {
+  const set = quotedInvoiceSet(
+    { amount: -466.3, reference: null, description: "2601695, 2601826, 2601291" },
+    alMalika,
+  );
+  assert.equal(set?.fullySettled, true);
+  assert.equal(set?.coversPayment, true);
 });

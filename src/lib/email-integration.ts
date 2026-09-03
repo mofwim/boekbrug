@@ -4047,6 +4047,10 @@ export async function syncUserEmails(
       // [BOEK-011] Step 1: store the PDF/image in Supabase Storage
       let documentId: string | null = null
       let pdfUrl: string | null = null
+      // [XML-PDF] Het object dat we ZELF hebben geüpload. Meestal hetzelfde als pdfUrl; bij een
+      // e-factuur met ingesloten PDF niet meer, en dan moet de opruiming hieronder ze allebei
+      // kennen — anders blijft de XML als wees achter terwijl zijn rij verdwijnt.
+      let uploadedPath: string | null = null
 
       try {
         // [BRIDGE-EXTRACT] fileBuffer already computed above for the byte-hash gate
@@ -4139,6 +4143,29 @@ export async function syncUserEmails(
           } else {
             documentId = doc.id
             pdfUrl = storagePath
+            uploadedPath = storagePath
+            // [XML-PDF] Dezelfde greep als in /api/intake, want dit is dezelfde deur één verdieping
+            // lager: een e-factuur draagt de leesbare PDF IN de XML, en zonder dit opent
+            // "Bekijk factuur" een muur met namespaces. De XML blijft staan als het bewijs
+            // (document_id wijst er nog steeds naar); alleen wat de EIGENAAR opent verandert.
+            //
+            // Best-effort, om precies dezelfde reden als daar: een factuur waarvan bedragen, BTW en
+            // leverancier feilloos gelezen zijn mag niet stranden op welk bestand er opengaat.
+            if (isEInvoiceXmlMime(attachment.mimeType)) {
+              try {
+                const { extractEmbeddedPdf } = await import('@/lib/ubl-embedded-pdf')
+                const ingesloten = extractEmbeddedPdf(Buffer.from(attachment.data, 'base64').toString('utf8'))
+                if (ingesloten) {
+                  const pdfPad = `${storagePath.replace(/\.[^./]*$/, '')}.pdf`
+                  const { error: pdfErr } = await supabase.storage
+                    .from('documents')
+                    .upload(pdfPad, ingesloten.bytes, { contentType: 'application/pdf', upsert: false })
+                  if (!pdfErr) pdfUrl = pdfPad
+                }
+              } catch (e) {
+                console.error('[XML-PDF] ingesloten PDF uit e-factuur halen mislukt (niet-fataal)', e)
+              }
+            }
           }
         } else {
           console.error('[BOEK-011] Storage upload failed:', uploadErr.message)
@@ -4628,6 +4655,14 @@ export async function syncUserEmails(
             // orphaned object is reclaimable by the retention sweep, another tenant's bill is not.
             const teVerwijderen = ownedStoragePath(pdfUrl, userId)
             if (teVerwijderen) await supabase.storage.from('documents').remove([teVerwijderen])
+          }
+          // [XML-PDF] Sinds een e-factuur ook een uitgepakte PDF kan opleveren, is `pdfUrl` niet
+          // meer altijd hetzelfde object als het bestand dat hierboven is geüpload. Zonder deze
+          // regel blijft de XML als los object achter terwijl zijn documents-rij net is verwijderd
+          // — precies de wees die het blok hierboven komt opruimen, één bestand verderop.
+          if (uploadedPath && pdfUrl !== uploadedPath) {
+            const xmlWees = ownedStoragePath(uploadedPath, userId)
+            if (xmlWees) await supabase.storage.from('documents').remove([xmlWees])
           }
           // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
           // sync re-fetches and retries this email … unless this attachment has now failed

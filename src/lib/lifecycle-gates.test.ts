@@ -25247,3 +25247,137 @@ test("[ARCHIEF-OPEN] the keep question is answered by the SAME readers that woul
         `would have booked it does not recognise it — unpacked and still unreadable`);
   }
 });
+
+// ── [SOM-KLOPT] The banner and the card may not contradict each other ─────────────────────────
+//
+// Two screenshots from /bank, both correct:
+//
+//   € 1.955,90 to Royal Food Center, description "2600999". The banner read "De betaling noemt een
+//   factuurnummer dat niet in je administratie staat" — printed directly above a card naming
+//   invoice 2600999, paid, € 1.955,90, to the cent.
+//
+//   € 466,30 to Al-Malika Bakkerij, description "2601695, 2601826, 2601291". Those three are
+//   162,19 + 148,68 + 155,43 = 466,30 and all three were already booked. The screen said "Geen
+//   factuur gevonden", offered three OTHER invoices to link, and showed a card about one of the
+//   three saying its amount did not agree.
+//
+// Neither was a slip. judgeBankWait is handed the OPEN invoices, so from inside it "already
+// settled" and "never entered" are the same observation; its own header calls that a blind spot and
+// picks silence as the safe error — but silence is not what happened, because rule 1 fires on a
+// number that is genuinely absent from the OPEN pool. An accusation about the owner's own
+// bookkeeping is the worst sentence in the app to be wrong about.
+//
+// Production, at the time of the fix: 71 of 328 pending debits quote an invoice that is already
+// settled; 57 of those add up to the payment exactly, 14 of them across more than one invoice.
+test("[SOM-KLOPT] the sentence about a quoted number is decided by ONE lookup, not two", () => {
+  const rede = code("src/lib/bank-waiting-reason.ts");
+  const route = code("src/app/api/bank/match/route.ts");
+
+  // judgeBankWait must be ABLE to know, and must ask before it accuses.
+  assert.match(rede, /settledQuoted\?: readonly \{ invoiceNumber: string \}\[\] \| null,/,
+    "judgeBankWait can no longer be told which invoices the payment names are already settled, so " +
+      "it is back to guessing from the open pool — where a settled invoice is precisely not");
+  const vraag = rede.indexOf('if (settledQuoted && settledQuoted.length > 0) return "reference_already_settled"');
+  const beschuldiging = rede.indexOf('return "reference_not_in_administration"');
+  assert.ok(vraag > 0, "the settled branch is gone — the false accusation is unguarded again");
+  assert.ok(beschuldiging > vraag,
+    "the accusation is decided BEFORE the settled check, so a booked invoice is still reported as " +
+      "one the owner never entered");
+
+  // …and the route must actually pass it, from the SAME lookup the card is drawn from.
+  assert.match(route, /quotedSet\?\.fullySettled \? quotedSet\.settled : null,/,
+    "the route no longer hands judgeBankWait the set the card renders, so the banner and the card " +
+      "are free to disagree about the same payment again — which is exactly what the screenshot " +
+      "caught. And it must be fullySettled, not coversPayment: with one named invoice still open " +
+      "there IS something to choose, and 'nothing to choose here' is then false");
+  assert.match(route, /const quotedSet =\s*\n\s*\(m\.transaction\.amount \?\? 0\) < 0 && !isLinked/,
+    "the set is computed per line again instead of once — three consumers reading three separate " +
+      "computations is how the two panels drifted apart in the first place");
+});
+
+test("[SOM-KLOPT] a payment is looked up against open invoices too, not only settled ones", () => {
+  // The bug inside the fix, caught by tests/render/bank-som-klopt.test.tsx. With only two buckets —
+  // "settled" and "not found" — a named invoice that is simply still OPEN lands in the second: the
+  // card says it is not in the administration (false) and the chooser that would link it is taken
+  // away (worse). Three buckets, because they ask for three different things from the owner.
+  const set = code("src/lib/bank-quoted-invoice.ts");
+  for (const bak of ["settled:", "open:", "unknownNumbers:"]) {
+    assert.ok(set.includes(bak),
+      `quotedInvoiceSet lost its '${bak}' bucket — a named invoice that is merely still open then ` +
+        `reads as one the owner never entered, and the button that would link it disappears`);
+  }
+  assert.match(set, /fullySettled: open\.length === 0 && unknownNumbers\.length === 0 && settled\.length > 0/,
+    "fullySettled no longer requires the open bucket to be empty, so a payment with an open named " +
+      "invoice would have its chooser removed and be stranded");
+  assert.match(code("src/app/api/bank/match/route.ts"), /quotePool,/,
+    "the set is handed a pool again that does not include the open invoices — the one input that " +
+      "makes the 'open' bucket possible");
+
+  // The screen decides on fullySettled, never on coversPayment: the sum can add up while one of
+  // the invoices in it is still waiting to be linked.
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.doesNotMatch(scherm, /quotedSet\?\.coversPayment/,
+    "the screen gates a control on coversPayment. The sum adding up does not mean the work is " +
+      "done — an open named invoice still has to be linked, and fullySettled is the flag that " +
+      "knows the difference");
+  assert.match(scherm, /if \(s\.quotedSet\?\.fullySettled\) return false/,
+    "a bulk 'confirm' can once more book a payment whose named invoices are all already settled — " +
+      "every candidate it would book is a DIFFERENT, still-open bill");
+});
+
+// ── [XML-PDF] An e-factuur must open as its invoice, not as its envelope ──────────────────────
+//
+// Reported with a screenshot of a browser tab: "Bekijk factuur" on invoice 26702771 opened a wall
+// of raw XML — namespaces, CustomizationID, and a base64 blob running off the right edge. Nothing
+// was broken; the stored file IS the UBL, because the supplier sent a UBL.
+//
+// That blob running off the screen was the invoice. Peppol carries the printable document inside
+// the XML in cbc:EmbeddedDocumentBinaryObject, and before this change nothing in the codebase read
+// that element — the app held the letter and showed the envelope. The failure is completely silent:
+// the amounts, the BTW and the supplier are all read correctly, and only the person who tries to
+// LOOK at the invoice ever finds out.
+//
+// Two rows in production today, which is exactly why it is worth holding: e-facturering becomes
+// mandatory for Dutch B2B, and every supplier that switches sends this shape.
+test("[XML-PDF] both doors onto an e-factuur open the PDF inside it, and keep the XML as evidence", () => {
+  // Two doors reach these bytes — an upload and the mail sync — and a fix on one of them is how
+  // this app has repeatedly ended up with two doors making opposite decisions about one file.
+  for (const [pad, waar] of [
+    ["src/app/api/intake/route.ts", "de upload"],
+    ["src/lib/email-integration.ts", "de mailsync"],
+  ]) {
+    const src = code(pad);
+    // The IMPORT, not the identifier. Checking only the name passes just as happily over
+    // `const extractEmbeddedPdf = () => null` — proven, not assumed: that mutation was the first
+    // negative control here, and the earlier version of this line stayed green through it.
+    assert.match(src, /await import\(["']@\/lib\/ubl-embedded-pdf["']\)/,
+      `${waar} reads the e-factuur again without looking for the PDF inside it — the owner is ` +
+        `shown a page of XML while the app holds the printable invoice`);
+    assert.match(src, /extractEmbeddedPdf\(/,
+      `${waar} imports the extractor but never calls it`);
+    assert.match(src, /contentType: ["']application\/pdf["']/,
+      `${waar} stores the extracted document without saying it is a PDF, so the browser will not ` +
+        `render it and the owner is no better off`);
+  }
+
+  // The XML stays the evidence. document_id must keep pointing at it: it is the signed original,
+  // the artefact an accountant and the Belastingdienst are entitled to, and the only proof of what
+  // the supplier actually sent. Only what the OWNER opens changes.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /pdf_url: openUrl \?\? storagePath,/,
+    "the invoice no longer falls back to the XML when there is no embedded PDF — carrying one is " +
+      "OPTIONAL in Peppol, so this must never leave a row with no file at all");
+  const pdfRegel = intake.indexOf("pdf_url: openUrl ?? storagePath");
+  const docRegel = intake.indexOf("document_id: documentId", pdfRegel);
+  assert.ok(docRegel > pdfRegel && docRegel - pdfRegel < 400,
+    "document_id no longer sits with pdf_url on the same insert — the split between what the owner " +
+      "opens and what the machine keeps is the whole design here, and it must stay visible");
+
+  // A missing attachment is not an error, and a failed extraction may not cost the invoice.
+  assert.match(code("src/lib/ubl-embedded-pdf.ts"), /bytes\.subarray\(0, 5\)\.toString\("latin1"\) !== "%PDF-"/,
+    "the extractor stopped checking that the bytes are actually a PDF. The mimeCode alone is a " +
+      "stranger's word about a file this app will then serve under its own name");
+  assert.match(code("src/lib/ubl-embedded-pdf.ts"), /mime !== "application\/pdf"/,
+    "…and it stopped checking the label, which means it is now guessing at the type of untrusted " +
+      "input from its first bytes");
+});

@@ -28,7 +28,7 @@ import { applyRejections, rejectionsByTransaction } from "@/lib/bank-rejections"
 import { rowToTransaction, type BankTransactionDbRow } from "@/lib/bank-import";
 // [WAAROM-WACHT-BANK] Waarom deze regel zichzelf niet koppelde — dezelfde pool als de matcher.
 import { judgeBankWait } from "@/lib/bank-waiting-reason";
-import { settledOnly, quotedSettledInvoice, type QuotedInvoiceRow } from "@/lib/bank-quoted-invoice";
+import { settledOnly, quotedSettledInvoice, quotedInvoiceSet, type QuotedInvoiceRow } from "@/lib/bank-quoted-invoice";
 import { findSupplierSumMatch, type SupplierSumCandidate } from "@/lib/bank-batch-reconcile";
 // [GEHEUGEN] The owner's own confirmations, read back — see match-memory.ts for what it means.
 import { loadMatchMemory } from "@/lib/match-memory-server";
@@ -380,7 +380,7 @@ export async function GET() {
       .from("invoices")
       // [BON-AUTO] field_confidence carries _intake_kind — the one thing that tells a KASSABON from
       // an invoice here, and it decides which evidence is enough below.
-      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence")
+      .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence, invoice_type")
       .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
       .eq("status", "paid")
       .order("id", { ascending: true })
@@ -421,6 +421,13 @@ export async function GET() {
 
   // [AL-GEBOEKT] The settled slice, built once for every line rather than per line.
   const settledForQuote = settledOnly((paidInvRows ?? []) as QuotedInvoiceRow[]);
+  // [SOM-KLOPT] The pool quotedInvoiceSet looks a named number up in: the settled slice PLUS the
+  // open invoices the matcher itself was given. Same list the chooser is drawn from, deliberately —
+  // an explanation built on a different set explains a decision that was never taken.
+  const quotePool: QuotedInvoiceRow[] = [
+    ...settledForQuote,
+    ...(invoices as unknown as QuotedInvoiceRow[]),
+  ];
 
   const paidExplained = new Set<string>();
   if ((paidInvRows ?? []).length > 0 && unexplained.length > 0) {
@@ -514,6 +521,23 @@ export async function GET() {
             invoices: invoices as SupplierSumCandidate[],
           })
         : null;
+    // [SOM-KLOPT] One lookup, read by three consumers below (the card, the waitReason, and the
+    // decision to hide the chooser). Computing it three times would not merely cost work — it is
+    // how the banner and the card managed to say opposite things about the same payment.
+    const quotedSet =
+      (m.transaction.amount ?? 0) < 0 && !isLinked
+        ? quotedInvoiceSet(
+            {
+              amount: m.transaction.amount,
+              reference: m.transaction.reference,
+              description: m.transaction.description,
+            },
+            // [SOM-KLOPT] Settled AND open. Handed only the settled ones, this reports a named
+            // invoice that is merely still open as "not in your administration" — the same false
+            // accusation this task exists to remove, one bucket over.
+            quotePool,
+          )
+        : null;
     return {
       transactionId: txId,
       date: m.transaction.date,
@@ -558,6 +582,11 @@ export async function GET() {
       // maakt er een zin van via why-waiting.ts. Alleen voor regels die NIETS vonden: bij een
       // kandidatenlijst is die lijst het antwoord. Dezelfde `invoices` als de matcher kreeg, want
       // een uitleg die op een andere verzameling rekent legt een besluit uit dat nooit genomen is.
+      // [SOM-KLOPT] Computed BEFORE waitReason and handed to it, because the two used to be able to
+      // contradict each other on one card: the banner said the quoted number was not in the
+      // administration while the card below it named that very invoice, paid, to the cent. One
+      // fact, read once, used by both.
+      quotedSet,
       waitReason:
         m.outcome === "none" && !isLinked
           ? judgeBankWait(
@@ -569,6 +598,13 @@ export async function GET() {
                 description: m.transaction.description,
               },
               invoices,
+              // [SOM-KLOPT] The same lookup the card below uses. Without it rule 1 in judgeBankWait
+              // accuses the owner of not having entered an invoice that is sitting in their own
+              // administration, settled — the sentence the screenshot caught.
+              // Only when EVERYTHING named is booked. With one of them still open there IS
+              // something to choose, and "already settled, nothing to choose here" would be the
+              // half of the truth that asks for nothing.
+              quotedSet?.fullySettled ? quotedSet.settled : null,
             )
           : null,
       // [AL-GEBOEKT] The invoice this payment NAMES, when that invoice exists and is already

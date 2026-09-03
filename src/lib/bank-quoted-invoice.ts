@@ -71,6 +71,8 @@ export interface QuotedInvoiceRow {
   status: string | null;
   client_name: string | null;
   accountant_status?: string | null;
+  /** [SOM-KLOPT] 'creditnota' pays the other way, so it SUBTRACTS from a payment's total. */
+  invoice_type?: string | null;
 }
 
 /**
@@ -144,4 +146,190 @@ export function quotedSettledInvoice(
     zwak ??= gevonden;
   }
   return zwak;
+}
+
+// ── [SOM-KLOPT] ONE PAYMENT, SEVERAL NAMED INVOICES ───────────────────────────────────────────
+//
+// Reported from /bank with two screenshots, and both were right.
+//
+//   Al-Malika Bakkerij, € 466,30, description "2601695, 2601826, 2601291".
+//     2601695 = 162,19   2601826 = 148,68   2601291 = 155,43   →  466,30, to the cent.
+//   Royal Food Center, € 1.955,90, description "2600999", invoice 2600999 = 1.955,90, paid.
+//
+// The first screen said "Geen factuur gevonden voor deze transactie", offered a chooser of three,
+// and underneath showed a card about ONE of the three saying the amount did not agree. The second
+// said, in the banner, that the quoted number "staat niet in je administratie" — directly above a
+// card naming that very invoice at the exact cent. Two panels of one card contradicting each other
+// on a money screen is not a rough edge; it is the moment an accountant stops trusting the app.
+//
+// The owner's rule, and it is the correct one: the payment states which invoices it pays. If every
+// stated number is in the administration and their total is the amount paid, the question is
+// ANSWERED. Not scored, not offered, not asked about — answered. The date does not enter into it,
+// and neither does anything else.
+//
+// quotedSettledInvoice above answers for ONE invoice, which is why it read the Al-Malika line as a
+// near-miss: it found 2601695 at 162,19 against a payment of 466,30, decided the amount disagreed,
+// and reported that as a weak hit. Nothing was wrong with that function; it was asked a question
+// one size too small.
+//
+// ── WHY CREDIT NOTES SUBTRACT ──
+//
+// A supplier who credits you and then bills you settles the difference in one transfer, naming
+// both documents. Adding the creditnota would make the total too high by twice its value and the
+// set would read as "does not add up" — on the one arrangement where the owner has done everything
+// right. invoice_type is the app's own field, so this is a fact about the row, not a guess.
+//
+// ── WHAT IT REFUSES TO DO ──
+//
+// It never books and it never confirms. It reports what the numbers say; the screen turns that
+// into either "this is settled, nothing to do" or "two of the three are booked and one is
+// missing". Partial is the common real case and it must not be dressed up as complete — the sum
+// either matches or it does not, and `coversPayment` says which, always.
+
+/**
+ * Every invoice this payment names, sorted by what the owner would have to DO about it.
+ *
+ * Three buckets, because they ask for three different afternoons and merging any two of them
+ * produces a sentence that is wrong for the third:
+ *   · settled  — nothing to do; the bill is booked.
+ *   · open     — in the administration, still open: this is a real candidate, and the chooser
+ *                below the card is exactly the right control for it.
+ *   · unknown  — named and nowhere: the paper is in a shoebox and only the owner can fix it.
+ *
+ * The first version of this had only "settled" and "unresolved", which read a still-OPEN invoice as
+ * "staat nog niet in je administratie" — a false accusation about an invoice sitting right there,
+ * which is the same class of bug this whole task started from.
+ */
+export interface QuotedInvoiceSet {
+  /** Named and already booked. */
+  settled: QuotedSettled[];
+  /** Named, present, still open — the honest candidates for this payment. */
+  open: QuotedSettled[];
+  /** Named and found nowhere. */
+  unknownNumbers: string[];
+  /** Signed total over settled AND open: a creditnota counts negative. Null when an amount is missing. */
+  total: number | null;
+  /** Does that total equal the payment, to the cent? */
+  coversPayment: boolean;
+  /** Nothing named is still open or missing — then there is genuinely nothing left to choose. */
+  fullySettled: boolean;
+}
+
+/** A creditnota pays the other way. The app's own field, so this is a fact and not a heuristic. */
+function signedTotal(row: QuotedInvoiceRow, total: number): number {
+  return row.invoice_type === "creditnota" ? -Math.abs(total) : Math.abs(total);
+}
+
+function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null): QuotedSettled {
+  const raw = typeof hit.total_inc_btw === "number" ? hit.total_inc_btw : null;
+  return {
+    invoiceId: hit.id,
+    invoiceNumber: hit.invoice_number ?? "",
+    amount: raw,
+    clientName: hit.client_name,
+    amountAgrees:
+      raw != null && paymentAmount != null && Math.abs(Math.abs(raw) - Math.abs(paymentAmount)) < 0.01,
+    lockedByAccountant:
+      hit.accountant_status === "verwerkt" && !SETTLED_STATUSES.has(hit.status ?? ""),
+  };
+}
+
+function isSettled(r: QuotedInvoiceRow): boolean {
+  return SETTLED_STATUSES.has(r.status ?? "") || r.accountant_status === "verwerkt";
+}
+
+/**
+ * Read the numbers this payment states and look every one of them up.
+ *
+ * `rows` is the whole pool the caller can see — settled AND open. Handing it only the settled ones
+ * is what produced the false "not in your administration" above.
+ *
+ * Returns null when the payment names no invoice at all; then there is nothing to say and the
+ * ordinary matcher keeps the floor.
+ */
+export function quotedInvoiceSet(
+  line: { amount: number | null; reference: string | null; description?: string | null },
+  rows: readonly QuotedInvoiceRow[],
+): QuotedInvoiceSet | null {
+  const tx = { reference: line.reference, description: line.description ?? "" };
+
+  const gezien = new Set<string>();
+  const settled: QuotedSettled[] = [];
+  const open: QuotedSettled[] = [];
+  const gevondenNummers: string[] = [];
+  // Only ONE row per invoice NUMBER contributes to the sum. A corrected invoice keeps the
+  // supplier's number and its predecessor is archived; adding both counts the same bill twice and
+  // turns a payment that adds up on paper into one the app calls a mismatch.
+  const geteld = new Set<string>();
+  let total = 0;
+  let anyAmountMissing = false;
+
+  for (const hit of rows) {
+    if (!hit.invoice_number) continue;
+    if (!referenceMatches(tx, hit.invoice_number)) continue;
+    if (gezien.has(hit.id)) continue;
+    gezien.add(hit.id);
+
+    const q = toQuoted(hit, line.amount);
+    (isSettled(hit) ? settled : open).push(q);
+    gevondenNummers.push(hit.invoice_number);
+
+    const nummer = normalizedNumber(hit.invoice_number);
+    if (nummer && geteld.has(nummer)) continue;
+    if (nummer) geteld.add(nummer);
+    if (q.amount == null) anyAmountMissing = true;
+    else total += signedTotal(hit, q.amount);
+  }
+
+  if (settled.length === 0 && open.length === 0) return null;
+
+  const unknownNumbers = statedNumbers(line).filter(
+    (n) => !gevondenNummers.some((g) => normalizedNumber(g) === normalizedNumber(n)),
+  );
+
+  const coversPayment =
+    !anyAmountMissing &&
+    unknownNumbers.length === 0 &&
+    line.amount != null &&
+    Math.abs(Math.abs(total) - Math.abs(line.amount)) < 0.01;
+
+  return {
+    settled,
+    open,
+    unknownNumbers,
+    total: anyAmountMissing ? null : total,
+    coversPayment,
+    // Fully settled means: everything this payment names is booked, and it names nothing else.
+    // Only then is the chooser genuinely empty of anything useful — with an open named invoice in
+    // the list, the chooser is the CORRECT control and taking it away would strand the payment.
+    fullySettled: open.length === 0 && unknownNumbers.length === 0 && settled.length > 0,
+  };
+}
+
+/** Comparison form for an invoice number: case and separators are printing, not identity. */
+function normalizedNumber(n: string | null | undefined): string {
+  return (n ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * The invoice numbers this payment STATES, as tokens.
+ *
+ * Deliberately a plain scan and not parseReferenceNumbers: that function splits on commas for a
+ * payment run and returned the single token `ustd2919045` for `USTD//2919045/`, which is the exact
+ * trap the header of this file documents. Here the tokens are only used to notice that a stated
+ * number found NO invoice, so a slightly generous reader is the safe direction: it can make the
+ * screen say "one of these is missing" where the truth is "that token was never an invoice
+ * number", and it can never make a half-explained payment read as fully explained.
+ */
+function statedNumbers(line: { reference: string | null; description?: string | null }): string[] {
+  const haystack = `${line.reference ?? ""} ${line.description ?? ""}`;
+  const out = new Set<string>();
+  for (const m of haystack.matchAll(/[0-9]{4,}/g)) {
+    // A bare calendar year is never identity — the same rule referenceMatches applies, and for the
+    // same reason: "Huur juli 2026" would otherwise report 2026 as a missing invoice on every rent
+    // payment in the account.
+    if (/^20[2-3]\d$/.test(m[0])) continue;
+    out.add(m[0]);
+  }
+  return [...out];
 }
