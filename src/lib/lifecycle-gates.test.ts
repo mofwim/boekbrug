@@ -13914,6 +13914,69 @@ test("[ZIJBALK] the navigation's destinations are declared once and rendered twi
   );
 });
 
+// ─── [WAARSCHUWING-GEHOORD] A warning nobody listens to is not a warning ───────────────────────
+//
+// A route that answers 200 with a `warning` has done something PARTLY, and saying so is the honest
+// choice — better than a 500 over work that mostly succeeded, and far better than silence. But the
+// honesty only reaches the owner if a screen reads it, and two of the app's six warnings had no
+// reader at all:
+//
+//   · `discount_not_stored` — /api/invoice/draft wrote the row WITHOUT its discount columns, so
+//     the draft stands at the full price. The route says so in its own comment — "Gezegd, niet
+//     verzwegen. De factuur staat er dan voor de volle prijs" — and nothing read it. The owner
+//     agreed ten percent off with a customer and the customer would be billed the whole amount.
+//     Worse, both screens that create a draft go straight on to SEND, which mints the legal
+//     number: by the time anyone could notice, the full-price invoice is issued and crediting is
+//     the only way back. It is caught before the send now.
+//   · `storage_orphan` — a file left in the bucket after its row was deleted. Nothing an owner can
+//     act on. That is a perfectly good answer; it just has to be a decision somebody made.
+//
+// So both facts about every warning live in api-warnings.ts, and this gate keeps that registry
+// honest in both directions: no warning a route can return may be missing from it, and no warning
+// it marks as the owner's may go unread.
+test("[WAARSCHUWING-GEHOORD] every warning a route returns is classified, and the owner's are read", () => {
+  const files = (dir: string, ext: RegExp): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...files(p, ext));
+      else if (ext.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+
+  // What the routes can actually say. Read from the whole file, not line by line: two routes write
+  // `warning:` and the value on separate lines, and a line-based sweep found four of the six.
+  const geretourneerd = new Map<string, string>();
+  for (const f of files("src/app/api", /\.ts$/)) {
+    for (const m of code(f).matchAll(/warning:\s*['"]([a-z_]+)['"]/g)) geretourneerd.set(m[1], f);
+  }
+  assert.ok(geretourneerd.size >= 6, `only ${geretourneerd.size} warning values found in the routes — the scan is broken`);
+
+  const registry = code("src/lib/api-warnings.ts");
+  const schermen = files("src", /\.tsx$/);
+
+  for (const [w, route] of [...geretourneerd].sort()) {
+    // 1. Classified at all. A seventh warning cannot appear without someone answering both
+    //    questions about it — which is the whole reason two of the six went unheard for months.
+    assert.match(registry, new RegExp(`\\n  ${w}: \\{`),
+      `${route} returns warning '${w}' and api-warnings.ts does not say what it means or who hears it`);
+
+    // 2. If it is the owner's, somebody reads it. Derived: a screen naming the string.
+    const blok = new RegExp(`\\n  ${w}: \\{[\\s\\S]*?\\n  \\},`).exec(registry)?.[0] ?? "";
+    if (!/gehoordDoor: "screen"/.test(blok)) {
+      // Marked "log" instead — then the reason must be written down. "Nobody needs to know" is a
+      // defensible answer exactly once it has been argued for.
+      assert.match(blok, /why: "[^"]{40,}"/,
+        `'${w}' is marked as not the owner's business without saying why`);
+      continue;
+    }
+    const lezers = schermen.filter((f) => code(f).includes(`'${w}'`) || code(f).includes(`"${w}"`));
+    assert.ok(lezers.length > 0,
+      `${route} returns warning '${w}' for the owner and no screen reads it — the route is telling nobody`);
+  }
+});
+
 // ─── [VERSTUURD-EERLIJK] "Verstuurd" is only said when it actually went out ────────────────────
 //
 // /api/invoice/send does the irreversible thing before the fallible one. It mints a number out of
@@ -13984,10 +14047,8 @@ test("[VERSTUURD-EERLIJK] every screen that sends an invoice asks whether it was
       `${f}: still tests the warning strings itself instead of asking the one module`);
   }
 
-  // 5. The classification stays exhaustive. Every `warning:` literal any API route can return must
-  //    be named in WARNING_DELIVERY, so a fifth warning cannot be added without someone answering
-  //    "does this mean the customer got nothing?". Derived from the routes, not maintained by hand —
-  //    `discount_not_stored` is the proof that the answer is not always yes.
+  // 5. The classification stays exhaustive — see [WAARSCHUWING-GEHOORD] below, which owns that rule
+  //    now for every warning in the app, not only the delivery ones.
   const geretourneerd = new Set<string>();
   // walk() above only collects .tsx; the API routes are .ts, so they get their own walk.
   const routeFiles = (function ts(dir: string): string[] {

@@ -286,6 +286,14 @@ export const MESSAGES = {
 
   'nieuw.fout.velden': { nl: 'Vul de rood gemarkeerde velden in', ar: 'املأ الحقول المُعلَّمة بالأحمر', en: 'Fill in the fields marked red' },
   'nieuw.fout.btwKlant': { nl: 'Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)', ar: 'رقم ضريبة القيمة المضافة للعميل يبدو غير صحيح (المتوقّع: NL123456789B01)', en: "The client's VAT number looks wrong (expected: NL123456789B01)" },
+  // [WAARSCHUWING-GEHOORD] Het concept is opgeslagen zonder de korting, dus de factuur zou voor
+  // de volle prijs de deur uit gaan. Gezegd VOORDAT het nummer valt: daarna is de factuur wettelijk
+  // uitgegeven en is crediteren de enige weg terug.
+  'nieuw.fout.kortingNietOpgeslagen': {
+    nl: 'De korting is niet opgeslagen — deze factuur zou voor de volle prijs verstuurd worden. Er is nog niets verstuurd; probeer het opnieuw.',
+    ar: 'لم يُحفَظ الخصم — كانت هذه الفاتورة سترسَل بالسعر الكامل. لم يُرسَل شيء بعد؛ حاول مرة أخرى.',
+    en: 'The discount was not saved — this invoice would go out at the full price. Nothing has been sent; please try again.',
+  },
   'nieuw.fout.aanmaken': { nl: 'Aanmaken mislukt — probeer opnieuw', ar: 'فشل الإنشاء — حاول مرة أخرى', en: 'Could not create it — please try again' },
   'nieuw.fout.versturen': { nl: 'Verzenden mislukt — de factuur is opgeslagen als concept', ar: 'فشل الإرسال — حُفظت الفاتورة كمسودة', en: 'Sending failed — the invoice was saved as a draft' },
   'nieuw.fout.omzetten': { nl: 'Omzetten mislukt', ar: 'فشل التحويل', en: 'Conversion failed' },

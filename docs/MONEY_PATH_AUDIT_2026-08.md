@@ -1413,3 +1413,62 @@ grep was line-based; two routes write `warning:` and the value on separate lines
 measurement blind spot in three days, and the first one caught by a gate rather than by hand.
 
 Six controls, six distinct failures.
+
+
+---
+
+## 22. Two warnings the app was saying to nobody — 2 September 2026
+
+Building §21's registry answered a question I had not asked: the map had to classify every
+`warning` any route can return, and once they were all in one place it was obvious that **two of
+the six had no reader anywhere in the app.**
+
+### `discount_not_stored`
+
+`/api/invoice/draft` writes the invoice row through `writeWithTrail`. If one of the discount
+columns is missing it falls back to writing the row **without all three**, and `trailWritten: false`
+is that signal. The route then says so, in as many words, in its own comment:
+
+```ts
+// [KORTING] Gezegd, niet verzwegen. De factuur staat er dan voor de volle prijs.
+...(korting && !trailWritten ? { warning: 'discount_not_stored' } : {}),
+```
+
+*Said, not concealed. The invoice then stands at the full price.* Nothing read it. The owner agrees
+ten percent off with a customer and the customer is billed the whole amount.
+
+And both screens that create a draft go straight on to **send**, which mints the legal number. So
+the window in which this could be noticed closed before anyone could look: by the time a full-price
+invoice exists it is legally issued, and crediting is the only way back. It is caught **before** the
+send now — the screen stops, says the discount was not saved and that nothing has gone out.
+
+**Measured, not assumed: this is latent, not fired.** All three columns (`discount_type`,
+`discount_value`, `created_by`) exist in production, so `writeWithTrail` never takes its fallback,
+and zero invoices carry a discount at all today. What was fixed is a gap that would open on the
+first deployment where a migration lags — the same category as the creditnota exposure in §11.
+
+### `storage_orphan`
+
+A file left in the bucket after its row was deleted. No money moved, no figure changed, and there is
+nothing an owner could do about it. Having no reader is the RIGHT answer here — it just has to be a
+decision somebody made and wrote down, rather than a gap that looks identical to the one above.
+
+### The registry, and why it replaced a second list
+
+`src/lib/api-warnings.ts` now carries both facts about every warning: what it means for delivery
+(§21's question) and who has to hear it. §21 had introduced its own list of the same six names —
+two lists of one vocabulary is how this area keeps failing — so `invoice-delivery.ts` reads the
+registry instead of keeping a copy.
+
+The gate holds it honest in both directions: no warning a route can return may be missing from the
+registry, and no warning marked as the owner's may go unread. A warning marked `"log"` must carry a
+reason of real length — "nobody needs to know" is defensible exactly once it has been argued for.
+
+### One control tested nothing, and said so
+
+NC112 added an unclassified warning to a route and the gate stayed green. The gate was fine: the
+route spells the literal with DOUBLE quotes and my mutation used single ones, so nothing was ever
+changed. A negative control that does not modify the file is not a control, and it looks exactly
+like a passing one. The re-run asserts the mutation landed (`grep -c` on the new name) before
+running the gate — and it then failed correctly, as did a second control writing the value on its
+own line, which is the shape that made my line-based grep find four of six in the first place.

@@ -1057,6 +1057,13 @@ function NewInvoicePageContent() {
     if (!draftRes.ok || !draftJson?.invoiceId) {
       setError(failureText(draftRes.status, draftJson, t('nieuw.fout.omzetten'))); setConvertingOfferte(false); return
     }
+    // [WAARSCHUWING-GEHOORD] The draft was written without its discount columns, so it stands at
+    // the FULL price. Stopping HERE is the whole point: the next call mints the legal number, and
+    // a full-price invoice that has been issued cannot be taken back — only credited. The route
+    // has always said this ("Gezegd, niet verzwegen"); nothing was listening.
+    if (draftJson?.warning === 'discount_not_stored') {
+      setError(t('nieuw.fout.kortingNietOpgeslagen')); setConvertingOfferte(false); return
+    }
     const factuur = { id: draftJson.invoiceId as string }
 
     // Mark offerte as converted
@@ -1268,6 +1275,13 @@ function NewInvoicePageContent() {
       }),
     })
     const draftJson = await draftRes.json().catch(() => ({}))
+    // [WAARSCHUWING-GEHOORD] Same stop as on the offerte path above, and for the same reason: the
+    // send that follows mints the legal number, and a full-price invoice cannot be un-issued.
+    if (draftRes.ok && draftJson?.warning === 'discount_not_stored') {
+      setError(t('nieuw.fout.kortingNietOpgeslagen'))
+      setLoading(false)
+      return
+    }
     if (!draftRes.ok || !draftJson?.invoiceId) {
       setError(failureText(draftRes.status, draftJson, t('nieuw.fout.aanmaken')))
       setLoading(false); return

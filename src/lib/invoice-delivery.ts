@@ -23,8 +23,12 @@
 //
 // So the question moves out of the screens. A screen decides how to SAY it; this decides IF.
 
-/** The ways a send can be legally complete and practically not delivered. */
-export type DeliveryFailure = "pdf_failed" | "email_failed";
+// [WAARSCHUWING-GEHOORD] The classification lives in ONE registry, next to the other fact each
+// warning carries (who has to hear it). Two lists of the same six names would drift, which is the
+// failure this whole area keeps producing.
+import { API_WARNINGS, type DeliveryFailure } from "./api-warnings";
+
+export type { DeliveryFailure };
 
 /** What /api/invoice/send returns on a 2xx. Everything optional: old shapes reach here too. */
 export interface SendResponse {
@@ -38,35 +42,6 @@ export interface SendResponse {
 }
 
 /**
- * Every `warning` any API route can return, and what it means for delivery. Null means the warning
- * is about something else entirely and the document DID go out.
- *
- * Exhaustive on purpose, and kept exhaustive by a [VERSTUURD-EERLIJK] gate that reads the warning
- * literals out of src/app/api/ and fails when one is missing here. A fifth warning therefore
- * cannot be added without someone answering "does this mean the customer got nothing?" — which is
- * the question four screens had already failed to ask.
- */
-export const WARNING_DELIVERY: Record<string, DeliveryFailure | null> = {
-  // The number is in the legal sequence; the document was never built or never handed over.
-  pdf_failed: "pdf_failed",
-  email_failed: "email_failed",
-  // A CORRECTED invoice that did not reach the customer — they still hold the old version, so it
-  // is the same class: something the owner must act on, by sending again.
-  corrected_delivery_failed: "email_failed",
-  // Not a delivery matter. The draft saved without its discount trail: a real problem, raised on a
-  // different screen, but the invoice that went out went out. Reporting it here would put a
-  // recovery banner over a delivered invoice and send a duplicate to the customer.
-  discount_not_stored: null,
-  // The bank warnings. They cannot reach an invoice screen today, and they are named here anyway,
-  // because the default for an UNKNOWN warning above is deliberately "undelivered" — the safe
-  // mistake, but still a mistake. Listing the app's whole warning vocabulary is what keeps that
-  // default unreachable in practice rather than merely unlikely. Neither says anything about
-  // whether a customer received a document.
-  payment_link_not_recorded: null,
-  storage_orphan: null,
-};
-
-/**
  * The failure to tell the owner about, or null when the invoice really did go out.
  *
  * Null is the ONLY value that permits a "verstuurd" message. Anything else means the number was
@@ -75,8 +50,8 @@ export const WARNING_DELIVERY: Record<string, DeliveryFailure | null> = {
 export function deliveryFailure(response: SendResponse | null | undefined): DeliveryFailure | null {
   if (!response) return null; // no body to judge; the caller's res.ok check already spoke
   if (typeof response.warning === "string" && response.warning !== "") {
-    const known = WARNING_DELIVERY[response.warning];
-    if (known !== undefined) return known;
+    const known = API_WARNINGS[response.warning];
+    if (known !== undefined) return known.delivery;
     // An unknown warning is still the route flagging something, and the two errors here are not
     // equal: saying "verstuurd" over a failed send loses the money, while an unnecessary recovery
     // banner costs the owner a moment and at worst one duplicate e-mail. So an unrecognised
