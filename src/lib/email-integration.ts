@@ -71,6 +71,8 @@ import { resolveSupplierForImport } from '@/lib/supplier-registry'
 // [IBAN-WISSEL] Een bekende leverancier met ineens een ander rekeningnummer — de handtekening
 // van factuurfraude, en de enige as waarop élke andere poort hier groen geeft.
 import { detectIbanChange } from '@/lib/iban-change'
+// [EERSTE-KEER] The one translation from an IBAN check to the flags it leaves on the invoice.
+import { ibanChangeSafecore } from '@/lib/intake-supplier'
 // [AFZENDERREGEL] Adressen waarvan de eigenaar zelf zei "altijd negeren" — toegepast in PHASE 0,
 // dus vóór de AI-aanroep, en altijd verantwoord in de skip-registry.
 import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '@/lib/sender-rules'
@@ -4329,17 +4331,16 @@ export async function syncUserEmails(
         }
         // [IBAN-WISSEL] Beide nummers mee, zodat de wachtrij ze naast elkaar kan tonen — dat
         // vergelijken IS de controle die de eigenaar moet doen. → needs-review + geen auto-boeking.
-        if (ibanChange.status === 'unavailable') {
-          // [IBAN-CHECK-HONEST] De controle kon niet draaien. Dat is iets anders dan "geen wissel",
-          // en het verschil is duur: bij factuurfraude is het gewijzigde rekeningnummer het enige
-          // signaal, dus een stil overgeslagen controle laat de eigenaar naar de rekening van de
-          // fraudeur betalen zonder dat iets dat ooit heeft gezegd.
-          safecore.iban_check_unavailable = true
-        } else if (ibanChange.change) {
-          safecore.iban_changed = true
-          safecore.iban_changed_from = ibanChange.change.from
-          safecore.iban_changed_to = ibanChange.change.to
-        }
+        // [EERSTE-KEER] ONE translation from a check to its flags, and this used to be a second
+        // copy of it. Two copies of a rule drift, and this pair already had: the intake path gained
+        // a flag for "there was nothing to compare with" and this one would have kept writing the
+        // empty object that reads as a clean comparison — so the same invoice would have been
+        // reassuring by e-mail and honest by camera.
+        //
+        // [IBAN-CHECK-HONEST] What it writes for 'unavailable' is unchanged and is the reason the
+        // function exists: on this check a skipped run and a clean run are indistinguishable to the
+        // person about to pay, and fraud is exactly the case where every other number adds up.
+        Object.assign(safecore, ibanChangeSafecore(ibanChange))
         fieldConfidenceValue = {
           ...(aiConfidence ?? {}),
           _safecore: safecore,

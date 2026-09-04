@@ -219,16 +219,31 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
   const ibanPrintedRaw = (inv.field_confidence as { _vendor_iban_printed?: string } | null)?._vendor_iban_printed
   const ibanPrinted = ((inv.vendor_iban ?? '').trim().length >= 15)
   const ibanChanged = sc.iban_changed === true
+  // [EERSTE-KEER] The fourth state, and the comment above lists only three. "We compared it and it
+  // is unchanged" and "we had nothing to compare it with" both arrived here as an empty safecore,
+  // so the first invoice from a supplier — no history whatsoever — earned the tick and the sentence
+  // "ongewijzigd ten opzichte van eerdere facturen", about earlier invoices that do not exist.
+  // Measured on one account: 72 invoices, EUR 63.128,41, all reassured at the one moment nothing in
+  // the system could catch a misread digit or a redirected payment.
+  //
+  // Not flagged red: a new supplier is an ordinary event, and a panel that shouts at every one of
+  // them is a panel nobody reads by the third. It is 'not-checked', which is what happened, and the
+  // sentence hands the comparison to the only party who can make it.
+  const ibanFirstSeen = sc.iban_first_seen === true
   out.push({
     id: 'iban',
     label: 'Rekeningnummer van deze leverancier',
     outcome: ibanChanged ? 'flagged'
       : sc.iban_check_unavailable === true ? 'not-checked'
       : !ibanPrinted ? 'not-checked'
+      : ibanFirstSeen ? 'not-checked'
       : 'passed',
     detail: ibanChanged
       ? `stond eerder op ${sc.iban_changed_from ?? 'een ander nummer'} — bel de leverancier op een nummer dat je zelf opzoekt`
       : sc.iban_check_unavailable ? 'we konden dit niet nagaan'
+      : ibanFirstSeen && ibanPrinted
+        ? 'dit is het eerste rekeningnummer dat we van deze leverancier zien — er is niets om mee te ' +
+          'vergelijken. Neem het over van de factuur vóór je betaalt'
       : !ibanPrinted
         // [REKENING-GELEZEN] Only when NOTHING was read. When the reader saw something it could
         // not use, saying "er staat er geen" is a claim about the paper we cannot make.
