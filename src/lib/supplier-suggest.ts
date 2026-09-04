@@ -82,6 +82,17 @@ export const SUPPLIER_SUGGEST_LIMIT = 6
  */
 export const SUPPLIER_PICK_LIMIT = 400
 
+/**
+ * [LEVERANCIER-BLADEREN] How many the BROWSE list shows — the one the owner opens deliberately,
+ * having asked to see what they have rather than typed a guess.
+ *
+ * Six is right for a panel that appears under a half-typed word and must not bury the form. It is
+ * wrong for "show me my suppliers": an owner with 54 of them would get six and a line saying there
+ * are 48 more, from a list they opened precisely because they did not know what to type. So the
+ * browse list is the whole registry, and the panel scrolls instead of truncating.
+ */
+export const SUPPLIER_BROWSE_LIMIT = SUPPLIER_PICK_LIMIT
+
 /** Below this the panel stays shut on typing: one letter matches most of a supplier list. */
 export const SUPPLIER_SUGGEST_MIN_CHARS = 2
 
@@ -161,9 +172,14 @@ export function suggestSuppliers(
   }
   if (scored.length === 0) return EMPTY
 
+  // [LEVERANCIER-BLADEREN] Shortest-first is a RELEVANCE rule: among names that all matched what
+  // was typed, the shortest is the tightest match. With nothing typed nothing matched, so it ranks
+  // by an accident of spelling — and a list of 54 companies ordered by name length is one an owner
+  // has to read end to end to find anything. With no query the order is the alphabet.
+  const browsing = queryFolded === ''
   scored.sort((a, b) =>
     a.rank - b.rank ||
-    a.choice.name.length - b.choice.name.length ||
+    (browsing ? 0 : a.choice.name.length - b.choice.name.length) ||
     a.folded.localeCompare(b.folded, 'nl') ||
     a.choice.id.localeCompare(b.choice.id),
   )

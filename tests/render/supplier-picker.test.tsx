@@ -160,3 +160,82 @@ test("[LEVERANCIER-KIEZEN] the verify queue's own name field is the picker, not 
   // amounts the moment the modal opens is worse than no list.
   assert.doesNotMatch(html, /role="listbox"/);
 });
+
+// ── [LEVERANCIER-BLADEREN] ────────────────────────────────────────────────────────────────────
+//
+// The screenshot that started this: the yellow "De AI was niet zeker over de leverancier" notice,
+// the field holding "ketel", and nothing on the screen saying the owner's own 54 suppliers are one
+// tap away. The list was reachable — by focusing, and by typing two characters that happen to
+// match — which is not the same as being findable.
+//
+// No gate in this repo can focus a field, so a render is the only place the BUTTON can be proven
+// to exist before the owner has to find it.
+
+test("[LEVERANCIER-BLADEREN] the queue's supplier field carries a button that opens the list", async () => {
+  const { ConfirmPaidModal } = await import("../../src/app/dashboard/incoming/IncomingInvoicesClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { classifyImportHealth } = await import("../../src/lib/import-health");
+
+  const base = {
+    id: "n1", client_name: "Jim Ketels", client_email: null, invoice_type: "factuur",
+    total_ex_btw: 38.8, btw_amount: 3.49, total_inc_btw: 42.29, amount_paid: 0,
+    invoice_date: "2026-09-01", invoice_number: "26004628", source: "email",
+    pdf_url: null, document_id: null, created_at: "2026-09-01T09:38:00Z",
+    folder_id: null, folder_name: null,
+    field_confidence: { client_name: 0.4 },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invoice = { ...base, health: classifyImportHealth(base as any) };
+
+  const draw = (suppliers: { id: string; name: string; iban: string | null }[]) =>
+    renderToStaticMarkup(
+      React.createElement(DialogProvider, null,
+        React.createElement(ToastProvider, null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          React.createElement(ConfirmPaidModal as any, {
+            invoice, startEditing: true, suppliers, suppliersUnavailable: false,
+            onVerify() {}, onPay() {}, onCancel() {},
+          }))));
+
+  const html = draw(REGISTRY);
+  assert.match(html, /aria-label="Toon je leveranciers"/,
+    "the field offers no way IN to the list — the owner has to already know it is there");
+  // Anchored on the BUTTON element. The first version of this assertion looked for
+  // aria-expanded + aria-controls anywhere in the markup and passed on the INPUT, which carries
+  // both — it would have stayed green with no button on the screen at all.
+  assert.match(html, /<button[^>]*aria-label="Toon je leveranciers"[^>]*aria-controls="/,
+    "the button must name the list it opens, for a reader that cannot see the chevron");
+  assert.match(html, /<button[^>]*aria-label="Toon je leveranciers"[^>]*aria-expanded="false"/,
+    "…and say it is shut, because it is: the panel is not on the first paint");
+  assert.doesNotMatch(html, /role="listbox"/, "…and opening it is the owner's decision, not the modal's");
+
+  // No registry, no button: a door onto an empty room is worse than no door.
+  assert.doesNotMatch(draw([]), /aria-label="Toon je leveranciers"/,
+    "an owner with no suppliers is offered a button that would open nothing");
+});
+
+test("[LEVERANCIER-BLADEREN] a full registry scrolls inside the panel instead of burying the form", async () => {
+  const { SupplierSuggestionPanel } = await import("../../src/components/invoice/SupplierNameInput");
+  const { suggestSuppliers, SUPPLIER_BROWSE_LIMIT } = await import("../../src/lib/supplier-suggest");
+
+  // This owner has 54. Below the amounts and the confirm button sits everything this panel pushes
+  // down, so a list that renders 54 rows at full height moves the money off the screen.
+  const many = Array.from({ length: 54 }, (_, i) => ({
+    id: String(i), name: `Leverancier ${String(i).padStart(2, "0")}`, iban: null,
+  }));
+  const suggestion = suggestSuppliers("", many, SUPPLIER_BROWSE_LIMIT);
+  assert.equal(suggestion.matches.length, 54, "the fixture must reach the row branch with a FULL list");
+
+  const html = renderToStaticMarkup(
+    React.createElement(SupplierSuggestionPanel, {
+      suggestion, active: -1, unavailable: false, newNotice: false, listId: "sug", onPick() {},
+    }),
+  );
+  assert.match(html, /max-height:264px/, "the panel has no height cap, so 54 rows push the form away");
+  assert.match(html, /overflow-y:auto/, "…and no way to reach the rows the cap hides");
+  // Every one of them is REACHABLE — the cap is a viewport, not a truncation.
+  assert.equal((html.match(/role="option"/g) ?? []).length, 54);
+  assert.doesNotMatch(textOf(html), /Nog \d+ meer/, "a complete list must not claim it is short of some");
+});
+

@@ -172,6 +172,24 @@ const ALLEEN_SERVICE_ROLE = [
 const lijst = (namen: string[]) => namen.map((n) => `'${n}'`).join(", ");
 
 const STAND_CONTROLE: Record<string, Stand> = {
+  "invoice_name_follows_taught_supplier.sql": {
+    soort: "controle",
+    vraag: "geen factuur toont nog een spelling die de eigenaar zelf aan zijn leverancier koppelde",
+    // Gekoppeld op printed_name, niet op alias_key: die laatste is de GENORMALISEERDE vorm
+    // (supplierNameKey haalt leestekens en rechtsvormen eruit), dus "Silifke / Hocaoglu" staat er
+    // als "silifke hocaoglu" en matcht nooit op de naam die op de factuur staat. Een eerdere versie
+    // van de migratie deed het wel zo en raakte nul rijen — schoon gedraaid, niets veranderd.
+    sql: `not exists (
+           select 1
+             from public.invoices i
+             join public.suppliers s on s.id = i.supplier_id
+             join public.supplier_aliases a
+               on a.user_id = i.receiver_id
+              and a.supplier_id = i.supplier_id
+              and lower(btrim(a.printed_name)) = lower(btrim(i.client_name))
+            where i.client_name is not null
+              and lower(btrim(i.client_name)) is distinct from lower(btrim(s.name)))`,
+  },
   "accountant_guard_fixed_search_path.sql": {
     soort: "controle",
     vraag: "de bedragbewaker draait met een vast zoekpad",

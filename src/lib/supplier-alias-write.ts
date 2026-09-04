@@ -200,6 +200,12 @@ export async function supplierIdForPrintedName(
 ): Promise<string | null> {
   const key = supplierNameKey(printedName)
   if (!key) return null
+  // [LES-TELT-MEE] A placeholder may never resolve, however it got into the table. planSupplierAlias
+  // now refuses to store such a key, but a row written before that guard existed would send every
+  // invoice whose sender the reader could not read to one company — and both callers of this
+  // function decide identity with the answer. One guard here, rather than one at each caller that
+  // remembers to.
+  if (!isReliableSupplierName(printedName ?? '')) return null
   try {
     const { data, error } = await supabase
       .from('supplier_aliases').select('supplier_id')

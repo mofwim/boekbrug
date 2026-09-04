@@ -225,6 +225,32 @@ export async function resolveSupplierForImport(
         }
       }
 
+      //   (c) [LES-TELT-MEE] The owner's own lesson, last — and still ahead of founding a company.
+      //
+      // Tier 0 above consults the aliases only when the invoice carries NO IBAN, on the sound
+      // argument that an IBAN is a stronger statement of identity than a name the owner mapped.
+      // That argument holds while the IBAN matches something. Here it has matched nothing, no row
+      // could be adopted, and the only thing left is to CREATE a supplier named whatever the reader
+      // printed — which is the misreading the owner already corrected once.
+      //
+      // Measured on this account: seven of the fifty-four supplier rows are second and third rows
+      // for a company that already had one, and several companies legitimately invoice from more
+      // than one account (Sumer Food B.V. has seven). So "known name, unknown account" is the
+      // ordinary case, not the exotic one, and answering it with a new island is how one company's
+      // crediteurenstand ends up split across three names.
+      //
+      // The IBAN is deliberately NOT attached to the row this returns. That is exactly the change
+      // [IBAN-WISSEL] exists to put in front of the owner, and knownIbanForVendor now resolves the
+      // same alias, so the flag fires on this invoice instead of being silently written away.
+      {
+        const aliased = await supplierIdForPrintedName(supabase, userId, cleanName)
+        if (aliased) {
+          const { data: byAlias } = await supabase
+            .from('suppliers').select('id, name').eq('id', aliased).eq('user_id', userId).maybeSingle()
+          if (byAlias) return { id: byAlias.id, name: byAlias.name }
+        }
+      }
+
       // Create, keyed by IBAN. Plain INSERT — NOT an upsert with onConflict: the (user_id, iban)
       // unique index is PARTIAL (`WHERE iban IS NOT NULL`), and PostgREST's onConflict cannot
       // carry that predicate, so an ON CONFLICT arbiter would fail to resolve and the create would

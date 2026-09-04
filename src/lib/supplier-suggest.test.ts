@@ -12,6 +12,7 @@ import {
   suggestSuppliers,
   shouldSuggest,
   SUPPLIER_SUGGEST_LIMIT,
+  SUPPLIER_BROWSE_LIMIT,
   type SupplierChoice,
 } from './supplier-suggest'
 
@@ -130,4 +131,42 @@ test('[LEVERANCIER-KIEZEN] the panel waits for a second character, but opens emp
   assert.equal(shouldSuggest('w k', true), true)
   assert.equal(shouldSuggest('', false), false, 'a field nobody is in shows nothing')
   assert.equal(shouldSuggest('ketels', false), false)
+})
+
+// ── [LEVERANCIER-BLADEREN] ────────────────────────────────────────────────────────────────────
+//
+// The list opened on focus and on two typed characters, and had no button. That is a feature an
+// owner meets by accident, and the field it lives in is the one the reader most often fills with
+// something wrong — so the moment it is needed, the owner is looking at a plain text box holding
+// "Jim Ketels" with no sign that their own 54 suppliers are one tap away.
+//
+// Browsing therefore asks the registry with an EMPTY query, whatever the field holds.
+
+test('[LEVERANCIER-BLADEREN] browsing offers every supplier, in alphabetical order', () => {
+  const all = names('', REGISTRY, SUPPLIER_BROWSE_LIMIT)
+  assert.equal(all.length, REGISTRY.length, 'browsing is the whole registry, not a page of it')
+  assert.deepEqual(
+    all,
+    [...REGISTRY].map((r) => r.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase(), 'nl')),
+    'a list opened to be READ is ordered by the alphabet, not by name length',
+  )
+})
+
+test('[LEVERANCIER-BLADEREN] shortest-first still decides between names that actually matched', () => {
+  // The browse order must not have cost the typed panel its relevance rule: among candidates that
+  // all matched "ketels", the shorter name is the tighter match and leads.
+  assert.deepEqual(names('ketels'), ['Jim Ketels', 'W. Ketels en Zoon Eierhandel'])
+})
+
+test('[LEVERANCIER-BLADEREN] the browse cap carries the whole payload the screen was given', () => {
+  // One number, or the panel silently truncates a list the page already holds in memory and tells
+  // the owner to keep typing towards a name they opened the list because they did not know.
+  assert.equal(SUPPLIER_BROWSE_LIMIT, 400)
+  assert.ok(SUPPLIER_BROWSE_LIMIT > SUPPLIER_SUGGEST_LIMIT)
+  const many: SupplierChoice[] = Array.from({ length: 54 }, (_, i) => ({
+    id: String(i), name: `Leverancier ${String(i).padStart(2, '0')}`,
+  }))
+  const browsed = suggestSuppliers('', many, SUPPLIER_BROWSE_LIMIT)
+  assert.equal(browsed.matches.length, 54, 'an owner with 54 suppliers browses 54 of them')
+  assert.equal(browsed.hidden, 0, '…and is not told there are more that it did not show')
 })
