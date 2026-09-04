@@ -24474,6 +24474,42 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [BETAALBAAR-NUMMER] ───────────────────────────────────────────────────────────────────────
+//
+// The fraud check answers "did this supplier's account number change" by reading the OLDEST number
+// stored for them. Valid or not — and 6 of this account's 50 stored numbers are not account numbers
+// at all, misreadings that founded their own supplier row before identityIban started refusing them.
+//
+// A malformed number is not one anybody can have paid to: no bank accepts it, and this app's own
+// pay sheet refuses to build a QR from it. So it can never be "the account they used before", and
+// comparing a good invoice against it reports a change that did not happen. Measured: of the 31
+// suppliers this check would compare against, one (Mollie B.V.) holds NL21CITI20323285 — sixteen
+// characters — as its oldest, and its next genuine invoice would have raised a fraud alarm about a
+// supplier who did nothing. A false alarm here is expensive twice: a phone call, and the lesson
+// that this particular warning can be clicked past.
+test("[BETAALBAAR-NUMMER] the fraud check compares against a number someone could actually have paid", () => {
+  const fraude = code("src/lib/iban-change.ts");
+
+  assert.match(fraude, /function oldestPayableIban/,
+    "the lookups take the oldest stored row outright again, valid or not");
+  assert.match(fraude, /const usable = identityIban\(row\.iban\)/,
+    "…and judge it with something other than the registry's own key, so the two can disagree");
+
+  // Every lookup goes through it. A tier that still reads a single row straight is a tier that can
+  // answer the check with a number nobody could pay to.
+  const lookup = fraude.slice(fraude.indexOf("export async function knownIbanForVendor"));
+  const body = lookup.slice(0, lookup.indexOf("\n}"));
+  assert.equal((body.match(/oldestPayableIban\(/g) ?? []).length, 3,
+    "one of the three tiers no longer filters for a payable number");
+  assert.doesNotMatch(body, /return normalizeIban\(/,
+    "a tier returns a stored number without asking whether it is an account number at all");
+
+  // Ordered explicitly, or the row that answers a fraud check is whichever one the database felt
+  // like returning.
+  assert.equal((body.match(/\.order\('created_at', \{ ascending: true \}\)/g) ?? []).length, 2,
+    "the two multi-row lookups must both be ordered oldest-first");
+});
+
 // ── [EERSTE-KEER] ─────────────────────────────────────────────────────────────────────────────
 //
 // The checks panel gives one green tick per row, and the strongest of them reads "Rekeningnummer

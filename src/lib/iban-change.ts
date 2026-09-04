@@ -29,7 +29,7 @@
 // melding", nooit een mislukte import.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk } from '@/lib/supplier-registry'
+import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk, identityIban } from '@/lib/supplier-registry'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,6 +114,31 @@ export function ibanChangeReason(change: IbanChange): string {
 }
 
 /**
+ * [BETAALBAAR-NUMMER] The oldest stored number that is actually an IBAN.
+ *
+ * Every lookup below used to take the oldest stored row outright, valid or not. A malformed number
+ * is not one this owner can ever have paid to — no bank accepts it and this app's own pay sheet
+ * refuses to build a QR from it — so it cannot be "the account they used before", and comparing a
+ * good invoice against it reports a change that never happened. That is a fraud alarm about a
+ * supplier who did nothing, and a false alarm on this particular check is expensive twice: it costs
+ * the owner a phone call, and it teaches them that this warning can be clicked past.
+ *
+ * Measured on one account: 31 suppliers this check would compare against, and for one of them
+ * (Mollie B.V.) the oldest stored number is NL21CITI20323285 — sixteen characters. Its next genuine
+ * invoice would have been flagged.
+ *
+ * identityIban is the same normalise-and-mod-97 the registry keys creation on, so the two agree by
+ * construction about what counts as an account number at all.
+ */
+function oldestPayableIban(rows: { iban: string | null }[] | null | undefined): string | null {
+  for (const row of rows ?? []) {
+    const usable = identityIban(row.iban)
+    if (usable) return usable
+  }
+  return null
+}
+
+/**
  * Het IBAN dat we AL kennen voor deze leverancier, gezocht op de sleutels die niet meeveranderen
  * met het rekeningnummer: eerst KVK (wettelijk, uniek), dan de genormaliseerde naamsleutel.
  *
@@ -156,11 +181,14 @@ export async function knownIbanForVendor(
         .eq('user_id', userId)
         .eq('kvk_number', kvk)
         .not('iban', 'is', null)
-        .limit(1)
-        .maybeSingle()
+        // [BETAALBAAR-NUMMER] Several rows, oldest first, and the first PAYABLE one wins. Ordered
+        // explicitly: without it the row that answers the fraud check is whichever one the database
+        // happened to return.
+        .order('created_at', { ascending: true })
+        .limit(5)
       if (error) throw new Error(error.message)
-      const hit = (data as { iban: string | null } | null)?.iban
-      if (hit) return normalizeIban(hit)
+      const hit = oldestPayableIban(data as { iban: string | null }[] | null)
+      if (hit) return hit
     }
 
     const cleanName = (vendor.name ?? '').trim()
@@ -211,10 +239,9 @@ export async function knownIbanForVendor(
         .eq('id', aliasedId)
         .not('iban', 'is', null)
         .limit(1)
-        .maybeSingle()
       if (viaErr) throw new Error(viaErr.message)
-      const hit = (viaAlias as { iban: string | null } | null)?.iban
-      if (hit) return normalizeIban(hit)
+      const hit = oldestPayableIban(viaAlias as { iban: string | null }[] | null)
+      if (hit) return hit
     }
 
 
@@ -225,11 +252,13 @@ export async function knownIbanForVendor(
       .eq('user_id', userId)
       .eq('name_key', key)
       .not('iban', 'is', null)
-      .order('created_at', { ascending: true }) // de oudste = het nummer waarop al betaald is
-      .limit(1)
-      .maybeSingle()
+      // [BETAALBAAR-NUMMER] de oudste = het nummer waarop al betaald is — maar alleen als het een
+      // rekeningnummer IS. Gemeten: Mollie B.V. staat hier met NL21CITI20323285, zestien tekens, en
+      // dat is de rij waartegen de volgende echte Mollie-factuur zou zijn afgezet.
+      .order('created_at', { ascending: true })
+      .limit(5)
     if (error) throw new Error(error.message)
-    return normalizeIban((data as { iban: string | null } | null)?.iban)
+    return oldestPayableIban(data as { iban: string | null }[] | null)
   }
 }
 
