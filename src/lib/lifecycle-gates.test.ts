@@ -24466,6 +24466,55 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [EERSTE-KEER] ─────────────────────────────────────────────────────────────────────────────
+//
+// The checks panel gives one green tick per row, and the strongest of them reads "Rekeningnummer
+// van deze leverancier — ongewijzigd ten opzichte van eerdere facturen". On the FIRST invoice from
+// a supplier there are no earlier invoices, and it said it anyway: assessIbanChange returns null
+// both when it compared and found no change, and when it had nothing to compare with, and
+// ibanChangeSafecore turned both into an empty object.
+//
+// That is the one moment nothing else can help. mod-97 catches every single-digit misread and
+// every adjacent transposition (measured: 0 of 90 and 0 of 5 slip through), so a wrong number that
+// still validates is a two-digit error — 0.8% of them do — or a valid number read off the wrong
+// part of the page. The only defence left is history, and a first invoice has none. Measured on one
+// account: 72 invoices, EUR 63,128.41, each of them ticked green.
+test("[EERSTE-KEER] nothing to compare with is never reported as a clean comparison", () => {
+  const type = code("src/lib/iban-change.ts");
+  const vertaler = code("src/lib/intake-supplier.ts");
+  const paneel = code("src/lib/invoice-checks.ts");
+  const mail = code("src/lib/email-integration.ts");
+
+  // 1. Required on the type, not optional. An optional field defaults to the reassuring answer at
+  //    every construction site that forgets it, which is exactly how this got here.
+  assert.match(type, /firstSeen: boolean/, "firstSeen is gone, or made optional — see the note on the type");
+  assert.doesNotMatch(type, /firstSeen\?: boolean/,
+    "an optional firstSeen lets a forgotten field mean 'we compared it', which is the bug");
+  assert.match(type, /firstSeen: !known/, "the check no longer reports whether it had anything to compare with");
+
+  // 2. The translator keeps the two apart.
+  assert.match(vertaler, /return check\.firstSeen \? \{ iban_first_seen: true \} : \{\};/,
+    "a first sighting leaves nothing behind again, and nothing downstream can tell it from a pass");
+
+  // 3. ONE translator. The e-mail path used to carry its own copy of this rule, and two copies of a
+  //    rule drift — this pair would have drifted on exactly this flag, so the same invoice would
+  //    have been reassuring by e-mail and honest by camera.
+  assert.match(mail, /ibanChangeSafecore\(ibanChange\)/,
+    "the e-mail path translates the IBAN check itself again — one rule, two copies, and they drift");
+  assert.doesNotMatch(mail, /safecore\.iban_changed_from\s*=/,
+    "…the hand-rolled copy is back");
+
+  // 4. And the row itself does not pass on it.
+  assert.match(paneel, /: ibanFirstSeen \? 'not-checked'/,
+    "a first sighting earns the tick again");
+  assert.match(paneel, /eerste rekeningnummer dat we van deze leverancier zien/,
+    "…without saying what actually happened");
+  // Not red either: a new supplier is ordinary, and a panel that shouts at every one of them is a
+  // panel nobody reads by the third.
+  assert.doesNotMatch(paneel, /ibanFirstSeen \? 'flagged'/,
+    "every new supplier is now an alarm, which is how alarms stop being read");
+});
+
 // ── [LES-TELT-MEE] ────────────────────────────────────────────────────────────────────────────
 //
 // The owner corrects a misread supplier name and the app writes the lesson down. Measured on

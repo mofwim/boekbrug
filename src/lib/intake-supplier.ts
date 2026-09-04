@@ -69,12 +69,22 @@ export interface IntakeSupplier {
  */
 export function ibanChangeSafecore(check: IbanCheck): Record<string, unknown> {
   if (check.status === "unavailable") return { iban_check_unavailable: true };
-  if (!check.change) return {};
-  return {
-    iban_changed: true,
-    iban_changed_from: check.change.from,
-    iban_changed_to: check.change.to,
-  };
+  if (check.change) {
+    return {
+      iban_changed: true,
+      iban_changed_from: check.change.from,
+      iban_changed_to: check.change.to,
+    };
+  }
+  // [EERSTE-KEER] "Nothing changed" and "there was nothing to compare with" both used to leave
+  // here as {}, and an empty safecore is what invoice-checks.ts reads as a clean comparison. So the
+  // first invoice from a supplier — the one case with no history at all to catch a misread digit or
+  // a redirected payment — carried a green tick saying the account number was unchanged from
+  // earlier invoices that do not exist.
+  //
+  // A flag, not a warning: a new supplier is an ordinary event and flagging all of them red is how
+  // a panel stops being read. It says only that this comparison did not happen.
+  return check.firstSeen ? { iban_first_seen: true } : {};
 }
 
 /**

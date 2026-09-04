@@ -234,6 +234,13 @@ export interface FieldConfidence {
     // klopt de rekensom juist wél en is het rekeningnummer het enige signaal — dus een controle
     // die stil is overgeslagen mag niet als een geslaagde controle ogen.
     iban_check_unavailable?: boolean
+    // [EERSTE-KEER] Er was NIETS om mee te vergelijken: dit is het eerste rekeningnummer dat we van
+    // deze leverancier zien. Een derde geval naast "gewijzigd" en "kon niet nagaan", en het stond er
+    // niet — waardoor het samenviel met "vergeleken en ongewijzigd", dat de enige is die een vinkje
+    // verdient. Gemeten op één administratie: 72 facturen, € 63.128,41, allemaal groen afgevinkt op
+    // het ene moment dat er geen enkele geschiedenis was om een misgelezen cijfer of een omgeleide
+    // betaling mee te betrappen.
+    iban_first_seen?: boolean
     // [CREDIT-WOORD] Bij de intake gezet toen het WOORD "creditnota" (of een variant) in de KOP van
     // het document stond terwijl de lezing er een gewone factuur van maakte. De tweede
     // deterministische greep naast de nummerprefix, en de enige die ook werkt bij een leverancier

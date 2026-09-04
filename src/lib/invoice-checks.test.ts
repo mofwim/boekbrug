@@ -440,3 +440,58 @@ test('[WIJ-LAZEN] a malformed btw number sends the owner to the INVOICE before t
     'and the possibility that the fault is ours is never stated');
 });
 
+// ── [EERSTE-KEER] ─────────────────────────────────────────────────────────────────────────────
+//
+// The comment above the iban row lists three states and calls collapsing any two of them "the
+// failure this whole file is careful about". There were four. "We compared it and it is unchanged"
+// and "we had nothing to compare it with" both arrived as an empty _safecore, and the second one
+// therefore earned the tick — and the sentence "ongewijzigd ten opzichte van eerdere facturen",
+// which on a first invoice is a claim about invoices that do not exist.
+//
+// It matters here more than anywhere: mod-97 catches every single-digit misread and every adjacent
+// transposition (measured: 0 of 90 and 0 of 5 slip through), so a wrong number that still validates
+// is a two-digit error — about 0.8% of them — or a valid number read off the wrong part of the page.
+// Against those the only defence is history, and a first invoice has none. Measured on one account:
+// 72 invoices, EUR 63,128.41.
+
+test('[EERSTE-KEER] a first invoice from a supplier does not claim the number is unchanged', () => {
+  const first = clean({
+    vendor_iban: 'NL94INGB0666664293',
+    field_confidence: { _safecore: { iban_first_seen: true } } as unknown as CheckInput['field_confidence'],
+  })
+  const row = invoiceChecks(first).find((c) => c.id === 'iban')
+  assert.ok(row)
+  assert.notEqual(row!.outcome, 'passed',
+    'the strongest reassurance the panel gives, at the one moment there is no history behind it')
+  assert.equal(row!.outcome, 'not-checked', 'and not red either — a new supplier is an ordinary event')
+  assert.doesNotMatch(row!.detail!, /ongewijzigd/,
+    'it still says the number is unchanged from invoices that do not exist')
+  assert.match(row!.detail!, /eerste rekeningnummer/, 'it says what actually happened')
+  assert.match(row!.detail!, /vóór je betaalt/, 'and hands the comparison to the only party who can make it')
+})
+
+test('[EERSTE-KEER] a supplier we have paid before still earns the tick', () => {
+  // The counter-proof. If this row stopped passing for everyone, the panel would flag 509 invoices
+  // and the flag would mean nothing.
+  const known = clean({
+    vendor_iban: 'NL94INGB0666664293',
+    field_confidence: { _safecore: {} } as unknown as CheckInput['field_confidence'],
+  })
+  const row = invoiceChecks(known).find((c) => c.id === 'iban')
+  assert.equal(row?.outcome, 'passed')
+  assert.match(row!.detail!, /ongewijzigd ten opzichte van eerdere facturen/)
+})
+
+test('[EERSTE-KEER] a CHANGED number still outranks a first sighting', () => {
+  const both = clean({
+    vendor_iban: 'NL02RABO0123456789',
+    field_confidence: {
+      _safecore: { iban_first_seen: true, iban_changed: true, iban_changed_from: 'NL91ABNA0417164300' },
+    } as unknown as CheckInput['field_confidence'],
+  })
+  const row = invoiceChecks(both).find((c) => c.id === 'iban')
+  assert.equal(row?.outcome, 'flagged', 'the fraud signal must not be softened into "we did not check"')
+  assert.match(row!.detail!, /NL91ABNA0417164300/)
+  assert.match(row!.detail!, /bel de leverancier/)
+})
+

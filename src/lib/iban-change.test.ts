@@ -198,6 +198,30 @@ console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag noo
     check('een ontbrekende aliastabel valt door naar de naamsleutel, en meldt gewoon',
       zonderTabel.status === 'ok' && zonderTabel.change?.from === 'NL91ABNA0417164300')
 
+
+    // ── [EERSTE-KEER] "Er valt niets te vergelijken" is een eigen antwoord ────────────────────
+    //
+    // change === null betekende twee dingen tegelijk: "vergeleken en gelijk" en "we hadden niets om
+    // mee te vergelijken". Downstream werd dat één leeg safecore, en dus een groen vinkje met
+    // "ongewijzigd ten opzichte van eerdere facturen" op de eerste factuur van een leverancier —
+    // over eerdere facturen die niet bestaan. Gemeten: 72 facturen, € 63.128,41.
+    const nieuweLeverancier = await detectIbanChange(leeg, 'u1', vendor)
+    check('een leverancier zonder nummer op de plank → eerste keer, geen schone vergelijking',
+      nieuweLeverancier.status === 'ok' && nieuweLeverancier.change === null
+        && nieuweLeverancier.firstSeen === true)
+
+    const bekendeLeverancier = await detectIbanChange(
+      bekend, 'u1', { ...vendor, iban: 'NL91ABNA0417164300' })
+    check('een leverancier die we al betaalden op DIT nummer → echt vergeleken, niet de eerste keer',
+      bekendeLeverancier.status === 'ok' && bekendeLeverancier.change === null
+        && bekendeLeverancier.firstSeen === false)
+
+    // Geen nummer op het papier is niets om de eerste van te zijn: de rij erboven zegt al dat er
+    // geen rekeningnummer op deze factuur staat.
+    const geenNummerOpPapier = await detectIbanChange(leeg, 'u1', { ...vendor, iban: null })
+    check('geen nummer op de factuur is geen eerste waarneming',
+      geenNummerOpPapier.status === 'ok' && geenNummerOpPapier.firstSeen === false)
+
     console.log(`\n${passed} passed, ${failed} failed\n`)
     process.exit(failed === 0 ? 0 : 1)
   })()

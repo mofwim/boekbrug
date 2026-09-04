@@ -53,7 +53,26 @@ export interface IbanChange {
  * de dure fout.
  */
 export type IbanCheck =
-  | { status: 'ok'; change: IbanChange | null }
+  | {
+      status: 'ok'
+      change: IbanChange | null
+      /**
+       * [EERSTE-KEER] There was nothing on record to compare against — this is the first account
+       * number we have ever seen for this supplier.
+       *
+       * NOT optional, on purpose. `change: null` used to carry two entirely different meanings:
+       * "we compared it and it is the same" and "we had nothing to compare it with". Both produced
+       * an empty safecore, and invoice-checks.ts turned that into a GREEN TICK reading
+       * "ongewijzigd ten opzichte van eerdere facturen" on the very first invoice from a supplier —
+       * a sentence about earlier invoices that do not exist. Measured on one account: 72 invoices,
+       * EUR 63.128,41, every one of them reassured at the exact moment there was no history to
+       * catch a misread digit or a redirected payment.
+       *
+       * Required so the compiler asks the question at every construction site rather than letting
+       * an omitted field default to the reassuring answer.
+       */
+      firstSeen: boolean
+    }
   | { status: 'unavailable' }
 
 /** "NL91 ABNA 0417 1643 00" — in blokken van vier, zoals het op een factuur staat. */
@@ -226,10 +245,13 @@ export async function detectIbanChange(
   const printed = normalizeIban(vendor.iban)
   // Geen IBAN op de factuur → niets om mee te vergelijken. Dat is een volledig uitgevoerde check
   // met een lege uitkomst, niet een mislukte: er valt niets te controleren.
-  if (!printed) return { status: 'ok', change: null }
+  // Nothing printed is not a first sighting of anything — there is no number here to be the first
+  // of. The row above this one in the checks panel already says the invoice carries no account
+  // number, and that is the honest sentence for this case.
+  if (!printed) return { status: 'ok', change: null, firstSeen: false }
   try {
     const known = await knownIbanForVendor(supabase, userId, vendor)
-    return { status: 'ok', change: assessIbanChange(printed, known) }
+    return { status: 'ok', change: assessIbanChange(printed, known), firstSeen: !known }
   } catch (e) {
     // [IBAN-CHECK-HONEST] Swallowing this used to produce a clean-looking invoice with no flag —
     // which on THIS check means the owner pays whatever account the paper prints, without ever
