@@ -3355,17 +3355,33 @@ test("[BIJLAGE-TERUGWEG] the panel's remedy is one the pipeline can actually hon
   // this gate should be the thing that says so, rather than the owner finding out.
   assert.match(
     sync,
-    // 400, measured at 274 on the stripped source. The other knownKeys.add (the invoices one) sits
-    // BEFORE this query, and the match only looks forward, so a wide window cannot borrow it.
-    /from\('email_skipped_attachments'\)[\s\S]{0,400}?knownKeys\.add/,
+    // Window widened from 400 to 1400 when [OVERSLAG-VERJAART] put its reasoning between the query
+    // and the add. Only the distance changed; the fact this pins did not.
+    /from\('email_skipped_attachments'\)[\s\S]{0,1400}?knownKeys\.add/,
     "PHASE 0 still folds the skip registry into knownKeys — the reason a backfill cannot reach a " +
       "listed attachment. If this is gone, re-read the panel's wording below",
   );
-  assert.doesNotMatch(
-    sync,
-    /from\('email_skipped_attachments'\)\s*\.delete\(/,
-    "nothing clears the skip registry, so the block is permanent — the panel may not imply otherwise",
-  );
+
+  // [OVERSLAG-VERJAART] This used to assert that NOTHING ever clears the registry, so the block was
+  // permanent and the panel could say so flatly. That is no longer true, and the change was
+  // deliberate: 29 till-closing zips were skipped because the app could not open a zip, [ARCHIEF-OPEN]
+  // gave it that ability, and leaving them blocked cost Q1 and Q3 their entire till administration.
+  //
+  // So the assertion is narrowed rather than dropped. Clearing is allowed in exactly one place —
+  // after an archive has actually been consumed — and the panel's sentence is checked below to
+  // match. A blanket delete anywhere else would make the panel's promise false again, and this is
+  // the line that would notice.
+  const wissers = [...sync.matchAll(/from\('email_skipped_attachments'\)\s*\.delete\(/g)];
+  assert.equal(wissers.length, 1,
+    "the skip registry is cleared in more than one place (or in none). Exactly one clear is " +
+      "allowed: the [OVERSLAG-VERJAART] cleanup that runs after an archive was unpacked");
+  assert.match(sync, /if \(uitgepakt\.consumedKeys\.length > 0\) \{[\s\S]{0,600}?\.delete\(\)/,
+    "the one permitted clear is no longer the consumed-archive cleanup, so some other code path " +
+      "is erasing the record of what was skipped");
+  assert.match(code("src/lib/i18n/messages.ts"), /'ink\.email\.echteFactuur':[\s\S]{0,400}?behalve als het een bestandstype is dat wij inmiddels wél kunnen openen/,
+    "the panel still promises flatly that a listed attachment is never fetched again. Since an " +
+      "archive the app has learned to open IS fetched again, that sentence would send the owner to " +
+      "upload 29 till closings by hand that arrive on their own");
 
   // The wording. The old sentence named the backfill as the remedy for a row IN the list; the two
   // situations now have their own answers, and the backfill keeps only the one it can serve.
@@ -25644,4 +25660,46 @@ test("[VERLEGD-NAAR-MIJ] 2a is declared and deducted from ONE number", () => {
   assert.match(code("src/lib/ai.ts"), /Leave "btw_rate" null/,
     "the reader is no longer told to leave the rate empty on a reverse-charged invoice — so it " +
       "will produce one, and a made-up rate here is a made-up amount in 2a");
+});
+
+// ── [OVERSLAG-VERJAART] A skip may not outlive the inability that caused it ───────────────────
+//
+// The numbers that make this a basics problem rather than a nicety. Q1 2026 and Q3 2026 hold ZERO
+// till days against EUR 253.439 of card income, so in both quarters that money falls through as
+// omzet with no rate and NEITHER QUARTER CAN BE FILED. The cause is 29 rows in
+// email_skipped_attachments, all named "Jouw dagafsluiting - DDMMYY HHMM.zip", written back when
+// this app could not open a zip.
+//
+// [ARCHIEF-OPEN] gave it that ability. It changed nothing for those 29, because PHASE 0 folds skip
+// rows into knownKeys — so they were filtered out of every later sync AND out of /api/email/backfill,
+// the endpoint whose own header says it exists so that "an invoice that was missed at the time …
+// can never come back on its own, even after the bug that dropped it is fixed".
+//
+// A fix that works forward while the evidence stays unreachable is the pattern this session kept
+// finding. Here it costs the aangifte itself.
+test("[OVERSLAG-VERJAART] a stale skip is decided by today's reader, not by yesterday's reason", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // Derived from the app's OWN capability. A list of stale reasons would need maintaining, and
+  // would go out of date exactly like the three hand-kept lists this codebase already lost.
+  assert.match(src, /if \(isOpenableArchive\(row\.filename\)\) continue/,
+    "PHASE 0 folds every skip row into knownKeys again, including the ones written because a " +
+      "format could not be opened. Those attachments are then unreachable to the daily sync AND " +
+      "to the backfill that exists to recover them — and for this owner that is Q1 and Q3 with no " +
+      "till days at all");
+  assert.match(src, /\.select\('source_message_id, filename'\)/,
+    "the filename is no longer read, so the check above cannot ask the reader anything");
+
+  // The skip row goes once the archive is genuinely consumed: it claimed the format was
+  // unreadable, and that claim is now false.
+  assert.match(src, /if \(uitgepakt\.consumedKeys\.length > 0\) \{[\s\S]{0,600}?\.from\('email_skipped_attachments'\)\s*\.delete\(\)/,
+    "a consumed archive keeps its 'could not read this type' row, so the same zip is re-fetched " +
+      "and re-unpacked on every sync for as long as its message stays in the window");
+  // …and only AFTER it is consumed. Deleting on sight would drop the row for an archive that then
+  // failed to open, and the owner would have neither the file nor the record of it.
+  const consumed = src.indexOf("for (const k of uitgepakt.consumedKeys) completedKeys.add(k)");
+  const deleted = src.indexOf("email_skipped_attachments", consumed);
+  assert.ok(consumed > 0 && deleted > consumed,
+    "the skip row is cleared before the archive is known to be consumed — then a zip that fails " +
+      "to open loses both its contents and the record that it was ever seen");
 });

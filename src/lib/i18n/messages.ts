@@ -6064,10 +6064,15 @@ export const MESSAGES = {
     ar: 'تحويل واحد بقيمة {amount} إلى {name}. امسح بتطبيق بنكك أو انسخ البيانات — الدفع يتم في بنكك أنت.',
     en: 'One transfer of {amount} to {name}. Scan with your banking app or copy the details — you pay inside your own bank.',
   },
+  // [OVERSLAG-VERJAART] Deze zin zei "die bijlage halen wij niet nog een keer op", en dat was waar
+  // zolang een overslag definitief was. Voor één soort is hij dat niet meer: een bestandstype dat
+  // de app inmiddels wél kan openen — een .zip sinds [ARCHIEF-OPEN] — verjaart en wordt bij een
+  // volgende sync alsnog opgehaald. De zin moet dat zeggen, want een ondernemer die hem letterlijk
+  // leest gaat 29 dagafsluitingen met de hand uploaden die vanzelf binnenkomen.
   'ink.email.echteFactuur': {
-    nl: 'Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op. Open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.',
-    ar: 'هل بين هذه فاتورة حقيقية؟ نحن لا نجلب ذلك المرفق مرة أخرى. افتح رسالة ذلك التاريخ وأضف الفاتورة بنفسك — رفعاً أو بصورة.',
-    en: 'Is there a real invoice among these? We do not fetch that attachment again. Open the e-mail of that date and add the invoice yourself — upload it or take a photo.',
+    nl: 'Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op — behalve als het een bestandstype is dat wij inmiddels wél kunnen openen, zoals een .zip; die pikken we vanzelf weer op. Voor de rest: open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.',
+    ar: 'هل بين هذه فاتورة حقيقية؟ نحن لا نجلب ذلك المرفق مرة أخرى — إلا إن كان نوع ملف صرنا نستطيع فتحه، مثل ملف ‎.zip؛ فذلك نلتقطه من تلقاء نفسه. أما البقية: افتح رسالة ذلك التاريخ وأضف الفاتورة بنفسك — رفعاً أو بصورة.',
+    en: 'Is there a real invoice among these? We do not fetch that attachment again — unless it is a file type we can open by now, such as a .zip; those we pick up on our own. Otherwise: open the e-mail of that date and add the invoice yourself — upload it or take a photo.',
   },
   'ink.email.nietTussen': {
     nl: 'Gebruik dan “Oudere e-mails opnieuw ophalen” hierboven.',

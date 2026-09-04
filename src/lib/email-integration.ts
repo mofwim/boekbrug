@@ -18,6 +18,8 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { ownedStoragePath } from '@/lib/storage-path'
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { expandArchives } from "@/lib/archive-expand";
+// [OVERSLAG-VERJAART] Het antwoord van de app zelf op "kan ik dit openen" — zie PHASE 0.
+import { isOpenableArchive } from "@/lib/archive-attachment";
 import { judgeKeepable } from "@/lib/turnover-keepable";
 import { computeContentHash } from '@/lib/content-hash'
 import { escapeLikeValue } from '@/lib/sanitize'
@@ -2798,12 +2800,27 @@ export async function syncUserEmails(
       // to every mail — FAMZFOOD does — turns that into a standing daily cost.
       const { data: skippedRows } = await supabase
         .from('email_skipped_attachments')
-        .select('source_message_id')
+        .select('source_message_id, filename')
         .eq('user_id', userId)
         .in('source_message_id', [...keyChunk, ...keyChunk.map((k) => `${k}:dubbel`)])
-      for (const row of (skippedRows ?? []) as Array<{ source_message_id: string | null }>) {
+      for (const row of (skippedRows ?? []) as Array<{ source_message_id: string | null; filename: string | null }>) {
         const id = row.source_message_id
         if (!id) continue
+        // [OVERSLAG-VERJAART] Een overslag die is geschreven omdat de app het FORMAAT niet kon
+        // openen, mag niet langer meegaan dan dat onvermogen.
+        //
+        // Gemeten: 29 rijen "Jouw dagafsluiting - DDMMYY HHMM.zip" staan hier, geschreven toen een
+        // zip nog niet open kon. [ARCHIEF-OPEN] heeft dat opgelost — maar deze regel voegde ze toe
+        // aan knownKeys, dus ze werden uit ELKE volgende sync gefilterd, én uit de backfill die er
+        // juist is om gemiste post terug te halen. Het gevolg staat in de cijfers: Q1 en Q3 2026
+        // hebben NUL kassadagen tegenover € 253.439 aan pinomzet, dus geen van beide kwartalen kan
+        // worden aangegeven. Dat is niet een gemiste bijlage; dat is de aangifte.
+        //
+        // Afgeleid uit de LEZER van vandaag, niet uit de reden van toen: isOpenableArchive is het
+        // antwoord van de app zelf op "kan ik dit openen". Leert die ooit een tweede archiefformaat,
+        // dan verjaren de overslagen daarvan dezelfde minuut mee — zonder dat iemand hier iets moet
+        // bijhouden. Een lijst met redenen zou precies dat wél vragen, en verouderen.
+        if (isOpenableArchive(row.filename)) continue
         knownKeys.add(id.endsWith(':dubbel') ? id.slice(0, -':dubbel'.length) : id)
       }
     }
@@ -3331,6 +3348,28 @@ export async function syncUserEmails(
   // onvoltooid, het watermerk schoof nooit op, en de sync bleef rondlopen — precies de bevroren
   // watermerk-bug waar [H3] en [NAN-DATE-GUARD] hierboven voor bestaan.
   for (const k of uitgepakt.consumedKeys) completedKeys.add(k)
+
+  // [OVERSLAG-VERJAART] En nu het archief écht is uitgepakt, mag zijn overslagregel weg. Die zei
+  // "we konden dit bestandstype niet lezen", en dat is niet meer waar. Laat je hem staan, dan wordt
+  // dezelfde zip elke sync opnieuw opgehaald en uitgepakt zolang het bericht binnen het venster
+  // valt — geen modelkosten (de inhoud zit dan in knownKeys), wel werk dat nergens toe leidt.
+  //
+  // Niet-fataal: mislukt het opruimen, dan is het enige gevolg dat het archief nog een keer wordt
+  // opengemaakt. De inhoud is dan al binnen, dus er kan niets dubbel van komen.
+  if (uitgepakt.consumedKeys.length > 0) {
+    try {
+      const opruimen = createPipelineClient()
+      for (const chunk of chunkArray(uitgepakt.consumedKeys, 100)) {
+        await opruimen
+          .from('email_skipped_attachments')
+          .delete()
+          .eq('user_id', userId)
+          .in('source_message_id', chunk)
+      }
+    } catch (e) {
+      console.error('[OVERSLAG-VERJAART] verouderde overslagregel opruimen mislukt (niet-fataal)', e)
+    }
+  }
 
   // [MODEL-OUTAGE] Decide, batch-wide, whether a TRANSIENT classify failure is a real outage or a
   // single stuck file. A config outage anywhere ⇒ app-wide outage. Otherwise a transient error is an
