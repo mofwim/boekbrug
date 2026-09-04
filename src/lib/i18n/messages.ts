@@ -6229,10 +6229,16 @@ export const MESSAGES = {
     ar: 'لم يُعثر على فواتير لـ«{query}».',
     en: 'No invoices found for “{query}”.',
   },
+  // [WIJ-LAZEN] "Geen geldig IBAN gevonden op deze factuur" is een uitspraak over het PAPIER, en
+  // die kan deze app niet doen. Gemeten op een gefotografeerde DELMO-factuur: er staan er twee op,
+  // allebei geldig (ING en Rabobank), en de lezer maakte van NL94.INGB.066.66.64.293 één cijfer
+  // verkeerd. De eigenaar las dus dat zijn leverancier geen rekeningnummer had afgedrukt, terwijl
+  // het er twee keer stond. De instructie blijft dezelfde; alleen de schuld verhuist naar waar hij
+  // hoort.
   'ink.geenIban': {
-    nl: 'Geen geldig IBAN gevonden op deze factuur. Open de PDF om het rekeningnummer te bekijken en betaal handmatig in je bankapp.',
-    ar: 'لم يُعثر على IBAN صالح في هذه الفاتورة. افتح ملف PDF لرؤية رقم الحساب وادفع يدوياً في تطبيق بنكك.',
-    en: 'No valid IBAN found on this invoice. Open the PDF to see the account number and pay manually in your banking app.',
+    nl: 'We konden op deze factuur geen bruikbaar rekeningnummer lezen. Open de PDF, neem het nummer daarvan over en betaal handmatig in je bankapp.',
+    ar: 'لم نتمكّن من قراءة رقم حساب صالح من هذه الفاتورة. افتح ملف PDF وانقل الرقم منه وادفع يدوياً في تطبيق بنكك.',
+    en: 'We could not read a usable account number from this invoice. Open the PDF, take the number from it and pay manually in your banking app.',
   },
   'ink.geenInPeriode': {
     nl: 'Geen inkoopfacturen in {period}',

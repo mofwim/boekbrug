@@ -394,3 +394,49 @@ test('[REKENING-GELEZEN] a page that really prints none keeps the old, true sent
     .find((c) => c.id === 'iban')
   assert.match(change!.detail!, /er staat geen rekeningnummer op deze factuur/)
 })
+
+// ── [WIJ-LAZEN] ───────────────────────────────────────────────────────────────────────────────
+//
+// A photographed DELMO GROOTHANDEL invoice, measured digit by digit:
+//
+//   printed  IBAN NL94.INGB.066.66.64.293   → NL94INGB0666664293, mod-97 valid
+//   stored                                   NL94INGB0066664293, one 6 read as a 0, invalid
+//   printed  BTW-nr. NL0085.41.048B01       → NL008541048B01, a valid Dutch btw-nummer
+//   stored                                   NL008085410048B01, three digits too many
+//
+// Both rows flagged, and both were RIGHT about the value they held. What they said about the
+// INVOICE was wrong in a way that costs the owner something: one told them their supplier had
+// printed no account number (two are printed, both valid), and the other told them to go back to
+// that supplier and ask for a corrected invoice — over a number the app itself had mangled.
+
+test('[WIJ-LAZEN] the checksum row prints the number it is complaining about', () => {
+  // Without it the owner is told the check digits are wrong and given nothing to compare against
+  // the paper, which is the one action the sentence asks of them.
+  const row = invoiceChecks(clean({ vendor_iban: 'NL94INGB0066664293' })).find((c) => c.id === 'iban-vorm')
+  assert.ok(row)
+  assert.equal(row!.outcome, 'flagged')
+  assert.match(row!.detail!, /NL94INGB0066664293/,
+    'the row withholds the very number it says is wrong — there is nothing to hold against the invoice')
+  assert.match(row!.detail!, /wij lazen/i, 'and it must be OUR reading, not a claim about the paper')
+})
+
+test('[WIJ-LAZEN] a malformed btw number sends the owner to the INVOICE before the supplier', () => {
+  const row = invoiceChecks(clean({
+    field_confidence: { _vendor_btw_printed: 'NL008085410048B01' } as unknown as CheckInput['field_confidence'],
+  })).find((c) => c.id === 'btw-nummer')
+  assert.ok(row)
+  assert.equal(row!.outcome, 'flagged')
+  assert.match(row!.detail!, /NL008085410048B01/, 'it still quotes what it holds')
+  assert.match(row!.detail!, /voorbelasting/, 'and the tax consequence is real, so it stays')
+
+  // The order is the fix. "Ask your supplier for a corrected invoice" is an instruction to tell a
+  // company their paperwork is defective, and here the paperwork was fine.
+  const compare = row!.detail!.search(/Vergelijk het met de factuur/);
+  const supplier = row!.detail!.search(/vraag de leverancier/i);
+  assert.ok(compare >= 0, 'the owner is never asked to look at the invoice first');
+  assert.ok(supplier > compare,
+    'the owner is sent to their supplier before being asked to look at the paper — on OUR reading');
+  assert.match(row!.detail!, /lazen wij het verkeerd/,
+    'and the possibility that the fault is ours is never stated');
+});
+

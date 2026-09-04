@@ -262,8 +262,14 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
           // is nothing to compare digit by digit, the reading itself did not land.
           ? `wij lazen "${ibanPrintedRaw}" — daar is geen bruikbaar rekeningnummer van te maken. ` +
             'Neem het over van de factuur vóór je betaalt'
-          : 'de controlecijfers van dit rekeningnummer kloppen niet — er is een teken misgelezen of ' +
-            'verkeerd afgedrukt. Vergelijk het met de factuur vóór je betaalt',
+          // [WIJ-LAZEN] Say the number. This row told the owner the check digits were wrong and
+          // then did not print what it had read, so there was nothing to compare against the paper
+          // — the one action the sentence asks for. Measured: a photographed DELMO invoice prints
+          // NL94.INGB.066.66.64.293, which is valid; the reader stored NL94INGB0066664293, turning
+          // one 6 into a 0. Side by side that is a two-second fix, and unseen it is a payment the
+          // owner cannot make.
+          : `wij lazen ${inv.vendor_iban || ibanPrintedRaw} en de controlecijfers daarvan kloppen niet — ` +
+            'er is een teken misgelezen of verkeerd afgedrukt. Vergelijk het met de factuur vóór je betaalt',
     })
   }
 
@@ -287,8 +293,21 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       outcome: btwShape === 'ok' ? 'passed' : 'flagged',
       detail: btwShape === 'ok'
         ? `${btwPrinted} — geldige vorm`
-        : `"${btwPrinted}" heeft niet de vorm van een geldig btw-nummer. Vraag de leverancier om ` +
-          'een juiste factuur — zonder geldig btw-nummer kan de belastingdienst de voorbelasting weigeren',
+        // [WIJ-LAZEN] The order of these two sentences is the whole point, and it was the wrong way
+        // round. "Vraag de leverancier om een juiste factuur" is an instruction to go back to a
+        // company and tell them their invoice is defective — on the strength of a value THIS APP
+        // read off a photo. Measured on the invoice that produced this row: the paper prints
+        // NL0085.41.048B01, which is a valid btw-nummer, and the reader made NL008085410048B01 of
+        // it. The owner would have called a supplier to complain about the app's own mistake, and
+        // held up a EUR 45,19 payment doing it.
+        //
+        // The tax consequence is real and stays — but it applies only once the owner has looked at
+        // the paper and confirmed the number really is printed that way. So: our reading first,
+        // compare second, and only then the supplier.
+        : `wij lazen "${btwPrinted}", en dat heeft niet de vorm van een geldig btw-nummer. ` +
+          'Vergelijk het met de factuur: staat het daar wél goed op, dan lazen wij het verkeerd en ' +
+          'is je factuur in orde. Staat het er echt zo, vraag de leverancier dan om een juiste ' +
+          'factuur — zonder geldig btw-nummer kan de belastingdienst de voorbelasting weigeren',
     })
   }
 
