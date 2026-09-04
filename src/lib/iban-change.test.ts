@@ -76,8 +76,26 @@ console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag noo
   // `catch { return null }` om de hele body ving ze drie regels verderop weer op en gaf precies de
   // null terug die ze moesten voorkomen. Geen enkele test keek naar een MISLUKTE lees, dus alles
   // bleef groen. Deze stub kijkt er wel naar.
+  // [BETAALBAAR-NUMMER] Een query ZONDER .maybeSingle() levert bij PostgREST een array op, en de
+  // lookups halen er nu meerdere rijen op om de oudste BETAALBARE eruit te kiezen. De stub is dus
+  // ook awaitable, met dezelfde rij in array-vorm — anders zou een stub die alleen maybeSingle kent
+  // groen blijven op code die de array-vorm gebruikt.
+  type StubRes = { data: unknown; error: unknown }
+  const asRows = (res: StubRes) => ({
+    data: res.data == null ? [] : (Array.isArray(res.data) ? res.data : [res.data]),
+    error: res.error ?? null,
+  })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const q = (res: any) => { const o: any = { select: () => o, eq: () => o, not: () => o, order: () => o, limit: () => o, maybeSingle: async () => res }; return o }
+  const q = (res: StubRes): any => {
+    // The builder returns itself on every call, which is a recursive shape not worth naming here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const o: any = {
+      select: () => o, eq: () => o, not: () => o, order: () => o, limit: () => o,
+      maybeSingle: async () => res,
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(asRows(res)).then(resolve),
+    }
+    return o
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stub = (res: any): any => ({ from: () => q(res) })
   const kapot = stub({ data: null, error: { message: 'connection reset' } })
@@ -135,6 +153,12 @@ console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag noo
             const spec = byTable[t]
             if (!spec) return { data: null, error: null }
             return typeof spec === 'function' ? spec(kolommen) : spec
+          },
+          then: (resolve: (v: unknown) => unknown) => {
+            const spec = byTable[t]
+            const res = !spec ? { data: null, error: null }
+              : (typeof spec === 'function' ? spec(kolommen) : spec)
+            return Promise.resolve(asRows(res)).then(resolve)
           },
         }
         return o
@@ -221,6 +245,36 @@ console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag noo
     const geenNummerOpPapier = await detectIbanChange(leeg, 'u1', { ...vendor, iban: null })
     check('geen nummer op de factuur is geen eerste waarneming',
       geenNummerOpPapier.status === 'ok' && geenNummerOpPapier.firstSeen === false)
+
+
+    // ── [BETAALBAAR-NUMMER] Vergelijken met een nummer waar niemand op kán betalen ────────────
+    //
+    // De naam-laag pakte de OUDSTE opgeslagen rij, geldig of niet. Een kapot nummer is er geen om
+    // ooit op betaald te hebben — geen bank neemt het aan en het betaalblad van deze app weigert er
+    // een QR van te maken — dus het kan nooit "het vorige rekeningnummer" zijn. Een goede factuur
+    // ertegen afzetten meldt een wissel die niet heeft plaatsgevonden: een fraudealarm over een
+    // leverancier die niets deed. En dát is twee keer duur, want het leert de eigenaar dat deze
+    // waarschuwing weg te klikken valt.
+    //
+    // Gemeten: 31 leveranciers waartegen deze controle zou vergelijken, en bij één (Mollie B.V.)
+    // is het oudste opgeslagen nummer NL21CITI20323285 — zestien tekens.
+    const mollie = stub({ data: [{ iban: 'NL21CITI20323285' }], error: null })
+    const echteMollieFactuur = { name: 'Mollie B.V.', kvk: null, iban: 'NL21INGB0006674051' }
+    const geenValsAlarm = await detectIbanChange(mollie, 'u1', echteMollieFactuur)
+    check('een kapot opgeslagen nummer is geen wissel — het is geen nummer',
+      geenValsAlarm.status === 'ok' && geenValsAlarm.change === null)
+    check('…en het telt als "nog niets bekend", want betaalbaar is er niets',
+      geenValsAlarm.status === 'ok' && geenValsAlarm.firstSeen === true)
+
+    // De oudste BETAALBARE wint, niet simpelweg de oudste: een kapotte rij vóór een goede mag de
+    // echte vergelijking niet wegduwen.
+    const kapotteRijEerst = stub({
+      data: [{ iban: 'NL21CITI20323285' }, { iban: 'NL91ABNA0417164300' }], error: null,
+    })
+    const echteWissel = await detectIbanChange(kapotteRijEerst, 'u1', vendor)
+    check('een kapotte rij ervoor verbergt de echte vergelijking niet',
+      echteWissel.status === 'ok' && echteWissel.change?.from === 'NL91ABNA0417164300'
+        && echteWissel.change?.to === 'NL02RABO0123456789')
 
     console.log(`\n${passed} passed, ${failed} failed\n`)
     process.exit(failed === 0 ? 0 : 1)

@@ -77,6 +77,14 @@ test("[LEVERANCIER-INTAKE] merging nothing returns what was already there, not a
 function fakeSupabase(log: string[]) {
   const maak = (tabel: string) => {
     let kolommen = "";
+    // [LES-TELT-MEE] Both steps resolve the owner's own spelling→supplier lessons first, and that
+    // read carries neither step's signature. Logged as its own thing rather than guessed at:
+    // attributing it to "resolve" made this gate fail on correct code, and attributing it to
+    // "check" would have made it pass on the code the gate exists to catch.
+    const note = () => {
+      if (tabel === "supplier_aliases") { log.push("alias"); return; }
+      log.push(kolommen.trim() === "iban" ? "check" : "resolve");
+    };
     const q: Record<string, unknown> = {
       select(cols: string) {
         kolommen = cols;
@@ -88,13 +96,16 @@ function fakeSupabase(log: string[]) {
       limit: () => q,
       order: () => q,
       maybeSingle: async () => {
-        // [LES-TELT-MEE] Both steps now resolve the owner's own spelling→supplier lessons first,
-        // and that read carries neither step's signature. Logged as its own thing rather than
-        // guessed at: attributing it to "resolve" made this gate fail on correct code, and
-        // attributing it to "check" would have made it pass on the code the gate exists to catch.
-        if (tabel === "supplier_aliases") { log.push("alias"); return { data: null, error: null }; }
-        log.push(kolommen.trim() === "iban" ? "check" : "resolve");
+        note();
         return { data: null, error: null };
+      },
+      // [BETAALBAAR-NUMMER] A query without .maybeSingle() resolves to an ARRAY, and the IBAN
+      // check now reads several rows so it can pick the oldest PAYABLE one. Without this the
+      // check's own reads went unlogged and the first thing this gate saw was resolution — the
+      // gate failed on correct code, which is how a gate gets deleted instead of read.
+      then: (resolve: (v: unknown) => unknown) => {
+        note();
+        return Promise.resolve({ data: [], error: null }).then(resolve);
       },
       update() {
         log.push("write");
