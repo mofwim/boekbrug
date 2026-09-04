@@ -25441,3 +25441,57 @@ test("[TARIEF-GEHEUGEN] a mixed-rate supplier gets no proposal, and the split al
     "the sentence stopped naming how many invoices it rests on. 'deze leverancier rekende 12 keer " +
       "21 %' is a fact the owner can check; without the count it is a machine asking to be trusted");
 });
+
+// ── [GEEN-BTW-SOORT] Not every 21 % is BTW you may reclaim ────────────────────────────────────
+//
+// Invoice 142257742, Coöperatie Univé Zuid-Nederland, 14-08-2026: € 195,28 + € 41,01 = € 236,29,
+// status 'received'. Read correctly, added up correctly, past every gate in this application —
+// and that € 41,01 is ASSURANTIEBELASTING, a different tax that happens to be 21 % as well, sitting
+// in exactly the place BTW would sit. It cannot be reclaimed (art. 11-1-k Wet OB; insurance is
+// exempt and the premium carries its own tax instead).
+//
+// The lesson is where the warning had to go. Every other amount check in this app hangs off the
+// health verdict, because those invoices are UNHEALTHY — their numbers disagree. This one is in
+// perfect health, and that is precisely why nobody ever looked at it. A wrong KIND of tax has no
+// arithmetic error beside it to give it away.
+test("[GEEN-BTW-SOORT] the warning does not hang off the health verdict", () => {
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const waarschuwing = scherm.indexOf("doubtAboutInputVat({");
+  const gezondheidsblok = scherm.indexOf("invoice.health.flags.arithmetic &&");
+  assert.ok(waarschuwing > 0, "the verify modal no longer asks what KIND of tax this is");
+  assert.ok(gezondheidsblok > 0 && waarschuwing < gezondheidsblok,
+    "the warning moved inside (or below) the arithmetic-health block. The invoice that provoked " +
+      "this adds up perfectly — 195,28 + 41,01 = 236,29 — so a warning gated on health is a " +
+      "warning that never fires on the case it exists for");
+  // And the readiness card looks back at what is ALREADY booked, like [DUBBEL-TERUGKIJKEN] does:
+  // the Univé invoice is 'received', so a check that only runs in the queue arrives too late.
+  assert.match(code("src/app/api/readiness/route.ts"), /doubtAboutInputVat\(\{/,
+    "nothing looks back at the invoices that are already in the books, so the one that provoked " +
+      "this task stays there unmentioned");
+  assert.match(code("src/lib/readiness.ts"), /const twijfel = s\.vatDoubtCount \?\? 0;/,
+    "the readiness verdict dropped the risk, so the look-back is computed and then thrown away");
+});
+
+test("[GEEN-BTW-SOORT] it asks about rent and never rules on it", () => {
+  // The one family where 21 % is very often entirely correct: landlord and tenant may opt for
+  // btw-belaste verhuur, which is normal for business premises. A verdict here would talk an owner
+  // out of a deduction they are legally entitled to — the opposite error, and just as expensive.
+  const mod = code("src/lib/btw-soort.ts");
+  const verhuurZin = /Verhuur is meestal vrijgesteld[\s\S]{0,220}?huurcontract\?/.exec(mod)?.[0];
+  assert.ok(verhuurZin, "the rent sentence is gone or rewritten — check it still ASKS");
+  assert.ok(/kunnen kiezen voor/.test(verhuurZin!),
+    "the rent sentence stopped naming the option to opt for taxed rental, so it now reads as a " +
+      "verdict on an amount that is very often correct");
+  assert.ok(!/mag je niet/.test(verhuurZin!),
+    "the rent sentence now tells the owner the BTW is not reclaimable. For opted-in taxed rental " +
+      "that is false, and acting on it throws away a real deduction");
+
+  // The two traps in this owner's own supplier list, both measured: a wholesaler with 'Horeca' in
+  // its name whose 16 invoices carry fully deductible BTW, and a bakery that is not a bank.
+  assert.ok(!/\bhoreca\|/.test(mod) && !mod.includes('"horeca|'),
+    "the industry word 'horeca' is back in the pattern. 'Enka Horeca B.V.' is a WHOLESALER with " +
+      "16 correctly booked invoices, and 'HorecaRama BV' sells equipment — that is 17 warnings on " +
+      "invoices that are right");
+  assert.ok(!/"bank\|/.test(mod),
+    "'bank' as a bare fragment matches Bankethuis and banketbakkerij; a bakery is not a bank");
+});

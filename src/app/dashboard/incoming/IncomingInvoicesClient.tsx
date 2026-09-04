@@ -112,6 +112,7 @@ import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
 import { reconcileBtw } from '@/lib/btw-reconcile'
 import { proposeSplit } from '@/lib/vendor-vat-rate'
+import { doubtAboutInputVat } from '@/lib/btw-soort'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
@@ -1244,6 +1245,44 @@ export function ConfirmPaidModal({
             <div style={{ fontSize: 14, color: "#5f6368", marginBottom: 20 }}>
               {t('ink.controleerBedragen')}
             </div>
+
+            {/* [GEEN-BTW-SOORT] Niet elke 21% is BTW die je mag terugvragen.
+                Aanleiding: factuur 142257742 van Coöperatie Univé, € 195,28 + € 41,01, netjes
+                gelezen, netjes opgeteld, langs elke poort in deze app — en die € 41,01 is
+                assurantiebelasting. Ook 21%, staat op precies de plek waar BTW zou staan, en
+                is niet aftrekbaar.
+
+                Dit staat BOVEN de reparatievoorstellen met opzet: die gaan over of de
+                bedragen kloppen, deze gaat over of het bedrag wel BTW ís. Een verkeerd
+                antwoord op de tweede vraag maakt de eerste zinloos.
+
+                Het is een vraag, geen oordeel, en dat is geen beleefdheid: bij verhuur is 21%
+                juist heel vaak correct (huurder en verhuurder mogen kiezen voor btw-belaste
+                verhuur), en een verzekeraar mag ook een gewone belaste dienst factureren.
+                De app verandert dus niets — ze wijst, de eigenaar beslist. */}
+            {(() => {
+              const twijfel = doubtAboutInputVat({
+                supplierName: invoice.client_name,
+                btwAmount: invoice.btw_amount,
+                totalExBtw: invoice.total_ex_btw,
+              })
+              if (!twijfel) return null
+              return (
+                <div style={{
+                  marginTop: 10, padding: "10px 12px", borderRadius: 10,
+                  background: "#fff8e1", border: "1px solid #e0a94f",
+                }}>
+                  <div style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                    {twijfel.message}
+                  </div>
+                  {/* Het wetsartikel erbij, zodat een boekhouder de bewering kan controleren
+                      in plaats van hem te moeten geloven. */}
+                  <div style={{ fontSize: 11.5, color: "#a6773a", marginTop: 4 }}>
+                    {twijfel.wet}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* [IMPORT-MONITOR] Part 3 — surface the arithmetic WHY in the modal.
                 The per-field ⚠️ flags below already cover vendor/number/date and
