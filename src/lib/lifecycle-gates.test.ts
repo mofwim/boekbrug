@@ -24490,6 +24490,91 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [BETAALBAAR-NUMMER] ───────────────────────────────────────────────────────────────────────
+//
+// The fraud check answers "did this supplier's account number change" by reading the OLDEST number
+// stored for them. Valid or not — and 6 of this account's 50 stored numbers are not account numbers
+// at all, misreadings that founded their own supplier row before identityIban started refusing them.
+//
+// A malformed number is not one anybody can have paid to: no bank accepts it, and this app's own
+// pay sheet refuses to build a QR from it. So it can never be "the account they used before", and
+// comparing a good invoice against it reports a change that did not happen. Measured: of the 31
+// suppliers this check would compare against, one (Mollie B.V.) holds NL21CITI20323285 — sixteen
+// characters — as its oldest, and its next genuine invoice would have raised a fraud alarm about a
+// supplier who did nothing. A false alarm here is expensive twice: a phone call, and the lesson
+// that this particular warning can be clicked past.
+test("[BETAALBAAR-NUMMER] the fraud check compares against a number someone could actually have paid", () => {
+  const fraude = code("src/lib/iban-change.ts");
+
+  assert.match(fraude, /function oldestPayableIban/,
+    "the lookups take the oldest stored row outright again, valid or not");
+  assert.match(fraude, /const usable = identityIban\(row\.iban\)/,
+    "…and judge it with something other than the registry's own key, so the two can disagree");
+
+  // Every lookup goes through it. A tier that still reads a single row straight is a tier that can
+  // answer the check with a number nobody could pay to.
+  const lookup = fraude.slice(fraude.indexOf("export async function knownIbanForVendor"));
+  const body = lookup.slice(0, lookup.indexOf("\n}"));
+  assert.equal((body.match(/oldestPayableIban\(/g) ?? []).length, 3,
+    "one of the three tiers no longer filters for a payable number");
+  assert.doesNotMatch(body, /return normalizeIban\(/,
+    "a tier returns a stored number without asking whether it is an account number at all");
+
+  // Ordered explicitly, or the row that answers a fraud check is whichever one the database felt
+  // like returning.
+  assert.equal((body.match(/\.order\('created_at', \{ ascending: true \}\)/g) ?? []).length, 2,
+    "the two multi-row lookups must both be ordered oldest-first");
+});
+
+// ── [EERSTE-KEER] ─────────────────────────────────────────────────────────────────────────────
+//
+// The checks panel gives one green tick per row, and the strongest of them reads "Rekeningnummer
+// van deze leverancier — ongewijzigd ten opzichte van eerdere facturen". On the FIRST invoice from
+// a supplier there are no earlier invoices, and it said it anyway: assessIbanChange returns null
+// both when it compared and found no change, and when it had nothing to compare with, and
+// ibanChangeSafecore turned both into an empty object.
+//
+// That is the one moment nothing else can help. mod-97 catches every single-digit misread and
+// every adjacent transposition (measured: 0 of 90 and 0 of 5 slip through), so a wrong number that
+// still validates is a two-digit error — 0.8% of them do — or a valid number read off the wrong
+// part of the page. The only defence left is history, and a first invoice has none. Measured on one
+// account: 72 invoices, EUR 63,128.41, each of them ticked green.
+test("[EERSTE-KEER] nothing to compare with is never reported as a clean comparison", () => {
+  const type = code("src/lib/iban-change.ts");
+  const vertaler = code("src/lib/intake-supplier.ts");
+  const paneel = code("src/lib/invoice-checks.ts");
+  const mail = code("src/lib/email-integration.ts");
+
+  // 1. Required on the type, not optional. An optional field defaults to the reassuring answer at
+  //    every construction site that forgets it, which is exactly how this got here.
+  assert.match(type, /firstSeen: boolean/, "firstSeen is gone, or made optional — see the note on the type");
+  assert.doesNotMatch(type, /firstSeen\?: boolean/,
+    "an optional firstSeen lets a forgotten field mean 'we compared it', which is the bug");
+  assert.match(type, /firstSeen: !known/, "the check no longer reports whether it had anything to compare with");
+
+  // 2. The translator keeps the two apart.
+  assert.match(vertaler, /return check\.firstSeen \? \{ iban_first_seen: true \} : \{\};/,
+    "a first sighting leaves nothing behind again, and nothing downstream can tell it from a pass");
+
+  // 3. ONE translator. The e-mail path used to carry its own copy of this rule, and two copies of a
+  //    rule drift — this pair would have drifted on exactly this flag, so the same invoice would
+  //    have been reassuring by e-mail and honest by camera.
+  assert.match(mail, /ibanChangeSafecore\(ibanChange\)/,
+    "the e-mail path translates the IBAN check itself again — one rule, two copies, and they drift");
+  assert.doesNotMatch(mail, /safecore\.iban_changed_from\s*=/,
+    "…the hand-rolled copy is back");
+
+  // 4. And the row itself does not pass on it.
+  assert.match(paneel, /: ibanFirstSeen \? 'not-checked'/,
+    "a first sighting earns the tick again");
+  assert.match(paneel, /eerste rekeningnummer dat we van deze leverancier zien/,
+    "…without saying what actually happened");
+  // Not red either: a new supplier is ordinary, and a panel that shouts at every one of them is a
+  // panel nobody reads by the third.
+  assert.doesNotMatch(paneel, /ibanFirstSeen \? 'flagged'/,
+    "every new supplier is now an alarm, which is how alarms stop being read");
+});
+
 // ── [LES-TELT-MEE] ────────────────────────────────────────────────────────────────────────────
 //
 // The owner corrects a misread supplier name and the app writes the lesson down. Measured on

@@ -29,7 +29,7 @@
 // melding", nooit een mislukte import.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk } from '@/lib/supplier-registry'
+import { normalizeIban, supplierNameKey, isReliableSupplierName, normalizeKvk, identityIban } from '@/lib/supplier-registry'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,7 +53,26 @@ export interface IbanChange {
  * de dure fout.
  */
 export type IbanCheck =
-  | { status: 'ok'; change: IbanChange | null }
+  | {
+      status: 'ok'
+      change: IbanChange | null
+      /**
+       * [EERSTE-KEER] There was nothing on record to compare against — this is the first account
+       * number we have ever seen for this supplier.
+       *
+       * NOT optional, on purpose. `change: null` used to carry two entirely different meanings:
+       * "we compared it and it is the same" and "we had nothing to compare it with". Both produced
+       * an empty safecore, and invoice-checks.ts turned that into a GREEN TICK reading
+       * "ongewijzigd ten opzichte van eerdere facturen" on the very first invoice from a supplier —
+       * a sentence about earlier invoices that do not exist. Measured on one account: 72 invoices,
+       * EUR 63.128,41, every one of them reassured at the exact moment there was no history to
+       * catch a misread digit or a redirected payment.
+       *
+       * Required so the compiler asks the question at every construction site rather than letting
+       * an omitted field default to the reassuring answer.
+       */
+      firstSeen: boolean
+    }
   | { status: 'unavailable' }
 
 /** "NL91 ABNA 0417 1643 00" — in blokken van vier, zoals het op een factuur staat. */
@@ -92,6 +111,31 @@ export function ibanChangeReason(change: IbanChange): string {
     `en op deze factuur staat ${formatIban(change.to)} — controleer dit vóór je betaalt, ` +
     `en bel de leverancier op een nummer dat je zelf opzoekt (niet het nummer op deze factuur)`
   )
+}
+
+/**
+ * [BETAALBAAR-NUMMER] The oldest stored number that is actually an IBAN.
+ *
+ * Every lookup below used to take the oldest stored row outright, valid or not. A malformed number
+ * is not one this owner can ever have paid to — no bank accepts it and this app's own pay sheet
+ * refuses to build a QR from it — so it cannot be "the account they used before", and comparing a
+ * good invoice against it reports a change that never happened. That is a fraud alarm about a
+ * supplier who did nothing, and a false alarm on this particular check is expensive twice: it costs
+ * the owner a phone call, and it teaches them that this warning can be clicked past.
+ *
+ * Measured on one account: 31 suppliers this check would compare against, and for one of them
+ * (Mollie B.V.) the oldest stored number is NL21CITI20323285 — sixteen characters. Its next genuine
+ * invoice would have been flagged.
+ *
+ * identityIban is the same normalise-and-mod-97 the registry keys creation on, so the two agree by
+ * construction about what counts as an account number at all.
+ */
+function oldestPayableIban(rows: { iban: string | null }[] | null | undefined): string | null {
+  for (const row of rows ?? []) {
+    const usable = identityIban(row.iban)
+    if (usable) return usable
+  }
+  return null
 }
 
 /**
@@ -137,11 +181,14 @@ export async function knownIbanForVendor(
         .eq('user_id', userId)
         .eq('kvk_number', kvk)
         .not('iban', 'is', null)
-        .limit(1)
-        .maybeSingle()
+        // [BETAALBAAR-NUMMER] Several rows, oldest first, and the first PAYABLE one wins. Ordered
+        // explicitly: without it the row that answers the fraud check is whichever one the database
+        // happened to return.
+        .order('created_at', { ascending: true })
+        .limit(5)
       if (error) throw new Error(error.message)
-      const hit = (data as { iban: string | null } | null)?.iban
-      if (hit) return normalizeIban(hit)
+      const hit = oldestPayableIban(data as { iban: string | null }[] | null)
+      if (hit) return hit
     }
 
     const cleanName = (vendor.name ?? '').trim()
@@ -192,10 +239,9 @@ export async function knownIbanForVendor(
         .eq('id', aliasedId)
         .not('iban', 'is', null)
         .limit(1)
-        .maybeSingle()
       if (viaErr) throw new Error(viaErr.message)
-      const hit = (viaAlias as { iban: string | null } | null)?.iban
-      if (hit) return normalizeIban(hit)
+      const hit = oldestPayableIban(viaAlias as { iban: string | null }[] | null)
+      if (hit) return hit
     }
 
 
@@ -206,11 +252,13 @@ export async function knownIbanForVendor(
       .eq('user_id', userId)
       .eq('name_key', key)
       .not('iban', 'is', null)
-      .order('created_at', { ascending: true }) // de oudste = het nummer waarop al betaald is
-      .limit(1)
-      .maybeSingle()
+      // [BETAALBAAR-NUMMER] de oudste = het nummer waarop al betaald is — maar alleen als het een
+      // rekeningnummer IS. Gemeten: Mollie B.V. staat hier met NL21CITI20323285, zestien tekens, en
+      // dat is de rij waartegen de volgende echte Mollie-factuur zou zijn afgezet.
+      .order('created_at', { ascending: true })
+      .limit(5)
     if (error) throw new Error(error.message)
-    return normalizeIban((data as { iban: string | null } | null)?.iban)
+    return oldestPayableIban(data as { iban: string | null }[] | null)
   }
 }
 
@@ -226,10 +274,13 @@ export async function detectIbanChange(
   const printed = normalizeIban(vendor.iban)
   // Geen IBAN op de factuur → niets om mee te vergelijken. Dat is een volledig uitgevoerde check
   // met een lege uitkomst, niet een mislukte: er valt niets te controleren.
-  if (!printed) return { status: 'ok', change: null }
+  // Nothing printed is not a first sighting of anything — there is no number here to be the first
+  // of. The row above this one in the checks panel already says the invoice carries no account
+  // number, and that is the honest sentence for this case.
+  if (!printed) return { status: 'ok', change: null, firstSeen: false }
   try {
     const known = await knownIbanForVendor(supabase, userId, vendor)
-    return { status: 'ok', change: assessIbanChange(printed, known) }
+    return { status: 'ok', change: assessIbanChange(printed, known), firstSeen: !known }
   } catch (e) {
     // [IBAN-CHECK-HONEST] Swallowing this used to produce a clean-looking invoice with no flag —
     // which on THIS check means the owner pays whatever account the paper prints, without ever

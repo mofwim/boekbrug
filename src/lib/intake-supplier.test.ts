@@ -6,12 +6,35 @@ import assert from "node:assert/strict";
 import { ibanChangeSafecore, mergeSafecore, resolveSupplierAtIntake } from "./intake-supplier";
 
 test("[LEVERANCIER-INTAKE] a clean check says nothing, so nothing lands on the invoice", () => {
-  assert.deepEqual(ibanChangeSafecore({ status: "ok", change: null }), {});
+  // A REAL comparison: we held this supplier's number and it is the same one. The only case that
+  // earns the tick, and the only one that may leave nothing behind.
+  assert.deepEqual(ibanChangeSafecore({ status: "ok", change: null, firstSeen: false }), {});
+});
+
+test("[EERSTE-KEER] nothing to compare with is not the same as nothing changed", () => {
+  // The first invoice from a supplier. Both cases used to leave here as {}, and an empty safecore
+  // is read downstream as a completed comparison — so invoice-checks.ts printed a green tick and
+  // "ongewijzigd ten opzichte van eerdere facturen" about earlier invoices that do not exist.
+  // Measured on one account: 72 invoices, EUR 63,128.41, reassured at the one moment nothing in
+  // the system could catch a misread digit or a redirected payment.
+  assert.deepEqual(
+    ibanChangeSafecore({ status: "ok", change: null, firstSeen: true }),
+    { iban_first_seen: true },
+    "a first sighting leaves nothing behind, so it reads as a comparison that happened",
+  );
+
+  // A CHANGE outranks it: both cannot be true, and the change is the sentence that matters.
+  const changed = ibanChangeSafecore({
+    status: "ok", firstSeen: true,
+    change: { from: "NL91ABNA0417164300", to: "NL02RABO0123456789" },
+  });
+  assert.equal(changed.iban_changed, true);
+  assert.equal(changed.iban_first_seen, undefined, "a first sighting must not dilute a real change");
 });
 
 test("[LEVERANCIER-INTAKE] a changed account number lands with both numbers", () => {
   const flags = ibanChangeSafecore({
-    status: "ok",
+    status: "ok", firstSeen: false,
     change: { from: "NL91ABNA0417164300", to: "NL02RABO0123456789" },
   });
   assert.equal(flags.iban_changed, true);
@@ -54,6 +77,14 @@ test("[LEVERANCIER-INTAKE] merging nothing returns what was already there, not a
 function fakeSupabase(log: string[]) {
   const maak = (tabel: string) => {
     let kolommen = "";
+    // [LES-TELT-MEE] Both steps resolve the owner's own spelling→supplier lessons first, and that
+    // read carries neither step's signature. Logged as its own thing rather than guessed at:
+    // attributing it to "resolve" made this gate fail on correct code, and attributing it to
+    // "check" would have made it pass on the code the gate exists to catch.
+    const note = () => {
+      if (tabel === "supplier_aliases") { log.push("alias"); return; }
+      log.push(kolommen.trim() === "iban" ? "check" : "resolve");
+    };
     const q: Record<string, unknown> = {
       select(cols: string) {
         kolommen = cols;
@@ -65,13 +96,16 @@ function fakeSupabase(log: string[]) {
       limit: () => q,
       order: () => q,
       maybeSingle: async () => {
-        // [LES-TELT-MEE] Both steps now resolve the owner's own spelling→supplier lessons first,
-        // and that read carries neither step's signature. Logged as its own thing rather than
-        // guessed at: attributing it to "resolve" made this gate fail on correct code, and
-        // attributing it to "check" would have made it pass on the code the gate exists to catch.
-        if (tabel === "supplier_aliases") { log.push("alias"); return { data: null, error: null }; }
-        log.push(kolommen.trim() === "iban" ? "check" : "resolve");
+        note();
         return { data: null, error: null };
+      },
+      // [BETAALBAAR-NUMMER] A query without .maybeSingle() resolves to an ARRAY, and the IBAN
+      // check now reads several rows so it can pick the oldest PAYABLE one. Without this the
+      // check's own reads went unlogged and the first thing this gate saw was resolution — the
+      // gate failed on correct code, which is how a gate gets deleted instead of read.
+      then: (resolve: (v: unknown) => unknown) => {
+        note();
+        return Promise.resolve({ data: [], error: null }).then(resolve);
       },
       update() {
         log.push("write");
