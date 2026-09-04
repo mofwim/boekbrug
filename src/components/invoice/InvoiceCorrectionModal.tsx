@@ -60,6 +60,12 @@ export interface CorrectableInvoice {
   total_ex_btw: number | null
   btw_amount: number | null
   total_inc_btw: number | null
+  /**
+   * [NUL-POST] Het deel van total_ex_btw waarop geen btw zit — statiegeld, emballage, europallets.
+   * Zit IN de grondslag en komt er niet bij, dus excl + btw = totaal blijft onveranderd gelden;
+   * alleen het TARIEF hoort over (excl - onbelast) te worden gerekend. Zie untaxed-amount.ts.
+   */
+  untaxed_amount?: number | null
 }
 
 /** [SPLIT-CORRECTIE] One rate row of the paper's own BTW specification. */
@@ -160,6 +166,12 @@ export default function InvoiceCorrectionModal({
     21: splitStart(21), 9: splitStart(9), 0: splitStart(0),
   })
   // Never pre-ticked: the app has an opinion (the ⚠ badge) but the declaration is the owner's.
+  // [NUL-POST] Het deel van excl. BTW waarop geen btw zit — statiegeld, emballage, europallets.
+  // Als tekst, net als de andere bedragvelden: een number-input maakt van een lege waarde een 0 en
+  // van "12,60" niets, en de eigenaar typt hier Nederlandse komma's.
+  const [onbelast, setOnbelast] = useState(
+    invoice.untaxed_amount ? String(Math.abs(invoice.untaxed_amount)).replace('.', ',') : '',
+  )
   const [credit, setCredit] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -197,6 +209,14 @@ export default function InvoiceCorrectionModal({
         .sort((a, b2) => b2.rate - a.rate)
       const nu = [...typed].sort((a, b2) => b2.rate - a.rate)
       if (JSON.stringify(nu) !== JSON.stringify(stond)) body.btw_rows = typed
+    }
+    // [NUL-POST] Los meestuurbaar: dit veld verandert geen enkel totaal (excl + btw = totaal blijft
+    // staan), het vertelt alleen welk deel van de grondslag onbelast is. Een eigenaar die alleen
+    // dit invult, corrigeert dus niets — hij vult aan.
+    {
+      const huidig = Math.abs(invoice.untaxed_amount ?? 0)
+      const getypt = onbelast.trim() === '' ? 0 : Number(onbelast.trim().replace(/\./g, '').replace(',', '.'))
+      if (Number.isFinite(getypt) && Math.abs(getypt - huidig) > 0.005) body.untaxed_amount = getypt
     }
     if (credit) body.is_credit_note = true
 
@@ -339,6 +359,31 @@ export default function InvoiceCorrectionModal({
 
         <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
 
+        {/* [NUL-POST] Statiegeld, emballage, europallets: bedragen op de factuur waar geen btw op
+            zit. Elk Nederlands pakket boekt die als een aparte 0%-regel; hier is het één veld,
+            omdat de eigenaar het bedrag van het papier overtypt en niet een regel opbouwt.
+
+            Het bedrag zit IN excl. BTW en komt er niet bij — daarom verandert er hierboven niets
+            en klopt excl + btw = totaal onveranderd door. Wat wél verandert is de grondslag
+            waarover het tarief wordt gerekend, en dat is precies het punt: zonder dit veld komt
+            een factuur met statiegeld uit op 6,50% of 8,38%, en dat is geen Nederlands tarief. */}
+        <p style={{ fontSize: 13, color: '#5F6368', margin: '0 0 8px', lineHeight: 1.45 }}>
+          {t('corr.onbelastUitleg')}
+        </p>
+        <label style={{ display: 'block', marginBottom: 16 }}>
+          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>
+            {t('corr.onbelastLabel')}
+          </span>
+          <input
+            type="text" inputMode="decimal" placeholder={t('corr.onbelastPlaceholder')}
+            value={onbelast}
+            onChange={(e) => setOnbelast(e.target.value)}
+            style={{ width: '100%', padding: '9px 10px', fontSize: 14, borderRadius: 10, border: '1px solid #d1d1d6', outline: 'none', color: '#202124', fontFamily: FONT }}
+          />
+        </label>
+
+        <div style={{ height: 1, background: '#EEE', margin: '4px 0 16px' }} />
+
         <p style={{ fontSize: 13, color: '#5F6368', margin: '0 0 12px', lineHeight: 1.45 }}>
           {t('corr.bedragUitleg')}
         </p>
@@ -412,7 +457,18 @@ export default function InvoiceCorrectionModal({
           <>
             <button
               type="button"
-              onClick={() => setAmounts(setExcl(amounts, round2(amounts.ex + depositGap.gap)))}
+              onClick={() => {
+                setAmounts(setExcl(amounts, round2(amounts.ex + depositGap.gap)))
+                // [NUL-POST] Deze knop vouwt het statiegeld IN de grondslag, en daarmee maakt hij
+                // het afgeleide tarief ongeldig: Elegance Brands 2026080832 wordt 75,22 / 1.011,70
+                // = 7,43%, en dat is geen Nederlands tarief. Precies het beeld van de 52 geboekte
+                // facturen die wél optellen en toch op 6,50% of 8,38% uitkomen.
+                //
+                // Het bedrag is hier bekend en op het papier teruggevonden, dus het onbelaste veld
+                // vult zichzelf. Overtypen wat de app al weet, is hoe een juist getal een typefout
+                // wordt. De eigenaar kan het daarna gewoon aanpassen.
+                setOnbelast(String(Math.abs(depositGap.gap)).replace('.', ','))
+              }}
               style={{
                 width: '100%', minHeight: 44, borderRadius: 12, border: '1px solid #1a73e8',
                 background: '#e8f0fe', color: '#1a4fa0', fontSize: 13.5, fontWeight: 600,

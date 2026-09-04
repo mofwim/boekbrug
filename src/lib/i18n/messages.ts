@@ -1848,6 +1848,25 @@ export const MESSAGES = {
     en: 'We do not work the rate out ourselves: the same amount can carry 9% or 21%, and a guessed VAT is a guessed input tax. Not right? Just type the amount over it.',
     ar: 'لا نحسب النسبة من تلقائنا: المبلغ نفسه قد يحمل ٩٪ أو ٢١٪، وضريبة مخمَّنة تعني ضريبة مدخلات مخمَّنة. غير صحيح؟ اكتب المبلغ فوقه ببساطة.',
   },
+  // [NUL-POST] Statiegeld, emballage, europallets: bedragen op de factuur waar geen btw op zit.
+  // Elk Nederlands boekhoudpakket (jortt, Silvasoft, SnelStart, Acumulus) boekt zo'n post als een
+  // aparte 0%-regel. De zin legt uit WAAROM het veld er is, want zonder die uitleg leest het als
+  // nog een bedrag dat ergens bij moet — en dat is het juist niet.
+  'corr.onbelastUitleg': {
+    nl: 'Staat er statiegeld, emballage of pallets op deze factuur? Daar zit geen btw op. Vul dat bedrag hier in — het zit al in het bedrag excl. BTW, dus je totaal verandert er niet van. De app rekent het btw-tarief dan over het juiste deel.',
+    ar: 'هل على هذه الفاتورة تأمين فوارغ أو عبوات أو منصّات نقل؟ لا ضريبة عليها. أدخل ذلك المبلغ هنا — هو أصلاً ضمن المبلغ بدون ضريبة، فلن يتغيّر إجماليك. عندها يحسب التطبيق نسبة الضريبة على الجزء الصحيح.',
+    en: 'Does this invoice include deposits, packaging or pallets? Those carry no BTW. Enter that amount here — it is already inside the amount excluding BTW, so your total does not change. The app then computes the BTW rate over the right part.',
+  },
+  'corr.onbelastLabel': {
+    nl: 'Bedrag zonder btw (statiegeld, emballage, pallets)',
+    ar: 'مبلغ بلا ضريبة (تأمين فوارغ، عبوات، منصّات)',
+    en: 'Amount without BTW (deposits, packaging, pallets)',
+  },
+  'corr.onbelastPlaceholder': {
+    nl: 'Bijvoorbeeld 12,60',
+    ar: 'مثلاً 12,60',
+    en: 'For example 12,60',
+  },
   'corr.bedragUitleg': {
     nl: 'Neem het totaal en de BTW over zoals ze onderaan de factuur staan — het bedrag exclusief rekent zichzelf uit.',
     ar: 'انقل الإجمالي ومبلغ btw كما هما مكتوبان أسفل الفاتورة — المبلغ بدون الضريبة يُحسب تلقائياً.',

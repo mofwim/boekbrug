@@ -282,6 +282,8 @@ interface IncomingRow {
   // cannot be "late" by definition.
   invoice_type?: string | null
   total_inc_btw: number | null
+  // [NUL-POST] Het deel van excl. BTW waarop geen btw zit (statiegeld, emballage, pallets).
+  untaxed_amount?: number | null
   // [PARTIAL-PAY] running total already settled by instalments (0 when fully open). A value between
   // 0 and |total_inc_btw| means the invoice is a deelbetaling: still openstaand, part paid.
   amount_paid?: number | null
@@ -4491,7 +4493,7 @@ export default function IncomingManageClient({
           why this is not a copy. It writes through the same route with the same guards. */}
       {correctFor && (
         <InvoiceCorrectionModal
-          invoice={correctFor}
+          invoice={{ ...correctFor, untaxed_amount: correctFor.untaxed_amount ?? null }}
           btwRows={Array.isArray(correctFor.field_confidence?._btw_rows)
             ? (correctFor.field_confidence._btw_rows as { rate: number; base: number; btw: number }[])
             : null}

@@ -31,6 +31,8 @@
 import { evaluateArithmetic, isPlaceholderInvoiceNumber } from '@/lib/safecore'
 // [GEGROND-NAAM] De zin hoort bij de regel, niet bij het scherm — zie het blok dat hem gebruikt.
 import { vendorGroundingText } from './vendor-grounding'
+// [SOM-IS-GROND] Een niet-gedrukt totaal dat exact de som is van twee bedragen die er WEL staan.
+import { totalIsDerivedFromGrounded } from './amount-grounding'
 // [E-FACTUUR] De cijfers die de leverancier zelf meestuurde — sterker dan elke lezing.
 import { eInvoiceOf, eInvoiceSettlesAmounts } from '@/lib/e-invoice'
 // [DOCCHECK-SPLIT] € 1.234,56 in de zin die zegt wat er op het document staat.
@@ -344,9 +346,28 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // own amounts contain a block that adds up.
   let alternativeTotals: { ex: number; btw: number; inc: number } | undefined
   const grounding = (fc as unknown as {
-    _grounding?: { totalIncBtw?: string; alternative?: { ex: number; btw: number; inc: number } }
+    _grounding?: {
+      totalIncBtw?: string; totalExBtw?: string; btwAmount?: string
+      alternative?: { ex: number; btw: number; inc: number }
+    }
   } | null)?._grounding
-  if (grounding?.totalIncBtw === 'absent') {
+  // [SOM-IS-GROND] Een totaal dat niet op het papier staat maar exact de som is van twee bedragen
+  // die er WEL letterlijk staan, is geen gok — het is rekenwerk over bewijs, en dat is het sterkste
+  // wat er is op een factuur die haar eigen totaal niet herhaalt.
+  //
+  // Gemeten: 53 van de 53 gegronde facturen van GROOTHANDEL M.H. BAL (de grootste leverancier van
+  // deze eigenaar, 96 stuks) hebben excl 'found', btw 'found' en incl 'absent' — en tellen elke
+  // keer exact op. Elke andere leverancier scoort 0 of 1. Dit was dus geen leesfout maar één
+  // factuurlay-out, 53 keer aangezien voor een probleem.
+  //
+  // Deze controle staat HIER en niet alleen bij het inlezen, want dan zouden de 53 bestaande rijen
+  // hun waarschuwing houden: het oordeel staat opgeslagen, de bedragen ook, dus het bewijs is
+  // achteraf net zo goed na te rekenen als op het moment zelf.
+  const somIsGrond = totalIsDerivedFromGrounded(
+    grounding as Parameters<typeof totalIsDerivedFromGrounded>[0],
+    { totalIncBtw: inv.total_inc_btw, totalExBtw: inv.total_ex_btw, btwAmount: inv.btw_amount },
+  )
+  if (grounding?.totalIncBtw === 'absent' && !somIsGrond) {
     // Both: `arithmetic` still holds this row out of auto-booking (it always did, and that is
     // right), while `notOnDocument` says WHICH finding it is so the checklist can stop describing
     // it as a sum that does not add up. See the flag's own comment.

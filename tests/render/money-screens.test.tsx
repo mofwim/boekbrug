@@ -3213,3 +3213,46 @@ test("[BANK-STAND] the bank screen says what is waiting, and says nothing while 
   assert.doesNotMatch(html, /Koppel je bank of upload je bankafschrift\. We koppelen/, "the static intro is back");
 });
 
+
+// ── [NUL-POST] Het onbelaste bedrag staat op het correctiescherm ────────────────────────────────
+//
+// Statiegeld, emballage en europallets dragen geen btw. jortt, Silvasoft, SnelStart en Acumulus
+// boeken zo'n post allemaal als een APARTE 0%-regel; deze app had er geen veld voor, dus verdween
+// het bedrag in de grondslag en zakte het afgeleide tarief onder het laagste wettelijke tarief.
+//
+// Gemeten: 52 van 479 geboekte inkoopfacturen (€ 40.761) rekenen een tarief dat geen 0/9/21 is
+// terwijl excl + btw exact het totaal is — Aardappelgroothandel Altena 6,50%, Elegance Brands
+// 8,38%, Vars Foods 8,45%. Alle drie ONDER 9%, wat precies is wat een onbelaste post in de
+// grondslag doet.
+test("[NUL-POST] het veld voor een bedrag zonder btw staat op het correctiescherm", async () => {
+  const { default: InvoiceCorrectionModal } = await import("../../src/components/invoice/InvoiceCorrectionModal");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+
+  const render = (extra: Record<string, unknown>) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      React.createElement(InvoiceCorrectionModal as any, {
+        invoice: {
+          id: "eb-1", invoice_number: "2026080832", client_name: "Elegance Brands",
+          invoice_date: "2026-08-08", invoice_type: "factuur",
+          total_ex_btw: 1011.70, btw_amount: 75.22, total_inc_btw: 1086.92,
+          ...(extra.invoice as object ?? {}),
+        },
+        onClose() {}, onSaved() {}, onMessage() {}, ...extra,
+      })),
+  );
+
+  const html = render({});
+  assert.match(html, /Bedrag zonder btw/,
+    "het veld staat er niet, en dan kan een ondernemer een factuur met statiegeld nergens goed " +
+      "krijgen: de bedragen kloppen al, alleen het tarief zakt onder 9%");
+  assert.match(html, /statiegeld, emballage, pallets/i, "het label moet zeggen waar het over gaat");
+  assert.match(html, /je totaal verandert er niet van/,
+    "de uitleg moet zeggen dat dit bedrag AL in excl. BTW zit — anders leest het als nog een " +
+      "bedrag dat erbij moet, en telt de ondernemer zijn factuur dubbel");
+
+  // De opgeslagen waarde komt terug in het veld, met een Nederlandse komma.
+  const metWaarde = render({ invoice: { untaxed_amount: 176.4 } });
+  assert.match(metWaarde, /value="176,4"/,
+    "een eerder ingevuld onbelast bedrag hoort terug te staan, anders wist elke volgende correctie het");
+});

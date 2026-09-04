@@ -279,6 +279,68 @@ export function groundAmount(amount: number | null | undefined, text: string | n
 }
 
 /** All three money fields at once. */
+/**
+ * [SOM-IS-GROND] Is a total that is not printed nevertheless proven by the page?
+ *
+ * ── THE INVOICES THIS EXISTS FOR ──
+ *
+ * GROOTHANDEL M.H. BAL invoices its subtotal and its BTW and never restates the gross. Measured on
+ * production: 53 of the 53 grounded invoices from this supplier — the owner's LARGEST, 96 invoices
+ * — report totalIncBtw 'absent', and every single one has totalExBtw 'found', btwAmount 'found',
+ * and ex + btw equal to the total to the cent:
+ *
+ *   611,61 + 55,04 = 666,65      744,58 + 67,01 = 811,59
+ *   627,63 + 56,49 = 684,12      779,95 + 70,20 = 850,15
+ *
+ * Every other supplier in the same administration scores 0 or 1. So this is not a misread; it is
+ * one supplier's layout, and the app called it a problem 53 times.
+ *
+ * ── WHY THAT IS THE WRONG ANSWER, AND WHAT IT COSTS ──
+ *
+ * The header of this file assumes the opposite case — "an invoice printing only the total and the
+ * BTW leaves excl to be computed" — and concludes that "an invoice that does not print its own
+ * total is close to hypothetical". On this owner's data that is false for more than half of the
+ * biggest supplier's invoices.
+ *
+ * And the sentence the owner reads is "het totaalbedrag staat niet letterlijk in de tekst —
+ * controleer het aan de factuur zelf", which implies the app may have invented the number. It did
+ * not: it added two figures that are literally on the page. That is not a guess, it is arithmetic
+ * over grounded evidence, and it is the strongest provenance available short of reading the total
+ * itself. A warning that fires on 53 correct invoices is how the warning stops being read — and the
+ * one it exists to catch then goes past unread too.
+ *
+ * ── WHY THIS DOES NOT WEAKEN THE CHECK THAT MATTERS ──
+ *
+ * [ANDER-TOTAAL] came from NemaFood 262697: the app read EUR 1.149,56 and the document said
+ * 1.065,14 + 95,54 = 1.160,68. That read ALSO added up internally — 1.054,64 + 94,92 = 1.149,56 —
+ * so "the numbers are consistent" proves nothing on its own.
+ *
+ * What separates them is grounding, not arithmetic. On NemaFood all THREE fields were 'absent' and
+ * a competing totals block was found on the page. Here two of the three are literally present and
+ * nothing competes with them. So this asks for both halves — each component individually FOUND, and
+ * their sum exactly the total — and stays silent the moment either fails.
+ */
+export function totalIsDerivedFromGrounded(
+  g: Pick<MoneyGrounding, 'totalIncBtw' | 'totalExBtw' | 'btwAmount'> | null | undefined,
+  amounts: { totalIncBtw?: number | null; totalExBtw?: number | null; btwAmount?: number | null },
+): boolean {
+  if (!g) return false;
+  // Only ever rescues a total the text does not carry. When it IS found there is nothing to rescue.
+  if (g.totalIncBtw !== 'absent') return false;
+  // Both components must be literally on the page. 'unreadable' is not evidence of anything, and
+  // 'absent' is the NemaFood shape this must never cover.
+  if (g.totalExBtw !== 'found' || g.btwAmount !== 'found') return false;
+
+  const inc = amounts.totalIncBtw;
+  const ex = amounts.totalExBtw;
+  const btw = amounts.btwAmount;
+  if (typeof inc !== 'number' || typeof ex !== 'number' || typeof btw !== 'number') return false;
+  if (!Number.isFinite(inc) || !Number.isFinite(ex) || !Number.isFinite(btw)) return false;
+  // Exactly, to the cent. This is a proof, not a plausibility check: a tolerance here would let a
+  // read that is a euro out present itself as grounded.
+  return Math.abs(ex + btw - inc) <= 0.005;
+}
+
 export function groundMoneyFields(
   amounts: { totalIncBtw?: number | null; totalExBtw?: number | null; btwAmount?: number | null },
   text: string | null | undefined,

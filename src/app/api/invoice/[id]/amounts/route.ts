@@ -185,6 +185,12 @@ export async function PATCH(
   const btw = body.btw_amount;
   const incBtw = body.total_inc_btw;
   const declaredCredit = body.is_credit_note === true;
+  // [NUL-POST] Het deel van excl. BTW waarop geen btw zit — statiegeld, emballage, europallets.
+  // Optioneel en los van de drie bedragen hierboven: een eigenaar die alleen deze post invult,
+  // corrigeert geen enkel totaal (excl + btw = totaal blijft precies staan), hij vertelt de app
+  // alleen welk stuk van de grondslag onbelast is. Zo wordt het tarief over de juiste basis
+  // gerekend. Zie untaxed-amount.ts.
+  const onbelast = body.untaxed_amount;
 
   // [FULL-CORRECTION] The amounts are now OPTIONAL, and the identity is only asserted when they
   // are present. An owner fixing a misread invoice NUMBER should not have to retype three amounts
@@ -432,6 +438,23 @@ export async function PATCH(
   // Written when the owner sent amounts, AND when the credit-sign rule turned the stored ones
   // negative — a tick with no retyping is still a change to the money, and the whole point of
   // [CREDIT-SIGN] is that the tick must move it.
+  // [NUL-POST] Apart van hasAmounts, want dit veld MAG in z'n eentje worden gewijzigd: het
+  // verandert geen enkel totaal, alleen de grondslag waarover het tarief wordt afgeleid.
+  if (finite(onbelast)) {
+    const ex = finite(exBtw) ? Math.abs(Number(exBtw)) : Math.abs(Number((invoice as { total_ex_btw?: number | null }).total_ex_btw ?? 0));
+    const n = Math.abs(Number(onbelast));
+    // Groter dan de grondslag is een typefout, en die mag niet als feit worden opgeslagen: het
+    // tarief zou dan over een negatieve basis worden gerekend en met stelligheid onzin melden.
+    if (n > ex + 0.005) {
+      return NextResponse.json(
+        { error: "Het onbelaste bedrag kan niet groter zijn dan het bedrag exclusief BTW." },
+        { status: 400 },
+      );
+    }
+    // Het teken volgt de factuur: op een creditnota is alles negatief.
+    (patch as Record<string, unknown>).untaxed_amount = signed.totalExBtw < 0 ? -n : n;
+  }
+
   if (hasAmounts || signed.flipped) {
     patch.total_ex_btw = signed.totalExBtw;
     patch.btw_amount = signed.btwAmount;

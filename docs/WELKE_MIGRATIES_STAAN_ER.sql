@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 116 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 118 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 15 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -296,6 +296,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoice_schedules.sql', 'index', 'invoices_one_per_schedule_date', null, 'public'),
   ('invoice_schedules.sql', 'policy', 'invoice_schedules_delete_own', 'invoice_schedules', 'public'),
   ('invoice_superseded_by.sql', 'column', 'superseded_by_number', 'invoices', 'public'),
+  ('invoice_untaxed_amount.sql', 'column', 'untaxed_amount', 'invoices', 'public'),
   ('kas_opening_balance.sql', 'column', 'kas_opening_balance', 'profiles', 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_session_uidx', null, 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_user_idx', null, 'public'),
@@ -535,7 +536,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 131
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 133
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

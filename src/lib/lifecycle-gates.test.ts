@@ -1327,7 +1327,9 @@ test("[GEGROND] the only non-self-referential check on a money field is actually
   // And the owner has to SEE it, or the app is still asking them to trust it.
   const health = code("src/lib/import-health.ts");
   assert.match(
-    health, /_grounding[\s\S]{0,400}?niet letterlijk in de tekst/,
+    // Window widened from 400 to 1600 when [SOM-IS-GROND] put its reasoning between the read and
+    // the sentence. Only the distance changed; the fact this pins did not.
+    health, /_grounding[\s\S]{0,1600}?niet letterlijk in de tekst/,
     "the verify screen must say it in words — that sentence is the difference between checking " +
       "the invoice yourself and not having to",
   );
@@ -25787,4 +25789,52 @@ test("[OVERSLAG-VERJAART] a stale skip is decided by today's reader, not by yest
   assert.ok(consumed > 0 && deleted > consumed,
     "the skip row is cleared before the archive is known to be consumed — then a zip that fails " +
       "to open loses both its contents and the record that it was ever seen");
+});
+
+// ── [NUL-POST] The untaxed part of an invoice, the way every Dutch package books it ───────────
+//
+// Statiegeld, emballage, europallets: amounts on an invoice that carry no BTW. jortt, Silvasoft,
+// SnelStart and Acumulus all book such a post as a SEPARATE 0% LINE beside the taxed goods line.
+// This app had no field for it, so the amount hid inside total_ex_btw and dragged the derived rate
+// below the lowest legal one.
+//
+// Measured: 52 of 479 booked purchase invoices (EUR 40.761) compute a rate that is not 0, 9 or 21
+// while excl + btw equals the total EXACTLY — Aardappelgroothandel Altena 6,50 %, Elegance Brands
+// 8,38 %, Vars Foods 8,45 %. All three BELOW nine, which is what an untaxed amount inside the base
+// does to the quotient.
+//
+// It is the missing second half of [STATIEGELD-GAT], which already finds a deposit the reader
+// dropped and folds it INTO the base — and by doing so produces exactly this sub-legal rate:
+// Elegance Brands 2026080832 becomes 75,22 / 1.011,70 = 7,43 %.
+test("[NUL-POST] the untaxed amount sits INSIDE the base, and only the rate is measured differently", () => {
+  const mod = code("src/lib/untaxed-amount.ts");
+  // The decision the whole design rests on. Stored beside the base instead of inside it, every
+  // existing total in the product would have stopped adding up the day this shipped.
+  assert.match(mod, /export function taxableBase/,
+    "the taxable base is gone, so the rate is being measured over the full excl amount again");
+  assert.match(mod, /return \(btw \/ base\) \* 100/,
+    "impliedRate no longer divides by the taxable base — a statiegeld invoice then reads as an " +
+      "illegal rate forever, and the owner has no way to say what the untaxed part is");
+  assert.match(code("supabase/migrations/invoice_untaxed_amount.sql"), /add column if not exists untaxed_amount numeric not null default 0/,
+    "the column is gone or nullable. Null would turn every sum downstream into null; the absent " +
+      "case is zero, which is what an invoice without a 0%-post actually has");
+
+  // It PROPOSES only where an untaxed post can explain the gap — never on a mixed-rate invoice,
+  // where suggesting statiegeld would be a wrong answer in a confident voice.
+  assert.match(mod, /if \(rate > LEGAL_RATES\[1\] \+ 0\.2\) return null;/,
+    "a rate between 9 % and 21 % is now offered an untaxed amount. That is a blend of two rates " +
+      "(Enka Horeca lands at 10,63 %), and _btw_rows already models it");
+
+  // The owner types it, on the ONE shared editor both screens open — a second one would drift.
+  const editor = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(editor, /t\('corr\.onbelastLabel'\)/,
+    "the field is gone from the shared correction editor, so /incoming and /incoming/manage both " +
+      "lose it at once");
+  assert.match(editor, /body\.untaxed_amount = getypt/,
+    "the typed amount is never sent, so the field renders and saves nothing");
+  // And the deposit repair fills it in, because the app already knows the number.
+  assert.match(editor, /setOnbelast\(String\(Math\.abs\(depositGap\.gap\)\)/,
+    "[STATIEGELD-GAT] folds the deposit into the base and no longer records how much of it is " +
+      "untaxed — which is precisely how the sub-legal rate is created. Retyping a number the app " +
+      "already found on the paper is how a correct figure becomes a typo");
 });

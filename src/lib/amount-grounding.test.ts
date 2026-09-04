@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import {
   groundAmount,
   groundMoneyFields,
+  totalIsDerivedFromGrounded,
   groundingBlocksAutoBooking,
   groundingText,
   verdictBlocksAutoBooking,
@@ -288,3 +289,79 @@ test('[VORM-GEMIST] and none of the new forms confirms an amount the document do
   assert.equal(groundAmount(871.40, 'TOTAAL 1.871,40 EUR'), 'absent', 'the thousand-euro misread is back')
   assert.equal(groundAmount(1.00, 'TOTAAL 1.871,40 EUR'), 'absent', 'a bare 1 matched the leading group')
 })
+
+// ── [SOM-IS-GROND] ────────────────────────────────────────────────────────────────────────────
+test('[SOM-IS-GROND] a total that is the exact sum of two FOUND amounts is proven, not absent', () => {
+  // GROOTHANDEL M.H. BAL, invoice 264502. Its layout prints the subtotal and the BTW and never
+  // restates the gross. 53 of 53 grounded invoices from this supplier look exactly like this, and
+  // every one carried "controleer het aan de factuur zelf" — a sentence implying the app might
+  // have invented a number it in fact added from two figures literally on the page.
+  assert.equal(
+    totalIsDerivedFromGrounded(
+      { totalIncBtw: 'absent', totalExBtw: 'found', btwAmount: 'found' },
+      { totalIncBtw: 666.65, totalExBtw: 611.61, btwAmount: 55.04 },
+    ),
+    true,
+  );
+  for (const [inc, ex, btw] of [[811.59, 744.58, 67.01], [684.12, 627.63, 56.49], [850.15, 779.95, 70.2]]) {
+    assert.equal(
+      totalIsDerivedFromGrounded(
+        { totalIncBtw: 'absent', totalExBtw: 'found', btwAmount: 'found' },
+        { totalIncBtw: inc, totalExBtw: ex, btwAmount: btw },
+      ),
+      true,
+      `${ex} + ${btw} = ${inc} is proof, not a guess`,
+    );
+  }
+});
+
+test('[SOM-IS-GROND] the NemaFood shape is untouched — arithmetic alone proves nothing', () => {
+  // The invoice [ANDER-TOTAAL] exists for: the app read EUR 1.149,56 while the document said
+  // 1.065,14 + 95,54 = 1.160,68. That read ALSO added up internally (1.054,64 + 94,92 = 1.149,56),
+  // so a rule based on "the numbers agree" would have waved it through. What separates the two is
+  // GROUNDING: there all three fields were absent; here two are literally on the page.
+  assert.equal(
+    totalIsDerivedFromGrounded(
+      { totalIncBtw: 'absent', totalExBtw: 'absent', btwAmount: 'absent' },
+      { totalIncBtw: 1149.56, totalExBtw: 1054.64, btwAmount: 94.92 },
+    ),
+    false,
+    'a self-consistent read of three ungrounded numbers must still raise the alarm',
+  );
+});
+
+test('[SOM-IS-GROND] one ungrounded component is enough to stay silent', () => {
+  for (const g of [
+    { totalIncBtw: 'absent', totalExBtw: 'found', btwAmount: 'absent' },
+    { totalIncBtw: 'absent', totalExBtw: 'absent', btwAmount: 'found' },
+    { totalIncBtw: 'absent', totalExBtw: 'unreadable', btwAmount: 'unreadable' },
+  ] as const) {
+    assert.equal(
+      totalIsDerivedFromGrounded(g, { totalIncBtw: 666.65, totalExBtw: 611.61, btwAmount: 55.04 }),
+      false,
+      'a component that is not literally on the page cannot ground anything',
+    );
+  }
+});
+
+test('[SOM-IS-GROND] the sum must be exact — a plausible near-miss is still a misread', () => {
+  assert.equal(
+    totalIsDerivedFromGrounded(
+      { totalIncBtw: 'absent', totalExBtw: 'found', btwAmount: 'found' },
+      { totalIncBtw: 667.65, totalExBtw: 611.61, btwAmount: 55.04 }, // one euro out
+    ),
+    false,
+    'a euro of difference is exactly what this check exists to surface',
+  );
+});
+
+test('[SOM-IS-GROND] nothing is rescued when the total WAS found', () => {
+  assert.equal(
+    totalIsDerivedFromGrounded(
+      { totalIncBtw: 'found', totalExBtw: 'found', btwAmount: 'found' },
+      { totalIncBtw: 666.65, totalExBtw: 611.61, btwAmount: 55.04 },
+    ),
+    false,
+    'there is nothing to rescue, and the caller must not read this as a second opinion',
+  );
+});
