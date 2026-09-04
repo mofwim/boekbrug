@@ -565,6 +565,52 @@ console.log("\n[RUBRIEK-1E] wat er in 1e staat, en wat de app er niet uit kan ha
   check("…en dus geen notitie", !alles3b.notes.some((n) => n.includes("rubriek 1e")));
 }
 
+console.log("\n— [VERLEGD-NAAR-MIJ] rubriek 2a: verlegde BTW, aangegeven én afgetrokken —");
+{
+  // Een aannemer met € 20.000 aan onderaanneming waarop de BTW naar hem is verlegd. De regeling
+  // raakt de aangifte op twee regels tegelijk: € 4.200 verschuldigd in 2a, en exact hetzelfde
+  // bedrag terug in 5b. Bij volledige aftrek betaalt hij er niets over — en juist daarom lijkt
+  // weglaten onschuldig. Het is het niet: de aangifte sluit dan niet aan op die van zijn
+  // onderaannemer, en de Belastingdienst legt die twee naast elkaar.
+  const input: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 50000, btw: 10500 }],
+    btwVoorbelasting: 3000,
+    cashOmzetZonderBtw: 0,
+    verlegdNaarMij: { grondslag: 20000, btw: 4200, aantal: 2 },
+  };
+  const a = buildAangifte(input, compl(), "Q2 2026");
+  const row = (c: string) => a.rows.find((r) => r.code === c);
+  check("2a staat op de aangifte: grondslag 20.000 / btw 4.200",
+    row("2a")?.omzet === 20000 && row("2a")?.btw === 4200);
+  check("5a telt 2a mee: 10.500 + 4.200 = 14.700", a.verschuldigd === 14700);
+  check("5b telt dezelfde 4.200 af: 3.000 + 4.200 = 7.200", a.voorbelasting === 7200);
+  // De hele regeling hangt hieraan: hetzelfde getal aan beide kanten, dus het saldo verandert niet.
+  check("5g ongewijzigd t.o.v. zonder verlegging (10.500 - 3.000 = 7.500)", a.saldo === 7500);
+  check("de notitie waarschuwt dat het tarief NIET op de factuur staat",
+    a.notes.some((n) => n.includes("GEEN tarief")));
+  check("de notitie noemt hoeveel facturen het betreft", a.notes.some((n) => n.includes("2 inkoopfacturen")));
+}
+
+console.log("\n— [VERLEGD-NAAR-MIJ] zonder verlegging blijft de aangifte precies zoals hij was —");
+{
+  // De tegenproef. Een bakker heeft geen verlegde inkoop; dan hoort er geen 2a-regel te staan,
+  // ook geen van nul. Een lege rubriek op een formulier is ruis, en ruis wordt genegeerd.
+  const zonder: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 50000, btw: 10500 }],
+    btwVoorbelasting: 3000,
+    cashOmzetZonderBtw: 0,
+  };
+  const a = buildAangifte(zonder, compl(), "Q2 2026");
+  check("geen 2a-regel", !a.rows.some((r) => r.code === "2a"));
+  check("5a onveranderd", a.verschuldigd === 10500);
+  check("5b onveranderd", a.voorbelasting === 3000);
+  check("geen verleggingsnotitie", !a.notes.some((n) => n.includes("naar jou heeft verlegd")));
+
+  // En een nul-verlegging telt óók niet mee: 'aangetroffen maar nul' is hetzelfde als niets.
+  const nul = buildAangifte({ ...zonder, verlegdNaarMij: { grondslag: 0, btw: 0, aantal: 0 } }, compl(), "Q2 2026");
+  check("een nul-verlegging levert geen rubriek op", !nul.rows.some((r) => r.code === "2a"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
 

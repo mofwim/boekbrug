@@ -24227,10 +24227,18 @@ test("[TWEE-BOEKEN] a paid invoice the supplier still lists is a contradiction, 
 test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names the limit", () => {
   const pure = code("src/lib/aangifte.ts");
 
-  // The row set is still the five it was — if a 3a row ever ships, this gate should be revisited
-  // rather than silently outlived.
-  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "3b";/,
-    "five rubrieken, and 3a/3c are not among them");
+  // The row set, named explicitly so a new rubriek trips this gate instead of slipping past it.
+  //
+  // [VERLEGD-NAAR-MIJ] It tripped, as designed, when 2a shipped — and this is the revisit its own
+  // note asked for rather than a weakening. 2a is a rubriek the app now COMPUTES, from a marker on
+  // the supplier's own invoice. 3a and 3c remain outside it for the reason below: they turn on
+  // where the customer is, and this schema holds no country for a customer anywhere.
+  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "2a" \| "3b";/,
+    "the rubriek vocabulary changed. That is not automatically wrong — but it is never incidental, " +
+      "so update this list deliberately and check the 3a/3c reasoning below still holds");
+  assert.ok(!/code: "3a"/.test(pure) && !/code: "3c"/.test(pure),
+    "a 3a or 3c row now ships. Those depend on where the CUSTOMER is, and there is no country for " +
+      "a customer anywhere in this schema — so such a row can only be a guess printed on a tax return");
 
   // The note fires on the AMOUNT, so a quarter with no 0%-turnover stays quiet. An aangifte that
   // lectures every owner about export is one whose notes stop being read.
@@ -25645,4 +25653,44 @@ test("[GEEN-BTW-SOORT] it asks about rent and never rules on it", () => {
       "invoices that are right");
   assert.ok(!/"bank\|/.test(mod),
     "'bank' as a bare fragment matches Bankethuis and banketbakkerij; a bakery is not a bank");
+});
+
+// ── [VERLEGD-NAAR-MIJ] Rubriek 2a exists, and it moves BOTH lines ─────────────────────────────
+//
+// This app has a front door at /voor-bouw, and construction is the trade that lives under the
+// verleggingsregeling. Behind that door there was no rubriek 2a at all — not a computation, and
+// unlike 1d, 3a and 4b not even a note saying it is not computed. An owner who falls under it got
+// silence on a filing they sign.
+//
+// The rule (art. 12 lid 5 Wet OB; art. 24b Uitv.besluit): the subcontractor invoices WITHOUT BTW
+// and prints "btw verlegd". The recipient then declares that BTW as owed in 2a AND deducts the
+// same amount in 5b. When deduction is full the two cancel — which is exactly why omitting both
+// looks harmless. It is not: the return is wrong on two lines, it does not reconcile against the
+// subcontractor's own filing, and the Belastingdienst compares them. A partly exempt owner is
+// worse off, because for them the two do not cancel at all.
+test("[VERLEGD-NAAR-MIJ] 2a is declared and deducted from ONE number", () => {
+  const a = code("src/lib/aangifte.ts");
+  assert.match(a, /"1a" \| "1b" \| "1c" \| "1e" \| "2a" \| "3b"/,
+    "rubriek 2a is gone from the row vocabulary, so verlegde BTW cannot be stated at all");
+  assert.match(a, /rows\.push\(\{ code: "2a", label: RATE_LABEL\["2a"\], omzet: euro\(verlegd\.grondslag\), btw: verlegdBtw \}\)/,
+    "the 2a row is no longer pushed onto the return");
+  // The two halves must come from ONE rounded figure. Rounding them apart is how two amounts that
+  // are supposed to cancel leave a few cents of balance on a return where nothing was payable.
+  assert.match(a, /const verlegdBtw = verlegd \? euro\(verlegd\.btw\) : 0;/,
+    "the 2a amount is no longer rounded once and reused");
+  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdBtw;/,
+    "5b stopped including the verlegde BTW. Then 2a raises what is owed and nothing deducts it — " +
+      "the owner pays BTW on a purchase they were entitled to deduct in the same return");
+
+  // And the rate is never invented: a reverse-charged invoice carries no BTW and therefore no rate.
+  const m = code("src/lib/verlegde-btw.ts");
+  assert.match(m, /if \(Math\.abs\(btw\) >= 0\.005\) return null;/,
+    "an invoice that DOES charge BTW is being read as reverse-charged, which would count the same " +
+      "BTW twice — once in 2a and once in the supplier's own charge");
+  assert.match(m, /bevestigdTarief/,
+    "the proposed rate can no longer be overruled by the owner, and the rate is precisely the one " +
+      "thing a reverse-charged document does not state");
+  assert.match(code("src/lib/ai.ts"), /Leave "btw_rate" null/,
+    "the reader is no longer told to leave the rate empty on a reverse-charged invoice — so it " +
+      "will produce one, and a made-up rate here is a made-up amount in 2a");
 });

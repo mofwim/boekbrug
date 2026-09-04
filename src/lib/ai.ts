@@ -571,6 +571,13 @@ export interface VerifyInvoiceResult {
   // enforces the consequence (btw → 0, folded into the cost) and flags it for a human. True only
   // on the literal word.
   has_assurantiebelasting?: boolean;
+  /**
+   * [VERLEGD-NAAR-MIJ] De leverancier heeft de BTW naar deze eigenaar VERLEGD (art. 12 lid 5 Wet
+   * OB). Zo'n factuur draagt geen BTW, en het bedrag hoort in rubriek 2a én in 5b van de aangifte.
+   * Een vlag en géén bedrag, met opzet: het TARIEF staat niet op zo'n document, dus het model kan
+   * het niet lezen en mag het niet verzinnen. Zie verlegde-btw.ts.
+   */
+  has_btw_verlegd?: boolean;
   // [STATEMENT] Is this a STATEMENT OF ACCOUNT — a "rekeningoverzicht" / "openstaande facturen"
   // that LISTS MULTIPLE separate invoices with a summed balance? It is NOT a bookable invoice:
   // booking its total double-counts the individual invoices (which arrive on their own). True
@@ -621,6 +628,10 @@ export interface VerifyInvoiceResult {
     // [ASSURANTIE] Set when assurantiebelasting was stripped from the deductible BTW. Keeps the
     // document in the verify queue (never auto-booked) and drives the owner-facing reason.
     _assurantiebelasting?: { read: number | null };
+    // [VERLEGD-NAAR-MIJ] Gezet wanneer de leverancier de BTW naar deze eigenaar heeft verlegd.
+    // Alleen vastgelegd — de factuur zelf is goed zoals ze is; de aangifte doet er iets mee
+    // (rubriek 2a, en dezelfde euro's terug in 5b). Zie verlegde-btw.ts.
+    _btw_verlegd?: { grondslag: number | null };
     // [EX-INCL-FIX] Set when the base was recovered from incl − btw (a mislabelled "Subtotaal").
     _ex_corrected?: { read: number | null; used: number | null };
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
@@ -1481,6 +1492,7 @@ Return only a JSON object with these exact keys:
   "paid_card_last4": string or null,
   "is_credit_note": boolean,
   "has_assurantiebelasting": boolean,
+  "has_btw_verlegd": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
   "reminder_of_invoice_number": string or null,
@@ -1506,6 +1518,16 @@ Insurance premium tax (assurantiebelasting) — read carefully, this is money:
   never be reclaimed. An insurance premium (polis, verzekering, "Overzicht van uw verzekeringen")
   carries assurantiebelasting, never deductible BTW. Never put that amount in "btw_amount".
 - Everything else on such a document is read normally (vendor, total_inc_btw, dates).
+
+BTW verlegd (reverse charge) — a different thing, and also money:
+- If the document says the BTW is shifted to the recipient — "btw verlegd", "verleggingsregeling",
+  "btw verlegd naar de aannemer", "artikel 24b", "reverse charge" — set "has_btw_verlegd": true.
+- Such an invoice carries NO BTW: "btw_amount" is 0 and there is no rate on it. Do NOT compute one,
+  and do NOT put a percentage in "btw_rate" — the rate follows from what was supplied, which is not
+  something the document states. Leave "btw_rate" null.
+- This is common in construction and staff hire: a subcontractor invoices the main contractor
+  without BTW. Read the amounts exactly as printed; the app handles the rest.
+- If the document DOES charge BTW, this is false, whatever the terms and conditions mention.
 
 Rules for is_invoice = true:
 - Must have a sender (vendor/company name)
@@ -2590,6 +2612,17 @@ Return JSON only.`;
         // The premium tax is not a BTW rate, so a stated rate no longer describes this document.
         parsed.btw_rate = undefined;
       }
+    }
+
+    // [VERLEGD-NAAR-MIJ] De leverancier heeft de BTW naar deze eigenaar verlegd. Alleen VASTLEGGEN,
+    // niets herrekenen: de factuur is precies goed zoals ze is (geen BTW, geen tarief), en wat er
+    // moet gebeuren gebeurt één laag verder — rubriek 2a op de aangifte, met dezelfde euro's weer
+    // terug in 5b. Het TARIEF staat niet op zo'n document, dus dat wordt hier niet bedacht.
+    if (parsed.has_btw_verlegd === true) {
+      parsed.field_confidence = {
+        ...(parsed.field_confidence ?? {}),
+        _btw_verlegd: { grondslag: parsed.total_ex_btw ?? parsed.total_inc_btw ?? null },
+      };
     }
 
     // [BTW-SPLIT] Carry the per-rate summary block through to storage.
