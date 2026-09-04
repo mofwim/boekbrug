@@ -21,6 +21,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
+import { DEMO_TENANT_ID } from "@/lib/demo-tenant";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
@@ -153,6 +154,9 @@ export async function GET(req: NextRequest) {
           (chunk, from, to) => (pipeline as any)
             .from("profiles")
             .select("id, email, role, ochtend_mail")
+            // [DEMO-DICHT] Het demoaccount overslaan: openbaar wachtwoord, en een cron draagt geen
+            // sessie zodat de middleware-fence deze route niet ziet.
+            .neq("id", DEMO_TENANT_ID)
             .in("id", chunk)
             .order("id", { ascending: true }).range(from, to) as PromiseLike<{ data: ProfielRij[] | null; error: { message: string } | null }>,
         );

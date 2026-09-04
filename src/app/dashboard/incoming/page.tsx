@@ -13,9 +13,20 @@ import {
   type FieldConfidence,
 } from "@/lib/import-health";
 // [QUEUE-COMPLETE] pages past PostgREST's silent ~1000-row cap.
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 // [READING-MEMORY] Which suppliers this owner keeps having to correct — built from the audit trail.
 import { readingHintFor, vendorKey } from "@/lib/reading-memory";
+// [TARIEF-GEHEUGEN] Het tarief dat een leverancier aantoonbaar altijd rekent — zie het blok
+// verderop, en vendor-vat-rate.ts voor waarom een gemengde leverancier er géén krijgt.
+import { deriveVendorRate, type RatedInvoice } from "@/lib/vendor-vat-rate";
+
+/** [TARIEF-GEHEUGEN] Eén historische factuur, teruggebracht tot wat een tarief eruit afleidt. */
+type HistorieRij = {
+  client_name: string | null;
+  total_ex_btw: number | null;
+  btw_amount: number | null;
+  total_inc_btw: number | null;
+};
 
 // [LEVERANCIER-KIEZEN] The suppliers the owner already has, for the name field in the verify
 // modal. The cap lives with the matching it feeds — one number, two screens.
@@ -411,6 +422,58 @@ export default async function IncomingPage() {
     if (hint) readingHints[vendorKey(inv.client_name)] = hint;
   }
 
+  // ── [TARIEF-GEHEUGEN] Het tarief dat DEZE leverancier zelf altijd rekent ────────────────────
+  //
+  // 44 facturen in productie staan vast met excl. BTW 0 en BTW 0 tegenover een echt totaal:
+  // € 49.963 aan inkoop waarop geen cent voorbelasting is geclaimd. safecore houdt ze terecht
+  // tegen — hij weigert een uitsplitsing te boeken die hij niet gelezen heeft. Maar het antwoord
+  // ligt vaak al in de administratie van de eigenaar zelf: ATAPACK rekende twaalf keer 21 %,
+  // Sumer twaalf keer 9 %, W.KETELS vijfentwintig keer 9 %.
+  //
+  // Alleen VOOR DE LEVERANCIERS DIE NU IN DE WACHTRIJ STAAN, en alleen de drie bedragen — dit is
+  // een voorstel op één scherm, geen tweede boekhouding. Enka Horeca krijgt hier niets: die mengt
+  // 9 % en 21 % op één factuur, en vendor-vat-rate.ts weigert dan een tarief. Dat is de duurste
+  // groep (13 facturen, € 18.698) en juist daarom moet hij leeg blijven — één tarief op een
+  // gemengde factuur is een verkeerd getal in de btw-aangifte.
+  const vendorRates: Record<string, { rate: number; basedOn: number }> = {};
+  {
+    const wachtendeLeveranciers = [...new Set(
+      pendingInvoices.map((i) => i.client_name).filter((n): n is string => typeof n === "string" && n.trim() !== ""),
+    )];
+    if (wachtendeLeveranciers.length > 0) {
+      // [NO-SILENT-EMPTY] Mislukt deze lezing, dan blijft vendorRates leeg en toont het scherm
+      // simpelweg geen voorstel — precies wat het vandaag ook doet. Er wordt niets beweerd op
+      // grond van een lezing die niet gelukt is.
+      // [IN-CHUNK] Gechunkt, want dit is een .in() op een lijst die met de wachtrij meegroeit. Een
+      // ongechunkte variant sneuvelt voorbij een paar honderd namen op een 414 die supabase-js als
+      // een gewone fout teruggeeft — en dan leest een MISLUKTE lezing als "geen geschiedenis", dus
+      // verdwijnt het voorstel precies bij de eigenaar met de meeste leveranciers.
+      const historie = await fetchAllRowsForIds<HistorieRij, string>(
+        wachtendeLeveranciers,
+        (chunk, from, to) => supabase
+          .from("invoices")
+          .select("client_name, total_ex_btw, btw_amount, total_inc_btw")
+          .eq("receiver_id", user.id)
+          .eq("direction", "incoming")
+          .in("client_name", chunk)
+          .in("status", ["received", "paid"])
+          .range(from, to) as unknown as PromiseLike<{ data: HistorieRij[] | null; error: { message: string } | null }>,
+      );
+      const perLeverancier = new Map<string, RatedInvoice[]>();
+            for (const r of historie) {
+        const k = vendorKey(r.client_name);
+        if (!k) continue;
+        const lijst = perLeverancier.get(k) ?? [];
+        lijst.push({ totalExBtw: r.total_ex_btw, btwAmount: r.btw_amount, totalIncBtw: r.total_inc_btw });
+        perLeverancier.set(k, lijst);
+      }
+      for (const [k, rijen] of perLeverancier) {
+        const tarief = deriveVendorRate(rijen);
+        if (tarief) vendorRates[k] = tarief;
+      }
+    }
+  }
+
   const connectionStatus = {
     connected: !!connection,
     provider: (connection?.provider ?? null) as 'gmail' | 'outlook' | null,
@@ -430,6 +493,7 @@ export default async function IncomingPage() {
       connectionStatus={connectionStatus}
       userRole={userRole}
       readingHints={readingHints}
+      vendorRates={vendorRates}
       readFailed={readFailed}
       suppliers={suppliers}
       suppliersUnavailable={!!suppliersErr}

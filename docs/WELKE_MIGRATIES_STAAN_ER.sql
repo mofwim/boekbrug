@@ -341,6 +341,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('push_subscriptions.sql', 'table', 'push_subscriptions', null, 'public'),
   ('regime_kor.sql', 'column', 'kor_active', 'profiles', 'public'),
   ('register_profile_from_metadata.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
+  ('reminders_on_by_default.sql', 'column', 'reminders_enabled_at', 'profiles', 'public'),
   ('repair_mandate_policies.sql', 'column', 'purge_warning_sent_at', 'deletion_requests', 'public'),
   ('repair_mandate_policies.sql', 'index', 'deletion_requests_unwarned_idx', null, 'public'),
   ('repair_mandate_policies.sql', 'policy', 'invoice_lines_mandate_read', 'invoice_lines', 'public'),

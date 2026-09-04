@@ -29,6 +29,8 @@ import { reconcileTriangle, bankNetByDay } from "@/lib/triangle";
 import type { EftSettlement } from "@/lib/eft-parser";
 import { buildReadiness, type ReadinessSignals } from "@/lib/readiness";
 import { vindBestaandeDubbelen } from "@/lib/existing-duplicates";
+// [GEEN-BTW-SOORT] Welke teruggevraagde BTW misschien een andere belasting is — zie btw-soort.ts.
+import { doubtAboutInputVat } from "@/lib/btw-soort";
 import { loadDrawerWitness } from "@/lib/drawer-witness";
 // [KAS-ZACHT] A removed cash movement counts in no total — one definition, see cash-live.ts.
 import { liveCashEntries } from "@/lib/cash-live";
@@ -365,6 +367,30 @@ export async function GET(req: NextRequest) {
       return rij?.invoice_number ?? null;
     }).filter((n): n is string => !!n),
   )];
+
+  // [GEEN-BTW-SOORT] Geboekte inkoopfacturen waarop BTW is teruggevraagd terwijl de tegenpartij
+  // een soort is die geen aftrekbare BTW draagt. Over dezelfde al opgehaalde rijen — geen extra
+  // query — en alleen over wat GEBOEKT is: in de wachtrij waarschuwt het scherm zelf al, en een
+  // factuur twee keer aanwijzen maakt van een melding ruis.
+  //
+  // Dit is geen leesfout maar een soortfout: het papier klopt, de optelling klopt, en het bedrag
+  // is toch niet terug te vragen. Assurantiebelasting is 21% en staat op precies de plek waar BTW
+  // zou staan; niets in deze app kon dat onderscheid eerder zien.
+  const vatDoubts = invRaw
+    .filter((i) => effDir(i as never) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")))
+    .map((i) => ({
+      naam: (i as { client_name: string | null }).client_name,
+      twijfel: doubtAboutInputVat({
+        supplierName: (i as { client_name: string | null }).client_name,
+        btwAmount: (i as { btw_amount: number | null }).btw_amount,
+        totalExBtw: (i as { total_ex_btw: number | null }).total_ex_btw,
+      }),
+    }))
+    .filter((r) => r.twijfel !== null);
+  const vatDoubtCount = vatDoubts.length;
+  // Op naam ontdubbeld: tien polissen van één verzekeraar zijn één ding om na te kijken, en een
+  // zin die die naam tien keer noemt wordt niet gelezen.
+  const vatDoubtNames = [...new Set(vatDoubts.map((r) => r.naam).filter((n): n is string => !!n))];
 
   const autoVerifiedCount = invRaw.filter((i) => {
     const fc = i.field_confidence as Record<string, unknown> | null;
@@ -706,6 +732,8 @@ export async function GET(req: NextRequest) {
     unverifiedInvoiceCount,
     autoVerifiedCount,
     doubleBookedCount,
+    vatDoubtCount,
+    vatDoubtNames,
     doubleBookedNumbers,
     // [EVIDENCE] De exacte factuurnummers zonder PDF. summarizeClosingPackage bouwt deze
     // lijst al (closing-package.ts:935) en gooide hem weg; readiness.ts:201-204 had de tak

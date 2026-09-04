@@ -18,6 +18,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { timingSafeEqualStr } from "@/lib/timing-safe";
+import { DEMO_TENANT_ID } from "@/lib/demo-tenant";
 import { summarizeClosingPackage } from "@/lib/closing-package";
 import { createNotification } from "@/lib/notifications";
 import { previousQuarter, buildQuarterCloseNotice } from "@/lib/quarter-close";
@@ -89,7 +90,11 @@ export async function GET(req: NextRequest) {
   let profiles: { id: string | null; role: string | null }[];
   try {
     profiles = await fetchAllRows<{ id: string | null; role: string | null }>((from, to) =>
+      // [DEMO-DICHT] Zonder het demoaccount: openbaar wachtwoord, en een cron draagt geen sessie
+      // dus de middleware-fence ziet deze route niet. Mail naar een verzonnen adres levert een
+      // bounce op, en bounces zijn precies wat [BEZORGING] net heeft opgeruimd.
       pipeline.from("profiles").select("id, role").or("role.is.null,role.neq.accountant")
+        .neq("id", DEMO_TENANT_ID)
         .order("id", { ascending: true }).range(from, to));
   } catch (e) {
     Sentry.captureException(e instanceof Error ? e : new Error(String(e)), { tags: { cron: "quarter-close", phase: "profiles" } });

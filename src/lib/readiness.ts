@@ -68,6 +68,12 @@ export interface ReadinessSignals {
   // lijst van zeshonderd facturen met de mededeling dat er zes fout zijn — dan is de melding het
   // werk, niet de oplossing.
   doubleBookedNumbers?: string[];
+  // [GEEN-BTW-SOORT] Geboekte inkoopfacturen waarop BTW is teruggevraagd terwijl de tegenpartij
+  // een soort is die geen aftrekbare BTW draagt — een verzekeraar (assurantiebelasting is óók 21%),
+  // horeca (art. 15 lid 5), een pensioenfonds. Aantal én de namen, want een getal zonder namen is
+  // een verwijt zonder adres. Zie btw-soort.ts.
+  vatDoubtCount?: number;
+  vatDoubtNames?: string[];
 
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
@@ -350,6 +356,40 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         // op "Alle". De ondernemer zou dan in het volledige grootboek landen met de mededeling dat
         // er ergens zes fout zijn — precies de dode belofte waar [SEGMENT-VOORDEUR] een poort voor
         // heeft. De nummers staan hierboven; die zijn hier het gereedschap.
+        fix: { label: "Naar de facturen", href: "/dashboard/incoming/manage" },
+      });
+    }
+  }
+
+  // ── [GEEN-BTW-SOORT] Teruggevraagde BTW die misschien geen BTW is ──────────────────────────
+  //
+  // Anders dan de dubbele boekingen hierboven is dit geen leesfout. Het document klopt, de
+  // optelling klopt, elke poort in deze app is groen — en het bedrag is toch niet terug te vragen,
+  // omdat het een ANDERE BELASTING is. Assurantiebelasting is 21%, net als BTW, en staat op een
+  // verzekeringsnota op precies de plek waar BTW zou staan.
+  //
+  // Daarom is de zin een vraag en geen oordeel: bij verhuur is 21% juist heel vaak wél correct
+  // (huurder en verhuurder mogen kiezen voor btw-belaste verhuur), en een verzekeraar mag ook een
+  // gewone belaste dienst factureren. De app wijst; de eigenaar of zijn boekhouder beslist.
+  {
+    const twijfel = s.vatDoubtCount ?? 0;
+    const namen = (s.vatDoubtNames ?? []).slice(0, 4);
+    const rest = (s.vatDoubtNames ?? []).length - namen.length;
+    if (rest > 0) namen.push(`en ${rest} andere`);
+    if (twijfel > 0) {
+      risks.push({
+        severity: "risk",
+        title:
+          twijfel === 1
+            ? "1 geboekte factuur vraagt BTW terug die misschien geen BTW is"
+            : `${twijfel} geboekte facturen vragen BTW terug die misschien geen BTW is`,
+        detail:
+          "Niet elke 21% op een nota is BTW. Een verzekeringspremie draagt assurantiebelasting — " +
+          "ook 21%, maar die mag je niet terugvragen. Eten en drinken in een horecagelegenheid " +
+          "draagt wél BTW, en juist die mag je niet aftrekken. " +
+          (namen.length > 0 ? `Het gaat om ${namen.join(", ")}. ` : "") +
+          "Kijk op het papier wat er echt staat. Klopt het, dan laat je het staan — bij verhuur " +
+          "is 21% vaak gewoon juist.",
         fix: { label: "Naar de facturen", href: "/dashboard/incoming/manage" },
       });
     }

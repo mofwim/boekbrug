@@ -111,6 +111,8 @@ import { applyServerRefresh } from '@/lib/queue-sync'
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
 import { reconcileBtw } from '@/lib/btw-reconcile'
+import { proposeSplit } from '@/lib/vendor-vat-rate'
+import { doubtAboutInputVat } from '@/lib/btw-soort'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
@@ -216,6 +218,10 @@ interface Props {
   // queue, and only past the threshold — most queues carry none at all. Optional: an older server
   // render, or a failed audit read, simply sends nothing and the cards look as they always did.
   readingHints?: Record<string, string>;
+  // [TARIEF-GEHEUGEN] Het tarief dat een leverancier aantoonbaar altijd rekent, met het aantal
+  // facturen waarop dat rust. Alleen aanwezig voor leveranciers waarvan ELKE goed gelezen factuur
+  // hetzelfde wettelijke tarief draagt — zie vendor-vat-rate.ts.
+  vendorRates?: Record<string, { rate: number; basedOn: number }>;
   // [NO-SILENT-EMPTY] Which of the server's reads did not come back, in the server's own Dutch
   // source names. Empty (or absent, from an older render) means every list below is the whole
   // list. Non-empty qualifies EVERYTHING on this screen — the counts, the tabs, and above all the
@@ -393,6 +399,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
     let totalDuplicate = 0;
     let totalErrors = 0;
     let totalCouldNotRead = 0;
+    let totalKeptForBooking = 0;
     let anyUnbalanced = false;
     // [BOEK-011] No-progress guard: if a round saves nothing AND remaining
     // didn't shrink, looping again would just repeat the same work. Stop and
@@ -425,6 +432,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
           if (data.balance.balanced === false) anyUnbalanced = true;
         }
         totalCouldNotRead += data.couldNotRead ?? 0;
+        totalKeptForBooking += data.keptForBooking ?? 0;
         totalErrors += data.errors ?? 0;
         const remaining = data.remaining ?? 0;
 
@@ -477,6 +485,19 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
             totalCouldNotRead === 1
               ? t('ink.sync.nietLezenEen')
               : t('ink.sync.nietLezenMeer', { n: totalCouldNotRead })
+          );
+        }
+        // [ARCHIEF-OPEN] A kept kassa/grootboek file is READ and waiting for one press of a
+        // button — a different sentence from "we couldn't read it", and it must be said HERE, in
+        // this run's summary, rather than as a standing counter somewhere. Nothing links a booked
+        // daily_turnover day back to the document it came from, so a standing "N klaar om te
+        // boeken" badge could never fall back to zero, and a counter that never reaches zero is
+        // noise the owner learns to skip past.
+        if (totalKeptForBooking > 0) {
+          message += ' ' + (
+            totalKeptForBooking === 1
+              ? t('ink.sync.kassaKlaarEen')
+              : t('ink.sync.kassaKlaarMeer', { n: totalKeptForBooking })
           );
         }
         setSyncResult(message);
@@ -967,8 +988,13 @@ export function ConfirmPaidModal({
   // [LEVERANCIER-KIEZEN] The owner's own suppliers, shown under the name field while they type.
   suppliers = [],
   suppliersUnavailable = false,
+  // [TARIEF-GEHEUGEN] Het tarief dat deze leverancier aantoonbaar altijd rekent, met het aantal
+  // facturen erachter. Afwezig zodra die leverancier ooit twee tarieven op één factuur zette —
+  // dan is er geen tarief en hoort er geen voorstel te staan.
+  vendorRate,
 }: {
   invoice: IncomingInvoice;
+  vendorRate?: { rate: number; basedOn: number };
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
   // [BRIDGE-EXTRACT] amounts now also carries reviewed client_name/invoice_number/invoice_date.
   onVerify: (amounts: {
@@ -1220,6 +1246,44 @@ export function ConfirmPaidModal({
               {t('ink.controleerBedragen')}
             </div>
 
+            {/* [GEEN-BTW-SOORT] Niet elke 21% is BTW die je mag terugvragen.
+                Aanleiding: factuur 142257742 van Coöperatie Univé, € 195,28 + € 41,01, netjes
+                gelezen, netjes opgeteld, langs elke poort in deze app — en die € 41,01 is
+                assurantiebelasting. Ook 21%, staat op precies de plek waar BTW zou staan, en
+                is niet aftrekbaar.
+
+                Dit staat BOVEN de reparatievoorstellen met opzet: die gaan over of de
+                bedragen kloppen, deze gaat over of het bedrag wel BTW ís. Een verkeerd
+                antwoord op de tweede vraag maakt de eerste zinloos.
+
+                Het is een vraag, geen oordeel, en dat is geen beleefdheid: bij verhuur is 21%
+                juist heel vaak correct (huurder en verhuurder mogen kiezen voor btw-belaste
+                verhuur), en een verzekeraar mag ook een gewone belaste dienst factureren.
+                De app verandert dus niets — ze wijst, de eigenaar beslist. */}
+            {(() => {
+              const twijfel = doubtAboutInputVat({
+                supplierName: invoice.client_name,
+                btwAmount: invoice.btw_amount,
+                totalExBtw: invoice.total_ex_btw,
+              })
+              if (!twijfel) return null
+              return (
+                <div style={{
+                  marginTop: 10, padding: "10px 12px", borderRadius: 10,
+                  background: "#fff8e1", border: "1px solid #e0a94f",
+                }}>
+                  <div style={{ fontSize: 12.5, color: "#9a5b00", lineHeight: 1.5 }}>
+                    {twijfel.message}
+                  </div>
+                  {/* Het wetsartikel erbij, zodat een boekhouder de bewering kan controleren
+                      in plaats van hem te moeten geloven. */}
+                  <div style={{ fontSize: 11.5, color: "#a6773a", marginTop: 4 }}>
+                    {twijfel.wet}
+                  </div>
+                </div>
+              )
+            })()}
+
             {/* [IMPORT-MONITOR] Part 3 — surface the arithmetic WHY in the modal.
                 The per-field ⚠️ flags below already cover vendor/number/date and
                 an unexpected BTW rate. This adds the one thing the modal never
@@ -1289,6 +1353,51 @@ export function ConfirmPaidModal({
                           }}
                         >
                           {t('ink.bedrag.neemOver', { bedrag: NL_CURRENCY.format(alt.inc) })}
+                        </button>
+                      </div>
+                    )
+                  })()}
+                  {/* [TARIEF-GEHEUGEN] De uitsplitsing is NIET gelezen — alleen het totaal stond er.
+                      Dan valt er niets te reconstrueren uit de bedragen zelf (dat probeerde het blok
+                      hieronder, en het bood "excl. BTW = het hele totaal" aan: 0 % is een geldig
+                      Nederlands tarief, dus dat gold als reparatie. Accepteren boekt een
+                      groothandelsfactuur zonder één cent voorbelasting.)
+
+                      Wat er wél is, staat in de administratie van de eigenaar zelf: dezelfde
+                      leverancier, dezelfde factuur, keer op keer hetzelfde tarief. Dat is geen
+                      gok maar een telling, en de zin noemt hem — "12 eerdere facturen" is te
+                      controleren, "wij denken 21 %" is een machine die om vertrouwen vraagt.
+
+                      Het VULT alleen de velden; bevestigen blijft de eigenaar. */}
+                  {(() => {
+                    const rec0 = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
+                    if (rec0.ok || rec0.splitWasRead || !vendorRate) return null
+                    const voorstel = proposeSplit(invoice.total_inc_btw, vendorRate.rate)
+                    if (!voorstel) return null
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          {t('ink.bedrag.tariefGeheugen', {
+                            tarief: String(vendorRate.rate),
+                            aantal: String(vendorRate.basedOn),
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            applyTriplet({ ex: voorstel.totalExBtw, btw: voorstel.btwAmount, incl: invoice.total_inc_btw })
+                            setEditing(true)
+                          }}
+                          style={{
+                            padding: "7px 12px", borderRadius: 9, background: "#fff",
+                            border: "1px solid #e0a94f", color: "#9a5b00",
+                            fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                          }}
+                        >
+                          {t('ink.bedrag.vulSplitsing', {
+                            excl: NL_CURRENCY.format(voorstel.totalExBtw),
+                            btw: NL_CURRENCY.format(voorstel.btwAmount),
+                          })}
                         </button>
                       </div>
                     )
@@ -3638,6 +3747,8 @@ export default function IncomingInvoicesClient({
   // [READING-MEMORY] Empty by default: most owners have no supplier past the threshold, and a
   // missing prop must render the queue exactly as it rendered before this existed.
   readingHints = {},
+  // Leeg bij afwezigheid: een oudere serverrender toont dan precies wat dit scherm altijd toonde.
+  vendorRates = {},
   // [NO-SILENT-EMPTY] Defaults to empty, so an older server render behaves exactly as before —
   // but an EMPTY array means "every read succeeded", which is a claim, not an absence.
   readFailed = [],
@@ -4796,6 +4907,7 @@ export default function IncomingInvoicesClient({
       {confirmPaidFor && (
         <ConfirmPaidModal
           invoice={confirmPaidFor}
+          vendorRate={vendorRates[(confirmPaidFor.client_name ?? "").trim().toLowerCase()]}
           suppliers={suppliers}
           suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
@@ -4811,6 +4923,7 @@ export default function IncomingInvoicesClient({
         <ConfirmPaidModal
           invoice={editFor}
           startEditing
+          vendorRate={vendorRates[(editFor.client_name ?? "").trim().toLowerCase()]}
           suppliers={suppliers}
           suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(editFor, amounts)}

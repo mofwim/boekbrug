@@ -76,6 +76,9 @@ export default function SettingsPage() {
   // [REMINDERS] Automatic payment reminders — opt-in + cadence, saved with the profile.
   // Default OFF: nothing is ever e-mailed to a client until the owner turns this on.
   const [remindersEnabled, setRemindersEnabled] = useState(false)
+  // [HERINNER-AAN] De stand zoals hij geladen werd. Nodig om AANZETTEN te onderscheiden van
+  // "stond al aan, ik wijzig alleen de dagen" — zie de opslag hieronder.
+  const [remindersWereOn, setRemindersWereOn] = useState(false)
   // [OCHTEND] The morning digest mail — on unless the owner said otherwise (missing column = on).
   const [ochtendMail, setOchtendMail] = useState(true)
   // [ZELF-EERST] The autopilot switch. Default true = today's behavior for everyone.
@@ -157,6 +160,7 @@ export default function SettingsPage() {
         setVatStatementNote((data as { vat_statement_note?: string | null }).vat_statement_note ?? '')
         setVatExemptSince(data.vat_exempt_since ?? null)
         setRemindersEnabled(!!data.reminders_enabled)
+        setRemindersWereOn(!!data.reminders_enabled)
         setOchtendMail((data as { ochtend_mail?: boolean | null }).ochtend_mail !== false)
         setAutoBoeken((data as { auto_boeken?: boolean | null }).auto_boeken !== false)
         setReminderOffsetsText(
@@ -287,10 +291,29 @@ export default function SettingsPage() {
       // matters.
       const { error: remErr } = await supabase
         .from('profiles')
-        .update({ reminders_enabled: remindersEnabled, reminder_offsets: finalOffsets })
+        // [HERINNER-AAN] De klok begint alleen bij een échte overgang UIT → AAN.
+        //
+        // Niet bij elke opslag met de schakelaar aan: dan zou het wijzigen van de herinnerdagen —
+        // een knop die niets met de stapel te maken heeft — het moment naar vandaag schuiven en
+        // stilzwijgend elke factuur die sindsdien verviel buiten beeld zetten. De ondernemer zou
+        // zien dat zijn herinneringen ophouden zonder dat iets op het scherm dat uitlegt.
+        //
+        // Ook niet bij uitzetten: het moment blijft staan, zodat weer aanzetten na een week pauze
+        // niet alsnog de stapel van vóór die pauze losmaakt.
+        .update({
+          reminders_enabled: remindersEnabled,
+          reminder_offsets: finalOffsets,
+          ...(remindersEnabled && !remindersWereOn
+            ? { reminders_enabled_at: new Date().toISOString() }
+            : {}),
+        })
         .eq('id', user.id)
       if (remErr) {
         console.warn('[REMINDERS] reminder-preferences save skipped (migration applied?)', remErr.message)
+      } else {
+        // Geslaagd → dit is voortaan de geladen stand, zodat een tweede opslag in dezelfde sessie
+        // niet opnieuw als "aanzetten" telt.
+        setRemindersWereOn(remindersEnabled)
       }
 
       // [OCHTEND] Same shape, same reason: before ochtend_mail.sql this column does not exist,

@@ -1844,6 +1844,40 @@ async function handleUblInvoice(
   }
   const documentId = doc.id
 
+  // ── [XML-PDF] The printable invoice inside the e-factuur ──────────────────────────────────
+  //
+  // Reported with a screenshot: pressing "Bekijk factuur" on an e-factuur opened a wall of raw XML.
+  // Nothing was broken — the stored file IS the UBL, because the supplier sent a UBL — but Peppol
+  // carries the human-readable PDF inside the XML, and the app was showing the envelope while
+  // holding the letter. An entrepreneur checking an amount, or an accountant checking the app,
+  // sees namespaces and a base64 blob running off the screen.
+  //
+  // The XML stays exactly where it is. It is the machine evidence: the signed original, the thing
+  // the Belastingdienst is entitled to, and the only artefact that proves what the supplier sent.
+  // Only `pdf_url` — the document the OWNER opens — points at the PDF instead. Same division this
+  // codebase draws everywhere: the client may correct any field the machine read, the machine's
+  // evidence is immutable.
+  //
+  // Best-effort ON PURPOSE, and this is the one judgement worth writing down. Failing the whole
+  // import because a bonus attachment could not be stored would refuse an invoice whose amounts,
+  // BTW and supplier were all read perfectly — over the cosmetics of which file opens. So a
+  // failure here leaves openUrl null and the owner keeps exactly what they have today: the XML.
+  let openUrl: string | null = null
+  try {
+    const { extractEmbeddedPdf } = await import("@/lib/ubl-embedded-pdf")
+    const ingesloten = extractEmbeddedPdf(xmlText)
+    if (ingesloten) {
+      const pdfNaam = ingesloten.filename ?? `${(v.invoiceNumber || "e-factuur").replace(/[^A-Za-z0-9._-]/g, "_")}.pdf`
+      const pdfPath = `${userId}/incoming/${Date.now()}-${pdfNaam.replace(/\.pdf$/i, "")}.pdf`
+      const { error: pdfErr } = await supabase.storage
+        .from("documents").upload(pdfPath, ingesloten.bytes, { contentType: "application/pdf", upsert: false })
+      if (!pdfErr) openUrl = pdfPath
+    }
+  } catch {
+    // Deliberately silent: see above. There is nothing for the owner to do about it, and the
+    // invoice itself is unaffected — this is the one place in this route where that is true.
+  }
+
   const fieldConfidence: Record<string, unknown> = {
     // A structured e-invoice is high-confidence per field where present; flag any missing field so
     // the verify queue's health badge asks the human to complete it (never a silent wrong number).
@@ -1937,7 +1971,11 @@ async function handleUblInvoice(
       total_ex_btw: totalExBtw,
       btw_amount: btwAmount,
       total_inc_btw: totalIncBtw ?? 0,
-      pdf_url: storagePath,
+      // [XML-PDF] What the owner opens: the PDF from inside the e-factuur when it carried one, and
+      // otherwise the XML exactly as before. Never null — a row with no file at all is worse than
+      // a row that opens as XML.
+      pdf_url: openUrl ?? storagePath,
+      // …and document_id keeps pointing at the XML, which is the evidence.
       document_id: documentId,
       vendor_iban: v.vendorIban ?? null,
       field_confidence: fieldConfidence as InvoiceFieldConfidence,

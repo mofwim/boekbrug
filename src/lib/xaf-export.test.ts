@@ -437,3 +437,69 @@ test("[XAF-NULBOEKING] en een inkoop die alleen BTW draagt wordt gewoon geboekt"
   assert.deepEqual(r.skipped, [], "een boeking met een echt bedrag werd geweigerd");
   assert.ok(r.xml.includes("Leverancier BV"));
 });
+
+// ── [XAF-TEGENPARTIJ] Het btw-nummer van de tegenpartij in het auditfile ─────────────────────
+//
+// Gemeten op productie: 488 van de 495 geboekte inkoopfacturen dragen geen btw-nummer, want de app
+// leest het pas sinds 30 augustus uit (van de 7 facturen daarna dragen er 5 het wél). Het auditfile
+// dat de boekhouder en de Belastingdienst lezen, noemde elke leverancier alleen bij naam.
+//
+// De volgorde is hier het gevaar en niet de inhoud: customerSupplier is een xs:sequence, dus
+// commerceNr(8), taxRegistrationCountry(9) en taxRegIdent(10) MOETEN tussen custSupName(2) en
+// custSupTp(12) staan. Eén element op de verkeerde plek en het hele bestand ketst af bij elke
+// importeur die tegen het XSD valideert — geen kleinere administratie, maar geen administratie.
+test("[XAF-TEGENPARTIJ] het btw-nummer staat erin, op de plek die het schema voorschrijft", () => {
+  const xml = buildXafFile({
+    ...baseInput(),
+    purchases: [{
+      id: "p1", invoiceNumber: "2601695", invoiceDate: "2026-05-16",
+      vendorName: "Al-Malika Bakkerij B.V.", totalExBtw: 148.80, btwAmount: 13.39,
+      vendorBtwNumber: "NL812345678B01", vendorKvkNumber: "17123456",
+    }],
+  }).xml;
+
+  const blok = /<customerSupplier>[\s\S]*?<\/customerSupplier>/.exec(xml)?.[0] ?? "";
+  assert.match(blok, /<taxRegIdent>NL812345678B01<\/taxRegIdent>/,
+    "het btw-nummer van de leverancier staat niet in het auditfile");
+  assert.match(blok, /<taxRegistrationCountry>NL<\/taxRegistrationCountry>/,
+    "het landdeel hoort erbij — het schema vraagt een ISO-landcode naast het nummer");
+  assert.match(blok, /<commerceNr>17123456<\/commerceNr>/, "het KVK-nummer hoort er ook in");
+
+  // De volgorde, letterlijk. Dit is de assertie die het bestand geldig houdt.
+  const volgorde = ["custSupID", "custSupName", "commerceNr", "taxRegistrationCountry", "taxRegIdent", "custSupTp"]
+    .map((tag) => blok.indexOf(`<${tag}>`));
+  for (let i = 1; i < volgorde.length; i++) {
+    assert.ok(volgorde[i] > volgorde[i - 1] && volgorde[i - 1] >= 0,
+      `de elementen staan niet in schemavolgorde — customerSupplier is een xs:sequence, dus dit ` +
+      `bestand valideert niet meer en de boekhouder krijgt niets`);
+  }
+});
+
+test("[XAF-TEGENPARTIJ] een onbekend nummer laat het element weg, en verzint geen land", () => {
+  // Een kassabon draagt geen btw-nummer. Een leeg element is ongeldig en een verzonnen "NL" op een
+  // buitenlands nummer is erger: dat is niet te zien voor wie het bestand leest.
+  const xml = buildXafFile({
+    ...baseInput(),
+    purchases: [{
+      id: "p1", invoiceNumber: "BON-1", invoiceDate: "2026-05-16",
+      vendorName: "Tamoil Express Tilburg", totalExBtw: 40, btwAmount: 8.40,
+    }],
+  }).xml;
+  const blok = /<customerSupplier>[\s\S]*?<\/customerSupplier>/.exec(xml)?.[0] ?? "";
+  assert.ok(!blok.includes("taxRegIdent"), "een leverancier zonder nummer krijgt geen leeg element");
+  assert.ok(!blok.includes("taxRegistrationCountry"), "…en al helemaal geen geraden land");
+  assert.match(blok, /<custSupName>Tamoil Express Tilburg<\/custSupName>/, "de naam blijft gewoon staan");
+});
+
+test("[XAF-TEGENPARTIJ] een buitenlands nummer houdt zijn eigen land", () => {
+  const xml = buildXafFile({
+    ...baseInput(),
+    purchases: [{
+      id: "p1", invoiceNumber: "DE-1", invoiceDate: "2026-05-16",
+      vendorName: "Müller GmbH", totalExBtw: 100, btwAmount: 0,
+      vendorBtwNumber: "DE123456789",
+    }],
+  }).xml;
+  assert.match(xml, /<taxRegistrationCountry>DE<\/taxRegistrationCountry>/,
+    "het land komt uit het nummer zelf, niet uit de aanname dat alles Nederlands is");
+});

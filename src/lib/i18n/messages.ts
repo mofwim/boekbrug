@@ -3971,6 +3971,42 @@ export const MESSAGES = {
     en: 'That is why no invoices are offered: this supplier\'s other invoices belong to other payments.',
     tr: 'Bu yüzden seçilecek fatura yok: bu tedarikçinin diğer faturaları başka ödemelere ait.',
   },
+  // ── [SOM-KLOPT] Eén betaling, meerdere genoemde facturen ────────────────────────────────────
+  //
+  // De zin die hier stond ging over ÉÉN factuur en zei dat het bedrag niet klopte — boven een
+  // betaling waarvan de drie genoemde facturen samen exact het bedrag zijn. Nu telt de kaart op.
+  'bank.somKlopt.titel': {
+    nl: 'Deze betaling hoort bij facturen die al zijn afgeboekt',
+    ar: 'هذه الدفعة تخصّ فواتير مُسجّلة بالفعل',
+    en: 'This payment belongs to invoices that are already settled',
+  },
+  'bank.somKlopt.titelDeels': {
+    nl: 'Deze betaling noemt deze facturen',
+    ar: 'هذه الدفعة تذكر هذه الفواتير',
+    en: 'This payment quotes these invoices',
+  },
+  'bank.somKlopt.nogOpen': {
+    nl: 'Daarvan staat {nummers} nog open — koppel hem hieronder, dan is deze regel klaar.',
+    ar: 'من بينها {nummers} ما زالت مفتوحة — اربطها أدناه ليكتمل هذا السطر.',
+    en: 'Of those, {nummers} is still open — link it below and this line is done.',
+  },
+  'bank.somKlopt.telt': {
+    nl: 'Samen {som} — precies het bedrag van deze betaling. Er valt hier niets te kiezen; controleer alleen of er niets twee keer is betaald.',
+    ar: 'مجموعها {som} — وهو تماماً مبلغ هذه الدفعة. لا شيء تختاره هنا؛ تحقّق فقط من عدم دفع شيء مرتين.',
+    en: 'Together {som} — exactly the amount of this payment. There is nothing to choose here; only check that nothing was paid twice.',
+  },
+  'bank.somKlopt.teltNiet': {
+    nl: 'Samen {som}, en deze betaling is {betaling}. Dat verschil hoort ergens bij — een deelbetaling, of een factuur die nog niet in je administratie staat.',
+    ar: 'مجموعها {som}، وهذه الدفعة {betaling}. هذا الفرق له سبب — دفعة جزئية، أو فاتورة لم تُدخل بعد.',
+    en: 'Together {som}, and this payment is {betaling}. That difference belongs somewhere — a part payment, or an invoice not yet in your administration.',
+  },
+  // Genoemd én niet gevonden. Dit is de enige regel op de kaart die om iets VRAAGT, dus hij staat
+  // apart en noemt de nummers: "voeg hem toe" zonder te zeggen wélke is geen opdracht.
+  'bank.somKlopt.ontbreekt': {
+    nl: 'Deze betaling noemt ook {nummers}, en die staat nog niet in je administratie. Voeg hem toe, dan klopt deze regel vanzelf.',
+    ar: 'تذكر هذه الدفعة أيضاً {nummers}، وهي غير موجودة في إدارتك بعد. أضفها ليصبح هذا السطر صحيحاً تلقائياً.',
+    en: 'This payment also quotes {nummers}, which is not in your administration yet. Add it and this line settles itself.',
+  },
   'bank.alGeboekt.bekijk': {
     nl: 'Bekijk factuur',
     ar: 'عرض الفاتورة',
@@ -5512,6 +5548,19 @@ export const MESSAGES = {
     nl: 'BTW = {bedrag}',
     ar: 'btw = {bedrag}',
     en: 'VAT = {bedrag}',
+  },
+  // [TARIEF-GEHEUGEN] De uitsplitsing stond niet op het document; de administratie van de eigenaar
+  // weet wat deze leverancier altijd rekent. De zin NOEMT het bewijs — een getal dat de eigenaar
+  // kan nalezen, in plaats van een machine die om vertrouwen vraagt.
+  'ink.bedrag.tariefGeheugen': {
+    nl: 'De BTW-uitsplitsing stond niet op deze factuur. Deze leverancier rekende {aantal} keer eerder {tarief}% — allemaal hetzelfde.',
+    ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. هذا المورّد احتسب {tarief}% في {aantal} فاتورة سابقة — كلها بالنسبة نفسها.',
+    en: 'The BTW breakdown was not on this invoice. This supplier charged {tarief}% on {aantal} earlier invoices — every one of them.',
+  },
+  'ink.bedrag.vulSplitsing': {
+    nl: 'Vul in: excl. {excl} · BTW {btw}',
+    ar: 'املأ: بدون ضريبة {excl} · الضريبة {btw}',
+    en: 'Fill in: excl. {excl} · BTW {btw}',
   },
   'ink.bedrag.exclIs': {
     nl: 'Excl. BTW = {bedrag}',
@@ -7465,6 +7514,23 @@ export const MESSAGES = {
     nl: '{n} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.',
     ar: 'عدد الملفات التي لم نستطع قراءتها: {n} — إنها في ملفاتك، تحقّق منها.',
     en: '{n} files we could not read — they are in your files, take a quick look.',
+  },
+  // [ARCHIEF-OPEN] Een kassa- of grootboekbestand kwam per e-mail binnen, is HERKEND en bewaard,
+  // en wacht op één druk op de knop. Bewust een andere zin dan 'nietLezen…': daar staat "we konden
+  // het niet lezen", hier staat "we hebben het gelezen en er is niets mee misgegaan". Een
+  // ondernemer die dat door elkaar haalt, gaat een bestand controleren dat niets mankeert — of erger,
+  // laat een dagafsluiting liggen omdat hij denkt dat er iets kapot is.
+  // De zin noemt de knop zoals hij op het scherm staat ("Boek opnieuw", op Uploaden), zodat er
+  // in geen enkele taal naar een woord gezocht wordt dat nergens in de app voorkomt.
+  'ink.sync.kassaKlaarEen': {
+    nl: '1 kassa- of grootboekbestand is bewaard — boek het met "Boek opnieuw" bij Uploaden.',
+    ar: 'تم حفظ ملف واحد للصندوق أو دفتر الأستاذ — سجّله عبر "Boek opnieuw" في صفحة Uploaden.',
+    en: '1 till or ledger file was kept — book it with "Boek opnieuw" on Uploaden.',
+  },
+  'ink.sync.kassaKlaarMeer': {
+    nl: '{n} kassa- of grootboekbestanden zijn bewaard — boek ze met "Boek opnieuw" bij Uploaden.',
+    ar: 'تم حفظ {n} من ملفات الصندوق أو دفتر الأستاذ — سجّلها عبر "Boek opnieuw" في صفحة Uploaden.',
+    en: '{n} till or ledger files were kept — book them with "Boek opnieuw" on Uploaden.',
   },
   'ink.sync.nietsVerwerkt': {
     nl: 'Er kon nu niets verwerkt worden — probeer het later opnieuw',
@@ -14003,6 +14069,13 @@ export const MESSAGES = {
     nl: 'De betaling noemt een factuurnummer dat niet in je administratie staat. Waarschijnlijk is die factuur er nog niet — voeg hem toe, dan koppelt deze regel zichzelf.',
     ar: 'الدفعة تذكر رقم فاتورة غير موجود في إدارتك. على الأرجح لم تُضَف تلك الفاتورة بعد — أضفها، وعندها يرتبط هذا السطر من تلقاء نفسه.',
     en: 'The payment quotes an invoice number that is not in your administration. That invoice is probably not entered yet — add it and this line links itself.',
+  },
+  // [SOM-KLOPT] De tegenovergestelde zin van hierboven, en hij bestaat omdat de app die van
+  // hierboven printte bóven een factuur die gewoon in de administratie stond, betaald, op de cent.
+  'wacht.bankNummerAlGeboekt': {
+    nl: 'De factuur die deze betaling noemt staat al in je administratie en is al afgeboekt. Er valt hier niets te kiezen — controleer alleen of hij niet twee keer betaald is.',
+    ar: 'الفاتورة التي تذكرها هذه الدفعة موجودة في إدارتك ومُسجّلة كمدفوعة. لا شيء تختاره هنا — تحقّق فقط من أنها لم تُدفع مرتين.',
+    en: 'The invoice this payment quotes is already in your administration and already settled. There is nothing to choose here — only check that it was not paid twice.',
   },
   'wacht.bankMeerdereZelfdeBedrag': {
     nl: 'Er staan meerdere facturen open met precies dit bedrag. Kies welke het is — raden doet de app niet.',

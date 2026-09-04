@@ -77,6 +77,29 @@ export interface ReminderDecisionInput {
   /** Per-invoice opt-out. */
   remindersPaused?: boolean | null;
   /**
+   * [HERINNER-AAN] Day-number van het moment waarop deze eigenaar herinneringen aanzette
+   * (profiles.reminders_enabled_at). Een factuur die VOOR dat moment verviel wordt nooit
+   * aangemaand.
+   *
+   * ── WAAROM DIT ER IS ──
+   * Deze functie geeft de HOOGST bereikte trap terug, en dat is juist: wie een factuur van 40
+   * dagen oud voor het eerst bekijkt hoort niet eerst trap 14 te sturen. Maar het betekent ook dat
+   * een stapel oude facturen in één ronde de zwaarste brief oplevert — de ingebrekestelling met
+   * incassokosten.
+   *
+   * Zolang herinneringen standaard UIT stonden was dat de keuze van iemand die zijn eigen
+   * openstaande posten kende. Sinds ze standaard AAN staan is het dat niet meer: wie zijn
+   * administratie meeneemt uit een ander pakket importeert facturen van maanden geleden, en de
+   * eerste cron-ronde na registratie zou die klanten aanmanen voor schulden die misschien allang
+   * buiten dit pakket om zijn voldaan. Een brief die de app nooit had mogen sturen kan niet worden
+   * teruggehaald — dezelfde reden waarom invoice_schedules.sql weigert een factuur zelf te
+   * versturen.
+   *
+   * Optioneel: undefined = geen rem (het gedrag van vóór deze regel), zodat bestaande aanroepers
+   * en tests onveranderd blijven en de migratie de rijen mag vullen in zijn eigen tempo.
+   */
+  remindersActiveSinceDay?: number | null;
+  /**
    * [CREDITNOTA-NO-CHASE] A creditnota was issued against this invoice — the owner cancelled
    * the demand. The invoice deliberately keeps its status and amounts (the +omzet must stay to
    * be netted by the creditnota's −omzet), so nothing in the status or the money tells us it is
@@ -103,6 +126,7 @@ export function reminderTierDue(input: ReminderDecisionInput): number | null {
     amountPaid,
     clientEmail,
     remindersPaused,
+    remindersActiveSinceDay,
     hasCreditnota,
   } = input;
 
@@ -130,6 +154,21 @@ export function reminderTierDue(input: ReminderDecisionInput): number | null {
   if (dueDay == null) return null;
   const daysOverdue = todayDayNumber - dueDay;
   if (daysOverdue <= 0) return null; // not yet overdue (or due today)
+
+  // [HERINNER-AAN] De stapel van vóór het aanzetten blijft van de ondernemer. Zie het veld voor
+  // waarom: zonder deze regel stuurt de eerste ronde van een nieuw account de zwaarste trap naar
+  // iedereen in een geïmporteerde administratie.
+  //
+  // Op de VERVALDATUM en niet op de factuurdatum: het gaat om het moment waarop er aangemaand kon
+  // worden. Een factuur die gisteren verviel terwijl de schakelaar vorige week aanging hoort
+  // gewoon gejaagd te worden; een factuur die in maart verviel niet.
+  if (
+    typeof remindersActiveSinceDay === "number" &&
+    Number.isFinite(remindersActiveSinceDay) &&
+    dueDay < remindersActiveSinceDay
+  ) {
+    return null;
+  }
 
   // Normalise the schedule: positive integers, unique, ascending.
   const schedule = [...new Set(offsets)]

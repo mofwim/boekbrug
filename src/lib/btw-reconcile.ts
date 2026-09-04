@@ -61,6 +61,15 @@ export type BtwReconcile = {
   exclRepairPossible: boolean;
   /** Is the second reading possible? */
   btwRepairPossible: boolean;
+  /**
+   * [TARIEF-GEHEUGEN] Was there a split to reconcile at all?
+   *
+   * False when BOTH halves came through as zero — the reader saw the printed total and no
+   * breakdown. Carried explicitly rather than left for each caller to infer from the numbers: it
+   * IS derivable (impliedExcl, impliedBtw and difference all collapse onto the total), but a
+   * caller that has to notice that is a caller that will forget to.
+   */
+  splitWasRead: boolean;
 };
 
 // [CENT] round2 comes from invoice-totals — one function for the whole app. This file had its
@@ -95,8 +104,26 @@ export function reconcileBtw(
   const difference = round2(inc - (ex + bt));
   const impliedExcl = round2(inc - bt);
   const impliedBtw = round2(inc - ex);
-  const exclRepairRate = rateOf(bt, impliedExcl);
-  const btwRepairRate = rateOf(impliedBtw, ex);
+
+  // [TARIEF-GEHEUGEN] Neither reading is a repair when the split was never READ at all.
+  //
+  // 44 invoices in production carry ex = 0, btw = 0 and a real total: the reader saw the printed
+  // total and no breakdown. Fed to the arithmetic above, "excl = total - btw" gives back the total
+  // itself, at an implied rate of 0 % — and 0 % is a legal Dutch rate, so `possible()` said yes and
+  // the screen offered "het bedrag excl. BTW hoort € 1.560,42 te zijn" as THE repair.
+  //
+  // Accepting that books a wholesale food invoice with zero voorbelasting. It is not a repair; it
+  // is the missing number restated as a fact, wearing the same button as two suggestions that are
+  // genuinely derived. EUR 49.963 of purchases sits behind this shape, and the owner's own history
+  // says these suppliers charge 9 % and 21 %.
+  //
+  // So: when there is nothing to reconcile BETWEEN, this function reports no repair. It keeps the
+  // difference and the implied figures — a caller may still want to show what the numbers are —
+  // and simply stops calling either one possible. What belongs on that screen instead is the
+  // supplier's own rate; see vendor-vat-rate.ts.
+  const nothingWasRead = ex === 0 && bt === 0;
+  const exclRepairRate = nothingWasRead ? null : rateOf(bt, impliedExcl);
+  const btwRepairRate = nothingWasRead ? null : rateOf(impliedBtw, ex);
 
   return {
     ok: Math.abs(inc - (ex + bt)) <= SUM_TOLERANCE,
@@ -107,6 +134,7 @@ export function reconcileBtw(
     btwRepairRate,
     exclRepairPossible: possible(exclRepairRate),
     btwRepairPossible: possible(btwRepairRate),
+    splitWasRead: !nothingWasRead,
   };
 }
 
@@ -167,6 +195,12 @@ export function rateHint(btw: number | null | undefined, storedExcl: number | nu
  */
 export function reconcileHint(r: BtwReconcile): string | null {
   if (r.ok) return null;
+
+  // [TARIEF-GEHEUGEN] Nothing was read, so there is nothing to reconcile and no sentence here can
+  // be about anything. safecore already says the true thing for this case ("de BTW-uitsplitsing
+  // ontbreekt — vul deze aan"), and what belongs on the screen next to it is the supplier's own
+  // rate, not a remark about amounts that were never on the page.
+  if (!r.splitWasRead) return null;
 
   const diff = `Verschil ${eur(Math.abs(r.difference))}`;
 

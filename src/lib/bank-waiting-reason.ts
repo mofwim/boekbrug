@@ -48,6 +48,7 @@ import {
  */
 export type BankWaitReason =
   | "reference_not_in_administration"
+  | "reference_already_settled"
   | "several_invoices_this_amount"
   | "counterparty_has_no_open_invoice_this_amount"
   | "counterparty_unknown_here"
@@ -87,6 +88,24 @@ function sameParty(line: WaitingBankLine, inv: InvoiceForMatching): boolean {
 export function judgeBankWait(
   line: WaitingBankLine,
   openInvoices: readonly InvoiceForMatching[],
+  /**
+   * [SOM-KLOPT] The SETTLED invoices this payment names, if any — the answer from
+   * quotedSettledSet. Optional so every existing caller keeps its meaning, and load-bearing when
+   * present, because without it this function's first rule tells the owner a falsehood.
+   *
+   * Reported from /bank: a payment of € 1.955,90 naming invoice 2600999, which exists, is paid, and
+   * agrees to the cent — under the sentence "De betaling noemt een factuurnummer dat niet in je
+   * administratie staat", printed directly above a card showing that very invoice. The two panels
+   * of one card contradicted each other on a money screen.
+   *
+   * The cause is structural rather than a slip. This function is handed the OPEN invoices, so from
+   * inside it "already settled" and "never entered" are the same observation. Its own header calls
+   * that a blind spot and picks silence as the safe error — but silence was never what happened:
+   * rule 1 fires, because the quoted number is genuinely absent from the OPEN pool. An accusation
+   * about the owner's own bookkeeping is the worst possible sentence to be wrong about, and this is
+   * the one fact that decides it.
+   */
+  settledQuoted?: readonly { invoiceNumber: string }[] | null,
 ): BankWaitReason | null {
   if (line.amount === null || !Number.isFinite(line.amount)) return null;
   const eps = DEFAULT_OPTIONS.amountEpsilon;
@@ -120,6 +139,14 @@ export function judgeBankWait(
   //    Conservative on purpose: a supplier whose every invoice happens to be settled is not in the
   //    open pool, so a genuinely missing invoice from them stays unnamed. Silence is the right
   //    error to make here; a false accusation is not.
+  //
+  //    [SOM-KLOPT] And it is only made where it is TRUE. A number that names an invoice which is in
+  //    the administration and already settled is not a missing invoice; it is a settled one, and
+  //    the two ask for opposite things from the owner ("go find the paper" versus "nothing to do
+  //    here"). This is asked FIRST, before the open pool is consulted at all, because the open pool
+  //    is exactly where a settled invoice is not.
+  if (settledQuoted && settledQuoted.length > 0) return "reference_already_settled";
+
   if (vanDezePartij.length > 0) {
     const quoted = parseReferenceNumbers(line.reference);
     if (quoted.length > 0) {

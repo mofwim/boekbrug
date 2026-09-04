@@ -99,6 +99,8 @@ export interface XafSalesInvoice {
   invoiceType: string | null;
   /** From fetchRateShares — present only on genuinely mixed-rate invoices. */
   rateLines: Array<{ rate: number; ex: number; btw: number }> | null;
+  /** [XAF-TEGENPARTIJ] Het btw-nummer van de klant, als het bekend is. */
+  clientBtwNumber?: string | null;
 }
 
 export interface XafPurchaseInvoice {
@@ -108,6 +110,14 @@ export interface XafPurchaseInvoice {
   vendorName: string | null;
   totalExBtw: number;
   btwAmount: number;
+  /**
+   * [XAF-TEGENPARTIJ] Het btw-nummer van de leverancier, zoals het op de factuur staat of zoals de
+   * app het bij die leverancier heeft vastgelegd. Optioneel: op een kassabon staat er geen, en een
+   * ontbrekend nummer laat het element gewoon weg.
+   */
+  vendorBtwNumber?: string | null;
+  /** Idem voor het KVK-nummer — commerceNr in het schema. */
+  vendorKvkNumber?: string | null;
 }
 
 export interface XafBankLine {
@@ -663,6 +673,28 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     out.push(el("country", "NL"));
     out.push("</streetAddress>");
   }
+  // [XAF-TEGENPARTIJ] Het btw-nummer (en KVK) per tegenpartij, verzameld uit de facturen die er
+  // hier toch al langskomen. Per NAAM, want dat is de sleutel waarop custId/supId zijn gebouwd, en
+  // de eerste factuur die een nummer draagt wint: bij één leverancier hoort één nummer, en twee
+  // verschillende zou betekenen dat het twee bedrijven zijn.
+  //
+  // AFGELEID BIJ EXPORT, NOOIT TERUGGESCHREVEN. De 488 oude facturen in productie dragen het
+  // nummer niet omdat de app het pas sinds 30 augustus uitleest; het staat wél op het papier en
+  // bij de leverancier. Dat nummer alsnog OP die facturen zetten zou een gegeven verzinnen dat het
+  // document niet noemt — de scheiding tussen wat de machine bewaart en wat zij afleidt is precies
+  // wat een auditfile controleerbaar houdt.
+  const btwPerNaam = new Map<string, string>();
+  const kvkPerNaam = new Map<string, string>();
+  for (const s of input.sales) {
+    const naam = s.clientName ?? "Onbekende debiteur";
+    if (s.clientBtwNumber && !btwPerNaam.has(naam)) btwPerNaam.set(naam, s.clientBtwNumber);
+  }
+  for (const p of input.purchases) {
+    const naam = p.vendorName ?? "Onbekende crediteur";
+    if (p.vendorBtwNumber && !btwPerNaam.has(naam)) btwPerNaam.set(naam, p.vendorBtwNumber);
+    if (p.vendorKvkNumber && !kvkPerNaam.has(naam)) kvkPerNaam.set(naam, p.vendorKvkNumber);
+  }
+
   out.push("<customersSuppliers>");
   for (const [name, id] of [...custId, ...supId]) {
     out.push("<customerSupplier>");
@@ -678,6 +710,23 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     // een knip op de vijftigste STRING-positie hakt zo'n entiteit doormidden. Dat levert geen te
     // lange naam meer op maar wel ongeldige XML — dezelfde fout, luidruchtiger.
     out.push(el("custSupName", esc(name.slice(0, 50))));
+    // [XAF-TEGENPARTIJ] De volgorde is die van het XSD en niet die van de leesbaarheid:
+    // custSupID · custSupName · … · commerceNr(8) · taxRegistrationCountry(9) · taxRegIdent(10) ·
+    // … · custSupTp(12). Een xs:sequence is geordend, dus een element op de verkeerde plek laat
+    // het HELE bestand afketsen bij elke importeur die tegen het schema valideert — dezelfde
+    // storing als een te lange custSupName hierboven, en met dezelfde uitkomst voor de boekhouder:
+    // geen kleinere administratie, maar geen administratie.
+    const kvk = kvkPerNaam.get(name);
+    if (kvk) out.push(el("commerceNr", esc(kvk.slice(0, 999))));
+    const btwNr = btwPerNaam.get(name);
+    if (btwNr) {
+      // Het landdeel komt uit het nummer zelf ("NL8123.45.678.B01" → NL). Staat er geen geldig
+      // ISO-landdeel voor, dan blijft taxRegistrationCountry weg: een verzonnen "NL" op een Belgisch
+      // nummer is erger dan een leeg veld, want het is niet te zien dat het geraden is.
+      const land = /^([A-Z]{2})/.exec(btwNr.toUpperCase())?.[1];
+      if (land) out.push(el("taxRegistrationCountry", esc(land)));
+      out.push(el("taxRegIdent", esc(btwNr.slice(0, 30))));
+    }
     out.push(el("custSupTp", id.startsWith("D") ? "C" : "S"));
     out.push("</customerSupplier>");
   }

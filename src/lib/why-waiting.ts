@@ -97,6 +97,11 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   // DEZE lijst en niet in een tweede: één zin per reden voor de hele app was het punt, en een
   // aparte woordenlijst per scherm is precies hoe de ene helft vertaald raakt en de andere niet.
   reference_not_in_administration: "wacht.bankNummerOnbekend",
+  // [SOM-KLOPT] The opposite sentence, and it exists because the app printed the one above it over
+  // an invoice that was sitting in the administration, paid, at the exact cent. "Go find the paper"
+  // and "there is nothing to do here" are opposite afternoons; saying the first about the second is
+  // an accusation about the owner's own bookkeeping.
+  reference_already_settled: "wacht.bankNummerAlGeboekt",
   several_invoices_this_amount: "wacht.bankMeerdereZelfdeBedrag",
   counterparty_has_no_open_invoice_this_amount: "wacht.bankGeenBedrag",
   counterparty_unknown_here: "wacht.bankOnbekendePartij",

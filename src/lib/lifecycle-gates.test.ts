@@ -3232,12 +3232,25 @@ test("[OBSERVABILITY] no door writes or reads a skipped ai_doc_type as a hardcod
   // And the door that carried the drift keeps the constant, named. Absence of the literal alone
   // would also be satisfied by a door that stopped writing the column at all — which loses the file
   // in the same way, from the other side.
+  //
+  // [ARCHIEF-OPEN] The saver now takes the kind as a parameter, because a recognised till closing
+  // WAS read and must not be labelled could_not_read. That makes the DEFAULT the load-bearing
+  // part: both original callers pass nothing, so if the default ever stops being the constant,
+  // every unreadable attachment this door stores silently leaves the skipped panel — the original
+  // bug, reached through the new parameter instead of through a literal.
   const email = code("src/lib/email-integration.ts");
   assert.match(
     email,
-    /const saveUnreadableAttachment[\s\S]{0,2600}?ai_doc_type: DOC_TYPE_COULD_NOT_READ/,
-    "the e-mail door stores an unreadable attachment under the shared constant, so the skipped " +
-      "panel and the second-chance list both see it",
+    /aiDocType: string = DOC_TYPE_COULD_NOT_READ/,
+    "the e-mail door's saver no longer DEFAULTS to the shared constant. Its two unreadable-file " +
+      "callers pass no kind, so they now store something else — and the skipped panel and the " +
+      "second-chance list stop seeing those files, which is the bug this gate exists for",
+  );
+  assert.match(
+    email,
+    /const saveKeptAttachment[\s\S]{0,3200}?ai_doc_type: aiDocType/,
+    "the saver stopped writing ai_doc_type at all — a kept file then belongs to no panel, which " +
+      "loses it just as completely as writing the wrong value",
   );
   assert.match(
     email,
@@ -13074,6 +13087,78 @@ test("[AL-GEBOEKT] de kiezer staat uit zodra de betaling een afgeboekte factuur 
   // En de server moet het veld überhaupt sturen.
   assert.match(code("src/app/api/bank/match/route.ts"), /quotedSettled:/,
     "de matchroute stuurt quotedSettled niet meer mee — dan staat de kiezer er in productie weer");
+});
+
+test("[DEMO-DICHT] een cron die namens een eigenaar mailt, slaat het demoaccount over", () => {
+  // Het gat dat gisteren openbleef. De fence in de middleware kijkt naar de SESSIEGEBRUIKER, en
+  // een cron heeft er geen — die routes zijn dus nooit langs die fence gekomen. Gemeten op
+  // 3 september: het demoaccount, met een openbaar wachtwoord, was het ENIGE profiel met
+  // herinneringen aan, met een openstaande factuur aan een verzonnen fysiopraktijk. Nu
+  // herinneringen standaard aanstaan is dat geen theorie meer.
+  //
+  // De grens per cron: mailt hij een DERDE (de klant van de eigenaar), dan is het een brief die
+  // niet terug kan. Mailt hij de eigenaar zelf, dan is het een bounce naar een verzonnen adres —
+  // minder erg, maar bounces zijn precies wat [BEZORGING] heeft opgeruimd. Allebei overslaan dus,
+  // en welke cron dat moet doen wordt AFGELEID uit wie er mailt én over eigenaren loopt.
+  const crons = execSync(
+    "grep -rl '@/lib/email' src/app/api/cron --include=route.ts || true",
+    { encoding: "utf8" },
+  ).split("\n").filter(Boolean);
+  assert.ok(crons.length >= 4, `maar ${crons.length} mailende crons gevonden — leest de scan nog mee?`);
+
+  const ongedekt: string[] = [];
+  for (const f of crons) {
+    const src = code(f);
+    // Alleen crons die zélf over profielen lopen kunnen een eigenaar overslaan. Een cron die op
+    // een rij begint die de demo nooit heeft (een mailbox, een betaalverzoek) heeft niets te doen.
+    if (!/from\("profiles"\)/.test(src)) continue;
+    // GEBRUIKT, niet alleen geïmporteerd. De eerste versie vroeg `src.includes("DEMO_TENANT_ID")`,
+    // en die was al waar door de import-regel alleen: de negatieve controle haalde de filterregel
+    // weg en de poort bleef groen. Een bewering die niet kan falen bewaakt niets — dezelfde les
+    // als de kandidaat die "datum dichtbij" toonde en de dimensie die undefined met undefined
+    // vergeleek. Dus: de identifier moet buiten de imports voorkomen, in een echte filterregel.
+    const zonderImports = src.split("\n").filter((r) => !/^\s*import\s/.test(r)).join("\n");
+    if (!/\.neq\(\s*"id"\s*,\s*DEMO_TENANT_ID\s*\)/.test(zonderImports)) ongedekt.push(f);
+  }
+  assert.deepEqual(ongedekt, [],
+    "deze crons lopen over eigenaren en versturen mail, maar slaan het demoaccount niet over — " +
+    `het wachtwoord daarvan is openbaar: ${ongedekt.join(", ")}`);
+});
+
+test("[HERINNER-AAN] de rem op de oude stapel zit in de cron, niet alleen in de functie", () => {
+  // Herinneringen staan sinds 3 september standaard AAN. De veiligheid daarvan hangt aan één
+  // argument dat de cron moet meegeven: reminderTierDue() geeft de HOOGST bereikte trap terug, dus
+  // zonder dat argument stuurt de eerste ronde van een net geregistreerd account de
+  // ingebrekestelling — mét incassokosten — naar iedereen in een geïmporteerde administratie.
+  //
+  // De unittests dekken de functie; ze kunnen niet zien of de aanroeper het argument nog meegeeft.
+  // Precies dat gat viel in de negatieve controle: het argument weghalen liet elke test groen.
+  const cron = code("src/app/api/cron/reminders/route.ts");
+  assert.match(cron, /remindersActiveSinceDay:/,
+    "de herinneringscron geeft het aanzetmoment niet meer mee — dan jaagt een nieuw account op " +
+    "zijn hele geïmporteerde stapel, met de zwaarste trap, in één ronde");
+  assert.match(cron, /reminders_enabled_at/,
+    "de cron leest reminders_enabled_at niet meer op, dus het moment kan nergens vandaan komen");
+
+  // En de schakelaar moet stempelen bij het AANZETTEN, anders is het moment altijd leeg en valt de
+  // rem terug op "geen rem".
+  assert.match(code("src/app/dashboard/settings/page.tsx"), /reminders_enabled_at: new Date\(\)\.toISOString\(\)/,
+    "het instellingenscherm zet reminders_enabled_at niet meer bij het aanzetten");
+});
+
+test("[HERINNER-AAN] de migratie zet de standaard om én vult het moment voor bestaande rijen", () => {
+  // Twee helften, en de tweede is de belangrijkste: zonder de backfill zou elke bestaande eigenaar
+  // een leeg moment krijgen. Dat is "geen rem", en dat is hier het VEILIGE antwoord (hun gedrag
+  // verandert niet) — maar de migratie hoort het expliciet te doen in plaats van erop te gokken.
+  // Géén STAND_CONTROLE-regel: deze migratie voegt een KOLOM toe en heeft daarmee een gewone
+  // vingerafdruk. scripts/migration-inventory.ts weigert allebei tegelijk, met de reden erbij —
+  // "twee metingen op hetzelfde gaan uit elkaar lopen". De eerste versie van deze poort zette hem
+  // er toch in en brak de generator.
+  const mig = code("supabase/migrations/reminders_on_by_default.sql");
+  assert.match(mig, /ALTER COLUMN reminders_enabled SET DEFAULT true/,
+    "de standaard gaat niet aan");
+  assert.match(mig, /UPDATE public\.profiles[\s\S]*reminders_enabled_at = COALESCE\(created_at/,
+    "bestaande rijen krijgen geen aanzetmoment, dus hun gedrag verandert stilzwijgend mee");
 });
 
 // ── [AL-GEBOEKT-KLEMT] ────────────────────────────────────────────────────────────────────────
@@ -25085,4 +25170,430 @@ test("[GEEN-REGELS] no column headers are drawn over rows that do not exist", ()
   const zin = scherm.indexOf("lines.length === 0");
   const kop = scherm.indexOf('className="inv-lines-head"');
   assert.ok(zin > 0 && kop > zin, "the explanation belongs where the table head was, not after it");
+});
+
+// ── [ARCHIEF-OPEN] ────────────────────────────────────────────────────────────────────────────
+//
+// The e-mail door skipped every archive it received: 410 skipped attachments in production, 40 of
+// them archives, and 29 of those the daily till-closing zip. That zip is the CASH side of the card
+// income — without it daily_turnover has zero days in Q1 and Q3 while € 253.439 of pos_income
+// arrives, falls through as untaxed omzet, and blocks the quarter. So the zip is now replaced by
+// its contents BEFORE classification: one path, one reader, one set of duplicate gates.
+//
+// The dangerous half is the watermark, and it is dangerous in a way that has no symptom on the
+// screen. The completeness check below iterates the ORIGINALLY FETCHED attachments and demands
+// every key back; the zip is no longer among the classified ones, so its key can never be returned
+// by that loop. The message then reads as unfinished forever, the watermark never advances, and
+// the sync re-fetches the same batch on every run — starving every mailbox behind it. Proven by
+// removing the consumedKeys line: archive-expand.test.ts goes red on two tests.
+//
+// Three halves, and all three are load-bearing:
+//   1. classification must run over the EXPANDED list (else the whole feature does nothing);
+//   2. every archive touched must return its own key (else the watermark freezes);
+//   3. a refused archive must land in `unread` with its reason (else we rebuild the silent skip
+//      this task exists to remove — see [NO-SILENT-EMPTY]).
+test("[ARCHIEF-OPEN] an unpacked archive is classified, accounted for, and never silently dropped", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // 1 — the classifier is handed what came OUT of the archives, not the raw fetch.
+  assert.match(src, /const uitgepakt = await expandArchives\(freshAttachments\)/,
+    "the archives are no longer expanded before classification — every zip is skipped again");
+  assert.match(
+    src, /const classified: Classified\[\] = await mapConcurrent\(\s*attachmentsToClassify,/,
+    "classification reads the original attachment list again, so expanding the archives changes " +
+      "nothing: the zip still reaches the reader as a zip and is still refused",
+  );
+
+  // 2 — the watermark gets its keys back. This is the one that has no visible symptom.
+  assert.match(src, /for \(const k of uitgepakt\.consumedKeys\) completedKeys\.add\(k\)/,
+    "the keys of the archives that were replaced by their contents are not returned to " +
+      "completedKeys. The completeness check iterates the fetched attachments, so those keys can " +
+      "never come back on their own: the message reads as unfinished forever, the watermark " +
+      "stops advancing, and the sync re-fetches the same batch on every run");
+  // …and it happens BEFORE the check that reads the set, not after it.
+  const vullen = src.indexOf("uitgepakt.consumedKeys");
+  const lezen = src.indexOf("completedKeys.has(key)");
+  assert.ok(vullen > 0 && lezen > vullen,
+    "the archive keys are added AFTER the completeness check reads the set — which is the same " +
+      "as not adding them at all on this run");
+
+  // 3 — a refusal is spoken, not swallowed. Condition AND push in one match on purpose: written
+  // separately, this assertion survived `if (false) {` around the push it was checking for —
+  // proven, not guessed. An unreachable refusal reads exactly like the silent skip it replaced.
+  assert.match(
+    src, /if \(uitgepakt\.skipped\.length > 0\) \{\s*unread\.push\(\.\.\.uitgepakt\.skipped\.map\(/,
+    "a refused archive no longer reaches the unread panel — either the push is gone or the " +
+      "condition in front of it no longer tests what was skipped, and a refusal that cannot be " +
+      "reached is the same silent skip this task was opened to remove",
+  );
+  assert.match(src, /kind: 'unreadable-format' as const/,
+    "the refused archive lost the kind the panel groups it under, so it lands in no group at all");
+});
+
+// Opening the envelope is only half of it. What came OUT of the till-closing zip is a Z-report:
+// no supplier, no invoice number, nothing to pay — so a CORRECT classifier answers "not an
+// invoice", and that branch registers a skip and DROPS THE BYTES. Unpacked and then thrown away is
+// the same € 253.439 of unrated omzet as never unpacking it, with more steps.
+test("[ARCHIEF-OPEN] a not-an-invoice file a reader could book is kept, not dropped", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // The question is asked BEFORE the drop, and it is asked of the bytes.
+  const vraag = src.indexOf("judgeKeepable(");
+  const wegwerpen = src.indexOf("createPipelineClient()\n          .from('email_skipped_attachments')");
+  assert.ok(vraag > 0, "the keep question is gone — every till closing is discarded again");
+  assert.match(src, /const houden = await judgeKeepable\(\s*attachment\.filename,\s*Buffer\.from\(attachment\.data, 'base64'\),/,
+    "judgeKeepable is no longer handed the real bytes, so it can only judge by filename — which " +
+      "is the one thing it exists not to do: keep on the name and the next till brand is dropped");
+
+  // Kept means kept UNDER ITS OWN KIND. Storing it as could_not_read would drop it into the
+  // "Overgeslagen bij import" panel (which counts SKIPPED_DOC_TYPES) and tell the owner we failed
+  // to read a file we read fine.
+  assert.match(src, /await saveKeptAttachment\(attachment, houden\.reason, houden\.kind\)/,
+    "a recognised kassa/grootboek file is stored without its own kind — it then reads as " +
+      "'could not read' in the skipped panel, over a file the app read perfectly");
+
+  // And the watermark still closes, exactly as on every other branch here.
+  assert.match(src, /keptForBooking\+\+\s*\n\s*skipped\+\+\s*\n\s*completedKeys\.add\(wmKey\)/,
+    "the kept file does not close its watermark key and is not counted into `skipped` — the " +
+      "first freezes the sync, the second breaks the balance check that proves nothing was lost");
+});
+
+// Three defects found by walking my own wiring after the tests were green, none of which any gate
+// or test noticed. They share one shape: the archive step changes an INVARIANT the surrounding
+// code was written against, and the surrounding code keeps computing the old thing quietly.
+test("[ARCHIEF-OPEN] opening an archive does not break the three invariants around it", () => {
+  const src = code("src/lib/email-integration.ts");
+
+  // 1. COST. PHASE 0's known-key filter ran before the zip was opened, so it never saw the entries
+  // inside — their keys did not exist yet. Without a second pass the same till closing is sent to
+  // Claude on every sync while its message stays in the fetch window: paid for, rate-limited
+  // against, and thrown away at the duplicate gate each time.
+  assert.match(
+    src,
+    /const attachmentsToClassify = uitgepakt\.attachments\.filter\(\s*\(a\) => !knownKeys\.has\(`\$\{a\.messageId\}:\$\{a\.filename\}`\),/,
+    "the files that came out of an archive are no longer checked against the already-handled " +
+      "keys, so every sync re-reads the same till closing through the model for as long as the " +
+      "message stays in the fetch window",
+  );
+
+  // 2. RETRY. "The next sync retries it" is true for an attachment that holds the watermark and
+  // FALSE for an unpacked one: its parent is complete unconditionally, so the mark walks past and
+  // the zip is never fetched again. Keeping the bytes on the spot is the only honest answer.
+  assert.match(
+    src,
+    /if \(attachment\.fromArchive\) \{\s*await saveKeptAttachment\(attachment, 'could_not_read'\)/,
+    "a file unpacked from an archive whose read failed is left to a retry that cannot happen — " +
+      "the watermark has already passed its message, so the document is gone with no row " +
+      "anywhere saying so",
+  );
+  assert.match(code("src/lib/archive-expand.ts"), /fromArchive: true,/,
+    "the unpacked files no longer carry fromArchive, so the branch above can never run");
+
+  // 3. THE BALANCE. One zip fetched, three documents bucketed: against the fetched count that
+  // reads 3 ≠ 1 and the screen says "even controleren" after a perfectly normal sync — a false
+  // alarm on the one sentence whose whole job is to be believed when it reports a gap.
+  assert.match(src, /const processedThisBatch = attachmentsToClassify\.length/,
+    "the balance check counts fetched attachments again instead of the documents PHASE 2 walked, " +
+      "so any sync containing an archive reports itself as unbalanced");
+});
+
+test("[ARCHIEF-OPEN] the keep question is answered by the SAME readers that would book it", () => {
+  // Derive, don't list. The tempting implementation is a filename rule for the one export format
+  // production happens to send; it keeps today's file and silently drops the next till brand.
+  // Asking spreadsheet-ingest and daily-sales-report instead means "would the reprocess button
+  // pick this up?" has one answer in this codebase, and a new format is learned in one place.
+  const readers = code("src/lib/email-integration.ts");
+  for (const fn of ["planSpreadsheetIngest", "sheetBytesToMatrix", "looksLikeDailySalesReport"]) {
+    assert.ok(readers.includes(fn),
+      `the e-mail door stopped asking ${fn} — whatever it asks instead is a second opinion that ` +
+        `can drift away from what /api/documents/reprocess actually books`);
+  }
+
+  // The extension pre-filter must match the reader route's own, or the door builds a shelf of
+  // files nothing will ever book (or drops one it would have booked).
+  const keepable = code("src/lib/turnover-keepable.ts");
+  const reprocess = code("src/app/api/documents/reprocess/route.ts");
+  // Longest alternative first: /xls|xlsx/ matches "xls" INSIDE "xlsx" and the set silently loses
+  // a format — which would have made this gate pass over a real mismatch.
+  const exts = (t: string) => new Set((t.match(/xlsx|xls|csv|pdf/g) ?? []));
+  const deur = keepable.match(/\/\\\.\(([a-z|]+)\)\$\//)?.[1];
+  assert.ok(deur, "the extension pre-filter is gone from turnover-keepable");
+  const boekbaar = exts(reprocess.match(/const isSheet = [^\n]+\n\s*const isPdf = [^\n]+/)?.[0] ?? "");
+  assert.deepEqual(
+    new Set(deur!.split("|")), boekbaar,
+    "the formats the e-mail door keeps are no longer the formats /api/documents/reprocess reads",
+  );
+
+  // …and the envelope must let those same formats OUT. This was wrong on the first version:
+  // archive-attachment.ts allowed csv but not xls/xlsx, so a till exporting its Z-report as xlsx
+  // was refused at the zip with "dit bestandstype kunnen wij niet lezen" — about a format the app
+  // reads and books perfectly. A hand-kept allowlist is right for untrusted input; a hand-kept
+  // allowlist nobody checks is how the one file this task is about stays outside.
+  const envelop = code("src/lib/archive-attachment.ts");
+  const toegestaan = envelop.match(/const LEESBAAR = \/\\\.\(([a-z|]+)\)\$\/i;/)?.[1];
+  assert.ok(toegestaan, "the archive allowlist is gone from archive-attachment.ts");
+  for (const ext of boekbaar) {
+    assert.ok(toegestaan!.split("|").includes(ext),
+      `.${ext} is a format /api/documents/reprocess books, but the archive gate refuses it — a ` +
+        `till that puts its Z-report in the zip as .${ext} is turned away at the envelope, with a ` +
+        `refusal that says we cannot read a format we read fine`);
+  }
+
+  // And out of the envelope with a mime the reader recognises: application/octet-stream reaches
+  // sheetBytesToMatrix as "not a spreadsheet", so an unpacked xlsx would be unreadable anyway.
+  const uitpakker = code("src/lib/archive-expand.ts");
+  for (const ext of boekbaar) {
+    if (ext === "pdf") continue; // already mapped, and checked by the daily-sales path above
+    assert.match(uitpakker, new RegExp(`(^|[^a-z])${ext}:\\s*"`, "m"),
+      `an unpacked .${ext} leaves the archive without its own mime type, so the reader that ` +
+        `would have booked it does not recognise it — unpacked and still unreadable`);
+  }
+});
+
+// ── [SOM-KLOPT] The banner and the card may not contradict each other ─────────────────────────
+//
+// Two screenshots from /bank, both correct:
+//
+//   € 1.955,90 to Royal Food Center, description "2600999". The banner read "De betaling noemt een
+//   factuurnummer dat niet in je administratie staat" — printed directly above a card naming
+//   invoice 2600999, paid, € 1.955,90, to the cent.
+//
+//   € 466,30 to Al-Malika Bakkerij, description "2601695, 2601826, 2601291". Those three are
+//   162,19 + 148,68 + 155,43 = 466,30 and all three were already booked. The screen said "Geen
+//   factuur gevonden", offered three OTHER invoices to link, and showed a card about one of the
+//   three saying its amount did not agree.
+//
+// Neither was a slip. judgeBankWait is handed the OPEN invoices, so from inside it "already
+// settled" and "never entered" are the same observation; its own header calls that a blind spot and
+// picks silence as the safe error — but silence is not what happened, because rule 1 fires on a
+// number that is genuinely absent from the OPEN pool. An accusation about the owner's own
+// bookkeeping is the worst sentence in the app to be wrong about.
+//
+// Production, at the time of the fix: 71 of 328 pending debits quote an invoice that is already
+// settled; 57 of those add up to the payment exactly, 14 of them across more than one invoice.
+test("[SOM-KLOPT] the sentence about a quoted number is decided by ONE lookup, not two", () => {
+  const rede = code("src/lib/bank-waiting-reason.ts");
+  const route = code("src/app/api/bank/match/route.ts");
+
+  // judgeBankWait must be ABLE to know, and must ask before it accuses.
+  assert.match(rede, /settledQuoted\?: readonly \{ invoiceNumber: string \}\[\] \| null,/,
+    "judgeBankWait can no longer be told which invoices the payment names are already settled, so " +
+      "it is back to guessing from the open pool — where a settled invoice is precisely not");
+  const vraag = rede.indexOf('if (settledQuoted && settledQuoted.length > 0) return "reference_already_settled"');
+  const beschuldiging = rede.indexOf('return "reference_not_in_administration"');
+  assert.ok(vraag > 0, "the settled branch is gone — the false accusation is unguarded again");
+  assert.ok(beschuldiging > vraag,
+    "the accusation is decided BEFORE the settled check, so a booked invoice is still reported as " +
+      "one the owner never entered");
+
+  // …and the route must actually pass it, from the SAME lookup the card is drawn from.
+  assert.match(route, /quotedSet\?\.fullySettled \? quotedSet\.settled : null,/,
+    "the route no longer hands judgeBankWait the set the card renders, so the banner and the card " +
+      "are free to disagree about the same payment again — which is exactly what the screenshot " +
+      "caught. And it must be fullySettled, not coversPayment: with one named invoice still open " +
+      "there IS something to choose, and 'nothing to choose here' is then false");
+  assert.match(route, /const quotedSet =\s*\n\s*\(m\.transaction\.amount \?\? 0\) < 0 && !isLinked/,
+    "the set is computed per line again instead of once — three consumers reading three separate " +
+      "computations is how the two panels drifted apart in the first place");
+});
+
+test("[SOM-KLOPT] a payment is looked up against open invoices too, not only settled ones", () => {
+  // The bug inside the fix, caught by tests/render/bank-som-klopt.test.tsx. With only two buckets —
+  // "settled" and "not found" — a named invoice that is simply still OPEN lands in the second: the
+  // card says it is not in the administration (false) and the chooser that would link it is taken
+  // away (worse). Three buckets, because they ask for three different things from the owner.
+  const set = code("src/lib/bank-quoted-invoice.ts");
+  for (const bak of ["settled:", "open:", "unknownNumbers:"]) {
+    assert.ok(set.includes(bak),
+      `quotedInvoiceSet lost its '${bak}' bucket — a named invoice that is merely still open then ` +
+        `reads as one the owner never entered, and the button that would link it disappears`);
+  }
+  assert.match(set, /fullySettled: open\.length === 0 && unknownNumbers\.length === 0 && settled\.length > 0/,
+    "fullySettled no longer requires the open bucket to be empty, so a payment with an open named " +
+      "invoice would have its chooser removed and be stranded");
+  assert.match(code("src/app/api/bank/match/route.ts"), /quotePool,/,
+    "the set is handed a pool again that does not include the open invoices — the one input that " +
+      "makes the 'open' bucket possible");
+
+  // The screen decides on fullySettled, never on coversPayment: the sum can add up while one of
+  // the invoices in it is still waiting to be linked.
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.doesNotMatch(scherm, /quotedSet\?\.coversPayment/,
+    "the screen gates a control on coversPayment. The sum adding up does not mean the work is " +
+      "done — an open named invoice still has to be linked, and fullySettled is the flag that " +
+      "knows the difference");
+  assert.match(scherm, /if \(s\.quotedSet\?\.fullySettled\) return false/,
+    "a bulk 'confirm' can once more book a payment whose named invoices are all already settled — " +
+      "every candidate it would book is a DIFFERENT, still-open bill");
+});
+
+// ── [XML-PDF] An e-factuur must open as its invoice, not as its envelope ──────────────────────
+//
+// Reported with a screenshot of a browser tab: "Bekijk factuur" on invoice 26702771 opened a wall
+// of raw XML — namespaces, CustomizationID, and a base64 blob running off the right edge. Nothing
+// was broken; the stored file IS the UBL, because the supplier sent a UBL.
+//
+// That blob running off the screen was the invoice. Peppol carries the printable document inside
+// the XML in cbc:EmbeddedDocumentBinaryObject, and before this change nothing in the codebase read
+// that element — the app held the letter and showed the envelope. The failure is completely silent:
+// the amounts, the BTW and the supplier are all read correctly, and only the person who tries to
+// LOOK at the invoice ever finds out.
+//
+// Two rows in production today, which is exactly why it is worth holding: e-facturering becomes
+// mandatory for Dutch B2B, and every supplier that switches sends this shape.
+test("[XML-PDF] both doors onto an e-factuur open the PDF inside it, and keep the XML as evidence", () => {
+  // Two doors reach these bytes — an upload and the mail sync — and a fix on one of them is how
+  // this app has repeatedly ended up with two doors making opposite decisions about one file.
+  for (const [pad, waar] of [
+    ["src/app/api/intake/route.ts", "de upload"],
+    ["src/lib/email-integration.ts", "de mailsync"],
+  ]) {
+    const src = code(pad);
+    // The IMPORT, not the identifier. Checking only the name passes just as happily over
+    // `const extractEmbeddedPdf = () => null` — proven, not assumed: that mutation was the first
+    // negative control here, and the earlier version of this line stayed green through it.
+    assert.match(src, /await import\(["']@\/lib\/ubl-embedded-pdf["']\)/,
+      `${waar} reads the e-factuur again without looking for the PDF inside it — the owner is ` +
+        `shown a page of XML while the app holds the printable invoice`);
+    assert.match(src, /extractEmbeddedPdf\(/,
+      `${waar} imports the extractor but never calls it`);
+    assert.match(src, /contentType: ["']application\/pdf["']/,
+      `${waar} stores the extracted document without saying it is a PDF, so the browser will not ` +
+        `render it and the owner is no better off`);
+  }
+
+  // The XML stays the evidence. document_id must keep pointing at it: it is the signed original,
+  // the artefact an accountant and the Belastingdienst are entitled to, and the only proof of what
+  // the supplier actually sent. Only what the OWNER opens changes.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /pdf_url: openUrl \?\? storagePath,/,
+    "the invoice no longer falls back to the XML when there is no embedded PDF — carrying one is " +
+      "OPTIONAL in Peppol, so this must never leave a row with no file at all");
+  const pdfRegel = intake.indexOf("pdf_url: openUrl ?? storagePath");
+  const docRegel = intake.indexOf("document_id: documentId", pdfRegel);
+  assert.ok(docRegel > pdfRegel && docRegel - pdfRegel < 400,
+    "document_id no longer sits with pdf_url on the same insert — the split between what the owner " +
+      "opens and what the machine keeps is the whole design here, and it must stay visible");
+
+  // A missing attachment is not an error, and a failed extraction may not cost the invoice.
+  assert.match(code("src/lib/ubl-embedded-pdf.ts"), /bytes\.subarray\(0, 5\)\.toString\("latin1"\) !== "%PDF-"/,
+    "the extractor stopped checking that the bytes are actually a PDF. The mimeCode alone is a " +
+      "stranger's word about a file this app will then serve under its own name");
+  assert.match(code("src/lib/ubl-embedded-pdf.ts"), /mime !== "application\/pdf"/,
+    "…and it stopped checking the label, which means it is now guessing at the type of untrusted " +
+      "input from its first bytes");
+});
+
+// ── [TARIEF-GEHEUGEN] A rate the supplier proves, never one the app guesses ───────────────────
+//
+// 44 incoming invoices sit held in production with excl. BTW 0, BTW 0 and a real gross total:
+// EUR 49.963 of purchases with no voorbelasting claimed against any of them. safecore is right to
+// hold them — it refuses to book a split it did not read — but the app's only SUGGESTION on that
+// shape was "het bedrag excl. BTW hoort € 1.560,42 te zijn". That is the missing number handed
+// back as a fact: 0 % is a legal Dutch rate, so reconcileBtw called it a possible reading and it
+// got the same button as two suggestions that genuinely follow from the amounts. One tap books a
+// wholesale food invoice with zero BTW.
+//
+// What the administration actually knows, counted on the owner's own rows: ATAPACK charged 21 %
+// on all 12 of its readable invoices, Sumer 9 % on all 12, W.KETELS 9 % on all 25. And Enka
+// Horeca — the largest held block, 13 invoices and EUR 18.698 — charged 9,45 · 10,07 · 11,10 ·
+// 11,89 alongside 9,00, because it puts both rates on one invoice. That supplier has no rate, and
+// the refusal has to survive: one rate on a mixed invoice is a wrong number in a btw-aangifte.
+test("[TARIEF-GEHEUGEN] the zero-BTW 'repair' cannot come back", () => {
+  const rec = code("src/lib/btw-reconcile.ts");
+  assert.match(rec, /const nothingWasRead = ex === 0 && bt === 0;/,
+    "reconcileBtw no longer notices that there was no split to reconcile, so 'excl. BTW = the " +
+      "whole total' is offered as a repair again — and accepting it books the invoice with no " +
+      "voorbelasting at all");
+  assert.match(rec, /const exclRepairRate = nothingWasRead \? null : rateOf/,
+    "…and the reading is called possible again, which is what put it on a button");
+  assert.match(rec, /splitWasRead: !nothingWasRead,/,
+    "the flag the screen reads is gone; every caller then has to infer it from the numbers, and " +
+      "a caller that has to notice is a caller that forgets");
+  assert.match(rec, /if \(!r\.splitWasRead\) return null;/,
+    "reconcileHint speaks again about amounts that were never on the page");
+});
+
+test("[TARIEF-GEHEUGEN] a mixed-rate supplier gets no proposal, and the split always adds up", () => {
+  const vr = code("src/lib/vendor-vat-rate.ts");
+  // The refusal, which is the whole reason this module can be trusted at all.
+  assert.match(vr, /if \(snapped === null\) return null;/,
+    "a blended invoice no longer disqualifies the supplier — ten agreeing invoices would then " +
+      "outvote one blend, and Enka Horeca (13 held invoices, EUR 18.698) would be handed a " +
+      "single rate it demonstrably does not use");
+  assert.match(vr, /else if \(found !== snapped\) return null;/,
+    "two different legal rates no longer disqualify either: the majority would win, and be wrong " +
+      "once every few invoices, silently, in the aangifte");
+  // The proposal must never fail the check it exists to clear.
+  assert.match(vr, /const btw = round2\(totalIncBtw - ex\);/,
+    "the BTW is no longer derived by subtraction, so ex + btw is not the printed total BY " +
+      "CONSTRUCTION any more — and a proposal that is a cent out is one safecore flags as " +
+      "sum_mismatch");
+
+  // And it proposes; it never books. The screen fills the fields and the owner still confirms.
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(scherm, /if \(rec0\.ok \|\| rec0\.splitWasRead \|\| !vendorRate\) return null/,
+    "the proposal is shown on invoices whose split WAS read. Those have their own answer from " +
+      "their own amounts, and a second button with a different number beside it turns a repair " +
+      "into a choice between two claims");
+  assert.match(scherm, /applyTriplet\(\{ ex: voorstel\.totalExBtw, btw: voorstel\.btwAmount, incl: invoice\.total_inc_btw \}\)/,
+    "the proposal no longer merely FILLS the fields — anything beyond that is this app booking " +
+      "money on a rate it inferred, which [ZELF-EERST] does not allow");
+  assert.match(scherm, /t\('ink\.bedrag\.tariefGeheugen', \{[\s\S]{0,160}?aantal: String\(vendorRate\.basedOn\)/,
+    "the sentence stopped naming how many invoices it rests on. 'deze leverancier rekende 12 keer " +
+      "21 %' is a fact the owner can check; without the count it is a machine asking to be trusted");
+});
+
+// ── [GEEN-BTW-SOORT] Not every 21 % is BTW you may reclaim ────────────────────────────────────
+//
+// Invoice 142257742, Coöperatie Univé Zuid-Nederland, 14-08-2026: € 195,28 + € 41,01 = € 236,29,
+// status 'received'. Read correctly, added up correctly, past every gate in this application —
+// and that € 41,01 is ASSURANTIEBELASTING, a different tax that happens to be 21 % as well, sitting
+// in exactly the place BTW would sit. It cannot be reclaimed (art. 11-1-k Wet OB; insurance is
+// exempt and the premium carries its own tax instead).
+//
+// The lesson is where the warning had to go. Every other amount check in this app hangs off the
+// health verdict, because those invoices are UNHEALTHY — their numbers disagree. This one is in
+// perfect health, and that is precisely why nobody ever looked at it. A wrong KIND of tax has no
+// arithmetic error beside it to give it away.
+test("[GEEN-BTW-SOORT] the warning does not hang off the health verdict", () => {
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  const waarschuwing = scherm.indexOf("doubtAboutInputVat({");
+  const gezondheidsblok = scherm.indexOf("invoice.health.flags.arithmetic &&");
+  assert.ok(waarschuwing > 0, "the verify modal no longer asks what KIND of tax this is");
+  assert.ok(gezondheidsblok > 0 && waarschuwing < gezondheidsblok,
+    "the warning moved inside (or below) the arithmetic-health block. The invoice that provoked " +
+      "this adds up perfectly — 195,28 + 41,01 = 236,29 — so a warning gated on health is a " +
+      "warning that never fires on the case it exists for");
+  // And the readiness card looks back at what is ALREADY booked, like [DUBBEL-TERUGKIJKEN] does:
+  // the Univé invoice is 'received', so a check that only runs in the queue arrives too late.
+  assert.match(code("src/app/api/readiness/route.ts"), /doubtAboutInputVat\(\{/,
+    "nothing looks back at the invoices that are already in the books, so the one that provoked " +
+      "this task stays there unmentioned");
+  assert.match(code("src/lib/readiness.ts"), /const twijfel = s\.vatDoubtCount \?\? 0;/,
+    "the readiness verdict dropped the risk, so the look-back is computed and then thrown away");
+});
+
+test("[GEEN-BTW-SOORT] it asks about rent and never rules on it", () => {
+  // The one family where 21 % is very often entirely correct: landlord and tenant may opt for
+  // btw-belaste verhuur, which is normal for business premises. A verdict here would talk an owner
+  // out of a deduction they are legally entitled to — the opposite error, and just as expensive.
+  const mod = code("src/lib/btw-soort.ts");
+  const verhuurZin = /Verhuur is meestal vrijgesteld[\s\S]{0,220}?huurcontract\?/.exec(mod)?.[0];
+  assert.ok(verhuurZin, "the rent sentence is gone or rewritten — check it still ASKS");
+  assert.ok(/kunnen kiezen voor/.test(verhuurZin!),
+    "the rent sentence stopped naming the option to opt for taxed rental, so it now reads as a " +
+      "verdict on an amount that is very often correct");
+  assert.ok(!/mag je niet/.test(verhuurZin!),
+    "the rent sentence now tells the owner the BTW is not reclaimable. For opted-in taxed rental " +
+      "that is false, and acting on it throws away a real deduction");
+
+  // The two traps in this owner's own supplier list, both measured: a wholesaler with 'Horeca' in
+  // its name whose 16 invoices carry fully deductible BTW, and a bakery that is not a bank.
+  assert.ok(!/\bhoreca\|/.test(mod) && !mod.includes('"horeca|'),
+    "the industry word 'horeca' is back in the pattern. 'Enka Horeca B.V.' is a WHOLESALER with " +
+      "16 correctly booked invoices, and 'HorecaRama BV' sells equipment — that is 17 warnings on " +
+      "invoices that are right");
+  assert.ok(!/"bank\|/.test(mod),
+    "'bank' as a bare fragment matches Bankethuis and banketbakkerij; a bakery is not a bank");
 });

@@ -157,3 +157,33 @@ test("[MONEY] nothing is repaired — the function only answers", () => {
   reconcileBtw(before.excl, before.btw, before.incl);
   assert.deepEqual(before, { excl: 985.87, btw: 88.73, incl: 1078.46 });
 });
+
+test("[TARIEF-GEHEUGEN] a split that was never read offers no 'repair' at all", () => {
+  // The shape of 44 held production invoices: the reader saw the printed total and no breakdown.
+  // The arithmetic then hands back the total itself as "excl. BTW", at an implied rate of 0 % —
+  // which IS a legal Dutch rate, so this used to be offered as a repair. Accepting it books a
+  // wholesale food invoice with zero voorbelasting, next to two buttons that are real derivations.
+  for (const incl of [1560.42, 8980.05, 117.17, 3819.82]) {
+    const r = reconcileBtw(0, 0, incl);
+    assert.equal(r.ok, false, "it still does not add up — that part was never in doubt");
+    assert.equal(r.exclRepairPossible, false,
+      `€ ${incl}: "excl. BTW is the whole total" is the missing number restated, not a repair`);
+    assert.equal(r.btwRepairPossible, false);
+    assert.equal(reconcileHint(r), null,
+      "and no sentence may claim a reading either — there is nothing here to reconcile between");
+  }
+});
+
+test("[TARIEF-GEHEUGEN] a real 0%-invoice with a READ split is untouched", () => {
+  // The guard is on "nothing was read", not on "the rate is 0". An invoice that genuinely states
+  // excl € 100 and BTW € 0 has a split; it simply adds up, and nothing here should fire.
+  const r = reconcileBtw(100, 0, 100);
+  assert.equal(r.ok, true);
+});
+
+test("[TARIEF-GEHEUGEN] one half read is still reconcilable", () => {
+  // Only BOTH being absent means nothing was read. With excl present and BTW missing there is a
+  // genuine second reading to offer, and taking that away would lose a working repair.
+  const r = reconcileBtw(1000, 0, 1090);
+  assert.equal(r.btwRepairPossible, true, "BTW € 90 on a base of € 1.000 is 9% — a real reading");
+});
