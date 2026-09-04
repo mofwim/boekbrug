@@ -72,9 +72,12 @@ export async function buildXafInputForOwner(args: {
     id: string; invoice_number: string | null; direction: string | null; status: string | null;
     invoice_type: string | null; total_ex_btw: number | null; btw_amount: number | null;
     invoice_date: string | null; receiver_id: string | null; client_name: string | null;
+    // [XAF-TEGENPARTIJ] Het btw-nummer van de tegenpartij hoort in het auditfile (taxRegIdent), en
+    // supplier_id is de tweede bron voor de facturen die het zelf niet dragen — zie hieronder.
+    client_btw_number: string | null; supplier_id: string | null;
   }>((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name")
+    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name, client_btw_number, supplier_id")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -90,6 +93,31 @@ export async function buildXafInputForOwner(args: {
     .filter(isVerifiedForPackage);
   const outgoing = attributed.filter((r) => r.direction === "outgoing");
   const incoming = attributed.filter((r) => r.direction === "incoming");
+  // ── [XAF-TEGENPARTIJ] Het btw- en KVK-nummer van de leveranciers ──────────────────────────
+  //
+  // Gemeten op productie: 488 van de 495 geboekte inkoopfacturen dragen geen btw-nummer, omdat de
+  // app het pas sinds 30 augustus uitleest (7 nieuwe facturen: 5 mét). Het staat wél op het papier
+  // én bij 26 van de 54 leveranciers in deze administratie — goed voor 311 van die 488 rijen.
+  //
+  // Dus haalt het auditfile het daar op. NIET terugschrijven op de facturen: het document noemt dat
+  // nummer niet en de app zou dan een gegeven verzinnen. Afleiden bij export is iets anders dan
+  // bewaren alsof het gelezen is, en dat verschil is precies wat een auditfile controleerbaar maakt.
+  const leverancierIds = [...new Set(incoming.map((r) => r.supplier_id).filter((x): x is string => !!x))];
+  const btwPerLeverancier = new Map<string, { btw: string | null; kvk: string | null }>();
+  if (leverancierIds.length > 0) {
+    // [IN-CHUNK] Gechunkt: het aantal leveranciers groeit met de administratie mee, en een 414 zou
+    // hier als "geen leveranciers bekend" lezen — een auditfile dat stil minder compleet is.
+    const rijen = await fetchAllRowsForIds<{ id: string; btw_number: string | null; kvk_number: string | null }, string>(
+      leverancierIds,
+      (chunk, from, to) => pipeline
+        .from("suppliers")
+        .select("id, btw_number, kvk_number")
+        .in("id", chunk)
+        .range(from, to) as unknown as PromiseLike<{ data: Array<{ id: string; btw_number: string | null; kvk_number: string | null }> | null; error: { message: string } | null }>,
+    );
+    for (const r of rijen) btwPerLeverancier.set(r.id, { btw: r.btw_number, kvk: r.kvk_number });
+  }
+
   const { rateShares, degraded: splitDegraded } = await fetchRateShares(pipeline, outgoing.map((r) => ({ id: r.id, total_ex_btw: r.total_ex_btw, btw_amount: r.btw_amount })));
 
   // ── Bank lines + the direction of whatever invoice each one settles ──
@@ -233,6 +261,7 @@ export async function buildXafInputForOwner(args: {
       btwAmount: r.btw_amount ?? 0,
       invoiceType: r.invoice_type,
       rateLines: rateShares.get(r.id) ?? null,
+      clientBtwNumber: r.client_btw_number,
     })),
     purchases: incoming.map((r) => ({
       id: r.id,
@@ -241,6 +270,9 @@ export async function buildXafInputForOwner(args: {
       vendorName: r.client_name,
       totalExBtw: r.total_ex_btw ?? 0,
       btwAmount: r.btw_amount ?? 0,
+      // De factuur eerst — dat is wat het document zei. Pas als die leeg is, de leverancier.
+      vendorBtwNumber: r.client_btw_number ?? (r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.btw ?? null : null),
+      vendorKvkNumber: r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.kvk ?? null : null,
     })),
     bank: bankRows.map((b) => ({
       id: b.id,
