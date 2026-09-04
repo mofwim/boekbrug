@@ -43,6 +43,11 @@ export type AangifteInput = Pick<
   onclassificeerbareOmzet?: number;
   // Whether the exempt regime applied at all — see the field of the same name on FinancialResult.
   exemptRegime?: boolean;
+  // [VERLEGD-NAAR-MIJ] Purchases whose supplier shifted the BTW to this owner (art. 12 lid 5 Wet
+  // OB). Not part of FinancialResult because it changes nothing there: the invoice carries no BTW,
+  // so it is a plain cost. It changes the AANGIFTE on two lines at once — owed in 2a, deducted in
+  // 5b — and those two must be the same number or they stop cancelling. See verlegde-btw.ts.
+  verlegdNaarMij?: { grondslag: number; btw: number; aantal: number } | null;
 };
 
 export interface AangifteCompleteness {
@@ -67,7 +72,7 @@ export interface AangifteCompleteness {
 }
 
 export interface AangifteRow {
-  code: "1a" | "1b" | "1c" | "1e" | "3b";
+  code: "1a" | "1b" | "1c" | "1e" | "2a" | "3b";
   label: string;
   omzet: number;                 // whole euros
   btw: number;                   // whole euros (0 for 1e)
@@ -152,6 +157,7 @@ export function filedSaldo(filed: {
 
 const RATE_LABEL: Record<string, string> = {
   "1a": "Leveringen/diensten belast met hoog tarief (21%)",
+  "2a": "Leveringen/diensten waarbij de omzetbelasting naar u is verlegd",
   "1b": "Leveringen/diensten belast met laag tarief (9%)",
   "1c": "Leveringen/diensten belast met overige tarieven, behalve 0%",
   "1e": "Leveringen/diensten belast met 0% of niet bij u belast",
@@ -211,8 +217,27 @@ export function buildAangifte(
   if (rest1e !== 0) rows.push({ code: "1e", label: RATE_LABEL["1e"], omzet: rest1e, btw: 0 });
   if (om3b !== 0) rows.push({ code: "3b", label: RATE_LABEL["3b"], omzet: om3b, btw: 0 });
 
+  // [VERLEGD-NAAR-MIJ] Rubriek 2a — BTW die een leverancier naar deze eigenaar heeft verlegd.
+  //
+  // Twee dingen in dezelfde aangifte, en de volgorde waarin ze hier staan is de volgorde op het
+  // formulier: 2a telt mee in het VERSCHULDIGDE (5a), en exact hetzelfde bedrag mag eraf in de
+  // voorbelasting (5b). Bij volledige aftrek vallen ze tegen elkaar weg en betaalt de eigenaar
+  // niets — en juist dáárom lijkt weglaten onschuldig. Dat is het niet: de aangifte is dan op twee
+  // regels onjuist, hij sluit niet aan op de aangifte van de onderaannemer, en de Belastingdienst
+  // legt die twee naast elkaar. Voor een deels vrijgestelde eigenaar vallen ze niet eens weg.
+  //
+  // Hetzelfde afgeronde bedrag aan beide kanten, uit één berekening. Twee keer los afronden is hoe
+  // twee bedragen die moeten wegvallen een saldo van een paar cent achterlaten op een aangifte
+  // waar niets te betalen viel.
+  const verlegd = input.verlegdNaarMij ?? null;
+  const verlegdBtw = verlegd ? euro(verlegd.btw) : 0;
+  if (verlegd && (verlegd.grondslag !== 0 || verlegdBtw !== 0)) {
+    rows.push({ code: "2a", label: RATE_LABEL["2a"], omzet: euro(verlegd.grondslag), btw: verlegdBtw });
+  }
+
   const verschuldigd = rows.reduce((s, r) => s + r.btw, 0); // 5a — sum of rounded rubrieken
-  const voorbelasting = euro(input.btwVoorbelasting);        // 5b
+  // 5b = de gedocumenteerde voorbelasting PLUS de verlegde BTW die hierboven in 2a is aangegeven.
+  const voorbelasting = euro(input.btwVoorbelasting) + verlegdBtw;
   const saldo = verschuldigd - voorbelasting;                // 5g
 
   // ── Honest notes — no false reassurance. Every figure states what it depends on. ──
@@ -386,6 +411,17 @@ export function buildAangifte(
   }
   // [REGIME-FLAGS] Special-regime notes last (KOR / verlegd / marge) — the concept is only a
   // mapping of the rate we read; these regimes change what the accountant must file.
+  // [VERLEGD-NAAR-MIJ] De rubriek zegt zichzelf niet uit. Het tarief staat NIET op een verlegde
+  // factuur — die draagt geen BTW — dus het is afgeleid uit wat er geleverd is, en dat hoort de
+  // eigenaar te weten voordat zijn boekhouder het indient.
+  if (verlegd && verlegd.aantal > 0) {
+    notes.push(
+      `Er ${verlegd.aantal === 1 ? "is 1 inkoopfactuur" : `zijn ${verlegd.aantal} inkoopfacturen`} waarop de ` +
+      "leverancier de BTW naar jou heeft verlegd. Die BTW staat als verschuldigd in rubriek 2a én is " +
+      "in dezelfde aangifte weer afgetrokken (5b), dus per saldo betaal je er niets over. Let op: op " +
+      "zo'n factuur staat GEEN tarief — dat volgt uit wat er geleverd is. Controleer dat met je boekhouder.",
+    );
+  }
   for (const rn of regimeNotes ?? []) notes.push(rn);
 
   return {

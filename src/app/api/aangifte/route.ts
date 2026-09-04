@@ -33,6 +33,8 @@ import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 // [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
 import { exemptShareOf } from "@/lib/vat-exemption";
+// [VERLEGD-NAAR-MIJ] Rubriek 2a — BTW die een leverancier naar deze eigenaar heeft verlegd.
+import { verlegdeBtwOpInkoop, totaalVerlegd } from "@/lib/verlegde-btw";
 // [SUPPLETIE-VERREKEND] Corrections from earlier filed quarters — see the block at the return.
 import { outstandingCorrections } from "@/lib/filed-quarter";
 
@@ -69,7 +71,7 @@ export async function GET(req: NextRequest) {
   // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id")
+    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -429,8 +431,31 @@ export async function GET(req: NextRequest) {
     })),
   });
 
+  // ── [VERLEGD-NAAR-MIJ] Rubriek 2a — inkoop waarop de leverancier de BTW naar deze eigenaar
+  //    heeft verlegd (art. 12 lid 5 Wet OB). Herkend bij het inlezen en vastgelegd in
+  //    field_confidence._btw_verlegd; hier alleen opgeteld.
+  //
+  //    Het TARIEF staat niet op zo'n factuur — die draagt geen BTW — dus verlegde-btw.ts stelt het
+  //    vaktarief voor (21% voor bouw en personeelsuitleen) en de notitie op de aangifte zegt
+  //    erbij dat dat gecontroleerd hoort te worden. Verzinnen doet de app het niet; verzwijgen ook niet.
+  const verlegdeVondsten = invRaw
+    .filter((i) => effDir(i) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")))
+    .map((i) => {
+      const fc = i.field_confidence as Record<string, unknown> | null;
+      const merk = fc && typeof fc === "object" ? (fc._btw_verlegd as { grondslag: number | null } | undefined) : undefined;
+      if (!merk) return null;
+      return verlegdeBtwOpInkoop({
+        // De vlag IS het bewijs: hij is bij het inlezen gezet op de tekst van het document zelf.
+        // Hier is die tekst er niet meer, dus de zin wordt niet opnieuw gezocht.
+        text: "btw verlegd",
+        totalExBtw: merk.grondslag ?? (i.total_ex_btw as number | null),
+        btwAmount: i.btw_amount as number | null,
+      });
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+
   const aangifte = buildAangifte(
-    { ...result, intraEuOmzet: icp.totalExBtw },
+    { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten) },
     { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
     `Q${quarter} ${year}`, regimeNotes,
   );
