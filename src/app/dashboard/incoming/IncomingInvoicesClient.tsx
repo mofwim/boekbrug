@@ -111,6 +111,7 @@ import { applyServerRefresh } from '@/lib/queue-sync'
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 // [ONE-TAP-REPAIR] The gate that names the two possible readings of a broken breakdown.
 import { reconcileBtw } from '@/lib/btw-reconcile'
+import { proposeSplit } from '@/lib/vendor-vat-rate'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] The typing surface, in Dutch order — see date-field-nl.ts.
@@ -216,6 +217,10 @@ interface Props {
   // queue, and only past the threshold — most queues carry none at all. Optional: an older server
   // render, or a failed audit read, simply sends nothing and the cards look as they always did.
   readingHints?: Record<string, string>;
+  // [TARIEF-GEHEUGEN] Het tarief dat een leverancier aantoonbaar altijd rekent, met het aantal
+  // facturen waarop dat rust. Alleen aanwezig voor leveranciers waarvan ELKE goed gelezen factuur
+  // hetzelfde wettelijke tarief draagt — zie vendor-vat-rate.ts.
+  vendorRates?: Record<string, { rate: number; basedOn: number }>;
   // [NO-SILENT-EMPTY] Which of the server's reads did not come back, in the server's own Dutch
   // source names. Empty (or absent, from an older render) means every list below is the whole
   // list. Non-empty qualifies EVERYTHING on this screen — the counts, the tabs, and above all the
@@ -982,8 +987,13 @@ export function ConfirmPaidModal({
   // [LEVERANCIER-KIEZEN] The owner's own suppliers, shown under the name field while they type.
   suppliers = [],
   suppliersUnavailable = false,
+  // [TARIEF-GEHEUGEN] Het tarief dat deze leverancier aantoonbaar altijd rekent, met het aantal
+  // facturen erachter. Afwezig zodra die leverancier ooit twee tarieven op één factuur zette —
+  // dan is er geen tarief en hoort er geen voorstel te staan.
+  vendorRate,
 }: {
   invoice: IncomingInvoice;
+  vendorRate?: { rate: number; basedOn: number };
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
   // [BRIDGE-EXTRACT] amounts now also carries reviewed client_name/invoice_number/invoice_date.
   onVerify: (amounts: {
@@ -1304,6 +1314,51 @@ export function ConfirmPaidModal({
                           }}
                         >
                           {t('ink.bedrag.neemOver', { bedrag: NL_CURRENCY.format(alt.inc) })}
+                        </button>
+                      </div>
+                    )
+                  })()}
+                  {/* [TARIEF-GEHEUGEN] De uitsplitsing is NIET gelezen — alleen het totaal stond er.
+                      Dan valt er niets te reconstrueren uit de bedragen zelf (dat probeerde het blok
+                      hieronder, en het bood "excl. BTW = het hele totaal" aan: 0 % is een geldig
+                      Nederlands tarief, dus dat gold als reparatie. Accepteren boekt een
+                      groothandelsfactuur zonder één cent voorbelasting.)
+
+                      Wat er wél is, staat in de administratie van de eigenaar zelf: dezelfde
+                      leverancier, dezelfde factuur, keer op keer hetzelfde tarief. Dat is geen
+                      gok maar een telling, en de zin noemt hem — "12 eerdere facturen" is te
+                      controleren, "wij denken 21 %" is een machine die om vertrouwen vraagt.
+
+                      Het VULT alleen de velden; bevestigen blijft de eigenaar. */}
+                  {(() => {
+                    const rec0 = reconcileBtw(invoice.total_ex_btw, invoice.btw_amount, invoice.total_inc_btw)
+                    if (rec0.ok || rec0.splitWasRead || !vendorRate) return null
+                    const voorstel = proposeSplit(invoice.total_inc_btw, vendorRate.rate)
+                    if (!voorstel) return null
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
+                          {t('ink.bedrag.tariefGeheugen', {
+                            tarief: String(vendorRate.rate),
+                            aantal: String(vendorRate.basedOn),
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            applyTriplet({ ex: voorstel.totalExBtw, btw: voorstel.btwAmount, incl: invoice.total_inc_btw })
+                            setEditing(true)
+                          }}
+                          style={{
+                            padding: "7px 12px", borderRadius: 9, background: "#fff",
+                            border: "1px solid #e0a94f", color: "#9a5b00",
+                            fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit",
+                          }}
+                        >
+                          {t('ink.bedrag.vulSplitsing', {
+                            excl: NL_CURRENCY.format(voorstel.totalExBtw),
+                            btw: NL_CURRENCY.format(voorstel.btwAmount),
+                          })}
                         </button>
                       </div>
                     )
@@ -3653,6 +3708,8 @@ export default function IncomingInvoicesClient({
   // [READING-MEMORY] Empty by default: most owners have no supplier past the threshold, and a
   // missing prop must render the queue exactly as it rendered before this existed.
   readingHints = {},
+  // Leeg bij afwezigheid: een oudere serverrender toont dan precies wat dit scherm altijd toonde.
+  vendorRates = {},
   // [NO-SILENT-EMPTY] Defaults to empty, so an older server render behaves exactly as before —
   // but an EMPTY array means "every read succeeded", which is a claim, not an absence.
   readFailed = [],
@@ -4811,6 +4868,7 @@ export default function IncomingInvoicesClient({
       {confirmPaidFor && (
         <ConfirmPaidModal
           invoice={confirmPaidFor}
+          vendorRate={vendorRates[(confirmPaidFor.client_name ?? "").trim().toLowerCase()]}
           suppliers={suppliers}
           suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(confirmPaidFor, amounts)}
@@ -4826,6 +4884,7 @@ export default function IncomingInvoicesClient({
         <ConfirmPaidModal
           invoice={editFor}
           startEditing
+          vendorRate={vendorRates[(editFor.client_name ?? "").trim().toLowerCase()]}
           suppliers={suppliers}
           suppliersUnavailable={suppliersUnavailable}
           onVerify={(amounts) => handleVerify(editFor, amounts)}

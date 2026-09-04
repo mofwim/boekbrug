@@ -25381,3 +25381,63 @@ test("[XML-PDF] both doors onto an e-factuur open the PDF inside it, and keep th
     "…and it stopped checking the label, which means it is now guessing at the type of untrusted " +
       "input from its first bytes");
 });
+
+// ── [TARIEF-GEHEUGEN] A rate the supplier proves, never one the app guesses ───────────────────
+//
+// 44 incoming invoices sit held in production with excl. BTW 0, BTW 0 and a real gross total:
+// EUR 49.963 of purchases with no voorbelasting claimed against any of them. safecore is right to
+// hold them — it refuses to book a split it did not read — but the app's only SUGGESTION on that
+// shape was "het bedrag excl. BTW hoort € 1.560,42 te zijn". That is the missing number handed
+// back as a fact: 0 % is a legal Dutch rate, so reconcileBtw called it a possible reading and it
+// got the same button as two suggestions that genuinely follow from the amounts. One tap books a
+// wholesale food invoice with zero BTW.
+//
+// What the administration actually knows, counted on the owner's own rows: ATAPACK charged 21 %
+// on all 12 of its readable invoices, Sumer 9 % on all 12, W.KETELS 9 % on all 25. And Enka
+// Horeca — the largest held block, 13 invoices and EUR 18.698 — charged 9,45 · 10,07 · 11,10 ·
+// 11,89 alongside 9,00, because it puts both rates on one invoice. That supplier has no rate, and
+// the refusal has to survive: one rate on a mixed invoice is a wrong number in a btw-aangifte.
+test("[TARIEF-GEHEUGEN] the zero-BTW 'repair' cannot come back", () => {
+  const rec = code("src/lib/btw-reconcile.ts");
+  assert.match(rec, /const nothingWasRead = ex === 0 && bt === 0;/,
+    "reconcileBtw no longer notices that there was no split to reconcile, so 'excl. BTW = the " +
+      "whole total' is offered as a repair again — and accepting it books the invoice with no " +
+      "voorbelasting at all");
+  assert.match(rec, /const exclRepairRate = nothingWasRead \? null : rateOf/,
+    "…and the reading is called possible again, which is what put it on a button");
+  assert.match(rec, /splitWasRead: !nothingWasRead,/,
+    "the flag the screen reads is gone; every caller then has to infer it from the numbers, and " +
+      "a caller that has to notice is a caller that forgets");
+  assert.match(rec, /if \(!r\.splitWasRead\) return null;/,
+    "reconcileHint speaks again about amounts that were never on the page");
+});
+
+test("[TARIEF-GEHEUGEN] a mixed-rate supplier gets no proposal, and the split always adds up", () => {
+  const vr = code("src/lib/vendor-vat-rate.ts");
+  // The refusal, which is the whole reason this module can be trusted at all.
+  assert.match(vr, /if \(snapped === null\) return null;/,
+    "a blended invoice no longer disqualifies the supplier — ten agreeing invoices would then " +
+      "outvote one blend, and Enka Horeca (13 held invoices, EUR 18.698) would be handed a " +
+      "single rate it demonstrably does not use");
+  assert.match(vr, /else if \(found !== snapped\) return null;/,
+    "two different legal rates no longer disqualify either: the majority would win, and be wrong " +
+      "once every few invoices, silently, in the aangifte");
+  // The proposal must never fail the check it exists to clear.
+  assert.match(vr, /const btw = round2\(totalIncBtw - ex\);/,
+    "the BTW is no longer derived by subtraction, so ex + btw is not the printed total BY " +
+      "CONSTRUCTION any more — and a proposal that is a cent out is one safecore flags as " +
+      "sum_mismatch");
+
+  // And it proposes; it never books. The screen fills the fields and the owner still confirms.
+  const scherm = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(scherm, /if \(rec0\.ok \|\| rec0\.splitWasRead \|\| !vendorRate\) return null/,
+    "the proposal is shown on invoices whose split WAS read. Those have their own answer from " +
+      "their own amounts, and a second button with a different number beside it turns a repair " +
+      "into a choice between two claims");
+  assert.match(scherm, /applyTriplet\(\{ ex: voorstel\.totalExBtw, btw: voorstel\.btwAmount, incl: invoice\.total_inc_btw \}\)/,
+    "the proposal no longer merely FILLS the fields — anything beyond that is this app booking " +
+      "money on a rate it inferred, which [ZELF-EERST] does not allow");
+  assert.match(scherm, /t\('ink\.bedrag\.tariefGeheugen', \{[\s\S]{0,160}?aantal: String\(vendorRate\.basedOn\)/,
+    "the sentence stopped naming how many invoices it rests on. 'deze leverancier rekende 12 keer " +
+      "21 %' is a fact the owner can check; without the count it is a machine asking to be trusted");
+});

@@ -5542,6 +5542,19 @@ export const MESSAGES = {
     ar: 'btw = {bedrag}',
     en: 'VAT = {bedrag}',
   },
+  // [TARIEF-GEHEUGEN] De uitsplitsing stond niet op het document; de administratie van de eigenaar
+  // weet wat deze leverancier altijd rekent. De zin NOEMT het bewijs — een getal dat de eigenaar
+  // kan nalezen, in plaats van een machine die om vertrouwen vraagt.
+  'ink.bedrag.tariefGeheugen': {
+    nl: 'De BTW-uitsplitsing stond niet op deze factuur. Deze leverancier rekende {aantal} keer eerder {tarief}% — allemaal hetzelfde.',
+    ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. هذا المورّد احتسب {tarief}% في {aantal} فاتورة سابقة — كلها بالنسبة نفسها.',
+    en: 'The BTW breakdown was not on this invoice. This supplier charged {tarief}% on {aantal} earlier invoices — every one of them.',
+  },
+  'ink.bedrag.vulSplitsing': {
+    nl: 'Vul in: excl. {excl} · BTW {btw}',
+    ar: 'املأ: بدون ضريبة {excl} · الضريبة {btw}',
+    en: 'Fill in: excl. {excl} · BTW {btw}',
+  },
   'ink.bedrag.exclIs': {
     nl: 'Excl. BTW = {bedrag}',
     ar: 'بدون btw = {bedrag}',
