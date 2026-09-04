@@ -24474,6 +24474,108 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [LES-TELT-MEE] ────────────────────────────────────────────────────────────────────────────
+//
+// The owner corrects a misread supplier name and the app writes the lesson down. Measured on
+// production: three lessons stored ("Silifke / Hocaoglu" is oz & er food b.v; "CHUR MARKT BV" and
+// "CHLIQI MARKT BV" are omur MARKT BV) — and exactly one caller ever read them, in one branch.
+//
+// Two places decided identity from the PRINTED name instead, which is the one field the app
+// already knows can be wrong:
+//
+//   · knownIbanForVendor keyed the fraud check on it, found nothing for a name it had been taught,
+//     and reported a completed check with nothing to say. That sentence means the owner pays
+//     whatever account the paper prints — on precisely the invoices whose sender it misreads.
+//   · resolveSupplierForImport consulted the aliases only when the invoice carried NO IBAN. With a
+//     new account number it adopted nothing and CREATED a supplier under the misread name. Real
+//     case: seven of this owner's 54 rows are second and third rows for a company that already had
+//     one, and several companies genuinely invoice from more than one account.
+//
+// Both now resolve the lesson first. And the lesson itself got the guard its own comment described:
+// planSupplierAlias checked that the CORRECTED name was not a placeholder while the key it stores
+// comes from the PRINTED one.
+test("[LES-TELT-MEE] the lesson the owner taught is read wherever the printed name decides identity", () => {
+  const fraude = code("src/lib/iban-change.ts");
+  const registratie = code("src/lib/supplier-registry.ts");
+  const les = code("src/lib/supplier-alias.ts");
+  const schrijver = code("src/lib/supplier-alias-write.ts");
+
+  // 1. The fraud check resolves the taught name.
+  assert.match(fraude, /\.from\('supplier_aliases'\)/,
+    "knownIbanForVendor is back to keying the fraud check on the name it knows can be wrong");
+  // …and a failed alias read may not read as "nothing on record". Same rule as the two lookups
+  // around it — the header of that function is entirely about this mistake.
+  const lookup = fraude.slice(fraude.indexOf("export async function knownIbanForVendor"));
+  const body = lookup.slice(0, lookup.indexOf("\n}"));
+  assert.doesNotMatch(body, /\bcatch\b/,
+    "a catch here turns a failed look into a clean bill of health on the only fraud check there is");
+  assert.match(body, /if \(aliasErr && \(aliasErr as \{ code\?: string \}\)\.code !== '42P01'\) throw/,
+    "a failed alias read must leave as a throw; only an absent table means 'taught us nothing'");
+
+  // 2. The importer asks before founding a company, and does NOT adopt the new account number —
+  //    that is the change [IBAN-WISSEL] exists to show the owner.
+  // Anchored on CODE, not on the comment that heads the tier: code() strips comments, so the first
+  // version of this sliced from index -1 and read the last character of the file.
+  const tierStart = registratie.indexOf("const { data: byIban } = await supabase");
+  assert.ok(tierStart > 0, "the IBAN tier has been rewritten — this gate is reading nothing");
+  const ibanTier = registratie.slice(tierStart);
+  const aliasAt = ibanTier.indexOf("supplierIdForPrintedName(");
+  const createAt = ibanTier.indexOf(".insert({");
+  assert.ok(aliasAt > 0, "the IBAN tier creates a supplier under the misread name without ever asking");
+  assert.ok(createAt > aliasAt, "…and asks only after it has already founded one");
+  const aliasBlok = ibanTier.slice(aliasAt, createAt);
+  assert.doesNotMatch(aliasBlok, /\.update\(/,
+    "the aliased row must not silently adopt the new IBAN — that is the fraud signal, written away");
+
+  // 3. The lesson may never be keyed on a placeholder, on either side of the mapping.
+  assert.match(les, /if \(!isReliableSupplierName\(corrected\)\) return \{ learn: false, hold: 'unreliable-name' \}/);
+  assert.match(les, /if \(!isReliableSupplierName\(printed\)\) return \{ learn: false, hold: 'placeholder-printed' \}/,
+    "the alias KEY comes from the printed name, and nothing checked that side");
+  assert.match(schrijver, /if \(!isReliableSupplierName\(printedName \?\? ''\)\) return null/,
+    "…and the read-back must refuse one too, for the rows stored before that guard existed");
+});
+
+// ── [LEVERANCIER-BLADEREN] ────────────────────────────────────────────────────────────────────
+//
+// The picker was reachable by focusing the field and typing two matching characters. Reported on
+// the one screen where that is least likely to happen: the reader had filled the field with
+// "Jim Ketels" off a delivery stamp, the yellow "niet zeker over de leverancier" notice was up,
+// and nothing on screen said the owner's own 54 suppliers were a tap away.
+//
+// So the list got a button, and browsing asks the registry with an EMPTY query. That last part is
+// the whole feature and the easiest thing to lose: pass `value` there and the list is filtered by
+// the misreading the owner opened it to escape, which looks like a list that simply has nothing in
+// it. tests/render/supplier-picker.test.tsx proves the button renders; this holds the wiring.
+test("[LEVERANCIER-BLADEREN] browsing offers the registry, not the registry filtered by the mistake", () => {
+  const veld = code("src/components/invoice/SupplierNameInput.tsx");
+
+  assert.match(veld, /suggestSuppliers\('', options, SUPPLIER_BROWSE_LIMIT\)/,
+    "the browse list is filtered by what the reader typed into the field — which is the misreading");
+  assert.match(veld, /const \[browsing, setBrowsing\] = useState\(false\)/,
+    "browsing is no longer a state of its own, so the field's own focus decides what the owner sees");
+  assert.match(veld, /aria-label=\{t\('lev\.kies\.toon'\)\}/, "the button that opens the list is gone");
+
+  // The door is not offered onto an empty room.
+  assert.match(veld, /\{options\.length > 0 && \(\s*<button/,
+    "an owner with no suppliers is shown a button that would open nothing");
+
+  // Every way out closes it — a panel that survives its own pick sits over the amounts.
+  const pick = veld.slice(veld.indexOf("const pick = ("), veld.indexOf("const onKeyDown"));
+  assert.match(pick, /setBrowsing\(false\)/, "picking a supplier leaves the panel open over the form");
+  assert.ok(pick.length < 400, `the pick scan ran past its function (${pick.length} chars)`);
+
+  // [LEVERANCIER-BLADEREN] The cap the browse list is read with must be bigger than the typed one,
+  // or "show me my suppliers" answers with six of them and a line about the rest.
+  const kern = code("src/lib/supplier-suggest.ts");
+  assert.match(kern, /export const SUPPLIER_BROWSE_LIMIT = SUPPLIER_PICK_LIMIT/,
+    "the browse cap is no longer the payload the screen was actually given");
+  const browseAt = kern.indexOf("export const SUPPLIER_BROWSE_LIMIT");
+  const pickAt = kern.indexOf("export const SUPPLIER_PICK_LIMIT");
+  assert.ok(pickAt > 0 && browseAt > pickAt,
+    "SUPPLIER_BROWSE_LIMIT reads a const declared below it — that is a ReferenceError on import, " +
+    "and nothing here type-checks it because a const is not hoisted");
+});
+
 // ─── [E-FACTUUR-DATUM] One file owns the timetable; everywhere else states no year ──────────────
 //
 // A sentence — "the Netherlands makes Peppol e-invoicing mandatory over €800k turnover from 2027

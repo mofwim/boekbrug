@@ -57,12 +57,17 @@ export type AliasHold =
   | 'unreliable-name'   // "Onbekende afzender" and friends — keying on it merges every stranger
   | 'same-key'          // "Ozer Food BV" → "Ozer Food B.V.": the registry already treats these as one
   | 'nothing-printed'   // there was no previous name to alias FROM
+  | 'placeholder-printed' // the previous name was a placeholder, so it may never become a key
 
 /** Dutch, owner-facing. Only 'unreliable-name' is worth showing; the rest are silent non-events. */
 export const ALIAS_HOLD_REASON: Record<AliasHold, string | null> = {
   'no-change': null,
   'same-key': null,
   'nothing-printed': null,
+  // Silent on purpose. The owner did nothing wrong here — they typed the right company over a
+  // placeholder the READER produced. 'unreliable-name' asks them to "fill in the name as it appears
+  // on the invoice", which they already did; saying it would send them back to fix nothing.
+  'placeholder-printed': null,
   'unreliable-name': 'deze naam is te algemeen om te onthouden — vul de naam van de leverancier aan zoals hij op de factuur staat',
 }
 
@@ -115,11 +120,21 @@ export function planSupplierAlias(input: AliasInput): AliasPlan {
 
   // A placeholder as an alias key would point every unidentified invoice in the book at one
   // supplier — the same reason resolveSupplierForImport refuses to create a supplier from one.
+  //
+  // BOTH SIDES, and only one of them was checked. The sentence above is about the alias KEY, which
+  // comes from `printed`; the guard read `corrected`. So "Onbekende afzender" — the literal string
+  // /api/intake writes when the reader found no sender — corrected to a real company was a learn,
+  // and the lesson it stored was "every invoice whose sender could not be read is that company".
+  // The reader fails on a bad photo, not on a particular supplier, so the next unreadable invoice
+  // from anyone would inherit that name, its IBAN, and its place in the crediteurenstand.
   if (!isReliableSupplierName(corrected)) return { learn: false, hold: 'unreliable-name' }
 
   const aliasKey = supplierNameKey(printed)
   const canonicalKey = supplierNameKey(corrected)
   if (!aliasKey) return { learn: false, hold: 'nothing-printed' }
+  // After the empty-key check, so "&&&" is still reported as nothing printed — which is what it is.
+  // This one is for a printed name that IS a string and still may not be a key.
+  if (!isReliableSupplierName(printed)) return { learn: false, hold: 'placeholder-printed' }
   // "Ozer Food BV" and "Ozer Food B.V." already normalize to the same key: the registry has always
   // treated them as one company, so there is no second spelling to remember. Not a failure —
   // the correction was cosmetic and the identity never moved.

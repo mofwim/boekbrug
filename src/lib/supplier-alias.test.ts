@@ -170,3 +170,30 @@ test('[SUPPLIER-ALIAS] the hijack check is not optional', () => {
   // Learning must never be able to fail a correction that already saved.
   assert.match(src, /catch \(e\) \{/, 'the learn path must swallow its own failures')
 })
+
+test('[SUPPLIER-ALIAS] a placeholder the READER produced may never become an alias key', () => {
+  // The guard above this one reads `corrected`, and its own comment is about the alias KEY — which
+  // comes from `printed`. So the side the sentence described was the side nothing checked.
+  //
+  // What that allowed: "Onbekende afzender" is the literal string /api/intake writes when the
+  // reader found no sender at all. Correct such an invoice to a real company and the lesson stored
+  // is "every invoice whose sender could not be read is that company". The reader fails on a bad
+  // photo, not on a particular supplier, so the next unreadable invoice from ANYONE would inherit
+  // that name, that IBAN — and, through knownIbanForVendor, that supplier's answer to the one
+  // fraud check in the app.
+  for (const placeholder of ['Onbekende afzender', 'ab']) {
+    const plan = planSupplierAlias({ printedName: placeholder, correctedName: 'Sumer Food B.V.' })
+    assert.equal(plan.learn, false, `"${placeholder}" was learned as a key that matches every stranger`)
+    assert.equal(hold(plan), 'placeholder-printed')
+    // Silent: the owner typed the right company over the reader's blank. There is nothing to fix.
+    assert.equal(ALIAS_HOLD_REASON['placeholder-printed'], null,
+      'the owner is sent back to correct a name they already corrected')
+  }
+
+  // The bar is placeholders and junk, not short names. The misreadings worth teaching all clear it.
+  for (const real of ['ketel', 'Jim Ketels', 'Silifke / Hocaoglu', 'CHUR MARKT BV']) {
+    assert.equal(planSupplierAlias({ printedName: real, correctedName: 'Sumer Food B.V.' }).learn, true,
+      `"${real}" is a real misreading and must still be learnable`)
+  }
+})
+

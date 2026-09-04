@@ -110,6 +110,94 @@ console.log('\n— [IBAN-CHECK-HONEST] een controle die NIET kon draaien mag noo
     let gooide = false
     try { await knownIbanForVendor(kapot, 'u1', vendor) } catch { gooide = true }
     check('knownIbanForVendor gooit bij een mislukte lees (geen catch die hem opslokt)', gooide)
+
+    // ── [LES-TELT-MEE] De les van de eigenaar telt mee in DEZE controle ──────────────────────
+    //
+    // Gemeten op productie: deze eigenaar heeft de app drie misleeswijzen geleerd — "Silifke /
+    // Hocaoglu" is oz & er food b.v, "CHUR MARKT BV" en "CHLIQI MARKT BV" zijn omur MARKT BV. Geen
+    // ervan sleutelt op naam naar iets, dus deze controle keek naar een leverancier die hij zelf
+    // niet herkende, vond geen rekeningnummer, en meldde niets. Op precies de facturen waarvan de
+    // app al WIST dat hij de afzender verkeerd leest.
+    //
+    // Een stub die per TABEL én per KOLOM antwoordt. De eerste versie hiervan keek alleen naar de
+    // tabel, en beide lagen lezen `suppliers` — dus de naamsleutellaag gaf hetzelfde antwoord als
+    // de aliaslaag en vier van deze vijf controles waren leeg: ze bleven groen met de hele
+    // aliaslaag eruit gesloopt. Nu vindt alléén de aliasweg (`.eq('id', …)`) een rekeningnummer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const perKolom = (byTable: Record<string, any>): any => ({
+      from: (t: string) => {
+        const kolommen: string[] = []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const o: any = {
+          select: () => o, not: () => o, order: () => o, limit: () => o,
+          eq: (col: string) => { kolommen.push(col); return o },
+          maybeSingle: async () => {
+            const spec = byTable[t]
+            if (!spec) return { data: null, error: null }
+            return typeof spec === 'function' ? spec(kolommen) : spec
+          },
+        }
+        return o
+      },
+    })
+    const geleerd = {
+      supplier_aliases: { data: { supplier_id: 'sup-ozer' }, error: null },
+      // Alleen wie de rij bij ID opvraagt — de aliasweg — krijgt een nummer terug. De
+      // naamsleutelweg kent deze misgelezen naam niet, want dat is precies de bug.
+      suppliers: (cols: string[]) =>
+        cols.includes('id')
+          ? { data: { iban: 'NL20ABNA0458266515' }, error: null }
+          : { data: null, error: null },
+    }
+    const misgelezen = { name: 'Silifke / Hocaoglu', kvk: null, iban: 'NL02RABO0123456789' }
+
+    const viaLes = await detectIbanChange(perKolom(geleerd), 'u1', misgelezen)
+    check('een geleerde misleeswijze vindt het rekeningnummer van de ECHTE leverancier',
+      viaLes.status === 'ok' && viaLes.change?.from === 'NL20ABNA0458266515'
+        && viaLes.change?.to === 'NL02RABO0123456789')
+
+    // De tegenproef: zonder de les kent de controle deze naam niet, en zwijgt hij — dat was de bug.
+    const zonderLes = await detectIbanChange(
+      perKolom({ supplier_aliases: { data: null, error: null }, suppliers: { data: null, error: null } }),
+      'u1', misgelezen)
+    check('zonder les valt er niets te melden — dat is de toestand die dit repareert',
+      zonderLes.status === 'ok' && zonderLes.change === null)
+
+    // Een gewoon woord is nog geen placeholder: "ketel" is precies de half getypte naam waarvoor
+    // deze les bestaat, en die moet hem gewoon halen.
+    const kortMaarEcht = await detectIbanChange(perKolom(geleerd), 'u1', { name: 'ketel', kvk: null, iban: 'NL02RABO0123456789' })
+    check('een korte maar echte naam vindt de les gewoon',
+      kortMaarEcht.status === 'ok' && kortMaarEcht.change?.from === 'NL20ABNA0458266515')
+
+    // En de grens die deze les NIET mag overschrijden. "Onbekende afzender" is wat /api/intake
+    // schrijft als de lezer geen afzender vond — dat mislukt op een slechte foto, niet op een
+    // bepaalde leverancier. Zou die sleutel meetellen, dan kreeg elke onleesbare factuur in het
+    // boek het rekeningnummer van één bedrijf, en dus ook zijn plek in de crediteurenstand.
+    const placeholder = await detectIbanChange(
+      perKolom(geleerd), 'u1', { name: 'Onbekende afzender', kvk: null, iban: 'NL02RABO0123456789' })
+    check('een placeholder-naam haalt de les NIET op — anders erft elke onleesbare factuur hem',
+      placeholder.status === 'ok' && placeholder.change === null)
+
+    // En de regel van dit hele bestand: een MISLUKTE aliaslees is geen "niets geleerd".
+    const aliasKapot = perKolom({ supplier_aliases: { data: null, error: { message: 'connection reset' } } })
+    check('een mislukte aliaslees → unavailable, nooit een stil groen',
+      (await detectIbanChange(aliasKapot, 'u1', misgelezen)).status === 'unavailable')
+
+    // De tabel bestaat nog niet (42P01) is wél "niets geleerd": zo stond elke database erbij
+    // voordat supplier_aliases.sql werd toegepast, en dat is geen mislukte lees.
+    const geenTabel = perKolom({
+      supplier_aliases: { data: null, error: { code: '42P01', message: 'relation does not exist' } },
+      // Hier moet juist de NAAMSLEUTELweg antwoorden: de aliastabel bestaat niet.
+      suppliers: (cols: string[]) =>
+        cols.includes('name_key')
+          ? { data: { iban: 'NL91ABNA0417164300' }, error: null }
+          : { data: null, error: null },
+    })
+    const zonderTabel = await detectIbanChange(geenTabel, 'u1',
+      { name: 'Dutch Sweets Company B.V.', kvk: null, iban: 'NL02RABO0123456789' })
+    check('een ontbrekende aliastabel valt door naar de naamsleutel, en meldt gewoon',
+      zonderTabel.status === 'ok' && zonderTabel.change?.from === 'NL91ABNA0417164300')
+
     console.log(`\n${passed} passed, ${failed} failed\n`)
     process.exit(failed === 0 ? 0 : 1)
   })()

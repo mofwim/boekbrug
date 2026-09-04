@@ -52,7 +52,7 @@ test("[LEVERANCIER-INTAKE] merging nothing returns what was already there, not a
  * steps in either order, which is the one thing this file must never allow.
  */
 function fakeSupabase(log: string[]) {
-  const maak = () => {
+  const maak = (tabel: string) => {
     let kolommen = "";
     const q: Record<string, unknown> = {
       select(cols: string) {
@@ -65,6 +65,11 @@ function fakeSupabase(log: string[]) {
       limit: () => q,
       order: () => q,
       maybeSingle: async () => {
+        // [LES-TELT-MEE] Both steps now resolve the owner's own spelling→supplier lessons first,
+        // and that read carries neither step's signature. Logged as its own thing rather than
+        // guessed at: attributing it to "resolve" made this gate fail on correct code, and
+        // attributing it to "check" would have made it pass on the code the gate exists to catch.
+        if (tabel === "supplier_aliases") { log.push("alias"); return { data: null, error: null }; }
         log.push(kolommen.trim() === "iban" ? "check" : "resolve");
         return { data: null, error: null };
       },
@@ -81,7 +86,7 @@ function fakeSupabase(log: string[]) {
     };
     return q;
   };
-  return { from: () => maak() };
+  return { from: (tabel: string) => maak(tabel) };
 }
 
 test("[LEVERANCIER-INTAKE] the account number is checked BEFORE the registry is touched", async () => {
@@ -92,11 +97,17 @@ test("[LEVERANCIER-INTAKE] the account number is checked BEFORE the registry is 
     iban: "NL02RABO0123456789",
   });
   assert.ok(log.length > 0, "both steps must actually consult the registry, or this proves nothing");
-  assert.equal(log[0], "check",
+  // The claim is about the SUPPLIERS table: an alias lookup reads a lesson the owner wrote down and
+  // can neither create nor rename a supplier, so it cannot answer the check with its own work.
+  const opLeveranciers = log.filter((s) => s !== "alias");
+  assert.ok(opLeveranciers.length > 0, "no read reached the suppliers table — this proves nothing");
+  assert.equal(opLeveranciers[0], "check",
     "the IBAN check must be the FIRST thing to touch the registry. Resolution may create a row " +
     "keyed on the very number under suspicion, and the check would then be answered by that row");
   assert.ok(!log.slice(0, log.indexOf("check") + 1).includes("write"),
     "nothing may be written before the check has run");
+  assert.ok(log.includes("alias"),
+    "the lesson the owner taught is not consulted at all — see [LES-TELT-MEE]");
 });
 
 test("[LEVERANCIER-INTAKE] an unreachable registry costs a supplier, never the invoice", async () => {
