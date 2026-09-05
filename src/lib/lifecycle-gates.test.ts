@@ -33,6 +33,8 @@ import { explainableReasons, explainWaiting } from "./why-waiting";
 import { categoryHint } from "./category-wait";
 // [GEGROND-STAAT-IN] De getuige die mag invallen voor een ontbrekende zelfscore — en alleen die.
 import { moneyGroundedInText } from "./amount-grounding";
+// [JAARSTAND] De vier standen als WAARDE — de volgordefout die dit ving typechecktte perfect.
+import { yearStanding } from "./year-standing";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 import { execSync } from "node:child_process";
@@ -26091,4 +26093,81 @@ test("[MELDING-TIK] a notification body does not repeat its own title", () => {
   assert.match(notice, /De vervaldatum valt in het weekend/,
     "the weekend explanation is gone. That is the opposite fix: it carries the one fact the title " +
       "cannot, and without it the notification looks a day early");
+});
+
+// ── [JAARSTAND] The year is visible as a year, and the strip judges nothing itself ────────────
+//
+// Every quarter-judging surface in this app judges exactly ONE quarter: /dashboard/quarterly has a
+// selector, Waarheid has a lens, the aangifte takes ?year&quarter. Measured on production while
+// this was built: Q1 2026 had 0 kassadagen against € 172.081,57 of pinomzet on the bank and Q3 had
+// 0 against € 81.358,01, so two of the year's three finished returns could not be filed — and the
+// only way to find that out was to open each quarter in turn.
+//
+// The strip that fixes it must stay a RENDERER. The moment it decides for itself whether a quarter
+// is ready, there are two answers to that question in the codebase, and the day they disagree the
+// owner gets a green year over a red quarter.
+
+test("[JAARSTAND] the year strip asks readiness — it does not judge", () => {
+  const strook = code("src/components/quarterly/YearStanding.tsx");
+
+  assert.match(strook, /fetch\(`\/api\/readiness\?year=\$\{year\}&quarter=\$\{q\}`\)/,
+    "the strip no longer asks /api/readiness per quarter. That endpoint IS the verdict every " +
+      "other quarter surface uses; anything else here is a second opinion about the same quarter");
+  assert.match(strook, /yearStanding\(antwoorden, year\)/,
+    "the answers no longer go through year-standing, so the mapping from verdict to row has moved " +
+      "into the component where it cannot be tested without a browser");
+
+  // The one thing that must NEVER appear here: a readiness rule of its own.
+  assert.doesNotMatch(strook, /kassadag|turnoverDays|omzetZonderBtw|verschuldigd|voorbelasting/,
+    "the strip is deriving a readiness signal itself. buildReadiness owns that question — a copy " +
+      "here is the second authority this file exists to prevent");
+
+  const mod = code("src/lib/year-standing.ts");
+  assert.doesNotMatch(mod, /kassadag|turnoverDays|omzetZonderBtw|btwSaldo/,
+    "year-standing has grown a rule about what makes a quarter ready. It may only ARRANGE verdicts");
+});
+
+test("[JAARSTAND] a quarter that could not be read never renders as fine", () => {
+  const mod = code("src/lib/year-standing.ts");
+  // [NO-SILENT-EMPTY] The whole reason the state is a union and not a boolean.
+  assert.match(mod, /state: "onbekend" as const/,
+    "the unknown state is gone, so a failed readiness call falls into one of the other four — and " +
+      "three of those tell the owner the quarter is fine");
+  assert.match(mod, /\| "onbekend"/,
+    "StandingState no longer carries 'onbekend'");
+
+  // Asserted as a VALUE, not as source text: the ordering bug this had (running checked after the
+  // unknown guard, so every open quarter came back "onbekend") type-checked perfectly.
+  const jaar = yearStanding(
+    [{ quarter: 1, report: null },
+     { quarter: 2, report: { quarterLabel: "Q2 2026", status: "ready", ready: true, missing: [] } },
+     { quarter: 3, report: null, filed: true },
+     { quarter: 4, report: null, running: true }],
+    2026,
+  );
+  assert.equal(jaar[0].state, "onbekend", "a failed read is not 'unknown'");
+  assert.equal(jaar[1].state, "klaar", "a ready quarter no longer reads as ready");
+  assert.equal(jaar[2].state, "ingediend", "a filed quarter no longer reads as filed");
+  assert.equal(jaar[3].state, "loopt",
+    "a running quarter reads as something else. It was 'onbekend' once, because the unknown guard " +
+      "ran before the running check — and a question mark on the one row with no question is how " +
+      "an owner learns to ignore the strip");
+});
+
+test("[JAARSTAND] the filings read is a list, not four recomputes", () => {
+  const route = code("src/app/api/btw/filed/route.ts");
+  assert.match(route, /readFiledQuartersOfYear/,
+    "the year route no longer uses the shared reader in filed-quarter.ts — the module that owns " +
+      "every other read of btw_filings");
+  assert.doesNotMatch(route, /computeResultForRange|computeFilingDivergence/,
+    "the year route recomputes the quarter figures. GET /api/btw/file already does that for ONE " +
+      "quarter; doing it four times to draw a strip runs the reconcile engine over the whole year " +
+      "for an answer that is a list of integers");
+  assert.match(route, /if \(failed\) return NextResponse\.json\(\{ error: "filings_read_failed" \}, \{ status: 503 \}\)/,
+    "[NO-SILENT-EMPTY] a failed filings read answers with an empty list again — and an empty list " +
+      "means 'nothing is filed', which is a different year from 'we could not look'");
+
+  const lib = code("src/lib/filed-quarter.ts");
+  assert.match(lib, /export async function readFiledQuartersOfYear/,
+    "the year-level reader has left filed-quarter.ts, so btw_filings is read from two places");
 });

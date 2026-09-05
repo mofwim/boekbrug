@@ -130,6 +130,40 @@ export async function readFiling(
 }
 
 /** What a change did to one already-filed quarter. */
+/**
+ * [JAARSTAND] Which quarters of ONE year are filed — the whole year in a single read.
+ *
+ * readFiling answers for one quarter and its caller (GET /api/btw/file) recomputes the live
+ * figures to report divergence. Asking that four times to render a year strip would run the
+ * reconcile engine four times over for an answer that is one SELECT: a year has at most four
+ * filings and this needs nothing but their quarter numbers.
+ *
+ * `failed` is separate from an empty set, and the caller must keep it separate: a year whose
+ * filings could not be read is not a year with no filings ([NO-SILENT-EMPTY]). A missing table
+ * genuinely holds none — same deploy-safe rule as readFiling above.
+ */
+export async function readFiledQuartersOfYear(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  userId: string,
+  year: number,
+): Promise<{ quarters: number[]; failed: boolean }> {
+  const { data, error } = await db
+    .from("btw_filings")
+    .select("quarter")
+    .eq("user_id", userId)
+    .eq("year", year);
+  if (error) {
+    if (isMissingRelation(error.message)) return { quarters: [], failed: false };
+    console.error("[JAARSTAND] btw_filings jaarlezing mislukt", { userId, year, error: error.message });
+    return { quarters: [], failed: true };
+  }
+  const quarters = ((data ?? []) as { quarter: number }[])
+    .map((r) => Number(r.quarter))
+    .filter((q) => Number.isInteger(q) && q >= 1 && q <= 4);
+  return { quarters: [...new Set(quarters)].sort((a, b) => a - b), failed: false };
+}
+
 export interface FiledQuarterImpact {
   year: number;
   quarter: number;

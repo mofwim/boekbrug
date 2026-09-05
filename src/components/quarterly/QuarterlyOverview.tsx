@@ -12,6 +12,8 @@ import { downloadCsv } from "@/lib/export";
 import { useParentPath } from "@/lib/navigation-hooks";
 import type { Role } from "@/lib/navigation";
 import { quarterFromParams } from "@/lib/quarter";
+// [JAARSTAND] Het jaar in vier regels — vraagt /api/readiness per kwartaal, oordeelt zelf niets.
+import { YearStanding } from "./YearStanding";
 // [TZ] The filing date pinned to Europe/Amsterdam — a legal record's date is the record.
 import { formatDateNL } from "@/lib/format-nl";
 import { useToast } from "@/components/ui/Toast";
@@ -246,6 +248,12 @@ function ZzpView({ role }: { role: Role }) {
           {t('kw.dashboard')}
         </Link>
       </div>
+
+      {/* [JAARSTAND] Het hele jaar in vier regels, bóven de kiezer. Dit scherm heet
+          "Kwartaaloverzicht" en toonde er één; welke aangiftes van dit jaar nog openstonden was
+          alleen te achterhalen door ze stuk voor stuk te openen. De strook oordeelt zelf niets —
+          zie het component. */}
+      <YearStanding year={year} currentQuarter={quarter} />
 
       {/* Quarter + year selector */}
       <div className="bg-background border rounded-2xl p-4 shadow-sm space-y-3">

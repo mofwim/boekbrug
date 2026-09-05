@@ -10805,6 +10805,41 @@ export const MESSAGES = {
     ar: 'هذه السنة',
     en: 'This year',
   },
+  // [JAARSTAND] Het jaar in vier regels, boven het Kwartaaloverzicht. Nederlands is de bron; de
+  // reden zelf komt woordelijk uit readiness en wordt NIET vertaald — die zin is al Nederlands en
+  // een tweede vertaling ervan zou twee versies van hetzelfde gat opleveren.
+  'jaar.stand.kop': {
+    nl: 'Het jaar in kwartalen',
+    ar: 'السنة على أربعة أرباع',
+    en: 'The year, quarter by quarter',
+  },
+  'jaar.stand.uitleg': {
+    nl: 'Zo staat elk kwartaal ervoor. Tik op een kwartaal om het te openen.',
+    ar: 'هذه حال كل ربع. اضغط على ربع لفتحه.',
+    en: 'Where each quarter stands. Tap one to open it.',
+  },
+  'jaar.stand.openstaand': {
+    nl: '{n} kwartalen kunnen nog niet worden ingediend',
+    ar: '{n} أرباع لا يمكن تقديمها بعد',
+    en: '{n} quarters cannot be filed yet',
+  },
+  'jaar.stand.openstaandEen': {
+    nl: '1 kwartaal kan nog niet worden ingediend',
+    ar: 'ربع واحد لا يمكن تقديمه بعد',
+    en: '1 quarter cannot be filed yet',
+  },
+  'jaar.stand.ingediend': { nl: 'Ingediend', ar: 'مُقدَّم', en: 'Filed' },
+  'jaar.stand.klaar': { nl: 'Klaar om in te dienen', ar: 'جاهز للتقديم', en: 'Ready to file' },
+  'jaar.stand.loopt': { nl: 'Loopt nog', ar: 'ما زال جارياً', en: 'Still running' },
+  'jaar.stand.blokkeert': { nl: 'Kan nog niet worden ingediend', ar: 'لا يمكن تقديمه بعد', en: 'Cannot be filed yet' },
+  // [NO-SILENT-EMPTY] De enige zin die dit paneel mag zeggen over een kwartaal dat het niet
+  // heeft kunnen lezen. Nooit 'klaar', nooit een leeg vakje.
+  'jaar.stand.onbekend': {
+    nl: 'Stand onbekend — dit kwartaal kon niet worden gelezen',
+    ar: 'الحالة غير معروفة — تعذّرت قراءة هذا الربع',
+    en: 'Status unknown — this quarter could not be read',
+  },
+  'jaar.stand.bezig': { nl: 'Stand ophalen…', ar: 'جاري جلب الحالة…', en: 'Loading status…' },
   'wh.lens.ditKwartaal': {
     nl: 'Dit kwartaal',
     ar: 'هذا الربع',
