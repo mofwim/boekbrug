@@ -10831,11 +10831,6 @@ export const MESSAGES = {
     ar: 'عميل واحد',
     en: '1 client',
   },
-  'bh.werk.soort.niets': {
-    nl: 'Geen openstaand werk bij je klanten.',
-    ar: 'ما في شغل معلّق عند عملائك.',
-    en: 'No open work at your clients.',
-  },
   'jaar.stand.kop': {
     nl: 'Het jaar in kwartalen',
     ar: 'السنة على أربعة أرباع',

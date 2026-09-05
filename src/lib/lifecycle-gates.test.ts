@@ -38,6 +38,10 @@ import { yearStanding } from "./year-standing";
 // [KANTOOR-BESLUIT] De groepeersleutel als WAARDE — een sleutel die een constante teruggeeft
 // haalt elke broncontrole en vouwt het hele bord tot één regel.
 import { workKey } from "../modules/accountant/work-grouping";
+// [MANDAAT-SOORT] Het oordeel als WAARDE — een decide() die altijd toestaat haalt elke broncontrole.
+import { decide as decideAutonomy } from "./autonomy-scope";
+// [WERK-GEDAAN] De weigering als WAARDE — een estimateMinutes die 42 teruggeeft haalt elke broncontrole.
+import { workDoneLedger as workDoneLedgerFor, estimateMinutes as estimateMinutesFor } from "./work-done";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 import { execSync } from "node:child_process";
@@ -26247,4 +26251,84 @@ test("[KANTOOR-BESLUIT] the grouping key still discriminates", () => {
   assert.equal(new Set([a, c, d]).size, 3,
     "three unrelated gaps collapsed — the key has stopped discriminating");
   assert.notEqual(a, "", "a real readiness title produces an empty key");
+});
+
+// ── [MANDAAT-SOORT] Per-category autonomy may only ever REFUSE ────────────────────────────────
+//
+// auto-boeken.ts is one boolean: may the app book without the owner's tap? The two answers an
+// office actually wants are both in between — "book the wholesaler I have thirty invoices from,
+// never a supplier I have never seen, never one whose IBAN changed, never above € 2.500".
+//
+// The whole module is safe to exist only because of one property: it narrows and never widens.
+// An absent scope is "no opinion", the caller then keeps today's decision, and adding the module
+// to a call site cannot cause one document to be booked that would not have been booked before.
+
+test("[MANDAAT-SOORT] an absent scope is no opinion — never permission", () => {
+  const mod = code("src/lib/autonomy-scope.ts");
+  assert.match(mod, /if \(!hasScope\(scope\)\) return \{ decision: "no-opinion", reason: null \}/,
+    "an unstated scope no longer yields 'no opinion'. If it yields 'allow', adding this module to " +
+      "any call site silently turns the autopilot ON for every owner who never granted anything");
+
+  // The three refusals a grant may not override. A scope says which CLEAN documents may book
+  // themselves; it can never mean "book one the app has flagged".
+  assert.match(mod, /if \(facts\.ibanChanged\) \{/,
+    "a changed supplier IBAN can be overridden by a scope — that is the one fact an owner checks " +
+      "by hand, always");
+  assert.match(mod, /if \(facts\.needsReview\) \{/,
+    "a flagged document can be auto-booked under a scope");
+  assert.match(mod, /facts\.amountIncBtw === null \|\| !Number\.isFinite\(facts\.amountIncBtw\)/,
+    "a document with no amount read can be auto-booked — there is then no number to hold a limit against");
+
+  // Asserted as VALUES too: every source check above passes on a decide() that always allows.
+  assert.equal(decideAutonomy(null, { supplierInvoiceCount: 30, amountIncBtw: 10, needsReview: false, ibanChanged: false }).decision,
+    "no-opinion", "no scope produced an opinion");
+  assert.equal(decideAutonomy({ maxAmount: 2500, knownSupplierMinInvoices: 4 },
+    { supplierInvoiceCount: 30, amountIncBtw: 10, needsReview: false, ibanChanged: true }).decision,
+    "hold", "a changed IBAN was allowed under a scope");
+  assert.equal(decideAutonomy({ maxAmount: 2500, knownSupplierMinInvoices: 4 },
+    { supplierInvoiceCount: 30, amountIncBtw: 10, needsReview: false, ibanChanged: false }).decision,
+    "allow", "a clean, known, small invoice is refused — the scope grants nothing and is useless");
+});
+
+// ── [WERK-GEDAAN] The office's ROI is counted, never claimed ──────────────────────────────────
+//
+// The case for putting two hundred clients into one system is one number: how much work it takes
+// off the desk. That number is recorded all over the database — measured on one live
+// administration: 317 invoices pulled from e-mail, 227 verified without a tap, 91 till days read,
+// 47 bank lines categorised or matched.
+//
+// And the sentence this module is FOR is the one it must never write: "we saved you 4,7 hours".
+// Nobody here knows how long an office takes to book an invoice. An invented minute is a number an
+// accountant disproves in an afternoon, and the first made-up figure you hand a professional is
+// the last one they believe from you.
+
+test("[WERK-GEDAAN] minutes exist only when the office supplies them", () => {
+  const mod = code("src/lib/work-done.ts");
+  assert.match(mod, /if \(typeof minutesPerAction !== "number" \|\| !Number\.isFinite\(minutesPerAction\) \|\| minutesPerAction <= 0\) \{\s*return null;/,
+    "estimateMinutes no longer refuses without a rate. A default here turns a counted fact into a " +
+      "claim, and it is the one claim this module was built not to make");
+  // No default anywhere: not a constant, not a fallback, not a "typical" figure.
+  assert.doesNotMatch(mod, /minutesPerAction\s*(\?\?|\|\|)\s*[0-9]/,
+    "a fallback minutes-per-action snuck in — the office's own number is the only one allowed");
+  assert.doesNotMatch(mod, /DEFAULT_MINUTES|GEMIDDELD|AVERAGE_MINUTES/,
+    "a default minutes constant was added");
+
+  // Asserted as VALUES: every source check above passes on an estimateMinutes that returns 42.
+  const ledger = workDoneLedgerFor("2026", {
+    invoicesFromEmail: 317, invoicesAutoVerified: 227, tillDaysImported: 91,
+    bankLinesCategorised: 24, bankLinesMatched: 23, duplicatesCaught: 10,
+  });
+  assert.equal(ledger.total, 692, "the ledger no longer counts every action");
+  assert.equal(estimateMinutesFor(ledger, null), null, "a missing rate produced a number");
+  assert.equal(estimateMinutesFor(ledger, 0), null, "zero was accepted as a rate");
+  assert.equal(estimateMinutesFor(ledger, 2), 1384, "the office's own arithmetic changed");
+});
+
+test("[WERK-GEDAAN] the period travels with the count", () => {
+  const mod = code("src/lib/work-done.ts");
+  assert.match(mod, /export function workDoneLedger\(period: string, counts: WorkDoneCounts\)/,
+    "the period is no longer required. '692 actions' read as a monthly figure overstates the case " +
+      "by however long the client has been on the platform, and this whole file exists to be believed");
+  assert.match(mod, /period,\s*lines,\s*total/,
+    "the ledger no longer carries its period, so a surface can render the number without the window");
 });
