@@ -11,6 +11,8 @@
 // Environment:
 //   CLIP_BASE_URL   default http://127.0.0.1:3100
 //   CLIP_OUT        default store-assets/clips
+//   CLIP_ONLY       maak alleen de clips waarvan de naam dit bevat
+//   CLIP_FFMPEG     pad naar ffmpeg (anders: ffmpeg-static, dan /usr/bin/ffmpeg)
 //   SHOT_EMAIL      zet dit en de dashboard-clips draaien mee (zie hieronder)
 //   SHOT_PASSWORD
 //
@@ -87,8 +89,23 @@ interface Clip {
   path: string;
   /** De hook — staat één seconde vóór er iets beweegt. Dit is wat scrollen stopt. */
   hook: string;
-  /** Het pad zelf. `say` zet de ondertitel; alles ertussen is echte interactie. */
-  run: (p: Page, say: (b: Beat) => Promise<void>) => Promise<void>;
+  /**
+   * [UITLEG] Hoe lang deze clip hoogstens mag worden, in seconden. Standaard MAX_LEN_S.
+   *
+   * Een teaser en een uitleg zijn niet hetzelfde soort film. De teasers hierboven duren tien tot
+   * vijftien seconden en dat is hun hele opzet: iemand die scrollt moet stoppen. Een UITLEG wordt
+   * bekeken door iemand die al is gestopt, en die heeft tijd nodig om te lezen wat er verandert —
+   * op vijftien seconden geperst wordt hetzelfde pad een flikkering die niets uitlegt.
+   *
+   * Ruim zetten, niet krap: het snijden gebeurt aan de STAART (-ss … -t …), dus een te lage waarde
+   * knipt precies de slotzin eraf. De lengte wordt geregeld door het tempo van `run`, niet hier.
+   */
+  maxLen?: number;
+  /**
+   * Het pad zelf. `say` zet de ondertitel; `step` verzet de balk bovenin; alles ertussen is echte
+   * interactie.
+   */
+  run: (p: Page, say: (b: Beat) => Promise<void>, step: (t: string) => Promise<void>) => Promise<void>;
 }
 
 // ── De ondertitellaag ─────────────────────────────────────────────────────────
@@ -124,6 +141,22 @@ async function installCaption(p: Page, badge: string) {
   }, badge);
 }
 
+/**
+ * [UITLEG] De balk bovenin verzetten — "stap 2 van 4".
+ *
+ * Voor een teaser staat daar de merknaam en verder niets. Voor een uitleg is dat de enige plek waar
+ * de kijker kan zien WAAR hij is: zonder die balk lijkt een film van veertig seconden één lange
+ * handeling, en wie halverwege instapt weet niet of hij het begin heeft gemist.
+ */
+function stepper(p: Page) {
+  return async (text: string) => {
+    await p.evaluate((t) => {
+      const el = document.getElementById("clip-badge");
+      if (el) el.textContent = t;
+    }, text);
+  };
+}
+
 /** Zet een ondertitel, laat hem staan, haal hem weg. Retourneert pas als de beat voorbij is. */
 function sayer(p: Page) {
   return async ({ text, ms, hold }: Beat) => {
@@ -147,6 +180,48 @@ async function type(p: Page, selector: string, value: string, perChar = 55) {
   await el.fill("");
   await el.type(value, { delay: perChar });
   await p.waitForTimeout(380);
+}
+
+/**
+ * Het veld ONDER een opschrift, gevonden op dat opschrift.
+ *
+ * `typeNth` hieronder telt invoervelden, en dat werkt tot iemand er één tussen zet. Het formulier
+ * op /factuur-maken heeft geen label-koppeling en geen id's, maar wél een zichtbaar woord boven elk
+ * veld — "Bedrijfsnaam", "Naam / bedrijf" — en dát woord is wat de kijker in beeld ziet. Erop
+ * mikken is daarom niet alleen steviger, het is ook hetzelfde als wat de clip beweert te tonen.
+ */
+function byLabel(p: Page, label: string) {
+  return p.locator(`xpath=//*[normalize-space(text())=${JSON.stringify(label)}]/following::input[1]`).first();
+}
+
+/**
+ * Breng iets op ooghoogte: niet "net in beeld", maar op een vaste hoogte in het scherm.
+ *
+ * scrollIntoViewIfNeeded doet het minimum, en het minimum is meestal ONDERAAN het scherm — precies
+ * waar de ondertitelbalk staat. In de eerste opname van de uitleg-clip stond het uitgerekende
+ * totaal daardoor achter zijn eigen bijschrift: € 1.512,50 werd genoemd en was niet te zien.
+ *
+ * Een vaste fractie van de viewport lost dat op en is niet gevoelig voor de lengte van de pagina.
+ * 0.42 zet het bedrag in de bovenste helft, ruim boven de balk van ±140 px onderin.
+ */
+async function bringToEyeLine(p: Page, target: ReturnType<Page["locator"]>, fraction = 0.42) {
+  await target.scrollIntoViewIfNeeded();
+  await p.waitForTimeout(120);
+  const box = await target.boundingBox();
+  if (!box) return;
+  const want = VIEW.height * fraction;
+  await p.evaluate((dy) => window.scrollBy(0, dy), Math.round(box.y - want));
+  await p.waitForTimeout(260);
+}
+
+/** Typen in het veld onder een opschrift, met hetzelfde menselijke ritme als type(). */
+async function typeUnder(p: Page, label: string, value: string, perChar = 70) {
+  const el = byLabel(p, label);
+  await el.scrollIntoViewIfNeeded();
+  await el.click();
+  await el.fill("");
+  await el.type(value, { delay: perChar });
+  await p.waitForTimeout(400);
 }
 
 /** Hetzelfde, maar op het zoveelste invoerveld van de pagina — voor formulieren zonder id's. */
@@ -220,6 +295,75 @@ const CLIPS: Clip[] = [
       await say({ text: "Geen account. Alles blijft<br>in je browser. <b>boekbrug.nl</b>", ms: 2200, hold: true });
     },
   },
+  // ── [UITLEG] Eén lange, langzame. Een ander soort film dan de vier hierboven. ──
+  //
+  // De teasers duren twaalf seconden en beginnen bij een probleem, omdat ze iemand moeten
+  // tegenhouden die aan het scrollen is. Deze duurt bijna veertig en legt één ding helemaal uit,
+  // voor iemand die al is blijven kijken. Dat is geen langere teaser maar een andere vorm, en het
+  // verschil zit in drie dingen die hieronder allemaal expres staan:
+  //
+  //   · de balk bovenin telt de stappen, zodat je altijd weet waar je bent;
+  //   · elke zin blijft ruim twee seconden staan, want hij moet gelezen worden, niet opgevangen;
+  //   · na elk resultaat valt een stilte, zodat het oog op het getal kan landen dat net veranderde.
+  //
+  // En het pad is niet willekeurig gekozen. Het eindigt bij het btw-tarief, omdat dát het moment is
+  // waarop te zien is dat de app rékent en niet alleen een formulier toont: 21% wordt 9%, en het
+  // totaal eronder verandert mee terwijl je kijkt. Een uitleg die daar niet komt, heeft niets
+  // uitgelegd.
+  {
+    name: "10-uitleg-factuur-maken",
+    path: "/factuur-maken",
+    maxLen: 60, // ruim: het tempo van run() bepaalt de lengte, niet de schaar
+    hook: "Een factuur die klopt.<br>Zonder account, zonder installatie.",
+    run: async (p, say, step) => {
+      // Het TOTAAL, en waar het moet staan. Één plek, want het is drie keer in beeld en het mag
+      // geen van die drie keren achter zijn eigen bijschrift verdwijnen.
+      const totaal = p.getByText("Totaal incl. BTW").first();
+
+      // ── Stap 1 · wie stuurt, wie ontvangt ──
+      await step("Factuur maken · stap 1 van 4");
+      await say({ text: "Eerst jij: van wie komt de factuur?", ms: 2100 });
+      await typeUnder(p, "Bedrijfsnaam", "Van Dijk Ontwerp", 55);
+      await p.waitForTimeout(500);
+      await say({ text: "Dan je klant.", ms: 2100 });
+      await typeUnder(p, "Naam / bedrijf", "Bakkerij De Korenbloem", 45);
+      await p.waitForTimeout(450);
+
+      // ── Stap 2 · wat je hebt geleverd ──
+      await step("Factuur maken · stap 2 van 4");
+      await say({ text: "Nu de regel:<br>wát je hebt geleverd.", ms: 2300 });
+      await bringToEyeLine(p, p.locator('input[placeholder="Omschrijving"]').first(), 0.34);
+      await type(p, 'input[placeholder="Omschrijving"]', "Ontwerp huisstijl", 55);
+      await p.waitForTimeout(400);
+      await say({ text: "En het bedrag, exclusief btw.", ms: 2200 });
+      await type(p, 'input[placeholder="0,00"]', "1250", 75);
+      await p.waitForTimeout(700);
+
+      // Het bedrag op ooghoogte — het btw-veld staat er 150 px boven en komt dus vanzelf mee, wat
+      // stap 3 nodig heeft: daar moeten de keuze en het bedrag tegelijk zichtbaar zijn.
+      await bringToEyeLine(p, totaal, 0.50);
+      await p.waitForTimeout(500);
+      await say({ text: "Het totaal rekent zichzelf uit:<br><b>€ 1.512,50</b>", ms: 2400 });
+      await p.waitForTimeout(500);
+
+      // ── Stap 3 · het btw-tarief — waar de uitleg om draait ──
+      await step("Factuur maken · stap 3 van 4");
+      await say({ text: "Ander btw-tarief?<br>Eén keuze.", ms: 2200 });
+      const btw = p.locator("select").filter({ hasText: "21%" }).first();
+      await btw.selectOption("9");
+      await p.waitForTimeout(950);
+      await say({ text: "9% in plaats van 21% —<br>en alles telt opnieuw.", ms: 2700 });
+      await p.waitForTimeout(700);
+
+      // ── Stap 4 · klaar ──
+      // Nog één keer op ooghoogte: de kijker verlaat de clip met het bedrag in beeld, niet met een
+      // bijschrift over de plek waar het stond.
+      await step("Factuur maken · stap 4 van 4");
+      await bringToEyeLine(p, totaal, 0.40);
+      await say({ text: "Klaar. Downloaden als pdf,<br>of mailen vanuit de app.", ms: 2300 });
+      await say({ text: "Gratis, zonder account.<br><b>boekbrug.nl/factuur-maken</b>", ms: 2700, hold: true });
+    },
+  },
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -287,6 +431,11 @@ function chromiumPath(): string | undefined {
 
 /** ffmpeg, als het er is. Zonder blijft de .webm staan — die speelt overal behalve op iOS. */
 function ffmpeg(): string | null {
+  // Een expliciet pad wint van alles. ffmpeg-static is ~80 MB en hoort niet in de dependencies van
+  // een boekhoud-app; wie hem elders al heeft staan, wijst hem hiermee aan.
+  const given = process.env.CLIP_FFMPEG;
+  if (given && existsSync(given)) return given;
+  if (given) console.error(`[CLIPS] CLIP_FFMPEG=${given} bestaat niet — verder zoeken.`);
   // createRequire, niet require: dit bestand is een ES-module en `require` bestaat er niet. De
   // eerste versie hiervan viel daardoor stil terug op .webm terwijl ffmpeg-static gewoon stond —
   // een catch die alles opvangt, ook de fout in zichzelf.
@@ -382,6 +531,17 @@ if (EMAIL && PASSWORD) {
  */
 const MAX_LEN_S = 15;
 
+// [CLIP-ONLY] Eén clip opnieuw maken zonder de andere acht af te wachten. Bestaat omdat het
+// afstellen van één uitleg-clip anders elke keer de hele reeks kost — en een reeks die vijf minuten
+// duurt, stel je niet af.
+const ONLY = process.env.CLIP_ONLY;
+const SELECTED = ONLY ? CLIPS.filter((c) => c.name.includes(ONLY)) : CLIPS;
+if (ONLY && SELECTED.length === 0) {
+  console.error(`[CLIPS] CLIP_ONLY=${ONLY} komt met geen enkele clip overeen. Beschikbaar:`);
+  for (const c of CLIPS) console.error(`[CLIPS]   ${c.name}`);
+  process.exit(2);
+}
+
 // Warm draaien. De eerste pagina die Chromium opent betaalt voor alles: de Next-chunks, het
 // icoonlettertype van Google, de verbinding. Zonder deze ronde draagt clip 01 die rekening en de
 // rest niet, en dan klopt één vaste aanloop voor alle clips niet.
@@ -391,7 +551,7 @@ const MAX_LEN_S = 15;
   // ELKE clip, niet de eerste paar. Met alleen de eerste twee betaalden clip 03 en 04 hun eigen
   // koude start binnen hun eigen opname: seconden wit beeld vooraan, en een clip die daardoor niet
   // op dezelfde lengte uitkwam als de rest.
-  for (const c of CLIPS.filter((c) => !c.auth)) {
+  for (const c of SELECTED.filter((c) => !c.auth)) {
     await wp.goto(BASE + c.path, { waitUntil: "domcontentloaded" }).catch(() => {});
     await wp.waitForTimeout(600);
   }
@@ -400,7 +560,7 @@ const MAX_LEN_S = 15;
 }
 
 const made: string[] = [];
-for (const clip of CLIPS) {
+for (const clip of SELECTED) {
   if (clip.auth && !sessionOk) { console.log(`[CLIPS] … ${clip.name} overgeslagen (geen sessie)`); continue; }
   const tmp = path.join(OUT, `.raw-${clip.name}`);
   rmSync(tmp, { recursive: true, force: true });
@@ -429,8 +589,9 @@ for (const clip of CLIPS) {
   const say = sayer(page);
   // De hook staat stil vóór er iets beweegt: dat is de anderhalve seconde waarin iemand besluit
   // door te scrollen of niet.
-  await say({ text: clip.hook, ms: 1600 });
-  await clip.run(page, say);
+  // Een uitleg opent trager dan een teaser: er is geen scroll te stoppen, er is iets te begrijpen.
+  await say({ text: clip.hook, ms: clip.maxLen && clip.maxLen > MAX_LEN_S ? 2600 : 1600 });
+  await clip.run(page, say, stepper(page));
   await page.waitForTimeout(500);
   await ctx.close(); // pas hierna is het bestand geschreven
 
@@ -455,7 +616,7 @@ for (const clip of CLIPS) {
     // Vooraan tot het eerste beeld, en daarna hoogstens MAX_LEN_S — het staart-deel, want daar
     // staat het uitgerekende bedrag en de slotzin.
     const from = firstPaintSeconds(ff, webm);
-    execFileSync(ff, ["-y", "-ss", from.toFixed(2), "-i", webm, "-t", String(MAX_LEN_S),
+    execFileSync(ff, ["-y", "-ss", from.toFixed(2), "-i", webm, "-t", String(clip.maxLen ?? MAX_LEN_S),
       "-vf", `scale=${OUT_SIZE.width}:${OUT_SIZE.height}:flags=lanczos,unsharp=5:5:0.6:5:5:0.0`,
       "-c:v", "libx264", "-preset", "slow", "-crf", "19",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-fps_mode", "passthrough", mp4], { stdio: "pipe" });
