@@ -30,6 +30,9 @@ import {
 } from '../readiness-board'
 // [KANTOOR-BESLUIT] Hetzelfde bord, andere snede: per SOORT werk in plaats van per klant.
 import { groupWork } from '../work-grouping'
+// [WERK-GEDAAN] Wat de app in dit kwartaal deed, geteld — het enige paneel over de waarde
+// van het product in plaats van over de administratie.
+import { WorkDonePanel } from './WorkDonePanel'
 
 // Same semantic colours as the owner's readiness screen (STATUS_META) so a client
 // sees the identical green/amber/red the accountant sees.
@@ -378,6 +381,18 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
               ))}
             </div>
           </section>
+        )}
+
+        {/* ── [WERK-GEDAAN] Wat de app deed in het gekozen kwartaal ──
+            Let op de as: het paneel vraagt een VERWERKINGSvenster (van/tot), niet het fiscale
+            kwartaal. Op de fiscale as gaf de live administratie 0 facturen voor Q2 — alles was in
+            juli ingelezen. De kwartaalgrenzen hieronder zijn dus 'de dagen waarin we werkten',
+            niet 'de dagen waar het geld over ging'. */}
+        {clients.length > 0 && (
+          <WorkDonePanel
+            from={`${year}-${String((quarter - 1) * 3 + 1).padStart(2, '0')}-01`}
+            to={new Date(Date.UTC(year, quarter * 3, 0)).toISOString().slice(0, 10)}
+          />
         )}
 
         {/* ── Filter ── */}

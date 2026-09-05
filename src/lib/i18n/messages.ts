@@ -10811,6 +10811,41 @@ export const MESSAGES = {
   // [KANTOOR-BESLUIT] Het werk van het kantoor, gegroepeerd naar WAT het is in plaats van naar
   // WIENS het is. De zin bij een groep is die van readiness zelf en wordt hier NIET vertaald —
   // hij is al Nederlands, en een tweede vertaling ervan zou twee versies van hetzelfde gat zijn.
+  // [WERK-GEDAAN] Wat de app deed, geteld. GEEN uren en GEEN euro's in deze zinnen: wat een minuut
+  // waard is, weet dit kantoor en wij niet — zie de weigering in work-done.ts.
+  'bh.gedaan.kop': {
+    nl: 'Wat BoekBrug voor je deed',
+    ar: 'شو عمل BoekBrug عنك',
+    en: 'What BoekBrug did for you',
+  },
+  'bh.gedaan.periode': {
+    nl: 'Van {van} tot {tot}, over {klanten}.',
+    ar: 'من {van} إلى {tot}، عبر {klanten}.',
+    en: 'From {van} to {tot}, across {klanten}.',
+  },
+  'bh.gedaan.klanten': { nl: '{n} klanten', ar: '{n} عملاء', en: '{n} clients' },
+  'bh.gedaan.klantenEen': { nl: '1 klant', ar: 'عميل واحد', en: '1 client' },
+  'bh.gedaan.totaal': {
+    nl: '{n} handelingen',
+    ar: '{n} إجراء',
+    en: '{n} actions',
+  },
+  'bh.gedaan.uitleg': {
+    nl: 'Elk van deze is iets dat anders met de hand gebeurde. Wat een handeling je kantoor aan tijd scheelt, weet je zelf beter dan wij — daarom rekenen we het niet voor je om.',
+    ar: 'كل واحد من هدول كان لازم يتعمل بالإيد. وكم بيوفّر الإجراء من وقت مكتبك بتعرفه إنت أحسن مننا — عشان هيك ما بنحوّله لساعات.',
+    en: 'Each of these is something that otherwise happened by hand. What one action saves your office is something you know better than we do — which is why we do not convert it for you.',
+  },
+  // [NO-SILENT-EMPTY] De twee zinnen die nooit als "nul handelingen" mogen lezen.
+  'bh.gedaan.nogNiet': {
+    nl: 'De telling staat nog niet aan op deze omgeving.',
+    ar: 'العدّ لسا ما اشتغل على هالبيئة.',
+    en: 'Counting is not switched on for this environment yet.',
+  },
+  'bh.gedaan.deelsOnleesbaar': {
+    nl: 'Van {n} van je klanten kon dit niet worden geteld — die staan hier niet bij.',
+    ar: '{n} من عملائك ما انعدّوا — مش محسوبين هون.',
+    en: 'This could not be counted for {n} of your clients — they are not included here.',
+  },
   'bh.werk.soort.kop': {
     nl: 'Het werk, op soort',
     ar: 'الشغل، حسب نوعه',
