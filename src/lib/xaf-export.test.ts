@@ -70,7 +70,7 @@ test("an unherleidbaar rate and a total that does not add up are REFUSED, and th
   const r = buildXafFile(input);
   assert.equal(r.entryCount, 0);
   assert.deepEqual(r.skipped.map((s) => s.id).sort(), ["bad-rate", "bad-sum", "no-date"]);
-  assert.match(r.xml, /BoekBrug: 3 regel\(s\) niet opgenomen/, "refusals are said inside the file itself");
+  assert.match(r.xml, /BoekBrug: 3 regels niet opgenomen/, "refusals are said inside the file itself");
 });
 
 test("a purchase invoice books kosten + voorbelasting against crediteuren", () => {
@@ -318,7 +318,7 @@ test("[XAF-NIET-STIL] een geweigerde post staat als waarschuwing boven in het be
 
   // Het bestand zegt het zelf, vóór het <auditfile>-element.
   const kop = r.xml.slice(0, r.xml.indexOf("<auditfile"));
-  assert.match(kop, /LET OP: 2 post\(en\) staan NIET in dit auditbestand/);
+  assert.match(kop, /LET OP: 2 posten staan NIET in dit auditbestand/);
   assert.match(kop, /geen factuurdatum/);
   assert.match(kop, /btw-tarief niet herleidbaar/);
   assert.match(kop, /sluit daardoor niet aan op de aangifte/,

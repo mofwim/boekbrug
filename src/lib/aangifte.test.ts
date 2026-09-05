@@ -215,8 +215,13 @@ console.log("\n— [COUNT-BASIS] de tellingen beschrijven de set waar de cijfers
   const acc = buildAangifte(input, compl({ incomingInvoiceCount: 40, outgoingInvoiceCount: 3 }), "Q1 2026");
   check("factuur: 5b noemt 'ingevoerde inkoopfacturen'",
     /Voorbelasting \(5b\) telt alleen 40 ingevoerde inkoopfactu/.test(note(acc, /Voorbelasting/)));
+  // [MEERVOUD] De zin is hier hetzelfde gebleven; alleen de SPELLING is gerepareerd — hij zei
+  // "3 verkoopfactu(u)r(en)". Wat deze regel bewaakt is het ontbreken van het betaal-woord in het
+  // factuurstelsel, en dat wordt hieronder apart gecontroleerd zodat een volgende herformulering
+  // niet ongemerkt "betaalde" kan terugbrengen.
   check("factuur: 5a noemt de verkoopfacturen zonder betaal-woord",
-    /en 3 verkoopfactu\(u\)r\(en\)\./.test(note(acc, /Verkoop-BTW/)));
+    /en 3 verkoopfacturen\./.test(note(acc, /Verkoop-BTW/)) &&
+    !/betaalde/.test(note(acc, /Verkoop-BTW/)));
 
   // Kasstelsel: dezelfde getallen betekenen iets anders, en de zin zegt dat nu ook.
   const cash = buildAangifte(input, compl({ incomingInvoiceCount: 10, outgoingInvoiceCount: 3, scheme: "kas" }), "Q1 2026");
@@ -232,7 +237,7 @@ console.log("\n— [COUNT-BASIS] de tellingen beschrijven de set waar de cijfers
   // Zonder verkoopfacturen blijft de zin in beide stelsels bij de dagomzet.
   const geen = buildAangifte(input, compl({ outgoingInvoiceCount: 0, scheme: "kas" }), "Q1 2026");
   check("geen verkoopfacturen: geen losse bijzin, in geen van beide stelsels",
-    /uit 90 dag\(en\) dagomzet\./.test(note(geen, /Verkoop-BTW/)));
+    /uit 90 dagen dagomzet\./.test(note(geen, /Verkoop-BTW/)));
 }
 
 console.log("\n— [PRIVEGEBRUIK] rubriek 1d: de correctie die deze app niet kan berekenen —");
