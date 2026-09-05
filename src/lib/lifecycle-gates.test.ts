@@ -26332,3 +26332,50 @@ test("[WERK-GEDAAN] the period travels with the count", () => {
   assert.match(mod, /period,\s*lines,\s*total/,
     "the ledger no longer carries its period, so a surface can render the number without the window");
 });
+
+// ── [WERK-GEDAAN] The route counts on ONE axis, and never answers zero by accident ────────────
+//
+// Two things about this surface can go wrong quietly, and both were found by measuring rather than
+// by reading:
+//
+//   1. The axis. Asking for "Q2 2026" on the fiscal axis returned 0 invoices on the live
+//      administration — everything was imported in July, so every Q2 invoice was processed outside
+//      Q2. Mixing the axes (bank lines by value date, invoices by import date) yields a total that
+//      falls apart the moment an accountant checks one client.
+//   2. The zero. This codebase uses json-path filters NOWHERE, so a PostgREST filter on
+//      `field_confidence->_grounding` would have been the first — and a filter that is accepted and
+//      semantically wrong returns 0 with no error. Zero is the single worst answer here: it tells
+//      an office the app did nothing for them.
+
+test("[WERK-GEDAAN] the window is a processing window, not a fiscal quarter", () => {
+  const route = code("src/app/api/work-done/route.ts");
+  assert.doesNotMatch(route, /searchParams\.get\("quarter"\)/,
+    "the route takes a quarter again. The counts are on the created_at axis — when the APP acted — " +
+      "and a fiscal quarter over that axis returned 0 on the live data");
+  assert.match(route, /const from = parseDay\(sp\.get\("from"\)\)/,
+    "the route no longer takes an explicit from/to window");
+
+  const fn = code("supabase/migrations/work_done_counts.sql");
+  // Every count on the same axis, or the total is a mix of two questions.
+  assert.equal((fn.match(/created_at >= p_from/g) ?? []).length, 5,
+    "not every count in work_done_counts uses created_at — a total that mixes 'when the money " +
+      "moved' with 'when we processed it' is not a measurement of anything");
+});
+
+test("[WERK-GEDAAN] a missing count is said out loud, never rendered as nothing", () => {
+  const route = code("src/app/api/work-done/route.ts");
+  assert.match(route, /if \(functionMissing\) \{[\s\S]{0,200}?countsUnavailable: true/,
+    "[DEPLOY-SAFE] the pre-migration case no longer answers 'countsUnavailable'. Without it an " +
+      "office whose function is not applied yet reads '0 handelingen' and concludes the app does " +
+      "nothing for them");
+  assert.match(route, /unreadable\.push\(r\.id\)/,
+    "a client whose counts failed is folded into the totals as zero instead of being named");
+  assert.match(route, /isMissingFunction/,
+    "the 42883 'function does not exist' case is no longer told apart from a real failure");
+
+  // The counting function is service-role only: an accountant's session must never call it directly.
+  const fn = code("supabase/migrations/work_done_counts.sql");
+  assert.match(fn, /REVOKE ALL ON FUNCTION public\.work_done_counts\(uuid, date, date\) FROM PUBLIC, anon, authenticated/,
+    "the SECURITY DEFINER counting function is callable from a browser session — it reads across " +
+      "owners by design and the route proves the link before calling it");
+});
