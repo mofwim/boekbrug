@@ -54,16 +54,31 @@ BROWSER, dus die moet erbij kunnen; zie dezelfde noot in `PLAY_STORE_LISTING.md`
 
 ## Twee soorten clip, en het verschil is niet cosmetisch
 
-| | Werving (01–04) | Uitleg (05–06) |
+| | Werving (01–04) | Uitleg (10) |
 | --- | --- | --- |
-| Voor wie | iemand die de app niet heeft | iemand die hem al heeft |
-| Begint bij | een probleem | een scherm |
+| Voor wie | iemand die de app niet heeft | iemand die al is blijven kijken |
+| Begint bij | een probleem | een taak, van begin tot eind |
 | Waar | Reels, Shorts, TikTok, LinkedIn | in de app, de kennisbank, YouTube |
-| Lengte | 9–15 seconden | mag langer |
+| Lengte | 9–15 seconden | 30–40 seconden |
+| Balk bovenin | de merknaam | "stap 2 van 4" |
+| Zin blijft staan | 1,8–2,2 s | 2,2–2,7 s |
 
 Op social wil niemand een rondleiding langs knoppen van software die hij niet gebruikt. Daarom
 beginnen 01–04 bij een vraag die de kijker zelf heeft, en laten ze het antwoord zien in plaats van
-het uit te leggen. De uitleg-clips zijn ook nuttig — maar niet dáár.
+het uit te leggen.
+
+**Een uitleg is geen langere werving.** Dat verschil is gemeten en niet bedacht: hetzelfde pad
+(factuur maken) op vijftien seconden geperst wordt een flikkering waarin je ziet dát er getypt
+wordt en niet wát. Drie dingen maken er uitleg van, en ze staan alle drie expres in de code:
+
+- **de balk telt de stappen**, zodat je altijd weet waar je bent — zonder die balk lijkt veertig
+  seconden één lange handeling en weet wie halverwege instapt niet of hij iets heeft gemist;
+- **elke zin blijft ruim twee seconden staan**, want hij moet gelezen worden, niet opgevangen;
+- **na elk resultaat valt een stilte**, zodat het oog kan landen op het getal dat net veranderde.
+
+En het pad eindigt niet willekeurig. Het eindigt bij het btw-tarief, want dát is het moment waarop
+te zien is dat de app RÉKENT en niet alleen een formulier toont: 21% wordt 9%, en het totaal
+eronder verandert mee terwijl je kijkt. Een uitleg die daar niet komt, heeft niets uitgelegd.
 
 ## Onderschriften, niet gesproken tekst
 
@@ -109,6 +124,47 @@ Kort, geen hashtag-muur, en de laatste regel is altijd dezelfde vraag: probeer h
 >
 > boekbrug.nl/factuur-maken
 
+## De uitleg-clip, met de tekst voor eronder
+
+**10 · Een factuur maken, van niets tot pdf** — 39 s, 1080×1920
+
+> Een factuur maken duurt geen kwartier.
+>
+> Jouw naam, je klant, één regel — en het totaal rekent zichzelf uit. Ander btw-tarief? Eén keuze,
+> en alles telt opnieuw.
+>
+> Geen account, geen installatie, geen kosten.
+>
+> boekbrug.nl/factuur-maken
+
+Deze werkt op YouTube, in de kennisbank en als antwoord onder een vraag in een zzp-groep — plekken
+waar iemand al heeft besloten te kijken. Op Reels of TikTok verliest hij het van 01 en 03.
+
+## De rondleiding, veld voor veld
+
+**11 · Een factuur maken, elk veld uitgelegd** — 65 s, 1080×1920
+
+> Elk vakje op een factuur, en waarom het er staat.
+>
+> Het nummer dat vanzelf doortelt · je KVK en btw-nummer, die er wettelijk op moeten · je klant ·
+> wat je hebt geleverd, hoeveel en tegen welk tarief. En onderaan telt alles zichzelf op.
+>
+> boekbrug.nl/factuur-maken
+
+**Het verschil met clip 10 is niet de lengte maar waar de kijker kijkt.** Zeggen "hier vul je je
+klant in" terwijl het hele formulier even hard in beeld staat, wijst nergens naar. Per stap komt één
+blok in het MIDDEN te staan en gaat de rest achter een waas — `focusBlock()` doet allebei.
+
+"Het midden" is trouwens niet het midden van het scherm: bovenin staat de stapbalk en onderin de
+ondertitel, dus het midden van wat de kijker kán zien ligt hoger. `centerBlock()` rekent dat uit; op
+het echte midden mikken zet het blok te laag.
+
+En de velden worden per BLOK geteld, niet over de hele pagina — met een controle op het aantal
+(`expectFields`). Een globale index ("het 16e input-veld") verschuift stil zodra iemand een veld
+toevoegt: de opname slaagt en filmt het verkeerde vakje, met een bijschrift dat iets anders belooft.
+Dat is precies het soort fout dat je pas ziet als de clip al gepost is, dus faalt de opname nu in
+plaats daarvan.
+
 ## Waar te posten
 
 - **LinkedIn** is voor dit publiek waarschijnlijk het sterkst: Nederlandse zzp'ers én de boekhouders
@@ -135,3 +191,18 @@ Twee dingen die uit meten zijn gekomen en die je niet zelf hoeft te ontdekken:
 - **Scroll naar een element, niet naar een aantal pixels.** Een vast getal schoot voorbij het totaal
   en liet de factuurclip eindigen op de uitleg onderaan de pagina in plaats van op het bedrag dat
   zojuist was uitgerekend.
+- **En zet het op OOGHOOGTE, niet "net in beeld".** `scrollIntoViewIfNeeded` doet het minimum, en
+  het minimum is meestal onderaan het scherm — precies waar de ondertitelbalk staat. In de eerste
+  opname van de uitleg-clip stond het uitgerekende totaal daardoor achter zijn eigen bijschrift:
+  € 1.512,50 werd genoemd en was niet te zien. `bringToEyeLine()` zet het op een vaste fractie van
+  de viewport en is niet gevoelig voor de lengte van de pagina.
+
+Twee schakelaars die het afstellen doenlijk maken:
+
+- `CLIP_ONLY=uitleg` — maak alleen de clips waarvan de naam dit bevat. Een reeks die vijf minuten
+  duurt, stel je niet af.
+- `CLIP_FFMPEG=/pad/naar/ffmpeg` — ffmpeg-static is ~80 MB en hoort niet in de dependencies van een
+  boekhoud-app; wie hem elders al heeft staan, wijst hem hiermee aan.
+
+En `maxLen` per clip: ruim zetten, niet krap. Het snijden gebeurt aan de staart, dus een te lage
+waarde knipt precies de slotzin eraf. De lengte regel je met het tempo van `run`, niet daarmee.
