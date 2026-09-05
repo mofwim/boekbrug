@@ -37,6 +37,7 @@ import { exemptShareOf } from "@/lib/vat-exemption";
 import { verlegdeBtwOpInkoop, totaalVerlegd } from "@/lib/verlegde-btw";
 // [SUPPLETIE-VERREKEND] Corrections from earlier filed quarters — see the block at the return.
 import { outstandingCorrections } from "@/lib/filed-quarter";
+import { telWoord, vervoeg } from "@/lib/nl-plural";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 // EU VAT prefixes (excl. NL) — a cheap, honest signal that a purchase may be intra-EU
@@ -319,13 +320,13 @@ export async function GET(req: NextRequest) {
     regimeNotes.push("Kasstelsel actief — de BTW is berekend op de BETAALdatum van je facturen (niet de factuurdatum). Een onbetaalde factuur telt pas mee zodra hij betaald is.");
     if (sr.undatedPaidCount > 0) {
       regimeNotes.push(
-        `LET OP: ${sr.undatedPaidCount} betaalde factu(u)r(en) ${sr.undatedPaidCount === 1 ? "heeft" : "hebben"} geen betaaldatum, ` +
+        `LET OP: ${telWoord(sr.undatedPaidCount, "betaalde factuur")} ${vervoeg(sr.undatedPaidCount, "heeft", "hebben")} geen betaaldatum, ` +
         "dus de betaalde BTW kan (nog) niet in het juiste kwartaal worden geplaatst — dit concept is daardoor mogelijk te laag. " +
         "Koppel de bankbetaling of vul de betaaldatum in voordat je indient.",
       );
     }
     if (sr.estimatedPortionCount > 0) {
-      regimeNotes.push(`${sr.estimatedPortionCount} betaaldatum(s) ${sr.estimatedPortionCount === 1 ? "is" : "zijn"} een schatting (handmatig 'betaald' gemarkeerd) — controleer of het kwartaal klopt.`);
+      regimeNotes.push(`${telWoord(sr.estimatedPortionCount, "betaaldatum", "betaaldata")} ${vervoeg(sr.estimatedPortionCount, "is", "zijn")} een schatting (handmatig 'betaald' gemarkeerd) — controleer of het kwartaal klopt.`);
     }
   }
 

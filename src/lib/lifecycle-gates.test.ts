@@ -25838,3 +25838,257 @@ test("[NUL-POST] the untaxed amount sits INSIDE the base, and only the rate is m
       "untaxed — which is precisely how the sub-legal rate is created. Retyping a number the app " +
       "already found on the paper is how a correct figure becomes a typo");
 });
+
+// ── [MELDING-TIK] A notification is a promise: it goes somewhere, and it reads as Dutch ───────
+//
+// Four things, all measured on the production `notifications` table (1031 rows) before they were
+// fixed, and all of them the same class of bug this file exists for: a rule that was written once,
+// applied where the author was looking, and never derived.
+//
+//   · 295 rows (28,6 %) carried no link, and a tap on one did NOTHING — not even mark it read, so
+//     the row stayed blue and the badge kept counting it forever;
+//   · the three "Factuur betaald" branches in bank/confirm are the same message; [NOTIF-DEADEND]
+//     gave two of them a link and missed the third, in the same file;
+//   · one row on the owner's screen read "1 factu(u)r(en) automatisch afgeschreven";
+//   · the link was checked in exactly one of the three places it travels, and that one check
+//     ("does it start with a slash") passes "//evil.example/steal".
+//
+// So none of these gates name a file. Each walks the tree and derives the offenders — which is the
+// only version that would have caught the third branch.
+
+test("[MELDING-TIK] every notification the app writes has somewhere to go", () => {
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad) && !pad.includes(".test.")) uit.push(pad);
+    }
+    return uit;
+  };
+
+  /** The object literal that starts at `from`, balanced — so a nested `{}` cannot end it early. */
+  const objectAt = (src: string, from: number): string => {
+    let i = src.indexOf("{", from);
+    if (i < 0) return "";
+    const start = i;
+    let depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) return src.slice(start, i + 1);
+    }
+    return src.slice(start);
+  };
+
+  const zonderLink: string[] = [];
+  let gevonden = 0;
+  for (const f of loop("src")) {
+    // notifications.ts is the writer itself: the `link` there is a parameter, not a destination.
+    if (f.endsWith("src/lib/notifications.ts")) continue;
+    const src = code(f);
+
+    // Server side: createNotification({ … }).
+    for (const m of src.matchAll(/createNotification\(/g)) {
+      const blok = objectAt(src, m.index!);
+      if (!blok) continue;
+      gevonden++;
+      if (!/\blink\s*:/.test(blok)) zonderLink.push(`${f} — createNotification zonder link`);
+    }
+    // Client side: fetch('/api/notifications/create', { body: JSON.stringify({ … }) }). The
+    // payload is the SECOND object literal after the path, so the search starts past the first.
+    for (const m of src.matchAll(/["']\/api\/notifications\/create["']/g)) {
+      const na = src.indexOf("JSON.stringify(", m.index!);
+      if (na < 0) continue;
+      const blok = objectAt(src, na);
+      if (!blok) continue;
+      gevonden++;
+      if (!/\blink\s*:/.test(blok)) zonderLink.push(`${f} — /api/notifications/create zonder link`);
+    }
+  }
+
+  // [NEGATIEVE CONTROLE] If the scanner finds nothing, everything below passes vacuously. The app
+  // had 38 call sites when this was written; the floor is deliberately far under that so ordinary
+  // churn does not trip it, and far over zero so a broken scanner does.
+  assert.ok(gevonden >= 30,
+    `the scanner found only ${gevonden} notification writers — it has stopped matching, and every ` +
+      "assertion below is now passing on an empty set");
+
+  assert.deepEqual(zonderLink, [],
+    "a notification with no link is a row the owner cannot open and — before [MELDING-TIK] — could " +
+      "not even dismiss. If this one genuinely has no screen to point at, that is the thing to fix; " +
+      "there is no case where the right answer is a bell that does nothing");
+});
+
+test("[MELDING-TIK] the link is checked at the door, and at the two places it is opened", () => {
+  const writer = code("src/lib/notifications.ts");
+  assert.match(writer, /import \{ safeNotificationLink \} from '\.\/notification-link'/,
+    "the single door every notification passes through no longer validates the link. Two routes " +
+      "read `link` straight out of a request body, so this is not a value the app authored");
+  assert.match(writer, /const veiligeLink = safeNotificationLink\(link\)/,
+    "the guard is imported but not called");
+  assert.match(writer, /link: veiligeLink,/,
+    "the row is written with the raw link again, so the guard is decoration");
+
+  const push = code("src/lib/push-payload.ts");
+  assert.match(push, /safeNotificationLink\(n\.link\) \?\? "\/dashboard"/,
+    'the push payload is back to its own check. The one it had was `link.startsWith("/")`, which ' +
+      'accepts "//evil.example/x" — a complete off-site URL');
+  assert.doesNotMatch(push, /link\.startsWith\("\/"\)/,
+    "the incomplete prefix test is back");
+
+  const bel = code("src/app/dashboard/_shared/index.tsx");
+  assert.match(bel, /const href = safeNotificationLink\(n\.link\)/,
+    "the bell reads the link straight off the row again. 1031 rows predate the door guard, so the " +
+      "screen cannot assume the column was ever checked");
+  assert.doesNotMatch(bel, /router\.push\(n\.link\)/,
+    "the bell navigates to the unvalidated column value");
+});
+
+test("[MELDING-TIK] a tap on a notification always does something", () => {
+  const bel = code("src/app/dashboard/_shared/index.tsx");
+  // The whole point: a row without a link is still a row you can acknowledge.
+  assert.match(bel, /if \(ongelezen\) markAsRead\(n\.id\)\s*\n\s*if \(href\) \{ router\.push\(href\); onToggle\(\) \}/,
+    "the tap handler no longer marks read BEFORE deciding whether to navigate. That order is the " +
+      "fix: 295 of 1031 notifications have no link, and until [MELDING-TIK] a tap on one did " +
+      "nothing at all — the only way to clear it was mark-ALL-read, which also clears the ones " +
+      "the owner has not looked at");
+  assert.doesNotMatch(bel, /role=\{n\.link \? 'button' : undefined\}/,
+    "the row is interactive only when it has a link again, so the linkless ones are unreachable " +
+      "from the keyboard and inert to a tap");
+});
+
+test("[MEERVOUD] no screen says factu(u)r(en)", () => {
+  const loop = (dir: string): string[] => {
+    const uit: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const pad = `${dir}/${e}`;
+      if (statSync(pad).isDirectory()) uit.push(...loop(pad));
+      else if (/\.tsx?$/.test(pad)) uit.push(pad);
+    }
+    return uit;
+  };
+
+  /**
+   * The SENTENCES in a file — the contents of its string and template literals, with every
+   * `${…}` expression removed.
+   *
+   * This is the whole trick, and the first version of this gate did not do it: scanning raw lines
+   * cannot tell `factu(u)r(en)` from `euro(btw)`, because at the character level they are the same
+   * shape — a word, a bracket, three lowercase letters. One is a sentence an owner reads and the
+   * other is a function call. Reading only what is inside quotes separates them by construction.
+   */
+  const zinnen = (src: string): string[] => {
+    const uit: string[] = [];
+    for (const m of src.matchAll(/`(?:[^`\\]|\\.)*`|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g)) {
+      uit.push(m[0].slice(1, -1).replace(/\$\{[^}]*\}/g, " "));
+    }
+    return uit;
+  };
+
+  // Dutch inflection, in brackets, glued to the word it inflects. The suffixes are the closed set
+  // Dutch actually has — this is morphology, not a list of files, so the next placeholder someone
+  // writes ("klant(en)", "dag(en)", "bon(nen)") is caught without anyone adding it here.
+  // Three letters minimum and nothing identifier-ish in front, so `.test(s)` and `.indexOf(n)` —
+  // code, not sentences — are not read as Dutch. A nested template literal can still hand the
+  // extractor a fragment that spans a `+`; that is why the word must look like a noun.
+  const PLAATSHOUDER = /(?<![.\w])[a-z]{3,}\((?:en|n|s|ren|nen)\)|factu\(u\)r\(en\)/i;
+
+  // What this gate does NOT read, and why each one is a reason rather than an escape:
+  //
+  //   · nl-plural.ts and this file quote the ban in order to state it;
+  //   · tests quote the sentences they are asserting about;
+  //   · ai.ts is a prompt addressed to a model, and locale-boot.ts is an emitted script;
+  //   · messages.ts — the catalogue — is the one real exemption, and it is DEBT, not a decision.
+  //     It holds this same shape in four languages ("{n} dag(en)", "{n} day(s)"), and it cannot be
+  //     fixed the way the app's own sentences were: a catalogue key needs a plural MECHANISM, and
+  //     the languages disagree about how many forms that is — Dutch and English have two, Arabic
+  //     has six. Picking one for all four is how a translation ends up permanently half-finished,
+  //     which is the failure AGENTS.md describes. Tracked separately; the count is asserted below
+  //     so the debt can only shrink.
+  const NIET_GELEZEN = ["nl-plural", "lifecycle-gates", ".test.", "src/lib/ai.ts",
+                        "src/lib/i18n/locale-boot.ts", "src/lib/i18n/messages.ts"];
+
+  const overtreders: string[] = [];
+  let gescand = 0;
+  for (const f of loop("src")) {
+    if (NIET_GELEZEN.some(k => f.includes(k))) continue;
+    const src = code(f);
+    for (const zin of zinnen(src)) {
+      gescand++;
+      if (!PLAATSHOUDER.test(zin)) continue;
+      // There is deliberately no exemption for console lines here. The first version had one, it
+      // silently never fired (it looked the extracted sentence up by text, and the text had its
+      // `${…}` blanked out, so the lookup always missed) — and the four operator logs it was
+      // written for were quicker to fix than to exempt. An exemption that cannot be shown to work
+      // is worse than no exemption: it makes the gate look narrower than it is.
+      overtreders.push(`${f}: ${zin.trim().slice(0, 110)}`);
+    }
+  }
+  assert.ok(gescand > 5000,
+    `only ${gescand} sentences were read out of the whole tree — the extractor has stopped ` +
+      "matching, and the empty offender list below would mean nothing");
+  assert.deepEqual(overtreders, [],
+    "a plural placeholder is on a screen. It is not shorthand a Dutch reader decodes — it is a " +
+      "mail-merge that failed, printed by an app asking an entrepreneur to trust it with his BTW. " +
+      "telWoord(n, 'factuur') in src/lib/nl-plural.ts derives it; the count is already in scope");
+
+  // [NEGATIEVE CONTROLE] Every assertion above passes on an empty set, and `zinnen` returning
+  // nothing is exactly how that happens silently. So: the extractor must find sentences, the
+  // pattern must match the thing it bans in all of its shapes, and it must leave code alone.
+  const proef = [
+    'const a = `${n} factu(u)r(en) betaald`',
+    'const b = "2 klant(en) wachten"',
+    "const c = 'over 3 dag(en)'",
+    // The two shapes that are CODE and must not be read as Dutch. The second is real: a CSV
+    // escape helper is `/[";\\n]/.test(s) ? …`, and the quote inside that regex opens what a flat
+    // scanner takes for a string — so `.test(s)` arrives here looking exactly like a placeholder.
+    'const d = "quoted: .test(s) and .indexOf(n) are calls"',
+    "const e = 'a key like ink.factuurBetaald is not a sentence'",
+    'const f = `${telWoord(n, "factuur")} automatisch afgeschreven`',
+  ].join("\n");
+  const gevonden = zinnen(proef);
+  assert.equal(gevonden.length, 6,
+    `the sentence extractor found ${gevonden.length} literals in a sample that has six — it has ` +
+      "stopped matching, and the empty offender list above means nothing");
+  const raakt = (t: string) => gevonden.some(z => z.includes(t) && PLAATSHOUDER.test(z));
+  assert.ok(raakt("factu(u)r(en)"), "the pattern no longer matches factu(u)r(en) itself");
+  assert.ok(raakt("klant(en)"), "the pattern only knows the invoice case, so the next one is written freely");
+  assert.ok(raakt("dag(en)"), "a bracketed -en on any other noun is not caught");
+  assert.ok(!gevonden.some(z => /are calls/.test(z) && PLAATSHOUDER.test(z)),
+    "a method call inside a string is read as Dutch, so the gate fires on code and gets deleted");
+  assert.ok(!gevonden.some(z => /is not a sentence/.test(z) && PLAATSHOUDER.test(z)),
+    "the pattern matches a translation key");
+  assert.ok(!gevonden.some(z => /automatisch afgeschreven/.test(z) && PLAATSHOUDER.test(z)),
+    "the pattern matches the FIXED sentence, so the fix itself would trip the gate");
+
+  // The catalogue's debt, pinned so it can only go down. This is a number and not a list of keys
+  // on purpose: a list would have to be maintained by hand, which is the failure mode this whole
+  // gate exists to replace. If a key is fixed, lower it; if this fails upward, a new placeholder
+  // was written into messages.ts and the fix is the key, not the number.
+  const catalogus = zinnen(code("src/lib/i18n/messages.ts")).filter(z => PLAATSHOUDER.test(z));
+  assert.ok(catalogus.length <= 44,
+    `messages.ts now holds ${catalogus.length} bracketed plurals, which is more than the 44 that ` +
+      "stood when [MEERVOUD] was written. The catalogue needs a plural mechanism, not another " +
+      "placeholder — see the exemption note above");
+  assert.ok(catalogus.length > 0,
+    "messages.ts is suddenly clean. Either the debt was paid — in which case lower the ceiling to " +
+      "0 and delete the exemption — or the sentence extractor has stopped reading the catalogue");
+});
+
+test("[MELDING-TIK] a notification body does not repeat its own title", () => {
+  const notice = code("src/lib/payment-due-notice.ts");
+  // Three tail sentences stood here. Two restated the title; the third said nothing at all, and
+  // the first had a number bug on top of it ("hij" for a message that lists up to five invoices).
+  assert.doesNotMatch(notice, /Je hebt nog even/,
+    "the filler sentence is back. A body that adds nothing to the title is what teaches an owner " +
+      "to stop opening notifications");
+  assert.doesNotMatch(notice, /Morgen is de laatste dag\."/,
+    "the tomorrow tail is back — it is the title, word for word");
+  assert.match(notice, /body: `\$\{lijst\}\.\$\{weekendUitleg\}`/,
+    "the body is composed of something other than the list plus the weekend note");
+  // And the one sentence that stays, because it is the only one that is not derivable from the
+  // title: that the due date falls on a weekend, so today is the last day a transfer arrives.
+  assert.match(notice, /De vervaldatum valt in het weekend/,
+    "the weekend explanation is gone. That is the opposite fix: it carries the one fact the title " +
+      "cannot, and without it the notification looks a day early");
+});

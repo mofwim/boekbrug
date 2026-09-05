@@ -38,6 +38,7 @@
 // code is a misfiled administration.
 
 import { round2 } from "./invoice-totals";
+import { telWoord, vervoeg } from "./nl-plural";
 
 // ── The rekeningschema ───────────────────────────────────────────────────────────────────────────
 
@@ -621,7 +622,7 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     const perReden = new Map<string, number>();
     for (const s of skipped) perReden.set(s.reason, (perReden.get(s.reason) ?? 0) + 1);
     out.push(`<!--`);
-    out.push(`  LET OP: ${skipped.length} post(en) staan NIET in dit auditbestand.`);
+    out.push(`  LET OP: ${telWoord(skipped.length, "post", "posten")} ${vervoeg(skipped.length, "staat", "staan")} NIET in dit auditbestand.`);
     for (const [reden, aantal] of [...perReden].sort((a, b) => b[1] - a[1])) {
       out.push(`    ${aantal}x  ${xmlCommentSafe(reden)}`);
     }
@@ -815,10 +816,10 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   out.push("</company>");
   if (skipped.length > 0) {
     const listed = skipped.slice(0, 50).map((s) => `${s.source}:${s.id} (${s.reason})`).join("; ");
-    out.push(`<!-- BoekBrug: ${skipped.length} regel(s) niet opgenomen - ${esc(listed)}${skipped.length > 50 ? "; ..." : ""} -->`);
+    out.push(`<!-- BoekBrug: ${telWoord(skipped.length, "regel", "regels")} niet opgenomen - ${esc(listed)}${skipped.length > 50 ? "; ..." : ""} -->`);
   }
   if (turnoverWitnessCount > 0) {
-    out.push(`<!-- BoekBrug: ${turnoverWitnessCount} kasregel(s) overgeslagen als getuige van Z-dagomzet (zelfde regel als het resultaat: de kassa boekte die ontvangst al) -->`);
+    out.push(`<!-- BoekBrug: ${telWoord(turnoverWitnessCount, "kasregel", "kasregels")} overgeslagen als getuige van Z-dagomzet (zelfde regel als het resultaat: de kassa boekte die ontvangst al) -->`);
   }
   out.push("</auditfile>");
 

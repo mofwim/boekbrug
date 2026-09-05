@@ -13,6 +13,7 @@
 //      form computes it), so our concept reconciles line-for-line with the accountant's.
 
 import type { FinancialResult } from "./financial-result";
+import { telWoord, woordBij, vervoeg } from "./nl-plural";
 
 /** Only the parts of the result the aangifte needs. */
 export type AangifteInput = Pick<
@@ -249,9 +250,9 @@ export function buildAangifte(
   // any amount in either direction, printed in the block this page calls its trust layer.
   const onCash = completeness.scheme === "kas";
   notes.push(
-    `Verkoop-BTW (5a) is berekend uit ${completeness.turnoverDays} dag(en) dagomzet` +
+    `Verkoop-BTW (5a) is berekend uit ${telWoord(completeness.turnoverDays, "dag", "dagen")} dagomzet` +
     `${completeness.outgoingInvoiceCount
-      ? ` en ${completeness.outgoingInvoiceCount} ${onCash ? "in dit kwartaal betaalde verkoopfactu(u)r(en)" : "verkoopfactu(u)r(en)"}`
+      ? ` en ${completeness.outgoingInvoiceCount} ${onCash ? "in dit kwartaal betaalde " : ""}${woordBij(completeness.outgoingInvoiceCount, "verkoopfactuur")}`
       : ""}.`,
   );
   if (completeness.turnoverDays > 0 && completeness.turnoverDays < completeness.quarterDays) {
@@ -269,9 +270,9 @@ export function buildAangifte(
   }
   notes.push(
     onCash
-      ? `Voorbelasting (5b) telt alleen de ${completeness.incomingInvoiceCount} inkoopfactu(u)r(en) die je in dit kwartaal hebt BETAALD (kasstelsel). ` +
+      ? `Voorbelasting (5b) telt alleen de ${telWoord(completeness.incomingInvoiceCount, "inkoopfactuur")} die je in dit kwartaal hebt BETAALD (kasstelsel). ` +
         "Een onbetaalde inkoopfactuur telt pas mee zodra je hem betaalt."
-      : `Voorbelasting (5b) telt alleen ${completeness.incomingInvoiceCount} ingevoerde inkoopfactu(u)r(en). ` +
+      : `Voorbelasting (5b) telt alleen ${telWoord(completeness.incomingInvoiceCount, "ingevoerde inkoopfactuur")}. ` +
         "Ontbreekt er een inkoopfactuur, dan is de voorbelasting te laag en het te betalen bedrag te hoog.",
   );
   if (input.cashOmzetZonderBtw > 0) {
@@ -405,7 +406,7 @@ export function buildAangifte(
   if ((completeness.datelessVerifiedCount ?? 0) > 0) {
     const n = completeness.datelessVerifiedCount ?? 0;
     notes.push(
-      `Let op: ${n} geverifieerde factu(u)r(en) ${n === 1 ? "heeft" : "hebben"} geen factuurdatum en ${n === 1 ? "telt" : "tellen"} ` +
+      `Let op: ${telWoord(n, "geverifieerde factuur")} ${vervoeg(n, "heeft", "hebben")} geen factuurdatum en ${vervoeg(n, "telt", "tellen")} ` +
       "daarom NIET mee in dit kwartaal — voer de factuurdatum in zodat de omzet/voorbelasting compleet is.",
     );
   }

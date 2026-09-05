@@ -33,6 +33,7 @@ import { checkTurnoverArithmetic, type DailyTurnover } from "@/lib/turnover";
 // [TURNOVER-CENTEN] Cents at the door — see the note above the coercers in the commit branch.
 import { round2 } from "@/lib/invoice-totals";
 import { logAuditAction, getClientIP } from "@/lib/audit";
+import { telWoord, vervoeg } from "@/lib/nl-plural";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB — a Z-report is tiny; this is generous.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -163,7 +164,7 @@ export async function POST(req: NextRequest) {
     }
     if (badDays.length > 0) {
       const shown = badDays.slice(0, 3).join("; ");
-      const more = badDays.length > 3 ? ` en ${badDays.length - 3} andere dag(en)` : "";
+      const more = badDays.length > 3 ? ` en ${telWoord(badDays.length - 3, "andere dag", "andere dagen")}` : "";
       return NextResponse.json(
         {
           error: "bedragen_kloppen_niet",

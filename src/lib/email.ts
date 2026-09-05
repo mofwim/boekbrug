@@ -18,6 +18,7 @@ import type { PayBlock } from './pay-block'
 import { customerMailFrom } from './mail-from'
 // [MAIL-TEKST] De teksthelft van elke mail — zie de kop van mail-text.ts.
 import { htmlToMailText } from './mail-text'
+import { telWoord, vervoeg } from "./nl-plural";
 
 // [BUILD-SAFE] Construct the Resend client LAZILY, on first send — not at module
 // import. The constructor throws when RESEND_API_KEY is absent, and Next.js's build
@@ -658,7 +659,7 @@ export async function sendAccountExportSummary({
     .join('')
   const skippedLine =
     skippedCount > 0
-      ? `<p style="color:#999; font-size:13px;">${skippedCount} bestand(en) konden niet worden opgehaald en zijn overgeslagen.</p>`
+      ? `<p style="color:#999; font-size:13px;">${telWoord(skippedCount, "bestand", "bestanden")} ${vervoeg(skippedCount, "kon", "konden")} niet worden opgehaald en ${vervoeg(skippedCount, "is", "zijn")} overgeslagen.</p>`
       : ''
 
   const __sendResult = await getResend().emails.send({

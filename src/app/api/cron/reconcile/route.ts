@@ -25,6 +25,7 @@ import { reconcileCashSettlements } from "@/lib/cash-settle";
 import { liveCashEntries } from "@/lib/cash-live";
 import { applyLearnedBankCategories } from "@/lib/bank-auto-categorize";
 import { createNotification } from "@/lib/notifications";
+import { telWoord } from "@/lib/nl-plural";
 // [CRON-HARTSLAG] Vastleggen DAT deze cron draaide — zie src/lib/cron-heartbeat.ts.
 import { beginCronRun, finishCronRun } from "@/lib/cron-heartbeat";
 // [AUTO-INCASSO] Book the invoices the bank collects on its own — see src/lib/incasso-settle.ts.
@@ -235,7 +236,7 @@ export async function GET(req: NextRequest) {
         await createNotification({
           userId: uid,
           type: "status",
-          title: `${categorized.length} banktransactie(s) automatisch gecategoriseerd`,
+          title: `${telWoord(categorized.length, "banktransactie", "banktransacties")} automatisch gecategoriseerd`,
           body: "We hebben deze op basis van eerdere keuzes ingedeeld. Controleer ze even — ze tellen al mee in je cijfers.",
           link: "/dashboard/bank/categoriseren?scope=review",
         }).catch((ne) => console.error("[CRON-RECONCILE] autocat notify failed", { uid, error: ne instanceof Error ? ne.message : String(ne) }));
@@ -257,7 +258,7 @@ export async function GET(req: NextRequest) {
           await createNotification({
             userId: uid,
             type: "payment",
-            title: `${incasso.booked.length} factu(u)r(en) automatisch afgeschreven`,
+            title: `${telWoord(incasso.booked.length, "factuur")} automatisch afgeschreven`,
             body: `${formatEuroNL(sum)} is bij je incasso-leveranciers afgeschreven. We hebben ze op betaald gezet — kloppen ze niet? Zet ze terug op openstaand.`,
             link: "/dashboard/incoming/manage?filter=paid",
           }).catch((ne) => console.error("[AUTO-INCASSO] notify failed", { uid, error: ne instanceof Error ? ne.message : String(ne) }));

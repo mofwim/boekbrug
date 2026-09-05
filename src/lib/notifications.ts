@@ -8,6 +8,7 @@
 
 import { createPipelineClient } from './supabase-pipeline'
 import { sendPushToUser } from './push'
+import { safeNotificationLink } from './notification-link'
 
 /**
  * The five values the `type` CHECK constraint on public.notifications allows.
@@ -53,6 +54,22 @@ export async function createNotification({
 }: CreateNotifOptions): Promise<NotificationResult> {
   try {
     const pipeline = createPipelineClient()
+
+    // [MELDING-TIK] The link is checked on the way IN, here, because this is the one door every
+    // notification in the app goes through — all forty call sites, including the two routes that
+    // read `link` out of a request body (POST /api/notifications/create and /notify-client). A
+    // check placed in those two routes would be a list that the forty-first caller is not on.
+    //
+    // An unusable link is dropped, not fatal: the sentence is what the notification is FOR, and
+    // refusing to tell an owner that his invoice was paid because someone handed the route a bad
+    // path would be the wrong trade. It is logged rather than swallowed — a link that silently
+    // becomes null is a tap that silently stops working.
+    const veiligeLink = safeNotificationLink(link)
+    if (link && !veiligeLink) {
+      console.error('[NOTIFY] link geweigerd — melding wordt zonder link opgeslagen', {
+        userId, type, link,
+      })
+    }
     // [NO-SILENT-EMPTY] The error was not read here at all. supabase-js does not
     // throw on a rejected write, so an RLS refusal, a CHECK violation on `type` or
     // a dead connection all left this function returning normally — and the caller,
@@ -65,7 +82,7 @@ export async function createNotification({
       body: body ?? null,
       type,
       read: false,
-      link: link ?? null,
+      link: veiligeLink,
     })
 
     if (error) {
@@ -87,7 +104,7 @@ export async function createNotification({
     // best-effort: sendPushToUser never throws and no-ops when push is unconfigured
     // or the user has no subscribed device — the in-app row above is the source of
     // truth and must never be held hostage by a push delivery.
-    await sendPushToUser(userId, { title, body, type, link })
+    await sendPushToUser(userId, { title, body, type, link: veiligeLink })
     return { ok: true, error: null }
   } catch (err) {
     // createPipelineClient() THROWS when the service-role env vars are missing, and

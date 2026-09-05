@@ -25,6 +25,12 @@ eq("non-relative link is rejected (no off-app redirect)",
   buildPushPayload({ title: "X", link: "https://evil.example/steal" }).url,
   "/dashboard");
 
+// [MELDING-TIK] A protocol-relative URL passes `startsWith("/")` and navigates off-site. This is
+// the case the original guard let through; safeNotificationLink is what closes it.
+eq("protocol-relative link is rejected",
+  buildPushPayload({ title: "X", link: "//evil.example/steal" }).url,
+  "/dashboard");
+
 eq("relative link is kept",
   buildPushPayload({ title: "X", link: "/dashboard/bank" }).url,
   "/dashboard/bank");

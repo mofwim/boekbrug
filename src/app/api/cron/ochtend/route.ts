@@ -229,7 +229,7 @@ export async function GET(req: NextRequest) {
 
     await finishCronRun(pipeline, cronRunId, {
       ok: failed === 0,
-      ...(failed > 0 ? { error: `${failed} owner(s) failed` } : {}),
+      ...(failed > 0 ? { error: `${failed} owners failed` } : {}),
       result: { gisteren, sent, quiet, optedOut, failed, alarmVerstuurd },
     });
     return NextResponse.json({ ok: failed === 0, gisteren, sent, quiet, optedOut, failed, alarmVerstuurd });

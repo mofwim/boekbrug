@@ -20,6 +20,7 @@ import { SearchBar } from '@/components/search/SearchBar'
 import { M3, FONT, PAGE_HEADER_HEIGHT } from '@/lib/design/tokens'
 import type { InvoiceStatusFilter, AccountantStatusFilter } from '@/hooks/useInfiniteInvoices'
 import type { ProfileRow, NotificationRow } from '@/types/rows'
+import { safeNotificationLink } from '@/lib/notification-link'
 // [LOGO-INITIALEN] Dezelfde functie als de factuur-PDF. Stond hier als een eigen regel die
 // "Kiwi Food Market" tot KF maakte terwijl de PDF er KM van maakte — één bedrijf, twee monogrammen.
 import { deriveInitials } from '@/lib/logo-initials'
@@ -470,27 +471,45 @@ export function NotificationsBell({
             </p>
           ) : (
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {notifications.map(n => (
+              {notifications.map(n => {
+                // [MELDING-TIK] The link is checked HERE, not trusted from the row. Two of the
+                // routes that write notifications take `link` straight from a request body, so
+                // the value in this column is not necessarily one this app composed. The push
+                // side has always checked it; the screen did not, and did router.push() on it raw.
+                const href = safeNotificationLink(n.link)
+                const ongelezen = !(readOverride[n.id] ?? n.read)
+                // [MELDING-TIK] Every row responds to a tap, not only the ones that go somewhere.
+                // Measured on production: 295 of 1031 notifications (28,6%) carry no link at all —
+                // "Inkoopfactuur betaald" has one on none of its 96 rows. A tap on those did
+                // nothing whatsoever: no navigation, and no mark-as-read either, so the row stayed
+                // blue and the badge kept counting it. The only way to clear one was the
+                // mark-ALL-read button, which also clears the ones you have not looked at yet.
+                // Reading a notification you cannot act on is still an act, and it is the whole
+                // meaning of the unread state.
+                const acteer = () => {
+                  if (ongelezen) markAsRead(n.id)
+                  if (href) { router.push(href); onToggle() }
+                }
+                return (
                 <div
                   key={n.id}
                   // [MOTION] A notification row is a link in everything but tag
                   // name. It now presses like one (pressable-row tints on
                   // :active, which touch fires — the old JS hover never did),
                   // and can be reached and opened from the keyboard.
-                  role={n.link ? 'button' : undefined}
-                  tabIndex={n.link ? 0 : undefined}
-                  className={n.link ? 'pressable-row notification-row' : undefined}
-                  onClick={() => {
-                    if (n.link) { router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id) }
-                  }}
+                  role="button"
+                  tabIndex={0}
+                  className="pressable-row notification-row"
+                  onClick={acteer}
                   onKeyDown={e => {
-                    if (!n.link || (e.key !== 'Enter' && e.key !== ' ')) return
+                    if (e.key !== 'Enter' && e.key !== ' ') return
                     e.preventDefault()
-                    router.push(n.link); onToggle(); if (!n.read) markAsRead(n.id)
+                    acteer()
                   }}
                   style={{
                     padding: '12px 16px', borderBottom: '1px solid #F1F3F4',
-                    backgroundColor: !(readOverride[n.id] ?? n.read) ? '#E8F0FE' : 'transparent',
+                    backgroundColor: ongelezen ? '#E8F0FE' : 'transparent',
+                    cursor: href ? 'pointer' : 'default',
                   }}
                 >
                   <p style={{ fontSize: 13, fontWeight: 500, color: '#202124', margin: 0 }}>{n.title}</p>
@@ -499,7 +518,8 @@ export function NotificationsBell({
                     {n.created_at ? new Date(n.created_at).toLocaleDateString('nl-NL') : ''}
                   </p>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

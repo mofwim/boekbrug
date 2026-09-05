@@ -113,6 +113,7 @@ import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
 // [TZ] The owner's day, not the server's — see amsterdamToday().
 import { amsterdamToday } from "@/lib/format-nl";
 import { supplierBtwForInvoice } from "@/lib/vendor-identity"
+import { telWoord, vervoeg } from "@/lib/nl-plural";
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -2123,7 +2124,7 @@ async function handleSpreadsheet(
         sheet_kind: "turnover_review",
         message: rows.length === 0
           ? "Dit lijkt een kassa-bestand, maar er zijn geen dag-omzetregels gelezen — controleer het in Dagomzet."
-          : `Kassa-omzet herkend (${rows.length} dagen, ${span}) — maar ${warnings.length} regel(s) hebben aandacht nodig. Controleer en boek in Dagomzet.`,
+          : `Kassa-omzet herkend (${telWoord(rows.length, "dag", "dagen")}, ${span}) — maar ${telWoord(warnings.length, "regel", "regels")} ${vervoeg(warnings.length, "heeft", "hebben")} aandacht nodig. Controleer en boek in Dagomzet.`,
       })
     }
 
@@ -2200,7 +2201,7 @@ async function handleSpreadsheet(
         `Kasboek gelezen ✓ — ${k.rows.length} dagen (${span}). Begint op ${eur(k.openingBalance ?? 0)}, ` +
         `eindigt op ${eur(k.closingBalance ?? 0)}; ${eur(k.totalReceived)} ontvangen, ${eur(k.totalSpent)} uitgegeven.` +
         (k.warnings.length
-          ? ` Let op: ${k.warnings.length} regel(s) sluiten niet aan — ${k.warnings[0].message}`
+          ? ` Let op: ${telWoord(k.warnings.length, "regel", "regels")} ${vervoeg(k.warnings.length, "sluit", "sluiten")} niet aan — ${k.warnings[0].message}`
           : " Het blad sluit op zichzelf aan.") +
         " Er is niets geboekt: een deel van deze uitgaven staat mogelijk al in je kas via de factuur" +
         " waarmee je ze betaalde. Vergelijk het in Kas.",
@@ -2268,8 +2269,8 @@ async function handleBankStatement(buffer: Buffer, filename: string, userId: str
       : result.parsed === 0
         ? `${result.statementStored ? "Bankafschrift opgeslagen, maar er" : "Er"} zijn geen transacties gelezen — controleer het bestand.${unreadable > 0 ? ` (${result.parseWarnings[0]})` : ""}`
         : unreadable > 0
-          ? `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd. Let op: ${unreadable} regel(s) konden niet gelezen worden en staan niet in je overzicht — controleer het originele bestand.`
-          : `Bankafschrift verwerkt — ${result.inserted} transactie(s) toegevoegd.`
+          ? `Bankafschrift verwerkt — ${telWoord(result.inserted, "transactie", "transacties")} toegevoegd. Let op: ${telWoord(unreadable, "regel", "regels")} ${vervoeg(unreadable, "kon", "konden")} niet gelezen worden en ${vervoeg(unreadable, "staat", "staan")} niet in je overzicht — controleer het originele bestand.`
+          : `Bankafschrift verwerkt — ${telWoord(result.inserted, "transactie", "transacties")} toegevoegd.`
   // [BANK-BALANCE §2.6] A statement whose begin/eindsaldo doesn't tie out to its own transactions
   // is INCOMPLETE — surface it prominently (this is exactly the "missing bank line" the owner can't
   // otherwise see), appended to the honest message and returned structured for the caller.

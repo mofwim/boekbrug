@@ -4,6 +4,7 @@
 // Kept pure + separate so the date math and the (honesty-critical) notification copy are unit-tested.
 import type { QuarterNo } from "./quarter";
 import { formatEuroNL as eur } from "./format-nl";
+import { telWoord } from "./nl-plural";
 
 /**
  * The quarter that just ended, relative to `now`. The cron fires early in the first month of a new
@@ -87,14 +88,14 @@ export function buildQuarterCloseNotice(
     // het sluitpakket staan daar); alleen de zin wijst nu naar het scherm dat de handeling
     // werkelijk heeft, in plaats van hem te beloven op de pagina waar je landt.
     ? `Je facturen voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Controleer je cijfers op het kwartaaloverzicht en markeer het kwartaal daarna als ingediend op Waarheid.`
-    : `${quarterLabel} heeft nog ${gapCount} aandachtspunt(en) voordat je kunt indienen: ${summary.warnings
+    : `${quarterLabel} heeft nog ${telWoord(gapCount, "aandachtspunt", "aandachtspunten")} voordat je kunt indienen: ${summary.warnings
         .map((w) => w.message)
         .slice(0, 3)
         .join(" · ")}${gapCount > 3 ? " …" : ""}`;
 
   const accountantTitle = clean
     ? `${quarterLabel} staat klaar voor je`
-    : `${quarterLabel} staat klaar — met ${gapCount} aandachtspunt(en)`;
+    : `${quarterLabel} staat klaar — met ${telWoord(gapCount, "aandachtspunt", "aandachtspunten")}`;
   // "zijn gecontroleerd" mag blijven staan: dat gaat over de verstuurd/ontvangen/betaald-set
   // die AV §7.2 zelf omschrijft als "alles wat je zelf hebt gecontroleerd". Wat wég moest is
   // de bewering dat de KLANT het kwartaal heeft afgesloten.
@@ -105,7 +106,7 @@ export function buildQuarterCloseNotice(
   // messages, same order (the array is sorted so the most consequential leads), same truncation.
   const accountantBody = clean
     ? `De facturen van je klant voor ${quarterLabel} zijn gecontroleerd (${summary.outgoingCount} verkoop, ${summary.incomingCount} inkoop). Het kwartaalpakket staat klaar om te downloaden.`
-    : `${quarterLabel} van je klant staat klaar, met nog ${gapCount} aandachtspunt(en): ${summary.warnings
+    : `${quarterLabel} van je klant staat klaar, met nog ${telWoord(gapCount, "aandachtspunt", "aandachtspunten")}: ${summary.warnings
         .map((w) => w.message)
         .slice(0, 3)
         .join(" · ")}${gapCount > 3 ? " …" : ""}`;
@@ -120,13 +121,13 @@ export function buildQuarterCloseNotice(
   const statedSentence = !statedFound || !stated
     ? ""
     : stated.booked
-      ? ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${stated.lines} afrekening(en); die staan als kosten in je cijfers — je winst was tot nu toe met dat bedrag te hoog.`
-      : ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${stated.lines} afrekening(en). Die staan nog NIET in je cijfers, omdat er ook een terminal-afrekening voor dit kwartaal is — controleer dat op Waarheid voordat je indient.`;
+      ? ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${telWoord(stated.lines, "afrekening", "afrekeningen")}; die staan als kosten in je cijfers — je winst was tot nu toe met dat bedrag te hoog.`
+      : ` Je bank noemde zelf ${eur(stated.total)} aan kosten van de betaalautomaat op ${telWoord(stated.lines, "afrekening", "afrekeningen")}. Die staan nog NIET in je cijfers, omdat er ook een terminal-afrekening voor dit kwartaal is — controleer dat op Waarheid voordat je indient.`;
   const statedSentenceAccountant = !statedFound || !stated
     ? ""
     : stated.booked
-      ? ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${stated.lines} afrekening(en) (over ${eur(stated.gross)} bruto); die is als betaalkosten geboekt — zie kaart-reconciliatie.csv.`
-      : ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${stated.lines} afrekening(en); die is NIET geboekt omdat er ook een terminal-afrekening is — zie kaart-reconciliatie.csv.`;
+      ? ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${telWoord(stated.lines, "afrekening", "afrekeningen")} (over ${eur(stated.gross)} bruto); die is als betaalkosten geboekt — zie kaart-reconciliatie.csv.`
+      : ` De bank noemt zelf ${eur(stated.total)} acquirer-commissie op ${telWoord(stated.lines, "afrekening", "afrekeningen")}; die is NIET geboekt omdat er ook een terminal-afrekening is — zie kaart-reconciliatie.csv.`;
 
   return {
     empty, clean, gapCount, ownerTitle,

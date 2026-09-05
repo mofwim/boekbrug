@@ -16,6 +16,7 @@ import { round2 } from "./invoice-totals";
 import { liveCashEntries } from "./cash-live";
 import { fetchAllRowsForIds } from "./supabase-paginate";
 import { TILL_SOURCE } from "./till-book";
+import { vervoeg } from "./nl-plural";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any>;
@@ -149,7 +150,7 @@ export async function bookTurnoverRows(
           `terwijl dit bestand er geen contant bij vermeldt: ${lijst}. ` +
           "Zou ik deze dag zo overnemen, dan telt die contante verkoop nergens meer mee — het " +
           "dagrapport dekt hem niet en de kasboeking wordt als dubbeltelling overgeslagen. " +
-          "Vul het contante bedrag aan in het bestand, of haal die dag(en) eruit.",
+          `Vul het contante bedrag aan in het bestand, of haal ${vervoeg(geclaimd.length, "die dag", "die dagen")} eruit.`,
         ],
       };
     }

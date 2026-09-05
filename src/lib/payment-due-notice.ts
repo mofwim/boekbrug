@@ -222,17 +222,27 @@ export function noticeFor(bucket: DueBucket): DueNotice {
       ? " De vervaldatum valt in het weekend, dus een overboeking vandaag is de laatste die op tijd aankomt."
       : "";
 
-  const staart =
-    bucket.tier === "today"
-      ? "Betaal je vandaag, dan is hij op tijd."
-      : bucket.tier === "tomorrow"
-        ? "Morgen is de laatste dag."
-        : "Je hebt nog even, maar dan weet je het.";
+  // [MELDING-TIK] Er stond hier een derde zin, per rung een andere, en geen van de drie zei iets
+  // wat de titel niet al zei:
+  //
+  //     vandaag  — "Betaal je vandaag, dan is hij op tijd."   titel: "vandaag de laatste dag"
+  //     morgen   — "Morgen is de laatste dag."                titel: "morgen de laatste dag"
+  //     3 dagen  — "Je hebt nog even, maar dan weet je het."  zegt niets
+  //
+  // De tweede was de titel woord voor woord. De derde was vulling. En de eerste had er ook nog een
+  // getalsfout in: "hij" gaat over één factuur, terwijl deze melding er net zo goed vijf kan
+  // opsommen — de zin die het rustigst klonk was de zin die het vaakst fout stond.
+  //
+  // Wat blijft staan is de weekenduitleg, en die blijft juist omdat hij het enige toevoegt wat
+  // NIET af te lezen is: dat de vervaldatum zaterdag of zondag is en een overboeking daarom
+  // vandaag al de laatste is die op tijd aankomt. Dat is de toets voor elke zin in een melding —
+  // staat het al in de titel, dan is het geen toon maar ruis, en ruis is wat een eigenaar leert
+  // om meldingen niet meer te openen.
 
   return {
     tier: bucket.tier,
     title,
-    body: `${lijst}. ${staart}${weekendUitleg}`,
+    body: `${lijst}.${weekendUitleg}`,
     // Naar de lijst waar hij ze kan afvinken, niet naar een algemeen scherm: een melding die je
     // op een dashboard afzet laat je zelf zoeken welke factuur ze bedoelde.
     link: "/dashboard/vandaag",

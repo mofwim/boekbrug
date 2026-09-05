@@ -26,6 +26,7 @@
 
 import type { BankTransaction, ParseResult } from "./bank-parser";
 import { extractInvoiceReference } from "./bank-parser";
+import { telWoord, vervoeg } from "./nl-plural";
 
 // ─── CSV tokeniser (RFC-4180-ish: quotes, escaped quotes, embedded delimiters) ──
 
@@ -443,11 +444,11 @@ export function parseBankCsv(content: string): ParseResult {
   if (transactions.length === 0) {
     errors.push("CSV bevatte geen leesbare transacties (geen geldige datum/bedrag-rijen).");
   } else if (dropped > 0) {
-    errors.push(`${dropped} CSV-rij(en) overgeslagen — geen geldige datum of bedrag.`);
+    errors.push(`${telWoord(dropped, "CSV-rij", "CSV-rijen")} overgeslagen — geen geldige datum of bedrag.`);
   }
   if (onbeslisteVlag > 0) {
     errors.push(
-      `${onbeslisteVlag} rij(en) hadden een Af/Bij-vlag die we niet herkennen — de richting is daar uit het bedrag zelf gelezen. Controleer die regels even.`,
+      `${telWoord(onbeslisteVlag, "rij", "rijen")} ${vervoeg(onbeslisteVlag, "had", "hadden")} een Af/Bij-vlag die we niet herkennen — de richting is daar uit het bedrag zelf gelezen. Controleer die ${vervoeg(onbeslisteVlag, "regel", "regels")} even.`,
     );
   }
 

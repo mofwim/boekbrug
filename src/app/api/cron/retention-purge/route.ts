@@ -158,7 +158,7 @@ async function sendRetentionWarnings(
 
   if (warn.length === 0) return uit;
   console.warn(
-    `[CRON-RETENTION] ${warn.length} account(s) krijgen de 30-dagenbrief (§5.7.5)` +
+    `[CRON-RETENTION] ${warn.length} accounts krijgen de 30-dagenbrief (§5.7.5)` +
       (dryRun ? " — DROGE RUN, er wordt niets verstuurd." : " — VERSTUREN NU."),
   );
   if (dryRun) return uit;
@@ -366,7 +366,7 @@ export async function GET(req: NextRequest) {
 
   // Loud: a real erasure becoming due is a compliance event, not routine noise.
   console.warn(
-    `[CRON-RETENTION] ${purge.length} account(s) past their 7-year retention window` +
+    `[CRON-RETENTION] ${purge.length} accounts past their 7-year retention window` +
       (dryRun ? " — DRY RUN, nothing will be erased." : " — ERASING NOW.")
   );
 
@@ -438,7 +438,7 @@ async function purgeOneUser(
   // Recursive: keys are `${userId}/${year}/Q${q}/${file}`, and list() only
   // returns one level at a time.
   const removed = await removePrefixRecursive(pipeline, prefix);
-  console.warn(`[CRON-RETENTION] removed ${removed} object(s) under ${prefix}`);
+  console.warn(`[CRON-RETENTION] removed ${removed} objects under ${prefix}`);
 
   // ── 2. The rows ────────────────────────────────────────────────────
   const { error: docErr } = await pipeline.from("documents").delete().eq("user_id", userId);

@@ -142,6 +142,7 @@ import { onRowTap } from '@/lib/row-tap'
 // overneemt en het minst uit het hoofd kent. Zie CopyButton.tsx.
 import { CopyButton } from '@/components/ui/CopyButton'
 import { copyToClipboard } from '@/lib/clipboard'
+import { telWoord, vervoeg } from '@/lib/nl-plural'
 
 // ─── Design tokens — BoekBrug Design System v1.0 (Material You) ───────────────
 const FONT     = "'Roboto', -apple-system, sans-serif"
@@ -856,8 +857,13 @@ export default function IncomingManageClient({
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: 'Inkoopfacturen betaald', // [TAAL-DB] stored notification content — Dutch by design
-            body: `${okCount} inkoopfacturen zijn gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
+            body: `${telWoord(okCount, 'inkoopfactuur')} ${vervoeg(okCount, 'is', 'zijn')} gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
             type: 'payment',
+            // [MELDING-TIK] Een bundel heeft geen één factuur om naartoe te gaan, dus hij landt op
+            // het tabblad dat exact deze rijen houdt. Alle 14 rijen met deze titel stonden zonder
+            // link. (De body zei ook "1 inkoopfacturen" als er precies één lukte — okCount is een
+            // teller en de zin ging ervan uit dat hij nooit 1 zou zijn.)
+            link: '/dashboard/incoming/manage?filter=paid',
           }),
         })
       } catch { /* non-blocking — payments already succeeded */ }
@@ -2053,6 +2059,12 @@ export default function IncomingManageClient({
             title: 'Inkoopfactuur betaald', // [TAAL-DB] stored notification content — Dutch by design
             body: `Inkoopfactuur ${ctx.number} is gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
             type: 'payment',
+            // [MELDING-TIK] Deze melding ging nergens heen: 96 van de 96 rijen met deze titel
+            // stonden zonder link in de database, en een tik erop deed dus letterlijk niets. Het
+            // deep-link mechanisme waar hij naartoe hoort bestond al — ?focus= hierboven draagt
+            // zelfs de tag [BRIDGE-NOTIF], "deep-link focus from a notification" — en de id van
+            // de factuur staat op deze regel in ctx. Er is nooit iemand op teruggekomen.
+            link: `/dashboard/incoming/manage?focus=${ctx.id}`,
           }),
         })
       } catch { /* non-blocking — payment already succeeded */ }

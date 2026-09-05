@@ -825,7 +825,11 @@ export default function FacturenClient({
               body: `Factuur ${ctx.number} is gemarkeerd als betaald.`, // [TAAL-DB] stored notification content — Dutch by design
               type: 'payment',
               // [BRIDGE-NOTIF] dead-click fix: open the invoices list.
-              link: '/dashboard/facturen',
+              // [MELDING-TIK] En nu de factuur zelf. De lijst was al beter dan niets — dat was de
+              // hele dead-click fix — maar ctx.id staat hier, dus de melding kan de eigenaar op de
+              // factuur zetten waar hij over gaat in plaats van op een scherm waarop hij hem
+              // vervolgens zoekt tussen alle andere.
+              link: `/dashboard/invoice/${ctx.id}`,
             }),
           })
         } catch { /* non-blocking — payment already succeeded */ }

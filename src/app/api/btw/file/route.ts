@@ -19,6 +19,7 @@ import { loadDrawerWitness } from "@/lib/drawer-witness";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 // [TZ] "Has this quarter ended?" is an Amsterdam-day question — see the filing-window gate below.
 import { amsterdamToday, formatDateNL } from "@/lib/format-nl";
+import { telWoord, vervoeg } from "@/lib/nl-plural";
 
 function parsePeriod(year: unknown, quarter: unknown): { year: number; quarter: number } | null {
   const y = Number(year);
@@ -183,10 +184,10 @@ export async function POST(req: NextRequest) {
     // invisible to the gate, so a quarter with unconfirmed purchases could pass it unchallenged.
     // It also removes a query and a fail-open/fail-closed branch: if the engine read fails, the
     // whole request fails, which is the correct fail-closed behaviour for a filing gate.
-    if (unconfirmedIncomingCount > 0) blockers.push(`${unconfirmedIncomingCount} inkoopfactu(u)r(en) in dit kwartaal zijn nog niet gecontroleerd — hun bedrag en BTW staan nog niet in de cijfers`);
+    if (unconfirmedIncomingCount > 0) blockers.push(`${telWoord(unconfirmedIncomingCount, "inkoopfactuur")} in dit kwartaal ${vervoeg(unconfirmedIncomingCount, "is", "zijn")} nog niet gecontroleerd — het bedrag en de BTW staan nog niet in de cijfers`);
     if (result.cashOmzetZonderBtw > 0) blockers.push(`er staat nog omzet zonder BTW-tarief (contant, bank of niet-gesplitste kassadag) — de verschuldigde BTW is daardoor mogelijk te laag`);
-    if (datelessVerifiedCount > 0) blockers.push(`${datelessVerifiedCount} bevestigde factu(u)r(en) hebben geen datum en tellen niet mee in dit kwartaal`);
-    if (undatedPaidCount > 0) blockers.push(`${undatedPaidCount} betaalde factu(u)r(en) missen een betaaldatum — onder kasstelsel kan de BTW niet in het juiste kwartaal worden geplaatst`);
+    if (datelessVerifiedCount > 0) blockers.push(`${telWoord(datelessVerifiedCount, "bevestigde factuur")} ${vervoeg(datelessVerifiedCount, "heeft", "hebben")} geen datum en ${vervoeg(datelessVerifiedCount, "telt", "tellen")} niet mee in dit kwartaal`);
+    if (undatedPaidCount > 0) blockers.push(`${telWoord(undatedPaidCount, "betaalde factuur")} ${vervoeg(undatedPaidCount, "mist", "missen")} een betaaldatum — onder kasstelsel kan de BTW niet in het juiste kwartaal worden geplaatst`);
 
     // [KAS-NEGATIEF] …and the drawer. This gate listed four signals and not this one, while
     // /dashboard/klaar counts a below-zero drawer as a MISSING item (it cannot reach "klaar"

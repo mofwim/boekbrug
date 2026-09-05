@@ -7,6 +7,8 @@
 // mean "this subscription is dead, delete it" — is a pure arithmetic core the
 // sender can't get subtly wrong.
 
+import { safeNotificationLink } from "./notification-link";
+
 /** The JSON the service worker's `push` handler receives and renders. */
 export interface PushPayload {
   title: string;
@@ -26,8 +28,12 @@ export function buildPushPayload(n: {
   const body = (n.body ?? "").trim();
   // A relative in-app link is safe to open; anything else falls back to the
   // dashboard so a bad/absolute link can never send the user off-app.
-  const link = (n.link ?? "").trim();
-  const url = link.startsWith("/") ? link : "/dashboard";
+  //
+  // [MELDING-TIK] The check used to be `link.startsWith("/")`, written here and nowhere else.
+  // It has two problems that safeNotificationLink fixes: "//evil.example/x" starts with a slash
+  // and is a complete off-site URL, and the bell — which opens the same value — never checked at
+  // all. One function now answers the question for the device and for the screen.
+  const url = safeNotificationLink(n.link) ?? "/dashboard";
   // The service worker shows notifications with the same tag ON TOP OF each other: a second one
   // REPLACES the first. That is right for a repeat about the SAME thing and wrong for two different
   // ones, so the tag is the kind PLUS where it points.

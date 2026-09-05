@@ -427,6 +427,14 @@ export async function POST(req: NextRequest) {
           ? `Factuur ${inv.invoice_number ?? ""} is gekoppeld aan een banktransactie en gemarkeerd als betaald.`
           : `Deelbetaling van € ${(row.applied ?? 0).toFixed(2)} geboekt op factuur ${inv.invoice_number ?? ""}. Nog openstaand: € ${remaining.toFixed(2)}.`,
         type: "payment",
+        // [MELDING-TIK] De DERDE tak. [NOTIF-DEADEND] repareerde dezelfde melding op regel 551 en
+        // 903 en liet deze staan — de toelichting daar zegt zelfs "de enige melding over het geld
+        // van de eigenaar was die je niet kon openen", en dat gold hier daarna nog steeds. Dit is
+        // waarom het scriptje dat elke createNotification zonder link opzoekt nu in de gates staat:
+        // met de hand "alle plekken" langsgaan miste er één van de drie, in hetzelfde bestand.
+        link: inv.direction === "incoming"
+          ? `/dashboard/incoming/manage?focus=${invoiceId}`
+          : `/dashboard/invoice/${invoiceId}`,
       });
       if (unassigned > 0.01) {
         await createNotification({

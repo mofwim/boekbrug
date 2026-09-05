@@ -7,6 +7,7 @@
 //
 import type { RegimeFlag } from "./regime-flags";
 import { BAD_DEBT_MIN_EUR } from "./bad-debt";
+import { telWoord, vervoeg } from "./nl-plural";
 
 // THE SCORE IS NOT COSMETIC. Every point is earned by a PROVABLE condition:
 //   score = 100 × Σ(weight·subscore over APPLICABLE dimensions) / Σ(weight over applicable)
@@ -506,7 +507,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
               ? "1 bankregel automatisch als privé/overboeking/belasting geboekt"
               : `${autoExcluded} bankregels automatisch als privé/overboeking/belasting geboekt`,
           detail:
-            "Deze regel(s) zijn automatisch ingedeeld als privé, overboeking of belasting en tellen daarom NIET mee in je omzet, kosten of BTW. Controleer eenmalig of er geen zakelijke ontvangst of kost tussen zit — die zou anders buiten je boekhouding vallen.",
+            `${vervoeg(autoExcluded, "Deze regel is", "Deze regels zijn")} automatisch ingedeeld als privé, overboeking of belasting en ${vervoeg(autoExcluded, "telt", "tellen")} daarom NIET mee in je omzet, kosten of BTW. Controleer eenmalig of er geen zakelijke ontvangst of kost tussen zit — die zou anders buiten je boekhouding vallen.`,
           fix: { label: "Controleer", href: reviewHref },
         });
       }
@@ -598,7 +599,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       title: undatedPaid === 1
         ? "1 betaalde factuur zonder betaaldatum"
         : `${undatedPaid} betaalde facturen zonder betaaldatum`,
-      detail: "Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. Deze betaalde factu(u)r(en) hebben geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.",
+      detail: `Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. ${vervoeg(undatedPaid, "Deze betaalde factuur heeft", "Deze betaalde facturen hebben")} geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.`,
       fix: FIX.bankQuarter(s.year, s.quarter),
     });
   }
@@ -794,9 +795,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
     const n = s.vatClawback.count;
     risks.push({
       severity: "risk",
-      title: `${n} onbetaalde inkoopfactu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.vatClawback.repayableBtw)} voorbelasting terugbetalen`,
+      title: `${telWoord(n, "onbetaalde inkoopfactuur")} >1 jaar — €${euro(s.vatClawback.repayableBtw)} voorbelasting terugbetalen`,
       detail:
-        "Deze inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open in je administratie. " +
+        `${vervoeg(n, "Deze inkoopfactuur staat", "Deze inkoopfacturen staan")} meer dan een jaar na de vervaldatum open in je administratie. ` +
         "De BTW die je hierover in aftrek bracht wordt dan weer verschuldigd (art. 29 lid 7 Wet OB). " +
         "Heb je ze wél betaald? Koppel de bankbetaling of zet ze op betaald. Zo niet, dan hoort dit bedrag " +
         "terug in je aangifte — dit wordt NIET automatisch verrekend.",
@@ -812,9 +813,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
     const n = s.badDebt.count;
     risks.push({
       severity: "risk",
-      title: `${n} onbetaalde factu${n === 1 ? "ur" : "ren"} >1 jaar — €${euro(s.badDebt.reclaimableBtw)} BTW terugvraagbaar`,
+      title: `${telWoord(n, "onbetaalde factuur")} >1 jaar — €${euro(s.badDebt.reclaimableBtw)} BTW terugvraagbaar`,
       detail:
-        "Deze verkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De BTW die je hierover hebt afgedragen kun je terugvragen (oninbare vordering, art. 29 Wet OB). Dit wordt NIET automatisch verrekend — bespreek met je boekhouder in welk tijdvak je het terugvraagt.",
+        `${vervoeg(n, "Deze verkoopfactuur staat", "Deze verkoopfacturen staan")} meer dan een jaar na de vervaldatum open. De BTW die je hierover hebt afgedragen kun je terugvragen (oninbare vordering, art. 29 Wet OB). Dit wordt NIET automatisch verrekend — bespreek met je boekhouder in welk tijdvak je het terugvraagt.`,
       fix: FIX.facturen,
     });
   }

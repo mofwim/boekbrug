@@ -246,6 +246,7 @@ export interface ClosingPackageResult {
 // because the twenty existing callers import them from this file and their behaviour is unchanged.
 export { isVerifiedForPackage, effectiveDirection } from "./package-attribution";
 import { isVerifiedForPackage, effectiveDirection } from "./package-attribution";
+import { telWoord, vervoeg } from "./nl-plural";
 
 // ─── Helpers (pure) ─────────────────────────────────────────────────────────────
 
@@ -1077,7 +1078,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     if (turnoverClosing.exceptions.length > 0) {
       warnings.push({
         code: "turnover_exceptions",
-        message: `Dagomzet: ${turnoverClosing.exceptions.length} dag(en) sluiten niet aan (zie dagomzet.csv) — controleer voor de aangifte.`,
+        message: `Dagomzet: ${telWoord(turnoverClosing.exceptions.length, "dag", "dagen")} ${vervoeg(turnoverClosing.exceptions.length, "sluit", "sluiten")} niet aan (zie dagomzet.csv) — controleer voor de aangifte.`,
       });
     }
   }
@@ -1091,7 +1092,7 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     if (cardReconciliation.grossMismatchDays > 0) {
       warnings.push({
         code: "card_gross_mismatch",
-        message: `Kaart-reconciliatie: ${cardReconciliation.grossMismatchDays} dag(en) waar kassa-PIN ≠ terminal-afrekening (zie kaart-reconciliatie.csv) — een echt verschil, controleer voor de aangifte.`,
+        message: `Kaart-reconciliatie: ${telWoord(cardReconciliation.grossMismatchDays, "dag", "dagen")} waar kassa-PIN ≠ terminal-afrekening (zie kaart-reconciliatie.csv) — een echt verschil, controleer voor de aangifte.`,
       });
     }
   }
@@ -1393,7 +1394,7 @@ export function datelessWarning(d: { count: number; labels: string[]; checked: b
   return {
     code: "invoice_no_date",
     message:
-      `${d.count} geverifieerde factu(u)r(en) hebben GEEN datum en vallen daardoor buiten elk ` +
+      `${telWoord(d.count, "geverifieerde factuur")} ${vervoeg(d.count, "heeft", "hebben")} GEEN datum en ${vervoeg(d.count, "valt", "vallen")} daardoor buiten elk ` +
       `kwartaalpakket — hun BTW/voorbelasting ontbreekt tot je een datum toekent: ${shown}${more}.`,
   };
 }
@@ -1574,7 +1575,7 @@ export function cashCostWithoutReceiptWarning(count: number, total: number): Clo
   return {
     code: "cash_cost_without_receipt",
     message:
-      `${count} contante kostenpost(en) van samen ${formatEuroNL(total)} hebben geen bon. ` +
+      `${telWoord(count, "contante kostenpost", "contante kostenposten")} van samen ${formatEuroNL(total)} ${vervoeg(count, "heeft", "hebben")} geen bon. ` +
       `Het bedrag telt volledig mee in de kosten, maar er is geen voorbelasting (5b) op ` +
       `terug te vragen zolang de bon ontbreekt.`,
   };
@@ -1601,7 +1602,7 @@ export function costWithoutInvoiceWarning(count: number, total: number): Closing
   return {
     code: "bank_cost_without_invoice",
     message:
-      `${count} banktransactie(s) van samen ${formatEuroNL(total)} zijn geboekt als zakelijke kosten, ` +
+      `${telWoord(count, "banktransactie", "banktransacties")} van samen ${formatEuroNL(total)} ${vervoeg(count, "is", "zijn")} geboekt als zakelijke kosten, ` +
       `maar er hoort geen inkoopfactuur bij. Het bedrag telt wel mee in de kosten, de BTW erop ` +
       `NIET — zonder factuur is er geen voorbelasting (5b) om terug te vragen. Controleer of de ` +
       `facturen nog geleverd kunnen worden voordat de aangifte weggaat.`,
@@ -1624,7 +1625,7 @@ export function sharedOutsideWarning(outsideCount: number, checked = true): Clos
   return {
     code: "shared_outside_quarter",
     message:
-      `${outsideCount} gedeeld(e) bestand(en) hoort/horen bij een ander kwartaal of hebben geen ` +
+      `${telWoord(outsideCount, "gedeeld bestand", "gedeelde bestanden")} ${vervoeg(outsideCount, "hoort", "horen")} bij een ander kwartaal of ${vervoeg(outsideCount, "heeft", "hebben")} geen ` +
       `kwartaal, en zitten NIET in dit pakket — controleer of ze bij dit kwartaal thuishoren.`,
   };
 }
@@ -1906,8 +1907,8 @@ export async function summarizeClosingPackage(args: {
     warnings.unshift({
       code: "bank_unresolved",
       message:
-        `${unresolvedBankCount} banktransactie(s) van samen ${formatEuroNL(unresolvedBankTotal)} zijn nog niet ` +
-        `geplaatst: geen factuur en geen categorie. Ze tellen daardoor in geen enkel cijfer mee — ` +
+        `${telWoord(unresolvedBankCount, "banktransactie", "banktransacties")} van samen ${formatEuroNL(unresolvedBankTotal)} ${vervoeg(unresolvedBankCount, "is", "zijn")} nog niet ` +
+        `geplaatst: geen factuur en geen categorie. ${vervoeg(unresolvedBankCount, "Hij telt", "Ze tellen")} daardoor in geen enkel cijfer mee — ` +
         `niet in omzet, niet in kosten en niet in de voorbelasting.`,
     });
   }
@@ -2792,9 +2793,9 @@ export async function buildClosingPackageZip(args: {
     if (kasResolution.undatedPaidCount > 0) {
       warnings.push({
         code: "kas_undated_paid",
-        message: `${kasResolution.undatedPaidCount} betaalde factu(u)r(en) hebben geen betaaldatum — onder kasstelsel kan de betaalde BTW daardoor niet in het juiste kwartaal worden geplaatst. Koppel de bankbetaling of vul de betaaldatum in; anders is dit concept mogelijk te laag.`,
+        message: `${telWoord(kasResolution.undatedPaidCount, "betaalde factuur")} ${vervoeg(kasResolution.undatedPaidCount, "heeft", "hebben")} geen betaaldatum — onder kasstelsel kan de betaalde BTW daardoor niet in het juiste kwartaal worden geplaatst. Koppel de bankbetaling of vul de betaaldatum in; anders is dit concept mogelijk te laag.`,
       });
-      regimeNotes.push(`LET OP: ${kasResolution.undatedPaidCount} betaalde factu(u)r(en) zonder betaaldatum — concept mogelijk te laag.`);
+      regimeNotes.push(`LET OP: ${telWoord(kasResolution.undatedPaidCount, "betaalde factuur")} zonder betaaldatum — concept mogelijk te laag.`);
     }
   }
 
@@ -2822,7 +2823,7 @@ export async function buildClosingPackageZip(args: {
     warnings.push({
       code: "vat_clawback_art29_7",
       message:
-        `${clawback.eligible.length} inkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `${telWoord(clawback.eligible.length, "inkoopfactuur")} ${vervoeg(clawback.eligible.length, "staat", "staan")} meer dan een jaar na de vervaldatum open. De ` +
         `voorbelasting daarop (${formatEuroNL(clawback.totalRepayableBtw)}) wordt weer verschuldigd ` +
         `(art. 29 lid 7 Wet OB) en is hier NIET verrekend. Zijn ze wél betaald, dan vervalt dit.`,
     });
@@ -2833,7 +2834,7 @@ export async function buildClosingPackageZip(args: {
     warnings.push({
       code: "bad_debt_art29_1",
       message:
-        `${badDebt.eligible.length} verkoopfactu(u)r(en) staan meer dan een jaar na de vervaldatum open. De ` +
+        `${telWoord(badDebt.eligible.length, "verkoopfactuur")} ${vervoeg(badDebt.eligible.length, "staat", "staan")} meer dan een jaar na de vervaldatum open. De ` +
         `afgedragen BTW daarop (${formatEuroNL(badDebt.totalReclaimableBtw)}) is terug te vragen ` +
         `(oninbare vordering, art. 29 Wet OB) en is hier NIET verrekend.`,
     });
@@ -2870,7 +2871,7 @@ export async function buildClosingPackageZip(args: {
     warnings.push({
       code: "icp_problems",
       message:
-        `ICP-opgaaf: ${icp.problems.length} verkoopfactu(u)r(en) aan EU-ondernemers kunnen zo niet worden opgegeven ` +
+        `ICP-opgaaf: ${telWoord(icp.problems.length, "verkoopfactuur")} aan EU-ondernemers ${vervoeg(icp.problems.length, "kan", "kunnen")} zo niet worden opgegeven ` +
         "(BTW berekend, of een BTW-nummer dat niet klopt) — zie concept-icp-opgaaf.csv.",
     });
   }
