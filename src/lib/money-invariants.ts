@@ -356,18 +356,52 @@ export function findMoneyViolations(input: {
     for (const group of byDocKey.values()) {
       if (group.length < 2) continue;
       const totals = group.map((g) => Math.abs(num(g.totalIncBtw)));
+      const hoogste = Math.max(...totals);
+      const laagste = Math.min(...totals);
       // The biggest copy is the one that stays; everything beyond it is counted double.
-      const extra = round2(totals.reduce((s, v) => s + v, 0) - Math.max(...totals));
+      const extra = round2(totals.reduce((s, v) => s + v, 0) - hoogste);
       const counts = group.map((g) => statusWord(g.status));
+      const wie =
+        `${group[0].invoiceNumber ?? "Een factuur"} van ${group[0].clientName ?? "een leverancier"}`;
+
+      // ── [KOPIE-ONEENS] Do the copies AGREE about the amount? ──
+      //
+      // Everything above this line treats a duplicate as one cost entered twice: keep the
+      // original, ignore the copy, done. That advice is right exactly when the copies say the same
+      // thing — and it is unsafe when they do not, because then one of the two READINGS is wrong
+      // and there is no way to tell which by looking at the sizes.
+      //
+      // The old code resolved that silently: `extra = Σ − max` keeps the LARGEST as the survivor.
+      // Measured live at the time of writing, on ten live duplicate groups: six agreed to the cent,
+      // four did not, and the worst was ATAPACK 26302362 at € 579,63 against € 4.917,90 — a factor
+      // 8,5, with one copy already booked as paid. "Keep the original" there can leave the books
+      // carrying eight times the real cost, and the sentence would not have hinted at it.
+      //
+      // Material means BOTH a cent floor and a share of the invoice: € 12,46 on € 1.348 is a
+      // line-level rounding difference between two reads of the same paper (that is Enka 26701681,
+      // and it must stay quiet), while € 17,42 on € 239 is not. One threshold alone gets one of
+      // those two wrong.
+      const spreiding = round2(hoogste - laagste);
+      const oneens = spreiding > Math.max(1, hoogste * 0.02);
+
       out.push({
         kind: "duplicate_live_pair",
         entityId: group[0].id,
-        euros: extra > MONEY_EPSILON ? extra : Math.max(...totals),
-        message:
-          `${group[0].invoiceNumber ?? "Een factuur"} van ${group[0].clientName ?? "een leverancier"} staat ` +
-          `${group.length} keer in de administratie (${counts.join(" en ")}). Dezelfde kost telt zo dubbel mee ` +
-          `in je kosten en je voorbelasting. Bewaar het origineel en zet de kopie bij Genegeerd; ` +
-          `is de kopie al als betaald gemeld, draai die betaling daar eerst terug.`,
+        // Unchanged, and deliberately: whichever copy is right, the cost still appears more than
+        // once, so Σ − max stays an honest LOWER bound on what is double-counted. What the
+        // disagreement adds is that the surviving AMOUNT may also be wrong — a different problem,
+        // which the sentence below states rather than folding into this number.
+        euros: extra > MONEY_EPSILON ? extra : hoogste,
+        message: oneens
+          ? `${wie} staat ${group.length} keer in de administratie (${counts.join(" en ")}), en de ` +
+            `versies zijn het ONEENS over het bedrag: ${eur(laagste)} tegenover ${eur(hoogste)}. ` +
+            `Dat is geen dubbele boeking alleen — één van beide is verkeerd gelezen. Leg ze naast ` +
+            `de papieren factuur voordat je er een weggooit: welke van de twee blijft staan bepaalt ` +
+            `hier ook welk bedrag in je kosten en je voorbelasting terechtkomt.`
+          : `${wie} staat ${group.length} keer in de administratie (${counts.join(" en ")}). ` +
+            `Dezelfde kost telt zo dubbel mee in je kosten en je voorbelasting. Bewaar het origineel ` +
+            `en zet de kopie bij Genegeerd; is de kopie al als betaald gemeld, draai die betaling ` +
+            `daar eerst terug.`,
       });
     }
   }

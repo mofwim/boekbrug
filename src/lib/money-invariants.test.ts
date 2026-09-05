@@ -415,6 +415,77 @@ test("[DUBBEL-GEBOEKT] paid twice — the 26/1876 case — is the worst copy and
   assert.match(dup[0].message, /betaald en betaald/);
 });
 
+// ── [KOPIE-ONEENS] Copies that disagree about the amount ────────────────────────────────────
+// Ten live duplicate groups on the production administration: six agreed to the cent, four did
+// not. These four are those four.
+
+test("[KOPIE-ONEENS] the ATAPACK case: two readings of one invoice, a factor 8,5 apart", () => {
+  // 26302362 — € 579,63 against € 4.917,90, one copy already booked as paid. "Keep the original
+  // and ignore the copy" is the wrong instruction here: whichever copy survives also decides
+  // which AMOUNT lands in the kosten and the voorbelasting.
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26302362", clientName: "ATAPACK Cash & Carry B.V.", status: "paid", amountPaid: 579.63, totalExBtw: null, btwAmount: null, totalIncBtw: 579.63 }),
+      inv({ id: "b", invoiceNumber: "26302362", clientName: "ATAPACK Cash & Carry B.V.", status: "received", amountPaid: 0, totalExBtw: null, btwAmount: null, totalIncBtw: 4917.90 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1, `expected exactly one pair finding: ${JSON.stringify(v)}`);
+  assert.match(dup[0].message, /ONEENS/, "the sentence does not say the two readings contradict");
+  assert.match(dup[0].message, /579,63/, "the lower reading is not named");
+  assert.match(dup[0].message, /4\.917,90/, "the higher reading is not named");
+  assert.match(dup[0].message, /verkeerd gelezen/, "it does not say one of them is misread");
+  // And it must NOT hand out the advice that belongs to matching copies.
+  assert.doesNotMatch(dup[0].message, /Genegeerd/,
+    "it still tells the owner to archive a copy — which silently picks one of two contradicting amounts");
+});
+
+test("[KOPIE-ONEENS] copies that agree keep the old, correct advice", () => {
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "202616271", clientName: "Vegimex BV", status: "paid", amountPaid: 732.04, totalExBtw: null, btwAmount: null, totalIncBtw: 732.04 }),
+      inv({ id: "b", invoiceNumber: "202616271", clientName: "Vegimex BV", status: "received", amountPaid: 0, totalExBtw: null, btwAmount: null, totalIncBtw: 732.04 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1);
+  assert.match(dup[0].message, /Genegeerd/, "identical copies lost the archive-the-copy advice");
+  assert.doesNotMatch(dup[0].message, /ONEENS/, "identical copies are reported as contradicting");
+});
+
+test("[KOPIE-ONEENS] a rounding difference between two reads stays quiet", () => {
+  // Enka 26701681 — € 12,46 apart on € 1.348,14, which is 0,9 %. That is two reads of the same
+  // paper differing on a line, not a misread total. A threshold in cents alone would flag it and
+  // the finding would stop being believed; a threshold in percent alone would miss Doyum below.
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26701681", clientName: "Enka Horeca B.V.", status: "paid", amountPaid: 1335.68, totalExBtw: null, btwAmount: null, totalIncBtw: 1335.68 }),
+      inv({ id: "b", invoiceNumber: "26701681", clientName: "Enka Horeca B.V.", status: "paid", amountPaid: 1348.14, totalExBtw: null, btwAmount: null, totalIncBtw: 1348.14 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1, "the duplicate itself must still be reported");
+  assert.doesNotMatch(dup[0].message, /ONEENS/, "a 0,9 % rounding difference is reported as a contradiction");
+});
+
+test("[KOPIE-ONEENS] a small invoice with the same gap in euros DOES speak", () => {
+  // Doyum 26700385 — € 17,42 apart on € 239,47 = 7,3 %. Bigger than Enka's gap in percent and
+  // smaller in euros: this pair is the reason the rule needs both floors.
+  const v = findMoneyViolations({
+    invoices: [
+      inv({ id: "a", invoiceNumber: "26700385", clientName: "Doyum Food B.V.", status: "paid", amountPaid: 222.05, totalExBtw: null, btwAmount: null, totalIncBtw: 222.05 }),
+      inv({ id: "b", invoiceNumber: "26700385", clientName: "Doyum Food B.V.", status: "paid", amountPaid: 239.47, totalExBtw: null, btwAmount: null, totalIncBtw: 239.47 }),
+    ],
+    links: [],
+  });
+  const dup = v.filter((x) => x.kind === "duplicate_live_pair");
+  assert.equal(dup.length, 1);
+  assert.match(dup[0].message, /ONEENS/, "7,3 % apart is reported as agreeing");
+});
+
 test("[DUBBEL-GEBOEKT] two suppliers who both number an invoice 2026-001 are not a pair", () => {
   // Every January is full of these. A false alarm here is how the audit stops being believed.
   const v = findMoneyViolations({

@@ -26171,3 +26171,34 @@ test("[JAARSTAND] the filings read is a list, not four recomputes", () => {
   assert.match(lib, /export async function readFiledQuartersOfYear/,
     "the year-level reader has left filed-quarter.ts, so btw_filings is read from two places");
 });
+
+// ── [KOPIE-ONEENS] A duplicate whose copies disagree is a READING problem ─────────────────────
+//
+// duplicate_live_pair groups by (type | supplier | number) and deliberately ignores the amount —
+// that is what lets it find a pair at all. But it then resolved the pair silently: `Σ − max` keeps
+// the LARGEST copy and the sentence said "keep the original, archive the copy".
+//
+// Measured live: of ten live duplicate groups six agreed to the cent and four did not, the worst
+// being ATAPACK 26302362 at € 579,63 against € 4.917,90 — a factor 8,5, one copy already paid.
+// There, "keep the original" can leave the books carrying eight times the real cost, and picking
+// the biggest is not a tie-break, it is a guess about which of two readings is wrong.
+
+test("[KOPIE-ONEENS] the duplicate rule notices when its own copies contradict", () => {
+  const mod = code("src/lib/money-invariants.ts");
+  assert.match(mod, /const oneens = spreiding > Math\.max\(1, hoogste \* 0\.02\)/,
+    "the two-floor threshold is gone. A cents-only floor flags Enka 26701681 (€ 12,46 on € 1.348 " +
+      "= 0,9 %, a line rounding between two reads) and the finding stops being believed; a " +
+      "percent-only floor misses Doyum 26700385 (€ 17,42 on € 239). Both real, both measured");
+  assert.match(mod, /versies zijn het ONEENS over het bedrag/,
+    "the disagreement sentence is gone, so a pair that contradicts gets the advice written for a " +
+      "pair that agrees");
+  assert.match(mod, /verkeerd gelezen/,
+    "the sentence no longer says that one of the two readings is wrong — which is the whole " +
+      "difference between this and an ordinary double booking");
+
+  // The euros field must stay the LOWER bound it always was. Folding the disagreement into it
+  // would put a number on 'which reading is wrong', which nothing here knows.
+  assert.match(mod, /euros: extra > MONEY_EPSILON \? extra : hoogste/,
+    "the exposure figure changed with the message. Whichever copy is right the cost still appears " +
+      "twice, so Σ − max stays honest; the disagreement is a SECOND problem and is stated in words");
+});
