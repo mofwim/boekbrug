@@ -36,6 +36,9 @@
 // all-time count read as a monthly one overstates the case by however long the client has been on
 // the platform — and this whole file exists to be believed.
 
+// [CENT] Afronden op centen staat op één plek in dit project — zie money-rounding.ts.
+import { round2 } from "./invoice-totals";
+
 /** Actions the app performed, as counted by the caller over ONE named period. */
 export interface WorkDoneCounts {
   /** Invoices pulled out of e-mail without anyone forwarding or uploading them. */
@@ -122,5 +125,5 @@ export function estimateEuros(
   const minutes = estimateMinutes(ledger, minutesPerAction);
   if (minutes === null) return null;
   if (typeof hourlyRate !== "number" || !Number.isFinite(hourlyRate) || hourlyRate <= 0) return null;
-  return Math.round((minutes / 60) * hourlyRate * 100) / 100;
+  return round2((minutes / 60) * hourlyRate);
 }
