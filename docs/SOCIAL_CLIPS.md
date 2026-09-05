@@ -140,6 +140,31 @@ Kort, geen hashtag-muur, en de laatste regel is altijd dezelfde vraag: probeer h
 Deze werkt op YouTube, in de kennisbank en als antwoord onder een vraag in een zzp-groep — plekken
 waar iemand al heeft besloten te kijken. Op Reels of TikTok verliest hij het van 01 en 03.
 
+## De rondleiding, veld voor veld
+
+**11 · Een factuur maken, elk veld uitgelegd** — 65 s, 1080×1920
+
+> Elk vakje op een factuur, en waarom het er staat.
+>
+> Het nummer dat vanzelf doortelt · je KVK en btw-nummer, die er wettelijk op moeten · je klant ·
+> wat je hebt geleverd, hoeveel en tegen welk tarief. En onderaan telt alles zichzelf op.
+>
+> boekbrug.nl/factuur-maken
+
+**Het verschil met clip 10 is niet de lengte maar waar de kijker kijkt.** Zeggen "hier vul je je
+klant in" terwijl het hele formulier even hard in beeld staat, wijst nergens naar. Per stap komt één
+blok in het MIDDEN te staan en gaat de rest achter een waas — `focusBlock()` doet allebei.
+
+"Het midden" is trouwens niet het midden van het scherm: bovenin staat de stapbalk en onderin de
+ondertitel, dus het midden van wat de kijker kán zien ligt hoger. `centerBlock()` rekent dat uit; op
+het echte midden mikken zet het blok te laag.
+
+En de velden worden per BLOK geteld, niet over de hele pagina — met een controle op het aantal
+(`expectFields`). Een globale index ("het 16e input-veld") verschuift stil zodra iemand een veld
+toevoegt: de opname slaagt en filmt het verkeerde vakje, met een bijschrift dat iets anders belooft.
+Dat is precies het soort fout dat je pas ziet als de clip al gepost is, dus faalt de opname nu in
+plaats daarvan.
+
 ## Waar te posten
 
 - **LinkedIn** is voor dit publiek waarschijnlijk het sterkst: Nederlandse zzp'ers én de boekhouders
