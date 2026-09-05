@@ -10808,6 +10808,34 @@ export const MESSAGES = {
   // [JAARSTAND] Het jaar in vier regels, boven het Kwartaaloverzicht. Nederlands is de bron; de
   // reden zelf komt woordelijk uit readiness en wordt NIET vertaald — die zin is al Nederlands en
   // een tweede vertaling ervan zou twee versies van hetzelfde gat opleveren.
+  // [KANTOOR-BESLUIT] Het werk van het kantoor, gegroepeerd naar WAT het is in plaats van naar
+  // WIENS het is. De zin bij een groep is die van readiness zelf en wordt hier NIET vertaald —
+  // hij is al Nederlands, en een tweede vertaling ervan zou twee versies van hetzelfde gat zijn.
+  'bh.werk.soort.kop': {
+    nl: 'Het werk, op soort',
+    ar: 'الشغل، حسب نوعه',
+    en: 'The work, by kind',
+  },
+  'bh.werk.soort.uitleg': {
+    nl: 'Dezelfde handeling bij meerdere klanten staat hier één keer. Tik om die klanten te zien.',
+    ar: 'نفس الإجراء عند عدة عملاء بيظهر هون مرة وحدة. اضغط لتشوف مين هنّ.',
+    en: 'One line per kind of work, however many clients it covers. Tap to see which.',
+  },
+  'bh.werk.soort.klanten': {
+    nl: '{n} klanten',
+    ar: '{n} عملاء',
+    en: '{n} clients',
+  },
+  'bh.werk.soort.klantenEen': {
+    nl: '1 klant',
+    ar: 'عميل واحد',
+    en: '1 client',
+  },
+  'bh.werk.soort.niets': {
+    nl: 'Geen openstaand werk bij je klanten.',
+    ar: 'ما في شغل معلّق عند عملائك.',
+    en: 'No open work at your clients.',
+  },
   'jaar.stand.kop': {
     nl: 'Het jaar in kwartalen',
     ar: 'السنة على أربعة أرباع',

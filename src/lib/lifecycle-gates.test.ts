@@ -35,6 +35,9 @@ import { categoryHint } from "./category-wait";
 import { moneyGroundedInText } from "./amount-grounding";
 // [JAARSTAND] De vier standen als WAARDE — de volgordefout die dit ving typechecktte perfect.
 import { yearStanding } from "./year-standing";
+// [KANTOOR-BESLUIT] De groepeersleutel als WAARDE — een sleutel die een constante teruggeeft
+// haalt elke broncontrole en vouwt het hele bord tot één regel.
+import { workKey } from "../modules/accountant/work-grouping";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 import { execSync } from "node:child_process";
@@ -26201,4 +26204,47 @@ test("[KOPIE-ONEENS] the duplicate rule notices when its own copies contradict",
   assert.match(mod, /euros: extra > MONEY_EPSILON \? extra : hoogste/,
     "the exposure figure changed with the message. Whichever copy is right the cost still appears " +
       "twice, so Σ − max stays honest; the disagreement is a SECOND problem and is stated in words");
+});
+
+// ── [KANTOOR-BESLUIT] The office sees the work, not only the clients ──────────────────────────
+//
+// AccountantWerkboard fetches /api/readiness once per client and summarizeBoard counts CLIENTS:
+// ready, almost, attention. Every figure the office reads is a number of clients and every row is
+// a client — which is fine at ten and stops working at eighty, because an accountant works by
+// habit (all the kassadagen, then all the unconfirmed invoices), not client by client.
+//
+// The strip that fixes it must stay a RE-CUT of the same answers. It may not judge, and it may not
+// keep a vocabulary of its own.
+
+test("[KANTOOR-BESLUIT] the work strip re-cuts readiness, and invents no kind of its own", () => {
+  const board = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(board, /import \{ groupWork \} from '\.\.\/work-grouping'/,
+    "the board no longer groups its rows by kind of work, so the office is back to one row per client");
+  assert.match(board, /groupWork\(rows[\s\S]{0,200}?state === 'ok'/,
+    "the grouping no longer filters on loaded rows. A row that is still loading or that failed has " +
+      "no titles, and turning it into a group would invent work nobody measured");
+
+  const mod = code("src/modules/accountant/work-grouping.ts");
+  // The whole point of deriving the key: no list of gap names to keep up to date.
+  assert.doesNotMatch(mod, /kassadag|betaaldatum|omzet zonder|voorbelasting/,
+    "work-grouping has grown a list of readiness' gap names. That list is wrong the day a gap is " +
+      "added and forgotten, and it fails silently — as one more row in a bucket nobody reads");
+  assert.match(mod, /\.replace\(\/uu\/g, "u"\)\.replace\(\/\(en\|s\)\$\/, ""\)/,
+    "the stem is gone. Without the uu collapse 'factuur' and 'facturen' are two kinds of work, and " +
+      "factuur is the one word this entire board is about");
+});
+
+test("[KANTOOR-BESLUIT] the grouping key still discriminates", () => {
+  // Asserted as VALUES: a key that returns a constant passes every source-level check above and
+  // collapses the whole board into one row.
+  const a = workKey("€172.081,57 omzet zonder BTW-tarief");
+  const b = workKey("€81.358,01 omzet zonder BTW-tarief");
+  const c = workKey("0 van 90 kassadagen geïmporteerd");
+  const d = workKey("3 betaalde facturen zonder betaaldatum");
+  const e = workKey("1 betaalde factuur zonder betaaldatum");
+  assert.equal(a, b, "two amounts of one gap are two kinds of work");
+  assert.equal(d, e, "singular and plural of one gap are two kinds of work");
+  assert.equal(new Set([a, c, d]).size, 3,
+    "three unrelated gaps collapsed — the key has stopped discriminating");
+  assert.notEqual(a, "", "a real readiness title produces an empty key");
 });

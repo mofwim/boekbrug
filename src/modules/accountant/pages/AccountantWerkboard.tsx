@@ -28,6 +28,8 @@ import {
   type BoardRow,
   type BoardStatus,
 } from '../readiness-board'
+// [KANTOOR-BESLUIT] Hetzelfde bord, andere snede: per SOORT werk in plaats van per klant.
+import { groupWork } from '../work-grouping'
 
 // Same semantic colours as the owner's readiness screen (STATUS_META) so a client
 // sees the identical green/amber/red the accountant sees.
@@ -219,6 +221,15 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
   }, [clients, year, quarter, reloadKey, loadOne])
 
   const summary = useMemo(() => summarizeBoard(rows), [rows])
+  // [KANTOOR-BESLUIT] Alleen geladen rijen: een rij die nog laadt of niet gelezen kon worden heeft
+  // geen titels, en een groep eruit halen zou werk verzinnen dat niemand heeft gemeten.
+  const werkSoorten = useMemo(
+    () => groupWork(rows
+      .filter(r => r.state === 'ok' && (r.missingTitles?.length ?? 0) > 0)
+      .map(r => ({ id: r.id, name: r.name, missingTitles: r.missingTitles ?? [] }))),
+    [rows],
+  )
+  const [openSoort, setOpenSoort] = useState<string | null>(null)
   // [SMART-FILTER] status toggle (bestaand) + naam-zoeken (nieuw) samen.
   const visible = useMemo(() => {
     const q = query.trim()
@@ -321,6 +332,52 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
               </div>
             ))}
           </div>
+        )}
+
+        {/* ── [KANTOOR-BESLUIT] Het werk, op soort ──
+            De tellingen hierboven tellen KLANTEN, en elke rij hieronder is een klant. Dat leest
+            prima bij tien en houdt op bij tachtig: een boekhouder doet niet klant voor klant, maar
+            eerst alle kassadagen, dan alle onbevestigde facturen — één handeling, herhaald. Deze
+            strook snijdt exact dezelfde readiness-antwoorden op die manier. Ze oordeelt zelf niets;
+            de zinnen zijn die van readiness, woordelijk. */}
+        {werkSoorten.length > 0 && (
+          <section style={{ backgroundColor: M3.surface, borderRadius: R.lg, boxShadow: EL1, padding: '14px 16px' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>
+              {t('bh.werk.soort.kop')}
+            </p>
+            <p style={{ fontSize: 12, color: '#5F6368', margin: '4px 0 10px' }}>
+              {t('bh.werk.soort.uitleg')}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {werkSoorten.map(g => (
+                <div key={g.key}>
+                <button
+                  onClick={() => setOpenSoort(prev => (prev === g.key ? null : g.key))}
+                  className="pressable-row"
+                  style={{
+                    display: 'flex', alignItems: 'baseline', gap: 10, width: '100%', textAlign: 'start',
+                    background: openSoort === g.key ? '#F1F3F4' : 'transparent',
+                    border: '1px solid #E0E0E0', borderRadius: 8, padding: '9px 12px',
+                    cursor: 'pointer', font: 'inherit',
+                  }}
+                  aria-expanded={openSoort === g.key}
+                >
+                  <span style={{ fontSize: 13, color: '#202124', flex: 1 }}>{g.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#B3261E', whiteSpace: 'nowrap' }}>
+                    {g.clients.length === 1
+                      ? t('bh.werk.soort.klantenEen')
+                      : t('bh.werk.soort.klanten', { n: g.clients.length })}
+                  </span>
+                </button>
+                {openSoort === g.key && (
+                  <p style={{ fontSize: 12, color: '#5F6368', margin: '0 0 2px', paddingInlineStart: 12 }}>
+                    {g.clients.map(c => c.name).join(' · ')}
+                  </p>
+                )}
+                </div>
+              ))}
+            </div>
+          </section>
         )}
 
         {/* ── Filter ── */}
