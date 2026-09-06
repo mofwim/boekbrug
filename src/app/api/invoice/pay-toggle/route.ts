@@ -89,7 +89,9 @@ export async function POST(req: NextRequest) {
     // that is partly settled but still open.
     // [HAND-DUBBEL] client_name + total_inc_btw ride along: the duplicate question is per SUPPLIER,
     // and the sentence the owner reads names the amounts of both rows.
-    .select("id, invoice_number, status, direction, accountant_status, sender_id, receiver_id, amount_paid, client_name, total_inc_btw")
+    // [BON-DUBBEL] …and invoice_date, because a document with no readable number is paired on its
+    // amount, and then the dates are what say whether these can be one document at all.
+    .select("id, invoice_number, invoice_date, status, direction, accountant_status, sender_id, receiver_id, amount_paid, client_name, total_inc_btw")
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
@@ -149,13 +151,76 @@ export async function POST(req: NextRequest) {
           });
         } else {
           const rows = (Array.isArray(twins) ? twins : []) as DuplicateCandidateRow[];
+
+          // ── [BON-DUBBEL] The rows the NUMBER can never find ────────────────────────────────
+          //
+          // A photographed kassabon carries a minted stand-in ("CAMERA-1784373753563"), one per
+          // import, so the RPC above — which compares numbers — returns nothing for exactly the
+          // intake path most likely to hold the same document twice. The second candidate list is
+          // therefore read on the AMOUNT, and duplicate-payable.ts decides whether the pair is
+          // real: it will only report one when at least one side has no usable number, which is
+          // what keeps a monthly bill at a fixed price out of it.
+          //
+          // Deliberately NOT a second SQL function: this is one equality on the total plus the
+          // owner and the direction, and a query that narrow needs no place of its own. What must
+          // not move into SQL is the JUDGEMENT — that stays in the one module that holds it.
+          //
+          // The range is built on the SIGNED total, not its magnitude: a creditnota is stored
+          // negative, so a range around the absolute value would return invoices when the row at
+          // hand is a credit — and never the other credit that actually is its twin.
+          //
+          // [RLS-UIT] The owner filter uses LITERAL column names, and the first draft of it did
+          // not: `.eq(isIncoming ? "receiver_id" : "sender_id", …)` reads correctly and is
+          // unverifiable — the gate that walks every service-role query on the money line cannot
+          // see which column a ternary picks, and a computed column name is exactly where an owner
+          // filter can quietly stop being one. So it is the same `.or(...)` the ownership lookup at
+          // the top of this route uses; with the direction pinned it selects precisely this owner's
+          // rows on this side, and it can reach nobody else's — both halves demand this user's id.
+          //
+          // The reasoning lives HERE and not between the chained calls, which is where it was
+          // written first: that gate reads the raw source in a 900-character window from `.from(`,
+          // and eight lines of comment pushed the owner filter out of its view. A rule that is
+          // enforced by reading has a budget, and prose inside the chain spends it.
+          const bedrag = Number(inv.total_inc_btw ?? 0);
+          const CAP = 200;
+          const gelijkeBedragen = Math.abs(bedrag) > 0.005
+            ? await pipeline
+                .from("invoices")
+                .select("id, invoice_number, invoice_date, client_name, total_inc_btw, status, amount_paid")
+                .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+                .eq("direction", isIncoming ? "incoming" : "outgoing")
+                .neq("id", invoiceId)
+                .not("status", "in", '("archived","draft")')
+                .gte("total_inc_btw", bedrag - 0.005)
+                .lte("total_inc_btw", bedrag + 0.005)
+                .limit(CAP)
+            : { data: [], error: null };
+          if (gelijkeBedragen.error) {
+            // [NO-SILENT-EMPTY] A read that failed is not an answer of "no twin". Logged, and the
+            // number pass below still runs on what it did get.
+            console.warn("[BON-DUBBEL] kon niet nakijken of ditzelfde bedrag elders staat", {
+              invoiceId, userId: user.id, error: gelijkeBedragen.error.message,
+            });
+          } else if ((gelijkeBedragen.data?.length ?? 0) >= CAP) {
+            // A truncated look is not a complete one. It filters on the amount across every
+            // supplier, so a round number in a busy administration can fill the page — and the
+            // twin we are looking for may be the row that did not fit.
+            console.warn("[BON-DUBBEL] de bedragvergelijking is afgekapt en dus niet volledig", {
+              invoiceId, userId: user.id, bedrag, cap: CAP,
+            });
+          }
+          const zelfdeBedrag = (Array.isArray(gelijkeBedragen.data) ? gelijkeBedragen.data : []) as DuplicateCandidateRow[];
+
           // The same judgement the pay screen uses — supplier key and all. Restating it here would
           // be a second definition of "the same invoice", and they would answer differently the
           // first time either is touched.
+          const kandidaten = new Map<string, DuplicateCandidateRow>();
+          for (const r of [...rows, ...zelfdeBedrag]) if (r?.id) kandidaten.set(r.id, r);
           const warn = findPayableDuplicates([
             { id: inv.id, invoice_number: inv.invoice_number, client_name: inv.client_name,
-              total_inc_btw: inv.total_inc_btw, status: inv.status, amount_paid: inv.amount_paid },
-            ...rows,
+              invoice_date: inv.invoice_date, total_inc_btw: inv.total_inc_btw,
+              status: inv.status, amount_paid: inv.amount_paid },
+            ...kandidaten.values(),
           ]).get(inv.id);
           if (warn?.anyPaid) {
             return NextResponse.json({

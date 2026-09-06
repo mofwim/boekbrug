@@ -26914,6 +26914,94 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
 
+// ─── [BON-DUBBEL] The document the number cannot pair ───────────────────────────────────────────
+//
+// Every duplicate defence in this app keys on the invoice number: the pay screen's warning, the
+// import-time dedup, and the [HAND-DUBBEL] guard added the same week. A photographed kassabon has
+// no number we can read — both intake paths mint a stand-in, one per import — so the intake path
+// where the same document most easily lands twice (photograph it again; it is one tap) was the one
+// path with no protection at all.
+//
+// Nettorama Huizen € 10,74 stands twice in the live administration for exactly that reason: two
+// rows created thirty-five seconds apart in one upload, one carrying CAMERA-1784373753563. € 0,89
+// of voorbelasting counted twice, and neither row ever warned.
+test("[BON-DUBBEL] one definition of 'no usable number', and both passes read it", () => {
+  const regel = code("src/lib/duplicate-payable.ts");
+
+  // The two passes must not each decide what a number is. They did, in the first draft of this
+  // very change: the second pass normalised the number BEFORE testing it for the minted shape, so
+  // "CAMERA-17843…" became "camera17843…", matched no placeholder pattern, and the whole rule
+  // silently never fired. The tests caught it because they were written first; the shape that
+  // caused it is a second definition, and this is what stops it coming back.
+  const noemt = [...regel.matchAll(/isPlaceholderInvoiceNumber\(/g)].length;
+  assert.equal(noemt, 1,
+    `isPlaceholderInvoiceNumber is called ${noemt}× in duplicate-payable.ts — the two passes are ` +
+    "each deciding what counts as a number, and they will answer differently the first time " +
+    "either is touched");
+  assert.match(regel, /function hasNoUsableNumber\(/, "the shared predicate is gone");
+  assert.equal([...regel.matchAll(/hasNoUsableNumber\b/g)].length >= 3, true,
+    "the shared predicate exists but only one pass uses it");
+
+  // A warning that pairs on the amount is weaker evidence and must SAY which it is, or the screen
+  // prints "verwijder er één" over two receipts that merely cost the same.
+  assert.match(regel, /matchedOn: 'number'/, "the number pass no longer labels its findings");
+  assert.match(regel, /matchedOn: 'amount'/, "the amount pass no longer labels its findings");
+  assert.match(regel, /if \(w\.matchedOn === 'amount'\)/,
+    "one sentence for both kinds of match — then the weaker one claims the stronger one's certainty");
+});
+
+test("[BON-DUBBEL] every screen that asks the rule hands it a date", () => {
+  // invoice_date is REQUIRED on DuplicateCandidateRow, so a forgotten field is a type error — for
+  // an object literal. It is not for a row that arrives from a database SELECT: the prop type
+  // declares the column and tsc believes it, so dropping `invoice_date` from the query compiles
+  // perfectly and switches half of this rule off, on the screen where nobody would look.
+  //
+  // Derived by walking src for the callers rather than naming them, for the reason [HAND-DUBBEL]
+  // gives one test down: a fourth caller is exactly the one that would ship without it.
+  const loop = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...loop(p));
+      else if (/\.tsx?$/.test(p) && !/\.test\.tsx?$/.test(p)) out.push(p);
+    }
+    return out;
+  };
+  const bestanden = loop("src");
+  const vragers = bestanden.filter((f) => /findPayableDuplicates\(/.test(code(f)))
+    .filter((f) => !f.endsWith("src/lib/duplicate-payable.ts"));
+  assert.ok(vragers.length >= 2, `only ${vragers.length} caller(s) found — this scan is broken`);
+
+  // What is checked is the QUERY, not the word: `invoice_date` appears all over a screen that
+  // renders dates, so a gate that searched the file would pass with the column dropped from the
+  // SELECT — verified, that is exactly what the first version of this did.
+  //
+  // So: every column list in reach that already names the other two fields this rule reads
+  // (invoice_number and total_inc_btw) is a query that feeds it, and must name the date as well.
+  let gecontroleerd = 0;
+  for (const vrager of vragers) {
+    const buurt = [vrager, vrager.replace(/[^/]+$/, "page.tsx")].filter((f) => existsSync(f));
+    const kolommenlijsten = buurt
+      .flatMap((f) => [...code(f).matchAll(/['"`]([a-z_0-9]+(?:\s*,\s*[a-z_0-9]+)+)['"`]/g)]
+        .map((m) => ({ f, lijst: m[1] })))
+      .filter(({ lijst }) => /\binvoice_number\b/.test(lijst) && /\btotal_inc_btw\b/.test(lijst));
+
+    assert.ok(kolommenlijsten.length > 0,
+      `${vrager} asks findPayableDuplicates for a verdict, and no column list near it reads the ` +
+      "invoice — then this gate cannot see what the rule is being handed");
+
+    for (const { f, lijst } of kolommenlijsten) {
+      gecontroleerd++;
+      assert.match(lijst, /\binvoice_date\b/,
+        `${f} reads invoice_number and total_inc_btw without invoice_date, and hands the result ` +
+        "to findPayableDuplicates — the amount pass then compares two documents it cannot place " +
+        "in time, on every row it sees. A missing column is not a type error here: the prop type " +
+        "declares it and tsc believes the type, not the query");
+    }
+  }
+  assert.ok(gecontroleerd >= 2, `only ${gecontroleerd} column list(s) checked — the scan is broken`);
+});
+
 test("[HAND-DUBBEL] the pay route asks the database, and asks it before booking", () => {
   const route = code("src/app/api/invoice/pay-toggle/route.ts");
 
@@ -26938,6 +27026,18 @@ test("[HAND-DUBBEL] the pay route asks the database, and asks it before booking"
   // [NO-SILENT-EMPTY] / [DEPLOY-SAFE] A failed look is not permission.
   assert.match(route, /kon niet nakijken of dit nummer elders staat/,
     "a failed duplicate read is swallowed silently");
+
+  // [BON-DUBBEL] And the SECOND look, for the documents the number can never find. The RPC above
+  // compares numbers, so for a photographed bon it returns nothing — which is the intake path most
+  // likely to hold the same document twice. Both reads must stand before the booking, and both
+  // must fail loudly rather than answer "no twin".
+  const bedrag = route.indexOf('.lte("total_inc_btw"');
+  assert.ok(bedrag > 0,
+    "the route no longer looks for a twin on the AMOUNT — a kassabon photographed twice carries " +
+      "two minted numbers and is invisible to every check that reads one");
+  assert.ok(book > bedrag, "the amount look happens after the payment is booked");
+  assert.match(route, /kon niet nakijken of ditzelfde bedrag elders staat/,
+    "a failed amount read is swallowed silently, which reads exactly like 'there is no twin'");
 
   // And the narrowing function it calls stays service-role only: it reads across a whole owner.
   const fn = code("supabase/migrations/invoice_number_twins.sql");

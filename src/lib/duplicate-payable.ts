@@ -19,6 +19,36 @@
 // supplier is a correction, a re-issue or a double import — never two bills. So the pay screen can
 // say so with certainty, and the owner stops discovering it by adding up their own list.
 //
+// ── [BON-DUBBEL] AND THE DOCUMENTS THAT HAVE NO NUMBER ──
+// Everything above rests on the invoice number, and a photographed kassabon does not have one we
+// can read. Both intake paths mint a stand-in instead — `CAMERA-1784373753563`, one per import —
+// so two photographs of ONE receipt produce two numbers that can never match. The rule below used
+// to skip those rows entirely, which meant the intake path most likely to duplicate a document
+// (photograph it again; it is one tap) was the one path with no duplicate protection at all.
+//
+// It was not theoretical. In the live administration, Nettorama Huizen € 10,74 stands twice: two
+// rows created thirty-five seconds apart in one upload, one carrying CAMERA-1784373753563 and
+// dated 22 April, the other carrying 631394 and dated 1 June with a payment date of 1 May — a
+// payment before its own invoice date, so one of the two readings is wrong about something. € 0,89
+// of voorbelasting counted twice, and neither row ever said a word.
+//
+// So a second pass pairs on the AMOUNT, and the whole design is in what it demands beside it:
+//
+//   · at least one of the two must have NO usable number. This is what makes the rule quiet, and
+//     the difference was measured by running this function over all 497 live incoming invoices:
+//     without the clause it reports 54 groups covering 84 rows — the monthly rent, KPN, the
+//     bookkeeper, the waste collection, a bakery on a standing order. Every one of those is an
+//     honest recurring invoice, and every one carries a real number on BOTH sides. With the
+//     clause: one group, two rows, and it is the Nettorama pair.
+//   · the amounts must be equal to the CENT. A resemblance is not this rule's business.
+//   · the invoice dates must be within AMOUNT_MATCH_WINDOW_DAYS of each other, or one of them must
+//     be missing — see the constant for why the window is as wide as it is.
+//
+// And it is reported as a different KIND of match (`matchedOn`), because it is weaker evidence and
+// the owner must be told which of the two they are reading. A number match is proof: a supplier
+// issues a number once. An amount match is a resemblance, and the sentence for it says so and does
+// not tell anyone to delete a row.
+//
 // ── WHAT THIS DOES NOT DO ──
 // It does not delete, merge or hide anything. Which of the two is right is a question about paper
 // — the owner has it, we do not, and on the Enka pair the CORRECT copy was the one our reader got
@@ -37,6 +67,13 @@ export interface DuplicateCandidateRow {
   id: string
   invoice_number: string | null
   client_name: string | null
+  /**
+   * [BON-DUBBEL] Required, not optional, and that is the point: the amount pass needs it, and an
+   * optional field a caller forgets to select does not fail — it silently switches half of this
+   * rule off, on the screen where nobody would notice. A caller that genuinely does not know the
+   * date passes null and says so.
+   */
+  invoice_date: string | null
   total_inc_btw: number | null
   status: string | null
   amount_paid?: number | null
@@ -49,10 +86,36 @@ export interface DuplicateWarning {
   anyPaid: boolean
   /** True when the amounts differ, i.e. a corrected re-issue rather than a plain double import. */
   amountsDiffer: boolean
+  /**
+   * [BON-DUBBEL] What paired these rows, because they are not equally strong.
+   *
+   * 'number' is proof — a supplier issues a number once, so the same one twice is a correction, a
+   * re-issue or a double import, never two bills. 'amount' is a resemblance: two documents from
+   * one supplier for the same cent amount, at least one of which has no number we can read. The
+   * screen must not print the same sentence for both.
+   */
+  matchedOn: 'number' | 'amount'
 }
 
 /** Cent tolerance, matching the rest of the money line. */
 const CENT = 0.005
+
+/**
+ * [BON-DUBBEL] How far apart two invoice dates may stand and still be one document read twice.
+ *
+ * Wide on purpose, and the reason is the case this exists for: on the Nettorama pair the two dates
+ * are forty days apart, because one of the two readings got the date wrong — and a document whose
+ * number could not be read is exactly the document whose date is also uncertain. A tight window
+ * would let precisely the badly-read pairs through, which are the ones nothing else catches.
+ *
+ * The cost of being wide is bounded by what this rule DOES: on the pay list it puts a sentence on
+ * a row, and at the pay route it asks a question the owner can answer with "toch afboeken"
+ * ([HAND-DUBBEL]). It never blocks and never deletes. So a false pair costs one extra look at two
+ * pieces of paper, while a missed pair costs a payment made twice.
+ *
+ * Two months also happens to be the horizon within which a shop uploads a backlog of bonnen.
+ */
+export const AMOUNT_MATCH_WINDOW_DAYS = 62
 
 /**
  * Legal-suffix-insensitive supplier key. "Enka Horeca B.V." and "Enka Horeca bv" are one supplier;
@@ -68,6 +131,21 @@ export function supplierKey(name: string | null | undefined): string {
 }
 
 /**
+ * [BON-DUBBEL] Is there a number on this row we can compare at all?
+ *
+ * One definition, used by BOTH passes — which is the point. The first pass skips these rows and
+ * the second pass exists for them, so if the two answered this question differently there would be
+ * documents that fall between: paired by nothing, warned about by nobody.
+ *
+ * Two ways to have no number: nothing readable at all, and a minted stand-in ("CAMERA-17843…",
+ * "UPLOAD-…", "EMAIL-…") that every intake path generates per import. The second is the dangerous
+ * one, because it LOOKS like a number and made the row read as fully identified.
+ */
+function hasNoUsableNumber(r: DuplicateCandidateRow): boolean {
+  return !normalizeInvoiceNumber(r.invoice_number) || isPlaceholderInvoiceNumber(r.invoice_number)
+}
+
+/**
  * Which rows in this list share a supplier + invoice number with another row?
  *
  * Returns a map from row id to what to say about it. Rows with no real invoice number are never
@@ -80,7 +158,7 @@ export function findPayableDuplicates(
   const groups = new Map<string, DuplicateCandidateRow[]>()
   for (const r of rows) {
     const num = normalizeInvoiceNumber(r.invoice_number)
-    if (!num || isPlaceholderInvoiceNumber(r.invoice_number)) continue
+    if (hasNoUsableNumber(r)) continue
     const supplier = supplierKey(r.client_name)
     // Without a usable supplier there is no key: numbers are unique PER supplier, and grouping on
     // the number alone would pair two unrelated companies that both number from 1.
@@ -104,10 +182,82 @@ export function findPayableDuplicates(
           (o) => (o.status ?? '') === 'paid' || Math.max(0, Number(o.amount_paid ?? 0)) > CENT,
         ),
         amountsDiffer,
+        matchedOn: 'number',
+      })
+    }
+  }
+
+  // ── [BON-DUBBEL] Second pass: the documents the number could not pair ──────────────────────
+  //
+  // Runs AFTER the first and never overwrites it. A row already paired by its number keeps that
+  // warning: the number is proof and the amount is a resemblance, and showing the weaker of two
+  // findings would be a step backwards on exactly the rows where we know the most.
+  const byAmount = new Map<string, DuplicateCandidateRow[]>()
+  for (const r of rows) {
+    const supplier = supplierKey(r.client_name)
+    if (!supplier) continue
+    const cents = Math.round(Math.abs(Number(r.total_inc_btw ?? 0)) * 100)
+    // A zero-amount row resembles every other zero-amount row and means nothing here.
+    if (cents === 0) continue
+    const key = `${supplier}::${cents}`
+    const list = byAmount.get(key)
+    if (list) list.push(r)
+    else byAmount.set(key, [r])
+  }
+
+  for (const list of byAmount.values()) {
+    if (list.length < 2) continue
+    // Cheap skip: without a single numberless row nothing in this group can pair. The real clause
+    // is per PAIR, one line down — a group-level test is not the same thing, and the difference is
+    // a false warning on two honest invoices. Three rows at one amount, one of them a photographed
+    // bon and the other two a monthly bill in January and in April: the group qualifies because of
+    // the bon, and then the two monthly invoices pair with EACH OTHER. Which is exactly the
+    // recurring-supplier noise the clause exists to remove, re-entering through the side door.
+    if (!list.some(hasNoUsableNumber)) continue
+
+    for (const r of list) {
+      if (out.has(r.id)) continue
+      const others = list.filter((o) =>
+        o.id !== r.id &&
+        // At least one side of THIS pair must be the document the number could not identify.
+        (hasNoUsableNumber(r) || hasNoUsableNumber(o)) &&
+        withinAmountWindow(r.invoice_date, o.invoice_date))
+      if (others.length === 0) continue
+      out.set(r.id, {
+        others,
+        anyPaid: others.some(
+          (o) => (o.status ?? '') === 'paid' || Math.max(0, Number(o.amount_paid ?? 0)) > CENT,
+        ),
+        // Equal to the cent by construction — that is what put them in this group.
+        amountsDiffer: false,
+        matchedOn: 'amount',
       })
     }
   }
   return out
+}
+
+/** A day number from an ISO date prefix, via UTC noon so an offset can never move the day. */
+function dayNumber(iso: string | null | undefined): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((iso ?? '').trim())
+  if (!m) return null
+  const n = Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) / 86_400_000)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * Are these two dates close enough to be one document?
+ *
+ * A MISSING date counts as yes, and that is deliberate: "we do not know when this was" is not the
+ * same as "these are far apart", and answering an unknown with a silent no is how a check that
+ * could not run reads as a check that passed. The pair still has to survive supplier, cent amount
+ * and the numberless clause before it gets here.
+ */
+export function withinAmountWindow(a: string | null, b: string | null): boolean {
+  const x = dayNumber(a)
+  const y = dayNumber(b)
+  if (x === null || y === null) return true
+  return Math.abs(x - y) <= AMOUNT_MATCH_WINDOW_DAYS
 }
 
 /** € 1.234,56 — the notation the rest of the screen uses. */
@@ -126,6 +276,24 @@ export function duplicateWarningText(w: DuplicateWarning, number: string | null)
   const amounts = w.others
     .map((o) => eur(Math.abs(Number(o.total_inc_btw ?? 0))))
     .join(' en ')
+
+  // [BON-DUBBEL] An amount match is a RESEMBLANCE and gets its own sentences. It may not borrow
+  // the number match's, for two reasons the owner would pay for: those sentences state that the
+  // rows are the same document, which here we do not know, and they end in "verwijder er één" —
+  // advice that on two genuinely different receipts for the same amount destroys a real
+  // voorbelasting. It says what we compared and leaves the conclusion to the paper.
+  if (w.matchedOn === 'amount') {
+    const leverancier = (w.others[0]?.client_name ?? '').trim()
+    const van = leverancier ? ` van ${leverancier}` : ' van dezelfde leverancier'
+    const kop = `Er staat nog een document${van} voor exact hetzelfde bedrag (${amounts})`
+    const waarom =
+      'Op één van de twee staat geen leesbaar factuurnummer, dus ze zijn alleen op het bedrag ' +
+      'vergeleken — dat is een gelijkenis, geen bewijs.'
+    return w.anyPaid
+      ? `${kop}, en dat is al betaald. ${waarom} Leg de bonnen naast elkaar voordat je deze afboekt.`
+      : `${kop}. ${waarom} Leg ze naast elkaar: zijn het twee aankopen of één bon die twee keer is ingelezen?`
+  }
+
   const head = nr
     ? `Factuurnummer ${nr} staat ${w.others.length + 1}× in je administratie`
     : `Deze factuur staat ${w.others.length + 1}× in je administratie`

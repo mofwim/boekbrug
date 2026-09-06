@@ -20,6 +20,11 @@
 -- Same owner and same direction only: a sales invoice and a purchase invoice sharing a number is a
 -- coincidence between two companies, not a double booking.
 
+-- [BON-DUBBEL] invoice_date joined the returned columns, and Postgres will not let a function
+-- change its RETURNS TABLE in place — hence the DROP. Both statements are safe to re-run: the drop
+-- is IF EXISTS and the create is the whole definition. No data is read, written or moved.
+DROP FUNCTION IF EXISTS public.invoice_number_twins(uuid, uuid);
+
 CREATE OR REPLACE FUNCTION public.invoice_number_twins(
   p_owner      uuid,
   p_invoice_id uuid
@@ -28,6 +33,7 @@ RETURNS TABLE(
   id             uuid,
   invoice_number text,
   client_name    text,
+  invoice_date   date,
   total_inc_btw  numeric,
   status         text,
   amount_paid    numeric
@@ -44,7 +50,7 @@ AS $$
     WHERE i.id = p_invoice_id
       AND (i.sender_id = p_owner OR i.receiver_id = p_owner)
   )
-  SELECT o.id, o.invoice_number, o.client_name, o.total_inc_btw, o.status, o.amount_paid
+  SELECT o.id, o.invoice_number, o.client_name, o.invoice_date, o.total_inc_btw, o.status, o.amount_paid
   FROM public.invoices o, self
   WHERE o.id <> p_invoice_id
     AND (o.sender_id = p_owner OR o.receiver_id = p_owner)
