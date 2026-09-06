@@ -10,6 +10,11 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { PAGE_HEADER_HEIGHT, COLUMN } from '@/lib/design/tokens'
+// [TAAL] The screen holds no language of its own: every sentence comes from the catalogue, and
+// the clock is formatted in the owner's language too (with Latin digits in Arabic, see locale.ts).
+import { useLocale } from '@/lib/i18n/use-locale'
+import { translator } from '@/lib/i18n/t'
+import { LOCALE_META } from '@/lib/i18n/locale'
 import type { MessageRow } from '@/types/rows'
 
 // Skeleton للرسائل أثناء التحميل
@@ -27,6 +32,8 @@ export default function ConversationPage() {
   const otherId = params.id as string
   const supabase = createClient()
   const bottomRef = useRef<HTMLDivElement>(null)
+  const locale = useLocale()
+  const t = translator(locale)
 
   const [currentUserId, setCurrentUserId] = useState<string>('')
   // [NAAM-TEGENPARTIJ] De naam komt van de server, samen met de berichten. Hij werd hier uit
@@ -47,14 +54,14 @@ export default function ConversationPage() {
       const res = await fetch(`/api/messages?with=${otherId}`)
       const data = await res.json().catch(() => null)
       if (!res.ok) {
-        setLoadError(failureText(res.status, data, 'We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.'))
+        setLoadError(failureText(res.status, data, t('gesprek.ophaalFout')))
         return
       }
       setLoadError('')
       if (data?.messages) setMessages(data.messages)
       if (data?.partner) setPartnerName(data.partner.name ?? null)
     } catch {
-      setLoadError('We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.')
+      setLoadError(t('gesprek.ophaalFout'))
     }
   }
 
@@ -132,7 +139,7 @@ export default function ConversationPage() {
       // eeuwig iets te herhalen dat nooit kan lukken: een scherm dat de weigering van de server
       // overschrijft met een raadgeving die hij niet gaf.
       const data = await res.json().catch(() => null)
-      setError(failureText(res.status, data, 'Verzenden mislukt — probeer opnieuw'))
+      setError(failureText(res.status, data, t('gesprek.verzendFout')))
     } else {
       await fetchMessages()
     }
@@ -181,14 +188,14 @@ export default function ConversationPage() {
               onClick={() => { setLoading(true); fetchMessages().finally(() => setLoading(false)) }}
               className="mt-4 text-sm font-medium text-blue-600 hover:text-blue-700"
             >
-              Opnieuw proberen
+              {t('ber.opnieuw')}
             </button>
           </div>
         ) : messages.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-2xl mb-2">👋</p>
             <p className="text-gray-400 text-sm">
-              Stuur een bericht aan {otherName}
+              {t('gesprek.stuurAan', { name: otherName })}
             </p>
           </div>
         ) : (
@@ -212,7 +219,7 @@ export default function ConversationPage() {
                   <p className="leading-relaxed">{msg.content}</p>
                   <p className={`text-xs mt-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
                     {msg.created_at
-                      ? new Date(msg.created_at).toLocaleTimeString('nl-NL', {
+                      ? new Date(msg.created_at).toLocaleTimeString(LOCALE_META[locale].intl, {
                           hour: '2-digit',
                           minute: '2-digit',
                         })
@@ -241,7 +248,7 @@ export default function ConversationPage() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Bericht aan ${otherName}... (Enter om te verzenden)`}
+            placeholder={t('gesprek.plaatshouder', { name: otherName })}
             rows={1}
             className="flex-1 border border-gray-200 rounded-2xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:border-blue-400 transition-colors"
             style={{ minHeight: '42px', maxHeight: '120px' }}
@@ -251,7 +258,7 @@ export default function ConversationPage() {
             disabled={!input.trim() || sending}
             className="bg-blue-600 text-white px-4 py-2.5 rounded-2xl text-sm font-medium hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
           >
-            {sending ? '...' : 'Stuur'}
+            {sending ? '...' : t('gesprek.stuur')}
           </button>
         </div>
       </div>
