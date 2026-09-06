@@ -418,7 +418,11 @@ test("[PAYMENT-NAMES-MISSING] a payment naming an un-imported invoice is still a
   );
   // The slot the owner cannot fill needs the reason beside it, or "Koppelen" on an invoice that
   // does not exist is a button that can only fail.
-  assert.match(src, /missingInvoiceNoticeText\(missingNamed\)/, "and the reason is on screen");
+  // [CREDIT-TEKEN] The sentence is now built from missingForNotice — the same list minus whatever
+  // quotedInvoiceSet has already found — so the card can no longer print an invoice with its amount
+  // and deny holding it four lines lower. missingNamed itself is untouched, which is what the two
+  // assertions above and below pin: the slot view and the multi gate still see every named number.
+  assert.match(src, /missingInvoiceNoticeText\(missingForNotice\)/, "and the reason is on screen");
   // The numbers must reach the slot list too — the gate opening on a list that still holds one row
   // would show a two-invoice batch as a single slot.
   assert.match(src, /\.\.\.missingNamed\.filter/, "the missing numbers become slots");
@@ -26450,4 +26454,13 @@ test("[CREDIT-TEKEN] one card may not list an invoice and call it missing in the
   assert.match(scherm, /eur\.format\(inv\.isCredit \? -Math\.abs\(inv\.amount\) : Math\.abs\(inv\.amount\)\)/,
     "the card prints a bare Math.abs again — a document that gives money BACK, shown as a bill, " +
       "above a total that used the other sign");
+
+  // One line per named number, because the total counts each number once. Production holds 26700603
+  // twice; the card printed −136,00 twice above a total that had used it once.
+  assert.match(scherm, /\[\.\.\.set\.settled, \.\.\.set\.open\]\.filter\(\(inv\) => inv\.countedInTotal !== false\)/,
+    "the card lists every row again, including a second copy of a number the sum counted once — " +
+      "then the addition printed underneath cannot be checked by eye");
+  assert.match(code("src/lib/bank-quoted-invoice.ts"), /toQuoted\(hit, line\.amount, !alGeteld\)/,
+    "countedInTotal is no longer derived from the same dedupe the total uses — two rules for one " +
+      "question is how the list and the sum drifted apart in the first place");
 });

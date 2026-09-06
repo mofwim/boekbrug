@@ -120,6 +120,18 @@ export interface QuotedSettled {
    * unable to check the addition by eye, which is the one thing this card exists to let them do.
    */
   isCredit: boolean;
+  /**
+   * [CREDIT-TEKEN] This row is one of the amounts that make up `total`.
+   *
+   * False for a SECOND row carrying an invoice number already counted — a duplicate import, or a
+   * corrected invoice whose archived predecessor keeps the supplier's number. The sum has always
+   * counted such a number once (see `geteld` below); the LIST showed every row, so the Altena card
+   * printed −136,00 twice above a total that had used it once, and the addition it exists to let an
+   * owner check did not add up on screen. Every named number appears exactly once, with the amount
+   * that went into the sum. The chooser underneath still offers every row, which is where a second
+   * copy of an invoice actually needs to be visible.
+   */
+  countedInTotal: boolean;
 }
 
 /**
@@ -269,7 +281,7 @@ function creditSign(row: QuotedInvoiceRow, total: number): number {
   return isCreditRow(row, total) ? -Math.abs(total) : Math.abs(total);
 }
 
-function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null): QuotedSettled {
+function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null, countedInTotal = true): QuotedSettled {
   const raw = typeof hit.total_inc_btw === "number" ? hit.total_inc_btw : null;
   return {
     invoiceId: hit.id,
@@ -281,6 +293,7 @@ function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null): QuotedSe
     lockedByAccountant:
       hit.accountant_status === "verwerkt" && !SETTLED_STATUSES.has(hit.status ?? ""),
     isCredit: isCreditRow(hit, raw),
+    countedInTotal,
   };
 }
 
@@ -320,12 +333,14 @@ export function quotedInvoiceSet(
     if (gezien.has(hit.id)) continue;
     gezien.add(hit.id);
 
-    const q = toQuoted(hit, line.amount);
+    const nummer = normalizedNumber(hit.invoice_number);
+    const alGeteld = nummer !== "" && geteld.has(nummer);
+
+    const q = toQuoted(hit, line.amount, !alGeteld);
     (isSettled(hit) ? settled : open).push(q);
     gevondenNummers.push(hit.invoice_number);
 
-    const nummer = normalizedNumber(hit.invoice_number);
-    if (nummer && geteld.has(nummer)) continue;
+    if (alGeteld) continue;
     if (nummer) geteld.add(nummer);
     if (q.amount == null) anyAmountMissing = true;
     else total += creditSign(hit, q.amount);

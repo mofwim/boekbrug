@@ -220,6 +220,8 @@ interface QuotedRef {
   clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
   /** [CREDIT-TEKEN] Dit document TREKT AF van de betaling — zie bank-quoted-invoice.ts. */
   isCredit?: boolean
+  /** [CREDIT-TEKEN] false = tweede rij met een al geteld nummer; telt niet mee in `total`. */
+  countedInTotal?: boolean
 }
 interface MatchResponse {
   ok: boolean
@@ -3975,7 +3977,12 @@ function SomKloptKaart({
       {/* De regels zelf. Elke factuur met haar bedrag, want de optelsom eronder moet na te rekenen
           zijn — een totaal zonder de posten erboven is een bewering, geen bewijs. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 7 }}>
-        {[...set.settled, ...set.open].map((inv) => (
+        {/* [CREDIT-TEKEN] Eén regel per genoemd factuurnummer, en dat is de optelsom zelf: een tweede
+            rij met hetzelfde nummer (dubbele import, of de gearchiveerde voorganger van een
+            gecorrigeerde factuur) telt in het totaal niet mee, dus hoort hij hier ook niet te staan.
+            Anders drukt de kaart −136,00 twee keer af boven een totaal dat het één keer gebruikte,
+            en is de som met de hand niet na te rekenen. De kiezer eronder toont wél elke rij. */}
+        {[...set.settled, ...set.open].filter((inv) => inv.countedInTotal !== false).map((inv) => (
           <div key={inv.invoiceId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, color: '#202124' }}>
             <button
               type="button"

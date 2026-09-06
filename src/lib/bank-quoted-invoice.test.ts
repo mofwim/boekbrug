@@ -335,3 +335,28 @@ test("[CREDIT-TEKEN] two credit notes subtract twice, not once", () => {
   assert.equal(set?.total, 34.27);
   assert.equal(set?.coversPayment, true);
 });
+
+test("[CREDIT-TEKEN] een dubbel geïmporteerde creditnota telt één keer én staat één keer", () => {
+  // Productie houdt 26700603 twee keer vast — twee rijen, beide 'received', beide −136,00. De som
+  // telde het nummer al één keer; de LIJST gaf elke rij, zodat de kaart −136,00 twee keer afdrukte
+  // boven een totaal dat het één keer had gebruikt. Dan is de optelsom met de hand niet meer na te
+  // rekenen, en dat is precies wat deze kaart de ondernemer moet laten doen.
+  const set = quotedInvoiceSet(
+    { amount: -170.27, reference: null, description: "2034 26700644 26700603" },
+    [
+      inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid" }),
+      inv({ id: "c1", invoice_number: "26700603", total_inc_btw: -136, status: "received" }),
+      inv({ id: "c2", invoice_number: "26700603", total_inc_btw: -136, status: "received" }),
+    ],
+  );
+  assert.equal(set?.total, 170.27, "de dubbele rij mag nooit twee keer meetellen");
+  const alle = [...(set?.settled ?? []), ...(set?.open ?? [])];
+  assert.equal(alle.length, 3, "beide rijen blijven in de bakjes — de kiezer eronder toont ze wél");
+  const getoond = alle.filter((q) => q.countedInTotal);
+  assert.equal(getoond.length, 2, "maar de kaart toont één regel per genoemd nummer");
+  assert.deepEqual(getoond.map((q) => q.invoiceNumber).sort(), ["26700603", "26700644"]);
+  // En de getoonde regels tellen op tot precies het totaal — de eigenschap waar dit om gaat.
+  const som = getoond.reduce((n, q) => n + (q.isCredit ? -Math.abs(q.amount ?? 0) : Math.abs(q.amount ?? 0)), 0);
+  assert.equal(Math.round(som * 100) / 100, set?.total,
+    "wat op de kaart staat telt niet op tot het totaal eronder");
+});
