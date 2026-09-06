@@ -367,6 +367,37 @@ console.log("\n— [VRIJGESTELD] an undecidable ratio says 5b is deliberately to
   check("5b carries only what was actually claimable", a.voorbelasting === 105);
 }
 
+console.log("\n— [TEGENTEKEN] BTW left out because the document contradicts itself —");
+{
+  const a = buildAangifte(
+    {
+      salesByRate: [], btwVoorbelasting: 84, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 0, proRataPercent: null, voorbelastingUnresolved: 0,
+      voorbelastingTegenteken: 13,
+    },
+    compl({ turnoverDays: 0 }),
+    "Q1 2026",
+  );
+  const notes = a.notes.join(" | ");
+  check("the refused amount is named", /13/.test(notes));
+  check("and WHY it cannot be right, in words the owner can act on", /tegengesteld teken/.test(notes));
+  check("the direction of the error is stated, not implied", /te LAAG/.test(notes));
+  check("5b carries only what was actually claimable", a.voorbelasting === 84);
+
+  // [NEGATIEVE CONTROLE] The note must be absent on an ordinary quarter, or it becomes wallpaper
+  // that an accountant learns to scroll past — and this one fires on one document in five hundred.
+  const gewoon = buildAangifte(
+    {
+      salesByRate: [], btwVoorbelasting: 84, cashOmzetZonderBtw: 0,
+      vrijgesteldeOmzet: 0, proRataPercent: null, voorbelastingUnresolved: 0,
+      voorbelastingTegenteken: 0,
+    },
+    compl({ turnoverDays: 0 }),
+    "Q1 2026",
+  );
+  check("no note when nothing was refused", !/tegengesteld teken/.test(gewoon.notes.join(" | ")));
+}
+
 
 console.log("\n— [VRIJGESTELD] the boundary of the feature is stated in the concept, not only in a migration —");
 {

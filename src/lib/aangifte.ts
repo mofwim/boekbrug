@@ -36,6 +36,10 @@ export type AangifteInput = Pick<
   // Input BTW on mixed costs left OUT of 5b because no ratio could be determined. > 0 ⇒ 5b is
   // deliberately too low, and the note says so.
   voorbelastingUnresolved?: number;
+  // [TEGENTEKEN] Input BTW left out of 5b because the document's base and its BTW carry opposite
+  // signs. A magnitude, not a signed amount: which direction it belongs in is exactly what such a
+  // row fails to say. > 0 ⇒ 5b is deliberately too low and the note names the figure.
+  voorbelastingTegenteken?: number;
   // Input BTW on costs attributed wholly to exempt activity — never deductible. Shown so an
   // owner who expected a refund can see what it went to.
   voorbelastingGeblokkeerd?: number;
@@ -367,6 +371,18 @@ export function buildAangifte(
       "hier dus als BELASTE omzet meegeteld — inclusief de BTW erover. Is een deel daarvan " +
       "vrijgesteld werk, dan klopt dit concept op dat punt niet en moet je boekhouder het corrigeren. " +
       "Verkoopfacturen kun je wel per regel op 'vrijgesteld' zetten.",
+    );
+  }
+  // [TEGENTEKEN] Before the pro-rata note, because this one is about a document that cannot be
+  // right rather than about a ratio that could not be found — the owner can fix it themselves.
+  const tegenteken = euro(input.voorbelastingTegenteken ?? 0);
+  if (tegenteken > 0) {
+    notes.push(
+      `LET OP: €${tegenteken.toLocaleString("nl-NL")} BTW staat NIET in 5b, omdat op die factuur het bedrag ` +
+      "en de BTW een tegengesteld teken hebben — een creditnota met positieve BTW, of andersom. Zo'n " +
+      "document kan niet kloppen: een BTW-tarief is nooit negatief. De voorbelasting is hierdoor bewust " +
+      "te LAAG. Leg de factuur ernaast en zet het bedrag of de BTW op het juiste teken; daarna telt hij " +
+      "vanzelf mee.",
     );
   }
   const onopgelost = euro(input.voorbelastingUnresolved ?? 0);

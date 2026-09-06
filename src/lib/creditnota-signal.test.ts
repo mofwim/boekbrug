@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   numberPrefix, looksLikeCreditnota, creditnotaSignalText, creditnotaSignConflict, asCreditAmounts,
   creditStance, payableAsDebt, looksLikeCreditnotaByNumber, creditWordInHeader,
+  btwSignOpposesBase,
 } from "./creditnota-signal";
 
 /** The real case: this wholesaler sends CR credit notes alongside RE invoices. */
@@ -374,4 +375,54 @@ test("[CREDIT-WOORD] losse woorden die er alleen op lijken, tellen niet", () => 
 test("[CREDIT-WOORD] geen tekstlaag is geen bewijs van het tegendeel", () => {
   assert.equal(creditWordInHeader(null), false);
   assert.equal(creditWordInHeader(""), false);
+});
+
+// ── [TEGENTEKEN] Het bedrag en de BTW die de andere kant op wijzen ──────────────────────────────
+//
+// Gevonden in een echte administratie: Aardappelgroothandel Altena 26700951, geboekt als
+// creditnota, grondslag −123,00, btw +13,42, totaal −109,58. Elke creditcontrole hierboven is
+// tevreden — het type zegt creditnota, het totaal is negatief, en −123,00 + 13,42 is werkelijk
+// −109,58 — terwijl het document niet kan bestaan: een BTW-tarief is nooit negatief. De rij droeg
+// +13,42 bij aan de terug te vragen BTW in plaats van −13,42, een verschil van € 26,84 op één bon.
+
+test("[TEGENTEKEN] de echte rij: alle bestaande controles tevreden, en toch onmogelijk", () => {
+  const rij = { totalExBtw: -123, btwAmount: 13.42, totalIncBtw: -109.58 };
+
+  // Wat de bestaande regels ervan vinden — dit is waarom er een aparte vraag nodig was.
+  assert.equal(creditnotaSignConflict({ invoiceType: "creditnota", totalIncBtw: rij.totalIncBtw }), false,
+    "het teken-conflict kijkt naar het TOTAAL, en dat staat hier correct negatief");
+  assert.equal(creditStance({
+    invoiceNumber: "26700951", totalIncBtw: rij.totalIncBtw, invoiceType: "creditnota", vendorNumbers: [],
+  }), "credit", "en de houding is gewoon 'credit'");
+  assert.deepEqual(asCreditAmounts(rij), { ...rij, flipped: false },
+    "asCreditAmounts laat een al negatief totaal met rust — precies zoals het hoort");
+
+  // En de vraag die wél iets vindt.
+  assert.equal(btwSignOpposesBase(rij), true, "grondslag en btw wijzen tegengesteld");
+});
+
+test("[TEGENTEKEN] wat géén conflict is", () => {
+  // Een gewone factuur, een correcte creditnota, en beide met nul btw.
+  assert.equal(btwSignOpposesBase({ totalExBtw: 123, btwAmount: 13.42 }), false);
+  assert.equal(btwSignOpposesBase({ totalExBtw: -123, btwAmount: -13.42 }), false);
+  assert.equal(btwSignOpposesBase({ totalExBtw: -136, btwAmount: 0 }), false,
+    "een creditnota zonder btw is geen tegenstelling — nul heeft geen richting");
+  assert.equal(btwSignOpposesBase({ totalExBtw: 0, btwAmount: 21 }), false,
+    "een grondslag van nul evenmin: dat is een btw-correctienota, niet een tegenstelling");
+
+  // Ontbrekende en onleesbare waarden zijn geen bevinding: niet gelezen is niet hetzelfde als fout.
+  assert.equal(btwSignOpposesBase({ totalExBtw: null, btwAmount: 13.42 }), false);
+  assert.equal(btwSignOpposesBase({ totalExBtw: -123, btwAmount: undefined }), false);
+  assert.equal(btwSignOpposesBase({ totalExBtw: Number.NaN, btwAmount: 13.42 }), false);
+
+  // Centenruis is geen richting. Een grondslag van −0,004 maakt van een gewone btw geen conflict.
+  assert.equal(btwSignOpposesBase({ totalExBtw: -0.004, btwAmount: 21 }), false);
+});
+
+test("[TEGENTEKEN] tegenproef: de vraag geeft niet altijd hetzelfde antwoord", () => {
+  // Zonder deze twee slagen de tests hierboven ook als de functie altijd false teruggeeft (de
+  // meeste gevallen) of altijd true. De andere richting, allebei.
+  assert.equal(btwSignOpposesBase({ totalExBtw: 100, btwAmount: -21 }), true,
+    "een gewone factuur met negatieve btw is dezelfde onmogelijkheid, andersom");
+  assert.equal(btwSignOpposesBase({ totalExBtw: 100, btwAmount: 21 }), false);
 });

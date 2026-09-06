@@ -42,7 +42,7 @@ import { formatEuroNL } from '@/lib/format-nl'
 import { depositGapText, type DepositGap } from '@/lib/statiegeld'
 // [LEVERANCIER-ID] The two mechanical identity checks — see vendor-identity.ts.
 import { checkVendorIban, checkVendorBtw } from '@/lib/vendor-identity'
-import { creditStance, payableAsDebt } from '@/lib/creditnota-signal'
+import { creditStance, payableAsDebt, btwSignOpposesBase } from '@/lib/creditnota-signal'
 import { classifyBtwSplit, btwSplitCorroborated, btwSplitDetail } from '@/lib/btw-split'
 
 export type CheckOutcome =
@@ -386,11 +386,23 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     vendorNumbers: inv.vendorNumbers ?? [],
   })
   const isCredit = !payableAsDebt(stance)
+  // [TEGENTEKEN] The sign question creditStance does not ask: not the KIND against the total, but
+  // the two amounts against each other. A creditnota stored at base −123,00 with btw +13,42 passes
+  // every check above — the type says credit, the total is negative, and the three numbers add up
+  // — while the BTW inside points the other way, which no rate can produce. It belongs on this row
+  // rather than on a tenth one: this is the row about what kind of document this is, and a base
+  // and a BTW disagreeing about that is the same question. Its consequence is money: the concept
+  // aangifte leaves that BTW out of 5b rather than adding it (financial-result.ts), so the sentence
+  // has to say what the owner must do to get it counted.
+  const tegenteken = btwSignOpposesBase({ totalExBtw: inv.total_ex_btw, btwAmount: inv.btw_amount })
   out.push({
     id: 'kind',
     label: isCredit ? 'Dit is een creditnota' : 'Dit is een gewone factuur',
-    outcome: stance === 'conflict' || stance === 'suspected' ? 'flagged' : 'passed',
-    detail: stance === 'conflict' ? 'geboekt als creditnota, maar de bedragen staan positief'
+    outcome: tegenteken || stance === 'conflict' || stance === 'suspected' ? 'flagged' : 'passed',
+    detail: tegenteken
+        ? 'het bedrag en de BTW hebben een tegengesteld teken — dat kan niet kloppen, en daarom telt ' +
+          'deze BTW niet mee in je aangifte'
+      : stance === 'conflict' ? 'geboekt als creditnota, maar de bedragen staan positief'
       : stance === 'suspected' ? 'het nummer lijkt op een creditnota van deze leverancier'
       : isCredit ? 'dit bedrag gaat van je openstaande saldo af'
       : null,

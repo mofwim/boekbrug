@@ -26914,6 +26914,64 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
 
+// ─── [TEGENTEKEN] A base and a BTW pointing opposite ways never reaches the aangifte ────────────
+//
+// Found in the live administration, and it is the whole reason this gate is here rather than a
+// test alone: Aardappelgroothandel Altena 26700951, typed creditnota, base −123,00, btw +13,42,
+// total −109,58. Every credit check in the app is satisfied — the type says creditnota, the total
+// is correctly negative, and the three numbers really do add up — and the document still cannot
+// exist, because a BTW rate is never negative.
+//
+// What it cost: financial-result.ts summed btw_amount raw, so that row contributed +13,42 to the
+// tax reclaimed where the truth is −13,42. € 26,84 wrong on one bon, in the direction the
+// Belastingdienst cares about. Nothing had been filed yet, which is the only reason this is a
+// repair and not a suppletie.
+//
+// The header of asCreditAmounts had already written down that /api/aangifte "sums them raw" — and
+// the fix that followed went to the two doors where a human EDITS amounts, never to the path that
+// COUNTS them. So this gate holds the counting path specifically.
+test("[TEGENTEKEN] the path that counts input BTW asks whether the document can be right", () => {
+  const rekenen = code("src/lib/financial-result.ts");
+
+  // The refusal is at the booking site, not somewhere downstream: a number added and then
+  // subtracted again is a number that four other totals have already seen.
+  assert.match(rekenen, /btwSignOpposesBase\(/,
+    "financial-result.ts sums btw_amount raw again — a creditnota with positive BTW then ADDS to " +
+      "the tax reclaimed instead of subtracting from it");
+  const vraag = rekenen.indexOf("btwSignOpposesBase({");
+  const boeken = rekenen.indexOf("bookVoorbelasting(btw, inv.vat_deduction)");
+  assert.ok(vraag > 0 && boeken > vraag,
+    "the impossible amount is booked before the question is asked");
+
+  // Refused, NOT repaired. creditnota-signal.ts ruled against per-field sign flipping in writing —
+  // "negating each field independently silently rewrites a triplet whose parts do not share a
+  // sign" — and a fix here that quietly used -Math.abs(btw) would be that same invention, made in
+  // the one place where nobody reads it back.
+  assert.doesNotMatch(rekenen, /bookVoorbelasting\(\s*-Math\.abs\(/,
+    "the counting path repairs the sign itself, which creditnota-signal.ts decided against");
+
+  // And what was refused is REPORTED. A deduction silently dropped is a 5b that is wrong in the
+  // other direction, with nothing on the page to explain the gap.
+  assert.match(rekenen, /voorbelastingTegenteken/, "the refusal is not carried out of the computation");
+  const aangifte = code("src/lib/aangifte.ts");
+  assert.match(aangifte, /voorbelastingTegenteken/, "the concept never learns that 5b is short");
+  // The BRANCH, not just the words: a note behind a condition that can never be true reads exactly
+  // like a note, and its own test is the only thing that would notice. Checked here because this
+  // gate is what a reader consults to see whether the rule is wired, not merely written.
+  assert.match(aangifte, /if \(tegenteken > 0\) \{[\s\S]{0,80}?notes\.push\(/,
+    "the note is written but not reachable — a sentence behind a dead condition");
+  assert.match(aangifte, /tegengesteld teken/,
+    "the note does not say what is wrong with the document, so the owner cannot fix it");
+  assert.match(aangifte, /te LAAG/,
+    "the note does not say WHICH WAY the figure is wrong — which is the only part an accountant " +
+      "cannot reconstruct");
+
+  // The owner meets it on the invoice too, or the only place it is ever stated is a note at the
+  // bottom of a quarter concept.
+  assert.match(code("src/lib/invoice-checks.ts"), /btwSignOpposesBase\(/,
+    "the checklist on the invoice itself says nothing about a document that cannot be right");
+});
+
 // ─── [BON-DUBBEL] The document the number cannot pair ───────────────────────────────────────────
 //
 // Every duplicate defence in this app keys on the invoice number: the pay screen's warning, the

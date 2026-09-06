@@ -33,6 +33,9 @@ import {
   type ProRata,
 } from "./vat-exemption";
 import { round2 } from "./invoice-totals";
+// [TEGENTEKEN] The one sign question the credit checks do not ask: base against BTW, inside one
+// document. See that function for why it reports rather than repairs.
+import { btwSignOpposesBase } from "./creditnota-signal";
 
 // [KASSTELSEL] Optional cash-basis inputs. When scheme==='kas', the invoice leg books the
 // quarter's SETTLEMENT slices (BTW on the paid date) instead of the full invoice on its
@@ -222,6 +225,11 @@ export interface FinancialResult {
   // Input BTW on mixed costs that was NOT deducted because the ratio could not be determined.
   // > 0 ⇒ btwVoorbelasting is deliberately too LOW and the notes must say so.
   voorbelastingUnresolved: number;
+  // [TEGENTEKEN] Input BTW left out of 5b because the document contradicts itself: its base and
+  // its BTW carry OPPOSITE signs, which no rate can produce. Reported as a MAGNITUDE — the one
+  // thing about such a row that is not in doubt — because whether it belongs in 5b as a plus or a
+  // minus is precisely what the row does not say. > 0 ⇒ 5b is deliberately too low.
+  voorbelastingTegenteken: number;
   // Input BTW on costs attributed wholly to exempt activity — never deductible. Carried for
   // transparency only: an owner who sees €0 where they expected a refund deserves the figure
   // that explains it.
@@ -468,6 +476,8 @@ export function computeResult(
   // goes to `direct` and comes back untouched at the bottom — that identity is what makes this
   // feature invisible to the owners who don't need it.
   const voorbelasting = { direct: 0, mixed: 0, blocked: 0 };
+  // [TEGENTEKEN] What was refused, and why 5b is lower than the paper suggests.
+  let voorbelastingTegenteken = 0;
   const exemptOn = opts.exemptRegime === true;
   /** Which bucket a purchase's input BTW belongs in. Off-regime: always the full-deduction one. */
   const bookVoorbelasting = (btw: number, deduction?: string | null): void => {
@@ -633,7 +643,19 @@ export function computeResult(
         }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
         kosten += ex;
-        bookVoorbelasting(btw, inv.vat_deduction);
+        // [TEGENTEKEN] A base and a BTW pointing in opposite directions is not a document that can
+        // exist — a rate is never negative — so this is the one place that must NOT quietly add it
+        // up. Found in a live administration: a creditnota stored at base −123,00 with btw +13,42,
+        // which every credit check passed (the type says creditnota, the total is negative, and
+        // the three numbers add up) while contributing +13,42 to the tax reclaimed instead of
+        // −13,42. Booking it as −|btw| would be the other guess, and creditnota-signal.ts already
+        // ruled against per-field sign repair in writing. So it is left out and NAMED: 5b too low
+        // by an amount the note states, which errs toward claiming less rather than more.
+        if (btwSignOpposesBase({ totalExBtw: ex, btwAmount: btw })) {
+          voorbelastingTegenteken += Math.abs(btw);
+        } else {
+          bookVoorbelasting(btw, inv.vat_deduction);
+        }
       }
     }
   }
@@ -906,6 +928,7 @@ export function computeResult(
     // voorbelastingUnresolved tells those two apart — see the field's own note.
     proRataPercent: exemptOn ? deduction.percent : null,
     voorbelastingUnresolved: deduction.unresolved,
+    voorbelastingTegenteken: round2(voorbelastingTegenteken),
     voorbelastingGeblokkeerd: voorbelasting.blocked,
   };
 }

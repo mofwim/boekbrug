@@ -243,6 +243,47 @@ export function creditnotaSignalText(signal: CreditnotaSignal): string | null {
 }
 
 /**
+ * [TEGENTEKEN] Do the base and the BTW inside one document point in OPPOSITE directions?
+ *
+ * ── WHY THIS IS ITS OWN QUESTION ──
+ * Every credit check in this file compares the document's KIND with its TOTAL: is it typed
+ * 'creditnota' while the money sits positive (`creditnotaSignConflict`), does either half say
+ * credit (`creditStance`), should the whole triplet be flipped (`asCreditAmounts`). All three read
+ * the total, and a row can pass all three while being impossible inside:
+ *
+ *     Aardappelgroothandel Altena 26700951 — base −123,00 · btw +13,42 · total −109,58
+ *
+ * The type says creditnota, the total is correctly negative, and −123,00 + 13,42 really is
+ * −109,58, so the arithmetic closes and every existing check is satisfied. It is still not a
+ * document that can exist: a BTW rate is never negative, so the tax on a credited base is a credit
+ * too. Somewhere between the paper and this row a sign was applied to two of the three fields and
+ * not to the third.
+ *
+ * ── WHY IT IS NOT REPAIRED HERE ──
+ * `asCreditAmounts` two functions down already decided this, in writing: it flips the triplet by
+ * −1 as ONE multiplication and refuses to negate fields individually, because "negating each field
+ * independently silently rewrites a triplet whose parts do not share a sign … turning a reading we
+ * do not understand into a different one we invented". That decision holds. This predicate does
+ * not repair anything; it lets the surfaces that COUNT money refuse to count a number they cannot
+ * trust, and lets the screens say why.
+ *
+ * Zero on either side is not a conflict — a zero has no direction — and the untaxed part of a
+ * document is nobody's business here: this compares the two fields as stored.
+ */
+export function btwSignOpposesBase(input: {
+  totalExBtw: number | null | undefined;
+  btwAmount: number | null | undefined;
+}): boolean {
+  const base = Number(input.totalExBtw ?? 0);
+  const btw = Number(input.btwAmount ?? 0);
+  if (!Number.isFinite(base) || !Number.isFinite(btw)) return false;
+  // A cent of float noise is not a direction. Below that, treat it as zero.
+  const CENT = 0.005;
+  if (Math.abs(base) <= CENT || Math.abs(btw) <= CENT) return false;
+  return (base < 0) !== (btw < 0);
+}
+
+/**
  * The amounts of a credit note, with the sign a credit note must carry.
  *
  * ── WHY THIS EXISTS ──

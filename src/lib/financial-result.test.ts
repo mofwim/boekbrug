@@ -1019,5 +1019,35 @@ console.log("\n— [WEEKBATCH] a card batch settles more than one day —");
     near(computeResult([], [], [], turnover).omzet, tillOmzet));
 }
 
+
+console.log("\n— [TEGENTEKEN] a document whose base and BTW point opposite ways —");
+{
+  // Aardappelgroothandel Altena 26700951, as it really stands: base −123,00, btw +13,42.
+  // Every credit check passes it (see creditnota-signal.test.ts) and it used to contribute
+  // +13,42 to the tax reclaimed instead of −13,42 — € 26,84 wrong on one document.
+  const inv: ResultInvoice[] = [
+    { direction: "incoming", status: "received", total_ex_btw: 400, btw_amount: 84 },
+    { direction: "incoming", status: "received", total_ex_btw: -123, btw_amount: 13.42 },
+  ];
+  const r = computeResult(inv, [], []);
+  check("the impossible BTW is left OUT of 5b", near(r.btwVoorbelasting, 84));
+  check("…and reported as a magnitude, so the aangifte can say why", near(r.voorbelastingTegenteken, 13.42));
+  // The COST side is untouched: the base is what it is, and this rule is about the tax only.
+  check("kosten still counts the credited base", near(r.kosten, 400 - 123));
+
+  // [NEGATIEVE CONTROLE] All three also pass if the rule simply dropped every creditnota, or
+  // every purchase. These pin that a correctly-signed credit still NETS the deduction.
+  const goed = computeResult([
+    { direction: "incoming", status: "received", total_ex_btw: 400, btw_amount: 84 },
+    { direction: "incoming", status: "received", total_ex_btw: -123, btw_amount: -13.42 },
+  ], [], []);
+  check("a correctly signed creditnota is still SUBTRACTED, not refused", near(goed.btwVoorbelasting, 84 - 13.42));
+  check("…and reports nothing", goed.voorbelastingTegenteken === 0);
+
+  // And an ordinary quarter reports nothing at all — the field must be quiet on 499 of 500 rows.
+  const gewoon = computeResult([{ direction: "incoming", status: "received", total_ex_btw: 400, btw_amount: 84 }], [], []);
+  check("an ordinary purchase reports no sign conflict", gewoon.voorbelastingTegenteken === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
