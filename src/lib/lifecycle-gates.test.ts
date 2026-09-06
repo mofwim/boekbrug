@@ -425,7 +425,10 @@ test("[PAYMENT-NAMES-MISSING] a payment naming an un-imported invoice is still a
   assert.match(src, /missingInvoiceNoticeText\(missingForNotice\)/, "and the reason is on screen");
   // The numbers must reach the slot list too — the gate opening on a list that still holds one row
   // would show a two-invoice batch as a single slot.
-  assert.match(src, /\.\.\.missingNamed\.filter/, "the missing numbers become slots");
+  // [SLOT-WAAR] They now reach it through bank-slot-numbers.ts, which holds the three sources
+  // against each other instead of leaving the screen to filter one against another. The property is
+  // the same and its address changed; the module's own gate below pins the rules themselves.
+  assert.match(src, /missing: missingNamed,/, "the missing numbers become slots");
 });
 
 test("[INCASSO-CONFIRM] the switch that can settle a year of invoices asks first", () => {
@@ -26708,4 +26711,45 @@ test("[SPLIT-ALSNOG] a different act asks its own eligibility question", () => {
   assert.match(rule, /return '_btw_rows' in \(fieldConfidence as Record<string, unknown>\)/,
     "hasBtwRows tests for a non-empty array again — then 'we looked and there is no block' reads " +
       "as 'we never looked', and the owner pays for the same question twice");
+});
+
+// ── [SLOT-WAAR] The slot list describes the payment, not our three lists ───────────────────────
+//
+// Reported: ipekci slachterij, € 3.624,25, reference "202604231", description "Deel twee factuur
+// 202604231". The card said "2 facturen" and offered "Facturen koppelen (2)" for a payment naming
+// ONE invoice — because the numbers were assembled inline from three sources with a single filter
+// between them, and that filter compared only against the RESOLVED ones. With nothing resolved (an
+// invoice never imported: the ordinary case) it had nothing to compare against.
+
+test("[SLOT-WAAR] one module decides which numbers a payment puts on screen", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const slotNumbers = slotNumbersOf\(\{/,
+    "the screen assembles the slot numbers inline again — three lists and no place where they are " +
+      "held against each other is exactly how one invoice became two");
+  // The three sources still all arrive; dropping one silently loses rows instead of duplicating them.
+  for (const bron of ["resolved:", "missing:", "referenceParts:"]) {
+    assert.ok(scherm.includes(bron), `the ${bron} source no longer reaches slotNumbersOf`);
+  }
+  assert.doesNotMatch(scherm, /const leftoverRefParts =/,
+    "the old inline filter is back beside the module — two answers to one question");
+
+  const mod = code("src/lib/bank-slot-numbers.ts");
+  // Both rules, and they are not the same rule: dedup catches a repeated number, the fragment rule
+  // catches "045" standing beside its own parent "2026045". On the reported line either one alone
+  // happens to suffice, which is why each is pinned here and in its own unit test.
+  assert.match(mod, /if \(!key \|\| seen\.has\(key\)\) return;/, "identity dedup is gone");
+  assert.match(mod, /\[\.\.\.seen\]\.some\(\(k\) => k\.includes\(key\)\)/,
+    "the fragment rule is gone, or narrowed back to one source");
+});
+
+test("[SLOT-BETAALD] a slot for an invoice already booked reads as booked, never as linkable", () => {
+  // Seen on the Altena card: "Koppelen" beside invoice 26700644, which is 'paid'. A settled invoice
+  // is no longer a candidate, so that button can only fail — and it sat directly under a card
+  // printing that same invoice with its amount.
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const quotedSettledKeys = \(s\.quotedSet\?\.settled \?\? \[\]\)\.map\(\(q\) => normRef\(q\.invoiceNumber\)\)/,
+    "the settled invoices quotedInvoiceSet found no longer reach the slot list");
+  assert.match(scherm, /confirmedSet = new Set\(\[[\s\S]{0,120}?\.concat\(quotedSettledKeys\)/,
+    "…or they reach it and are not folded into the confirmed set, so the row still offers a button " +
+      "that cannot work");
 });

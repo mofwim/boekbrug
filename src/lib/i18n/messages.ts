@@ -3248,6 +3248,21 @@ export const MESSAGES = {
     ar: 'قُيّدت دفعة جزئية · المتبقي {amount}',
     en: 'Partial payment booked · {amount} still open',
   },
+  // ── [SLOT-WAAR] De lezing is geen grens ──────────────────────────────────────────────────────
+  // De slotweergave toont de nummers die WIJ in deze betaling hebben gelezen. Hoort er een factuur
+  // bij die er niet in staat — omdat de bank haar niet noemt, of omdat wij haar hebben gemist —
+  // dan eindigde het scherm daar. De eigenaar zat vast in onze lezing, en dat is precies de fout
+  // die dit product bij een LEZING nooit accepteert: zij mag een mens niet begrenzen.
+  'bank.slot.meerFacturen': {
+    nl: 'Horen er meer facturen bij deze betaling dan hier staan? Verdeel hem zelf over de juiste facturen.',
+    ar: '\u0647\u0644 \u062a\u062e\u0635\u0651 \u0647\u0630\u0647 \u0627\u0644\u062f\u0641\u0639\u0629 \u0641\u0648\u0627\u062a\u064a\u0631 \u0623\u0643\u062b\u0631 \u0645\u0645\u0651\u0627 \u0647\u0648 \u0645\u0639\u0631\u0648\u0636 \u0647\u0646\u0627\u061f \u0648\u0632\u0651\u0639\u0647\u0627 \u0628\u0646\u0641\u0633\u0643 \u0639\u0644\u0649 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u0635\u062d\u064a\u062d\u0629.',
+    en: 'Does this payment cover more invoices than are listed here? Split it across the right invoices yourself.',
+  },
+  'bank.slot.meerFacturenKnop': {
+    nl: 'Zelf over facturen verdelen',
+    ar: '\u0627\u0644\u062a\u0648\u0632\u064a\u0639 \u0639\u0644\u0649 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u064a\u062f\u0648\u064a\u0651\u0627\u064b',
+    en: 'Split across invoices yourself',
+  },
   'bank.facturenKoppelen': {
     nl: 'Facturen koppelen ({count})',
     ar: 'ربط فواتير ({count})',
