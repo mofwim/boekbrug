@@ -30,7 +30,7 @@
 // as the escape hatch rather than as the only way in. An image (a photographed bon, the common
 // case for a camera intake) needs none of that: <img> works everywhere.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { M3, R, FONT, EL2, COLUMN, columnInner, sheetPaddingBottom } from '@/lib/design/tokens'
 import { formatEuroNL } from '@/lib/format-nl'
 import { invoiceChecks, checksSummary, type CheckInput, type InvoiceCheck } from '@/lib/invoice-checks'
@@ -162,6 +162,26 @@ export default function InvoiceDocumentSheet({
   // green reserved for the only case that earns it.
   const hasUnknown = !hasFlag && checks.some((c) => c.outcome === 'not-checked')
 
+  // ── [CONTROLES-INKLAPPEN] Nine green ticks is a wall, and a wall is not read ──────────────
+  //
+  // Every check the app runs was printed in full on every invoice, which turns the one row that
+  // matters into the fifth of nine identical green lines. The panel exists to answer "why should I
+  // not look myself?", and it answered by making the owner look at everything.
+  //
+  // Collapsed it shows what is NOT settled, which is the same rule in both directions: nothing to
+  // report leaves the heading alone, and something to report leaves exactly that something. The
+  // arrow opens the full list for the owner who wants to see the work — the reassurance is still
+  // there, it is one tap away instead of nine lines deep.
+  //
+  // 'not-checked' counts as unsettled, deliberately. It is the [EERSTE-KEER] row — "this is the
+  // first account number we have seen for this supplier, take it from the invoice before you pay"
+  // — and folding that away behind an arrow would undo the reason it was written.
+  const [checksOpen, setChecksOpen] = useState(false)
+  const checksListId = useId()
+  const openChecks = checks.filter((c) => c.outcome !== 'passed')
+  const shownChecks = checksOpen ? checks : openChecks
+  const hiddenChecks = checks.length - shownChecks.length
+
   const row = (label: string, value: string) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0' }}>
       <span style={{ fontSize: 12.5, color: M3.onSurfaceVariant, flexShrink: 0 }}>{label}</span>
@@ -262,10 +282,38 @@ export default function InvoiceDocumentSheet({
 
           {/* ── What we checked ── the answer to "why should I not look myself?" ── */}
           <div style={{ border: `1px solid ${hasFlag ? '#F5C6C0' : '#DADCE0'}`, borderRadius: R.md, padding: '10px 12px', marginBottom: 10 }}>
-            <p style={{ fontSize: 12.5, fontWeight: 700, color: hasFlag ? '#B3261E' : hasUnknown ? M3.onSurfaceVariant : '#137333', margin: '0 0 6px' }}>
-              {summary}
-            </p>
-            {checks.map((c) => (
+            {/* [CONTROLES-INKLAPPEN] The heading IS the button: it is the widest thing in the panel
+                and the owner is already reading it, so a 15-pixel chevron beside it would be the
+                only way in on a phone. */}
+            <button
+              type="button"
+              onClick={() => setChecksOpen((o) => !o)}
+              aria-expanded={checksOpen}
+              aria-controls={checksListId}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                border: 'none', background: 'none', padding: 0, margin: 0,
+                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'start',
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: hasFlag ? '#B3261E' : hasUnknown ? M3.onSurfaceVariant : '#137333' }}>
+                {summary}
+              </span>
+              {/* What the arrow will reveal, so it is not a mystery button. */}
+              {!checksOpen && hiddenChecks > 0 && (
+                <span style={{ fontSize: 11.5, color: M3.onSurfaceVariant, flexShrink: 0 }}>
+                  {/* The TOTAL, not the folded remainder. "toon alle 8" beside a heading that
+                      says nine checks were done is a smaller promise than the panel keeps, and the
+                      word is "alle". */}
+                  {t('dsh.controlesTonen', { n: String(checks.length) })}
+                </span>
+              )}
+              <span className="material-symbols-outlined" style={{ fontSize: 18, color: M3.onSurfaceVariant, flexShrink: 0 }} aria-hidden>
+                {checksOpen ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+            <div id={checksListId} style={{ marginTop: shownChecks.length > 0 ? 6 : 0 }}>
+            {shownChecks.map((c) => (
               <div key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 15, color: TICK[c.outcome].color, flexShrink: 0, marginTop: 1 }} aria-hidden>
                   {TICK[c.outcome].icon}
@@ -282,6 +330,7 @@ export default function InvoiceDocumentSheet({
                 </span>
               </div>
             ))}
+            </div>
           </div>
 
           {/* ── The paper itself ── */}
