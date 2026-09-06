@@ -100,7 +100,20 @@ ALTER TABLE public.invoices
   ADD COLUMN invoice_date        date,
   ADD COLUMN due_date            date,
   ADD COLUMN pay_token           uuid,
-  ADD COLUMN payment_prepared_at timestamptz;
+  ADD COLUMN payment_prepared_at timestamptz,
+  -- [SEAM-KOLOMMEN] The guard grew after this block was written — vendor_iban, payment_reference,
+  -- document_id and vat_deduction with the accountant write-hole fixes, discount_type and
+  -- discount_value with the discount guard (#290) — and the fixture did not grow with it. The
+  -- trigger then failed on the first name it could not find ("record new has no field
+  -- vendor_iban"), and the SQL gate has been red on main since, with no test actually asserting
+  -- anything. Types are the shipped ones; document_id is a plain uuid here, no FK, for the same
+  -- reason invoice_lines.invoice_id has none (see below).
+  ADD COLUMN vendor_iban         text,
+  ADD COLUMN payment_reference   text,
+  ADD COLUMN document_id         uuid,
+  ADD COLUMN vat_deduction       text,
+  ADD COLUMN discount_type       text,
+  ADD COLUMN discount_value      numeric;
 
 CREATE TABLE public.invoice_lines (
   -- invoice_id is a PLAIN uuid, no FK — same as bank_transactions.invoice_id above. A foreign key

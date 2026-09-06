@@ -3175,6 +3175,46 @@ test("[CI-PARITEIT] CI invokes the package.json scripts, so it cannot drift from
   );
 });
 
+// ── [SEAM-GUARD] The SQL fixture's first statement is DROP SCHEMA public CASCADE ──
+//
+// The runner used to stand between that statement and a real database with one check: the
+// database NAME, with 'postgres' on the allow-list. 'postgres' is the name of every Supabase
+// project's database, so a DATABASE_URL copied from a project's settings passed, and the next
+// statement would have been the DROP — on production. This gate pins the three refusals that
+// replaced it. It reads the script as text because the refusals ARE text: a shell case-pattern and
+// two SQL probes. What it cannot check is that they fire; the runner was exercised against a
+// throwaway cluster for that (a database named 'postgres', one carrying auth.users, and a
+// Supabase-shaped URL — each refused, each canary table still there afterwards).
+test("[SEAM-GUARD] the SQL seam runner refuses anything that could be a real database", () => {
+  const runner = readFileSync("scripts/sql-seam-test.sh", "utf8");
+
+  // 1. The name. 'postgres' may never be on the allow-list again, and neither may 'ci' (it matches
+  //    'financien'). The list is asserted as the exact case-pattern so a widened one is visible.
+  assert.match(runner, /case "\$target" in\n\s+\*test\*\|\*seam\*\|\*scratch\*\) ;;/,
+    "the scratch-name allow-list changed — 'postgres' or 'ci' on it is how production gets dropped");
+  assert.doesNotMatch(runner, /\bpostgres\|/, "'postgres' is back on the allow-list");
+
+  // 2. The host. A Supabase host is refused BEFORE the first connection is opened; any other
+  //    non-local server needs SQL_SEAM_ALLOW_REMOTE=1 said out loud.
+  const supabaseAt = runner.indexOf("*supabase.co*|*supabase.com*");
+  const firstConnectAt = runner.indexOf("-c 'SELECT 1'");
+  assert.ok(supabaseAt > 0, "the Supabase-host refusal is gone");
+  assert.ok(firstConnectAt > 0 && supabaseAt < firstConnectAt,
+    "the Supabase-host refusal must run before the runner opens its first connection");
+  assert.match(runner, /inet_server_addr\(\) <<= ANY/, "the local-range classification is gone (and it must be <<=, not <<, or ::1 reads as remote)");
+  assert.match(runner, /SQL_SEAM_ALLOW_REMOTE/, "a remote server must need an explicit opt-in");
+
+  // 3. The signature. The fixture creates `auth` with one stub function; auth.users can only mean
+  //    a real project.
+  assert.match(runner, /to_regclass\('auth\.users'\) IS NOT NULL/, "the auth.users refusal is gone");
+
+  // And the printed instructions may never again suggest a URL ending in /postgres.
+  assert.doesNotMatch(runner, /localhost:5432\/postgres\b/, "the how-to-run line suggests /postgres again");
+  // The CI service database is named so that refusal 1 lets it through.
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  assert.match(ci, /POSTGRES_DB:\s*seamtest/, "CI's service database must carry a scratch name");
+});
+
 // ── [OBSERVABILITY] The kept-but-unread marker lives in ONE file, on both sides ──
 //
 // src/lib/skipped-import.ts exists because the WRITER and the READER of `ai_doc_type` once used
