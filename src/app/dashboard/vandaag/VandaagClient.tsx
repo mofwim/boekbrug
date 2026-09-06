@@ -41,7 +41,8 @@ import { M3 } from '@/lib/design/tokens'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /facturen and /manage.
-import { payToggleAnswer, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
+import { payToggleAnswer, isDuplicatePaidConflict, PAY_TOGGLE_FALLBACK_KEY } from '@/lib/pay-toggle-reason'
+import { useDialog } from "@/components/ui/Dialog";
 // [BTW-RESERVERING] Het geld op de rekening dat al van de Belastingdienst is.
 import BtwReservationPanel from '@/components/btw/BtwReservationPanel'
 // [BEVEILIGING] Zie de kop van dat bestand: hij rendert niets zodra de tweede stap aanstaat.
@@ -158,6 +159,8 @@ const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
   const t = translator(useLocale())
   const router = useRouter();
+  // [HAND-DUBBEL] De app-brede bevestigingsdialoog (DialogProvider staat in de root layout).
+  const dialog = useDialog();
 
   // [TODAY-LISTS-V1] "Negeren" = session-only visual hide (no DB write, like
   // BANK-SLOT-DISMISS). The invoice is untouched; it returns on reload because it
@@ -215,7 +218,11 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
   const payNow = useCallback(async (id: string, paymentMethod: "bank" | "kas") => {
     setPayBusy(id);
     setPayError((e) => ({ ...e, [id]: "" }));
-    try {
+    // [HAND-DUBBEL] De verzending zelf, zodat een tweede ronde met `force` dezelfde regels
+    // doorloopt in plaats van een tweede, iets andere kopie ervan. Binnen de useCallback en niet
+    // als recursie op payNow: een callback die zichzelf aanroept moet in zijn eigen dependencies
+    // staan, en dat is een lus die niemand later nog durft aan te raken.
+    const verstuur = async (force: boolean): Promise<void> => {
       const res = await fetch("/api/invoice/pay-toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -224,6 +231,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
           action: "pay",
           paymentMethod,
           paymentDate: amsterdamToday(),
+          ...(force ? { force: true } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -235,11 +243,35 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
         // status says we may trust it, otherwise a line from the catalogue in the owner's
         // language. Never a code.
         const answer = payToggleAnswer(res.status, data);
-        setPayError((e) => ({ ...e, [id]: answer.kind === "server" ? answer.text : t(answer.key) }));
+        const bericht = answer.kind === "server" ? answer.text : t(answer.key);
+        // [HAND-DUBBEL] Dit factuurnummer staat al ergens anders betaald. Dat is geen storing en
+        // geen verbod: welke van twee lezingen de echte factuur is, is een vraag over papier — en
+        // op het Enka-paar was de kopie die ons goed leek juist de verkeerde. Dus vragen, en bij ja
+        // dezelfde verzending nog één keer met force.
+        //
+        // Ook op dit scherm, en niet alleen op het beheerscherm: de dubbele boekingen in de live
+        // administratie zijn met één tik gemaakt, en dit is het scherm waar die tik het snelst gaat.
+        if (isDuplicatePaidConflict(data)) {
+          const toch = await dialog.confirm({
+            title: t("ink.dubbelBetaald.kop"),
+            message: bericht,
+            confirmLabel: t("ink.dubbelBetaald.tochBoeken"),
+          });
+          if (toch) return verstuur(true);
+          // Nee is een antwoord, en het hoort te blijven staan: de regel houdt de zin die uitlegt
+          // waarom er niets is geboekt.
+          setPayError((e) => ({ ...e, [id]: bericht }));
+          return;
+        }
+        setPayError((e) => ({ ...e, [id]: bericht }));
         return;
       }
       setPaidIds((prev) => new Set(prev).add(id));
       setPayingId(null);
+    };
+
+    try {
+      await verstuur(false);
     } catch {
       // The request never completed — it may or may not have reached the server, and we cannot
       // know which. The catalogue's neutral line says exactly that much and nothing more.
@@ -247,7 +279,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
     } finally {
       setPayBusy(null);
     }
-  }, [t]);
+  }, [t, dialog]);
 
   // [SORT] Owner-chosen order, applied inside each list.
   const [sortBy, setSortBy] = useState<SortKey>("due_asc");

@@ -44,6 +44,8 @@ import { openAmount, isPartiallyPaid, interpretAmountEntry } from "@/lib/partial
 // API route re-checks before it writes. The dialog below is that decision, rendered.
 import { decideRemoval, type RemovalDecision, type RemovalInvoice } from "@/lib/invoice-removal"
 import { useToast } from "@/components/ui/Toast"
+// [HAND-DUBBEL] De app-brede bevestigingsdialoog (DialogProvider staat in de root layout).
+import { useDialog } from "@/components/ui/Dialog"
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
@@ -52,7 +54,7 @@ import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
-import { payToggleAnswer, isVerwerktConflict } from '@/lib/pay-toggle-reason'
+import { payToggleAnswer, isVerwerktConflict, isDuplicatePaidConflict } from '@/lib/pay-toggle-reason'
 import type { MessageKey } from '@/lib/i18n/messages'
 // [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by the same component the
 // pay screen uses. Never open-invoice-proof.ts itself — that reaches the whole matching engine.
@@ -210,6 +212,8 @@ export default function FacturenClient({
   // call sites already used. The local one it replaces could not stack, was
   // never announced to a screen reader, and vanished with the page.
   const showToast = useToast()
+  // [HAND-DUBBEL] Voor de ene vraag die dit scherm moet stellen voordat het geld boekt.
+  const dialog = useDialog()
   const taal = useLocale()
   // [BEWIJS-BEANTWOORDEN] Wat de ondernemer op het bewijspaneel al beantwoord heeft.
   const proofAnswers = useProofAnswers()
@@ -734,7 +738,9 @@ export default function FacturenClient({
   }, [typeFiltered, searching, loading, hasMore, displayed.length, loadMore])
 
 
-  async function executePay(ctx: ConfirmPayCtx) {
+  // [HAND-DUBBEL] `force` is de tweede ronde: de server heeft geweigerd omdat dit factuurnummer al
+  // ergens anders betaald staat, de ondernemer heeft die zin gelezen en zegt toch afboeken.
+  async function executePay(ctx: ConfirmPayCtx, force = false) {
     setPayCtx(null); setProcessingId(ctx.id)
     // [MANUAL-PARTIAL-PAY] A DEELBETALING leaves the invoice open — so do NOT optimistically
     // flip it to 'paid'; only a full settlement changes the status. The amount lands after
@@ -764,6 +770,8 @@ export default function FacturenClient({
           ...(ctx.amount != null ? { amount: ctx.amount } : {}),
           // Idempotency: a double tap or a retried POST must not book twice.
           ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+          // [HAND-DUBBEL] Alleen na een uitdrukkelijk ja — zie de tak bij de weigering hieronder.
+          ...(force ? { force: true } : {}),
         }),
       })
     } catch {
@@ -798,6 +806,23 @@ export default function FacturenClient({
       if (isVerwerktConflict(json)) {
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
+      } else if (isDuplicatePaidConflict(json)) {
+        // [HAND-DUBBEL] Geen storing en geen verbod: dit factuurnummer staat al ergens anders
+        // betaald. Twee van de drie dubbele boekingen in de live administratie zijn zo ontstaan —
+        // de ondernemer tikte "betaald" op een tweede lezing van een document dat de bank al had
+        // afgeschreven. De server ziet dat nu; dit scherm moet het vrágen.
+        //
+        // Vragen en niet weigeren, want welke van twee lezingen de echte factuur is, is een vraag
+        // over papier — en op het Enka-paar was de kopie die ons goed leek juist de verkeerde. De
+        // optimistische status is hierboven al teruggezet; een tweede ronde zet hem opnieuw.
+        setProcessingId(null)
+        const toch = await dialog.confirm({
+          title: t('ink.dubbelBetaald.kop'),
+          message,
+          confirmLabel: t('ink.dubbelBetaald.tochBoeken'),
+        })
+        if (toch) return executePay(ctx, true)
+        return
       } else {
         showToast(message)
       }

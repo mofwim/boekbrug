@@ -26849,13 +26849,38 @@ test("[HAND-DUBBEL] the pay route asks the database, and asks it before booking"
       "reading stored \"26/1876\", and an equality filter calls those two invoices");
 });
 
-test("[HAND-DUBBEL] and the screen asks rather than reports", () => {
-  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
-  assert.match(scherm, /isDuplicatePaidConflict\(json as PayToggleError\)/,
-    "the screen reads this refusal as an ordinary error again — a toast the owner taps away");
-  assert.match(scherm, /if \(toch\) return executePay\(ctx, true\)/,
-    "there is no way through: the owner reads that the number stands paid and then cannot book " +
-      "the one invoice that legitimately repeats");
+test("[HAND-DUBBEL] every screen that can book a payment asks, and none of them only reports", () => {
+  // Derived, not listed: the doors are the files that POST to this route, found by reading the
+  // tree. A fourth screen that learns to pay must learn to ask in the same breath — a hand-kept
+  // list of three would let it ship without one, which is exactly how /facturen and /vandaag were
+  // left behind when the guard first landed on /manage.
+  const loop = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...loop(p));
+      else out.push(p);
+    }
+    return out;
+  };
+  const deuren = loop("src/app")
+    .filter((f) => /\.tsx$/.test(f) && !f.includes(".test."))
+    .filter((f) => /['"`]\/api\/invoice\/pay-toggle['"`]/.test(code(f)));
+
+  assert.ok(deuren.length >= 3,
+    `only ${deuren.length} screen(s) POST to pay-toggle — this gate has gone blind to the others`);
+
+  for (const deur of deuren) {
+    const scherm = code(deur);
+    assert.match(scherm, /isDuplicatePaidConflict\(/,
+      `${deur} books a payment and reads a duplicate refusal as an ordinary error — a toast the ` +
+        "owner taps away, on the exact tap that made two of the three double bookings");
+    assert.match(scherm, /confirmLabel: t\(["']ink\.dubbelBetaald\.tochBoeken["']\)/,
+      `${deur} refuses without asking — then the owner reads that the number stands paid and ` +
+        "cannot book the one invoice whose number legitimately repeats");
+    assert.match(scherm, /force: true/,
+      `${deur} never re-issues the request with force, so its question has no yes`);
+  }
 
   // Recognised by CODE, never by reading our own sentence back — the reason isVerwerktConflict
   // exists at all.

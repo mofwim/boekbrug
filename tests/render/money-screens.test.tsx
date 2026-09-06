@@ -1218,6 +1218,11 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
   // props, so unlike the four above this one can be handed the cases that actually branch.
   const { default: VandaagClient } = await import("../../src/app/dashboard/vandaag/VandaagClient");
   const { ToastProvider } = await import("../../src/components/ui/Toast");
+  // [HAND-DUBBEL] Dit scherm boekt sinds vandaag zelf een betaling af, en het moet dus kunnen
+  // VRAGEN voordat het een tweede exemplaar van een al betaald factuurnummer afboekt. Daarvoor
+  // gebruikt het useDialog, dat buiten zijn provider gooit — precies wat deze poort ving. De app
+  // hangt hem in de root layout, dus zo hoort dit scherm ook hier te worden gemonteerd.
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
 
   const inv = (over: Record<string, unknown> = {}) => ({
     id: "v1", client_name: "Groothandel", invoice_number: "RE1", invoice_date: "2026-03-01",
@@ -1226,6 +1231,7 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
   });
 
   const html = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
     React.createElement(ToastProvider, null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       React.createElement(VandaagClient as any, {
@@ -1244,7 +1250,7 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
         loadFailed: false,
         toVerifyCount: 3,
         datelessPayableCount: 1,
-      })),
+      }))),
   );
   assert.ok(html.length > 500, "Vandaag rendered its lists");
 
