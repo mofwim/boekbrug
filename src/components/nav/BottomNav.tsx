@@ -8,11 +8,17 @@
 // around the app were the logo, the browser's back button, and whatever tiles
 // the home screen happened to show. Every journey had to start by going home.
 //
-// This is the Material 3 navigation bar: four destinations per role, an active
-// pill behind the current one, icon plus label. Four and not six on purpose —
-// M3 allows up to five, and past that the labels stop fitting on a 320px screen
-// and the bar stops being scannable. Everything else stays reachable from the
-// home tiles, which is what they are for.
+// This is the Material 3 navigation bar: four or five destinations per role, an
+// active pill behind the current one, icon plus label. Never six — M3 allows up
+// to five, and past that the labels stop fitting on a 320px screen and the bar
+// stops being scannable. Everything else stays reachable from the home tiles,
+// which is what they are for.
+//
+// [KORTE-WEG] The owner's two lists are five since Vandaag joined them; the
+// accountant's is still four. Which is why the active pill is no longer a fixed
+// 56px: at five columns on a 320px screen that leaves 4px between two pills and
+// they read as one bar of colour. It narrows with the count instead, so the
+// indicator keeps its gap at every width the bar is drawn at.
 //
 // It appears ONLY below 640px (see .bottom-nav in globals.css) — exactly the
 // width at which the top-bar links disappear, so the two never both hide or
@@ -105,7 +111,7 @@ export function BottomNav({ role, counter = false }: { role: Role | null; counte
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: 56,
+                width: items.length >= 5 ? 48 : 56,
                 height: 30,
                 borderRadius: 999,
                 background: isActive ? M3.primaryContainer : 'transparent',

@@ -35,12 +35,51 @@ test("[NAV-BESTEMMINGEN] the longest match wins, so a child lights its own paren
   assert.equal(activeHref("/dashboard/accountant", ACCOUNTANT), "/dashboard/accountant");
 });
 
+test("[KORTE-WEG] the owner's daily screen is in the bar itself, for both trades", () => {
+  // Below 640px the bottom bar IS the standing navigation — the header's text links are
+  // `display: none !important` there and the rail starts at 1024px (asserted against globals.css
+  // in the [KORTE-WEG] gate). So a screen that is not in this list has no standing door on the
+  // device these owners actually hold, whatever else links to it.
+  for (const counter of [false, true]) {
+    const hrefs = destinationsFor("zzper", counter).map((d) => d.href);
+    assert.ok(hrefs.includes("/dashboard/vandaag"),
+      `the owner${counter ? " (counter)" : ""} has no standing way to the screen that lists what ` +
+      "must be paid today and prints the aangifte deadline");
+    // Five is M3's ceiling, and the bar's own note explains what six costs on a 320px screen.
+    assert.ok(hrefs.length <= 5, `the ${counter ? "counter " : ""}owner's bar carries ${hrefs.length} destinations`);
+    // The trade still owns the second slot: a kapper opens the Kassa thirty times a day and
+    // Vandaag once. Vandaag sits after it, in the same place for both, or the two bars would
+    // teach two different maps of one app.
+    assert.equal(hrefs.indexOf("/dashboard/vandaag"), 2,
+      "Vandaag moved out of the slot the trade shortcut leaves it");
+  }
+
+  // The accountant does not get it, and that is the same reasoning the module gives for their
+  // whole list: Vandaag is the OWNER's day. An accountant works across many administraties and
+  // their own day is the werkvoorraad, not one client's payables.
+  assert.ok(!destinationsFor("accountant").map((d) => d.href).includes("/dashboard/vandaag"));
+
+  // [NEGATIEVE CONTROLE] Everything above also passes if destinationsFor returned the owner's list
+  // for every argument, or if the rail simply held every route in the app. These pin both.
+  assert.notDeepEqual(destinationsFor("accountant"), destinationsFor("zzper"));
+  for (const counter of [false, true]) {
+    const rail = railDestinations("zzper", counter).map((d) => d.href);
+    assert.ok(rail.includes("/dashboard/vandaag"), "the rail lost the same screen the phone bar carries");
+    assert.ok(!rail.includes("/dashboard/beveiliging"),
+      "the rail now lists everything, so finding a route in it proves nothing");
+  }
+});
+
 test("[NAV-BESTEMMINGEN] every label is a catalogue key, never a word", () => {
   // The navigation is on every screen, so a hard-coded Dutch label here is the one piece of Dutch
   // an owner reading Arabic could never get away from.
   for (const list of [OWNER, OWNER_COUNTER, ACCOUNTANT]) {
     for (const d of list) {
-      assert.match(d.label, /^nav\./, `${d.href} carries "${d.label}" — a label must be a catalogue key`);
+      // `chrome.` is allowed beside `nav.` for one reason and it is not laxity: a destination that
+      // ALSO has a sub-page header must carry that header's key, or the bar and the bar above it
+      // name one screen twice and the two can drift apart in any of the four languages. Vandaag is
+      // the case ([KORTE-WEG]); DashboardChrome wrote out the same reasoning for kassa.titel.
+      assert.match(d.label, /^(nav|chrome)\./, `${d.href} carries "${d.label}" — a label must be a catalogue key`);
       assert.ok(d.icon.length > 0, `${d.href} has no icon`);
       assert.match(d.href, /^\/dashboard/, `${d.href} is not a dashboard route`);
     }
@@ -68,7 +107,7 @@ test("[ZIJBALK] the rail is grouped, and every row is still a catalogue key", ()
   assert.ok(secties.slice(1).every((s) => s.heading !== null), "every group after the first is named");
   // Same keys the home screen uses, so a tile and a rail row cannot name one destination twice.
   for (const d of railDestinations("zzper")) {
-    assert.match(d.label, /^(nav|start)\./, `${d.href} carries "${d.label}" — not a catalogue key`);
+    assert.match(d.label, /^(nav|start|chrome)\./, `${d.href} carries "${d.label}" — not a catalogue key`);
     assert.match(d.href, /^\/dashboard/, `${d.href} is not a dashboard route`);
     assert.ok(d.icon.length > 0, `${d.href} has no icon`);
   }

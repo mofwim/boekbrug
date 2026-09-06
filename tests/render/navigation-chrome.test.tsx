@@ -157,3 +157,39 @@ test("[ZIJBALK] the phone bar still renders too — the same destinations, the o
     }
   }
 });
+
+// [KORTE-WEG] The bar is five wide for an owner now, and the fifth one is a screen that could not
+// be opened on a phone at all until it was added. Two things can go wrong in the render and only
+// here: the link is absent (a list edited on one branch of the trade and not the other), or the
+// label prints its own KEY — because this destination deliberately borrows the sub-page header's
+// `chrome.vandaag` rather than declaring a second key with the same word in it, and a key that has
+// slipped out of the catalogue renders as itself in 11px type on every screen in the app.
+test("[KORTE-WEG] the phone bar carries Vandaag, and prints it as a word", async () => {
+  const { BottomNav } = await load();
+  pathname = "/dashboard";
+  for (const counter of [false, true]) {
+    const html = draw(<BottomNav role="zzper" counter={counter} />);
+    assert.ok(html.includes('href="/dashboard/vandaag"'),
+      `the ${counter ? "counter " : ""}owner's phone bar has no way to today's work`);
+    assert.ok(html.includes(">Vandaag<"),
+      `the ${counter ? "counter " : ""}owner's bar shows no word for it — a label rendering as its key`);
+    assert.ok(!html.includes("chrome.vandaag"), "the catalogue key reached the screen");
+  }
+
+  // Standing on it lights it, and standing anywhere else does not: an active pill on the wrong
+  // item tells the owner they are somewhere they are not.
+  // Read through links(), not with one regex: React does not emit attributes in source order, so
+  // "href then aria-current" is a property of this render and not of the markup.
+  const huidig = (html: string) =>
+    links(html).filter((a) => a.includes('aria-current="page"')).find((a) => a.includes('href="/dashboard/vandaag"'));
+  pathname = "/dashboard/vandaag";
+  assert.ok(huidig(draw(<BottomNav role="zzper" />)),
+    "the bar does not mark today's screen as the one you are on");
+  pathname = "/dashboard/facturen";
+  assert.ok(!huidig(draw(<BottomNav role="zzper" />)),
+    "Vandaag is marked current while standing on Facturen");
+
+  // The accountant's bar is four and does not carry it — the owner's day is not theirs.
+  const kantoor = draw(<BottomNav role="accountant" />);
+  assert.ok(!kantoor.includes('href="/dashboard/vandaag"'));
+});

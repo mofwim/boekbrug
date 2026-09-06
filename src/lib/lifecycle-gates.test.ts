@@ -13953,6 +13953,65 @@ test("[ICOON-SUBSET] no icon renders as its own name", () => {
   }
 });
 
+// ─── [KORTE-WEG] The screen the app sends the owner to must exist on a phone ────────────────────
+//
+// /dashboard/vandaag lists what has to be paid today, who has to be reminded, which offertes are
+// still open, and it is the ONLY screen in the app that prints the btw-aangifte deadline. On a
+// phone it could not be opened at all.
+//
+// Not "was hard to find" — could not be opened. Below 640px the header's text links are
+// `display: none !important`, the desktop rail starts at 1024px, and the bottom bar carried four
+// destinations of which this was not one. The single door left was a button inside
+// `{attention.length > 0 && …}` on the home screen: a block that renders only when an invoice is
+// overdue or due within three days. So the owner with an aangifte deadline in four days and
+// nothing late had no way to the screen that states the deadline — and payment-due-notice.ts sends
+// a push notification straight at that screen, which on a phone opened a page the owner could
+// never get back to.
+//
+// The gate derives both halves rather than asserting the fix. The route comes out of the notice
+// module that links to it, and "reachable on a phone" comes out of globals.css — because the claim
+// "the bottom bar is the standing navigation below 640px" is a CSS fact, and a gate that assumed
+// it would keep passing after someone changed the breakpoints.
+test("[KORTE-WEG] the screen a due-payment notification opens is in the phone's own navigation", () => {
+  // 1. WHERE THE APP SENDS THE OWNER — read from the notice, not typed here. A notice that starts
+  //    pointing somewhere else moves this gate with it instead of leaving it guarding a stale route.
+  const melding = code("src/lib/payment-due-notice.ts");
+  const link = /link:\s*['"`](\/dashboard[^'"`]*)['"`]/.exec(melding);
+  assert.ok(link, "payment-due-notice.ts no longer names a screen — this gate has nothing to follow");
+  const route = link![1].split(/[?#]/)[0];
+
+  // 2. WHAT "REACHABLE ON A PHONE" MEANS — read from the stylesheet. Three rules together say that
+  //    below 640px the bottom bar is the only standing navigation there is.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const telefoon = css.slice(css.indexOf("@media (max-width: 640px)"));
+  assert.ok(telefoon.length > 0, "the phone breakpoint is gone from globals.css");
+  assert.match(telefoon.slice(0, telefoon.indexOf("@media", 1) > 0 ? telefoon.indexOf("@media", 1) : undefined),
+    /\.dash-nav-links\s*\{[^}]*display:\s*none/,
+    "the header's text links are visible on a phone again — then this gate is measuring the wrong bar");
+  assert.match(css, /\.dash-rail[\s\S]{0,400}?min-width:\s*1024px|min-width:\s*1024px[\s\S]{0,400}?\.dash-rail/,
+    "the rail no longer starts at 1024px, so it may now be part of the phone's navigation");
+
+  // 3. THE ASSERTION. Both owner lists, because the counter trade gets a different second slot and
+  //    a fix applied to one list is exactly the kind that never reaches the other.
+  for (const counter of [false, true]) {
+    const hrefs = destinationsFor("zzper", counter).map((d) => d.href);
+    assert.ok(hrefs.includes(route),
+      `a due-payment notification opens ${route}, and the ${counter ? "counter " : ""}owner's phone ` +
+      "bar has no way back to it — the notification is a one-way door");
+  }
+
+  // 4. AND THE DOOR IT REPLACES IS STILL THE CONDITIONAL ONE. Said out loud rather than removed:
+  //    the home screen's link belongs inside its preview (it reads "alle 7 bekijken", which only
+  //    means something when there are seven). What was wrong was that it was the ONLY door, and
+  //    this line records that the gate above is what now carries that weight.
+  const home = code("src/app/dashboard/zzp/DailyTruth.tsx");
+  const voorwaarde = home.indexOf("attention.length > 0");
+  const deur = home.indexOf(`router.push('${route}')`);
+  assert.ok(voorwaarde > 0 && deur > voorwaarde,
+    "the home screen's link to this screen moved out of the attention block — then say so here, " +
+    "because this gate is written on the assumption that the bar is what makes it reachable");
+});
+
 // ─── [ZIJBALK] Two navigation bars, one list of destinations ────────────────────────────────────
 //
 // The phone had real navigation — four role-aware destinations, translated labels, an active pill.

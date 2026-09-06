@@ -35,11 +35,37 @@ export interface Destination {
   exact?: boolean;
 }
 
+// ── [KORTE-WEG] The one destination both owner lists share in the middle ────────────────────────
+//
+// "Vandaag" is the screen that answers "what do I have to do?" — the invoices to pay, the clients
+// to remind, the offertes still open, and the btw-potje with the aangifte deadline printed on it.
+// It had no standing door on a phone, and that is not a matter of taste: below 640px
+// `.dash-nav-links` is `display: none !important` (globals.css), the rail only appears from
+// 1024px, and the home screen linked here ONLY from inside `{attention.length > 0 && …}` — a block
+// that collapses the moment nothing is overdue. So the owner with a deadline in four days and no
+// late invoice had no way to the screen that states the deadline. btw-deadline-notice.ts opens
+// with that same sentence; this is the other half of that repair.
+//
+// It sits THIRD, and the trade still owns the second slot: a kapper reaches the Kassa thirty times
+// a day and Vandaag once, so the counter's shortcut keeps its place ([VAK-BRUG] below). Third of
+// five is also where a thumb rests on a phone held in one hand.
+//
+// FIVE and not four now. The bar's own note says "M3 allows up to five, and past that the labels
+// stop fitting on a 320px screen" — the objection was to six. At 320px each column is 64px, the
+// active pill is 56px, and the labels truncate rather than wrap; on the 360px screens these owners
+// actually hold it is 72px per column.
+//
+// The label is `chrome.vandaag`, the key the sub-page header already uses for this screen, not a
+// second key with the same word in it. One screen, one key, so the bar and the header cannot come
+// to call it two different things in any language — the reasoning [DEUR] wrote out in
+// DashboardChrome for kassa.titel, uren.titel and the other two.
+const VANDAAG: Destination = { href: "/dashboard/vandaag", label: "chrome.vandaag", icon: "today" };
+
 // Chosen from what each role's home screen puts first, so the bars shortcut the journeys people
 // already take rather than inventing a new hierarchy.
 //
-// [VAK-BRUG] The counter trade's list. Four destinations again, and three of them the same — only
-// the second changes, and that one change is the whole point.
+// [VAK-BRUG] The counter trade's list. The same five destinations as the owner's — only the second
+// changes, and that one change is the whole point.
 //
 // A kapper is paid EUR 25 by someone who walks out. He sends no invoice and has no "client", and
 // the bar on every screen of his app led with Facturen and Inkomend: a list he never adds to, and
@@ -53,6 +79,7 @@ export interface Destination {
 export const OWNER_COUNTER: Destination[] = [
   { href: "/dashboard", label: "nav.start", icon: "home", exact: true },
   { href: "/dashboard/kassa", label: "nav.kassa", icon: "storefront" },
+  VANDAAG,
   { href: "/dashboard/incoming", label: "nav.incoming", icon: "inbox", also: ["/dashboard/upload"] },
   { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
 ];
@@ -60,6 +87,7 @@ export const OWNER_COUNTER: Destination[] = [
 export const OWNER: Destination[] = [
   { href: "/dashboard", label: "nav.start", icon: "home", exact: true },
   { href: "/dashboard/facturen", label: "nav.invoices", icon: "receipt_long", also: ["/dashboard/invoice"] },
+  VANDAAG,
   { href: "/dashboard/incoming", label: "nav.incoming", icon: "inbox", also: ["/dashboard/upload"] },
   { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
 ];
@@ -158,7 +186,12 @@ export function railSectionsFor(role: Role | null, counter = false): RailSection
   if (counter) administratie.unshift({ href: "/dashboard/kassa", label: "nav.kassa", icon: "storefront" });
 
   return [
-    { heading: null, items: [OWNER[0]] },
+    // [KORTE-WEG] Start and Vandaag, above the first heading: where am I, and what do I have to do.
+    // Vandaag is here because it is a primary destination and every one of those must be somewhere
+    // in the rail ([ZIJBALK]) — but also because the rail had the same hole the phone did. The one
+    // link to this screen on a wide display was the header's text link, which the sub-page bar
+    // replaces on most routes.
+    { heading: null, items: [OWNER[0], VANDAAG] },
     { heading: "start.administratie", items: administratie },
     {
       heading: "start.cijfers",
