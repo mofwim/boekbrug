@@ -14369,6 +14369,170 @@ export const MESSAGES = {
     en: 'This one was not eligible to be booked automatically.',
   },
 
+
+  // ─── [GESPREK] The conversation screen — one chat with a linked client or accountant ────────
+  //
+  // This screen held six Dutch sentences of its own. The list screen next to it (ber.*) was
+  // already in the catalogue; this one is the one the owner opens from it, so a translated list
+  // led straight into a Dutch chat. Simple words on purpose: the reader is typing to their
+  // accountant, not reading a manual.
+
+  'gesprek.ophaalFout': {
+    nl: 'We konden dit gesprek nu niet ophalen. Probeer het zo meteen opnieuw.',
+    ar: 'لم نتمكن من فتح هذه المحادثة الآن. حاول مرة أخرى بعد قليل.',
+    en: 'We could not load this conversation right now. Please try again in a moment.',
+  },
+  'gesprek.stuurAan': { nl: 'Stuur een bericht aan {name}', ar: 'أرسل رسالة إلى {name}', en: 'Send a message to {name}' },
+  'gesprek.plaatshouder': {
+    nl: 'Bericht aan {name}... (Enter om te verzenden)',
+    ar: 'رسالة إلى {name}... (اضغط Enter للإرسال)',
+    en: 'Message to {name}... (Enter to send)',
+  },
+  'gesprek.verzendFout': { nl: 'Verzenden mislukt — probeer opnieuw', ar: 'فشل الإرسال، حاول مرة أخرى', en: 'Sending failed — try again' },
+  'gesprek.stuur': { nl: 'Stuur', ar: 'إرسال', en: 'Send' },
+
+  // ─── [KWARTAAL-INTRO] The one line above the quarter overview ───────────────────────────────
+
+  'kwo.intro': {
+    nl: 'BTW-aangifte, totalen en export per kwartaal',
+    ar: 'إقرار BTW والإجماليات والتصدير لكل ربع سنة',
+    en: 'BTW return, totals and export per quarter',
+  },
+
+  // ─── [BEHEER] The operator's screen ─────────────────────────────────────────────────────────
+  //
+  // This screen was deliberately Dutch-only, on the argument that its one reader chose no
+  // language setting. The reader is the owner of the product, and the owner reads Arabic — the
+  // same reversal the accountant module went through. The sentences that come from the libraries
+  // it renders (the hold-reason labels, the cron notes) stay as those libraries write them; the
+  // screen's OWN words are here. Plain words, because these panels are read at a glance.
+
+  'beh.titel': { nl: 'Beheer', ar: 'الإدارة', en: 'Admin' },
+  'beh.alleenLezen': {
+    nl: 'Alleen-lezen. Koppelen, ontkoppelen en rollen lopen via de partijen zelf — dit scherm geeft overzicht, geen tweede deur.',
+    ar: 'للقراءة فقط. الربط وفكّ الربط والأدوار تتم عند الأطراف نفسها. هذه الشاشة تعطي نظرة عامة، وليست بابًا ثانيًا.',
+    en: 'Read-only. Linking, unlinking and roles are done by the parties themselves — this screen gives an overview, not a second door.',
+  },
+
+  'beh.accounts': { nl: 'accounts', ar: 'حسابات', en: 'accounts' },
+  'beh.ondernemers': { nl: 'ondernemers', ar: 'أصحاب أعمال', en: 'business owners' },
+  'beh.boekhouders': { nl: 'boekhouders', ar: 'محاسبون', en: 'accountants' },
+  'beh.koppelingen': { nl: 'koppelingen', ar: 'روابط', en: 'links' },
+
+  'beh.accountsKop': { nl: 'Accounts', ar: 'الحسابات', en: 'Accounts' },
+  'beh.naam': { nl: 'Naam', ar: 'الاسم', en: 'Name' },
+  'beh.email': { nl: 'E-mail', ar: 'البريد الإلكتروني', en: 'E-mail' },
+  'beh.rol': { nl: 'Rol', ar: 'الدور', en: 'Role' },
+  'beh.plan': { nl: 'Plan', ar: 'الباقة', en: 'Plan' },
+  'beh.sinds': { nl: 'Sinds', ar: 'منذ', en: 'Since' },
+  'beh.nogGeenAccounts': { nl: 'Nog geen accounts.', ar: 'لا حسابات بعد.', en: 'No accounts yet.' },
+
+  'beh.koppelKop': { nl: 'Boekhouder ↔ klant', ar: 'المحاسب ↔ العميل', en: 'Accountant ↔ client' },
+  'beh.boekhouder': { nl: 'Boekhouder', ar: 'المحاسب', en: 'Accountant' },
+  'beh.klant': { nl: 'Klant', ar: 'العميل', en: 'Client' },
+  'beh.nogGeenKoppelingen': { nl: 'Nog geen koppelingen.', ar: 'لا روابط بعد.', en: 'No links yet.' },
+
+  // The background jobs.
+  'beh.hartslagOnleesbaar': { nl: 'De cron-hartslag is niet te lezen', ar: 'تعذّرت قراءة نبض المهام الخلفية', en: 'The cron heartbeat cannot be read' },
+  'beh.hartslagOnleesbaarUitleg': {
+    nl: 'We weten dus niet of de achtergrondtaken nog draaien. Dat is geen bevestiging dat er iets stuk is, en ook geen bevestiging dat alles goed gaat — het is precies het geval waarin niemand het merkt.',
+    ar: 'لا نعرف إذًا إن كانت المهام الخلفية ما زالت تعمل. هذا لا يؤكد أن شيئًا معطّل، ولا يؤكد أن كل شيء بخير. وهذه تحديدًا الحالة التي لا يلاحظها أحد.',
+    en: 'So we do not know whether the background jobs are still running. That does not confirm something is broken, nor that all is well — it is exactly the case nobody notices.',
+  },
+  'beh.alleTakenDraaien': { nl: 'Alle {n} achtergrondtaken draaien', ar: 'كل المهام الخلفية ({n}) تعمل', en: 'All {n} background jobs are running' },
+  'beh.takenAandacht': {
+    nl: '{a} van {n} achtergrondtaken hebben aandacht nodig',
+    ar: '{a} من {n} مهام خلفية تحتاج انتباهًا',
+    en: '{a} of {n} background jobs need attention',
+  },
+  'beh.nogNooit': { nl: 'nog nooit', ar: 'لم تعمل قط', en: 'never yet' },
+  'beh.minderDanUur': { nl: '< 1 uur', ar: 'أقل من ساعة', en: '< 1 hour' },
+  'beh.uren': { nl: '{n} uur', ar: '{n} ساعة', en: '{n} h' },
+  // The six health states of cron-heartbeat.ts, as words. The judgement stays there; only the
+  // label is here.
+  'beh.gezond.ok': { nl: 'ok', ar: 'سليمة', en: 'ok' },
+  'beh.gezond.nogNietLangs': { nl: 'nog niet langs', ar: 'لم يحن دورها بعد', en: 'not due yet' },
+  'beh.gezond.nooitGedraaid': { nl: 'nooit gedraaid', ar: 'لم تعمل قط', en: 'never ran' },
+  'beh.gezond.afgebroken': { nl: 'afgebroken', ar: 'توقفت في المنتصف', en: 'aborted' },
+  'beh.gezond.gefaald': { nl: 'gefaald', ar: 'فشلت', en: 'failed' },
+  'beh.gezond.teLangStil': { nl: 'te lang stil', ar: 'صامتة أطول من اللازم', en: 'silent too long' },
+
+  // The failures of the last days.
+  'beh.storingOnleesbaar': { nl: 'Het storingsbeeld is niet te lezen', ar: 'تعذّرت قراءة صورة الأعطال', en: 'The failure picture cannot be read' },
+  'beh.storingOnleesbaarUitleg': {
+    nl: 'We weten dus niet of er de afgelopen {days} dagen iets is misgegaan. Dat is niet hetzelfde als "er ging niets mis".',
+    ar: 'لا نعرف إذًا إن حدث خطأ في آخر {days} يومًا. وهذا ليس مثل "لم يحدث أي خطأ".',
+    en: 'So we do not know whether anything went wrong in the last {days} days. That is not the same as "nothing went wrong".',
+  },
+  'beh.geenStoringen': { nl: 'Geen afgevangen storingen in {days} dagen', ar: 'لا أعطال مسجّلة خلال {days} يومًا', en: 'No caught failures in {days} days' },
+  'beh.storingenEen': { nl: '1 afgevangen storing in {days} dagen', ar: 'عطل واحد مسجّل خلال {days} يومًا', en: '1 caught failure in {days} days' },
+  'beh.storingenMeer': { nl: '{n} afgevangen storingen in {days} dagen', ar: '{n} أعطال مسجّلة خلال {days} يومًا', en: '{n} caught failures in {days} days' },
+  'beh.minderDanUurGeleden': { nl: '< 1 uur geleden', ar: 'قبل أقل من ساعة', en: '< 1 hour ago' },
+  'beh.urenGeleden': { nl: '{n} uur geleden', ar: 'قبل {n} ساعة', en: '{n} h ago' },
+
+  // How often a person had to correct the reader.
+  'beh.lees.onleesbaarKop': { nl: 'Leeskwaliteit is niet te lezen', ar: 'تعذّر قياس جودة القراءة', en: 'Reading quality cannot be read' },
+  'beh.lees.onleesbaarUitleg': {
+    nl: 'De vraag kon niet gesteld worden. Dat is géén bevestiging dat de lezer het goed doet.',
+    ar: 'تعذّر طرح السؤال. وهذا ليس تأكيدًا أن القارئ يعمل جيدًا.',
+    en: 'The question could not be asked. That is not confirmation that the reader is doing well.',
+  },
+  'beh.lees.kop': { nl: 'Leeskwaliteit', ar: 'جودة القراءة', en: 'Reading quality' },
+  'beh.lees.uitleg': {
+    nl: 'Hoe vaak een mens een gelezen bedrag of rekeningnummer heeft moeten verbeteren, over de laatste 90 dagen. Dit is de fout die IEMAND ZAG — een misllezing die niemand opmerkte, ziet er van hier af uit als een goede lezing.',
+    ar: 'كم مرة اضطر إنسان إلى تصحيح مبلغ أو رقم حساب قرأه التطبيق، خلال آخر 90 يومًا. هذه هي الأخطاء التي لاحظها أحد. أما القراءة الخاطئة التي لم يلاحظها أحد فتبدو من هنا قراءة صحيحة.',
+    en: 'How often a person had to correct an amount or account number the app read, over the last 90 days. This is the error SOMEONE SAW — a misreading nobody noticed looks, from here, like a good reading.',
+  },
+  'beh.lees.gelezen': { nl: 'facturen gelezen', ar: 'فواتير مقروءة', en: 'invoices read' },
+  'beh.lees.bedragVerbeterd': { nl: 'bedrag verbeterd', ar: 'مبلغ مصحَّح', en: 'amount corrected' },
+  'beh.lees.ibanVerbeterd': { nl: 'rekeningnummer verbeterd', ar: 'رقم حساب مصحَّح', en: 'account number corrected' },
+  'beh.lees.naBetaling': { nl: 'verbeterd ná betaling', ar: 'صُحِّح بعد الدفع', en: 'corrected after payment' },
+  'beh.lees.foutpercentage': { nl: 'Gevonden foutpercentage:', ar: 'نسبة الأخطاء المكتشفة:', en: 'Found error rate:' },
+  'beh.lees.leveranciersKop': { nl: 'Leveranciers met meer dan één verbetering', ar: 'مورّدون لديهم أكثر من تصحيح', en: 'Suppliers with more than one correction' },
+  'beh.lees.leveranciersUitleg': {
+    nl: 'Twee keer dezelfde leverancier is zelden toeval — dat is meestal één documentsoort die de lezer niet aankan, en die herhaalt zich bij elke volgende factuur van dat bedrijf.',
+    ar: 'تكرار المورّد نفسه مرتين نادرًا ما يكون صدفة. غالبًا هو نوع مستند واحد لا يجيده القارئ، ويتكرر مع كل فاتورة قادمة من تلك الشركة.',
+    en: 'The same supplier twice is rarely a coincidence — it is usually one document type the reader cannot handle, and it repeats with every next invoice from that company.',
+  },
+  'beh.lees.leverancier': { nl: 'Leverancier', ar: 'المورّد', en: 'Supplier' },
+  'beh.lees.verbeterd': { nl: 'Verbeterd', ar: 'صُحِّح', en: 'Corrected' },
+  'beh.lees.vanHoeveel': { nl: 'Van hoeveel', ar: 'من أصل', en: 'Out of' },
+  'beh.lees.wanneer': { nl: 'Wanneer', ar: 'متى', en: 'When' },
+  'beh.lees.wat': { nl: 'Wat', ar: 'ماذا', en: 'What' },
+  'beh.lees.was': { nl: 'Was', ar: 'كان', en: 'Was' },
+  'beh.lees.werd': { nl: 'Werd', ar: 'أصبح', en: 'Became' },
+  'beh.lees.geen': { nl: 'Geen enkele verbetering in deze periode.', ar: 'لا تصحيحات في هذه الفترة.', en: 'No corrections at all in this period.' },
+
+  // Why the rest needed a person.
+  'beh.vast.onleesbaarKop': { nl: 'Handwerk is niet te meten', ar: 'تعذّر قياس العمل اليدوي', en: 'Manual work cannot be measured' },
+  'beh.vast.onleesbaarUitleg': {
+    nl: 'De vraag kon niet gesteld worden. Dat is géén bevestiging dat de wachtrij leeg is.',
+    ar: 'تعذّر طرح السؤال. وهذا ليس تأكيدًا أن قائمة الانتظار فارغة.',
+    en: 'The question could not be asked. That is not confirmation that the queue is empty.',
+  },
+  'beh.vast.kop': { nl: 'Waarom kost dit handwerk', ar: 'لماذا يحتاج هذا عملًا يدويًا', en: 'Why this takes manual work' },
+  'beh.vast.uitleg': {
+    nl: 'Van de inkomende documenten van de laatste 90 dagen: hoeveel de app zelf heeft geboekt, en waarom de rest op een mens moest wachten. Elke regel hieronder is een minuut per document — de bovenste regel is de eerstvolgende verbetering die het meeste tijd teruggeeft.',
+    ar: 'من المستندات الواردة خلال آخر 90 يومًا: كم قيّد التطبيق بنفسه، ولماذا انتظر الباقي إنسانًا. كل سطر أدناه يساوي دقيقة لكل مستند، والسطر الأول هو التحسين القادم الذي يوفر أكبر قدر من الوقت.',
+    en: 'Of the incoming documents of the last 90 days: how many the app booked itself, and why the rest had to wait for a person. Every row below is a minute per document — the top row is the next improvement that gives back the most time.',
+  },
+  'beh.vast.binnen': { nl: 'documenten binnen', ar: 'مستندات واردة', en: 'documents received' },
+  'beh.vast.vanzelf': { nl: 'vanzelf geboekt', ar: 'قُيِّدت تلقائيًا', en: 'booked automatically' },
+  'beh.vast.handwerk': { nl: 'handwerk', ar: 'عمل يدوي', en: 'manual work' },
+  'beh.vast.vanzelfVerwerkt': { nl: 'Vanzelf verwerkt:', ar: 'عولج تلقائيًا:', en: 'Processed automatically:' },
+  'beh.vast.zonderReden': { nl: '{u} van de {h} zonder vastgelegde reden', ar: '{u} من {h} بلا سبب مسجّل', en: '{u} of the {h} without a recorded reason' },
+  'beh.vast.zonderRedenUitleg': {
+    nl: 'Deze tellen niet mee in de lijst hieronder. Documenten van vóór deze meting dragen geen reden; dat aantal hoort vanzelf te dalen. Stijgt het, dan schrijft een pad zijn reden niet meer op en is de lijst hieronder onvolledig zonder dat te zeggen.',
+    ar: 'هذه لا تُحسب في القائمة أدناه. المستندات التي سبقت هذا القياس لا تحمل سببًا، وهذا العدد يجب أن ينخفض من تلقاء نفسه. إن ارتفع، فهناك مسار توقف عن تسجيل سببه، والقائمة أدناه ناقصة دون أن تقول ذلك.',
+    en: 'These do not count in the list below. Documents from before this measurement carry no reason; that number should fall by itself. If it rises, a path has stopped writing down its reason and the list below is incomplete without saying so.',
+  },
+  'beh.vast.reden': { nl: 'Reden', ar: 'السبب', en: 'Reason' },
+  'beh.vast.aantal': { nl: 'Aantal', ar: 'العدد', en: 'Count' },
+  'beh.vast.aandeel': { nl: 'Aandeel', ar: 'النسبة', en: 'Share' },
+  'beh.vast.vooralBij': { nl: 'Vooral bij', ar: 'غالبًا عند', en: 'Mostly at' },
+  'beh.vast.verspreid': { nl: 'verspreid', ar: 'متفرّق', en: 'spread out' },
+  'beh.vast.geen': { nl: 'Geen enkele vastgelegde reden in deze periode.', ar: 'لا أسباب مسجّلة في هذه الفترة.', en: 'No recorded reason at all in this period.' },
+
 } satisfies Record<string, Message>
 
 export type MessageKey = keyof typeof MESSAGES

@@ -26,6 +26,8 @@ import { readReaderQuality } from "@/lib/reader-quality";
 // [WAAROM-VASTGEHOUDEN] En waarom de rest niet vanzelf ging — de werklijst op tijd geordend.
 import { readHoldReasons } from "@/lib/hold-reasons";
 import { decidePlan } from "@/lib/subscription";
+// [TAAL] The operator's own language, read from the request like every other dashboard page.
+import { getServerLocale } from "@/lib/i18n/server";
 import { BeheerScherm } from "./BeheerScherm";
 
 export const dynamic = "force-dynamic";
@@ -112,5 +114,7 @@ export default async function BeheerPage() {
     (p) => decidePlan({ role: p.role, subscriptionStatus: p.subscriptionStatus, currentPeriodEnd: p.currentPeriodEnd, nowMs }).plan,
   );
 
-  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} leeskwaliteit={leeskwaliteit} vastgehouden={vastgehouden} />;
+  const locale = await getServerLocale();
+
+  return <BeheerScherm overview={overview} systeem={systeem} storingen={storingen} leeskwaliteit={leeskwaliteit} vastgehouden={vastgehouden} locale={locale} />;
 }

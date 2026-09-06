@@ -7,6 +7,8 @@ import { getSessionUser } from "@/lib/session-user";
 import { redirect } from "next/navigation";
 import { QuarterlyOverview } from "@/components/quarterly/QuarterlyOverview";
 import { COLUMN } from "@/lib/design/tokens";
+// [TAAL] The one line this page speaks itself; the overview below reads the catalogue already.
+import { serverTranslator } from "@/lib/i18n/server";
 
 export const metadata = {
   title: "Kwartaaloverzicht — BoekBrug",
@@ -27,6 +29,7 @@ export default async function QuarterlyPage() {
   const isAccountant = profile?.role === "accountant";
   // [BOEK-013] role for navigation helper in QuarterlyOverview
   const role = isAccountant ? "accountant" : "zzper";
+  const t = await serverTranslator();
 
   // [HEADER-SYSTEM] Title "Kwartaaloverzicht" + back live in the shared sub-page
   // bar (DashboardChrome/STATIC_TITLES); the in-body h1 that repeated it was
@@ -34,7 +37,7 @@ export default async function QuarterlyPage() {
   return (
     <div className="mx-auto px-4 py-8" style={{ maxWidth: COLUMN.work }}>
       <p className="text-muted-foreground text-sm mb-6">
-        BTW-aangifte, totalen en export per kwartaal
+        {t("kwo.intro")}
       </p>
       {/* [QUARTER-DEEPLINK] QuarterlyOverview reads ?year&quarter so a link from another screen
           (e.g. waarheid's "Naar de BTW-aangifte van deze periode") opens the period it names.
