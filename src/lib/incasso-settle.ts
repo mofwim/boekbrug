@@ -218,6 +218,55 @@ export async function settleIncassoForUser(
       .range(from, to)
     )
 
+    // ── [DUBBEL-INCASSO] Which invoice NUMBERS stand on more than one row? ──
+    //
+    // Enka Horeca 26701681 stood three times — three readings of one document at € 1.335,68,
+    // € 1.336,14 and € 1.348,14 — and this pass booked two of them 250 ms apart. The duplicate
+    // check inside incassoDecision could not see it: _safecore.possible_duplicate is computed at
+    // import and keys on the AMOUNT, so readings that DISAGREE about the amount are three separate
+    // invoices to it. That is backwards — a duplicate whose copies disagree is the dangerous one,
+    // because each copy books its own wrong total.
+    //
+    // Two reads, because a duplicate is not only a sibling in this batch: the second copy may
+    // already be settled, or archived, from an earlier run. Numbers first, so this asks about the
+    // handful of numbers this pass could touch and not about the whole administration.
+    const kandidaatNummers = [...new Set(
+      rows.map((r) => String((r as { invoice_number?: unknown }).invoice_number ?? '').trim()).filter(Boolean),
+    )]
+    const nummerTelling = new Map<string, number>()
+    const telMee = (nummer: unknown) => {
+      const n = String(nummer ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (!n) return
+      nummerTelling.set(n, (nummerTelling.get(n) ?? 0) + 1)
+    }
+    for (const r of rows) telMee((r as { invoice_number?: unknown }).invoice_number)
+    if (kandidaatNummers.length > 0) {
+      // [NO-SILENT-EMPTY] A read that fails must not read as "no duplicates". It leaves the count
+      // at what the batch itself showed — which still catches the Enka shape, where all three rows
+      // stood open — and never turns a failed look into permission to book.
+      try {
+        const anderen = await fetchAllRows<{ id: string; invoice_number: string | null }>((from, to) => supabase
+          .from('invoices')
+          .select('id, invoice_number')
+          .eq('receiver_id', userId)
+          .eq('direction', 'incoming')
+          .neq('status', 'received')
+          .in('invoice_number', kandidaatNummers)
+          .order('id', { ascending: true })
+          .range(from, to)
+        )
+        for (const a of anderen) telMee(a.invoice_number)
+      } catch (e) {
+        console.warn('[DUBBEL-INCASSO] kon niet nakijken of een nummer elders staat', {
+          userId, error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+    const staatElders = (nummer: unknown): boolean => {
+      const n = String(nummer ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+      return !!n && (nummerTelling.get(n) ?? 0) > 1
+    }
+
     const booked: IncassoBooked[] = []
     const held: IncassoHeld[] = []
 
@@ -226,7 +275,7 @@ export async function settleIncassoForUser(
       const supplier = belongsToIncassoSupplier(inv, suppliers)
       if (!supplier) continue
 
-      const decision = incassoDecision(inv, today)
+      const decision = incassoDecision(inv, today, { sameNumberElsewhere: staatElders(inv.invoice_number) })
       if (!decision.settle) {
         // 'not-yet-due' is the normal, expected state of an invoice waiting for its collection
         // date — reporting it as "held" every hour would bury the four that mean something.

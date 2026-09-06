@@ -252,3 +252,73 @@ test('[AUTO-INCASSO] an assumed payment is marked as one, without disturbing the
     'an invoice with no field_confidence yet must still get the marker',
   )
 })
+
+// ── [DUBBEL-INCASSO] Het nummer dat twee keer in de administratie staat ────────────────────────
+//
+// Gemeten op de live administratie. Enka Horeca 26701681 stond DRIE keer — drie lezingen van één
+// document, op € 1.335,68, € 1.336,14 en € 1.348,14 — en deze pas boekte er twee als betaald,
+// binnen 250 milliseconden, op een datum waarop de bank niets deed. Twee inkoopfacturen waar er één
+// is, voorbelasting twee keer afgetrokken, en de échte afschrijving van € 1.336,14 stond nog
+// ongekoppeld in de wachtrij.
+//
+// De duplicaatcontrole die er al stond kón dit niet zien: _safecore.possible_duplicate wordt bij de
+// IMPORT berekend en sleutelt op het BEDRAG. Drie lezingen die het over het bedrag ONEENS zijn,
+// zijn voor haar drie verschillende facturen — en juist die soort duplicaat is de gevaarlijke,
+// want elke kopie boekt haar eigen verkeerde totaal.
+
+const enka = (over: Partial<IncassoInvoice> = {}): IncassoInvoice => rent({
+  id: 'enka-1',
+  client_name: 'Enka Horeca B.V.',
+  invoice_number: '26701681',
+  invoice_date: '2026-01-30',
+  due_date: '2026-03-01',
+  total_ex_btw: 1213.50,
+  btw_amount: 122.18,
+  total_inc_btw: 1335.68,
+  ...over,
+})
+
+test('[DUBBEL-INCASSO] hetzelfde factuurnummer op twee rijen wordt niet geboekt', () => {
+  // Zonder context boekt hij — dat is de toestand van 5 augustus, en zij was fout.
+  assert.deepEqual(incassoDecision(enka(), TODAY), { settle: true, paymentDate: '2026-03-01' })
+
+  const d = incassoDecision(enka(), TODAY, { sameNumberElsewhere: true })
+  assert.equal(d.settle, false)
+  if (d.settle) return
+  assert.equal(d.hold, 'same-number')
+  assert.match(
+    INCASSO_HOLD_REASON[d.hold], /staat nog een keer/,
+    'de reden moet zeggen WAT er aan de hand is — "we boeken hem niet" zonder waarom is een ' +
+      'factuur die blijft staan zonder dat iemand weet waarom',
+  )
+})
+
+test('[DUBBEL-INCASSO] en de kopie die het over het bedrag ONEENS is, wordt net zo goed gehouden', () => {
+  // De derde lezing: € 12,00 te veel btw. Een bedragregel ziet hier geen duplicaat; het nummer wel.
+  const derde = enka({ id: 'enka-3', btw_amount: 134.64, total_inc_btw: 1348.14 })
+  const d = incassoDecision(derde, TODAY, { sameNumberElsewhere: true })
+  assert.equal(d.settle, false)
+  if (!d.settle) assert.equal(d.hold, 'same-number')
+})
+
+test('[DUBBEL-INCASSO] tegenproef: een nummer dat één keer staat, wordt gewoon geboekt', () => {
+  // Zonder deze test slaagt alles hierboven ook als de pas nooit meer iets boekt — en dan staat elke
+  // incasso weer voor eeuwig in "nog te betalen", de fout waar [AUTO-INCASSO] voor bestaat.
+  assert.deepEqual(
+    incassoDecision(enka(), TODAY, { sameNumberElsewhere: false }),
+    { settle: true, paymentDate: '2026-03-01' },
+  )
+  assert.deepEqual(
+    incassoDecision(rent({ due_date: '2026-08-01' }), TODAY, { sameNumberElsewhere: false }),
+    { settle: true, paymentDate: '2026-08-01' },
+  )
+})
+
+test('[DUBBEL-INCASSO] de zwaardere weigeringen blijven vóór deze staan', () => {
+  // Volgorde is betekenis: een creditnota of een verwerkte factuur mag niet als "dubbel nummer"
+  // gerapporteerd worden, want dan gaat de eigenaar het verkeerde nakijken.
+  const verwerkt = incassoDecision(enka({ accountant_status: 'verwerkt' }), TODAY, { sameNumberElsewhere: true })
+  assert.equal(verwerkt.settle === false && verwerkt.hold, 'verwerkt')
+  const credit = incassoDecision(enka({ invoice_type: 'creditnota', total_inc_btw: -1336.14 }), TODAY, { sameNumberElsewhere: true })
+  assert.equal(credit.settle === false && credit.hold, 'creditnota')
+})

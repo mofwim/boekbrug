@@ -26753,3 +26753,45 @@ test("[SLOT-BETAALD] a slot for an invoice already booked reads as booked, never
     "…or they reach it and are not folded into the confirmed set, so the row still offers a button " +
       "that cannot work");
 });
+
+// ── [DUBBEL-INCASSO] The double booking this pass can cause, and the look that prevents it ──────
+//
+// Measured on the live administration: Enka Horeca 26701681 stood THREE times — three readings of
+// one document at € 1.335,68, € 1.336,14 and € 1.348,14 — and the incasso pass booked two of them
+// as paid 250 ms apart, on a date the bank never touched. Two purchase invoices where there is one,
+// voorbelasting deducted twice, and the real € 1.336,14 debit still unmatched in the queue.
+//
+// The duplicate check that was already there could not see it: _safecore.possible_duplicate is
+// computed at IMPORT and keys on the AMOUNT, so three readings that disagree about the amount are
+// three separate invoices to it — and a duplicate whose copies disagree is the dangerous kind,
+// because each copy books its own wrong total.
+
+test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to hold", () => {
+  const pas = code("src/lib/incasso-settle.ts");
+  assert.match(pas, /sameNumberElsewhere: staatElders\(inv\.invoice_number\)/,
+    "the pass books again without asking whether this invoice number stands on another row — the " +
+      "flag inside incassoDecision keys on the amount and cannot answer that question");
+
+  // Both halves of the look. The batch alone would have caught Enka (all three stood open), but a
+  // second copy that is already settled or archived from an earlier run is the same double booking
+  // one hour later.
+  assert.match(pas, /for \(const r of rows\) telMee\(/,
+    "the open siblings in this batch are no longer counted");
+  assert.match(pas, /\.neq\('status', 'received'\)[\s\S]{0,120}?\.in\('invoice_number', kandidaatNummers\)/,
+    "the already-settled and archived copies are no longer read — a duplicate booked an hour ago " +
+      "is invisible again");
+
+  // [NO-SILENT-EMPTY] A failed look may never read as "no duplicates".
+  assert.match(pas, /catch[\s\S]{0,200}?kon niet nakijken of een nummer elders staat/,
+    "a failed duplicate read is swallowed silently, and silence here is permission to book");
+
+  const regel = code("src/lib/auto-incasso.ts");
+  assert.match(regel, /if \(ctx\?\.sameNumberElsewhere\) return \{ settle: false, hold: 'same-number' \}/,
+    "the hold itself is gone");
+  // Order is meaning: a creditnota or an accountant-locked invoice must not be reported as a
+  // duplicate number, or the owner goes and checks the wrong thing.
+  assert.ok(regel.indexOf("hold: 'creditnota'") < regel.indexOf("hold: 'same-number'"),
+    "the same-number hold now outranks the creditnota refusal");
+  assert.ok(regel.indexOf("hold: 'verwerkt'") < regel.indexOf("hold: 'same-number'"),
+    "the same-number hold now outranks the accountant lock");
+});
