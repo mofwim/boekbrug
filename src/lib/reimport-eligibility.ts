@@ -127,6 +127,78 @@ export function reimportDecision(inv: ReimportInvoice): ReimportDecision {
   return { allowed: true, returnsToQueue: status === 'received' }
 }
 
+// ── [SPLIT-ALSNOG] The other kind of re-read: one that overwrites nothing ─────────────────────
+//
+// Measured on the live administration: 31 incoming invoices carry a BLENDED btw rate, and 29 of
+// them hold no per-rate specification block — € 2.758,01 of voorbelasting on which the only check
+// that can see a mis-read (btw-split.ts) never ran. Every one of those 29 was imported before the
+// reader learned to read that block; both mixed-rate invoices since carry it. So nothing is broken
+// going forward, and there was no way BACK.
+//
+// The full re-read above cannot be that way back. It REPLACES the amounts, and on these invoices
+// the amounts are the part we have no reason to doubt — Enka Horeca 26710525 stores exactly what
+// the paper prints. Handing those figures to a fresh read to win a checkmark is trading a number
+// we trust for one we have not looked at. It also refuses paid and processed rows, which is
+// exactly where an unverifiable deduction is worth the most to check.
+//
+// So this decision is a different question about a different act: read the document again and take
+// ONLY the per-rate block. No amount, no total, no status, no direction — one key.
+//
+// ── WHY THE MONEY REFUSALS DO NOT APPLY ──
+// Every refusal above exists because a re-read changes what the owner pays or what the accountant
+// has processed. This one changes neither: field_confidence._btw_rows is EVIDENCE about the paper,
+// not a figure anyone books. A paid invoice, an archived one, an invoice the accountant marked
+// 'verwerkt' — all may be checked, and the deduction already taken is precisely the reason to.
+//
+// ── AND WHY IT NEVER OVERWRITES A BLOCK WE ALREADY HAVE ──
+// A stored block is either what the reader saw or what the owner typed in the correction sheet
+// ([SPLIT-CORRECTIE]). Replacing either with a fresh model read means the second opinion silently
+// wins over a human's, which is backwards. Nothing to do is an answer.
+
+export type BtwRowsRefusal = 'not_incoming' | 'no_file' | 'already_known'
+
+export type BtwRowsDecision =
+  | { allowed: true }
+  | { allowed: false; reason: BtwRowsRefusal; message: string }
+
+/** Does this invoice already carry a per-rate block? An empty array counts: we looked, and there was none. */
+export function hasBtwRows(fieldConfidence: unknown): boolean {
+  if (!fieldConfidence || typeof fieldConfidence !== 'object') return false
+  return '_btw_rows' in (fieldConfidence as Record<string, unknown>)
+}
+
+/**
+ * May we read this document again for its btw specification alone?
+ *
+ * Dutch messages: shown to the entrepreneur (AGENTS.md).
+ */
+export function btwRowsReadDecision(
+  inv: ReimportInvoice & { field_confidence?: unknown },
+): BtwRowsDecision {
+  if ((inv.direction ?? '') !== 'incoming') {
+    return {
+      allowed: false,
+      reason: 'not_incoming',
+      message: 'Alleen bij inkomende facturen kunnen we de btw-specificatie nalezen.',
+    }
+  }
+  if (!((inv.pdf_url ?? '').trim() || (inv.document_id ?? '').trim())) {
+    return {
+      allowed: false,
+      reason: 'no_file',
+      message: 'Er hangt geen bestand aan deze factuur, dus er valt niets na te lezen.',
+    }
+  }
+  if (hasBtwRows(inv.field_confidence)) {
+    return {
+      allowed: false,
+      reason: 'already_known',
+      message: 'De btw-specificatie van deze factuur is al bekend.',
+    }
+  }
+  return { allowed: true }
+}
+
 /**
  * What the owner is told BEFORE they tap, on a row that qualifies.
  *

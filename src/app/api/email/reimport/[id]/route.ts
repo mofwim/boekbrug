@@ -36,7 +36,7 @@ import { isEInvoiceXmlMime } from "@/lib/e-invoice";
 // [REIMPORT-CARRY] De regel over wat een herlezing bewaart en wat zij opnieuw bepaalt.
 import { buildReimportFieldConfidence } from "@/lib/reimport-carry";
 // [REREAD-CONFIRMED] Who may be read again, and what happens to the one that is — one rule.
-import { reimportDecision } from "@/lib/reimport-eligibility";
+import { reimportDecision, btwRowsReadDecision } from "@/lib/reimport-eligibility";
 // [HERLEES-ARCHIVEER] Blijkt het geen factuur, dan archiveren we hem zelf — maar nooit als er geld
 // op staat. Dezelfde predicaat als de negeer-route, zodat de twee niet uit elkaar kunnen lopen.
 import { hasSettledMoney } from "@/lib/invoice-removal";
@@ -135,6 +135,25 @@ async function runReimport(
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
 
+  // [SPLIT-ALSNOG] Two acts share this route because they share every safety step before the read:
+  // ownership of the row, ownership of the storage PATH, the mime sniff, the rate limit and the
+  // fair-use gate. Copying that sequence into a second route would copy the security work, and the
+  // copy that drifts is always the one nobody is looking at.
+  //
+  //   default          — the full re-read: fresh amounts, fresh dates, back to the queue.
+  //   onlyBtwRows      — read the document again and take ONLY the per-rate btw block. No amount,
+  //                      no total, no status, no direction. One key: field_confidence._btw_rows.
+  //
+  // The second one exists because 29 invoices in the live administration carry a blended btw rate
+  // with no such block — € 2.758,01 of voorbelasting on which the only check that can catch a
+  // mis-read never ran — and all of them predate the reader that can read one. The full re-read
+  // cannot fix them: it replaces amounts that are, on those invoices, exactly what the paper says.
+  let onlyBtwRows = false;
+  try {
+    const body = await req.json().catch(() => null);
+    onlyBtwRows = !!(body && typeof body === "object" && (body as { onlyBtwRows?: unknown }).onlyBtwRows === true);
+  } catch { /* no body is the ordinary full re-read */ }
+
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
@@ -175,7 +194,21 @@ async function runReimport(
   // GUARD 1 — [REREAD-CONFIRMED] one shared predicate, re-checked here on the server. The screens
   // use the same function to decide whether to offer the button at all, so an owner never taps
   // something that then refuses them.
-  const eligibility = reimportDecision(invoice);
+  // [SPLIT-ALSNOG] A different act asks a different question. Every refusal in reimportDecision
+  // exists because a re-read changes what the owner pays or what the accountant has processed; the
+  // narrow read changes neither, and a paid invoice is exactly where an unverifiable deduction is
+  // worth the most to check. Both predicates live in one module so a screen and this route can
+  // never disagree about what is on offer.
+  if (onlyBtwRows) {
+    const mag = btwRowsReadDecision(invoice);
+    if (!mag.allowed) {
+      return NextResponse.json(
+        { error: mag.message, code: mag.reason },
+        { status: mag.reason === "not_incoming" ? 400 : 409 },
+      );
+    }
+  }
+  const eligibility = onlyBtwRows ? { allowed: true as const, returnsToQueue: false } : reimportDecision(invoice);
   // Narrowed here rather than at the write: reimportDecision only allows 'processing' or
   // 'received', so this is the value the TOCTOU guard below must re-assert.
   const statusAtRead = (invoice.status ?? "") as string;
@@ -357,6 +390,70 @@ async function runReimport(
       reason: c.reason ?? null,
       detail: "We konden dit document nu niet lezen. Er is niets gewijzigd — probeer het zo meteen opnieuw.",
     }, { status: 503 });
+  }
+
+  // ── [SPLIT-ALSNOG] The narrow act ends HERE, and that placement is the safety property ────────
+  //
+  // Everything below this point writes: amounts, dates, status, the archive branch. This mode
+  // returns before any of it, so there is exactly one write in this branch and it is one key.
+  // Reviewers: the [SPLIT-ALSNOG] gate in lifecycle-gates asserts this return sits above every
+  // .update() in this file, because a fall-through here would silently replace the amounts of a
+  // PAID invoice — the one thing reimportDecision refuses and this mode deliberately walks past.
+  if (onlyBtwRows) {
+    // A document the reader no longer recognises as an invoice cannot lend us its btw block. Say so
+    // and change nothing — this act never archives, never reclassifies, never touches a figure.
+    if (!c.isInvoice) {
+      return NextResponse.json({
+        ok: false, mode: "btwRows", written: false,
+        detail: "We konden op dit document geen btw-specificatie vinden. Er is niets gewijzigd.",
+      });
+    }
+
+    // The block as the extractor returned it, cleaned exactly the way the import path cleans it.
+    // NEVER derived from the stored amounts: two equations reproduce this block to within a dozen
+    // cents (a supplier who rounds per line drifts from base x rate), and a derived block agrees
+    // with our own figures BY CONSTRUCTION. That is a green tick this app would have awarded itself
+    // on the very invoice btw-split.ts was written for. It comes off the paper or it does not come.
+    // Straight from the reader, via the same key the import path stores — ai.ts has already
+    // validated and cent-rounded these rows ([BTW-SPLIT]), so re-deriving them here would be a
+    // second cleaner drifting from the first. Re-checked for shape only: this value crosses a
+    // network boundary and a malformed row must never reach the checklist as evidence.
+    const gelezen = c.fieldConfidence?._btw_rows;
+    const rows = (Array.isArray(gelezen) ? gelezen : []).filter(
+      (r): r is { rate: number; base: number; btw: number } =>
+        !!r && typeof r === "object" &&
+        Number.isFinite(r.rate) && Number.isFinite(r.base) && Number.isFinite(r.btw),
+    );
+
+    // An EMPTY array is stored on purpose. "We looked and this invoice prints no per-rate block" is
+    // an answer, and storing it stops the owner paying for the same question twice. [NO-SILENT-EMPTY]
+    // applies to the screen, not to the record: the sentence below says which of the two happened.
+    const basis = (invoice.field_confidence && typeof invoice.field_confidence === "object")
+      ? { ...(invoice.field_confidence as Record<string, unknown>) }
+      : {};
+    basis._btw_rows = rows;
+
+    const { error: schrijfFout } = await supabase
+      .from("invoices")
+      .update({ field_confidence: basis as InvoiceUpdate["field_confidence"] })
+      .eq("id", id)
+      .eq("receiver_id", user.id);
+    if (schrijfFout) {
+      console.error("[SPLIT-ALSNOG] kon de btw-specificatie niet opslaan", { invoiceId: id, error: schrijfFout.message });
+      return NextResponse.json(
+        { error: "We konden de btw-specificatie niet opslaan. Er is niets gewijzigd." },
+        { status: 500 },
+      );
+    }
+
+    await logAuditAction({
+      userId: user.id, action: "invoice.btw_rows_read", entityType: "invoice", entityId: id,
+      // No oldValue: nothing was replaced. The trail records that we LOOKED and what we found —
+      // which is exactly the claim a later reader of this row needs to be able to check.
+      newValue: { _btw_rows: rows }, ipAddress: getClientIP(req),
+    });
+
+    return NextResponse.json({ ok: true, mode: "btwRows", written: true, rows });
   }
 
   if (!c.isInvoice) {

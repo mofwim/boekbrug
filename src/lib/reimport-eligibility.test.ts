@@ -14,7 +14,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { reimportDecision, reimportPromptText, type ReimportInvoice } from './reimport-eligibility'
+import { reimportDecision, reimportPromptText, btwRowsReadDecision, type ReimportInvoice } from './reimport-eligibility'
 
 const inv = (o: Partial<ReimportInvoice> = {}): ReimportInvoice => ({
   direction: 'incoming',
@@ -104,3 +104,68 @@ test('[REREAD-CONFIRMED] every refusal carries a sentence the owner can act on',
     assert.doesNotMatch(d.message, /[a-z]+_[a-z]+/, `${d.reason} leaks a field name at the owner`)
   }
 })
+
+// ── [SPLIT-ALSNOG] The narrow read: the one that overwrites nothing ────────────────────────────
+//
+// A different question from the full re-read, and the difference IS the point: this act writes one
+// evidence key and no figure anyone books. Measured on the live administration, 29 invoices carry a
+// blended btw rate with no per-rate block — € 2.758,01 of voorbelasting nothing can check — and all
+// of them predate the reader that can read one. Several are paid or processed, which is where the
+// unverifiable deduction is worth the most to look at.
+
+test("[SPLIT-ALSNOG] the money refusals do not apply — nothing here is a figure", () => {
+  const paid = {
+    direction: "incoming", status: "paid", amount_paid: 3819.82,
+    accountant_status: "verwerkt", pdf_url: "u/1/f.pdf", field_confidence: {},
+  };
+  // The full re-read refuses this row three times over, and it is right to: it replaces amounts.
+  assert.equal(reimportDecision(paid).allowed, false);
+  // This one may run. The deduction is already taken; that is the reason to check it, not against.
+  assert.equal(btwRowsReadDecision(paid).allowed, true);
+
+  for (const status of ["processing", "received", "archived", "paid"]) {
+    assert.equal(
+      btwRowsReadDecision({ ...paid, status }).allowed, true,
+      `status ${status} may not be read for its btw specification — that is a status rule on an act that changes no status`,
+    );
+  }
+});
+
+test("[SPLIT-ALSNOG] a block we already have is never overwritten by a second opinion", () => {
+  const base = { direction: "incoming", status: "received", pdf_url: "u/1/f.pdf" };
+  const met = btwRowsReadDecision({ ...base, field_confidence: { _btw_rows: [{ rate: 9, base: 100, btw: 9 }] } });
+  assert.equal(met.allowed, false);
+  assert.equal(met.allowed === false && met.reason, "already_known");
+
+  // An EMPTY array is also an answer: we looked and the invoice prints no block. Asking again
+  // would spend a document from the owner's allowance on a question already settled.
+  const leeg = btwRowsReadDecision({ ...base, field_confidence: { _btw_rows: [] } });
+  assert.equal(leeg.allowed, false, "an empty block is a finding, not a gap");
+
+  // …and a row that carries no block at all is exactly the one to read.
+  assert.equal(btwRowsReadDecision({ ...base, field_confidence: {} }).allowed, true);
+  assert.equal(btwRowsReadDecision({ ...base, field_confidence: null }).allowed, true);
+});
+
+test("[SPLIT-ALSNOG] what it still refuses", () => {
+  const base = { status: "received", pdf_url: "u/1/f.pdf", field_confidence: {} };
+  const uit = btwRowsReadDecision({ ...base, direction: "outgoing" });
+  assert.equal(uit.allowed === false && uit.reason, "not_incoming");
+  const geen = btwRowsReadDecision({ ...base, direction: "incoming", pdf_url: null, document_id: null });
+  assert.equal(geen.allowed === false && geen.reason, "no_file");
+  // Dutch, and no field names leaking at the owner — same bar as the refusals above.
+  for (const d of [uit, geen]) {
+    assert.ok(d.allowed === false && d.message.length > 20);
+    assert.doesNotMatch((d as { message: string }).message, /[a-z]+_[a-z]+/);
+  }
+});
+
+// [NEGATIEVE CONTROLE] Every refusal above also passes if btwRowsReadDecision always refuses.
+test("[SPLIT-ALSNOG] and it really does allow the case it exists for", () => {
+  assert.equal(
+    btwRowsReadDecision({
+      direction: "incoming", status: "received", pdf_url: "u/1/f.pdf", field_confidence: {},
+    }).allowed,
+    true,
+  );
+});

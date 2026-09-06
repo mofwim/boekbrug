@@ -116,6 +116,33 @@ export default function InvoiceDocumentSheet({
   const [pinning, setPinning] = useState(false)
   const [pinned, setPinned] = useState<string | null>(null)
 
+  // [SPLIT-ALSNOG] Het document nálezen voor ALLEEN zijn btw-specificatie. De route schrijft één
+  // sleutel en raakt geen bedrag, geen totaal en geen status aan — daarom mag deze knop ook op een
+  // betaalde of verwerkte factuur staan, en juist daar is een niet-nagerekende aftrek het meeste
+  // waard om alsnog na te kijken.
+  const leesBtwSpecificatie = async () => {
+    setNaLezen('bezig')
+    try {
+      const res = await fetch(`/api/email/reimport/${invoice.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ onlyBtwRows: true }),
+      })
+      const json = await res.json().catch(() => null)
+      // Alleen een geslaagde SCHRIJVING telt als antwoord. Een 503 ("we konden dit document nu niet
+      // lezen") is geen bevinding over het papier, en hem als lege specificatie opslaan zou de
+      // controle voorgoed op "er staat er geen" zetten op grond van een storing.
+      if (!res.ok || !json?.ok || json.written !== true || !Array.isArray(json.rows)) {
+        setNaLezen('mislukt')
+        return
+      }
+      setNaGelezen(json.rows as { rate: number; base: number; btw: number }[])
+      setNaLezen('idle')
+    } catch {
+      setNaLezen('mislukt')
+    }
+  }
+
   useEffect(() => {
     // Cancel-guarded: the sheet can be closed and reopened on another row before this resolves,
     // and a late answer writing into the new render would show the previous invoice's document.
@@ -152,7 +179,17 @@ export default function InvoiceDocumentSheet({
     return () => window.removeEventListener('keydown', fn)
   }, [onClose])
 
-  const checks = invoiceChecks(invoice)
+  // [SPLIT-ALSNOG] De btw-specificatie die dit blad zojuist heeft laten nalezen. Lokaal, zodat de
+  // controleregel meteen zijn nieuwe uitkomst toont; het scherm eronder haalt zijn eigen kopie op
+  // wanneer het toch ververst. Null = nog niet gevraagd, [] = gevraagd en er stond er geen.
+  const [naGelezen, setNaGelezen] = useState<{ rate: number; base: number; btw: number }[] | null>(null)
+  const [naLezen, setNaLezen] = useState<'idle' | 'bezig' | 'mislukt'>('idle')
+  // De controles lezen de specificatie uit field_confidence, dus een verse lezing komt daar binnen —
+  // niet via een tweede pad dat hetzelfde antwoord anders zou kunnen wegen.
+  const teControleren = naGelezen === null
+    ? invoice
+    : { ...invoice, field_confidence: { ...(invoice.field_confidence ?? {}), _btw_rows: naGelezen } }
+  const checks = invoiceChecks(teControleren)
   const summary = checksSummary(checks)
   const hasFlag = checks.some((c) => c.outcome === 'flagged')
   // [CHECKLIST] The colour is read before the sentence is. Green over "1 konden we niet nagaan"
@@ -325,6 +362,43 @@ export default function InvoiceDocumentSheet({
                   {c.detail && (
                     <span style={{ display: 'block', fontSize: 11.5, color: c.outcome === 'flagged' ? M3.error : M3.onSurfaceVariant, lineHeight: 1.4, marginTop: 1 }}>
                       {c.detail}
+                    </span>
+                  )}
+                  {/* [SPLIT-ALSNOG] De enige controleregel met een handeling eronder, en alleen in de
+                      ene toestand waarin die handeling bestaat: een gemengd btw-tarief zonder
+                      gedrukte specificatie. Daar is de specificatie het ENIGE wat het btw-bedrag kan
+                      tegenspreken — de somidentiteit en de tariefcontrole vallen daar allebei stil
+                      (btw-split.ts) — en zonder deze knop eindigde de regel in "vergelijk het zelf".
+                      Wat de knop doet is het document nálezen en ALLEEN die specificatie opslaan:
+                      geen bedrag, geen totaal, geen status. Zie de smalle tak in de reimport-route. */}
+                  {c.id === 'btw-split' && c.outcome === 'not-checked' && naGelezen === null && (
+                    <span style={{ display: 'block', marginTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={leesBtwSpecificatie}
+                        disabled={naLezen === 'bezig'}
+                        style={{
+                          background: 'none', border: 'none', padding: 0, font: 'inherit',
+                          fontSize: 11.5, fontWeight: 600, color: M3.primary,
+                          cursor: naLezen === 'bezig' ? 'default' : 'pointer',
+                        }}
+                      >
+                        {naLezen === 'bezig' ? t('dsh.btwSpec.bezig') : t('dsh.btwSpec.lees')}
+                      </button>
+                      {/* [NO-SILENT-EMPTY] Een mislukte poging mag niet als "niets aan de hand"
+                          verdwijnen: de controle is dan nog steeds niet gelopen. */}
+                      {naLezen === 'mislukt' && (
+                        <span style={{ display: 'block', fontSize: 11.5, color: M3.error, lineHeight: 1.4, marginTop: 2 }}>
+                          {t('dsh.btwSpec.mislukt')}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {/* Gevraagd, en het papier drukt er geen af. Dat is een BEVINDING, geen storing —
+                      en zonder deze zin zou de regel er na de tik uitzien alsof er niets gebeurde. */}
+                  {c.id === 'btw-split' && naGelezen !== null && naGelezen.length === 0 && (
+                    <span style={{ display: 'block', fontSize: 11.5, color: M3.onSurfaceVariant, lineHeight: 1.4, marginTop: 3 }}>
+                      {t('dsh.btwSpec.geen')}
                     </span>
                   )}
                 </span>

@@ -26628,3 +26628,84 @@ test("[TAAL] every key the age rule can ask for exists and is Dutch", () => {
     assert.ok(berichten.includes(`'${k}'`), `readiness-cache can ask for ${k} and messages.ts has no such key`);
   }
 });
+
+// ── [SPLIT-ALSNOG] A btw check that could not run must be able to run later ────────────────────
+//
+// Measured on the live administration: 31 incoming invoices carry a BLENDED btw rate and 29 of them
+// hold no per-rate specification block — € 2.758,01 of voorbelasting on which btw-split.ts, the only
+// check that can see a mis-read there, never ran. All 29 predate the reader that can read such a
+// block; both mixed-rate invoices since carry one. Nothing is broken going forward. There was no
+// way back.
+//
+// The narrow re-read is that way back, and it lives inside the full re-read's route so it inherits
+// every safety step before the AI call — row ownership, storage-PATH ownership, the mime sniff, the
+// rate limit, the fair-use gate. That reuse is the point; it is also the risk, and these are the
+// three properties that make it safe.
+
+test("[SPLIT-ALSNOG] the narrow read returns BEFORE anything is written", () => {
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+
+  // Anchored on CODE, not on a comment: code() strips comments before this test ever sees the file.
+  // And on the branch's own shape, because `if (onlyBtwRows)` also opens the eligibility block two
+  // hundred lines higher — anchoring on the first match measured the wrong region entirely.
+  const opening = /if \(onlyBtwRows\) \{[\s\S]{0,120}?if \(!c\.isInvoice\) \{/.exec(route);
+  assert.ok(opening, "the [SPLIT-ALSNOG] branch is gone or was rewritten past recognition");
+  const branch = opening!.index;
+
+  // It ends in its own return, and between the two there is EXACTLY ONE write. A fall-through here
+  // would replace the amounts of a PAID invoice — precisely what reimportDecision refuses and what
+  // this mode walks past on the argument that it writes no figure.
+  const eind = route.indexOf('return NextResponse.json({ ok: true, mode: "btwRows"', branch);
+  assert.ok(eind > branch, "the narrow branch no longer ends in a return");
+
+  const eigenWrite = route.slice(branch, eind);
+  assert.equal([...eigenWrite.matchAll(/\.update\(/g)].length, 1,
+    "the [SPLIT-ALSNOG] branch performs more than one write — this mode writes one key and returns, " +
+      "or it is not the act it claims to be");
+
+  // And that single write touches exactly field_confidence. Not status, not a total, not a date.
+  // Checked on the UPDATE'S OWN ARGUMENT, not on the branch text: a `{ status: 500 }` in an error
+  // response is an HTTP status, and a gate that cannot tell those apart fails on correct code —
+  // which teaches the next person to loosen it rather than to read it.
+  const call = /\.update\(\{([\s\S]*?)\}\)/.exec(eigenWrite);
+  assert.ok(call, "the narrow write is no longer a plain .update({...}) this gate can read");
+  const geschreven = call![1];
+  assert.match(geschreven, /^\s*field_confidence:/,
+    "the narrow write no longer writes field_confidence first — or at all");
+  for (const verboden of ["status", "total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "direction"]) {
+    assert.ok(!geschreven.includes(verboden),
+      `the narrow write sets ${verboden} — this act exists precisely because those must not move`);
+  }
+});
+
+test("[SPLIT-ALSNOG] the block comes off the paper, never from our own amounts", () => {
+  // The trap this feature invites. From excl 3.413,92 and btw 405,90 two equations reproduce the
+  // Enka block to within twelve cents — a supplier who rounds per line drifts from base x rate —
+  // and a DERIVED block agrees with our figures by construction. That is btw-split.ts awarding a
+  // green tick to itself on the very invoice it was written for.
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+  const branch = route.slice(route.indexOf("if (onlyBtwRows) {"), route.indexOf('mode: "btwRows", written: true'));
+  assert.match(branch, /const gelezen = c\.fieldConfidence\?\._btw_rows/,
+    "the rows no longer come from the reader's own answer");
+  // Nothing in the branch may compute a base or a btw out of the stored totals.
+  assert.doesNotMatch(branch, /invoice\.total_ex_btw|invoice\.btw_amount|invoice\.total_inc_btw/,
+    "the narrow branch reads the stored amounts — the only reason to do that here is to derive the " +
+      "split from them, which is a false green tick");
+});
+
+test("[SPLIT-ALSNOG] a different act asks its own eligibility question", () => {
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+  assert.match(route, /if \(onlyBtwRows\) \{[\s\S]{0,400}?btwRowsReadDecision\(invoice\)/,
+    "the narrow read no longer has its own predicate — either it inherits refusals that exist " +
+      "because amounts move (and then paid invoices, where an unverifiable deduction matters most, " +
+      "stay unreachable) or it inherits none at all");
+
+  const rule = code("src/lib/reimport-eligibility.ts");
+  // Never overwrite a block we already hold: it is either what the reader saw or what the owner
+  // typed in the correction sheet, and a second model opinion must not silently beat a human.
+  assert.match(rule, /if \(hasBtwRows\(inv\.field_confidence\)\) \{/,
+    "btwRowsReadDecision no longer refuses an invoice whose block is already known");
+  assert.match(rule, /return '_btw_rows' in \(fieldConfidence as Record<string, unknown>\)/,
+    "hasBtwRows tests for a non-empty array again — then 'we looked and there is no block' reads " +
+      "as 'we never looked', and the owner pays for the same question twice");
+});

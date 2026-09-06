@@ -3340,3 +3340,76 @@ test("[CONTROLES-INKLAPPEN] a check that could not run is not something to fold 
   assert.doesNotMatch(html, /Bedragen kloppen met elkaar/, "…while a settled row is printed");
 });
 
+
+// ── [SPLIT-ALSNOG] De controle die niet kon lopen, met een handeling eronder ───────────────────
+//
+// Op een factuur die btw-tarieven mengt is de gedrukte specificatie het ENIGE wat het btw-bedrag
+// kan tegenspreken: de somidentiteit en de tariefcontrole vallen daar allebei stil (btw-split.ts).
+// Stond die specificatie er niet, dan zei dit blad "konden we niet nagaan" en verder niets — een
+// doodlopende regel boven een bedrag dat de eigenaar aftrekt. Op de live administratie staan 29
+// zulke facturen, samen € 2.758,01 aan voorbelasting.
+//
+// De poort in lifecycle-gates bewaakt dat de route niets anders schrijft. Wat zij niet kan zien is
+// of de knop er staat, en of hij er alléén staat in de toestand waarin hij iets betekent.
+
+const ENKA = {
+  id: "enka-1", client_name: "Enka Horeca B.V.", invoice_number: "26710525",
+  invoice_date: "2026-03-11", invoice_type: "factuur",
+  // De echte cijfers: 2.591,71 tegen 9% en 822,21 tegen 21% — samen 11,89%, een legale menging.
+  total_ex_btw: 3413.92, btw_amount: 405.9, total_inc_btw: 3819.82,
+  vendor_iban: null, vendorNumbers: [],
+};
+
+async function blad(extra: Record<string, unknown>) {
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+  return renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: { ...ENKA, ...extra }, onClose() {}, onCorrect() {},
+    }),
+  );
+}
+
+test("[SPLIT-ALSNOG] een niet-uitgevoerde btw-controle biedt de handeling die haar alsnog laat lopen", async () => {
+  const html = await blad({ field_confidence: null });
+  assert.match(html, /Btw-bedrag nagerekend/, "de controleregel zelf hoort er te staan");
+  assert.match(html, /mengt btw-tarieven/, "…in de toestand die deze knop bestaansrecht geeft");
+  assert.match(html, /Btw-specificatie nalezen/,
+    "de regel eindigt weer in 'vergelijk het zelf' — een doodlopende zin boven een bedrag dat " +
+      "de ondernemer aftrekt, terwijl de app het papier vasthoudt");
+});
+
+test("[SPLIT-ALSNOG] tegenproef: op een ZICHTBARE btw-regel die wél is gelopen staat geen knop", async () => {
+  // Zonder deze test slaagt de test hierboven ook als de knop onder ELKE btw-regel hangt — en dan
+  // biedt het blad een tweede modellezing aan bovenop een specificatie die er al is, waarmee een
+  // tweede mening stilletjes wint van wat de eigenaar zelf heeft ingevuld ([SPLIT-CORRECTIE]).
+  //
+  // Met een KLOPPENDE specificatie zou die test niets bewijzen: een geslaagde controle valt uit de
+  // ingeklapte lijst en de knop is dan afwezig omdat de hele regel afwezig is. Dus een specificatie
+  // die NIET klopt — dan is de regel gemarkeerd, staat hij er dus wél, en is het de voorwaarde die
+  // de knop weghoudt en niet het inklappen.
+  const html = await blad({
+    field_confidence: { _btw_rows: [
+      { rate: 9, base: 2591.71, btw: 233.2 },
+      { rate: 21, base: 822.21, btw: 300.0 },
+    ] },
+  });
+  assert.match(html, /Btw-bedrag nagerekend/, "de regel hoort zichtbaar te zijn — anders bewijst dit niets");
+  assert.match(html, /btw-specificatie/i, "…met de reden waarom hij is gemarkeerd");
+  assert.ok(!html.includes("Btw-specificatie nalezen"),
+    "de knop hangt onder een btw-regel die al is nagerekend");
+});
+
+test("[SPLIT-ALSNOG] tegenproef: op een enkeltarief-factuur is de controle gewoon gelopen", async () => {
+  // 21% over 1.000,00 — twee onafhankelijke constraints, dus corroboratie zonder specificatie.
+  const html = await blad({
+    total_ex_btw: 1000, btw_amount: 210, total_inc_btw: 1210, field_confidence: null,
+  });
+  assert.ok(!html.includes("Btw-specificatie nalezen"),
+    "de knop staat op een factuur waar niets ontbreekt — dan kost hij de eigenaar een document " +
+      "van zijn maandtegoed voor een controle die al is gelopen");
+  // 21% is exact een legaal tarief: twee constraints, dus corroboratie zonder specificatie. De
+  // niet-nagegaan-zin hoort hier helemaal niet te staan.
+  assert.ok(!html.includes("mengt btw-tarieven"),
+    "een enkeltarief-factuur leest als niet nagerekend");
+});

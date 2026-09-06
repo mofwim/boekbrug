@@ -1774,6 +1774,33 @@ export const MESSAGES = {
   'dsh.watGelezen': { nl: 'Wat wij hebben gelezen', ar: 'ما قرأناه نحن', en: 'What we read' },
   // [CONTROLES-INKLAPPEN] Wat er achter het pijltje zit. Een knop zonder belofte wordt niet
   // ingedrukt, en het aantal is precies de belofte: negen vinkjes uitklappen is iets anders dan één.
+  // ── [SPLIT-ALSNOG] De controle die niet kon lopen, alsnog laten lopen ────────────────────────
+  // Op een factuur die btw-tarieven mengt is de gedrukte specificatie het ENIGE wat het btw-bedrag
+  // kan tegenspreken (zie btw-split.ts). Stond die er niet, dan zei het blad "konden we niet
+  // nagaan" en verder niets — een doodlopende regel boven een bedrag dat de eigenaar aftrekt.
+  'dsh.btwSpec.lees': {
+    nl: 'Btw-specificatie nalezen',
+    ar: 'إعادة قراءة تفصيل الضريبة',
+    en: 'Read the btw specification',
+  },
+  'dsh.btwSpec.bezig': {
+    nl: 'Bezig met nalezen\u2026',
+    ar: 'جارٍ إعادة القراءة\u2026',
+    en: 'Reading\u2026',
+  },
+  // [NO-SILENT-EMPTY] Twee verschillende uitkomsten, twee verschillende zinnen: "er staat er geen
+  // op" is een BEVINDING en "het lukte niet" is een storing. Ze op één zin laten uitkomen is
+  // precies hoe een niet-uitgevoerde controle als een schone leest.
+  'dsh.btwSpec.geen': {
+    nl: 'Op dit document staat geen btw-specificatie per tarief. Vergelijk het btw-bedrag zelf met de factuur.',
+    ar: 'لا يوجد على هذا المستند تفصيل للضريبة حسب النسبة. قارن مبلغ الضريبة بنفسك مع الفاتورة.',
+    en: 'This document prints no per-rate btw specification. Compare the btw amount with the invoice yourself.',
+  },
+  'dsh.btwSpec.mislukt': {
+    nl: 'Nalezen lukte nu niet. Er is niets gewijzigd \u2014 probeer het zo meteen opnieuw.',
+    ar: 'تعذّرت إعادة القراءة الآن. لم يتغيّر شيء \u2014 جرّب بعد قليل.',
+    en: 'Could not read it just now. Nothing was changed \u2014 try again in a moment.',
+  },
   'dsh.controlesTonen': {
     nl: 'toon alle {n}',
     ar: 'أظهر الكلّ ({n})',
@@ -12424,6 +12451,10 @@ export const MESSAGES = {
   'log.invoice.auto_paid': { nl: 'Kassabon automatisch afgeboekt — de bon vermeldde de betaalwijze', en: 'Receipt settled automatically — the paper stated the payment method', ar: 'سُوّي إيصال تلقائياً — الورقة ذكرت طريقة الدفع' },
   'log.invoice.reread_from_document': { nl: 'Bestand opnieuw gelezen', en: 'File read again', ar: 'أُعيدت قراءة ملف' },
   'log.invoice.reimported': { nl: 'Factuur opnieuw ingelezen', en: 'Invoice re-imported', ar: 'أُعيد استيراد فاتورة' },
+  // [SPLIT-ALSNOG] Bewust een andere zin dan 'opnieuw ingelezen': hier is GEEN bedrag veranderd.
+  // Een logboekregel die de twee op één zin laat uitkomen laat een eigenaar denken dat zijn
+  // factuur is herschreven terwijl er alleen een controle alsnog kon lopen.
+  'log.invoice.btw_rows_read': { nl: 'Btw-specificatie nagelezen (bedragen ongewijzigd)', en: 'Btw specification read again (amounts unchanged)', ar: 'أُعيدت قراءة تفصيل الضريبة (المبالغ دون تغيير)' },
   'log.bank.auto_confirmed': { nl: 'Bankregel automatisch aan een factuur gekoppeld', en: 'Bank line matched to an invoice automatically', ar: 'رُبط سطر بنكي بفاتورة تلقائياً' },
   'log.bank.auto_confirmed_batch': { nl: 'Eén bankbetaling automatisch over meerdere facturen verdeeld', en: 'One bank payment split across several invoices automatically', ar: 'وُزّعت دفعة بنكية على عدة فواتير تلقائياً' },
   'log.bank.confirmed': { nl: 'Bankregel aan een factuur gekoppeld', en: 'Bank line matched to an invoice', ar: 'رُبط سطر بنكي بفاتورة' },
