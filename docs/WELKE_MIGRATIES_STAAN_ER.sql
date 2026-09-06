@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 120 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 121 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -277,6 +277,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoice_manual_payments.sql', 'function', 'apply_manual_payment', null, 'public'),
   ('invoice_move_payment.sql', 'function', 'move_invoice_payment', null, 'public'),
   ('invoice_move_payment_creditnota_guard.sql', 'function_body', 'move_invoice_payment', 'creditnota,invoice_type,receiving', 'public'),
+  ('invoice_number_twins.sql', 'function', 'invoice_number_twins', null, 'public'),
   ('invoice_partial_payments.sql', 'column', 'amount_applied', 'bank_tx_invoices', 'public'),
   ('invoice_partial_payments.sql', 'column', 'amount_paid', 'invoices', 'public'),
   ('invoice_partial_payments.sql', 'function', 'apply_bank_payment', null, 'public'),
@@ -539,7 +540,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 136
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 137
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

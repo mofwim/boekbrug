@@ -2809,6 +2809,26 @@ export const MESSAGES = {
     ar: 'محاسبك عالج هذه الفاتورة بالفعل',
     en: 'Your accountant has already processed this invoice',
   },
+  // ── [HAND-DUBBEL] Ditzelfde factuurnummer staat al ergens anders betaald ─────────────────────
+  // Geen storing en geen verbod: een VRAAG. Welke van twee lezingen de echte factuur is, is een
+  // vraag over papier — en op het Enka-paar was de kopie die ons goed leek juist de verkeerde.
+  // De server stuurt hier een geschreven zin mee die de bedragen van beide rijen noemt; deze
+  // sleutel is wat er staat als die zin er onverhoopt niet is.
+  'pay.reden.dubbelAlBetaald': {
+    nl: 'Dit factuurnummer staat al betaald in je administratie. Leg de factuur ernaast voordat je deze ook afboekt.',
+    ar: '\u0631\u0642\u0645 \u0627\u0644\u0641\u0627\u062a\u0648\u0631\u0629 \u0647\u0630\u0627 \u0645\u0633\u062c\u0651\u0644 \u0643\u0645\u062f\u0641\u0648\u0639 \u0641\u0639\u0644\u0627\u064b \u0641\u064a \u0625\u062f\u0627\u0631\u062a\u0643. \u0631\u0627\u062c\u0639 \u0627\u0644\u0641\u0627\u062a\u0648\u0631\u0629 \u0642\u0628\u0644 \u062a\u0633\u062c\u064a\u0644 \u0647\u0630\u0647 \u0623\u064a\u0636\u0627\u064b.',
+    en: 'This invoice number already stands paid in your administration. Put the invoice beside it before booking this one too.',
+  },
+  'ink.dubbelBetaald.kop': {
+    nl: 'Dit nummer staat al betaald',
+    ar: '\u0647\u0630\u0627 \u0627\u0644\u0631\u0642\u0645 \u0645\u0633\u062c\u0651\u0644 \u0643\u0645\u062f\u0641\u0648\u0639',
+    en: 'This number already stands paid',
+  },
+  'ink.dubbelBetaald.tochBoeken': {
+    nl: 'Toch afboeken',
+    ar: '\u0633\u062c\u0651\u0644\u0647\u0627 \u0631\u063a\u0645 \u0630\u0644\u0643',
+    en: 'Book it anyway',
+  },
   'pay.reden.alBetaald': {
     nl: 'Deze factuur staat al als betaald',
     ar: 'هذه الفاتورة مُسجَّلة كمدفوعة بالفعل',

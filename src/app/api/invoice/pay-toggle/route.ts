@@ -27,6 +27,8 @@ import { logAuditAction, getClientIP } from "@/lib/audit";
 // must answer identically, or the clients cannot tell a deelbetaling from a settlement.
 import { buildPaymentResult } from "@/lib/partial-payment";
 import { requireOwner } from '@/lib/owner-only'
+// [HAND-DUBBEL] One definition of "these two rows are the same invoice" — the pay screen's own.
+import { findPayableDuplicates, duplicateWarningText, type DuplicateCandidateRow } from "@/lib/duplicate-payable";
 import { round2 } from "@/lib/invoice-totals";
 
 export const dynamic = "force-dynamic";
@@ -69,7 +71,8 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  let body: { invoiceId?: string; action?: string; paymentMethod?: string; paymentDate?: string };
+  // [HAND-DUBBEL] `force` is the owner saying "yes, I know, book it anyway" — see the check below.
+  let body: { invoiceId?: string; action?: string; paymentMethod?: string; paymentDate?: string; force?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid_body" }, { status: 400 }); }
   const invoiceId = body.invoiceId;
   const action = body.action;
@@ -84,7 +87,9 @@ export async function POST(req: NextRequest) {
     .from("invoices")
     // [MANUAL-PARTIAL-PAY] amount_paid decides whether an undo is allowed on an invoice
     // that is partly settled but still open.
-    .select("id, invoice_number, status, direction, accountant_status, sender_id, receiver_id, amount_paid")
+    // [HAND-DUBBEL] client_name + total_inc_btw ride along: the duplicate question is per SUPPLIER,
+    // and the sentence the owner reads names the amounts of both rows.
+    .select("id, invoice_number, status, direction, accountant_status, sender_id, receiver_id, amount_paid, client_name, total_inc_btw")
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
@@ -115,6 +120,62 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+    // ── [HAND-DUBBEL] Does this invoice NUMBER already stand paid on another row? ──
+    //
+    // Two of the three double bookings found in the live administration came through HERE, not
+    // through any automatic pass: bank_tx_invoices rows written at 19:19 and 19:30 on 5 August by
+    // this route — the owner tapping "betaald" on the pay list. FAMZFOOD "26 / 1876" booked € 665,02
+    // twice; Doyum 26700385 booked € 239,47 on top of the € 222,05 the bank had already paid.
+    //
+    // The pay screen already warns about this pair ([DUP-ON-PAY]). It warned from a LIST, and a list
+    // is always a subset — of a period, of a tab, of the rows that screen happened to load — so the
+    // warning is missing at exactly the moment the twin was settled somewhere else. The database is
+    // not a subset, and this is the door every manual payment goes through.
+    //
+    // It ASKS, it does not refuse. Which of two readings is the real invoice is a question about
+    // paper, and on the Enka pair the copy our reader got wrong was the one that looked right. So
+    // the owner is told what stands where, and `force` lets them book it anyway — deliberately,
+    // once, instead of never knowing.
+    if (body.force !== true) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: twins, error: twinErr } = await (pipeline as any)
+          .rpc("invoice_number_twins", { p_owner: user.id, p_invoice_id: invoiceId });
+        // [DEPLOY-SAFE] invoice_number_twins.sql is applied by hand; until it is, this fails and the
+        // tap behaves exactly as it did before. A failed LOOK is logged, never turned into "no twin".
+        if (twinErr) {
+          console.warn("[HAND-DUBBEL] kon niet nakijken of dit nummer elders staat", {
+            invoiceId, userId: user.id, error: twinErr.message,
+          });
+        } else {
+          const rows = (Array.isArray(twins) ? twins : []) as DuplicateCandidateRow[];
+          // The same judgement the pay screen uses — supplier key and all. Restating it here would
+          // be a second definition of "the same invoice", and they would answer differently the
+          // first time either is touched.
+          const warn = findPayableDuplicates([
+            { id: inv.id, invoice_number: inv.invoice_number, client_name: inv.client_name,
+              total_inc_btw: inv.total_inc_btw, status: inv.status, amount_paid: inv.amount_paid },
+            ...rows,
+          ]).get(inv.id);
+          if (warn?.anyPaid) {
+            return NextResponse.json({
+              error: "duplicate_already_paid",
+              detail: duplicateWarningText(warn, inv.invoice_number),
+              invoiceNumber: inv.invoice_number,
+              others: warn.others.map((o) => ({
+                id: o.id, invoiceNumber: o.invoice_number, clientName: o.client_name,
+                total: o.total_inc_btw, status: o.status, amountPaid: o.amount_paid ?? 0,
+              })),
+            }, { status: 409 });
+          }
+        }
+      } catch (e) {
+        console.warn("[HAND-DUBBEL] kon niet nakijken of dit nummer elders staat", {
+          invoiceId, userId: user.id, error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
     const paymentMethod = body.paymentMethod === "kas" ? "kas" : "bank";
     // [PAY-DATE-SANE] The shape test that stood here is not a date check: "2062-03-01" and
     // "1926-07-04" pass it, and a slipped digit in a date field is an ordinary mistake. What that

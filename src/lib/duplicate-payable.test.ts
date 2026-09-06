@@ -118,3 +118,48 @@ test('[DUP-ON-PAY] spacing in a printed number does not hide the pair', () => {
   ])
   assert.equal(dups.size, 2)
 })
+
+// ── [HAND-DUBBEL] De rij die AL betaald is, gezien vanaf de tik ────────────────────────────────
+//
+// Twee van de drie dubbele boekingen in de live administratie zijn door de "betaald"-tik gemaakt,
+// niet door een automatische pas. Op dat moment stond de tweelingrij al betaald — door de bank —
+// en de lijst waar de waarschuwing uit komt bevatte hem niet altijd. De server kijkt nu zelf, en
+// dit is het antwoord dat hij daarop leest.
+
+test('[HAND-DUBBEL] een tweeling die al betaald is, is de dure waarschuwing', () => {
+  // FAMZFOOD "26 / 1876": twee lezingen, hetzelfde bedrag, de ene door de bank betaald op 9 maart.
+  // De leestekens verschillen — dat is precies waarom de nummers genormaliseerd worden vergeleken.
+  const w = findPayableDuplicates([
+    { id: 'open', invoice_number: '26 / 1876', client_name: 'FAMZFOOD BV', total_inc_btw: 665.02, status: 'received', amount_paid: 0 },
+    { id: 'betaald', invoice_number: '26/1876', client_name: 'FAMZFOOD bv', total_inc_btw: 665.02, status: 'paid', amount_paid: 665.02 },
+  ]).get('open')
+  assert.ok(w, 'de twee rijen horen als één factuur herkend te worden')
+  assert.equal(w!.anyPaid, true, 'de tweeling staat betaald — dit is de toestand die geld kost')
+  assert.equal(w!.amountsDiffer, false)
+  assert.match(
+    duplicateWarningText(w!, '26 / 1876'), /al betaald/,
+    'de zin moet zeggen dat de andere al betaald is — dat is wat de tik tegenhoudt',
+  )
+})
+
+test('[HAND-DUBBEL] ook als de twee lezingen het over het bedrag oneens zijn', () => {
+  // Doyum 26700385: de bank betaalde 222,05 met het factuurnummer erbij; de tweede lezing zei
+  // 239,47 en werd er bovenop geboekt.
+  const w = findPayableDuplicates([
+    { id: 'tweede', invoice_number: '26700385', client_name: 'Doyum Food B.V.', total_inc_btw: 239.47, status: 'received', amount_paid: 0 },
+    { id: 'echt', invoice_number: '26700385', client_name: 'Doyum Food B.V.', total_inc_btw: 222.05, status: 'paid', amount_paid: 222.05 },
+  ]).get('tweede')
+  assert.ok(w)
+  assert.equal(w!.anyPaid, true)
+  assert.equal(w!.amountsDiffer, true, 'verschillende bedragen — een correctie of een dubbele lezing')
+})
+
+test('[HAND-DUBBEL] tegenproef: twee leveranciers met hetzelfde nummer is géén waarschuwing', () => {
+  // Zonder deze test slaagt alles hierboven ook als de regel alleen op het nummer sleutelt — en dan
+  // krijgt elke eerlijke "2026001" een waarschuwing, wat de waarschuwing waardeloos maakt.
+  const w = findPayableDuplicates([
+    { id: 'a', invoice_number: '2026001', client_name: 'Bakkerij Noord', total_inc_btw: 100, status: 'received', amount_paid: 0 },
+    { id: 'b', invoice_number: '2026001', client_name: 'Loodgieter De Vries', total_inc_btw: 100, status: 'paid', amount_paid: 100 },
+  ])
+  assert.equal(w.size, 0, 'nummers zijn uniek PER leverancier, niet erover heen')
+})

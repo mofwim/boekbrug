@@ -26795,3 +26795,63 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
   assert.ok(regel.indexOf("hold: 'verwerkt'") < regel.indexOf("hold: 'same-number'"),
     "the same-number hold now outranks the accountant lock");
 });
+
+// ── [HAND-DUBBEL] The manual "betaald" tap is the door, so the guard stands at the door ─────────
+//
+// Two of the three double bookings found in the live administration were made HERE, not by any
+// automatic pass: bank_tx_invoices rows written at 19:19 and 19:30 on 5 August by /pay-toggle —
+// the owner tapping "betaald" on the pay list. FAMZFOOD "26 / 1876" booked € 665,02 twice; Doyum
+// 26700385 booked € 239,47 on top of the € 222,05 the bank had already paid.
+//
+// The pay screen already warned about the pair ([DUP-ON-PAY]). It warned from a LIST — of a period,
+// of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
+// the twin had been settled somewhere else. The database is not a subset.
+
+test("[HAND-DUBBEL] the pay route asks the database, and asks it before booking", () => {
+  const route = code("src/app/api/invoice/pay-toggle/route.ts");
+
+  const check = route.indexOf('rpc("invoice_number_twins"');
+  const book = route.indexOf('rpc("apply_manual_payment"');
+  assert.ok(check > 0, "the duplicate look is gone from the manual pay route");
+  assert.ok(book > check,
+    "the payment is booked before the duplicate question is asked — a warning after the write is " +
+      "a report, not a guard");
+
+  // The judgement is the pay screen's own. A second definition of "these two rows are one invoice"
+  // would answer differently the first time either is touched.
+  assert.match(route, /findPayableDuplicates\(\[/,
+    "the route decides for itself again whether two rows are the same invoice");
+  assert.match(route, /if \(warn\?\.anyPaid\)/,
+    "the route no longer refuses on the case that costs money: a twin that already stands PAID");
+
+  // It asks, it does not forbid. Which reading is the real invoice is a question about paper.
+  assert.match(route, /if \(body\.force !== true\)/,
+    "the owner can no longer get past this — every invoice whose number legitimately repeats is " +
+      "now unpayable by hand");
+  // [NO-SILENT-EMPTY] / [DEPLOY-SAFE] A failed look is not permission.
+  assert.match(route, /kon niet nakijken of dit nummer elders staat/,
+    "a failed duplicate read is swallowed silently");
+
+  // And the narrowing function it calls stays service-role only: it reads across a whole owner.
+  const fn = code("supabase/migrations/invoice_number_twins.sql");
+  assert.match(fn, /REVOKE ALL ON FUNCTION public\.invoice_number_twins\(uuid, uuid\) FROM PUBLIC, anon, authenticated/,
+    "invoice_number_twins is callable from a browser session");
+  assert.match(fn, /regexp_replace\(lower\(coalesce\(o\.invoice_number, ''\)\), '\[\^a-z0-9\]', '', 'g'\)/,
+    "the number match no longer ignores punctuation — FAMZFOOD sent \"26 / 1876\" and the second " +
+      "reading stored \"26/1876\", and an equality filter calls those two invoices");
+});
+
+test("[HAND-DUBBEL] and the screen asks rather than reports", () => {
+  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(scherm, /isDuplicatePaidConflict\(json as PayToggleError\)/,
+    "the screen reads this refusal as an ordinary error again — a toast the owner taps away");
+  assert.match(scherm, /if \(toch\) return executePay\(ctx, true\)/,
+    "there is no way through: the owner reads that the number stands paid and then cannot book " +
+      "the one invoice that legitimately repeats");
+
+  // Recognised by CODE, never by reading our own sentence back — the reason isVerwerktConflict
+  // exists at all.
+  const regel = code("src/lib/pay-toggle-reason.ts");
+  assert.match(regel, /=== DUPLICATE_PAID_CODE/,
+    "the refusal is recognised by its wording, which stops working the moment it is translated");
+});

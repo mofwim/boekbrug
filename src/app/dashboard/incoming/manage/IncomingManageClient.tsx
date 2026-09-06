@@ -105,7 +105,7 @@ import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REASON] One rule for what a refused pay-toggle says, shared with /vandaag and /facturen.
-import { payToggleAnswer, type PayToggleError } from '@/lib/pay-toggle-reason'
+import { payToggleAnswer, isDuplicatePaidConflict, type PayToggleError } from '@/lib/pay-toggle-reason'
 // [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
 import { sendWithFit } from '@/lib/upload-fit'
 // [INVOICE-REMOVE] The same rule the sales list uses, so "Verwijderen" means the same thing on
@@ -1964,7 +1964,9 @@ export default function IncomingManageClient({
   // ── Mark paid / undo — session client, PAYMENT FIELDS ONLY ──
   // Returns whether the write actually landed — [REMOVAL-ALTERNATIVE] chains a removal onto a
   // successful undo, and must never re-open the remove sheet on a payment that is still booked.
-  async function executePay(ctx: PayCtx): Promise<boolean> {
+  // [HAND-DUBBEL] `force` is de tweede ronde: de server heeft geweigerd omdat dit factuurnummer al
+  // ergens anders betaald staat, de ondernemer heeft die zin gelezen en zegt toch boeken.
+  async function executePay(ctx: PayCtx, force = false): Promise<boolean> {
     setPayCtx(null); setPayCheck(null); setProcessingId(ctx.id)
     // [MANUAL-PARTIAL-PAY] A deelbetaling leaves the invoice on 'Te betalen' — only a full
     // settlement flips the status, so don't claim otherwise before the server answers.
@@ -1994,6 +1996,7 @@ export default function IncomingManageClient({
           paymentDate: ctx.paymentDate ?? amsterdamToday(),
           ...(ctx.amount != null ? { amount: ctx.amount } : {}),
           ...(ctx.clientKey ? { clientKey: ctx.clientKey } : {}),
+          ...(force ? { force: true } : {}),
         }),
       })
     } catch {
@@ -2021,6 +2024,21 @@ export default function IncomingManageClient({
       if ((json as { error?: string })?.error === 'verwerkt') {
         setRequestSent(false)
         setVerwerktCtx({ id: ctx.id, number: ctx.number })
+      } else if (isDuplicatePaidConflict(json as PayToggleError)) {
+        // [HAND-DUBBEL] Dit is geen storing en geen verbod: dit factuurnummer staat al ergens
+        // anders betaald, en de ondernemer moet WETEN dat voordat hij het tweede exemplaar afboekt.
+        // Twee van de drie dubbele boekingen in de live administratie zijn hier ontstaan.
+        //
+        // Vragen en niet weigeren, want welke van twee lezingen de echte factuur is, is een vraag
+        // over papier — en op het Enka-paar was de kopie die ONS goed leek juist de verkeerde.
+        setProcessingId(null)
+        const toch = await dialog.confirm({
+          title: t('ink.dubbelBetaald.kop'),
+          message: error.message,
+          confirmLabel: t('ink.dubbelBetaald.tochBoeken'),
+        })
+        if (toch) return executePay(ctx, true)
+        return false
       } else {
         showToast(error.message || t('ink.bijwerkenMislukt'))
       }

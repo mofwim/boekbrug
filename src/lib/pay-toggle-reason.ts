@@ -51,6 +51,10 @@ export type PayToggleError = { detail?: unknown; error?: unknown } | null | unde
 export const PAY_TOGGLE_REASON_KEY: Record<string, MessageKey> = {
   verwerkt: 'pay.reden.verwerkt',
   invoice_already_paid: 'pay.reden.alBetaald',
+  // [HAND-DUBBEL] Carries a written `detail` naming the other row's amounts, so payToggleAnswer
+  // shows that sentence rather than this key. The key exists because a code without one falls back
+  // to "er ging iets mis", and this refusal is the opposite of a malfunction.
+  duplicate_already_paid: 'pay.reden.dubbelAlBetaald',
   invoice_not_found: 'pay.reden.nietGevonden',
   not_paid: 'pay.reden.nietBetaald',
   not_payable: 'pay.reden.nietAfboekbaar',
@@ -70,6 +74,27 @@ export const PAY_TOGGLE_FALLBACK_KEY: MessageKey = 'pay.reden.algemeen'
 
 /** The code the route sends when the accountant has locked the invoice. */
 export const VERWERKT_CODE = 'verwerkt'
+
+/**
+ * [HAND-DUBBEL] The code the route sends when this invoice NUMBER already stands paid elsewhere.
+ *
+ * Its own predicate rather than a string test at the call site, for the reason isVerwerktConflict
+ * gives one paragraph down: a screen that recognises a refusal by reading its own sentence back
+ * stops recognising it the moment that sentence is translated.
+ */
+export const DUPLICATE_PAID_CODE = 'duplicate_already_paid'
+
+/**
+ * Does this refusal deserve a QUESTION rather than a toast?
+ *
+ * The double booking this guards against was made three times in one evening on a live
+ * administration, twice through this very route. But which of two rows is the real invoice is a
+ * question about paper — so the screen asks, and the owner may book it anyway. A refusal the owner
+ * cannot get past would strand every legitimate invoice whose number happens to repeat.
+ */
+export function isDuplicatePaidConflict(json: PayToggleError): boolean {
+  return (typeof json?.error === 'string' ? json.error : '') === DUPLICATE_PAID_CODE;
+}
 
 /**
  * What to show for a failed pay-toggle response.
