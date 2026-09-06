@@ -32,7 +32,7 @@
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
 --   DEEL 1  de 120 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 15 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -539,7 +539,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 135
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 136
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -614,6 +614,25 @@ with controle(bestand, vraag, toegepast) as (
              where n.nspname = 'public') d
      group by indrelid, indisunique, vorm
     having count(*) > 1)
+  )
+  union all
+  select 'drop_supplier_rows_that_are_misreadings.sql'::text, 'geen leveranciersrij houdt nog een nummer vast dat geen rekeningnummer is terwijl niets ernaar wijst'::text, (
+    not exists (
+    with schoon as (
+      select s.id, upper(regexp_replace(s.iban, '[^A-Za-z0-9]', '', 'g')) as c
+        from public.suppliers s where s.iban is not null
+    ), cijfers as (
+      select h.id, h.c,
+             string_agg(case when t.ch ~ '^[0-9]$' then t.ch else (ascii(t.ch) - 55)::text end,
+                        '' order by t.ord) as n
+        from (select id, c, substr(c, 5) || substr(c, 1, 4) as r from schoon) h,
+             lateral regexp_split_to_table(h.r, '') with ordinality as t(ch, ord)
+       group by h.id, h.c
+    )
+    select 1 from cijfers v
+     where not (length(v.c) = 18 and v.n ~ '^[0-9]+$' and mod(v.n::numeric, 97) = 1)
+       and not exists (select 1 from public.invoices i where i.supplier_id = v.id)
+       and not exists (select 1 from public.supplier_aliases a where a.supplier_id = v.id))
   )
   union all
   select 'function_search_path.sql'::text, 'elk van de negen functies heeft een vastgezet search_path'::text, (

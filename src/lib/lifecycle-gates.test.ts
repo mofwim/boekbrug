@@ -24505,6 +24505,37 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [CONTROLES-INKLAPPEN] ─────────────────────────────────────────────────────────────────────
+//
+// Every check the app runs was printed on every invoice — nine identical green lines, with the one
+// row that matters somewhere in the middle. A wall is skipped, so the panel that exists to answer
+// "why should I not look myself?" answered by making the owner look at everything.
+//
+// Collapsed it shows what is NOT settled: nothing to report leaves the heading alone, something to
+// report leaves exactly that something, and the arrow opens the full list either way.
+// tests/render/money-screens.test.tsx proves the rendered states; this holds the wiring, which is
+// one flipped comparison away from either extreme.
+test("[CONTROLES-INKLAPPEN] the panel folds what is settled, and nothing else", () => {
+  const blad = code("src/components/invoice/InvoiceDocumentSheet.tsx");
+
+  // 'not-checked' stays VISIBLE. It is the [EERSTE-KEER] row — "this is the first account number we
+  // have seen for this supplier, take it from the invoice before you pay" — and folding that behind
+  // an arrow would undo the reason it was written. `=== 'flagged'` here is that undoing.
+  assert.match(blad, /const openChecks = checks\.filter\(\(c\) => c\.outcome !== 'passed'\)/,
+    "the fold is keyed on something other than 'settled', so a check that could not run gets buried");
+  assert.match(blad, /const shownChecks = checksOpen \? checks : openChecks/,
+    "the arrow no longer opens the whole list, or the fold is gone entirely");
+
+  // The heading is the button. A 15-pixel chevron on its own is the only way in on a phone.
+  assert.match(blad, /aria-expanded=\{checksOpen\}/, "the toggle does not say what state it is in");
+  assert.match(blad, /aria-controls=\{checksListId\}/, "…nor which list it opens");
+
+  // And it promises the WHOLE list, not the folded remainder: "toon alle 8" under a heading that
+  // says nine checks were done is a smaller promise than the panel keeps.
+  assert.match(blad, /t\('dsh\.controlesTonen', \{ n: String\(checks\.length\) \}\)/,
+    "the button counts something other than the whole list, and the word on it is 'alle'");
+});
+
 // ── [BETAALBAAR-NUMMER] ───────────────────────────────────────────────────────────────────────
 //
 // The fraud check answers "did this supplier's account number change" by reading the OLDEST number
