@@ -1772,6 +1772,13 @@ export const MESSAGES = {
   'dsh.onbekendeLeverancier': { nl: 'Onbekende leverancier', ar: 'مورّد غير معروف', en: 'Unknown supplier' },
   'dsh.zonderNummer': { nl: 'zonder nummer', ar: 'بدون رقم', en: 'without a number' },
   'dsh.watGelezen': { nl: 'Wat wij hebben gelezen', ar: 'ما قرأناه نحن', en: 'What we read' },
+  // [CONTROLES-INKLAPPEN] Wat er achter het pijltje zit. Een knop zonder belofte wordt niet
+  // ingedrukt, en het aantal is precies de belofte: negen vinkjes uitklappen is iets anders dan één.
+  'dsh.controlesTonen': {
+    nl: 'toon alle {n}',
+    ar: 'أظهر الكلّ ({n})',
+    en: 'show all {n}',
+  },
   'dsh.factuurdatum': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
   'dsh.totaalIncl': { nl: 'Totaal incl. btw', ar: 'الإجمالي شامل btw', en: 'Total incl. VAT' },
   'dsh.btw': { nl: 'Btw', ar: 'btw (الضريبة)', en: 'VAT' },

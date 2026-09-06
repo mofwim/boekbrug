@@ -172,6 +172,29 @@ const ALLEEN_SERVICE_ROLE = [
 const lijst = (namen: string[]) => namen.map((n) => `'${n}'`).join(", ");
 
 const STAND_CONTROLE: Record<string, Stand> = {
+  "drop_supplier_rows_that_are_misreadings.sql": {
+    soort: "controle",
+    vraag: "geen leveranciersrij houdt nog een nummer vast dat geen rekeningnummer is terwijl niets ernaar wijst",
+    // Echte mod-97, geen vormtest: NL36SUME0364345977 en NL36SNSB0363434977 zijn achttien tekens in
+    // precies het goede patroon en vallen op de controlecijfers. Een eerdere telling met een regex
+    // op de VORM miste ze allebei en rapporteerde er zes in plaats van acht.
+    sql: `not exists (
+           with schoon as (
+             select s.id, upper(regexp_replace(s.iban, '[^A-Za-z0-9]', '', 'g')) as c
+               from public.suppliers s where s.iban is not null
+           ), cijfers as (
+             select h.id, h.c,
+                    string_agg(case when t.ch ~ '^[0-9]$' then t.ch else (ascii(t.ch) - 55)::text end,
+                               '' order by t.ord) as n
+               from (select id, c, substr(c, 5) || substr(c, 1, 4) as r from schoon) h,
+                    lateral regexp_split_to_table(h.r, '') with ordinality as t(ch, ord)
+              group by h.id, h.c
+           )
+           select 1 from cijfers v
+            where not (length(v.c) = 18 and v.n ~ '^[0-9]+$' and mod(v.n::numeric, 97) = 1)
+              and not exists (select 1 from public.invoices i where i.supplier_id = v.id)
+              and not exists (select 1 from public.supplier_aliases a where a.supplier_id = v.id))`,
+  },
   "invoice_name_follows_taught_supplier.sql": {
     soort: "controle",
     vraag: "geen factuur toont nog een spelling die de eigenaar zelf aan zijn leverancier koppelde",

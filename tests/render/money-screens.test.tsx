@@ -1746,10 +1746,20 @@ test("[DOC-INLINE] the document sheet shows the paper, our numbers AND what was 
   // Nine since [LEVERANCIER-ID]: the IBAN checksum joined the list, and this fixture prints an
   // account number. Asserted on the RENDERED count rather than a literal 8, so the panel and the
   // pure list can never drift apart about how many checks the owner is being promised.
+  // Nine since [LEVERANCIER-ID]. [CONTROLES-INKLAPPEN] then folded the settled rows away, so the
+  // promise moved from nine printed lines to one sentence and a button that says how many are
+  // behind it. Both numbers are still read from the RENDER, so the panel and the pure list cannot
+  // drift apart about how many checks the owner is being promised.
   assert.match(clean, /Alle 9 controles gedaan/, "a clean invoice says what was checked instead of nothing");
-  assert.match(clean, /Rekeningnummer klopt als IBAN/, "…including the checksum row itself");
+  assert.match(clean, /toon alle 9/, "…and the nine are one tap away, with the count on the button");
+  assert.match(clean, /aria-expanded="false"/, "collapsed by default — nine green ticks is a wall, not an answer");
+  // The rows themselves are NOT printed while everything is settled. This assertion used to be the
+  // opposite ("including the checksum row itself"), and that was the decision this change reverses:
+  // the panel answers "why should I not look myself?", and it answered by making the owner look at
+  // everything. Reachability is what matters, and the button above carries it.
+  assert.doesNotMatch(clean, /Rekeningnummer klopt als IBAN/, "a settled row is printed anyway");
+  assert.doesNotMatch(clean, /9% over het hele bedrag/, "…and so is its detail line");
   assert.match(clean, /Klopt niet — corrigeren/, "and the fix is one tap from the doubt");
-  assert.match(clean, /9% over het hele bedrag/, "including the btw axis, which is a real check here");
 
   // The half that must never be cosmetic: a check that could not run says so, and the summary
   // stops claiming completeness. A green list that overstates is worse than no list.
@@ -3256,3 +3266,77 @@ test("[NUL-POST] het veld voor een bedrag zonder btw staat op het correctiescher
   assert.match(metWaarde, /value="176,4"/,
     "een eerder ingevuld onbelast bedrag hoort terug te staan, anders wist elke volgende correctie het");
 });
+
+// ── [CONTROLES-INKLAPPEN] ─────────────────────────────────────────────────────────────────────
+//
+// Every check the app runs was printed on every invoice, which turns the one row that matters into
+// the fifth of nine identical green lines. Reported on a CAN Vleesgroothandel invoice where all
+// nine passed: the panel was a wall, and a wall is skipped.
+//
+// The rule is the same in both directions — show what is NOT settled. Nothing to report leaves the
+// heading alone; something to report leaves exactly that something. No gate in this repo can click
+// the arrow, so a render is the only place the COLLAPSED state can be held.
+
+test("[CONTROLES-INKLAPPEN] a flagged invoice shows the flag, not the nine lines around it", async () => {
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+  const { invoiceChecks } = await import("../../src/lib/invoice-checks");
+
+  // The DELMO invoice this came from: the reader turned one 6 into a 0, so the checksum fails while
+  // everything else on the paper is right.
+  const invoice = {
+    id: "d7", client_name: "DELMO GROOTHANDEL B.V.", invoice_number: "2607902",
+    invoice_date: "2026-06-02", invoice_type: "factuur",
+    total_ex_btw: 37.35, btw_amount: 7.84, total_inc_btw: 45.19,
+    vendor_iban: "NL94INGB0066664293", field_confidence: null, vendorNumbers: [],
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const checks = invoiceChecks(invoice as any);
+  const settled = checks.filter((c) => c.outcome === "passed");
+  assert.ok(settled.length >= 5, `only ${settled.length} settled rows — the fixture stopped exercising the fold`);
+  assert.ok(checks.some((c) => c.outcome !== "passed"), "…and nothing is flagged, so there is no flag to look for");
+
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, { invoice, onClose() {}, onCorrect() {} }),
+  );
+
+  // The one that matters is on screen, with the number to hold against the paper.
+  assert.match(html, /controlecijfers/, "the flagged row is folded away with the settled ones");
+  assert.match(html, /NL94INGB0066664293/, "…and with it the number there is nothing to compare without");
+
+  // The settled ones are not. Checked by LABEL, per row, rather than by counting ticks: a count
+  // passes while the wrong rows are shown.
+  for (const c of settled) {
+    assert.doesNotMatch(html, new RegExp(c.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `"${c.label}" is settled and printed anyway — the wall is back`);
+  }
+
+  // And the way to the full list is there, promising what is behind it.
+  assert.match(html, /aria-expanded="false"/);
+  assert.match(html, new RegExp(`toon alle ${checks.length}`),
+    "the button must promise the whole list, not the folded remainder");
+});
+
+test("[CONTROLES-INKLAPPEN] a check that could not run is not something to fold away", async () => {
+  // [EERSTE-KEER] is a 'not-checked' row that says "this is the first account number we have seen
+  // for this supplier — take it from the invoice before you pay". Folding that behind an arrow
+  // would undo the reason it was written, so unsettled means flagged AND not-checked.
+  const { default: InvoiceDocumentSheet } = await import("../../src/components/invoice/InvoiceDocumentSheet");
+  const html = renderToStaticMarkup(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(InvoiceDocumentSheet as any, {
+      invoice: {
+        id: "d8", client_name: "Nieuwe Leverancier B.V.", invoice_number: "2026-1",
+        invoice_date: "2026-09-05", invoice_type: "factuur",
+        total_ex_btw: 100, btw_amount: 21, total_inc_btw: 121,
+        vendor_iban: "NL94INGB0666664293", vendorNumbers: [],
+        field_confidence: { _safecore: { iban_first_seen: true } },
+      },
+      onClose() {}, onCorrect() {},
+    }),
+  );
+  assert.match(html, /eerste rekeningnummer dat we van deze leverancier zien/,
+    "the one row with no history behind it is folded away with the settled ones");
+  assert.doesNotMatch(html, /Bedragen kloppen met elkaar/, "…while a settled row is printed");
+});
+
