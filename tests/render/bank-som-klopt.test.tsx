@@ -133,3 +133,164 @@ test("[SOM-KLOPT] een genoemde factuur die nog OPENSTAAT houdt zijn kiezer", asy
   assert.ok(html.includes("2602010"),
     "en de kiezer moet blijven staan — die openstaande factuur moet nog gekoppeld kunnen worden");
 });
+
+// ── [CREDIT-TEKEN] De creditnota die als rekening werd opgeteld ────────────────────────────────
+//
+// Aardappelgroothandel Altena, afschrijving € 170,27, omschrijving "2034 26700644 26700603".
+// 26700644 is € 306,27 en 26700603 is een creditnota van € 136,00 — samen precies de betaling. Het
+// scherm zei "Samen € 442,27, en deze betaling is € 170,27", drukte de creditnota af als € 136,00
+// zonder minteken, en zette daaronder in oranje dat 26700644 niet in de administratie staat —
+// direct ónder een regel waarop diezelfde factuur met haar bedrag stond.
+//
+// Waarom dit hier hoort en niet alleen in de unit-test: de unit-test bewijst de SOM. Wat zij niet
+// kan zien is of het scherm de post afdrukt met het teken waarmee zij is opgeteld, en of de twee
+// panelen van deze ene kaart elkaar nog tegenspreken.
+
+const ALTENA_SET = {
+  settled: [
+    { invoiceId: "f", invoiceNumber: "26700644", amount: 306.27, clientName: "Aardappelgroothandel Altena B.V.", amountAgrees: false, lockedByAccountant: false, isCredit: false },
+  ],
+  open: [
+    { invoiceId: "c1", invoiceNumber: "26700603", amount: -136, clientName: "Aardappelgroothandel Altena B.V.", amountAgrees: false, lockedByAccountant: false, isCredit: true },
+  ],
+  total: 170.27,
+  coversPayment: true,
+  unknownNumbers: [] as string[],
+  fullySettled: false,
+  totalUnknownReason: null,
+};
+
+const ALTENA = {
+  transactionId: "tx-altena",
+  date: "2026-03-18",
+  amount: -170.27,
+  counterpartName: "Aardappelgroothandel Altena Bv",
+  description: "2034 26700644 26700603",
+  reference: null,
+  outcome: "choice" as const,
+  best: null,
+  candidates: [] as never[],
+};
+
+test("[CREDIT-TEKEN] de creditnota staat op de kaart MET haar minteken", async () => {
+  const html = renderToStaticMarkup(
+    React.createElement((await import("../../src/app/dashboard/bank/BankClient")).TxCard as never, {
+      s: { ...ALTENA, quotedSet: ALTENA_SET, quotedSettled: null },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+
+  // Het teken zelf. Zonder minteken leest een document dat geld TERUGGEEFT als een rekening, en de
+  // optelsom eronder is met de hand niet meer na te rekenen: 306,27 + 136,00 is niet 170,27.
+  assert.match(html, /[-−]136,00/,
+    "de creditnota staat zonder minteken op de kaart — precies de melding waar dit mee begon");
+  assert.ok(html.includes("306,27"), "de factuur hoort er met haar eigen bedrag bij te staan");
+  assert.ok(html.includes("170,27"), "en de som die er werkelijk uitkomt");
+  assert.ok(!html.includes("442,27"),
+    "442,27 is de som mét de creditnota erbij opgeteld — de fout zelf, terug op het scherm");
+  assert.match(html, /precies het bedrag van deze betaling/,
+    "306,27 − 136,00 IS deze betaling; de kaart moet dat zeggen in plaats van om een factuur te vragen");
+  assert.ok(!html.includes("staat niet in je administratie"),
+    "geen enkele van deze twee ontbreekt: ze staan allebei op deze kaart");
+});
+
+test("[CREDIT-TEKEN] tegenproef: een gewone factuur wordt NIET van een minteken voorzien", async () => {
+  // Zonder deze test slaagt de test hierboven ook als het scherm elk bedrag negatief afdrukt.
+  // Twee posten, want met één regel toont de kaart zichzelf niet — dan bewijst "geen minteken" niets.
+  const geenCredit = {
+    ...ALTENA_SET,
+    open: [{ ...ALTENA_SET.open[0], invoiceNumber: "26700605", amount: 136, isCredit: false }],
+    total: 442.27, coversPayment: false,
+  };
+  const html = renderToStaticMarkup(
+    React.createElement((await import("../../src/app/dashboard/bank/BankClient")).TxCard as never, {
+      s: { ...ALTENA, quotedSet: geenCredit, quotedSettled: null },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+  assert.ok(html.includes("306,27"), "de factuur staat er");
+  assert.doesNotMatch(html, /[-−]306,27|[-−]136,00/,
+    "een gewone factuur mag geen minteken krijgen — dan zegt het teken niets meer");
+});
+
+test("[NO-SILENT-EMPTY] een onleesbaar bedrag zegt DAT er niets is opgeteld", async () => {
+  const html = renderToStaticMarkup(
+    React.createElement((await import("../../src/app/dashboard/bank/BankClient")).TxCard as never, {
+      s: {
+        ...ALTENA,
+        quotedSet: { ...ALTENA_SET, total: null, coversPayment: false, totalUnknownReason: "amount" },
+        quotedSettled: null,
+      },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+  assert.match(html, /is het bedrag niet gelezen/,
+    "hier stond een zin over andere facturen van deze leverancier — een antwoord op een vraag die " +
+      "niemand had gesteld, terwijl de gestelde vraag onbeantwoord bleef");
+  assert.ok(!html.includes("precies het bedrag van deze betaling"),
+    "zonder som mag er niets over kloppen beweerd worden");
+});
+
+test("[CREDIT-TEKEN] de kaart noemt geen factuur ontbrekend die er zelf op staat", async () => {
+  // De tweede helft van dezelfde schermafbeelding. De kandidaat is de creditnota 26700603 (open,
+  // 8 cijfers); haar lengte is het anker waarmee namedInvoiceNumbers 26700644 als een genoemde
+  // factuur herkent. Die factuur staat betaald in de administratie — quotedSet heeft haar zelfs
+  // opgezocht en met bedrag afgedrukt — maar stond niet in de lijst waaruit de zin werd gebouwd.
+  // Resultaat: "€ 306,27" en "staat niet in je administratie" over hetzelfde nummer, vier regels
+  // uit elkaar. Op een geldscherm is dat het moment waarop een boekhouder ophoudt met kijken.
+  const html = renderToStaticMarkup(
+    React.createElement((await import("../../src/app/dashboard/bank/BankClient")).TxCard as never, {
+      s: {
+        ...ALTENA,
+        quotedSet: ALTENA_SET,
+        quotedSettled: null,
+        candidates: [
+          { invoiceId: "c1", invoiceNumber: "26700603", amount: -136, invoiceDate: "2026-02-26", confidence: 0.5, signals: ["counterpart"], reason: "", nameSim: 1, nameIdentity: true, clientName: "Aardappelgroothandel Altena B.V.", amountPaid: 0, remaining: -136 },
+        ],
+      },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+  assert.ok(html.includes("306,27"), "de factuur staat met haar bedrag op de kaart");
+  assert.ok(!html.includes("26700644, en die staat niet in je administratie"),
+    "de kaart drukt 26700644 af én zegt dat we hem niet hebben — twee panelen van één kaart die " +
+      "elkaar tegenspreken over dezelfde factuur");
+});
+
+test("[PAYMENT-NAMES-MISSING] tegenproef: een écht ontbrekende factuur wordt nog steeds genoemd", async () => {
+  // Zonder deze test slaagt de test hierboven ook als de zin nooit meer verschijnt — en dan is de
+  // deadlock terug waar [PAYMENT-NAMES-MISSING] voor bestaat: het hele bedrag op de ene factuur.
+  const html = renderToStaticMarkup(
+    React.createElement((await import("../../src/app/dashboard/bank/BankClient")).TxCard as never, {
+      s: {
+        ...ALTENA,
+        description: "2034 26700644 26700603",
+        // quotedSet kent alleen de creditnota; 26700644 is nergens in de administratie.
+        quotedSet: { ...ALTENA_SET, settled: [], total: -136, coversPayment: false },
+        quotedSettled: null,
+        candidates: [
+          { invoiceId: "c1", invoiceNumber: "26700603", amount: -136, invoiceDate: "2026-02-26", confidence: 0.5, signals: ["counterpart"], reason: "", nameSim: 1, nameIdentity: true, clientName: "Aardappelgroothandel Altena B.V.", amountPaid: 0, remaining: -136 },
+        ],
+      },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+  assert.match(html, /26700644, en die staat niet in je administratie/,
+    "een factuur die de betaling noemt en die we werkelijk niet hebben moet genoemd blijven — " +
+      "anders boekt de ondernemer het hele bedrag op de factuur die hij wél heeft");
+});

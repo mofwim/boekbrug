@@ -207,6 +207,8 @@ interface Suggestion {
     open: QuotedRef[]
     unknownNumbers: string[]
     total: number | null
+    /** [CREDIT-TEKEN] Waarom `total` null is, als hij dat is — zie bank-quoted-invoice.ts. */
+    totalUnknownReason?: 'amount' | null
     coversPayment: boolean
     /** Alles wat genoemd is, is geboekt — pas dán valt er werkelijk niets te kiezen. */
     fullySettled: boolean
@@ -216,6 +218,8 @@ interface Suggestion {
 interface QuotedRef {
   invoiceId: string; invoiceNumber: string; amount: number | null
   clientName: string | null; amountAgrees: boolean; lockedByAccountant: boolean
+  /** [CREDIT-TEKEN] Dit document TREKT AF van de betaling — zie bank-quoted-invoice.ts. */
+  isCredit?: boolean
 }
 interface MatchResponse {
   ok: boolean
@@ -2885,6 +2889,23 @@ export function TxCard({
   const missingNamed = missingNamedInvoices(namedInvoices).filter(
     (n) => !dismissedNumbers.has(normRef(n)),
   )
+  // [CREDIT-TEKEN] De facturen die quotedInvoiceSet al heeft OPGEZOCHT — en dat is geen detail: op
+  // één schermafbeelding uit productie stond de kaart "Factuur 26700644 · € 306,27" met daaronder,
+  // in oranje, "deze betaling noemt ook factuur 26700644, en die staat niet in je administratie".
+  // Twee panelen van één kaart die elkaar tegenspreken over dezelfde factuur.
+  //
+  // De oorzaak is dat de twee lezers uit verschillende bakken putten: de lijst hierboven kent de
+  // kandidaten en wat er op DEZE regel al is afgeboekt, terwijl quotedSet de betaalde facturen van
+  // de hele administratie doorzoekt. Een nummer dat quotedSet heeft gevonden is per definitie een
+  // factuur die we HEBBEN, en daarover mag deze zin niet beweren dat hij ontbreekt.
+  //
+  // Alleen de ZIN wordt hiermee gecorrigeerd, niet missingNamed zelf. Dat is opzet: missingNamed
+  // draagt ook wasMulti en de slots, en een betaling die twee documenten noemt hoort de slotweergave
+  // te houden — daar hoort deze regel nog thuis, alleen niet meer met dit woord erbij.
+  const quotedNumbers = s.quotedSet
+    ? [...s.quotedSet.settled, ...s.quotedSet.open].map((q) => normRef(q.invoiceNumber))
+    : []
+  const missingForNotice = missingNamed.filter((n) => !quotedNumbers.includes(normRef(n)))
   // [PAYMENT-NAMES-MISSING] …and a payment that names ≥2 invoices is a batch even when one of them
   // is not in the administration yet. Counting only RESOLVED numbers meant the missing invoice
   // silently downgraded the card to single-invoice mode, where "Bevestig betaling" books the whole
@@ -3186,14 +3207,14 @@ export function TxCard({
         <SomKloptKaart set={s.quotedSet} betaling={s.amount} onOpenFile={onOpenFile} />
       )}
 
-      {wasMulti && !s.quotedSet?.fullySettled && missingNamed.length > 0 && (
+      {wasMulti && !s.quotedSet?.fullySettled && missingForNotice.length > 0 && (
         <div style={{
           marginTop: 12, display: 'flex', alignItems: 'flex-start', gap: 8,
           padding: '10px 12px', borderRadius: R.md,
           background: M3.warningContainer, color: '#7C5800', fontSize: 12.5, lineHeight: 1.45,
         }}>
           <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }} aria-hidden>info</span>
-          <span>{missingInvoiceNoticeText(missingNamed)}</span>
+          <span>{missingInvoiceNoticeText(missingForNotice)}</span>
         </div>
       )}
 
@@ -3971,8 +3992,16 @@ function SomKloptKaart({
               {inv.clientName && <span style={{ color: '#5f6368' }}> · {inv.clientName}</span>}
             </button>
             {inv.amount != null && (
-              <span style={{ fontFamily: FONT_NUM, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {eur.format(Math.abs(inv.amount))}
+              // [CREDIT-TEKEN] Het bedrag MET het teken waarmee het is opgeteld. Dit stond hier als
+              // Math.abs, en daarmee las een creditnota van € 136,00 op het scherm als een rekening
+              // van € 136,00 — een document dat geld TERUGGEEFT, afgedrukt als iets dat je betaalt.
+              //
+              // Niet `inv.amount` zelf, maar het teken dat de som gebruikte: een creditnota die in de
+              // administratie positief staat telt tóch negatief mee (zie creditSign), en het bedrag
+              // hierboven afdrukken naast een totaal dat het andersom gebruikte maakt de optelsom
+              // oncontroleerbaar — precies wat deze kaart de ondernemer moet laten doen.
+              <span style={{ fontFamily: FONT_NUM, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0, color: inv.isCredit ? '#137333' : undefined }}>
+                {eur.format(inv.isCredit ? -Math.abs(inv.amount) : Math.abs(inv.amount))}
               </span>
             )}
           </div>
@@ -3980,9 +4009,11 @@ function SomKloptKaart({
       </div>
       <div style={{ fontSize: 12, color: '#3c4043', lineHeight: 1.5 }}>
         {set.total == null
-          // Een factuur zonder bedrag maakt de som onbekend, niet nul. Dan mag de kaart niets
-          // beweren over kloppen — dat is dezelfde regel als [NO-SILENT-EMPTY] hierboven.
-          ? t('bank.alGeboekt.waaromGeenKeuze')
+          // [NO-SILENT-EMPTY] Een onbekende som is niet nul, en de kaart mag dan niets beweren over
+          // kloppen. Hier stond één zin die over iets anders ging — "de andere facturen van deze
+          // leverancier horen bij andere betalingen" — zodat de ondernemer nooit te horen kreeg
+          // DÁT er niet opgeteld kon worden, laat staan waarom. Nu zegt de reden zichzelf.
+          ? t('bank.somKlopt.somOnleesbaar')
           : klopt
             ? t('bank.somKlopt.telt', { som: eur.format(Math.abs(set.total)) })
             : t('bank.somKlopt.teltNiet', {

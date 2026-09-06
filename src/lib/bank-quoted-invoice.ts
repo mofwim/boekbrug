@@ -62,6 +62,10 @@
 // copy that drifts is always the one nobody is looking at.
 
 import { referenceMatches } from "./bank-matching";
+// [CREDIT-TEKEN] One definition of "this is a credit note" for the whole product.
+import { creditStance } from "./creditnota-signal";
+// [CENT] Rounding to cents lives in one place — see money-rounding.ts.
+import { round2 } from "./invoice-totals";
 
 /** One invoice, reduced to what naming it requires. */
 export interface QuotedInvoiceRow {
@@ -107,6 +111,15 @@ export interface QuotedSettled {
   amountAgrees: boolean;
   /** 'verwerkt' locks a quarter; the sentence differs because so does the remedy. */
   lockedByAccountant: boolean;
+  /**
+   * [CREDIT-TEKEN] This document SUBTRACTS from the payment's total.
+   *
+   * The screen needs it because `amount` is the stored value and the sum is not always allowed to
+   * agree with it: a creditnota typed as one but stored positive counts negative anyway (see
+   * creditSign). Printing the stored +136,00 above a total that used −136,00 leaves an owner
+   * unable to check the addition by eye, which is the one thing this card exists to let them do.
+   */
+  isCredit: boolean;
 }
 
 /**
@@ -130,19 +143,11 @@ export function quotedSettledInvoice(
   for (const hit of settled) {
     if (!referenceMatches(tx, hit.invoice_number)) continue;
 
-    const total = typeof hit.total_inc_btw === "number" ? hit.total_inc_btw : null;
-    const amountAgrees =
-      total != null && line.amount != null && Math.abs(Math.abs(total) - Math.abs(line.amount)) < 0.01;
-
-    const gevonden: QuotedSettled = {
-      invoiceId: hit.id,
-      invoiceNumber: hit.invoice_number ?? "",
-      amount: total,
-      clientName: hit.client_name,
-      amountAgrees,
-      lockedByAccountant: hit.accountant_status === "verwerkt" && !SETTLED_STATUSES.has(hit.status ?? ""),
-    };
-    if (amountAgrees) return gevonden;
+    // [CREDIT-TEKEN] Eén bouwer voor beide paden. Dit was een tweede, woordelijk gelijke kopie van
+    // toQuoted; toen QuotedSettled er een veld bij kreeg, bleef die kopie er zonder achter — precies
+    // het soort stille verschil waar dit hele hoofdstuk over gaat.
+    const gevonden = toQuoted(hit, line.amount);
+    if (gevonden.amountAgrees) return gevonden;
     zwak ??= gevonden;
   }
   return zwak;
@@ -207,17 +212,61 @@ export interface QuotedInvoiceSet {
   open: QuotedSettled[];
   /** Named and found nowhere. */
   unknownNumbers: string[];
-  /** Signed total over settled AND open: a creditnota counts negative. Null when an amount is missing. */
+  /** Signed total over settled AND open: a creditnota counts negative. Null when it cannot be read. */
   total: number | null;
+  /**
+   * [NO-SILENT-EMPTY] Why `total` is null, when it is: 'amount' — one of the named invoices carries
+   * no readable amount. Before this existed the card rendered a sentence about something else
+   * entirely, so the owner never learned that nothing had been added up.
+   */
+  totalUnknownReason: "amount" | null;
   /** Does that total equal the payment, to the cent? */
   coversPayment: boolean;
   /** Nothing named is still open or missing — then there is genuinely nothing left to choose. */
   fullySettled: boolean;
 }
 
-/** A creditnota pays the other way. The app's own field, so this is a fact and not a heuristic. */
-function signedTotal(row: QuotedInvoiceRow, total: number): number {
-  return row.invoice_type === "creditnota" ? -Math.abs(total) : Math.abs(total);
+/**
+ * The sign this document brings to a payment's total.
+ *
+ * [CREDIT-TEKEN] This used to read `invoice_type === "creditnota"` and nothing else, and that one
+ * field is not always there. Measured on the live administration: a debit of € 170,27 quoting
+ * "26700644 26700603" — a € 306,27 invoice settled with a € 136,00 creditnota, which is exactly
+ * 170,27. The card said "Samen € 442,27, en deze betaling is € 170,27" and sent the owner looking
+ * for a bill that does not exist, because the creditnota reached this function through the OPEN
+ * invoice read — and that select never named invoice_type. Undefined is not "creditnota", so
+ * Math.abs turned the stored −136 into +136 and the total was wrong by twice the credit.
+ *
+ * The route now selects the column, but a sum that is only correct while every caller remembers a
+ * field is a sum waiting to be wrong again. creditStance is this codebase's own answer to that and
+ * says it plainly: EITHER HALF IS ENOUGH — a row stored negative behaves as a credit whatever its
+ * type says, and a row typed 'creditnota' is one by the owner's own hand. Calling it here also
+ * means there is one definition of "this is a credit note" in the product instead of a fourth copy.
+ *
+ * A CONFLICT — typed 'creditnota' while the money sits positive — subtracts too, and that is not a
+ * guess: asCreditAmounts in creditnota-signal.ts is this product's standing answer for that exact
+ * state, and it flips the amounts. Refusing to add up here would be a THIRD opinion about one
+ * question, and it would break the arrangement that already works: invoice 900,00 minus creditnota
+ * 100,00 settled in one transfer of 800,00, where the supplier plainly netted them.
+ *
+ * A "suspected" credit never flips anything. A suspicion is not a fact, and the surfaces that own
+ * that suspicion say so in their own words.
+ */
+function isCreditRow(row: QuotedInvoiceRow, total: number | null): boolean {
+  const stance = creditStance({
+    invoiceNumber: row.invoice_number,
+    totalIncBtw: total,
+    invoiceType: row.invoice_type,
+    // The supplier's other numbers are not fetched here, so "suspected" can only come from this
+    // row's own number — and a suspicion changes no sign, so it never reaches the sum.
+    vendorNumbers: [],
+  });
+  return stance === "credit" || stance === "conflict";
+}
+
+/** The amount this document brings to a payment's total, with the sign it belongs with. */
+function creditSign(row: QuotedInvoiceRow, total: number): number {
+  return isCreditRow(row, total) ? -Math.abs(total) : Math.abs(total);
 }
 
 function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null): QuotedSettled {
@@ -231,6 +280,7 @@ function toQuoted(hit: QuotedInvoiceRow, paymentAmount: number | null): QuotedSe
       raw != null && paymentAmount != null && Math.abs(Math.abs(raw) - Math.abs(paymentAmount)) < 0.01,
     lockedByAccountant:
       hit.accountant_status === "verwerkt" && !SETTLED_STATUSES.has(hit.status ?? ""),
+    isCredit: isCreditRow(hit, raw),
   };
 }
 
@@ -278,7 +328,7 @@ export function quotedInvoiceSet(
     if (nummer && geteld.has(nummer)) continue;
     if (nummer) geteld.add(nummer);
     if (q.amount == null) anyAmountMissing = true;
-    else total += signedTotal(hit, q.amount);
+    else total += creditSign(hit, q.amount);
   }
 
   if (settled.length === 0 && open.length === 0) return null;
@@ -287,8 +337,12 @@ export function quotedInvoiceSet(
     (n) => !gevondenNummers.some((g) => normalizedNumber(g) === normalizedNumber(n)),
   );
 
+  // [NO-SILENT-EMPTY] Why the total is unknown, when it is — so the screen can say what it could
+  // not read instead of falling silent on a money question.
+  const totalUnknownReason: QuotedInvoiceSet["totalUnknownReason"] = anyAmountMissing ? "amount" : null;
+
   const coversPayment =
-    !anyAmountMissing &&
+    totalUnknownReason === null &&
     unknownNumbers.length === 0 &&
     line.amount != null &&
     Math.abs(Math.abs(total) - Math.abs(line.amount)) < 0.01;
@@ -297,7 +351,10 @@ export function quotedInvoiceSet(
     settled,
     open,
     unknownNumbers,
-    total: anyAmountMissing ? null : total,
+    // [CENT] Rounded once, here: the running sum is float arithmetic and 306,27 − 136,00 came out
+    // as 170,26999999999998. coversPayment tolerates a cent, but the number on screen must not.
+    total: totalUnknownReason ? null : round2(total),
+    totalUnknownReason,
     coversPayment,
     // Fully settled means: everything this payment names is booked, and it names nothing else.
     // Only then is the chooser genuinely empty of anything useful — with an open named invoice in

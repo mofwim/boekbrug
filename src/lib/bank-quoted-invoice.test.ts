@@ -227,3 +227,111 @@ test("[SOM-KLOPT] everything named and booked, nothing else: then there is truly
   assert.equal(set?.fullySettled, true);
   assert.equal(set?.coversPayment, true);
 });
+
+// ── [CREDIT-TEKEN] The credit note that was summed as a bill ──────────────────────────────────
+//
+// Aardappelgroothandel Altena, one debit of € 170,27, description "2034 26700644 26700603".
+// 26700644 is an invoice of € 306,27 and 26700603 is a creditnota of € 136,00: 306,27 − 136,00 is
+// exactly the payment. The card said "Samen € 442,27, en deze betaling is € 170,27" and sent the
+// owner looking for a bill that does not exist — because the creditnota reached this module through
+// the OPEN invoice read, whose select never named invoice_type.
+//
+// The rows below are production's own, and the FIRST case deliberately leaves invoice_type out:
+// that is how the row actually arrived, and the sum has to come out right anyway.
+
+const ALTENA_ZONDER_TYPE: QuotedInvoiceRow[] = [
+  inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid", client_name: "Aardappelgroothandel Altena B.V." }),
+  // Stored −136,00, as production holds it. No invoice_type — exactly what the old select returned.
+  inv({ id: "c1", invoice_number: "26700603", total_inc_btw: -136, status: "received", client_name: "Aardappelgroothandel Altena B.V." }),
+];
+
+test("[CREDIT-TEKEN] the stored minus alone settles the sum — no invoice_type needed", () => {
+  const set = quotedInvoiceSet(
+    { amount: -170.27, reference: null, description: "2034 26700644 26700603" },
+    ALTENA_ZONDER_TYPE,
+  );
+  assert.equal(set?.total, 170.27,
+    "the creditnota was added instead of subtracted — the € 442,27 from the screenshot");
+  assert.equal(set?.coversPayment, true, "306,27 − 136,00 IS the payment; the card must say so");
+  assert.equal(set?.totalUnknownReason, null);
+  // [CENT] And not 170.26999999999998: the running sum is float arithmetic.
+  assert.equal(String(set?.total), "170.27", "the total reaches the screen unrounded");
+});
+
+test("[CREDIT-TEKEN] and with the type present it lands on the same number", () => {
+  const met = ALTENA_ZONDER_TYPE.map((r) =>
+    r.invoice_number === "26700603" ? { ...r, invoice_type: "creditnota" } : { ...r, invoice_type: "factuur" });
+  const set = quotedInvoiceSet({ amount: -170.27, reference: null, description: "26700644 26700603" }, met);
+  assert.equal(set?.total, 170.27, "the two witnesses must never disagree about the answer");
+  assert.equal(set?.coversPayment, true);
+});
+
+test("[CREDIT-TEKEN] a creditnota with no minus and no type is still a credit by its type alone", () => {
+  // The mirror of the case above: the owner ticked "dit is een creditnota" and the amount is
+  // negative in the row. Either half is enough — that rule is creditStance's, not this file's.
+  const set = quotedInvoiceSet(
+    { amount: -170.27, reference: null, description: "26700644 26700603" },
+    [
+      inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid", invoice_type: "factuur" }),
+      inv({ id: "c1", invoice_number: "26700603", total_inc_btw: -136, status: "received", invoice_type: "creditnota" }),
+    ],
+  );
+  assert.equal(set?.total, 170.27);
+});
+
+test("[CREDIT-TEKEN] typed 'creditnota' with positive money still subtracts, and says so per row", () => {
+  // The app contradicting itself: the kind says credit, the money says debt. asCreditAmounts is
+  // this product's standing answer for that state and it flips the amounts, so this module must
+  // reach the SAME conclusion rather than invent a third one. What it may not do is print the
+  // stored +136,00 next to a total that used −136,00 — hence isCredit on the row.
+  const set = quotedInvoiceSet(
+    { amount: -170.27, reference: null, description: "26700644 26700603" },
+    [
+      inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid", invoice_type: "factuur" }),
+      inv({ id: "c1", invoice_number: "26700603", total_inc_btw: 136, status: "received", invoice_type: "creditnota" }),
+    ],
+  );
+  assert.equal(set?.total, 170.27, "a document typed 'creditnota' subtracts whatever its sign says");
+  assert.equal(set?.coversPayment, true);
+  const credit = [...(set?.settled ?? []), ...(set?.open ?? [])].find((q) => q.invoiceNumber === "26700603");
+  assert.equal(credit?.isCredit, true, "the row must carry the sign the sum used, or nobody can check it");
+  assert.equal(credit?.amount, 136, "…while amount stays what the administration actually holds");
+  const factuur = set?.settled.find((q) => q.invoiceNumber === "26700644");
+  assert.equal(factuur?.isCredit, false, "…and an ordinary invoice is not marked as one");
+});
+
+test("[NO-SILENT-EMPTY] an unreadable amount is its own reason, not the creditnota one", () => {
+  const set = quotedInvoiceSet(
+    { amount: -170.27, reference: null, description: "26700644 26700603" },
+    [
+      inv({ id: "f", invoice_number: "26700644", total_inc_btw: null, status: "paid", invoice_type: "factuur" }),
+      inv({ id: "c1", invoice_number: "26700603", total_inc_btw: -136, status: "received", invoice_type: "creditnota" }),
+    ],
+  );
+  assert.equal(set?.total, null);
+  assert.equal(set?.totalUnknownReason, "amount", "the two silences need two different sentences");
+});
+
+// [NEGATIEVE CONTROLE] Every assertion above still passes if the sign is flipped the WRONG way for
+// ordinary invoices, or if the module simply never produces a total. These two pin the other side.
+test("[CREDIT-TEKEN] an ordinary invoice still counts POSITIVE", () => {
+  const set = quotedInvoiceSet(
+    { amount: -306.27, reference: null, description: "26700644" },
+    [inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid", invoice_type: "factuur" })],
+  );
+  assert.equal(set?.total, 306.27, "abs/negate got swapped: every normal payment now reads as a credit");
+  assert.equal(set?.coversPayment, true);
+});
+
+test("[CREDIT-TEKEN] two credit notes subtract twice, not once", () => {
+  const set = quotedInvoiceSet(
+    { amount: -34.27, reference: null, description: "26700644 26700603 26700604" },
+    [
+      inv({ id: "f", invoice_number: "26700644", total_inc_btw: 306.27, status: "paid" }),
+      inv({ id: "c1", invoice_number: "26700603", total_inc_btw: -136, status: "received" }),
+      inv({ id: "c2", invoice_number: "26700604", total_inc_btw: -136, status: "received" }),
+    ],
+  );
+  assert.equal(set?.total, 34.27);
+  assert.equal(set?.coversPayment, true);
+});

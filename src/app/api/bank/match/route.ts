@@ -109,7 +109,10 @@ export async function GET() {
         .select(
           // [PARTIAL-PAY] amount_paid lets the matcher target the REMAINING balance so the next
           // instalment matches on amount.
-          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id"
+          // [CREDIT-TEKEN] invoice_type: this list feeds the quote pool below, and an OPEN creditnota
+          // arrived there without its kind. A € 136,00 credit then counted as +136 in a payment's
+          // total instead of −136 — a € 272,00 error on a € 170,27 debit, on screen, in production.
+          "id, invoice_number, total_inc_btw, amount_paid, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, invoice_type"
         )
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .neq("status", "paid")
@@ -426,7 +429,10 @@ export async function GET() {
   // an explanation built on a different set explains a decision that was never taken.
   const quotePool: QuotedInvoiceRow[] = [
     ...settledForQuote,
-    ...(invoices as unknown as QuotedInvoiceRow[]),
+    // [CREDIT-TEKEN] No cast. This was `as unknown as QuotedInvoiceRow[]`, and an unchecked cast is
+    // exactly how invoice_type went missing here without one compiler warning: the shape is the
+    // thing being asserted, so asserting it by hand defeats the only check there was.
+    ...invoices,
   ];
 
   const paidExplained = new Set<string>();
@@ -456,7 +462,9 @@ export async function GET() {
     const queuedRows = await fetchAllRows((from, to) =>
       pipeline
         .from("invoices")
-        .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence")
+        // [CREDIT-TEKEN] invoice_type for the same reason as the two reads above: whichever of these
+        // lists a document arrives on, its kind must arrive with it.
+        .select("id, invoice_number, total_inc_btw, invoice_date, due_date, client_name, direction, status, accountant_status, vendor_iban, payment_reference, payment_prepared_at, supplier_id, field_confidence, invoice_type")
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .eq("status", "processing")
         .order("id", { ascending: true })

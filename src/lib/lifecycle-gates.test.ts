@@ -26379,3 +26379,75 @@ test("[WERK-GEDAAN] a missing count is said out loud, never rendered as nothing"
     "the SECURITY DEFINER counting function is callable from a browser session — it reads across " +
       "owners by design and the route proves the link before calling it");
 });
+
+// ── [CREDIT-TEKEN] A creditnota must never be summed as a bill to pay ──────────────────────────
+//
+// Live: a debit of € 170,27 at Aardappelgroothandel Altena quoting "26700644 26700603". 26700644 is
+// € 306,27 and 26700603 is a creditnota of € 136,00, so the payment is 306,27 − 136,00 exactly. The
+// card said "Samen € 442,27, en deze betaling is € 170,27" and asked the owner for an invoice that
+// does not exist — because the creditnota reached the sum through the OPEN invoice read, and that
+// select never named invoice_type. Undefined is not "creditnota", so the stored −136 was abs'd into
+// +136: wrong by twice the document, on a money screen.
+//
+// Three properties keep it from coming back, and none of them is "remember to select the column".
+
+test("[CREDIT-TEKEN] whatever list an invoice arrives on, its KIND arrives with it", () => {
+  // The mechanical half. Every read in the match route that pulls an amount must pull the document
+  // type too — those rows are handed to quotedInvoiceSet, which adds them up.
+  const route = code("src/app/api/bank/match/route.ts");
+  const selects = [...route.matchAll(/\.select\(\s*((?:"[^"]*"|'[^']*')(?:\s*\+?\s*(?:"[^"]*"|'[^']*'))*)/g)]
+    .map((m) => m[1].replace(/["'+\s]/g, ""));
+  const metBedrag = selects.filter((s) => s.includes("total_inc_btw"));
+  assert.ok(metBedrag.length >= 3,
+    "the amount-bearing selects in the match route can no longer be found — this gate has gone blind");
+  for (const s of metBedrag) {
+    assert.ok(s.includes("invoice_type"),
+      `a select in /api/bank/match reads total_inc_btw without invoice_type: ${s.slice(0, 120)}… ` +
+        "— that is exactly how a € 136,00 creditnota was counted as a bill to pay");
+  }
+});
+
+test("[CREDIT-TEKEN] the sum asks creditStance, not one field", () => {
+  // The half that survives a forgotten column. creditStance is this product's own answer to "is
+  // this a credit note", and it says EITHER HALF IS ENOUGH: a row stored negative behaves as one
+  // whatever its type says. A second definition here is how the three copies that already read it
+  // correctly (bank-line-budget, cron/ochtend, IncomingManage) drifted apart from this one.
+  const mod = code("src/lib/bank-quoted-invoice.ts");
+  assert.match(mod, /creditStance\(\{/,
+    "bank-quoted-invoice decides 'is this a credit note' on its own again");
+  assert.match(mod, /stance === "credit" \|\| stance === "conflict"/,
+    "a document typed 'creditnota' whose money sits positive no longer subtracts — asCreditAmounts " +
+      "flips exactly that case, and two answers to one question is how this bug is built");
+  assert.doesNotMatch(mod, /row\.invoice_type === "creditnota" \?/,
+    "the single-field test is back; it is the defect itself");
+
+  // And the sum reaches the screen rounded — 306,27 − 136,00 came out as 170,26999999999998.
+  assert.match(mod, /total: totalUnknownReason \? null : round2\(total\)/,
+    "[CENT] the running float sum is handed to the screen unrounded");
+});
+
+test("[CREDIT-TEKEN] one card may not list an invoice and call it missing in the same breath", () => {
+  // The screenshot showed "Factuur 26700644 · € 306,27" with, directly underneath, "deze betaling
+  // noemt ook factuur 26700644, en die staat niet in je administratie". Two readers, two different
+  // pools, one card. A number quotedInvoiceSet resolved IS an invoice we hold, so it belongs in the
+  // known list — and then the contradiction cannot be written.
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const missingForNotice = missingNamed\.filter\(\(n\) => !quotedNumbers\.includes\(normRef\(n\)\)\)/,
+    "the notice is built from missingNamed again — the card can print an invoice with its amount " +
+      "and deny holding it one line lower, which is what the screenshot showed");
+  assert.match(scherm, /missingInvoiceNoticeText\(missingForNotice\)/,
+    "the sentence is still fed the unfiltered list");
+  assert.match(scherm, /missingForNotice\.length > 0 && \(/,
+    "the orange block is still gated on missingNamed — with the sentence filtered to nothing that " +
+      "renders an empty warning box");
+  // …and NOT by narrowing missingNamed itself: it also carries wasMulti and the slot rows, and a
+  // payment naming two documents must keep the slot view that lets the owner link them.
+  assert.match(scherm, /resolvedRefCount \+ missingNamed\.length >= 2/,
+    "wasMulti is now computed from the filtered list — a two-document payment silently loses its " +
+      "slot view, which is a bigger hole than the sentence this fix was about");
+
+  // And the amount is printed with the sign the SUM used, not the stored one.
+  assert.match(scherm, /eur\.format\(inv\.isCredit \? -Math\.abs\(inv\.amount\) : Math\.abs\(inv\.amount\)\)/,
+    "the card prints a bare Math.abs again — a document that gives money BACK, shown as a bill, " +
+      "above a total that used the other sign");
+});

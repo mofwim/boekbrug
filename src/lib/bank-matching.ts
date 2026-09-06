@@ -63,6 +63,11 @@ export interface InvoiceForMatching {
   // has known the account the whole time and no matcher ever asked. Null when the invoice has no
   // supplier_id, or the supplier record carries no IBAN → changes nothing.
   supplier_known_iban?: string | null;
+  // [CREDIT-TEKEN] The document's own kind. The matcher itself reads the SIGN of total_inc_btw and
+  // never needs this, but the same rows are handed to quotedInvoiceSet, which sums them — and a
+  // creditnota arriving there without its kind was counted as a bill to pay. Declared here so the
+  // compiler carries the field along instead of a cast quietly dropping it.
+  invoice_type?: string | null;
 }
 
 /** Which signal(s) fired for a candidate. */

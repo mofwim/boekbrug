@@ -4014,6 +4014,14 @@ export const MESSAGES = {
     ar: 'مجموعها {som} — وهو تماماً مبلغ هذه الدفعة. لا شيء تختاره هنا؛ تحقّق فقط من عدم دفع شيء مرتين.',
     en: 'Together {som} — exactly the amount of this payment. There is nothing to choose here; only check that nothing was paid twice.',
   },
+  // [NO-SILENT-EMPTY] De reden waarom de optelsom er NIET staat. Zonder deze zin viel de kaart terug
+  // op een regel over iets anders, zodat de ondernemer nooit te horen kreeg DÁT er niets is opgeteld
+  // — stilte op precies het moment dat een geldscherm iets moet toegeven.
+  'bank.somKlopt.somOnleesbaar': {
+    nl: 'Van \u00e9\u00e9n van deze facturen is het bedrag niet gelezen, dus tellen we hier niets op. Kijk de bedragen zelf na voordat je koppelt.',
+    ar: '\u0625\u062d\u062f\u0649 \u0647\u0630\u0647 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0644\u0645 \u064a\u064f\u0642\u0631\u0623 \u0645\u0628\u0644\u063a\u0647\u0627\u060c \u0644\u0630\u0644\u0643 \u0644\u0627 \u0646\u062c\u0645\u0639 \u0634\u064a\u0626\u0627\u064b \u0647\u0646\u0627. \u062a\u062d\u0642\u0651\u0642 \u0645\u0646 \u0627\u0644\u0645\u0628\u0627\u0644\u063a \u0628\u0646\u0641\u0633\u0643 \u0642\u0628\u0644 \u0627\u0644\u0631\u0628\u0637.',
+    en: 'One of these invoices has no readable amount, so we add nothing up here. Check the amounts yourself before you link.',
+  },
   'bank.somKlopt.teltNiet': {
     nl: 'Samen {som}, en deze betaling is {betaling}. Dat verschil hoort ergens bij — een deelbetaling, of een factuur die nog niet in je administratie staat.',
     ar: 'مجموعها {som}، وهذه الدفعة {betaling}. هذا الفرق له سبب — دفعة جزئية، أو فاتورة لم تُدخل بعد.',
