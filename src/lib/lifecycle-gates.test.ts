@@ -22513,13 +22513,17 @@ test("[BEHEER-GEZOND] een gestopte cron bereikt een mens, en niet alleen een cur
   assert.match(cron, /catch \(e\) \{[\s\S]{0,200}?cron-alarm mislukt/);
 
   // ── En een mens ziet het ook zonder mail ─────────────────────────────────
-  assert.match(scherm, /<Systeem systeem=\{systeem\} \/>/, "het blok staat niet meer op de pagina");
+  assert.match(scherm, /<Systeem systeem=\{systeem\} t=\{t\} \/>/, "het blok staat niet meer op de pagina");
   // [NO-SILENT-EMPTY] Onleesbaar is een derde stand, geen groene.
   assert.match(scherm, /if \(!systeem\.readable\) \{/);
-  assert.match(scherm, /De cron-hartslag is niet te lezen/);
+  // [TAAL] Pinned on the KEY, not the Dutch sentence — this gate went red on translation alone.
+  // The sentence itself is checked as a VALUE below, so it cannot quietly become a key on screen.
+  assert.match(scherm, /t\("beh\.hartslagOnleesbaar"\)/);
+  assert.equal(MESSAGES["beh.hartslagOnleesbaar"].nl, "De cron-hartslag is niet te lezen");
   // "nog nooit" is een echt antwoord — en het antwoord op "is deze nieuwe cron ooit gedraaid?",
   // wat de eerste vraag is na een deploy die er een toevoegt.
-  assert.match(scherm, /"nog nooit"/);
+  assert.match(scherm, /t\("beh\.nogNooit"\)/);
+  assert.equal(MESSAGES["beh.nogNooit"].nl, "nog nooit");
 });
 
 test("[BANK-CSV-LEESBAAR] the client's readable-format list may not deny what the server parses", () => {
@@ -22937,9 +22941,13 @@ test("[STORINGSBEELD] het storingslogboek kan geen klantgegeven dragen — bouwv
 
   // ── [NO-SILENT-EMPTY] "er ging niets mis" ≠ "we konden niet kijken" ───────
   assert.match(scherm, /if \(!storingen\.readable\) \{/);
-  assert.match(scherm, /Het storingsbeeld is niet te lezen/);
-  assert.match(scherm, /Geen afgevangen storingen in \{storingen\.days\} dagen/,
+  // [TAAL] Pinned on the KEY, not the Dutch sentence — same lesson as the heartbeat gate above.
+  // The days stay a placeholder in every language, which the catalogue test enforces per key.
+  assert.match(scherm, /t\("beh\.storingOnleesbaar"\)/);
+  assert.equal(MESSAGES["beh.storingOnleesbaar"].nl, "Het storingsbeeld is niet te lezen");
+  assert.match(scherm, /t\("beh\.geenStoringen", \{ days: storingen\.days \}\)/,
     "een stille week zegt dat niet meer — en dan lijkt hij op een onleesbare");
+  assert.equal(MESSAGES["beh.geenStoringen"].nl, "Geen afgevangen storingen in {days} dagen");
 
   // ── Eén lezer, zoals de hartslag ─────────────────────────────────────────
   const pagina = code("src/app/dashboard/beheer/page.tsx");
