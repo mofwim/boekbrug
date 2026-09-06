@@ -64,6 +64,7 @@ export type AuditAction =
   // from, and why did it appear months after the file did" has no other answer.
   | 'invoice.reread_from_document'
   | 'invoice.reimported'              // ← [REIMPORT] owner re-read a queued invoice's PDF with the current extractor
+  | 'invoice.btw_rows_read'          // ← [SPLIT-ALSNOG] owner re-read a document for its btw specification ONLY — no figure changed
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment
   | 'bank.confirmed'                  // ← [BANK-CONFIRM] owner confirmed a bank↔invoice match (invoice fully paid)

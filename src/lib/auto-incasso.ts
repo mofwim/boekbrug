@@ -85,6 +85,7 @@ export type IncassoHold =
   | 'multiple-invoices' // one of several invoices in the file was read; the rest exist nowhere
   | 'arithmetic'        // the breakdown does not add up, so the amount itself is not a fact
   | 'undone'            // [INCASSO-ONGEDAAN] we booked this once and the owner put it back open
+  | 'same-number'       // [DUBBEL-INCASSO] this invoice NUMBER stands on another row too
 
 /** Dutch, because the owner reads it. One sentence per hold, said the way a person would. */
 export const INCASSO_HOLD_REASON: Record<IncassoHold, string> = {
@@ -97,6 +98,7 @@ export const INCASSO_HOLD_REASON: Record<IncassoHold, string> = {
   'no-amount': 'er staat geen bedrag op deze factuur',
   'duplicate': 'deze factuur lijkt op een factuur die je al hebt — kijk er eerst zelf naar',
   'undone': 'je hebt deze afschrijving zelf teruggezet op openstaand — we boeken hem niet opnieuw',
+  'same-number': 'dit factuurnummer staat nog een keer in je administratie — kijk eerst welke van de twee klopt',
   'iban-changed': 'het rekeningnummer van deze leverancier is veranderd — controleer dit eerst zelf',
   'multiple-invoices': 'er lijken meerdere facturen in dit bestand te zitten',
   'arithmetic': 'de bedragen op deze factuur kloppen niet met elkaar',
@@ -118,7 +120,22 @@ export type IncassoDecision =
  * first, then the ones about timing, then the ones about whether the invoice can be trusted at
  * all. That last group is the reason this function is not three lines.
  */
-export function incassoDecision(inv: IncassoInvoice, today: string): IncassoDecision {
+/**
+ * [DUBBEL-INCASSO] What the caller knows about this invoice that the row itself cannot say.
+ *
+ * Optional, and absent means "not asked" rather than "no": a caller that cannot look is not
+ * allowed to turn silence into a green light, so the caller decides and this file only judges.
+ */
+export interface IncassoContext {
+  /** Another invoice of this owner carries the SAME number. See the hold below for why it matters. */
+  sameNumberElsewhere?: boolean
+}
+
+export function incassoDecision(
+  inv: IncassoInvoice,
+  today: string,
+  ctx?: IncassoContext,
+): IncassoDecision {
   if (inv.direction !== 'incoming') return { settle: false, hold: 'not-incoming' }
   if (inv.status !== 'received') return { settle: false, hold: 'not-open' }
   // [INCASSO-ONGEDAAN] We already booked this one, and it is open again. Somebody put it back.
@@ -170,6 +187,24 @@ export function incassoDecision(inv: IncassoInvoice, today: string): IncassoDeci
   const health = classifyImportHealth(inv)
   if (health.flags.ibanChanged) return { settle: false, hold: 'iban-changed' }
   if (health.flags.possibleDuplicate) return { settle: false, hold: 'duplicate' }
+  // [DUBBEL-INCASSO] The duplicate this pass can actually cause, which the flag above cannot see.
+  //
+  // Measured on the live administration: Enka Horeca 26701681 stood THREE times — three readings of
+  // one document, at € 1.335,68, € 1.336,14 and € 1.348,14 — and this pass booked two of them as
+  // paid within 250 milliseconds, on a date the bank never touched. Two purchase invoices where
+  // there is one; voorbelasting deducted twice; and the real debit of € 1.336,14 still sitting
+  // unmatched in the queue.
+  //
+  // possibleDuplicate did not fire, and it was never going to: _safecore.possible_duplicate is
+  // computed at import and keys on the AMOUNT. Three readings that disagree about the amount are
+  // three different invoices to it — and disagreeing readings are exactly the dangerous kind here,
+  // because each one books its own wrong total. The one signal that identifies them is the one
+  // thing they agree on: the number the supplier printed.
+  //
+  // So the caller looks, live, and this holds on what it is told. Holding is right rather than
+  // "book the first one": which of the readings is true is a question about paper, and the answer
+  // to it was € 0,46 away from one row and € 12,00 from the other.
+  if (ctx?.sameNumberElsewhere) return { settle: false, hold: 'same-number' }
   if (health.flags.multipleInvoices) return { settle: false, hold: 'multiple-invoices' }
   if (health.flags.arithmetic) return { settle: false, hold: 'arithmetic' }
 

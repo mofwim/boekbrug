@@ -1774,6 +1774,33 @@ export const MESSAGES = {
   'dsh.watGelezen': { nl: 'Wat wij hebben gelezen', ar: 'ما قرأناه نحن', en: 'What we read' },
   // [CONTROLES-INKLAPPEN] Wat er achter het pijltje zit. Een knop zonder belofte wordt niet
   // ingedrukt, en het aantal is precies de belofte: negen vinkjes uitklappen is iets anders dan één.
+  // ── [SPLIT-ALSNOG] De controle die niet kon lopen, alsnog laten lopen ────────────────────────
+  // Op een factuur die btw-tarieven mengt is de gedrukte specificatie het ENIGE wat het btw-bedrag
+  // kan tegenspreken (zie btw-split.ts). Stond die er niet, dan zei het blad "konden we niet
+  // nagaan" en verder niets — een doodlopende regel boven een bedrag dat de eigenaar aftrekt.
+  'dsh.btwSpec.lees': {
+    nl: 'Btw-specificatie nalezen',
+    ar: 'إعادة قراءة تفصيل الضريبة',
+    en: 'Read the btw specification',
+  },
+  'dsh.btwSpec.bezig': {
+    nl: 'Bezig met nalezen\u2026',
+    ar: 'جارٍ إعادة القراءة\u2026',
+    en: 'Reading\u2026',
+  },
+  // [NO-SILENT-EMPTY] Twee verschillende uitkomsten, twee verschillende zinnen: "er staat er geen
+  // op" is een BEVINDING en "het lukte niet" is een storing. Ze op één zin laten uitkomen is
+  // precies hoe een niet-uitgevoerde controle als een schone leest.
+  'dsh.btwSpec.geen': {
+    nl: 'Op dit document staat geen btw-specificatie per tarief. Vergelijk het btw-bedrag zelf met de factuur.',
+    ar: 'لا يوجد على هذا المستند تفصيل للضريبة حسب النسبة. قارن مبلغ الضريبة بنفسك مع الفاتورة.',
+    en: 'This document prints no per-rate btw specification. Compare the btw amount with the invoice yourself.',
+  },
+  'dsh.btwSpec.mislukt': {
+    nl: 'Nalezen lukte nu niet. Er is niets gewijzigd \u2014 probeer het zo meteen opnieuw.',
+    ar: 'تعذّرت إعادة القراءة الآن. لم يتغيّر شيء \u2014 جرّب بعد قليل.',
+    en: 'Could not read it just now. Nothing was changed \u2014 try again in a moment.',
+  },
   'dsh.controlesTonen': {
     nl: 'toon alle {n}',
     ar: 'أظهر الكلّ ({n})',
@@ -3220,6 +3247,21 @@ export const MESSAGES = {
     nl: 'Deelbetaling geboekt · nog {amount} open',
     ar: 'قُيّدت دفعة جزئية · المتبقي {amount}',
     en: 'Partial payment booked · {amount} still open',
+  },
+  // ── [SLOT-WAAR] De lezing is geen grens ──────────────────────────────────────────────────────
+  // De slotweergave toont de nummers die WIJ in deze betaling hebben gelezen. Hoort er een factuur
+  // bij die er niet in staat — omdat de bank haar niet noemt, of omdat wij haar hebben gemist —
+  // dan eindigde het scherm daar. De eigenaar zat vast in onze lezing, en dat is precies de fout
+  // die dit product bij een LEZING nooit accepteert: zij mag een mens niet begrenzen.
+  'bank.slot.meerFacturen': {
+    nl: 'Horen er meer facturen bij deze betaling dan hier staan? Verdeel hem zelf over de juiste facturen.',
+    ar: '\u0647\u0644 \u062a\u062e\u0635\u0651 \u0647\u0630\u0647 \u0627\u0644\u062f\u0641\u0639\u0629 \u0641\u0648\u0627\u062a\u064a\u0631 \u0623\u0643\u062b\u0631 \u0645\u0645\u0651\u0627 \u0647\u0648 \u0645\u0639\u0631\u0648\u0636 \u0647\u0646\u0627\u061f \u0648\u0632\u0651\u0639\u0647\u0627 \u0628\u0646\u0641\u0633\u0643 \u0639\u0644\u0649 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0627\u0644\u0635\u062d\u064a\u062d\u0629.',
+    en: 'Does this payment cover more invoices than are listed here? Split it across the right invoices yourself.',
+  },
+  'bank.slot.meerFacturenKnop': {
+    nl: 'Zelf over facturen verdelen',
+    ar: '\u0627\u0644\u062a\u0648\u0632\u064a\u0639 \u0639\u0644\u0649 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u064a\u062f\u0648\u064a\u0651\u0627\u064b',
+    en: 'Split across invoices yourself',
   },
   'bank.facturenKoppelen': {
     nl: 'Facturen koppelen ({count})',
@@ -12424,6 +12466,10 @@ export const MESSAGES = {
   'log.invoice.auto_paid': { nl: 'Kassabon automatisch afgeboekt — de bon vermeldde de betaalwijze', en: 'Receipt settled automatically — the paper stated the payment method', ar: 'سُوّي إيصال تلقائياً — الورقة ذكرت طريقة الدفع' },
   'log.invoice.reread_from_document': { nl: 'Bestand opnieuw gelezen', en: 'File read again', ar: 'أُعيدت قراءة ملف' },
   'log.invoice.reimported': { nl: 'Factuur opnieuw ingelezen', en: 'Invoice re-imported', ar: 'أُعيد استيراد فاتورة' },
+  // [SPLIT-ALSNOG] Bewust een andere zin dan 'opnieuw ingelezen': hier is GEEN bedrag veranderd.
+  // Een logboekregel die de twee op één zin laat uitkomen laat een eigenaar denken dat zijn
+  // factuur is herschreven terwijl er alleen een controle alsnog kon lopen.
+  'log.invoice.btw_rows_read': { nl: 'Btw-specificatie nagelezen (bedragen ongewijzigd)', en: 'Btw specification read again (amounts unchanged)', ar: 'أُعيدت قراءة تفصيل الضريبة (المبالغ دون تغيير)' },
   'log.bank.auto_confirmed': { nl: 'Bankregel automatisch aan een factuur gekoppeld', en: 'Bank line matched to an invoice automatically', ar: 'رُبط سطر بنكي بفاتورة تلقائياً' },
   'log.bank.auto_confirmed_batch': { nl: 'Eén bankbetaling automatisch over meerdere facturen verdeeld', en: 'One bank payment split across several invoices automatically', ar: 'وُزّعت دفعة بنكية على عدة فواتير تلقائياً' },
   'log.bank.confirmed': { nl: 'Bankregel aan een factuur gekoppeld', en: 'Bank line matched to an invoice', ar: 'رُبط سطر بنكي بفاتورة' },
@@ -13518,6 +13564,30 @@ export const MESSAGES = {
   'bh.home.ai.checkInternet': { nl: 'Controleer je internet en probeer opnieuw.', en: 'Check your internet and try again.', ar: 'تحقق من اتصالك بالإنترنت وحاول مرة أخرى.' },
 
   // ─── [BOEKHOUDER] Boekhouder · aangifte & status (AccountantWerkboard) ──────────────────────
+  // ── [SNEL-BORD] Hoe oud de stand op het bord is ──────────────────────────────────────────────
+  // Eén sleutel per band én per getal: "{n} {woord} geleden" werkt in het Nederlands en breekt de
+  // Arabische congruentie en de Turkse klinkerharmonie (AGENTS.md), en n = 1 is in al die talen een
+  // andere zin. Welke sleutel wanneer: ageMessageKey in readiness-cache.ts.
+  'bh.stand.zojuist': { nl: 'stand van zojuist', ar: 'الحالة الآن', en: 'as of just now' },
+  'bh.stand.minuut1': { nl: 'stand van 1 minuut geleden', ar: 'الحالة قبل دقيقة', en: 'as of 1 minute ago' },
+  'bh.stand.minuten': { nl: 'stand van {n} minuten geleden', ar: 'الحالة قبل {n} دقيقة', en: 'as of {n} minutes ago' },
+  'bh.stand.uur1': { nl: 'stand van 1 uur geleden', ar: 'الحالة قبل ساعة', en: 'as of 1 hour ago' },
+  'bh.stand.uren': { nl: 'stand van {n} uur geleden', ar: 'الحالة قبل {n} ساعة', en: 'as of {n} hours ago' },
+  'bh.stand.dag1': { nl: 'stand van gisteren', ar: 'حالة الأمس', en: 'as of yesterday' },
+  'bh.stand.dagen': { nl: 'stand van {n} dagen geleden', ar: 'الحالة قبل {n} أيام', en: 'as of {n} days ago' },
+  // De regel boven het bord, zolang er nog rijen van eerder op staan. Zij verdwijnt vanzelf.
+  'bh.stand.bijwerken': {
+    nl: 'Sommige cijfers hieronder zijn van eerder — bij elke rij staat van wanneer.',
+    ar: 'بعض الأرقام أدناه من وقت سابق — وعند كل سطر مكتوب متى.',
+    en: 'Some figures below are from earlier — each row says when.',
+  },
+  // [NO-SILENT-EMPTY] En als het bijwerken mislukt: het oude cijfer blijft staan, maar nooit alsof
+  // het vers is. Een stand die niet kon worden nagerekend mag niet als een oordeel lezen.
+  'bh.stand.mislukt': {
+    nl: 'kon niet worden bijgewerkt',
+    ar: 'تعذّر التحديث',
+    en: 'could not be refreshed',
+  },
   'bh.werk.vernieuwen': { nl: 'Vernieuwen', ar: 'تحديث', en: 'Refresh' },
   'bh.werk.hero.btwAangifte': { nl: 'BTW-aangifte {kwartaal}', ar: 'إقرار ضريبة القيمة المضافة {kwartaal}', en: 'VAT return {kwartaal}' },
   'bh.werk.hero.uiterlijk': { nl: 'Uiterlijk {datum}', ar: 'في موعد أقصاه {datum}', en: 'No later than {datum}' },

@@ -294,3 +294,90 @@ test("[PAYMENT-NAMES-MISSING] tegenproef: een écht ontbrekende factuur wordt no
     "een factuur die de betaling noemt en die we werkelijk niet hebben moet genoemd blijven — " +
       "anders boekt de ondernemer het hele bedrag op de factuur die hij wél heeft");
 });
+
+// ── [SLOT-WAAR] Eén rij per factuurnummer, en de lezing is geen grens ──────────────────────────
+//
+// Gemeld: ipekci slachterij, afschrijving € 3.624,25, kenmerk "202604231", omschrijving "Deel twee
+// factuur 202604231". De kaart zei "2 facturen" en de knop "Facturen koppelen (2)" — voor een
+// betaling die er ÉÉN noemt, twee keer. In de administratie staat een tweede bankregel van exact
+// hetzelfde bedrag met "Deel 1 helft": één factuur, in twee helften betaald.
+
+const IPEKCI = {
+  transactionId: "tx-ipekci",
+  date: "2026-06-09",
+  amount: -3624.25,
+  counterpartName: "ipekci slachterij bv",
+  description: "Deel twee factuur 202604231",
+  reference: "202604231",
+  // Zoals op de melding: "Geen factuur gevonden voor deze transactie". Dat is de tak waarin de
+  // knoppen uit de schermafbeelding staan — "Facturen koppelen (N)" en "Verdelen over facturen".
+  outcome: "none" as const,
+  best: null,
+  candidates: [] as never[],
+  quotedSet: null,
+  quotedSettled: null,
+};
+
+async function ipekciKaart(extra: Record<string, unknown> = {}) {
+  const { TxCard } = await import("../../src/app/dashboard/bank/BankClient");
+  return renderToStaticMarkup(
+    React.createElement(TxCard as never, {
+      s: { ...IPEKCI, ...extra },
+      selectedInvoiceId: undefined, processing: false, isIgnoredTab: false,
+      confirmedNumbers: [], batchEligible: false, batchChecked: false,
+      onBatchToggle: NOOP, onSelect: NOOP, onConfirm: NOOP, onAttach: NOOP,
+      onIgnore: NOOP, onRestore: NOOP, onOpenFile: NOOP, onCorrect: NOOP,
+    } as never),
+  );
+}
+
+test("[SLOT-WAAR] één genoemd factuurnummer is één factuur, hoe vaak de bank het ook schrijft", async () => {
+  const html = await ipekciKaart();
+  assert.ok(html.includes("202604231"), "het nummer hoort op de kaart te staan");
+  assert.ok(!html.includes("2 facturen"),
+    "de kaart telt hetzelfde nummer twee keer — één keer omdat de betaling het NOEMT en één keer " +
+      "omdat het in het bankkenmerk staat");
+  assert.ok(!html.includes("Facturen koppelen (2)"),
+    "en de knop belooft twee facturen te koppelen waar er één is");
+  // Het nummer staat er precies één keer als rij — twee rijen delen anders ook nog dezelfde key.
+  assert.equal((html.match(/202604231/g) ?? []).length, 1,
+    "het factuurnummer staat meer dan één keer op de kaart");
+});
+
+test("[SLOT-WAAR] tegenproef: een betaling die er écht twee noemt toont er twee", async () => {
+  // Zonder deze test slaagt de test hierboven ook als het scherm nooit meer dan één rij toont — en
+  // dan is de bundelweergave stuk, wat een veel duurdere fout is dan de gemelde.
+  const html = await ipekciKaart({
+    description: "factuur 202604231 en factuur 202604232",
+    reference: "202604231, 202604232",
+  });
+  assert.ok(html.includes("202604231") && html.includes("202604232"),
+    "een echte bundel hoort beide nummers te tonen");
+  assert.match(html, /2 facturen|Facturen koppelen \(2\)/,
+    "…en zich als bundel te gedragen");
+});
+
+test("[SLOT-WAAR] de lezing is geen grens — ook op de kaart uit de melding", async () => {
+  // De vraag van de eigenaar: "en als er méér facturen bij horen dan jullie hebben gelezen?"
+  //
+  // Op DEZE kaart (één genoemd nummer, dus geen slotweergave) is het antwoord er al: het
+  // verdeelscherm kent onze lezing niet als grens. Dat vast te leggen is de helft die telt — het is
+  // de weg die de melding zocht, en hij mag niet stilletjes van deze kaart verdwijnen.
+  const html = await ipekciKaart();
+  assert.match(html, /Verdelen over facturen/,
+    "de weg voorbij onze lezing staat niet op de kaart — dan is ons aantal wél een grens");
+  assert.match(html, /\/dashboard\/bank\/verdelen\/tx-ipekci/,
+    "…en die weg wijst naar het verdeelscherm van déze regel");
+});
+
+test("[SLOT-WAAR] en in de slotweergave staat het met zoveel woorden", async () => {
+  // Daar is de grens echt voelbaar: een lijst met precies de nummers die wij lazen, elk met een
+  // knop, en niets dat zegt wat je doet als er een factuur bij hoort die er niet in staat.
+  const html = await ipekciKaart({
+    description: "factuur 202604231 en factuur 202604232",
+    reference: "202604231, 202604232",
+  });
+  assert.match(html, /Horen er meer facturen bij deze betaling/,
+    "de slotweergave eindigt bij ons aantal zonder te zeggen dat er een weg voorbij is");
+  assert.match(html, /Zelf over facturen verdelen/, "…met de handeling erbij, niet alleen de vraag");
+});

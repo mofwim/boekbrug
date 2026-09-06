@@ -425,7 +425,10 @@ test("[PAYMENT-NAMES-MISSING] a payment naming an un-imported invoice is still a
   assert.match(src, /missingInvoiceNoticeText\(missingForNotice\)/, "and the reason is on screen");
   // The numbers must reach the slot list too — the gate opening on a list that still holds one row
   // would show a two-invoice batch as a single slot.
-  assert.match(src, /\.\.\.missingNamed\.filter/, "the missing numbers become slots");
+  // [SLOT-WAAR] They now reach it through bank-slot-numbers.ts, which holds the three sources
+  // against each other instead of leaving the screen to filter one against another. The property is
+  // the same and its address changed; the module's own gate below pins the rules themselves.
+  assert.match(src, /missing: missingNamed,/, "the missing numbers become slots");
 });
 
 test("[INCASSO-CONFIRM] the switch that can settle a year of invoices asks first", () => {
@@ -26502,4 +26505,301 @@ test("[CREDIT-TEKEN] one card may not list an invoice and call it missing in the
   assert.match(code("src/lib/bank-quoted-invoice.ts"), /toQuoted\(hit, line\.amount, !alGeteld\)/,
     "countedInTotal is no longer derived from the same dedupe the total uses — two rules for one " +
       "question is how the list and the sum drifted apart in the first place");
+});
+
+// ── [SNEL-BORD] The board may show a recorded verdict, never pass one off as fresh ─────────────
+//
+// /api/readiness is a projection over the whole administration: ~22 database rounds and, measured
+// on the live file, about 1.500 rows for one client for one quarter. The werkboard fires it ONCE
+// PER CLIENT, four at a time, so an office with eighty clients pays that eighty times on every
+// open. readiness_cache holds what that route itself computed, and the board renders it instantly
+// while refreshing every row behind it.
+//
+// The whole arrangement rests on three properties. Each is invisible in tsc, eslint and the build.
+
+test("[SNEL-BORD] nothing but /api/readiness may put a report in the cache", () => {
+  // The one rule that keeps this from becoming a second authority. A second writer would be a
+  // second opinion about whether a quarter can be filed, and the board would show whichever ran
+  // last — which is the defect this codebase keeps finding in its own past.
+  const loop = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...loop(p));
+      else out.push(p);
+    }
+    return out;
+  };
+  const schrijvers = loop("src")
+    .filter((f) => /\.tsx?$/.test(f) && !f.includes(".test."))
+    .filter((f) => /\.from\(\s*["']readiness_cache["']\s*\)[\s\S]{0,400}?\.(upsert|insert|update|delete)\(/.test(code(f)));
+  assert.deepEqual(schrijvers, ["src/app/api/readiness/route.ts"],
+    "something other than /api/readiness writes readiness_cache — then the board can show a " +
+      "verdict nobody computed with buildReadiness");
+
+  const route = code("src/app/api/readiness/route.ts");
+  // Keyed on exactly what the report depends on. Everything in that route reads ownerId; the
+  // caller's identity decides only whether they were allowed to ask.
+  assert.match(route, /owner_id: ownerId, year, quarter, report/,
+    "the recording is no longer keyed on (owner, year, quarter) — an accountant and an owner " +
+      "looking at the same quarter would then get different rows for one answer");
+  assert.match(route, /onConflict: "owner_id,year,quarter"/,
+    "without the conflict target the cache grows a second row per key instead of replacing one");
+  // A failed write may never cost the caller the answer that is already computed and correct.
+  assert.match(route, /catch[\s\S]{0,120}?\[SNEL-BORD\] stand niet opgeslagen/,
+    "a failing cache write can now throw out of the readiness route — the optimisation would be " +
+      "breaking the thing it optimises");
+});
+
+test("[SNEL-BORD] a recorded figure carries its moment, all the way to the screen", () => {
+  const board = code("src/app/api/readiness/board/route.ts");
+  assert.match(board, /computedAt: row\.computed_at/,
+    "the board route hands back reports without the moment they were computed — then the screen " +
+      "cannot tell an accountant that a 'klaar' is from yesterday");
+  // [NO-SILENT-EMPTY] A read that failed is not an empty board: an empty perClient is the claim
+  // that nothing was ever computed for these clients, and this is not the moment to make it.
+  assert.match(board, /status: 503/,
+    "a failed read answers 200 with an empty board — silence dressed as an answer");
+  assert.match(board, /cacheUnavailable: true/,
+    "[DEPLOY-SAFE] the pre-migration case is gone; the board would read a missing table as a " +
+      "failure instead of simply loading every row live");
+
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(bord, /\{ \.\.\.rij, cachedAt: opname\.computedAt \}/,
+    "a row seeded from the recording no longer carries cachedAt — and then it renders as a fresh " +
+      "verdict, which is the app telling an accountant to file on a figure nobody looked at");
+  assert.match(bord, /<StandBadge computedAt=\{row\.cachedAt\}/,
+    "the age is no longer rendered beside the figure");
+  assert.match(bord, /if \(r\.state !== 'loading'\) return r/,
+    "the recording may overwrite a row that was just computed for real — the older answer would " +
+      "then replace the newer one, silently");
+  // The headline counts include cached rows, so the board says so once, at the top.
+  assert.match(bord, /nogBijwerken && \(/,
+    "'3 klaar' can again stand above figures from yesterday with nothing saying so");
+});
+
+test("[SNEL-BORD] the board reads the recordings FIRST, then asks only for what it needs", () => {
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+
+  // One pass, not two effects racing. Two would start the queue before knowing what was already
+  // known, and then every saving is an accident of timing rather than a property of the code.
+  const opnameEerst = bord.indexOf("/api/readiness/board?year=");
+  const wachtrij = bord.indexOf("const queue = clients.filter");
+  assert.ok(opnameEerst > 0 && wachtrij > opnameEerst,
+    "the queue is built before the recordings are read — the board is back to eighty heavy " +
+      "reports per open, whatever it already had");
+
+  // …and the queue really is narrowed. Without this the cache only hides the wait; the load that
+  // decides whether an office of eighty clients can use this product at all is unchanged.
+  assert.match(bord, /return needsRefresh\(opname\?\.computedAt, gelezenOp\)/,
+    "every client is queued again regardless of what was recorded minutes ago");
+  // The refresh button must ignore all of it: asking for the board again is asking for NOW, and a
+  // control that quietly does nothing is worse than no control.
+  assert.match(bord, /const forceren = reloadKey > 0[\s\S]{0,200}?if \(forceren\) return true/,
+    "the refresh button now goes through the same window — pressing it can leave rows untouched");
+  // MAX_PARALLEL over the NARROWED queue: spinning up four workers for a two-row queue is two
+  // workers that exist to do nothing.
+  assert.match(bord, /Math\.min\(MAX_PARALLEL, queue\.length\)/,
+    "the worker count is taken from the client list again instead of from the work there is");
+
+  // The two windows are different questions and must stay different numbers.
+  const mod = code("src/lib/readiness-cache.ts");
+  assert.match(mod, /REFRESH_AFTER_MS = 15 \* 60 \* 1000/,
+    "the refresh window changed — that is a product decision about how old a triage figure may be");
+  assert.match(mod, /if \(!vers\.usable \|\| vers\.ageMs === null\) return true/,
+    "needsRefresh no longer forces a read when there is nothing usable to work from — 'we have no " +
+      "verdict' and 'we have a recent verdict' would take the same branch");
+});
+
+test("[NO-SILENT-EMPTY] a refresh that fails keeps the figure and admits it", () => {
+  // Throwing the recorded figure away would take information off an accountant's screen that they
+  // already had; keeping it silently would let a stale verdict read as a live one. Both at once.
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(
+    bord,
+    /if \(row\.state === 'error' && r\.state === 'ok' && r\.cachedAt\) \{[\s\S]{0,120}?refreshFailed: true/,
+    "a failed refresh wipes the recorded figure again, or keeps it without saying that it could " +
+      "not be checked",
+  );
+  const badge = code("src/modules/accountant/pages/StandBadge.tsx");
+  assert.match(badge, /refreshFailed \?[\s\S]{0,120}?bh\.stand\.mislukt/,
+    "the badge no longer says that the refresh failed");
+  assert.match(badge, /if \(!vers\.usable\) return null/,
+    "the badge renders an age it was told not to trust — the second latch on the age cap is gone");
+});
+
+test("[TAAL] every key the age rule can ask for exists and is Dutch", () => {
+  // Derived, not listed: the keys come out of the module that chooses them, so a fifth band with a
+  // forgotten message cannot pass. A missing key renders as the key itself, on a money screen.
+  const mod = code("src/lib/readiness-cache.ts");
+  const sleutels = [...mod.matchAll(/"(bh\.stand\.[a-zA-Z0-9]+)"/g)].map((m) => m[1]);
+  assert.ok(sleutels.length >= 7, "the age keys can no longer be read out of readiness-cache.ts");
+  const berichten = code("src/lib/i18n/messages.ts");
+  for (const k of new Set(sleutels)) {
+    assert.ok(berichten.includes(`'${k}'`), `readiness-cache can ask for ${k} and messages.ts has no such key`);
+  }
+});
+
+// ── [SPLIT-ALSNOG] A btw check that could not run must be able to run later ────────────────────
+//
+// Measured on the live administration: 31 incoming invoices carry a BLENDED btw rate and 29 of them
+// hold no per-rate specification block — € 2.758,01 of voorbelasting on which btw-split.ts, the only
+// check that can see a mis-read there, never ran. All 29 predate the reader that can read such a
+// block; both mixed-rate invoices since carry one. Nothing is broken going forward. There was no
+// way back.
+//
+// The narrow re-read is that way back, and it lives inside the full re-read's route so it inherits
+// every safety step before the AI call — row ownership, storage-PATH ownership, the mime sniff, the
+// rate limit, the fair-use gate. That reuse is the point; it is also the risk, and these are the
+// three properties that make it safe.
+
+test("[SPLIT-ALSNOG] the narrow read returns BEFORE anything is written", () => {
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+
+  // Anchored on CODE, not on a comment: code() strips comments before this test ever sees the file.
+  // And on the branch's own shape, because `if (onlyBtwRows)` also opens the eligibility block two
+  // hundred lines higher — anchoring on the first match measured the wrong region entirely.
+  const opening = /if \(onlyBtwRows\) \{[\s\S]{0,120}?if \(!c\.isInvoice\) \{/.exec(route);
+  assert.ok(opening, "the [SPLIT-ALSNOG] branch is gone or was rewritten past recognition");
+  const branch = opening!.index;
+
+  // It ends in its own return, and between the two there is EXACTLY ONE write. A fall-through here
+  // would replace the amounts of a PAID invoice — precisely what reimportDecision refuses and what
+  // this mode walks past on the argument that it writes no figure.
+  const eind = route.indexOf('return NextResponse.json({ ok: true, mode: "btwRows"', branch);
+  assert.ok(eind > branch, "the narrow branch no longer ends in a return");
+
+  const eigenWrite = route.slice(branch, eind);
+  assert.equal([...eigenWrite.matchAll(/\.update\(/g)].length, 1,
+    "the [SPLIT-ALSNOG] branch performs more than one write — this mode writes one key and returns, " +
+      "or it is not the act it claims to be");
+
+  // And that single write touches exactly field_confidence. Not status, not a total, not a date.
+  // Checked on the UPDATE'S OWN ARGUMENT, not on the branch text: a `{ status: 500 }` in an error
+  // response is an HTTP status, and a gate that cannot tell those apart fails on correct code —
+  // which teaches the next person to loosen it rather than to read it.
+  const call = /\.update\(\{([\s\S]*?)\}\)/.exec(eigenWrite);
+  assert.ok(call, "the narrow write is no longer a plain .update({...}) this gate can read");
+  const geschreven = call![1];
+  assert.match(geschreven, /^\s*field_confidence:/,
+    "the narrow write no longer writes field_confidence first — or at all");
+  for (const verboden of ["status", "total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "direction"]) {
+    assert.ok(!geschreven.includes(verboden),
+      `the narrow write sets ${verboden} — this act exists precisely because those must not move`);
+  }
+});
+
+test("[SPLIT-ALSNOG] the block comes off the paper, never from our own amounts", () => {
+  // The trap this feature invites. From excl 3.413,92 and btw 405,90 two equations reproduce the
+  // Enka block to within twelve cents — a supplier who rounds per line drifts from base x rate —
+  // and a DERIVED block agrees with our figures by construction. That is btw-split.ts awarding a
+  // green tick to itself on the very invoice it was written for.
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+  const branch = route.slice(route.indexOf("if (onlyBtwRows) {"), route.indexOf('mode: "btwRows", written: true'));
+  assert.match(branch, /const gelezen = c\.fieldConfidence\?\._btw_rows/,
+    "the rows no longer come from the reader's own answer");
+  // Nothing in the branch may compute a base or a btw out of the stored totals.
+  assert.doesNotMatch(branch, /invoice\.total_ex_btw|invoice\.btw_amount|invoice\.total_inc_btw/,
+    "the narrow branch reads the stored amounts — the only reason to do that here is to derive the " +
+      "split from them, which is a false green tick");
+});
+
+test("[SPLIT-ALSNOG] a different act asks its own eligibility question", () => {
+  const route = code("src/app/api/email/reimport/[id]/route.ts");
+  assert.match(route, /if \(onlyBtwRows\) \{[\s\S]{0,400}?btwRowsReadDecision\(invoice\)/,
+    "the narrow read no longer has its own predicate — either it inherits refusals that exist " +
+      "because amounts move (and then paid invoices, where an unverifiable deduction matters most, " +
+      "stay unreachable) or it inherits none at all");
+
+  const rule = code("src/lib/reimport-eligibility.ts");
+  // Never overwrite a block we already hold: it is either what the reader saw or what the owner
+  // typed in the correction sheet, and a second model opinion must not silently beat a human.
+  assert.match(rule, /if \(hasBtwRows\(inv\.field_confidence\)\) \{/,
+    "btwRowsReadDecision no longer refuses an invoice whose block is already known");
+  assert.match(rule, /return '_btw_rows' in \(fieldConfidence as Record<string, unknown>\)/,
+    "hasBtwRows tests for a non-empty array again — then 'we looked and there is no block' reads " +
+      "as 'we never looked', and the owner pays for the same question twice");
+});
+
+// ── [SLOT-WAAR] The slot list describes the payment, not our three lists ───────────────────────
+//
+// Reported: ipekci slachterij, € 3.624,25, reference "202604231", description "Deel twee factuur
+// 202604231". The card said "2 facturen" and offered "Facturen koppelen (2)" for a payment naming
+// ONE invoice — because the numbers were assembled inline from three sources with a single filter
+// between them, and that filter compared only against the RESOLVED ones. With nothing resolved (an
+// invoice never imported: the ordinary case) it had nothing to compare against.
+
+test("[SLOT-WAAR] one module decides which numbers a payment puts on screen", () => {
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const slotNumbers = slotNumbersOf\(\{/,
+    "the screen assembles the slot numbers inline again — three lists and no place where they are " +
+      "held against each other is exactly how one invoice became two");
+  // The three sources still all arrive; dropping one silently loses rows instead of duplicating them.
+  for (const bron of ["resolved:", "missing:", "referenceParts:"]) {
+    assert.ok(scherm.includes(bron), `the ${bron} source no longer reaches slotNumbersOf`);
+  }
+  assert.doesNotMatch(scherm, /const leftoverRefParts =/,
+    "the old inline filter is back beside the module — two answers to one question");
+
+  const mod = code("src/lib/bank-slot-numbers.ts");
+  // Both rules, and they are not the same rule: dedup catches a repeated number, the fragment rule
+  // catches "045" standing beside its own parent "2026045". On the reported line either one alone
+  // happens to suffice, which is why each is pinned here and in its own unit test.
+  assert.match(mod, /if \(!key \|\| seen\.has\(key\)\) return;/, "identity dedup is gone");
+  assert.match(mod, /\[\.\.\.seen\]\.some\(\(k\) => k\.includes\(key\)\)/,
+    "the fragment rule is gone, or narrowed back to one source");
+});
+
+test("[SLOT-BETAALD] a slot for an invoice already booked reads as booked, never as linkable", () => {
+  // Seen on the Altena card: "Koppelen" beside invoice 26700644, which is 'paid'. A settled invoice
+  // is no longer a candidate, so that button can only fail — and it sat directly under a card
+  // printing that same invoice with its amount.
+  const scherm = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(scherm, /const quotedSettledKeys = \(s\.quotedSet\?\.settled \?\? \[\]\)\.map\(\(q\) => normRef\(q\.invoiceNumber\)\)/,
+    "the settled invoices quotedInvoiceSet found no longer reach the slot list");
+  assert.match(scherm, /confirmedSet = new Set\(\[[\s\S]{0,120}?\.concat\(quotedSettledKeys\)/,
+    "…or they reach it and are not folded into the confirmed set, so the row still offers a button " +
+      "that cannot work");
+});
+
+// ── [DUBBEL-INCASSO] The double booking this pass can cause, and the look that prevents it ──────
+//
+// Measured on the live administration: Enka Horeca 26701681 stood THREE times — three readings of
+// one document at € 1.335,68, € 1.336,14 and € 1.348,14 — and the incasso pass booked two of them
+// as paid 250 ms apart, on a date the bank never touched. Two purchase invoices where there is one,
+// voorbelasting deducted twice, and the real € 1.336,14 debit still unmatched in the queue.
+//
+// The duplicate check that was already there could not see it: _safecore.possible_duplicate is
+// computed at IMPORT and keys on the AMOUNT, so three readings that disagree about the amount are
+// three separate invoices to it — and a duplicate whose copies disagree is the dangerous kind,
+// because each copy books its own wrong total.
+
+test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to hold", () => {
+  const pas = code("src/lib/incasso-settle.ts");
+  assert.match(pas, /sameNumberElsewhere: staatElders\(inv\.invoice_number\)/,
+    "the pass books again without asking whether this invoice number stands on another row — the " +
+      "flag inside incassoDecision keys on the amount and cannot answer that question");
+
+  // Both halves of the look. The batch alone would have caught Enka (all three stood open), but a
+  // second copy that is already settled or archived from an earlier run is the same double booking
+  // one hour later.
+  assert.match(pas, /for \(const r of rows\) telMee\(/,
+    "the open siblings in this batch are no longer counted");
+  assert.match(pas, /\.neq\('status', 'received'\)[\s\S]{0,120}?\.in\('invoice_number', kandidaatNummers\)/,
+    "the already-settled and archived copies are no longer read — a duplicate booked an hour ago " +
+      "is invisible again");
+
+  // [NO-SILENT-EMPTY] A failed look may never read as "no duplicates".
+  assert.match(pas, /catch[\s\S]{0,200}?kon niet nakijken of een nummer elders staat/,
+    "a failed duplicate read is swallowed silently, and silence here is permission to book");
+
+  const regel = code("src/lib/auto-incasso.ts");
+  assert.match(regel, /if \(ctx\?\.sameNumberElsewhere\) return \{ settle: false, hold: 'same-number' \}/,
+    "the hold itself is gone");
+  // Order is meaning: a creditnota or an accountant-locked invoice must not be reported as a
+  // duplicate number, or the owner goes and checks the wrong thing.
+  assert.ok(regel.indexOf("hold: 'creditnota'") < regel.indexOf("hold: 'same-number'"),
+    "the same-number hold now outranks the creditnota refusal");
+  assert.ok(regel.indexOf("hold: 'verwerkt'") < regel.indexOf("hold: 'same-number'"),
+    "the same-number hold now outranks the accountant lock");
 });

@@ -782,6 +782,41 @@ export async function GET(req: NextRequest) {
   };
   const report = buildReadiness(signals);
 
+  // ── [SNEL-BORD] Record the answer, so the accountant's board has something to show ──
+  //
+  // The werkboard fires this route once per client, four at a time; an office with eighty clients
+  // pays ~22 database rounds eighty times every time it opens the board, and watches "laden" while
+  // it happens. readiness_cache holds the LAST report this route produced, and the board renders it
+  // straight away with the moment beside it while it refreshes every row behind it.
+  //
+  // Written here and only here, which is what keeps it from becoming a second authority: no other
+  // code path may put a report in that table. The key is (owner, year, quarter) because the report
+  // depends on exactly those three — everything above this line reads ownerId, never user.id, and
+  // the caller's identity decides only whether they were allowed to ask.
+  //
+  // A failed write must never cost the caller their answer: the report is already computed and
+  // correct, and the cache is an optimisation. It is awaited rather than fired and forgotten
+  // because a serverless invocation ends with the response — an un-awaited insert is a write that
+  // sometimes happens.
+  try {
+    // [DEPLOY-SAFE] readiness_cache.sql is applied by hand; until it is, this fails and the board
+    // keeps loading every row live, which is exactly today's behaviour.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: cacheError } = await (pipeline as any)
+      .from("readiness_cache")
+      .upsert(
+        { owner_id: ownerId, year, quarter, report, computed_at: new Date().toISOString() },
+        { onConflict: "owner_id,year,quarter" },
+      );
+    if (cacheError) {
+      console.warn("[SNEL-BORD] stand niet opgeslagen", { ownerId, year, quarter, error: cacheError.message });
+    }
+  } catch (e) {
+    console.warn("[SNEL-BORD] stand niet opgeslagen", {
+      ownerId, year, quarter, error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     year,

@@ -15,6 +15,8 @@ import Link from 'next/link'
 import { reconcileBatch, resolveBatchNumbers, settleableAmount } from '@/lib/bank-batch-reconcile'
 // [PAYMENT-NAMES-MISSING] What the payment NAMED, including invoices not yet imported.
 import { namedInvoiceNumbers, missingNamedInvoices, missingInvoiceNoticeText } from '@/lib/payment-named-invoices'
+// [SLOT-WAAR] Eén rij per factuurnummer — de drie bronnen tegen elkaar gehouden, op één plek.
+import { slotNumbers as slotNumbersOf } from '@/lib/bank-slot-numbers'
 import { parsePaymentPeriod } from '@/lib/payment-period'
 import { quartersPresent, quarterLabelOf, matchesQuarter, lastCompletedQuarter } from '@/lib/quarter'
 import { isPartialPaymentHint, parseReferenceNumbers, isReferenceNumberToken } from '@/lib/bank-matching'
@@ -2921,7 +2923,18 @@ export function TxCard({
   // [BANK-SLOT-PERSIST] Merge the SESSION's just-confirmed numbers with the server's
   // covered numbers (paid invoices, reload-safe) so an already-paid slot shows "Betaald"
   // after a refresh instead of a false "Koppelen" / "nog open" that would double-book it.
-  const confirmedSet = new Set([...confirmedNumbers, ...(s.coveredNumbers ?? [])].map(normRef))
+  // [SLOT-BETAALD] …en de facturen die quotedInvoiceSet AFGEBOEKT terugmeldt.
+  //
+  // Gezien op de Altena-kaart: de slotweergave bood "Koppelen" aan bij factuur 26700644, die in de
+  // administratie gewoon op 'paid' staat. Die knop kan alleen maar mislukken — een betaalde factuur
+  // is geen kandidaat meer, dus er is niets om aan te koppelen — en hij staat er juist op het
+  // moment dat de kaart erboven diezelfde factuur mét bedrag afdrukt.
+  //
+  // De rij wordt hiermee "Betaald", en dat is precies wat er waar is: over DEZE betaling zegt het
+  // niets, over de factuur alles. Wat het weghaalt is een knop die niet kan werken en een ✗ waarmee
+  // de eigenaar een echte factuur uit beeld zou vegen.
+  const quotedSettledKeys = (s.quotedSet?.settled ?? []).map((q) => normRef(q.invoiceNumber))
+  const confirmedSet = new Set([...confirmedNumbers, ...(s.coveredNumbers ?? [])].map(normRef).concat(quotedSettledKeys))
   // [BANK-SLOT-DISMISS] Build slots whenever the transaction STARTED multi, so a
   // single remaining number (after others were dismissed) still shows its own
   // linkable row — not just an empty banner. Driven by wasMulti, not isMulti.
@@ -2930,20 +2943,21 @@ export function TxCard({
   // once as a linkable row and once as a permanently-unlinkable one that would keep the batch
   // "incomplete" forever. A reference number that resolves to nothing is kept: it is a real
   // invoice we don't have yet, and hiding it would fake a complete batch.
-  const resolvedKeys = resolvedNumbers.map(normRef)
-  const leftoverRefParts = refParts.filter((r) => {
-    const key = normRef(r)
-    return !resolvedKeys.some((rk) => rk === key || rk.includes(key))
+  // [SLOT-WAAR] Eén rij per FACTUURNUMMER, en die regel staat in bank-slot-numbers.ts.
+  //
+  // Hier stonden drie lijsten naast elkaar met één filter ertussen — en dat filter keek alleen naar
+  // de opgeloste nummers. Zodra er niets oploste (de gewone toestand bij een factuur die nooit is
+  // geïmporteerd) had het niets om tegen te vergelijken, overleefde elk stuk van het bankkenmerk, en
+  // verscheen hetzelfde nummer twee keer: "2 facturen" boven een betaling die er één noemt, met
+  // twee React-rijen op dezelfde key. Gemeld op ipekci slachterij, € 3.624,25, "Deel twee factuur
+  // 202604231".
+  const slotNumbers = slotNumbersOf({
+    resolved: resolvedNumbers.filter((n) => !dismissedNumbers.has(normRef(n))),
+    // [PAYMENT-NAMES-MISSING] De facturen die de betaling noemt en die wij niet hebben. De
+    // slotweergave weet raad met een nummer zonder factuur erachter — die rij toont "Koppelen".
+    missing: missingNamed,
+    referenceParts: refParts,
   })
-  const slotNumbers = [
-    ...resolvedNumbers.filter((n) => !dismissedNumbers.has(normRef(n))),
-    // [PAYMENT-NAMES-MISSING] The invoices the payment names that we do not hold. The slot view
-    // already knows what to do with a number that has no invoice behind it — its own input type
-    // says "null when no invoice with this number is in the system yet (the slot shows Koppelen)" —
-    // it simply never received one, because the list was built from what we own.
-    ...missingNamed.filter((n) => !resolvedNumbers.some((r) => normRef(r) === normRef(n))),
-    ...leftoverRefParts,
-  ]
   // [BANK-REF-DISPLAY] The compact label on the card. One number → show it; several → "N
   // facturen" so the card stays clean and signals the multi-invoice case. Built from the
   // resolved numbers, so a bundle shows the invoice numbers the owner recognises rather than
@@ -3458,6 +3472,32 @@ export function TxCard({
               </div>
             ))}
           </div>
+
+          {/* [SLOT-WAAR] De lezing is geen grens.
+              Deze lijst is wat WIJ in deze betaling hebben gelezen, en die lezing kan te weinig
+              zien: de bank noemt niet altijd elk factuurnummer, en een omschrijving als "Deel twee
+              factuur 202604231" noemt er één terwijl er twee betalingen voor lopen. Zonder deze
+              regel eindigt het scherm bij ons aantal en zit de eigenaar vast in onze lezing.
+              Het verdeelscherm kent die grens niet — daar kiest hij zelf uit álle facturen die deze
+              betaling mag raken, met een bedrag per factuur. Dat scherm bestond al; wat ontbrak was
+              de zin die zegt dat het er is op het moment dat je het nodig hebt. */}
+          <a
+            href={`/dashboard/bank/verdelen/${s.transactionId}`}
+            style={{
+              marginTop: 10, display: 'flex', alignItems: 'flex-start', gap: 8,
+              padding: '9px 11px', borderRadius: R.md, border: `1px solid ${M3.outline}`,
+              background: '#fff', textDecoration: 'none', color: '#3c4043',
+              fontSize: 12.5, lineHeight: 1.45, fontFamily: FONT,
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1, color: M3.primary }} aria-hidden>call_split</span>
+            <span>
+              {t('bank.slot.meerFacturen')}
+              <span style={{ display: 'block', fontWeight: 600, color: M3.primary, marginTop: 2 }}>
+                {t('bank.slot.meerFacturenKnop')}
+              </span>
+            </span>
+          </a>
           </>
           )}
 
