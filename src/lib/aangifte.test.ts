@@ -381,8 +381,15 @@ console.log("\n— [TEGENTEKEN] BTW left out because the document contradicts it
   const notes = a.notes.join(" | ");
   check("the refused amount is named", /13/.test(notes));
   check("and WHY it cannot be right, in words the owner can act on", /tegengesteld teken/.test(notes));
-  check("the direction of the error is stated, not implied", /te LAAG/.test(notes));
   check("5b carries only what was actually claimable", a.voorbelasting === 84);
+
+  // The DIRECTION must not be claimed, and this is the correction that matters most in this note.
+  // The sibling note above says "bewust te LAAG" and is right to: there an ordinary deduction falls
+  // away. Here the amount that fell away may be a CREDITNOTA, which would have LOWERED 5b — so
+  // leaving it out makes 5b too HIGH. Which of the two it is, is exactly what this document does
+  // not say, and an accountant reads a stated direction as a fact and reckons with it.
+  check("no direction is claimed that the document cannot support", !/te LAAG/.test(notes) && !/te HOOG/.test(notes));
+  check("…and both possibilities are spelled out instead", /AF/.test(notes) && /ERBIJ/.test(notes));
 
   // [NEGATIEVE CONTROLE] The note must be absent on an ordinary quarter, or it becomes wallpaper
   // that an accountant learns to scroll past — and this one fires on one document in five hundred.

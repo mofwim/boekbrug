@@ -377,12 +377,19 @@ export function buildAangifte(
   // right rather than about a ratio that could not be found — the owner can fix it themselves.
   const tegenteken = euro(input.voorbelastingTegenteken ?? 0);
   if (tegenteken > 0) {
+    // De RICHTING wordt hier met opzet niet genoemd, en dat is een correctie op de eerste versie van
+    // deze zin. "Bewust te laag" klopt bij de notitie hierboven, waar een aftrek wegvalt — maar het
+    // bedrag dat hier wegvalt kan net zo goed een CREDITNOTA zijn, en dan had het 5b juist VERLAAGD.
+    // Welke van de twee het is, is precies wat dit document niet zegt. Een richting noemen die we
+    // niet kennen is erger dan geen richting noemen: de boekhouder rekent ermee.
     notes.push(
       `LET OP: €${tegenteken.toLocaleString("nl-NL")} BTW staat NIET in 5b, omdat op die factuur het bedrag ` +
       "en de BTW een tegengesteld teken hebben — een creditnota met positieve BTW, of andersom. Zo'n " +
-      "document kan niet kloppen: een BTW-tarief is nooit negatief. De voorbelasting is hierdoor bewust " +
-      "te LAAG. Leg de factuur ernaast en zet het bedrag of de BTW op het juiste teken; daarna telt hij " +
-      "vanzelf mee.",
+      "document kan niet kloppen: een BTW-tarief is nooit negatief. Daarom weten we ook niet welke kant " +
+      "het op moet: is het een creditnota, dan hoort deze BTW van 5b AF; is het een gewone factuur, dan " +
+      "hoort hij ERBIJ. 5b wijkt dus €" + tegenteken.toLocaleString("nl-NL") + " af in een richting die de " +
+      "factuur zelf moet uitwijzen. Leg hem ernaast en zet het bedrag of de BTW op het juiste teken; " +
+      "daarna telt hij vanzelf mee.",
     );
   }
   const onopgelost = euro(input.voorbelastingUnresolved ?? 0);

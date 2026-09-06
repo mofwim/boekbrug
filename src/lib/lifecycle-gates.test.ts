@@ -26962,9 +26962,19 @@ test("[TEGENTEKEN] the path that counts input BTW asks whether the document can 
     "the note is written but not reachable — a sentence behind a dead condition");
   assert.match(aangifte, /tegengesteld teken/,
     "the note does not say what is wrong with the document, so the owner cannot fix it");
-  assert.match(aangifte, /te LAAG/,
-    "the note does not say WHICH WAY the figure is wrong — which is the only part an accountant " +
-      "cannot reconstruct");
+  // And it must NOT claim a direction. The sibling note for unresolved pro-rata BTW says "bewust
+  // te LAAG" and is right to — there an ordinary deduction falls away. The amount refused HERE may
+  // be a creditnota, which would have LOWERED 5b, so leaving it out makes 5b too HIGH. Which of
+  // the two it is, is exactly what the document does not say. The first version of this note said
+  // "te LAAG" anyway; an accountant reads a stated direction as a fact and reckons with it.
+  const bij = aangifte.indexOf("tegengesteld teken");
+  const zin = bij < 0 ? "" : aangifte.slice(Math.max(0, bij - 400), bij + 900);
+  assert.ok(zin.length > 0, "the sign-conflict note is gone from the concept");
+  assert.doesNotMatch(zin, /te LAAG|te HOOG/,
+    "the note claims a direction the document cannot support — both are possible here, and which " +
+      "one it is, is the thing this row fails to say");
+  assert.match(zin, /AF[\s\S]{0,200}ERBIJ/,
+    "…and it does not spell out the two possibilities either, so the reader is left with a hole");
 
   // The owner meets it on the invoice too, or the only place it is ever stated is a note at the
   // bottom of a quarter concept.
