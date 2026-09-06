@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 119 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 120 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 15 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -340,6 +340,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_delete_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'policy', 'push_subscriptions_select_own', 'push_subscriptions', 'public'),
   ('push_subscriptions.sql', 'table', 'push_subscriptions', null, 'public'),
+  ('readiness_cache.sql', 'index', 'readiness_cache_quarter_idx', null, 'public'),
+  ('readiness_cache.sql', 'table', 'readiness_cache', null, 'public'),
   ('regime_kor.sql', 'column', 'kor_active', 'profiles', 'public'),
   ('register_profile_from_metadata.sql', 'function_body', 'handle_new_user', '.email,.id,.raw_user_meta_data', 'public'),
   ('reminders_on_by_default.sql', 'column', 'reminders_enabled_at', 'profiles', 'public'),
@@ -537,7 +539,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 134
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 15 van de 135
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

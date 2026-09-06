@@ -34,6 +34,51 @@ export interface BoardRow {
   missingTitles?: string[]
   /** Waarom de rij niet laadde, als de reden bekend is (bv. koppeling verbroken). */
   errorReason?: 'unlinked' | 'unknown'
+  /**
+   * [SNEL-BORD] Het moment waarop dit rapport is BEREKEND, als de rij uit de opname komt.
+   *
+   * Afwezig zodra de verse lezing binnen is. Zolang hij er staat hoort het scherm hem te tonen:
+   * readiness beslist of een kwartaal ingediend kan worden, en een cijfer van gisteren dat als vers
+   * leest is de app die aanraadt aangifte te doen op iets wat niemand heeft nagekeken.
+   */
+  cachedAt?: string
+  /**
+   * [NO-SILENT-EMPTY] Het bijwerken is geprobeerd en mislukt, en dit is nog de opgenomen stand.
+   *
+   * Het cijfer blijft staan — het weggooien zou een boekhouder informatie afnemen die hij had —
+   * maar nooit stilzwijgend: een stand die niet kon worden nagerekend mag niet als oordeel lezen.
+   */
+  refreshFailed?: boolean
+}
+
+/**
+ * Eén rapport → één bordrij. Gedeeld door de verse lezing en de opgenomen stand, met opzet: dit is
+ * de plek waar `missing[]` een aantal wordt en waar de koppen eruit komen, en twee kopieën daarvan
+ * betekent dat het bord na een tijdje twee verschillende dingen over dezelfde klant kan zeggen.
+ *
+ * `report` komt van buiten (JSON uit een route of uit readiness_cache), dus alles wordt hier
+ * gecontroleerd in plaats van aangenomen. Een rapport zonder score is geen rij: null terug.
+ */
+export function rowFromReport(
+  base: { id: string; name: string },
+  report: unknown,
+): BoardRow | null {
+  if (!report || typeof report !== 'object') return null
+  const r = report as Record<string, unknown>
+  if (typeof r.score !== 'number' || typeof r.status !== 'string') return null
+  const missing: unknown[] = Array.isArray(r.missing) ? r.missing : []
+  return {
+    ...base,
+    state: 'ok',
+    score: r.score,
+    status: r.status as BoardStatus,
+    missingCount: missing.length,
+    riskCount: Array.isArray(r.risks) ? r.risks.length : 0,
+    // [REDEN] Alleen de koppen — zie de toelichting bij BoardRow.missingTitles.
+    missingTitles: missing
+      .map(m => (m && typeof m === 'object' && 'title' in m ? String((m as { title: unknown }).title) : ''))
+      .filter(Boolean),
+  }
 }
 
 export interface BoardSummary {

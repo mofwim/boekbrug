@@ -25,9 +25,13 @@ import { getAangifteDeadline, daysUntil } from '../accountant.service'
 import {
   summarizeBoard,
   needsAction,
+  rowFromReport,
   type BoardRow,
   type BoardStatus,
 } from '../readiness-board'
+// [SNEL-BORD] De opgenomen stand: wanneer is een cijfer nog te tonen, en hoe oud is het?
+import { cacheFreshness, needsRefresh } from '@/lib/readiness-cache'
+import { StandBadge } from './StandBadge'
 // [KANTOOR-BESLUIT] Hetzelfde bord, andere snede: per SOORT werk in plaats van per klant.
 import { groupWork } from '../work-grouping'
 // [WERK-GEDAAN] Wat de app in dit kwartaal deed, geteld — het enige paneel over de waarde
@@ -138,6 +142,11 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
     () => clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })),
   )
   const [nudge, setNudge] = useState<Record<string, NudgeState>>({})
+  // [SNEL-BORD] Het moment waarop de opnames zijn gelezen, zodat elke leeftijdsregel op het bord
+  // van dezelfde klok wordt afgelezen. Gezet in het effect en niet tijdens het renderen: een klok
+  // uitlezen in een render is onzuiver (react-hooks/purity) en zou server en client uit de pas
+  // laten lopen. 0 zolang er geen opname is — dan valt elke badge vanzelf weg.
+  const [nu, setNu] = useState(0)
   // [PAKKET-VERS] Per klant: wanneer dit kwartaalpakket voor het laatst is opgehaald en of er
   // sindsdien iets in het kwartaal is bijgekomen. Alleen aanwezig voor klanten waarvan deze
   // boekhouder het pakket al eens ophaalde — voor de rest is er geen kopie die oud kan zijn.
@@ -157,21 +166,10 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
       // de boekhouder op gaat klikken. Zeg wat er is.
       if (!res.ok) return { ...base, state: 'error', errorReason: res.status === 403 ? 'unlinked' : 'unknown' }
       const json = await res.json()
-      const report = json?.report
-      if (!report) return { ...base, state: 'error', errorReason: 'unknown' }
-      const missing: unknown[] = Array.isArray(report.missing) ? report.missing : []
-      return {
-        ...base,
-        state: 'ok',
-        score: report.score,
-        status: report.status as BoardStatus,
-        missingCount: missing.length,
-        riskCount: Array.isArray(report.risks) ? report.risks.length : 0,
-        // [REDEN] Alleen de koppen — zie de toelichting bij BoardRow.missingTitles.
-        missingTitles: missing
-          .map(m => (m && typeof m === 'object' && 'title' in m ? String((m as { title: unknown }).title) : ''))
-          .filter(Boolean),
-      }
+      // [SNEL-BORD] Dezelfde vertaling van rapport naar rij als de opgenomen stand gebruikt. Stond
+      // hier als eigen kopie; twee kopieën betekent dat het bord na een tijdje twee verschillende
+      // dingen over dezelfde klant kan zeggen, afhankelijk van waar de rij vandaan kwam.
+      return rowFromReport(base, json?.report) ?? { ...base, state: 'error', errorReason: 'unknown' }
     } catch {
       return { ...base, state: 'error' }
     }
@@ -197,33 +195,101 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
     return () => { cancelled = true }
   }, [year, quarter])
 
-  // Fetch every client's readiness for the selected quarter, MAX_PARALLEL at a time.
-  // Re-runs on quarter change / refresh; a stale run is cancelled so a quick switch
-  // can't write old-quarter rows. Resets any per-row nudge state too.
+  // ── [SNEL-BORD] Eerst de opnames, dan alleen wat écht opnieuw gelezen moet worden ──
+  //
+  // /api/readiness is een projectie over de hele administratie — zo'n 22 databaseronden en ~1.500
+  // rijen per klant per kwartaal. Dit bord vuurde hem af PER KLANT, vier tegelijk: een kantoor met
+  // tachtig klanten betaalde die prijs tachtig keer bij elke keer dat dit scherm openging, en keek
+  // ondertussen naar een lijst vol "controleren…". De economie schaalt niet mee met het kantoor.
+  //
+  // Eén effect en niet twee, met opzet: de opnames komen EERST binnen (één query voor het hele
+  // bord), zetten meteen staat op het scherm, en bepalen daarna welke klanten nog een verse lezing
+  // nodig hebben. Als losse effecten naast elkaar zou dat een race zijn — de wachtrij zou al lopen
+  // voordat bekend is wat er al bekend was, en dan is elke besparing toeval.
+  //
+  // Wat het NIET doet is een oud cijfer voor vers laten doorgaan: bij elke rij die uit de opname
+  // komt staat van wanneer hij is (StandBadge), boven de refresh-knop die alles alsnog opnieuw
+  // leest. Zie de kop van readiness-cache.ts voor de twee vensters — tonen en herlezen zijn niet
+  // dezelfde vraag en hebben niet dezelfde kosten.
   useEffect(() => {
     let cancelled = false
-    // Reset in dezelfde tick, maar buiten de effect-body zelf.
+
     void (async () => {
       setRows(clients.map(c => ({ id: c.id, name: c.name, state: 'loading' as const })))
       setNudge({})
+
+      // 1) De opnames, in één vraag. Mislukt hij, dan gebeurt er niets bijzonders: elke rij wordt
+      //    live geladen, precies zoals dit bord deed voordat de opname bestond.
+      const opnames = new Map<string, { report: unknown; computedAt: string }>()
+      try {
+        const res = await fetch(`/api/readiness/board?year=${year}&quarter=${quarter}`)
+        if (res.ok) {
+          const json = await res.json()
+          const per = json?.perClient as Record<string, { report?: unknown; computedAt?: string }> | undefined
+          for (const [id, o] of Object.entries(per ?? {})) {
+            if (o?.computedAt) opnames.set(id, { report: o.report, computedAt: o.computedAt })
+          }
+        }
+      } catch { /* geen stand is eerlijker dan een verzonnen stand */ }
+      if (cancelled) return
+
+      const gelezenOp = Date.now()
+      setNu(gelezenOp)
+
+      // 2) Zet neer wat we hebben. Te oud of onleesbaar telt niet mee: dan is dit geen cijfer
+      //    waarvan we de betekenis kennen, en laat de rij liever zien dat hij nog laadt.
+      if (opnames.size > 0) {
+        setRows(prev => prev.map(r => {
+          if (r.state !== 'loading') return r
+          const opname = opnames.get(r.id)
+          if (!opname || !cacheFreshness(opname.computedAt, gelezenOp).usable) return r
+          const rij = rowFromReport({ id: r.id, name: r.name }, opname.report)
+          return rij ? { ...rij, cachedAt: opname.computedAt } : r
+        }))
+      }
+
+      // 3) En lees alleen opnieuw wat opnieuw gelezen moet worden. De refresh-knop slaat dit over:
+      //    daar om vragen is om NU vragen, en een knop die stilletjes niets doet is erger dan geen
+      //    knop. reloadKey begint op 0 en loopt op bij elke druk.
+      const forceren = reloadKey > 0
+      const queue = clients.filter(c => {
+        if (forceren) return true
+        const opname = opnames.get(c.id)
+        return needsRefresh(opname?.computedAt, gelezenOp)
+      })
+
+      async function worker() {
+        while (!cancelled) {
+          const next = queue.shift()
+          if (!next) return
+          const row = await loadOne(next.id, year, quarter)
+          if (cancelled) return
+          setRows(prev => prev.map(r => {
+            if (r.id !== row.id) return r
+            // [NO-SILENT-EMPTY] Mislukt het bijwerken van een rij die al een opgenomen stand toont,
+            // dan blijft dat cijfer staan — het weggooien zou de boekhouder informatie afnemen die
+            // hij had — maar met de mededeling erbij. Een stand die niet kon worden nagerekend mag
+            // niet als een vers oordeel lezen, en een lege rij niet als "niets aan de hand".
+            if (row.state === 'error' && r.state === 'ok' && r.cachedAt) {
+              return { ...r, refreshFailed: true }
+            }
+            return row
+          }))
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(MAX_PARALLEL, queue.length) }, worker),
+      )
     })()
 
-    const queue = [...clients]
-    async function worker() {
-      while (!cancelled) {
-        const next = queue.shift()
-        if (!next) return
-        const row = await loadOne(next.id, year, quarter)
-        if (cancelled) return
-        setRows(prev => prev.map(r => (r.id === row.id ? row : r)))
-      }
-    }
-    const workers = Array.from({ length: Math.min(MAX_PARALLEL, clients.length) }, worker)
-    void Promise.all(workers)
     return () => { cancelled = true }
   }, [clients, year, quarter, reloadKey, loadOne])
 
   const summary = useMemo(() => summarizeBoard(rows), [rows])
+  // Staan er rijen van eerder op het bord, dan zegt het dat één keer bovenaan in plaats van het aan
+  // elke rij over te laten. De zin belooft niet dat er iets loopt — sommige rijen worden bewust NIET
+  // opnieuw gelezen (needsRefresh) — hij zegt alleen dat er bij elke rij staat van wanneer hij is.
+  const nogBijwerken = rows.some(r => r.cachedAt && !r.refreshFailed)
   // [KANTOOR-BESLUIT] Alleen geladen rijen: een rij die nog laadt of niet gelezen kon worden heeft
   // geen titels, en een groep eruit halen zou werk verzinnen dat niemand heeft gemeten.
   const werkSoorten = useMemo(
@@ -335,6 +401,14 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
               </div>
             ))}
           </div>
+        )}
+
+        {/* [SNEL-BORD] Deze drie tellingen tellen ook de rijen mee die nog uit de opname komen — dat
+            is precies wat het bord bruikbaar maakt op het moment dat het opengaat. Dan hoort er ook
+            te staan dat het zo is: "3 klaar" boven cijfers van gisteren is een bewering waar een
+            boekhouder op afgaat. De regel verdwijnt vanzelf zodra elke rij vers is. */}
+        {nogBijwerken && (
+          <p style={{ fontSize: 12, color: '#5F6368', margin: 0 }}>{t('bh.stand.bijwerken')}</p>
         )}
 
         {/* ── [KANTOOR-BESLUIT] Het werk, op soort ──
@@ -477,6 +551,16 @@ export default function AccountantWerkboard({ clients, klantenOnleesbaar = false
                             {t('bh.werk.rij.compleet', { score: row.score ?? '' })}
                             {(row.missingCount ?? 0) > 0 && ` · ${t('bh.werk.rij.ontbreekt', { n: row.missingCount ?? 0 })}`}
                             {(row.riskCount ?? 0) > 0 && ` · ${t('bh.werk.rij.nakijken', { n: row.riskCount ?? 0 })}`}
+                            {/* [SNEL-BORD] Komt dit cijfer uit de opname, dan staat er bij WANNEER het
+                                is berekend. Zonder dat leest een stand van gisteren als een oordeel
+                                van nu, boven een knop die naar de aangifte leidt. Hij verdwijnt
+                                zodra de verse lezing binnen is — meestal binnen enkele seconden. */}
+                            {row.cachedAt && (
+                              <>
+                                {' · '}
+                                <StandBadge computedAt={row.cachedAt} now={nu} refreshFailed={row.refreshFailed} />
+                              </>
+                            )}
                           </>
                         )}
                       </span>

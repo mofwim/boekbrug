@@ -13511,6 +13511,30 @@ export const MESSAGES = {
   'bh.home.ai.checkInternet': { nl: 'Controleer je internet en probeer opnieuw.', en: 'Check your internet and try again.', ar: 'تحقق من اتصالك بالإنترنت وحاول مرة أخرى.' },
 
   // ─── [BOEKHOUDER] Boekhouder · aangifte & status (AccountantWerkboard) ──────────────────────
+  // ── [SNEL-BORD] Hoe oud de stand op het bord is ──────────────────────────────────────────────
+  // Eén sleutel per band én per getal: "{n} {woord} geleden" werkt in het Nederlands en breekt de
+  // Arabische congruentie en de Turkse klinkerharmonie (AGENTS.md), en n = 1 is in al die talen een
+  // andere zin. Welke sleutel wanneer: ageMessageKey in readiness-cache.ts.
+  'bh.stand.zojuist': { nl: 'stand van zojuist', ar: 'الحالة الآن', en: 'as of just now' },
+  'bh.stand.minuut1': { nl: 'stand van 1 minuut geleden', ar: 'الحالة قبل دقيقة', en: 'as of 1 minute ago' },
+  'bh.stand.minuten': { nl: 'stand van {n} minuten geleden', ar: 'الحالة قبل {n} دقيقة', en: 'as of {n} minutes ago' },
+  'bh.stand.uur1': { nl: 'stand van 1 uur geleden', ar: 'الحالة قبل ساعة', en: 'as of 1 hour ago' },
+  'bh.stand.uren': { nl: 'stand van {n} uur geleden', ar: 'الحالة قبل {n} ساعة', en: 'as of {n} hours ago' },
+  'bh.stand.dag1': { nl: 'stand van gisteren', ar: 'حالة الأمس', en: 'as of yesterday' },
+  'bh.stand.dagen': { nl: 'stand van {n} dagen geleden', ar: 'الحالة قبل {n} أيام', en: 'as of {n} days ago' },
+  // De regel boven het bord, zolang er nog rijen van eerder op staan. Zij verdwijnt vanzelf.
+  'bh.stand.bijwerken': {
+    nl: 'Sommige cijfers hieronder zijn van eerder — bij elke rij staat van wanneer.',
+    ar: 'بعض الأرقام أدناه من وقت سابق — وعند كل سطر مكتوب متى.',
+    en: 'Some figures below are from earlier — each row says when.',
+  },
+  // [NO-SILENT-EMPTY] En als het bijwerken mislukt: het oude cijfer blijft staan, maar nooit alsof
+  // het vers is. Een stand die niet kon worden nagerekend mag niet als een oordeel lezen.
+  'bh.stand.mislukt': {
+    nl: 'kon niet worden bijgewerkt',
+    ar: 'تعذّر التحديث',
+    en: 'could not be refreshed',
+  },
   'bh.werk.vernieuwen': { nl: 'Vernieuwen', ar: 'تحديث', en: 'Refresh' },
   'bh.werk.hero.btwAangifte': { nl: 'BTW-aangifte {kwartaal}', ar: 'إقرار ضريبة القيمة المضافة {kwartaal}', en: 'VAT return {kwartaal}' },
   'bh.werk.hero.uiterlijk': { nl: 'Uiterlijk {datum}', ar: 'في موعد أقصاه {datum}', en: 'No later than {datum}' },

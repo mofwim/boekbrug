@@ -26464,3 +26464,136 @@ test("[CREDIT-TEKEN] one card may not list an invoice and call it missing in the
     "countedInTotal is no longer derived from the same dedupe the total uses — two rules for one " +
       "question is how the list and the sum drifted apart in the first place");
 });
+
+// ── [SNEL-BORD] The board may show a recorded verdict, never pass one off as fresh ─────────────
+//
+// /api/readiness is a projection over the whole administration: ~22 database rounds and, measured
+// on the live file, about 1.500 rows for one client for one quarter. The werkboard fires it ONCE
+// PER CLIENT, four at a time, so an office with eighty clients pays that eighty times on every
+// open. readiness_cache holds what that route itself computed, and the board renders it instantly
+// while refreshing every row behind it.
+//
+// The whole arrangement rests on three properties. Each is invisible in tsc, eslint and the build.
+
+test("[SNEL-BORD] nothing but /api/readiness may put a report in the cache", () => {
+  // The one rule that keeps this from becoming a second authority. A second writer would be a
+  // second opinion about whether a quarter can be filed, and the board would show whichever ran
+  // last — which is the defect this codebase keeps finding in its own past.
+  const loop = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...loop(p));
+      else out.push(p);
+    }
+    return out;
+  };
+  const schrijvers = loop("src")
+    .filter((f) => /\.tsx?$/.test(f) && !f.includes(".test."))
+    .filter((f) => /\.from\(\s*["']readiness_cache["']\s*\)[\s\S]{0,400}?\.(upsert|insert|update|delete)\(/.test(code(f)));
+  assert.deepEqual(schrijvers, ["src/app/api/readiness/route.ts"],
+    "something other than /api/readiness writes readiness_cache — then the board can show a " +
+      "verdict nobody computed with buildReadiness");
+
+  const route = code("src/app/api/readiness/route.ts");
+  // Keyed on exactly what the report depends on. Everything in that route reads ownerId; the
+  // caller's identity decides only whether they were allowed to ask.
+  assert.match(route, /owner_id: ownerId, year, quarter, report/,
+    "the recording is no longer keyed on (owner, year, quarter) — an accountant and an owner " +
+      "looking at the same quarter would then get different rows for one answer");
+  assert.match(route, /onConflict: "owner_id,year,quarter"/,
+    "without the conflict target the cache grows a second row per key instead of replacing one");
+  // A failed write may never cost the caller the answer that is already computed and correct.
+  assert.match(route, /catch[\s\S]{0,120}?\[SNEL-BORD\] stand niet opgeslagen/,
+    "a failing cache write can now throw out of the readiness route — the optimisation would be " +
+      "breaking the thing it optimises");
+});
+
+test("[SNEL-BORD] a recorded figure carries its moment, all the way to the screen", () => {
+  const board = code("src/app/api/readiness/board/route.ts");
+  assert.match(board, /computedAt: row\.computed_at/,
+    "the board route hands back reports without the moment they were computed — then the screen " +
+      "cannot tell an accountant that a 'klaar' is from yesterday");
+  // [NO-SILENT-EMPTY] A read that failed is not an empty board: an empty perClient is the claim
+  // that nothing was ever computed for these clients, and this is not the moment to make it.
+  assert.match(board, /status: 503/,
+    "a failed read answers 200 with an empty board — silence dressed as an answer");
+  assert.match(board, /cacheUnavailable: true/,
+    "[DEPLOY-SAFE] the pre-migration case is gone; the board would read a missing table as a " +
+      "failure instead of simply loading every row live");
+
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(bord, /\{ \.\.\.rij, cachedAt: opname\.computedAt \}/,
+    "a row seeded from the recording no longer carries cachedAt — and then it renders as a fresh " +
+      "verdict, which is the app telling an accountant to file on a figure nobody looked at");
+  assert.match(bord, /<StandBadge computedAt=\{row\.cachedAt\}/,
+    "the age is no longer rendered beside the figure");
+  assert.match(bord, /if \(r\.state !== 'loading'\) return r/,
+    "the recording may overwrite a row that was just computed for real — the older answer would " +
+      "then replace the newer one, silently");
+  // The headline counts include cached rows, so the board says so once, at the top.
+  assert.match(bord, /nogBijwerken && \(/,
+    "'3 klaar' can again stand above figures from yesterday with nothing saying so");
+});
+
+test("[SNEL-BORD] the board reads the recordings FIRST, then asks only for what it needs", () => {
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+
+  // One pass, not two effects racing. Two would start the queue before knowing what was already
+  // known, and then every saving is an accident of timing rather than a property of the code.
+  const opnameEerst = bord.indexOf("/api/readiness/board?year=");
+  const wachtrij = bord.indexOf("const queue = clients.filter");
+  assert.ok(opnameEerst > 0 && wachtrij > opnameEerst,
+    "the queue is built before the recordings are read — the board is back to eighty heavy " +
+      "reports per open, whatever it already had");
+
+  // …and the queue really is narrowed. Without this the cache only hides the wait; the load that
+  // decides whether an office of eighty clients can use this product at all is unchanged.
+  assert.match(bord, /return needsRefresh\(opname\?\.computedAt, gelezenOp\)/,
+    "every client is queued again regardless of what was recorded minutes ago");
+  // The refresh button must ignore all of it: asking for the board again is asking for NOW, and a
+  // control that quietly does nothing is worse than no control.
+  assert.match(bord, /const forceren = reloadKey > 0[\s\S]{0,200}?if \(forceren\) return true/,
+    "the refresh button now goes through the same window — pressing it can leave rows untouched");
+  // MAX_PARALLEL over the NARROWED queue: spinning up four workers for a two-row queue is two
+  // workers that exist to do nothing.
+  assert.match(bord, /Math\.min\(MAX_PARALLEL, queue\.length\)/,
+    "the worker count is taken from the client list again instead of from the work there is");
+
+  // The two windows are different questions and must stay different numbers.
+  const mod = code("src/lib/readiness-cache.ts");
+  assert.match(mod, /REFRESH_AFTER_MS = 15 \* 60 \* 1000/,
+    "the refresh window changed — that is a product decision about how old a triage figure may be");
+  assert.match(mod, /if \(!vers\.usable \|\| vers\.ageMs === null\) return true/,
+    "needsRefresh no longer forces a read when there is nothing usable to work from — 'we have no " +
+      "verdict' and 'we have a recent verdict' would take the same branch");
+});
+
+test("[NO-SILENT-EMPTY] a refresh that fails keeps the figure and admits it", () => {
+  // Throwing the recorded figure away would take information off an accountant's screen that they
+  // already had; keeping it silently would let a stale verdict read as a live one. Both at once.
+  const bord = code("src/modules/accountant/pages/AccountantWerkboard.tsx");
+  assert.match(
+    bord,
+    /if \(row\.state === 'error' && r\.state === 'ok' && r\.cachedAt\) \{[\s\S]{0,120}?refreshFailed: true/,
+    "a failed refresh wipes the recorded figure again, or keeps it without saying that it could " +
+      "not be checked",
+  );
+  const badge = code("src/modules/accountant/pages/StandBadge.tsx");
+  assert.match(badge, /refreshFailed \?[\s\S]{0,120}?bh\.stand\.mislukt/,
+    "the badge no longer says that the refresh failed");
+  assert.match(badge, /if \(!vers\.usable\) return null/,
+    "the badge renders an age it was told not to trust — the second latch on the age cap is gone");
+});
+
+test("[TAAL] every key the age rule can ask for exists and is Dutch", () => {
+  // Derived, not listed: the keys come out of the module that chooses them, so a fifth band with a
+  // forgotten message cannot pass. A missing key renders as the key itself, on a money screen.
+  const mod = code("src/lib/readiness-cache.ts");
+  const sleutels = [...mod.matchAll(/"(bh\.stand\.[a-zA-Z0-9]+)"/g)].map((m) => m[1]);
+  assert.ok(sleutels.length >= 7, "the age keys can no longer be read out of readiness-cache.ts");
+  const berichten = code("src/lib/i18n/messages.ts");
+  for (const k of new Set(sleutels)) {
+    assert.ok(berichten.includes(`'${k}'`), `readiness-cache can ask for ${k} and messages.ts has no such key`);
+  }
+});
