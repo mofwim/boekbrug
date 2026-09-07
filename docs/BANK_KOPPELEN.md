@@ -65,9 +65,18 @@ reversals by link id with a recompute.
   with reason `storno`, out of the books — they net to zero. Through the unlink and ignore doors,
   never a write of its own; the pairing is re-proved on the server.
 
+- **An invoice from a line, no file** (`[REGEL-FACTUUR]`): the supplier who never sends a bill,
+  the receipt that went through the wash, the cash sale paid by transfer. "Zonder bestand" on any
+  free line opens one sheet — party, rate, "I have the document elsewhere" — and books the line
+  as that invoice, linked and settled. The money rule is the law's: a purchase without a document
+  carries no btw (art. 15 Wet OB), the cost still counts; a sale owes btw regardless. The rate is
+  suggested from the supplier's own earlier invoices. A paid invoice of the same amount nearby
+  refuses the booking (the double-booking guard). Row markers `_no_document`,
+  `_document_missing`, `_btw_withheld_no_document` keep the reason on the record.
+
 ## Still open
 
-- No file-less "create an invoice from this line" — attach-invoice reads a file.
+- Nothing on this screen. See docs/ZIEL.md for what comes next.
 
 ## Gates
 

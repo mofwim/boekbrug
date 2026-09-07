@@ -12821,6 +12821,42 @@ test("[STORNO] a reversed incasso reopens its invoice through the doors that alr
   assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /t\('bank\.storno\.uitleg', \{ date:/, "the card names the payment it undoes");
 });
 
+// ─── [ZIEL] The equation as the product's soul ───
+test("[ZIEL] the equation is written down, measured on the audit trail, and every self-writer is counted", () => {
+  const ziel = readFileSync("docs/ZIEL.md", "utf8");
+  assert.match(ziel, /BoekBrug does the work\. The owner keeps the say\./, "the equation, in one sentence");
+  assert.match(ziel, /art\. 15 Wet OB/, "the law's line is part of the soul");
+  const page = code("src/app/dashboard/vandaag/page.tsx");
+  assert.match(page, /\.in\("action", \[\.\.\.SELF_ACTIONS\]\)/, "self is counted from audit rows");
+  assert.match(page, /\.in\("action", \[\.\.\.HAND_ACTIONS\]\)/);
+  assert.match(page, /const zelf = selfRes\.error \|\| handRes\.error \|\| pendingBankRes\.error\s*\? null/, "a failed read says nothing, never a made-up share");
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function zelfZin\(/);
+  // Every action a machine writer logs when it books unattended must be in SELF_ACTIONS, or the
+  // measure understates what the app does — and overstates the owner's share of the work.
+  const SELF_ACTIONS: readonly string[] = ZIEL_SELF_ACTIONS;
+  for (const a of ["bank.auto_confirmed", "bank.auto_confirmed_batch", "invoice.auto_verified", "invoice.auto_paid", "turnover.auto_imported", "ledger.auto_imported"]) {
+    assert.ok(SELF_ACTIONS.includes(a), `${a} is a self-writer and must be counted`);
+  }
+});
+
+// ─── [REGEL-FACTUUR] An invoice from a bank line, no file ───
+test("[REGEL-FACTUUR] no btw on a purchase without a document, the guard is asked, and the line is linked pending-only", () => {
+  const lib = code("src/lib/line-invoice.ts");
+  assert.match(lib, /const rateApplied: LineRate = direction === "incoming" && !input\.hasDocumentElsewhere \? 0 : input\.rate;/, "art. 15 Wet OB, in code");
+  const route = code("src/app/api/bank/line-invoice/route.ts");
+  assert.match(route, /const verdict = buildLineInvoice\(/, "the money rule is the pure module's, not the route's");
+  assert.match(route, /readDoubleBookingGuard\(/, "a paid invoice of this amount nearby refuses the booking");
+  assert.match(route, /if \(hold === "paid-invoice"\)/);
+  assert.match(route, /\.update\(\{ invoice_id: invoiceId, status: "matched" \}\)[\s\S]{0,200}\.eq\("status", "pending"\)\.is\("invoice_id", null\)/, "the link re-asserts the line is free");
+  assert.match(route, /recordPaymentLinks\(pipeline, user\.id, transactionId, \[invoiceId\], \{ \[invoiceId\]: d\.totalIncBtw \}\)/, "the join row carries the amount");
+  assert.match(route, /source: "created"/);
+  assert.match(route, /_btw_withheld_no_document: d\.btwWithheldNoDocument/, "the reason for a 0 stays on the row");
+  assert.match(route, /requireOwner\(/);
+  const sheet = code("src/components/bank/LijnFactuurSheet.tsx");
+  assert.match(sheet, /const btwOff = isPurchase && !hasDoc;/, "the screen mirrors the rule: chips off without a document");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /<LijnFactuurSheet/);
+});
+
 test("[BEVESTIG-DICHT] every RPC a screen calls with the session client is granted to authenticated", () => {
   // The revoke list and the call sites must never disagree again: a function in the revoke list
   // may not be called with the session client anywhere, and confirm_bank_payment — which is —

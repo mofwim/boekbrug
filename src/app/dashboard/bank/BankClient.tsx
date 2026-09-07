@@ -50,6 +50,7 @@ import { type DepositGap } from '@/lib/statiegeld'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
 import BijlageStrip from '@/components/bank/BijlageStrip'
+import LijnFactuurSheet, { type LijnFactuurPrefill } from '@/components/bank/LijnFactuurSheet'
 import type { BankAttachment } from '@/lib/bank-attachments'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -1388,6 +1389,49 @@ export default function BankClient() {
       showToast(t('bank.fout.algemeen'))
     }
   }
+  // [REGEL-FACTUUR] "Say what this payment was": the prefill comes from the server (the party,
+  // the amount, the rate this supplier's invoices show), the owner answers three things, the
+  // server applies the money rule (no btw on a purchase without a document) and links the line.
+  const [lijnFactuur, setLijnFactuur] = useState<LijnFactuurPrefill | null>(null)
+  async function openLijnFactuur(txId: string) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch(`/api/bank/line-invoice?transactionId=${encodeURIComponent(txId)}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.prefill) { showToast(failureText(res.status, json, t('bank.fout.lijnFactuur'))); return }
+      setLijnFactuur(json.prefill as LijnFactuurPrefill)
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+  async function submitLijnFactuur(input: { rate: 0 | 9 | 21; hasDocumentElsewhere: boolean; clientName: string; description: string }) {
+    if (!lijnFactuur) return
+    const txId = lijnFactuur.transactionId
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/line-invoice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId, ...input }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        showToast(json?.btwWithheldNoDocument ? t('bank.lf.klaarZonderBtw') : t('bank.lf.klaar'))
+        setLijnFactuur(null)
+        await runMatch()
+      } else if (json?.code === 'paid_invoice_nearby') {
+        showToast(t('bank.lf.alBetaald'))
+      } else {
+        showToast(failureText(res.status, json, t('bank.fout.lijnFactuur')))
+      }
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
   // [STORNO] One tap: the origin is unlinked (invoice open again), both lines set aside.
   async function applyStorno(stornoTxId: string, originTxId: string) {
     setProcessingId(stornoTxId)
@@ -2601,6 +2645,7 @@ export default function BankClient() {
                 onMove={() => openMove(s.transactionId)}
                 onMatchChecked={() => markMatchChecked(s.transactionId)}
                 onStorno={s.storno ? () => applyStorno(s.transactionId, s.storno!.originTxId) : undefined}
+                onCreateFromLine={bankTab !== 'done' && !s.partiallyLinked ? () => openLijnFactuur(s.transactionId) : undefined}
                 bijlagen={
                   <BijlageStrip
                     attachments={s.attachments ?? []}
@@ -2637,6 +2682,15 @@ export default function BankClient() {
           here spends its money, so the owner gets the three honest ways forward — and the default
           is the safe one. Nothing was written when this opened. */}
       {/* [FULL-CORRECTION] One editor, shared with /dashboard/incoming/manage. */}
+      {lijnFactuur && (
+        <LijnFactuurSheet
+          prefill={lijnFactuur}
+          t={t as (k: string, v?: Record<string, string | number>) => string}
+          busy={processingId === lijnFactuur.transactionId}
+          onSubmit={submitLijnFactuur}
+          onClose={() => setLijnFactuur(null)}
+        />
+      )}
       {correctFor && (
         <InvoiceCorrectionModal
           invoice={correctFor}
@@ -2868,9 +2922,11 @@ function Empty({ done }: { done: boolean }) {
 // kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
 // roepen een component nooit aan.
 export function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked, bijlagen, onStorno,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked, bijlagen, onStorno, onCreateFromLine,
 }: {
   s: Suggestion
+  /** [REGEL-FACTUUR] Present on a free line: book it as an invoice without a file. */
+  onCreateFromLine?: () => void
   /** [STORNO] Present when the server paired this credit with the incasso it reverses. */
   onStorno?: () => void
   /** [BIJLAGE-BIJ-REGEL] The owner's own controls under the card, built by the screen. */
@@ -3830,6 +3886,20 @@ export function TxCard({
                   ? t('bank.verwerken')
                   : slotNumbers.length > 1 ? t('bank.facturenKoppelen', { count: slotNumbers.length }) : t('bank.factuurKoppelen')}
               </label>
+              {/* [REGEL-FACTUUR] The third door beside "attach a file" and "ignore": say what it
+                  was. For the supplier who never sends a bill, the receipt that went through the
+                  wash, the cash sale paid by transfer. The money rule is the server's. */}
+              {onCreateFromLine && !isIgnoredTab && (
+                <button
+                  type="button"
+                  onClick={onCreateFromLine}
+                  disabled={processing}
+                  style={{ marginTop: 8, width: '100%', padding: '9px', borderRadius: R.full, border: '1px solid #DADCE0', background: '#fff', color: '#3C4043', fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: processing ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }} aria-hidden>edit_note</span>
+                  {t('bank.lf.knop')}
+                </button>
+              )}
               {/* [BETAALPLAN] De derde uitweg, die er niet was.
                   Er waren er twee: koppel een BESTAND, of negeer de regel. Beide gaan uit van de
                   aanname dat één betaling bij één factuur hoort. Een groothandel schrijft één bedrag
