@@ -12452,6 +12452,85 @@ export const MESSAGES = {
     en: 'Counted from {quarter}.',
   },
 
+  // ─── [VOORUIT] How much money there will be in 7 and in 30 days ────────────────────────────
+  // The forecast engine (cashflow-forecast.ts) returns note CODES; cashflow-forecast-copy.ts
+  // gives each one a sentence here. The two counted notes carry a singular and a plural.
+  'vooruit.titel': { nl: 'Vooruitkijken', ar: 'نظرة إلى الأمام', en: 'Looking ahead' },
+  'vooruit.dagen': { nl: '{days} dagen', ar: '{days} يوماً', en: '{days} days' },
+  'vooruit.nu': { nl: 'Nu (bank + kas)', ar: 'الآن (البنك + الصندوق)', en: 'Now (bank + drawer)' },
+  'vooruit.op': { nl: 'Op {date}', ar: 'في {date}', en: 'On {date}' },
+  'vooruit.tekortOp': { nl: 'Tekort op {date}', ar: 'عجز في {date}', en: 'Short on {date}' },
+  'vooruit.uit': { nl: 'Te betalen ({count})', ar: 'مستحق الدفع ({count})', en: 'To pay ({count})' },
+  'vooruit.uitIncasso': {
+    nl: 'Waarvan € {amount} via incasso.',
+    ar: 'منها € {amount} بالخصم المباشر.',
+    en: 'Of which € {amount} by direct debit.',
+  },
+  'vooruit.inFacturen': { nl: 'Verwacht van klanten ({count})', ar: 'متوقع من العملاء ({count})', en: 'Expected from customers ({count})' },
+  'vooruit.inKassa': { nl: 'Verwachte kassa-omzet', ar: 'إيرادات الصندوق المتوقعة', en: 'Expected till takings' },
+  'vooruit.laagste': {
+    nl: 'Laagste stand: € {amount} op {date}.',
+    ar: 'أدنى رصيد: € {amount} في {date}.',
+    en: 'Lowest point: € {amount} on {date}.',
+  },
+  'vooruit.laagsteTekort': {
+    nl: 'Op {date} kom je € {amount} tekort.',
+    ar: 'في {date} ينقصك € {amount}.',
+    en: 'On {date} you are € {amount} short.',
+  },
+  'vooruit.naarBetalen': { nl: 'Naar te betalen', ar: 'إلى المستحقات', en: 'Go to payments' },
+  'vooruit.note.bankOnbekend': {
+    nl: 'We kennen je banksaldo niet. Alleen de bewegingen staan hier.',
+    ar: 'لا نعرف رصيد حسابك. تظهر هنا الحركات فقط.',
+    en: 'We do not know your bank balance. Only the movements are shown.',
+  },
+  'vooruit.note.bankDeels': {
+    nl: 'Van minstens één rekening kennen we het saldo niet.',
+    ar: 'لا نعرف رصيد حساب واحد على الأقل.',
+    en: 'We do not know the balance of at least one account.',
+  },
+  'vooruit.note.bankOud': {
+    nl: 'Saldo van je afschrift van {date}, plus de bankregels sindsdien.',
+    ar: 'الرصيد من كشف حسابك بتاريخ {date}، مع حركات البنك منذ ذلك الحين.',
+    en: 'Balance from your statement of {date}, plus the bank lines since.',
+  },
+  'vooruit.note.bankRekeningen': {
+    nl: '{count} rekeningen: bankregels tussen de afschriften tellen niet mee.',
+    ar: '{count} حسابات: حركات البنك بين الكشوف غير محسوبة.',
+    en: '{count} accounts: bank lines between the statements are not counted.',
+  },
+  'vooruit.note.kasOnbekend': { nl: 'De kas telt niet mee.', ar: 'الصندوق النقدي غير محسوب.', en: 'The cash drawer is not counted.' },
+  'vooruit.note.zonderDatum': {
+    nl: '{count} inkoopfacturen zonder vervaldatum (€ {amount}) tellen niet mee.',
+    ar: '{count} فواتير شراء بلا تاريخ استحقاق (€ {amount}) غير محسوبة.',
+    en: '{count} purchase invoices without a due date (€ {amount}) are not counted.',
+  },
+  'vooruit.note.zonderDatumEen': {
+    nl: 'Eén inkoopfactuur zonder vervaldatum (€ {amount}) telt niet mee.',
+    ar: 'فاتورة شراء واحدة بلا تاريخ استحقاق (€ {amount}) غير محسوبة.',
+    en: 'One purchase invoice without a due date (€ {amount}) is not counted.',
+  },
+  'vooruit.note.teLaat': {
+    nl: '{count} facturen zijn al over tijd (€ {amount}). Dat geld telt niet mee.',
+    ar: '{count} فواتير تجاوزت موعدها (€ {amount}). هذا المال غير محسوب.',
+    en: '{count} invoices are already overdue (€ {amount}). That money is not counted.',
+  },
+  'vooruit.note.teLaatEen': {
+    nl: 'Eén factuur is al over tijd (€ {amount}). Dat geld telt niet mee.',
+    ar: 'فاتورة واحدة تجاوزت موعدها (€ {amount}). هذا المال غير محسوب.',
+    en: 'One invoice is already overdue (€ {amount}). That money is not counted.',
+  },
+  'vooruit.note.kassaOnbekend': {
+    nl: 'Geen kassa-omzet geboekt, dus geen verwachte omzet.',
+    ar: 'لا إيرادات صندوق مسجلة، فلا إيرادات متوقعة.',
+    en: 'No till takings booked, so no expected takings.',
+  },
+  'vooruit.note.kassaDun': {
+    nl: 'De kassa-omzet rust op maar {days} geboekte dagen.',
+    ar: 'إيرادات الصندوق تستند إلى {days} أيام مسجلة فقط.',
+    en: 'The till takings rest on only {days} booked days.',
+  },
+
   // ─── [LOGBOEK] What happened in this administration, in words ───────────────────────────────
   //
   // 89 kinds of event were already being recorded — from 60 files, into audit_logs — and a

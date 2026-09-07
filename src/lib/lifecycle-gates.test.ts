@@ -16401,6 +16401,61 @@ test("[DEEL-CREDIT] the home tile subtracts the credit it already went and read"
   assert.doesNotMatch(pay, /creditedOn/, "the pairing side must keep pairing");
 });
 
+// ─── [VOORUIT] How much money there will be in 7 and in 30 days ───
+//
+// The owner's first question every week — "kom ik uit?" — had no answer, while the app held every
+// number it needed. The engine (cashflow-forecast.ts) is tested on its rules; what those tests
+// cannot see is below: that the route invents no balance, that the answer reaches the screen, and
+// that the panel holds no language of its own.
+
+test("[VOORUIT] the route never invents a balance, and refuses rather than answers on a failed invoice read", () => {
+  const route = code("src/app/api/cashflow/route.ts");
+  assert.match(route, /let bankBalance = balance\.balance;/, "the balance goes through as it came out — null included");
+  assert.doesNotMatch(route, /balance\.balance \?\? 0/, "a null balance is not zero euros");
+  assert.doesNotMatch(route, /Number\(balance\.balance/, "and it is not coerced on the way either");
+  // Lines the app could not read make the balance UNKNOWN, not merely stale: a closing balance
+  // from July presented beside a September due date, without the lines between, is a number the
+  // owner will act on.
+  assert.match(route, /if \(txRows == null\) \{[\s\S]{0,400}bankBalance = null;/, "unreadable bank lines withhold the balance");
+  // The two invoice reads carry the claim: an empty list reads as "nothing to pay".
+  assert.match(route, /if \(payRows == null \|\| recvRows == null\)/, "a failed invoice read must stop the answer");
+  assert.match(route, /status: 503/, "…with no answer, rather than a reassuring one");
+  // Open amounts come from the ONE rule ([OPEN-TOTAL]), net of creditnotas and known payment
+  // differences — never total_inc_btw, which would re-count what was already paid.
+  assert.match(route, /openAmountSigned\(r, creditedOn\(r\.id\)\)/, "receivables are net of what was credited");
+  assert.match(route, /differenceOn\.get\(r\.id\)/, "and net of what is probably not coming");
+  assert.doesNotMatch(route, /open: r\.total_inc_btw/, "the gross total is never an open amount");
+});
+
+test("[VOORUIT] the answer reaches the screen the owner opens most", () => {
+  const vandaag = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+  assert.match(vandaag, /<CashflowPanel \/>/, "the panel is mounted on Vandaag");
+  assert.match(vandaag, /import CashflowPanel from/);
+  const panel = code("src/components/cashflow/CashflowPanel.tsx");
+  assert.match(panel, /fetch\("\/api\/cashflow"\)/, "and it is the route's own answer");
+  assert.match(panel, /useEffect\(/, "fetched after paint, never in the server render");
+  assert.match(panel, /if \(!panel\) return null;/, "nothing is drawn until there is something true to draw");
+});
+
+test("[VOORUIT] the panel holds no language of its own, and every note code has a sentence", () => {
+  const panel = code("src/components/cashflow/CashflowPanel.tsx");
+  for (const dutch of ["Vooruit", "Te betalen", "tekort", "banksaldo", "dagen", "kassa"]) {
+    assert.ok(!new RegExp(`["'>][^"'<]*${dutch}`).test(panel), `a Dutch string is baked into the panel: "${dutch}"`);
+  }
+  assert.match(panel, /dir=\{panel\.dir\}/, "the direction travels with the words");
+  assert.match(panel, /textAlign: "end"/);
+  assert.doesNotMatch(panel, /textAlign: "right"|paddingLeft|paddingRight/, "physical sides are wrong in exactly one language");
+
+  const rule = code("src/lib/cashflow-forecast.ts");
+  const copy = code("src/lib/cashflow-forecast-copy.ts");
+  // Scoped to the ForecastNote union alone; its members are object types, so the first ";" is
+  // inside a member — the union ends where the next declaration begins.
+  const unionText = rule.slice(rule.indexOf("export type ForecastNote ="));
+  const codes = [...unionText.slice(0, unionText.indexOf("export interface")).matchAll(/code: "([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(codes.length >= 9, `expected the note codes, found ${codes.length}`);
+  for (const c of codes) assert.ok(copy.includes(`"${c}"`), `note code with no sentence: ${c}`);
+});
+
 test("[DEEL-CREDIT] the invoice list never states an open amount the credit beside it contradicts", () => {
   // The facturenlijst prints a chip that names the credited amount — "Deels gecrediteerd € 50" —
   // and printed, two lines below it, an open amount that ignored that very number. It also fed the

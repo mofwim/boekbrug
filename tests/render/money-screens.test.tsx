@@ -3465,3 +3465,47 @@ test("[RENDER-GATE] the asset register renders a row with its yearly amount and 
   assert.match(cand, /bm\.kandidaat\.nee/);
   assert.equal(renderToStaticMarkup(React.createElement(CandidateList, { candidates: [], t })), "", "no candidates → no box, not an empty box");
 });
+
+test("[VOORUIT] the forecast panel renders the ordinary case, a shortfall, and an unknown balance", async () => {
+  const { CashflowPanelView } = await import("../../src/components/cashflow/CashflowPanel");
+  const { cashflowPanel } = await import("../../src/lib/cashflow-forecast-copy");
+  const { forecastCashflow } = await import("../../src/lib/cashflow-forecast");
+  const input = {
+    today: "2026-09-07",
+    bank: { balance: 5_000, asOf: "2026-08-01", partial: false, netSinceAsOf: 120.5 },
+    kas: 250,
+    payables: [
+      { id: "p1", name: "Sligro", dueDate: "2026-09-10", open: 1_200, incasso: false },
+      { id: "p2", name: "Verhuurder", dueDate: "2026-09-12", open: 800, incasso: true },
+      { id: "p3", name: "Zonder datum", dueDate: null, open: 75, incasso: false },
+    ],
+    receivables: [{ id: "r1", name: "Klant A", invoiceDate: "2026-09-01", dueDate: "2026-09-15", open: 600, expectedDays: 10 }],
+    takings: { perTradingDay: 100, tradingDaysPerWeek: 7, daysMeasured: 30 },
+  };
+  const noop = () => {};
+
+  const panel = cashflowPanel(forecastCashflow(input))!;
+  const html = renderToStaticMarkup(React.createElement(CashflowPanelView, { panel, selected: 7, onSelect: noop, onAction: noop }));
+  assert.match(html, /5\.370,50/, "now = bank + lines since + drawer");
+  assert.match(html, /-2\.000,00/, "what leaves carries its minus");
+  assert.match(html, /800/, "the incasso share is named");
+  assert.match(html, /Zonder datum|zonder vervaldatum/, "the undated invoice is named, not counted");
+  assert.match(html, /01-08-2026/, "a stale balance says which statement it came from");
+  assert.match(html, /aria-selected="true"/, "one horizon is open");
+  assert.match(html, /30 dagen/, "…and the other is offered");
+
+  const month = renderToStaticMarkup(React.createElement(CashflowPanelView, { panel, selected: 30, onSelect: noop, onAction: noop }));
+  assert.notEqual(month, html, "the 30-day view is a different view");
+
+  const shortPanel = cashflowPanel(forecastCashflow({ ...input, bank: { ...input.bank, balance: 500 }, takings: null }))!;
+  const short = renderToStaticMarkup(React.createElement(CashflowPanelView, { panel: shortPanel, selected: 7, onSelect: noop, onAction: noop }));
+  assert.match(short, /Tekort op 14-09-2026<\/div><div[^>]*>€ 529,50/, "the shortfall is a label with a magnitude");
+  assert.doesNotMatch(short, /Tekort op[^€]*€ -/, "never a double minus");
+  assert.match(short, /€ -2\.000,00/, "the outflow beside it still carries its own minus");
+
+  const unknownPanel = cashflowPanel(forecastCashflow({ ...input, bank: { balance: null, asOf: null, partial: false, netSinceAsOf: null } }))!;
+  const unknown = renderToStaticMarkup(React.createElement(CashflowPanelView, { panel: unknownPanel, selected: 7, onSelect: noop, onAction: noop }));
+  assert.doesNotMatch(unknown, /Nu \(bank/, "no balance → no 'now' figure at all");
+  assert.match(unknown, /banksaldo niet/, "…and the absence is said");
+  assert.match(unknown, /-2\.000,00/, "the movements are still stated");
+});

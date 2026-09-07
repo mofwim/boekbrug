@@ -45,6 +45,7 @@ import { payToggleAnswer, isDuplicatePaidConflict, PAY_TOGGLE_FALLBACK_KEY } fro
 import { useDialog } from "@/components/ui/Dialog";
 // [BTW-RESERVERING] Het geld op de rekening dat al van de Belastingdienst is.
 import BtwReservationPanel from '@/components/btw/BtwReservationPanel'
+import CashflowPanel from '@/components/cashflow/CashflowPanel'
 // [BEVEILIGING] Zie de kop van dat bestand: hij rendert niets zodra de tweede stap aanstaat.
 import { TweestapsHint } from '@/components/beveiliging/TweestapsHint'
 
@@ -361,6 +362,11 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
           eerste render (zie de component) en toont niets tot het iets te zeggen heeft — dit scherm
           blijft dus even snel als het [WATERVAL] werk het maakte. */}
       <BtwReservationPanel />
+
+      {/* [VOORUIT] Hoeveel geld er over 7 en over 30 dagen is. Direct onder de btw-reservering,
+          omdat de twee samen de vraag beantwoorden waar dit scherm voor is: kom ik uit? Zelfde
+          patroon: haalt zijn cijfer op ná de eerste render en toont niets tot het iets waars heeft. */}
+      <CashflowPanel />
 
       {/* [P1-STUCK-PROCESSING] Nudge for invoices imported/photographed but not yet verified.
           Ambiguous ones stay in the verify queue with no reminder and their cost + BTW-aftrek
