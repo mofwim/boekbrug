@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 125 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 127 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -269,6 +269,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoice_corrections.sql', 'policy', 'invoice_corrections_accountant_read', 'invoice_corrections', 'public'),
   ('invoice_corrections.sql', 'policy', 'invoice_corrections_client_read', 'invoice_corrections', 'public'),
   ('invoice_corrections.sql', 'table', 'invoice_corrections', null, 'public'),
+  ('invoice_corrections_claim.sql', 'column', 'applying_since', 'invoice_corrections', 'public'),
   ('invoice_discount.sql', 'column', 'discount_type', 'invoices', 'public'),
   ('invoice_discount.sql', 'column', 'discount_value', 'invoices', 'public'),
   ('invoice_discount.sql', 'constraint', 'invoices_discount_pair_check', null, 'public'),
@@ -333,6 +334,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('mollie_settlements.sql', 'index', 'mollie_settlements_user_settled_idx', null, 'public'),
   ('mollie_settlements.sql', 'policy', 'mollie_settlements_select_own', 'mollie_settlements', 'public'),
   ('mollie_settlements.sql', 'table', 'mollie_settlements', null, 'public'),
+  ('mollie_settlements_fee_paid.sql', 'column', 'fee_paid_at', 'mollie_settlements', 'public'),
   ('ochtend_mail.sql', 'column', 'ochtend_mail', 'profiles', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_responded_at', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response', 'invoices', 'public'),
@@ -559,7 +561,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 141
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 143
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

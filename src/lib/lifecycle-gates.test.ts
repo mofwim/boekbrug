@@ -19373,8 +19373,8 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
     "cost booking is an allow-list — mirroring CASH_CATEGORIES in the result engine");
   assert.match(pure, /const restC = totalC - salesC;/,
     "[FIN-5] a Z-day remainder above tolerance still books its revenue on 8020");
-  assert.match(pure, /el\("endDate", input\.endDate\)/,
-    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31");
+  assert.match(pure, /const declaredEnd = lastEntryDate > input\.endDate \? lastEntryDate : input\.endDate;\s*out\.push\(el\("endDate", declaredEnd\)\)/,
+    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31 — stretched only to a transaction the file actually carries");
   assert.match(pure, /: "<companyIdent\/>"/,
     "companyIdent is a REQUIRED child of company in XAF 3.2 — empty element when KvK is absent, never omitted");
   const xafSpec = readFileSync("src/lib/xaf-export.test.ts", "utf8");
@@ -27836,6 +27836,13 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(xaf, /const booking = inv\.taxKind \? taxLetterBooking\(inv\.taxKind\) : null;/);
   assert.match(xaf, /booking === "prive" \? ACC\.prive : booking === "settlement" \? ACC\.btwTeBetalen : ACC\.vraagposten/);
   assert.match(xaf, /\{ accID: "0500", accDesc: "Privé-opnamen/, "the privé account is declared");
+  // [XAF-LENGTE] No raw String.slice on an element's content: every typed string goes through the
+  // code-point clip, at the schema's own limit. One over-long postcode refused the whole file.
+  assert.doesNotMatch(xaf.replace(/skipped\.slice\(0, 50\)/, ""), /esc\([^)]*\.slice\(0, \d+\)\)|\.slice\(0, \d+\), build/, "a raw slice reached the serializer");
+  for (const [elName, max] of [["postalCode", 10], ["taxRegIdent", 30], ["commerceNr", 100], ["streetname", 100], ["custSupName", 50]] as const) {
+    assert.match(xaf, new RegExp(`el\\("${elName}", esc\\(clip\\([^,]+, ${max}\\)\\)`), `${elName} is clipped to ${max}`);
+  }
+  assert.match(xaf, /const declaredEnd = lastEntryDate > input\.endDate \? lastEntryDate : input\.endDate;/, "the header covers every transaction");
   // The year screen names it, only when there was any.
   assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\(overzicht\.aanslagen \?\? 0\) > 0 &&/);
 });
@@ -27915,7 +27922,7 @@ test("[BEDRIJFSMIDDEL] the auditfile books the same split: 0100 for the purchase
   assert.match(xaf, /accID: "4900", accDesc: "Afschrijvingskosten",\s+accTp: "P", rgs: null/);
   assert.match(xaf, /const lines: Line\[\] = inv\.asset\s*\?\s*\[\{ accID: ACC\.activa, debitC: exC,/, "an asset purchase debits the balance sheet");
   assert.match(xaf, /if \(c <= 0\) return \{ reason: "afschrijving van nul of negatief — geweigerd" \};/);
-  assert.match(xaf, /push\("MEM", d\.date, d\.description\.slice\(0, 100\), buildDepreciation\(d\), "afschrijving", d\.id\);/);
+  assert.match(xaf, /push\("MEM", d\.date, clip\(d\.description, 100\), buildDepreciation\(d\), "afschrijving", d\.id\);/);
   const fetch = code("src/lib/xaf-fetch.ts");
   assert.match(fetch, /asset: assetInvoiceIds\.has\(r\.id\),/, "the fetch layer marks registered purchases");
   assert.match(fetch, /if \(last > end\) break;/, "no memoriaal is dated after the file's own end date");

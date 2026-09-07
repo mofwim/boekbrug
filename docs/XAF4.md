@@ -31,6 +31,19 @@ element names and order in both schemas.
 - The quarter package ships both: `Auditfile-YYYY-tm-Qn.xaf` and `…-XAF4.xaf`, and LEESMIJ says
   to import one of the two, never both.
 
+## Limits the file keeps, and one it does not claim
+
+- Every string the owner or the reader typed is clipped to the schema's length in code points
+  (postalCode 10, taxRegIdent 30, commerceNr/streetname 100, custSupName 50, companyName 255):
+  one over-long postcode used to refuse the whole file, and a UTF-16 slice through an emoji
+  left a lone surrogate that serialized as "�".
+- The header's `endDate` is the later of the route's clamp (today) and the latest transaction
+  date, so a post-dated invoice never sits outside the declared window.
+- `RGSVersion` is NOT emitted: the RGS codes on the main accounts are verified references, but
+  the version they were verified against is not recorded anywhere, and an optional element with
+  a guessed value is worse than none. Record the version when it is known; the element is a
+  one-liner then.
+
 ## Proof
 
 `schemas/xaf/` holds the official XSD and the Belastingdienst's own test file. The test

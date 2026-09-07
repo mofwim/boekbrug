@@ -429,7 +429,7 @@ function buildBank(tx: XafBankLine): { lines: Line[] } | { reason: string } {
     : tx.posSettlement ? ACC.kruisposten
     : ACC.vraagposten;
   const hint = counter === ACC.vraagposten && tx.category ? ` [${tx.category}]` : "";
-  const desc = (tx.description ?? "Bankmutatie").slice(0, 200);
+  const desc = clip(tx.description ?? "Bankmutatie", 200);
   return {
     lines: [
       { accID: ACC.bank, debitC: amtC, desc, docRef },
@@ -612,6 +612,17 @@ function buildTurnoverDay(t: XafTurnoverDay): { lines: Line[] } | { reason: stri
 
 // ── XML ──────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * [XAF-LENGTE] Clip a string to the XSD's character limit — in CODE POINTS, before escaping.
+ * `String.prototype.slice` counts UTF-16 units: a 49-letter name followed by an emoji clipped at
+ * 50 keeps a lone high surrogate, which every serializer turns into U+FFFD — the accountant's
+ * package then ends a name in "�". Clipped before `esc`, because "&amp;" is one character on
+ * paper and five in the string.
+ */
+function clip(s: string, max: number): string {
+  return Array.from(s).slice(0, max).join("");
+}
+
 function esc(s: string): string {
   // C0-stuurtekens eerst: een 0x1F uit een MT940-omschrijving maakt het bestand ONparseerbaar,
   // niet slechts ongeldig.
@@ -675,7 +686,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
   const purchaseIds: ReadonlySet<string> = new Set(input.purchases.map((p) => p.id));
   const salesIds: ReadonlySet<string> = new Set(input.sales.map((p) => p.id));
   for (const tx of input.bank) {
-    push("BNK", tx.date ?? "", (tx.description ?? "Bankmutatie").slice(0, 100), buildBank(tx), "bank", tx.id);
+    push("BNK", tx.date ?? "", clip(tx.description ?? "Bankmutatie", 100), buildBank(tx), "bank", tx.id);
   }
   for (const row of input.cash) {
     const built = buildCash(row, purchaseIds, salesIds);
@@ -686,7 +697,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
     push("OMZ", t.date, `Dagomzet ${t.date}`, buildTurnoverDay(t), "dagomzet", t.date);
   }
   for (const d of input.depreciation ?? []) {
-    push("MEM", d.date, d.description.slice(0, 100), buildDepreciation(d), "afschrijving", d.id);
+    push("MEM", d.date, clip(d.description, 100), buildDepreciation(d), "afschrijving", d.id);
   }
 
   // File totals, in cents, from the lines actually emitted — and the file-level balance assertion.
@@ -763,8 +774,13 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
   out.push(el("fiscalYear", String(year)));
   out.push(el("startDate", `${year}-01-01`));
   // [XAF-PERIODE] Never declare days that have not happened: "periods 6-12 empty" read as a fact
-  // about the administration. The route clamps endDate to today.
-  out.push(el("endDate", input.endDate));
+  // about the administration. The route clamps endDate to today — AND the header must cover every
+  // transaction the file carries: a post-dated invoice (invoice_date is owner-entered) is a fact
+  // in the books, and a trDt after the declared endDate is a file that contradicts itself. The
+  // XSD does not cross-check it; an importer's consistency rules do.
+  const lastEntryDate = entries.reduce<string>((mx, e) => (e.date > mx ? e.date : mx), input.endDate);
+  const declaredEnd = lastEntryDate > input.endDate ? lastEntryDate : input.endDate;
+  out.push(el("endDate", declaredEnd));
   out.push(el("curCode", "EUR"));
   out.push(el("dateCreated", input.dateCreated));
   out.push(el("softwareDesc", "BoekBrug"));
@@ -775,22 +791,24 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
   // nooit weggelaten (dan valideert het bestand niet en strandt de import als geheel).
   // [XAF-4] In 4.0 the KvK number is `Commercenr`, optional: left out when unknown, never empty.
   if (v4) {
-    if (input.company.kvkNumber) out.push(el("Commercenr", esc(input.company.kvkNumber.slice(0, 100))));
+    if (input.company.kvkNumber) out.push(el("Commercenr", esc(clip(input.company.kvkNumber, 100))));
   } else {
-    out.push(input.company.kvkNumber ? el("companyIdent", esc(input.company.kvkNumber)) : "<companyIdent/>");
+    out.push(input.company.kvkNumber ? el("companyIdent", esc(clip(input.company.kvkNumber, 100))) : "<companyIdent/>");
   }
-  out.push(el("companyName", esc(input.company.name.slice(0, 255))));
+  out.push(el("companyName", esc(clip(input.company.name, 255))));
   out.push(el("taxRegistrationCountry", "NL"));
   // taxRegIdent heeft GEEN minOccurs="0" in het 3.2-schema — een onderneming zonder BTW-nummer
   // (KOR-starter) kreeg een bestand dat als geheel niet valideerde. Leeg element, nooit weggelaten
   // — dezelfde regel als companyIdent hierboven, en per xmllint tegen het officiële XSD bevestigd.
-  out.push(input.company.btwNumber ? el("taxRegIdent", esc(input.company.btwNumber)) : "<taxRegIdent/>");
+  // TypeString30 in both schemas — and typed by the owner, who may have put a note in the field.
+  out.push(input.company.btwNumber ? el("taxRegIdent", esc(clip(input.company.btwNumber, 30))) : "<taxRegIdent/>");
   if (input.company.address || input.company.city) {
     out.push("<streetAddress>");
-    if (input.company.address) out.push(el("streetname", esc(input.company.address)));
-    // [XAF-LENGTE] Ook een String50 in het schema, en ook door de ondernemer zelf ingetypt.
-    if (input.company.city) out.push(el("city", esc(input.company.city.slice(0, 50))));
-    if (input.company.postalCode) out.push(el("postalCode", esc(input.company.postalCode)));
+    // [XAF-LENGTE] Every one of these is typed by the owner: streetname String100, city String50,
+    // postalCode String10 — "1234 AB Amsterdam" in the postcode field refused the whole file.
+    if (input.company.address) out.push(el("streetname", esc(clip(input.company.address, 100))));
+    if (input.company.city) out.push(el("city", esc(clip(input.company.city, 50))));
+    if (input.company.postalCode) out.push(el("postalCode", esc(clip(input.company.postalCode, 10))));
     out.push(el("country", "NL"));
     out.push("</streetAddress>");
   }
@@ -830,7 +848,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
     // Knippen VOOR het escapen, niet erna: "&amp;" is één teken op papier en vijf in de string, en
     // een knip op de vijftigste STRING-positie hakt zo'n entiteit doormidden. Dat levert geen te
     // lange naam meer op maar wel ongeldige XML — dezelfde fout, luidruchtiger.
-    out.push(el("custSupName", esc(name.slice(0, 50))));
+    out.push(el("custSupName", esc(clip(name, 50))));
     // [XAF-TEGENPARTIJ] De volgorde is die van het XSD en niet die van de leesbaarheid:
     // custSupID · custSupName · … · commerceNr(8) · taxRegistrationCountry(9) · taxRegIdent(10) ·
     // … · custSupTp(12). Een xs:sequence is geordend, dus een element op de verkeerde plek laat
@@ -838,7 +856,8 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
     // storing als een te lange custSupName hierboven, en met dezelfde uitkomst voor de boekhouder:
     // geen kleinere administratie, maar geen administratie.
     const kvk = kvkPerNaam.get(name);
-    if (kvk) out.push(el("commerceNr", esc(kvk.slice(0, 999))));
+    // TypeString100 — and the source may be an AI read of a supplier's footer.
+    if (kvk) out.push(el("commerceNr", esc(clip(kvk, 100))));
     const btwNr = btwPerNaam.get(name);
     if (btwNr) {
       // Het landdeel komt uit het nummer zelf ("NL8123.45.678.B01" → NL). Staat er geen geldig
@@ -846,7 +865,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
       // nummer is erger dan een leeg veld, want het is niet te zien dat het geraden is.
       const land = /^([A-Z]{2})/.exec(btwNr.toUpperCase())?.[1];
       if (land) out.push(el("taxRegistrationCountry", esc(land)));
-      out.push(el("taxRegIdent", esc(btwNr.slice(0, 30))));
+      out.push(el("taxRegIdent", esc(clip(btwNr, 30))));
     }
     out.push(el("custSupTp", id.startsWith("D") ? "C" : "S"));
     out.push("</customerSupplier>");
@@ -921,7 +940,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
         out.push("<trLine>");
         out.push(el("nr", String(++lineNr)));
         out.push(el("accID", l.accID));
-        out.push(el("docRef", esc(l.docRef.slice(0, 200))));
+        out.push(el("docRef", esc(clip(l.docRef, 200))));
         out.push(el("effDate", e.date));
         out.push(el("desc", esc(l.desc)));
         out.push(el("amnt", eur(Math.abs(l.debitC))));
@@ -930,7 +949,7 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
         // [XAF-4] The invoice number as its own element (a factuurvereiste), after custSupID and
         // before vat — the XSD's sequence order. Only in 4.0: 3.2 never carried it and stays as
         // every importer has validated it.
-        if (v4 && l.invRef) out.push(el("invRef", esc(l.invRef.slice(0, 255))));
+        if (v4 && l.invRef) out.push(el("invRef", esc(clip(l.invRef, 255))));
         if (l.vat) {
           out.push("<vat>");
           out.push(el("vatID", l.vat.rate === 21 ? "V21" : l.vat.rate === 9 ? "V9" : "V0"));
