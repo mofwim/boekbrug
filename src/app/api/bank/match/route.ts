@@ -37,6 +37,8 @@ import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history"
 import { allocatedByTransaction } from "@/lib/bank-line-budget";
 // [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
 import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
+import { attachmentsByTransaction } from "@/lib/bank-attachments";
+import { findStornoOrigin, isStornoLine, STORNO_WINDOW_DAYS } from "@/lib/bank-storno";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -67,7 +69,8 @@ export async function GET() {
         .from("bank_transactions")
         // [BANK-COUNTERPART-HISTORY] `category` rides along so the card can say what the owner did
         // with this counterpart before. No extra query: these rows are already read in full.
-        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category")
+        // [STORNO] type_code / mandate_id / creditor_id: the bank's own direct-debit markers.
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category, type_code, mandate_id, creditor_id")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .order("id", { ascending: true })
@@ -182,7 +185,7 @@ export async function GET() {
   // list — a truncated list rendered existing invoices as "missing" slots with an upload
   // control, inviting a duplicate import of a bill that was already there. Fifteen covers any
   // realistic bundle; the choice-list UI still shows only the top few.
-  const result = matchTransactions(transactions, invoices, { maxCandidates: 15, memory });
+  // The matcher runs BELOW, once the applied amounts are known — see [REST-MATCHT].
 
   // [BANK-MULTI-LINK-PERSIST] Partial-link coverage. A multi-invoice tx that has
   // already had ONE invoice paid against it keeps status='pending' + an invoice_id.
@@ -295,6 +298,23 @@ export async function GET() {
     !hasLinkRow.has(row.id) || amountUnknown.has(row.id)
       ? null
       : bankLineFullyApplied(row.amount, appliedByTx.get(row.id) ?? 0);
+
+  // [REST-MATCHT] A line partly booked on an invoice offers its REMAINDER to the matcher, not its
+  // full amount. A € 1.000 line with € 600 on invoice A never suggested the € 400 invoice B: the
+  // matcher compared B against € 1.000, the card said "€ 400 nog toe te wijzen" and offered
+  // nothing, and the owner had to find Verdelen by hand. Only where the applied total is
+  // MEASURED (every link priced); an unmeasured line keeps its full amount, as before.
+  const matcherInput = transactions.map((t, i) => {
+    const row = (txRows ?? [])[i] as BankTransactionDbRow | undefined;
+    if (!row || !hasLinkRow.has(row.id) || amountUnknown.has(row.id)) return t;
+    const applied = appliedByTx.get(row.id) ?? 0;
+    if (applied <= 0) return t;
+    const magnitude = Math.abs(Number(row.amount) || 0);
+    const rest = Math.max(0, magnitude - applied);
+    if (rest <= 0.01) return t;
+    return { ...t, amount: (Number(row.amount) || 0) < 0 ? -rest : rest };
+  });
+  const result = matchTransactions(matcherInput, invoices, { maxCandidates: 15, memory });
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -669,6 +689,7 @@ export async function GET() {
   // join table + a fallback to the single invoice_id (covers pre-migration lines with no join
   // rows). Best-effort, display only — wrapped so a missing table degrades to the invoice_id path.
   const idsByTx = new Map<string, Set<string>>();
+  const linkedNumberById = new Map<string, string | null>();
   for (const r of matchedTx) idsByTx.set(r.id, new Set(r.invoice_id ? [r.invoice_id as string] : []));
   if (matchedTx.length > 0) {
     // [IN-CHUNK] matchedTx is fully paged above, so on a real account it holds thousands of ids —
@@ -717,7 +738,7 @@ export async function GET() {
             .order("id", { ascending: true })
             .range(from, to),
       );
-      for (const i of linkedInvs) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+      for (const i of linkedInvs) { numById.set(i.id, normalizeRef(i.invoice_number ?? "")); linkedNumberById.set(i.id, i.invoice_number); }
     } catch {
       /* display only — the card falls back to the parsed reference numbers */
     }
@@ -784,9 +805,68 @@ export async function GET() {
       coveredNumbers: covered,
       // [BANK-AMOUNT-ONLY] 'amount_only' → the Gekoppeld card shows a "controleer" flag.
       matchReason: reasonByTx.get(row.id) ?? null,
+      // [OPEN-FACTUUR] The invoices this line paid, by id, so the card can open the document the
+      // owner is checking against — the Gekoppeld card showed numbers and no way to the file.
+      linkedInvoices: [...(idsByTx.get(row.id) ?? [])].map((id) => ({ invoiceId: id, invoiceNumber: linkedNumberById.get(id) ?? null })),
     };
   });
 
+  // [STORNO] A pending CREDIT the bank marks as a direct-debit event is the reversal of a
+  // collection. Find the one matched debit it undoes — same cents, same party, at most 45 days
+  // earlier — and put it on the card, so the owner can reopen the invoice with one tap instead of
+  // reading "Geen factuur" over a payment that was taken back.
+  {
+    type StornoRow = BankTransactionDbRow & { type_code?: string | null; mandate_id?: string | null; creditor_id?: string | null };
+    const stornos = ((txRows ?? []) as StornoRow[]).filter((r) => isStornoLine({
+      id: r.id, amount: r.amount, date: r.date, counterpartIban: r.counterpart_iban, counterpartName: r.counterpart_name,
+      description: r.description, reference: r.reference, typeCode: r.type_code, mandateId: r.mandate_id, creditorId: r.creditor_id,
+    }));
+    if (stornos.length > 0) {
+      const amounts = [...new Set(stornos.map((r) => -Math.abs(Number(r.amount) || 0)))];
+      const oldest = stornos.reduce<string>((m, r) => (r.date && r.date < m ? r.date : m), stornos[0].date ?? "9999-12-31");
+      const since = new Date(Date.parse(`${oldest}T00:00:00Z`) - STORNO_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+      // [IN-CHUNK] Chunked + paged like every id-keyed read here; the amounts list is the key.
+      const origins = await fetchAllRowsForIds<{ id: string; date: string | null; amount: number | null; counterpart_name: string | null; counterpart_iban: string | null; status: string | null; invoice_id: string | null }, number>(
+        amounts,
+        (chunk, from, to) =>
+          pipeline
+            .from("bank_transactions")
+            .select("id, date, amount, counterpart_name, counterpart_iban, status, invoice_id")
+            .eq("user_id", user.id).eq("status", "matched").in("amount", chunk).gte("date", since)
+            .order("id", { ascending: true }).range(from, to),
+      ).catch(() => []);
+      const pool = origins.map((o) => ({ id: o.id, amount: o.amount, date: o.date, counterpartIban: o.counterpart_iban, counterpartName: o.counterpart_name, status: o.status, invoiceId: o.invoice_id }));
+      const pairs = new Map<string, { originTxId: string; originDate: string | null; invoiceId: string }>();
+      for (const r of stornos) {
+        const hit = findStornoOrigin({
+          id: r.id, amount: r.amount, date: r.date, counterpartIban: r.counterpart_iban, counterpartName: r.counterpart_name,
+          description: r.description, reference: r.reference, typeCode: r.type_code, mandateId: r.mandate_id, creditorId: r.creditor_id,
+        }, pool);
+        if (hit && hit.invoiceId) pairs.set(r.id, { originTxId: hit.id, originDate: hit.date, invoiceId: hit.invoiceId });
+      }
+      if (pairs.size > 0) {
+        const invs = await fetchAllRowsForIds<{ id: string; invoice_number: string | null }, string>(
+          [...new Set([...pairs.values()].map((p) => p.invoiceId))],
+          (chunk, from, to) => pipeline.from("invoices").select("id, invoice_number").in("id", chunk).order("id", { ascending: true }).range(from, to),
+        ).catch(() => []);
+        const numberOf = new Map(invs.map((i) => [i.id, i.invoice_number]));
+        for (const s of suggestions) {
+          const p = (s as { transactionId: string | null }).transactionId ? pairs.get((s as { transactionId: string }).transactionId) : undefined;
+          if (p) (s as { storno?: unknown }).storno = { ...p, invoiceNumber: numberOf.get(p.invoiceId) ?? null };
+        }
+      }
+    }
+  }
+
+  // [BIJLAGE-BIJ-REGEL] The files kept with each line, on every card the screen shows.
+  const allSuggestions = [...suggestions, ...linkedSuggestions];
+  const attachments = await attachmentsByTransaction(
+    pipeline, user.id, allSuggestions.map((s) => (s as { transactionId: string | null }).transactionId).filter((x): x is string => !!x),
+  );
+  for (const s of allSuggestions) {
+    const id = (s as { transactionId: string | null }).transactionId;
+    (s as { attachments?: unknown }).attachments = id ? (attachments.get(id) ?? []) : [];
+  }
   return NextResponse.json({
     ok: true,
     summary: {
@@ -795,6 +875,6 @@ export async function GET() {
       choice: result.choiceCount,
       none: result.noneCount,
     },
-    suggestions: [...suggestions, ...linkedSuggestions],
+    suggestions: allSuggestions,
   });
 }

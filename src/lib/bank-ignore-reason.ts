@@ -31,7 +31,7 @@
 //
 // Pure + node-testbaar (run: npx tsx src/lib/bank-ignore-reason.test.ts).
 
-export const BANK_IGNORE_REASONS = ['prive', 'geen_factuur', 'dubbel', 'niet_van_mij', 'anders'] as const
+export const BANK_IGNORE_REASONS = ['prive', 'geen_factuur', 'dubbel', 'niet_van_mij', 'storno', 'anders'] as const
 
 export type BankIgnoreReason = (typeof BANK_IGNORE_REASONS)[number]
 
@@ -52,6 +52,10 @@ export const BANK_IGNORE_REASON_LABELS: Record<BankIgnoreReason, { label: string
   niet_van_mij: {
     label: 'Niet van mij',
     hint: 'terugboeking of vergissing van de bank',
+  },
+  storno: {
+    label: 'Storno',
+    hint: 'incasso teruggeboekt — geld ging weg en kwam terug',
   },
   anders: {
     label: 'Anders',
@@ -111,6 +115,8 @@ export function ignoredLineCountsInBooks(reason: string | null | undefined): boo
     case 'prive':
     case 'dubbel':
     case 'niet_van_mij':
+    // [STORNO] Two lines that net to zero: the money went out and came back.
+    case 'storno':
       return false
     // 'geen_factuur' is een echte kost; 'anders' en null zeggen niets. Beide blijven tellen.
     default:

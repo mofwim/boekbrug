@@ -43,12 +43,12 @@ function isValidStatus(s: string | null): s is InvoiceStatus {
 
 // [BOEK-014] Separate SELECT constants — concatenation causes GenericStringError
 const INVOICE_SELECT =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type" as const;
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, tax_kind" as const;
 
 // [F2] Both owner sides — an invoice is attributed to the client that is either
 // its sender (a sale) or its receiver (a purchase).
 const INVOICE_SELECT_WITH_OWNERS =
-  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, sender_id, receiver_id" as const;
+  "invoice_number, client_name, client_email, client_address, client_postal_code, client_city, status, direction, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, created_at, invoice_type, tax_kind, sender_id, receiver_id" as const;
 
 // Local type for accountant query rows — includes both owner ids
 type InvRowWithOwners = InvRow & { sender_id: string | null; receiver_id: string | null };

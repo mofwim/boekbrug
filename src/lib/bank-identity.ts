@@ -27,7 +27,7 @@ export type TxIdentity =
 // ─── Patterns (Dutch bank statements) ─────────────────────────────────────────
 // Kept deliberately specific to avoid mislabelling a real purchase as "not a cost".
 
-const TAX_RE = /\bbelastingdienst\b|belasting dienst/;
+const TAX_RE = /belastings?dienst|belasting dienst/;
 const PRIVE_RE = /\bpriv[eé]\b|priv[eé][- ]?opname|priv[eé][- ]?storting/;
 const TRANSFER_RE =
   /\bspaar-?rekening\b|oranje spaar|\beigen rekening\b|kruispost|naar (?:mijn )?spaar|van (?:mijn )?spaar/;

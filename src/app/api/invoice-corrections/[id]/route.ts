@@ -11,6 +11,14 @@
 // A proposal is refused as STALE when the invoice no longer matches the snapshot on the fields it
 // names: someone corrected it in between, and applying an old proposal on top of the newer truth
 // is the one thing this feature must never do.
+//
+// ── ONE DECISION ──
+// The row and the invoice must never contradict each other, and two requests must never both run
+// the door. So an accept CLAIMS the row first (applying_since, compare-and-set on status = open
+// and no live claim), then calls the door, then closes the row — and every write on the row checks
+// that it actually moved a row. A decline is refused while a claim is live. A request that died
+// between the door and the close leaves the invoice carrying the proposal; the next tap sees that
+// (isAlreadyApplied) and closes the row as accepted instead of calling it stale.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
@@ -18,7 +26,7 @@ import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { requireOwner } from '@/lib/owner-only'
 import { createNotification } from '@/lib/notifications'
 import { logAuditAction, getClientIP } from '@/lib/audit'
-import { isStale, proposalPatchBody, type ProposableValues, type ProposedChange } from '@/lib/correction-proposal'
+import { isStale, isAlreadyApplied, isChangeList, proposalEndsOn, proposalPatchBody, CLAIM_LEASE_MS, type ProposableValues, type ProposedChange } from '@/lib/correction-proposal'
 import { PATCH as correctInvoiceAmounts } from '@/app/api/invoice/[id]/amounts/route'
 
 export const dynamic = 'force-dynamic'
@@ -27,8 +35,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 type ProposalRow = {
   id: string; accountant_id: string; client_id: string; invoice_id: string; status: string
-  before: ProposableValues; proposed: ProposableValues; changes: ProposedChange[]
+  before: ProposableValues; proposed: ProposableValues; changes: ProposedChange[]; applying_since: string | null
 }
+
+const READ_FAILED = 'Het voorstel kon niet worden gelezen — probeer het opnieuw.'
+const BUSY = 'Dit voorstel wordt op dit moment al verwerkt — ververs de pagina.'
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -46,26 +57,47 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const pipeline = createPipelineClient() as any
   const { data: p, error: readErr } = await pipeline
     .from('invoice_corrections')
-    .select('id, accountant_id, client_id, invoice_id, status, before, proposed, changes')
+    .select('id, accountant_id, client_id, invoice_id, status, before, proposed, changes, applying_since')
     .eq('id', id)
     .eq('client_id', user.id)
     .maybeSingle()
   if (readErr) {
     console.error('[VOORSTEL] voorstel lezen mislukt', { userId: user.id, id, error: readErr.message })
-    return NextResponse.json({ error: 'Het voorstel kon niet worden gelezen — probeer het opnieuw.' }, { status: 503 })
+    return NextResponse.json({ error: READ_FAILED }, { status: 503 })
   }
   const proposal = p as ProposalRow | null
   if (!proposal) return NextResponse.json({ error: 'Voorstel niet gevonden' }, { status: 404 })
   if (proposal.status !== 'open') return NextResponse.json({ error: 'Dit voorstel is al beantwoord.', code: 'decided' }, { status: 409 })
+  if (!isChangeList(proposal.changes) || !proposal.before || !proposal.proposed) {
+    console.error('[VOORSTEL] voorstelrij onleesbaar', { userId: user.id, id })
+    return NextResponse.json({ error: READ_FAILED }, { status: 503 })
+  }
+  const now = Date.now()
+  const claimLive = proposal.applying_since !== null && now - Date.parse(proposal.applying_since) < CLAIM_LEASE_MS
+  const leaseEdge = new Date(now - CLAIM_LEASE_MS).toISOString()
 
-  const decide = async (status: 'accepted' | 'declined' | 'stale') => {
-    await pipeline.from('invoice_corrections')
-      .update({ status, decided_at: new Date().toISOString() })
+  // Every write on the row is a compare-and-set that reports whether it moved the row: from open
+  // and unclaimed (fromClaim = false), or from the claim this request holds (fromClaim = true).
+  type RowStatus = 'accepted' | 'declined' | 'stale'
+  const closeRow = async (status: RowStatus, fromClaim: boolean): Promise<'moved' | 'lost' | 'failed'> => {
+    let q = pipeline.from('invoice_corrections')
+      .update({ status, decided_at: new Date().toISOString(), applying_since: null })
       .eq('id', proposal.id).eq('status', 'open')
+    // Without a claim the row must be unclaimed (or the claim dead); with one it must be ours.
+    q = fromClaim ? q.not('applying_since', 'is', null) : q.or(`applying_since.is.null,applying_since.lt.${leaseEdge}`)
+    const { data, error } = await q.select('id')
+    if (error) {
+      console.error('[VOORSTEL] voorstel sluiten mislukt', { userId: user.id, id, status, error: error.message })
+      return 'failed'
+    }
+    return data && data.length > 0 ? 'moved' : 'lost'
   }
 
   if (action === 'decline') {
-    await decide('declined')
+    if (claimLive) return NextResponse.json({ error: BUSY, code: 'busy' }, { status: 409 })
+    const r = await closeRow('declined', false)
+    if (r === 'failed') return NextResponse.json({ error: 'Het antwoord kon niet worden opgeslagen — probeer het opnieuw.' }, { status: 503 })
+    if (r === 'lost') return NextResponse.json({ error: 'Dit voorstel is al beantwoord.', code: 'decided' }, { status: 409 })
     await createNotification({
       userId: proposal.accountant_id, type: 'status',
       title: 'Correctievoorstel afgewezen', // [TAAL-DB]
@@ -89,26 +121,69 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     total_ex_btw: inv.total_ex_btw, btw_amount: inv.btw_amount, total_inc_btw: inv.total_inc_btw,
     invoice_date: inv.invoice_date, due_date: inv.due_date,
   }
-  if (isStale(proposal.before, current, proposal.changes)) {
-    await decide('stale')
+  const stale = isStale(proposal.before, current, proposal.changes)
+  // The invoice already carries the proposal: the door ran and the row was not closed. Close it
+  // as what it is — accepted — and never as stale. Checked before the stale check on purpose: an
+  // applied proposal is by definition "moved since the snapshot".
+  const applied = isAlreadyApplied(proposal.proposed, current, proposal.changes)
+  if (claimLive && !applied) return NextResponse.json({ error: BUSY, code: 'busy' }, { status: 409 })
+  if (applied) {
+    const r = await closeRow('accepted', false)
+    if (r === 'failed') return NextResponse.json({ error: 'Het antwoord kon niet worden opgeslagen — probeer het opnieuw.' }, { status: 503 })
+    if (r === 'lost') return NextResponse.json({ error: 'Dit voorstel is al beantwoord.', code: 'decided' }, { status: 409 })
+    await logAuditAction({ userId: user.id, action: 'invoice.correction_accepted', entityType: 'invoice', entityId: proposal.invoice_id, newValue: { proposal_id: proposal.id, changes: proposal.changes, already_applied: true }, ipAddress: getClientIP(request) })
+    return NextResponse.json({ ok: true, status: 'accepted' })
+  }
+  if (stale) {
+    const r = await closeRow('stale', false)
+    if (r === 'lost') return NextResponse.json({ error: 'Dit voorstel is al beantwoord.', code: 'decided' }, { status: 409 })
     return NextResponse.json({ error: 'De factuur is intussen veranderd; dit voorstel vervalt. Vraag je boekhouder om een nieuw voorstel.', code: 'stale' }, { status: 409 })
   }
 
+  // CLAIM. Exactly one request gets past this line per open row per lease: the WHERE re-asserts
+  // open + unclaimed (or a dead claim), and .select() says whether it was us.
+  const { data: claimed, error: claimErr } = await pipeline.from('invoice_corrections')
+    .update({ applying_since: new Date(now).toISOString() })
+    .eq('id', proposal.id).eq('status', 'open')
+    .or(`applying_since.is.null,applying_since.lt.${leaseEdge}`)
+    .select('id')
+  if (claimErr) {
+    console.error('[VOORSTEL] claim mislukt', { userId: user.id, id, error: claimErr.message })
+    return NextResponse.json({ error: 'De correctie kon nu niet worden toegepast — probeer het opnieuw.' }, { status: 503 })
+  }
+  if (!claimed || claimed.length === 0) return NextResponse.json({ error: BUSY, code: 'busy' }, { status: 409 })
+
   // The client's own door, in the client's own session. Nothing else writes the invoice.
-  const patchBody = proposalPatchBody(proposal.proposed, proposal.changes)
+  const patchBody = { ...proposalPatchBody(proposal.proposed, proposal.changes), proposal_id: proposal.id }
   const doorRequest = new NextRequest(new URL(`/api/invoice/${proposal.invoice_id}/amounts`, request.url), {
     method: 'PATCH',
-    headers: { 'content-type': 'application/json', 'x-forwarded-for': request.headers.get('x-forwarded-for') ?? '' },
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': request.headers.get('x-forwarded-for') ?? '',
+      'x-real-ip': request.headers.get('x-real-ip') ?? '',
+    },
     body: JSON.stringify(patchBody),
   })
   const doorResponse = await correctInvoiceAmounts(doorRequest, { params: Promise.resolve({ id: proposal.invoice_id }) })
   if (!doorResponse.ok) {
     const doorJson = await doorResponse.json().catch(() => ({}))
-    // The door's own sentence, the door's own status: the proposal stays open for a second try.
+    if (proposalEndsOn(doorJson.code)) {
+      // Paid, money booked, or verwerkt: this proposal can never apply. Closed as vervallen, so the
+      // accountant is not shown "wacht op de klant" for a decision nobody can take.
+      await closeRow('stale', true)
+      return NextResponse.json({ error: doorJson.error ?? 'De correctie kon niet worden toegepast.', code: 'stale' }, { status: 409 })
+    }
+    // Release the claim: the door's own sentence, the door's own status, the proposal stays open.
+    const { error: relErr } = await pipeline.from('invoice_corrections')
+      .update({ applying_since: null }).eq('id', proposal.id).eq('status', 'open')
+    if (relErr) console.error('[VOORSTEL] claim vrijgeven mislukt', { userId: user.id, id, error: relErr.message })
     return NextResponse.json({ error: doorJson.error ?? 'De correctie kon niet worden toegepast.', code: doorJson.code ?? 'door_refused' }, { status: doorResponse.status })
   }
 
-  await decide('accepted')
+  // The invoice is written. Close the row from our claim; if that somehow fails, say so loudly —
+  // the next tap heals it through isAlreadyApplied, and the trail below still records the fact.
+  const closed = await closeRow('accepted', true)
+  if (closed !== 'moved') console.error('[VOORSTEL] factuur aangepast maar voorstelrij niet gesloten', { userId: user.id, id, closed })
   await createNotification({
     userId: proposal.accountant_id, type: 'status',
     title: 'Correctievoorstel overgenomen', // [TAAL-DB]

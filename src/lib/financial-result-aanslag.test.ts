@@ -1,6 +1,7 @@
 // [AANSLAG] Run: npx tsx --test src/lib/financial-result-aanslag.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { computeResult, type ResultInvoice } from "./financial-result";
 import { buildSettlementEvents } from "./kas-payment-events";
 
@@ -54,4 +55,33 @@ test("[AANSLAG] under kasstelsel the settlement slice is withheld by the id map"
   assert.equal(r.kosten, 2500);
   assert.equal(r.aanslagen, 1200);
   assert.equal(r.btwVoorbelasting, 225);
+});
+
+test("[AANSLAG] motorrijtuigenbelasting is a cost for its whole gross, and a misread btw on it is never voorbelasting", () => {
+  const r = computeResult([
+    inv({ id: "mrb", client_name: "Belastingdienst", tax_kind: "motorrijtuigenbelasting", total_ex_btw: 165.29, btw_amount: 34.71 }),
+  ], [], [], [], undefined, 0);
+  assert.equal(r.kosten, 200, "the letter says € 200 and € 200 is the cost");
+  assert.equal(r.btwVoorbelasting, 0, "no letter of the Belastingdienst carries btw");
+  assert.equal(r.aanslagen, 0);
+  // Same under kasstelsel, by the id map.
+  const mrb = buildSettlementEvents({ invoiceId: "mrb", direction: "incoming", totalEx: 165.29, totalBtw: 34.71, totalInc: 200 }, 0, [{ payDate: "2026-05-10", amountApplied: 200, estimated: false }]);
+  const k = computeResult([], [], [], [], undefined, 0, undefined, {
+    scheme: "kas", settlements: mrb, taxKindByInvoice: new Map([["mrb", "motorrijtuigenbelasting" as const]]),
+  });
+  assert.equal(k.kosten, 200);
+  assert.equal(k.btwVoorbelasting, 0);
+});
+
+test("[AANSLAG] under kasstelsel the map reaches a letter dated in an EARLIER window — the settlement fetch builds it", () => {
+  // The range assembler used to build the map from the invoices dated in the window only; a
+  // voorlopige aanslag dated 20 March and paid 5 April reached Q2 as a cost. The map now comes
+  // from the settlement fetch (every settled purchase, no date filter) and is merged in.
+  const code = (p: string) => readFileSync(p, "utf8");
+  const fetchSrc = code("src/lib/kas-payment-events-fetch.ts");
+  assert.match(fetchSrc, /marked_paid_at, status, tax_kind, client_name"\)/, "the settlement fetch reads the kind and the name");
+  assert.match(fetchSrc, /if \(i\.receiver_id === ownerId\) \{ const k = effectiveTaxKind\(i\); if \(k\) taxKindByInvoice\.set\(i\.id, k\); \}/);
+  assert.match(fetchSrc, /return \{ \.\.\.buildQuarterSettlements\(headers, raw, start, end\), taxKindByInvoice \};/);
+  assert.match(fetchSrc, /const taxKindByInvoice = merge\(opts\.taxKindByInvoice, local\.taxKindByInvoice\)/, "mergeSchemeOpts merges it like the other three maps");
+  assert.match(code("src/lib/result-range-assemble.ts"), /\.\.\.\(kas\.taxKindByInvoice \?\? new Map<string, TaxKind>\(\)\),/, "the range assembler merges the settled kinds under kas");
 });

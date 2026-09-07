@@ -35,7 +35,8 @@
 --     administratie die niet van de aanroeper is.
 --   · recompute_invoice_amount_paid, fair_use_consume, fair_use_release — de stand van andermans
 --     boekhouding en tegoed herrekenen of opsouperen.
---   · confirm_bank_payment — kent geen enkele aanroeper meer in de code, en stond wél open.
+--   · confirm_bank_payment — stond hier tot september 2026; /api/bank/confirm roept haar sinds
+--     bank_confirm_atomic weer aan met de sessieclient. Zie confirm_bank_payment_regrant.sql.
 --   · handle_new_user, assert_credit_within_original — triggerfuncties. Die horen sowieso geen
 --     RPC te zijn.
 --
@@ -139,7 +140,6 @@ BEGIN
     'recompute_invoice_amount_paid',
     'fair_use_consume',
     'fair_use_release',
-    'confirm_bank_payment',
     'handle_new_user',
     'assert_credit_within_original'
   ]

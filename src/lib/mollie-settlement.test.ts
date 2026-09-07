@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  feeInvoiceFrom, isPayoutOf, payoutLineVerdict, splitPayments, summarizeSettlement,
+  feeInvoiceFrom, isPayoutOf, payoutLineVerdict, splitPayments, summarizeSettlement, paymentsCoverRevenue, holdReason, feeClientKey,
   type MollieSettlement,
 } from "./mollie-settlement";
 
@@ -103,4 +103,30 @@ test("[MOLLIE-AFREKENING] the payout line needs the amount, the name and the dat
   assert.ok(!isPayoutOf({ ...line, description: "Overboeking", counterpart_name: "J. Jansen" }, s), "no Mollie in the text");
   assert.ok(isPayoutOf({ ...line, description: "1234567.2609.01", counterpart_name: null }, s), "the bank reference alone names it");
   assert.ok(!isPayoutOf({ ...line, date: "2026-09-20" }, s), "sixteen days later is a different settlement");
+});
+
+test("[MOLLIE-AFREKENING] a refund or chargeback inside the settlement holds it, even when every payment is ours", () => {
+  const v = summarizeSettlement(settlement());
+  assert.ok(v.ok);
+  const payments = [{ id: "tr_a", amount: eur("1000.00") }, { id: "tr_b", amount: eur("510.00") }];
+  const split = splitPayments(payments, new Set(["tr_a", "tr_b"]));
+  assert.equal(payoutLineVerdict(split), "transfer", "the old verdict: every payment is ours");
+  assert.equal(payoutLineVerdict(split, { summary: v.summary, adjustments: 0 }), "transfer");
+  assert.equal(payoutLineVerdict(split, { summary: v.summary, adjustments: 1 }), "hold", "one refund → hold");
+  // The payments do not explain the revenue: something else (a refund line) sits in it.
+  const short = splitPayments([{ id: "tr_a", amount: eur("1000.00") }], new Set(["tr_a"]));
+  assert.equal(paymentsCoverRevenue(short, v.summary), false);
+  assert.equal(payoutLineVerdict(short, { summary: v.summary, adjustments: 0 }), "hold");
+  assert.equal(paymentsCoverRevenue(split, v.summary), true);
+  const reason = holdReason(split, v.summary, 1);
+  assert.match(reason, /terugbetaling/);
+  assert.match(reason, /één netto bedrag/, "the owner is told the line is netted, so nobody codes it whole as omzet");
+  assert.match(holdReason(splitPayments(payments, new Set(["tr_a"])), v.summary, 0), /€ 510\.00 van de betalingen hoort niet bij een BoekBrug-factuur/);
+});
+
+test("[MOLLIE-AFREKENING] the fee payment key is one per (settlement row, invoice), deterministic, uuid-shaped", () => {
+  const k1 = feeClientKey("11111111-2222-3333-4444-555555555555", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+  assert.match(k1, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(feeClientKey("11111111-2222-3333-4444-555555555555", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), k1, "a retry replays the same booking");
+  assert.notEqual(feeClientKey("11111111-2222-3333-4444-555555555555", "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"), k1, "a recreated invoice gets its own key");
 });

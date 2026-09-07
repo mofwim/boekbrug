@@ -166,6 +166,8 @@ export interface MatchCandidate {
   // (the 'amount_only' tier) demands a STRONG match — see autoConfirmTier / HIGH_NAME_SIM.
   // Optional: candidates built outside matchTransactions (e.g. batch reconcile) may omit it.
   nameSim?: number;
+  /** [NUMMER-BOTST] The account the DOCUMENT names, so a printed-number match can be vetoed by the bank's counterparty. */
+  vendorIban?: string | null;
   // [BANK-AMOUNT-ONLY-TOKENS] Whether the two counterpart names identify the same party strongly
   // (see isStrongNameIdentity). nameSim alone cannot express this: "Jansen B.V." and "Jansen
   // Holding" both reduce to the single token {jansen}, giving a containment of 1.0 — a perfect
@@ -978,6 +980,28 @@ export function autoConfirmTier(m: TransactionMatch): AutoConfirmTier | null {
   }
   const sig = m.best.signals;
   if (!sig.includes("amount")) return null; // the amount is the money-truth — required by both tiers
+  if (sig.includes("reference") && !sig.includes("iban")) {
+    // [NUMMER-BOTST] A printed number plus the exact amount was 'certain' with no counterparty
+    // veto at all. Supplier numbers are not unique across suppliers ("2026-014" is everyone's
+    // fourteenth invoice), so paying supplier B € 121 under B's own number booked supplier A's
+    // open € 121 invoice of the same number — silently, A marked paid on B's date, B's line
+    // gone from "Geen factuur" so the missing-invoice alarm never rang.
+    //   · The bank names an account the document contradicts → not this invoice, no tier.
+    //   · On a PAYMENT OUT with a counterparty that does not even clear the listing bar and no
+    //     account to confirm it → booked flagged ('controleer'), never silently. A customer
+    //     paying US quotes OUR number, which is unique in this administration, so that side
+    //     keeps 'certain'.
+    const txIban = normalizeIban(m.transaction.counterpartIban);
+    const invIban = normalizeIban(m.best.vendorIban);
+    if (txIban && invIban && txIban !== invIban) return null;
+    // The reference branch never records a 'counterpart' signal, so the raw similarity is the
+    // measure: below the listing bar (nameSimThreshold) the bank's counterparty is not this
+    // invoice's party.
+    const paymentOut = (m.transaction.amount ?? 0) < 0;
+    const nameGiven = (m.transaction.counterpartName ?? "").trim().length > 0;
+    const nameWeak = (m.best.nameSim ?? 0) < DEFAULT_OPTIONS.nameSimThreshold && m.best.nameIdentity !== true;
+    if (paymentOut && nameGiven && nameWeak && !invIban) return "amount_only";
+  }
   if (sig.includes("reference") || sig.includes("iban")) return "certain";
   // [SUPPLIER-IBAN] The account the supplier bills from, known from the registry rather than
   // printed on this invoice. Placed ABOVE the name branch because it is the stronger evidence: a
@@ -1145,6 +1169,15 @@ function topReachesAuto(
   // the lead was an artefact of removal, while the stamp was written before any matching ran.
   const uniquePrepared =
     top.signals.includes("prepared") && !free.slice(1).some((c) => c.signals.includes("prepared"));
+  // [TWEELING] Two open invoices of the SAME party for the SAME amount, neither named by the
+  // statement nor declared by the owner: only the date bonus separates them, and a date is not
+  // an identity. With a known IBAN the pair capped at 0.96 and the bonus alone cleared the
+  // margin, so January's late payment booked February's invoice and February's real payment
+  // then booked January — documents and payment dates crossed, nothing flagged. A human choice.
+  const twin = free.slice(1).some(
+    (c) => c.signals.includes("amount") && isStrongNameIdentity(top.clientName ?? null, c.clientName ?? null),
+  );
+  if (twin && top.signals.includes("amount") && !uniqueRef && !uniquePrepared) return false;
   return strongLead || uniqueRef || uniquePrepared;
 }
 
@@ -1195,6 +1228,7 @@ export function matchTransactions(
         nameSim,
         nameIdentity: isStrongNameIdentity(tx.counterpartName, inv.client_name),
         clientName: inv.client_name, // [BANK-DEDUP-SUPPLIER] dedupe key component
+        vendorIban: inv.vendor_iban ?? null,
         amountPaid: alreadyPaid,
         remaining: stillOpen,
       });

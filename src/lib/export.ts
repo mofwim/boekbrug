@@ -5,6 +5,7 @@
 // Structured for future UBL/XML (BOEK-020)
 
 import { csvCell } from "./csv-safe";
+import { effectiveTaxKind } from "./tax-letter";
 // [TZ] Eén datumopmaak voor de hele app — zie de noot bij fmtDateNL hieronder.
 import { formatDateNL } from "./format-nl";
 
@@ -32,6 +33,8 @@ export interface InvoiceExportRow {
 export interface InvRow {
   invoice_number: string | null;
   client_name: string | null;
+  /** [AANSLAG] A Belastingdienst letter's kind; absent on an ordinary invoice. */
+  tax_kind?: string | null;
   client_email: string | null;
   client_address: string | null;
   client_postal_code: string | null;
@@ -156,7 +159,8 @@ export function toExportRowFull(inv: InvRow, period: string): InvoiceExportRowFu
     btw_rate: calcBtwRate(btwAmt, exBtw),
     invoice_date: fmtDateNL(inv.invoice_date),
     due_date: fmtDateNL(inv.due_date),
-    invoice_type: inv.invoice_type ?? "factuur", // [BOEK-014]
+    // [BOEK-014] · [AANSLAG] A tax letter is named as such, never exported as an inkoopfactuur.
+    invoice_type: effectiveTaxKind(inv) ? `aanslag ${effectiveTaxKind(inv)}` : (inv.invoice_type ?? "factuur"),
     period,
   };
 }

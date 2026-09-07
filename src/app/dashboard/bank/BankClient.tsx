@@ -49,6 +49,9 @@ import { type DepositGap } from '@/lib/statiegeld'
 // [BACK-CLOSES] Back closes what is open — see src/lib/use-close-on-back.ts.
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { round2 } from '@/lib/invoice-totals'
+import BijlageStrip from '@/components/bank/BijlageStrip'
+import LijnFactuurSheet, { type LijnFactuurPrefill } from '@/components/bank/LijnFactuurSheet'
+import type { BankAttachment } from '@/lib/bank-attachments'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 
@@ -195,6 +198,12 @@ interface Suggestion {
   // [WAAROM-WACHT-BANK] Machinecode van de server: waarom deze regel niets vond. Null wanneer er
   // niets eerlijks te zeggen valt, en dan zegt de kaart niets — zie bank-waiting-reason.ts.
   waitReason?: string | null
+  /** [BIJLAGE-BIJ-REGEL] Files kept with this line. */
+  attachments?: BankAttachment[]
+  /** [OPEN-FACTUUR] On a linked line: the invoices it paid, so the card can open them. */
+  linkedInvoices?: { invoiceId: string; invoiceNumber: string | null }[]
+  /** [STORNO] A reversed incasso: the matched debit this credit undoes. */
+  storno?: { originTxId: string; originDate: string | null; invoiceId: string; invoiceNumber: string | null } | null
   // [AL-GEBOEKT] De factuur die deze betaling NOEMT, wanneer die al is afgeboekt. Geen kandidaat en
   // niet te bevestigen: dit is het antwoord op "waarom klopt er hier niets", en het vervangt de
   // kiezer in plaats van eronder te staan — zie bank-quoted-invoice.ts.
@@ -919,32 +928,26 @@ export default function BankClient() {
   // guarded /api/bank/confirm, sequentially (the money arithmetic allocates: every booking
   // spends only what the line still has, and the last one closes it). No new write path —
   // the suggestion is only a pre-computed answer to "which invoices?", never its own booking.
+  // [SOM-KLOPT-ÉÉN] …and it is now ONE request: the route books the set through book_bank_batch,
+  // which re-proves the tie on the current rows, signs a creditnota negative and books all or
+  // nothing. The loop this replaced could not book a netted creditnota in either order, and
+  // reported "2 samen gekoppeld" over an invoice it had left € 52,38 open.
   async function confirmSumMatch(txId: string, invoiceIds: string[]) {
     setProcessingId(txId)
-    let ok = 0
-    let failed = 0
     try {
-      for (const invoiceId of invoiceIds) {
-        try {
-          const res = await fetch('/api/bank/confirm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transactionId: txId, invoiceId }),
-          })
-          const json = await res.json().catch(() => ({}))
-          const benign = res.status === 409 && (json?.error === 'invoice_already_paid' || json?.error === 'transaction_already_processed')
-          if (res.ok || benign) ok++
-          else failed++
-        } catch {
-          failed++
-        }
-      }
-      showToast(
-        failed === 0
-          ? t('bank.samenGekoppeld', { count: ok })
-          : t('bank.samenDeels', { ok, failed }),
-      )
+      const res = await fetch('/api/bank/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId, invoiceIds }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) showToast(t('bank.samenGekoppeld', { count: invoiceIds.length }))
+      else if (res.status === 409 && json?.error === 'transaction_already_processed') showToast(t('bank.samenGekoppeld', { count: invoiceIds.length }))
+      else if (res.status === 409 && json?.error === 'batch_tie_broken') showToast(t('bank.somVeranderd'))
+      else showToast(failureText(res.status, json, t('bank.fout.bevestigen')))
       await runMatch()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
     } finally {
       setProcessingId(null)
     }
@@ -1335,6 +1338,133 @@ export default function BankClient() {
 
   // [BANK-IGNORE] Ignore a transaction: pending → not_found. It leaves the active
   // list (match only reads pending) and appears under Genegeerd.
+  // [BIJLAGE-BIJ-REGEL] A file WITH the line — never a booking. The list on the card comes from
+  // the same route that lists the line, so after a change the list is simply reloaded.
+  async function addAttachment(txId: string, file: File) {
+    if (file.size > 15 * 1024 * 1024) { showToast(t('bank.bijlage.teGroot')); return }
+    setProcessingId(txId)
+    try {
+      // [UPLOAD-PLAFOND] Through the shared fit, like every browser upload of a document: a large
+      // scan is shrunk to the platform's ceiling and retried, never refused with a bare 413.
+      const { response: res } = await sendWithFit(file, (f) => {
+        const fd = new FormData()
+        fd.append('transactionId', txId)
+        fd.append('file', f)
+        return fetch('/api/bank/attachment', { method: 'POST', body: fd })
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) showToast(t('bank.bijlage.toegevoegd'))
+      else if (res.status === 415) showToast(t('bank.bijlage.soort'))
+      else if (res.status === 413) showToast(t('bank.bijlage.teGroot'))
+      else showToast(failureText(res.status, json, t('bank.fout.bijlage')))
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+  async function removeAttachment(txId: string, a: BankAttachment) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/attachment', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
+      showToast(res.ok ? t('bank.bijlage.weg') : t('bank.fout.bijlage'))
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+  async function openAttachment(txId: string, a: BankAttachment) {
+    try {
+      const res = await fetch(`/api/bank/attachment?transactionId=${encodeURIComponent(txId)}`)
+      const json = await res.json().catch(() => ({}))
+      const hit = (json?.attachments as { id: string; url: string | null }[] | undefined)?.find((x) => x.id === a.id)
+      if (hit?.url) window.open(hit.url, '_blank', 'noopener')
+      else showToast(t('bank.fout.bijlage'))
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    }
+  }
+  // [REGEL-FACTUUR] "Say what this payment was": the prefill comes from the server (the party,
+  // the amount, the rate this supplier's invoices show), the owner answers three things, the
+  // server applies the money rule (no btw on a purchase without a document) and links the line.
+  const [lijnFactuur, setLijnFactuur] = useState<LijnFactuurPrefill | null>(null)
+  async function openLijnFactuur(txId: string) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch(`/api/bank/line-invoice?transactionId=${encodeURIComponent(txId)}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.prefill) { showToast(failureText(res.status, json, t('bank.fout.lijnFactuur'))); return }
+      setLijnFactuur(json.prefill as LijnFactuurPrefill)
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+  async function submitLijnFactuur(input: { rate: 0 | 9 | 21; hasDocumentElsewhere: boolean; clientName: string; description: string }) {
+    if (!lijnFactuur) return
+    const txId = lijnFactuur.transactionId
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/line-invoice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionId: txId, ...input }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        showToast(json?.btwWithheldNoDocument ? t('bank.lf.klaarZonderBtw') : t('bank.lf.klaar'))
+        setLijnFactuur(null)
+        await runMatch()
+      } else if (json?.code === 'paid_invoice_nearby') {
+        showToast(t('bank.lf.alBetaald'))
+      } else {
+        showToast(failureText(res.status, json, t('bank.fout.lijnFactuur')))
+      }
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // [STORNO] One tap: the origin is unlinked (invoice open again), both lines set aside.
+  async function applyStorno(stornoTxId: string, originTxId: string) {
+    setProcessingId(stornoTxId)
+    try {
+      const res = await fetch('/api/bank/storno', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stornoTxId, originTxId }) })
+      const json = await res.json().catch(() => ({}))
+      showToast(res.ok ? t('bank.storno.klaar') : failureText(res.status, json, t('bank.fout.storno')))
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+  // [REGEL-WEG] The owner deletes a line no invoice claims. Refused by the server on a linked line.
+  async function deleteLine(txId: string) {
+    setProcessingId(txId)
+    try {
+      const res = await fetch('/api/bank/delete-line', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transactionId: txId }) })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) showToast(t('bank.regelWegKlaar'))
+      else if (json?.code === 'transaction_linked') showToast(t('bank.fout.regelGekoppeld'))
+      else showToast(failureText(res.status, json, t('bank.fout.regelWeg')))
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
   async function ignoreTx(txId: string, reason: string | null = null) {
     setProcessingId(txId)
     try {
@@ -1350,7 +1480,9 @@ export default function BankClient() {
         await runMatch()             // drops it from the active list
         await loadIgnored()          // refresh Genegeerd immediately (counter stays correct)
       } else {
-        showToast(t('bank.fout.negeren'))
+        const json = await res.json().catch(() => ({}))
+        // [NEGEER-NIET-HALF] Money sits on this line — say which door to take instead.
+        showToast(json?.code === 'transaction_partially_linked' ? t('bank.fout.regelGekoppeld') : t('bank.fout.negeren'))
       }
     } catch {
       showToast(t('bank.fout.algemeen'))
@@ -2512,6 +2644,19 @@ export default function BankClient() {
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
                 onMatchChecked={() => markMatchChecked(s.transactionId)}
+                onStorno={s.storno ? () => applyStorno(s.transactionId, s.storno!.originTxId) : undefined}
+                onCreateFromLine={bankTab !== 'done' && !s.partiallyLinked ? () => openLijnFactuur(s.transactionId) : undefined}
+                bijlagen={
+                  <BijlageStrip
+                    attachments={s.attachments ?? []}
+                    t={t as (k: string) => string}
+                    busy={processingId === s.transactionId}
+                    onDeleteLine={bankTab !== 'done' && !s.partiallyLinked ? () => deleteLine(s.transactionId) : undefined}
+                    onAddFile={(f) => addAttachment(s.transactionId, f)}
+                    onOpen={(a) => openAttachment(s.transactionId, a)}
+                    onRemove={(a) => removeAttachment(s.transactionId, a)}
+                  />
+                }
               />
             ))}
             {activeList.length === 0 && (
@@ -2537,6 +2682,15 @@ export default function BankClient() {
           here spends its money, so the owner gets the three honest ways forward — and the default
           is the safe one. Nothing was written when this opened. */}
       {/* [FULL-CORRECTION] One editor, shared with /dashboard/incoming/manage. */}
+      {lijnFactuur && (
+        <LijnFactuurSheet
+          prefill={lijnFactuur}
+          t={t as (k: string, v?: Record<string, string | number>) => string}
+          busy={processingId === lijnFactuur.transactionId}
+          onSubmit={submitLijnFactuur}
+          onClose={() => setLijnFactuur(null)}
+        />
+      )}
       {correctFor && (
         <InvoiceCorrectionModal
           invoice={correctFor}
@@ -2768,9 +2922,15 @@ function Empty({ done }: { done: boolean }) {
 // kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
 // roepen een component nooit aan.
 export function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked, bijlagen, onStorno, onCreateFromLine,
 }: {
   s: Suggestion
+  /** [REGEL-FACTUUR] Present on a free line: book it as an invoice without a file. */
+  onCreateFromLine?: () => void
+  /** [STORNO] Present when the server paired this credit with the incasso it reverses. */
+  onStorno?: () => void
+  /** [BIJLAGE-BIJ-REGEL] The owner's own controls under the card, built by the screen. */
+  bijlagen?: React.ReactNode
   selectedInvoiceId: string | undefined
   /** [NIET-DEZE-FACTUUR] "This is not the invoice for this payment." Removes the suggestion; books
    *  nothing. Optional: a screen that does not pass it simply has no such button. */
@@ -3023,7 +3183,19 @@ export function TxCard({
           button here a mis-tapped first confirmation would have no way back — the undo lived on
           a tab the line no longer reaches. It reverses everything booked against this line. */}
       {(isDoneTab || s.partiallyLinked === true) && onUnlink && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, flexWrap: 'wrap', gap: 4 }}>
+          {/* [OPEN-FACTUUR] The document behind the booking, one tap away from the line that paid it. */}
+          {isDoneTab && (s.linkedInvoices ?? []).map((li) => (
+            <button
+              key={li.invoiceId}
+              onClick={() => onOpenFile(li.invoiceId)}
+              disabled={processing}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'none', cursor: processing ? 'default' : 'pointer', fontFamily: FONT, fontSize: 12, fontWeight: 600, color: M3.primary, padding: '2px 4px', marginInlineEnd: 'auto' }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>description</span>
+              {t('bank.openFactuur')}{li.invoiceNumber ? ` ${li.invoiceNumber}` : ''}
+            </button>
+          ))}
           <button
             onClick={onUnlink}
             disabled={processing}
@@ -3648,6 +3820,20 @@ export function TxCard({
                   het Genegeerd- of Gekoppeld-tabblad: daar is de vraag al beantwoord. En niets
                   wanneer de server niets kon zeggen — een verzonnen uitleg op een geldscherm is
                   erger dan de leegte die de eigenaar al had. */}
+              {/* [STORNO] The credit names the payment it undoes, and the one tap that states the fact. */}
+              {!isIgnoredTab && !isDoneTab && s.storno && onStorno && (
+                <div style={{ padding: '9px 11px', borderRadius: R.md, marginBottom: 10, background: '#FFF8E1', border: '1px solid #FFE082', color: '#8D6E00', fontSize: 12.5, lineHeight: 1.5, textAlign: 'start' }}>
+                  <div>{t('bank.storno.uitleg', { date: fmtInvoiceDate(s.storno.originDate), number: s.storno.invoiceNumber ?? '—' })}</div>
+                  <button
+                    type="button"
+                    onClick={onStorno}
+                    disabled={processing}
+                    style={{ marginTop: 8, padding: '8px 12px', borderRadius: R.full, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: processing ? 'default' : 'pointer' }}
+                  >
+                    {t('bank.storno.knop')}
+                  </button>
+                </div>
+              )}
               {(() => {
                 if (isIgnoredTab || isDoneTab || s.sumMatch) return null
                 const uitleg = explainWaiting(s.waitReason ?? null, {}, taal)
@@ -3700,6 +3886,20 @@ export function TxCard({
                   ? t('bank.verwerken')
                   : slotNumbers.length > 1 ? t('bank.facturenKoppelen', { count: slotNumbers.length }) : t('bank.factuurKoppelen')}
               </label>
+              {/* [REGEL-FACTUUR] The third door beside "attach a file" and "ignore": say what it
+                  was. For the supplier who never sends a bill, the receipt that went through the
+                  wash, the cash sale paid by transfer. The money rule is the server's. */}
+              {onCreateFromLine && !isIgnoredTab && (
+                <button
+                  type="button"
+                  onClick={onCreateFromLine}
+                  disabled={processing}
+                  style={{ marginTop: 8, width: '100%', padding: '9px', borderRadius: R.full, border: '1px solid #DADCE0', background: '#fff', color: '#3C4043', fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: processing ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }} aria-hidden>edit_note</span>
+                  {t('bank.lf.knop')}
+                </button>
+              )}
               {/* [BETAALPLAN] De derde uitweg, die er niet was.
                   Er waren er twee: koppel een BESTAND, of negeer de regel. Beide gaan uit van de
                   aanname dat één betaling bij één factuur hoort. Een groothandel schrijft één bedrag
@@ -3939,6 +4139,7 @@ export function TxCard({
             : <><span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>check</span> {t('bank.bevestigBetaling')}</>}
         </button>
       )}
+      {bijlagen}
     </div>
   )
 }

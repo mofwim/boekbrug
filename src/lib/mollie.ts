@@ -217,7 +217,7 @@ export async function getMolliePaymentLink(
 // and explains the payout bank line. Every function answers `{ error }` rather than throwing, and
 // an error is a reason to book NOTHING for that settlement — never a reason to guess.
 
-import type { MollieSettlement, MollieSettlementPayment } from "./mollie-settlement";
+import type { MollieSettlement, MollieSettlementPayment, MollieSettlementAdjustment } from "./mollie-settlement";
 
 type Page<T> = { items: T[]; next: string | null };
 
@@ -269,6 +269,18 @@ export async function getMollieSettlement(apiKey: string, settlementId: string):
 /** The payments a settlement paid out. */
 export async function listMollieSettlementPayments(apiKey: string, settlementId: string): Promise<MollieSettlementPayment[] | { error: string }> {
   return molliePages<MollieSettlementPayment>(apiKey, `/settlements/${encodeURIComponent(settlementId)}/payments?limit=250`, "payments");
+}
+
+/**
+ * The refunds and chargebacks a settlement netted. Either one means the settlement carries money
+ * that is not a payment — a refund of a BoekBrug invoice, a customer's chargeback — and the
+ * payments alone no longer explain the payout. Read so the sync can HOLD such a settlement.
+ */
+export async function listMollieSettlementRefunds(apiKey: string, settlementId: string): Promise<MollieSettlementAdjustment[] | { error: string }> {
+  return molliePages<MollieSettlementAdjustment>(apiKey, `/settlements/${encodeURIComponent(settlementId)}/refunds?limit=250`, "refunds", 4);
+}
+export async function listMollieSettlementChargebacks(apiKey: string, settlementId: string): Promise<MollieSettlementAdjustment[] | { error: string }> {
+  return molliePages<MollieSettlementAdjustment>(apiKey, `/settlements/${encodeURIComponent(settlementId)}/chargebacks?limit=250`, "chargebacks", 4);
 }
 
 /** The payments made on one payment link — how a link (ours) maps to a payment (in a settlement). */

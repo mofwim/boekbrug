@@ -12,7 +12,7 @@ test("[AANSLAG] income tax and Zvw are private, btw is a settlement, only MRB is
 });
 
 test("[AANSLAG] the tax office is recognised by name, including the OCR spelling with a space", () => {
-  for (const n of ["Belastingdienst", "BELASTINGDIENST/CENTRALE ADMINISTRATIE", "Belasting dienst Apeldoorn", "Ministerie van Financiën Belastingdienst"]) {
+  for (const n of ["Belastingdienst", "BELASTINGDIENST/CENTRALE ADMINISTRATIE", "Belasting dienst Apeldoorn", "Ministerie van Financiën Belastingdienst", "Belastingsdienst", "Rijksbelastingdienst"]) {
     assert.ok(isTaxOfficeName(n), n);
   }
   for (const n of ["Belastingadviseur Jansen", "Sligro", null, "", "Gemeente Belastingen Rotterdam"]) {

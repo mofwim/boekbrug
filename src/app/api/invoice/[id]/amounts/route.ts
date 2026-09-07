@@ -65,6 +65,7 @@ import { correctedFields, readingHintFor } from "@/lib/reading-memory";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
+import { isTaxKind } from "@/lib/tax-letter";
 // [SPLIT-CORRECTIE] The owner's per-rate split, validated against the final totals.
 import { validateBtwRows } from "@/lib/btw-rows-correction";
 // [SUPPLETIE] The one door to "did this touch a quarter that is already at the Belastingdienst?"
@@ -109,7 +110,7 @@ export async function GET(
     .from("invoices")
     // [LEES-CORRECTIE] due_date/vendor_iban/payment_reference ride along so the editor can
     // prefill the three fields that used to be write-only for the pipeline.
-    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid, field_confidence")
+    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid, field_confidence")
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
@@ -290,8 +291,17 @@ export async function PATCH(
   // request), because a split that contradicts the invoice it specifies is worse than none.
   const rawBtwRows = "btw_rows" in body ? body.btw_rows : null;
 
+  // [AANSLAG] What kind of Belastingdienst letter this is — or none ("" = an ordinary invoice).
+  // The reader guesses it and the owner is the authority: a kind wrongly stored removes a real
+  // cost from the books, a kind wrongly missing puts a private tax bill into them. Closed list.
+  const rawTaxKind = typeof body.tax_kind === "string" ? body.tax_kind.trim() : null;
+  if (rawTaxKind !== null && rawTaxKind !== "" && !isTaxKind(rawTaxKind)) {
+    return NextResponse.json({ error: "Onbekende soort aanslag." }, { status: 400 });
+  }
+  const nextTaxKind: string | null | undefined = rawTaxKind === null ? undefined : (rawTaxKind === "" ? null : rawTaxKind);
+
   if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit
-      && nextDue === null && nextIban === null && nextRef === null && rawBtwRows === null) {
+      && nextDue === null && nextIban === null && nextRef === null && rawBtwRows === null && nextTaxKind === undefined) {
     return NextResponse.json({ error: "Er is niets gewijzigd." }, { status: 400 });
   }
 
@@ -305,7 +315,7 @@ export async function PATCH(
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
     // [SUPPLIER-ALIAS] supplier_id + vendor_iban ride along: they are what says WHICH company a
     // corrected name belongs to, and without one of them a rename is one name pointing at another.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, due_date, payment_reference, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
+    .select("id, receiver_id, direction, status, invoice_type, tax_kind, invoice_number, client_name, invoice_date, due_date, payment_reference, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
     .eq("id", id)
     .maybeSingle();
 
@@ -333,6 +343,16 @@ export async function PATCH(
         code: "wrong_status",
       },
       { status: 409 },
+    );
+  }
+
+  // GUARD 2b — [CREDIT-SIGN] a negative amount on a document that is not (and is not being
+  // declared) a creditnota. That document IS a creditnota; stored as a negative factuur it would
+  // subtract from the outstanding balance while every list still calls it a bill to pay.
+  if (hasAmounts && !declaredCredit && invoice.invoice_type !== "creditnota" && (exBtw < -0.005 || incBtw < -0.005)) {
+    return NextResponse.json(
+      { error: "Een negatief bedrag hoort op een creditnota. Vink 'dit is een creditnota' aan als dat het is.", code: "negative_on_factuur" },
+      { status: 400 },
     );
   }
 
@@ -501,18 +521,34 @@ export async function PATCH(
   // note is never recognised, see HUNT-F2 in ai.ts) and the direction that takes money OFF the
   // outstanding balance. The reverse would quietly turn a credit into a debt.
   if (declaredCredit && invoice.invoice_type !== "creditnota") patch.invoice_type = "creditnota";
+  // [AANSLAG] Differs-only, like the rest; null clears the kind.
+  if (nextTaxKind !== undefined && nextTaxKind !== ((invoice as { tax_kind?: string | null }).tax_kind ?? null)) {
+    (patch as Record<string, unknown>).tax_kind = nextTaxKind;
+  }
 
   // GUARD 5 — the WHERE re-asserts every precondition, so a stale tab cannot overwrite a newer
   // state. .select() so zero rows is distinguishable from success — without it a WHERE that matched
   // nothing would return ok and the screen would show a correction that never happened.
-  const { data: written, error: writeErr } = await supabase
+  //
+  // [VOORSTEL] It also pins the VALUES this request read: the five correctable fields must still
+  // be what they were a moment ago, or the write matches nothing and the caller is told to reload.
+  // Between the read above and this write another tab — or the client's own editor while an
+  // accountant's proposal is being accepted — may have corrected the same invoice, and writing on
+  // top of that is applying an old truth over a newer one. A null is pinned with `is`, because
+  // `eq` never matches a null.
+  let writeQuery = supabase
     .from("invoices")
     .update(patch)
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
-    .eq("status", "received")
-    .select("id");
+    .eq("status", "received");
+  writeQuery = invoice.total_ex_btw === null ? writeQuery.is("total_ex_btw", null) : writeQuery.eq("total_ex_btw", invoice.total_ex_btw);
+  writeQuery = invoice.btw_amount === null ? writeQuery.is("btw_amount", null) : writeQuery.eq("btw_amount", invoice.btw_amount);
+  writeQuery = invoice.total_inc_btw === null ? writeQuery.is("total_inc_btw", null) : writeQuery.eq("total_inc_btw", invoice.total_inc_btw);
+  writeQuery = invoice.invoice_date === null ? writeQuery.is("invoice_date", null) : writeQuery.eq("invoice_date", invoice.invoice_date);
+  writeQuery = (inv2.due_date ?? null) === null ? writeQuery.is("due_date", null) : writeQuery.eq("due_date", inv2.due_date as string);
+  const { data: written, error: writeErr } = await writeQuery.select("id");
 
   if (writeErr) {
     // The B.4 trigger freezes an invoice the accountant marked 'verwerkt'. Its message deliberately
@@ -583,7 +619,12 @@ export async function PATCH(
       btw_amount: signed.btwAmount,
       total_inc_btw: signed.totalIncBtw,
       invoice_type: patch.invoice_type ?? invoice.invoice_type,
+      ...("tax_kind" in patch ? { tax_kind: (patch as { tax_kind?: string | null }).tax_kind ?? null, tax_kind_was: (invoice as { tax_kind?: string | null }).tax_kind ?? null } : {}),
       via: "manage_amount_correction",
+      // [VOORSTEL] When the request was built by the client accepting an accountant's proposal,
+      // the trail names that proposal on the row that moved the money — not only on the separate
+      // correction_accepted row — so a year later one line says whose figures these were.
+      ...(typeof body.proposal_id === "string" && /^[0-9a-f-]{36}$/i.test(body.proposal_id) ? { proposal_id: body.proposal_id } : {}),
       // [CREDIT-SIGN] Recorded when the server turned the posted amounts negative, so a year later
       // the trail explains a minus the owner never typed.
       ...(signed.flipped ? { credit_sign_applied: true } : {}),
@@ -682,6 +723,8 @@ export async function PATCH(
     btw_amount: signed.btwAmount,
     total_inc_btw: signed.totalIncBtw,
     invoice_type: patch.invoice_type ?? invoice.invoice_type,
+    // [AANSLAG] As now stored, so the badge on the caller's row follows without a reload.
+    tax_kind: "tax_kind" in patch ? (patch as { tax_kind?: string | null }).tax_kind ?? null : ((invoice as { tax_kind?: string | null }).tax_kind ?? null),
     // [SPLIT-CORRECTIE] The split as it now stands, so the caller's row (whose checklist reads
     // it) updates without a reload. null = untouched in this request; [] = cleared.
     btw_rows: clearBtwRows ? [] : nextBtwRows,

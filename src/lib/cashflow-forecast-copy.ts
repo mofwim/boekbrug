@@ -32,6 +32,7 @@ const NOTE_KEY: Record<ForecastNote["code"], MessageKey> = {
   "kas-unknown": "vooruit.note.kasOnbekend",
   "payables-undated": "vooruit.note.zonderDatum",
   "receivables-late": "vooruit.note.teLaat",
+  "receivables-undated": "vooruit.note.klantZonderDatum",
   "takings-unknown": "vooruit.note.kassaOnbekend",
   "takings-thin": "vooruit.note.kassaDun",
 };
@@ -89,6 +90,10 @@ function noteSentence(t: ReturnType<typeof translator>, n: ForecastNote): string
     case "receivables-late":
       return n.count === 1
         ? t("vooruit.note.teLaatEen", { amount: bare(n.amount) })
+        : t(NOTE_KEY[n.code], { count: n.count, amount: bare(n.amount) });
+    case "receivables-undated":
+      return n.count === 1
+        ? t("vooruit.note.klantZonderDatumEen", { amount: bare(n.amount) })
         : t(NOTE_KEY[n.code], { count: n.count, amount: bare(n.amount) });
     case "takings-thin":
       return t(NOTE_KEY[n.code], { days: n.days });

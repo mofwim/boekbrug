@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { attachmentsByTransaction } from "@/lib/bank-attachments";
 
 export async function GET() {
   const supabase = await createServerSupabaseClient();
@@ -74,8 +75,10 @@ export async function GET() {
 
   // Same lean DTO as /api/bank/match (outcome 'none', no candidates) so the UI
   // can reuse its row renderer. transactionId === bank_transactions.id.
+  const attachments = await attachmentsByTransaction(pipeline, user.id, (rows ?? []).map((r) => r.id));
   const suggestions = (rows ?? []).map((r) => ({
     transactionId: r.id,
+    attachments: attachments.get(r.id) ?? [],
     date: r.date,
     amount: r.amount ?? 0,
     description: r.description,

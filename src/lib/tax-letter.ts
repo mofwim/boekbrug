@@ -57,7 +57,9 @@ export function taxLetterBooking(kind: TaxKind): TaxLetterBooking {
  */
 export function isTaxOfficeName(name: string | null | undefined): boolean {
   if (!name) return false;
-  return /\bbelasting\s?dienst\b/i.test(name);
+  // No leading \b and an optional s: "Belastingsdienst" is the common misspelling and
+  // "Rijksbelastingdienst" the old official name — both are the tax office.
+  return /belasting\s?s?dienst/i.test(name);
 }
 
 /**

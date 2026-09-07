@@ -71,6 +71,7 @@ export type AuditAction =
   | 'invoice.btw_rows_read'          // ← [SPLIT-ALSNOG] owner re-read a document for its btw specification ONLY — no figure changed
   | 'bank.auto_confirmed'             // ← [BANK-AUTO-CONFIRM] app booked a near-certain bank↔invoice match without a tap
   | 'bank.auto_confirmed_batch'       // ← [BANK-BATCH] app booked a provably-exact multi-invoice batch payment
+  | 'bank.confirmed_batch'            // ← [SOM-KLOPT-ÉÉN] the OWNER booked a suggested same-supplier sum as one batch
   | 'bank.confirmed'                  // ← [BANK-CONFIRM] owner confirmed a bank↔invoice match (invoice fully paid)
   | 'bank.partial_payment'            // ← [PARTIAL-PAY] a deelbetaling booked against an invoice (still openstaand)
   // [BETAALPLAN] One payment deliberately spread by the OWNER over several invoices, with an
@@ -81,6 +82,10 @@ export type AuditAction =
   | 'bank.overpayment_residue'        // ← [PARTIAL-PAY-RESIDUE] payment exceeded the balance; the excess was NOT booked
   | 'invoice.partial_payment'         // ← [MANUAL-PARTIAL-PAY] owner recorded a deelbetaling by hand (invoice stays openstaand)
   | 'bank.unlinked'                   // ← [BANK-UNLINK] owner undid a bank↔invoice match (invoice back to unpaid)
+  | 'bank.attachment_added'           // ← [BIJLAGE-BIJ-REGEL] owner attached a file to a bank line (no booking)
+  | 'bank.attachment_removed'         // ← [BIJLAGE-BIJ-REGEL] owner removed such a file
+  | 'bank.line_deleted'               // ← [REGEL-WEG] owner deleted an unlinked bank line; its identity is in old_value
+  | 'bank.storno_applied'             // ← [STORNO] owner confirmed a reversed incasso: origin unlinked, both lines set aside
   // [KAS-AUTO-BOOK] The other answer to the "even controleren" flag. 'bank.unlinked' records the
   // owner rejecting an amount-only booking; this records them ACCEPTING one, which until now left
   // no trace at all — the flag simply stayed up forever. It matters more than it looks: under the

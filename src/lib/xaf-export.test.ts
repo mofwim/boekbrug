@@ -530,9 +530,12 @@ test("[AANSLAG] a tax letter books to privé, the btw account or vraagposten —
     { id: "ob", invoiceNumber: "A2", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 500, btwAmount: 0, taxKind: "omzetbelasting" },
     { id: "x", invoiceNumber: "A3", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 80, btwAmount: 16.8, taxKind: "overig" },
     { id: "mrb", invoiceNumber: "A4", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 140, btwAmount: 0, taxKind: "motorrijtuigenbelasting" },
+    // A misread btw on an MRB letter: the whole gross is the cost, nothing on 1400.
+    { id: "mrb2", invoiceNumber: "A5", invoiceDate: "2026-05-28", vendorName: "Belastingdienst", totalExBtw: 165.29, btwAmount: 34.71, taxKind: "motorrijtuigenbelasting" },
   ];
   const r = buildXafFile(input);
   const ls = lines(r.xml);
+  assert.ok(ls.some(([acc, amt]) => acc === "4000" && amt === "200.00"), "MRB with a misread btw is a € 200 cost, gross");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "0500" && amt === "1200.00" && tp === "D"), "income tax is a privé-opname");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "1500" && amt === "500.00" && tp === "D"), "a btw-naheffing settles against te betalen omzetbelasting");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "2100" && amt === "96.80" && tp === "D"), "an unknown letter is a vraagpost for its whole gross");
@@ -667,4 +670,36 @@ test("[XAF-4] the output validates against the official XSD, and the validator i
   // And an administration with nothing in it still validates (an empty year, a new owner).
   const empty = baseInput(); empty.company.kvkNumber = null; empty.company.btwNumber = null; empty.company.address = null; empty.company.city = null;
   assert.equal(validate(buildXafFile(empty, { version: "4.0" }).xml), "", "an empty administration validates");
+});
+
+test("[XAF-LENGTE] every owner- or reader-typed string is clipped to its schema length, in code points", (t) => {
+  const input = richInput();
+  input.company.postalCode = "1234 AB Amsterdam";        // TypeString10
+  input.company.btwNumber = "NL812345678B01 (zie ook oud nummer NL001234567B01)"; // TypeString30
+  input.company.address = "A".repeat(140);               // TypeString100
+  input.purchases.push({ id: "p-kvk", invoiceNumber: "K-1", invoiceDate: "2026-02-03", vendorName: "Lange KvK BV", totalExBtw: 10, btwAmount: 2.1, vendorKvkNumber: "9".repeat(150) });
+  // 49 letters and an emoji: a UTF-16 slice at 50 would keep half the emoji.
+  input.sales.push({ id: "s-emoji", invoiceNumber: "E-1", invoiceDate: "2026-02-04", clientName: `${"B".repeat(49)}😀 en verder`, totalExBtw: 10, btwAmount: 2.1, invoiceType: "factuur", rateLines: null });
+  const r = buildXafFile(input, { version: "4.0" });
+  assert.equal(r.skipped.length, 0);
+  assert.match(r.xml, /<postalCode>1234 AB Am<\/postalCode>/);
+  assert.match(r.xml, /<taxRegIdent>NL812345678B01 \(zie ook oud nu<\/taxRegIdent>/);
+  assert.match(r.xml, new RegExp(`<streetname>${"A".repeat(100)}</streetname>`));
+  assert.match(r.xml, new RegExp(`<commerceNr>${"9".repeat(100)}</commerceNr>`));
+  assert.match(r.xml, new RegExp(`<custSupName>${"B".repeat(49)}😀</custSupName>`), "the emoji survives whole");
+  assert.ok(!r.xml.includes("\uFFFD") && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(r.xml), "no lone surrogate anywhere");
+  if (xmllintAvailable()) assert.equal(validate(r.xml), "", "and the file validates");
+  else t.diagnostic("xmllint not installed — schema validation not run here");
+});
+
+test("[XAF-PERIODE] the header's endDate covers a post-dated transaction, so the file never contradicts itself", () => {
+  const input = richInput();
+  input.endDate = "2026-08-15";
+  input.purchases.push({ id: "p-nov", invoiceNumber: "N-1", invoiceDate: "2026-11-05", vendorName: "Later BV", totalExBtw: 10, btwAmount: 2.1 });
+  const r = buildXafFile(input, { version: "4.0" });
+  assert.match(r.xml, /<endDate>2026-11-05<\/endDate>/, "the declared end moves to the latest transaction");
+  assert.match(r.xml, /<periodNumber>11<\/periodNumber>\s*<startDatePeriod>2026-11-01/, "…and the period is declared");
+  const plain = buildXafFile(richInput(), { version: "4.0" });
+  assert.match(plain.xml, /<endDate>\d{4}-\d{2}-\d{2}<\/endDate>/);
+  assert.ok(!plain.xml.includes("<endDate>2026-11-05"), "negative control: without the post-dated entry the end stays where the route put it");
 });

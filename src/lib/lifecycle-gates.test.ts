@@ -12,6 +12,7 @@
 // and the PLACEMENT of code, not about what any function returns when you call it.
 
 import { test } from "node:test";
+import { SELF_ACTIONS as ZIEL_SELF_ACTIONS } from "./zelfstandig";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 // [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
@@ -1107,13 +1108,47 @@ test("[VOORSTEL] Akkoord goes through the client's own correction door, and noth
   assert.match(decide, /await correctInvoiceAmounts\(doorRequest, \{ params: Promise\.resolve\(\{ id: proposal\.invoice_id \}\) \}\)/);
   assert.match(decide, /requireOwner\(/, "only the owner answers — an accountant cannot accept their own proposal");
   assert.doesNotMatch(decide, /from\('invoices'\)\s*\.update\(/, "the decide route never updates invoices itself");
-  assert.match(decide, /if \(isStale\(proposal\.before, current, proposal\.changes\)\) \{[\s\S]{0,120}await decide\('stale'\)/,
+  assert.match(decide, /const stale = isStale\(proposal\.before, current, proposal\.changes\)[\s\S]{0,2000}if \(stale\) \{[\s\S]{0,120}await closeRow\('stale', false\)/,
     "a proposal on an invoice that moved underneath it lapses instead of applying");
   assert.match(decide, /if \(!doorResponse\.ok\) \{/, "the door's refusal reaches the client, and the proposal stays open");
+  // ONE DECISION. The row is claimed before the door runs, the claim is a compare-and-set, and
+  // every write on the row reads back whether it moved a row. Without this two tabs both ran the
+  // door, and a decline that landed between the door and the close left the invoice corrected
+  // under a row that said "declined".
+  {
+    const claimAt = decide.indexOf(".update({ applying_since: new Date(now).toISOString() })");
+    const doorAt = decide.indexOf("await correctInvoiceAmounts(doorRequest");
+    assert.ok(claimAt > 0 && doorAt > claimAt, "the row is CLAIMED before the door is called");
+    assert.match(decide.slice(claimAt, doorAt), /\.eq\('status', 'open'\)[\s\S]{0,200}\.select\('id'\)[\s\S]{0,400}if \(!claimed \|\| claimed\.length === 0\) return/,
+      "the claim is a compare-and-set on status = open, and a lost claim is a refusal");
+    const updates = decide.match(/from\('invoice_corrections'\)\s*\.update\(/g) ?? [];
+    assert.ok(updates.length >= 2, "at least the claim and the close");
+    // closeRow: the only place that moves status, and it reads back the row count.
+    assert.match(decide, /const closeRow = async[\s\S]{0,800}\.select\('id'\)[\s\S]{0,200}return data && data\.length > 0 \? 'moved' : 'lost'/,
+      "closing the row reports whether it moved a row");
+    assert.doesNotMatch(decide.replace(/const closeRow = async[\s\S]{0,1200}?\n  \}/, ""), /\.update\(\{ status/,
+      "status is written through closeRow only");
+    assert.match(decide, /if \(claimLive\) return NextResponse\.json\(\{ error: BUSY, code: 'busy' \}/, "a decline while a claim is live is refused");
+    assert.match(decide, /const applied = isAlreadyApplied\(proposal\.proposed, current, proposal\.changes\)[\s\S]{0,300}if \(applied\) \{[\s\S]{0,100}closeRow\('accepted', false\)/,
+      "an invoice already carrying the proposal closes the row as accepted, never as stale");
+    assert.match(decide, /if \(proposalEndsOn\(doorJson\.code\)\) \{[\s\S]{0,400}closeRow\('stale', true\)/,
+      "paid / money booked / verwerkt ends the proposal instead of leaving it open forever");
+  }
+  // The door pins the values it read, so nothing — the client's own editor, a second tab — can
+  // slip a newer truth under an accepted proposal between the stale check and the write.
+  const door = code("src/app/api/invoice/[id]/amounts/route.ts");
+  for (const f of ["total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "due_date"]) {
+    assert.match(door, new RegExp(`writeQuery = [^\\n]*writeQuery\\.is\\("${f}", null\\) : writeQuery\\.eq\\("${f}", `), `the write pins ${f} as read`);
+  }
+  assert.match(door, /invoice\.invoice_type !== "creditnota" && \(exBtw < -0\.005 \|\| incBtw < -0\.005\)/,
+    "a negative amount on a factuur is refused at the door — that document is a creditnota");
+  // What the client accepts is what is stored: the creditnota sign rule runs when the proposal is
+  // built, and the propose route hands the invoice type in.
+  assert.match(code("src/lib/correction-proposal.ts"), /if \(opts\.invoiceType === "creditnota"\) \{\s*const signed = asCreditAmounts\(/);
 
   const propose = code("src/app/api/accountant/invoice-correction/route.ts");
   assert.doesNotMatch(propose, /from\('invoices'\)\s*\.update\(/, "proposing writes nothing on the invoice");
-  assert.match(propose, /buildProposal\(before, \{/, "the client's door's arithmetic is enforced before the client sees it");
+  assert.match(propose, /buildProposal\(before, \{[\s\S]{0,300}\}, \{ invoiceType: inv\.invoice_type \}\)/, "the client's door's arithmetic and sign rule are enforced before the client sees it");
   assert.match(propose, /inv\.status !== 'received' \|\| hasSettledMoney\(/, "only a booked, unpaid invoice can be proposed on");
   assert.match(propose, /\.some\(\(l\) => l\.zzper_id === clientId\)/, "only for a linked client");
 
@@ -9043,7 +9078,8 @@ test("[DUBBEL-GEDEKT] no machine writes a bank category without asking what is a
   for (const file of walk("src")) {
     const src = code(file);
     if (!src.includes('from("bank_transactions")')) continue;
-    for (const m of src.matchAll(INFERRED_WRITE)) sites.push({ file, at: m.index ?? 0 });
+    // [ONTKOPPEL-SCHOON] `category: null` CLEARS a category; it infers nothing and needs no guard.
+    for (const m of src.matchAll(INFERRED_WRITE)) if (!/\bcategory: null\b/.test(m[0])) sites.push({ file, at: m.index ?? 0 });
   }
 
   // The scan must not go vacuously green. These two files hold the writers the money was measured
@@ -11031,7 +11067,7 @@ test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
   assert.match(server, /if \(!tx \|\| !inv\) continue;/, "a half-read link must teach nothing");
   const route = code("src/app/api/bank/match/route.ts");
   assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
-  assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
+  assert.match(route, /matchTransactions\(matcherInput, invoices, \{ maxCandidates: 15, memory \}\)/);
 });
 
 // ─── [REGEL-KOPIE] The class this has now been, three times ─────────────────────────────────────
@@ -12719,14 +12755,135 @@ test("[ANON-RPC] every state-changing RPC is revoked from anon", () => {
     "an overloaded function needs every signature revoked, not just the first");
 });
 
+// ─── [BANK-KOPPELEN] One bank line, the right invoices, and the owner's own controls ───
+//
+// The owner's requirement: outgoing and incoming invoices match without error, especially one
+// payment over several invoices — and when the app does not know, the owner can add, delete,
+// link or upload files on the line. An adversarial read found fourteen gaps; the ones below are
+// the mechanics the unit tests cannot see.
+
+test("[BANK-KOPPELEN] a suggested sum books as ONE batch, and the doors that could hide money are closed", () => {
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+  assert.match(confirm, /\(supabase\.rpc as any\)\("book_bank_batch", \{/, "the sum-suggest books through book_bank_batch — locked, tie re-proved, creditnota signed");
+  assert.match(confirm, /if \(invoiceIds\) \{/, "…on the invoiceIds path");
+  assert.match(confirm, /action: "bank\.confirmed_batch"/, "…and leaves one audit row for the batch");
+  const client = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(client, /body: JSON\.stringify\(\{ transactionId: txId, invoiceIds \}\)/, "the client sends the set once");
+  assert.doesNotMatch(client.slice(client.indexOf("async function confirmSumMatch"), client.indexOf("async function confirmSumMatch") + 1500), /for \(const invoiceId of invoiceIds\)/,
+    "the per-invoice loop that could not book a netted creditnota is gone");
+  assert.match(confirm, /error: "declared_invoice_open"/, "a named invoice that IS in the administration is told apart from one that is not");
+
+  const unlink = code("src/app/api/bank/unlink/route.ts");
+  const clears = [...unlink.matchAll(/\.update\(\{ status: "pending", invoice_id: null, category: null, category_source: null, category_confirmed: false \}\)/g)];
+  assert.ok(clears.length >= 2, "both unlink paths clear the category with the link, or the cost counts twice");
+  assert.doesNotMatch(unlink, /\.eq\("payment_method", "bank"\)/, "the batch reversal set is not filtered on the LAST payment's method");
+
+  const ignore = code("src/app/api/bank/ignore/route.ts");
+  assert.match(ignore, /if \(tx\.invoice_id \|\| \(links \?\? \[\]\)\.length > 0\) \{[\s\S]{0,200}transaction_partially_linked/, "a line with money on it cannot be ignored");
+
+  const del = code("src/app/api/bank/delete-line/route.ts");
+  assert.match(del, /if \(tx\.status === "matched" \|\| tx\.invoice_id \|\| \(links \?\? \[\]\)\.length > 0\)/, "a line with money on it cannot be deleted");
+  assert.match(del, /\.is\("invoice_id", null\)\.neq\("status", "matched"\)\.select\("id"\)/, "…and the delete itself re-asserts it");
+  assert.match(del, /action: "bank\.line_deleted"/);
+  assert.match(del, /requireOwner\(/);
+
+  const match = code("src/app/api/bank/match/route.ts");
+  assert.match(match, /const result = matchTransactions\(matcherInput, invoices/, "the matcher sees a partly-booked line's REMAINDER");
+  assert.match(match, /attachmentsByTransaction\(/, "attachments ride on every card");
+  assert.match(match, /linkedInvoices: \[\.\.\.\(idsByTx\.get\(row\.id\)/, "a linked card can open its invoice");
+
+  const matching = code("src/lib/bank-matching.ts");
+  assert.match(matching, /if \(txIban && invIban && txIban !== invIban\) return null;/, "[NUMMER-BOTST] the bank's account vetoes a printed-number match");
+  assert.match(matching, /if \(paymentOut && nameGiven && nameWeak && !invIban\) return "amount_only";/, "…and a strange counterparty on a payment out books flagged, never silently");
+  assert.match(matching, /if \(twin && top\.signals\.includes\("amount"\) && !uniqueRef && !uniquePrepared\) return false;/, "[TWEELING] same party, same amount → a human choice");
+
+  // The attachment: a file WITH the line, never a booking. The table is read-only through RLS.
+  const att = code("src/app/api/bank/attachment/route.ts");
+  assert.doesNotMatch(att, /from\("invoices"\)|from\('invoices'\)|category/, "attaching a file touches no invoice and no category");
+  const sql = readFileSync("supabase/migrations/bank_tx_attachments.sql", "utf8");
+  assert.match(sql, /FOR SELECT TO authenticated USING \(user_id = \(select auth\.uid\(\)\)\)/);
+  assert.doesNotMatch(sql, /FOR (INSERT|UPDATE|DELETE)/);
+  assert.match(code("src/components/bank/BijlageStrip.tsx"), /marginInlineStart/, "logical sides only");
+  assert.match(client, /<BijlageStrip/, "the strip is on every card");
+});
+
+test("[STORNO] a reversed incasso reopens its invoice through the doors that already own the steps", () => {
+  const route = code("src/app/api/bank/storno/route.ts");
+  assert.match(route, /import \{ POST as unlinkLine \} from "@\/app\/api\/bank\/unlink\/route"/, "the origin is unlinked by the unlink door");
+  assert.match(route, /import \{ POST as setAside \} from "@\/app\/api\/bank\/ignore\/route"/, "both lines are set aside by the ignore door");
+  assert.doesNotMatch(route, /from\("invoices"\)\s*\.update|from\("bank_transactions"\)\s*\.update/, "the storno route writes neither invoices nor lines itself");
+  assert.match(route, /const proved = findStornoOrigin\(/, "the pairing is re-proved on the rows as they are NOW");
+  assert.match(route, /reason: "storno"/);
+  assert.match(code("src/lib/bank-ignore-reason.ts"), /case 'storno':\s*return false/, "two lines that net to zero stay out of the books");
+  assert.match(readFileSync("supabase/migrations/bank_ignore_reason_storno.sql", "utf8"), /'storno'/);
+  const match = code("src/app/api/bank/match/route.ts");
+  assert.match(match, /category, type_code, mandate_id, creditor_id"\)/, "the bank's own direct-debit markers are read");
+  assert.match(match, /const hit = findStornoOrigin\(/, "…and the credit is paired on the screen's own route");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /t\('bank\.storno\.uitleg', \{ date:/, "the card names the payment it undoes");
+});
+
+// ─── [ZIEL] The equation as the product's soul ───
+test("[ZIEL] the equation is written down, measured on the audit trail, and every self-writer is counted", () => {
+  const ziel = readFileSync("docs/ZIEL.md", "utf8");
+  assert.match(ziel, /BoekBrug does the work\. The owner keeps the say\./, "the equation, in one sentence");
+  assert.match(ziel, /art\. 15 Wet OB/, "the law's line is part of the soul");
+  const page = code("src/app/dashboard/vandaag/page.tsx");
+  assert.match(page, /\.in\("action", \[\.\.\.SELF_ACTIONS\]\)/, "self is counted from audit rows");
+  assert.match(page, /\.in\("action", \[\.\.\.HAND_ACTIONS\]\)/);
+  assert.match(page, /const zelf = selfRes\.error \|\| handRes\.error \|\| pendingBankRes\.error\s*\? null/, "a failed read says nothing, never a made-up share");
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function zelfZin\(/);
+  // Every action a machine writer logs when it books unattended must be in SELF_ACTIONS, or the
+  // measure understates what the app does — and overstates the owner's share of the work.
+  const SELF_ACTIONS: readonly string[] = ZIEL_SELF_ACTIONS;
+  for (const a of ["bank.auto_confirmed", "bank.auto_confirmed_batch", "invoice.auto_verified", "invoice.auto_paid", "turnover.auto_imported", "ledger.auto_imported"]) {
+    assert.ok(SELF_ACTIONS.includes(a), `${a} is a self-writer and must be counted`);
+  }
+});
+
+// ─── [REGEL-FACTUUR] An invoice from a bank line, no file ───
+test("[REGEL-FACTUUR] no btw on a purchase without a document, the guard is asked, and the line is linked pending-only", () => {
+  const lib = code("src/lib/line-invoice.ts");
+  assert.match(lib, /const rateApplied: LineRate = direction === "incoming" && !input\.hasDocumentElsewhere \? 0 : input\.rate;/, "art. 15 Wet OB, in code");
+  const route = code("src/app/api/bank/line-invoice/route.ts");
+  assert.match(route, /const verdict = buildLineInvoice\(/, "the money rule is the pure module's, not the route's");
+  assert.match(route, /readDoubleBookingGuard\(/, "a paid invoice of this amount nearby refuses the booking");
+  assert.match(route, /if \(hold === "paid-invoice"\)/);
+  assert.match(route, /\.update\(\{ invoice_id: invoiceId, status: "matched" \}\)[\s\S]{0,200}\.eq\("status", "pending"\)\.is\("invoice_id", null\)/, "the link re-asserts the line is free");
+  assert.match(route, /recordPaymentLinks\(pipeline, user\.id, transactionId, \[invoiceId\], \{ \[invoiceId\]: d\.totalIncBtw \}\)/, "the join row carries the amount");
+  assert.match(route, /source: "created"/);
+  assert.match(route, /_btw_withheld_no_document: d\.btwWithheldNoDocument/, "the reason for a 0 stays on the row");
+  assert.match(route, /requireOwner\(/);
+  const sheet = code("src/components/bank/LijnFactuurSheet.tsx");
+  assert.match(sheet, /const btwOff = isPurchase && !hasDoc;/, "the screen mirrors the rule: chips off without a document");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /<LijnFactuurSheet/);
+});
+
+test("[BEVESTIG-DICHT] every RPC a screen calls with the session client is granted to authenticated", () => {
+  // The revoke list and the call sites must never disagree again: a function in the revoke list
+  // may not be called with the session client anywhere, and confirm_bank_payment — which is —
+  // must not be in it. Its regrant migration exists and is the later word.
+  const revoke = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+  // The SECOND list — the one that revokes from `authenticated`. The first revokes from `anon`
+  // and rightly names every function.
+  const authPart = revoke.slice(revoke.indexOf("Deze staan in geen enkele call site met de sessieclient"));
+  const listed = [...authPart.matchAll(/^\s*'([a-z_]+)',?\s*$/gm)].map((m) => m[1]);
+  assert.ok(listed.includes("seed_invoice_counter"), "the revoke list is where it was");
+  assert.ok(!listed.includes("confirm_bank_payment"), "confirm_bank_payment is called by /api/bank/confirm with the session client");
+  const regrant = readFileSync("supabase/migrations/confirm_bank_payment_regrant.sql", "utf8");
+  assert.match(regrant, /GRANT EXECUTE ON FUNCTION %s TO authenticated/);
+  assert.match(code("src/app/api/bank/confirm/route.ts"), /const atomicFn = withAmount \? "allocate_bank_payment" : "confirm_bank_payment";/);
+});
+
 test("[ANON-RPC] the server-only RPCs really are server-only", () => {
   // De tweede lijst in de migratie trekt óók `authenticated` in. Dat mag alleen als geen enkel
   // scherm ze via de sessieclient aanroept — anders zet deze migratie een knop stil. Deze poort
   // is de reden dat de lijst later niet stilletjes fout kan worden: voegt iemand een aanroep met
   // de sessieclient toe, dan faalt hij hier en niet bij een gebruiker.
+  // [BEVESTIG-DICHT] confirm_bank_payment left this list: /api/bank/confirm calls it with the
+  // session client (bank_confirm_atomic), and its grant is restored (confirm_bank_payment_regrant).
   const SERVER_ONLY = [
     "seed_invoice_counter", "recompute_invoice_amount_paid",
-    "fair_use_consume", "fair_use_release", "confirm_bank_payment",
+    "fair_use_consume", "fair_use_release",
   ];
   const walk = (dir: string): string[] => {
     const out: string[] = [];
@@ -12741,10 +12898,13 @@ test("[ANON-RPC] the server-only RPCs really are server-only", () => {
   for (const fn of SERVER_ONLY) {
     for (const file of bronnen) {
       const src = readFileSync(file, "utf8");
-      for (const regel of src.split("\n")) {
-        if (!regel.includes(`rpc("${fn}"`) && !regel.includes(`rpc('${fn}'`)) continue;
+      // The NAME, not only `rpc("name"`: the confirm route reached a revoked function through a
+      // variable (`const atomicFn = … ? "…" : "confirm_bank_payment"`) and this gate, matching the
+      // literal call only, waved it through — every plain Bevestig on /bank then answered 500.
+      for (const regel of code(file).split("\n")) {
+        if (!regel.includes(`"${fn}"`) && !regel.includes(`'${fn}'`)) continue;
         assert.match(regel, /(pipeline|insertPipeline|pipelineForConfirm)\s*(as any\s*)?\)?\.rpc/,
-          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client (${file})`);
+          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client, and only by its literal name in the rpc call (${file})`);
       }
     }
   }
@@ -16492,8 +16652,21 @@ test("[VOORUIT] the panel holds no language of its own, and every note code has 
   // inside a member — the union ends where the next declaration begins.
   const unionText = rule.slice(rule.indexOf("export type ForecastNote ="));
   const codes = [...unionText.slice(0, unionText.indexOf("export interface")).matchAll(/code: "([a-z-]+)"/g)].map((m) => m[1]);
-  assert.ok(codes.length >= 9, `expected the note codes, found ${codes.length}`);
+  assert.ok(codes.length >= 10, `expected the note codes, found ${codes.length}`);
   for (const c of codes) assert.ok(copy.includes(`"${c}"`), `note code with no sentence: ${c}`);
+});
+
+test("[VOORUIT] a bank line that is not this administration's money never moves the figure", () => {
+  const route = code("src/app/api/cashflow/route.ts");
+  assert.match(route, /const excluded = await readExcludedBankIds\(\{ client: pipeline, userId: user\.id, start: since/,
+    "owner-ignored lines (privé, dubbel, niet van mij) are read with the same helper the result engine uses");
+  assert.match(route, /if \(!t\.date \|\| t\.date <= since \|\| excluded\.has\(t\.id\)\) return s;/, "…and left out of the sum");
+  assert.match(route, /if \(balance\.partial\) \{[\s\S]{0,600}placeable = new Set\(/, "with an account whose balance is unknown, only statements of the known accounts place a line");
+  assert.match(route, /if \(placeable && \(!t\.statement_document_id \|\| !placeable\.has\(t\.statement_document_id\)\)\) return s;/);
+  assert.match(route, /if \(!used\) kas = 0;/, "a shop without a kas has a drawer of zero, not an unknown one");
+  assert.match(route, /TAKINGS_SPAN_DAYS, today\);/, "the week rate is measured over the till's own history");
+  const rule = code("src/lib/cashflow-forecast.ts");
+  assert.match(rule, /if \(d0 === null \|\| isLateReceivable\(r, today\)\) continue;/, "late means past due, not past the pace");
 });
 
 test("[DEEL-CREDIT] the invoice list never states an open amount the credit beside it contradicts", () => {
@@ -19339,8 +19512,8 @@ test("[XAF] the auditfile is balanced by construction, honest about the rest, an
     "cost booking is an allow-list — mirroring CASH_CATEGORIES in the result engine");
   assert.match(pure, /const restC = totalC - salesC;/,
     "[FIN-5] a Z-day remainder above tolerance still books its revenue on 8020");
-  assert.match(pure, /el\("endDate", input\.endDate\)/,
-    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31");
+  assert.match(pure, /const declaredEnd = lastEntryDate > input\.endDate \? lastEntryDate : input\.endDate;\s*out\.push\(el\("endDate", declaredEnd\)\)/,
+    "the header's endDate is the CLAMPED one the route computed — never a bare Dec 31 — stretched only to a transaction the file actually carries");
   assert.match(pure, /: "<companyIdent\/>"/,
     "companyIdent is a REQUIRED child of company in XAF 3.2 — empty element when KvK is absent, never omitted");
   const xafSpec = readFileSync("src/lib/xaf-export.test.ts", "utf8");
@@ -23519,7 +23692,16 @@ test("[MOLLIE-AFREKENING] nothing books before the settlement reconciles, and th
   const sync = code("src/lib/mollie-settlement-sync.ts");
   assert.match(sync, /const verdict = summarizeSettlement\(s\);\s*if \(!verdict\.ok\) \{[\s\S]{0,300}status: "refused"/, "a refused settlement is recorded as refused and skipped");
   assert.match(sync, /pipeline\.rpc\("apply_manual_payment", \{/, "the fee is marked paid through the locked RPC, never by an UPDATE");
-  assert.match(sync, /p_client_key: settlementRowId,/, "…keyed on the settlement, so a second run cannot pay it twice");
+  assert.match(sync, /p_client_key: feeClientKey\(settlementRowId, invoiceId\),/, "…keyed on (settlement row, invoice), so a second run replays and a recreated invoice can still be paid");
+  // A refund or chargeback, a guard that says "this may be an invoice's own payment", an unsettled
+  // fee: each holds the settlement. 'booked' is never written over any of them.
+  assert.match(sync, /listMollieSettlementRefunds\(conn\.apiKey, s\.id\),\s*listMollieSettlementChargebacks\(conn\.apiKey, s\.id\),/, "refunds and chargebacks are read");
+  assert.match(sync, /const lineVerdict = payoutLineVerdict\(split, \{ summary, adjustments \}\);/, "…and reach the verdict");
+  assert.match(sync, /if \(guard\.hold\("omzet", line\) === "paid-invoice"\) \{\s*return \{ lineId: line\.id, blocked:/, "the guard's answer blocks, it does not book");
+  assert.match(sync, /const complete = feeDone && payoutTxId !== null && lineBlocked === null && lineVerdict === "transfer";/);
+  assert.match(sync, /if \(status !== "received"\) \{\s*return \{ paidAt: null, reason:/, "an unconfirmed fee invoice is a held row, retried next run");
+  assert.match(sync, /return \{ paidAt: null, reason: `kostenfactuur niet op betaald gezet/, "a failed RPC is returned unsettled, so it is retried");
+  assert.match(code("src/lib/mollie.ts"), /export async function listMollieSettlementRefunds/);
   assert.match(sync, /status: autoBoeken \? "received" : "processing",/, "[ZELF-EERST] the owner's switch holds the fee in the queue");
   assert.doesNotMatch(sync, /category: "omzet"|category: "pos_income"|category: "kosten"/, "the sync never codes revenue or cost onto a bank line");
   assert.match(sync, /update\(\{ category: "transfer", category_source: "rule", category_confirmed: false \}\)/, "the payout line is a transfer, unconfirmed, only when every payment is ours");
@@ -27759,7 +27941,7 @@ test("[AANSLAG] every path that writes an incoming invoice carries the tax kind,
   // The reader is told, and its answer is normalised to the closed list.
   const ai = code("src/lib/ai.ts");
   assert.match(ai, /"tax_kind": "inkomstenbelasting" \| "zorgverzekeringswet" \| "omzetbelasting" \| "motorrijtuigenbelasting" \| "overig" \| null,/);
-  assert.match(ai, /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) \? parsed\.tax_kind : null;/);
+  assert.match(ai, /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) && isTaxOfficeName\([^\n]*\? parsed\.tax_kind : null;/);
 });
 
 test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it where it belongs", () => {
@@ -27769,6 +27951,20 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(engine, /if \(taxKind && taxLetterBooking\(taxKind\) !== "kosten"\) \{ aanslagen \+= s\.ex \+ s\.btw; continue; \}/,
     "the kasstelsel branch must withhold the settlement slice");
   assert.match(engine, /aanslagen: round2\(aanslagen\),/, "the withheld money reaches the result by name");
+  // No letter of the Belastingdienst carries btw: the one kind that IS a cost (MRB) books gross and
+  // never reaches bookVoorbelasting — in both legs, and in the auditfile.
+  assert.match(engine, /if \(taxKind\) \{ kosten \+= s\.ex \+ s\.btw; continue; \}/, "kas: MRB gross to kosten, no voorbelasting");
+  assert.match(engine, /if \(effectiveTaxKind\(inv\)\) \{ kosten \+= ex \+ btw; continue; \}/, "accrual: the same");
+  assert.match(code("src/lib/xaf-export.ts"), /if \(booking === "kosten"\) \{[\s\S]{0,600}accID: ACC\.kosten, debitC: exC \+ btwC/, "auditfile: MRB gross on kosten");
+  // The kind can only come from the tax office, and the owner can correct it.
+  assert.match(code("src/lib/ai.ts"), /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) && isTaxOfficeName\(/, "the reader may not name a kind for any other sender");
+  const door = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(door, /if \(rawTaxKind !== null && rawTaxKind !== "" && !isTaxKind\(rawTaxKind\)\)/, "the door accepts the closed list only");
+  assert.match(door, /\(patch as Record<string, unknown>\)\.tax_kind = nextTaxKind;/);
+  assert.match(code("src/components/invoice/InvoiceCorrectionModal.tsx"), /<select\s+value=\{taxKind\}/, "the editor offers the kind");
+  // The closing package and the export name a letter as what it is, never as inkoop.
+  assert.match(code("src/lib/closing-package.ts"), /const taxLetters = incoming\.filter\(\(i\) => effectiveTaxKind\(i\) !== null\);/);
+  assert.match(code("src/lib/export.ts"), /effectiveTaxKind\(inv\) \? `aanslag \$\{effectiveTaxKind\(inv\)\}`/);
   // The selects carry the column, and the assembler hands both handles to the engine.
   assert.match(code("src/lib/compute-result-range.ts"), /client_name, tax_kind"\)/);
   assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind"\)/);
@@ -27779,6 +27975,13 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(xaf, /const booking = inv\.taxKind \? taxLetterBooking\(inv\.taxKind\) : null;/);
   assert.match(xaf, /booking === "prive" \? ACC\.prive : booking === "settlement" \? ACC\.btwTeBetalen : ACC\.vraagposten/);
   assert.match(xaf, /\{ accID: "0500", accDesc: "Privé-opnamen/, "the privé account is declared");
+  // [XAF-LENGTE] No raw String.slice on an element's content: every typed string goes through the
+  // code-point clip, at the schema's own limit. One over-long postcode refused the whole file.
+  assert.doesNotMatch(xaf.replace(/skipped\.slice\(0, 50\)/, ""), /esc\([^)]*\.slice\(0, \d+\)\)|\.slice\(0, \d+\), build/, "a raw slice reached the serializer");
+  for (const [elName, max] of [["postalCode", 10], ["taxRegIdent", 30], ["commerceNr", 100], ["streetname", 100], ["custSupName", 50]] as const) {
+    assert.match(xaf, new RegExp(`el\\("${elName}", esc\\(clip\\([^,]+, ${max}\\)\\)`), `${elName} is clipped to ${max}`);
+  }
+  assert.match(xaf, /const declaredEnd = lastEntryDate > input\.endDate \? lastEntryDate : input\.endDate;/, "the header covers every transaction");
   // The year screen names it, only when there was any.
   assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\(overzicht\.aanslagen \?\? 0\) > 0 &&/);
 });
@@ -27858,7 +28061,7 @@ test("[BEDRIJFSMIDDEL] the auditfile books the same split: 0100 for the purchase
   assert.match(xaf, /accID: "4900", accDesc: "Afschrijvingskosten",\s+accTp: "P", rgs: null/);
   assert.match(xaf, /const lines: Line\[\] = inv\.asset\s*\?\s*\[\{ accID: ACC\.activa, debitC: exC,/, "an asset purchase debits the balance sheet");
   assert.match(xaf, /if \(c <= 0\) return \{ reason: "afschrijving van nul of negatief — geweigerd" \};/);
-  assert.match(xaf, /push\("MEM", d\.date, d\.description\.slice\(0, 100\), buildDepreciation\(d\), "afschrijving", d\.id\);/);
+  assert.match(xaf, /push\("MEM", d\.date, clip\(d\.description, 100\), buildDepreciation\(d\), "afschrijving", d\.id\);/);
   const fetch = code("src/lib/xaf-fetch.ts");
   assert.match(fetch, /asset: assetInvoiceIds\.has\(r\.id\),/, "the fetch layer marks registered purchases");
   assert.match(fetch, /if \(last > end\) break;/, "no memoriaal is dated after the file's own end date");

@@ -66,7 +66,7 @@ if (typeof window !== 'undefined') {
 // so there is no way to reach the paid API that skips the ceiling. See
 // src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
 import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, AI_BUDGET_EXHAUSTED_ERROR, isAiBudgetError } from './ai-budget'
-import { isTaxKind, type TaxKind } from "./tax-letter";
+import { isTaxKind, isTaxOfficeName, type TaxKind } from "./tax-letter";
 
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
@@ -2464,7 +2464,11 @@ Return JSON only.`;
     parsed.is_reminder = parsed.is_reminder === true || isReminderFilename(filename);
     // [AANSLAG] Closed list, else null. The name rule in tax-letter.ts is the backstop for a
     // Belastingdienst letter the model left unnamed.
-    parsed.tax_kind = isTaxKind(parsed.tax_kind) ? parsed.tax_kind : null;
+    // …and only for the tax office itself. An accountant's invoice for "verzorgen aangifte
+    // inkomstenbelasting" is a cost with reclaimable btw; the model, asked to name the tax a
+    // document concerns, named it — and a stored kind is honoured everywhere, so that invoice
+    // silently left the costs. The sender decides whether a kind can exist at all.
+    parsed.tax_kind = isTaxKind(parsed.tax_kind) && isTaxOfficeName(typeof parsed.vendor === 'string' ? parsed.vendor : null) ? parsed.tax_kind : null;
 
     // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
     // invoice. Below the hard floor (or with no invoice signal at all) it's spam /

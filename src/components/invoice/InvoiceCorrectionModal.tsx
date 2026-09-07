@@ -57,6 +57,8 @@ export interface CorrectableInvoice {
   vendor_iban?: string | null
   payment_reference?: string | null
   invoice_type?: string | null
+  /** [AANSLAG] Which Belastingdienst letter this is; null/undefined = an ordinary invoice. */
+  tax_kind?: string | null
   total_ex_btw: number | null
   btw_amount: number | null
   total_inc_btw: number | null
@@ -93,10 +95,22 @@ export interface CorrectionResult {
   btw_amount: number
   total_inc_btw: number
   invoice_type: string | null
+  /** [AANSLAG] As now stored. */
+  tax_kind?: string | null
   invoice_number?: string | null
   client_name?: string | null
   invoice_date?: string | null
 }
+
+// [AANSLAG] The closed list the door accepts, each with its own literal key ([TAAL]).
+const TAX_KIND_KEY = {
+  inkomstenbelasting: 'corr.soort.inkomstenbelasting',
+  zorgverzekeringswet: 'corr.soort.zorgverzekeringswet',
+  omzetbelasting: 'corr.soort.omzetbelasting',
+  motorrijtuigenbelasting: 'corr.soort.motorrijtuigenbelasting',
+  overig: 'corr.soort.overig',
+} as const
+const TAX_KINDS = Object.keys(TAX_KIND_KEY) as (keyof typeof TAX_KIND_KEY)[]
 
 export default function InvoiceCorrectionModal({
   invoice,
@@ -156,6 +170,8 @@ export default function InvoiceCorrectionModal({
   const [dueDate, setDueDate] = useState(invoice.due_date ?? '')
   const [iban, setIban] = useState(invoice.vendor_iban ?? '')
   const [kenmerk, setKenmerk] = useState(invoice.payment_reference ?? '')
+  // [AANSLAG] '' = an ordinary invoice. Sent only when the owner moved it.
+  const [taxKind, setTaxKind] = useState(invoice.tax_kind ?? '')
   // [SPLIT-CORRECTIE] The paper's own specification: one row per rate, as TEXT (comma decimals
   // like every Dutch invoice). Prefilled from what stands; empty everywhere = clear it.
   const splitStart = (rate: number) => {
@@ -196,6 +212,7 @@ export default function InvoiceCorrectionModal({
     if (dueDate !== (invoice.due_date ?? '')) body.due_date = dueDate
     if (iban.trim() !== (invoice.vendor_iban ?? '')) body.vendor_iban = iban.trim()
     if (kenmerk.trim() !== (invoice.payment_reference ?? '')) body.payment_reference = kenmerk.trim()
+    if (taxKind !== (invoice.tax_kind ?? '')) body.tax_kind = taxKind
     // [SPLIT-CORRECTIE] Sent only when the typed rows differ from what stood. Rows with both
     // fields empty do not exist; everything empty = [] = wis de specificatie. Parsing is
     // comma-tolerant; the SERVER validates the arithmetic and refuses with the exact numbers.
@@ -331,6 +348,19 @@ export default function InvoiceCorrectionModal({
         {field(t('corr.vervaldatum'), dueDate, setDueDate, 'date')}
         {field(t('corr.iban'), iban, setIban)}
         {field(t('corr.kenmerk'), kenmerk, setKenmerk)}
+        {/* [AANSLAG] A letter of the Belastingdienst is booked by its kind, never as a cost with
+            btw — and the reader's guess at that kind is the owner's to correct. */}
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>{t('corr.soort.label')}</span>
+          <select
+            value={taxKind}
+            onChange={(e) => setTaxKind(e.target.value)}
+            style={{ width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15, borderRadius: 10, border: '1px solid #d1d1d6', outline: 'none', color: '#202124', fontFamily: FONT, background: '#fff' }}
+          >
+            <option value="">{t('corr.soort.factuur')}</option>
+            {TAX_KINDS.map((k) => <option key={k} value={k}>{t(TAX_KIND_KEY[k])}</option>)}
+          </select>
+        </label>
 
         {/* [SPLIT-CORRECTIE] De specificatie zoals die op het papier staat — één regel per tarief.
             De server rekent na en weigert met de exacte getallen wanneer het niet optelt; leeg

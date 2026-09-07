@@ -29,6 +29,7 @@
 // (fetch + parallel download, then assemble). Reuses quarterly.ts + export.ts.
 
 import { readExcludedBankIds } from "./bank-ignored-excluded";
+import { effectiveTaxKind } from "./tax-letter";
 import JSZip from "jszip";
 // [CLOSING-PACKAGE-PAYDATE] pdf-lib stamps a small "Betaald op: DD-MM-YYYY" line
 // on the first page of each PAID invoice. Mechanical text-draw at fixed
@@ -170,6 +171,8 @@ export interface PackageInvoice {
   // alleen aan een minteken te herkennen, en dat is precies het soort verschil waar een
   // boekhouder een half uur aan kwijt is als hij het pas bij het inboeken ontdekt.
   invoice_type: string | null;
+  /** [AANSLAG] A Belastingdienst letter's kind; null on an ordinary invoice. */
+  tax_kind?: string | null;
   // [FIN-4] ownership — used to infer a NULL direction so a verified row is
   // never silently dropped from the package.
   sender_id: string | null;
@@ -468,7 +471,12 @@ export function buildOverviewCsv(
   lines.push("BTW-overzicht (ruwe cijfers — de boekhouder berekent de aangifte)");
   lines.push(["Richting", "Tarief", "Omzet excl. BTW", "BTW-bedrag"].map(esc).join(";"));
 
-  for (const [label, set] of [["Uitgaand (verkoop)", outgoing], ["Inkomend (inkoop)", incoming]] as const) {
+  // [AANSLAG] A Belastingdienst letter is not an inkoop and carries no btw: it is kept out of the
+  // per-rate table (where it read as "inkoop @ 0%") and listed on its own line, gross, so the
+  // overview and the concept aangifte in the same package stop contradicting each other.
+  const taxLetters = incoming.filter((i) => effectiveTaxKind(i) !== null);
+  const purchases = incoming.filter((i) => effectiveTaxKind(i) === null);
+  for (const [label, set] of [["Uitgaand (verkoop)", outgoing], ["Inkomend (inkoop)", purchases]] as const) {
     const byRate = new Map<number, { excl: number; btw: number }>();
     for (const inv of set) {
       const rate = calcBtwRate(inv.btw_amount, inv.total_ex_btw);
@@ -493,6 +501,10 @@ export function buildOverviewCsv(
         lines.push([label, `${rate}%`, EUR(v.excl), EUR(v.btw)].map(esc).join(";"));
       }
     }
+  }
+  if (taxLetters.length > 0) {
+    const gross = taxLetters.reduce((s, i) => s + (i.total_inc_btw ?? ((i.total_ex_btw ?? 0) + (i.btw_amount ?? 0))), 0);
+    lines.push(["Aanslagen Belastingdienst (geen inkoop, geen btw)", "—", EUR(gross), EUR(0)].map(esc).join(";"));
   }
   lines.push("");
 
@@ -520,7 +532,8 @@ export function buildOverviewCsv(
     const rate = calcBtwRate(inv.btw_amount, inv.total_ex_btw);
     lines.push([
       inv.direction === "outgoing" ? "Uitgaand" : "Inkomend",
-      inv.invoice_type ?? "factuur",
+      // [AANSLAG] Named as what it is, so the accountant does not book a private tax bill as inkoop.
+      effectiveTaxKind(inv) ? `aanslag ${effectiveTaxKind(inv)}` : (inv.invoice_type ?? "factuur"),
       inv.invoice_number ?? "—",
       inv.client_name ?? "—",
       inv.invoice_date ?? "—",
@@ -1336,7 +1349,7 @@ const INVOICE_FIELDS =
   // [CREDIT-REF] original_invoice_id rijdt mee zodat de creditnota-e-factuur in het pakket
   // dezelfde BillingReference draagt als zijn gemailde/gedownloade tweeling — twee e-facturen
   // van één document die verschillen is precies de drift waar ubl-inputs.ts tegen bestaat.
-  "id, invoice_number, client_name, status, direction, invoice_type, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value, original_invoice_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters

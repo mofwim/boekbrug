@@ -79,6 +79,7 @@ export type ForecastNote =
   | { code: "kas-unknown" }
   | { code: "payables-undated"; count: number; amount: number }
   | { code: "receivables-late"; count: number; amount: number }
+  | { code: "receivables-undated"; count: number; amount: number }
   | { code: "takings-unknown" }
   | { code: "takings-thin"; days: number };
 
@@ -130,6 +131,17 @@ function daysAfter(a: string, b: string): number {
   return (dayNumberFromIso(b) ?? 0) - (dayNumberFromIso(a) ?? 0);
 }
 
+/**
+ * Late means PAST DUE. A client who usually pays in four days is not "over tijd" on day six of a
+ * thirty-day term — the money is merely not in yet, and its expected day is simply today. Only
+ * without a due date does the pace's date decide.
+ */
+export function isLateReceivable(r: ForecastReceivable, today: string): boolean {
+  if (r.dueDate && dayNumberFromIso(r.dueDate) !== null) return r.dueDate < today;
+  const d = expectedInflowDate(r);
+  return d !== null && d < today;
+}
+
 export function forecastCashflow(input: ForecastInput): CashflowForecast {
   const { today } = input;
   const horizons = input.horizons ?? [7, 30];
@@ -138,10 +150,9 @@ export function forecastCashflow(input: ForecastInput): CashflowForecast {
   const start = bankNow === null ? null : round2(bankNow + (input.kas ?? 0));
 
   const undated = input.payables.filter((p) => outflowDate(p, today) === null);
-  const late = input.receivables.filter((r) => {
-    const d = expectedInflowDate(r);
-    return d !== null && d < today;
-  });
+  const late = input.receivables.filter((r) => isLateReceivable(r, today));
+  // No invoice date and no due date: nothing places it on a day, so it is named, not counted.
+  const undatedIn = input.receivables.filter((r) => expectedInflowDate(r) === null);
 
   const out: HorizonForecast[] = [];
   for (const days of horizons) {
@@ -168,8 +179,11 @@ export function forecastCashflow(input: ForecastInput): CashflowForecast {
     }
     let inSum = 0, inCount = 0;
     for (const r of input.receivables) {
-      const d = expectedInflowDate(r);
-      if (d === null || d < today || d > endDate) continue;
+      const d0 = expectedInflowDate(r);
+      if (d0 === null || isLateReceivable(r, today)) continue;
+      // A pace date already behind us on an invoice still inside its term: expected today.
+      const d = d0 < today ? today : d0;
+      if (d > endDate) continue;
       inSum += r.open; inCount++;
       add(d, r.open);
     }
@@ -183,6 +197,7 @@ export function forecastCashflow(input: ForecastInput): CashflowForecast {
     }
     if (undated.length > 0) notes.push({ code: "payables-undated", count: undated.length, amount: round2(undated.reduce((s, p) => s + p.open, 0)) });
     if (late.length > 0) notes.push({ code: "receivables-late", count: late.length, amount: round2(late.reduce((s, r) => s + r.open, 0)) });
+    if (undatedIn.length > 0) notes.push({ code: "receivables-undated", count: undatedIn.length, amount: round2(undatedIn.reduce((s, r) => s + r.open, 0)) });
 
     let lowest: HorizonForecast["lowest"] = null;
     let end: number | null = null;
@@ -208,17 +223,30 @@ export function forecastCashflow(input: ForecastInput): CashflowForecast {
   return { today, horizons: out };
 }
 
-/** Average takings from booked till days: Σ(pin + cash) ÷ booked days, and booked days per week. */
+/**
+ * Average takings from booked till days: Σ(pin + cash) ÷ booked days, and booked days per week.
+ *
+ * The week rate is measured over the span the till has actually been in use — from its first
+ * booked day to `today` — never over the whole look-back window. A till three weeks old with 18
+ * booked days trades six days a week; over a fixed eight-week window it read as 2,25, and the
+ * forecast scaled a € 800 day down to a third of itself and painted a tekort that was not there.
+ */
 export function takingsFromTillDays(
   rows: readonly { turnover_date: string | null; pin_amount: number | null; cash_amount: number | null }[],
   spanDays: number,
+  today?: string,
 ): ForecastTakings | null {
   const booked = rows.filter((r) => r.turnover_date && dayNumberFromIso(r.turnover_date) !== null);
   if (booked.length === 0 || spanDays <= 0) return null;
   const total = booked.reduce((s, r) => s + (Number(r.pin_amount) || 0) + (Number(r.cash_amount) || 0), 0);
+  let span = spanDays;
+  if (today && dayNumberFromIso(today) !== null) {
+    const first = booked.reduce<string>((m, r) => (r.turnover_date! < m ? r.turnover_date! : m), booked[0].turnover_date!);
+    span = Math.max(1, Math.min(spanDays, daysAfter(first, today) + 1));
+  }
   return {
     perTradingDay: round2(total / booked.length),
-    tradingDaysPerWeek: Math.min(7, round2(booked.length / (spanDays / 7))),
+    tradingDaysPerWeek: Math.min(7, round2(booked.length / (span / 7))),
     daysMeasured: booked.length,
   };
 }

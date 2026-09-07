@@ -20,6 +20,7 @@
 //     between — and a stale proposal is refused, never applied on top of the newer truth.
 
 import { SUM_TOLERANCE } from "./btw-reconcile";
+import { asCreditAmounts } from "./creditnota-signal";
 
 /** The fields a proposal may name. All of them sit behind the amount guard. */
 export const PROPOSABLE_FIELDS = ["total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "due_date"] as const;
@@ -41,7 +42,46 @@ export interface ProposedChange {
 
 export type ProposalVerdict =
   | { ok: true; changes: ProposedChange[]; proposed: ProposableValues }
-  | { ok: false; reason: string; code: "nothing_changed" | "incomplete_amounts" | "sum_mismatch" | "no_base" | "impossible_rate" | "bad_date" };
+  | { ok: false; reason: string; code: "nothing_changed" | "incomplete_amounts" | "sum_mismatch" | "no_base" | "impossible_rate" | "bad_date" | "negative_amounts" };
+
+const AMOUNT_FIELDS = ["total_ex_btw", "btw_amount", "total_inc_btw"] as const;
+
+/**
+ * The fields the client's door will WRITE for this proposal. Amounts travel as a trio (the door
+ * refuses a partial one), so naming one amount means all three are written — and therefore all
+ * three must be compared, at the stale check and at the already-applied check. Comparing only the
+ * named field left a 2-cent hole: SUM_TOLERANCE lets a concurrent edit move the total alone by
+ * less than that, invisibly to a proposal that named only ex and btw.
+ */
+export function fieldsWritten(changes: readonly ProposedChange[]): ProposableField[] {
+  const out: ProposableField[] = [];
+  if (changes.some((c) => (AMOUNT_FIELDS as readonly string[]).includes(c.field))) out.push(...AMOUNT_FIELDS);
+  for (const f of ["invoice_date", "due_date"] as const) if (changes.some((c) => c.field === f)) out.push(f);
+  return out;
+}
+
+function sameValue(f: ProposableField, a: ProposableValues, b: ProposableValues): boolean {
+  if (f === "invoice_date" || f === "due_date") return (a[f] ?? null) === (b[f] ?? null);
+  return sameMoney(a[f], b[f]);
+}
+
+/** A stored `changes` column, validated: an array of known fields. Anything else is a broken row, not a proposal. */
+export function isChangeList(v: unknown): v is ProposedChange[] {
+  return Array.isArray(v) && v.every((c) => c && typeof c === "object" && (PROPOSABLE_FIELDS as readonly string[]).includes((c as { field?: unknown }).field as string));
+}
+
+/**
+ * The door's refusal codes after which a proposal can never apply: the invoice was paid, money was
+ * booked against it, or the accountant marked it verwerkt. The proposal is then closed as stale
+ * ("vervallen") rather than left open — an open proposal nobody can ever accept shows the
+ * accountant "wacht op de klant" forever.
+ */
+export function proposalEndsOn(doorCode: unknown): boolean {
+  return doorCode === "wrong_status" || doorCode === "money_settled" || doorCode === "verwerkt";
+}
+
+/** How long one accept request may hold the row while the door runs. After this a stuck claim is ignored. */
+export const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -60,13 +100,30 @@ function sameMoney(a: number | null, b: number | null): boolean {
  * no rate above 21%. A proposal the client's door would refuse is refused here, before it is
  * ever shown to the client.
  */
-export function buildProposal(current: ProposableValues, input: Partial<Record<ProposableField, unknown>>): ProposalVerdict {
-  const ex = finite(input.total_ex_btw) ? input.total_ex_btw : null;
-  const btw = finite(input.btw_amount) ? input.btw_amount : null;
-  const inc = finite(input.total_inc_btw) ? input.total_inc_btw : null;
+export function buildProposal(
+  current: ProposableValues,
+  input: Partial<Record<ProposableField, unknown>>,
+  opts: { invoiceType?: string | null } = {},
+): ProposalVerdict {
+  let ex = finite(input.total_ex_btw) ? input.total_ex_btw : null;
+  let btw = finite(input.btw_amount) ? input.btw_amount : null;
+  let inc = finite(input.total_inc_btw) ? input.total_inc_btw : null;
   const anyAmount = ex !== null || btw !== null || inc !== null;
   if (anyAmount && (ex === null || btw === null || inc === null)) {
     return { ok: false, code: "incomplete_amounts", reason: "Vul alle drie de bedragen in — excl. btw, btw en totaal — of laat ze alle drie leeg." };
+  }
+  // [CREDIT-SIGN] What is stored is what the client accepted. The door flips a creditnota's trio
+  // negative on its own; a proposal that showed "−100 → 100" and then stored −100 would have the
+  // record say money moved that did not. So the same rule is applied HERE, before the card is
+  // built — and on a factuur a negative amount is refused outright: that document is a creditnota,
+  // and the door would otherwise store a negative debt.
+  if (anyAmount) {
+    if (opts.invoiceType === "creditnota") {
+      const signed = asCreditAmounts({ totalExBtw: ex as number, btwAmount: btw as number, totalIncBtw: inc as number });
+      ex = signed.totalExBtw; btw = signed.btwAmount; inc = signed.totalIncBtw;
+    } else if ((ex as number) < -0.005 || (inc as number) < -0.005) {
+      return { ok: false, code: "negative_amounts", reason: "Een negatief bedrag hoort op een creditnota. Deze factuur is er geen." };
+    }
   }
   if (anyAmount && Math.abs((ex as number) + (btw as number) - (inc as number)) > SUM_TOLERANCE) {
     return { ok: false, code: "sum_mismatch", reason: "Bedrag excl. btw plus btw moet gelijk zijn aan het totaal." };
@@ -99,15 +156,20 @@ export function buildProposal(current: ProposableValues, input: Partial<Record<P
   return { ok: true, changes, proposed };
 }
 
-/** Has the invoice moved since the snapshot? Only the fields the proposal names matter. */
+/** Has the invoice moved since the snapshot? Judged on every field the door would write. */
 export function isStale(before: ProposableValues, current: ProposableValues, changes: readonly ProposedChange[]): boolean {
-  for (const c of changes) {
-    const f = c.field;
-    if (f === "invoice_date" || f === "due_date") {
-      if ((before[f] ?? null) !== (current[f] ?? null)) return true;
-    } else if (!sameMoney(before[f], current[f])) return true;
-  }
-  return false;
+  return fieldsWritten(changes).some((f) => !sameValue(f, before, current));
+}
+
+/**
+ * Does the invoice ALREADY carry the proposal? Then the door ran and the row was not closed — a
+ * request that died between the two, or a retry of one that did — and closing the row as accepted
+ * is the true record. It must never be read as stale: "vervallen" over an applied correction is
+ * the record contradicting the books.
+ */
+export function isAlreadyApplied(proposed: ProposableValues, current: ProposableValues, changes: readonly ProposedChange[]): boolean {
+  const fields = fieldsWritten(changes);
+  return fields.length > 0 && fields.every((f) => sameValue(f, proposed, current));
 }
 
 /**

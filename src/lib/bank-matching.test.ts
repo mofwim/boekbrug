@@ -1303,5 +1303,42 @@ console.log("\n— [PAY-REFERENCE] the betalingskenmerk the invoice asked for is
     (tie.candidates ?? []).some((c) => (c.signals ?? []).includes("amount")));
 }
 
+// ── [NUMMER-BOTST] a printed number is not an identity across suppliers ──────────────────────
+{
+  const cand = (p: Partial<MatchCandidate> = {}): MatchCandidate => ({
+    invoiceId: "inv-a", invoiceNumber: "2026-014", amount: -121, invoiceDate: "2026-02-01",
+    confidence: 0.97, signals: ["reference", "amount"], reason: "", nameSim: 0, nameIdentity: false, ...p,
+  });
+  const asAuto = (t: BankTransaction, c: MatchCandidate): TransactionMatch => ({ transaction: t, outcome: "auto", best: c, candidates: [c] });
+  // Supplier A's invoice 2026-014, € 121; the owner pays supplier B € 121 quoting B's own 2026-014.
+  const payB = tx({ amount: -121, counterpartName: "Supplier B", counterpartIban: "NL91ABNA0417164300", reference: "2026-014" });
+  check("[NUMMER-BOTST] the bank names an account the document contradicts → no tier",
+    autoConfirmTier(asAuto(payB, cand({ vendorIban: "NL02RABO0123456789" }))) === null);
+  check("[NUMMER-BOTST] no account to confirm, a counterparty that does not match, money OUT → flagged, never silent",
+    autoConfirmTier(asAuto(payB, cand({ vendorIban: null }))) === "amount_only");
+  check("[NUMMER-BOTST] the same account on both sides → certain, as before",
+    autoConfirmTier(asAuto(payB, cand({ vendorIban: "NL91ABNA0417164300" }))) === "certain");
+  check("[NUMMER-BOTST] a counterparty that DOES match → certain, as before",
+    autoConfirmTier(asAuto(payB, cand({ vendorIban: null, nameSim: 0.9 }))) === "certain");
+  check("[NUMMER-BOTST] a line without a counterparty name at all → certain (nothing contradicts)",
+    autoConfirmTier(asAuto(tx({ amount: -121, counterpartName: null, reference: "2026-014" }), cand({ vendorIban: null }))) === "certain");
+  check("[NUMMER-BOTST] money IN quoting OUR number stays certain — our numbers are unique here",
+    autoConfirmTier(asAuto(tx({ amount: 121, counterpartName: "Stichting Derdengelden", reference: "2026-014" }), cand({ amount: 121, vendorIban: null }))) === "certain");
+}
+
+// ── [TWEELING] same party, same amount, only a date apart → a human choice ─────────────────
+{
+  const late = tx({ transactionId: "t-late", amount: -89, date: "2026-02-20", counterpartName: "KPN B.V.", counterpartIban: "NL91ABNA0417164300", reference: "abonnement" });
+  const jan = inv({ id: "i-jan", invoice_number: "K-001", total_inc_btw: 89, invoice_date: "2026-01-01", due_date: "2026-01-14", direction: "incoming", status: "received", client_name: "KPN B.V.", vendor_iban: "NL91ABNA0417164300" } as never);
+  const feb = inv({ id: "i-feb", invoice_number: "K-002", total_inc_btw: 89, invoice_date: "2026-02-20", due_date: "2026-03-06", direction: "incoming", status: "received", client_name: "KPN B.V.", vendor_iban: "NL91ABNA0417164300" } as never);
+  const m = matchTransactions([late] as never, [jan, feb] as never).matches[0];
+  check("[TWEELING] January paid late on February's date: not an 'auto' — the date bonus is not an identity", m.outcome !== "auto");
+  check("[TWEELING] …both stay listed for the owner", (m.candidates ?? []).length === 2);
+  // Negative control: name the document and it IS decisive.
+  const named = tx({ ...late, reference: "K-001" });
+  const n = matchTransactions([named] as never, [jan, feb] as never).matches[0];
+  check("[TWEELING] negative control — a printed number picks January, auto", n.outcome === "auto" && n.best?.invoiceId === "i-jan");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

@@ -34,6 +34,7 @@ import { exemptShareOf } from "./vat-exemption";
 // point at — a different set from the ones the window DATES. See the call site.
 import { fetchVatDeductions } from "./vat-exemption-collect";
 import { round2 } from "./invoice-totals";
+import { effectiveTaxKind, type TaxKind } from "./tax-letter";
 
 // [KASSTELSEL] Under cash basis an invoice counts ONLY when money moved: amount_paid > 0 (any
 // partial) OR status 'paid' (fully settled). NOT a bare 'sent'/'overdue' (unpaid sale) or
@@ -69,9 +70,10 @@ export async function fetchSettlementEvents(
     id: string; direction: string | null; sender_id: string | null; receiver_id: string | null;
     total_ex_btw: number | null; btw_amount: number | null; total_inc_btw: number | null;
     amount_paid: number | null; payment_date: string | null; marked_paid_at: string | null; status: string | null;
+    tax_kind?: string | null; client_name?: string | null;
   }>((from, to) => pipeline
     .from("invoices")
-    .select("id, direction, sender_id, receiver_id, total_ex_btw, btw_amount, total_inc_btw, amount_paid, payment_date, marked_paid_at, status")
+    .select("id, direction, sender_id, receiver_id, total_ex_btw, btw_amount, total_inc_btw, amount_paid, payment_date, marked_paid_at, status, tax_kind, client_name")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .order("id", { ascending: true }).range(from, to),
   ).catch((e: unknown) => { throw new Error(`[KASSTELSEL] invoice fetch failed: ${e instanceof Error ? e.message : String(e)}`); });
@@ -124,7 +126,10 @@ export async function fetchSettlementEvents(
   if (settled.length === 0) return { events: [], priorByInvoice: new Map(), undatedPaidCount: 0, estimatedCount: 0 };
 
   const headers = new Map<string, HeaderWithPaid>();
+  // [AANSLAG] See QuarterSettlements.taxKindByInvoice.
+  const taxKindByInvoice = new Map<string, TaxKind>();
   for (const i of settled) {
+    if (i.receiver_id === ownerId) { const k = effectiveTaxKind(i); if (k) taxKindByInvoice.set(i.id, k); }
     const direction: InvoiceDirection =
       i.direction === "incoming" || i.direction === "outgoing"
         ? i.direction
@@ -204,7 +209,7 @@ export async function fetchSettlementEvents(
     else raw.push({ invoiceId: i.id, payDate: null, magnitude: remainderMag, estimated: true });
   }
 
-  return buildQuarterSettlements(headers, raw, start, end);
+  return { ...buildQuarterSettlements(headers, raw, start, end), taxKindByInvoice };
 }
 
 /**
@@ -334,6 +339,9 @@ export function mergeSchemeOpts(
     // only in the caller's date-range map, or only in the scheme's settled map, keeps it either
     // way. Set it after this call and the other half is gone.
     deductionByInvoice?: ComputeOpts["deductionByInvoice"]
+    // [AANSLAG] Same window problem, same merge: the caller knows the letters DATED in the window,
+    // the scheme knows the letters SETTLED in it.
+    taxKindByInvoice?: ComputeOpts["taxKindByInvoice"]
   },
 ): ComputeOpts {
   // [MERGE-SCHEME] Precedence, stated to match what the code DOES.
@@ -347,16 +355,18 @@ export function mergeSchemeOpts(
   // first. On the one function that exists so this cannot be got wrong, a comment describing the
   // reverse of the behaviour is the next version of the bug: a reader who trusts it and "restores"
   // the order flips the precedence on exempt shares, silently, on a filed quarter.
-  const merge = <V>(a?: Map<string, V>, b?: Map<string, V>): Map<string, V> | undefined =>
+  const merge = <V>(a?: ReadonlyMap<string, V>, b?: ReadonlyMap<string, V>): Map<string, V> | undefined =>
     a || b ? new Map([...(a ?? new Map<string, V>()), ...(b ?? new Map<string, V>())]) : undefined
   const rateSharesByInvoice = merge(opts.rateSharesByInvoice, local.rateSharesByInvoice)
   const exemptShareByInvoice = merge(opts.exemptShareByInvoice, local.exemptShareByInvoice)
   const deductionByInvoice = merge(opts.deductionByInvoice, local.deductionByInvoice)
+  const taxKindByInvoice = merge(opts.taxKindByInvoice, local.taxKindByInvoice)
   return {
     ...opts,
     ...(rateSharesByInvoice ? { rateSharesByInvoice } : {}),
     ...(exemptShareByInvoice ? { exemptShareByInvoice } : {}),
     ...(deductionByInvoice ? { deductionByInvoice } : {}),
+    ...(taxKindByInvoice ? { taxKindByInvoice } : {}),
   }
 }
 
@@ -441,6 +451,8 @@ export async function resolveSchemeSettlements(
       // Fractions, because a settlement settles a PART of its invoice — see exemptShareOf.
       exemptShareByInvoice: exemptShareOf(settledSales, exemptExByInvoice),
       ...(deductionByInvoice.size > 0 ? { deductionByInvoice } : {}),
+      // [AANSLAG] The settled letters' kinds — merged with the caller's own by mergeSchemeOpts.
+      ...(qs.taxKindByInvoice && qs.taxKindByInvoice.size > 0 ? { taxKindByInvoice: qs.taxKindByInvoice } : {}),
     },
     undatedPaidCount: qs.undatedPaidCount,
     estimatedPortionCount: qs.estimatedCount,

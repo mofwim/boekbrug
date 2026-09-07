@@ -33,6 +33,12 @@ import { supplierNameKey } from "@/lib/supplier-registry";
 // [OFFERTE-OPVOLGING] Welke offerte vandaag aandacht vraagt — één regel, zie dat bestand.
 import { quotesNeedingFollowup } from "@/lib/offerte-followup";
 import { amsterdamToday } from "@/lib/format-nl";
+import { SELF_ACTIONS, HAND_ACTIONS } from "@/lib/zelfstandig";
+
+/** [ZIEL] Seven days back, as ISO. A function, so the page component itself calls no clock in render. */
+function weekAgoIso(): string {
+  return new Date(Date.now() - 7 * 86_400_000).toISOString();
+}
 
 export const dynamic = "force-dynamic";
 
@@ -166,6 +172,17 @@ export default async function VandaagPage() {
       (e: unknown) => ({ data: null, error: e }),
     ) as Promise<{ data: { name_key: string | null }[] | null; error: unknown }>;
 
+  // [ZIEL] What BoekBrug did by itself this week, and what waits for the owner — measured on the
+  // audit trail (what HAPPENED), never on what a screen claims. Head counts only. A failed read
+  // leaves the line off the screen: a made-up share on a money screen is worse than none.
+  const weekAgo = weekAgoIso();
+  const selfQ = supabase.from("audit_logs").select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).in("action", [...SELF_ACTIONS]).gte("created_at", weekAgo);
+  const handQ = supabase.from("audit_logs").select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).in("action", [...HAND_ACTIONS]).gte("created_at", weekAgo);
+  const pendingBankQ = supabase.from("bank_transactions").select("id", { count: "exact", head: true })
+    .eq("user_id", user.id).eq("status", "pending");
+
   const [
     { data: payableRaw, error: payableErr },
     { data: remindRaw, error: remindErr },
@@ -173,7 +190,13 @@ export default async function VandaagPage() {
     { count: toVerifyCount, error: toVerifyErr },
     { count: datelessPayableCount, error: datelessErr },
     incassoRes,
-  ] = await Promise.all([payableQ, remindQ, offertesQ, toVerifyQ, datelessQ, incassoQ]);
+    selfRes,
+    handRes,
+    pendingBankRes,
+  ] = await Promise.all([payableQ, remindQ, offertesQ, toVerifyQ, datelessQ, incassoQ, selfQ, handQ, pendingBankQ]);
+  const zelf = selfRes.error || handRes.error || pendingBankRes.error
+    ? null
+    : { self: selfRes.count ?? 0, hand: handRes.count ?? 0, waiting: (toVerifyCount ?? 0) + (pendingBankRes.count ?? 0) };
 
   const payableAll = (payableRaw ?? []) as unknown as VandaagInvoice[];
 
@@ -259,5 +282,5 @@ export default async function VandaagPage() {
     amsterdamToday(),
   ).map((r) => ({ ...r.quote, followupState: r.state, followupDays: r.days }));
 
-  return <VandaagClient payable={payable} remind={remind} offertes={offertes} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} />;
+  return <VandaagClient payable={payable} remind={remind} offertes={offertes} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} zelf={zelf} />;
 }

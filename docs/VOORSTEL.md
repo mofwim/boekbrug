@@ -29,6 +29,29 @@ A proposal is a question with the answer already typed in.
 3. **Outcome** back to the accountant: a notification and a status chip on the quarter page
    (wacht op de klant · overgenomen · afgewezen · vervallen).
 
+## One decision per proposal
+
+The row and the invoice must never contradict each other, and two requests must never both run
+the door. So the decide route:
+
+- **claims** the row before calling the door (`applying_since`, compare-and-set on `status =
+  open` and no live claim; a claim older than two minutes is a dead request and is ignored);
+- **checks every row write** for the row it moved — a decline that lands while a claim is live is
+  refused (`busy`), a second accept from another tab loses the claim and is refused;
+- **closes the row from its claim** after the door wrote, and if the door refused because the
+  invoice was paid, money was booked or it is verwerkt, closes it as `stale` (vervallen) — an
+  open proposal nobody can ever accept showed the accountant "wacht op de klant" forever;
+- **heals a broken run**: an invoice that already carries the proposal (the door ran, the row did
+  not close) closes as `accepted` on the next tap, never as stale.
+
+The stale check compares every field the door will WRITE (an amount proposal writes the trio,
+so all three are compared — naming one left a 2-cent hole inside `SUM_TOLERANCE`), and the door
+itself pins the five correctable values it read in its WHERE, so nothing — the client's own
+editor, a second tab — can slip a newer truth under an accepted proposal between the check and
+the write. Sign follows the document at build time: on a creditnota the proposed trio is stored
+negative, exactly as the door would store it, so the card shows what will be stored; on a factuur
+a negative amount is refused, here and at the door — that document is a creditnota.
+
 ## What it never does
 
 Update an invoice on the accountant's word. The routes write `invoice_corrections` with the
@@ -39,4 +62,6 @@ client read the ones about them, and nobody writes through RLS.
 
 `correction-proposal.test.ts` (arithmetic, stale rule, the door's body shape), a render test for
 the client's card, and a `[VOORSTEL]` lifecycle gate: the one door, owner-only, no direct
-invoice writes on either route, the stale check, both screens, the RLS shape.
+invoice writes on either route, the stale check, the claim before the door and the row-count
+check on every close, the already-applied heal, the terminal door codes, the door's value pin
+and sign refusal, both screens, the RLS shape.

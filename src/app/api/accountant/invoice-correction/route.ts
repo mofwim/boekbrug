@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
 
   const { data: inv, error: invErr } = await supabase
     .from('invoices')
-    .select('id, receiver_id, direction, status, amount_paid, invoice_number, client_name, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date')
+    .select('id, receiver_id, direction, status, invoice_type, amount_paid, invoice_number, client_name, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date')
     .eq('id', invoiceId)
     .maybeSingle()
   if (invErr) {
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
   const verdict = buildProposal(before, {
     total_ex_btw: body?.total_ex_btw, btw_amount: body?.btw_amount, total_inc_btw: body?.total_inc_btw,
     invoice_date: body?.invoice_date, due_date: body?.due_date,
-  })
+  }, { invoiceType: inv.invoice_type })
   if (!verdict.ok) return NextResponse.json({ error: verdict.reason, code: verdict.code }, { status: 400 })
 
   // Service role: the table has no INSERT policy on purpose (see the migration).
