@@ -34,12 +34,30 @@ export interface OchtendPayment {
   amount: number;
 }
 
+/**
+ * [POST-WAARD] One incoming invoice that arrived yesterday — the FACTS, not a count.
+ *
+ * The mail used to say "1 nieuwe inkomende factuur staat voor je klaar" and open the home
+ * screen. The owner's own words: what did I gain from a mail with general information, whose
+ * button lands on the front page and not on the invoice it is about — an invoice I cannot even
+ * identify, because the mail names nothing. So the mail names it: who, how much, when it is
+ * due — and the button opens THAT invoice.
+ */
+export interface OchtendIncoming {
+  id: string;
+  supplierName: string | null;
+  /** Stored total, or null when the reader has not established one yet. Never invented here. */
+  amount: number | null;
+  /** 'YYYY-MM-DD' or null. */
+  dueDate: string | null;
+}
+
 export interface OchtendInput {
   /** Yesterday, as the Amsterdam calendar day the mail is about ('YYYY-MM-DD'). */
   gisteren: string;
   payments: OchtendPayment[];
   /** Incoming invoices that arrived/were staged yesterday (e-mail sync, upload, intake). */
-  newIncomingCount: number;
+  newIncoming: OchtendIncoming[];
   /** Absolute base URL for the one click target, e.g. https://boekbrug.nl */
   baseUrl: string;
 }
@@ -47,6 +65,17 @@ export interface OchtendInput {
 export interface OchtendMail {
   subject: string;
   html: string;
+  /** Where the button lands — a path inside the app. Exposed so a test can hold it to the facts. */
+  target: string;
+}
+
+/**
+ * [POST-WAARD] The page a single arrived invoice opens on: the pay screen, focused on that row.
+ * The same deep link the dashboard's attention list and the bell use (focus-scroll.ts), so a
+ * mail, a bell and a tile cannot come to send the owner to three different places for one invoice.
+ */
+export function incomingInvoiceTarget(id: string): string {
+  return `/dashboard/incoming/manage?focus=${encodeURIComponent(id)}`;
 }
 
 /** Sum of yesterday's recorded payments, rounded by the one cent-rounder ([CENT]). */
@@ -62,19 +91,28 @@ function paymentsTotal(payments: OchtendPayment[]): number {
  */
 export function planOchtendMail(input: OchtendInput): OchtendMail | null {
   const betalingen = input.payments.filter((p) => Number.isFinite(p.amount) && p.amount > 0);
-  const inkomend = Number.isInteger(input.newIncomingCount) && input.newIncomingCount > 0
-    ? input.newIncomingCount
-    : 0;
+  const inkomend = (input.newIncoming ?? []).filter((i) => typeof i.id === "string" && i.id.length > 0);
 
   // The quiet-by-default rule. A day with nothing to say says nothing.
-  if (betalingen.length === 0 && inkomend === 0) return null;
+  if (betalingen.length === 0 && inkomend.length === 0) return null;
 
   const totaal = paymentsTotal(betalingen);
+  const naam = (i: OchtendIncoming) => i.supplierName?.trim() ? i.supplierName.trim() : "Onbekende leverancier";
+  const bedragVan = (i: OchtendIncoming) => Number.isFinite(i.amount as number) ? formatEuroNL(i.amount as number) : null;
+  // The sum of the arrivals whose amount is known — and only when EVERY amount is known, so the
+  // subject never states a total that is missing a document.
+  const inkomendTotaal = inkomend.every((i) => Number.isFinite(i.amount as number))
+    ? round2(inkomend.reduce((s, i) => s + (i.amount as number), 0))
+    : null;
+
+  // [POST-WAARD] The subject carries the facts, so the mailbox preview alone answers "do I need
+  // to act". Money first when there is money; otherwise the arrival itself: who, how much, when.
   const subject = betalingen.length > 0
     ? `${formatEuroNL(totaal)} binnengekomen ${formatDateNL(input.gisteren)}`
-    : inkomend === 1
-      ? "1 nieuwe inkomende factuur klaargezet"
-      : `${inkomend} nieuwe inkomende facturen klaargezet`;
+    : inkomend.length === 1
+      ? [naam(inkomend[0]), bedragVan(inkomend[0]), inkomend[0].dueDate ? `vervalt ${formatDateNL(inkomend[0].dueDate)}` : null]
+          .filter(Boolean).join(" · ")
+      : `${inkomend.length} nieuwe inkomende facturen${inkomendTotaal != null ? ` · samen ${formatEuroNL(inkomendTotaal)}` : ""}`;
 
   const betaalRegels = betalingen
     .map((p) => {
@@ -94,11 +132,36 @@ export function planOchtendMail(input: OchtendInput): OchtendMail | null {
         </ul>`
     : "";
 
-  const inkomendBlok = inkomend > 0
-    ? `<p style="color: #555; margin: ${betalingen.length > 0 ? "14px" : "0"} 0 0;">
-         ${inkomend === 1 ? "1 nieuwe inkomende factuur staat" : `${inkomend} nieuwe inkomende facturen staan`} voor je klaar.
-       </p>`
+  // Every arrival is a line the owner can act on, and each line is its own door.
+  const inkomendRegels = inkomend
+    .map((i) => {
+      const bedrag = bedragVan(i);
+      const vervalt = i.dueDate ? ` · vervalt ${formatDateNL(i.dueDate)}` : "";
+      const href = `${escapeHtml(input.baseUrl)}${incomingInvoiceTarget(i.id)}`;
+      return `<li style="margin: 2px 0;"><a href="${href}" style="color: #1A73E8; text-decoration: none;">${escapeHtml(naam(i))}</a>` +
+        ` — ${bedrag ? `<strong>${bedrag}</strong>` : "bedrag nog niet gelezen"}${vervalt}</li>`;
+    })
+    .join("\n");
+
+  const inkomendBlok = inkomend.length > 0
+    ? `
+        <p style="color: #202124; font-size: 16px; margin: ${betalingen.length > 0 ? "14px" : "0"} 0 4px;">
+          ${inkomend.length === 1 ? "1 nieuwe inkomende factuur" : `${inkomend.length} nieuwe inkomende facturen`}:
+        </p>
+        <ul style="color: #555; padding-inline-start: 18px; margin: 4px 0 0;">
+          ${inkomendRegels}
+        </ul>`
     : "";
+
+  // Where the button lands. Payments are done — nothing to do there — so an arrival wins when
+  // there is one. One arrival: that invoice. Several: the pay screen that lists them. Payments
+  // only: the sales list where the money now shows as received.
+  const target = inkomend.length === 1
+    ? incomingInvoiceTarget(inkomend[0].id)
+    : inkomend.length > 1
+      ? "/dashboard/incoming/manage"
+      : "/dashboard/facturen";
+  const knop = inkomend.length === 1 ? "Open deze factuur" : inkomend.length > 1 ? "Bekijk de facturen" : "Open BoekBrug";
 
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
@@ -106,9 +169,9 @@ export function planOchtendMail(input: OchtendInput): OchtendMail | null {
       ${betaalBlok}
       ${inkomendBlok}
       <p style="margin: 18px 0 0;">
-        <a href="${escapeHtml(input.baseUrl)}/dashboard"
+        <a href="${escapeHtml(input.baseUrl)}${target}"
            style="display: inline-block; background: #1A73E8; color: #FFFFFF; text-decoration: none; border-radius: 8px; padding: 10px 20px; font-size: 14px;">
-          Open BoekBrug
+          ${knop}
         </a>
       </p>
       <p style="color: #a0a0a5; font-size: 12px; margin-top: 24px;">
@@ -116,5 +179,5 @@ export function planOchtendMail(input: OchtendInput): OchtendMail | null {
       </p>
     </div>`;
 
-  return { subject, html };
+  return { subject, html, target };
 }

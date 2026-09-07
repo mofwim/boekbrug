@@ -47,6 +47,8 @@ import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
 import { demoRefusalFor } from "./demo-tenant";
+// [POST-WAARD] The composed mail as a VALUE — the second lock is held against the real html.
+import { planOchtendMail } from "./ochtend-digest";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -19594,7 +19596,9 @@ test("[PULS] money recorded with nobody present is TOLD, and the morning mail is
 
   // ── [OCHTEND] The restraint rule lives in the pure module, where a fixture can prove it ──
   const digest = code("src/lib/ochtend-digest.ts");
-  assert.match(digest, /if \(betalingen\.length === 0 && inkomend === 0\) return null;/,
+  // [POST-WAARD] `inkomend` became the ROWS rather than a count, so the mail can name who and how
+  // much; the quiet-by-default rule is unchanged and its own test still proves it behaviourally.
+  assert.match(digest, /if \(betalingen\.length === 0 && inkomend\.length === 0\) return null;/,
     "a quiet day says NOTHING — an empty digest teaches the reader to delete unread");
   assert.match(digest, /p\.amount > 0/, "a zero or garbage amount is not money that came in");
 
@@ -26921,6 +26925,63 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // The pay screen already warned about the pair ([DUP-ON-PAY]). It warned from a LIST — of a period,
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
+
+// ─── [POST-WAARD] The notification mail names the invoice it is about, and opens it ────────────
+//
+// "1 nieuwe inkomende factuur klaargezet", with a button to /dashboard. The owner's own words: what
+// did I gain from a mail with general information, whose button lands on the front page and not
+// on the invoice it is about — an invoice I cannot even identify, because the mail names nothing.
+// Same defect [MELDING-TIK] repaired in the bell, never carried to the mail.
+//
+// Blocked on [EIGEN-POST] and shipped after it, deliberately: a mail that names an amount and the
+// word "factuur" is a mail the app's own sync could take for a purchase invoice. The sender guard
+// is the first lock; the last assertion here is the second.
+test("[POST-WAARD] the morning mail is built from the invoice's facts, and lands on it", () => {
+  const cron = code("src/app/api/cron/ochtend/route.ts");
+  const digest = code("src/lib/ochtend-digest.ts");
+
+  // 1. The cron hands over FACTS, not a count. A count cannot name a supplier or an amount, and
+  //    that is the whole difference between a mail worth opening and one the owner learns to
+  //    delete unread.
+  assert.match(cron, /\.select\("id, receiver_id, client_name, total_inc_btw, due_date, status"\)/,
+    "the cron reads only id and receiver_id for arrivals again — then the mail can say nothing but a number");
+  assert.match(cron, /\.neq\("status", "archived"\)/, "an archived row is announced as an arrival");
+  assert.match(cron, /newIncoming: incomingByUser\.get\(p\.id\) \?\? \[\]/, "the rows do not reach the composer");
+  assert.doesNotMatch(cron, /newIncomingCount/, "the count is back");
+
+  // 2. ONE deep link for one invoice, across mail, bell and tile. The shape is read out of
+  //    focus-scroll.ts — the module that made the pay screen honour it — rather than restated,
+  //    so the day that screen changes its parameter this gate follows it instead of the mail
+  //    quietly pointing at a door that no longer opens.
+  const focus = readFileSync("src/lib/focus-scroll.ts", "utf8");
+  const vorm = /\/dashboard\/incoming\/manage\?focus=\{id\}/.exec(focus)?.[0];
+  assert.ok(vorm, "focus-scroll.ts no longer documents the deep link this mail relies on");
+  assert.match(digest, /return `\/dashboard\/incoming\/manage\?focus=\$\{encodeURIComponent\(id\)\}`/,
+    "incomingInvoiceTarget builds a different path than the pay screen listens for: " + vorm);
+  assert.match(digest, /\? incomingInvoiceTarget\(inkomend\[0\]\.id\)/,
+    "one arrival no longer opens on that arrival");
+  assert.doesNotMatch(digest, /\/dashboard"\s*\n?\s*style=/,
+    "the button points at the home screen again — the exact complaint this repairs");
+
+  // 3. The subject is built from the row. A subject that is a constant is a subject the mailbox
+  //    preview cannot answer with.
+  assert.match(digest, /\[naam\(inkomend\[0\]\), bedragVan\(inkomend\[0\]\)/,
+    "the single-arrival subject no longer carries who and how much");
+
+  // 4. The second lock. Composed for real, with an amount and the word "factuur" in it — the pair
+  //    that used to keep our own mail out of the invoice filter — and then held to the one thing
+  //    that filter still needs and this mail must never supply: a whole-word tax term.
+  const mail = planOchtendMail({
+    gisteren: "2026-09-06",
+    payments: [{ invoiceNumber: "20260046", clientName: "Vermeulen BV", amount: 1210 }],
+    newIncoming: [{ id: "x", supplierName: "Enka Horeca B.V.", amount: 1559.97, dueDate: "2026-09-27" }],
+    baseUrl: "https://boekbrug.nl",
+  });
+  assert.ok(mail, "a day with an arrival and a payment is a mail");
+  assert.doesNotMatch(`${mail.subject}\n${mail.html}`, /\b(btw|vat|omzetbelasting)\b/i,
+    "the morning mail carries a tax word — with an amount and 'factuur' already in it, that is the " +
+      "third and last condition bodyLooksLikeInvoice needs to take our own mail for a purchase invoice");
+});
 
 // ─── [RUSTIG] A screen says what it is and offers what to do — nothing else at rest ─────────────
 //

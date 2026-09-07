@@ -27,7 +27,7 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { effectiveDirection } from "@/lib/closing-package";
-import { planOchtendMail, type OchtendPayment } from "@/lib/ochtend-digest";
+import { planOchtendMail, type OchtendIncoming, type OchtendPayment } from "@/lib/ochtend-digest";
 import { sendOchtendMail, sendBeheerAlarm } from "@/lib/email";
 // [BEHEER-GEZOND] Het oordeel over de andere crons bestond al en had geen enkele lezer.
 import { readSystemHealth, healthAlarm } from "@/lib/beheer-health";
@@ -120,17 +120,32 @@ export async function GET(req: NextRequest) {
     }
 
     // ── 2. Incoming invoices that arrived yesterday ──
-    const nieuweInkomend = await fetchAllRows<{ id: string; receiver_id: string | null }>((from, to) => pipeline
+    // [POST-WAARD] The FACTS of each arrival, not a count: the mail names who, how much and when
+    // it is due, and its button opens that invoice. An archived row is not an arrival anyone
+    // needs to hear about.
+    type InkomendRij = {
+      id: string; receiver_id: string | null; client_name: string | null;
+      total_inc_btw: number | null; due_date: string | null; status: string | null;
+    };
+    const nieuweInkomend = await fetchAllRows<InkomendRij>((from, to) => pipeline
       .from("invoices")
-      .select("id, receiver_id")
+      .select("id, receiver_id, client_name, total_inc_btw, due_date, status")
       .eq("direction", "incoming")
+      .neq("status", "archived")
       .gte("created_at", vanaf)
       .lt("created_at", tot)
       .order("id", { ascending: true }).range(from, to));
-    const incomingByUser = new Map<string, number>();
+    const incomingByUser = new Map<string, OchtendIncoming[]>();
     for (const r of nieuweInkomend) {
       if (!r.receiver_id) continue;
-      incomingByUser.set(r.receiver_id, (incomingByUser.get(r.receiver_id) ?? 0) + 1);
+      const arr = incomingByUser.get(r.receiver_id) ?? [];
+      arr.push({
+        id: r.id,
+        supplierName: r.client_name,
+        amount: typeof r.total_inc_btw === "number" && Number.isFinite(r.total_inc_btw) ? r.total_inc_btw : null,
+        dueDate: r.due_date,
+      });
+      incomingByUser.set(r.receiver_id, arr);
     }
 
     // ── 3. The owners this concerns, with their address and their choice ──
@@ -189,7 +204,7 @@ export async function GET(req: NextRequest) {
         const mail = planOchtendMail({
           gisteren,
           payments: paymentsByUser.get(p.id) ?? [],
-          newIncomingCount: incomingByUser.get(p.id) ?? 0,
+          newIncoming: incomingByUser.get(p.id) ?? [],
           baseUrl,
         });
         if (!mail) { quiet++; continue; }
