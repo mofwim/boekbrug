@@ -48,6 +48,7 @@ import BtwReservationPanel from '@/components/btw/BtwReservationPanel'
 import CashflowPanel from '@/components/cashflow/CashflowPanel'
 // [BEVEILIGING] Zie de kop van dat bestand: hij rendert niets zodra de tweede stap aanstaat.
 import { TweestapsHint } from '@/components/beveiliging/TweestapsHint'
+import { selfShare, type SelfShareCounts } from '@/lib/zelfstandig'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -87,6 +88,18 @@ interface Props {
   loadFailed?: boolean; // [COHERENCE-ERRSTATE] true when a server query errored
   toVerifyCount?: number; // [P1-STUCK-PROCESSING] incoming invoices stuck in the verify queue
   datelessPayableCount?: number; // [DATELESS-TASK] confirmed incoming bills with no due date (else invisible)
+  /** [ZIEL] This week's self/hand counts and what waits; null when the read failed (then nothing is said). */
+  zelf?: SelfShareCounts | null;
+}
+
+/** [ZIEL] One sentence: what the app did by itself this week, and what waits. Pure. */
+export function zelfZin(counts: SelfShareCounts | null | undefined, t: (k: string, v?: Record<string, string | number>) => string): string | null {
+  if (!counts) return null;
+  const z = selfShare(counts);
+  if (z.share === null) return z.waiting > 0 ? (z.waiting === 1 ? t('vandaag.zelf.wachtEen') : t('vandaag.zelf.wachtMeer', { n: z.waiting })) : null;
+  const deed = t('vandaag.zelf.deed', { self: z.self, total: z.total });
+  const wait = z.waiting === 0 ? t('vandaag.zelf.niets') : z.waiting === 1 ? t('vandaag.zelf.wachtEen') : t('vandaag.zelf.wachtMeer', { n: z.waiting });
+  return `${deed} ${wait}`;
 }
 
 // ─── Date helpers (timezone-proof) ────────────────────────────────────────────
@@ -157,7 +170,7 @@ const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0 }: Props) {
+export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0, zelf = null }: Props) {
   const t = translator(useLocale())
   const router = useRouter();
   // [HAND-DUBBEL] De app-brede bevestigingsdialoog (DialogProvider staat in de root layout).
@@ -348,6 +361,13 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
         <p style={{ fontSize: 15, color: M3.onSurfaceVariant, margin: 0 }}>
           {t('vandaag.aandacht')}
         </p>
+        {/* [ZIEL] The equation, measured: what BoekBrug did by itself this week, what waits. One
+            line, from the audit trail, absent when nothing was booked or the read failed. */}
+        {zelfZin(zelf, t as (k: string, v?: Record<string, string | number>) => string) && (
+          <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
+            {zelfZin(zelf, t as (k: string, v?: Record<string, string | number>) => string)}
+          </p>
+        )}
       </header>
 
       {/* [BEVEILIGING] Alleen zichtbaar zolang de tweede stap UIT staat, en weg zodra hij aanstaat.

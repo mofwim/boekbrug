@@ -1040,6 +1040,11 @@ export const MESSAGES = {
   'vandaag.offerteVerlopenEen': { nl: 'Gisteren verlopen', ar: 'انتهى أمس', en: 'Lapsed yesterday' },
   'vandaag.offerteVerlopenMeer': { nl: '{n} dagen verlopen', ar: 'انتهى منذ {n} يوماً', en: 'Lapsed {n} days ago' },
   'vandaag.aandacht': { nl: 'Dit heeft vandaag je aandacht nodig.', ar: 'هذا ما يحتاج انتباهك اليوم.', en: 'This needs your attention today.' },
+  // [ZIEL] What the app did by itself this week, and what waits for the owner.
+  'vandaag.zelf.deed': { nl: 'Deze week deed BoekBrug {self} van {total} boekingen zelf.', ar: 'هذا الأسبوع سجّل BoekBrug {self} من {total} قيودًا بنفسه.', en: 'This week BoekBrug did {self} of {total} bookings itself.' },
+  'vandaag.zelf.niets': { nl: 'Niets wacht op jou.', ar: 'لا شيء ينتظرك.', en: 'Nothing waits for you.' },
+  'vandaag.zelf.wachtEen': { nl: 'Eén ding wacht op jou.', ar: 'شيء واحد ينتظرك.', en: 'One thing waits for you.' },
+  'vandaag.zelf.wachtMeer': { nl: '{n} dingen wachten op jou.', ar: '{n} أشياء تنتظرك.', en: '{n} things wait for you.' },
   'vandaag.nietsNodig': { nl: 'Niets dat nu je aandacht nodig heeft', ar: 'لا شيء يحتاج انتباهك الآن', en: 'Nothing needs your attention right now' },
   'vandaag.geenVervallen': { nl: 'Geen facturen die binnen 3 dagen vervallen of te laat zijn.', ar: 'لا فواتير تستحق خلال 3 أيام أو متأخرة.', en: 'No invoices due within 3 days or overdue.' },
   'vandaag.teBetalen': { nl: 'Te betalen', ar: 'مستحقة للدفع', en: 'To pay' },

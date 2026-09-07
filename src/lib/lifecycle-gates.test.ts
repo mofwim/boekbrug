@@ -12,6 +12,7 @@
 // and the PLACEMENT of code, not about what any function returns when you call it.
 
 import { test } from "node:test";
+import { SELF_ACTIONS as ZIEL_SELF_ACTIONS } from "./zelfstandig";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 // [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
