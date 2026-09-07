@@ -9,6 +9,7 @@
 import { useState } from "react";
 import { sheetPaddingBottom } from "@/lib/design/tokens";
 import { useCloseOnBack } from "@/lib/use-close-on-back";
+import { useBodyScrollLock } from "@/lib/use-body-scroll-lock";
 
 export interface LijnFactuurPrefill {
   transactionId: string;
@@ -34,6 +35,7 @@ const eur = (n: number) => `€ ${Math.abs(n).toLocaleString("nl-NL", { minimumF
 export default function LijnFactuurSheet({ prefill, t, busy, onSubmit, onClose }: LijnFactuurSheetProps) {
   // [BACK-CLOSES] The system back button closes the sheet, never the page behind it.
   useCloseOnBack(true, onClose);
+  useBodyScrollLock(true);
   const isPurchase = prefill.amount < 0;
   const [name, setName] = useState(prefill.counterpartName ?? "");
   const [rate, setRate] = useState<0 | 9 | 21>((prefill.suggestedRate === 0 || prefill.suggestedRate === 9 || prefill.suggestedRate === 21) ? prefill.suggestedRate : 21);
