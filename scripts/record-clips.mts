@@ -93,6 +93,13 @@ const OUTFIT_BOLD = font("Outfit-Bold.ttf");
 interface Beat {
   text: string;
   ms: number;
+  /**
+   * [STEM] Wat er wordt UITGESPROKEN, als dat anders moet zijn dan wat er staat.
+   *
+   * Een ondertitel is kort omdat lezen tijd kost; een gesproken zin mag een lidwoord meer hebben.
+   * Leeg laten betekent: spreek het bijschrift uit, zonder de opmaak.
+   */
+  voice?: string;
   /** Laat de zin STAAN. Voor de laatste van een clip: anders vervaagt hij over het beeld heen en
    *  eindigt de clip op een halfdoorzichtige regel over de pagina. */
   hold?: boolean;
@@ -184,9 +191,6 @@ const CAPTION_CSS = `
   from{transform:scale(.4); opacity:.95}
   to{transform:scale(3.4); opacity:0}
 }
-/* [ZOOM] Inzoomen op het veld waar het over gaat. ease-out-cubic: snel beginnen, zacht uitlopen —
-   de curve die schermopnamegereedschap gebruikt, omdat een lineaire zoom mechanisch aanvoelt. */
-.clip-focus{transition:box-shadow .3s ease, transform .62s cubic-bezier(.22,.61,.36,1)}
 #clip-badge{
   position:fixed; top:0; left:0; right:0; z-index:2147483646; pointer-events:none;
   padding:14px 18px; box-sizing:border-box; text-align:center;
@@ -237,9 +241,23 @@ function stepper(p: Page) {
   };
 }
 
-/** Zet een ondertitel, laat hem staan, haal hem weg. Retourneert pas als de beat voorbij is. */
-function sayer(p: Page) {
-  return async ({ text, ms, hold }: Beat) => {
+/**
+ * [STEM] Wanneer elke zin in beeld kwam, gemeten op de klok van de opname zelf.
+ *
+ * Niet uitgerekend uit de som van de `ms`-waarden: daar zitten typen, scrollen en wachten tussen,
+ * en die duren nooit twee keer precies hetzelfde. Een spoor dat de werkelijke tijdstippen bewaart
+ * is het enige dat de stem op de ondertitel laat vallen in plaats van ernaast.
+ */
+interface VoiceCue { at: number; say: string }
+
+/** Ondertitel weergeven, en het tijdstip onthouden voor de stem. */
+function sayer(p: Page, cues?: VoiceCue[], t0?: number) {
+  return async ({ text, ms, hold, voice }: Beat) => {
+    if (cues && t0 !== undefined) {
+      // De opmaak eruit: <br> wordt een pauze, <b> zegt niets hoorbaars.
+      const spoken = (voice ?? text.replace(/<br\s*\/?>/gi, ", ").replace(/<[^>]+>/g, "")).trim();
+      if (spoken) cues.push({ at: (Date.now() - t0) / 1000, say: spoken });
+    }
     await p.evaluate((t) => {
       const el = document.getElementById("clip-cap");
       if (!el) return;
@@ -339,7 +357,7 @@ async function centerBlock(p: Page, block: ReturnType<Page["locator"]>) {
   const h = p.viewportSize()?.height ?? VIEW.height;
   const middle = TOP_BAR + (h - TOP_BAR - CAPTION) / 2;
   await p.evaluate((dy) => window.scrollBy({ top: dy, behavior: "smooth" }), Math.round(box.y + box.height / 2 - middle));
-  await p.waitForTimeout(520); // de smooth scroll uitlopen — een sprong leest als een montagefout
+  await p.waitForTimeout(700); // de smooth scroll uitlopen — een sprong leest als een montagefout
 }
 
 /** Centreren én uitlichten. De vorige uitlichting gaat vanzelf uit. */
@@ -353,7 +371,7 @@ async function focusBlock(p: Page, block: ReturnType<Page["locator"]>) {
     document.getElementById("clip-dim")?.classList.add("on");
   });
   await block.evaluate((el) => el.classList.add("clip-focus"));
-  await p.waitForTimeout(300);
+  await p.waitForTimeout(430);
 }
 
 /** De waas weg — voor het moment waarop de kijker het geheel weer moet zien. */
@@ -377,35 +395,8 @@ async function unfocus(p: Page) {
 async function moveTo(p: Page, target: ReturnType<Page["locator"]>) {
   const box = await target.boundingBox();
   if (!box) return;
-  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 18 });
-  await p.waitForTimeout(180);
-}
-
-/**
- * [ZOOM] Inzoomen op één veld binnen het uitgelichte blok.
- *
- * Niet op de pagina — dat zou de layout opnieuw laten berekenen en de mobiele breakpoints kunnen
- * omzetten. Alleen het blok wordt geschaald, met de oorsprong op het veld, zodat dat veld op zijn
- * plek blijft en de rest eromheen wegloopt. Dat is wat een zoom in een schermopname doet.
- */
-async function zoomOn(p: Page, block: ReturnType<Page["locator"]>, field: ReturnType<Page["locator"]>, scale = 1.35) {
-  const b = await block.boundingBox();
-  const f = await field.boundingBox();
-  if (!b || !f) return;
-  const ox = ((f.x + f.width / 2 - b.x) / b.width) * 100;
-  const oy = ((f.y + f.height / 2 - b.y) / b.height) * 100;
-  await block.evaluate((el, v) => {
-    const s = el as HTMLElement;
-    s.style.transformOrigin = `${v.ox}% ${v.oy}%`;
-    s.style.transform = `scale(${v.scale})`;
-  }, { ox, oy, scale });
-  await p.waitForTimeout(680);
-}
-
-/** Uitzoomen naar het hele blok. */
-async function zoomOut(p: Page, block: ReturnType<Page["locator"]>) {
-  await block.evaluate((el) => { (el as HTMLElement).style.transform = ""; });
-  await p.waitForTimeout(680);
+  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 28 });
+  await p.waitForTimeout(300);
 }
 
 /** Eén veld aanwijzen binnen het uitgelichte blok, en het daarna weer loslaten. */
@@ -417,12 +408,12 @@ async function pointAt(p: Page, field: ReturnType<Page["locator"]>, ms: number) 
 }
 
 /** Typen in een veld dat al is aangewezen — zonder scrollen, want het blok staat al goed. */
-async function fill(p: Page, field: ReturnType<Page["locator"]>, value: string, perChar = 38) {
+async function fill(p: Page, field: ReturnType<Page["locator"]>, value: string, perChar = 55) {
   await moveTo(p, field);
   await field.click();
   await field.fill("");
   await field.type(value, { delay: perChar });
-  await p.waitForTimeout(200);
+  await p.waitForTimeout(340);
 }
 
 /** Typen in het veld onder een opschrift, met hetzelfde menselijke ritme als type(). */
@@ -703,53 +694,82 @@ const CLIPS: Clip[] = [
       await expectFields(regels, 5, "Regels");
 
       // ── De belofte, meteen na de pijn. Eén zin, dan bewegen. ──
-      await say({ text: "Dit duurt één minuut,<br>en de btw rekent zichzelf.", ms: 2400 });
+      await say({
+        text: "Dit duurt één minuut,<br>en de btw rekent zichzelf.",
+        voice: "Dit duurt één minuut. En de btw rekent zichzelf uit.",
+        ms: 2600,
+      });
 
       // ── Jij ──
       await step("1 · Wie stuurt de factuur");
       await focusBlock(p, mij);
-      await say({ text: "Je eigen gegevens,<br>één keer.", ms: 2000 });
-      await fill(p, fieldIn(mij, 0), "Van Dijk Ontwerp", 34);
-      await fill(p, fieldIn(mij, 2), "Havenstraat 14", 34);
-      await fill(p, fieldIn(mij, 4), "Tilburg", 40);
-      await say({ text: "<b>KVK</b> en <b>btw-nummer</b>:<br>wettelijk verplicht.", ms: 2300 });
-      await zoomOn(p, mij, fieldIn(mij, 6), 1.4);
-      await fill(p, fieldIn(mij, 6), "NL003829471B72", 30);
-      await zoomOut(p, mij);
+      await say({
+        text: "Je eigen gegevens,<br>één keer.",
+        voice: "Eerst je eigen gegevens. Die vul je één keer in.",
+        ms: 2400,
+      });
+      await fill(p, fieldIn(mij, 0), "Van Dijk Ontwerp", 48);
+      await fill(p, fieldIn(mij, 2), "Havenstraat 14", 48);
+      await fill(p, fieldIn(mij, 4), "Tilburg", 55);
+      await say({
+        text: "<b>KVK</b> en <b>btw-nummer</b>:<br>wettelijk verplicht.",
+        voice: "Je K V K nummer en je btw nummer zijn wettelijk verplicht.",
+        ms: 2600,
+      });
+      await fill(p, fieldIn(mij, 6), "NL003829471B72", 44);
 
       // ── Je klant ──
       await step("2 · Wie hem ontvangt");
       await focusBlock(p, klant);
-      await say({ text: "Je klant: naam,<br>adres en plaats.", ms: 2200 });
-      await fill(p, fieldIn(klant, 0), "Bakkerij De Korenbloem", 32);
-      await fill(p, fieldIn(klant, 2), "Kerkstraat 7", 34);
-      await fill(p, fieldIn(klant, 4), "Breda", 40);
+      await say({
+        text: "Je klant: naam,<br>adres en plaats.",
+        voice: "Dan je klant. Naam, adres en plaats.",
+        ms: 2500,
+      });
+      await fill(p, fieldIn(klant, 0), "Bakkerij De Korenbloem", 46);
+      await fill(p, fieldIn(klant, 2), "Kerkstraat 7", 48);
+      await fill(p, fieldIn(klant, 4), "Breda", 55);
 
       // ── Wat je levert ──
       await step("3 · Wat je hebt geleverd");
       await focusBlock(p, regels);
-      await say({ text: "Wat je deed,<br>hoeveel, en waarvoor.", ms: 2200 });
-      await fill(p, fieldIn(regels, 1), "Ontwerp huisstijl", 34);
-      await zoomOn(p, regels, fieldIn(regels, 2), 1.45);
-      await fill(p, fieldIn(regels, 2), "3", 160);
-      await fill(p, fieldIn(regels, 3), "450", 110);
-      await say({ text: "3 uur × € 450", ms: 1800 });
-      await zoomOut(p, regels);
+      await say({
+        text: "Wat je deed,<br>hoeveel, en waarvoor.",
+        voice: "Nu de regel. Wat je deed, hoeveel, en voor welk bedrag.",
+        ms: 2500,
+      });
+      await fill(p, fieldIn(regels, 1), "Ontwerp huisstijl", 48);
+      await fill(p, fieldIn(regels, 2), "3", 220);
+      await fill(p, fieldIn(regels, 3), "450", 150);
+      await say({ text: "3 uur × € 450", voice: "Drie uur, keer vierhonderdvijftig euro.", ms: 2100 });
 
       // ── Het bewijs: de belofte uit de hook, waargemaakt ──
       await step("Het rekent zichzelf");
-      await say({ text: "En de btw?", ms: 1600 });
-      await zoomOn(p, regels, fieldIn(regels, 4), 1.5);
       await moveTo(p, fieldIn(regels, 4));
-      await say({ text: "21% erop:<br><b>€ 1.633,50</b>", ms: 2400 });
+      await say({
+        text: "21% erop:<br><b>€ 1.633,50</b>",
+        voice: "Eenentwintig procent btw erop. Totaal: zestienhonderd drieëndertig euro vijftig.",
+        ms: 2800,
+      });
       await fieldIn(regels, 4).selectOption("9");
-      await p.waitForTimeout(900);
-      await say({ text: "9%? <b>€ 1.471,50</b><br>Direct opnieuw geteld.", ms: 2600 });
-      await zoomOut(p, regels);
+      await p.waitForTimeout(1100);
+      await say({
+        text: "9%? <b>€ 1.471,50</b><br>Direct opnieuw geteld.",
+        voice: "Negen procent? Veertienhonderd eenenzeventig vijftig. Direct opnieuw geteld.",
+        ms: 3000,
+      });
       await unfocus(p);
       await bringToEyeLine(p, p.getByText("Totaal incl. BTW").first(), 0.55);
-      await say({ text: "Nooit meer zelf<br>btw uitrekenen.", ms: 2400 });
-      await say({ text: "Gratis, zonder account.<br><b>boekbrug.nl/factuur-maken</b>", ms: 2800, hold: true });
+      await say({
+        text: "Nooit meer zelf<br>btw uitrekenen.",
+        voice: "Nooit meer zelf btw uitrekenen.",
+        ms: 2500,
+      });
+      await say({
+        text: "Gratis, zonder account.<br><b>boekbrug.nl/factuur-maken</b>",
+        voice: "Gratis, en zonder account. Boekbrug punt N L.",
+        ms: 3000, hold: true,
+      });
     },
   },
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
@@ -815,6 +835,61 @@ function chromiumPath(): string | undefined {
   if (!root || !existsSync(root)) return undefined;
   const dir = readdirSync(root).find((d) => d.startsWith("chromium-"));
   return dir ? path.join(root, dir, "chrome-linux", "chrome") : undefined;
+}
+
+/**
+ * [STEM] Een gesproken spoor onder de clip leggen, op de tijdstippen waarop de zinnen in beeld
+ * kwamen.
+ *
+ * Alleen als CLIP_VOICE staat: stil is de standaard en dat blijft zo. De meeste mensen kijken
+ * zonder geluid, dus de ondertitels blijven de drager — een stem is een extra, nooit de enige weg
+ * waarop de boodschap aankomt.
+ *
+ * Welke stem: `espeak-ng` is een formant-synthesizer en klinkt daar ook naar. Dit is er om te
+ * HOREN of gesproken tekst de uitleg helpt, niet om te publiceren. Een echte stem — of een neuraal
+ * model — vervangt hem zonder dat er iets aan de tijdlijn hoeft te veranderen, want die staat
+ * hieronder los van de spreker.
+ */
+/** De lengte van een mediabestand, gelezen uit ffmpeg's eigen verslag (ffprobe ontbreekt hier). */
+function mediaSeconds(ff: string, file: string): number {
+  const r = spawnSync(ff, ["-i", file], { encoding: "utf-8" });
+  const m = /Duration:\s*(\d+):(\d+):(\d+\.\d+)/.exec(`${r.stderr ?? ""}`);
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+function speak(ff: string, cues: Array<{ at: number; say: string }>, dir: string, name: string, from: number): string | null {
+  // `from` is hier het NULPUNT VAN DE VIDEO op de klok van dit script, niet alleen de afgeknipte
+  // aanloop. Zie de berekening bij de aanroep: Playwright begint pas te filmen bij het eerste
+  // beeld, niet bij het aanmaken van de context, en dat scheelde hier dertien seconden — de eerste
+  // gesproken zin viel op het moment dat de derde ondertitel in beeld stond.
+  const say = "espeak-ng";
+  try { execFileSync(say, ["--version"], { stdio: "pipe" }); } catch { 
+    console.error(`[CLIPS] geen ${say} — clip blijft stil. apt-get install ${say}`);
+    return null;
+  }
+  const parts: string[] = [];
+  const args: string[] = [];
+  const delays: string[] = [];
+  cues.forEach((c, i) => {
+    const wav = path.join(dir, `.voice-${name}-${i}.wav`);
+    // -s 150: iets trager dan standaard, want dit is uitleg. -g 6: adempauze tussen woorden.
+    // -p 35: lager dan standaard; hoog klinkt bij deze synthese meteen als een robot uit 1985.
+    execFileSync(say, ["-v", "nl", "-s", "150", "-g", "6", "-p", "35", "-w", wav, c.say], { stdio: "pipe" });
+    parts.push(wav);
+    const at = Math.max(0, Math.round((c.at - from) * 1000));
+    delays.push(`[${i}:a]adelay=${at}|${at},volume=1.35[a${i}]`);
+  });
+  if (parts.length === 0) return null;
+  if (process.env.CLIP_VOICE_DEBUG) {
+    console.log(`[STEM] from=${from.toFixed(2)}s  cues=${cues.map((c) => c.at.toFixed(2)).join(", ")}`);
+  }
+  for (const w of parts) args.push("-i", w);
+  const out = path.join(dir, `.voice-${name}.wav`);
+  const graph = `${delays.join(";")};${parts.map((_, i) => `[a${i}]`).join("")}amix=inputs=${parts.length}:duration=longest:normalize=0[out]`;
+  execFileSync(ff, ["-y", ...args, "-filter_complex", graph, "-map", "[out]", out], { stdio: "pipe" });
+  for (const w of parts) rmSync(w, { force: true });
+  return out;
 }
 
 /** ffmpeg, als het er is. Zonder blijft de .webm staan — die speelt overal behalve op iOS. */
@@ -959,6 +1034,10 @@ for (const clip of SELECTED) {
     recordVideo: { dir: tmp, size: view },
     ...(clip.auth && storage ? { storageState: JSON.parse(storage) } : {}),
   });
+  // De klok van deze opname. Playwright begint met filmen zodra de context bestaat, dus dit is
+  // nulpunt nul van de videotijdlijn — vóór de navigatie, niet erna.
+  const t0 = Date.now();
+  const cues: VoiceCue[] = [];
   const page = await ctx.newPage();
   await page.goto(BASE + clip.path, { waitUntil: "domcontentloaded" });
   // Kort, niet 900 ms: dit venster is alleen bedoeld om een server-redirect te laten gebeuren,
@@ -977,7 +1056,7 @@ for (const clip of SELECTED) {
     continue;
   }
   await installCaption(page, "boekbrug.nl");
-  const say = sayer(page);
+  const say = sayer(page, cues, t0);
   // De hook staat stil vóór er iets beweegt: dat is de anderhalve seconde waarin iemand besluit
   // door te scrollen of niet.
   //
@@ -994,11 +1073,15 @@ for (const clip of SELECTED) {
   await clip.run(page, say, stepper(page));
   await page.waitForTimeout(500);
   await ctx.close(); // pas hierna is het bestand geschreven
+  // [STEM-SYNC] De opname stopt hier. Dit moment, min de lengte van het bestand, is seconde nul
+  // van de video op de klok van dit script — zie de berekening bij de stem hieronder.
+  const closedAt = (Date.now() - t0) / 1000;
 
   const raw = readdirSync(tmp).find((f) => f.endsWith(".webm"));
   if (!raw) { console.error(`[CLIPS] ✗ ${clip.name}: geen opname`); continue; }
   const webm = path.join(OUT, `${clip.name}.webm`);
   renameSync(path.join(tmp, raw), webm);
+  const rawWebmForTiming = webm; // gemeten vóór het knippen: dit is de volle opname
   rmSync(tmp, { recursive: true, force: true });
 
   if (ff) {
@@ -1016,11 +1099,34 @@ for (const clip of SELECTED) {
     // Vooraan tot het eerste beeld, en daarna hoogstens MAX_LEN_S — het staart-deel, want daar
     // staat het uitgerekende bedrag en de slotzin.
     const from = firstPaintSeconds(ff, webm);
+    const webmSeconds = mediaSeconds(ff, rawWebmForTiming);
     execFileSync(ff, ["-y", "-ss", from.toFixed(2), "-i", webm, "-t", String(clip.maxLen ?? MAX_LEN_S),
       "-vf", `scale=${OUT_SIZE.width}:${OUT_SIZE.height}:flags=lanczos,unsharp=5:5:0.6:5:5:0.0`,
       "-c:v", "libx264", "-preset", "slow", "-crf", "19",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-fps_mode", "passthrough", mp4], { stdio: "pipe" });
     rmSync(webm, { force: true });
+
+    // [STEM] Optioneel, en als aparte stap: mislukt de stem, dan staat de stille clip er nog.
+    if (process.env.CLIP_VOICE) {
+      // [STEM-SYNC] Waar ligt seconde nul van de video op de klok van dit script?
+      //
+      // Niet bij t0: Playwright schrijft het eerste frame pas als de pagina iets tekent, en de
+      // navigatie ervoor duurde hier dertien seconden. Wél afleidbaar, want de opname stopt exact
+      // bij ctx.close(): het nulpunt is dat moment MIN de lengte van de opname. Daar komt de
+      // afgeknipte aanloop (`from`) nog bij, want die is uit het begin van de video geknipt.
+      //
+      // Gemeten en niet aangenomen — de eerste versie trok alleen `from` af, en `from` was nul.
+      const videoStart = closedAt - webmSeconds + from;
+      const wav = speak(ff, cues, OUT, clip.name, videoStart);
+      if (wav) {
+        const withVoice = path.join(OUT, `${clip.name}-stem.mp4`);
+        execFileSync(ff, ["-y", "-i", mp4, "-i", wav,
+          "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", withVoice], { stdio: "pipe" });
+        rmSync(wav, { force: true });
+        made.push(withVoice);
+        console.log(`[CLIPS] ✓ ${clip.name}-stem.mp4 (${cues.length} zinnen)`);
+      }
+    }
     made.push(mp4);
     console.log(`[CLIPS] ✓ ${clip.name}.mp4`);
   } else {
