@@ -31,8 +31,8 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 127 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
---   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
+--   DEEL 1  de 128 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
 -- Draai ze allebei. Deel 1 alleen is een schoon rapport met twee veiligheidsmigraties er
@@ -127,6 +127,10 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('bank_statement_periods.sql', 'index', 'idx_bsp_user_iban_start', null, 'public'),
   ('bank_statement_periods.sql', 'policy', 'bsp_owner_read', 'bank_statement_periods', 'public'),
   ('bank_statement_periods.sql', 'table', 'bank_statement_periods', null, 'public'),
+  ('bank_tx_attachments.sql', 'index', 'bank_tx_attachments_tx_idx', null, 'public'),
+  ('bank_tx_attachments.sql', 'index', 'bank_tx_attachments_user_idx', null, 'public'),
+  ('bank_tx_attachments.sql', 'policy', 'bank_tx_attachments_owner_read', 'bank_tx_attachments', 'public'),
+  ('bank_tx_attachments.sql', 'table', 'bank_tx_attachments', null, 'public'),
   ('bank_tx_counterpart_iban.sql', 'column', 'counterpart_iban', 'bank_transactions', 'public'),
   ('bank_tx_counterpart_iban.sql', 'index', 'idx_bank_transactions_counterpart_iban', null, 'public'),
   ('bank_tx_direct_debit.sql', 'column', 'creditor_id', 'bank_transactions', 'public'),
@@ -561,7 +565,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 143
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 145
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
@@ -623,6 +627,14 @@ with controle(bestand, vraag, toegepast) as (
     and not exists (select 1 from information_schema.columns
                      where table_schema = 'public' and table_name = 'bank_tx_invoices'
                        and column_name = 'amount')
+  )
+  union all
+  select 'confirm_bank_payment_regrant.sql'::text, 'confirm_bank_payment is weer aan te roepen door authenticated, en nog steeds niet door anon'::text, (
+    exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'confirm_bank_payment'
+       and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+       and not has_function_privilege('anon', p.oid, 'EXECUTE'))
   )
   union all
   select 'drop_duplicate_indexes.sql'::text, 'geen twee indexen meer met precies dezelfde vorm op dezelfde tabel'::text, (
@@ -704,14 +716,14 @@ with controle(bestand, vraag, toegepast) as (
           or coalesce(with_check,'') like '%SELECT ( SELECT auth.%' ))
   )
   union all
-  select 'rpc_anon_revoke.sql'::text, 'geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated'::text, (
+  select 'rpc_anon_revoke.sql'::text, 'geen enkele geldfunctie is nog aan te roepen door anon, en zes ook niet door authenticated'::text, (
     not exists (
      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname in ('seed_invoice_counter', 'next_invoice_seq', 'apply_manual_payment', 'apply_bank_payment', 'allocate_bank_payment', 'confirm_bank_payment', 'book_bank_batch', 'move_invoice_payment', 'recompute_invoice_amount_paid', 'fair_use_consume', 'fair_use_release', 'handle_new_user', 'assert_credit_within_original')
         and has_function_privilege('anon', p.oid, 'EXECUTE'))
     and not exists (
      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and p.proname in ('seed_invoice_counter', 'recompute_invoice_amount_paid', 'fair_use_consume', 'fair_use_release', 'confirm_bank_payment', 'handle_new_user', 'assert_credit_within_original')
+      where n.nspname = 'public' and p.proname in ('seed_invoice_counter', 'recompute_invoice_amount_paid', 'fair_use_consume', 'fair_use_release', 'handle_new_user', 'assert_credit_within_original')
         and has_function_privilege('authenticated', p.oid, 'EXECUTE'))
   )
   union all

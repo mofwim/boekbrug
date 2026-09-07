@@ -12753,14 +12753,84 @@ test("[ANON-RPC] every state-changing RPC is revoked from anon", () => {
     "an overloaded function needs every signature revoked, not just the first");
 });
 
+// ─── [BANK-KOPPELEN] One bank line, the right invoices, and the owner's own controls ───
+//
+// The owner's requirement: outgoing and incoming invoices match without error, especially one
+// payment over several invoices — and when the app does not know, the owner can add, delete,
+// link or upload files on the line. An adversarial read found fourteen gaps; the ones below are
+// the mechanics the unit tests cannot see.
+
+test("[BANK-KOPPELEN] a suggested sum books as ONE batch, and the doors that could hide money are closed", () => {
+  const confirm = code("src/app/api/bank/confirm/route.ts");
+  assert.match(confirm, /\(supabase\.rpc as any\)\("book_bank_batch", \{/, "the sum-suggest books through book_bank_batch — locked, tie re-proved, creditnota signed");
+  assert.match(confirm, /if \(invoiceIds\) \{/, "…on the invoiceIds path");
+  assert.match(confirm, /action: "bank\.confirmed_batch"/, "…and leaves one audit row for the batch");
+  const client = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(client, /body: JSON\.stringify\(\{ transactionId: txId, invoiceIds \}\)/, "the client sends the set once");
+  assert.doesNotMatch(client.slice(client.indexOf("async function confirmSumMatch"), client.indexOf("async function confirmSumMatch") + 1500), /for \(const invoiceId of invoiceIds\)/,
+    "the per-invoice loop that could not book a netted creditnota is gone");
+  assert.match(confirm, /error: "declared_invoice_open"/, "a named invoice that IS in the administration is told apart from one that is not");
+
+  const unlink = code("src/app/api/bank/unlink/route.ts");
+  const clears = [...unlink.matchAll(/\.update\(\{ status: "pending", invoice_id: null, category: null, category_source: null, category_confirmed: false \}\)/g)];
+  assert.ok(clears.length >= 2, "both unlink paths clear the category with the link, or the cost counts twice");
+  assert.doesNotMatch(unlink, /\.eq\("payment_method", "bank"\)/, "the batch reversal set is not filtered on the LAST payment's method");
+
+  const ignore = code("src/app/api/bank/ignore/route.ts");
+  assert.match(ignore, /if \(tx\.invoice_id \|\| \(links \?\? \[\]\)\.length > 0\) \{[\s\S]{0,200}transaction_partially_linked/, "a line with money on it cannot be ignored");
+
+  const del = code("src/app/api/bank/delete-line/route.ts");
+  assert.match(del, /if \(tx\.status === "matched" \|\| tx\.invoice_id \|\| \(links \?\? \[\]\)\.length > 0\)/, "a line with money on it cannot be deleted");
+  assert.match(del, /\.is\("invoice_id", null\)\.neq\("status", "matched"\)\.select\("id"\)/, "…and the delete itself re-asserts it");
+  assert.match(del, /action: "bank\.line_deleted"/);
+  assert.match(del, /requireOwner\(/);
+
+  const match = code("src/app/api/bank/match/route.ts");
+  assert.match(match, /const result = matchTransactions\(matcherInput, invoices/, "the matcher sees a partly-booked line's REMAINDER");
+  assert.match(match, /attachmentsByTransaction\(/, "attachments ride on every card");
+  assert.match(match, /linkedInvoices: \[\.\.\.\(idsByTx\.get\(row\.id\)/, "a linked card can open its invoice");
+
+  const matching = code("src/lib/bank-matching.ts");
+  assert.match(matching, /if \(txIban && invIban && txIban !== invIban\) return null;/, "[NUMMER-BOTST] the bank's account vetoes a printed-number match");
+  assert.match(matching, /if \(paymentOut && nameGiven && nameWeak && !invIban\) return "amount_only";/, "…and a strange counterparty on a payment out books flagged, never silently");
+  assert.match(matching, /if \(twin && top\.signals\.includes\("amount"\) && !uniqueRef && !uniquePrepared\) return false;/, "[TWEELING] same party, same amount → a human choice");
+
+  // The attachment: a file WITH the line, never a booking. The table is read-only through RLS.
+  const att = code("src/app/api/bank/attachment/route.ts");
+  assert.doesNotMatch(att, /from\("invoices"\)|from\('invoices'\)|category/, "attaching a file touches no invoice and no category");
+  const sql = readFileSync("supabase/migrations/bank_tx_attachments.sql", "utf8");
+  assert.match(sql, /FOR SELECT TO authenticated USING \(user_id = \(select auth\.uid\(\)\)\)/);
+  assert.doesNotMatch(sql, /FOR (INSERT|UPDATE|DELETE)/);
+  assert.match(code("src/components/bank/BijlageStrip.tsx"), /marginInlineStart/, "logical sides only");
+  assert.match(client, /<BijlageStrip/, "the strip is on every card");
+});
+
+test("[BEVESTIG-DICHT] every RPC a screen calls with the session client is granted to authenticated", () => {
+  // The revoke list and the call sites must never disagree again: a function in the revoke list
+  // may not be called with the session client anywhere, and confirm_bank_payment — which is —
+  // must not be in it. Its regrant migration exists and is the later word.
+  const revoke = readFileSync("supabase/migrations/rpc_anon_revoke.sql", "utf8");
+  // The SECOND list — the one that revokes from `authenticated`. The first revokes from `anon`
+  // and rightly names every function.
+  const authPart = revoke.slice(revoke.indexOf("Deze staan in geen enkele call site met de sessieclient"));
+  const listed = [...authPart.matchAll(/^\s*'([a-z_]+)',?\s*$/gm)].map((m) => m[1]);
+  assert.ok(listed.includes("seed_invoice_counter"), "the revoke list is where it was");
+  assert.ok(!listed.includes("confirm_bank_payment"), "confirm_bank_payment is called by /api/bank/confirm with the session client");
+  const regrant = readFileSync("supabase/migrations/confirm_bank_payment_regrant.sql", "utf8");
+  assert.match(regrant, /GRANT EXECUTE ON FUNCTION %s TO authenticated/);
+  assert.match(code("src/app/api/bank/confirm/route.ts"), /const atomicFn = withAmount \? "allocate_bank_payment" : "confirm_bank_payment";/);
+});
+
 test("[ANON-RPC] the server-only RPCs really are server-only", () => {
   // De tweede lijst in de migratie trekt óók `authenticated` in. Dat mag alleen als geen enkel
   // scherm ze via de sessieclient aanroept — anders zet deze migratie een knop stil. Deze poort
   // is de reden dat de lijst later niet stilletjes fout kan worden: voegt iemand een aanroep met
   // de sessieclient toe, dan faalt hij hier en niet bij een gebruiker.
+  // [BEVESTIG-DICHT] confirm_bank_payment left this list: /api/bank/confirm calls it with the
+  // session client (bank_confirm_atomic), and its grant is restored (confirm_bank_payment_regrant).
   const SERVER_ONLY = [
     "seed_invoice_counter", "recompute_invoice_amount_paid",
-    "fair_use_consume", "fair_use_release", "confirm_bank_payment",
+    "fair_use_consume", "fair_use_release",
   ];
   const walk = (dir: string): string[] => {
     const out: string[] = [];
@@ -12775,10 +12845,13 @@ test("[ANON-RPC] the server-only RPCs really are server-only", () => {
   for (const fn of SERVER_ONLY) {
     for (const file of bronnen) {
       const src = readFileSync(file, "utf8");
-      for (const regel of src.split("\n")) {
-        if (!regel.includes(`rpc("${fn}"`) && !regel.includes(`rpc('${fn}'`)) continue;
+      // The NAME, not only `rpc("name"`: the confirm route reached a revoked function through a
+      // variable (`const atomicFn = … ? "…" : "confirm_bank_payment"`) and this gate, matching the
+      // literal call only, waved it through — every plain Bevestig on /bank then answered 500.
+      for (const regel of code(file).split("\n")) {
+        if (!regel.includes(`"${fn}"`) && !regel.includes(`'${fn}'`)) continue;
         assert.match(regel, /(pipeline|insertPipeline|pipelineForConfirm)\s*(as any\s*)?\)?\.rpc/,
-          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client (${file})`);
+          `${fn} is revoked from 'authenticated' — it may only be called with the service-role client, and only by its literal name in the rpc call (${file})`);
       }
     }
   }

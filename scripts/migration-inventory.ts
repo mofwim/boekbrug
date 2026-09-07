@@ -165,7 +165,8 @@ const ALLEEN_SERVICE_ROLE = [
   "recompute_invoice_amount_paid",
   "fair_use_consume",
   "fair_use_release",
-  "confirm_bank_payment",
+  // confirm_bank_payment left this list in september 2026: /api/bank/confirm calls it with the
+  // session client again (confirm_bank_payment_regrant.sql).
   "handle_new_user",
   "assert_credit_within_original",
 ];
@@ -331,7 +332,7 @@ const STAND_CONTROLE: Record<string, Stand> = {
   },
   "rpc_anon_revoke.sql": {
     soort: "controle",
-    vraag: "geen enkele geldfunctie is nog aan te roepen door anon, en zeven ook niet door authenticated",
+    vraag: "geen enkele geldfunctie is nog aan te roepen door anon, en zes ook niet door authenticated",
     sql: `not exists (
            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in (${lijst(GELDFUNCTIES)})
@@ -340,6 +341,15 @@ const STAND_CONTROLE: Record<string, Stand> = {
            select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in (${lijst(ALLEEN_SERVICE_ROLE)})
               and has_function_privilege('authenticated', p.oid, 'EXECUTE'))`,
+  },
+  "confirm_bank_payment_regrant.sql": {
+    soort: "controle",
+    vraag: "confirm_bank_payment is weer aan te roepen door authenticated, en nog steeds niet door anon",
+    sql: `exists (
+           select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname = 'confirm_bank_payment'
+              and has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              and not has_function_privilege('anon', p.oid, 'EXECUTE'))`,
   },
   "storage_bucket_hardening.sql": {
     soort: "controle",
