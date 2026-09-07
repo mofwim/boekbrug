@@ -1,7 +1,7 @@
 // src/lib/cashflow-forecast.test.ts — run: npx tsx --test src/lib/cashflow-forecast.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { forecastCashflow, takingsFromTillDays, outflowDate, expectedInflowDate, type ForecastInput } from "./cashflow-forecast";
+import { forecastCashflow, takingsFromTillDays, outflowDate, expectedInflowDate, isLateReceivable, type ForecastInput } from "./cashflow-forecast";
 
 const near = (a: number | null, b: number) => a !== null && Math.abs(a - b) < 0.005;
 const base = (): ForecastInput => ({
@@ -99,4 +99,45 @@ test("[VOORUIT] negative control — an invoice due on day 8 is outside seven da
   assert.equal(d7.outCount, 0); assert.equal(d30.outCount, 1);
   i.payables[0].dueDate = "2026-09-14";
   assert.equal(forecastCashflow(i).horizons[0].outCount, 1, "day seven is inside");
+});
+
+test("[VOORUIT] late means past due — a fast payer inside its term is expected today, not written off", () => {
+  const i = base(); i.takings = null; i.payables = [];
+  // Invoiced 1 September, 30-day term, this client pays in 4 days: on 7 September it is not late.
+  i.receivables = [{ id: "fast", name: "Snel BV", invoiceDate: "2026-09-01", dueDate: "2026-10-01", open: 600, expectedDays: 4 }];
+  const [d7] = forecastCashflow(i).horizons;
+  assert.equal(isLateReceivable(i.receivables[0], "2026-09-07"), false);
+  assert.equal(d7.inCount, 1, "expected today, inside seven days");
+  assert.ok(near(d7.inInvoices, 600));
+  assert.ok(!d7.notes.some((n) => n.code === "receivables-late"));
+  // Past its due date it IS late, whatever the pace.
+  assert.equal(isLateReceivable({ ...i.receivables[0], dueDate: "2026-09-06" }, "2026-09-07"), true);
+  // Without a due date the pace's date decides.
+  assert.equal(isLateReceivable({ ...i.receivables[0], dueDate: null }, "2026-09-07"), true);
+  assert.equal(isLateReceivable({ ...i.receivables[0], dueDate: null, expectedDays: 10 }, "2026-09-07"), false);
+});
+
+test("[VOORUIT] a receivable with no date at all is named, never silently dropped", () => {
+  const i = base(); i.takings = null; i.payables = [];
+  i.receivables = [{ id: "nd", name: "Zonder", invoiceDate: null, dueDate: null, open: 320, expectedDays: null }];
+  const [d7] = forecastCashflow(i).horizons;
+  assert.equal(d7.inCount, 0);
+  const n = d7.notes.find((x) => x.code === "receivables-undated") as { count: number; amount: number };
+  assert.deepEqual([n.count, n.amount], [1, 320]);
+});
+
+test("[VOORUIT] the week rate is measured over the till's own history — a three-week-old till trades six days a week", () => {
+  // 18 booked days in the three weeks up to today, six a week.
+  const days = ["2026-08-18","2026-08-19","2026-08-20","2026-08-21","2026-08-22","2026-08-23",
+                "2026-08-25","2026-08-26","2026-08-27","2026-08-28","2026-08-29","2026-08-30",
+                "2026-09-01","2026-09-02","2026-09-03","2026-09-04","2026-09-05","2026-09-06"];
+  const rows = days.map((d) => ({ turnover_date: d, pin_amount: 800, cash_amount: 0 }));
+  const t = takingsFromTillDays(rows, 56, "2026-09-07");
+  assert.ok(t && near(t.tradingDaysPerWeek, 6), `six days a week, got ${t?.tradingDaysPerWeek}`);
+  const old = takingsFromTillDays(rows, 56);
+  assert.ok(old && old.tradingDaysPerWeek < 3, "negative control: over a fixed 56-day window the same till read as 2,25 days a week");
+  // A till older than the window is measured over the window, never beyond it.
+  const long = Array.from({ length: 48 }, (_, i) => ({ turnover_date: `2026-07-${String((i % 28) + 1).padStart(2, "0")}`, pin_amount: 1, cash_amount: 0 }));
+  const l = takingsFromTillDays(long, 56, "2026-09-07");
+  assert.ok(l && near(l.tradingDaysPerWeek, 6));
 });

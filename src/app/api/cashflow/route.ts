@@ -17,6 +17,7 @@
 // Read-only. service_role, every query pinned to the authenticated user.
 
 import { NextResponse } from "next/server";
+import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 import { getSessionUser } from "@/lib/session-user";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -94,8 +95,8 @@ export async function GET() {
   }
 
   // ── Everything else, concurrently. Each may degrade to null and be NAMED by the engine. ──
-  type PeriodRow = { iban: string | null; period_end: string | null; closing_balance: number | null };
-  type TxRow = { date: string | null; amount: number | null };
+  type PeriodRow = { document_id: string | null; iban: string | null; period_end: string | null; closing_balance: number | null };
+  type TxRow = { id: string; date: string | null; amount: number | null; statement_document_id: string | null };
   type TillRow = { turnover_date: string | null; pin_amount: number | null; cash_amount: number | null };
 
   const [periodRows, txRows, kasParts, paidRows, incasso, creditRows] = await Promise.all([
@@ -104,13 +105,13 @@ export async function GET() {
         // bank_statement_periods is not in the generated types → relaxed client, as /api/daily-truth.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data, error } = await (pipeline as any)
-          .from("bank_statement_periods").select("iban, period_end, closing_balance")
+          .from("bank_statement_periods").select("document_id, iban, period_end, closing_balance")
           .eq("user_id", user.id).order("period_end", { ascending: false }).limit(400);
         return error ? null : ((data ?? []) as PeriodRow[]);
       } catch { return null; }
     })(),
     fetchAllRows<TxRow>((from, to) => pipeline
-      .from("bank_transactions").select("date, amount").eq("user_id", user.id)
+      .from("bank_transactions").select("id, date, amount, statement_document_id").eq("user_id", user.id)
       .order("id", { ascending: true }).range(from, to)).catch(() => null),
     // [CASH-LEDGER] The drawer, the SAME figure the Kas page shows — mirrors /api/daily-truth.
     (async () => {
@@ -156,6 +157,15 @@ export async function GET() {
   // A line dated after asOf is, for one account, by definition not inside that closing balance:
   // a statement ending later would have moved asOf. With several accounts the line cannot be
   // placed, so only lines after the NEWEST statement count — and the engine says so.
+  //
+  // Two more rules, both about a line that must NOT move the figure:
+  //  · [WAAROM-WACHT-BANK] a line the owner set aside (privé, dubbel, niet van mij) is not money
+  //    of this administration — the same exclusion the result engine applies;
+  //  · an account WITHOUT a declared balance (a CSV import beside an MT940 account) has lines
+  //    too, and adding them to the other account's closing balance shows a euro that is neither
+  //    account's. When the balance is partial, only lines from statements of the accounts whose
+  //    balance IS known count; the rest cannot be placed and the note already says the balance
+  //    is partial.
   let netSinceAsOf: number | null = null;
   let bankBalance = balance.balance;
   if (bankBalance !== null && balance.asOf) {
@@ -166,7 +176,18 @@ export async function GET() {
       const since = balance.accounts > 1
         ? (periodRows ?? []).reduce<string>((m, r) => (r.period_end && r.period_end > m ? r.period_end : m), balance.asOf)
         : balance.asOf;
-      netSinceAsOf = txRows.reduce((s, t) => (t.date && t.date > since ? s + (Number(t.amount) || 0) : s), 0);
+      const excluded = await readExcludedBankIds({ client: pipeline, userId: user.id, start: since, end: "2999-12-31" });
+      let placeable: Set<string> | null = null;
+      if (balance.partial) {
+        const key = (iban: string | null) => (iban ?? "").trim() || "(zonder iban)";
+        const withBalance = new Set((periodRows ?? []).filter((r) => r.closing_balance !== null && r.period_end).map((r) => key(r.iban)));
+        placeable = new Set((periodRows ?? []).filter((r) => r.document_id && withBalance.has(key(r.iban))).map((r) => r.document_id as string));
+      }
+      netSinceAsOf = txRows.reduce((s, t) => {
+        if (!t.date || t.date <= since || excluded.has(t.id)) return s;
+        if (placeable && (!t.statement_document_id || !placeable.has(t.statement_document_id))) return s;
+        return s + (Number(t.amount) || 0);
+      }, 0);
     }
   }
 
@@ -178,6 +199,9 @@ export async function GET() {
     const opening = Number((kasProf.data as { kas_opening_balance?: number | null } | null)?.kas_opening_balance ?? 0) || 0;
     const tillCash = till.reduce((s, t) => s + (Number(t.cash_amount) || 0), 0);
     const used = cashRows.length > 0 || tillCash !== 0 || opening !== 0;
+    // No drawer at all — no entries, no cash takings, no opening balance — is a drawer of € 0,
+    // not an unknown one: "de kas telt niet mee" over a shop that has no kas is noise.
+    if (!used) kas = 0;
     if (used) {
       kas = computeDrawerBalance({
         openingBalance: opening,
@@ -242,7 +266,7 @@ export async function GET() {
   // ── Takings: the last eight weeks of booked till days ─────────────────────────────
   const takings = drawerTill == null
     ? null
-    : takingsFromTillDays(till.filter((t) => t.turnover_date && t.turnover_date > addDays(today, -TAKINGS_SPAN_DAYS) && t.turnover_date <= today), TAKINGS_SPAN_DAYS);
+    : takingsFromTillDays(till.filter((t) => t.turnover_date && t.turnover_date > addDays(today, -TAKINGS_SPAN_DAYS) && t.turnover_date <= today), TAKINGS_SPAN_DAYS, today);
 
   const forecast = forecastCashflow({
     today,

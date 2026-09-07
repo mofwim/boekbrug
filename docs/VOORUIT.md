@@ -39,6 +39,9 @@ pace, and eight weeks of till takings. This tile does the sum on Vandaag, under 
 
 ## What it does not do
 
+- **Count a purchase invoice still in the verify queue.** Only booked (`received`) purchases
+  are payables here; a queued document with a due date is not yet a debt the app can vouch for.
+
 It does not know about salary, rent that is not invoiced, tax assessments not yet in the app, or
 the owner's private drawings. It is the sum of what the administration holds, and it says what it
 left out.

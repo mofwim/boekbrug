@@ -12548,6 +12548,16 @@ export const MESSAGES = {
     ar: 'فاتورة واحدة تجاوزت موعدها (€ {amount}). هذا المال غير محسوب.',
     en: 'One invoice is already overdue (€ {amount}). That money is not counted.',
   },
+  'vooruit.note.klantZonderDatum': {
+    nl: '{count} verkoopfacturen zonder datum (€ {amount}) tellen niet mee.',
+    ar: '{count} فواتير بيع بلا تاريخ (€ {amount}) غير محسوبة.',
+    en: '{count} sales invoices without a date (€ {amount}) are not counted.',
+  },
+  'vooruit.note.klantZonderDatumEen': {
+    nl: 'Eén verkoopfactuur zonder datum (€ {amount}) telt niet mee.',
+    ar: 'فاتورة بيع واحدة بلا تاريخ (€ {amount}) غير محسوبة.',
+    en: 'One sales invoice without a date (€ {amount}) is not counted.',
+  },
   'vooruit.note.kassaOnbekend': {
     nl: 'Geen kassa-omzet geboekt, dus geen verwachte omzet.',
     ar: 'لا إيرادات صندوق مسجلة، فلا إيرادات متوقعة.',

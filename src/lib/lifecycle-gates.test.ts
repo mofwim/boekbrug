@@ -16526,8 +16526,21 @@ test("[VOORUIT] the panel holds no language of its own, and every note code has 
   // inside a member — the union ends where the next declaration begins.
   const unionText = rule.slice(rule.indexOf("export type ForecastNote ="));
   const codes = [...unionText.slice(0, unionText.indexOf("export interface")).matchAll(/code: "([a-z-]+)"/g)].map((m) => m[1]);
-  assert.ok(codes.length >= 9, `expected the note codes, found ${codes.length}`);
+  assert.ok(codes.length >= 10, `expected the note codes, found ${codes.length}`);
   for (const c of codes) assert.ok(copy.includes(`"${c}"`), `note code with no sentence: ${c}`);
+});
+
+test("[VOORUIT] a bank line that is not this administration's money never moves the figure", () => {
+  const route = code("src/app/api/cashflow/route.ts");
+  assert.match(route, /const excluded = await readExcludedBankIds\(\{ client: pipeline, userId: user\.id, start: since/,
+    "owner-ignored lines (privé, dubbel, niet van mij) are read with the same helper the result engine uses");
+  assert.match(route, /if \(!t\.date \|\| t\.date <= since \|\| excluded\.has\(t\.id\)\) return s;/, "…and left out of the sum");
+  assert.match(route, /if \(balance\.partial\) \{[\s\S]{0,600}placeable = new Set\(/, "with an account whose balance is unknown, only statements of the known accounts place a line");
+  assert.match(route, /if \(placeable && \(!t\.statement_document_id \|\| !placeable\.has\(t\.statement_document_id\)\)\) return s;/);
+  assert.match(route, /if \(!used\) kas = 0;/, "a shop without a kas has a drawer of zero, not an unknown one");
+  assert.match(route, /TAKINGS_SPAN_DAYS, today\);/, "the week rate is measured over the till's own history");
+  const rule = code("src/lib/cashflow-forecast.ts");
+  assert.match(rule, /if \(d0 === null \|\| isLateReceivable\(r, today\)\) continue;/, "late means past due, not past the pace");
 });
 
 test("[DEEL-CREDIT] the invoice list never states an open amount the credit beside it contradicts", () => {
