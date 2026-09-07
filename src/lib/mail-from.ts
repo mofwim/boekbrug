@@ -41,6 +41,53 @@
 /** The only address this product can send from — the one domain that is authenticated. */
 export const MAIL_FROM_ADDRESS = "noreply@boekbrug.nl";
 
+// ── [EIGEN-POST] De post die dit product ZELF verstuurt, en nooit terug mag lezen ──────────────
+//
+// De mailsync leest de mailbox van de eigenaar. BoekBrug stuurt naar diezelfde mailbox. En bij een
+// bericht ZONDER bijlage maakt de app een document van de TEKST ([MAILTEKST]) — dus onze eigen
+// melding is, structureel, een kandidaat-inkoopfactuur in de administratie van de eigenaar.
+//
+// Vandaag komt hij daar niet doorheen, en dat is geen bewaking maar geluk: bodyLooksLikeInvoice
+// eist een factuurwoord (onze melding HEEFT er een — "factuur"), een btw-woord en een eurobedrag,
+// en die laatste twee ontbreken. Nagekeken in de live administratie: nog nooit iets van onszelf
+// ingelezen.
+//
+// Het gevaar ontstaat door de verbetering die de eigenaar in dezelfde adem vroeg: een melding die
+// zegt WELKE factuur klaarstaat, van wie en voor hoeveel, levert precies die twee ontbrekende
+// voorwaarden. Daarom staat deze poort er VÓÓR de melding beter wordt.
+//
+// Afgeleid van MAIL_FROM_ADDRESS hierboven en niet nog eens uitgetypt: één adres, één plek. Wordt
+// de afzender ooit een andere, dan verhuist de poort mee in plaats van naar een dood adres te
+// blijven wijzen.
+
+/**
+ * Is dit bericht door ons verstuurd?
+ *
+ * Vergelijkt alleen het ADRES, niet de weergavenaam: die is vrij tekst en dus geen bewijs — de
+ * hele reden waarom customerMailFrom hieronder de naam quoot. Een `Naam <adres>`-header wordt
+ * uitgepakt, want de twee mailpaden geven hem allebei anders door.
+ */
+export function isOwnAppMail(from: string | null | undefined): boolean {
+  const raw = String(from ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  const inAngles = /<([^>]+)>\s*$/.exec(raw);
+  const address = (inAngles ? inAngles[1] : raw).trim();
+  return address === MAIL_FROM_ADDRESS;
+}
+
+/**
+ * Het stukje zoekopdracht waarmee Gmail onze eigen post niet eens OPSOMT.
+ *
+ * Dit is de vroegst mogelijke plek, en dat is het hele punt: geen pagina uit het paginabudget,
+ * geen bijlage opgehaald, geen tekst gedownload, geen modelaanroep. De app hoeft niet eerst een
+ * bericht open te maken om te ontdekken dat het van haarzelf is.
+ *
+ * Graph (Outlook) kent zo'n uitsluiting in zijn $filter niet zonder de rest van de filter in
+ * gevaar te brengen — een afgewezen filter laat daar de HELE scan leeglopen — dus dat pad weigert
+ * op de eerste regel van de lus, vóór er iets gelezen wordt. Zie de plekken zelf.
+ */
+export const GMAIL_NOT_OWN_MAIL = `-from:${MAIL_FROM_ADDRESS}`;
+
 /** Shown when there is no usable business name. Also the whole name for internal mail. */
 export const MAIL_FROM_FALLBACK = "BoekBrug";
 

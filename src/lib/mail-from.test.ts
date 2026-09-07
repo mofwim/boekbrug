@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { customerMailFrom, sanitizeSenderName, MAIL_FROM_ADDRESS } from "./mail-from";
+import { customerMailFrom, sanitizeSenderName, MAIL_FROM_ADDRESS, isOwnAppMail, GMAIL_NOT_OWN_MAIL } from "./mail-from";
 
 test("[AFZENDERNAAM] the customer sees the business, and how it was sent", () => {
   // The report: an inbox row reading "BoekBrug" about an amount the recipient is asked to pay, from
@@ -81,4 +81,41 @@ test("[AFZENDERNAAM] accents and ordinary punctuation are left alone", () => {
   // Only what is dangerous comes out. A trade name is a name.
   assert.equal(sanitizeSenderName("Café Zonneschijn B.V."), "Café Zonneschijn B.V.");
   assert.equal(sanitizeSenderName("  Kiwi   Food  Market  "), "Kiwi Food Market");
+});
+
+// ── [EIGEN-POST] De post die dit product zelf verstuurt ────────────────────────────────────────
+//
+// De mailsync leest de mailbox van de eigenaar; BoekBrug stuurt naar diezelfde mailbox; en een
+// bericht zonder bijlage kan een document worden van zijn eigen TEKST. Onze melding is dus
+// structureel een kandidaat-inkoopfactuur in de administratie van de eigenaar.
+
+test("[EIGEN-POST] onze eigen afzender wordt herkend, in beide vormen", () => {
+  assert.equal(isOwnAppMail("noreply@boekbrug.nl"), true, "het kale adres");
+  assert.equal(isOwnAppMail('"BoekBrug" <noreply@boekbrug.nl>'), true, "en met een weergavenaam ervoor");
+  assert.equal(isOwnAppMail('"Kiwi Food Market via BoekBrug" <noreply@boekbrug.nl>'), true,
+    "ook de vorm die klanten van een ondernemer zien — het adres is wat telt");
+  assert.equal(isOwnAppMail("  NoReply@BoekBrug.NL  "), true, "hoofdletters en spaties zijn geen ander adres");
+});
+
+test("[EIGEN-POST] tegenproef: de post van iemand anders wordt NIET tegengehouden", () => {
+  // Zonder deze slaagt alles hierboven ook als de functie altijd true teruggeeft — en dan leest de
+  // app geen enkele factuur meer in. Dat is de dure kant van deze poort.
+  for (const anders of [
+    "facturen@enkahoreca.nl",
+    "noreply@boekbrug.nl.fraude.com",   // ons adres als SUBDOMEIN van iemand anders
+    "boekbrug@gmail.com",
+    '"BoekBrug" <noreply@boekbrug.example>',
+    "",
+    null,
+    undefined,
+  ]) {
+    assert.equal(isOwnAppMail(anders), false, `${JSON.stringify(anders)} is niet ons adres`);
+  }
+});
+
+test("[EIGEN-POST] de zoekopdracht sluit uit op HET adres, niet op een los getypt adres", () => {
+  // Eén adres, één plek. Wordt de afzender ooit een andere, dan verhuist de poort mee in plaats van
+  // naar een dood adres te blijven wijzen — wat een poort is die niets meer tegenhoudt.
+  assert.equal(GMAIL_NOT_OWN_MAIL, `-from:${MAIL_FROM_ADDRESS}`);
+  assert.match(GMAIL_NOT_OWN_MAIL, /^-from:/, "Gmail sluit uit met -from:, niet met from:");
 });

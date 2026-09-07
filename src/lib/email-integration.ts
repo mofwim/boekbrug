@@ -22,6 +22,10 @@ import { expandArchives } from "@/lib/archive-expand";
 import { isOpenableArchive } from "@/lib/archive-attachment";
 import { judgeKeepable } from "@/lib/turnover-keepable";
 import { computeContentHash } from '@/lib/content-hash'
+// [EIGEN-POST] Het ene adres waar dit product vandaan mailt, en de twee vormen waarin de sync het
+// nodig heeft. Afgeleid van MAIL_FROM_ADDRESS — zie de kop van dat bestand voor waarom deze poort
+// er moest zijn vóórdat de melding zelf beter wordt.
+import { isOwnAppMail, GMAIL_NOT_OWN_MAIL } from '@/lib/mail-from'
 import { escapeLikeValue } from '@/lib/sanitize'
 // [DUP-TRASHED] Gedeelde uitzondering op de byte-hash-poort: een weggegooid bestand mag de
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
@@ -800,10 +804,13 @@ export async function fetchGmailAttachments(
   const listGmailIds = async (
     beforeSec: number | null
   ): Promise<{ ids: Array<{ id: string }>; complete: boolean; pages: number }> => {
+    // [EIGEN-POST] `-from:noreply@boekbrug.nl` — onze eigen post wordt niet eens OPGESOMD. De
+    // vroegst mogelijke plek: geen pagina uit het paginabudget, geen bijlage opgehaald, niets
+    // gedownload om daarna te ontdekken dat het bericht van onszelf was. Zie mail-from.ts.
     const q =
       `has:attachment after:${afterDate}` +
       (beforeSec != null ? ` before:${beforeSec}` : '') +
-      ` in:anywhere -in:sent -in:drafts -in:chats`
+      ` in:anywhere -in:sent -in:drafts -in:chats ${GMAIL_NOT_OWN_MAIL}`
     const raw: Array<{ id: string }> = []
     let pageToken: string | null = null
     let page = 0
@@ -1404,6 +1411,11 @@ export async function fetchOutlookAttachments(
   const withAttachments = messages.filter((m) => {
     if (!m.hasAttachments) return false
     if (isOwnOutbound(m)) return false // [OWN-SENT] owner's own outbound mail — not incoming
+    // [EIGEN-POST] Post die dit product zelf verstuurde. Hier, vóór withAttachments iets ophaalt,
+    // zodat er geen enkele bijlage van onszelf wordt gedownload om daarna te worden weggegooid.
+    // Graph kent geen veilige $filter-uitsluiting hiervoor — een afgewezen filter laat de hele
+    // listing leeglopen — dus dit is voor Outlook de vroegste plek die niets in gevaar brengt.
+    if (isOwnAppMail(m.from?.emailAddress?.address)) return false
     return true
   })
   console.log('[BOEK-011] Outlook attachment fetch', {
@@ -5307,8 +5319,11 @@ async function fetchGmailBodyInvoices(
   const afterDate = new Date(syncAfterMs).toISOString().slice(0, 10).replace(/-/g, '/')
   // Gmail's own index does the first pass, at no cost to us: only mail WITHOUT an attachment that
   // mentions an invoice word anywhere in it. Everything expensive happens after this.
+  // [EIGEN-POST] En hier het hardst: dit is het pad dat van een BERICHTTEKST een document maakt,
+  // dus precies het pad waarlangs onze eigen melding een inkoopfactuur zou worden. Gmail sluit hem
+  // uit in de zoekopdracht; er komt geen tekst binnen om te beoordelen.
   const q =
-    `-has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats ` +
+    `-has:attachment after:${afterDate} in:anywhere -in:sent -in:drafts -in:chats ${GMAIL_NOT_OWN_MAIL} ` +
     `{${BODY_SEARCH_WORDS.join(' ')}}`
   const listRes = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=${MAX_BODY_SCAN}`,
@@ -5377,6 +5392,9 @@ async function fetchOutlookBodyInvoices(
   const items: GmailAttachment[] = []
   for (const m of messages) {
     const addr = m.from?.emailAddress?.address ?? ''
+    // [EIGEN-POST] Eerst, en vóór er ook maar één regel van deze tekst wordt gelezen: post van
+    // onszelf is geen inkoopfactuur, en het is niet nodig om hem te openen om dat vast te stellen.
+    if (isOwnAppMail(addr)) continue
     // Mail the owner sent themselves is not a purchase invoice.
     if (ownEmail && addr && addr.toLowerCase() === ownEmail.toLowerCase()) continue
     const name = m.from?.emailAddress?.name ?? ''

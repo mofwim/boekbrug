@@ -26922,6 +26922,79 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
 
+// ─── [EIGEN-POST] The app never reads its own mail back in ──────────────────────────────────────
+//
+// The mail sync reads the owner's mailbox. BoekBrug sends to that same mailbox. And a message with
+// NO attachment can become a document made of its own body text ([MAILTEKST]). So this product's
+// own notification is, structurally, a candidate purchase invoice inside the owner's books.
+//
+// It does not get through today, and that is luck rather than a guard: bodyLooksLikeInvoice wants
+// an invoice word (our mail HAS one — "factuur"), a whole-word tax term and a euro amount, and the
+// last two are missing. Checked against the live administration: nothing of ours has ever been
+// ingested.
+//
+// The danger is created by the improvement the owner asked for in the same breath — a notification
+// naming WHICH invoice, from whom, for how much, supplies exactly those two missing conditions. So
+// this gate lands before that mail is made useful, and stays to say so.
+test("[EIGEN-POST] every mail path refuses our own sender, and does it before it reads anything", () => {
+  const sync = code("src/lib/email-integration.ts");
+
+  // ── 1. ONE address, derived. A guard that types the address out again keeps pointing at the old
+  //    one the day the sender changes, which is a guard that stops guarding without failing.
+  const afzender = code("src/lib/mail-from.ts");
+  assert.match(afzender, /export const GMAIL_NOT_OWN_MAIL = `-from:\$\{MAIL_FROM_ADDRESS\}`/,
+    "the Gmail exclusion no longer derives from the one address this product sends from");
+  assert.match(afzender, /export function isOwnAppMail\(/, "the predicate left its home");
+  assert.doesNotMatch(sync, /noreply@boekbrug\.nl/,
+    "the sync spells our address out itself — then it is a second authority, and the day the " +
+      "sender moves this one stays behind pointing at an address nobody sends from");
+
+  // ── 2. GMAIL refuses in the QUERY, so our own mail is never even listed. This is what "stop at
+  //    the first step" means on this API: no page of the budget, no attachment fetched, no body
+  //    downloaded to then be discarded.
+  // Found by the marker Gmail queries all carry, and read as a WINDOW around it: the two queries
+  // are built differently (one splices a `before:` ceiling through a ternary) and a regex that
+  // matched both shapes would be a regex nobody could edit later.
+  const gmailQueries = [...sync.matchAll(/in:anywhere/g)].map((m) => m.index ?? 0);
+  assert.ok(gmailQueries.length >= 2,
+    `found ${gmailQueries.length} Gmail listing quer(ies) — the scan is broken, or a path was ` +
+      "added that this gate cannot see");
+  for (const at of gmailQueries) {
+    const venster = sync.slice(at, at + 220);
+    assert.match(venster, /GMAIL_NOT_OWN_MAIL/,
+      "a Gmail listing still asks for our own mail, and will download it before deciding: " +
+        venster.replace(/\s+/g, " ").slice(0, 90));
+  }
+
+  // ── 3. OUTLOOK refuses on the first line it can. Graph has no safe $filter exclusion for this —
+  //    a rejected filter empties the WHOLE scan there — so both Outlook paths test the sender
+  //    themselves, before anything is fetched or read.
+  const outlookSites = [...sync.matchAll(/isOwnAppMail\(/g)].length;
+  assert.ok(outlookSites >= 2,
+    `isOwnAppMail is called ${outlookSites}× — Outlook has two paths (attachments and body scan) ` +
+      "and both must ask");
+
+  // The attachment path asks BEFORE the fetch. Position is the whole claim: asking afterwards is
+  // exactly the "go deep, then discover it was ours" this exists to stop.
+  const filterAt = sync.indexOf("const withAttachments = messages.filter");
+  const askAt = sync.indexOf("isOwnAppMail(m.from?.emailAddress?.address)");
+  assert.ok(filterAt > 0 && askAt > filterAt && askAt < filterAt + 900,
+    "the Outlook attachment listing no longer drops our own mail before it fetches attachments");
+
+  // And on the body path it stands ahead of the line that reads the text — checked INSIDE that
+  // function, not across the file. A file-wide indexOf passes when the question sits in the
+  // neighbouring Gmail scan and the Outlook loop has none, which is exactly what a mis-aimed
+  // negative control put there and this assertion did not notice.
+  const bodyAt = sync.indexOf("async function fetchOutlookBodyInvoices");
+  assert.ok(bodyAt > 0, "the Outlook body scan is gone, or renamed — this half of the gate is blind");
+  const bodyFn = sync.slice(bodyAt, sync.indexOf("\n}", bodyAt));
+  const lees = bodyFn.indexOf("htmlToReadableText(m.body?.content");
+  const vraag = bodyFn.indexOf("if (isOwnAppMail(addr)) continue");
+  assert.ok(vraag > 0, "the Outlook body scan does not ask whether we sent this message at all");
+  assert.ok(lees > vraag,
+    "the Outlook body scan reads the message text before asking whether we sent it");
+});
+
 // ─── [BETAALMOMENT] A changed account number reaches the owner where the money moves ───────────
 //
 // Invoice-redirect fraud is defeated at exactly one moment: showing the account change while the
