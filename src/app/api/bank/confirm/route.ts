@@ -50,7 +50,7 @@ import { allocatedOnLine } from "@/lib/bank-line-budget";
 import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
 // [DECLARED-INVOICE] Invoice numbers the payment NAMES, whether or not we hold them.
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
-import { logAuditAction } from "@/lib/audit";
+import { logAuditAction, getClientIP } from "@/lib/audit";
 import { round2 } from "@/lib/invoice-totals";
 
 export async function POST(req: NextRequest) {
@@ -68,10 +68,25 @@ export async function POST(req: NextRequest) {
   let requestedAmount: number | null = null;
   let force = false;
   let invoiceId: string | undefined;
+  // [SOM-KLOPT-ÉÉN] Several invoices at once — the same-supplier sum the matcher suggested. Booked
+  // as ONE decision through book_bank_batch (locked, the tie re-proved on the current rows, signed
+  // for a creditnota, all-or-nothing) instead of one confirm per invoice in list order. The loop
+  // could not book a netted creditnota at all: invoice-first the line closed on the invoice alone
+  // and the credit's turn answered "already processed" (counted as success); credit-first the
+  // credit was refused as not eligible. Either way the invoice stood € 52,38 "open" under a toast
+  // that said "2 samen gekoppeld".
+  let invoiceIds: string[] | null = null;
   try {
     const body = await req.json();
     transactionId = body?.transactionId;
     invoiceId = body?.invoiceId;
+    if (Array.isArray(body?.invoiceIds)) {
+      const ids = (body.invoiceIds as unknown[]).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x));
+      if (ids.length !== body.invoiceIds.length || ids.length < 2 || ids.length > 50) {
+        return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+      }
+      invoiceIds = [...new Set(ids)];
+    }
     // [BANK-SPLIT] How much of this line to put on this invoice. Absent = "everything it has left",
     // which is what every caller sent before this existed.
     requestedAmount = typeof body?.amount === "number" ? body.amount : null;
@@ -80,7 +95,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
-  if (!transactionId || !invoiceId) {
+  if (!transactionId || (!invoiceId && !invoiceIds)) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
@@ -104,6 +119,44 @@ export async function POST(req: NextRequest) {
   if (tx.status !== "pending") {
     return NextResponse.json({ error: "transaction_already_processed" }, { status: 409 });
   }
+
+  if (invoiceIds) {
+    // [SOM-KLOPT-ÉÉN] The batch door. Everything the function checks — ownership, payability,
+    // the 'verwerkt' guard, the cent-exact tie on the CURRENT open amounts with a creditnota
+    // signed negative — it checks under the line's lock, and nothing half-books.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: bookedRows, error: batchErr } = await (supabase.rpc as any)("book_bank_batch", {
+      p_user_id: user.id,
+      p_tx_id: transactionId,
+      p_invoice_ids: invoiceIds,
+      p_pay_date: tx.date ?? null,
+    }) as { data: unknown; error: { code?: string; message?: string } | null };
+    if (batchErr) {
+      const msg = (batchErr.message ?? "").toLowerCase();
+      if (msg.includes("verwerkt")) return NextResponse.json({ error: "verwerkt" }, { status: 409 });
+      if (msg.includes("tie no longer exact")) {
+        return NextResponse.json({ error: "batch_tie_broken", detail: batchErr.message }, { status: 409 });
+      }
+      if (msg.includes("no longer payable")) {
+        return NextResponse.json({ error: "invoice_already_paid", detail: batchErr.message }, { status: 409 });
+      }
+      console.error("[SOM-KLOPT-ÉÉN] book_bank_batch refused", { userId: user.id, transactionId, error: batchErr.message });
+      return NextResponse.json({ error: "payment_failed", detail: batchErr.message }, { status: 500 });
+    }
+    if (!bookedRows || (bookedRows as unknown[]).length === 0) {
+      return NextResponse.json({ error: "transaction_already_processed" }, { status: 409 });
+    }
+    await logAuditAction({
+      userId: user.id,
+      action: "bank.confirmed_batch",
+      entityType: "bank_transaction",
+      entityId: transactionId,
+      newValue: { invoice_ids: invoiceIds, invoice_count: invoiceIds.length, amount: tx.amount ?? 0, reason: "owner_confirmed_sum" },
+      ipAddress: getClientIP(req),
+    });
+    return NextResponse.json({ ok: true, booked: (bookedRows as unknown[]).length });
+  }
+  if (!invoiceId) return NextResponse.json({ error: "missing_fields" }, { status: 400 });
 
   const { data: inv, error: invErr } = await pipeline
     .from("invoices")
@@ -332,6 +385,33 @@ export async function POST(req: NextRequest) {
       [inv.invoice_number, ...linkedInvoiceNumbers],
     );
     if (missing.length > 0) {
+      // [GENOEMD-STAAT-ER] "Staat nog niet in je administratie" was said of every number the
+      // payment names, including one that IS there, open, one screen away. Look it up: a named
+      // invoice that exists is a different instruction — book both (verdelen) — not "add it".
+      const { data: openRows } = await pipeline
+        .from("invoices")
+        .select("invoice_number")
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .in("status", ["sent", "overdue", "received"])
+        .not("invoice_number", "is", null)
+        .limit(2000);
+      const openNums = new Set(((openRows ?? []) as { invoice_number: string | null }[]).map((r) => normalizeRef(r.invoice_number ?? "")).filter(Boolean));
+      const present = missing.filter((n) => openNums.has(normalizeRef(n)));
+      if (present.length > 0) {
+        return NextResponse.json(
+          {
+            error: "declared_invoice_open",
+            code: "declared_invoice_open",
+            missingNumbers: present,
+            canForce: true,
+            detail:
+              `Deze betaling noemt ook ${present.length === 1 ? "factuur" : "facturen"} ${present.join(", ")}, ` +
+              `${present.length === 1 ? "die staat" : "die staan"} open in je administratie. Koppel ze samen via Verdelen, ` +
+              `of vul hieronder in welk deel van dit bedrag op ${inv.invoice_number ?? "deze factuur"} hoort.`,
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         {
           error: "declared_invoice_missing",

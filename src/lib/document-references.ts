@@ -107,6 +107,16 @@ export const DOCUMENT_REFERRERS: ReadonlyArray<{
     keyMany: "prul.ref.factuurBijlage.meer",
   },
   {
+    // [BIJLAGE-BIJ-REGEL] A file kept WITH a bank line. Deleting the document would silently take
+    // the owner's proof off the line (the FK cascades the link row away).
+    table: "bank_tx_attachments",
+    column: "document_id",
+    one: "een bankregel waar dit als bijlage bij hoort",
+    many: (n) => `${n} bankregels waar dit als bijlage bij hoort`,
+    keyOne: "prul.ref.bankBijlage.een",
+    keyMany: "prul.ref.bankBijlage.meer",
+  },
+  {
     table: "cash_entries",
     column: "document_id",
     one: "een kasboekregel waar dit de bon van is",

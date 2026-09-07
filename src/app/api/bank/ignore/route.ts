@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     .from("bank_transactions")
     // [BANK-IGNORE-AUDIT] Also read what the line IS, so the audit row can identify it after
     // delete-statement has hard-deleted the row it points at.
-    .select("id, status, user_id, date, amount, counterpart_name, description")
+    .select("id, status, user_id, date, amount, counterpart_name, description, invoice_id")
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -73,6 +73,18 @@ export async function POST(req: NextRequest) {
   // A matched transaction is settled — don't let ignore/restore touch it.
   if (tx.status === "matched") {
     return NextResponse.json({ error: "transaction_already_matched" }, { status: 409 });
+  }
+  // [NEGEER-NIET-HALF] Neither a line that is still pending because PART of it sits on an invoice:
+  // ignoring it left the links and the invoice's amount_paid standing while the unassigned rest —
+  // "€ 400 nog toe te wijzen" a second ago — vanished from every list, and with reason dubbel or
+  // privé the line left the books while its invoice kept counting. Unlink first, then ignore.
+  if (action === "ignore") {
+    const { data: links, error: linkErr } = await pipeline
+      .from("bank_tx_invoices").select("id").eq("transaction_id", transactionId).eq("user_id", user.id).limit(1);
+    if (linkErr) return NextResponse.json({ error: "links_lookup_failed", detail: linkErr.message }, { status: 500 });
+    if (tx.invoice_id || (links ?? []).length > 0) {
+      return NextResponse.json({ error: "transaction_partially_linked", code: "transaction_partially_linked" }, { status: 409 });
+    }
   }
 
   // ignore: pending → not_found.  restore: not_found → pending.

@@ -159,7 +159,12 @@ export async function POST(req: Request) {
   //    Only detach OUR link (invoice_id guard) so a concurrent re-link is never clobbered.
   const { data: detachData, error: unlinkErr } = await pipeline
     .from("bank_transactions")
-    .update({ status: "pending", invoice_id: null })
+    // [ONTKOPPEL-SCHOON] The category goes with the link. An import may have categorised this line
+    // (kosten) before the matcher tied it to an invoice; linked, the engine counts the invoice and
+    // skips the line — unlinked, it counted BOTH: the line as kosten and the restored invoice as
+    // kosten, voorbelasting doubled, until the owner re-linked. Cleared, the line returns to the
+    // categorise screen like any other unexplained line.
+    .update({ status: "pending", invoice_id: null, category: null, category_source: null, category_confirmed: false })
     .eq("id", transactionId)
     .eq("user_id", user.id)
     .eq("invoice_id", invoiceId)
@@ -433,7 +438,10 @@ async function unlinkBatch(args: {
         .select("id, invoice_number, direction, status, accountant_status, marked_paid_at, payment_date, amount_paid")
         .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
         .eq("status", "paid")
-        .eq("payment_method", "bank")
+        // [ONTKOPPEL-KAS-NA] No payment_method filter — the same lesson delete-statement learned:
+        // apply_manual_payment writes the LAST payment's method, so an invoice paid € 600 by this
+        // batch and € 400 in cash afterwards reads 'kas' and was skipped here: it stayed 'paid'
+        // while its € 600 was removed. The id-link and the number gap-fill below decide membership.
         .order("id", { ascending: true })
         .range(from, to),
     );
@@ -493,7 +501,12 @@ async function unlinkBatch(args: {
   // concurrent re-link is never clobbered. A 0-row detach → the link moved under us → conflict.
   const { data: detachData, error: unlinkErr } = await pipeline
     .from("bank_transactions")
-    .update({ status: "pending", invoice_id: null })
+    // [ONTKOPPEL-SCHOON] The category goes with the link. An import may have categorised this line
+    // (kosten) before the matcher tied it to an invoice; linked, the engine counts the invoice and
+    // skips the line — unlinked, it counted BOTH: the line as kosten and the restored invoice as
+    // kosten, voorbelasting doubled, until the owner re-linked. Cleared, the line returns to the
+    // categorise screen like any other unexplained line.
+    .update({ status: "pending", invoice_id: null, category: null, category_source: null, category_confirmed: false })
     .eq("id", transactionId)
     .eq("user_id", userId)
     .eq("invoice_id", linkedInvoiceId)

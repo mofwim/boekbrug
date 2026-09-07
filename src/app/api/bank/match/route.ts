@@ -37,6 +37,7 @@ import { counterpartHistory, type HistoryLine } from "@/lib/counterpart-history"
 import { allocatedByTransaction } from "@/lib/bank-line-budget";
 // [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
 import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
+import { attachmentsByTransaction } from "@/lib/bank-attachments";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -182,7 +183,7 @@ export async function GET() {
   // list — a truncated list rendered existing invoices as "missing" slots with an upload
   // control, inviting a duplicate import of a bill that was already there. Fifteen covers any
   // realistic bundle; the choice-list UI still shows only the top few.
-  const result = matchTransactions(transactions, invoices, { maxCandidates: 15, memory });
+  // The matcher runs BELOW, once the applied amounts are known — see [REST-MATCHT].
 
   // [BANK-MULTI-LINK-PERSIST] Partial-link coverage. A multi-invoice tx that has
   // already had ONE invoice paid against it keeps status='pending' + an invoice_id.
@@ -295,6 +296,23 @@ export async function GET() {
     !hasLinkRow.has(row.id) || amountUnknown.has(row.id)
       ? null
       : bankLineFullyApplied(row.amount, appliedByTx.get(row.id) ?? 0);
+
+  // [REST-MATCHT] A line partly booked on an invoice offers its REMAINDER to the matcher, not its
+  // full amount. A € 1.000 line with € 600 on invoice A never suggested the € 400 invoice B: the
+  // matcher compared B against € 1.000, the card said "€ 400 nog toe te wijzen" and offered
+  // nothing, and the owner had to find Verdelen by hand. Only where the applied total is
+  // MEASURED (every link priced); an unmeasured line keeps its full amount, as before.
+  const matcherInput = transactions.map((t, i) => {
+    const row = (txRows ?? [])[i] as BankTransactionDbRow | undefined;
+    if (!row || !hasLinkRow.has(row.id) || amountUnknown.has(row.id)) return t;
+    const applied = appliedByTx.get(row.id) ?? 0;
+    if (applied <= 0) return t;
+    const magnitude = Math.abs(Number(row.amount) || 0);
+    const rest = Math.max(0, magnitude - applied);
+    if (rest <= 0.01) return t;
+    return { ...t, amount: (Number(row.amount) || 0) < 0 ? -rest : rest };
+  });
+  const result = matchTransactions(matcherInput, invoices, { maxCandidates: 15, memory });
 
   if (linkedTxRows.length > 0) {
     // Paid invoice numbers for this user, both directions (cheap, single read).
@@ -669,6 +687,7 @@ export async function GET() {
   // join table + a fallback to the single invoice_id (covers pre-migration lines with no join
   // rows). Best-effort, display only — wrapped so a missing table degrades to the invoice_id path.
   const idsByTx = new Map<string, Set<string>>();
+  const linkedNumberById = new Map<string, string | null>();
   for (const r of matchedTx) idsByTx.set(r.id, new Set(r.invoice_id ? [r.invoice_id as string] : []));
   if (matchedTx.length > 0) {
     // [IN-CHUNK] matchedTx is fully paged above, so on a real account it holds thousands of ids —
@@ -717,7 +736,7 @@ export async function GET() {
             .order("id", { ascending: true })
             .range(from, to),
       );
-      for (const i of linkedInvs) numById.set(i.id, normalizeRef(i.invoice_number ?? ""));
+      for (const i of linkedInvs) { numById.set(i.id, normalizeRef(i.invoice_number ?? "")); linkedNumberById.set(i.id, i.invoice_number); }
     } catch {
       /* display only — the card falls back to the parsed reference numbers */
     }
@@ -784,9 +803,21 @@ export async function GET() {
       coveredNumbers: covered,
       // [BANK-AMOUNT-ONLY] 'amount_only' → the Gekoppeld card shows a "controleer" flag.
       matchReason: reasonByTx.get(row.id) ?? null,
+      // [OPEN-FACTUUR] The invoices this line paid, by id, so the card can open the document the
+      // owner is checking against — the Gekoppeld card showed numbers and no way to the file.
+      linkedInvoices: [...(idsByTx.get(row.id) ?? [])].map((id) => ({ invoiceId: id, invoiceNumber: linkedNumberById.get(id) ?? null })),
     };
   });
 
+  // [BIJLAGE-BIJ-REGEL] The files kept with each line, on every card the screen shows.
+  const allSuggestions = [...suggestions, ...linkedSuggestions];
+  const attachments = await attachmentsByTransaction(
+    pipeline, user.id, allSuggestions.map((s) => (s as { transactionId: string | null }).transactionId).filter((x): x is string => !!x),
+  );
+  for (const s of allSuggestions) {
+    const id = (s as { transactionId: string | null }).transactionId;
+    (s as { attachments?: unknown }).attachments = id ? (attachments.get(id) ?? []) : [];
+  }
   return NextResponse.json({
     ok: true,
     summary: {
@@ -795,6 +826,6 @@ export async function GET() {
       choice: result.choiceCount,
       none: result.noneCount,
     },
-    suggestions: [...suggestions, ...linkedSuggestions],
+    suggestions: allSuggestions,
   });
 }

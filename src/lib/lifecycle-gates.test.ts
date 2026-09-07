@@ -9077,7 +9077,8 @@ test("[DUBBEL-GEDEKT] no machine writes a bank category without asking what is a
   for (const file of walk("src")) {
     const src = code(file);
     if (!src.includes('from("bank_transactions")')) continue;
-    for (const m of src.matchAll(INFERRED_WRITE)) sites.push({ file, at: m.index ?? 0 });
+    // [ONTKOPPEL-SCHOON] `category: null` CLEARS a category; it infers nothing and needs no guard.
+    for (const m of src.matchAll(INFERRED_WRITE)) if (!/\bcategory: null\b/.test(m[0])) sites.push({ file, at: m.index ?? 0 });
   }
 
   // The scan must not go vacuously green. These two files hold the writers the money was measured
@@ -11065,7 +11066,7 @@ test("[GEHEUGEN] the app reads back what the owner already confirmed", () => {
   assert.match(server, /if \(!tx \|\| !inv\) continue;/, "a half-read link must teach nothing");
   const route = code("src/app/api/bank/match/route.ts");
   assert.match(route, /loadMatchMemory\(pipeline, user\.id\)\.catch\(/, "a failed memory read may not break the page");
-  assert.match(route, /matchTransactions\(transactions, invoices, \{ maxCandidates: 15, memory \}\)/);
+  assert.match(route, /matchTransactions\(matcherInput, invoices, \{ maxCandidates: 15, memory \}\)/);
 });
 
 // ─── [REGEL-KOPIE] The class this has now been, three times ─────────────────────────────────────
