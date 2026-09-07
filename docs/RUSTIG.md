@@ -32,6 +32,11 @@ zitten"), een tooltip die het paneel herhaalde dat hij opent, en dezelfde alinea
 bank-sleutel én een betaal-sleutel. Wat er bleef, staat bij een beslissing: het bevestigvenster
 van "vervangen", het betaalblad, de creditvraag.
 
+Na batch 3 (de boekhoudermodule): 15 schermen, 2.794 → 2.537 woorden, 40 → 24 zinnen boven de
+twintig. De wet bleef woord voor woord staan — art. 52 AWR, art. 35 en 35a Wet OB, art. 6:96 BW —
+en de zes sleutels die elk zeiden "dit konden we niet lezen, en dat zegt niets over X" zeggen dat
+nog steeds, in veertien woorden of minder.
+
 De 233 zinnen langer dan twintig woorden zijn 7% van de zinnen en dragen ~30% van de woorden.
 De drie dagelijkse schermen — betalen, bank, controlewachtrij — dragen 8.577 woorden: een derde
 van alles.

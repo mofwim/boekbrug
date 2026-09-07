@@ -26998,13 +26998,18 @@ test("[POST-WAARD] the morning mail is built from the invoice's facts, and lands
 // staan hier zodat ze je werk niet in de weg zitten"), a tooltip that repeated the sheet it
 // opens, and the same "no fitting invoice" paragraph under a bank key and a pay key.
 //
+// Batch 3 took the accountant module — 15 screens, 2.794 → 2.537 words, 40 → 24 sentences over
+// twenty — and the "could not read, and that says nothing about X" line that stood under six
+// keys. The law stayed word for word (art. 52 AWR, 35/35a Wet OB, 6:96 BW): a boekhouder reads
+// those, and the render tests pin them.
+//
 // This gate is a RATCHET. It knows today's stand and refuses any step back; each cleaned batch
 // lowers the ceilings here, in the same commit. What it cannot judge — whether a sentence stands
 // at a decision or at rest — the standard judges; what it can count, it counts.
 test("[RUSTIG] the screen does not grow wordier than the day this was measured", () => {
   // Ceilings — lowered batch by batch. Raising one is a decision to argue in the commit message.
   const LONGEST_WORDS = 45;      // 7 sep: 67 → 47 after batch 1 → 45 after batch 2
-  const OVER_TWENTY = 217;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 (owner screens AND src/modules)
+  const OVER_TWENTY = 201;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 → 201 after batch 3 (owner screens AND src/modules)
   const OVER_FIFTY = 0;          // 7 sep: 10 → 0 after batch 1
 
   const loop = (dir: string): string[] => {
@@ -27048,9 +27053,13 @@ test("[RUSTIG] the screen does not grow wordier than the day this was measured",
   // the Dutch source. Structural variants are excluded by RULE, not by list, because [TAAL]
   // requires them: one sentence per count (Een/Meer/N), per role (Acc), per with/without
   // (MetNaam/ZonderNaam, MetDatum, ZonderNummer, Anoniem, Kort). Everything else is a copy.
+  // Two passes: a count variant can carry a role suffix on top (geenDatumEenAcc → geenDatumEen →
+  // geenDatum). "Btw" is the with/without-a-BTW-number variant (mandaat / mandaatBtw).
+  const SUFFIX = /(Een|Meer|N|Acc|Kort|Anoniem|Btw)$/;
+  const VARIANT = /(MetNaam|ZonderNaam|MetDatum|ZonderNummer|MetNr|ZonderNr)$/i;
   const stem = (k: string) => k
-    .replace(/(Een|Meer|N|Acc|Kort|Anoniem)$/, "")
-    .replace(/(MetNaam|ZonderNaam|MetDatum|ZonderNummer|MetNr|ZonderNr)$/i, "")
+    .replace(SUFFIX, "").replace(VARIANT, "")
+    .replace(SUFFIX, "").replace(VARIANT, "")
     .replace(/\.(een|meer)$/, "");
   const lang = zinnen.filter((z) => z.w >= 15).map((z) => ({
     key: z.key,
@@ -27068,29 +27077,21 @@ test("[RUSTIG] the screen does not grow wordier than the day this was measured",
     dubbel.push([lang[i].key, lang[j].key].sort().join(" ≈ "));
   }
   // Today's copies — 46 pairs on 7 September, measured, not chosen; 27 after batch 2 folded the
-  // ones on the daily screens (the "je boekhouder heeft dit verwerkt" line stood under FOUR keys
-  // and now stands under two, each below the length this compares). A ratchet: a new pair is a
-  // red gate, and this set shrinks with every batch that folds one away.
-  const BEKENDE_KOPIEEN = 27;
+  // ones on the daily screens; 12 after batch 3 folded the accountant module's and the
+  // "could not read — says nothing about X" cluster that stood under six keys. A ratchet: a new
+  // pair is a red gate, and this set shrinks with every batch that folds one away.
+  const BEKENDE_KOPIEEN = 12;
   const bekend = new Set([
     "act.bv.disclaimer ≈ lijst.bundel.iban", "act.bv.uitleg ≈ lijst.bundel.deel",
     "beh.lees.onleesbaarUitleg ≈ beh.vast.onleesbaarUitleg",
-    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing", "bh.bev.bulk.lezing ≈ bh.bev.uitleg",
-    "bh.fact.mandaat ≈ bh.fact.mandaatBtw",
-    "bh.home.klanten.onleesbaar.uitleg ≈ bh.home.todo.onleesbaar.uitleg",
-    "bh.home.klanten.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
-    "bh.home.todo.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
-    "bh.home.todo.onleesbaar.uitleg ≈ ink.betekentNietLeeg",
-    "bh.home.todo.onleesbaar.uitleg ≈ klr.afl.fout",
-    "bh.home.todo.onleesbaar.uitleg ≈ vr.fout.betekentNiet",
-    "bh.kwt.leesfout ≈ kw.klantenLaadFout", "bh.kwt.leesfout ≈ kw.laadFout",
+    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing",
+    // The single confirm and the bulk confirm each say the reading is not being changed and where
+    // the liability stays (art. 52 AWR) — [BULK-BEVESTIG] requires both to.
+    "bh.bev.bulk.lezing ≈ bh.bev.uitleg",
     "detail.fout.mailNietVerstuurd ≈ detail.fout.pdfNietGemaakt",
     "detail.fout.pdfNietGemaakt ≈ lijst.pdfNietGemaakt",
     "inst.gevarenzoneUitleg ≈ inst.verwijderUitleg", "inst.mandaatFacturenUitleg ≈ inst.rijFacturenAan",
     "kluis.introArchief ≈ kluis.introBoekhouden",
-    "kw.geenDatumEen ≈ kw.geenDatumEenAcc", "kw.geenDatumEen ≈ kw.geenDatumMeerAcc",
-    "kw.geenDatumEenAcc ≈ kw.geenDatumMeer", "kw.geenDatumEenAcc ≈ kw.geenDatumMeerAcc",
-    "kw.geenDatumMeer ≈ kw.geenDatumMeerAcc", "kw.klantenLaadFout ≈ kw.laadFout",
     "verd.geenInkoop ≈ verd.geenVerkoop", "wh.voet.berekendFactuur ≈ wh.voet.berekendKas",
   ]);
   const nieuw = dubbel.filter((d) => !bekend.has(d));
