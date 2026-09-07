@@ -102,6 +102,9 @@ test("de lijst met aandacht bevat alleen wat niet in orde is", () => {
       // net als de twee hierboven meestal stil: hij spreekt alleen over een vervaldatum die vandaag
       // een grens oversteekt. Valt hij om, dan mist de eigenaar geen scherm maar een betaaltermijn.
       "payment-due": run(2),
+      // [MOLLIE-AFREKENING] Dagelijks, na de bankfeed, en stil voor iedere eigenaar zonder nieuwe
+      // afrekening — bewaakt wordt dat de run gebeurde.
+      "mollie-settlements": run(2),
     },
     NU,
   );

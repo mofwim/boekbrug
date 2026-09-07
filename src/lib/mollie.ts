@@ -210,3 +210,68 @@ export async function getMolliePaymentLink(
     return { error: `Mollie onbereikbaar: ${e instanceof Error ? e.message : String(e)}` };
   }
 }
+
+// ── [MOLLIE-AFREKENING] Settlements ─────────────────────────────────────────────────────────────
+//
+// Read-only. The settlement is the one document that carries the fee (a cost the app never saw)
+// and explains the payout bank line. Every function answers `{ error }` rather than throwing, and
+// an error is a reason to book NOTHING for that settlement — never a reason to guess.
+
+import type { MollieSettlement, MollieSettlementPayment } from "./mollie-settlement";
+
+type Page<T> = { items: T[]; next: string | null };
+
+async function molliePage<T>(apiKey: string, path: string, key: string): Promise<Page<T> | { error: string }> {
+  try {
+    const res = await mollieFetch(apiKey, path);
+    if (!res.ok) return { error: `Mollie ${path} antwoordde ${res.status}` };
+    const json = (await res.json()) as { _embedded?: Record<string, T[]>; _links?: { next?: { href?: string } | null } };
+    const items = json._embedded?.[key] ?? [];
+    const nextHref = json._links?.next?.href ?? null;
+    // Mollie's next link is absolute; keep only the path+query so mollieFetch can prefix it.
+    const next = nextHref ? nextHref.replace(/^https?:\/\/[^/]+\/v2/, "") : null;
+    return { items, next };
+  } catch (e) {
+    return { error: `Mollie onbereikbaar: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** Every page, bounded: a runaway pagination must not run a cron into its deadline. */
+async function molliePages<T>(apiKey: string, path: string, key: string, maxPages = 20): Promise<T[] | { error: string }> {
+  const out: T[] = [];
+  let next: string | null = path;
+  for (let i = 0; next && i < maxPages; i++) {
+    const page: Page<T> | { error: string } = await molliePage<T>(apiKey, next, key);
+    if ("error" in page) return page;
+    out.push(...page.items);
+    next = page.next;
+  }
+  return out;
+}
+
+/** The most recent settlements, newest first, with their periods (the list carries them). */
+export async function listMollieSettlements(apiKey: string, limit = 50): Promise<MollieSettlement[] | { error: string }> {
+  return molliePages<MollieSettlement>(apiKey, `/settlements?limit=${Math.min(250, Math.max(1, limit))}`, "settlements", 4);
+}
+
+export async function getMollieSettlement(apiKey: string, settlementId: string): Promise<MollieSettlement | { error: string }> {
+  try {
+    const res = await mollieFetch(apiKey, `/settlements/${encodeURIComponent(settlementId)}`);
+    if (!res.ok) return { error: `Mollie-afrekening nalezen mislukt (${res.status})` };
+    const json = (await res.json()) as MollieSettlement;
+    if (!json.id) return { error: "Mollie-antwoord zonder id" };
+    return json;
+  } catch (e) {
+    return { error: `Mollie onbereikbaar: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** The payments a settlement paid out. */
+export async function listMollieSettlementPayments(apiKey: string, settlementId: string): Promise<MollieSettlementPayment[] | { error: string }> {
+  return molliePages<MollieSettlementPayment>(apiKey, `/settlements/${encodeURIComponent(settlementId)}/payments?limit=250`, "payments");
+}
+
+/** The payments made on one payment link — how a link (ours) maps to a payment (in a settlement). */
+export async function listMolliePaymentLinkPayments(apiKey: string, linkId: string): Promise<MollieSettlementPayment[] | { error: string }> {
+  return molliePages<MollieSettlementPayment>(apiKey, `/payment-links/${encodeURIComponent(linkId)}/payments?limit=250`, "payments", 2);
+}

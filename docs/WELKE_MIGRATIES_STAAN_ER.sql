@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 123 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 124 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -322,6 +322,11 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('mollie.sql', 'policy', 'mollie_connections_select_own', 'mollie_connections', 'public'),
   ('mollie.sql', 'table', 'mollie_connections', null, 'public'),
   ('mollie.sql', 'table', 'mollie_payment_links', null, 'public'),
+  ('mollie_settlements.sql', 'column', 'payment_id', 'mollie_payment_links', 'public'),
+  ('mollie_settlements.sql', 'index', 'mollie_payment_links_payment_idx', null, 'public'),
+  ('mollie_settlements.sql', 'index', 'mollie_settlements_user_settled_idx', null, 'public'),
+  ('mollie_settlements.sql', 'policy', 'mollie_settlements_select_own', 'mollie_settlements', 'public'),
+  ('mollie_settlements.sql', 'table', 'mollie_settlements', null, 'public'),
   ('ochtend_mail.sql', 'column', 'ochtend_mail', 'profiles', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_responded_at', 'invoices', 'public'),
   ('offerte_akkoord.sql', 'column', 'offerte_response', 'invoices', 'public'),
@@ -548,7 +553,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 139
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 140
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

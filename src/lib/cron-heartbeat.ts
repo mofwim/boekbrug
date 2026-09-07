@@ -46,6 +46,9 @@ export const CRON_JOBS = {
   // run zonder meldingen is dus de gezonde normaaltoestand — bewaakt wordt dat de run gebeurde,
   // want valt hij om, dan mist de eigenaar geen scherm maar een betaaltermijn.
   "payment-due": 24,
+  // [MOLLIE-AFREKENING] Mollie's settlements: the fee as a cost, the payout line as a transfer.
+  // Daily, after the bank feed. Silent for every owner without a new settlement.
+  "mollie-settlements": 24,
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

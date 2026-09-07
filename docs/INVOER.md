@@ -58,11 +58,11 @@ without btw, refunds, and the payout. Read as a purchase invoice, only the commi
 turnover is missed and the bank payout has no invoice to match. Every Dutch package handles this
 with a tussenrekening.
 
-**What to build ([AFREKENING]):** a settlement reader that books turnover per rate, cost per
-rate, and the payout as the bank counterpart — one document, three bookings. Formats differ per
-platform and cannot be inferred from their help pages (Mollie: MT940 with opening balance zero
-and CSV with Dutch headers for NL; Thuisbezorgd: weekly PDF with tips on page 2; bol.com:
-monthly specification XLSX + PDF). **Needs one real file per platform.**
+**Built for Mollie ([MOLLIE-AFREKENING], 7 September 2026):** no file at all — the
+Settlements API, with the key the app already holds. Fee as a cost, payout line as a transfer,
+payments not ours named for the owner. See `docs/MOLLIE_AFREKENING.md`. The same shape fits
+SumUp and Zettle (public APIs on GitHub). Thuisbezorgd, Uber Eats, bol.com and Adyen have no
+public sample and no reachable API spec here: **one real file per platform is still needed.**
 
 ### 4. PDF bank statements
 

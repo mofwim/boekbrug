@@ -23452,6 +23452,32 @@ test("[BEWIJS-VAST] the screen renders the reason from keys, not from the server
 // betekent dat de winnaar zelf nog bezig is. Twee plekken lazen hetzelfde teken en trokken de
 // omgekeerde conclusie.
 
+// ─── [MOLLIE-AFREKENING] A Mollie payout is a netted settlement, and the app now reads it ───
+//
+// The fee was nowhere, the payout line was held forever. The Settlements API says both, per
+// settlement, to the cent — and the rule in mollie-settlement.ts refuses anything that does not
+// add up. What those tests cannot see: that nothing books before it reconciles, that the fee goes
+// through the one locked door, and that the payout line is never coded as revenue.
+
+test("[MOLLIE-AFREKENING] nothing books before the settlement reconciles, and the fee takes the locked door", () => {
+  const pure = code("src/lib/mollie-settlement.ts");
+  assert.match(pure, /if \(revenueC - costGrossC !== payoutC\) \{/, "revenue − costs = payout, in cents, or refused");
+  assert.match(pure, /if \(n \+ v !== g\) return \{ ok: false/, "every cost line must add up");
+  const sync = code("src/lib/mollie-settlement-sync.ts");
+  assert.match(sync, /const verdict = summarizeSettlement\(s\);\s*if \(!verdict\.ok\) \{[\s\S]{0,300}status: "refused"/, "a refused settlement is recorded as refused and skipped");
+  assert.match(sync, /pipeline\.rpc\("apply_manual_payment", \{/, "the fee is marked paid through the locked RPC, never by an UPDATE");
+  assert.match(sync, /p_client_key: settlementRowId,/, "…keyed on the settlement, so a second run cannot pay it twice");
+  assert.match(sync, /status: autoBoeken \? "received" : "processing",/, "[ZELF-EERST] the owner's switch holds the fee in the queue");
+  assert.doesNotMatch(sync, /category: "omzet"|category: "pos_income"|category: "kosten"/, "the sync never codes revenue or cost onto a bank line");
+  assert.match(sync, /update\(\{ category: "transfer", category_source: "rule", category_confirmed: false \}\)/, "the payout line is a transfer, unconfirmed, only when every payment is ours");
+  assert.match(sync, /if \(verdict === "transfer" && line\.category === null && line\.invoice_id === null\) \{/, "…and never over a category the owner already set");
+  // The API layer answers { error }, never throws into a booking.
+  const api = code("src/lib/mollie.ts");
+  assert.match(api, /export async function listMollieSettlements/);
+  assert.match(api, /export async function listMolliePaymentLinkPayments/);
+  assert.doesNotMatch(api, /api_key_secret_id/, "the API layer never touches the Vault reference");
+});
+
 test("[MOLLIE-C7-RACE] a placeholder is only cleaned up once it can no longer be in flight", () => {
   const src = code("src/app/api/pay/[token]/ideal/route.ts");
 
