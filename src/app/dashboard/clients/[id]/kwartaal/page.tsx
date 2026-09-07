@@ -27,6 +27,8 @@ import { isOverdue } from '@/components/invoice/InvoiceRow'
 // [TEKST-SELECTIE] Een sleep die tekst selecteert is geen tik op de rij: de kaart klapte
 // open en dicht terwijl de eigenaar een factuurnummer probeerde te kopiëren.
 import { onRowTap } from '@/lib/row-tap'
+import DateFieldNL from '@/components/ui/DateFieldNL'
+import { VoorstelFormulier, type VoorstelStatus } from '../VoorstelFormulier'
 
 // De kwartaalpagina leest alleen deze velden van een factuur. Ze expliciet noemen maakt
 // zichtbaar waar de pagina van afhangt — en dat `total_inc_btw` en `btw_amount` in de
@@ -50,6 +52,14 @@ const ACCOUNTANT_ACTIONS = [
 ] as const
 
 type ActionValue = 'verwerkt' | 'in_behandeling' | 'vraag'
+
+// [VOORSTEL] One literal key per status, so the [TAAL] scanner sees every sentence rendered.
+const VOORSTEL_STATUS_KEY = {
+  open: 'bh.kwt.voorstel.status.open',
+  accepted: 'bh.kwt.voorstel.status.accepted',
+  declined: 'bh.kwt.voorstel.status.declined',
+  stale: 'bh.kwt.voorstel.status.stale',
+} as const
 
 // Quarter date ranges
 const QUARTER_RANGES: Record<number, { start: string; end: string; label: string }> = {
@@ -164,6 +174,9 @@ export default function KwartaalPage() {
   // [NO-SILENT-EMPTY] Een mislukte lezing mag nooit 'Geen facturen' worden — dat is een uitspraak
   // over andermans administratie die een leesfout niet mag doen.
   const [loadError, setLoadError] = useState(false)
+  // [VOORSTEL] The latest proposal per invoice (its status), and which row has the form open.
+  const [voorstelStatus, setVoorstelStatus] = useState<Record<string, VoorstelStatus>>({})
+  const [voorstelOpenVoor, setVoorstelOpenVoor] = useState<string | null>(null)
   // [TRUST-ACCOUNTANT] The quarter tiles must show the SAME reconciled, turnover-aware
   // figures as the owner's /klaar, the Brug hub and the ZIP — not an invoices-only
   // client-side sum (which, for a retail/cash client, is a fraction of the real omzet
@@ -249,6 +262,23 @@ export default function KwartaalPage() {
       // from the two typed queries above, so "tile total ≠ sum of visible rows".
       // Fetch them by ownership, infer direction the same way, and keep only the
       // (direction, status) combos the sections show — so the list matches the tiles.
+      // [VOORSTEL] The accountant's own proposals for this client, newest first; the first row per
+      // invoice is its current state. Best-effort: a database without the migration has none.
+      try {
+        // invoice_corrections is not in the generated types (hand-applied migration).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: props } = await (supabase as any)
+          .from('invoice_corrections')
+          .select('invoice_id, status, created_at')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false })
+        const latest: Record<string, VoorstelStatus> = {}
+        for (const r of (props ?? []) as { invoice_id: string; status: VoorstelStatus }[]) {
+          if (!(r.invoice_id in latest)) latest[r.invoice_id] = r.status
+        }
+        setVoorstelStatus(latest)
+      } catch { /* no proposals to show — the form still works */ }
+
       const { data: nullDir, error: nullDirErr } = await supabase
         .from('invoices')
         .select('*, invoice_lines(*), invoice_type, replaced_by_number')
@@ -775,6 +805,39 @@ export default function KwartaalPage() {
                               </span>
                             </div>
                           ))}
+
+                          {/* [VOORSTEL] A correction the client taps OK on. Only on a booked, unpaid
+                              purchase invoice — the only state the client's own door opens on. */}
+                          {!isOutgoing && invoice.status === 'received' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 }}>
+                              {voorstelStatus[invoice.id] && (
+                                <span style={{ fontSize: 12, fontWeight: 600, color: voorstelStatus[invoice.id] === 'accepted' ? '#137333' : voorstelStatus[invoice.id] === 'open' ? '#1967D2' : '#5F6368' }}>
+                                  {t(VOORSTEL_STATUS_KEY[voorstelStatus[invoice.id]])}
+                                </span>
+                              )}
+                              {voorstelOpenVoor === invoice.id ? (
+                                <VoorstelFormulier
+                                  clientId={clientId}
+                                  invoice={invoice}
+                                  t={t}
+                                  DateField={DateFieldNL}
+                                  onClose={() => setVoorstelOpenVoor(null)}
+                                  onSent={() => {
+                                    setVoorstelStatus((s) => ({ ...s, [invoice.id]: 'open' }))
+                                    setVoorstelOpenVoor(null)
+                                    toast(t('bh.kwt.voorstel.verstuurd'))
+                                  }}
+                                  onError={(msg: string | null) => toast(msg || t('bh.kwt.voorstel.fout'), { tone: 'error' })}
+                                />
+                              ) : voorstelStatus[invoice.id] !== 'open' && (
+                                <button
+                                  onClick={() => setVoorstelOpenVoor(invoice.id)}
+                                  style={{ width: '100%', padding: '8px 16px', borderRadius: 8, backgroundColor: '#FFFFFF', color: '#1A73E8', fontSize: 13, fontWeight: 500, border: '1px solid #1A73E8', cursor: 'pointer' }}>
+                                  {t('bh.kwt.voorstel.knop')}
+                                </button>
+                              )}
+                            </div>
+                          )}
 
                           {/* Openen button — only this navigates */}
                           <div className="pt-2">

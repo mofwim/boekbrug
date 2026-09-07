@@ -35,6 +35,10 @@ export type AuditAction =
   // Level 1 — Financial (critical)
   | 'invoice.created'
   | 'invoice.updated'
+  // [VOORSTEL] The accountant's correction proposal and the client's answer to it.
+  | 'invoice.correction_proposed'
+  | 'invoice.correction_accepted'
+  | 'invoice.correction_declined'
   | 'invoice.deleted'
   | 'invoice.duplicated'              // ← v2: matches historical data
   // [HERSTEL] A SENT invoice was edited in place (same number) — allowed only while nothing is

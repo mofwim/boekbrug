@@ -170,7 +170,9 @@ export function logboekKindOf(action: string): LogboekKind {
  */
 const SENTENCE_KEYS: readonly MessageKey[] = [
   // Level 1 — Financial (critical)
-  "log.invoice.created", "log.invoice.updated", "log.invoice.deleted", "log.invoice.duplicated",
+  "log.invoice.created", "log.invoice.updated",
+  "log.invoice.correction_proposed", "log.invoice.correction_accepted", "log.invoice.correction_declined",
+  "log.invoice.deleted", "log.invoice.duplicated",
   "log.invoice.corrected", "log.invoice.dedup_override", "log.invoice.status_changed",
   "log.offerte.sent", "log.offerte.answered", "log.invoice.auto_verified", "log.invoice.auto_paid",
   "log.invoice.reread_from_document", "log.invoice.reimported", "log.invoice.btw_rows_read",

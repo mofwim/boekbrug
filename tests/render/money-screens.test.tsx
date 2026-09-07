@@ -3530,3 +3530,36 @@ test("[VOORUIT] the forecast panel renders the ordinary case, a shortfall, and a
   assert.match(unknown, /banksaldo niet/, "…and the absence is said");
   assert.match(unknown, /-2\.000,00/, "the movements are still stated");
 });
+
+test("[VOORSTEL] the client's proposal card renders old → new per field, the reason, and both buttons", async () => {
+  const { VoorstelKaart } = await import("../../src/app/dashboard/vragen/VragenClient");
+  const html = renderToStaticMarkup(React.createElement(VoorstelKaart, {
+    voorstel: {
+      id: "p1",
+      invoice: { id: "inv-1", invoice_number: "F-2026-118", client_name: "Sligro", total_inc_btw: 121, invoice_date: "2026-08-01" },
+      changes: [
+        { field: "total_ex_btw", from: 100, to: 111.01 },
+        { field: "btw_amount", from: 21, to: 9.99 },
+        { field: "due_date", from: "2026-08-31", to: null },
+      ],
+      reason: "Dit is 9%-goederen, geen 21%.",
+      askedAt: "2026-09-07T10:00:00Z",
+    },
+  }));
+  assert.match(html, /F-2026-118/);
+  assert.match(html, /100,00/, "the old amount is shown");
+  assert.match(html, /111,01/, "…and the new one");
+  assert.match(html, /9,99/);
+  assert.match(html, /31-08-2026/, "the old due date, in Dutch order");
+  assert.match(html, />—</, "a cleared due date is a dash, not 'null'");
+  assert.match(html, /9%-goederen/, "the reason is on the card");
+  assert.match(html, /Akkoord/);
+  assert.match(html, /Niet akkoord/);
+  assert.match(html, /focus=inv-1/, "the card links to the invoice it is about");
+  // An invoice that disappeared still renders a card the client can decline.
+  const weg = renderToStaticMarkup(React.createElement(VoorstelKaart, {
+    voorstel: { id: "p2", invoice: null, changes: [{ field: "invoice_date", from: "2026-08-01", to: "2026-07-31" }], reason: null, askedAt: null },
+  }));
+  assert.match(weg, /Niet akkoord/);
+  assert.doesNotMatch(weg, /focus=/);
+});

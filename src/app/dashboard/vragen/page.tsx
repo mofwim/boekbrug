@@ -30,7 +30,8 @@ import {
   buildOpenVragen, buildOpenInvoiceVragen, VRAAG_STATUS,
   type VraagStatusRow, type VraagInvoiceRow,
 } from '@/lib/vragen'
-import VragenClient, { type VraagView } from './VragenClient'
+import VragenClient, { type VraagView, type VoorstelView } from './VragenClient'
+import type { ProposedChange } from '@/lib/correction-proposal'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Vragen van je boekhouder — BoekBrug' }
@@ -208,9 +209,50 @@ export default async function VragenPage() {
     fileUrl: urlByDoc.get(v.documentId) ?? null,
   }))
 
+  // ── [VOORSTEL] The accountant's correction proposals, open, with their invoice ───────────
+  // Read through the client's own RLS (invoice_corrections_client_read). A failed read counts
+  // as loadFailed for the same reason the questions do: "geen vragen" may never come from a read
+  // that did not happen.
+  let voorstellen: VoorstelView[] = []
+  {
+    // invoice_corrections is not in the generated types (hand-applied migration).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: propRows, error: propErr } = await (supabase as any)
+      .from('invoice_corrections')
+      .select('id, invoice_id, changes, reason, created_at')
+      .eq('client_id', user.id)
+      .eq('status', 'open')
+      .order('created_at', { ascending: true })
+    if (propErr) {
+      // A database where the migration is not applied yet has no proposals — not a failure.
+      if (!/42P01|relation .* does not exist/i.test(propErr.message ?? '')) loadFailed = true
+    } else {
+      const rows = (propRows ?? []) as { id: string; invoice_id: string; changes: ProposedChange[]; reason: string | null; created_at: string | null }[]
+      const propInvIds = rows.map((r) => r.invoice_id)
+      const propInvoices = propInvIds.length
+        ? await fetchAllRowsForIds<VraagInvoiceRow, string>(
+            propInvIds,
+            (chunk, from, to) =>
+              supabase.from('invoices').select('id, invoice_number, client_name, total_inc_btw, invoice_date')
+                .in('id', chunk).order('id', { ascending: true }).range(from, to),
+          ).catch(() => null)
+        : []
+      if (propInvoices === null) loadFailed = true
+      const byId = new Map((propInvoices ?? []).map((i) => [i.id, i]))
+      voorstellen = rows.map((r) => ({
+        id: r.id,
+        invoice: byId.get(r.invoice_id) ?? null,
+        changes: Array.isArray(r.changes) ? r.changes : [],
+        reason: r.reason,
+        askedAt: r.created_at,
+      }))
+    }
+  }
+
   return (
     <VragenClient
       vragen={views}
+      voorstellen={voorstellen}
       accountantId={accountantId}
       accountantNaam={accountantNaam}
       loadFailed={loadFailed}

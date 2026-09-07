@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 124 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 125 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -263,6 +263,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoice_bijlage.sql', 'constraint', 'invoices_attachment_document_id_fkey', null, 'public'),
   ('invoice_bijlage.sql', 'index', 'invoices_attachment_document_id_idx', null, 'public'),
   ('invoice_corrected_at.sql', 'column', 'corrected_at', 'invoices', 'public'),
+  ('invoice_corrections.sql', 'index', 'invoice_corrections_accountant_idx', null, 'public'),
+  ('invoice_corrections.sql', 'index', 'invoice_corrections_client_idx', null, 'public'),
+  ('invoice_corrections.sql', 'index', 'invoice_corrections_open_uidx', null, 'public'),
+  ('invoice_corrections.sql', 'policy', 'invoice_corrections_accountant_read', 'invoice_corrections', 'public'),
+  ('invoice_corrections.sql', 'policy', 'invoice_corrections_client_read', 'invoice_corrections', 'public'),
+  ('invoice_corrections.sql', 'table', 'invoice_corrections', null, 'public'),
   ('invoice_discount.sql', 'column', 'discount_type', 'invoices', 'public'),
   ('invoice_discount.sql', 'column', 'discount_value', 'invoices', 'public'),
   ('invoice_discount.sql', 'constraint', 'invoices_discount_pair_check', null, 'public'),
@@ -553,7 +559,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 140
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 141
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

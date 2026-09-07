@@ -20,12 +20,24 @@ import { bouwAntwoordBericht, type OpenVraag } from '@/lib/vragen'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { failureText } from '@/lib/server-message'
+import { formatDateNL, formatEuroNL } from '@/lib/format-nl'
+import type { ProposedChange, ProposableField } from '@/lib/correction-proposal'
+import type { VraagInvoiceRow } from '@/lib/vragen'
 
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 export interface VraagView extends OpenVraag {
   /** Ondertekende URL naar het bestand, of null als er niets te openen valt. */
   fileUrl: string | null
+}
+
+/** [VOORSTEL] One open correction proposal from the accountant, as the card shows it. */
+export interface VoorstelView {
+  id: string
+  invoice: VraagInvoiceRow | null
+  changes: ProposedChange[]
+  reason: string | null
+  askedAt: string | null
 }
 
 // Datum uit een ISO-string zonder tijdzonegedoe en zonder klok in de render
@@ -40,17 +52,20 @@ function datumNL(iso: string | null): string | null {
 
 export default function VragenClient({
   vragen,
+  voorstellen = [],
   accountantId,
   accountantNaam,
   loadFailed,
 }: {
   vragen: VraagView[]
+  voorstellen?: VoorstelView[]
   accountantId: string | null
   accountantNaam: string | null
   loadFailed: boolean
 }) {
   const t = translator(useLocale())
   const router = useRouter()
+  const nietsOpen = vragen.length === 0 && voorstellen.length === 0
 
   return (
     <div style={{ minHeight: '100vh', background: M3.bg, fontFamily: FONT }}>
@@ -83,7 +98,7 @@ export default function VragenClient({
               {t('inkoop.opnieuwProberen')}
             </button>
           </div>
-        ) : vragen.length === 0 ? (
+        ) : nietsOpen ? (
           <div style={{ background: M3.successContainer, borderRadius: R.lg, padding: '20px 18px', boxShadow: EL1 }}>
             <div style={{ fontSize: 15.5, fontWeight: 600, color: '#0B5345' }}>{t('vr.geen')}</div>
             <div style={{ fontSize: 13.5, color: '#0B5345', marginTop: 4, lineHeight: 1.55 }}>
@@ -94,6 +109,10 @@ export default function VragenClient({
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* [VOORSTEL] A proposal is a question with the answer typed in — it goes first. */}
+            {voorstellen.map((v) => (
+              <VoorstelKaart key={v.id} voorstel={v} />
+            ))}
             {vragen.map((v) => (
               <VraagKaart key={v.documentId} vraag={v} accountantId={accountantId} />
             ))}
@@ -269,6 +288,135 @@ function VraagKaart({ vraag, accountantId }: { vraag: VraagView; accountantId: s
             >
               {bezig ? t('fb.versturenBezig') : t('vr.antwoordVersturen')}
             </button>
+          </>
+        )}
+      </div>
+    </article>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [VOORSTEL] The accountant's correction proposal: old → new per field, a reason, two buttons.
+// Akkoord goes through the client's OWN correction door on the server; this card only asks.
+// Exported so the render gate can hand it a proposal and see the branches paint.
+
+const VELD_KEY: Record<ProposableField, 'vr.voorstel.veld.exBtw' | 'vr.voorstel.veld.btw' | 'vr.voorstel.veld.inc' | 'vr.voorstel.veld.datum' | 'vr.voorstel.veld.vervalt'> = {
+  total_ex_btw: 'vr.voorstel.veld.exBtw',
+  btw_amount: 'vr.voorstel.veld.btw',
+  total_inc_btw: 'vr.voorstel.veld.inc',
+  invoice_date: 'vr.voorstel.veld.datum',
+  due_date: 'vr.voorstel.veld.vervalt',
+}
+
+function waarde(field: ProposableField, v: number | string | null): string {
+  if (v === null || v === undefined || v === '') return '—'
+  if (field === 'invoice_date' || field === 'due_date') return formatDateNL(String(v))
+  return formatEuroNL(Number(v))
+}
+
+export function VoorstelKaart({ voorstel, onDecided }: { voorstel: VoorstelView; onDecided?: (status: 'accepted' | 'declined' | 'stale') => void }) {
+  const t = translator(useLocale())
+  const router = useRouter()
+  const [bezig, setBezig] = useState<'accept' | 'decline' | null>(null)
+  const [klaar, setKlaar] = useState<'accepted' | 'declined' | 'stale' | null>(null)
+  const [fout, setFout] = useState<string | null>(null)
+
+  const inv = voorstel.invoice
+  const naam = inv
+    ? `${inv.invoice_number ? `${t('nieuw.type.factuur')} ${inv.invoice_number}` : t('nieuw.type.factuur')}${inv.client_name ? ` · ${inv.client_name}` : ''}`
+    : t('vr.naam.factuurWeg')
+  const datum = datumNL(voorstel.askedAt)
+  const factuurHref = inv ? `/dashboard/incoming/manage?focus=${encodeURIComponent(inv.id)}` : null
+
+  async function beslis(action: 'accept' | 'decline') {
+    setBezig(action); setFout(null)
+    try {
+      const res = await fetch(`/api/invoice-corrections/${encodeURIComponent(voorstel.id)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        if (json?.code === 'stale') { setKlaar('stale'); onDecided?.('stale') }
+        else setFout(failureText(res.status, json, t('vr.voorstel.fout')))
+      } else {
+        const status = action === 'accept' ? 'accepted' : 'declined'
+        setKlaar(status); onDecided?.(status)
+        router.refresh()
+      }
+    } catch {
+      setFout(t('vr.voorstel.fout'))
+    } finally {
+      setBezig(null)
+    }
+  }
+
+  return (
+    <article style={{ background: M3.surface, borderRadius: R.lg, boxShadow: EL1, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden' }}>
+      <div style={{ padding: '16px 16px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span className="material-symbols-outlined" style={{ color: M3.primary, fontSize: 22, marginTop: 1 }} aria-hidden>edit_note</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: M3.primary, letterSpacing: 0.2 }}>{t('vr.voorstel.titel')}</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word', marginTop: 2 }}>{naam}</div>
+            <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2 }}>
+              {datum ? t('vr.gevraagdOp', { datum }) : t('vr.datumOnbekend')}
+            </div>
+          </div>
+          {factuurHref && (
+            <a href={factuurHref} style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 600, color: M3.primary, textDecoration: 'none', padding: '4px 2px' }}>
+              {t('kl.bekijk')}
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Old → new, one line per field. The amounts the client must compare are never shortened. */}
+      <dl style={{ margin: '0 16px 12px', padding: '12px 14px', background: M3.surfaceVariant, borderRadius: R.md, display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 6, columnGap: 14, fontSize: 14 }}>
+        {voorstel.changes.map((c) => (
+          <div key={c.field} style={{ display: 'contents' }}>
+            <dt style={{ color: M3.neutral }}>{t(VELD_KEY[c.field])}</dt>
+            <dd style={{ margin: 0, color: M3.onSurface, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ textDecoration: 'line-through', color: M3.neutral }}>{waarde(c.field, c.from)}</span>
+              <span className="icon-dir" aria-hidden> → </span>
+              <strong>{waarde(c.field, c.to)}</strong>
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {voorstel.reason && (
+        <p style={{ margin: '0 16px 12px', fontSize: 14, color: M3.onSurface, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {voorstel.reason}
+        </p>
+      )}
+
+      <div style={{ padding: '0 16px 16px' }}>
+        {klaar === 'accepted' ? (
+          <div style={{ background: M3.successContainer, borderRadius: R.md, padding: '12px 14px', fontSize: 14, fontWeight: 600, color: '#0B5345' }}>{t('vr.voorstel.klaar')}</div>
+        ) : klaar === 'declined' ? (
+          <div style={{ background: M3.surfaceVariant, borderRadius: R.md, padding: '12px 14px', fontSize: 14, fontWeight: 600, color: M3.onSurface }}>{t('vr.voorstel.afgewezen')}</div>
+        ) : klaar === 'stale' ? (
+          <div style={{ background: M3.warnContainer, borderRadius: R.md, padding: '12px 14px', fontSize: 14, color: '#5a3e00' }}>{t('vr.voorstel.verouderd')}</div>
+        ) : (
+          <>
+            <p style={{ margin: '0 0 10px', fontSize: 13, color: M3.neutral }}>{t('vr.voorstel.uitleg')}</p>
+            {fout && <p role="alert" style={{ margin: '0 0 10px', fontSize: 13, color: M3.error }}>{fout}</p>}
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => beslis('accept')}
+                disabled={bezig !== null}
+                style={{ border: 'none', borderRadius: 980, padding: '9px 20px', fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: bezig ? 'default' : 'pointer', background: M3.primary, color: '#fff' }}
+              >
+                {bezig === 'accept' ? t('fb.versturenBezig') : t('vr.voorstel.akkoord')}
+              </button>
+              <button
+                onClick={() => beslis('decline')}
+                disabled={bezig !== null}
+                style={{ border: `1px solid ${M3.outlineVariant}`, borderRadius: 980, padding: '9px 20px', fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: bezig ? 'default' : 'pointer', background: M3.surface, color: M3.onSurface }}
+              >
+                {bezig === 'decline' ? t('fb.versturenBezig') : t('vr.voorstel.nietAkkoord')}
+              </button>
+            </div>
           </>
         )}
       </div>

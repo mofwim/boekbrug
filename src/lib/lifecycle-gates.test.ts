@@ -1094,6 +1094,44 @@ test("[ORIGINEEL] one tab rule, so the count and the list cannot disagree", () =
   assert.ok(uses.length >= 2, `both call sites must use it (found ${uses.length})`);
 });
 
+// ─── [VOORSTEL] The accountant proposes a correction; the client taps OK ───
+//
+// The amount guard keeps a boekhouder from changing the money on a client's invoice, and that is
+// right. A proposal is a question with the answer typed in; Akkoord goes through the client's OWN
+// correction door, in the client's session. What the unit tests cannot see is below.
+
+test("[VOORSTEL] Akkoord goes through the client's own correction door, and nothing else writes the invoice", () => {
+  const decide = code("src/app/api/invoice-corrections/[id]/route.ts");
+  assert.match(decide, /import \{ PATCH as correctInvoiceAmounts \} from '@\/app\/api\/invoice\/\[id\]\/amounts\/route'/,
+    "the ONE door: the same handler the client's editor calls");
+  assert.match(decide, /await correctInvoiceAmounts\(doorRequest, \{ params: Promise\.resolve\(\{ id: proposal\.invoice_id \}\) \}\)/);
+  assert.match(decide, /requireOwner\(/, "only the owner answers — an accountant cannot accept their own proposal");
+  assert.doesNotMatch(decide, /from\('invoices'\)\s*\.update\(/, "the decide route never updates invoices itself");
+  assert.match(decide, /if \(isStale\(proposal\.before, current, proposal\.changes\)\) \{[\s\S]{0,120}await decide\('stale'\)/,
+    "a proposal on an invoice that moved underneath it lapses instead of applying");
+  assert.match(decide, /if \(!doorResponse\.ok\) \{/, "the door's refusal reaches the client, and the proposal stays open");
+
+  const propose = code("src/app/api/accountant/invoice-correction/route.ts");
+  assert.doesNotMatch(propose, /from\('invoices'\)\s*\.update\(/, "proposing writes nothing on the invoice");
+  assert.match(propose, /buildProposal\(before, \{/, "the client's door's arithmetic is enforced before the client sees it");
+  assert.match(propose, /inv\.status !== 'received' \|\| hasSettledMoney\(/, "only a booked, unpaid invoice can be proposed on");
+  assert.match(propose, /\.some\(\(l\) => l\.zzper_id === clientId\)/, "only for a linked client");
+
+  // Both screens: the client sees old → new and decides; the accountant sees the outcome.
+  const client = code("src/app/dashboard/vragen/VragenClient.tsx");
+  assert.match(client, /export function VoorstelKaart/);
+  assert.match(client, /fetch\(`\/api\/invoice-corrections\/\$\{encodeURIComponent\(voorstel\.id\)\}`/);
+  assert.match(code("src/app/dashboard/vragen/page.tsx"), /\.from\('invoice_corrections'\)/, "the questions page lists the proposals");
+  const kwartaal = code("src/app/dashboard/clients/[id]/kwartaal/page.tsx");
+  assert.match(kwartaal, /<VoorstelFormulier/, "the accountant proposes from the quarter page");
+  assert.match(kwartaal, /!isOutgoing && invoice\.status === 'received'/, "…only where the client's door would open");
+  // The migration: the client and the accountant READ; nobody writes through RLS.
+  const sql = readFileSync("supabase/migrations/invoice_corrections.sql", "utf8");
+  assert.match(sql, /FOR SELECT TO authenticated USING \(client_id = \(select auth\.uid\(\)\)\)/);
+  assert.doesNotMatch(sql, /FOR (INSERT|UPDATE|ALL)/, "no write policy — the routes write after their own checks");
+  assert.match(sql, /invoice_corrections_open_uidx[\s\S]{0,120}WHERE status = 'open'/, "one open proposal per invoice");
+});
+
 test("[FACTUURVRAAG] the counters that were reading zero now have a writer", () => {
   // Three accountant surfaces READ invoices.accountant_status = 'vraag': the "Open vraag" KPI on
   // the home, the red dot in Klantenbeheer, and the ❓ todo on the werkboard. No route wrote it.
@@ -7533,7 +7571,9 @@ test("[RLS-UIT] every service-role query on the money line is scoped to one owne
   // Reason 4 — the token is the credential.
   const TOKEN = /\.eq\(\s*["'](pay_token|token|public_token)["']/;
   // Reason 2 — an INSERT that stamps the owner it got from the session.
-  const STAMPS_OWNER = /\.insert\(\s*\{[\s\S]{0,400}?(sender_id|receiver_id|user_id)\s*:\s*[^,\n]*\b(user\.id|userId|ownerId|uid)\b/;
+  // [VOORSTEL] accountant_id joins the stamp columns: on invoice_corrections the accountant IS
+  // the session owner, exactly as OWNER_COL already treats it for reads.
+  const STAMPS_OWNER = /\.insert\(\s*\{[\s\S]{0,400}?(sender_id|receiver_id|user_id|accountant_id)\s*:\s*[^,\n]*\b(user\.id|userId|ownerId|uid)\b/;
   // Reason 3 — acting on a row this same request created. The id is a local const from an insert,
   // never a request field, so it is named after what it is rather than taken from params/body.
   const OWN_NEW_ROW = /\.eq\(\s*["']id["']\s*,\s*(documentId|factuur\.id|doc\.id|invoice\.id|draft\.id|creditnota\.id|newInvoice\.id)\s*\)/;
