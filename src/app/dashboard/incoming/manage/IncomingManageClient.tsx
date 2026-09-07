@@ -3186,7 +3186,16 @@ export default function IncomingManageClient({
                             title={health.reasons.join(' · ')}
                             style={{ whiteSpace: 'nowrap', fontSize: 11, fontWeight: 700, borderRadius: R.full, padding: '1px 8px', background: M3.warningContainer, color: '#7C5800' }}
                           >
-                            ⚠ {t('ink.bedragenKloppenNiet')}
+                            {/* [SUBTOTAAL] flags.arithmetic carries three findings that share one
+                                consequence — do not book this unseen — and they do NOT share one
+                                sentence. Two of them are about WHERE the amount stands rather than
+                                whether it adds up, and on those this badge said "Bedragen kloppen
+                                niet" over three numbers that add up exactly, printed on this very
+                                card. A warning the owner can disprove by reading the card it sits
+                                on is how the next warning stops being read. */}
+                            ⚠ {t(health.flags.totalLooksLikeSubtotal || health.flags.notOnDocument
+                              ? 'ink.controleerHetTotaal'
+                              : 'ink.bedragenKloppenNiet')}
                           </span>
                         )}
                         {/* [AUTO-INCASSO] The bank takes this one. It stands where "te laat" would

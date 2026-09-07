@@ -15586,16 +15586,24 @@ test("[CONTROLE-EERLIJK] the checklist says only things that are true of this in
     "btwSplitCorroborated is an allowlist, so a new verdict cannot become a tick by default");
 
   const checks = code("src/lib/invoice-checks.ts");
-  // The arithmetic row is judged on the arithmetic. flags.arithmetic carries two findings because
-  // both mean "do not book this unseen"; printing one row about both is what produced the false
-  // sentence. The other finding has its own row.
-  assert.match(checks, /health\.flags\.arithmetic && !health\.flags\.notOnDocument\s*\n?\s*\?\s*'flagged'/);
+  // The arithmetic row is judged on the arithmetic. flags.arithmetic carries THREE findings because
+  // all three mean "do not book this unseen"; printing one row about all of them is what produced
+  // the false sentence. Each of the other two has its own row.
+  //
+  // [SUBTOTAAL] It was two when this gate was written, and the third — the total that IS on the
+  // paper but not where a total sits — kept printing the sentence this test exists to forbid, on
+  // Enka Horeca 26713540 over 1.431,19 + 128,78 = 1.559,97. This gate caught the widening, which
+  // is what it is for: the condition is pinned so that carving out a finding is a deliberate edit
+  // here and not a quiet one there.
+  assert.match(checks, /health\.flags\.arithmetic && !health\.flags\.notOnDocument && !health\.flags\.totalLooksLikeSubtotal\s*\n?\s*\?\s*'flagged'/);
   assert.match(checks, /id: 'total-on-document'/);
+  assert.match(checks, /id: 'total-is-the-total'/);
   // The detail must use the SAME condition as the outcome — keying them differently put a green
   // tick over the sentence "excl. + btw komt niet uit op het totaal", a row contradicting itself.
   const detailAt = checks.indexOf("detail: health.flags.arithmetic");
   assert.ok(detailAt > 0, "the arithmetic row still has a detail");
-  assert.match(checks.slice(detailAt, detailAt + 120), /&& !health\.flags\.notOnDocument/,
+  assert.match(checks.slice(detailAt, detailAt + 160),
+    /&& !health\.flags\.notOnDocument && !health\.flags\.totalLooksLikeSubtotal/,
     "outcome and detail are decided by one condition, or the row disagrees with itself");
 
   const health = code("src/lib/import-health.ts");
@@ -26913,6 +26921,56 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // The pay screen already warned about the pair ([DUP-ON-PAY]). It warned from a LIST — of a period,
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
+
+// ─── [SUBTOTAAL] A warning may not say something the card it sits on disproves ──────────────────
+//
+// flags.arithmetic carries three findings that share ONE consequence — do not book this row unseen
+// — and do not share one sentence:
+//
+//   · the three amounts do not add up;
+//   · the total we read is not in the document's text at all   (notOnDocument);
+//   · the total we read IS on the paper, but not where a total sits (totalLooksLikeSubtotal).
+//
+// The second was carved out when the lie was measured on BALKIP 264091. The third was left behind
+// and kept printing the same sentence: on Enka Horeca 26713540 the badge said "Bedragen kloppen
+// niet" and the checklist said "excl. + btw komt niet uit op het totaal" over 1.431,19 + 128,78 =
+// 1.559,97 — exact to the cent, with all three numbers printed on that very card.
+//
+// A warning the owner can disprove by reading the card it sits on is not a small cosmetic problem:
+// it is how the NEXT warning stops being read, including the one about a changed bank account.
+test("[SUBTOTAAL] the three findings inside flags.arithmetic do not share one sentence", () => {
+  const gezondheid = code("src/lib/import-health.ts");
+  const lijst = code("src/lib/invoice-checks.ts");
+
+  // The finding exists as its own flag, set beside arithmetic rather than instead of it.
+  assert.match(gezondheid, /totalLooksLikeSubtotal: boolean/, "the finding has no name of its own again");
+  assert.match(gezondheid, /flags\.arithmetic = true\s*\n\s*flags\.totalLooksLikeSubtotal = true/,
+    "the row must still be held out of auto-booking — the sentence was wrong, not the caution");
+
+  // The arithmetic row excludes BOTH placement findings. Excluding only one is exactly the state
+  // this gate exists to prevent: the fix applied to the sibling and not to this one.
+  for (const helft of ["notOnDocument", "totalLooksLikeSubtotal"]) {
+    assert.ok(
+      new RegExp(`arithmetic && !health\\.flags\\.notOnDocument && !health\\.flags\\.totalLooksLikeSubtotal`).test(lijst),
+      `the arithmetic row still claims a sum problem for ${helft} — and on those rows the sum adds up`,
+    );
+  }
+  // …in BOTH places, because the outcome and the detail were once keyed on different conditions
+  // and put a green tick over the sentence "excl. + btw komt niet uit op het totaal".
+  assert.equal(
+    [...lijst.matchAll(/arithmetic && !health\.flags\.notOnDocument && !health\.flags\.totalLooksLikeSubtotal/g)].length,
+    2,
+    "the outcome and the detail of the arithmetic row are keyed on different questions again — " +
+      "that once produced a row that contradicted itself, which is worse than either half",
+  );
+  assert.match(lijst, /id: 'total-is-the-total'/, "the finding has no row of its own to speak from");
+
+  // And the badge on the pay card says which of the two it is. It reads flags, not prose.
+  const kaart = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(kaart, /health\.flags\.totalLooksLikeSubtotal \|\| health\.flags\.notOnDocument/,
+    "the badge prints one word for three findings again — and on two of them it is false");
+  assert.match(kaart, /ink\.controleerHetTotaal/, "…and it has no second word to print");
+});
 
 // ─── [TEGENTEKEN] A base and a BTW pointing opposite ways never reaches the aangifte ────────────
 //

@@ -5683,6 +5683,16 @@ export const MESSAGES = {
     ar: 'المبالغ غير صحيحة',
     en: 'Amounts do not add up',
   },
+  // [SUBTOTAAL] De badge voor de ANDERE bevinding die tot nu toe dezelfde woorden kreeg: het
+  // bedrag klopt met zichzelf, alleen weten we niet of het het totaal IS. Op Enka Horeca 26713540
+  // stond 'Bedragen kloppen niet' boven 1.431,19 + 128,78 = 1.559,97 — exact tot op de cent, en
+  // alle drie de getallen stonden op dezelfde kaart. Een waarschuwing die de eigenaar in twee
+  // seconden kan weerleggen, leert hem de volgende te overslaan.
+  'ink.controleerHetTotaal': {
+    nl: 'Controleer het totaal',
+    ar: 'تحقّق من المبلغ الإجمالي',
+    en: 'Check the total',
+  },
   'ink.beheren': {
     nl: 'Beheren',
     ar: 'إدارة',

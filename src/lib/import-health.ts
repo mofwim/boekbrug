@@ -118,6 +118,20 @@ export interface ImportHealth {
      * reads again — including on the invoice where it is right.
      */
     notOnDocument: boolean
+    /**
+     * [SUBTOTAAL] The amount we read as the total IS on the document — but not where a total sits:
+     * it carries no total label and it is not the largest amount on the page. That is exactly what
+     * a subtotal, a line amount and the BTW amount look like.
+     *
+     * A sibling of `notOnDocument`, and it exists for the same reason that one does. Both mean
+     * "the figure we call the total is not established as this document's total", both share
+     * `arithmetic` so neither books itself unseen — and the sentence the checklist prints for an
+     * arithmetic mismatch is false for both. `notOnDocument` was carved out when that lie was
+     * measured on BALKIP 264091; this branch was left behind and kept printing it. Measured on
+     * Enka Horeca 26713540: "Bedragen kloppen niet" over 1.431,19 + 128,78 = 1.559,97, which is
+     * exact to the cent, on a card that shows the owner all three numbers.
+     */
+    totalLooksLikeSubtotal: boolean
   }
 }
 
@@ -298,6 +312,7 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     multipleInvoices: false,
     creditPrefix: false,
     notOnDocument: false,
+    totalLooksLikeSubtotal: false,
   }
 
   const fc = inv.field_confidence
@@ -433,7 +448,11 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     _doccheck?: { total?: string; date?: string; btwContradiction?: { excl: number; btw: number; rate: number } | null }
   } | null)?._doccheck
   if (doccheck?.total === 'present') {
+    // Both, for the reason the flag's own comment gives: `arithmetic` keeps the row out of
+    // auto-booking (that part was always right), and the sibling flag says WHICH finding it is so
+    // the checklist can stop calling it a sum that does not add up.
     flags.arithmetic = true
+    flags.totalLooksLikeSubtotal = true
     reasons.push(
       'dit bedrag staat wél op het document, maar niet waar het totaal staat — het lijkt een ' +
       'subtotaal of een regelbedrag. Controleer welk bedrag het totaal is.',

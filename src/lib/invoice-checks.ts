@@ -52,7 +52,7 @@ export type CheckOutcome =
 
 export interface InvoiceCheck {
   /** Stable id for keys and tests. */
-  id: 'arithmetic' | 'total-on-document' | 'btw-split' | 'duplicate' | 'iban' | 'iban-vorm' | 'btw-nummer' | 'single-invoice' | 'date' | 'number' | 'kind'
+  id: 'arithmetic' | 'total-on-document' | 'total-is-the-total' | 'btw-split' | 'duplicate' | 'iban' | 'iban-vorm' | 'btw-nummer' | 'single-invoice' | 'date' | 'number' | 'kind'
   /** What was checked. Dutch — this is what the owner reads (AGENTS.md). */
   label: string
   outcome: CheckOutcome
@@ -105,7 +105,12 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     // komt niet uit op het totaal" over 1.123,62 + 101,13 = 1.224,75, which is exact to the cent.
     // An owner who checks that and finds it false stops reading the whole list — including on the
     // invoice where it is right. The other finding has its own row below.
-    outcome: health.flags.arithmetic && !health.flags.notOnDocument
+    // [SUBTOTAAL] totalLooksLikeSubtotal joins notOnDocument here, and for the same reason the
+    // comment above gives. It is the sibling finding — the amount IS on the paper, just not where
+    // a total sits — and it was still being printed as "excl. + btw komt niet uit op het totaal".
+    // Measured on Enka Horeca 26713540: that sentence over 1.431,19 + 128,78 = 1.559,97, on a card
+    // that shows the owner all three numbers. Its own row is two blocks down.
+    outcome: health.flags.arithmetic && !health.flags.notOnDocument && !health.flags.totalLooksLikeSubtotal
       ? 'flagged'
       : totalDerived ? 'not-checked' : 'passed',
     // The SAME condition as the outcome above. Keying the detail on flags.arithmetic while the
@@ -119,7 +124,7 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
     // total as "Totaal Statiegeld". Detected at import against the document's own characters
     // (statiegeld.ts), so this row names the amount, the word on the paper, and the base it
     // becomes — and the verify screen offers it as one tap.
-    detail: health.flags.arithmetic && !health.flags.notOnDocument
+    detail: health.flags.arithmetic && !health.flags.notOnDocument && !health.flags.totalLooksLikeSubtotal
       ? (deposit ? depositGapText(deposit) : 'excl. + btw komt niet uit op het totaal')
       : totalDerived === 'total'
         ? 'het totaal stond niet los op de factuur — wij hebben het uit excl. + btw berekend'
@@ -160,6 +165,28 @@ export function invoiceChecks(inv: CheckInput): InvoiceCheck[] {
       label: 'Totaalbedrag teruggevonden op het document',
       outcome: 'flagged',
       detail: `${witness}${wijzer}`,
+    })
+  }
+
+  // ── 1c. Is the amount we read the document's TOTAL, or something further up the page? ──
+  //
+  // [SUBTOTAAL] The amount was found on the paper — so 1b above has nothing to report — but not
+  // where a total sits: no total label, and not the largest amount on the page. That is what a
+  // subtotal, a line amount and the BTW amount all look like, and reading one of those as the
+  // total is how an invoice ends up in the books for the wrong money with its own arithmetic
+  // perfectly consistent.
+  //
+  // Its own row, because the sentence is a different instruction. "Excl. + btw komt niet uit op
+  // het totaal" sends the owner to re-add three numbers that already add up; this one sends them
+  // to look at WHERE on the invoice the amount stands, which is the question that settles it.
+  if (health.flags.totalLooksLikeSubtotal) {
+    out.push({
+      id: 'total-is-the-total',
+      label: 'Het bedrag staat waar een totaal hoort te staan',
+      outcome: 'flagged',
+      detail:
+        'dit bedrag staat wél op de factuur, maar niet op de plek van een totaal — het kan een ' +
+        'subtotaal of een regelbedrag zijn. Kijk even waar het op het papier staat voordat je betaalt',
     })
   }
 

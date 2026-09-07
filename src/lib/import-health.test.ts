@@ -420,5 +420,35 @@ console.log('\n— [DUBBELE-ZIN] one field, one sentence —')
   check('alleen plaatshouder → die zin staat er wél', alleenLeeg.reasons.some((r) => r.includes('ontbreekt')))
 }
 
+console.log('\n— [SUBTOTAAL] het bedrag staat op het papier, maar niet waar een totaal staat —')
+{
+  // Enka Horeca 26713540, zoals hij werkelijk staat: 1.431,19 + 128,78 = 1.559,97, exact tot op
+  // de cent, en _doccheck zegt 'present' — gevonden op het document, maar niet op een totaalplek.
+  const h = classifyImportHealth(inv({
+    total_ex_btw: 1431.19, btw_amount: 128.78, total_inc_btw: 1559.97,
+    invoice_number: '26713540',
+    field_confidence: {
+      _doccheck: { btw: 'found', date: 'found', total: 'present', invoiceNumber: 'found', btwContradiction: null },
+      _grounding: { source: 'text', btwAmount: 'found', totalExBtw: 'found', totalIncBtw: 'found' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+  }))
+
+  check('de rekensom klopt, dus dit is geen rekenfout', Math.abs((1431.19 + 128.78) - 1559.97) < 0.005)
+  check('de rij wordt nog steeds vastgehouden', h.flags.arithmetic === true)
+  check('…maar de bevinding heeft nu een eigen naam', h.flags.totalLooksLikeSubtotal === true)
+  check('en het is NIET de "niet in de tekst"-bevinding', h.flags.notOnDocument === false)
+  check('de zin gaat over de PLEK, niet over de som',
+    h.reasons.some((r) => /subtotaal|regelbedrag/.test(r)))
+
+  // [NEGATIEVE CONTROLE] Alles hierboven slaagt ook als de vlag altijd aan staat. Deze pinnen de
+  // andere kant: een echte rekenfout blijft een rekenfout, en een schone factuur zegt niets.
+  const echteRekenfout = classifyImportHealth(inv({ total_ex_btw: 100, btw_amount: 21, total_inc_btw: 130 }))
+  check('een echte rekenfout blijft arithmetic zonder deze vlag',
+    echteRekenfout.flags.arithmetic === true && echteRekenfout.flags.totalLooksLikeSubtotal === false)
+  check('en een schone factuur draagt de vlag niet',
+    classifyImportHealth(inv({})).flags.totalLooksLikeSubtotal === false)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
