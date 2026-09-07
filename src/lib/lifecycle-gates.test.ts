@@ -26922,6 +26922,69 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
 
+// ─── [BETAALMOMENT] A changed account number reaches the owner where the money moves ───────────
+//
+// Invoice-redirect fraud is defeated at exactly one moment: showing the account change while the
+// owner is about to pay. Everything else about such an invoice is right by construction — amount,
+// number, btw, date are all copied from a real bill — so this is the one axis carrying a signal,
+// and it is the axis every other check reads as clean.
+//
+// The app knew. classifyImportHealth raises ibanChanged, iban-change.ts writes the sentence, and
+// the verify queue draws a red badge for it. On the PAY screen the whole set of findings reached
+// the owner through one `title=` on one badge — a hover, which does not exist on the phones these
+// owners work on — and that badge only rendered when flags.arithmetic was true. So an invoice with
+// a clean sum and a changed bank account said nothing at all there.
+//
+// Measured on Enka Horeca 26713540: € 1.559,97, unpaid, due 27 September, known at
+// NL89RABO0322814162, printing NL61INGB0116981407.
+test("[BETAALMOMENT] the pay screen asks about a changed account number, and shows it without a hover", () => {
+  const kaart = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+
+  // 1. THE QUESTION, in the one function both pay doors go through. Placing it there rather than on
+  //    each button is what makes a third door inherit it.
+  assert.match(kaart, /async function payGuarded\(/,
+    "payGuarded no longer asks anything it has to wait for");
+  const guard = kaart.slice(kaart.indexOf("async function payGuarded("));
+  const eind = guard.indexOf("\n  }");
+  const body = guard.slice(0, eind > 0 ? eind : 1200);
+  assert.match(body, /storedIbanChange\(/, "the guard does not look at the account number");
+  assert.match(body, /dialog\.confirm\(/, "…and does not ask");
+  assert.match(body, /if \(!ok\) return/, "a 'no' does not stop the payment");
+  const beideDeuren = [...kaart.matchAll(/payGuarded\(inv, stance,/g)].length;
+  assert.ok(beideDeuren >= 2,
+    `only ${beideDeuren} pay door(s) go through the guard — the other one asks nothing`);
+
+  // 2. AND ON THE CARD, so it is read without a hover and both numbers can be compared side by
+  //    side. A dialog you have just dismissed is not where you compare eighteen characters.
+  // Anchored on the CARD's own heading, not on the sentence expression: the dialog above contains
+  // the identical call, so searching for it alone passes while the card has lost it. Verified —
+  // that is exactly what the first version of this assertion did.
+  const kop = kaart.indexOf("t('ink.anderRekening')}");
+  assert.ok(kop > 0, "the card itself no longer names a changed account number");
+  const blok = kaart.slice(kop, kop + 400);
+  assert.match(blok, /ibanChangeReason\(\{ from: wissel\.from, to: wissel\.to \}\)/,
+    "the card announces a changed account number and does not print the two numbers — which is " +
+      "the one thing the owner has to compare, and the reason this block exists at all");
+  // Not delivered through a title= attribute. That was the whole defect.
+  const titels = [...kaart.matchAll(/title=\{health\.reasons/g)].length;
+  assert.ok(titels <= 1,
+    "more of the findings moved into title= attributes — a hover does not exist on a phone");
+
+  // 3. The sentence comes from the ONE module that owns it, and that module is importable by a
+  //    screen. It used to live in a file that opens a Supabase client, which is why the words could
+  //    not reach the page that needed them — the same reason locale.ts came out of blog.ts.
+  const woorden = code("src/lib/iban-change-text.ts");
+  assert.match(woorden, /export function ibanChangeReason/, "the sentence left its own module");
+  assert.doesNotMatch(woorden, /supabase|report-handled/i,
+    "the screen-safe half reaches the database again, so a client component cannot import it");
+  assert.match(code("src/lib/iban-change.ts"), /export \{ formatIban, ibanChangeReason, storedIbanChange \}/,
+    "the server module stopped re-exporting them, so its existing callers broke or forked");
+  // The instruction is half the value: an owner who calls the number ON the forged invoice calls
+  // the fraudster. Pinned as a literal because it is the sentence, not a detail of it.
+  assert.match(woorden, /een nummer dat je zelf opzoekt/,
+    "the sentence lost the only instruction that actually protects the payment");
+});
+
 // ─── [SUBTOTAAL] A warning may not say something the card it sits on disproves ──────────────────
 //
 // flags.arithmetic carries three findings that share ONE consequence — do not book this row unseen

@@ -718,6 +718,15 @@ export const MESSAGES = {
   'ink.betaaldBedrag': { nl: 'Betaald bedrag', ar: 'المبلغ المدفوع', en: 'Amount paid' },
   'ink.betaaldatum': { nl: 'Betaaldatum', ar: 'تاريخ الدفع', en: 'Payment date' },
   'ink.anderRekening': { nl: 'Ander rekeningnummer', ar: 'رقم حساب آخر', en: 'A different account number' },
+  // [BETAALMOMENT] De vraag vóór de betaalknop, en het antwoord dat de eigenaar mag geven. Een
+  // gewisseld rekeningnummer is soms écht — een leverancier stapt over van bank — dus dit vraagt en
+  // blokkeert niet, zoals elke andere poort hier. Wat het NIET meer doet is zwijgen.
+  'ink.anderRekeningKaal': {
+    nl: 'Het rekeningnummer van deze leverancier is veranderd ten opzichte van eerdere facturen. Controleer dit vóór je betaalt, en bel de leverancier op een nummer dat je zelf opzoekt — niet het nummer op deze factuur.',
+    ar: 'رقم حساب هذا المورّد تغيّر مقارنةً بالفواتير السابقة. تحقّق قبل الدفع، واتصل بالمورّد على رقم تبحث عنه أنت — لا الرقم المكتوب على هذه الفاتورة.',
+    en: 'This supplier’s account number has changed since their earlier invoices. Check before you pay, and call them on a number you look up yourself — not the one printed on this invoice.',
+  },
+  'ink.tochBetalen': { nl: 'Ik heb het gecontroleerd', ar: 'تحقّقتُ من ذلك', en: 'I have checked it' },
   'ink.bonVermeldt': { nl: 'De bon vermeldt', ar: 'الإيصال يذكر', en: 'The receipt states' },
   'ink.kassabon': { nl: 'Kassabon — waarschijnlijk al betaald. Controleer en bevestig.', ar: 'إيصال كاشير — على الأغلب مدفوع مسبقاً. تحقّق وأكّد.', en: 'A till receipt — probably already paid. Check and confirm.' },
   'ink.bekijkControles': { nl: 'Bekijk factuur en controles', ar: 'اعرض الفاتورة والفحوصات', en: 'View the invoice and its checks' },

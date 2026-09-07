@@ -35,13 +35,14 @@ import { reportHandledFailure } from '@/lib/report-handled'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = SupabaseClient<any>
 
-/** Het oude en het nieuwe nummer, allebei genormaliseerd. */
-export interface IbanChange {
-  /** Het IBAN dat we al van deze leverancier kenden. */
-  from: string
-  /** Het IBAN dat op DEZE factuur staat. */
-  to: string
-}
+// [BETAALMOMENT] De woordenschat staat sinds vandaag in iban-change-text.ts, en wordt hier
+// doorgegeven zodat elke bestaande import ongewijzigd blijft werken. Reden: dit bestand opent een
+// Supabase-client, en een SCHERM dat deze zinnen nodig heeft mag dat niet importeren — precies de
+// reden waarom locale.ts ooit uit blog.ts is gehaald. De zin over een gewisseld rekeningnummer
+// hoort op het scherm waar betaald wordt, en stond in het ene bestand dat daar niet bij kan.
+export type { IbanChange } from '@/lib/iban-change-text'
+export { formatIban, ibanChangeReason, storedIbanChange } from '@/lib/iban-change-text'
+import type { IbanChange } from '@/lib/iban-change-text'
 
 /**
  * De uitkomst van de IBAN-controle, inclusief het geval dat hij NIET KON DRAAIEN.
@@ -75,11 +76,6 @@ export type IbanCheck =
     }
   | { status: 'unavailable' }
 
-/** "NL91 ABNA 0417 1643 00" — in blokken van vier, zoals het op een factuur staat. */
-export function formatIban(iban: string): string {
-  return (iban.match(/.{1,4}/g) ?? [iban]).join(' ')
-}
-
 /**
  * Puur: is het gedrukte IBAN een WISSEL ten opzichte van wat we al kenden?
  *
@@ -96,21 +92,6 @@ export function assessIbanChange(
   if (!to || !from) return null
   if (to === from) return null
   return { from, to }
-}
-
-/**
- * De zin die de eigenaar leest. Eén bron, zodat de wachtrij, de kaart en een toekomstige
- * melding niet ieder hun eigen formulering krijgen.
- *
- * De instructie is het belangrijkste deel: bellen op een zelf opgezocht nummer. Een gewaarschuwde
- * eigenaar die het nummer BELT dat op de vervalste factuur staat, belt de fraudeur.
- */
-export function ibanChangeReason(change: IbanChange): string {
-  return (
-    `deze leverancier gebruikte eerder rekeningnummer ${formatIban(change.from)}, ` +
-    `en op deze factuur staat ${formatIban(change.to)} — controleer dit vóór je betaalt, ` +
-    `en bel de leverancier op een nummer dat je zelf opzoekt (niet het nummer op deze factuur)`
-  )
 }
 
 /**

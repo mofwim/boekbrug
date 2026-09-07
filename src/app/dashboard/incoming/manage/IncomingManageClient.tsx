@@ -99,6 +99,9 @@ import { supplierNameKey } from '@/lib/supplier-registry'
 import { rowMatchesQuery } from '@/lib/search'
 import { useToast } from '@/components/ui/Toast'
 import { useDialog } from '@/components/ui/Dialog'
+// [BETAALMOMENT] De IBAN-wissel als WAARDE en als ZIN — uit het schermveilige helft van
+// iban-change.ts, zie de kop van dat bestand.
+import { storedIbanChange, ibanChangeReason, type StoredIbanChangeSource } from '@/lib/iban-change-text'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
 import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
@@ -1298,9 +1301,41 @@ export default function IncomingManageClient({
   const [creditBusy, setCreditBusy] = useState(false)
 
   /** Every one-tap payment path on this screen runs through here. Payable rows notice nothing. */
-  function payGuarded(inv: IncomingRow, stance: CreditStance, proceed: () => void) {
-    if (payableAsDebt(stance)) { proceed(); return }
-    setCreditAsk({ inv, stance, proceed })
+  async function payGuarded(inv: IncomingRow, stance: CreditStance, proceed: () => void) {
+    if (!payableAsDebt(stance)) { setCreditAsk({ inv, stance, proceed }); return }
+
+    // ── [BETAALMOMENT] Is dit nog wel het rekeningnummer van deze leverancier? ────────────────
+    //
+    // Dit is de handtekening van factuurfraude, en het is de enige as die er dan iets van zegt:
+    // bedrag, nummer, btw en datum zijn overgenomen van een echte factuur, dus elke andere
+    // controle in dit bestand geeft groen. De app wist het al — classifyImportHealth zet de vlag
+    // en iban-change.ts schrijft de zin — en op DIT scherm stond die zin in één `title=` op een
+    // badge die alleen verschijnt bij een rekenprobleem. Een title is een hover; op de telefoon
+    // waar deze eigenaren werken bestaat hij niet. Gemeten op Enka Horeca 26713540, € 1.559,97,
+    // nog niet betaald: bekend op NL89RABO0322814162, op de factuur NL61INGB0116981407.
+    //
+    // Hier, en niet alleen in de kaart eronder, omdat dit de enige plek is waar de vraag nog iets
+    // kan tegenhouden. Beide betaaldeuren lopen door deze functie — "Betalen" en "Heb je
+    // betaald?" — dus één vraag dekt ze allebei, en een derde deur erft hem.
+    //
+    // Vragen, niet weigeren: een wissel is soms echt, en een echte factuur onbetaalbaar maken is
+    // de duurdere fout. De knop zegt daarom "Ik heb het gecontroleerd" en niet "Toch betalen" —
+    // dat is wat de eigenaar bevestigt, en het is het enige dat hier helpt.
+    const wissel = storedIbanChange(inv.field_confidence as StoredIbanChangeSource | null)
+    if (wissel) {
+      const ok = await dialog.confirm({
+        title: t('ink.anderRekening'),
+        // Allebei de nummers als we ze hebben — dat IS de controle die de eigenaar moet doen.
+        // Een rij van vóór dat die velden werden bewaard draagt de wissel wel en de nummers niet;
+        // die zwijgt dan over de cijfers en niet over de wissel.
+        message: wissel.from && wissel.to
+          ? ibanChangeReason({ from: wissel.from, to: wissel.to })
+          : t('ink.anderRekeningKaal'),
+        confirmLabel: t('ink.tochBetalen'),
+      })
+      if (!ok) return
+    }
+    proceed()
   }
 
   // ── [AUTO-INCASSO] Does the bank pay this one by itself? ──────────────────────
@@ -3460,6 +3495,37 @@ export default function IncomingManageClient({
                           {t('ink.creditKomtToe')}
                         </p>
                       )}
+
+                      {/* ── [BETAALMOMENT] Het rekeningnummer van deze leverancier is veranderd ──
+                          Boven de knoppenrij, in het rood, en met beide nummers erin. Niet in een
+                          `title=` op een badge: dat is een hover, en op de telefoon waar deze
+                          eigenaren werken bestaat hij niet — en die badge verscheen alleen bij een
+                          rekenprobleem, dus een factuur met een kloppende som en een gewisseld
+                          rekeningnummer zei op dit scherm helemaal niets.
+
+                          Dit staat er náást de vraag vóór de betaalknop, niet in plaats daarvan.
+                          De vraag houdt de tik tegen; deze regel is er voor de eigenaar die de
+                          kaart openslaat om te kijken wat er aan de hand is, en voor de vergelijking
+                          zelf — twee nummers naast elkaar lezen doe je niet in een dialoog die je
+                          net hebt weggeklikt. */}
+                      {(() => {
+                        const wissel = storedIbanChange(inv.field_confidence as StoredIbanChangeSource | null)
+                        if (!wissel) return null
+                        return (
+                          <p style={{
+                            fontSize: 12.5, color: '#b3261e', background: '#fce8e6',
+                            border: '1px solid #f5b5ae', borderRadius: R.md,
+                            padding: '10px 12px', margin: '0 0 8px', lineHeight: 1.5,
+                          }}>
+                            <span style={{ fontWeight: 700, display: 'block', marginBottom: 2 }}>
+                              🏦 {t('ink.anderRekening')}
+                            </span>
+                            {wissel.from && wissel.to
+                              ? ibanChangeReason({ from: wissel.from, to: wissel.to })
+                              : t('ink.anderRekeningKaal')}
+                          </p>
+                        )
+                      })()}
 
                       {/* [REREAD-CONFIRMED] The sentence, not just the button. A control the owner
                           never notices is a control that does not exist — and the owner's own words
