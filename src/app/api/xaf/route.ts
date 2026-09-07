@@ -15,7 +15,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { buildXafFile } from "@/lib/xaf-export";
+import { buildXafFile, type XafVersion } from "@/lib/xaf-export";
 import { buildXafInputForOwner } from "@/lib/xaf-fetch";
 import { reportHandledFailure } from "@/lib/report-handled";
 
@@ -35,6 +35,14 @@ export async function GET(req: NextRequest) {
   const limited = await checkRateLimit({ userId: user.id, endpoint: "xaf-export", ...RATE_LIMITS.HEAVY_EXPORT });
   if (!limited.allowed) return rateLimitResponse(limited);
 
+  // [XAF-4] ?version=4.0 for the schema the Belastingdienst accepts from 1 January 2027; 3.2 stays
+  // the default until the accountants' packages import 4.0 — the file is for THEIR software first.
+  const versionParam = req.nextUrl.searchParams.get("version") ?? "3.2";
+  if (versionParam !== "3.2" && versionParam !== "4.0") {
+    return NextResponse.json({ error: "Ongeldige versie — 3.2 of 4.0" }, { status: 400 });
+  }
+  const version: XafVersion = versionParam;
+
   const owner = await resolveQuarterOwner(supabase, user.id, req.nextUrl.searchParams.get("clientId"));
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const pipeline = createPipelineClient();
@@ -46,7 +54,7 @@ export async function GET(req: NextRequest) {
     // what is its own: who is asking, how often, and what comes back over the wire.
     const input = await buildXafInputForOwner({ pipeline, ownerId, year });
 
-    const built = buildXafFile(input);
+    const built = version === "4.0" ? buildXafFile(input, { version: "4.0" }) : buildXafFile(input);
     // [XAF-NIET-STIL] Een overgeslagen post is geen normale uitkomst. Het bestand zegt het nu zelf
     // (buildXafFile zet het als commentaar bovenin, want de X-Xaf-Skipped-kop hieronder bereikt
     // niemand: beide plekken die dit ophalen zijn een gewone downloadlink, en een browser toont
@@ -67,7 +75,8 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/xml; charset=utf-8",
-        "Content-Disposition": `attachment; filename="auditfile-${year}-${safeName}.xaf"`,
+        "Content-Disposition": `attachment; filename="auditfile-${year}-${safeName}${version === "4.0" ? "-xaf4" : ""}.xaf"`,
+        "X-Xaf-Version": version,
         // The counts travel in headers too, so a caller CAN show them without parsing XML.
         "X-Xaf-Entries": String(built.entryCount),
         "X-Xaf-Skipped": String(built.skipped.length),

@@ -212,6 +212,22 @@ export interface XafDepreciationEntry {
   amount: number;
 }
 
+/**
+ * [XAF-4] Which schema the file is written to.
+ *
+ * 3.2 (2014) is what every Dutch package imports today. 4.0 (February 2025, 90 fields instead of
+ * 250) is what the Belastingdienst accepts from 1 January 2027 — and ONLY 4.0 from that day. Both
+ * come from the same balanced entries; only the envelope differs: namespace, `Commercenr` instead
+ * of `companyIdent`, `RGScode` instead of `leadReference` (unique per account, rule [0003]),
+ * `Source` on the transaction and `invRef` on the line. The schema is vendored under
+ * schemas/xaf/ and the test validates the output against it with xmllint.
+ */
+export type XafVersion = "3.2" | "4.0";
+
+export interface XafBuildOptions {
+  version?: XafVersion;
+}
+
 export interface XafSkipped {
   source: "verkoop" | "inkoop" | "bank" | "kas" | "dagomzet" | "afschrijving";
   id: string;
@@ -228,6 +244,8 @@ export interface XafBuildResult {
   skipped: XafSkipped[];
   /** Cash omzet rows on Z-covered days: witnesses of takings the till already booked. */
   turnoverWitnessCount: number;
+  /** [XAF-4] The schema the xml is written to. */
+  version: XafVersion;
 }
 
 // ── Cents. Every balance decision happens in integers ([CENT]: round2 is the one rounding) ──────
@@ -248,6 +266,8 @@ interface Line {
   desc: string;
   docRef: string;
   custSupID?: string;
+  /** [XAF-4] The invoice number (factuurvereiste) — `invRef` in 4.0; 3.2 keeps it in docRef only. */
+  invRef?: string;
   vat?: { rate: number; amountDebitC: number };
 }
 
@@ -304,19 +324,20 @@ function buildSales(inv: XafSalesInvoice, custSupID: string): { lines: Line[] } 
   const grossC = partsC.reduce((s, p) => s + p.exC + p.btwC, 0);
   const storedC = cents(inv.totalExBtw) + cents(inv.btwAmount);
   if (Math.abs(grossC - storedC) > 1) return { reason: "totaal telt niet op uit de delen" };
+  const invRef = inv.invoiceNumber ?? undefined;
   const lines: Line[] = [
-    { accID: ACC.debiteuren, debitC: grossC, desc: inv.clientName ?? "Debiteur", docRef, custSupID },
+    { accID: ACC.debiteuren, debitC: grossC, desc: inv.clientName ?? "Debiteur", docRef, custSupID, invRef },
   ];
   for (const p of partsC) {
     if (p.exC !== 0) {
       lines.push({
-        accID: omzetAccountFor(p.rate), debitC: -p.exC, desc: `Omzet ${p.rate}%`, docRef,
+        accID: omzetAccountFor(p.rate), debitC: -p.exC, desc: `Omzet ${p.rate}%`, docRef, invRef,
         vat: { rate: p.rate, amountDebitC: -p.btwC },
       });
     }
   }
   const btwC = partsC.reduce((s, p) => s + p.btwC, 0);
-  if (btwC !== 0) lines.push({ accID: ACC.btwTeBetalen, debitC: -btwC, desc: "BTW over omzet", docRef });
+  if (btwC !== 0) lines.push({ accID: ACC.btwTeBetalen, debitC: -btwC, desc: "BTW over omzet", docRef, invRef });
   return { lines };
 }
 
@@ -348,22 +369,23 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
   // sheet (0100) and reaches the result only through the MEM depreciation entries. The btw side
   // is identical — voorbelasting does not care whether a purchase is stock or an oven.
   // [AANSLAG] A tax letter: the whole gross goes to the account its kind names, nothing to 1400.
+  const invRef = inv.invoiceNumber ?? undefined;
   const booking = inv.taxKind ? taxLetterBooking(inv.taxKind) : null;
   if (booking && booking !== "kosten") {
     const acc = booking === "prive" ? ACC.prive : booking === "settlement" ? ACC.btwTeBetalen : ACC.vraagposten;
     const desc = `Belastingdienst ${inv.taxKind}`;
     return {
       lines: [
-        { accID: acc, debitC: exC + btwC, desc, docRef },
-        { accID: ACC.crediteuren, debitC: -(exC + btwC), desc, docRef, custSupID },
+        { accID: acc, debitC: exC + btwC, desc, docRef, invRef },
+        { accID: ACC.crediteuren, debitC: -(exC + btwC), desc, docRef, custSupID, invRef },
       ],
     };
   }
   const lines: Line[] = inv.asset
-    ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef }]
-    : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef }];
-  if (btwC !== 0) lines.push({ accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting", docRef });
-  lines.push({ accID: ACC.crediteuren, debitC: -(exC + btwC), desc: inv.vendorName ?? "Crediteur", docRef, custSupID });
+    ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef, invRef }]
+    : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef, invRef }];
+  if (btwC !== 0) lines.push({ accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting", docRef, invRef });
+  lines.push({ accID: ACC.crediteuren, debitC: -(exC + btwC), desc: inv.vendorName ?? "Crediteur", docRef, custSupID, invRef });
   return { lines };
 }
 
@@ -609,7 +631,9 @@ const JOURNALS: Record<Entry["journal"], { desc: string; jrnTp: string }> = {
  * Build the complete auditfile. Sequencing, journal membership and the customer/supplier
  * sub-administration all happen here so the route stays a fetch-adapt-refuse pipeline.
  */
-export function buildXafFile(input: XafInput): XafBuildResult {
+export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): XafBuildResult {
+  const version: XafVersion = options.version ?? "3.2";
+  const v4 = version === "4.0";
   const skipped: XafSkipped[] = [];
   let turnoverWitnessCount = 0;
 
@@ -705,12 +729,25 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   // xmlCommentSafe en niet esc(): dit is een XML-COMMENTAAR. Daar sluit een dubbel koppelteken het
   // commentaar (en maakt het bestand ongeldig), terwijl &amp; er juist letterlijk als "&amp;"
   // komt te staan. De twee ontsnappingen lossen tegengestelde problemen op.
-  if (input.regimeNotes.length > 0) {
+  // [XAF-4] One more honest limit, stated where the others are: 4.0 has an openingBalance
+  // element and this file carries none. BoekBrug keeps no balance sheet, so an opening balance of
+  // 0.00 would be a claim (a going concern never starts a year at zero), and a claim is worse
+  // than a stated absence. The accountant's own package holds the opening balance.
+  const regimeNotes = v4
+    ? [...input.regimeNotes, "Geen openingsbalans in dit bestand: BoekBrug houdt geen balans bij. De beginbalans komt uit het eigen pakket van de boekhouder."]
+    : input.regimeNotes;
+  if (regimeNotes.length > 0) {
     out.push(`<!--`);
-    for (const note of input.regimeNotes) out.push(`  ${xmlCommentSafe(note)}`);
+    for (const note of regimeNotes) out.push(`  ${xmlCommentSafe(note)}`);
     out.push(`-->`);
   }
-  out.push(`<auditfile xmlns="http://www.auditfiles.nl/XAF/3.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
+  if (v4) {
+    // The namespace the XSD declares (targetNamespace) — NOT the one the Toelichting names in
+    // §3.7; the schema is the authority, and the official test file uses this one.
+    out.push(`<auditfile xmlns="http://www.odb.belastingdienst.nl/Belastingdienst/BCPP/1.1/structures/XmlauditfileXAF_4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
+  } else {
+    out.push(`<auditfile xmlns="http://www.auditfiles.nl/XAF/3.2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`);
+  }
   out.push("<header>");
   out.push(el("fiscalYear", String(year)));
   out.push(el("startDate", `${year}-01-01`));
@@ -725,8 +762,13 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   out.push("<company>");
   // companyIdent is een VERPLICHT kind van company in XAF 3.2 — leeg element als de KvK ontbreekt,
   // nooit weggelaten (dan valideert het bestand niet en strandt de import als geheel).
-  out.push(input.company.kvkNumber ? el("companyIdent", esc(input.company.kvkNumber)) : "<companyIdent/>");
-  out.push(el("companyName", esc(input.company.name)));
+  // [XAF-4] In 4.0 the KvK number is `Commercenr`, optional: left out when unknown, never empty.
+  if (v4) {
+    if (input.company.kvkNumber) out.push(el("Commercenr", esc(input.company.kvkNumber.slice(0, 100))));
+  } else {
+    out.push(input.company.kvkNumber ? el("companyIdent", esc(input.company.kvkNumber)) : "<companyIdent/>");
+  }
+  out.push(el("companyName", esc(input.company.name.slice(0, 255))));
   out.push(el("taxRegistrationCountry", "NL"));
   // taxRegIdent heeft GEEN minOccurs="0" in het 3.2-schema — een onderneming zonder BTW-nummer
   // (KOR-starter) kreeg een bestand dat als geheel niet valideerde. Leeg element, nooit weggelaten
@@ -800,12 +842,21 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   out.push("</customersSuppliers>");
   out.push("<generalLedger>");
+  // [XAF-4] Rule [0003] of the 4.0 specification: an RGScode is UNIQUE across ledger accounts. The
+  // three omzet accounts share the group code WOmz (the leaf depends on facts the app does not
+  // hold), so in 4.0 none of them carries it — a duplicate code fails the consistency validation
+  // and takes the whole file down. 3.2's leadReference has no such rule and keeps the codes.
+  const rgsCount = new Map<string, number>();
+  for (const a of XAF_ACCOUNTS) if (a.rgs) rgsCount.set(a.rgs, (rgsCount.get(a.rgs) ?? 0) + 1);
   for (const a of XAF_ACCOUNTS) {
     out.push("<ledgerAccount>");
     out.push(el("accID", a.accID));
     out.push(el("accDesc", esc(a.accDesc)));
     out.push(el("accTp", a.accTp));
-    if (a.rgs) out.push(el("leadReference", a.rgs));
+    if (a.rgs) {
+      if (v4) { if (rgsCount.get(a.rgs) === 1) out.push(el("RGScode", a.rgs)); }
+      else out.push(el("leadReference", a.rgs));
+    }
     out.push("</ledgerAccount>");
   }
   out.push("</generalLedger>");
@@ -852,6 +903,8 @@ export function buildXafFile(input: XafInput): XafBuildResult {
       out.push(el("desc", esc(e.desc)));
       out.push(el("periodNumber", String(monthOf(e.date))));
       out.push(el("trDt", e.date));
+      // [XAF-4] Which application created the transaction — the app itself, on every entry.
+      if (v4) out.push(el("Source", "BoekBrug"));
       let lineNr = 0;
       for (const l of e.lines) {
         out.push("<trLine>");
@@ -863,6 +916,10 @@ export function buildXafFile(input: XafInput): XafBuildResult {
         out.push(el("amnt", eur(Math.abs(l.debitC))));
         out.push(el("amntTp", l.debitC >= 0 ? "D" : "C"));
         if (l.custSupID) out.push(el("custSupID", esc(l.custSupID)));
+        // [XAF-4] The invoice number as its own element (a factuurvereiste), after custSupID and
+        // before vat — the XSD's sequence order. Only in 4.0: 3.2 never carried it and stays as
+        // every importer has validated it.
+        if (v4 && l.invRef) out.push(el("invRef", esc(l.invRef.slice(0, 255))));
         if (l.vat) {
           out.push("<vat>");
           out.push(el("vatID", l.vat.rate === 21 ? "V21" : l.vat.rate === 9 ? "V9" : "V0"));
@@ -898,5 +955,6 @@ export function buildXafFile(input: XafInput): XafBuildResult {
     totalCredit: totalCreditC / 100,
     skipped,
     turnoverWitnessCount,
+    version,
   };
 }

@@ -198,7 +198,8 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
   {
     vraag: 'Is er een XAF-auditbestand of RGS-rekeningschema?',
     antwoord:
-      'Ja: per klant en per jaar is er een XML Auditfile Financieel 3.2, met verkoopboek, ' +
+      'Ja: per klant en per jaar is er een XML Auditfile Financieel 3.2 én 4.0 (het schema dat de ' +
+      'Belastingdienst vanaf 2027 als enige accepteert), met verkoopboek, ' +
       'inkoopboek, bank, kas en dagomzet als sluitende boekingen. Elke journaalpost telt ' +
       'debet = credit voordat hij in het bestand komt, het bestandstotaal sluit, en een post die ' +
       'niet sluitend te maken is wordt GEWEIGERD in plaats van rechtgetrokken — die staat er dan ' +

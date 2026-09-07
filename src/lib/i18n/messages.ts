@@ -12656,7 +12656,8 @@ export const MESSAGES = {
   'jaar.kanttekeningen.titel': { nl: 'Kanttekeningen', en: 'Caveats', ar: 'ملاحظات' },
   'jaar.laden': { nl: 'Jaar doorrekenen…', en: 'Computing the year…', ar: 'جارٍ احتساب السنة…' },
   'jaar.fout': { nl: 'We konden het jaar nu niet doorrekenen. Probeer het zo opnieuw.', en: 'We could not compute the year right now. Try again shortly.', ar: 'تعذّر احتساب السنة الآن. حاول بعد قليل.' },
-  'jaar.xaf.link': { nl: 'Download auditbestand (XAF) voor de boekhouder', en: 'Download audit file (XAF) for your accountant', ar: 'نزّل ملف التدقيق (XAF) للمحاسب' },
+  'jaar.xaf.link': { nl: 'Download auditbestand (XAF 3.2) voor de boekhouder', en: 'Download audit file (XAF 3.2) for your accountant', ar: 'نزّل ملف التدقيق (XAF 3.2) للمحاسب' },
+  'jaar.xaf.link4': { nl: 'Download auditbestand XAF 4.0 (Belastingdienst vanaf 2027)', en: 'Download audit file XAF 4.0 (tax office from 2027)', ar: 'نزّل ملف التدقيق XAF 4.0 (مصلحة الضرائب من 2027)' },
 
   'log.kasboek.imported_read_only': { nl: 'Kasboek gelezen (niets geboekt)', en: 'Cash book read (nothing booked)', ar: 'قُرئ دفتر النقد (لم يُقيَّد شيء)' },
   'log.kasboek.gap_booked': { nl: 'Ontbrekende kasuitgaven uit het kasboek geboekt', en: 'Missing cash payments booked from the cash book', ar: 'قُيّدت مصروفات نقدية ناقصة من دفتر النقد' },
@@ -13598,7 +13599,7 @@ export const MESSAGES = {
   'bh.demo.vraag.teltNietMee': { nl: 'Telt nergens in mee tot de klant antwoordt — geen gok in je voorbelasting.', ar: 'لا تُحتسب في أي شيء حتى يجيب العميل — لا تخمين في ضريبتك المستردة.', en: 'Counts nowhere until the client answers — no guess in your input VAT.' },
   'bh.demo.eerlijk.kop': { nl: 'Wat wij niet zeker weten, staat als vraag — niet als gok', ar: 'ما لا نعرفه يقيناً يبقى سؤالاً — لا تخميناً', en: 'What we are not sure of stands as a question — not a guess' },
   'bh.demo.eerlijk.tekst': { nl: 'Kijk naar de tegels: de factuur met de open vraag telt niet mee in kosten en voorbelasting. Het dossier klopt — of zegt precies waar het nog niet klopt.', ar: 'انظر إلى الأرقام: الفاتورة ذات السؤال المفتوح لا تُحتسب في التكاليف ولا في الضريبة المستردة. الملف صحيح — أو يقول بدقة أين لم يصح بعد.', en: 'Look at the tiles: the invoice with the open question counts in neither costs nor input VAT. The file is right — or says exactly where it is not yet.' },
-  'bh.demo.pakket.tekst': { nl: 'Aan het kwartaaleinde haal je alles in één keer op: PDF\'s, CSV en het XAF 3.2-auditbestand voor je eigen pakket.', ar: 'في نهاية الربع تجمع كل شيء دفعة واحدة: ملفات PDF وCSV وملف تدقيق XAF 3.2 لبرنامجك.', en: 'At quarter end you collect everything in one go: PDFs, CSV and the XAF 3.2 audit file for your own package.' },
+  'bh.demo.pakket.tekst': { nl: 'Aan het kwartaaleinde haal je alles in één keer op: PDF\'s, CSV en het XAF-auditbestand voor je eigen pakket.', ar: 'في نهاية الربع تجمع كل شيء دفعة واحدة: ملفات PDF وCSV وملف تدقيق XAF لبرنامجك.', en: 'At quarter end you collect everything in one go: PDFs, CSV and the XAF audit file for your own package.' },
   'bh.demo.cta': { nl: 'Nodig je eerste klant uit', ar: 'ادعُ عميلك الأول', en: 'Invite your first client' },
 
   'uitn.laden': { nl: 'Laden…', ar: 'جارٍ التحميل…', en: 'Loading…' },

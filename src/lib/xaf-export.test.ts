@@ -559,3 +559,112 @@ test("[BEDRIJFSMIDDEL] a month's depreciation is a balanced MEM entry, and a zer
   assert.deepEqual(r.skipped.map((s) => s.source), ["afschrijving"]);
   assert.match(r.skipped[0].reason, /nul/);
 });
+
+// ─── [XAF-4] The same entries in the schema the Belastingdienst accepts from 1 January 2027 ──────
+import { execFileSync } from "node:child_process";
+import { writeFileSync, mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+/** A rich administration: every journal, every branch the builders have. */
+function richInput(): XafInput {
+  const input = baseInput();
+  input.regimeNotes = ["Kasstelsel: de datums in dit bestand zijn betaaldatums."];
+  input.sales = [
+    { id: "inv-1", invoiceNumber: "20260001", invoiceDate: "2026-03-10", clientName: "Vermeulen & Zonen BV <test>", totalExBtw: 1000, btwAmount: 120, invoiceType: "factuur",
+      rateLines: [{ rate: 21, ex: 400, btw: 84 }, { rate: 9, ex: 400, btw: 36 }, { rate: 0, ex: 200, btw: 0 }], clientBtwNumber: "NL001234567B01" },
+    { id: "cn-1", invoiceNumber: "20260002", invoiceDate: "2026-04-01", clientName: "Vermeulen & Zonen BV <test>", totalExBtw: -100, btwAmount: -21, invoiceType: "creditnota", rateLines: null },
+  ];
+  input.purchases = [
+    { id: "oven", invoiceNumber: "F1", invoiceDate: "2026-05-27", vendorName: "HorecaRama", totalExBtw: 756, btwAmount: 158.76, asset: true, vendorKvkNumber: "12345678", vendorBtwNumber: "NL812345678B01" },
+    { id: "meat", invoiceNumber: "F2", invoiceDate: "2026-05-28", vendorName: "HVO Meat", totalExBtw: 2500, btwAmount: 225 },
+    { id: "ib", invoiceNumber: "8123.45.678.H.60", invoiceDate: "2026-06-30", vendorName: "Belastingdienst", totalExBtw: 1200, btwAmount: 0, taxKind: "inkomstenbelasting" },
+    { id: "ob", invoiceNumber: null, invoiceDate: "2026-07-31", vendorName: "Belastingdienst", totalExBtw: 300, btwAmount: 0, taxKind: "omzetbelasting" },
+  ];
+  input.bank = [
+    { id: "b1", date: "2026-03-20", amount: 1120, description: "Vermeulen betaalt 20260001", category: null, linkedInvoiceDirection: "outgoing", posSettlement: false },
+    { id: "b2", date: "2026-06-01", amount: -2725, description: "HVO Meat F2", category: null, linkedInvoiceDirection: "incoming", posSettlement: false },
+    { id: "b3", date: "2026-06-02", amount: 350.5, description: "CCV payout", category: "pos_income", posSettlement: true, linkedInvoiceDirection: null },
+    { id: "b4", date: "2026-06-03", amount: -49, description: "Bankkosten", category: "fee", posSettlement: false, linkedInvoiceDirection: null },
+  ];
+  input.cash = [
+    { id: "c1", date: "2026-06-04", direction: "out", amount: 121, category: "kosten", btwRate: 21, documentId: "doc-1", invoiceId: null, coveredByTurnover: false },
+    { id: "c2", date: "2026-06-05", direction: "in", amount: 80, category: "omzet", btwRate: null, documentId: null, invoiceId: null, coveredByTurnover: false },
+  ];
+  input.turnover = [
+    { date: "2026-06-06", base0: 0, base9: 500, base21: 100, btw9: 45, btw21: 21, pinAmount: 400, cashAmount: 266, otherAmount: 0, totalIncl: 666 },
+  ];
+  input.depreciation = [{ id: "afs-oven-2026-06", date: "2026-06-30", description: "Afschrijving koelvitrine juni 2026", amount: 12.6 }];
+  return input;
+}
+
+const XSD = "schemas/xaf/XmlAuditfileFinancieel4.0.xsd";
+const SAMPLE = "schemas/xaf/XAF_4_0_Test_100425.xaf";
+
+function xmllintAvailable(): boolean {
+  try { execFileSync("xmllint", ["--version"], { stdio: "ignore" }); return true; } catch { return false; }
+}
+
+/** Validate xml against the vendored XSD; returns xmllint's stderr on failure, "" on success. */
+function validate(xml: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "xaf4-"));
+  const file = join(dir, "out.xaf");
+  writeFileSync(file, xml);
+  try {
+    execFileSync("xmllint", ["--noout", "--schema", XSD, file], { stdio: ["ignore", "pipe", "pipe"] });
+    return "";
+  } catch (e) {
+    return String((e as { stderr?: Buffer }).stderr ?? e);
+  }
+}
+
+test("[XAF-4] both versions book the same lines — only the envelope differs", () => {
+  const input = richInput();
+  const v32 = buildXafFile(input);
+  const v40 = buildXafFile(input, { version: "4.0" });
+  assert.equal(v32.version, "3.2");
+  assert.equal(v40.version, "4.0");
+  assert.deepEqual(lines(v40.xml), lines(v32.xml), "every trLine amount is identical across the two schemas");
+  assert.equal(v40.entryCount, v32.entryCount);
+  assert.equal(v40.totalDebit, v32.totalDebit);
+  assert.deepEqual(v40.skipped, v32.skipped);
+  assert.equal(v40.totalDebit, v40.totalCredit);
+});
+
+test("[XAF-4] the 4.0 envelope: namespace, Commercenr, RGScode, Source, invRef — and nothing of 3.2's", () => {
+  const r = buildXafFile(richInput(), { version: "4.0" });
+  assert.match(r.xml, /xmlns="http:\/\/www\.odb\.belastingdienst\.nl\/Belastingdienst\/BCPP\/1\.1\/structures\/XmlauditfileXAF_4\.0"/);
+  assert.match(r.xml, /<Commercenr>12345678<\/Commercenr>/, "the KvK number under its 4.0 name");
+  assert.doesNotMatch(r.xml, /companyIdent|leadReference/, "3.2's element names do not exist in 4.0");
+  assert.match(r.xml, /<RGScode>BVorVbkTvo<\/RGScode>/, "a unique RGS code rides on its account");
+  assert.doesNotMatch(r.xml, /<RGScode>WOmz<\/RGScode>/, "rule [0003]: a code shared by three omzet accounts is on none of them");
+  assert.match(r.xml, /<trDt>2026-03-10<\/trDt>\s*<Source>BoekBrug<\/Source>/, "the source application on every transaction");
+  assert.match(r.xml, /<custSupID>D00001<\/custSupID>\s*<invRef>20260001<\/invRef>/, "the invoice number as its own element, after custSupID");
+  assert.match(r.xml, /Geen openingsbalans in dit bestand/, "the missing opening balance is said, not zeroed");
+  assert.doesNotMatch(r.xml, /<openingBalance>/, "…and never emitted as 0.00");
+  // A company without a KvK number: the element is left out, never empty.
+  const noKvk = richInput(); noKvk.company.kvkNumber = null;
+  assert.doesNotMatch(buildXafFile(noKvk, { version: "4.0" }).xml, /Commercenr/);
+});
+
+test("[XAF-4] 3.2 output is byte-for-byte what it was before 4.0 existed", () => {
+  const r = buildXafFile(richInput());
+  assert.match(r.xml, /xmlns="http:\/\/www\.auditfiles\.nl\/XAF\/3\.2"/);
+  assert.match(r.xml, /<companyIdent>12345678<\/companyIdent>/);
+  assert.match(r.xml, /<leadReference>WOmz<\/leadReference>/);
+  assert.doesNotMatch(r.xml, /<Source>|<invRef>|<RGScode>|<Commercenr>|Geen openingsbalans/);
+});
+
+test("[XAF-4] the output validates against the official XSD, and the validator is proven on the official test file", (t) => {
+  assert.ok(existsSync(XSD), "the schema is vendored");
+  if (!xmllintAvailable()) { t.skip("xmllint not installed — schema validation not run here"); return; }
+  assert.equal(validate(readFileSync(SAMPLE, "utf8")), "", "the Belastingdienst's own test file must pass — otherwise the validator is broken, not the file");
+  // Negative control on the validator itself: a 3.2 file must FAIL the 4.0 schema.
+  assert.notEqual(validate(buildXafFile(richInput()).xml), "", "the validator rejects a 3.2 file");
+  const r = buildXafFile(richInput(), { version: "4.0" });
+  assert.equal(r.skipped.length, 0);
+  assert.equal(validate(r.xml), "", "the 4.0 file validates");
+  // And an administration with nothing in it still validates (an empty year, a new owner).
+  const empty = baseInput(); empty.company.kvkNumber = null; empty.company.btwNumber = null; empty.company.address = null; empty.company.city = null;
+  assert.equal(validate(buildXafFile(empty, { version: "4.0" }).xml), "", "an empty administration validates");
+});

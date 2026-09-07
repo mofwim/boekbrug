@@ -22923,6 +22923,37 @@ test("[EXPORT-VOLLEDIG] every user-owned table is exported, or refused with a re
 //
 // Nothing could have failed. A sentence in a mail template and a list of writes in another module
 // have no reason to be compared, which is why this gate compares them.
+// ─── [XAF-4] The auditfile in the schema the Belastingdienst accepts from 1 January 2027 ───
+//
+// 4.0 is not a second export: it is the same balanced entries in a second envelope, and the test
+// in xaf-export.test.ts proves that against the official XSD with xmllint. What that test cannot
+// see is below — that the second file actually reaches an accountant.
+
+test("[XAF-4] the schema is vendored with the official test file, and the output is validated against it", () => {
+  assert.ok(existsSync("schemas/xaf/XmlAuditfileFinancieel4.0.xsd"), "the official XSD is in the repo");
+  assert.ok(existsSync("schemas/xaf/XAF_4_0_Test_100425.xaf"), "…with the Belastingdienst's own test file, which proves the validator");
+  const t = code("src/lib/xaf-export.test.ts");
+  assert.match(t, /execFileSync\("xmllint", \["--noout", "--schema", XSD, file\]/, "xmllint validates against the vendored schema");
+  assert.match(t, /assert\.notEqual\(validate\(buildXafFile\(richInput\(\)\)\.xml\), ""/, "the validator is proven to reject a 3.2 file");
+  assert.match(t, /assert\.deepEqual\(lines\(v40\.xml\), lines\(v32\.xml\)/, "both schemas carry the same lines");
+});
+
+test("[XAF-4] the 4.0 file reaches every door the 3.2 file reaches", () => {
+  const route = code("src/app/api/xaf/route.ts");
+  assert.match(route, /versionParam !== "3\.2" && versionParam !== "4\.0"/, "the route accepts exactly the two schemas");
+  assert.match(route, /buildXafFile\(input, \{ version: "4\.0" \}\)/, "…and builds 4.0 on request");
+  assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\/api\/xaf\?year=\$\{year\}&version=4\.0/, "the owner's year screen offers 4.0");
+  assert.match(code("src/modules/accountant/pages/AccountantWerkboard.tsx"), /\/api\/xaf\?year=\$\{year\}&version=4\.0&clientId=/, "the werkboard offers 4.0 per client");
+  const pakket = code("src/lib/closing-package.ts");
+  assert.match(pakket, /buildXafFile\(xafInput, \{ version: "4\.0" \}\)/, "the quarter package builds 4.0 from the SAME input");
+  assert.match(pakket, /zip\.file\(`Auditfile-\$\{year\}-tm-Q\$\{quarter\}-XAF4\.xaf`, auditfile\.xml4\)/, "…and ships it beside the 3.2 file");
+  assert.match(pakket, /Eén van de twee inlezen, nooit allebei/, "LEESMIJ tells the accountant to import one of the two");
+  // The 4.0 envelope never leaks 3.2 names, and the RGS uniqueness rule is enforced in code.
+  const pure = code("src/lib/xaf-export.ts");
+  assert.match(pure, /if \(v4\) \{ if \(rgsCount\.get\(a\.rgs\) === 1\) out\.push\(el\("RGScode", a\.rgs\)\); \}/, "rule [0003]: an RGS code only where it is unique");
+  assert.match(pure, /if \(v4 && l\.invRef\) out\.push\(el\("invRef"/, "the invoice number becomes invRef in 4.0 only");
+});
+
 test("[XAF-IN-PAKKET] what the accountant's mail names, the package writes", () => {
   const mail = code("src/lib/email.ts");
   const pakket = code("src/lib/closing-package.ts");

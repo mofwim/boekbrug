@@ -961,7 +961,7 @@ export async function sendQuarterPackageLink({
           <strong>${outgoingCount} verkoopfactuur${outgoingCount === 1 ? '' : 'en'}</strong> en
           <strong>${incomingCount} inkoopfactuur${incomingCount === 1 ? '' : 'en'}</strong>,
           geordend per kwartaal met de bijlagen erbij. Het pakket bevat de PDF's, een CSV-overzicht
-          en het XAF 3.2-auditbestand — te importeren in je eigen pakket.
+          en het XAF 3.2-auditbestand én het XAF 4.0-auditbestand — te importeren in je eigen pakket.
         </p>
 
         ${notitie}

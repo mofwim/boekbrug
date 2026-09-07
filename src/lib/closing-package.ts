@@ -702,7 +702,7 @@ interface AssembleInput {
    * `xml` null = it could not be built, and the reason is already in `warnings`. Never an empty
    * file: an accountant who imports an empty auditfile imports an empty administration.
    */
-  auditfile?: { xml: string; entryCount: number; skippedCount: number; throughDate: string } | null;
+  auditfile?: { xml: string; xml4?: string | null; entryCount: number; skippedCount: number; throughDate: string } | null;
   warnings: ClosingPackageWarning[];
 }
 
@@ -834,6 +834,9 @@ export function buildLeesmij(args: {
     L.push("");
     L.push(`  ${xaf.fileName}`);
     L.push(`  XML Auditfile Financieel 3.2 — ${xaf.entryCount} boekingen, in te lezen in je eigen pakket.`);
+    L.push(`  ${xaf.fileName.replace(/\.xaf$/, "-XAF4.xaf")}`);
+    L.push(`  Dezelfde boekingen als XML Auditfile Financieel 4.0 — het schema dat de Belastingdienst`);
+    L.push(`  vanaf 1 januari 2027 als enige accepteert. Eén van de twee inlezen, nooit allebei.`);
     L.push("");
     L.push(`  LET OP — dit bestand loopt van 1 januari tot en met ${xaf.throughDate}, niet alleen`);
     L.push("  over dit kwartaal. Het auditfile-formaat kent maandperiodes vanaf de jaarstart; een");
@@ -1069,6 +1072,10 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
   const auditfileName = `Auditfile-${year}-tm-Q${quarter}.xaf`;
   if (auditfile) {
     zip.file(auditfileName, auditfile.xml);
+    // [XAF-4] The same entries in the schema the Belastingdienst accepts from 2027, beside the
+    // 3.2 file every package imports today. Two renderings of one administration, never two
+    // administrations — LEESMIJ.txt says so.
+    if (auditfile.xml4) zip.file(`Auditfile-${year}-tm-Q${quarter}-XAF4.xaf`, auditfile.xml4);
   }
 
   // ── dagomzet.csv (retail till turnover: summary + reconciliation + exceptions) ──
@@ -3233,12 +3240,16 @@ export async function buildClosingPackageZip(args: {
   // Best-effort, and loudly so. A failed auditfile costs the accountant an import shortcut; it may
   // never cost the owner their quarter, and it may never be a silent absence either — the mail
   // announces this file by name.
-  let auditfile: { xml: string; entryCount: number; skippedCount: number; throughDate: string } | null = null;
+  let auditfile: { xml: string; xml4: string | null; entryCount: number; skippedCount: number; throughDate: string } | null = null;
   try {
     const xafInput = await buildXafInputForOwner({ pipeline: supabase, ownerId, year, through: end });
     const builtXaf = buildXafFile(xafInput);
+    // [XAF-4] Same input, second schema. Pure and cheap; a failure here fails the whole try, as it
+    // should — two files that could disagree is exactly what the shared input prevents.
+    const builtXaf4 = buildXafFile(xafInput, { version: "4.0" });
     auditfile = {
       xml: builtXaf.xml,
+      xml4: builtXaf4.xml,
       entryCount: builtXaf.entryCount,
       skippedCount: builtXaf.skipped.length,
       throughDate: xafInput.endDate,

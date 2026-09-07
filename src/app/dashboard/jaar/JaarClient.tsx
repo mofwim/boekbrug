@@ -161,6 +161,14 @@ export default function JaarClient() {
           >
             ⬇︎ {t('jaar.xaf.link')}
           </a>
+          <br />
+          {/* [XAF-4] The schema the Belastingdienst accepts from 1 January 2027. */}
+          <a
+            href={`/api/xaf?year=${year}&version=4.0${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ''}`}
+            style={{ color: '#1A73E8', fontWeight: 600, textDecoration: 'none' }}
+          >
+            ⬇︎ {t('jaar.xaf.link4')}
+          </a>
         </p>
       )}
     </main>

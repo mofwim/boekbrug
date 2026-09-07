@@ -44,9 +44,11 @@ February 2025 (4.0.3 is current), and its ODB notice of 22 April 2026 says that 
 2027 only 4.0 is accepted. 4.0 cuts the elements from about 250 to about 90 and carries the RGS
 code per account, which the export already has.
 
-**What to build ([XAF-4]):** a 4.0 writer beside the 3.2 one, selected by date or by the
-accountant. The specification zip (XSD + documentation) is only on `odb.belastingdienst.nl`,
-which this environment cannot reach — it has to be downloaded and handed over, like a sample file.
+**Built ([XAF-4], 7 September 2026):** the owner handed over the 4.0.3 package (XSD, FunHie,
+Toelichting, test file). One builder now writes both envelopes from the same balanced entries;
+the 4.0 output is validated against the official XSD with xmllint in the tests, the route takes
+`?version=4.0`, both screens offer both files, and the quarter package ships both. See
+`docs/XAF4.md`.
 
 ### 3. Netted settlements: one document that carries revenue AND cost
 
