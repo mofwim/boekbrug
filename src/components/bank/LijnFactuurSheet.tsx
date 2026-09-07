@@ -7,6 +7,8 @@
 "use client";
 
 import { useState } from "react";
+import { sheetPaddingBottom } from "@/lib/design/tokens";
+import { useCloseOnBack } from "@/lib/use-close-on-back";
 
 export interface LijnFactuurPrefill {
   transactionId: string;
@@ -30,6 +32,8 @@ const FONT = "'Roboto', -apple-system, sans-serif";
 const eur = (n: number) => `€ ${Math.abs(n).toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function LijnFactuurSheet({ prefill, t, busy, onSubmit, onClose }: LijnFactuurSheetProps) {
+  // [BACK-CLOSES] The system back button closes the sheet, never the page behind it.
+  useCloseOnBack(true, onClose);
   const isPurchase = prefill.amount < 0;
   const [name, setName] = useState(prefill.counterpartName ?? "");
   const [rate, setRate] = useState<0 | 9 | 21>((prefill.suggestedRate === 0 || prefill.suggestedRate === 9 || prefill.suggestedRate === 21) ? prefill.suggestedRate : 21);
@@ -48,7 +52,7 @@ export default function LijnFactuurSheet({ prefill, t, busy, onSubmit, onClose }
     <div role="dialog" aria-modal="true" aria-label={t("bank.lf.titel")} onClick={() => !busy && onClose()}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 3000 }}>
       <div onClick={(e) => e.stopPropagation()} data-testid="lijn-factuur-sheet"
-        style={{ background: "#fff", borderRadius: "20px 20px 0 0", padding: "22px 20px", paddingBottom: "calc(22px + env(safe-area-inset-bottom))", width: "100%", maxWidth: 460, fontFamily: FONT, maxHeight: "88vh", overflowY: "auto" }}>
+        style={{ background: "#fff", borderRadius: "20px 20px 0 0", padding: "22px 20px", paddingBottom: sheetPaddingBottom(22), width: "100%", maxWidth: 460, fontFamily: FONT, maxHeight: "88vh", overflowY: "auto" }}>
         <p style={{ fontSize: 18, fontWeight: 700, color: "#202124", margin: 0 }}>{t("bank.lf.titel")}</p>
         <p style={{ fontSize: 13, color: "#5F6368", margin: "4px 0 16px", lineHeight: 1.45 }}>
           {isPurchase ? t("bank.lf.uitlegInkoop") : t("bank.lf.uitlegVerkoop")}
