@@ -20,23 +20,49 @@ const eur = (n: number) => `€ ${n.toLocaleString('nl-NL', { minimumFractionDig
 export function JaarOverzichtPaneel({ overzicht, t }: { overzicht: IbJaarOverzicht; t: (k: never) => string }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tt = t as (k: any) => string
-  const { wv, uren, nietBijgehouden, kanttekeningen } = overzicht
+  const { wv, uren, nietBijgehouden, kanttekeningen, bedrijfsmiddelen } = overzicht
+  // [BEDRIJFSMIDDEL] Kosten already contains the afschrijvingen; the line under it says how much
+  // of it, so the owner can tie the figure to the register. The investment is shown apart: it is
+  // the amount that is NOT in kosten this year, which is the whole point of the register.
+  const rows: Array<[string, number, 'sub' | 'total' | null]> = [
+    [tt('jaar.wv.opbrengsten'), wv.opbrengsten, null],
+    [tt('jaar.wv.kosten'), wv.kosten, null],
+    ...(wv.afschrijvingen > 0 ? [[tt('jaar.wv.afschrijvingen'), wv.afschrijvingen, 'sub'] as [string, number, 'sub']] : []),
+    [tt('jaar.wv.saldo'), wv.saldo, 'total'],
+  ]
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <section style={CARD}>
         <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#202124' }}>{tt('jaar.wv.titel')}</h2>
         <div style={{ display: 'grid', gap: 6 }}>
-          {[
-            [tt('jaar.wv.opbrengsten'), wv.opbrengsten],
-            [tt('jaar.wv.kosten'), wv.kosten],
-            [tt('jaar.wv.saldo'), wv.saldo],
-          ].map(([label, val], i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: i === 2 ? 15 : 13.5, fontWeight: i === 2 ? 700 : 400, color: '#202124', borderTop: i === 2 ? '1px solid #E0E0E0' : 'none', paddingTop: i === 2 ? 8 : 0 }}>
-              <span>{label as string}</span>
-              <span>{eur(val as number)}</span>
+          {rows.map(([label, val, kind], i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: kind === 'total' ? 15 : kind === 'sub' ? 12.5 : 13.5, fontWeight: kind === 'total' ? 700 : 400, color: kind === 'sub' ? '#5F6368' : '#202124', borderTop: kind === 'total' ? '1px solid #E0E0E0' : 'none', paddingTop: kind === 'total' ? 8 : 0, paddingInlineStart: kind === 'sub' ? 14 : 0 }}>
+              <span>{label}</span>
+              <span>{eur(val)}</span>
             </div>
           ))}
         </div>
+      </section>
+
+      <section style={CARD}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#202124' }}>{tt('jaar.balans.titel')}</h2>
+        {bedrijfsmiddelen.unreadable ? (
+          <p style={{ fontSize: 13.5, margin: 0, lineHeight: 1.6, color: '#B26A00' }}>{tt('jaar.balans.onleesbaar')}</p>
+        ) : (
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, color: '#202124' }}>
+              <span>{tt('jaar.balans.investeringen')}</span><span>{eur(bedrijfsmiddelen.investeringen)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, color: '#202124' }}>
+              <span>{tt('jaar.balans.boekwaarde')}</span><span>{eur(bedrijfsmiddelen.boekwaardeEinde ?? 0)}</span>
+            </div>
+            <p style={{ fontSize: 13, margin: '4px 0 0' }}>
+              <a href="/dashboard/bedrijfsmiddelen" style={{ color: '#1A73E8', fontWeight: 600, textDecoration: 'none' }}>
+                {bedrijfsmiddelen.aantal === 0 ? tt('jaar.balans.registerLeeg') : tt('jaar.balans.registerLink')}
+              </a>
+            </p>
+          </div>
+        )}
       </section>
 
       <section style={CARD}>

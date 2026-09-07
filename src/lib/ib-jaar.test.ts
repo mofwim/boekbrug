@@ -38,3 +38,23 @@ test("[IB-JAAR] what is not tracked is named, and unrated omzet gets its caveat"
   assert.ok(o.kanttekeningen.some((k) => /4\.200,00/.test(k) && /telt hij gewoon mee/.test(k)));
   assert.equal(buildIbJaarOverzicht(base).kanttekeningen.length, 0, "no caveat invented when there is nothing to say");
 });
+
+test("[BEDRIJFSMIDDEL] the year names the investment, the depreciation and the boekwaarde, and says when it could not read them", () => {
+  const withRegister = buildIbJaarOverzicht({ ...base, investeringen: 3000, afschrijvingen: 625, boekwaardeEinde: 2375, assetCount: 1 });
+  assert.equal(withRegister.wv.afschrijvingen, 625);
+  assert.equal(withRegister.bedrijfsmiddelen.investeringen, 3000);
+  assert.equal(withRegister.bedrijfsmiddelen.boekwaardeEinde, 2375);
+  assert.equal(withRegister.bedrijfsmiddelen.aantal, 1);
+  assert.ok(!withRegister.nietBijgehouden.some((r) => /volledige kost/.test(r)), "with a register the old apology is gone");
+  assert.ok(withRegister.nietBijgehouden.some((r) => /boekwinst/.test(r)), "…and what is still a boekhouder's call is named");
+
+  const empty = buildIbJaarOverzicht(base);
+  assert.equal(empty.wv.afschrijvingen, 0);
+  assert.equal(empty.bedrijfsmiddelen.aantal, 0);
+  assert.ok(empty.nietBijgehouden.some((r) => /€ 450/.test(r) && /register/i.test(r)), "an empty register points at itself");
+
+  const broken = buildIbJaarOverzicht({ ...base, assetsUnreadable: true, boekwaardeEinde: 999 });
+  assert.equal(broken.bedrijfsmiddelen.unreadable, true);
+  assert.equal(broken.bedrijfsmiddelen.boekwaardeEinde, null, "never a number over a failed read");
+  assert.ok(broken.kanttekeningen.some((k) => /register van bedrijfsmiddelen kon nu niet gelezen/.test(k)));
+});

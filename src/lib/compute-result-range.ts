@@ -43,8 +43,7 @@ import { collectVatExemption, fetchVatDeductions } from "./vat-exemption-collect
 import {
   assembleRangeResult, effDirOf, isoShiftDays, SETTLEMENT_BUFFER_DAYS,
   type RangeEftRow, type RangeInvoiceRow, type RangeKasInputs, type RangeLedgerRow,
-  type RangeTurnoverRow,
-} from "./result-range-assemble";
+  type RangeTurnoverRow, type AssetRow } from "./result-range-assemble";
 
 export type { RangeResult } from "./result-range-assemble";
 
@@ -255,8 +254,17 @@ export async function computeResultForRange(args: {
     .is("invoice_date", null)
     .order("id", { ascending: true }).range(from, to) as never);
 
+  // [BEDRIJFSMIDDEL] The register. Read whole, not by window: an asset bought in 2023 still
+  // depreciates in 2026, and the engine excludes a purchase by its invoice id whatever its date.
+  // Deploy-safe like every hand-applied migration here: a missing table is an empty register
+  // (there can be no rows before the table), any other failure is `null` — the engine then books
+  // every purchase as a cost, as before, and SAYS so (assetsUnreadable) rather than showing a
+  // year figure that quietly lost its depreciation.
+  const assets = await readAssets(pipeline, ownerId);
+
   return assembleRangeResult({
     ownerId, start, end, scheme, span,
+    assets,
     invRows,
     exemption,
     rateSharesByInvoice,
@@ -274,4 +282,35 @@ export async function computeResultForRange(args: {
     kas,
     datelessRows,
   });
+}
+
+/** [BEDRIJFSMIDDEL] The owner's asset register: rows, [] before the migration, null on failure. */
+export async function readAssets(pipeline: PipelineClient, ownerId: string): Promise<AssetRow[] | null> {
+  try {
+    const rows = await fetchAllRows<{
+      invoice_id: string | null; cost: number | string | null; residual_value: number | string | null;
+      useful_life_years: number | null; in_use_from: string | null; disposed_on: string | null;
+    }>((from, to) => pipeline
+      .from("assets")
+      .select("invoice_id, cost, residual_value, useful_life_years, in_use_from, disposed_on")
+      .eq("user_id", ownerId)
+      .order("id", { ascending: true }).range(from, to) as never);
+    return rows
+      .filter((r) => r.in_use_from && r.useful_life_years)
+      .map((r) => ({
+        invoice_id: r.invoice_id,
+        cost: Number(r.cost) || 0,
+        residualValue: Number(r.residual_value) || 0,
+        usefulLifeYears: Number(r.useful_life_years),
+        inUseFrom: r.in_use_from as string,
+        disposedOn: r.disposed_on,
+      }));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // PostgREST names a missing relation two ways depending on the version; both mean "the
+    // migration has not been applied here", and an unapplied register is an empty one.
+    if (/relation .*assets.* does not exist|Could not find the table 'public\.assets'/i.test(msg)) return [];
+    console.error("[BEDRIJFSMIDDEL] asset register read failed — every purchase counts as a cost, no depreciation", { ownerId, error: msg });
+    return null;
+  }
 }

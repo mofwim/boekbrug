@@ -12,7 +12,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { resolveQuarterOwner } from "@/lib/accountant-access";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
-import { computeResultForRange } from "@/lib/compute-result-range";
+import { computeResultForRange, readAssets } from "@/lib/compute-result-range";
+import { activeInRange, bookValueAt } from "@/lib/depreciation";
 import { buildIbJaarOverzicht } from "@/lib/ib-jaar";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 
@@ -79,6 +80,15 @@ export async function GET(req: NextRequest) {
       return null;
     });
 
+  // [BEDRIJFSMIDDEL] The boekwaarde on 31 December: the register read once more (the range read
+  // keeps only what the engine needs), every asset still on the books at year end, at its month
+  // rule. null when the register could not be read — the overzicht then says so instead of € 0.
+  const assets = range.result.assetsUnreadable ? null : await readAssets(pipeline, owner.ownerId);
+  const onBooks = (assets ?? []).filter((a) => activeInRange(a, start, end));
+  const boekwaardeEinde = assets === null
+    ? null
+    : onBooks.filter((a) => !a.disposedOn || a.disposedOn > end).reduce((sum, a) => sum + bookValueAt(a, end), 0);
+
   const overzicht = buildIbJaarOverzicht({
     year,
     omzet: range.result.omzet,
@@ -86,6 +96,11 @@ export async function GET(req: NextRequest) {
     resultaat: range.result.resultaat,
     cashOmzetZonderBtw: range.result.cashOmzetZonderBtw,
     hoursTotal,
+    investeringen: range.result.investeringen,
+    afschrijvingen: range.result.afschrijvingen,
+    assetsUnreadable: range.result.assetsUnreadable || assets === null,
+    boekwaardeEinde,
+    assetCount: onBooks.length,
   });
 
   return NextResponse.json({ ok: true, overzicht });

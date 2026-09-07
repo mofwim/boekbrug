@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 121 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 122 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 16 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -85,6 +85,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('articles.sql', 'policy', 'articles_insert_own', 'articles', 'public'),
   ('articles.sql', 'policy', 'articles_select_own', 'articles', 'public'),
   ('articles.sql', 'policy', 'articles_update_own', 'articles', 'public'),
+  ('assets.sql', 'index', 'idx_assets_user_in_use', null, 'public'),
+  ('assets.sql', 'policy', 'asset_dismissals_delete_own', 'asset_dismissals', 'public'),
+  ('assets.sql', 'policy', 'asset_dismissals_insert_own', 'asset_dismissals', 'public'),
+  ('assets.sql', 'policy', 'asset_dismissals_select_own', 'asset_dismissals', 'public'),
+  ('assets.sql', 'policy', 'assets_accountant_read', 'assets', 'public'),
+  ('assets.sql', 'policy', 'assets_delete_own', 'assets', 'public'),
   ('audit_logs_client_read.sql', 'function', 'audit_row_is_about_me', null, 'public'),
   ('audit_logs_client_read.sql', 'policy', 'audit_logs_about_me', 'audit_logs', 'public'),
   ('auto_boeken.sql', 'column', 'auto_boeken', 'profiles', 'public'),
@@ -540,7 +546,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 137
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 16 van de 138
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

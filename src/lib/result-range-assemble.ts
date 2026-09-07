@@ -46,6 +46,7 @@ import { round2 } from "./invoice-totals";
 import type { RateShare } from "./btw-rate-split";
 import { parsePosCommission, statedCommission, type StatedCommission } from "./pos-commission";
 import type { QuarterSettlements } from "./kas-payment-events";
+import { depreciationInRange, type AssetLike } from "./depreciation";
 
 // ── The pure helpers the fetch half needs too, so they live on this side of the seam ──────────
 
@@ -80,6 +81,11 @@ export const SETTLEMENT_BUFFER_DAYS = 5;
 // ── The rows ─────────────────────────────────────────────────────────────────────────────────
 
 /** An invoices row as the window fetch selects it. */
+/** [BEDRIJFSMIDDEL] One register row, as compute-result-range reads it. */
+export interface AssetRow extends AssetLike {
+  invoice_id: string | null;
+}
+
 export interface RangeInvoiceRow {
   id?: string | null;
   direction: string | null;
@@ -182,6 +188,11 @@ export interface RangeInputs {
   kas: RangeKasInputs | null;
   /** [DATELESS] Verified invoices with NO invoice_date. Empty under kas, where it does not apply. */
   datelessRows: readonly RangeInvoiceRow[];
+  // [BEDRIJFSMIDDEL] The owner's asset register, or null when it could not be read. Every asset
+  // counts, whatever its date: one bought before the window still depreciates inside it.
+  // Optional only for the test harness's partial inputs; absent reads as an empty register.
+  // The production caller (compute-result-range) always passes it — a gate holds it there.
+  assets?: readonly AssetRow[] | null;
 }
 
 export interface RangeResult {
@@ -243,10 +254,11 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   const {
     ownerId, start, end, scheme, span, invRows, exemption,
     rateSharesByInvoice, exemptExByInvoice, bankBufRows, cashRows, excludedBankIds,
-    turnoverRows, eftRows, pinLedgerRows, pinLedgerAvailable, kas, datelessRows,
+    turnoverRows, eftRows, pinLedgerRows, pinLedgerAvailable, kas, datelessRows, assets,
   } = inputs;
 
   const invoices: ResultInvoice[] = invRows.map((i) => ({
+    id: i.id,
     direction: effDirOf(i, ownerId),
     status: i.status,
     // [OFFERTE-GEEN-OMZET] Without this the engine cannot tell a quote from an invoice.
@@ -406,10 +418,18 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
   // below only adds the settlement-shaped inputs on top. Seeding them here is what stops the
   // accrual path (the default, and almost every owner) from silently skipping the apportionment
   // because the exempt inputs happened to live in a variable named after the other scheme.
+  // [BEDRIJFSMIDDEL] Seeded here, like the exempt inputs, because the register belongs to BOTH
+  // bases: the kas branch below spreads this object and must not lose it.
+  const assetsRead = assets === undefined ? [] : assets;
+  const assetInvoiceIds = new Set((assetsRead ?? []).map((a) => a.invoice_id).filter((x): x is string => !!x));
+  const afschrijvingen = (assetsRead ?? []).reduce((sum, a) => sum + depreciationInRange(a, start, end), 0);
   let kasOpts: Parameters<typeof computeResult>[7] = {
     exemptRegime: exemption.active,
     deductionByInvoice: new Map(exemption.deductionByInvoice),
     exemptShareByInvoice: exemptShareOf(invRows, exemptExByInvoice),
+    assetInvoiceIds,
+    afschrijvingen,
+    assetsUnreadable: assetsRead === null,
   };
   if (scheme === "kas" && kas) {
     undatedPaidCount = kas.undatedPaidCount;

@@ -27543,3 +27543,101 @@ test("[HAND-DUBBEL] every screen that can book a payment asks, and none of them 
   assert.match(regel, /=== DUPLICATE_PAID_CODE/,
     "the refusal is recognised by its wording, which stops working the moment it is translated");
 });
+
+// ─── [BEDRIJFSMIDDEL] An investment is not a cost of its year; it is depreciated ────────────────
+//
+// Two seats, one review: as the owner and as the boekhouder using the app for a while, the
+// biggest gap was that the year figure the accountant copies into the IB return was WRONG for
+// anyone who bought equipment — a € 756 koelvitrine sat in the costs whole, and the year screen
+// said so in its honest list ("afschrijvingen … staan hier als volledige kost of nog nergens").
+//
+// The rule, from belastingdienst.nl and pinned in depreciation.test.ts: a purchase of € 450 or
+// more (ex btw when the btw is deductible) is a bedrijfsmiddel; per year (aanschaf − restwaarde)
+// ÷ gebruiksduur, at most 20% a year, pro rata by month from ingebruikname. The owner decides
+// WHICH purchase is an asset — measured on the live administration, ~260 purchases over € 450
+// and all but one are stock — so nothing here classifies by amount alone.
+//
+// This gate holds the mechanics together: the register reaches the engine under BOTH btw
+// schemes, a failed read is said rather than silently zero, the migration keeps the ordinary
+// rule, the boekhouder reads and never writes, and the auditfile books the same split.
+test("[BEDRIJFSMIDDEL] the register moves the result in both schemes, and a failed read is said", () => {
+  const engine = code("src/lib/financial-result.ts");
+  // 1. Both cost legs consult the register by invoice id: the accrual loop and the kas slices.
+  assert.match(engine, /if \(inv\.id && assetIds\.has\(inv\.id\)\) investeringen \+= ex; else kosten \+= ex;/,
+    "the accrual branch no longer withholds a registered purchase from kosten");
+  assert.match(engine, /if \(assetIds\.has\(s\.invoiceId\)\) investeringen \+= s\.ex; else kosten \+= s\.ex;/,
+    "the kasstelsel branch no longer withholds it — the register belongs to both btw schemes");
+  // 2. The depreciation enters kosten once, after every leg, before the result is formed.
+  assert.match(engine, /kosten \+= afschrijvingen;\s*\n\s*const proRata: ProRata/,
+    "the depreciation must land after the legs and before the pro-rata btw computation");
+  assert.match(engine, /assetsUnreadable: opts\.assetsUnreadable === true,/, "a failed read must reach the result");
+
+  // 3. The range fetch reads the register and passes it in; a missing table is an empty register,
+  //    any other failure is null — never a quiet []. 
+  const range = code("src/lib/compute-result-range.ts");
+  assert.match(range, /const assets = await readAssets\(pipeline, ownerId\);/, "the register is read");
+  assert.match(range, /assembleRangeResult\(\{\s*ownerId, start, end, scheme, span,\s*assets,/, "…and handed to the assembler");
+  assert.match(range, /does not exist\|Could not find the table 'public\\\.assets'\/i\.test\(msg\)\) return \[\];/,
+    "an unapplied migration is an empty register");
+  assert.match(range, /console\.error\("\[BEDRIJFSMIDDEL\] asset register read failed[\s\S]{0,200}return null;/,
+    "every other failure is logged and returned as null, so the engine can say it");
+  const assemble = code("src/lib/result-range-assemble.ts");
+  assert.match(assemble, /assetsUnreadable: assetsRead === null,/);
+  assert.match(assemble, /afschrijvingen = \(assetsRead \?\? \[\]\)\.reduce\(\(sum, a\) => sum \+ depreciationInRange\(a, start, end\), 0\)/,
+    "the window's depreciation comes from depreciation.ts, per asset");
+
+  // 4. The year screen: the failed read is a kanttekening, the empty register points at itself.
+  const jaar = code("src/lib/ib-jaar.ts");
+  assert.match(jaar, /if \(input\.assetsUnreadable\) \{\s*kanttekeningen\.push\(/, "a failed register read is a caveat on the year");
+  assert.match(jaar, /boekwaardeEinde: unreadable \? null : /, "no boekwaarde over a failed read");
+  assert.match(code("src/app/api/ib-jaar/route.ts"), /assetsUnreadable: range\.result\.assetsUnreadable \|\| assets === null,/);
+  assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /href="\/dashboard\/bedrijfsmiddelen"/, "the year screen has the door to the register");
+});
+
+test("[BEDRIJFSMIDDEL] the migration keeps the ordinary rule, and the boekhouder reads but never writes", () => {
+  const sql = readFileSync("supabase/migrations/assets.sql", "utf8");
+  assert.match(sql, /CONSTRAINT assets_life_ordinary CHECK \(useful_life_years BETWEEN 5 AND 50\)/,
+    "the 20%-a-year rule: five years is the shortest ordinary life");
+  assert.match(sql, /CONSTRAINT assets_residual_within_cost CHECK \(residual_value >= 0 AND residual_value <= cost\)/);
+  assert.match(sql, /CONSTRAINT assets_one_per_invoice UNIQUE \(invoice_id\)/, "one asset per purchase invoice");
+  assert.match(sql, /CREATE POLICY assets_accountant_read ON public\.assets\s+FOR SELECT TO authenticated USING \(public\.is_my_accountant_client\(user_id\)\);/,
+    "the boekhouder reads a linked client's register");
+  assert.doesNotMatch(sql, /accountant[\s\S]{0,80}FOR (INSERT|UPDATE|DELETE)/i, "…and has no write policy: an asset moves the winst, and that is the owner's signature");
+  for (const pol of ["assets_insert_own", "assets_update_own", "assets_delete_own"]) {
+    assert.match(sql, new RegExp(`CREATE POLICY ${pol} ON public\\.assets[\\s\\S]{0,120}\\(select auth\\.uid\\(\\)\\)`), `${pol} uses the wrapped auth.uid()`);
+  }
+  // The rule's constants, in the one module that owns them.
+  const dep = code("src/lib/depreciation.ts");
+  assert.match(dep, /export const ASSET_THRESHOLD_EUR = 450;/);
+  assert.match(dep, /export const MIN_USEFUL_LIFE_YEARS = 5;/);
+  assert.match(dep, /const compared = args\.btwDeductible \? args\.totalExBtw : args\.totalIncBtw;/,
+    "the € 450 line is ex btw when the btw is deductible and incl when it is not (belastingdienst.nl)");
+  // The API writes are the owner's alone, and only a purchase of their own can be registered.
+  const api = code("src/app/api/assets/route.ts");
+  for (const verb of ["POST", "PATCH", "DELETE"]) {
+    assert.match(api, new RegExp(`export async function ${verb}\\([\\s\\S]{0,400}?requireOwner\\(`), `${verb} is owner-only`);
+  }
+  assert.match(api, /if \(!inv \|\| inv\.receiver_id !== user\.id \|\| inv\.direction !== "incoming"\)/,
+    "a sales invoice, or someone else's invoice, cannot be registered as this owner's asset");
+  // The candidate rule never classifies by amount alone.
+  const cand = code("src/lib/asset-candidates.ts");
+  assert.match(cand, /export const RARE_SUPPLIER_MAX_INVOICES = 2;/);
+  assert.match(cand, /if \(n > RARE_SUPPLIER_MAX_INVOICES\) continue;/, "a regular supplier's invoice is never a candidate, whatever its amount");
+  assert.match(cand, /=== "creditnota" \|\| inc < 0 \|\| ex < 0\) continue;/, "money coming back is not an asset going in");
+});
+
+test("[BEDRIJFSMIDDEL] the auditfile books the same split: 0100 for the purchase, MEM for the depreciation", () => {
+  const xaf = code("src/lib/xaf-export.ts");
+  assert.match(xaf, /accID: "0100", accDesc: "Inventaris \(aanschafwaarde\)"/);
+  assert.match(xaf, /accID: "0110", accDesc: "Cumulatieve afschrijving inventaris",\s+accTp: "B", rgs: "BMvaBeiCae"/,
+    "the one verified RGS code stays on the cumulative account; the unverified ones stay null");
+  assert.match(xaf, /accID: "0100", accDesc: "Inventaris \(aanschafwaarde\)",\s+accTp: "B", rgs: null/);
+  assert.match(xaf, /accID: "4900", accDesc: "Afschrijvingskosten",\s+accTp: "P", rgs: null/);
+  assert.match(xaf, /const lines: Line\[\] = inv\.asset\s*\?\s*\[\{ accID: ACC\.activa, debitC: exC,/, "an asset purchase debits the balance sheet");
+  assert.match(xaf, /if \(c <= 0\) return \{ reason: "afschrijving van nul of negatief — geweigerd" \};/);
+  assert.match(xaf, /push\("MEM", d\.date, d\.description\.slice\(0, 100\), buildDepreciation\(d\), "afschrijving", d\.id\);/);
+  const fetch = code("src/lib/xaf-fetch.ts");
+  assert.match(fetch, /asset: assetInvoiceIds\.has\(r\.id\),/, "the fetch layer marks registered purchases");
+  assert.match(fetch, /if \(last > end\) break;/, "no memoriaal is dated after the file's own end date");
+  assert.match(fetch, /regimeNotes\.push\("Het register van bedrijfsmiddelen kon niet gelezen worden/, "a failed register read is a LET OP in the file");
+});

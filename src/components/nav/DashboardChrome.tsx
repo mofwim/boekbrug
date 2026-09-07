@@ -70,6 +70,7 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   // andere drie horen bij de home en krijgen die al via de veilige fallback.
   ["/dashboard/kassa", "kassa.titel"],
   ["/dashboard/voertuigen", "vtg.titel"],
+  ["/dashboard/bedrijfsmiddelen", "bm.titel"],
   ["/dashboard/settings/team", "team.titel"],
   // [UREN-DEUR] Het urenscherm bestond, was vertaald en getest, en had geen enkele link naar zich
   // toe — en dus ook geen titel. Beide zijn hier gerepareerd: de tegel staat op de home (zie

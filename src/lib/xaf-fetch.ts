@@ -30,6 +30,8 @@ import { turnoverNetOmzet } from "@/lib/turnover";
 import { getVatScheme } from "@/lib/vat-scheme";
 import { amsterdamToday } from "@/lib/format-nl";
 import type { XafInput } from "@/lib/xaf-export";
+import { readAssets } from "@/lib/compute-result-range";
+import { depreciationInRange } from "@/lib/depreciation";
 
 /**
  * Assemble the XafInput for one owner and one year.
@@ -239,6 +241,27 @@ export async function buildXafInputForOwner(args: {
     );
   }
 
+  // ── [BEDRIJFSMIDDEL] The register: asset purchases leave the kostenrekening, and each asset
+  // books one afschrijving per closed month. Only months that END on or before `through` are
+  // emitted — a memoriaal dated after today would claim a period that has not happened.
+  const assets = await readAssets(pipeline, ownerId);
+  const assetInvoiceIds = new Set((assets ?? []).map((a) => a.invoice_id).filter((x): x is string => !!x));
+  const depreciation: NonNullable<XafInput["depreciation"]> = [];
+  if (assets === null) {
+    regimeNotes.push("Het register van bedrijfsmiddelen kon niet gelezen worden: inkopen staan in dit bestand als kosten en er is niet afgeschreven.");
+  } else {
+    assets.forEach((a, i) => {
+      for (let mth = 1; mth <= 12; mth++) {
+        const mm = String(mth).padStart(2, "0");
+        const first = `${year}-${mm}-01`;
+        const last = `${year}-${mm}-${String(new Date(Date.UTC(year, mth, 0)).getUTCDate()).padStart(2, "0")}`;
+        if (last > end) break;
+        const amount = depreciationInRange(a, first, last);
+        if (amount > 0) depreciation.push({ id: `afschr-${i + 1}-${year}-${mm}`, date: last, description: `Afschrijving ${year}-${mm}`, amount });
+      }
+    });
+  }
+
   return {
     year,
     dateCreated: vandaag,
@@ -270,6 +293,7 @@ export async function buildXafInputForOwner(args: {
       vendorName: r.client_name,
       totalExBtw: r.total_ex_btw ?? 0,
       btwAmount: r.btw_amount ?? 0,
+      asset: assetInvoiceIds.has(r.id),
       // De factuur eerst — dat is wat het document zei. Pas als die leeg is, de leverancier.
       vendorBtwNumber: r.client_btw_number ?? (r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.btw ?? null : null),
       vendorKvkNumber: r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.kvk ?? null : null,
@@ -294,6 +318,7 @@ export async function buildXafInputForOwner(args: {
       invoiceId: c.invoice_id,
       coveredByTurnover: c.category === "omzet" && c.entry_date != null && coveredDates.has(c.entry_date),
     })),
+    depreciation,
     turnover: turnoverRows.map((t) => ({
       date: t.turnover_date,
       base0: t.base_0 ?? 0, base9: t.base_9 ?? 0, base21: t.base_21 ?? 0,

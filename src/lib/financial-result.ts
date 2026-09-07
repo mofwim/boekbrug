@@ -68,9 +68,27 @@ export interface ComputeOpts {
   // without this map every cash-basis cost would fall back to 'mixed' and an owner who
   // carefully attributed their costs would see the ratio applied to all of them anyway.
   deductionByInvoice?: Map<string, string | null>;
+  // [BEDRIJFSMIDDEL] Purchase invoices the owner registered as a bedrijfsmiddel. Their ex-btw
+  // amount is NOT a cost of the period it is dated in: it is an investment, reported apart, and
+  // reaches the result only as depreciation. Their btw is deducted exactly as before — the
+  // register changes the income-tax picture, never the btw-aangifte. Keyed by invoice id because
+  // under kasstelsel the cost leg sees settlement slices, which carry only the id (see
+  // deductionByInvoice above for the same argument).
+  assetInvoiceIds?: ReadonlySet<string>;
+  // [BEDRIJFSMIDDEL] Σ depreciation of every registered asset that falls in the window, euros,
+  // computed by the caller with depreciation.ts. Added to kosten as its own named line.
+  afschrijvingen?: number;
+  // [BEDRIJFSMIDDEL] TRUE when the register could not be read. The figures then fall back to the
+  // pre-register treatment (every purchase a cost, no depreciation) — which is the honest
+  // fallback and also the one that must be SAID, so the year screen can say it.
+  assetsUnreadable?: boolean;
 }
 
 export interface ResultInvoice {
+  // [BEDRIJFSMIDDEL] The row's id, so the engine can tell an asset purchase from a cost. OPTIONAL
+  // for the same reason invoice_type is: a caller that omits it books the row as a cost, exactly
+  // as before the register existed. compute-result-range passes it; the year screen depends on it.
+  id?: string | null;
   direction: "outgoing" | "incoming" | null;
   status: string | null;
   // [OFFERTE-GEEN-OMZET] 'factuur' | 'creditnota' | 'pro_forma' | 'offerte'.
@@ -254,6 +272,15 @@ export interface FinancialResult {
   // a balance here is a to-do, never a resting place. 0 for an owner who has coded everything.
   ongecategoriseerdBankIn: number;
   ongecategoriseerdBankUit: number;
+  // [BEDRIJFSMIDDEL] Purchases in this window that are registered assets — kept OUT of kosten.
+  // Named so the year screen can show the investment beside the depreciation that replaced it.
+  investeringen: number;
+  // [BEDRIJFSMIDDEL] The depreciation of the window, which IS in kosten (its own line on the year
+  // screen). 0 for every owner without a register.
+  afschrijvingen: number;
+  // [BEDRIJFSMIDDEL] The register could not be read; investeringen and afschrijvingen are 0 and
+  // every purchase counted as a cost. Never quiet — see ComputeOpts.assetsUnreadable.
+  assetsUnreadable: boolean;
 }
 
 export interface SalesRateBucket { rate: number; omzet: number; btw: number }
@@ -453,6 +480,9 @@ export function computeResult(
 ): FinancialResult {
   let omzet = 0;
   let kosten = 0;
+  // [BEDRIJFSMIDDEL] Investments withheld from kosten; see ComputeOpts.assetInvoiceIds.
+  let investeringen = 0;
+  const assetIds: ReadonlySet<string> = opts.assetInvoiceIds ?? new Set<string>();
   let btwVerschuldigd = 0;
   let btwVoorbelasting = 0;
   let cashOmzetZonderBtw = 0;
@@ -580,7 +610,10 @@ export function computeResult(
           addSale(rate, taxedEx, s.btw);
         }
       } else {
-        kosten += s.ex;
+        // [BEDRIJFSMIDDEL] A registered asset is an investment, not a cost — under kasstelsel too:
+        // the kas regime is a btw rule, and depreciation is an income-tax rule that does not
+        // follow the payment date. The btw on it is deducted exactly as for any purchase.
+        if (assetIds.has(s.invoiceId)) investeringen += s.ex; else kosten += s.ex;
         bookVoorbelasting(s.btw, opts.deductionByInvoice?.get(s.invoiceId));
       }
     }
@@ -642,7 +675,8 @@ export function computeResult(
           addSale(taxedEx !== 0 ? nearestLegalRate(Math.round((btw / taxedEx) * 100)) : 0, taxedEx, btw);
         }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
-        kosten += ex;
+        // [BEDRIJFSMIDDEL] See the kas branch: an asset purchase is reported apart, not as a cost.
+        if (inv.id && assetIds.has(inv.id)) investeringen += ex; else kosten += ex;
         // [TEGENTEKEN] A base and a BTW pointing in opposite directions is not a document that can
         // exist — a rate is never negative — so this is the one place that must NOT quietly add it
         // up. Found in a live administration: a creditnota stored at base −123,00 with btw +13,42,
@@ -897,6 +931,12 @@ export function computeResult(
   //
   //    Off-regime this is arithmetic with a known answer: everything is in `direct`, the ratio
   //    is ignored, and btwVoorbelasting comes out equal to the running total the old code kept.
+  // [BEDRIJFSMIDDEL] The depreciation of the window is a cost of the window. It is the ONLY way a
+  // registered asset reaches the result, and it lands here — after every leg — so the pro-rata
+  // btw computation below never sees it (depreciation carries no btw).
+  const afschrijvingen = round2(Math.max(0, opts.afschrijvingen ?? 0));
+  kosten += afschrijvingen;
+
   const proRata: ProRata = computeProRata({
     taxedOmzet: omzet - vrijgesteldeOmzet,
     exemptOmzet: vrijgesteldeOmzet,
@@ -930,5 +970,8 @@ export function computeResult(
     voorbelastingUnresolved: deduction.unresolved,
     voorbelastingTegenteken: round2(voorbelastingTegenteken),
     voorbelastingGeblokkeerd: voorbelasting.blocked,
+    investeringen: round2(investeringen),
+    afschrijvingen,
+    assetsUnreadable: opts.assetsUnreadable === true,
   };
 }

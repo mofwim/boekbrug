@@ -59,7 +59,15 @@ export const XAF_ACCOUNTS: readonly XafAccount[] = [
   { accID: "1500", accDesc: "Te betalen omzetbelasting", accTp: "B", rgs: "BSchBepBtw" },
   { accID: "1600", accDesc: "Crediteuren", accTp: "B", rgs: "BSchCreHac" },
   { accID: "2100", accDesc: "Vraagposten", accTp: "B", rgs: null },
+  // [BEDRIJFSMIDDEL] The register's three accounts. Only the cumulative-depreciation code could be
+  // verified against a fetchable RGS source (boekhoudplaza: BMvaBeiCae = "Cumulatieve
+  // afschrijvingen en waardeverminderingen inventaris"); the verkrijgingsprijs leaf (BMvaBeiVvp)
+  // and the W-side afschrijvingskosten code were not, and by the rule at the top of this table a
+  // missing code is a lookup, a wrong one a misfiled administration — so they stay null.
+  { accID: "0100", accDesc: "Inventaris (aanschafwaarde)",          accTp: "B", rgs: null },
+  { accID: "0110", accDesc: "Cumulatieve afschrijving inventaris",  accTp: "B", rgs: "BMvaBeiCae" },
   { accID: "4000", accDesc: "Kosten", accTp: "P", rgs: "WBed" },
+  { accID: "4900", accDesc: "Afschrijvingskosten",                  accTp: "P", rgs: null },
   { accID: "8000", accDesc: "Omzet 21%", accTp: "P", rgs: "WOmz" },
   { accID: "8010", accDesc: "Omzet 9%", accTp: "P", rgs: "WOmz" },
   { accID: "8020", accDesc: "Omzet 0% / vrijgesteld / zonder tarief", accTp: "P", rgs: "WOmz" },
@@ -69,6 +77,7 @@ const ACC = {
   kas: "1000", bank: "1100", debiteuren: "1300", kruisposten: "1350",
   voorbelasting: "1400", btwTeBetalen: "1500", crediteuren: "1600",
   vraagposten: "2100", kosten: "4000",
+  activa: "0100", cumAfschrijving: "0110", afschrijving: "4900",
 } as const;
 
 function omzetAccountFor(rate: number): string {
@@ -111,6 +120,8 @@ export interface XafPurchaseInvoice {
   vendorName: string | null;
   totalExBtw: number;
   btwAmount: number;
+  /** [BEDRIJFSMIDDEL] Registered as an asset: the ex-btw amount books to 0100, not to kosten. */
+  asset?: boolean;
   /**
    * [XAF-TEGENPARTIJ] Het btw-nummer van de leverancier, zoals het op de factuur staat of zoals de
    * app het bij die leverancier heeft vastgelegd. Optioneel: op een kassabon staat er geen, en een
@@ -177,10 +188,21 @@ export interface XafInput {
   bank: XafBankLine[];
   cash: XafCashLine[];
   turnover: XafTurnoverDay[];
+  /** [BEDRIJFSMIDDEL] One memoriaal entry per asset per month: debit 4900, credit 0110. */
+  depreciation?: XafDepreciationEntry[];
+}
+
+export interface XafDepreciationEntry {
+  id: string;
+  /** ISO date the entry is booked on — the last day of the month it depreciates. */
+  date: string;
+  description: string;
+  /** Euros, positive. */
+  amount: number;
 }
 
 export interface XafSkipped {
-  source: "verkoop" | "inkoop" | "bank" | "kas" | "dagomzet";
+  source: "verkoop" | "inkoop" | "bank" | "kas" | "dagomzet" | "afschrijving";
   id: string;
   reason: string;
 }
@@ -222,7 +244,7 @@ interface Entry {
   nr: number;
   desc: string;
   date: string; // ISO
-  journal: "VRK" | "INK" | "BNK" | "KAS" | "OMZ";
+  journal: "VRK" | "INK" | "BNK" | "KAS" | "OMZ" | "MEM";
   lines: Line[];
 }
 
@@ -311,10 +333,28 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
   if (exC === 0 && btwC === 0) {
     return { reason: "geen bedragen op de factuur — een boeking van 0,00 zou zeggen dat deze inkoop gratis was" };
   }
-  const lines: Line[] = [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef }];
+  // [BEDRIJFSMIDDEL] A registered asset is an investment: its ex-btw amount goes to the balance
+  // sheet (0100) and reaches the result only through the MEM depreciation entries. The btw side
+  // is identical — voorbelasting does not care whether a purchase is stock or an oven.
+  const lines: Line[] = inv.asset
+    ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef }]
+    : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef }];
   if (btwC !== 0) lines.push({ accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting", docRef });
   lines.push({ accID: ACC.crediteuren, debitC: -(exC + btwC), desc: inv.vendorName ?? "Crediteur", docRef, custSupID });
   return { lines };
+}
+
+/** [BEDRIJFSMIDDEL] Afschrijving of one asset for one month: kosten up, boekwaarde down. */
+function buildDepreciation(d: XafDepreciationEntry): { lines: Line[] } | { reason: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return { reason: "geen datum — niet in een periode te plaatsen" };
+  const c = cents(d.amount);
+  if (c <= 0) return { reason: "afschrijving van nul of negatief — geweigerd" };
+  return {
+    lines: [
+      { accID: ACC.afschrijving, debitC: c, desc: d.description, docRef: d.id },
+      { accID: ACC.cumAfschrijving, debitC: -c, desc: d.description, docRef: d.id },
+    ],
+  };
 }
 
 function buildBank(tx: XafBankLine): { lines: Line[] } | { reason: string } {
@@ -539,6 +579,7 @@ const JOURNALS: Record<Entry["journal"], { desc: string; jrnTp: string }> = {
   BNK: { desc: "Bankboek", jrnTp: "B" },
   KAS: { desc: "Kasboek", jrnTp: "C" },
   OMZ: { desc: "Dagomzet (Z-rapporten)", jrnTp: "M" },
+  MEM: { desc: "Memoriaal (afschrijvingen)", jrnTp: "M" },
 };
 
 /**
@@ -585,6 +626,9 @@ export function buildXafFile(input: XafInput): XafBuildResult {
   }
   for (const t of input.turnover) {
     push("OMZ", t.date, `Dagomzet ${t.date}`, buildTurnoverDay(t), "dagomzet", t.date);
+  }
+  for (const d of input.depreciation ?? []) {
+    push("MEM", d.date, d.description.slice(0, 100), buildDepreciation(d), "afschrijving", d.id);
   }
 
   // File totals, in cents, from the lines actually emitted — and the file-level balance assertion.

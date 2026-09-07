@@ -562,6 +562,99 @@ export type Database = {
           },
         ]
       }
+      assets: {
+        Row: {
+          cost: number
+          created_at: string
+          description: string
+          disposal_note: string | null
+          disposed_on: string | null
+          id: string
+          in_use_from: string
+          invoice_id: string | null
+          residual_value: number
+          updated_at: string
+          useful_life_years: number
+          user_id: string
+        }
+        Insert: {
+          cost: number
+          created_at?: string
+          description: string
+          disposal_note?: string | null
+          disposed_on?: string | null
+          id?: string
+          in_use_from: string
+          invoice_id?: string | null
+          residual_value?: number
+          updated_at?: string
+          useful_life_years: number
+          user_id: string
+        }
+        Update: {
+          cost?: number
+          created_at?: string
+          description?: string
+          disposal_note?: string | null
+          disposed_on?: string | null
+          id?: string
+          in_use_from?: string
+          invoice_id?: string | null
+          residual_value?: number
+          updated_at?: string
+          useful_life_years?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assets_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: true
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      asset_dismissals: {
+        Row: {
+          created_at: string
+          invoice_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          invoice_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          invoice_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asset_dismissals_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "asset_dismissals_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vehicles: {
         Row: {
           apk_expiry: string | null

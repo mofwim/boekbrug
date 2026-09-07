@@ -127,6 +127,10 @@ export interface ExportRegisters {
   timeEntries: unknown[];
   /** vehicles — the cars behind the kilometeradministratie. */
   vehicles: unknown[];
+  /** assets — the bedrijfsmiddelen register; each row moves the year's winst through its depreciation. */
+  assets: unknown[];
+  /** asset_dismissals — the owner's "nee, dit is inkoop" answers, so a candidate is never asked twice. */
+  assetDismissals: unknown[];
   /** invoice_reminders — when each reminder went out. The WIK trail; nothing else records it. */
   invoiceReminders: unknown[];
   /** bank_tx_invoices — which bank line paid which invoice. The reconciliation itself. */
@@ -151,7 +155,7 @@ export interface ExportRegisters {
 /** Empty registers — the shape, with nothing in it. Used as the default in assemble. */
 export const EMPTY_REGISTERS: ExportRegisters = {
   invoiceLines: [], clients: [], suppliers: [], supplierAliases: [], articles: [],
-  timeEntries: [], vehicles: [], invoiceReminders: [], bankInvoiceLinks: [],
+  timeEntries: [], vehicles: [], assets: [], assetDismissals: [], invoiceReminders: [], bankInvoiceLinks: [],
   folders: [], counterpartMemory: [], emailSenderRules: [], emailSkipped: [],
   invoiceCounters: [], payBundles: [], payBundleInvoices: [], feedback: [],
 };
@@ -393,6 +397,8 @@ export async function assembleAccountExportZip(
     ["articles", "artikelen.json"],
     ["timeEntries", "uren.json"],
     ["vehicles", "voertuigen.json"],
+    ["assets", "bedrijfsmiddelen.json"],
+    ["assetDismissals", "bedrijfsmiddelen-antwoorden.json"],
     ["invoiceReminders", "herinneringen.json"],
     ["bankInvoiceLinks", "bank-factuur-koppelingen.json"],
     ["folders", "mappen.json"],
@@ -677,7 +683,7 @@ export async function buildAccountExportZip(args: {
 
   const [
     invoiceLineRows, clientRows, supplierRows, supplierAliasRows, articleRows,
-    timeEntryRows, vehicleRows, reminderRows, bankLinkRows, folderRows, memoryRows,
+    timeEntryRows, vehicleRows, assetRows, assetDismissalRows, reminderRows, bankLinkRows, folderRows, memoryRows,
     senderRuleRows, skippedMailRows, counterRows, bundleRows, bundleInvoiceRows, feedbackRows,
   ] = await Promise.all([
     invoiceIds.length === 0
@@ -703,6 +709,10 @@ export async function buildAccountExportZip(args: {
       supabase.from("time_entries").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("vehicles", (from, to) =>
       supabase.from("vehicles").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("assets", (from, to) =>
+      supabase.from("assets").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("asset_dismissals", (from, to) =>
+      supabase.from("asset_dismissals").select("*").eq("user_id", userId).order("invoice_id", { ascending: true }).range(from, to)),
     readAll("invoice_reminders", (from, to) =>
       supabase.from("invoice_reminders").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("bank_tx_invoices", (from, to) =>
@@ -805,6 +815,8 @@ export async function buildAccountExportZip(args: {
       articles: articleRows,
       timeEntries: timeEntryRows,
       vehicles: vehicleRows,
+      assets: assetRows,
+      assetDismissals: assetDismissalRows,
       invoiceReminders: reminderRows,
       bankInvoiceLinks: bankLinkRows,
       folders: folderRows,

@@ -3005,7 +3005,8 @@ test("[IB-JAAR] het paneel toont de W&V, het urencriterium en wat er NIET in zit
         t: t as never,
         overzicht: {
           year: 2026,
-          wv: { opbrengsten: 85000.5, kosten: 32000.25, saldo: 53000.25 },
+          wv: { opbrengsten: 85000.5, kosten: 32000.25, saldo: 53000.25, afschrijvingen: 625 },
+    bedrijfsmiddelen: { investeringen: 3000, boekwaardeEinde: 2375, aantal: 1, unreadable: false },
           uren: { total: 1400, threshold: 1225, met: true, sentence: "Je registreerde 1.400 uur in 2026 — het urencriterium (1.225 uur) is op basis van je registratie gehaald." },
           nietBijgehouden: ["afschrijvingen (investeringen boven € 450 schrijf je af)"],
           kanttekeningen: [],
@@ -3016,6 +3017,13 @@ test("[IB-JAAR] het paneel toont de W&V, het urencriterium en wat er NIET in zit
     assert.match(html, /53\.000,25/);
     assert.match(html, /urencriterium \(1\.225 uur\) is op basis van je registratie gehaald/);
     assert.match(html, /afschrijvingen/, "de eerlijke lijst staat op het scherm");
+  // [BEDRIJFSMIDDEL] De afschrijving staat als eigen regel onder de kosten, de boekwaarde op 31-12
+  // staat op het scherm, en de investering die NIET in de kosten zit is genoemd.
+  assert.match(html, /jaar\.wv\.afschrijvingen/);
+  assert.match(html, /625,00/, "de afschrijving van het jaar");
+  assert.match(html, /2\.375,00/, "de boekwaarde op 31 december");
+  assert.match(html, /3\.000,00/, "de investering buiten de kosten");
+  assert.match(html, /\/dashboard\/bedrijfsmiddelen/, "de deur naar het register");
   })();
 });
 
@@ -3024,7 +3032,8 @@ test("[IB-JAAR] een kanttekening verschijnt, en zonder kanttekeningen geen leeg 
     const { JaarOverzichtPaneel } = await import("../../src/app/dashboard/jaar/JaarClient");
     const basis = {
       year: 2026,
-      wv: { opbrengsten: 100, kosten: 50, saldo: 50 },
+      wv: { opbrengsten: 100, kosten: 50, saldo: 50, afschrijvingen: 0 },
+      bedrijfsmiddelen: { investeringen: 0, boekwaardeEinde: null, aantal: 0, unreadable: true },
       uren: { total: null, threshold: 1225, met: null, sentence: "We konden je urenregistratie nu niet lezen — het urencriterium is niet beoordeeld." },
       nietBijgehouden: ["voorraadmutatie"],
       kanttekeningen: ["€ 4.200,00 omzet staat nog zonder BTW-tarief."],
@@ -3034,6 +3043,9 @@ test("[IB-JAAR] een kanttekening verschijnt, en zonder kanttekeningen geen leeg 
     assert.match(met, /niet beoordeeld/, "een mislukte urenlezing zegt dat, nooit 'niet gehaald'");
     const zonder = renderToStaticMarkup(React.createElement(JaarOverzichtPaneel, { t: ((k: string) => k) as never, overzicht: { ...basis, kanttekeningen: [] } }));
     assert.doesNotMatch(zonder, /FFF8E1/, "geen leeg amberkader");
+    // [BEDRIJFSMIDDEL] Een register dat niet gelezen kon worden zegt dat, en toont géén boekwaarde.
+    assert.match(met, /jaar\.balans\.onleesbaar/, "een mislukte registerlezing wordt gezegd");
+    assert.doesNotMatch(met, /jaar\.balans\.boekwaarde/, "…en er staat geen € 0 als boekwaarde");
   })();
 });
 
@@ -3418,4 +3430,38 @@ test("[SPLIT-ALSNOG] tegenproef: op een enkeltarief-factuur is de controle gewoo
   // niet-nagegaan-zin hoort hier helemaal niet te staan.
   assert.ok(!html.includes("mengt btw-tarieven"),
     "een enkeltarief-factuur leest als niet nagerekend");
+});
+
+// ─── [BEDRIJFSMIDDEL] Het register tekent zijn rijen, zijn lege stand en zijn vraag ─────────────
+test("[RENDER-GATE] the asset register renders a row with its yearly amount and book value, its empty state, and a candidate", async () => {
+  const { RegisterList, CandidateList } = await import("../../src/app/dashboard/bedrijfsmiddelen/BedrijfsmiddelenPanels");
+  const t = ((k: string, p?: Record<string, string | number>) => (p ? `${k}:${Object.values(p).join(",")}` : k)) as never;
+  const row = {
+    id: "a1", description: "Koelvitrine", cost: 756, residual_value: 0, useful_life_years: 5, in_use_from: "2026-05-27",
+    disposed_on: null, yearly: 151.2, book_value: 693, invoice_number: "INV 82910", supplier_name: "HorecaRama BV",
+  };
+  const html = renderToStaticMarkup(React.createElement(RegisterList, { assets: [row], t, onDispose: () => {}, onDelete: () => {} }));
+  assert.match(html, /Koelvitrine/);
+  assert.match(html, /HorecaRama BV · INV 82910/, "the invoice behind the asset is named");
+  assert.match(html, /151,20/, "the yearly depreciation");
+  assert.match(html, /693,00/, "the book value today");
+  assert.match(html, /27-05-2026/, "in use since, in Dutch date order");
+  assert.match(html, /bm\.afvoeren/, "a live asset can be disposed");
+  assert.match(html, /bm\.verwijderen/);
+
+  const sold = renderToStaticMarkup(React.createElement(RegisterList, { assets: [{ ...row, disposed_on: "2028-03-10" }], t, onDispose: () => {}, onDelete: () => {} }));
+  assert.match(sold, /bm\.afgevoerd:10-03-2028/, "a disposed asset says so with its date");
+  assert.doesNotMatch(sold, /bm\.afvoeren"|>bm\.afvoeren</, "…and cannot be disposed twice");
+
+  const empty = renderToStaticMarkup(React.createElement(RegisterList, { assets: [], t }));
+  assert.match(empty, /bm\.leeg/, "an empty register explains itself");
+
+  const cand = renderToStaticMarkup(React.createElement(CandidateList, {
+    candidates: [{ invoiceId: "i1", invoiceDate: "2026-05-27", invoiceNumber: "INV 82910", supplierName: "HorecaRama BV", amount: 756, supplierInvoices: 1 }], t,
+  }));
+  assert.match(cand, /bm\.kandidaten\.titel/);
+  assert.match(cand, /756,00/);
+  assert.match(cand, /bm\.kandidaat\.ja/);
+  assert.match(cand, /bm\.kandidaat\.nee/);
+  assert.equal(renderToStaticMarkup(React.createElement(CandidateList, { candidates: [], t })), "", "no candidates → no box, not an empty box");
 });

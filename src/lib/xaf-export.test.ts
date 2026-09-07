@@ -503,3 +503,38 @@ test("[XAF-TEGENPARTIJ] een buitenlands nummer houdt zijn eigen land", () => {
   assert.match(xml, /<taxRegistrationCountry>DE<\/taxRegistrationCountry>/,
     "het land komt uit het nummer zelf, niet uit de aanname dat alles Nederlands is");
 });
+
+// ─── [BEDRIJFSMIDDEL] An asset purchase is balance sheet, its depreciation is a memoriaal ─────────
+test("[BEDRIJFSMIDDEL] a registered asset books to 0100, never to kosten; voorbelasting and crediteuren unchanged", () => {
+  const input = baseInput();
+  input.purchases = [
+    { id: "oven", invoiceNumber: "F1", invoiceDate: "2026-05-27", vendorName: "HorecaRama", totalExBtw: 756, btwAmount: 158.76, asset: true },
+    { id: "meat", invoiceNumber: "F2", invoiceDate: "2026-05-28", vendorName: "HVO Meat", totalExBtw: 2500, btwAmount: 225 },
+  ];
+  const r = buildXafFile(input);
+  const ls = lines(r.xml);
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "0100" && amt === "756.00" && tp === "D"), "the oven is an investment on 0100");
+  assert.ok(!ls.some(([acc, amt]) => acc === "4000" && amt === "756.00"), "…and not a cost");
+  assert.ok(ls.some(([acc, amt]) => acc === "4000" && amt === "2500.00"), "the meat stays a cost");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "1400" && amt === "158.76" && tp === "D"), "voorbelasting on the oven is deducted as on any purchase");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "1600" && amt === "914.76" && tp === "C"), "crediteuren carries the gross amount");
+  assert.equal(r.skipped.length, 0);
+  assert.match(r.xml, /<accID>0100<\/accID>\s*<accDesc>Inventaris/, "the account is declared");
+  assert.match(r.xml, /<accID>0110<\/accID>[\s\S]*?BMvaBeiCae/, "the one verified RGS code is on the cumulative account");
+});
+
+test("[BEDRIJFSMIDDEL] a month's depreciation is a balanced MEM entry, and a zero one is refused by name", () => {
+  const input = baseInput();
+  input.depreciation = [
+    { id: "afschr-1-2026-06", date: "2026-06-30", description: "Afschrijving 2026-06", amount: 12.6 },
+    { id: "afschr-1-2026-07", date: "2026-07-31", description: "Afschrijving 2026-07", amount: 0 },
+  ];
+  const r = buildXafFile(input);
+  const ls = lines(r.xml);
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "4900" && amt === "12.60" && tp === "D"), "afschrijvingskosten debit");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "0110" && amt === "12.60" && tp === "C"), "cumulative depreciation credit");
+  assert.match(r.xml, /<jrnID>MEM<\/jrnID>/);
+  assert.equal(r.totalDebit, r.totalCredit);
+  assert.deepEqual(r.skipped.map((s) => s.source), ["afschrijving"]);
+  assert.match(r.skipped[0].reason, /nul/);
+});

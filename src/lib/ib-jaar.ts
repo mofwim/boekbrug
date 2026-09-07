@@ -39,12 +39,33 @@ export interface IbJaarInput {
   cashOmzetZonderBtw: number;
   /** Σ time_entries.hours in the year, or null when the read failed ("could not look"). */
   hoursTotal: number | null;
+  /**
+   * [BEDRIJFSMIDDEL] From the same range result: purchases registered as an asset (withheld from
+   * kosten) and the year's depreciation (inside kosten). Optional so a caller from before the
+   * register still arranges a year; absent reads as "no register".
+   */
+  investeringen?: number;
+  afschrijvingen?: number;
+  /** The register could not be read: every purchase counted as a cost, nothing was depreciated. */
+  assetsUnreadable?: boolean;
+  /** Σ boekwaarde on 31 December of every asset still on the books, or null when unreadable. */
+  boekwaardeEinde?: number | null;
+  /** Assets on the books at some point in the year. */
+  assetCount?: number;
 }
 
 export interface IbJaarOverzicht {
   year: number;
-  /** Winst-en-verliesrekening, in the form's own order. */
-  wv: { opbrengsten: number; kosten: number; saldo: number };
+  /** Winst-en-verliesrekening, in the form's own order. `kosten` INCLUDES afschrijvingen. */
+  wv: { opbrengsten: number; kosten: number; saldo: number; afschrijvingen: number };
+  /** [BEDRIJFSMIDDEL] The balance-sheet half the form asks about: what is on the books. */
+  bedrijfsmiddelen: {
+    investeringen: number;
+    /** null = the register could not be read. */
+    boekwaardeEinde: number | null;
+    aantal: number;
+    unreadable: boolean;
+  };
   uren: {
     total: number | null;
     threshold: number;
@@ -81,21 +102,44 @@ export function buildIbJaarOverzicht(input: IbJaarInput): IbJaarOverzicht {
   })();
 
   const kanttekeningen: string[] = [];
+  // [BEDRIJFSMIDDEL] A register that could not be read is a year figure that quietly went back to
+  // "every purchase is a cost" — said first, because it moves the winst.
+  if (input.assetsUnreadable) {
+    kanttekeningen.push(
+      "Het register van bedrijfsmiddelen kon nu niet gelezen worden: elke inkoop telt hieronder als kost en er is niets afgeschreven. Ververs de pagina voordat je cijfers overneemt.",
+    );
+  }
   if (Math.abs(input.cashOmzetZonderBtw) >= 0.005) {
     kanttekeningen.push(
       `${eur(input.cashOmzetZonderBtw)} omzet staat nog zonder BTW-tarief. Voor de winst telt hij gewoon mee; voor de BTW-aangifte moet het tarief er alsnog bij.`,
     );
   }
 
+  const aantal = input.assetCount ?? 0;
+  const unreadable = input.assetsUnreadable === true;
   return {
     year,
-    wv: { opbrengsten: round2(input.omzet), kosten: round2(input.kosten), saldo: round2(input.resultaat) },
+    wv: {
+      opbrengsten: round2(input.omzet), kosten: round2(input.kosten), saldo: round2(input.resultaat),
+      afschrijvingen: round2(input.afschrijvingen ?? 0),
+    },
+    bedrijfsmiddelen: {
+      investeringen: round2(input.investeringen ?? 0),
+      boekwaardeEinde: unreadable ? null : round2(input.boekwaardeEinde ?? 0),
+      aantal,
+      unreadable,
+    },
     uren,
     // The honest list. Every entry is a thing the IB form asks about and this administration has
     // no source for — presenting a "winst" without naming these invites copying a wrong number
     // into a legal form.
     nietBijgehouden: [
-      "afschrijvingen (investeringen boven € 450 schrijf je af — die staan hier als volledige kost of nog nergens)",
+      // [BEDRIJFSMIDDEL] With an empty register the old sentence stands: an investment of € 450 or
+      // more is sitting in the costs as a whole. With a register, what is still a boekhouder's call
+      // is named instead — the register does the ordinary rule and nothing beyond it.
+      aantal === 0 && !unreadable
+        ? "afschrijvingen (een investering van € 450 of meer hoort in het register Bedrijfsmiddelen — zolang het leeg is, staat zo'n inkoop hier als volledige kost)"
+        : "willekeurige afschrijving (starters), investeringsaftrek (KIA) en boekwinst of -verlies bij verkoop van een bedrijfsmiddel — bespreek die met je boekhouder",
       "voorraadmutatie (begin- en eindvoorraad)",
       "privé-gebruik (auto van de zaak, privé-deel van kosten)",
       "fiscale aftrekposten (zelfstandigenaftrek, startersaftrek, MKB-winstvrijstelling — die past de aangifte zelf toe)",
