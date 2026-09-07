@@ -11381,6 +11381,19 @@ export const MESSAGES = {
     ar: 'هذا ليس تاريخًا موجودًا — استخدم dd-mm-jjjj.',
     en: 'That is not an existing date — use dd-mm-jjjj.',
   },
+  // [DATE-NL] The bounds the field enforces, said in the owner's language. {datum} is dd-mm-jjjj.
+  'datum.voorMinimum': {
+    nl: 'Die datum ligt vóór {datum} — controleer het jaartal.',
+    en: 'That date is before {datum} — check the year.',
+    ar: 'هذا التاريخ يسبق {datum} — تحقّق من السنة.',
+    tr: 'Bu tarih {datum} öncesinde — yılı kontrol et.',
+  },
+  'datum.naMaximum': {
+    nl: 'Die datum ligt in de toekomst (na {datum}).',
+    en: 'That date is in the future (after {datum}).',
+    ar: 'هذا التاريخ في المستقبل (بعد {datum}).',
+    tr: 'Bu tarih gelecekte ({datum} sonrası).',
+  },
   'lijst.geenBetaalde': {
     nl: 'Geen betaalde facturen',
     ar: 'لا توجد فواتير مدفوعة',
@@ -13555,6 +13568,75 @@ export const MESSAGES = {
     nl: 'De factuur is niet gemaakt en je uren staan er nog. Ververs de pagina en probeer het opnieuw.',
     en: 'The invoice was not created and your hours are still there. Refresh the page and try again.',
     ar: 'لم تُنشأ الفاتورة وساعاتك ما زالت موجودة. حدّث الصفحة وأعد المحاولة.',
+  },
+  // [SERVER-ZIN] What /api/uren answers when it refuses. Each sentence names ONE field. They used
+  // to live in the route as Dutch literals, so an Arabic owner who left the hours blank read
+  // "Vul in hoeveel uur je gewerkt hebt." in a toast. The route now translates them with the
+  // language cookie of whoever is typing (uren-refusal.ts maps the code to the key).
+  'uren.fout.nietIngelogd': {
+    nl: 'Je bent niet ingelogd. Log opnieuw in en probeer het nog eens.',
+    en: 'You are not signed in. Sign in again and try once more.',
+    ar: 'أنت غير مسجّل الدخول. سجّل الدخول مجدداً وأعد المحاولة.',
+  },
+  'uren.fout.geenDatum': {
+    nl: 'Vul de datum in waarop je gewerkt hebt.',
+    en: 'Fill in the date you worked on.',
+    ar: 'أدخل التاريخ الذي عملت فيه.',
+  },
+  'uren.fout.geenBestaandeDatum': {
+    nl: 'Die datum bestaat niet. Gebruik de datumkiezer.',
+    en: 'That date does not exist. Use the date picker.',
+    ar: 'هذا التاريخ غير موجود. استخدم منتقي التاريخ.',
+  },
+  'uren.fout.geenOmschrijving': {
+    nl: 'Schrijf op wat je gedaan hebt — dit komt zo op de factuurregel te staan.',
+    en: 'Write down what you did — this will appear on the invoice line.',
+    ar: 'اكتب ما أنجزته — سيظهر هذا في سطر الفاتورة.',
+  },
+  'uren.fout.omschrijvingTeLang': {
+    nl: 'De omschrijving is te lang voor een factuurregel. Houd het bij een zin.',
+    en: 'The description is too long for an invoice line. Keep it to one sentence.',
+    ar: 'الوصف أطول من أن يتّسع في سطر فاتورة. اجعله جملة واحدة.',
+  },
+  'uren.fout.geenUren': {
+    nl: 'Vul in hoeveel uur je gewerkt hebt.',
+    en: 'Fill in how many hours you worked.',
+    ar: 'أدخل عدد الساعات التي عملتها.',
+  },
+  'uren.fout.teVeelUren': {
+    nl: 'Meer dan {max} uur op één dag kan niet. Splits het over twee regels.',
+    en: 'More than {max} hours in one day is not possible. Split it over two lines.',
+    ar: 'لا يمكن تسجيل أكثر من {max} ساعة في يوم واحد. قسّمها على سطرين.',
+  },
+  'uren.fout.tariefGeenBedrag': {
+    nl: 'Het uurtarief is geen bedrag. Laat het leeg als je het nog niet weet.',
+    en: 'The hourly rate is not an amount. Leave it empty if you do not know it yet.',
+    ar: 'أجر الساعة ليس مبلغاً. اتركه فارغاً إن لم تعرفه بعد.',
+  },
+  'uren.fout.welkUur': {
+    nl: 'Welk uur bedoel je?',
+    en: 'Which hours do you mean?',
+    ar: 'أيّ ساعات تقصد؟',
+  },
+  'uren.fout.aanpassen': {
+    nl: 'Dit uur kon niet worden aangepast. Probeer het opnieuw.',
+    en: 'These hours could not be changed. Try again.',
+    ar: 'تعذّر تعديل هذه الساعات. أعد المحاولة.',
+  },
+  'uren.fout.verwijderenMislukt': {
+    nl: 'Dit uur kon niet worden verwijderd. Probeer het opnieuw.',
+    en: 'These hours could not be removed. Try again.',
+    ar: 'تعذّر حذف هذه الساعات. أعد المحاولة.',
+  },
+  'uren.fout.alGefactureerdAanpassen': {
+    nl: 'Dit uur staat al op een factuur en kan niet meer worden aangepast. Gooi het concept weg als je het toch wilt wijzigen — dan komt het uur weer vrij.',
+    en: 'These hours are already on an invoice and can no longer be changed. Discard the draft if you do want to change them — the hours are then released.',
+    ar: 'هذه الساعات موجودة في فاتورة بالفعل ولا يمكن تعديلها. احذف المسودة إن أردت تعديلها — فتعود الساعات متاحة.',
+  },
+  'uren.fout.alGefactureerdVerwijderen': {
+    nl: 'Dit uur staat al op een factuur en kan niet meer worden verwijderd. Gooi het concept weg als je het toch wilt weghalen — dan komt het uur weer vrij.',
+    en: 'These hours are already on an invoice and can no longer be removed. Discard the draft if you do want to take them out — the hours are then released.',
+    ar: 'هذه الساعات موجودة في فاتورة بالفعل ولا يمكن حذفها. احذف المسودة إن أردت إزالتها — فتعود الساعات متاحة.',
   },
   'uren.verwijderen.vraag': {
     nl: 'Dit uur weggooien?',

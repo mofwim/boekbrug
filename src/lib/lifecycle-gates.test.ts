@@ -18234,9 +18234,17 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
   // dit scherm daarvóór helemaal niet kreeg. De sleutel wordt dus wél gerenderd, alleen niet meer
   // door dit bestand, en de vraag die deze regel stelt ("ziet iemand deze zin ooit?") blijft
   // precies dezelfde.
+  //
+  // [SERVER-ZIN] De route en uren-refusal.ts tellen óók mee. De zinnen waarmee /api/uren een uur
+  // weigert stonden als Nederlandse literals in de route, en het scherm toont een serverzin zoals
+  // hij is — dus las een Arabische eigenaar Nederlands in een toast. Ze staan nu in de catalogus,
+  // de route vertaalt ze met het taalkoekje, en de toast op dit scherm laat ze zien. "Ziet iemand
+  // deze zin ooit?" is nog steeds de vraag; het antwoord komt alleen via een omweg.
   const overal = ui
     + readFileSync("src/app/dashboard/uren/page.tsx", "utf8")
-    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
+    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8")
+    + readFileSync("src/app/api/uren/route.ts", "utf8")
+    + readFileSync("src/lib/uren-refusal.ts", "utf8");
   for (const key of verklaard) {
     // Beide aanhalingstekens: dit bestand schrijft ze enkel, DashboardChrome dubbel.
     assert.ok(
@@ -18244,6 +18252,11 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
       `${key} wordt ergens gerenderd`,
     );
   }
+
+  // En de route zelf draagt geen Nederlandse zin meer: elke `error:` is een t()-aanroep.
+  const route = readFileSync("src/app/api/uren/route.ts", "utf8");
+  const losseServerZinnen = [...route.matchAll(/error: "([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(losseServerZinnen, [], `de route schrijft zelf zinnen: ${losseServerZinnen.join(" | ")}`);
 
   // De structurele helft: GEEN Nederlandse tekst als los JSX-tekstknooppunt. Eén hard-gecodeerde
   // zin in een onderdeel is precies hoe een vertaling voorgoed half af blijft — het scherm ziet er
