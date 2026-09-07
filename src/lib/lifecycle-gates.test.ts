@@ -26922,6 +26922,121 @@ test("[DUBBEL-INCASSO] the pass LOOKS, and looks past the batch it happens to ho
 // of a tab, of what that screen happened to load — so the warning was missing at exactly the moment
 // the twin had been settled somewhere else. The database is not a subset.
 
+// ─── [RUSTIG] A screen says what it is and offers what to do — nothing else at rest ─────────────
+//
+// The owner's instruction, handing over the lead: every page easier, faster, less complexity,
+// less talk in the customer's face. Measured before anything moved: 3.193 rendered sentences,
+// 21.946 Dutch words on screen; 233 sentences over twenty words carried ~30% of the text; ten
+// exceeded fifty. The ten longest all stood AT REST — a `<p>` beside nothing that needed it: a
+// 67-word explanation of what the app cannot show, the same retention footnote twice under two
+// keys, a 63-word tax lesson beside a checkbox. See docs/RUSTIG.md for the standard.
+//
+// This gate is a RATCHET. It knows today's stand and refuses any step back; each cleaned batch
+// lowers the ceilings here, in the same commit. What it cannot judge — whether a sentence stands
+// at a decision or at rest — the standard judges; what it can count, it counts.
+test("[RUSTIG] the screen does not grow wordier than the day this was measured", () => {
+  // Ceilings — lowered batch by batch. Raising one is a decision to argue in the commit message.
+  const LONGEST_WORDS = 47;      // 7 sep: 67 → 47 after batch 1
+  const OVER_TWENTY = 262;       // 7 sep: 263 → 262 after batch 1 (owner screens AND src/modules)
+  const OVER_FIFTY = 0;          // 7 sep: 10 → 0 after batch 1
+
+  const loop = (dir: string): string[] => {
+    const out: string[] = [];
+    if (!existsSync(dir)) return out;
+    for (const e of readdirSync(dir)) {
+      const p = `${dir}/${e}`;
+      if (statSync(p).isDirectory()) out.push(...loop(p));
+      else if (/\.tsx$/.test(p) && !/\.test\./.test(p)) out.push(p);
+    }
+    return out;
+  };
+  // Rendered = the key appears in a t('…') call on a screen. A declared-but-unrendered key is a
+  // different gate's business ([TAAL]); an unrendered sentence is not in anyone's face.
+  const rendered = new Set<string>();
+  for (const f of [...loop("src/app"), ...loop("src/components"), ...loop("src/modules")]) {
+    for (const m of readFileSync(f, "utf8").matchAll(/\bt\(\s*['"]([a-zA-Z0-9_.]+)['"]/g)) rendered.add(m[1]);
+  }
+  assert.ok(rendered.size > 2000, `only ${rendered.size} rendered keys found — the scan is broken`);
+
+  const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
+  const zinnen = Object.entries(MESSAGES)
+    .filter(([k]) => rendered.has(k))
+    .map(([k, v]) => ({ key: k, w: words((v as { nl: string }).nl) }))
+    .sort((a, b) => b.w - a.w);
+
+  const langste = zinnen[0];
+  assert.ok(langste.w <= LONGEST_WORDS,
+    `${langste.key} puts ${langste.w} words on the screen in one sentence — the ceiling is ` +
+      `${LONGEST_WORDS}. Say it at the decision, or say less. (docs/RUSTIG.md)`);
+  const boven50 = zinnen.filter((z) => z.w > 50);
+  assert.ok(boven50.length <= OVER_FIFTY,
+    `${boven50.length} sentence(s) over fifty words: ${boven50.map((z) => z.key).join(", ")}`);
+  const boven20 = zinnen.filter((z) => z.w > 20);
+  assert.ok(boven20.length <= OVER_TWENTY,
+    `${boven20.length} rendered sentences over twenty words — the ceiling is ${OVER_TWENTY}. ` +
+      "A new long sentence needs an old one gone");
+
+  // "Say it once in the app." Two long sentences sharing three-quarters of their words are one
+  // thought under two keys — the pair that drifts the first time either is edited. Compared on
+  // the Dutch source. Structural variants are excluded by RULE, not by list, because [TAAL]
+  // requires them: one sentence per count (Een/Meer/N), per role (Acc), per with/without
+  // (MetNaam/ZonderNaam, MetDatum, ZonderNummer, Anoniem, Kort). Everything else is a copy.
+  const stem = (k: string) => k
+    .replace(/(Een|Meer|N|Acc|Kort|Anoniem)$/, "")
+    .replace(/(MetNaam|ZonderNaam|MetDatum|ZonderNummer)$/i, "")
+    .replace(/\.(een|meer)$/, "");
+  const lang = zinnen.filter((z) => z.w >= 15).map((z) => ({
+    key: z.key,
+    set: new Set((MESSAGES[z.key as keyof typeof MESSAGES] as { nl: string }).nl.toLowerCase()
+      .replace(/[^a-zà-ÿ0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3)),
+  }));
+  const dubbel: string[] = [];
+  for (let i = 0; i < lang.length; i++) for (let j = i + 1; j < lang.length; j++) {
+    const a = lang[i].set, b = lang[j].set;
+    if (a.size < 8 || b.size < 8) continue;
+    let shared = 0; for (const w of a) if (b.has(w)) shared++;
+    if (shared / Math.min(a.size, b.size) < 0.75) continue;
+    if (stem(lang[i].key) === stem(lang[j].key)) continue;
+    // Orientation-free: the pair is the same pair whichever key the walk met first.
+    dubbel.push([lang[i].key, lang[j].key].sort().join(" ≈ "));
+  }
+  // Today's copies — 46 pairs on 7 September, measured, not chosen. Each is one thought said twice
+  // (the "je boekhouder heeft dit verwerkt" line stands under FOUR keys). A ratchet: a new pair is
+  // a red gate, and this set shrinks with every batch that folds one away.
+  const BEKENDE_KOPIEEN = 46;
+  const bekend = new Set([
+    "bank.fout.verwerkt ≈ bank.verwerktUitleg", "bank.fout.verwerkt ≈ ink.boekhouderVerwerkt",
+    "bank.fout.verwerkt ≈ lijst.verwerktUitleg", "kw.klantenLaadFout ≈ kw.laadFout",
+    "bh.kwt.leesfout ≈ kw.laadFout", "bh.kwt.leesfout ≈ kw.klantenLaadFout",
+    "act.bv.uitleg ≈ lijst.bundel.deel", "act.bv.disclaimer ≈ lijst.bundel.iban",
+    "ber.ophaalFoutEerlijk ≈ ink.skipped.fout", "ber.ophaalFoutEerlijk ≈ start.meldingenFout",
+    "kluis.introArchief ≈ kluis.introBoekhouden", "verd.geenInkoop ≈ verd.geenVerkoop",
+    "bank.verplaats.geenBedrag ≈ ink.geenBedragVastgelegd", "bank.verplaats.geenDoel ≈ ink.geenPassendeFactuur",
+    "bank.verplaats.kies ≈ ink.verplaatsUitleg", "bank.verwerktUitleg ≈ ink.boekhouderVerwerkt",
+    "bank.verwerktUitleg ≈ lijst.verwerktUitleg", "bank.alGeboekt.zelfdeBedrag ≈ bank.somKlopt.telt",
+    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing", "detail.fout.mailNietVerstuurd ≈ detail.fout.pdfNietGemaakt",
+    "detail.fout.pdfNietGemaakt ≈ lijst.pdfNietGemaakt", "bh.home.todo.onleesbaar.uitleg ≈ ink.betekentNietLeeg",
+    "ink.boekhouderVerwerkt ≈ lijst.verwerktUitleg", "ink.creditPositiefUitleg ≈ ink.creditUitlegConflict",
+    "ink.incassoAanUitlegKort ≈ ink.incassoResultAan", "ink.mp.uitleg ≈ int.mpUitleg",
+    "ink.skipped.fout ≈ start.meldingenFout", "ink.sync.nietLezenEen ≈ kas.upload.nietLezen",
+    "ink.vervang.uitlegMetNr ≈ ink.vervang.uitlegZonderNr", "ink.xqUitleg ≈ lijst.kwartaal.uitleg",
+    "inst.gevarenzoneUitleg ≈ inst.verwijderUitleg", "inst.mandaatFacturenUitleg ≈ inst.rijFacturenAan",
+    "kw.geenDatumEen ≈ kw.geenDatumEenAcc", "kw.geenDatumEen ≈ kw.geenDatumMeerAcc",
+    "kw.geenDatumEenAcc ≈ kw.geenDatumMeer", "kw.geenDatumEenAcc ≈ kw.geenDatumMeerAcc",
+    "kw.geenDatumMeer ≈ kw.geenDatumMeerAcc", "bh.home.todo.onleesbaar.uitleg ≈ vr.fout.betekentNiet",
+    "wh.voet.berekendFactuur ≈ wh.voet.berekendKas", "bh.home.todo.onleesbaar.uitleg ≈ klr.afl.fout",
+    "bh.home.klanten.onleesbaar.uitleg ≈ bh.home.todo.onleesbaar.uitleg",
+    "bh.home.todo.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
+    "bh.home.klanten.onleesbaar.uitleg ≈ bh.klant.unreadable.line2", "bh.fact.mandaat ≈ bh.fact.mandaatBtw",
+    "bh.bev.bulk.lezing ≈ bh.bev.uitleg", "beh.lees.onleesbaarUitleg ≈ beh.vast.onleesbaarUitleg",
+  ]);
+  const nieuw = dubbel.filter((d) => !bekend.has(d));
+  assert.deepEqual(nieuw, [],
+    "a long sentence now stands under two keys — one thought, one place: " + nieuw.join(" · "));
+  assert.ok(dubbel.length <= BEKENDE_KOPIEEN,
+    `${dubbel.length} copies of a long sentence, ceiling ${BEKENDE_KOPIEEN}`);
+});
+
 // ─── [EIGEN-POST] The app never reads its own mail back in ──────────────────────────────────────
 //
 // The mail sync reads the owner's mailbox. BoekBrug sends to that same mailbox. And a message with

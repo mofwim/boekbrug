@@ -79,9 +79,8 @@ export default function KluisClient({
               >
                 {t('kluis.welkomKnop')}
               </a>
-              <p style={{ fontSize: 13, color: M3.neutral, margin: '14px 0 0', lineHeight: 1.6 }}>
-                {t('kluis.welkomVoetnoot')}
-              </p>
+              {/* [RUSTIG] The retention footnote stood here AND on the Bewaarkluis card, 102
+                  words under two keys. One thought, one place: the card, where the decision is. */}
             </div>
           ) : (
             <div style={{ textAlign: 'center', color: M3.neutral, fontSize: 14.5, padding: '48px 16px', background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, marginTop: 16 }}>

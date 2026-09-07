@@ -1838,9 +1838,9 @@ export const MESSAGES = {
     en: 'Replace the file with a better copy?',
   },
   'dsh.vervang.uitleg': {
-    nl: 'Alleen als dit hetzelfde papier is — bijvoorbeeld een scherpe pdf in plaats van je snelle foto. De bedragen blijven staan zoals ze zijn; het bestand wordt niet gelezen. Het oude bestand blijft bewaard in Mijn bestanden. Heeft de leverancier de factuur opnieuw uitgegeven met ANDERE bedragen? Gebruik dan "Deze vervangt factuur X" — dat zijn twee documenten.',
-    ar: 'فقط إذا كان هذا هو الورق نفسه — مثلاً ملف pdf واضح بدل صورتك السريعة. تبقى المبالغ كما هي؛ لا يُقرأ الملف. يبقى الملف القديم محفوظاً في «ملفاتي». هل أعاد المورّد إصدار الفاتورة بمبالغ مختلفة؟ استخدم عندئذٍ «هذه تحلّ محل الفاتورة X» — فتلك وثيقتان.',
-    en: 'Only if this is the same paper — a sharp pdf instead of your quick photo, say. The amounts stay exactly as they are; the file is not read. The old file is kept in Mijn bestanden. Did the supplier reissue the invoice with DIFFERENT amounts? Use "Deze vervangt factuur X" instead — those are two documents.',
+    nl: 'Alleen als dit hetzelfde papier is, bijvoorbeeld een scherpe pdf in plaats van je foto. De bedragen blijven staan en het oude bestand blijft bewaard. Heeft de leverancier de factuur met andere bedragen opnieuw uitgegeven? Gebruik dan "Deze vervangt factuur X".',
+    ar: 'فقط إذا كان هذا هو الورق نفسه، مثلاً ملف pdf واضح بدل صورتك. تبقى المبالغ كما هي ويبقى الملف القديم محفوظاً. هل أصدر المورّد الفاتورة من جديد بمبالغ مختلفة؟ استخدم حينها «Deze vervangt factuur X».',
+    en: 'Only if this is the same paper, such as a sharp pdf instead of your photo. The amounts stay and the old file is kept. Did the supplier reissue the invoice with different amounts? Then use "Deze vervangt factuur X".',
   },
   'dsh.vervang.gelukt': {
     nl: 'Bestand vervangen. Het oude staat nog in Mijn bestanden.',
@@ -1920,9 +1920,9 @@ export const MESSAGES = {
   'corr.exclBtw': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون btw', en: 'Amount excl. VAT' },
   'corr.creditTitel': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن (creditnota)', en: 'This is a credit note' },
   'corr.creditUitleg': {
-    nl: ' — geld dat jou toekomt. Vink dit aan als er “Creditnota” op staat of als het totaal onderaan negatief is. De bedragen worden dan als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Je hoeft zelf geen minteken te typen — staat er al een, dan blijft die staan.',
-    ar: ' — مال يعود لك. علّم هذا الخيار إذا كُتب على الوثيقة «Creditnota» أو كان الإجمالي في الأسفل سالباً. تُحفظ المبالغ حينها بالسالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدل أن تُضاف. لا حاجة لكتابة إشارة السالب بنفسك — وإن كانت موجودة فتبقى.',
-    en: ' — money owed to you. Tick this when the document says “Creditnota” or the bottom total is negative. The amounts are then stored as negatives: it comes off your open balance and its VAT is subtracted instead of added. You never need to type a minus sign — if one is already there, it stays.',
+    nl: ' — geld dat jou toekomt. Vink aan als er “Creditnota” op staat of het totaal negatief is. De bedragen worden dan als minbedrag opgeslagen; een minteken hoef je niet zelf te typen.',
+    ar: ' — مال يعود لك. علّم هذا إذا كُتب على الوثيقة «Creditnota» أو كان الإجمالي سالباً. تُحفظ المبالغ حينها كمبالغ سالبة؛ لا تحتاج لكتابة إشارة السالب بنفسك.',
+    en: ' — money owed to you. Tick this when the document says “Creditnota” or the total is negative. The amounts are then stored as negatives; you do not type the minus yourself.',
   },
   // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
   // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
@@ -2443,11 +2443,6 @@ export const MESSAGES = {
   },
   // The arrow is directional and travels WITH the words: in Arabic "forward" points left.
   'kluis.welkomKnop': { nl: 'Bestanden toevoegen →', ar: 'إضافة ملفات ←', en: 'Add files →' },
-  'kluis.welkomVoetnoot': {
-    nl: 'Alles wat je hier neerzet blijft van jou en is altijd te exporteren. Wij nemen je bewaarplicht niet over — wij zijn je tweede exemplaar, nooit je enige. En de rest van BoekBrug staat gewoon klaar voor als je hem ooit nodig hebt: er is niets afgesloten en niets te ontgrendelen.',
-    ar: 'كل ما تضعه هنا يبقى ملكك ويمكن تصديره دائماً. نحن لا نتولى واجب الحفظ عنك — نحن نسختك الثانية، لا الوحيدة أبداً. وبقية BoekBrug جاهزة متى احتجتها: لا شيء مقفل ولا شيء يحتاج فتحاً.',
-    en: 'Everything you put here stays yours and can always be exported. We do not take over your retention duty — we are your second copy, never your only one. And the rest of BoekBrug stands ready whenever you need it: nothing is locked and nothing needs unlocking.',
-  },
   'kluis.leeg': {
     nl: 'Nog geen stukken in de kluis. Zodra je facturen verstuurt of bankafschriften en bonnen uploadt, verschijnen ze hier — netjes per jaar en kwartaal.',
     ar: 'لا مستندات في الخزانة بعد. حالما ترسل فواتير أو ترفع كشوف بنك وإيصالات، ستظهر هنا — مرتبة حسب السنة والربع.',
@@ -2473,9 +2468,9 @@ export const MESSAGES = {
   'kluis.qAfschr': { nl: '{count} afschr.', ar: '{count} كشف', en: '{count} stmts.' },
   'kluis.cardKop': { nl: 'Als je ooit stopt', ar: 'إذا توقفت يوماً', en: 'If you ever stop' },
   'kluis.cardUitleg': {
-    nl: 'Je bewaarplicht loopt door als je onderneming stopt — en ook als je stopt met BoekBrug. Zeg je op, dan bewaren wij je administratie eerst nog {maanden} maanden kosteloos, en exporteren blijft die hele tijd werken. Wij verwijderen nooit iets zonder je minstens 30 dagen vooraf te mailen.',
-    ar: 'واجب الحفظ يستمر حتى لو أغلقت مشروعك — وحتى لو توقفت عن استخدام BoekBrug. إذا ألغيت اشتراكك، نحفظ دفاترك أولاً {maanden} شهراً مجاناً، والتصدير يعمل طوال تلك المدة. لا نحذف شيئاً أبداً دون مراسلتك قبل 30 يوماً على الأقل.',
-    en: 'Your retention duty continues when your business stops — and when you stop using BoekBrug. If you cancel, we first keep your administration {maanden} months free of charge, and exporting keeps working the whole time. We never delete anything without e-mailing you at least 30 days ahead.',
+    nl: 'Je bewaarplicht loopt door als je onderneming stopt, en ook als je stopt met BoekBrug. Zeg je op, dan bewaren wij je administratie nog {maanden} maanden kosteloos, en exporteren blijft werken.',
+    ar: 'واجب الحفظ يستمر إن أغلقت مشروعك، وإن توقفت عن استخدام BoekBrug. إذا ألغيت اشتراكك، نحتفظ بإدارتك {maanden} شهراً إضافياً مجاناً، ويبقى التصدير يعمل.',
+    en: 'Your retention duty continues when your business stops, and when you stop using BoekBrug. If you cancel, we keep your administration {maanden} more months for free, and exporting keeps working.',
   },
   'kluis.cardGeregeldKop': { nl: 'Je Bewaarkluis is geregeld.', ar: 'خزانة الحفظ (Bewaarkluis) مفعّلة.', en: 'Your Bewaarkluis is arranged.' },
   'kluis.cardGeregeldRest': {
@@ -2506,9 +2501,9 @@ export const MESSAGES = {
     en: 'No connection. Check your internet and try again.',
   },
   'kluis.cardVoetnoot': {
-    nl: 'Wij nemen je bewaarplicht niet over — die blijft van jou. Bewaar daarom altijd ook je eigen kopie: wij zijn je tweede exemplaar, nooit je enige. Stoppen wij ooit zelf, dan hoor je dat 90 dagen van tevoren, krijg je je volledige archief toegestuurd en betalen wij het niet-verbruikte deel terug.',
-    ar: 'نحن لا نتولى واجب الحفظ عنك — يبقى مسؤوليتك. لذلك احتفظ دائماً بنسختك الخاصة: نحن نسختك الثانية، لا الوحيدة أبداً. وإن توقفنا نحن يوماً، تعرف ذلك قبل 90 يوماً، ويصلك أرشيفك كاملاً، ونعيد لك الجزء غير المستهلك من المبلغ.',
-    en: 'We do not take over your retention duty — it stays yours. So always keep your own copy too: we are your second copy, never your only one. Should we ever stop ourselves, you hear it 90 days ahead, receive your full archive, and we refund the unused part.',
+    nl: 'Wij nemen je bewaarplicht niet over: bewaar altijd ook je eigen kopie. Alles hier blijft van jou en is altijd te exporteren. Stoppen wij ooit, dan hoor je dat 90 dagen vooraf, krijg je je archief toegestuurd en betalen wij het niet-verbruikte deel terug.',
+    ar: 'نحن لا نتولى واجب الحفظ عنك: احتفظ دائماً بنسختك الخاصة أيضاً. كل ما هنا يبقى ملكك ويمكن تصديره دائماً. وإن توقفنا يوماً، تعرف ذلك قبل 90 يوماً، ويصلك أرشيفك كاملاً، ونردّ لك الجزء غير المستهلك.',
+    en: 'We do not take over your retention duty: always keep your own copy too. Everything here stays yours and can always be exported. Should we ever stop, you hear it 90 days ahead, receive your full archive, and get the unused part refunded.',
   },
 
   // Verdelen: one payment across several invoices.
@@ -6060,9 +6055,9 @@ export const MESSAGES = {
   // question. Now it says both facts: the books are already right, and the button underneath is
   // how the row itself is closed once the money actually came back.
   'ink.creditKomtToe': {
-    nl: 'Dit is geld dat jóu toekomt — je hoeft niets te betalen: hij staat al met een minbedrag in je boeken en is dus al van "nog te betalen" af. Komt de terugstorting op je bankafschrift binnen, dan herkennen we die. Al terugontvangen of door je leverancier verrekend? Sluit hem dan af met "Verrekend of terugontvangen?" hieronder.',
-    ar: 'هذا مال مستحق لك أنت — لا تحتاج لدفع شيء: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، أي أنه خُصم بالفعل من «ما زال مستحقاً». إن وصل الاسترداد في كشفك البنكي فسنتعرّف عليه. وإن كنت قد استرددته فعلاً أو قاصّه مورّدك، فأغلقه بزر «تمت المقاصّة أو استرددته؟» أدناه.',
-    en: 'This is money owed to YOU — you do not have to pay anything: it already stands as a negative amount in your books, so it has already come off "still to pay". If the refund arrives on your bank statement, we recognise it. Already received back, or netted off by your supplier? Then close it with "Netted off or received back?" below.',
+    nl: 'Dit is geld dat jou toekomt: hij staat al met een minbedrag in je boeken, dus er is niets te betalen. Komt de terugstorting op je bank, dan herkennen we die. Al terugontvangen of verrekend? Sluit hem af met "Verrekend of terugontvangen?" hieronder.',
+    ar: 'هذا مال مستحق لك: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، فلا شيء لتدفعه. حين يصل المبلغ المُعاد إلى بنكك سنتعرّف عليه. استلمته أو خُصم بالفعل؟ أغلقه بـ «تمت المقاصّة أو استرددته؟» أدناه.',
+    en: 'This is money owed to you: it already stands as a negative amount in your books, so there is nothing to pay. When the refund reaches your bank we will recognise it. Already received or offset? Close it with "Netted off or received back?" below.',
   },
   'ink.creditnotaUitleg': {
     nl: 'Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt',
@@ -6185,9 +6180,9 @@ export const MESSAGES = {
   // volgende sync alsnog opgehaald. De zin moet dat zeggen, want een ondernemer die hem letterlijk
   // leest gaat 29 dagafsluitingen met de hand uploaden die vanzelf binnenkomen.
   'ink.email.echteFactuur': {
-    nl: 'Staat hier een échte factuur tussen? Die bijlage halen wij niet nog een keer op — behalve als het een bestandstype is dat wij inmiddels wél kunnen openen, zoals een .zip; die pikken we vanzelf weer op. Voor de rest: open de e-mail van die datum en voeg de factuur zelf toe — uploaden of met een foto.',
-    ar: 'هل بين هذه فاتورة حقيقية؟ نحن لا نجلب ذلك المرفق مرة أخرى — إلا إن كان نوع ملف صرنا نستطيع فتحه، مثل ملف ‎.zip؛ فذلك نلتقطه من تلقاء نفسه. أما البقية: افتح رسالة ذلك التاريخ وأضف الفاتورة بنفسك — رفعاً أو بصورة.',
-    en: 'Is there a real invoice among these? We do not fetch that attachment again — unless it is a file type we can open by now, such as a .zip; those we pick up on our own. Otherwise: open the e-mail of that date and add the invoice yourself — upload it or take a photo.',
+    nl: 'Staat hier een échte factuur tussen? Die halen wij niet opnieuw op — behalve als het een bestandstype is dat wij inmiddels wél kunnen openen, zoals een .zip. Open anders de e-mail van die datum en voeg de factuur zelf toe.',
+    ar: 'هل بين هذه فاتورة حقيقية؟ لا نجلبها من جديد — إلا إن كانت من نوع ملفات صرنا نستطيع فتحه، كملف .zip. وإلا فافتح البريد بذلك التاريخ وأضف الفاتورة بنفسك.',
+    en: 'Is there a real invoice among these? We do not fetch it again — unless it is a file type we can open by now, such as a .zip. Otherwise open the e-mail of that date and add the invoice yourself.',
   },
   'ink.email.nietTussen': {
     nl: 'Gebruik dan “Oudere e-mails opnieuw ophalen” hierboven.',
@@ -7024,9 +7019,9 @@ export const MESSAGES = {
     en: 'No, this is one invoice',
   },
   'ink.multi.uitleg': {
-    nl: 'We konden niet uitsluiten dat er meer facturen in dit bestand zitten. Zeg je dat het er één is, dan halen we die waarschuwing weg en beoordelen we deze factuur verder op zichzelf.\n\nAndere waarschuwingen op deze factuur blijven staan. Zit er tóch een tweede factuur in, voeg die dan los toe — hij staat nu nergens in je boekhouding.',
-    ar: 'لم نستطع استبعاد وجود أكثر من فاتورة في هذا الملف. إن قلت إنها واحدة، نزيل ذلك التحذير ونقيّم هذه الفاتورة بذاتها.\n\nالتحذيرات الأخرى على هذه الفاتورة تبقى. وإن كانت فيه فاتورة ثانية فعلاً، أضفها منفصلة — فهي غير موجودة في دفاترك الآن.',
-    en: 'We could not rule out that this file holds more invoices. If you say it is one, we remove that warning and judge this invoice on its own.\n\nOther warnings on this invoice remain. If there is a second invoice in it after all, add it separately — it is nowhere in your books right now.',
+    nl: 'We konden niet uitsluiten dat er meer facturen in dit bestand zitten. Zeg je dat het er één is, dan vervalt die waarschuwing. Zit er tóch een tweede in, voeg die dan los toe — hij staat nu nergens in je boekhouding.',
+    ar: 'لم نستطع استبعاد وجود أكثر من فاتورة في هذا الملف. إن قلت إنها واحدة، يزول ذلك التحذير. وإن كانت فيه فاتورة ثانية فعلاً، أضفها على حدة — فهي الآن غير موجودة في دفاترك.',
+    en: 'We could not rule out that this file holds more invoices. If you say it is one, that warning goes. If there is a second one after all, add it separately — right now it is nowhere in your books.',
   },
   'ink.multi.vraag': {
     nl: 'Bevat dit bestand één factuur?',
@@ -8119,9 +8114,9 @@ export const MESSAGES = {
     en: 'Let your accountant confirm your purchase invoices?',
   },
   'inst.mandaatBevestigenUitleg': {
-    nl: '{name} mag dan je inkoopfacturen controleren en boeken, zodat je kwartaal kan sluiten zonder dat jij ze stuk voor stuk nakijkt. Hij kan geen bedragen wijzigen — alleen bevestigen wat er staat. Bij elke bevestiging komt zijn naam te staan, je krijgt er bericht van, en je blijft er zelf verantwoordelijk voor.',
-    ar: 'سيتمكن {name} حينها من مراجعة فواتير مشترياتك وقيدها، ليُغلق ربع سنتك دون أن تراجعها واحدة واحدة. لا يمكنه تغيير المبالغ — فقط تأكيد ما هو مكتوب. يُسجَّل اسمه مع كل تأكيد، وتصلك رسالة بذلك، وتبقى أنت المسؤول بنفسك.',
-    en: '{name} may then check and book your purchase invoices, so your quarter can close without you reviewing them one by one. He cannot change amounts — only confirm what is there. His name is recorded with every confirmation, you are notified of it, and you remain responsible yourself.',
+    nl: '{name} mag dan je inkoopfacturen controleren en boeken. Hij kan geen bedragen wijzigen, alleen bevestigen wat er staat. Bij elke bevestiging staat zijn naam en krijg je bericht; je blijft zelf verantwoordelijk.',
+    ar: 'سيتمكن {name} حينها من مراجعة فواتير مشترياتك وقيدها. لا يستطيع تغيير المبالغ، فقط تأكيد ما هو مكتوب. مع كل تأكيد يُسجَّل اسمه وتصلك رسالة؛ وتبقى المسؤولية عليك.',
+    en: '{name} may then check and book your purchase invoices. They cannot change amounts, only confirm what is there. Every confirmation carries their name and you are notified; you remain responsible.',
   },
   'inst.mandaatFacturenTitel': {
     nl: 'Je boekhouder laten factureren?',
@@ -8239,9 +8234,9 @@ export const MESSAGES = {
     en: 'E.g. Vrijgesteld van btw op grond van artikel 11-1-o Wet OB (onderwijs).',
   },
   'inst.toelichtingUitleg': {
-    nl: 'Deze zin komt onder het totaal te staan op elke factuur waar geen BTW op zit. Zonder toelichting ziet je klant een factuur zonder BTW en niets dat uitlegt waarom — zijn boekhouder kan hem dan niet plaatsen. Vul de grond in die voor jouw werk geldt, bijvoorbeeld:',
-    ar: 'تظهر هذه الجملة تحت المجموع في كل فاتورة لا تحمل btw. من دون توضيح يرى عميلك فاتورة بلا btw ولا شيء يشرح السبب — فلا يستطيع محاسبه قيدها. أدخل الأساس الذي ينطبق على عملك، مثلاً:',
-    en: 'This sentence appears under the total on every invoice that carries no BTW. Without a note your client sees an invoice without BTW and nothing explaining why — their accountant then cannot book it. Enter the ground that applies to your work, for example:',
+    nl: 'Deze zin komt onder het totaal op elke factuur zonder BTW, zodat de boekhouder van je klant weet waarom er geen BTW op staat. Bijvoorbeeld:',
+    ar: 'تظهر هذه الجملة تحت المجموع في كل فاتورة بلا btw، ليعرف محاسب عميلك لماذا لا توجد ضريبة. مثلاً:',
+    en: 'This sentence appears under the total on every invoice without BTW, so your client’s accountant knows why there is none. For example:',
   },
   'inst.uitnodigen': {
     nl: 'Uitnodigen',
@@ -8284,9 +8279,9 @@ export const MESSAGES = {
     en: 'Your next invoice will be:',
   },
   'inst.vrijgesteldUitleg': {
-    nl: 'Voor werk dat is vrijgesteld van BTW (art. 11) — zoals zorg, onderwijs of verzekeringsbemiddeling. Je kunt dan per factuurregel "Vrijgesteld" kiezen. Let op: vrijgesteld is NIET hetzelfde als 0%. Bij 0% mag je de BTW op je inkopen gewoon terugvragen, bij een vrijstelling niet — heb je beide soorten omzet, dan wordt de BTW op kosten die allebei dienen naar verhouding afgetrokken.',
-    ar: 'للعمل المُعفى من الضريبة (المادة 11) — كالرعاية أو التعليم أو وساطة التأمين. يمكنك حينها اختيار "Vrijgesteld" (مُعفى) لكل بند فاتورة. انتبه: المُعفى ليس مثل 0%. عند 0% يحق لك استرداد الضريبة على مشترياتك، أما مع الإعفاء فلا — وإذا كان لديك النوعان من الإيراد، تُخصم الضريبة على التكاليف المشتركة بالتناسب.',
-    en: 'For work that is exempt from BTW (art. 11) — such as care, education or insurance mediation. You can then choose "Vrijgesteld" per invoice line. Note: exempt is NOT the same as 0%. At 0% you can simply reclaim the BTW on your purchases; with an exemption you cannot — if you have both kinds of turnover, the BTW on costs serving both is deducted proportionally.',
+    nl: 'Voor werk dat is vrijgesteld van BTW (art. 11), zoals zorg of onderwijs. Je kiest dan per factuurregel "Vrijgesteld". Vrijgesteld is niet 0%: de BTW op inkopen voor vrijgesteld werk vraag je niet terug.',
+    ar: 'للعمل المُعفى من الضريبة (المادة 11) كالرعاية أو التعليم. تختار حينها «Vrijgesteld» لكل سطر فاتورة. المُعفى ليس 0٪: ضريبة المشتريات للعمل المُعفى لا تُستردّ.',
+    en: 'For work exempt from BTW (art. 11), such as care or education. You then choose "Vrijgesteld" per invoice line. Exempt is not 0%: the BTW on purchases for exempt work is not reclaimed.',
   },
   'inst.vulEmail': {
     nl: 'Vul een e-mailadres in',
@@ -12814,9 +12809,9 @@ export const MESSAGES = {
   'bev.apparaten.titel': { nl: 'Andere apparaten', en: 'Other devices', ar: 'الأجهزة الأخرى' },
   // De eerlijke helft staat in de zin zelf: wat we NIET kunnen tonen, staat er vóór wat we wel kunnen.
   'bev.apparaten.uitleg': {
-    nl: 'We kunnen je niet laten zien op welke apparaten je bent ingelogd — die lijst geeft de inlogdienst niet vrij, en een lijst die we zelf zouden verzinnen klopt juist niet in het geval waarvoor je hem nodig hebt. Wat we wél kunnen: alle andere sessies in één keer uitloggen. Vermoed je dat iemand je wachtwoord heeft, doe dan dit én zet verificatie in twee stappen aan.',
-    en: 'We cannot show you which devices you are signed in on — the auth service does not hand that list out, and a list we made up ourselves would be wrong in exactly the case you need it for. What we can do: sign every other session out at once. If you suspect someone has your password, do this and switch on two-step verification.',
-    ar: 'لا نستطيع أن نُريك على أي الأجهزة أنت مسجَّل الدخول — خدمة الدخول لا تُتيح تلك القائمة، وقائمة نختلقها نحن ستكون خاطئة تحديداً في الحالة التي تحتاجها من أجلها. ما نستطيعه: إنهاء كل الجلسات الأخرى دفعة واحدة. إن كنت تشك أن أحداً يملك كلمة مرورك، فافعل هذا وفعِّل التحقق بخطوتين.',
+    nl: 'Een lijst van je apparaten kunnen we niet tonen. Wel kun je alle andere sessies in één keer uitloggen — doe dat als je vermoedt dat iemand je wachtwoord heeft, en zet verificatie in twee stappen aan.',
+    en: 'We cannot show a list of your devices. What you can do is sign out every other session at once — do that if you suspect someone has your password, and turn on two-step verification.',
+    ar: 'لا نستطيع عرض قائمة أجهزتك. لكن يمكنك إنهاء كل الجلسات الأخرى دفعة واحدة — افعل ذلك إن شككت أن أحداً يعرف كلمة سرّك، وفعّل التحقق بخطوتين.',
   },
   'bev.apparaten.knop': { nl: 'Log alle andere apparaten uit', en: 'Sign out every other device', ar: 'إنهاء الجلسات على كل الأجهزة الأخرى' },
   'bev.apparaten.gelukt': {
