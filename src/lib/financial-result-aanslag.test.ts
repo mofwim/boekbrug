@@ -1,6 +1,7 @@
 // [AANSLAG] Run: npx tsx --test src/lib/financial-result-aanslag.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { computeResult, type ResultInvoice } from "./financial-result";
 import { buildSettlementEvents } from "./kas-payment-events";
 
@@ -76,7 +77,7 @@ test("[AANSLAG] under kasstelsel the map reaches a letter dated in an EARLIER wi
   // The range assembler used to build the map from the invoices dated in the window only; a
   // voorlopige aanslag dated 20 March and paid 5 April reached Q2 as a cost. The map now comes
   // from the settlement fetch (every settled purchase, no date filter) and is merged in.
-  const { code } = { code: (p: string) => require("node:fs").readFileSync(p, "utf8") };
+  const code = (p: string) => readFileSync(p, "utf8");
   const fetchSrc = code("src/lib/kas-payment-events-fetch.ts");
   assert.match(fetchSrc, /marked_paid_at, status, tax_kind, client_name"\)/, "the settlement fetch reads the kind and the name");
   assert.match(fetchSrc, /if \(i\.receiver_id === ownerId\) \{ const k = effectiveTaxKind\(i\); if \(k\) taxKindByInvoice\.set\(i\.id, k\); \}/);
