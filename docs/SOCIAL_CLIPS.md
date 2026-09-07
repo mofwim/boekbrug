@@ -165,6 +165,43 @@ toevoegt: de opname slaagt en filmt het verkeerde vakje, met een bijschrift dat 
 Dat is precies het soort fout dat je pas ziet als de clip al gepost is, dus faalt de opname nu in
 plaats daarvan.
 
+## De formule, en waar wij ervan afweken
+
+Opgezocht in september 2026 in plaats van bedacht. Wat elke bron zegt, en wat dat hier veranderde.
+
+| Regel | Bron is eensgezind over | Wat wij deden |
+| --- | --- | --- |
+| **Pijn vóór functie** | open bij het probleem van de kijker, niet bij het product | clip 10 en 11 openen bij een functie ("elk veld uitgelegd"). **Fout.** Clip 12 opent bij "kost je een half uur, en dan klopt de btw nóg niet" |
+| **De eerste 3 seconden** | 2–3 s beslist; gemiddelde kijktijd ligt rond 1,5 s | onze hook stond pas op 1,4 s in beeld — de hele gemiddelde kijktijd was een stilstaande paginakop. Staat er nu op 0,4 s |
+| **Onder de 60 s** | betrokkenheid zakt scherp voorbij een minuut; <60 s haalt ±52% | clip 11 duurt 65 s. Clip 12 doet hetzelfde in 53 |
+| **Ondertitels ingebrand** | autoplay staat stil; 4–7 woorden, hoog contrast | deden we al — dit is het enige punt waarop we vooropliepen |
+| **Het échte product** | Notion en Figma landen omdat je het gereedschap écht ziet werken | doen we al: gegenereerd uit de draaiende app, geen namaak |
+| **Eén boodschap** | één ding per film | clip 11 legt vijf blokken uit; clip 12 legt uit dat het rekenen vanzelf gaat |
+| **Bewijs aan het eind** | sluit met het resultaat, niet met nóg een functie | clip 12 eindigt op het tarief dat verandert en de bedragen die meelopen |
+
+En drie dingen uit het ambacht van schermopnames die hier ontbraken:
+
+- **Een muisaanwijzer.** Playwright neemt er geen op. Al onze clips lieten dus dingen *vanzelf*
+  gebeuren: velden lichtten op, een keuzelijst versprong, zonder dat te zien was dat iemand klikte.
+  Er wordt er nu één getekend, met een rimpel bij elke klik — hetzelfde wat Screen Studio en
+  soortgelijk gereedschap doet, en om dezelfde reden: een handeling moet gemótiveerd lijken.
+- **Zoomen op het veld dat wordt genoemd**, met `cubic-bezier(.22,.61,.36,1)` — snel beginnen,
+  zacht uitlopen. Een lineaire zoom voelt mechanisch. Een blok uitlichten zegt "hier ergens";
+  inzoomen zegt "dit".
+- **Telefoonbreedte.** 540 CSS-pixels is geen telefoon: een iPhone is er 390 tot 430 breed. Op 540
+  opnemen en naar 1080 schalen levert een beeld dat een kwart kleiner oogt dan wat een échte
+  telefoon van dezelfde pagina toont — precies op de cijfers. Clip 12 neemt op 432×768 op, exact
+  1080×1920 gedeeld door 2,5.
+
+**Wat we NIET hebben overgenomen.** De bronnen raden een voice-over aan (Stripe leunt erop). Dat
+blijft hier staan zoals het stond: de meeste mensen kijken zonder geluid, en een synthetische stem
+op een boekhoudapp kost meer vertrouwen dan hij aan begrip oplevert. Een echte Nederlandse stem is
+een aanvulling voor later, geen drager.
+
+**Clip 11 blijft staan naast 12, en dat is opzet.** 11 legt élk veld uit voor iemand die het gaat
+doen; 12 is de wervende versie van hetzelfde pad. De formule hierboven gaat over werving. Een
+handleiding mag langer, trager en saaier zijn — die wordt gezocht, niet voorgeschoteld.
+
 ## Waar te posten
 
 - **LinkedIn** is voor dit publiek waarschijnlijk het sterkst: Nederlandse zzp'ers én de boekhouders

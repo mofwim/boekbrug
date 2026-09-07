@@ -62,6 +62,22 @@ const VIEW = { width: 540, height: 960 };
 const VIDEO = { width: 540, height: 960 };
 const OUT_SIZE = { width: 1080, height: 1920 };
 
+/**
+ * [TELEFOONBREEDTE] 540 CSS-pixels is geen telefoon.
+ *
+ * Een iPhone is 390 tot 430 CSS-pixels breed, een Android meestal 360 tot 412. Op 540 opnemen en
+ * naar 1080 schalen levert dus een beeld dat 25% kleiner oogt dan wat een échte telefoon van
+ * dezelfde pagina laat zien — precies op de plek waar het om gaat, de cijfers.
+ *
+ * 432×768 is exact 1080×1920 gedeeld door 2,5. Dat is een gewone telefoonbreedte, alles wordt een
+ * kwart groter in het eindbeeld, en de schaalfactor blijft heel (geen halve pixels op de randen
+ * van letters).
+ *
+ * Per clip instelbaar en niet globaal: de bestaande clips zijn op 540 gekaderd en opnieuw kaderen
+ * is een andere film, geen verbetering die je stilletjes doorvoert.
+ */
+const PHONE = { width: 432, height: 768 };
+
 // ── Merk ──────────────────────────────────────────────────────────────────────
 // Dezelfde kleur en hetzelfde lettertype als de deck-generator en de store-assets, uit
 // dezelfde map. Een clip die een andere blauw gebruikt dan de slide ernaast leest als een andere
@@ -89,6 +105,8 @@ interface Clip {
   path: string;
   /** De hook — staat één seconde vóór er iets beweegt. Dit is wat scrollen stopt. */
   hook: string;
+  /** Afwijkend opnameformaat. Standaard VIEW; PHONE voor een echte telefoonbreedte. */
+  view?: { width: number; height: number };
   /**
    * [UITLEG] Hoe lang deze clip hoogstens mag worden, in seconden. Standaard MAX_LEN_S.
    *
@@ -145,6 +163,30 @@ const CAPTION_CSS = `
   position:relative; z-index:2147483642;
   box-shadow:0 0 0 3px ${BLUE}, 0 0 0 7px rgba(26,115,232,.28); border-radius:9px;
 }
+/* [CURSOR] Playwright neemt GEEN muisaanwijzer op. Elke opname liet dus dingen vanzelf gebeuren:
+   een veld dat oplicht, een keuzelijst die verspringt, zonder dat te zien was dat er iemand klikte.
+   Dit tekent er zelf een, met een rimpel bij elke klik — precies wat schermopnamegereedschap als
+   Screen Studio doet, en om dezelfde reden: een zoom of een klik moet gemotiveerd lijken. */
+#clip-cursor{
+  position:fixed; top:0; left:0; z-index:2147483645; pointer-events:none;
+  width:22px; height:22px; margin:-4px 0 0 -3px; opacity:0;
+  transition:opacity .25s ease;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,.45));
+}
+#clip-cursor.on{opacity:1}
+.clip-ripple{
+  position:fixed; z-index:2147483644; pointer-events:none;
+  width:18px; height:18px; margin:-9px 0 0 -9px; border-radius:50%;
+  border:2px solid ${BLUE}; background:rgba(26,115,232,.22);
+  animation:clipRipple .55s ease-out forwards;
+}
+@keyframes clipRipple{
+  from{transform:scale(.4); opacity:.95}
+  to{transform:scale(3.4); opacity:0}
+}
+/* [ZOOM] Inzoomen op het veld waar het over gaat. ease-out-cubic: snel beginnen, zacht uitlopen —
+   de curve die schermopnamegereedschap gebruikt, omdat een lineaire zoom mechanisch aanvoelt. */
+.clip-focus{transition:box-shadow .3s ease, transform .62s cubic-bezier(.22,.61,.36,1)}
 #clip-badge{
   position:fixed; top:0; left:0; right:0; z-index:2147483646; pointer-events:none;
   padding:14px 18px; box-sizing:border-box; text-align:center;
@@ -156,6 +198,23 @@ async function installCaption(p: Page, badge: string) {
   await p.addStyleTag({ content: CAPTION_CSS });
   await p.evaluate((b) => {
     const dim = document.createElement("div"); dim.id = "clip-dim";
+    // Een echte pijl, geen stip: een stip leest als een aanwijslaser, een pijl als een gebruiker.
+    const cur = document.createElement("div"); cur.id = "clip-cursor";
+    cur.innerHTML = '<svg viewBox="0 0 22 22" width="22" height="22" aria-hidden="true">' +
+      '<path d="M3 2 L3 17.5 L7.2 13.6 L9.9 19.6 L12.7 18.3 L10 12.4 L15.8 12.2 Z" ' +
+      'fill="#fff" stroke="#16223a" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+    document.addEventListener("mousemove", (e) => {
+      cur.classList.add("on");
+      cur.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+    }, true);
+    document.addEventListener("mousedown", (e) => {
+      const r = document.createElement("div");
+      r.className = "clip-ripple";
+      r.style.left = `${e.clientX}px`; r.style.top = `${e.clientY}px`;
+      document.body.appendChild(r);
+      setTimeout(() => r.remove(), 650);
+    }, true);
+    document.body.appendChild(cur);
     const cap = document.createElement("div"); cap.id = "clip-cap";
     const bar = document.createElement("div"); bar.id = "clip-badge"; bar.textContent = b;
     document.body.append(dim, bar, cap);
@@ -230,7 +289,7 @@ async function bringToEyeLine(p: Page, target: ReturnType<Page["locator"]>, frac
   await p.waitForTimeout(120);
   const box = await target.boundingBox();
   if (!box) return;
-  const want = VIEW.height * fraction;
+  const want = (p.viewportSize()?.height ?? VIEW.height) * fraction;
   await p.evaluate((dy) => window.scrollBy(0, dy), Math.round(box.y - want));
   await p.waitForTimeout(260);
 }
@@ -277,7 +336,8 @@ async function centerBlock(p: Page, block: ReturnType<Page["locator"]>) {
   const box = await block.boundingBox();
   if (!box) return;
   const TOP_BAR = 44, CAPTION = 150;
-  const middle = TOP_BAR + (VIEW.height - TOP_BAR - CAPTION) / 2;
+  const h = p.viewportSize()?.height ?? VIEW.height;
+  const middle = TOP_BAR + (h - TOP_BAR - CAPTION) / 2;
   await p.evaluate((dy) => window.scrollBy({ top: dy, behavior: "smooth" }), Math.round(box.y + box.height / 2 - middle));
   await p.waitForTimeout(520); // de smooth scroll uitlopen — een sprong leest als een montagefout
 }
@@ -286,7 +346,10 @@ async function centerBlock(p: Page, block: ReturnType<Page["locator"]>) {
 async function focusBlock(p: Page, block: ReturnType<Page["locator"]>) {
   await centerBlock(p, block);
   await p.evaluate(() => {
-    document.querySelectorAll(".clip-focus").forEach((e) => e.classList.remove("clip-focus"));
+    document.querySelectorAll(".clip-focus").forEach((e) => {
+      (e as HTMLElement).style.transform = ""; // een blok dat nog ingezoomd staat, blijft dat anders
+      e.classList.remove("clip-focus");
+    });
     document.getElementById("clip-dim")?.classList.add("on");
   });
   await block.evaluate((el) => el.classList.add("clip-focus"));
@@ -296,10 +359,53 @@ async function focusBlock(p: Page, block: ReturnType<Page["locator"]>) {
 /** De waas weg — voor het moment waarop de kijker het geheel weer moet zien. */
 async function unfocus(p: Page) {
   await p.evaluate(() => {
-    document.querySelectorAll(".clip-focus, .clip-point").forEach((e) => e.classList.remove("clip-focus", "clip-point"));
+    document.querySelectorAll(".clip-focus, .clip-point").forEach((e) => {
+      (e as HTMLElement).style.transform = "";
+      e.classList.remove("clip-focus", "clip-point");
+    });
     document.getElementById("clip-dim")?.classList.remove("on");
   });
   await p.waitForTimeout(380);
+}
+
+/**
+ * De muis er echt naartoe bewegen, zodat de getekende cursor meereist.
+ *
+ * Playwright klikt standaard door de muis in één sprong te verplaatsen. Op een opname leest dat als
+ * teleporteren; `steps` maakt er een beweging van. De klik zelf tekent zijn eigen rimpel.
+ */
+async function moveTo(p: Page, target: ReturnType<Page["locator"]>) {
+  const box = await target.boundingBox();
+  if (!box) return;
+  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 18 });
+  await p.waitForTimeout(180);
+}
+
+/**
+ * [ZOOM] Inzoomen op één veld binnen het uitgelichte blok.
+ *
+ * Niet op de pagina — dat zou de layout opnieuw laten berekenen en de mobiele breakpoints kunnen
+ * omzetten. Alleen het blok wordt geschaald, met de oorsprong op het veld, zodat dat veld op zijn
+ * plek blijft en de rest eromheen wegloopt. Dat is wat een zoom in een schermopname doet.
+ */
+async function zoomOn(p: Page, block: ReturnType<Page["locator"]>, field: ReturnType<Page["locator"]>, scale = 1.35) {
+  const b = await block.boundingBox();
+  const f = await field.boundingBox();
+  if (!b || !f) return;
+  const ox = ((f.x + f.width / 2 - b.x) / b.width) * 100;
+  const oy = ((f.y + f.height / 2 - b.y) / b.height) * 100;
+  await block.evaluate((el, v) => {
+    const s = el as HTMLElement;
+    s.style.transformOrigin = `${v.ox}% ${v.oy}%`;
+    s.style.transform = `scale(${v.scale})`;
+  }, { ox, oy, scale });
+  await p.waitForTimeout(680);
+}
+
+/** Uitzoomen naar het hele blok. */
+async function zoomOut(p: Page, block: ReturnType<Page["locator"]>) {
+  await block.evaluate((el) => { (el as HTMLElement).style.transform = ""; });
+  await p.waitForTimeout(680);
 }
 
 /** Eén veld aanwijzen binnen het uitgelichte blok, en het daarna weer loslaten. */
@@ -312,6 +418,7 @@ async function pointAt(p: Page, field: ReturnType<Page["locator"]>, ms: number) 
 
 /** Typen in een veld dat al is aangewezen — zonder scrollen, want het blok staat al goed. */
 async function fill(p: Page, field: ReturnType<Page["locator"]>, value: string, perChar = 38) {
+  await moveTo(p, field);
   await field.click();
   await field.fill("");
   await field.type(value, { delay: perChar });
@@ -558,6 +665,93 @@ const CLIPS: Clip[] = [
       await say({ text: "Gratis, zonder account.<br><b>boekbrug.nl/factuur-maken</b>", ms: 2800, hold: true });
     },
   },
+  // ── [FORMULE] Dezelfde rondleiding, gebouwd op wat de vakliteratuur er wél over zegt. ──
+  //
+  // Clip 11 is een goede rondleiding en overtreedt drie regels waar elke bron het over eens is.
+  // Deze is dezelfde inhoud, opnieuw gemonteerd volgens die regels — zodat de twee naast elkaar te
+  // vergelijken zijn in plaats van dat er één wordt vervangen.
+  //
+  //   1. PIJN VOOR FUNCTIE. "Een factuur maken — elk veld uitgelegd" is een functie. Elke bron zegt
+  //      hetzelfde: open bij het probleem van de kijker, niet bij het product. De eerste drie
+  //      seconden beslissen, en ze beslissen op "gaat dit over mij?" — niet op "wat is dit?".
+  //   2. ONDER DE MINUUT. Betrokkenheid zakt scherp voorbij de zestig seconden; clip 11 duurt 65.
+  //      Dezelfde inhoud past in vijftig als de uitleg de handeling niet dubbelop vertelt.
+  //   3. BEWIJS AAN HET EIND. Niet nóg een functie, maar het resultaat dat de belofte waarmaakt:
+  //      het tarief verandert en de bedragen lopen mee. Dat is de "proof"-beat.
+  //
+  // En drie dingen uit het ambacht van schermopnames die hier ontbraken:
+  //
+  //   · een MUISAANWIJZER. Playwright neemt er geen op, dus gebeurde alles vanzelf: velden lichtten
+  //     op zonder dat iemand ze aanraakte. Er wordt er nu één getekend, met een rimpel bij de klik.
+  //   · ZOOMEN op het veld dat wordt genoemd, met een ease-out-curve. Een blok uitlichten zegt
+  //     "hier ergens"; inzoomen zegt "dit".
+  //   · TELEFOONBREEDTE. 540 CSS-pixels is geen telefoon (390–430 is het). Op 432 opnemen maakt
+  //     alles een kwart groter in hetzelfde eindbeeld — op de cijfers, waar het om gaat.
+  {
+    name: "12-factuur-formule",
+    path: "/factuur-maken",
+    view: PHONE,
+    maxLen: 90,
+    // De pijn, niet de functie. Dit is de zin die bepaalt of er verder gekeken wordt.
+    hook: "Een factuur maken kost je<br>een half uur. En dan klopt<br>de btw nóg niet.",
+    run: async (p, say, step) => {
+      const mij = section(p, "Jouw gegevens (afzender)");
+      const klant = section(p, "Klant (ontvanger)");
+      const regels = section(p, "Regels");
+      await expectFields(mij, 9, "Jouw gegevens (afzender)");
+      await expectFields(klant, 6, "Klant (ontvanger)");
+      await expectFields(regels, 5, "Regels");
+
+      // ── De belofte, meteen na de pijn. Eén zin, dan bewegen. ──
+      await say({ text: "Dit duurt één minuut,<br>en de btw rekent zichzelf.", ms: 2400 });
+
+      // ── Jij ──
+      await step("1 · Wie stuurt de factuur");
+      await focusBlock(p, mij);
+      await say({ text: "Je eigen gegevens,<br>één keer.", ms: 2000 });
+      await fill(p, fieldIn(mij, 0), "Van Dijk Ontwerp", 34);
+      await fill(p, fieldIn(mij, 2), "Havenstraat 14", 34);
+      await fill(p, fieldIn(mij, 4), "Tilburg", 40);
+      await say({ text: "<b>KVK</b> en <b>btw-nummer</b>:<br>wettelijk verplicht.", ms: 2300 });
+      await zoomOn(p, mij, fieldIn(mij, 6), 1.4);
+      await fill(p, fieldIn(mij, 6), "NL003829471B72", 30);
+      await zoomOut(p, mij);
+
+      // ── Je klant ──
+      await step("2 · Wie hem ontvangt");
+      await focusBlock(p, klant);
+      await say({ text: "Je klant: naam,<br>adres en plaats.", ms: 2200 });
+      await fill(p, fieldIn(klant, 0), "Bakkerij De Korenbloem", 32);
+      await fill(p, fieldIn(klant, 2), "Kerkstraat 7", 34);
+      await fill(p, fieldIn(klant, 4), "Breda", 40);
+
+      // ── Wat je levert ──
+      await step("3 · Wat je hebt geleverd");
+      await focusBlock(p, regels);
+      await say({ text: "Wat je deed,<br>hoeveel, en waarvoor.", ms: 2200 });
+      await fill(p, fieldIn(regels, 1), "Ontwerp huisstijl", 34);
+      await zoomOn(p, regels, fieldIn(regels, 2), 1.45);
+      await fill(p, fieldIn(regels, 2), "3", 160);
+      await fill(p, fieldIn(regels, 3), "450", 110);
+      await say({ text: "3 uur × € 450", ms: 1800 });
+      await zoomOut(p, regels);
+
+      // ── Het bewijs: de belofte uit de hook, waargemaakt ──
+      await step("Het rekent zichzelf");
+      await say({ text: "En de btw?", ms: 1600 });
+      await zoomOn(p, regels, fieldIn(regels, 4), 1.5);
+      await moveTo(p, fieldIn(regels, 4));
+      await say({ text: "21% erop:<br><b>€ 1.633,50</b>", ms: 2400 });
+      await fieldIn(regels, 4).selectOption("9");
+      await p.waitForTimeout(900);
+      await say({ text: "9%? <b>€ 1.471,50</b><br>Direct opnieuw geteld.", ms: 2600 });
+      await zoomOut(p, regels);
+      await unfocus(p);
+      await bringToEyeLine(p, p.getByText("Totaal incl. BTW").first(), 0.55);
+      await say({ text: "Nooit meer zelf<br>btw uitrekenen.", ms: 2400 });
+      await say({ text: "Gratis, zonder account.<br><b>boekbrug.nl/factuur-maken</b>", ms: 2800, hold: true });
+    },
+  },
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -758,15 +952,18 @@ for (const clip of SELECTED) {
   if (clip.auth && !sessionOk) { console.log(`[CLIPS] … ${clip.name} overgeslagen (geen sessie)`); continue; }
   const tmp = path.join(OUT, `.raw-${clip.name}`);
   rmSync(tmp, { recursive: true, force: true });
+  const view = clip.view ?? VIEW;
   const ctx = await browser.newContext({
-    viewport: VIEW,
+    viewport: view,
     deviceScaleFactor: 2,
-    recordVideo: { dir: tmp, size: VIDEO },
+    recordVideo: { dir: tmp, size: view },
     ...(clip.auth && storage ? { storageState: JSON.parse(storage) } : {}),
   });
   const page = await ctx.newPage();
   await page.goto(BASE + clip.path, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(900);
+  // Kort, niet 900 ms: dit venster is alleen bedoeld om een server-redirect te laten gebeuren,
+  // en elke milliseconde erna is beeld waar niets op staat. Zie de hook hieronder.
+  await page.waitForTimeout(350);
   // Elk /dashboard-scherm bepaalt de sessie op de SERVER (dashboard/layout.tsx en de pagina zelf),
   // dus een sessie die daar niet aankomt stuurt je naar /login vóór er één byte HTML is. Zonder
   // deze controle levert dat een keurige clip op van het inlogscherm — het soort fout dat je pas
@@ -783,8 +980,17 @@ for (const clip of SELECTED) {
   const say = sayer(page);
   // De hook staat stil vóór er iets beweegt: dat is de anderhalve seconde waarin iemand besluit
   // door te scrollen of niet.
+  //
+  // [EERSTE FRAME] En hij staat er METEEN. Dit stond hier achter 900 ms bezinktijd, en op de
+  // opname was dat te zien: anderhalve seconde stilstaande paginakop vóór de eerste letter. Elke
+  // bron over verticale video zegt hetzelfde over die anderhalve seconde — dat is de gemiddelde
+  // kijktijd, niet de aanloop ernaartoe. Het eerste frame is ook het frame dat een platform als
+  // voorbeeld toont, dus een leeg eerste frame is een lege voorvertoning.
+  //
+  // De pagina bezinkt nu ACHTER de hook: die staat toch stil, dus de tijd is gratis.
   // Een uitleg opent trager dan een teaser: er is geen scroll te stoppen, er is iets te begrijpen.
-  await say({ text: clip.hook, ms: clip.maxLen && clip.maxLen > MAX_LEN_S ? 2600 : 1600 });
+  const hookMs = clip.maxLen && clip.maxLen > MAX_LEN_S ? 2600 : 1600;
+  await say({ text: clip.hook, ms: hookMs });
   await clip.run(page, say, stepper(page));
   await page.waitForTimeout(500);
   await ctx.close(); // pas hierna is het bestand geschreven
