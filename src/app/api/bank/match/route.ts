@@ -38,6 +38,7 @@ import { allocatedByTransaction } from "@/lib/bank-line-budget";
 // [SUPPLIER-IBAN] The account a supplier is known to bill from — see supplier-known-iban.ts.
 import { fetchSupplierIbans, withSupplierIbans } from "@/lib/supplier-known-iban";
 import { attachmentsByTransaction } from "@/lib/bank-attachments";
+import { findStornoOrigin, isStornoLine, STORNO_WINDOW_DAYS } from "@/lib/bank-storno";
 
 export async function GET() {
   // 1. Auth — only ever read the authenticated user's own rows.
@@ -68,7 +69,8 @@ export async function GET() {
         .from("bank_transactions")
         // [BANK-COUNTERPART-HISTORY] `category` rides along so the card can say what the owner did
         // with this counterpart before. No extra query: these rows are already read in full.
-        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category")
+        // [STORNO] type_code / mandate_id / creditor_id: the bank's own direct-debit markers.
+        .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, category, type_code, mandate_id, creditor_id")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .order("id", { ascending: true })
@@ -808,6 +810,53 @@ export async function GET() {
       linkedInvoices: [...(idsByTx.get(row.id) ?? [])].map((id) => ({ invoiceId: id, invoiceNumber: linkedNumberById.get(id) ?? null })),
     };
   });
+
+  // [STORNO] A pending CREDIT the bank marks as a direct-debit event is the reversal of a
+  // collection. Find the one matched debit it undoes — same cents, same party, at most 45 days
+  // earlier — and put it on the card, so the owner can reopen the invoice with one tap instead of
+  // reading "Geen factuur" over a payment that was taken back.
+  {
+    type StornoRow = BankTransactionDbRow & { type_code?: string | null; mandate_id?: string | null; creditor_id?: string | null };
+    const stornos = ((txRows ?? []) as StornoRow[]).filter((r) => isStornoLine({
+      id: r.id, amount: r.amount, date: r.date, counterpartIban: r.counterpart_iban, counterpartName: r.counterpart_name,
+      description: r.description, reference: r.reference, typeCode: r.type_code, mandateId: r.mandate_id, creditorId: r.creditor_id,
+    }));
+    if (stornos.length > 0) {
+      const amounts = [...new Set(stornos.map((r) => -Math.abs(Number(r.amount) || 0)))];
+      const oldest = stornos.reduce<string>((m, r) => (r.date && r.date < m ? r.date : m), stornos[0].date ?? "9999-12-31");
+      const since = new Date(Date.parse(`${oldest}T00:00:00Z`) - STORNO_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+      // [IN-CHUNK] Chunked + paged like every id-keyed read here; the amounts list is the key.
+      const origins = await fetchAllRowsForIds<{ id: string; date: string | null; amount: number | null; counterpart_name: string | null; counterpart_iban: string | null; status: string | null; invoice_id: string | null }, number>(
+        amounts,
+        (chunk, from, to) =>
+          pipeline
+            .from("bank_transactions")
+            .select("id, date, amount, counterpart_name, counterpart_iban, status, invoice_id")
+            .eq("user_id", user.id).eq("status", "matched").in("amount", chunk).gte("date", since)
+            .order("id", { ascending: true }).range(from, to),
+      ).catch(() => []);
+      const pool = origins.map((o) => ({ id: o.id, amount: o.amount, date: o.date, counterpartIban: o.counterpart_iban, counterpartName: o.counterpart_name, status: o.status, invoiceId: o.invoice_id }));
+      const pairs = new Map<string, { originTxId: string; originDate: string | null; invoiceId: string }>();
+      for (const r of stornos) {
+        const hit = findStornoOrigin({
+          id: r.id, amount: r.amount, date: r.date, counterpartIban: r.counterpart_iban, counterpartName: r.counterpart_name,
+          description: r.description, reference: r.reference, typeCode: r.type_code, mandateId: r.mandate_id, creditorId: r.creditor_id,
+        }, pool);
+        if (hit && hit.invoiceId) pairs.set(r.id, { originTxId: hit.id, originDate: hit.date, invoiceId: hit.invoiceId });
+      }
+      if (pairs.size > 0) {
+        const invs = await fetchAllRowsForIds<{ id: string; invoice_number: string | null }, string>(
+          [...new Set([...pairs.values()].map((p) => p.invoiceId))],
+          (chunk, from, to) => pipeline.from("invoices").select("id, invoice_number").in("id", chunk).order("id", { ascending: true }).range(from, to),
+        ).catch(() => []);
+        const numberOf = new Map(invs.map((i) => [i.id, i.invoice_number]));
+        for (const s of suggestions) {
+          const p = (s as { transactionId: string | null }).transactionId ? pairs.get((s as { transactionId: string }).transactionId) : undefined;
+          if (p) (s as { storno?: unknown }).storno = { ...p, invoiceNumber: numberOf.get(p.invoiceId) ?? null };
+        }
+      }
+    }
+  }
 
   // [BIJLAGE-BIJ-REGEL] The files kept with each line, on every card the screen shows.
   const allSuggestions = [...suggestions, ...linkedSuggestions];

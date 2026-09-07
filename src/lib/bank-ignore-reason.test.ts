@@ -18,7 +18,8 @@ console.log("\n— the vocabulary the database will actually accept —");
   // The CHECK constraint in bank_ignore_reason.sql is the real gatekeeper. If this list and that
   // constraint ever disagree, the owner taps a reason and gets a 500 instead of an ignored line —
   // so read the migration and compare, rather than trusting that both were edited together.
-  const sql = readFileSync("supabase/migrations/bank_ignore_reason.sql", "utf8");
+  // [STORNO] bank_ignore_reason_storno.sql rewrites the constraint — the newest definition is the one in force.
+  const sql = readFileSync("supabase/migrations/bank_ignore_reason_storno.sql", "utf8");
   const inCheck = [...sql.matchAll(/^\s*'([a-z_]+)',?\s*(?:--.*)?$/gm)].map((m) => m[1]);
   const missing = BANK_IGNORE_REASONS.filter((r) => !inCheck.includes(r));
   const extra = inCheck.filter((r) => !(BANK_IGNORE_REASONS as readonly string[]).includes(r));

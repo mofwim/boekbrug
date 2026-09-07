@@ -58,10 +58,15 @@ invoice twice in a batch de-duplicated; credits applied first in Verdelen; partl
 never auto-booked; rematch never overwrites a human link; deleting a linked invoice refused;
 reversals by link id with a recompute.
 
+- **A reversed incasso** (`[STORNO]`): a credit the bank marks as a direct-debit event is
+  paired with the one matched debit it undoes (same cents, same party, at most 45 days earlier,
+  exactly one candidate). The card says "terugboeking van de incasso van …, factuur … is dus
+  niet betaald" and one tap unlinks the origin (invoice open again) and sets both lines aside
+  with reason `storno`, out of the books — they net to zero. Through the unlink and ignore doors,
+  never a write of its own; the pairing is re-proved on the server.
+
 ## Still open
 
-- Incasso/storno signals (`type_code`, `mandate_id`) are stored and not yet read by the matcher:
-  a storno credit sits in "Geen factuur" while the original incasso stays matched.
 - No file-less "create an invoice from this line" — attach-invoice reads a file.
 
 ## Gates

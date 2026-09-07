@@ -179,7 +179,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.bank.auto_confirmed",
   "log.bank.auto_confirmed_batch", "log.bank.confirmed_batch", "log.bank.confirmed", "log.bank.partial_payment",
   "log.bank.payment_allocated", "log.bank.overpayment_residue", "log.invoice.partial_payment",
-  "log.bank.unlinked", "log.bank.attachment_added", "log.bank.attachment_removed", "log.bank.line_deleted", "log.bank.match_checked", "log.invoice.document_attached", "log.invoice.document_replaced",
+  "log.bank.unlinked", "log.bank.attachment_added", "log.bank.attachment_removed", "log.bank.line_deleted", "log.bank.storno_applied", "log.bank.match_checked", "log.invoice.document_attached", "log.invoice.document_replaced",
   "log.accountant.invoice_question", "log.bank.ignored", "log.bank.restored",
   "log.bank.rematch_restored", "log.bank.overapplied", "log.bank.overapplied_check_failed", "log.creditnota.created",
   "log.invoice.archived", "log.invoice.restored", "log.invoice.payment_moved",

@@ -201,6 +201,8 @@ interface Suggestion {
   attachments?: BankAttachment[]
   /** [OPEN-FACTUUR] On a linked line: the invoices it paid, so the card can open them. */
   linkedInvoices?: { invoiceId: string; invoiceNumber: string | null }[]
+  /** [STORNO] A reversed incasso: the matched debit this credit undoes. */
+  storno?: { originTxId: string; originDate: string | null; invoiceId: string; invoiceNumber: string | null } | null
   // [AL-GEBOEKT] De factuur die deze betaling NOEMT, wanneer die al is afgeboekt. Geen kandidaat en
   // niet te bevestigen: dit is het antwoord op "waarom klopt er hier niets", en het vervangt de
   // kiezer in plaats van eronder te staan — zie bank-quoted-invoice.ts.
@@ -1384,6 +1386,21 @@ export default function BankClient() {
       else showToast(t('bank.fout.bijlage'))
     } catch {
       showToast(t('bank.fout.algemeen'))
+    }
+  }
+  // [STORNO] One tap: the origin is unlinked (invoice open again), both lines set aside.
+  async function applyStorno(stornoTxId: string, originTxId: string) {
+    setProcessingId(stornoTxId)
+    try {
+      const res = await fetch('/api/bank/storno', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stornoTxId, originTxId }) })
+      const json = await res.json().catch(() => ({}))
+      showToast(res.ok ? t('bank.storno.klaar') : failureText(res.status, json, t('bank.fout.storno')))
+      await runMatch()
+      await loadIgnored()
+    } catch {
+      showToast(t('bank.fout.algemeen'))
+    } finally {
+      setProcessingId(null)
     }
   }
   // [REGEL-WEG] The owner deletes a line no invoice claims. Refused by the server on a linked line.
@@ -2583,6 +2600,7 @@ export default function BankClient() {
                 onUnlink={() => unlink(s.transactionId)}
                 onMove={() => openMove(s.transactionId)}
                 onMatchChecked={() => markMatchChecked(s.transactionId)}
+                onStorno={s.storno ? () => applyStorno(s.transactionId, s.storno!.originTxId) : undefined}
                 bijlagen={
                   <BijlageStrip
                     attachments={s.attachments ?? []}
@@ -2850,9 +2868,11 @@ function Empty({ done }: { done: boolean }) {
 // kaart zijn alleen te bewijzen door hem te RENDEREN met rijen die ze raken — tsc en de build
 // roepen een component nooit aan.
 export function TxCard({
-  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked, bijlagen,
+  s, selectedInvoiceId, processing, isIgnoredTab, confirmedNumbers, batchEligible, batchChecked, onBatchToggle, onSelect, onConfirm, onConfirmSum, onAttach, onIgnore, onRestore, onOpenFile, onCorrect, onReject, onUndoReject, isDoneTab, onUnlink, onMove, onMatchChecked, bijlagen, onStorno,
 }: {
   s: Suggestion
+  /** [STORNO] Present when the server paired this credit with the incasso it reverses. */
+  onStorno?: () => void
   /** [BIJLAGE-BIJ-REGEL] The owner's own controls under the card, built by the screen. */
   bijlagen?: React.ReactNode
   selectedInvoiceId: string | undefined
@@ -3744,6 +3764,20 @@ export function TxCard({
                   het Genegeerd- of Gekoppeld-tabblad: daar is de vraag al beantwoord. En niets
                   wanneer de server niets kon zeggen — een verzonnen uitleg op een geldscherm is
                   erger dan de leegte die de eigenaar al had. */}
+              {/* [STORNO] The credit names the payment it undoes, and the one tap that states the fact. */}
+              {!isIgnoredTab && !isDoneTab && s.storno && onStorno && (
+                <div style={{ padding: '9px 11px', borderRadius: R.md, marginBottom: 10, background: '#FFF8E1', border: '1px solid #FFE082', color: '#8D6E00', fontSize: 12.5, lineHeight: 1.5, textAlign: 'start' }}>
+                  <div>{t('bank.storno.uitleg', { date: fmtInvoiceDate(s.storno.originDate), number: s.storno.invoiceNumber ?? '—' })}</div>
+                  <button
+                    type="button"
+                    onClick={onStorno}
+                    disabled={processing}
+                    style={{ marginTop: 8, padding: '8px 12px', borderRadius: R.full, border: 'none', background: M3.primary, color: '#fff', fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: processing ? 'default' : 'pointer' }}
+                  >
+                    {t('bank.storno.knop')}
+                  </button>
+                </div>
+              )}
               {(() => {
                 if (isIgnoredTab || isDoneTab || s.sumMatch) return null
                 const uitleg = explainWaiting(s.waitReason ?? null, {}, taal)

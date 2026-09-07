@@ -881,6 +881,15 @@ export const MESSAGES = {
   'bank.fout.regelWeg': { nl: 'Verwijderen mislukt.', ar: 'فشل الحذف.', en: 'Deleting failed.' },
   'bank.fout.regelGekoppeld': { nl: 'Deze regel staat (deels) op een factuur — ontkoppel eerst.', ar: 'هذا السطر مرتبط (جزئيًا) بفاتورة — افصله أولًا.', en: 'This line is (partly) on an invoice — unlink it first.' },
   'bank.openFactuur': { nl: 'Open factuur', ar: 'افتح الفاتورة', en: 'Open invoice' },
+  // [STORNO] A reversed incasso: the credit names the payment it undoes.
+  'bank.storno.uitleg': {
+    nl: 'Terugboeking van de incasso van {date}. Factuur {number} is dus niet betaald.',
+    ar: 'استرجاع للخصم المباشر بتاريخ {date}. الفاتورة {number} إذن غير مدفوعة.',
+    en: 'Reversal of the direct debit of {date}. Invoice {number} is therefore not paid.',
+  },
+  'bank.storno.knop': { nl: 'Factuur weer open zetten', ar: 'إعادة فتح الفاتورة', en: 'Reopen the invoice' },
+  'bank.storno.klaar': { nl: 'Factuur staat weer open; beide regels apart gezet.', ar: 'الفاتورة مفتوحة من جديد؛ وُضع السطران جانبًا.', en: 'Invoice open again; both lines set aside.' },
+  'bank.fout.storno': { nl: 'Terugdraaien mislukt.', ar: 'فشل التراجع.', en: 'Reversing failed.' },
   'bank.bijlage.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'bank.genegeerd': { nl: 'Genegeerd', ar: 'مُتجاهَلة', en: 'Ignored' },
   'bank.genegeerdWeg': { nl: 'Genegeerd — staat niet in de actieve lijst.', ar: 'تُجوهلت — ليست في القائمة النشطة.', en: 'Ignored — not in the active list.' },
@@ -12631,6 +12640,7 @@ export const MESSAGES = {
   'log.bank.attachment_added': { nl: 'Bestand bij een bankregel gevoegd', en: 'File attached to a bank line', ar: 'أُرفق ملف بسطر بنكي' },
   'log.bank.attachment_removed': { nl: 'Bestand bij een bankregel verwijderd', en: 'File removed from a bank line', ar: 'أُزيل ملف من سطر بنكي' },
   'log.bank.line_deleted': { nl: 'Bankregel verwijderd', en: 'Bank line deleted', ar: 'حُذف سطر بنكي' },
+  'log.bank.storno_applied': { nl: 'Teruggeboekte incasso verwerkt: factuur weer open, beide regels apart gezet', en: 'Reversed direct debit processed: invoice reopened, both lines set aside', ar: 'عولج خصم مباشر مرتجع: أُعيد فتح الفاتورة ووُضع السطران جانبًا' },
   'log.bank.confirmed_batch': { nl: 'Eén bankbetaling over meerdere facturen verdeeld', en: 'One bank payment split across several invoices', ar: 'وُزّعت دفعة بنكية على عدة فواتير' },
   'log.bank.confirmed': { nl: 'Bankregel aan een factuur gekoppeld', en: 'Bank line matched to an invoice', ar: 'رُبط سطر بنكي بفاتورة' },
   'log.bank.partial_payment': { nl: 'Deelbetaling geboekt', en: 'Partial payment booked', ar: 'قُيّدت دفعة جزئية' },

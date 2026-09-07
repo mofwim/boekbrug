@@ -12806,6 +12806,21 @@ test("[BANK-KOPPELEN] a suggested sum books as ONE batch, and the doors that cou
   assert.match(client, /<BijlageStrip/, "the strip is on every card");
 });
 
+test("[STORNO] a reversed incasso reopens its invoice through the doors that already own the steps", () => {
+  const route = code("src/app/api/bank/storno/route.ts");
+  assert.match(route, /import \{ POST as unlinkLine \} from "@\/app\/api\/bank\/unlink\/route"/, "the origin is unlinked by the unlink door");
+  assert.match(route, /import \{ POST as setAside \} from "@\/app\/api\/bank\/ignore\/route"/, "both lines are set aside by the ignore door");
+  assert.doesNotMatch(route, /from\("invoices"\)\s*\.update|from\("bank_transactions"\)\s*\.update/, "the storno route writes neither invoices nor lines itself");
+  assert.match(route, /const proved = findStornoOrigin\(/, "the pairing is re-proved on the rows as they are NOW");
+  assert.match(route, /reason: "storno"/);
+  assert.match(code("src/lib/bank-ignore-reason.ts"), /case 'storno':\s*return false/, "two lines that net to zero stay out of the books");
+  assert.match(readFileSync("supabase/migrations/bank_ignore_reason_storno.sql", "utf8"), /'storno'/);
+  const match = code("src/app/api/bank/match/route.ts");
+  assert.match(match, /category, type_code, mandate_id, creditor_id"\)/, "the bank's own direct-debit markers are read");
+  assert.match(match, /const hit = findStornoOrigin\(/, "…and the credit is paired on the screen's own route");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /t\('bank\.storno\.uitleg', \{ date:/, "the card names the payment it undoes");
+});
+
 test("[BEVESTIG-DICHT] every RPC a screen calls with the session client is granted to authenticated", () => {
   // The revoke list and the call sites must never disagree again: a function in the revoke list
   // may not be called with the session client anywhere, and confirm_bank_payment — which is —

@@ -85,6 +85,7 @@ export type AuditAction =
   | 'bank.attachment_added'           // ← [BIJLAGE-BIJ-REGEL] owner attached a file to a bank line (no booking)
   | 'bank.attachment_removed'         // ← [BIJLAGE-BIJ-REGEL] owner removed such a file
   | 'bank.line_deleted'               // ← [REGEL-WEG] owner deleted an unlinked bank line; its identity is in old_value
+  | 'bank.storno_applied'             // ← [STORNO] owner confirmed a reversed incasso: origin unlinked, both lines set aside
   // [KAS-AUTO-BOOK] The other answer to the "even controleren" flag. 'bank.unlinked' records the
   // owner rejecting an amount-only booking; this records them ACCEPTING one, which until now left
   // no trace at all — the flag simply stayed up forever. It matters more than it looks: under the
