@@ -1107,13 +1107,47 @@ test("[VOORSTEL] Akkoord goes through the client's own correction door, and noth
   assert.match(decide, /await correctInvoiceAmounts\(doorRequest, \{ params: Promise\.resolve\(\{ id: proposal\.invoice_id \}\) \}\)/);
   assert.match(decide, /requireOwner\(/, "only the owner answers — an accountant cannot accept their own proposal");
   assert.doesNotMatch(decide, /from\('invoices'\)\s*\.update\(/, "the decide route never updates invoices itself");
-  assert.match(decide, /if \(isStale\(proposal\.before, current, proposal\.changes\)\) \{[\s\S]{0,120}await decide\('stale'\)/,
+  assert.match(decide, /const stale = isStale\(proposal\.before, current, proposal\.changes\)[\s\S]{0,2000}if \(stale\) \{[\s\S]{0,120}await closeRow\('stale', false\)/,
     "a proposal on an invoice that moved underneath it lapses instead of applying");
   assert.match(decide, /if \(!doorResponse\.ok\) \{/, "the door's refusal reaches the client, and the proposal stays open");
+  // ONE DECISION. The row is claimed before the door runs, the claim is a compare-and-set, and
+  // every write on the row reads back whether it moved a row. Without this two tabs both ran the
+  // door, and a decline that landed between the door and the close left the invoice corrected
+  // under a row that said "declined".
+  {
+    const claimAt = decide.indexOf(".update({ applying_since: new Date(now).toISOString() })");
+    const doorAt = decide.indexOf("await correctInvoiceAmounts(doorRequest");
+    assert.ok(claimAt > 0 && doorAt > claimAt, "the row is CLAIMED before the door is called");
+    assert.match(decide.slice(claimAt, doorAt), /\.eq\('status', 'open'\)[\s\S]{0,200}\.select\('id'\)[\s\S]{0,400}if \(!claimed \|\| claimed\.length === 0\) return/,
+      "the claim is a compare-and-set on status = open, and a lost claim is a refusal");
+    const updates = decide.match(/from\('invoice_corrections'\)\s*\.update\(/g) ?? [];
+    assert.ok(updates.length >= 2, "at least the claim and the close");
+    // closeRow: the only place that moves status, and it reads back the row count.
+    assert.match(decide, /const closeRow = async[\s\S]{0,800}\.select\('id'\)[\s\S]{0,200}return data && data\.length > 0 \? 'moved' : 'lost'/,
+      "closing the row reports whether it moved a row");
+    assert.doesNotMatch(decide.replace(/const closeRow = async[\s\S]{0,1200}?\n  \}/, ""), /\.update\(\{ status/,
+      "status is written through closeRow only");
+    assert.match(decide, /if \(claimLive\) return NextResponse\.json\(\{ error: BUSY, code: 'busy' \}/, "a decline while a claim is live is refused");
+    assert.match(decide, /const applied = isAlreadyApplied\(proposal\.proposed, current, proposal\.changes\)[\s\S]{0,300}if \(applied\) \{[\s\S]{0,100}closeRow\('accepted', false\)/,
+      "an invoice already carrying the proposal closes the row as accepted, never as stale");
+    assert.match(decide, /if \(proposalEndsOn\(doorJson\.code\)\) \{[\s\S]{0,400}closeRow\('stale', true\)/,
+      "paid / money booked / verwerkt ends the proposal instead of leaving it open forever");
+  }
+  // The door pins the values it read, so nothing — the client's own editor, a second tab — can
+  // slip a newer truth under an accepted proposal between the stale check and the write.
+  const door = code("src/app/api/invoice/[id]/amounts/route.ts");
+  for (const f of ["total_ex_btw", "btw_amount", "total_inc_btw", "invoice_date", "due_date"]) {
+    assert.match(door, new RegExp(`writeQuery = [^\\n]*writeQuery\\.is\\("${f}", null\\) : writeQuery\\.eq\\("${f}", `), `the write pins ${f} as read`);
+  }
+  assert.match(door, /invoice\.invoice_type !== "creditnota" && \(exBtw < -0\.005 \|\| incBtw < -0\.005\)/,
+    "a negative amount on a factuur is refused at the door — that document is a creditnota");
+  // What the client accepts is what is stored: the creditnota sign rule runs when the proposal is
+  // built, and the propose route hands the invoice type in.
+  assert.match(code("src/lib/correction-proposal.ts"), /if \(opts\.invoiceType === "creditnota"\) \{\s*const signed = asCreditAmounts\(/);
 
   const propose = code("src/app/api/accountant/invoice-correction/route.ts");
   assert.doesNotMatch(propose, /from\('invoices'\)\s*\.update\(/, "proposing writes nothing on the invoice");
-  assert.match(propose, /buildProposal\(before, \{/, "the client's door's arithmetic is enforced before the client sees it");
+  assert.match(propose, /buildProposal\(before, \{[\s\S]{0,300}\}, \{ invoiceType: inv\.invoice_type \}\)/, "the client's door's arithmetic and sign rule are enforced before the client sees it");
   assert.match(propose, /inv\.status !== 'received' \|\| hasSettledMoney\(/, "only a booked, unpaid invoice can be proposed on");
   assert.match(propose, /\.some\(\(l\) => l\.zzper_id === clientId\)/, "only for a linked client");
 
