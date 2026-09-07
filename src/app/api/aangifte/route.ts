@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
   // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence")
+    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence, tax_kind")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)

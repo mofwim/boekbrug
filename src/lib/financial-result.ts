@@ -15,7 +15,7 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
-import { taxLetterBooking, taxLetterWithheldFromCosts, type TaxKind } from "./tax-letter";
+import { taxLetterBooking, taxLetterWithheldFromCosts, effectiveTaxKind, type TaxKind } from "./tax-letter";
 // [OFFERTE-GEEN-OMZET] One answer to "is this a quote", shared with the follow-up engine.
 import { isQuote } from "./offerte-followup";
 import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
@@ -632,6 +632,10 @@ export function computeResult(
         // "btw" (a misread, on a letter that carries none) is not voorbelasting.
         const taxKind = taxKindOf.get(s.invoiceId);
         if (taxKind && taxLetterBooking(taxKind) !== "kosten") { aanslagen += s.ex + s.btw; continue; }
+        // Motorrijtuigenbelasting IS a cost — the whole letter, gross. A "btw" the reader split off
+        // a tax letter is a misread (no letter of the Belastingdienst carries btw) and must never
+        // reach 5b as voorbelasting.
+        if (taxKind) { kosten += s.ex + s.btw; continue; }
         if (assetIds.has(s.invoiceId)) investeringen += s.ex; else kosten += s.ex;
         bookVoorbelasting(s.btw, opts.deductionByInvoice?.get(s.invoiceId));
       }
@@ -698,6 +702,8 @@ export function computeResult(
         // btw-naheffing is a settlement, an unknown letter is withheld and named. Only
         // motorrijtuigenbelasting falls through to kosten. Nothing of it is voorbelasting.
         if (taxLetterWithheldFromCosts(inv)) { aanslagen += ex + btw; continue; }
+        // Motorrijtuigenbelasting: a cost, gross, and never voorbelasting — see the kas branch.
+        if (effectiveTaxKind(inv)) { kosten += ex + btw; continue; }
         // [BEDRIJFSMIDDEL] See the kas branch: an asset purchase is reported apart, not as a cost.
         if (inv.id && assetIds.has(inv.id)) investeringen += ex; else kosten += ex;
         // [TEGENTEKEN] A base and a BTW pointing in opposite directions is not a document that can

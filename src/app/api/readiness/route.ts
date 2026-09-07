@@ -288,7 +288,7 @@ export async function GET(req: NextRequest) {
   // ── 3) Invoices + cash for the VAT engine (same inputs as /api/aangifte) ──
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, invoice_date, created_at, client_btw_number, sender_id, receiver_id, field_confidence")
+    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, total_inc_btw, client_name, invoice_date, created_at, client_btw_number, sender_id, receiver_id, field_confidence, tax_kind")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start).lte("invoice_date", end)
     .order("id", { ascending: true }).range(from, to));

@@ -65,6 +65,7 @@ import { correctedFields, readingHintFor } from "@/lib/reading-memory";
 import { loadReadingMemory } from "@/lib/reading-memory-source";
 // [CREDIT-SIGN] A credit note has to be STORED negative — nothing that counts money reads the type.
 import { asCreditAmounts } from "@/lib/creditnota-signal";
+import { isTaxKind } from "@/lib/tax-letter";
 // [SPLIT-CORRECTIE] The owner's per-rate split, validated against the final totals.
 import { validateBtwRows } from "@/lib/btw-rows-correction";
 // [SUPPLETIE] The one door to "did this touch a quarter that is already at the Belastingdienst?"
@@ -109,7 +110,7 @@ export async function GET(
     .from("invoices")
     // [LEES-CORRECTIE] due_date/vendor_iban/payment_reference ride along so the editor can
     // prefill the three fields that used to be write-only for the pipeline.
-    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid, field_confidence")
+    .select("id, invoice_number, client_name, invoice_date, due_date, vendor_iban, payment_reference, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, status, amount_paid, field_confidence")
     .eq("id", id)
     .eq("receiver_id", user.id)
     .eq("direction", "incoming")
@@ -290,8 +291,17 @@ export async function PATCH(
   // request), because a split that contradicts the invoice it specifies is worse than none.
   const rawBtwRows = "btw_rows" in body ? body.btw_rows : null;
 
+  // [AANSLAG] What kind of Belastingdienst letter this is — or none ("" = an ordinary invoice).
+  // The reader guesses it and the owner is the authority: a kind wrongly stored removes a real
+  // cost from the books, a kind wrongly missing puts a private tax bill into them. Closed list.
+  const rawTaxKind = typeof body.tax_kind === "string" ? body.tax_kind.trim() : null;
+  if (rawTaxKind !== null && rawTaxKind !== "" && !isTaxKind(rawTaxKind)) {
+    return NextResponse.json({ error: "Onbekende soort aanslag." }, { status: 400 });
+  }
+  const nextTaxKind: string | null | undefined = rawTaxKind === null ? undefined : (rawTaxKind === "" ? null : rawTaxKind);
+
   if (!hasAmounts && nextNumber === null && nextVendor === null && nextDate === null && !declaredCredit
-      && nextDue === null && nextIban === null && nextRef === null && rawBtwRows === null) {
+      && nextDue === null && nextIban === null && nextRef === null && rawBtwRows === null && nextTaxKind === undefined) {
     return NextResponse.json({ error: "Er is niets gewijzigd." }, { status: 400 });
   }
 
@@ -305,7 +315,7 @@ export async function PATCH(
     // supplier it happened at, and without the name the correction cannot be remembered anywhere.
     // [SUPPLIER-ALIAS] supplier_id + vendor_iban ride along: they are what says WHICH company a
     // corrected name belongs to, and without one of them a rename is one name pointing at another.
-    .select("id, receiver_id, direction, status, invoice_type, invoice_number, client_name, invoice_date, due_date, payment_reference, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
+    .select("id, receiver_id, direction, status, invoice_type, tax_kind, invoice_number, client_name, invoice_date, due_date, payment_reference, total_ex_btw, btw_amount, total_inc_btw, amount_paid, supplier_id, vendor_iban, field_confidence")
     .eq("id", id)
     .maybeSingle();
 
@@ -713,6 +723,8 @@ export async function PATCH(
     btw_amount: signed.btwAmount,
     total_inc_btw: signed.totalIncBtw,
     invoice_type: patch.invoice_type ?? invoice.invoice_type,
+    // [AANSLAG] As now stored, so the badge on the caller's row follows without a reload.
+    tax_kind: "tax_kind" in patch ? (patch as { tax_kind?: string | null }).tax_kind ?? null : ((invoice as { tax_kind?: string | null }).tax_kind ?? null),
     // [SPLIT-CORRECTIE] The split as it now stands, so the caller's row (whose checklist reads
     // it) updates without a reload. null = untouched in this request; [] = cleared.
     btw_rows: clearBtwRows ? [] : nextBtwRows,

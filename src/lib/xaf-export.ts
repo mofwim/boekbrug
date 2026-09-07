@@ -381,6 +381,17 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
       ],
     };
   }
+  if (booking === "kosten") {
+    // Motorrijtuigenbelasting: a cost, and the whole letter is the cost — a letter of the
+    // Belastingdienst carries no btw, so a split the reader made is booked back together and
+    // nothing reaches 1400.
+    return {
+      lines: [
+        { accID: ACC.kosten, debitC: exC + btwC, desc: `Belastingdienst ${inv.taxKind}`, docRef, invRef },
+        { accID: ACC.crediteuren, debitC: -(exC + btwC), desc: `Belastingdienst ${inv.taxKind}`, docRef, custSupID, invRef },
+      ],
+    };
+  }
   const lines: Line[] = inv.asset
     ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef, invRef }]
     : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef, invRef }];

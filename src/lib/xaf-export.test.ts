@@ -530,9 +530,12 @@ test("[AANSLAG] a tax letter books to privé, the btw account or vraagposten —
     { id: "ob", invoiceNumber: "A2", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 500, btwAmount: 0, taxKind: "omzetbelasting" },
     { id: "x", invoiceNumber: "A3", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 80, btwAmount: 16.8, taxKind: "overig" },
     { id: "mrb", invoiceNumber: "A4", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 140, btwAmount: 0, taxKind: "motorrijtuigenbelasting" },
+    // A misread btw on an MRB letter: the whole gross is the cost, nothing on 1400.
+    { id: "mrb2", invoiceNumber: "A5", invoiceDate: "2026-05-28", vendorName: "Belastingdienst", totalExBtw: 165.29, btwAmount: 34.71, taxKind: "motorrijtuigenbelasting" },
   ];
   const r = buildXafFile(input);
   const ls = lines(r.xml);
+  assert.ok(ls.some(([acc, amt]) => acc === "4000" && amt === "200.00"), "MRB with a misread btw is a € 200 cost, gross");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "0500" && amt === "1200.00" && tp === "D"), "income tax is a privé-opname");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "1500" && amt === "500.00" && tp === "D"), "a btw-naheffing settles against te betalen omzetbelasting");
   assert.ok(ls.some(([acc, amt, tp]) => acc === "2100" && amt === "96.80" && tp === "D"), "an unknown letter is a vraagpost for its whole gross");

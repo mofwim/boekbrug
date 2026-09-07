@@ -16,6 +16,7 @@
 // with the engine wiring); this file stays a pure, exhaustively-tested arithmetic core.
 
 import { nearestLegalRate } from "./btw-rate";
+import type { TaxKind } from "./tax-letter";
 
 /** Cumulative "invoice considered fully settled" slack (cents) — mirrors the partial-payment
  *  RPC's `abs(total) − 0.01` rule so app and engine agree on when an invoice is closed. */
@@ -130,6 +131,13 @@ export interface HeaderWithPaid extends InvoiceHeader {
 /** The per-quarter settlement inputs the engine needs, assembled from raw rows. Pure. */
 export interface QuarterSettlements {
   events: SettlementEvent[];             // in-window events (this quarter)
+  /**
+   * [AANSLAG] The tax kind of every SETTLED purchase that is a Belastingdienst letter. Built
+   * here, beside the events, because the settled invoices are a different set from the invoices
+   * dated in the window: a voorlopige aanslag dated in March and paid in April reached the Q2
+   * kas result as a cost with voorbelasting, because Q2's own date-range map had never seen it.
+   */
+  taxKindByInvoice?: Map<string, TaxKind>;
   priorByInvoice: Map<string, PriorSettled>; // unrounded ex/btw booked in earlier quarters (F1 seed)
   undatedPaidCount: number;              // invoices with paid money we could NOT date → block klaar
   estimatedCount: number;               // invoices whose in-window date came from marked_paid_at

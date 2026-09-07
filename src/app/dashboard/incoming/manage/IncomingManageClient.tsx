@@ -285,6 +285,8 @@ interface IncomingRow {
   // OWED TO YOU: it belongs in the list with a minus sign, comes off the outstanding balance, and
   // cannot be "late" by definition.
   invoice_type?: string | null
+  /** [AANSLAG] A Belastingdienst letter's kind; null on an ordinary invoice. */
+  tax_kind?: string | null
   total_inc_btw: number | null
   // [NUL-POST] Het deel van excl. BTW waarop geen btw zit (statiegeld, emballage, pallets).
   untaxed_amount?: number | null
@@ -4613,6 +4615,8 @@ export default function IncomingManageClient({
                 btw_amount: data.btw_amount,
                 total_inc_btw: data.total_inc_btw,
                 invoice_type: data.invoice_type,
+                // [AANSLAG] The kind as now stored.
+                ...(data.tax_kind !== undefined ? { tax_kind: data.tax_kind } : {}),
                 // [FULL-CORRECTION] The metadata follows too, or the row would keep showing the
                 // misread supplier the owner just fixed until the next reload.
                 ...(data.invoice_number != null ? { invoice_number: data.invoice_number } : {}),

@@ -31,7 +31,7 @@
 // the tests it now admits are testing what already shipped. Where a comment explains a decision it
 // travelled with the code it explains.
 
-import { effectiveTaxKind } from "./tax-letter";
+import { effectiveTaxKind, type TaxKind } from "./tax-letter";
 import {
   computeResult, toResultBankTx, cardBudgetBound,
   type RawBankRow, type ResultInvoice, type ResultBankTx, type ResultCashEntry, type FinancialResult,
@@ -468,6 +468,12 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
       deductionByInvoice: new Map([
         ...kas.settledDeductionByInvoice,
         ...exemption.deductionByInvoice,
+      ]),
+      // [AANSLAG] And the letters' kinds, for the same reason: the kas slices reach invoices
+      // dated in an earlier window, whose kind this window's own map never saw.
+      taxKindByInvoice: new Map([
+        ...(kas.taxKindByInvoice ?? new Map<string, TaxKind>()),
+        ...(kasOpts.taxKindByInvoice ?? new Map<string, TaxKind>()),
       ]),
     };
   }

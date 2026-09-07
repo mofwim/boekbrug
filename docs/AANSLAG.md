@@ -29,11 +29,31 @@ it), and the sender's name (`isTaxOfficeName`) for rows written by a path that n
 - **The result engine** withholds the whole gross from `kosten` and from voorbelasting in both
   schemes and reports it as `aanslagen`; the year screen names it under the balance card.
 - **The auditfile** books the letter against the account its kind names and leaves 1400 alone.
+- **Motorrijtuigenbelasting** is the one kind that IS a cost — for its whole gross. A "btw" the
+  reader split off any letter is a misread (no letter of the Belastingdienst carries btw) and
+  never reaches 5b or account 1400, in either scheme.
+- **Under kasstelsel** the kinds come from the settlement fetch, not from the window's dated
+  invoices: a voorlopige aanslag dated 20 March and paid 5 April is a Q2 settlement of a Q1
+  letter, and Q2's own date-range map had never seen it — it booked as a cost with voorbelasting.
+  `fetchSettlementEvents` now carries `taxKindByInvoice` for every settled purchase and
+  `mergeSchemeOpts` merges it like the rate mix and the deductions.
+- **The kind can only come from the tax office.** The reader's `tax_kind` is dropped unless the
+  vendor name is the Belastingdienst; an accountant's invoice for "verzorgen aangifte
+  inkomstenbelasting" is a cost with reclaimable btw, and the model named it after the tax it
+  mentioned. The name rule accepts "Belastingsdienst" and "Rijksbelastingdienst" too.
+- **The owner corrects it.** The correction editor (`InvoiceCorrectionModal`, the amounts door)
+  carries "Soort document": ordinary invoice or one of the five kinds. A stored kind on a
+  non-tax-office sender is still honoured — that is the owner's word.
+- **The closing package and the CSV export** list a letter as `aanslag <kind>`, keep it out of
+  the per-rate inkoop table and give it its own gross line, so the overview and the concept
+  aangifte in the same package no longer contradict each other.
 - **Unchanged:** the payable itself. The due date reaches the pay screen and the forecast, the
   bank line that pays it matches as before, the queue shows a badge naming the kind.
 
 ## Gates
 
 `tax-letter.test.ts`, `financial-result-aanslag.test.ts`, the XAF and auto-advance tests, a render
-test for the badge, and two `[AANSLAG]` lifecycle gates: every insert path carries the kind, and
-the engine withholds in both legs.
+test for the badge, and two `[AANSLAG]` lifecycle gates: every insert path carries the kind; the engine withholds
+in both legs, MRB books gross without voorbelasting in both legs and in the auditfile, the
+settlement fetch builds and merges the settled kinds, the reader gates on the sender, the door
+and the editor offer the kind, and the package and export name a letter as one.

@@ -27780,7 +27780,7 @@ test("[AANSLAG] every path that writes an incoming invoice carries the tax kind,
   // The reader is told, and its answer is normalised to the closed list.
   const ai = code("src/lib/ai.ts");
   assert.match(ai, /"tax_kind": "inkomstenbelasting" \| "zorgverzekeringswet" \| "omzetbelasting" \| "motorrijtuigenbelasting" \| "overig" \| null,/);
-  assert.match(ai, /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) \? parsed\.tax_kind : null;/);
+  assert.match(ai, /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) && isTaxOfficeName\([^\n]*\? parsed\.tax_kind : null;/);
 });
 
 test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it where it belongs", () => {
@@ -27790,6 +27790,20 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(engine, /if \(taxKind && taxLetterBooking\(taxKind\) !== "kosten"\) \{ aanslagen \+= s\.ex \+ s\.btw; continue; \}/,
     "the kasstelsel branch must withhold the settlement slice");
   assert.match(engine, /aanslagen: round2\(aanslagen\),/, "the withheld money reaches the result by name");
+  // No letter of the Belastingdienst carries btw: the one kind that IS a cost (MRB) books gross and
+  // never reaches bookVoorbelasting — in both legs, and in the auditfile.
+  assert.match(engine, /if \(taxKind\) \{ kosten \+= s\.ex \+ s\.btw; continue; \}/, "kas: MRB gross to kosten, no voorbelasting");
+  assert.match(engine, /if \(effectiveTaxKind\(inv\)\) \{ kosten \+= ex \+ btw; continue; \}/, "accrual: the same");
+  assert.match(code("src/lib/xaf-export.ts"), /if \(booking === "kosten"\) \{[\s\S]{0,600}accID: ACC\.kosten, debitC: exC \+ btwC/, "auditfile: MRB gross on kosten");
+  // The kind can only come from the tax office, and the owner can correct it.
+  assert.match(code("src/lib/ai.ts"), /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) && isTaxOfficeName\(/, "the reader may not name a kind for any other sender");
+  const door = code("src/app/api/invoice/[id]/amounts/route.ts");
+  assert.match(door, /if \(rawTaxKind !== null && rawTaxKind !== "" && !isTaxKind\(rawTaxKind\)\)/, "the door accepts the closed list only");
+  assert.match(door, /\(patch as Record<string, unknown>\)\.tax_kind = nextTaxKind;/);
+  assert.match(code("src/components/invoice/InvoiceCorrectionModal.tsx"), /<select\s+value=\{taxKind\}/, "the editor offers the kind");
+  // The closing package and the export name a letter as what it is, never as inkoop.
+  assert.match(code("src/lib/closing-package.ts"), /const taxLetters = incoming\.filter\(\(i\) => effectiveTaxKind\(i\) !== null\);/);
+  assert.match(code("src/lib/export.ts"), /effectiveTaxKind\(inv\) \? `aanslag \$\{effectiveTaxKind\(inv\)\}`/);
   // The selects carry the column, and the assembler hands both handles to the engine.
   assert.match(code("src/lib/compute-result-range.ts"), /client_name, tax_kind"\)/);
   assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind"\)/);
