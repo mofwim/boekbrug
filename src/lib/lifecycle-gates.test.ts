@@ -23553,7 +23553,16 @@ test("[MOLLIE-AFREKENING] nothing books before the settlement reconciles, and th
   const sync = code("src/lib/mollie-settlement-sync.ts");
   assert.match(sync, /const verdict = summarizeSettlement\(s\);\s*if \(!verdict\.ok\) \{[\s\S]{0,300}status: "refused"/, "a refused settlement is recorded as refused and skipped");
   assert.match(sync, /pipeline\.rpc\("apply_manual_payment", \{/, "the fee is marked paid through the locked RPC, never by an UPDATE");
-  assert.match(sync, /p_client_key: settlementRowId,/, "…keyed on the settlement, so a second run cannot pay it twice");
+  assert.match(sync, /p_client_key: feeClientKey\(settlementRowId, invoiceId\),/, "…keyed on (settlement row, invoice), so a second run replays and a recreated invoice can still be paid");
+  // A refund or chargeback, a guard that says "this may be an invoice's own payment", an unsettled
+  // fee: each holds the settlement. 'booked' is never written over any of them.
+  assert.match(sync, /listMollieSettlementRefunds\(conn\.apiKey, s\.id\),\s*listMollieSettlementChargebacks\(conn\.apiKey, s\.id\),/, "refunds and chargebacks are read");
+  assert.match(sync, /const lineVerdict = payoutLineVerdict\(split, \{ summary, adjustments \}\);/, "…and reach the verdict");
+  assert.match(sync, /if \(guard\.hold\("omzet", line\) === "paid-invoice"\) \{\s*return \{ lineId: line\.id, blocked:/, "the guard's answer blocks, it does not book");
+  assert.match(sync, /const complete = feeDone && payoutTxId !== null && lineBlocked === null && lineVerdict === "transfer";/);
+  assert.match(sync, /if \(status !== "received"\) \{\s*return \{ paidAt: null, reason:/, "an unconfirmed fee invoice is a held row, retried next run");
+  assert.match(sync, /return \{ paidAt: null, reason: `kostenfactuur niet op betaald gezet/, "a failed RPC is returned unsettled, so it is retried");
+  assert.match(code("src/lib/mollie.ts"), /export async function listMollieSettlementRefunds/);
   assert.match(sync, /status: autoBoeken \? "received" : "processing",/, "[ZELF-EERST] the owner's switch holds the fee in the queue");
   assert.doesNotMatch(sync, /category: "omzet"|category: "pos_income"|category: "kosten"/, "the sync never codes revenue or cost onto a bank line");
   assert.match(sync, /update\(\{ category: "transfer", category_source: "rule", category_confirmed: false \}\)/, "the payout line is a transfer, unconfirmed, only when every payment is ours");

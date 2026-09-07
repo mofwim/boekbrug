@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS public.mollie_settlements (
   -- What was booked from it, when it was.
   fee_invoice_id uuid REFERENCES public.invoices(id) ON DELETE SET NULL,
   payout_tx_id uuid REFERENCES public.bank_transactions(id) ON DELETE SET NULL,
-  -- 'booked' | 'held' (payments not ours, or the fee awaits the owner) | 'refused' (did not reconcile)
+  -- 'booked' | 'held' (payments not ours, a refund/chargeback inside, the payout line not found or
+  -- not coded, or the fee not yet settled — see mollie_settlements_fee_paid.sql) | 'refused' (did not reconcile)
   status text NOT NULL DEFAULT 'held',
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),

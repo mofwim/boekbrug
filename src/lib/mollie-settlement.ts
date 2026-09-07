@@ -25,7 +25,9 @@
 // the paid-out amount in cents. A settlement that does not add up is refused with a reason, and
 // the refusal is stored — a Mollie response the app did not understand must never become a cost.
 
+import { createHash } from "node:crypto";
 import { round2 } from "./invoice-totals";
+import { telWoord } from "./nl-plural";
 
 /** One line of a settlement period: a revenue or a cost, as Mollie reports it. */
 export interface MollieSettlementLine {
@@ -64,6 +66,12 @@ export interface MollieSettlementPayment {
   status?: string | null;
   /** Mollie's own field on payments created from a payment link, when present. */
   paymentLinkId?: string | null;
+}
+
+/** A refund or chargeback inside a settlement — only its existence matters here. */
+export interface MollieSettlementAdjustment {
+  id: string;
+  amount?: { currency?: string; value?: string } | null;
 }
 
 export interface SettlementSummary {
@@ -242,14 +250,59 @@ export function isPayoutOf(
 }
 
 /**
+ * Do the payments explain the whole revenue? When they do not, the settlement carries lines that
+ * are not payments — a refund, a chargeback, a correction — and "every payment is ours" no longer
+ * means "every euro in this line is booked". Cents, like everything else here; an unreadable
+ * payment makes the answer no.
+ */
+export function paymentsCoverRevenue(split: PaymentSplit, summary: Pick<SettlementSummary, "revenueGross">): boolean {
+  if (split.unreadable.length > 0) return false;
+  return Math.round((split.linkedGross + split.unlinkedGross) * 100) === Math.round(summary.revenueGross * 100);
+}
+
+/**
  * What the payout bank line is, given the split.
  *
- *   'transfer'  every payment in it settled a BoekBrug invoice: the revenue is booked, the fee
- *               is booked, the line is money moving from Mollie's balance to the bank —
+ *   'transfer'  every payment in it settled a BoekBrug invoice, the payments add up to the
+ *               revenue, and nothing was refunded or charged back: the revenue is booked, the
+ *               fee is booked, the line is money moving from Mollie's balance to the bank —
  *               a transfer, which touches neither revenue nor cost.
- *   'hold'      at least one payment is not ours: part of the line is revenue the app never
- *               saw. The owner books that part; the app names the amount and books nothing.
+ *   'hold'      at least one payment is not ours, or the settlement carries money that is not a
+ *               payment (a refund of one of OUR invoices leaves that invoice standing as paid
+ *               while the money went back), or the payments do not explain the revenue. The
+ *               owner books what the app cannot; the app names it and books nothing.
  */
-export function payoutLineVerdict(split: PaymentSplit): "transfer" | "hold" {
-  return split.unlinkedCount === 0 && split.unreadable.length === 0 ? "transfer" : "hold";
+export function payoutLineVerdict(
+  split: PaymentSplit,
+  context?: { summary?: Pick<SettlementSummary, "revenueGross">; adjustments?: number },
+): "transfer" | "hold" {
+  if (split.unlinkedCount > 0 || split.unreadable.length > 0) return "hold";
+  if ((context?.adjustments ?? 0) > 0) return "hold";
+  if (context?.summary && !paymentsCoverRevenue(split, context.summary)) return "hold";
+  return "transfer";
+}
+
+/**
+ * The reason a settlement is held, in the owner's words — one sentence that says what the bank
+ * line IS (one netted amount) and what to do, so nobody codes the whole line as omzet and books
+ * the linked part twice.
+ */
+export function holdReason(split: PaymentSplit, summary: Pick<SettlementSummary, "payout" | "revenueGross">, adjustments: number): string {
+  const parts: string[] = [];
+  if (adjustments > 0) parts.push(`${telWoord(adjustments, "terugbetaling of chargeback", "terugbetalingen of chargebacks")} in deze afrekening — controleer welke factuur is terugbetaald`);
+  if (split.unlinkedCount > 0) parts.push(`€ ${split.unlinkedGross.toFixed(2)} van de betalingen hoort niet bij een BoekBrug-factuur (${split.unlinkedCount} betalingen${split.unreadable.length ? `, ${split.unreadable.length} onleesbaar` : ""})`);
+  else if (split.unreadable.length > 0) parts.push(`${split.unreadable.length} betalingen onleesbaar`);
+  else if (!paymentsCoverRevenue(split, summary)) parts.push(`de betalingen (€ ${(split.linkedGross + split.unlinkedGross).toFixed(2)}) verklaren de omzet (€ ${summary.revenueGross.toFixed(2)}) niet`);
+  return `${parts.join("; ")}. De bankregel van € ${summary.payout.toFixed(2)} is één netto bedrag (omzet min Mollie-kosten): splits hem, of boek de omzet apart en zet de regel op overboeking — niet de hele regel als omzet.`;
+}
+
+/**
+ * The idempotency key of the fee payment: one per (settlement row, invoice). Keyed on the row
+ * alone, a fee invoice the owner deleted could never be paid again — the recreated invoice met
+ * a key "spent" on the old one. Deterministic, so a retry after a failed RPC replays the same
+ * booking. A uuid shape because that is what apply_manual_payment takes.
+ */
+export function feeClientKey(settlementRowId: string, invoiceId: string): string {
+  const h = createHash("sha1").update(`mollie-fee:${settlementRowId}:${invoiceId}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
