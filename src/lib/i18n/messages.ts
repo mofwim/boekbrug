@@ -499,9 +499,9 @@ export const MESSAGES = {
   // corrected version to the customer; the number never changes. The old creditnota+draft
   // orchestration is gone; a manual creditnota remains for the locked cases.
   'bewerk.herstel.uitleg': {
-    nl: 'Dit is een verstuurde factuur — het nummer {number} blijft staan. Als je opslaat, ontvangt je klant automatisch de gecorrigeerde factuur per e-mail, met de melding dat de eerdere versie vervalt.',
-    ar: 'هذه فاتورة مُرسَلة — الرقم {number} يبقى كما هو. عند الحفظ، يستلم عميلك تلقائياً الفاتورة المصحَّحة بالبريد الإلكتروني، مع تنبيه بأن النسخة السابقة لاغية.',
-    en: 'This is a sent invoice — the number {number} stays. When you save, your customer automatically receives the corrected invoice by e-mail, noting that the earlier version is void.',
+    nl: 'Verstuurde factuur — nummer {number} blijft staan. Bij opslaan krijgt je klant automatisch de gecorrigeerde factuur per e-mail, met de melding dat de eerdere versie vervalt.',
+    ar: 'فاتورة مُرسَلة — الرقم {number} يبقى. عند الحفظ يستلم عميلك تلقائياً الفاتورة المصحَّحة بالبريد الإلكتروني، مع تنبيه بأن النسخة السابقة لاغية.',
+    en: 'Sent invoice — number {number} stays. On saving, your customer automatically receives the corrected invoice by e-mail, noting that the earlier version is void.',
   },
   'bewerk.herstel.knop': {
     nl: 'Opslaan en gecorrigeerde factuur versturen',
@@ -964,7 +964,7 @@ export const MESSAGES = {
   // Drie zinnen met nadruk middenin. De <strong> is opgeofferd (zie nieuw.bevestig.uitleg):
   // opmaak middenin een zin knipt hem stuk voor vertalers, en het woord draagt de nadruk zelf.
   'kas.fout.saldoNiet': { nl: 'Het bedrag hieronder is daarom NIET je echte saldo. Probeer het opnieuw.', ar: 'المبلغ أدناه ليس إذاً رصيدك الحقيقي. حاول مرة أخرى.', en: 'The amount below is therefore NOT your real balance. Try again.' },
-  'kas.fout.controleNiet': { nl: 'De controle op een negatief kassaldo is daarom NIET uitgevoerd — dit betekent niet dat er niets aan de hand is. Open het kasboek hieronder om het opnieuw te proberen.', ar: 'لم يُجرَ إذاً فحص الرصيد السالب — وهذا لا يعني أن كل شيء سليم. افتح دفتر الصندوق أدناه لإعادة المحاولة.', en: 'The negative-balance check therefore did NOT run — which does not mean nothing is wrong. Open the cash book below to try again.' },
+  'kas.fout.controleNiet': { nl: 'De controle op een negatief kassaldo is daarom NIET uitgevoerd — dat betekent niet dat er niets aan de hand is. Open het kasboek hieronder en probeer opnieuw.', ar: 'لم يُجرَ إذاً فحص الرصيد السالب — وهذا لا يعني أن كل شيء سليم. افتح دفتر الصندوق أدناه وأعد المحاولة.', en: 'The negative-balance check therefore did NOT run — which does not mean nothing is wrong. Open the cash book below and try again.' },
   'kas.fout.ladenNietLeeg': { nl: 'Kon de boekingen niet laden. Dit is NIET hetzelfde als een lege kas — probeer het opnieuw.', ar: 'تعذّر تحميل القيود. هذا ليس كصندوق فارغ — حاول مرة أخرى.', en: 'Could not load the entries. That is NOT the same as an empty till — try again.' },
   'kas.opnieuw': { nl: 'Opnieuw', ar: 'أعد المحاولة', en: 'Again' },
 
@@ -2201,10 +2201,10 @@ export const MESSAGES = {
     tr: 'Banka ekstrelerinize',
   },
   'leveranciers.nietGelezen': {
-    nl: 'We konden je inkoopfacturen nu niet lezen, dus staat hier geen bedrag. Een leeg totaal zou betekenen dat er niets openstaat, en dat is niet vastgesteld. Probeer het zo opnieuw.',
-    ar: 'تعذّرت قراءة فواتير الشراء الآن، لذلك لا يظهر أي مبلغ هنا. الإجمالي الفارغ يعني أن لا شيء مستحق، وهذا لم يُثبَت. أعد المحاولة بعد قليل.',
-    en: 'We could not read your purchase invoices just now, so no amount is shown. An empty total would mean nothing is outstanding, and that has not been established. Try again shortly.',
-    tr: 'Alış faturalarınız şu anda okunamadı, bu yüzden burada tutar yok. Boş bir toplam hiçbir borcunuz olmadığı anlamına gelirdi; bu tespit edilmedi. Birazdan tekrar deneyin.',
+    nl: 'We konden je inkoopfacturen nu niet lezen, dus staat hier geen bedrag. Dat betekent niet dat er niets openstaat. Probeer zo opnieuw.',
+    ar: 'تعذّرت قراءة فواتير الشراء الآن، لذلك لا يظهر مبلغ هنا. هذا لا يعني أن لا شيء مستحق. أعد المحاولة بعد قليل.',
+    en: 'We could not read your purchase invoices just now, so no amount is shown. That does not mean nothing is outstanding. Try again shortly.',
+    tr: 'Alış faturalarınız şu anda okunamadı, bu yüzden burada tutar yok. Bu, borcunuz olmadığı anlamına gelmez. Birazdan tekrar deneyin.',
   },
   'leveranciers.ouderdom': {
     nl: 'Ouderdom',
@@ -2468,9 +2468,9 @@ export const MESSAGES = {
   'kluis.qAfschr': { nl: '{count} afschr.', ar: '{count} كشف', en: '{count} stmts.' },
   'kluis.cardKop': { nl: 'Als je ooit stopt', ar: 'إذا توقفت يوماً', en: 'If you ever stop' },
   'kluis.cardUitleg': {
-    nl: 'Je bewaarplicht loopt door als je onderneming stopt, en ook als je stopt met BoekBrug. Zeg je op, dan bewaren wij je administratie nog {maanden} maanden kosteloos, en exporteren blijft werken.',
-    ar: 'واجب الحفظ يستمر إن أغلقت مشروعك، وإن توقفت عن استخدام BoekBrug. إذا ألغيت اشتراكك، نحتفظ بإدارتك {maanden} شهراً إضافياً مجاناً، ويبقى التصدير يعمل.',
-    en: 'Your retention duty continues when your business stops, and when you stop using BoekBrug. If you cancel, we keep your administration {maanden} more months for free, and exporting keeps working.',
+    nl: 'Je bewaarplicht loopt door als je onderneming of je BoekBrug-abonnement stopt. Na opzeggen bewaren wij je administratie nog {maanden} maanden kosteloos; exporteren blijft werken.',
+    ar: 'واجب الحفظ يستمر إن توقف مشروعك أو اشتراكك في BoekBrug. بعد الإلغاء نحتفظ بإدارتك {maanden} شهراً إضافياً مجاناً؛ ويبقى التصدير يعمل.',
+    en: 'Your retention duty continues when your business or your BoekBrug subscription stops. After cancelling we keep your administration {maanden} more months for free; exporting keeps working.',
   },
   'kluis.cardGeregeldKop': { nl: 'Je Bewaarkluis is geregeld.', ar: 'خزانة الحفظ (Bewaarkluis) مفعّلة.', en: 'Your Bewaarkluis is arranged.' },
   'kluis.cardGeregeldRest': {
@@ -2576,9 +2576,9 @@ export const MESSAGES = {
   'verd.boekEen': { nl: 'Boek 1 factuur', ar: 'سجّل فاتورة واحدة', en: 'Book 1 invoice' },
   'verd.boek': { nl: 'Boek {count} facturen', ar: 'سجّل {count} فاتورة', en: 'Book {count} invoices' },
   'verd.voetnoot': {
-    nl: 'Een factuur die maar deels betaald is, blijft voor de rest openstaan — er wordt niets weggeschreven. Wat er van de betaling overblijft blijft ook staan; ontkoppelen kan altijd.',
-    ar: 'الفاتورة المدفوعة جزئياً يبقى باقيها مفتوحاً — لا يُشطب شيء. وما يتبقى من الدفعة يبقى أيضاً؛ والفصل ممكن دائماً.',
-    en: 'A partially paid invoice stays open for the rest — nothing is written off. Whatever remains of the payment also stays; unlinking is always possible.',
+    nl: 'Een factuur die deels betaald is, blijft voor de rest openstaan; er wordt niets weggeschreven. De rest van de betaling blijft ook staan, en ontkoppelen kan altijd.',
+    ar: 'الفاتورة المدفوعة جزئياً يبقى باقيها مفتوحاً؛ لا يُشطب شيء. وباقي الدفعة يبقى أيضاً، والفصل ممكن دائماً.',
+    en: 'An invoice that is partly paid stays open for the rest; nothing is written off. The rest of the payment stays too, and unlinking is always possible.',
   },
 
   // BankConnectPanel: the Enable Banking connect card on the bank page.
@@ -2663,18 +2663,18 @@ export const MESSAGES = {
   'bkc.ververs': { nl: 'Ververs', ar: 'تحديث', en: 'Refresh' },
   'bkc.ontkoppelen': { nl: 'Ontkoppelen', ar: 'فصل', en: 'Disconnect' },
   'bkc.afschriftNodig': {
-    nl: 'Je transacties komen nu automatisch binnen. Het originele bankafschrift zelf krijgen we niet van je bank — upload dat per kwartaal alsnog, dan is het pakket voor je boekhouder compleet.',
-    ar: 'معاملاتك تصل الآن تلقائياً. لكن كشف الحساب الأصلي نفسه لا يصلنا من بنكك — ارفعه كل ربع سنة، فيكتمل الملف لمحاسبك.',
-    en: 'Your transactions now arrive automatically. The original bank statement itself we do not get from your bank — still upload it per quarter, so your accountant’s package is complete.',
+    nl: 'Je transacties komen nu automatisch binnen. Het originele bankafschrift krijgen we niet van je bank — upload dat per kwartaal, dan is het pakket voor je boekhouder compleet.',
+    ar: 'معاملاتك تصل الآن تلقائياً. كشف الحساب الأصلي لا يصلنا من بنكك — ارفعه كل ربع سنة، فيكتمل الملف لمحاسبك.',
+    en: 'Your transactions now arrive automatically. The original bank statement we do not get from your bank — upload it per quarter, and your accountant\'s package is complete.',
   },
 
   // SnelStartCard: the SnelStart link card on Settings. SnelStart's own menu names
   // (Onderhoud → Maatwerk) stay Dutch in every language — a sentence that points at a
   // button names the button as it is written.
   'ss.uitleg': {
-    nl: 'Stuur je gecontroleerde facturen en bonnen rechtstreeks als inkoop- en verkoopboeking naar je SnelStart-administratie. Alleen facturen die je hebt gecontroleerd gaan mee, en elke factuur gaat maar één keer.',
-    ar: 'أرسل فواتيرك وإيصالاتك المدقَّقة مباشرة كقيود مشتريات ومبيعات إلى إدارة SnelStart لديك. تذهب الفواتير التي دققتها فقط، وكل فاتورة مرة واحدة لا غير.',
-    en: 'Send your checked invoices and receipts straight to your SnelStart administration as purchase and sales bookings. Only invoices you checked go along, and each invoice goes only once.',
+    nl: 'Stuur je gecontroleerde facturen en bonnen rechtstreeks als inkoop- en verkoopboeking naar je SnelStart-administratie. Alleen gecontroleerde facturen gaan mee, elk maar één keer.',
+    ar: 'أرسل فواتيرك وإيصالاتك المدقَّقة مباشرة كقيود مشتريات ومبيعات إلى إدارة SnelStart لديك. تذهب الفواتير المدقَّقة فقط، وكل واحدة مرة واحدة.',
+    en: 'Send your checked invoices and receipts straight to your SnelStart administration as purchase and sales bookings. Only checked invoices go along, each only once.',
   },
   'ss.sleutelOud': {
     nl: 'SnelStart accepteert je maatwerksleutel niet meer. Maak in SnelStart een nieuwe sleutel aan en plak die hieronder.',
@@ -5146,9 +5146,9 @@ export const MESSAGES = {
     en: 'Paid in {quarter}.',
   },
   'detail.kwartaal.uitleg': {
-    nl: 'Voor de btw telt deze factuur mee in {quarter} — de kwartaal­aangifte volgt de factuurdatum, niet de betaaldatum. Dit verandert daar niets aan; het laat alleen zien wanneer het geld binnenkwam.',
-    ar: 'بالنسبة للضريبة تُحتسب هذه الفاتورة في {quarter} — إقرار الربع يتبع تاريخ الفاتورة، لا تاريخ الدفع. هذا لا يغيّر شيئاً هناك؛ إنما يبيّن متى وصل المال.',
-    en: 'For VAT this invoice counts in {quarter} — the quarterly return follows the invoice date, not the payment date. This changes nothing there; it only shows when the money came in.',
+    nl: 'Voor de btw telt deze factuur mee in {quarter}: de aangifte volgt de factuurdatum, niet de betaaldatum. Dit laat alleen zien wanneer het geld binnenkwam.',
+    ar: 'بالنسبة للضريبة تُحتسب هذه الفاتورة في {quarter}: الإقرار يتبع تاريخ الفاتورة، لا تاريخ الدفع. هذا يبيّن فقط متى وصل المال.',
+    en: 'For VAT this invoice counts in {quarter}: the return follows the invoice date, not the payment date. This only shows when the money came in.',
   },
   'detail.opnieuwVerzonden': {
     nl: 'De factuur is opnieuw verzonden.',
@@ -5225,9 +5225,9 @@ export const MESSAGES = {
     en: 'Sending failed',
   },
   'dz.beheerUitleg': {
-    nl: 'Staat hier een dag met de verkeerde datum of uit een andere periode? Verwijder hem — dat corrigeert je omzet en BTW-aangifte. Daarna kun je het juiste Z-rapport opnieuw importeren.',
-    ar: 'هل هنا يوم بتاريخ خاطئ أو من فترة أخرى؟ احذفه — فهذا يصحّح إيرادك وإقرار الضريبة. بعدها يمكنك استيراد تقرير Z الصحيح من جديد.',
-    en: 'Is there a day with the wrong date or from another period? Delete it — that corrects your turnover and VAT return. Afterwards you can import the right Z-report again.',
+    nl: 'Een dag met de verkeerde datum of uit een andere periode? Verwijder hem — dat corrigeert je omzet en BTW-aangifte. Daarna importeer je het juiste Z-rapport opnieuw.',
+    ar: 'يوم بتاريخ خاطئ أو من فترة أخرى؟ احذفه — فهذا يصحّح إيرادك وإقرار الضريبة. ثم استورد تقرير Z الصحيح من جديد.',
+    en: 'A day with the wrong date or from another period? Delete it — that corrects your turnover and VAT return. Then import the right Z-report again.',
   },
   'dz.dagenBeheren': {
     nl: 'Geboekte dagen beheren ({n})',
@@ -8627,9 +8627,9 @@ export const MESSAGES = {
   // true is that this is the moment it is cheap to fix, while the days are still fresh enough to
   // remember and no filing has been built on them.
   'kas.negatief.nogNietIngediend': {
-    nl: 'Dit kwartaal is nog niet ingediend. Los je dit nu op, dan blokkeert het je aangifte straks niet — en de dagen liggen nog vers genoeg om ze na te lopen.',
-    ar: 'لم يُقدَّم هذا الربع بعد. إن أصلحته الآن فلن يحجب إقرارك لاحقاً — والأيام لا تزال قريبة بما يكفي لتتبّعها.',
-    en: 'This quarter has not been filed yet. Fix it now and it will not block your return later — and the days are still fresh enough to retrace.',
+    nl: 'Dit kwartaal is nog niet ingediend. Los je dit nu op, dan blokkeert het je aangifte straks niet.',
+    ar: 'لم يُقدَّم هذا الربع بعد. إن أصلحته الآن فلن يحجب إقرارك لاحقاً.',
+    en: 'This quarter has not been filed yet. Fix it now and it will not block your return later.',
   },
   // [KAS-BRUG] De vierde reden, en in een winkel de gewoonste: er is contant geld van de bank
   // gehaald en de opname is nooit in het kasboek geschreven. De app ZIET die opname al — hij staat
@@ -8642,9 +8642,9 @@ export const MESSAGES = {
     en: 'You took cash out of the bank that is not in your cash book',
   },
   'kas.brug.uitleg': {
-    nl: 'Dit staat wél op je bankafschrift. Hoort dit geld in de kassa? Boek het dan als opname — dan klopt je kassaldo weer, en meestal is dit precies wat er ontbrak.',
-    ar: 'هذا موجود في كشف حسابك البنكي. هل يخصّ هذا المال الكاسة؟ إذاً قيّده كسحب — فيعود رصيدك صحيحاً، وغالباً هذا بالضبط ما كان ناقصاً.',
-    en: 'It is on your bank statement. Did this money go into the till? Book it as a withdrawal — your cash balance adds up again, and this is usually exactly what was missing.',
+    nl: 'Dit staat wél op je bankafschrift. Hoort dit geld in de kassa? Boek het als opname — dan klopt je kassaldo weer; meestal is dit wat er ontbrak.',
+    ar: 'هذا موجود في كشف حسابك البنكي. هل يخصّ هذا المال الكاسة؟ قيّده كسحب — فيعود رصيدك صحيحاً؛ وغالباً هذا ما كان ناقصاً.',
+    en: 'It is on your bank statement. Does this money belong in the till? Book it as a withdrawal — your cash balance adds up again; usually this is what was missing.',
   },
   'kas.negatief.reden1': {
     nl: 'het beginsaldo staat te laag (het geld dat al in de kassa lag)',
@@ -9286,10 +9286,10 @@ export const MESSAGES = {
   // Wat de ondernemer eraan doet. Bewust GEEN knop die het zelf oplost: welke van de twee regels
   // de juiste is, is een vraag over papier dat hij heeft en wij niet.
   'kas.dubbel.watNu': {
-    nl: 'Klopt het dat dit dezelfde aankoop is? Verwijder dan de kasregel — de factuur blijft staan en houdt de btw aftrekbaar. Zijn het echt twee aankopen, dan hoef je niets te doen.',
-    ar: 'هل هذه فعلاً نفس المشتريات؟ إذاً احذف سطر الصندوق — تبقى الفاتورة وتحفظ حق خصم الضريبة. أما إن كانتا عمليتَي شراء مختلفتين فلا حاجة لأي إجراء.',
-    en: 'Is this really the same purchase? Then remove the cash line — the invoice stays and keeps the BTW deductible. If they are genuinely two purchases, nothing needs doing.',
-    tr: 'Bu gerçekten aynı alım mı? Öyleyse kasa satırını silin — fatura kalır ve KDV indirilebilir olmayı sürdürür. Gerçekten iki ayrı alımsa bir şey yapmanıza gerek yok.',
+    nl: 'Dezelfde aankoop? Verwijder dan de kasregel — de factuur blijft staan en houdt de btw aftrekbaar. Echt twee aankopen? Dan laat je het zo.',
+    ar: 'نفس المشتريات؟ إذاً احذف سطر الصندوق — تبقى الفاتورة وتحفظ حق خصم الضريبة. عمليتا شراء مختلفتان فعلاً؟ فاتركه كما هو.',
+    en: 'The same purchase? Then remove the cash line — the invoice stays and keeps the BTW deductible. Genuinely two purchases? Then leave it.',
+    tr: 'Aynı alım mı? Öyleyse kasa satırını silin — fatura kalır ve KDV indirilebilir olmayı sürdürür. Gerçekten iki ayrı alım mı? O zaman öyle bırakın.',
   },
   'kas.dubbel.naarFactuur': {
     nl: 'Bekijk de factuur',
@@ -9887,9 +9887,9 @@ export const MESSAGES = {
     en: 'Your details are missing: {list}. An invoice is only legally complete with these details.',
   },
   'nieuw.klant.euBtwInfo': {
-    nl: 'Klant in een ander EU-land. Bij een intracommunautaire prestatie zet je 0% BTW — “Btw verlegd” komt dan automatisch op de factuur, en de klant komt in je ICP-opgaaf.',
-    ar: 'العميل في بلد أوروبي آخر. عند خدمة داخل الاتحاد الأوروبي تختار 0% btw — عندها تُطبع «Btw verlegd» تلقائياً على الفاتورة، ويدخل العميل في بيان ICP-opgaaf الخاص بك.',
-    en: 'Client in another EU country. For an intra-community supply you set 0% VAT — “Btw verlegd” then appears on the invoice automatically, and the client goes on your ICP declaration.',
+    nl: 'Klant in een ander EU-land: bij een intracommunautaire prestatie zet je 0% BTW. “Btw verlegd” komt dan automatisch op de factuur en de klant komt in je ICP-opgaaf.',
+    ar: 'العميل في بلد أوروبي آخر: عند خدمة داخل الاتحاد الأوروبي تختار 0% btw. تُطبع «Btw verlegd» تلقائياً على الفاتورة ويدخل العميل في بيان ICP-opgaaf.',
+    en: 'Client in another EU country: for an intra-community supply you set 0% VAT. “Btw verlegd” then appears on the invoice automatically and the client goes on your ICP-opgaaf.',
   },
   'nieuw.klant.euBtwLengte': {
     nl: 'Deze lengte klopt niet voor dat EU-land — controleer via VIES. Het bepaalt de BTW-verlegging én de ICP-opgaaf.',
@@ -10057,9 +10057,9 @@ export const MESSAGES = {
     en: 'Could not load the team',
   },
   'team.migratieNa': {
-    nl: 'moet nog worden toegepast. Zolang dat niet is gebeurd kun je niemand uitnodigen — en verandert er verder niets: je facturen, je bank en je aangifte werken gewoon door.',
-    ar: 'لم يُطبَّق بعد. وما دام الأمر كذلك لا يمكنك دعوة أحد — ولا يتغير شيء آخر: فواتيرك وبنكك وإقرارك (aangifte) تعمل كالمعتاد.',
-    en: 'still needs to be applied. Until that happens you cannot invite anyone — and nothing else changes: your invoices, your bank and your aangifte keep working as usual.',
+    nl: 'moet nog worden toegepast. Tot dan kun je niemand uitnodigen — verder verandert er niets: je facturen, bank en aangifte werken gewoon door.',
+    ar: 'لم يُطبَّق بعد. حتى ذلك الحين لا يمكنك دعوة أحد — ولا يتغير شيء آخر: فواتيرك وبنكك وإقرارك تعمل كالمعتاد.',
+    en: 'still needs to be applied. Until then you cannot invite anyone — nothing else changes: your invoices, bank and aangifte keep working.',
   },
   'team.migratieVoor': {
     nl: 'De databasemigratie',
@@ -10072,9 +10072,9 @@ export const MESSAGES = {
     en: 'since {date}',
   },
   'team.uitlegOnderaan': {
-    nl: 'Intrekken werkt onmiddellijk: bij zijn volgende klik kan hij niets meer. Facturen die hij al verstuurde blijven staan — die hebben een wettelijk nummer en horen bij je boekhouding.',
-    ar: 'السحب فوري: عند نقرته التالية لا يستطيع فعل شيء. الفواتير التي أرسلها تبقى — فلها رقم قانوني وهي جزء من دفاترك.',
-    en: 'Revoking works immediately: on his next click he can do nothing more. Invoices he already sent remain — they carry a legal number and belong to your bookkeeping.',
+    nl: 'Intrekken werkt onmiddellijk. Facturen die hij al verstuurde blijven staan — ze hebben een wettelijk nummer en horen bij je boekhouding.',
+    ar: 'السحب فوري. الفواتير التي أرسلها تبقى — فلها رقم قانوني وهي جزء من دفاترك.',
+    en: 'Revoking works immediately. Invoices he already sent remain — they carry a legal number and belong to your bookkeeping.',
   },
   'team.uitnodigenMislukt': {
     nl: 'Uitnodigen mislukt',
@@ -10122,14 +10122,14 @@ export const MESSAGES = {
     en: 'Booked automatically',
   },
   'up.autoGeboektEen': {
-    nl: 'Eén factuur was zeker genoeg om zelf te controleren en is meteen geboekt als inkoopfactuur — klaar voor je boekhouder. Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.',
-    ar: 'فاتورة واحدة كانت مؤكدة بما يكفي للتدقيق الذاتي وقُيّدت فوراً كفاتورة مشتريات — جاهزة للمحاسب. لم يُدفع شيء؛ يمكن مراجعتها في «فواتير المشتريات» ضمن “Automatisch verwerkt”.',
-    en: 'One invoice was certain enough to check itself and was booked immediately as a purchase invoice — ready for your accountant. Nothing was paid; you can review it under “Automatisch verwerkt” on Purchase invoices.',
+    nl: 'Eén factuur was zeker genoeg en is meteen geboekt als inkoopfactuur — klaar voor je boekhouder. Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.',
+    ar: 'فاتورة واحدة كانت مؤكدة بما يكفي وقُيّدت فوراً كفاتورة مشتريات — جاهزة للمحاسب. لم يُدفع شيء؛ راجعها في «فواتير المشتريات» ضمن “Automatisch verwerkt”.',
+    en: 'One invoice was certain enough and was booked immediately as a purchase invoice — ready for your accountant. Nothing was paid; review it under “Automatisch verwerkt” on Purchase invoices.',
   },
   'up.autoGeboektMeer': {
-    nl: '{n} facturen waren zeker genoeg om zelf te controleren en zijn meteen geboekt als inkoopfactuur — klaar voor je boekhouder. Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.',
-    ar: 'فواتير مؤكدة بما يكفي للتدقيق الذاتي: {n}، وقُيّدت فوراً كفواتير مشتريات — جاهزة للمحاسب. لم يُدفع شيء؛ يمكن مراجعتها في «فواتير المشتريات» ضمن “Automatisch verwerkt”.',
-    en: '{n} invoices were certain enough to check themselves and were booked immediately as purchase invoices — ready for your accountant. Nothing was paid; you can review them under “Automatisch verwerkt” on Purchase invoices.',
+    nl: '{n} facturen waren zeker genoeg en zijn meteen geboekt als inkoopfactuur — klaar voor je boekhouder. Er is niets betaald; nakijken kan bij Inkoopfacturen onder “Automatisch verwerkt”.',
+    ar: 'فواتير مؤكدة بما يكفي: {n}، وقُيّدت فوراً كفواتير مشتريات — جاهزة للمحاسب. لم يُدفع شيء؛ راجعها في «فواتير المشتريات» ضمن “Automatisch verwerkt”.',
+    en: '{n} invoices were certain enough and were booked immediately as purchase invoices — ready for your accountant. Nothing was paid; review them under “Automatisch verwerkt” on Purchase invoices.',
   },
   'up.bestandenKiezen': {
     nl: 'Bestanden kiezen',
@@ -10417,9 +10417,9 @@ export const MESSAGES = {
     en: '{n} to review in Daily turnover',
   },
   'up.reproc.uitleg': {
-    nl: 'Kassa-, grootboek- en dagomzet-bestanden die al in je bestanden staan maar nog niet geboekt zijn, worden hiermee alsnog verwerkt — zonder opnieuw te uploaden. Veilig om te herhalen (corrigeert, telt nooit dubbel).',
-    ar: 'ملفات الكاشير ودفتر الأستاذ وإيراد اليوم الموجودة أصلاً في ملفاتك ولم تُقيَّد بعد تُعالَج بهذا لاحقاً — دون رفعها من جديد. تكراره آمن (يُصحّح ولا يَعُدّ مرتين أبداً).',
-    en: 'Till, ledger and daily-turnover files already in your files but not yet booked are processed after all — without re-uploading. Safe to repeat (it corrects, never double-counts).',
+    nl: 'Verwerkt alsnog de kassa-, grootboek- en dagomzetbestanden die al in je bestanden staan maar nog niet geboekt zijn. Veilig om te herhalen: telt nooit dubbel.',
+    ar: 'يعالج لاحقاً ملفات الكاشير ودفتر الأستاذ وإيراد اليوم الموجودة في ملفاتك ولم تُقيَّد بعد. تكراره آمن: لا يَعُدّ مرتين أبداً.',
+    en: 'Processes the till, ledger and daily-turnover files already in your files but not yet booked. Safe to repeat: never double-counts.',
   },
   'up.selecteerUitleg': {
     nl: 'Je kunt meerdere foto’s of bestanden in één keer selecteren. Eén PDF = één factuur.',
@@ -10837,9 +10837,9 @@ export const MESSAGES = {
     en: 'This quarter is still running. Once it has ended you can mark it as filed here and we freeze the figures.',
   },
   'wh.filed.uitlegOnbekend': {
-    nl: 'We konden niet controleren of dit kwartaal al is ingediend, dus we laten je het nu niet vastleggen — anders zou je een eerdere indiening kunnen overschrijven. Ververs de pagina.',
-    ar: 'لم نستطع التحقق مما إذا كان هذا الربع قد قُدّم، فلن ندعك تثبّته الآن — وإلا لربما استبدلت تقديماً سابقاً. حدّث الصفحة.',
-    en: 'We could not check whether this quarter is already filed, so we will not let you freeze it now — you might overwrite an earlier filing. Refresh the page.',
+    nl: 'We konden niet controleren of dit kwartaal al is ingediend, dus vastleggen kan nu niet — anders zou je een eerdere indiening overschrijven. Ververs de pagina.',
+    ar: 'لم نستطع التحقق مما إذا كان هذا الربع قد قُدّم، فلا يمكن التثبيت الآن — وإلا لربما استبدلت تقديماً سابقاً. حدّث الصفحة.',
+    en: 'We could not check whether this quarter is already filed, so freezing is not possible now — you might overwrite an earlier filing. Refresh the page.',
   },
   'wh.filed.uitlegVastleggen': {
     nl: 'Dit legt de cijfers van dit kwartaal vast. Komt er later nog een factuur bij, dan zien we het verschil en zeggen we of een suppletie nodig is.',
@@ -11028,9 +11028,9 @@ export const MESSAGES = {
     en: 'That amount is processed as a cost in the result above — VAT-free (payment services exemption).',
   },
   'wh.pin.uitBankregelNietGeboekt': {
-    nl: 'Dit bedrag staat nog NIET in het resultaat hierboven: er is ook een terminal-afrekening voor deze periode, en zolang die er is boeken we de commissie nooit uit twee bronnen tegelijk.',
-    ar: 'هذا المبلغ ليس بعدُ في النتيجة أعلاه: توجد أيضاً تسوية جهاز لهذه الفترة، وما دامت موجودة فلا نسجّل العمولة من مصدرين في آن.',
-    en: 'This amount is NOT yet in the result above: a terminal settlement also exists for this period, and while it does we never book the commission from two sources at once.',
+    nl: 'Dit bedrag staat nog NIET in het resultaat hierboven: er is ook een terminal-afrekening voor deze periode, en de commissie boeken we nooit uit twee bronnen tegelijk.',
+    ar: 'هذا المبلغ ليس بعدُ في النتيجة أعلاه: توجد أيضاً تسوية جهاز لهذه الفترة، ولا نسجّل العمولة من مصدرين في آن أبداً.',
+    en: 'This amount is NOT yet in the result above: a terminal settlement also exists for this period, and we never book the commission from two sources at once.',
   },
   'wh.pin.uitBankregelOnleesbaar': {
     nl: '{n} afrekening(en) noemden een commissie die niet klopte met het bijgeschreven bedrag. Die zijn niet meegeteld.',
@@ -11801,9 +11801,9 @@ export const MESSAGES = {
     en: '{n} sales invoices have been unpaid for more than a year past their due date.',
   },
   'aang.art29.terugvraagUitleg': {
-    nl: 'De BTW die je hierover afdroeg kun je terugvragen (oninbare vordering, art. 29 Wet OB). Ook dit bedrag zit niet in de rubrieken hierboven — bespreek het tijdvak met je boekhouder.',
-    ar: 'الضريبة التي سددتها عن هذه الفواتير يمكنك استردادها (دين معدوم، المادة 29 من قانون Wet OB). هذا المبلغ أيضاً غير مشمول في البنود أعلاه — ناقش الفترة مع المحاسب.',
-    en: 'You can reclaim the VAT you paid on these (bad debt, art. 29 Wet OB). This amount is also not included in the boxes above — discuss the period with your accountant.',
+    nl: 'De BTW die je hierover afdroeg kun je terugvragen (oninbare vordering, art. 29 Wet OB). Dit bedrag zit niet in de rubrieken hierboven — bespreek het tijdvak met je boekhouder.',
+    ar: 'الضريبة التي سددتها عن هذه يمكنك استردادها (دين معدوم، art. 29 Wet OB). هذا المبلغ غير مشمول في البنود أعلاه — ناقش الفترة مع المحاسب.',
+    en: 'The VAT you paid on these you can reclaim (bad debt, art. 29 Wet OB). This amount is not in the boxes above — discuss the period with your accountant.',
   },
   'aang.icp.uitleg1': {
     nl: 'Leveringen aan ondernemers in de EU (rubriek 3b hierboven) moet je óók per BTW-nummer opgeven.',
@@ -12520,7 +12520,7 @@ export const MESSAGES = {
   // zinnen (uren, kanttekeningen, niet-bijgehouden) komen als data van de server, in het
   // Nederlands, zoals elke administratieve waarheid hier.
   'jaar.titel': { nl: 'Jaaroverzicht voor de IB-aangifte', en: 'Year overview for the income tax return', ar: 'ملخص السنة لإقرار ضريبة الدخل' },
-  'jaar.intro': { nl: 'Je jaar, geordend zoals de aangifte inkomstenbelasting erom vraagt. Dit rekent geen belasting uit — het zet je cijfers klaar om over te nemen, en zegt eerlijk wat er nog mist.', en: 'Your year, arranged the way the income tax return asks for it. It computes no tax — it lays out your figures to copy over, and says honestly what is still missing.', ar: 'سنتك مرتبة كما يطلبها إقرار ضريبة الدخل. لا يحسب ضريبة — يجهّز أرقامك للنقل ويقول بصدق ما الناقص.' },
+  'jaar.intro': { nl: 'Je jaar, geordend zoals de aangifte inkomstenbelasting erom vraagt. Dit rekent geen belasting uit — het zet je cijfers klaar en zegt wat er nog mist.', en: 'Your year, arranged the way the income tax return asks for it. It computes no tax — it lays out your figures and says what is still missing.', ar: 'سنتك مرتبة كما يطلبها إقرار ضريبة الدخل. لا يحسب ضريبة — يجهّز أرقامك ويقول ما الناقص.' },
   'jaar.wv.titel': { nl: 'Winst-en-verliesrekening', en: 'Profit and loss', ar: 'حساب الأرباح والخسائر' },
   'jaar.wv.opbrengsten': { nl: 'Opbrengsten', en: 'Revenue', ar: 'الإيرادات' },
   'jaar.wv.kosten': { nl: 'Kosten', en: 'Costs', ar: 'التكاليف' },
@@ -13058,9 +13058,9 @@ export const MESSAGES = {
   // AGENTS.md names both explicitly. They stay as they are in every language, exactly like btw.
   'vtg.titel': { nl: 'Voertuigen', en: 'Vehicles', ar: 'المركبات', tr: 'Araçlar' },
   'vtg.uitleg': {
-    nl: 'Leg vast welke auto’s je onder handen hebt. De APK-datum zet ze vanzelf bovenaan zodra die in zicht komt — dat is je reden om de klant te bellen.',
-    en: 'Record which cars you work on. The APK date moves them to the top by itself as it comes into view — that is your reason to call the customer.',
-    ar: 'سجّل السيارات التي تعمل عليها. تاريخ الـ APK يرفعها إلى الأعلى تلقائياً عند اقترابه — وهو سببك للاتصال بالزبون.',
+    nl: 'Leg vast welke auto’s je onder handen hebt. Komt de APK-datum in zicht, dan staan ze vanzelf bovenaan — je reden om de klant te bellen.',
+    en: 'Record which cars you work on. As the APK date comes into view they move to the top by themselves — your reason to call the customer.',
+    ar: 'سجّل السيارات التي تعمل عليها. عند اقتراب تاريخ الـ APK ترتفع إلى الأعلى تلقائياً — وهو سببك للاتصال بالزبون.',
   },
   'vtg.kenteken': { nl: 'Kenteken', en: 'Kenteken', ar: 'رقم اللوحة (kenteken)', tr: 'Plaka (kenteken)' },
   'vtg.auto': { nl: 'Merk en model', en: 'Make and model', ar: 'الماركة والموديل' },
@@ -13103,9 +13103,9 @@ export const MESSAGES = {
 
   'vak.titel': { nl: 'Begin met de regels van jouw vak', en: 'Start from your trade’s lines', ar: 'ابدأ من بنود مهنتك' },
   'vak.uitleg': {
-    nl: 'Kies je vak, vul in wat jij rekent, en je prijslijst staat er. Het btw-tarief staat er al bij — dat is het stukje waar het vaakst iets misgaat.',
-    en: 'Pick your trade, fill in what you charge, and your price list is there. The btw rate is already set — that is the part that most often goes wrong.',
-    ar: 'اختر مهنتك، واملأ ما تتقاضاه، فتجهز قائمة أسعارك. نسبة الـ btw مضبوطة سلفاً — وهي الجزء الذي يُخطئ فيه الناس أكثر.',
+    nl: 'Kies je vak en vul in wat jij rekent — je prijslijst staat er. Het btw-tarief staat er al bij; daar gaat het het vaakst mis.',
+    en: 'Pick your trade and fill in what you charge — your price list is there. The btw rate is already set; that is where it most often goes wrong.',
+    ar: 'اختر مهنتك واملأ ما تتقاضاه — فتجهز قائمة أسعارك. نسبة الـ btw مضبوطة سلفاً؛ وهناك يُخطئ الناس أكثر.',
   },
   'vak.kies': { nl: 'Wat is je vak?', en: 'What is your trade?', ar: 'ما مهنتك؟' },
   'vak.prijsKop': { nl: 'Wat reken jij?', en: 'What do you charge?', ar: 'كم تتقاضى؟' },
@@ -13123,9 +13123,9 @@ export const MESSAGES = {
   // ─── [KASSA] A whole day typed by hand, on the Dagomzet screen ───────────────────────────────
   'dzh.titel': { nl: 'Dag zelf invullen', en: 'Enter a day yourself', ar: 'أدخل اليوم بنفسك' },
   'dzh.uitleg': {
-    nl: 'Geen kassa-rapport? Vul dan zelf in wat je die dag hebt omgezet. Het btw-tarief is het enige dat je nergens anders kwijt kunt — zonder tarief blokkeert je btw-aangifte.',
-    en: 'No till report? Then enter what you took that day yourself. The btw rate is the one thing you cannot record anywhere else — without it your btw return is blocked.',
-    ar: 'لا يوجد تقرير كاسة؟ أدخل بنفسك ما حقّقته ذلك اليوم. نسبة الـ btw هي الشيء الوحيد الذي لا يمكن تسجيله في مكان آخر — وبدونها يُحجب إقرار الـ btw.',
+    nl: 'Geen kassa-rapport? Vul dan zelf in wat je die dag omzette. Het btw-tarief kun je nergens anders kwijt — zonder tarief blokkeert je btw-aangifte.',
+    en: 'No till report? Then enter what you took that day yourself. The btw rate you can record nowhere else — without it your btw return is blocked.',
+    ar: 'لا يوجد تقرير كاسة؟ أدخل بنفسك ما حقّقته ذلك اليوم. نسبة الـ btw لا يمكن تسجيلها في مكان آخر — وبدونها يُحجب إقرار الـ btw.',
   },
   'dzh.datum': { nl: 'Welke dag', en: 'Which day', ar: 'أي يوم' },
   'dzh.omzetKop': { nl: 'Omzet, inclusief btw', en: 'Revenue, including btw', ar: 'الإيراد شاملاً الـ btw' },
@@ -14499,9 +14499,9 @@ export const MESSAGES = {
   'beh.lees.foutpercentage': { nl: 'Gevonden foutpercentage:', ar: 'نسبة الأخطاء المكتشفة:', en: 'Found error rate:' },
   'beh.lees.leveranciersKop': { nl: 'Leveranciers met meer dan één verbetering', ar: 'مورّدون لديهم أكثر من تصحيح', en: 'Suppliers with more than one correction' },
   'beh.lees.leveranciersUitleg': {
-    nl: 'Twee keer dezelfde leverancier is zelden toeval — dat is meestal één documentsoort die de lezer niet aankan, en die herhaalt zich bij elke volgende factuur van dat bedrijf.',
-    ar: 'تكرار المورّد نفسه مرتين نادرًا ما يكون صدفة. غالبًا هو نوع مستند واحد لا يجيده القارئ، ويتكرر مع كل فاتورة قادمة من تلك الشركة.',
-    en: 'The same supplier twice is rarely a coincidence — it is usually one document type the reader cannot handle, and it repeats with every next invoice from that company.',
+    nl: 'Twee keer dezelfde leverancier is zelden toeval: meestal één documentsoort die de lezer niet aankan, en die komt bij elke volgende factuur terug.',
+    ar: 'تكرار المورّد نفسه مرتين نادرًا ما يكون صدفة: غالبًا نوع مستند واحد لا يجيده القارئ، ويعود مع كل فاتورة قادمة.',
+    en: 'The same supplier twice is rarely a coincidence: usually one document type the reader cannot handle, and it returns with every next invoice.',
   },
   'beh.lees.leverancier': { nl: 'Leverancier', ar: 'المورّد', en: 'Supplier' },
   'beh.lees.verbeterd': { nl: 'Verbeterd', ar: 'صُحِّح', en: 'Corrected' },

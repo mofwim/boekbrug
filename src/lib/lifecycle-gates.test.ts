@@ -27014,7 +27014,7 @@ test("[POST-WAARD] the morning mail is built from the invoice's facts, and lands
 test("[RUSTIG] the screen does not grow wordier than the day this was measured", () => {
   // Ceilings — lowered batch by batch. Raising one is a decision to argue in the commit message.
   const LONGEST_WORDS = 38;      // 7 sep: 67 → 47 after batch 1 → 45 after batch 2 → 38 after batch 4
-  const OVER_TWENTY = 198;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 → 201 after batch 3 → 198 after batch 4 (owner screens AND src/modules)
+  const OVER_TWENTY = 197;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 → 201 after batch 3 → 197 after batch 4 (owner screens AND src/modules)
   const OVER_FIFTY = 0;          // 7 sep: 10 → 0 after batch 1
 
   const loop = (dir: string): string[] => {

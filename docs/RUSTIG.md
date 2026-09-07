@@ -40,7 +40,8 @@ nog steeds, in veertien woorden of minder.
 Na batch 4 (de rest, op meting): elke zin in rust van 33 woorden of meer is geweest, en van de
 46 kopieën zijn er 5 over — elk uitgelegd in de poort. De langste zin op het scherm is nu 38
 woorden (de ene instructie van het bevestigscherm, met art. 52 AWR erin); alles boven de 35 staat
-bij een beslissing. Gemeten over alle schermen: 263 → 198 zinnen boven de twintig.
+bij een beslissing. Gemeten over alle schermen: 263 → 197 zinnen boven de twintig, en 23.111 → 22.327 woorden sinds
+batch 2 begon.
 
 De 233 zinnen langer dan twintig woorden zijn 7% van de zinnen en dragen ~30% van de woorden.
 De drie dagelijkse schermen — betalen, bank, controlewachtrij — dragen 8.577 woorden: een derde
