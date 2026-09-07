@@ -185,9 +185,9 @@ En drie dingen uit het ambacht van schermopnames die hier ontbraken:
   gebeuren: velden lichtten op, een keuzelijst versprong, zonder dat te zien was dat iemand klikte.
   Er wordt er nu één getekend, met een rimpel bij elke klik — hetzelfde wat Screen Studio en
   soortgelijk gereedschap doet, en om dezelfde reden: een handeling moet gemótiveerd lijken.
-- **Zoomen op het veld dat wordt genoemd**, met `cubic-bezier(.22,.61,.36,1)` — snel beginnen,
-  zacht uitlopen. Een lineaire zoom voelt mechanisch. Een blok uitlichten zegt "hier ergens";
-  inzoomen zegt "dit".
+- **Zoomen op het veld dat wordt genoemd.** Gebouwd, geprobeerd en er weer uit: op een blok dat al
+  is uitgelicht én gecentreerd voegde de zoom onrust toe in plaats van aandacht, en hij sneed de
+  zijkanten van de regel af — juist de kolom met het bedrag. De schijnwerper doet het werk al.
 - **Telefoonbreedte.** 540 CSS-pixels is geen telefoon: een iPhone is er 390 tot 430 breed. Op 540
   opnemen en naar 1080 schalen levert een beeld dat een kwart kleiner oogt dan wat een échte
   telefoon van dezelfde pagina toont — precies op de cijfers. Clip 12 neemt op 432×768 op, exact
@@ -201,6 +201,36 @@ een aanvulling voor later, geen drager.
 **Clip 11 blijft staan naast 12, en dat is opzet.** 11 legt élk veld uit voor iemand die het gaat
 doen; 12 is de wervende versie van hetzelfde pad. De formule hierboven gaat over werving. Een
 handleiding mag langer, trager en saaier zijn — die wordt gezocht, niet voorgeschoteld.
+
+## De stem — een proef, en wat hij kostte om te bouwen
+
+`CLIP_VOICE=1` legt een gesproken spoor onder de clip. Standaard staat het UIT en dat blijft zo: de
+ondertitels dragen de boodschap, want de meeste mensen kijken zonder geluid.
+
+**De stem is nu `espeak-ng` en dat hoor je.** Het is een formant-synthesizer uit een ander tijdperk.
+Hij staat er om te horen óf gesproken tekst de uitleg helpt, niet om te publiceren. Een neuraal
+model (`piper`, stem `nl_NL-mls-medium`) is de bedoeling en is hier niet te installeren: het
+downloaden van de stem gaat langs de egress-proxy en die geeft 403. Op een machine die er wél bij
+kan is het één commando, en er hoeft niets aan de tijdlijn hieronder te veranderen — die staat los
+van wie er spreekt.
+
+**Wat wél al klopt is het moeilijke deel: de synchronisatie.** Elke `say()` legt vast wanneer hij in
+beeld kwam, en het spoor wordt op die tijdstippen gebouwd. Niet uit de som van de `ms`-waarden —
+daar zitten typen, scrollen en wachten tussen, en die duren nooit twee keer hetzelfde.
+
+Dat ging de eerste keer mis, en de manier waarop is het opschrijven waard: **de eerste gesproken zin
+viel dertien seconden te laat.** Playwright begint pas te filmen bij het eerste getekende beeld, niet
+bij het aanmaken van de context — en de navigatie ervóór duurde hier dertien seconden. De eerste
+versie trok alleen de afgeknipte aanloop af (`from`), en die was nul. Het nulpunt van de video is
+afleidbaar zonder iets aan te nemen: de opname stopt exact bij `ctx.close()`, dus **seconde nul is
+dat moment min de lengte van het bestand**.
+
+Nagemeten in plaats van aangenomen, met `silencedetect` op het eindresultaat: eerste spraak op
+0,98 s waar de ondertitel op 0,98 s staat, en elke gevonden grens daarna valt op zijn eigen zin.
+
+Een `Beat` mag een eigen `voice` hebben. Een ondertitel is kort omdat lezen tijd kost; een gesproken
+zin mag een lidwoord meer hebben, en getallen worden voluit gespeld ("zestienhonderd drieëndertig
+euro vijftig") omdat elke synthesizer over "€ 1.633,50" struikelt.
 
 ## Waar te posten
 
