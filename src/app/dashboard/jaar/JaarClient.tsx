@@ -56,6 +56,12 @@ export function JaarOverzichtPaneel({ overzicht, t }: { overzicht: IbJaarOverzic
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, color: '#202124' }}>
               <span>{tt('jaar.balans.boekwaarde')}</span><span>{eur(bedrijfsmiddelen.boekwaardeEinde ?? 0)}</span>
             </div>
+            {/* [AANSLAG] Only when there were any — a zero line at rest says nothing. */}
+            {(overzicht.aanslagen ?? 0) > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, color: '#202124' }}>
+                <span>{tt('jaar.balans.aanslagen')}</span><span>{eur(overzicht.aanslagen ?? 0)}</span>
+              </div>
+            )}
             <p style={{ fontSize: 13, margin: '4px 0 0' }}>
               <a href="/dashboard/bedrijfsmiddelen" style={{ color: '#1A73E8', fontWeight: 600, textDecoration: 'none' }}>
                 {bedrijfsmiddelen.aantal === 0 ? tt('jaar.balans.registerLeeg') : tt('jaar.balans.registerLink')}

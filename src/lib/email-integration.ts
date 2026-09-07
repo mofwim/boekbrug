@@ -7,6 +7,7 @@
 // read, write, or delete tokens — never touch access_token / refresh_token
 // columns directly (they are NULL since the BOEK-SECURITY migration).
 import { randomUUID } from 'node:crypto'
+import { effectiveTaxKind, type TaxKind } from './tax-letter'
 // [OBSERVABILITY] De waarde die de lezer telt — één plek, zie skipped-import.ts.
 import { DOC_TYPE_COULD_NOT_READ } from '@/lib/skipped-import'
 // [MAILTEKST] De factuur die nooit een bijlage had: het filter en de tekstconversie.
@@ -1838,6 +1839,8 @@ export interface AttachmentClassification {
   // as the intake gate — a statement/other-kind read as an invoice must never auto-book.
   isStatement?: boolean
   documentKind?: string | null
+  // [AANSLAG] Which tax a Belastingdienst letter concerns; null on an ordinary invoice.
+  taxKind?: TaxKind | null
   // [BON-EMAIL] The payment signals. The reader has always produced them — ai.ts asks for them by
   // name — and this mapper dropped all five, so the sync could not tell a kassabon from a bill and
   // booked money already spent as money still owed. paymentSuggestion() reads them; see its header.
@@ -1987,6 +1990,7 @@ export async function classifyAttachment(
     // [AUTO-ADVANCE] statement / kind — defense-in-depth for the auto-advance gate.
     isStatement: result.is_statement,
     documentKind: result.document_kind ?? null,
+    taxKind: result.tax_kind ?? null, // [AANSLAG]
     // [BON-EMAIL] Verbatim from the same Claude call the camera path uses — including the printed
     // tender line, which outranks the model's own opinion about whether it was settled.
     isPaid: result.is_paid,
@@ -4530,6 +4534,8 @@ export async function syncUserEmails(
             is_reminder: classification.isReminder,
             is_credit_note: classification.isCreditNote,
             document_kind: classification.documentKind ?? null,
+            // [AANSLAG] Stored kind or the sender's name — a tax letter never auto-books.
+            tax_kind: effectiveTaxKind({ tax_kind: classification.taxKind, client_name: supplier?.name || rawVendorName }),
             confidence: classification.confidence,
             invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
             // Raw gross only — never auto-book a total derived from the 'amount' fallback (that
@@ -4647,6 +4653,7 @@ export async function syncUserEmails(
           // Amounts below stay NEGATIVE as extracted — matching the outgoing
           // creditnota route [BOEK-031] (one sign convention in the table).
           invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
+          tax_kind: classification.taxKind ?? null, // [AANSLAG]
           total_ex_btw: classification.totalExBtw ?? 0,
           btw_amount: classification.btwAmount ?? 0,
           total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,

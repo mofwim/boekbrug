@@ -1770,6 +1770,7 @@ export type Database = {
           total_inc_btw: number | null
           updated_at: string | null
           vat_deduction: string | null
+          tax_kind: string | null
           vendor_iban: string | null
         }
         Insert: {
@@ -1833,6 +1834,7 @@ export type Database = {
           total_inc_btw?: number | null
           updated_at?: string | null
           vat_deduction?: string | null
+          tax_kind?: string | null
           vendor_iban?: string | null
         }
         Update: {
@@ -1896,6 +1898,7 @@ export type Database = {
           total_inc_btw?: number | null
           updated_at?: string | null
           vat_deduction?: string | null
+          tax_kind?: string | null
           vendor_iban?: string | null
         }
         Relationships: [

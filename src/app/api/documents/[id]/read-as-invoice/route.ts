@@ -263,6 +263,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       due_date: deriveDueDate(invoiceDate, v.due_date ?? null, v.payment_term_days ?? null),
       invoice_number: v.invoice_number?.trim() || null,
       invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+      tax_kind: v.tax_kind ?? null, // [AANSLAG]
       total_ex_btw: v.total_ex_btw ?? 0, btw_amount: v.btw_amount ?? 0,
       total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,
       pdf_url: doc.file_url, document_id: doc.id,

@@ -43,6 +43,8 @@ interface IncomingInvoiceRow {
   // [BRIDGE-CREDITNOTA-SIGN] 'creditnota' → negative amounts by design; drives
   // the queue badge + the sign-inverted read-time health gate below.
   invoice_type: string | null;
+  // [AANSLAG] Which tax a Belastingdienst letter concerns; drives the queue badge.
+  tax_kind: string | null;
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
@@ -91,7 +93,7 @@ const INVOICE_COLUMNS =
   // does not fail loudly — it simply answers "no", and the "Opnieuw inlezen" button silently never
   // appears on any card. A control that is never on screen is indistinguishable from one that was
   // never built.
-  "id, client_name, client_email, invoice_type, direction, status, accountant_status, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence, vendor_iban";
+  "id, client_name, client_email, invoice_type, tax_kind, direction, status, accountant_status, total_ex_btw, btw_amount, total_inc_btw, amount_paid, invoice_date, invoice_number, source, pdf_url, document_id, created_at, field_confidence, vendor_iban";
 
 export default async function IncomingPage() {
   const supabase = await createServerSupabaseClient();

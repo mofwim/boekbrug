@@ -523,6 +523,27 @@ test("[BEDRIJFSMIDDEL] a registered asset books to 0100, never to kosten; voorbe
   assert.match(r.xml, /<accID>0110<\/accID>[\s\S]*?BMvaBeiCae/, "the one verified RGS code is on the cumulative account");
 });
 
+test("[AANSLAG] a tax letter books to privé, the btw account or vraagposten — never to kosten, never to 1400", () => {
+  const input = baseInput();
+  input.purchases = [
+    { id: "ib", invoiceNumber: "A1", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 1200, btwAmount: 0, taxKind: "inkomstenbelasting" },
+    { id: "ob", invoiceNumber: "A2", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 500, btwAmount: 0, taxKind: "omzetbelasting" },
+    { id: "x", invoiceNumber: "A3", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 80, btwAmount: 16.8, taxKind: "overig" },
+    { id: "mrb", invoiceNumber: "A4", invoiceDate: "2026-05-27", vendorName: "Belastingdienst", totalExBtw: 140, btwAmount: 0, taxKind: "motorrijtuigenbelasting" },
+  ];
+  const r = buildXafFile(input);
+  const ls = lines(r.xml);
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "0500" && amt === "1200.00" && tp === "D"), "income tax is a privé-opname");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "1500" && amt === "500.00" && tp === "D"), "a btw-naheffing settles against te betalen omzetbelasting");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "2100" && amt === "96.80" && tp === "D"), "an unknown letter is a vraagpost for its whole gross");
+  assert.ok(!ls.some(([acc]) => acc === "1400"), "a tax letter never yields voorbelasting, even when the read put btw on it");
+  assert.ok(ls.some(([acc, amt]) => acc === "4000" && amt === "140.00"), "MRB stays a cost");
+  assert.ok(!ls.some(([acc, amt]) => acc === "4000" && amt === "1200.00"), "…and income tax is not one");
+  assert.ok(ls.some(([acc, amt, tp]) => acc === "1600" && amt === "1200.00" && tp === "C"), "the letter is still a payable");
+  assert.equal(r.skipped.length, 0);
+  assert.match(r.xml, /<accID>0500<\/accID>\s*<accDesc>Privé-opnamen/, "the account is declared");
+});
+
 test("[BEDRIJFSMIDDEL] a month's depreciation is a balanced MEM entry, and a zero one is refused by name", () => {
   const input = baseInput();
   input.depreciation = [

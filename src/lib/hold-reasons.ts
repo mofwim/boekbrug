@@ -104,6 +104,9 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
   statement: "Het document is een rekeningoverzicht, geen factuur",
   reminder: "Het document is een herinnering van een factuur die er al hoort te zijn",
   creditnota: "Het document is een creditnota — die gaan nooit vanzelf door",
+  // [AANSLAG] Ook een keuze, geen leesprobleem: waar het geld boekt (privé, afdracht, kost) is
+  // aan de eigenaar. Een lezer die beter wordt, verandert hieraan niets.
+  tax_letter: "Het document is een brief van de Belastingdienst — waar die boekt beslist de eigenaar",
   no_reliable_total: "Het totaalbedrag was niet betrouwbaar te lezen",
   zero_btw_not_explicit_zero_rate: "De btw stond op nul zonder dat er 0% op het document staat",
   total_derived_never_grounded: "Het totaal is afgeleid en stond nergens zo op het document",

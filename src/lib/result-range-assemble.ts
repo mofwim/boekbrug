@@ -31,6 +31,7 @@
 // the tests it now admits are testing what already shipped. Where a comment explains a decision it
 // travelled with the code it explains.
 
+import { effectiveTaxKind } from "./tax-letter";
 import {
   computeResult, toResultBankTx, cardBudgetBound,
   type RawBankRow, type ResultInvoice, type ResultBankTx, type ResultCashEntry, type FinancialResult,
@@ -99,6 +100,8 @@ export interface RangeInvoiceRow {
   sender_id?: string | null;
   receiver_id: string | null;
   client_name?: string | null;
+  /** [AANSLAG] The tax kind of a Belastingdienst letter; null on an ordinary invoice. */
+  tax_kind?: string | null;
 }
 
 /** A cash_entries row as the window fetch selects it. */
@@ -270,6 +273,9 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
     rate_lines: i.id ? rateSharesByInvoice.get(i.id) ?? null : null,
     exempt_ex: i.id ? exemptExByInvoice.get(i.id) ?? null : null,
     vat_deduction: i.id ? exemption.deductionByInvoice.get(i.id) ?? null : null,
+    // [AANSLAG] Both handles: the stored kind and the sender's name.
+    tax_kind: i.tax_kind ?? null,
+    client_name: i.client_name ?? null,
   }));
 
   // The RESULT leg stays strictly in-window: the buffer days exist only to key the triangle, and
@@ -428,6 +434,10 @@ export function assembleRangeResult(inputs: RangeInputs): RangeResult {
     deductionByInvoice: new Map(exemption.deductionByInvoice),
     exemptShareByInvoice: exemptShareOf(invRows, exemptExByInvoice),
     assetInvoiceIds,
+    // [AANSLAG] Keyed by id for the kas slices; only tax letters get an entry.
+    taxKindByInvoice: new Map(
+      invRows.flatMap((i) => { const k = i.id ? effectiveTaxKind(i) : null; return i.id && k ? [[i.id, k] as const] : []; }),
+    ),
     afschrijvingen,
     assetsUnreadable: assetsRead === null,
   };

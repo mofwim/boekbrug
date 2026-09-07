@@ -46,6 +46,8 @@ export interface IbJaarInput {
    */
   investeringen?: number;
   afschrijvingen?: number;
+  /** [AANSLAG] Money on Belastingdienst letters kept out of kosten (income tax, Zvw, btw settlement). */
+  aanslagen?: number;
   /** The register could not be read: every purchase counted as a cost, nothing was depreciated. */
   assetsUnreadable?: boolean;
   /** Σ boekwaarde on 31 December of every asset still on the books, or null when unreadable. */
@@ -59,6 +61,8 @@ export interface IbJaarOverzicht {
   /** Winst-en-verliesrekening, in the form's own order. `kosten` INCLUDES afschrijvingen. */
   wv: { opbrengsten: number; kosten: number; saldo: number; afschrijvingen: number };
   /** [BEDRIJFSMIDDEL] The balance-sheet half the form asks about: what is on the books. */
+  /** [AANSLAG] Tax letters withheld from kosten, euros. Shown only when there were any. */
+  aanslagen?: number;
   bedrijfsmiddelen: {
     investeringen: number;
     /** null = the register could not be read. */
@@ -123,6 +127,7 @@ export function buildIbJaarOverzicht(input: IbJaarInput): IbJaarOverzicht {
       opbrengsten: round2(input.omzet), kosten: round2(input.kosten), saldo: round2(input.resultaat),
       afschrijvingen: round2(input.afschrijvingen ?? 0),
     },
+    aanslagen: round2(input.aanslagen ?? 0),
     bedrijfsmiddelen: {
       investeringen: round2(input.investeringen ?? 0),
       boekwaardeEinde: unreadable ? null : round2(input.boekwaardeEinde ?? 0),

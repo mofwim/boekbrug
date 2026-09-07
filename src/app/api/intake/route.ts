@@ -19,6 +19,7 @@
 // (arithmetic) still applies on the invoice/receipt write path.
 
 import { round2 } from "@/lib/invoice-totals"
+import { effectiveTaxKind } from "@/lib/tax-letter"
 import { randomUUID } from "node:crypto"
 import { NextRequest, NextResponse } from "next/server"
 // [DEUR-VANGNET] Eén vangnet voor elke deur waar een document binnenkomt.
@@ -1283,6 +1284,8 @@ async function runIntake(req: NextRequest) {
           is_credit_note: v.is_credit_note,
           document_kind: v.document_kind ?? null,
           invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+          // [AANSLAG] The stored kind or the sender's name — either holds the row for the owner.
+          tax_kind: effectiveTaxKind({ tax_kind: v.tax_kind, client_name: leverancier.supplierName || v.vendor }),
           confidence: v.confidence,
           // Raw gross only (no amount-fallback), and never auto-book a forced-through duplicate.
           totalIncBtw: v.total_inc_btw ?? null,
@@ -1391,6 +1394,8 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       // The read-time health classifier (import-health) applies the
       // sign-inverted gate for this row via invoice_type.
       invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
+      // [AANSLAG] Which tax a Belastingdienst letter concerns; null on an ordinary invoice.
+      tax_kind: v.tax_kind ?? null,
       total_ex_btw: v.total_ex_btw ?? 0,
       btw_amount: v.btw_amount ?? 0,
       total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,

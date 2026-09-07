@@ -27615,6 +27615,64 @@ test("[HAND-DUBBEL] every screen that can book a payment asks, and none of them 
 // This gate holds the mechanics together: the register reaches the engine under BOTH btw
 // schemes, a failed read is said rather than silently zero, the migration keeps the ordinary
 // rule, the boekhouder reads and never writes, and the auditfile books the same split.
+// ─── [AANSLAG] A letter from the Belastingdienst is never a cost ───
+//
+// A voorlopige aanslag has every mark the reader is told to look for in an invoice, and every
+// path that books one landed it in kosten. The rule is in tax-letter.ts and tested there; below is
+// what those tests cannot see: that every insert path carries the kind, that both cost legs
+// withhold it, and that the auditfile never turns it into voorbelasting.
+
+test("[AANSLAG] every path that writes an incoming invoice carries the tax kind, and none auto-books one", () => {
+  // Every INSERT that types a creditnota is a path an AI read reaches; each must also store
+  // tax_kind, or a Belastingdienst letter through that door is a cost again.
+  const doors = [
+    "src/app/api/intake/route.ts",
+    "src/app/api/documents/[id]/read-as-invoice/route.ts",
+    "src/app/api/email/upload/route.ts",
+    "src/app/api/email/reimport/[id]/route.ts",
+    "src/lib/email-integration.ts",
+  ];
+  for (const f of doors) {
+    const src = code(f);
+    const hits = [...src.matchAll(/invoice_type: [^\n]*\? ['"]creditnota['"] : ['"]factuur['"],/g)];
+    assert.ok(hits.length > 0, `${f}: no typed insert found — the scan is broken`);
+    // The main insert sites (not the auto-advance signal objects) must carry tax_kind within reach.
+    const stored = [...src.matchAll(/tax_kind: [^\n]*(?:\?\? null|taxKind)/g)].length;
+    assert.ok(stored >= 1, `${f}: the insert does not store tax_kind`);
+  }
+  const aa = code("src/lib/auto-advance.ts");
+  assert.match(aa, /if \(isTaxKind\(s\.tax_kind\)\) return \{ advance: false, reason: "tax_letter" \};/,
+    "a tax letter must never auto-book — where it books is the owner's call");
+  // Both gates that feed auto-advance pass the EFFECTIVE kind (stored or by name).
+  assert.match(code("src/app/api/intake/route.ts"), /tax_kind: effectiveTaxKind\(\{ tax_kind: v\.tax_kind, client_name: /);
+  assert.match(code("src/lib/email-integration.ts"), /tax_kind: effectiveTaxKind\(\{ tax_kind: classification\.taxKind, client_name: /);
+  // The reader is told, and its answer is normalised to the closed list.
+  const ai = code("src/lib/ai.ts");
+  assert.match(ai, /"tax_kind": "inkomstenbelasting" \| "zorgverzekeringswet" \| "omzetbelasting" \| "motorrijtuigenbelasting" \| "overig" \| null,/);
+  assert.match(ai, /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) \? parsed\.tax_kind : null;/);
+});
+
+test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it where it belongs", () => {
+  const engine = code("src/lib/financial-result.ts");
+  assert.match(engine, /if \(taxLetterWithheldFromCosts\(inv\)\) \{ aanslagen \+= ex \+ btw; continue; \}/,
+    "the accrual branch must withhold before the asset/cost split");
+  assert.match(engine, /if \(taxKind && taxLetterBooking\(taxKind\) !== "kosten"\) \{ aanslagen \+= s\.ex \+ s\.btw; continue; \}/,
+    "the kasstelsel branch must withhold the settlement slice");
+  assert.match(engine, /aanslagen: round2\(aanslagen\),/, "the withheld money reaches the result by name");
+  // The selects carry the column, and the assembler hands both handles to the engine.
+  assert.match(code("src/lib/compute-result-range.ts"), /client_name, tax_kind"\)/);
+  assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind"\)/);
+  assert.match(code("src/lib/result-range-assemble.ts"), /tax_kind: i\.tax_kind \?\? null,\s*client_name: i\.client_name \?\? null,/);
+  assert.match(code("src/lib/result-range-assemble.ts"), /taxKindByInvoice: new Map\(/);
+  // The auditfile: the whole gross to the kind's account, nothing to 1400.
+  const xaf = code("src/lib/xaf-export.ts");
+  assert.match(xaf, /const booking = inv\.taxKind \? taxLetterBooking\(inv\.taxKind\) : null;/);
+  assert.match(xaf, /booking === "prive" \? ACC\.prive : booking === "settlement" \? ACC\.btwTeBetalen : ACC\.vraagposten/);
+  assert.match(xaf, /\{ accID: "0500", accDesc: "Privé-opnamen/, "the privé account is declared");
+  // The year screen names it, only when there was any.
+  assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\(overzicht\.aanslagen \?\? 0\) > 0 &&/);
+});
+
 test("[BEDRIJFSMIDDEL] the register moves the result in both schemes, and a failed read is said", () => {
   const engine = code("src/lib/financial-result.ts");
   // 1. Both cost legs consult the register by invoice id: the accrual loop and the kas slices.

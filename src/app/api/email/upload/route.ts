@@ -522,6 +522,7 @@ const dup = await findSemanticDuplicate(
       // health classifier picks the positive-expecting arithmetic gate and a legitimately
       // negative credit reads as an error / aggregates with the wrong sign.
       invoice_type: verification.is_credit_note === true ? "creditnota" : "factuur",
+      tax_kind: verification.tax_kind ?? null, // [AANSLAG]
     })
     .select("id")
     .single();

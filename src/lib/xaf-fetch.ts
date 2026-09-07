@@ -20,6 +20,7 @@
 // which cash rows exist, fetchRateShares supplies the mixed-rate split.
 
 import type { PipelineClient } from "@/lib/supabase-pipeline";
+import { effectiveTaxKind } from "./tax-letter";
 import { isQuote } from "./offerte-followup";
 import { fetchAllRows, fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { isVerifiedForPackage, effectiveDirection } from "@/lib/package-attribution";
@@ -79,7 +80,7 @@ export async function buildXafInputForOwner(args: {
     client_btw_number: string | null; supplier_id: string | null;
   }>((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name, client_btw_number, supplier_id")
+    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name, client_btw_number, supplier_id, tax_kind")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -294,6 +295,8 @@ export async function buildXafInputForOwner(args: {
       totalExBtw: r.total_ex_btw ?? 0,
       btwAmount: r.btw_amount ?? 0,
       asset: assetInvoiceIds.has(r.id),
+      // [AANSLAG] The kind that governs where a Belastingdienst letter books; null otherwise.
+      taxKind: effectiveTaxKind(r),
       // De factuur eerst — dat is wat het document zei. Pas als die leeg is, de leverancier.
       vendorBtwNumber: r.client_btw_number ?? (r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.btw ?? null : null),
       vendorKvkNumber: r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.kvk ?? null : null,

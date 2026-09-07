@@ -38,6 +38,7 @@
 // code is a misfiled administration.
 
 import { round2 } from "./invoice-totals";
+import { taxLetterBooking, type TaxKind } from "./tax-letter";
 import { telWoord, vervoeg } from "./nl-plural";
 
 // ── The rekeningschema ───────────────────────────────────────────────────────────────────────────
@@ -59,6 +60,9 @@ export const XAF_ACCOUNTS: readonly XafAccount[] = [
   { accID: "1500", accDesc: "Te betalen omzetbelasting", accTp: "B", rgs: "BSchBepBtw" },
   { accID: "1600", accDesc: "Crediteuren", accTp: "B", rgs: "BSchCreHac" },
   { accID: "2100", accDesc: "Vraagposten", accTp: "B", rgs: null },
+  // [AANSLAG] Privé-opnamen for the owner's income tax and Zvw paid from the business. RGS leaf
+  // not verified against a fetchable source → null, by the rule at the top of this table.
+  { accID: "0500", accDesc: "Privé-opnamen (inkomstenbelasting / Zvw)", accTp: "B", rgs: null },
   // [BEDRIJFSMIDDEL] The register's three accounts. Only the cumulative-depreciation code could be
   // verified against a fetchable RGS source (boekhoudplaza: BMvaBeiCae = "Cumulatieve
   // afschrijvingen en waardeverminderingen inventaris"); the verkrijgingsprijs leaf (BMvaBeiVvp)
@@ -76,7 +80,7 @@ export const XAF_ACCOUNTS: readonly XafAccount[] = [
 const ACC = {
   kas: "1000", bank: "1100", debiteuren: "1300", kruisposten: "1350",
   voorbelasting: "1400", btwTeBetalen: "1500", crediteuren: "1600",
-  vraagposten: "2100", kosten: "4000",
+  vraagposten: "2100", kosten: "4000", prive: "0500",
   activa: "0100", cumAfschrijving: "0110", afschrijving: "4900",
 } as const;
 
@@ -122,6 +126,13 @@ export interface XafPurchaseInvoice {
   btwAmount: number;
   /** [BEDRIJFSMIDDEL] Registered as an asset: the ex-btw amount books to 0100, not to kosten. */
   asset?: boolean;
+  /**
+   * [AANSLAG] A Belastingdienst letter. Income tax and Zvw book to privé (0500), a btw
+   * settlement to 1500, an unknown kind to vraagposten (2100); only motorrijtuigenbelasting is a
+   * cost. Never voorbelasting: a tax letter carries none, and a read that put some on it is a
+   * misread that must not reach 1400.
+   */
+  taxKind?: TaxKind | null;
   /**
    * [XAF-TEGENPARTIJ] Het btw-nummer van de leverancier, zoals het op de factuur staat of zoals de
    * app het bij die leverancier heeft vastgelegd. Optioneel: op een kassabon staat er geen, en een
@@ -336,6 +347,18 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
   // [BEDRIJFSMIDDEL] A registered asset is an investment: its ex-btw amount goes to the balance
   // sheet (0100) and reaches the result only through the MEM depreciation entries. The btw side
   // is identical — voorbelasting does not care whether a purchase is stock or an oven.
+  // [AANSLAG] A tax letter: the whole gross goes to the account its kind names, nothing to 1400.
+  const booking = inv.taxKind ? taxLetterBooking(inv.taxKind) : null;
+  if (booking && booking !== "kosten") {
+    const acc = booking === "prive" ? ACC.prive : booking === "settlement" ? ACC.btwTeBetalen : ACC.vraagposten;
+    const desc = `Belastingdienst ${inv.taxKind}`;
+    return {
+      lines: [
+        { accID: acc, debitC: exC + btwC, desc, docRef },
+        { accID: ACC.crediteuren, debitC: -(exC + btwC), desc, docRef, custSupID },
+      ],
+    };
+  }
   const lines: Line[] = inv.asset
     ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef }]
     : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef }];

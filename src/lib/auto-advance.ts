@@ -22,6 +22,7 @@
 // and undo any one. Pure + testable (run: npx tsx src/lib/auto-advance.test.ts).
 
 import { classifyImportHealth, type HealthInput } from "./import-health";
+import { isTaxKind } from "./tax-letter";
 // [GEGROND]/[DOCCHECK] The two vetoes below are DEFINED in those modules, next to the reasoning
 // that justifies them. This file used to restate them as `=== "absent"` and `=== "present"`, which
 // left the versions carrying the explanation with no caller at all — so editing them would have
@@ -48,6 +49,8 @@ export interface AutoAdvanceSignals {
   is_credit_note?: boolean | null;
   document_kind?: string | null;
   invoice_type?: string | null;
+  /** [AANSLAG] The effective tax kind (tax-letter.ts effectiveTaxKind); a tax letter never auto-books. */
+  tax_kind?: string | null;
   confidence?: number | null; // overall AI confidence
   // [AUTO-ADVANCE] The RAW stored gross (total_inc_btw) — NOT the amount-fallback. Auto-booking
   // requires a real, finite, non-zero gross; an invoice priced only via a fallback 'amount' (so
@@ -112,6 +115,9 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   if (s.is_statement === true) return { advance: false, reason: "statement" };
   if (s.is_reminder === true) return { advance: false, reason: "reminder" };
   if (s.is_credit_note === true || s.invoice_type === "creditnota") return { advance: false, reason: "creditnota" };
+  // [AANSLAG] A Belastingdienst letter decides where money books (privé, settlement, cost) —
+  // that is the owner's call, never the app's.
+  if (isTaxKind(s.tax_kind)) return { advance: false, reason: "tax_letter" };
   const kind = (s.document_kind ?? "").toLowerCase();
   if (kind === "statement" || kind === "reminder" || kind === "credit_note" || kind === "creditnota") {
     return { advance: false, reason: `kind_${kind}` };

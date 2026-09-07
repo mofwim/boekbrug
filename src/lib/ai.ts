@@ -66,6 +66,7 @@ if (typeof window !== 'undefined') {
 // so there is no way to reach the paid API that skips the ceiling. See
 // src/lib/ai-budget.ts for why a GLOBAL ceiling and not a better per-user quota.
 import { reserveAiBudget, settleAiBudget, TOKEN_ESTIMATE, AI_BUDGET_EXHAUSTED_ERROR, isAiBudgetError } from './ai-budget'
+import { isTaxKind, type TaxKind } from "./tax-letter";
 
 // [BOEK-018] constants — May 2026
 // [MODEL-CONFIG] The OCR/classification model is ENV-CONFIGURABLE with a PROVEN default. A previous
@@ -538,6 +539,10 @@ export interface VerifyInvoiceResult {
   // "invoice" is a payment request (usually unpaid). "other" → not a financial
   // document for the invoice pipeline (route to bestanden instead).
   document_kind?: "invoice" | "receipt" | "other";
+  // [AANSLAG] When the sender is the Belastingdienst: which tax the letter concerns. A tax letter
+  // is a payable, not a cost — see tax-letter.ts for where each kind books. Null on an ordinary
+  // invoice. Normalised to the closed list; anything else becomes null.
+  tax_kind?: TaxKind | null;
   // [SMART-INTAKE] Did this document indicate it is ALREADY PAID? True for a
   // kassabon / pin-receipt (paid at the counter). The router uses this to
   // pre-suggest "paid" in the verify queue — the human still confirms (Pillar ⑤).
@@ -1492,6 +1497,7 @@ Return only a JSON object with these exact keys:
   "paid_card_last4": string or null,
   "is_credit_note": boolean,
   "has_assurantiebelasting": boolean,
+  "tax_kind": "inkomstenbelasting" | "zorgverzekeringswet" | "omzetbelasting" | "motorrijtuigenbelasting" | "overig" | null,
   "has_btw_verlegd": boolean,
   "is_statement": boolean,
   "is_reminder": boolean,
@@ -1636,6 +1642,22 @@ CRITICAL — a STATEMENT OF ACCOUNT is NOT a bookable invoice (set is_invoice=fa
   document names one — even when that number appears only in a sentence like
   "betreft factuur 2026-0041" or "onze factuur 2026-0041 d.d. 3 maart".
 - For anything that is NOT a reminder, set is_reminder=false and reminder_of_invoice_number=null.
+
+A letter from the BELASTINGDIENST (tax office) — set "tax_kind" (ALWAYS set this key):
+- When the sender is the Belastingdienst (also "Belasting dienst", "Ministerie van Financiën /
+  Belastingdienst", a letter with an "aanslagnummer" and a "betalingskenmerk"), it IS a payable
+  (is_invoice=true, document_kind="invoice", vendor="Belastingdienst", extract the amount, the
+  IBAN, the betalingskenmerk and the due date as usual) — but it is NOT a purchase, so name the
+  tax it concerns in "tax_kind":
+    · "inkomstenbelasting"       — "Voorlopige aanslag inkomstenbelasting", "Aanslag IB", "IB/PVV"
+    · "zorgverzekeringswet"      — "Zorgverzekeringswet", "Zvw", "bijdrage Zvw"
+    · "omzetbelasting"           — "Naheffingsaanslag omzetbelasting", "btw", "OB"
+    · "motorrijtuigenbelasting"  — "Motorrijtuigenbelasting", "MRB", "wegenbelasting"
+    · "overig"                   — any other Belastingdienst letter with an amount to pay
+  A letter that combines IB and Zvw on one aanslag: use "inkomstenbelasting".
+- Such a letter has NO btw: btw_amount=0, total_ex_btw = total_inc_btw = the amount to pay.
+- For every other sender, tax_kind=null. Never guess a kind for a supplier that merely mentions
+  tax on its invoice.
 
 Document kind + paid status (ALWAYS set these):
 - "document_kind" tells what this is:
@@ -2440,6 +2462,9 @@ Return JSON only.`;
     // the model booked as a plain invoice is still flagged. Not a rejection — a reminder is a
     // real (single) invoice; the flag only routes it to the human to check it isn't a duplicate.
     parsed.is_reminder = parsed.is_reminder === true || isReminderFilename(filename);
+    // [AANSLAG] Closed list, else null. The name rule in tax-letter.ts is the backstop for a
+    // Belastingdienst letter the model left unnamed.
+    parsed.tax_kind = isTaxKind(parsed.tax_kind) ? parsed.tax_kind : null;
 
     // [TRUST-UNCERTAIN] Confidence banding — never silently drop a real-but-hard
     // invoice. Below the hard floor (or with no invoice signal at all) it's spam /

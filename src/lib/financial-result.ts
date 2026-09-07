@@ -15,6 +15,7 @@
 // a rate are surfaced separately (cashOmzetZonderBtw) rather than silently guessed.
 
 import { pnlRole } from "./bank-categories";
+import { taxLetterBooking, taxLetterWithheldFromCosts, type TaxKind } from "./tax-letter";
 // [OFFERTE-GEEN-OMZET] One answer to "is this a quote", shared with the follow-up engine.
 import { isQuote } from "./offerte-followup";
 import { turnoverNetOmzet, turnoverBtw, parsePosSettlement, SETTLE_LAG_DAYS, type DailyTurnover } from "./turnover";
@@ -82,9 +83,17 @@ export interface ComputeOpts {
   // pre-register treatment (every purchase a cost, no depreciation) — which is the honest
   // fallback and also the one that must be SAID, so the year screen can say it.
   assetsUnreadable?: boolean;
+  // [AANSLAG] Per PURCHASE invoice: the tax kind of a Belastingdienst letter (tax-letter.ts). Under
+  // kasstelsel the cost leg sees settlement slices, which carry only the id — same argument as
+  // deductionByInvoice. Only rows that ARE a tax letter need an entry.
+  taxKindByInvoice?: ReadonlyMap<string, TaxKind>;
 }
 
 export interface ResultInvoice {
+  // [AANSLAG] A Belastingdienst letter is never a cost (tax-letter.ts). Both optional: a caller
+  // that omits them books the row as before, and the name alone already withholds the row.
+  tax_kind?: string | null;
+  client_name?: string | null;
   // [BEDRIJFSMIDDEL] The row's id, so the engine can tell an asset purchase from a cost. OPTIONAL
   // for the same reason invoice_type is: a caller that omits it books the row as a cost, exactly
   // as before the register existed. compute-result-range passes it; the year screen depends on it.
@@ -275,6 +284,10 @@ export interface FinancialResult {
   // [BEDRIJFSMIDDEL] Purchases in this window that are registered assets — kept OUT of kosten.
   // Named so the year screen can show the investment beside the depreciation that replaced it.
   investeringen: number;
+  // [AANSLAG] Money on Belastingdienst letters that was kept OUT of kosten (income tax, Zvw, a btw
+  // settlement, or a letter of unknown kind), euros incl. whatever the read put on it. Named so
+  // the year screen can say where it went. Motorrijtuigenbelasting is a cost and is not in here.
+  aanslagen: number;
   // [BEDRIJFSMIDDEL] The depreciation of the window, which IS in kosten (its own line on the year
   // screen). 0 for every owner without a register.
   afschrijvingen: number;
@@ -482,6 +495,8 @@ export function computeResult(
   let kosten = 0;
   // [BEDRIJFSMIDDEL] Investments withheld from kosten; see ComputeOpts.assetInvoiceIds.
   let investeringen = 0;
+  let aanslagen = 0;
+  const taxKindOf = opts.taxKindByInvoice ?? new Map<string, TaxKind>();
   const assetIds: ReadonlySet<string> = opts.assetInvoiceIds ?? new Set<string>();
   let btwVerschuldigd = 0;
   let btwVoorbelasting = 0;
@@ -613,6 +628,10 @@ export function computeResult(
         // [BEDRIJFSMIDDEL] A registered asset is an investment, not a cost — under kasstelsel too:
         // the kas regime is a btw rule, and depreciation is an income-tax rule that does not
         // follow the payment date. The btw on it is deducted exactly as for any purchase.
+        // [AANSLAG] A tax letter settles like any payable, but its money is not a cost and its
+        // "btw" (a misread, on a letter that carries none) is not voorbelasting.
+        const taxKind = taxKindOf.get(s.invoiceId);
+        if (taxKind && taxLetterBooking(taxKind) !== "kosten") { aanslagen += s.ex + s.btw; continue; }
         if (assetIds.has(s.invoiceId)) investeringen += s.ex; else kosten += s.ex;
         bookVoorbelasting(s.btw, opts.deductionByInvoice?.get(s.invoiceId));
       }
@@ -675,6 +694,10 @@ export function computeResult(
           addSale(taxedEx !== 0 ? nearestLegalRate(Math.round((btw / taxedEx) * 100)) : 0, taxedEx, btw);
         }
       } else if (inv.direction === "incoming" && INCOMING_OK.has(st)) {
+        // [AANSLAG] A Belastingdienst letter is never a cost: income tax and Zvw are private, a
+        // btw-naheffing is a settlement, an unknown letter is withheld and named. Only
+        // motorrijtuigenbelasting falls through to kosten. Nothing of it is voorbelasting.
+        if (taxLetterWithheldFromCosts(inv)) { aanslagen += ex + btw; continue; }
         // [BEDRIJFSMIDDEL] See the kas branch: an asset purchase is reported apart, not as a cost.
         if (inv.id && assetIds.has(inv.id)) investeringen += ex; else kosten += ex;
         // [TEGENTEKEN] A base and a BTW pointing in opposite directions is not a document that can
@@ -971,6 +994,7 @@ export function computeResult(
     voorbelastingTegenteken: round2(voorbelastingTegenteken),
     voorbelastingGeblokkeerd: voorbelasting.blocked,
     investeringen: round2(investeringen),
+    aanslagen: round2(aanslagen),
     afschrijvingen,
     assetsUnreadable: opts.assetsUnreadable === true,
   };

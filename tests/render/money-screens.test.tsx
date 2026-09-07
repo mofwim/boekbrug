@@ -940,6 +940,27 @@ test("[RENDER-GATE] the verify queue renders", async () => {
   assert.ok(html.length > 1000, "the queue rendered something substantial");
   // The list is here, and both suppliers reached it.
   assert.match(html, /Groothandel/);
+
+  // [AANSLAG] A tax letter carries a badge naming the tax and where it books; a supplier that
+  // merely has "belasting" in its name does not.
+  const withLetter = renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        React.createElement(IncomingInvoicesClient as any, {
+          initialInvoices: [
+            queueRow({ id: "t1", client_name: "Belastingdienst", tax_kind: "inkomstenbelasting", total_ex_btw: 1200, btw_amount: 0, total_inc_btw: 1200, invoice_number: "A1" }),
+            queueRow({ id: "t2", client_name: "Belastingdienst", tax_kind: null, total_ex_btw: 80, btw_amount: 0, total_inc_btw: 80, invoice_number: "A2" }),
+            queueRow({ id: "t3", client_name: "Belastingadviseur Jansen", total_ex_btw: 400, btw_amount: 84, total_inc_btw: 484, invoice_number: "A3" }),
+          ],
+          ignoredInvoices: [], confirmedInvoices: [],
+          connectionStatus: { connected: false, provider: null, email: null, connected_at: null, needs_reauth: false, pending_count: 0 },
+          userRole: "zzper", readingHints: {},
+        }))),
+  );
+  assert.match(withLetter, /Aanslag inkomstenbelasting — privé, geen kost/, "the kind is named on the row");
+  assert.match(withLetter, /Brief Belastingdienst — niet in de kosten/, "an unnamed tax-office letter is still badged");
+  assert.equal((withLetter.match(/geen kost|niet in de kosten/g) ?? []).length, 2, "the adviser gets no badge");
 });
 
 test("[RENDER-GATE] the verify queue does not report an unread queue as finished", async () => {

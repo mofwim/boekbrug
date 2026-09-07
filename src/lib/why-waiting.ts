@@ -80,6 +80,7 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   statement: "wacht.overzicht",
   reminder: "wacht.herinnering",
   creditnota: "wacht.creditnota",
+  tax_letter: "wacht.aanslag", // [AANSLAG]
 
   // How it arrived.
   paid_mark_not_settled: "wacht.betaalspoor",

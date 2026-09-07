@@ -98,6 +98,7 @@ export async function GET(req: NextRequest) {
     hoursTotal,
     investeringen: range.result.investeringen,
     afschrijvingen: range.result.afschrijvingen,
+    aanslagen: range.result.aanslagen, // [AANSLAG]
     assetsUnreadable: range.result.assetsUnreadable || assets === null,
     boekwaardeEinde,
     assetCount: onBooks.length,

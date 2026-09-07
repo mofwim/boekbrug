@@ -713,6 +713,12 @@ export const MESSAGES = {
   'ink.datumOntbreekt': { nl: 'Factuurdatum ontbreekt — verplicht om te bevestigen.', ar: 'تاريخ الفاتورة ناقص — وهو إلزامي للتأكيد.', en: 'The invoice date is missing — required to confirm.' },
   'ink.isCreditnota': { nl: 'Dit is een creditnota', ar: 'هذه إشعار دائن', en: 'This is a credit note' },
   'ink.creditnota': { nl: 'Creditnota', ar: 'إشعار دائن', en: 'Credit note' },
+  // [AANSLAG] The badge on a Belastingdienst letter: which tax, and where it books.
+  'ink.aanslag.inkomstenbelasting': { nl: 'Aanslag inkomstenbelasting — privé, geen kost', ar: 'ضريبة الدخل — خاص، ليست تكلفة', en: 'Income tax assessment — private, not a cost' },
+  'ink.aanslag.zorgverzekeringswet': { nl: 'Aanslag Zvw — privé, geen kost', ar: 'مساهمة Zvw — خاص، ليست تكلفة', en: 'Zvw assessment — private, not a cost' },
+  'ink.aanslag.omzetbelasting': { nl: 'Naheffing omzetbelasting — afdracht, geen kost', ar: 'ضريبة القيمة المضافة — تسوية، ليست تكلفة', en: 'VAT assessment — a settlement, not a cost' },
+  'ink.aanslag.motorrijtuigenbelasting': { nl: 'Motorrijtuigenbelasting — kost', ar: 'ضريبة المركبات — تكلفة', en: 'Motor vehicle tax — a cost' },
+  'ink.aanslag.overig': { nl: 'Brief Belastingdienst — niet in de kosten', ar: 'رسالة من مصلحة الضرائب — ليست ضمن التكاليف', en: 'Tax office letter — not in costs' },
   'ink.hoeBetaald': { nl: 'Hoe is deze factuur betaald?', ar: 'كيف دُفعت هذه الفاتورة؟', en: 'How was this invoice paid?' },
   'ink.markeerBetaald': { nl: 'Markeer als betaald', ar: 'علّمها كمدفوعة', en: 'Mark as paid' },
   'ink.betaaldBedrag': { nl: 'Betaald bedrag', ar: 'المبلغ المدفوع', en: 'Amount paid' },
@@ -12606,6 +12612,7 @@ export const MESSAGES = {
   'jaar.wv.saldo': { nl: 'Saldo (winst)', en: 'Balance (profit)', ar: 'الرصيد (الربح)' },
   'jaar.wv.afschrijvingen': { nl: 'waarvan afschrijvingen', en: 'of which depreciation', ar: 'منها الاستهلاك' },
   'jaar.balans.titel': { nl: 'Bedrijfsmiddelen', en: 'Business assets', ar: 'الأصول التجارية' },
+  'jaar.balans.aanslagen': { nl: 'Belastingaanslagen betaald (niet in de kosten)', en: 'Tax assessments paid (not in costs)', ar: 'ضرائب مدفوعة (ليست ضمن التكاليف)' },
   'jaar.balans.investeringen': { nl: 'Investeringen dit jaar (niet in de kosten)', en: 'Investments this year (not in costs)', ar: 'استثمارات هذه السنة (ليست ضمن التكاليف)' },
   'jaar.balans.boekwaarde': { nl: 'Boekwaarde op 31 december', en: 'Book value on 31 December', ar: 'القيمة الدفترية في 31 ديسمبر' },
   'jaar.balans.registerLeeg': { nl: 'Register is leeg — een investering van € 450 of meer hoort erin', en: 'Register is empty — an investment of € 450 or more belongs in it', ar: 'السجل فارغ — أي استثمار بقيمة € 450 أو أكثر مكانه هنا' },
@@ -14362,6 +14369,11 @@ export const MESSAGES = {
     nl: 'Dit lijkt een herinnering van een factuur die je misschien al hebt.',
     ar: 'يبدو هذا تذكيراً بفاتورة قد تكون لديك أصلاً.',
     en: 'This looks like a reminder for an invoice you may already have.',
+  },
+  'wacht.aanslag': {
+    nl: 'Dit is een brief van de Belastingdienst. Jij bevestigt waar hij boekt.',
+    ar: 'هذه رسالة من مصلحة الضرائب. أنت تؤكد أين تُقيَّد.',
+    en: 'This is a letter from the tax office. You confirm where it books.',
   },
   'wacht.creditnota': {
     nl: 'Dit lijkt een creditnota. Die boekt de app nooit vanzelf.',

@@ -567,6 +567,7 @@ async function runReimport(
     btw_amount: freshHasTotal ? (c.btwAmount ?? 0) : invoice.btw_amount,
     total_inc_btw: freshHasTotal ? (c.totalIncBtw ?? c.amount ?? 0) : invoice.total_inc_btw,
     invoice_type: c.isCreditNote === true ? "creditnota" : "factuur",
+    tax_kind: c.taxKind ?? null, // [AANSLAG]
     vendor_iban: c.vendorIban ?? null,
     payment_reference: c.paymentReference ?? null,
     field_confidence: fieldConfidenceValue as InvoiceUpdate["field_confidence"],

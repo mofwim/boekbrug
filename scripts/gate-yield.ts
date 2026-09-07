@@ -61,6 +61,7 @@ const GATES: Record<string, string> = {
   statement: 'a statement, not an invoice',
   reminder: 'a payment reminder',
   creditnota: 'a credit note',
+  tax_letter: '[AANSLAG] a Belastingdienst letter — the owner decides where it books',
   kind_statement: 'document_kind = statement',
   kind_reminder: 'document_kind = reminder',
   kind_credit_note: 'document_kind = credit_note',

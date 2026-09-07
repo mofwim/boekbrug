@@ -46,6 +46,9 @@ console.log("\n— never auto-book a statement / reminder / creditnota —");
   check("credit-note flag → blocked", shouldAutoAdvanceInvoice(clean({ is_credit_note: true })).advance === false);
   check("invoice_type creditnota → blocked", shouldAutoAdvanceInvoice(clean({ invoice_type: "creditnota", health: { ...clean().health, invoice_type: "creditnota" } })).advance === false);
   check("document_kind statement → blocked", shouldAutoAdvanceInvoice(clean({ document_kind: "statement" })).advance === false);
+  // [AANSLAG] A tax letter decides where money books — the owner's call, never the app's.
+  check("tax letter → blocked", shouldAutoAdvanceInvoice(clean({ tax_kind: "inkomstenbelasting" })).reason === "tax_letter");
+  check("garbage tax_kind is not a tax letter", shouldAutoAdvanceInvoice(clean({ tax_kind: "nonsense" })).advance === true);
 }
 
 console.log("\n— never auto-book an ambiguous read (needs-review) —");

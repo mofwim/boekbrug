@@ -13,6 +13,20 @@
 // - Restore ignored invoices → back to the verification queue
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { effectiveTaxKind, type TaxKind } from "@/lib/tax-letter";
+
+// [AANSLAG] One literal key per kind — a template key would be invisible to the [TAAL] gate.
+const TAX_KIND_LABEL: Record<TaxKind, string> = {
+  inkomstenbelasting: "ink.aanslag.inkomstenbelasting",
+  zorgverzekeringswet: "ink.aanslag.zorgverzekeringswet",
+  omzetbelasting: "ink.aanslag.omzetbelasting",
+  motorrijtuigenbelasting: "ink.aanslag.motorrijtuigenbelasting",
+  overig: "ink.aanslag.overig",
+};
+function taxKindLabel(inv: { tax_kind?: string | null; client_name?: string | null }): string | null {
+  const k = effectiveTaxKind(inv);
+  return k ? TAX_KIND_LABEL[k] : null;
+}
 // [VERVANG-OVERAL] Eén regel voor "is er een gemarkeerde tweeling?" — gedeeld met de betaalpagina.
 import { supersedeTargetOf } from "@/lib/supersede-target";
 // [WAAROM-WACHT] De zin die zegt waarom DIT document nog op de eigenaar wacht. De component
@@ -145,6 +159,8 @@ interface IncomingInvoice {
   // and the signed amount display. Optional: the page select must include it
   // (patch note) — absent means 'factuur' (default).
   invoice_type?: string | null;
+  // [AANSLAG] Which tax a Belastingdienst letter concerns; null on an ordinary invoice.
+  tax_kind?: string | null;
   total_ex_btw: number;
   btw_amount: number;
   total_inc_btw: number;
@@ -2516,6 +2532,21 @@ export function InvoiceCard({
               >
                 <span style={{ fontSize: 12, color: "#b3261e", fontWeight: 600 }}>
                   {t('ink.creditnota')}
+                </span>
+              </div>
+            )}
+            {/* [AANSLAG] A Belastingdienst letter is a payable and not a cost; the badge names the
+                tax so the owner sees at a glance where the money will book. Keys are literal
+                (TAX_KIND_LABEL) so the [TAAL] gate can see each one rendered. */}
+            {taxKindLabel(invoice) && (
+              <div
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 8,
+                  background: "#e8f0fe", border: "1px solid #aecbfa",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "#174ea6", fontWeight: 600 }}>
+                  {t(taxKindLabel(invoice) as never)}
                 </span>
               </div>
             )}
