@@ -18349,7 +18349,8 @@ test("[HERSTEL] de verzendknop belooft niet dat een factuur nooit meer te wijzig
   assert.match(code("src/app/dashboard/invoice/[id]/edit/page.tsx"), /setCanCorrectSent\(/,
     "en het bewerkscherm dat hem toepast");
 
-  for (const key of ["bewerk.modal.waarschuwing", "lijst.send.waarschuwing"]) {
+  // [RUSTIG] batch 4 folded lijst.send.waarschuwing into this key: /facturen renders the same sentence.
+  for (const key of ["bewerk.modal.waarschuwing"]) {
     const m = CATALOGUE[key];
     assert.ok(m, `${key} bestaat`);
     for (const [taal, zin] of Object.entries(m)) {
@@ -27003,13 +27004,17 @@ test("[POST-WAARD] the morning mail is built from the invoice's facts, and lands
 // keys. The law stayed word for word (art. 52 AWR, 35/35a Wet OB, 6:96 BW): a boekhouder reads
 // those, and the render tests pin them.
 //
+// Batch 4 took the rest by measurement: every at-rest sentence of 33+ words on the owner screens,
+// and the last copies. The longest rendered sentence is now 38 words (bh.bev.uitleg, the confirm
+// screen's one instruction, carrying art. 52 AWR); the ten over 35 all stand at a decision.
+//
 // This gate is a RATCHET. It knows today's stand and refuses any step back; each cleaned batch
 // lowers the ceilings here, in the same commit. What it cannot judge — whether a sentence stands
 // at a decision or at rest — the standard judges; what it can count, it counts.
 test("[RUSTIG] the screen does not grow wordier than the day this was measured", () => {
   // Ceilings — lowered batch by batch. Raising one is a decision to argue in the commit message.
-  const LONGEST_WORDS = 45;      // 7 sep: 67 → 47 after batch 1 → 45 after batch 2
-  const OVER_TWENTY = 201;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 → 201 after batch 3 (owner screens AND src/modules)
+  const LONGEST_WORDS = 38;      // 7 sep: 67 → 47 after batch 1 → 45 after batch 2 → 38 after batch 4
+  const OVER_TWENTY = 198;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 → 201 after batch 3 → 198 after batch 4 (owner screens AND src/modules)
   const OVER_FIFTY = 0;          // 7 sep: 10 → 0 after batch 1
 
   const loop = (dir: string): string[] => {
@@ -27076,23 +27081,24 @@ test("[RUSTIG] the screen does not grow wordier than the day this was measured",
     // Orientation-free: the pair is the same pair whichever key the walk met first.
     dubbel.push([lang[i].key, lang[j].key].sort().join(" ≈ "));
   }
-  // Today's copies — 46 pairs on 7 September, measured, not chosen; 27 after batch 2 folded the
-  // ones on the daily screens; 12 after batch 3 folded the accountant module's and the
-  // "could not read — says nothing about X" cluster that stood under six keys. A ratchet: a new
-  // pair is a red gate, and this set shrinks with every batch that folds one away.
-  const BEKENDE_KOPIEEN = 12;
+  // Today's copies — 46 pairs on 7 September, measured, not chosen; 27 after batch 2, 12 after
+  // batch 3, 5 after batch 4 folded the rest of the owner screens. Each of the five that remain is
+  // one thought two screens genuinely both need, explained in place. A ratchet: a new pair is a
+  // red gate, and this set shrinks with every batch that folds one away.
+  const BEKENDE_KOPIEEN = 5;
   const bekend = new Set([
-    "act.bv.disclaimer ≈ lijst.bundel.iban", "act.bv.uitleg ≈ lijst.bundel.deel",
-    "beh.lees.onleesbaarUitleg ≈ beh.vast.onleesbaarUitleg",
-    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing",
     // The single confirm and the bulk confirm each say the reading is not being changed and where
     // the liability stays (art. 52 AWR) — [BULK-BEVESTIG] requires both to.
     "bh.bev.bulk.lezing ≈ bh.bev.uitleg",
+    // Two failure modes after a number was issued: the mail did not go, the PDF was not made. The
+    // owner must hear which, and both must say the number IS issued.
     "detail.fout.mailNietVerstuurd ≈ detail.fout.pdfNietGemaakt",
-    "detail.fout.pdfNietGemaakt ≈ lijst.pdfNietGemaakt",
-    "inst.gevarenzoneUitleg ≈ inst.verwijderUitleg", "inst.mandaatFacturenUitleg ≈ inst.rijFacturenAan",
+    // The dialog that grants the invoicing mandate and the row that shows it is on.
+    "inst.mandaatFacturenUitleg ≈ inst.rijFacturenAan",
+    // The two modes of the kluis, each naming the 7-year duty once.
     "kluis.introArchief ≈ kluis.introBoekhouden",
-    "verd.geenInkoop ≈ verd.geenVerkoop", "wh.voet.berekendFactuur ≈ wh.voet.berekendKas",
+    // Purchase vs sales: a noun inside a sentence is not a parameter (AGENTS.md).
+    "verd.geenInkoop ≈ verd.geenVerkoop",
   ]);
   const nieuw = dubbel.filter((d) => !bekend.has(d));
   assert.deepEqual(nieuw, [],

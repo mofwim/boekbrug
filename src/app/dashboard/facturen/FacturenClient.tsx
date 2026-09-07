@@ -2076,7 +2076,7 @@ export default function FacturenClient({
             </div>
 
             <p style={{ fontSize: 11.5, color: '#70757a', lineHeight: 1.5, margin: '0 0 16px' }}>
-              {t('lijst.bundel.iban', { iban: bundle.iban.replace(/(.{4})/g, '$1 ').trim() })}
+              {t('act.bv.disclaimer', { iban: bundle.iban.replace(/(.{4})/g, '$1 ').trim() })}
             </p>
 
             <button onClick={() => setBundle(null)}
@@ -2149,7 +2149,7 @@ export default function FacturenClient({
             { label: t('lijst.send.email'),  value: sendCtx.clientEmail },
             { label: t('lijst.send.bedrag'), value: fmtEur(sendCtx.totalIncBtw) },
           ]}
-          warning={t('lijst.send.waarschuwing')}
+          warning={t('bewerk.modal.waarschuwing')}
           confirmLabel={t('lijst.versturen')}
           confirmBg={M3.primary}
           onConfirm={() => executeSend(sendCtx)}
