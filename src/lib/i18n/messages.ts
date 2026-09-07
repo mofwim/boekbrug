@@ -722,9 +722,9 @@ export const MESSAGES = {
   // gewisseld rekeningnummer is soms écht — een leverancier stapt over van bank — dus dit vraagt en
   // blokkeert niet, zoals elke andere poort hier. Wat het NIET meer doet is zwijgen.
   'ink.anderRekeningKaal': {
-    nl: 'Het rekeningnummer van deze leverancier is veranderd ten opzichte van eerdere facturen. Controleer dit vóór je betaalt, en bel de leverancier op een nummer dat je zelf opzoekt — niet het nummer op deze factuur.',
-    ar: 'رقم حساب هذا المورّد تغيّر مقارنةً بالفواتير السابقة. تحقّق قبل الدفع، واتصل بالمورّد على رقم تبحث عنه أنت — لا الرقم المكتوب على هذه الفاتورة.',
-    en: 'This supplier’s account number has changed since their earlier invoices. Check before you pay, and call them on a number you look up yourself — not the one printed on this invoice.',
+    nl: 'Deze leverancier heeft een ander rekeningnummer dan op eerdere facturen. Bel vóór je betaalt op een nummer dat je zelf opzoekt — niet het nummer op deze factuur.',
+    ar: 'رقم حساب هذا المورّد يختلف عمّا في الفواتير السابقة. قبل الدفع اتصل به على رقم تبحث عنه بنفسك — لا الرقم المكتوب على هذه الفاتورة.',
+    en: 'This supplier has a different account number than on earlier invoices. Before you pay, call them on a number you look up yourself — not the one on this invoice.',
   },
   'ink.tochBetalen': { nl: 'Ik heb het gecontroleerd', ar: 'تحقّقتُ من ذلك', en: 'I have checked it' },
   'ink.bonVermeldt': { nl: 'De bon vermeldt', ar: 'الإيصال يذكر', en: 'The receipt states' },
@@ -806,9 +806,9 @@ export const MESSAGES = {
   // De belangrijkste geruststelling op dit scherm: deze cijfers zijn niet GELEZEN maar exact wat
   // de leverancier zelf heeft opgestuurd. De zin draagt het waarom, dus hij verhuist als geheel.
   'inkoop.eFactuurUitleg': {
-    nl: 'De bedragen op deze factuur komen uit de e-factuur die de leverancier zelf heeft meegestuurd ({syntax}). Er is niets van een pagina gelezen en niets geïnterpreteerd — dit is exact wat de leverancier heeft opgegeven. Deze hoef je niet na te kijken.',
-    ar: 'مبالغ هذه الفاتورة مأخوذة من الفاتورة الإلكترونية التي أرفقها المورّد بنفسه ({syntax}). لم يُقرأ شيء من صفحة ولم يُفسَّر شيء — هذا بالضبط ما صرّح به المورّد. لا تحتاج لمراجعتها.',
-    en: 'The amounts on this invoice come from the e-invoice the supplier attached themselves ({syntax}). Nothing was read off a page and nothing was interpreted — this is exactly what the supplier stated. You do not need to check it.',
+    nl: 'Bedragen uit de e-factuur van de leverancier ({syntax}), niets van een pagina gelezen. Deze hoef je niet na te kijken.',
+    ar: 'المبالغ من الفاتورة الإلكترونية للمورّد ({syntax})، لم يُقرأ شيء من صفحة. لا تحتاج لمراجعتها.',
+    en: 'Amounts from the supplier’s e-invoice ({syntax}), nothing read off a page. You do not need to check this one.',
   },
   'inkoop.bedragenCorrigeren': { nl: 'Bedragen corrigeren', ar: 'تصحيح المبالغ', en: 'Correct the amounts' },
   'inkoop.bekijkBetaalde': { nl: 'Bekijk de betaalde factuur', ar: 'اعرض الفاتورة المدفوعة', en: 'View the paid invoice' },
@@ -904,7 +904,7 @@ export const MESSAGES = {
   'bank.fout.geenNummers': { nl: 'Geen factuurnummers meer. Is dit geen factuur? Gebruik Negeren.', ar: 'لم تعد ثمة أرقام فواتير. أليست فاتورة؟ استخدم «تجاهل».', en: 'No invoice numbers left. Not an invoice? Use Ignore.' },
   'bank.fout.alToegewezen': { nl: 'Deze betaling is al volledig toegewezen aan facturen.', ar: 'هذه الدفعة وُزّعت بالكامل على فواتير.', en: 'This payment is already fully assigned to invoices.' },
   'bank.fout.groep': { nl: 'Ontkoppelen van een groepsbetaling kan hier nog niet.', ar: 'فكّ ربط دفعة جماعية غير ممكن هنا بعد.', en: 'Unlinking a group payment is not possible here yet.' },
-  'bank.fout.verwerkt': { nl: 'De boekhouder heeft deze factuur al verwerkt — vraag eerst om dat ongedaan te maken.', ar: 'المحاسب عالج هذه الفاتورة مسبقاً — اطلب أولاً التراجع عن ذلك.', en: 'The accountant already processed this invoice — first ask to undo that.' },
+  'bank.fout.verwerkt': { nl: 'De boekhouder heeft deze factuur al verwerkt. Vraag eerst om dat ongedaan te maken.', ar: 'المحاسب عالج هذه الفاتورة مسبقاً. اطلب أولاً التراجع عن ذلك.', en: 'The accountant already processed this invoice. First ask to undo that.' },
   'bank.fout.netGedaan': { nl: 'Even wachten — je hebt dit net al gedaan.', ar: 'انتظر قليلاً — فعلت هذا للتو.', en: 'One moment — you just did this.' },
   'bank.fout.bedragNul': { nl: 'Vul een bedrag groter dan nul in.', ar: 'أدخل مبلغاً أكبر من صفر.', en: 'Enter an amount above zero.' },
   'bank.fout.offlineNiets': { nl: 'Geen verbinding — er is niets gewijzigd.', ar: 'لا يوجد اتصال — لم يتغيّر شيء.', en: 'No connection — nothing was changed.' },
@@ -1838,9 +1838,9 @@ export const MESSAGES = {
     en: 'Replace the file with a better copy?',
   },
   'dsh.vervang.uitleg': {
-    nl: 'Alleen als dit hetzelfde papier is, bijvoorbeeld een scherpe pdf in plaats van je foto. De bedragen blijven staan en het oude bestand blijft bewaard. Heeft de leverancier de factuur met andere bedragen opnieuw uitgegeven? Gebruik dan "Deze vervangt factuur X".',
-    ar: 'فقط إذا كان هذا هو الورق نفسه، مثلاً ملف pdf واضح بدل صورتك. تبقى المبالغ كما هي ويبقى الملف القديم محفوظاً. هل أصدر المورّد الفاتورة من جديد بمبالغ مختلفة؟ استخدم حينها «Deze vervangt factuur X».',
-    en: 'Only if this is the same paper, such as a sharp pdf instead of your photo. The amounts stay and the old file is kept. Did the supplier reissue the invoice with different amounts? Then use "Deze vervangt factuur X".',
+    nl: 'Alleen voor hetzelfde papier, bijvoorbeeld een scherpe pdf in plaats van je foto. De bedragen blijven staan; het oude bestand blijft bewaard. Andere bedragen van de leverancier? Gebruik dan "Deze vervangt factuur X".',
+    ar: 'فقط للورق نفسه، مثلاً ملف pdf واضح بدل صورتك. تبقى المبالغ كما هي ويبقى الملف القديم محفوظاً. مبالغ مختلفة من المورّد؟ استخدم حينها «Deze vervangt factuur X».',
+    en: 'Only for the same paper, such as a sharp pdf instead of your photo. The amounts stay; the old file is kept. Different amounts from the supplier? Then use "Deze vervangt factuur X".',
   },
   'dsh.vervang.gelukt': {
     nl: 'Bestand vervangen. Het oude staat nog in Mijn bestanden.',
@@ -1887,9 +1887,9 @@ export const MESSAGES = {
     ar: '{tarief}٪ — تصبح الضريبة {btw}',
   },
   'corr.tarief.uitleg': {
-    nl: 'Wij rekenen het tarief niet zelf uit: hetzelfde bedrag kan 9% of 21% dragen, en een geraden btw is een geraden voorbelasting. Klopt het niet? Tik het bedrag gewoon over.',
-    en: 'We do not work the rate out ourselves: the same amount can carry 9% or 21%, and a guessed VAT is a guessed input tax. Not right? Just type the amount over it.',
-    ar: 'لا نحسب النسبة من تلقائنا: المبلغ نفسه قد يحمل ٩٪ أو ٢١٪، وضريبة مخمَّنة تعني ضريبة مدخلات مخمَّنة. غير صحيح؟ اكتب المبلغ فوقه ببساطة.',
+    nl: 'Het tarief raden wij niet: hetzelfde bedrag kan 9% of 21% zijn. Klopt het niet? Tik het bedrag over.',
+    en: 'We do not guess the rate: the same amount can be 9% or 21%. Not right? Type the amount over it.',
+    ar: 'لا نخمّن النسبة: المبلغ نفسه قد يكون ٩٪ أو ٢١٪. غير صحيح؟ اكتب المبلغ فوقه.',
   },
   // [NUL-POST] Statiegeld, emballage, europallets: bedragen op de factuur waar geen btw op zit.
   // Elk Nederlands boekhoudpakket (jortt, Silvasoft, SnelStart, Acumulus) boekt zo'n post als een
@@ -1920,9 +1920,9 @@ export const MESSAGES = {
   'corr.exclBtw': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون btw', en: 'Amount excl. VAT' },
   'corr.creditTitel': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن (creditnota)', en: 'This is a credit note' },
   'corr.creditUitleg': {
-    nl: ' — geld dat jou toekomt. Vink aan als er “Creditnota” op staat of het totaal negatief is. De bedragen worden dan als minbedrag opgeslagen; een minteken hoef je niet zelf te typen.',
-    ar: ' — مال يعود لك. علّم هذا إذا كُتب على الوثيقة «Creditnota» أو كان الإجمالي سالباً. تُحفظ المبالغ حينها كمبالغ سالبة؛ لا تحتاج لكتابة إشارة السالب بنفسك.',
-    en: ' — money owed to you. Tick this when the document says “Creditnota” or the total is negative. The amounts are then stored as negatives; you do not type the minus yourself.',
+    nl: ' — geld dat jou toekomt. Vink aan bij “Creditnota” of een negatief totaal; de bedragen worden dan als minbedrag opgeslagen.',
+    ar: ' — مال يعود لك. علّم هذا عند «Creditnota» أو إجمالي سالب؛ تُحفظ المبالغ حينها كمبلغ سالب.',
+    en: ' — money owed to you. Tick for “Creditnota” or a negative total; the amounts are then stored as a minus amount.',
   },
   // [STATIEGELD-GAT] De knop op de correctie-modal. Kort, want de zin eronder (uit statiegeld.ts)
   // noemt het bedrag, het woord van de factuur en wat het bedrag excl. btw wordt.
@@ -1982,9 +1982,9 @@ export const MESSAGES = {
     en: 'Count the deposit into the amount excl. VAT',
   },
   'corr.statiegeld': {
-    nl: 'Staat er statiegeld, emballage of een retour op de factuur? Dat hoort in het bedrag exclusief mee te tellen, mét zijn teken.',
-    ar: 'هل على الفاتورة statiegeld (رهن عبوات) أو مرتجعات؟ يجب أن تُحسب ضمن المبلغ بدون الضريبة، بإشارتها الصحيحة.',
-    en: 'Deposit (statiegeld), packaging or a return on the invoice? It belongs inside the ex-VAT amount, with its sign.',
+    nl: 'Statiegeld, emballage of een retour op de factuur? Die tellen mee in het bedrag exclusief, mét hun teken.',
+    ar: 'statiegeld (رهن عبوات) أو مرتجعات على الفاتورة؟ تُحسب ضمن المبلغ بدون الضريبة، بإشارتها.',
+    en: 'Deposit (statiegeld), packaging or a return on the invoice? They count inside the ex-VAT amount, with their sign.',
   },
   'corr.nietsGewijzigd': { nl: 'Er is niets gewijzigd.', ar: 'لم يتغيّر شيء.', en: 'Nothing was changed.' },
   'corr.mislukt': {
@@ -2330,9 +2330,9 @@ export const MESSAGES = {
     en: 'We could not fetch your messages right now. Please try again shortly.',
   },
   'ber.ophaalFoutEerlijk': {
-    nl: 'We konden je berichten nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er berichten voor je zijn.',
-    ar: 'تعذّر جلب رسائلك الآن. حاول بعد قليل — هذا لا يعني شيئاً عن وجود رسائل لك أو عدمه.',
-    en: 'We could not fetch your messages right now. Try again shortly — this says nothing about whether you have messages.',
+    nl: 'Berichten niet opgehaald; dat zegt niets over of er berichten zijn. Probeer zo opnieuw.',
+    ar: 'لم تُجلب الرسائل؛ وهذا لا يعني شيئاً عن وجود رسائل. حاول بعد قليل.',
+    en: 'Messages not fetched; that says nothing about whether there are any. Try again shortly.',
   },
   'ber.opnieuw': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
   'ber.leeg': { nl: 'Nog geen berichten', ar: 'لا رسائل بعد', en: 'No messages yet' },
@@ -3128,9 +3128,9 @@ export const MESSAGES = {
     en: 'will be booked on invoice {nummer}',
   },
   'bank.auto.uitleg': {
-    nl: 'Facturen waarvan het nummer én het bedrag exact in je bankafschrift staan handel ik zelf af — koppelen en als betaald markeren. De rest laat ik aan jou, en je kunt elke koppeling later ongedaan maken.',
-    ar: 'الفواتير التي يظهر رقمها ومبلغها تماماً في كشف حسابك أعالجها بنفسي — أربطها وأوسمها كمدفوعة. الباقي أتركه لك، ويمكنك التراجع عن أي ربط لاحقاً.',
-    en: 'Invoices whose number and amount appear exactly in your bank statement I handle myself — linking and marking as paid. The rest I leave to you, and you can undo any link later.',
+    nl: 'Nummer én bedrag exact in je bankafschrift? Dan koppel ik zelf en zet ik op betaald. De rest is aan jou. Ongedaan maken kan altijd.',
+    ar: 'الرقم والمبلغ مطابقان تماماً في كشف حسابك؟ عندها أربط وأضع كمدفوع بنفسي. الباقي لك. التراجع ممكن دائماً.',
+    en: 'Number and amount exactly in your bank statement? Then I link and mark as paid myself. The rest is yours. Undo is always possible.',
   },
   'bank.autoGeboekt': {
     nl: '{count} facturen automatisch gekoppeld ✓ — zie "Bevestigd"',
@@ -3208,9 +3208,9 @@ export const MESSAGES = {
     en: 'Invoice paid (the link will follow later).',
   },
   'bank.betaaldNietVastgelegd': {
-    nl: 'Betaald ✓ — maar deze bankregel is niet volledig vastgelegd. Blijft hij terugkomen, ververs de pagina; lukt dat niet, gebruik Negeren.',
-    ar: 'مدفوعة ✓ — لكن بند البنك هذا لم يُسجَّل بالكامل. إن استمر في الظهور فحدّث الصفحة؛ وإن لم ينفع ذلك، استخدم «تجاهل».',
-    en: 'Paid ✓ — but this bank line was not fully recorded. If it keeps coming back, refresh the page; if that fails, use Ignore.',
+    nl: 'Betaald ✓ — maar de bankregel is niet volledig vastgelegd. Komt hij terug: ververs de pagina, anders Negeren.',
+    ar: 'مدفوعة ✓ — لكن بند البنك لم يُسجَّل بالكامل. إن عاد: حدّث الصفحة، وإلا فاستخدم «تجاهل».',
+    en: 'Paid ✓ — but the bank line was not fully recorded. If it comes back: refresh the page, otherwise Ignore.',
   },
   'bank.betaaldNogEenOpen': {
     nl: 'Factuur betaald ✓ · nog een factuur open',
@@ -3372,9 +3372,9 @@ export const MESSAGES = {
     en: 'Moving failed — nothing was changed.',
   },
   'bank.geenFactuurUitleg': {
-    nl: 'Leveranciers zonder gevonden factuur. Koppel het bestand, of negeer de transactie als er geen factuur bij hoort (zoals huur of een lening).',
-    ar: 'مورّدون بلا فاتورة معثور عليها. اربط الملف، أو تجاهل المعاملة إن لم تكن لها فاتورة (كالإيجار أو قرض).',
-    en: 'Suppliers with no invoice found. Link the file, or ignore the transaction if no invoice belongs to it (such as rent or a loan).',
+    nl: 'Betalingen zonder factuur. Koppel er een, of negeer de regel als er geen factuur bij hoort (huur, lening).',
+    ar: 'دفعات بلا فاتورة. اربط فاتورة، أو تجاهل البند إن لم تكن له فاتورة (إيجار، قرض).',
+    en: 'Payments without an invoice. Link one, or ignore the line if no invoice belongs to it (rent, loan).',
   },
   'bank.geenNummer': {
     nl: '(geen nummer)',
@@ -3412,9 +3412,9 @@ export const MESSAGES = {
     en: ', of which one above € 500',
   },
   'bank.genegeerdNaloop': {
-    nl: 'Deze staan in geen enkel cijfer en je boekhouder ziet ze niet — loop ze nog even na voordat je het kwartaal afsluit.',
-    ar: 'هذه لا تظهر في أي رقم ولا يراها المحاسب — راجعها قبل إقفال الربع.',
-    en: 'These appear in no figure and your accountant does not see them — go over them before you close the quarter.',
+    nl: 'Ze tellen nergens mee en je boekhouder ziet ze niet — loop ze na vóór je het kwartaal afsluit.',
+    ar: 'لا تُحتسب في شيء ولا يراها المحاسب — راجعها قبل إقفال الربع.',
+    en: 'They count nowhere and your accountant does not see them — go over them before you close the quarter.',
   },
   'bank.genegeerdSom': {
     nl: '{count} genegeerde regels van samen {total}',
@@ -3585,9 +3585,9 @@ export const MESSAGES = {
   // betaling die intussen ergens anders is geboekt. Daarom noemt deze zin geen reden die hij niet
   // kent, en wijst hij naar wat er wél kan.
   'bank.auto.geenGeboekt': {
-    nl: 'Er is niets automatisch geboekt. Deze betalingen staan hieronder klaar — koppel ze met één tik, dan zie je per regel welke factuur erbij hoort.',
-    ar: 'لم يُقيَّد شيء تلقائياً. هذه الدفعات جاهزة بالأسفل — اربطها بلمسة واحدة، وسترى مع كل سطر الفاتورة التي تخصّه.',
-    en: 'Nothing was booked automatically. These payments are waiting below — link them with one tap and you will see which invoice each one belongs to.',
+    nl: 'Niets automatisch geboekt. De betalingen staan hieronder — koppel ze met één tik.',
+    ar: 'لم يُقيَّد شيء تلقائياً. الدفعات بالأسفل — اربطها بلمسة واحدة.',
+    en: 'Nothing booked automatically. The payments are below — link them with one tap.',
   },
   'bank.nuAfhandelen': {
     nl: 'Nu afhandelen',
@@ -3640,9 +3640,9 @@ export const MESSAGES = {
     en: 'Skip',
   },
   'bank.pinUitleg': {
-    nl: 'Pinontvangsten via de betaalautomaat (ING DD&C). Deze hebben geen factuur — ze staan hier zodat ze je openstaande werk niet in de weg zitten.',
-    ar: 'مقبوضات نقاط البيع عبر جهاز الدفع (ING DD&C). ليست لها فواتير — وُضعت هنا كي لا تعترض عملك المفتوح.',
-    en: 'Card takings via the payment terminal (ING DD&C). These have no invoice — they sit here so they do not get in the way of your open work.',
+    nl: 'Pinontvangsten via de betaalautomaat (ING DD&C) — geen factuur, niets te doen.',
+    ar: 'مقبوضات نقاط البيع عبر جهاز الدفع (ING DD&C) — لا فاتورة، ولا شيء لفعله.',
+    en: 'Card takings via the payment terminal (ING DD&C) — no invoice, nothing to do.',
   },
   'bank.proof.bedrag': {
     nl: 'Dit bedrag komt overeen met je bankafschrift',
@@ -3655,9 +3655,9 @@ export const MESSAGES = {
     en: 'This amount and invoice number are in your bank statement',
   },
   'bank.redenVraag': {
-    nl: 'Waarom heeft deze regel geen factuur nodig? Dit is alleen een aantekening — je boekhouder ziet hem terug bij het kwartaal.',
-    ar: 'لماذا لا يحتاج هذا البند إلى فاتورة؟ هذه مجرد ملاحظة — يراها المحاسب عند الربع.',
-    en: 'Why does this line need no invoice? This is only a note — your accountant sees it at the quarter.',
+    nl: 'Waarom heeft deze regel geen factuur nodig? Een aantekening voor je boekhouder, bij het kwartaal.',
+    ar: 'لماذا لا يحتاج هذا البند إلى فاتورة؟ ملاحظة للمحاسب، عند الربع.',
+    en: 'Why does this line need no invoice? A note for your accountant, at the quarter.',
   },
   'bank.rematch.alles': {
     nl: 'Alle {count} regels opnieuw bekeken — er was niets nieuws te koppelen.',
@@ -3665,14 +3665,14 @@ export const MESSAGES = {
     en: 'All {count} lines re-examined — there was nothing new to link.',
   },
   'bank.rematch.ambigu': {
-    nl: 'Bij {count} genegeerde regels passen nu wel een factuur, maar niet één duidelijke — die laat ik met rust. Kijk bij "Genegeerd" als je ze zelf wilt koppelen.',
-    ar: 'هناك فواتير تناسب الآن {count} من البنود المتجاهَلة، لكن ليست واحدة واضحة — سأتركها كما هي. انظر «مُتجاهَلة» إن أردت ربطها بنفسك.',
-    en: '{count} ignored lines now have a fitting invoice, but not one clear one — I am leaving them alone. Look under "Ignored" if you want to link them yourself.',
+    nl: '{count} genegeerde regels hebben nu een mogelijke factuur, maar geen duidelijke — die laat ik staan. Koppel ze zelf onder "Genegeerd".',
+    ar: '{count} من البنود المتجاهَلة لها الآن فاتورة محتملة لكن غير واضحة — أتركها كما هي. اربطها بنفسك تحت «مُتجاهَلة».',
+    en: '{count} ignored lines now have a possible invoice, but not a clear one — I leave them be. Link them yourself under "Ignored".',
   },
   'bank.rematch.ambiguEen': {
-    nl: 'Bij 1 genegeerde regel past nu wel een factuur, maar niet één duidelijke — die laat ik met rust. Kijk bij "Genegeerd" als je ze zelf wilt koppelen.',
-    ar: 'هناك فاتورة تناسب الآن بنداً متجاهَلاً واحداً، لكن ليست واحدة واضحة — سأتركه كما هو. انظر «مُتجاهَلة» إن أردت ربطه بنفسك.',
-    en: '1 ignored line now has a fitting invoice, but not one clear one — I am leaving it alone. Look under "Ignored" if you want to link it yourself.',
+    nl: '1 genegeerde regel heeft nu een mogelijke factuur, maar geen duidelijke — die laat ik staan. Koppel hem zelf onder "Genegeerd".',
+    ar: 'بند متجاهَل واحد له الآن فاتورة محتملة لكن غير واضحة — أتركه كما هو. اربطه بنفسك تحت «مُتجاهَلة».',
+    en: '1 ignored line now has a possible invoice, but not a clear one — I leave it be. Link it yourself under "Ignored".',
   },
   'bank.rematch.geboekt': {
     nl: 'betalingen zijn automatisch gekoppeld.',
@@ -3735,9 +3735,9 @@ export const MESSAGES = {
     en: 'The rest stays on this payment, so you can link it once the other invoice arrives.',
   },
   'bank.saldoSluit': {
-    nl: 'Dit afschrift sluit aan, tot op de cent: beginsaldo {opening} plus {count} mutaties komt uit op eindsaldo {closing}. Er ontbreekt geen regel.',
-    ar: 'هذا الكشف متطابق حتى السنت: الرصيد الافتتاحي {opening} زائد {count} حركة يساوي الرصيد الختامي {closing}. لا ينقص أي بند.',
-    en: 'This statement ties out to the cent: opening balance {opening} plus {count} movements equals closing balance {closing}. No line is missing.',
+    nl: 'Sluit aan tot op de cent: beginsaldo {opening} + {count} mutaties = eindsaldo {closing}. Geen regel ontbreekt.',
+    ar: 'متطابق حتى السنت: الرصيد الافتتاحي {opening} + {count} حركة = الرصيد الختامي {closing}. لا ينقص أي بند.',
+    en: 'Ties out to the cent: opening balance {opening} + {count} movements = closing balance {closing}. No line is missing.',
   },
   'bank.samenDeels': {
     nl: '{ok} gekoppeld · {failed} mislukt — controleer de lijst',
@@ -3881,14 +3881,14 @@ export const MESSAGES = {
     en: '{parsed} transactions read · {inserted} new',
   },
   'bank.upload.onleesbaar': {
-    nl: '{count} regels konden niet gelezen worden en staan niet in je overzicht. Het originele bestand is wél bewaard voor je boekhouder — controleer die regels.',
-    ar: 'تعذّرت قراءة {count} من البنود وهي غير موجودة في نظرتك العامة. الملف الأصلي محفوظ للمحاسب — راجع تلك البنود.',
-    en: '{count} lines could not be read and are not in your overview. The original file was kept for your accountant — check those lines.',
+    nl: '{count} regels konden we niet lezen; die ontbreken in je overzicht. Controleer ze in het bestand, dat bewaard is voor je boekhouder.',
+    ar: '{count} من البنود تعذّرت قراءتها؛ وهي ناقصة في نظرتك العامة. راجعها في الملف، المحفوظ للمحاسب.',
+    en: '{count} lines we could not read; they are missing from your overview. Check them in the file, which is kept for your accountant.',
   },
   'bank.upload.onleesbaarEen': {
-    nl: '1 regel kon niet gelezen worden en staat niet in je overzicht. Het originele bestand is wél bewaard voor je boekhouder — controleer die regel.',
-    ar: 'تعذّرت قراءة بند واحد وهو غير موجود في نظرتك العامة. الملف الأصلي محفوظ للمحاسب — راجع ذلك البند.',
-    en: '1 line could not be read and is not in your overview. The original file was kept for your accountant — check that line.',
+    nl: '1 regel konden we niet lezen; die ontbreekt in je overzicht. Controleer hem in het bestand, dat bewaard is voor je boekhouder.',
+    ar: 'بند واحد تعذّرت قراءته؛ وهو ناقص في نظرتك العامة. راجعه في الملف، المحفوظ للمحاسب.',
+    en: '1 line we could not read; it is missing from your overview. Check it in the file, which is kept for your accountant.',
   },
   'bank.vergelijkBedrag': {
     nl: 'bedrag',
@@ -3916,19 +3916,14 @@ export const MESSAGES = {
     en: 'refresh the page for the updated list',
   },
   'bank.verplaats.geenBedrag': {
-    nl: 'Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Ontkoppel hem en boek hem opnieuw op de juiste factuur.',
-    ar: 'لم يُسجَّل مبلغ لهذه الدفعة، لذا لا يمكن نقلها. افكك ربطها وقيّدها من جديد على الفاتورة الصحيحة.',
-    en: 'No amount was recorded for this payment, so it cannot be moved. Unlink it and book it again on the right invoice.',
-  },
-  'bank.verplaats.geenDoel': {
-    nl: 'Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {amount} op open staat.',
-    ar: 'لم يُعثر على فاتورة يناسبها هذا المبلغ. لا تستقبل الفاتورة دفعة إلا إذا كانت مُراجَعة ومن النوع نفسه وعليها {amount} على الأقل مفتوحاً.',
-    en: 'No invoice found that this amount fits. An invoice can only receive a payment if it has been checked, is of the same kind, and has at least {amount} still open.',
+    nl: 'Geen bedrag vastgelegd, dus verplaatsen kan niet. Ontkoppel hem en boek hem opnieuw.',
+    ar: 'لم يُسجَّل مبلغ، فلا يمكن النقل. افكك ربطها وقيّدها من جديد.',
+    en: 'No amount recorded, so it cannot be moved. Unlink it and book it again.',
   },
   'bank.verplaats.kies': {
-    nl: 'Kies de factuur waar hij bij hoort — het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.',
-    ar: 'اختر الفاتورة التي تخصها — ينتقل المبلغ وتاريخ الدفع والطريقة دون تغيير.',
-    en: 'Choose the invoice it belongs to — the amount, payment date and method carry over unchanged.',
+    nl: 'Kies de factuur waar hij bij hoort; bedrag, betaaldatum en methode gaan ongewijzigd mee.',
+    ar: 'اختر الفاتورة التي تخصها؛ ينتقل المبلغ وتاريخ الدفع والطريقة دون تغيير.',
+    en: 'Choose the invoice it belongs to; amount, payment date and method carry over unchanged.',
   },
   'bank.verplaats.opEenFactuur': {
     nl: 'Deze betaling staat nu op een factuur.',
@@ -3964,11 +3959,6 @@ export const MESSAGES = {
     nl: 'Verwerken…',
     ar: 'جارٍ المعالجة…',
     en: 'Processing…',
-  },
-  'bank.verwerktUitleg': {
-    nl: 'De boekhouder heeft factuur {number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je deze koppelt.',
-    ar: 'عالج المحاسب الفاتورة {number}. اطلب أولاً التراجع عن المعالجة قبل ربط هذه الدفعة.',
-    en: 'The accountant has processed invoice {number}. First ask to undo the processing before you link this one.',
   },
   'bank.vinkAan': {
     nl: 'Vink sterke matches aan',
@@ -4021,10 +4011,10 @@ export const MESSAGES = {
   // [WAAROM-DEZE] En de kop van de kiezer, als GEEN kandidaat op bedrag matcht. "Meerdere facturen
   // passen bij deze betaling" is dan onwaar: ze staan open bij dezelfde partij, meer niet.
   'bank.vergelijkGeenBedrag': {
-    nl: 'Geen van deze facturen heeft dit bedrag. Ze staan wel open bij dezelfde leverancier — kies alleen als je zeker weet welke erbij hoort.',
-    ar: 'لا توجد فاتورة بهذا المبلغ. لكنها مفتوحة لدى المورّد نفسه — لا تختر إلا إذا كنت متأكداً.',
-    en: 'None of these invoices has this amount. They are open with the same supplier — only choose if you are sure which one belongs to it.',
-    tr: 'Bu faturaların hiçbiri bu tutarda değil. Aynı tedarikçide açıklar — yalnızca hangisinin ait olduğundan eminseniz seçin.',
+    nl: 'Geen van deze facturen heeft dit bedrag — wel open bij deze leverancier. Kies alleen als je zeker weet welke.',
+    ar: 'لا فاتورة من هذه بهذا المبلغ — لكنها مفتوحة لدى هذا المورّد. لا تختر إلا إذا كنت متأكداً أيّها.',
+    en: 'None of these invoices has this amount — they are open with this supplier though. Only choose if you are sure which.',
+    tr: 'Bu faturaların hiçbiri bu tutarda değil — ama bu tedarikçide açıklar. Yalnızca hangisi olduğundan eminseniz seçin.',
   },
   // [AL-GEBOEKT] De betaling noemt een factuur die al is afgeboekt.
   'bank.alGeboekt.titel': {
@@ -4040,16 +4030,16 @@ export const MESSAGES = {
     tr: 'Fatura {nummer} · {partij}',
   },
   'bank.alGeboekt.zelfdeBedrag': {
-    nl: 'Het bedrag komt tot op de cent overeen. Er valt hier niets te kiezen — controleer alleen of deze factuur niet twee keer is betaald.',
-    ar: 'المبلغ مطابق حتى السنت. لا يوجد ما تختاره هنا — تحقّق فقط من أن الفاتورة لم تُدفع مرتين.',
-    en: 'The amount agrees to the cent. There is nothing to choose here — just check that this invoice was not paid twice.',
-    tr: 'Tutar kuruşuna kadar aynı. Burada seçilecek bir şey yok — yalnızca faturanın iki kez ödenmediğini kontrol edin.',
+    nl: 'Zelfde bedrag, tot op de cent. Niets te kiezen — kijk alleen of deze factuur niet twee keer is betaald.',
+    ar: 'المبلغ نفسه حتى السنت. لا شيء تختاره — تحقّق فقط من أن الفاتورة لم تُدفع مرتين.',
+    en: 'Same amount, to the cent. Nothing to choose — just check that this invoice was not paid twice.',
+    tr: 'Kuruşuna kadar aynı tutar. Seçilecek bir şey yok — yalnızca faturanın iki kez ödenmediğini kontrol edin.',
   },
   'bank.alGeboekt.anderBedrag': {
-    nl: 'Het bedrag van deze betaling is anders dan dat van de factuur. Mogelijk een deelbetaling of een tweede termijn — kijk zelf welke van de twee klopt.',
-    ar: 'مبلغ هذه الدفعة يختلف عن مبلغ الفاتورة. قد تكون دفعة جزئية أو قسطاً ثانياً — تحقّق أيّهما الصحيح.',
-    en: 'This payment is for a different amount than the invoice. Possibly an instalment or a second term — check which of the two is right.',
-    tr: 'Bu ödemenin tutarı faturadan farklı. Taksit veya ikinci bir ödeme olabilir — hangisinin doğru olduğunu kontrol edin.',
+    nl: 'Ander bedrag dan de factuur: een deelbetaling of een tweede termijn? Kijk zelf welke klopt.',
+    ar: 'مبلغ مختلف عن الفاتورة: دفعة جزئية أم قسط ثانٍ؟ تحقّق بنفسك أيّهما الصحيح.',
+    en: 'Different amount than the invoice: a part payment or a second instalment? Check which is right.',
+    tr: 'Faturadan farklı tutar: kısmi ödeme mi, ikinci taksit mi? Hangisinin doğru olduğunu kontrol edin.',
   },
   'bank.alGeboekt.verwerkt': {
     nl: 'Je boekhouder heeft deze factuur al verwerkt. Neem contact op voordat je hier iets verandert.',
@@ -4083,29 +4073,29 @@ export const MESSAGES = {
     en: 'Of those, {nummers} is still open — link it below and this line is done.',
   },
   'bank.somKlopt.telt': {
-    nl: 'Samen {som} — precies het bedrag van deze betaling. Er valt hier niets te kiezen; controleer alleen of er niets twee keer is betaald.',
-    ar: 'مجموعها {som} — وهو تماماً مبلغ هذه الدفعة. لا شيء تختاره هنا؛ تحقّق فقط من عدم دفع شيء مرتين.',
-    en: 'Together {som} — exactly the amount of this payment. There is nothing to choose here; only check that nothing was paid twice.',
+    nl: 'Samen {som} — precies het bedrag van deze betaling. Niets te kiezen; controleer alleen of niets twee keer is betaald.',
+    ar: 'المجموع {som} — تماماً مبلغ هذه الدفعة. لا شيء تختاره؛ تحقّق فقط من عدم دفع شيء مرتين.',
+    en: 'Together {som} — exactly the amount of this payment. Nothing to choose; only check that nothing was paid twice.',
   },
   // [NO-SILENT-EMPTY] De reden waarom de optelsom er NIET staat. Zonder deze zin viel de kaart terug
   // op een regel over iets anders, zodat de ondernemer nooit te horen kreeg DÁT er niets is opgeteld
   // — stilte op precies het moment dat een geldscherm iets moet toegeven.
   'bank.somKlopt.somOnleesbaar': {
-    nl: 'Van \u00e9\u00e9n van deze facturen is het bedrag niet gelezen, dus tellen we hier niets op. Kijk de bedragen zelf na voordat je koppelt.',
-    ar: '\u0625\u062d\u062f\u0649 \u0647\u0630\u0647 \u0627\u0644\u0641\u0648\u0627\u062a\u064a\u0631 \u0644\u0645 \u064a\u064f\u0642\u0631\u0623 \u0645\u0628\u0644\u063a\u0647\u0627\u060c \u0644\u0630\u0644\u0643 \u0644\u0627 \u0646\u062c\u0645\u0639 \u0634\u064a\u0626\u0627\u064b \u0647\u0646\u0627. \u062a\u062d\u0642\u0651\u0642 \u0645\u0646 \u0627\u0644\u0645\u0628\u0627\u0644\u063a \u0628\u0646\u0641\u0633\u0643 \u0642\u0628\u0644 \u0627\u0644\u0631\u0628\u0637.',
-    en: 'One of these invoices has no readable amount, so we add nothing up here. Check the amounts yourself before you link.',
+    nl: 'Van één factuur is het bedrag niet gelezen, dus we tellen niets op. Kijk ze zelf na voor je koppelt.',
+    ar: 'مبلغ إحدى الفواتير لم يُقرأ، لذلك لا نجمع شيئاً. تحقّق منها بنفسك قبل الربط.',
+    en: 'One invoice\'s amount was not read, so we add nothing up. Check them yourself before you link.',
   },
   'bank.somKlopt.teltNiet': {
-    nl: 'Samen {som}, en deze betaling is {betaling}. Dat verschil hoort ergens bij — een deelbetaling, of een factuur die nog niet in je administratie staat.',
-    ar: 'مجموعها {som}، وهذه الدفعة {betaling}. هذا الفرق له سبب — دفعة جزئية، أو فاتورة لم تُدخل بعد.',
-    en: 'Together {som}, and this payment is {betaling}. That difference belongs somewhere — a part payment, or an invoice not yet in your administration.',
+    nl: 'Samen {som}, deze betaling {betaling}. Het verschil hoort ergens bij: een deelbetaling, of een factuur die nog ontbreekt.',
+    ar: 'المجموع {som}، وهذه الدفعة {betaling}. الفرق له سبب: دفعة جزئية، أو فاتورة ما زالت ناقصة.',
+    en: 'Together {som}, this payment {betaling}. The difference belongs somewhere: a part payment, or an invoice still missing.',
   },
   // Genoemd én niet gevonden. Dit is de enige regel op de kaart die om iets VRAAGT, dus hij staat
   // apart en noemt de nummers: "voeg hem toe" zonder te zeggen wélke is geen opdracht.
   'bank.somKlopt.ontbreekt': {
-    nl: 'Deze betaling noemt ook {nummers}, en die staat nog niet in je administratie. Voeg hem toe, dan klopt deze regel vanzelf.',
-    ar: 'تذكر هذه الدفعة أيضاً {nummers}، وهي غير موجودة في إدارتك بعد. أضفها ليصبح هذا السطر صحيحاً تلقائياً.',
-    en: 'This payment also quotes {nummers}, which is not in your administration yet. Add it and this line settles itself.',
+    nl: 'Deze betaling noemt ook {nummers}, en die staat nog niet in je administratie. Voeg hem toe, dan klopt deze regel.',
+    ar: 'تذكر هذه الدفعة أيضاً {nummers}، وهي ليست في إدارتك بعد. أضفها ليستقيم هذا البند.',
+    en: 'This payment also quotes {nummers}, which is not in your administration yet. Add it and this line settles.',
   },
   'bank.alGeboekt.bekijk': {
     nl: 'Bekijk factuur',
@@ -4149,9 +4139,9 @@ export const MESSAGES = {
     en: '1 payment without a purchase invoice',
   },
   'bank.zonderInkoopUitleg': {
-    nl: 'Je hebt betaald, maar we hebben de factuur nog niet. Zonder factuur mis je de BTW-aftrek (voorbelasting) op deze kosten. Voeg de factuur toe, of haal je e-mail opnieuw op — dan koppelen we hem automatisch.',
-    ar: 'لقد دفعت، لكن الفاتورة ليست لدينا بعد. بدون فاتورة تخسر خصم الضريبة (voorbelasting) على هذه التكاليف. أضف الفاتورة، أو أعد جلب بريدك — وسنربطها تلقائياً.',
-    en: 'You paid, but we do not have the invoice yet. Without the invoice you miss the btw deduction (voorbelasting) on these costs. Add the invoice, or fetch your e-mail again — then we link it automatically.',
+    nl: 'Betaald, maar zonder factuur — en zonder factuur geen voorbelasting. Voeg hem toe of haal je e-mail opnieuw op; koppelen doen wij.',
+    ar: 'مدفوعة لكن بلا فاتورة — وبلا فاتورة لا خصم ضريبة. أضفها أو أعد جلب بريدك؛ الربط علينا.',
+    en: 'Paid, but without an invoice — and without an invoice no input VAT. Add it or fetch your e-mail again; we do the linking.',
   },
   'best.aanbevolenLocatie': {
     nl: 'Aanbevolen locatie:',
@@ -5630,9 +5620,9 @@ export const MESSAGES = {
     en: 'Fetch again',
   },
   'ink.backfill.uitleg': {
-    nl: 'Ik scan je e-mail opnieuw vanaf deze datum en importeer wat er nog mist. Al geïmporteerde facturen blijven zoals ze zijn — niets wordt dubbel.',
-    ar: 'سأفحص بريدك من جديد اعتباراً من هذا التاريخ وأستورد الناقص. الفواتير المستوردة مسبقاً تبقى كما هي — لا شيء يتكرر.',
-    en: 'I scan your e-mail again from this date and import what is still missing. Already imported invoices stay as they are — nothing is duplicated.',
+    nl: 'Ik scan je e-mail opnieuw vanaf deze datum en haal op wat nog mist. Niets wordt dubbel.',
+    ar: 'سأفحص بريدك من جديد اعتباراً من هذا التاريخ وأجلب ما ينقص. لا شيء يتكرر.',
+    en: 'I scan your e-mail again from this date and fetch what is still missing. Nothing is duplicated.',
   },
   'ink.bankMatchMislukt': {
     nl: 'Het bankafschrift kon niet worden gematcht — probeer het straks opnieuw.',
@@ -5818,9 +5808,9 @@ export const MESSAGES = {
     en: 'Updating failed',
   },
   'ink.boekhouderVerwerkt': {
-    nl: 'De boekhouder heeft inkoopfactuur {number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je de betaalstatus wijzigt.',
-    ar: 'عالج المحاسب فاتورة المشتريات {number}. اطلب أولاً التراجع عن المعالجة قبل تغيير حالة الدفع.',
-    en: 'Your accountant has processed purchase invoice {number}. First ask to undo the processing before you change the payment status.',
+    nl: 'De boekhouder heeft inkoopfactuur {number} al verwerkt. Vraag eerst om dat ongedaan te maken.',
+    ar: 'عالج المحاسب فاتورة المشتريات {number} مسبقاً. اطلب أولاً التراجع عن ذلك.',
+    en: 'The accountant already processed purchase invoice {number}. First ask to undo that.',
   },
   'ink.bonAutoGeboekt': {
     nl: 'Deze bon is automatisch als betaald geboekt ({details}).',
@@ -5943,9 +5933,9 @@ export const MESSAGES = {
     en: 'Yes, ignore {n}',
   },
   'ink.bulk.negerenUitleg': {
-    nl: 'Ze gaan naar Genegeerd en tellen nergens meer mee. Je kunt ze daar terugzetten — of meteen hierna met één tik ongedaan maken.',
-    ar: 'ستنتقل إلى المتجاهَل ولن تُحتسب في أي شيء. يمكنك إرجاعها من هناك — أو التراجع مباشرة بعدها بضغطة واحدة.',
-    en: 'They go to Ignored and no longer count anywhere. You can restore them there — or undo it right after with one tap.',
+    nl: 'Ze gaan naar Genegeerd en tellen nergens meer mee. Terugzetten kan daar, of meteen hierna met één tik.',
+    ar: 'ستنتقل إلى المتجاهَل ولن تُحتسب في شيء. الإرجاع ممكن من هناك، أو مباشرة بعدها بضغطة واحدة.',
+    en: 'They go to Ignored and no longer count anywhere. Restore them there, or right after with one tap.',
   },
   'ink.bulk.negerenVraag': {
     nl: '{n} facturen negeren?',
@@ -6023,9 +6013,9 @@ export const MESSAGES = {
   // it went out. "Verrekend met een andere factuur" books as Bank: no cash moved, and the drawer
   // must not claim it did.
   'ink.credit.afhandelenUitleg': {
-    nl: 'Creditnota {number} wordt afgesloten: het bedrag is terugontvangen of verrekend. Kies Bank als het is teruggestort of verrekend met een andere factuur; Contant als je het contant terugkreeg — dan komt het in het kasboek als geld IN de la.',
-    en: 'Credit note {number} is closed: the amount was received back or netted off. Choose Bank if it was refunded or netted against another invoice; Contant if you received it in cash — it then enters the cash book as money INTO the drawer.',
-    ar: 'سيُغلق الإشعار الدائن {number}: المبلغ استُردّ أو تمت مقاصّته. اختر Bank إذا أُعيد إلى حسابك أو قوصّ مع فاتورة أخرى؛ وContant إذا استلمته نقداً — فيُقيَّد عندها في دفتر الصندوق كمال داخل إلى الدرج.',
+    nl: 'Creditnota {number} wordt afgesloten. Bank: teruggestort of verrekend met een andere factuur. Contant: contant terugontvangen — dat komt in het kasboek als geld IN de la.',
+    en: 'Credit note {number} is closed. Bank: refunded or netted against another invoice. Contant: received back in cash — that enters the cash book as money INTO the drawer.',
+    ar: 'سيُغلق الإشعار الدائن {number}. Bank: أُعيد إلى حسابك أو قوصّ مع فاتورة أخرى. Contant: استلمته نقداً — فيُقيَّد في دفتر الصندوق كمال داخل إلى الدرج.',
   },
   'ink.credit.jaAfhandelen': {
     nl: 'Ja, afgehandeld',
@@ -6034,9 +6024,9 @@ export const MESSAGES = {
   },
 
   'ink.creditKiesJa': {
-    nl: 'Kies je “ja”, dan worden de bedragen als minbedrag opgeslagen: hij gaat van je openstaande saldo af en zijn btw wordt afgetrokken in plaats van opgeteld. Kijk op de factuur — staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag onderaan, dan is het er een.',
-    ar: 'إن اخترت «نعم» فستُحفظ المبالغ كمبلغ سالب: تُخصم من رصيدك المفتوح وتُطرح ضريبتها بدلاً من أن تُضاف. انظر إلى الفاتورة — إن وُجد "Creditnota" أو "Creditfactuur" في الأعلى، أو مبلغ سالب في الأسفل، فهي إشعار دائن.',
-    en: 'If you choose “yes”, the amounts are stored as a minus amount: it comes off your outstanding balance and its btw is deducted instead of added. Look at the invoice — if it says “Creditnota” or “Creditfactuur” at the top, or a minus amount at the bottom, it is one.',
+    nl: 'Bij “ja” wordt het een minbedrag: het gaat van je openstaande saldo af en de btw wordt afgetrokken, niet opgeteld. Staat er “Creditnota” of “Creditfactuur” bovenaan, of een minbedrag onderaan? Dan is het er een.',
+    ar: 'مع «نعم» يصبح مبلغاً سالباً: يُخصم من رصيدك المفتوح وتُطرح ضريبته بدلاً من أن تُضاف. هل كُتب «Creditnota» أو «Creditfactuur» في الأعلى، أو مبلغ سالب في الأسفل؟ فهي إذن إشعار دائن.',
+    en: 'With “yes” it becomes a minus amount: it comes off your outstanding balance and the btw is deducted, not added. Does it say “Creditnota” or “Creditfactuur” at the top, or show a minus amount at the bottom? Then it is one.',
   },
   // [CREDIT-AL-VERWERKT] De eerste zin is nieuw, en hij is de reden dat deze melding een vraag
   // opriep: hij vertelde alleen wat er nog GAAT gebeuren (terugstorting, of verrekening met een
@@ -6055,9 +6045,9 @@ export const MESSAGES = {
   // question. Now it says both facts: the books are already right, and the button underneath is
   // how the row itself is closed once the money actually came back.
   'ink.creditKomtToe': {
-    nl: 'Dit is geld dat jou toekomt: hij staat al met een minbedrag in je boeken, dus er is niets te betalen. Komt de terugstorting op je bank, dan herkennen we die. Al terugontvangen of verrekend? Sluit hem af met "Verrekend of terugontvangen?" hieronder.',
-    ar: 'هذا مال مستحق لك: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، فلا شيء لتدفعه. حين يصل المبلغ المُعاد إلى بنكك سنتعرّف عليه. استلمته أو خُصم بالفعل؟ أغلقه بـ «تمت المقاصّة أو استرددته؟» أدناه.',
-    en: 'This is money owed to you: it already stands as a negative amount in your books, so there is nothing to pay. When the refund reaches your bank we will recognise it. Already received or offset? Close it with "Netted off or received back?" below.',
+    nl: 'Dit komt jou toe: hij staat al met een minbedrag in je boeken, dus er is niets te betalen. De terugstorting herkennen we op je bank. Al terug of verrekend? Sluit hem af met "Verrekend of terugontvangen?".',
+    ar: 'هذا مستحق لك: فهو مقيّد أصلاً بمبلغ سالب في دفاترك، فلا شيء لتدفعه. المبلغ المُعاد نتعرّف عليه في بنكك. استلمته أو تمت مقاصّته؟ أغلقه بـ «تمت المقاصّة أو استرددته؟».',
+    en: 'This is owed to you: it already stands as a negative amount in your books, so there is nothing to pay. We recognise the refund on your bank. Already back or netted off? Close it with "Netted off or received back?".',
   },
   'ink.creditnotaUitleg': {
     nl: 'Creditnota — dit bedrag gaat van je openstaande saldo af en verlaagt de btw die je terugvraagt',
@@ -6070,19 +6060,19 @@ export const MESSAGES = {
     en: 'Credit note stands positive',
   },
   'ink.creditPositiefUitleg': {
-    nl: 'Deze creditnota staat met een POSITIEF bedrag in de boeken. Daardoor telt hij mee in \'nog te betalen\' terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken.',
-    ar: 'هذا الإشعار الدائن مقيّد بمبلغ موجب في الدفاتر. لذلك يُحتسب ضمن «ما زال مستحقاً» بينما يجب أن يُخصم، وتُضاف ضريبته بدلاً من أن تُطرح.',
-    en: 'This credit note stands in the books with a POSITIVE amount. It therefore counts towards \'still to pay\' while it should come off, and its btw is added instead of deducted.',
+    nl: 'Creditnota met een positief bedrag — tik om te corrigeren.',
+    ar: 'إشعار دائن بمبلغ موجب — اضغط للتصحيح.',
+    en: 'Credit note with a positive amount — tap to correct.',
   },
   'ink.creditUitlegConflict': {
-    nl: 'Deze factuur staat als creditnota geboekt, maar met een POSITIEF bedrag. Daardoor telt hij mee in "nog te betalen" terwijl hij eraf hoort te gaan, en wordt zijn btw opgeteld in plaats van afgetrokken.',
-    ar: 'هذه الفاتورة مقيّدة كإشعار دائن لكن بمبلغ موجب. لذلك تُحتسب ضمن «ما زال مستحقاً» بينما يجب أن تُخصم، وتُضاف ضريبتها بدلاً من أن تُطرح.',
-    en: 'This invoice is booked as a credit note, but with a POSITIVE amount. It therefore counts towards "still to pay" while it should come off, and its btw is added instead of deducted.',
+    nl: 'Geboekt als creditnota, maar met een POSITIEF bedrag. Zo telt hij mee in "nog te betalen" en wordt zijn btw opgeteld — allebei andersom dan het hoort.',
+    ar: 'مقيّدة كإشعار دائن لكن بمبلغ موجب. فتُحتسب ضمن «ما زال مستحقاً» وتُضاف ضريبتها — وكلاهما بالاتجاه المعاكس لما يجب.',
+    en: 'Booked as a credit note, but with a POSITIVE amount. So it counts towards "still to pay" and its btw is added — both the wrong way round.',
   },
   'ink.creditUitlegGeboekt': {
-    nl: 'Dit is een creditnota: geld dat jóu toekomt. Je hoeft hem niet te betalen — hij staat met een minbedrag in de boeken en gaat vanzelf van je openstaande saldo af.',
-    ar: 'هذه إشعار دائن: مال مستحق لك أنت. لا تحتاج لدفعها — فهي مقيّدة بمبلغ سالب وتُخصم تلقائياً من رصيدك المفتوح.',
-    en: 'This is a credit note: money owed to YOU. You do not have to pay it — it stands in the books with a minus amount and comes off your outstanding balance by itself.',
+    nl: 'Een creditnota: geld dat jóu toekomt. Niets te betalen — hij staat als minbedrag in de boeken en gaat vanzelf van je openstaande saldo af.',
+    ar: 'إشعار دائن: مال مستحق لك أنت. لا شيء لتدفعه — فهو مقيّد بمبلغ سالب ويُخصم تلقائياً من رصيدك المفتوح.',
+    en: 'A credit note: money owed to YOU. Nothing to pay — it stands as a minus amount in the books and comes off your outstanding balance by itself.',
   },
   'ink.creditUitlegLijkt': {
     nl: 'Deze factuur lijkt een creditnota — geld dat jou toekomt in plaats van geld dat je moet betalen.',
@@ -6170,9 +6160,9 @@ export const MESSAGES = {
     en: 'One payment to {name}',
   },
   'ink.eenOverboeking': {
-    nl: 'Eén overboeking van {amount} aan {name}. Scan met je bankapp of kopieer de gegevens — je betaalt in je eigen bank.',
-    ar: 'تحويل واحد بقيمة {amount} إلى {name}. امسح بتطبيق بنكك أو انسخ البيانات — الدفع يتم في بنكك أنت.',
-    en: 'One transfer of {amount} to {name}. Scan with your banking app or copy the details — you pay inside your own bank.',
+    nl: 'Eén overboeking van {amount} aan {name}. Scan met je bankapp of kopieer de gegevens — betalen doe je zelf.',
+    ar: 'تحويل واحد بقيمة {amount} إلى {name}. امسح بتطبيق بنكك أو انسخ البيانات — الدفع تقوم به أنت.',
+    en: 'One transfer of {amount} to {name}. Scan with your banking app or copy the details — you make the payment yourself.',
   },
   // [OVERSLAG-VERJAART] Deze zin zei "die bijlage halen wij niet nog een keer op", en dat was waar
   // zolang een overslag definitief was. Voor één soort is hij dat niet meer: een bestandstype dat
@@ -6180,9 +6170,9 @@ export const MESSAGES = {
   // volgende sync alsnog opgehaald. De zin moet dat zeggen, want een ondernemer die hem letterlijk
   // leest gaat 29 dagafsluitingen met de hand uploaden die vanzelf binnenkomen.
   'ink.email.echteFactuur': {
-    nl: 'Staat hier een échte factuur tussen? Die halen wij niet opnieuw op — behalve als het een bestandstype is dat wij inmiddels wél kunnen openen, zoals een .zip. Open anders de e-mail van die datum en voeg de factuur zelf toe.',
-    ar: 'هل بين هذه فاتورة حقيقية؟ لا نجلبها من جديد — إلا إن كانت من نوع ملفات صرنا نستطيع فتحه، كملف .zip. وإلا فافتح البريد بذلك التاريخ وأضف الفاتورة بنفسك.',
-    en: 'Is there a real invoice among these? We do not fetch it again — unless it is a file type we can open by now, such as a .zip. Otherwise open the e-mail of that date and add the invoice yourself.',
+    nl: 'Een échte factuur hiertussen halen wij niet opnieuw op — behalve als het een bestandstype is dat wij inmiddels wél kunnen openen, zoals .zip. Voeg hem anders zelf toe uit de e-mail van die datum.',
+    ar: 'الفاتورة الحقيقية بين هذه لا نجلبها من جديد — إلا إن كانت من نوع ملفات صرنا نستطيع فتحه، مثل .zip. وإلا فأضفها بنفسك من بريد ذلك التاريخ.',
+    en: 'A real invoice among these we do not fetch again — unless it is a file type we can open by now, such as .zip. Otherwise add it yourself from the e-mail of that date.',
   },
   'ink.email.nietTussen': {
     nl: 'Gebruik dan “Oudere e-mails opnieuw ophalen” hierboven.',
@@ -6275,14 +6265,14 @@ export const MESSAGES = {
     en: 'Nothing changes on your invoices — we only recheck.',
   },
   'ink.fotoUitlegScan': {
-    nl: 'Deze facturen zijn een foto of scan, dus er is geen tekst om in te zoeken. Wij kunnen ze wél opnieuw laten uitlezen en het bedrag daarmee vergelijken.',
-    ar: 'هذه الفواتير صورة أو مسح ضوئي، فلا نص للبحث فيه. لكن يمكننا إعادة استخراجها ومقارنة المبلغ بذلك.',
-    en: 'These invoices are a photo or scan, so there is no text to search in. We CAN have them read out again and compare the amount against that.',
+    nl: 'Deze facturen zijn een foto of scan: geen tekst om in te zoeken. We kunnen ze opnieuw laten uitlezen en het bedrag daarmee vergelijken.',
+    ar: 'هذه الفواتير صورة أو مسح ضوئي: لا نص للبحث فيه. يمكننا إعادة قراءتها ومقارنة المبلغ بذلك.',
+    en: 'These invoices are a photo or scan: no text to search in. We can have them read out again and compare the amount against that.',
   },
   'ink.fotoUitlegTweede': {
-    nl: 'Dat is een tweede lezing van de afbeelding — iets zekerder dan niets, en niet hetzelfde als de letterlijke tekstcontrole hierboven.',
-    ar: 'هذه قراءة ثانية للصورة — أوثق قليلاً من لا شيء، وليست كالفحص النصي الحرفي أعلاه.',
-    en: 'That is a second reading of the image — somewhat surer than nothing, and not the same as the literal text check above.',
+    nl: 'Dat is een tweede lezing van de foto: zekerder dan niets, maar geen letterlijke tekstcontrole.',
+    ar: 'تلك قراءة ثانية للصورة: أوثق من لا شيء، لكنها ليست فحصاً نصياً حرفياً.',
+    en: 'That is a second reading of the photo: surer than nothing, but not a literal text check.',
   },
   'ink.fout.bevestiging': {
     nl: 'Bevestiging mislukt — factuur staat nog in de wachtrij',
@@ -6320,14 +6310,14 @@ export const MESSAGES = {
     en: '{n} bank transaction(s) categorised automatically — check them on the Bank page.',
   },
   'ink.geenBedragOpFactuur': {
-    nl: 'Op deze factuur staat geen bedrag, dus er valt niets af te boeken. Vul eerst het factuurbedrag in — dan kun je hem als betaald markeren.',
-    ar: 'لا مبلغ على هذه الفاتورة، فلا شيء لتسويته. أدخل مبلغ الفاتورة أولاً — بعدها يمكنك تعليمها كمدفوعة.',
-    en: 'This invoice carries no amount, so there is nothing to settle. Fill in the invoice amount first — then you can mark it as paid.',
+    nl: 'Geen bedrag op deze factuur, dus niets af te boeken. Vul eerst het factuurbedrag in.',
+    ar: 'لا مبلغ على هذه الفاتورة، فلا شيء لتسويته. أدخل مبلغ الفاتورة أولاً.',
+    en: 'No amount on this invoice, so nothing to settle. Fill in the invoice amount first.',
   },
   'ink.geenBedragVastgelegd': {
-    nl: 'Van deze betaling is geen bedrag vastgelegd, dus verplaatsen kan niet. Draai hem terug en boek hem opnieuw op de juiste factuur.',
-    ar: 'لم يُسجَّل لهذه الدفعة مبلغ، فلا يمكن نقلها. تراجع عنها ثم قيّدها من جديد على الفاتورة الصحيحة.',
-    en: 'No amount was recorded for this payment, so it cannot be moved. Revert it and book it again on the right invoice.',
+    nl: 'Geen bedrag vastgelegd, dus verplaatsen kan niet. Draai hem terug en boek hem opnieuw.',
+    ar: 'لم يُسجَّل مبلغ، فلا يمكن النقل. تراجع عنها وقيّدها من جديد.',
+    en: 'No amount recorded, so it cannot be moved. Revert it and book it again.',
   },
   'ink.geenDatum': {
     nl: '{n} facturen hebben geen factuurdatum en vallen buiten deze periode.',
@@ -6351,9 +6341,9 @@ export const MESSAGES = {
   // het er twee keer stond. De instructie blijft dezelfde; alleen de schuld verhuist naar waar hij
   // hoort.
   'ink.geenIban': {
-    nl: 'We konden op deze factuur geen bruikbaar rekeningnummer lezen. Open de PDF, neem het nummer daarvan over en betaal handmatig in je bankapp.',
-    ar: 'لم نتمكّن من قراءة رقم حساب صالح من هذه الفاتورة. افتح ملف PDF وانقل الرقم منه وادفع يدوياً في تطبيق بنكك.',
-    en: 'We could not read a usable account number from this invoice. Open the PDF, take the number from it and pay manually in your banking app.',
+    nl: 'Geen leesbaar rekeningnummer op deze factuur. Neem het over uit de PDF en betaal in je bankapp.',
+    ar: 'لا رقم حساب مقروء على هذه الفاتورة. انقله من ملف PDF وادفع في تطبيق بنكك.',
+    en: 'No readable account number on this invoice. Take it from the PDF and pay in your banking app.',
   },
   'ink.geenInPeriode': {
     nl: 'Geen inkoopfacturen in {period}',
@@ -6376,19 +6366,19 @@ export const MESSAGES = {
     en: 'No open bank transactions to match against.',
   },
   'ink.geenOrigineel': {
-    nl: '{n} facturen hebben geen origineel document, dus daar viel niets naast te leggen. Voeg het origineel toe via de factuur zelf.',
-    ar: '{n} فاتورة بلا مستند أصلي، فلم يكن ثمة ما يُقارن به. أضف الأصل من الفاتورة نفسها.',
-    en: '{n} invoices have no original document, so there was nothing to compare against. Add the original via the invoice itself.',
+    nl: '{n} facturen zonder origineel document: daar viel niets naast te leggen. Voeg het toe via de factuur zelf.',
+    ar: '{n} فاتورة بلا مستند أصلي: لم يكن ثمة ما يُقارن به. أضفه من الفاتورة نفسها.',
+    en: '{n} invoices without an original document: nothing to compare against there. Add it via the invoice itself.',
   },
   'ink.geenOrigineelEen': {
-    nl: '1 factuur heeft geen origineel document, dus daar viel niets naast te leggen. Voeg het origineel toe via de factuur zelf.',
-    ar: 'فاتورة واحدة بلا مستند أصلي، فلم يكن ثمة ما يُقارن به. أضف الأصل من الفاتورة نفسها.',
-    en: '1 invoice has no original document, so there was nothing to compare against. Add the original via the invoice itself.',
+    nl: '1 factuur zonder origineel document: daar viel niets naast te leggen. Voeg het toe via de factuur zelf.',
+    ar: 'فاتورة واحدة بلا مستند أصلي: لم يكن ثمة ما يُقارن به. أضفه من الفاتورة نفسها.',
+    en: '1 invoice without an original document: nothing to compare against there. Add it via the invoice itself.',
   },
   'ink.geenPassendeFactuur': {
-    nl: 'Geen factuur gevonden waar dit bedrag op past. Een factuur kan alleen een betaling ontvangen als hij gecontroleerd is, van dezelfde soort is, en er minstens {amount} op open staat.',
-    ar: 'لم يُعثر على فاتورة يناسبها هذا المبلغ. لا تستقبل الفاتورة دفعة إلا إذا كانت مدققة ومن النوع نفسه ومفتوحاً عليها {amount} على الأقل.',
-    en: 'No invoice was found this amount fits on. An invoice can only receive a payment if it is verified, of the same kind, and has at least {amount} still open.',
+    nl: 'Geen passende factuur: alleen een gecontroleerde factuur van dezelfde soort met minstens {amount} open kan deze betaling ontvangen.',
+    ar: 'لا فاتورة مناسبة: لا تستقبل هذه الدفعة إلا فاتورة مدققة من النوع نفسه ومفتوحاً عليها {amount} على الأقل.',
+    en: 'No fitting invoice: only a verified invoice of the same kind with at least {amount} open can receive this payment.',
   },
   'ink.geenQr': {
     nl: 'Geen QR mogelijk',
@@ -6566,9 +6556,9 @@ export const MESSAGES = {
     en: 'Read again',
   },
   'ink.incassoAanUitlegKort': {
-    nl: 'Facturen van deze leverancier krijgen geen betaalknop meer en worden na de vervaldatum vanzelf op betaald gezet.',
-    ar: 'لن يكون لفواتير هذا المورّد زر دفع بعد الآن، وستوضع كمدفوعة تلقائياً بعد تاريخ الاستحقاق.',
-    en: 'Invoices from this supplier no longer get a pay button and are set to paid by themselves after the due date.',
+    nl: 'Geen betaalknop meer; na de vervaldatum zetten we ze vanzelf op betaald.',
+    ar: 'لا زر دفع بعد الآن؛ بعد تاريخ الاستحقاق نضعها كمدفوعة تلقائياً.',
+    en: 'No pay button any more; after the due date we set them to paid by ourselves.',
   },
   'ink.incassoAanVraag': {
     nl: '{name} zelf laten afschrijven?',
@@ -6581,9 +6571,9 @@ export const MESSAGES = {
     en: 'Whatever is already set to paid stays put — this reverts nothing.',
   },
   'ink.incassoGeenKnop': {
-    nl: 'Facturen van deze leverancier krijgen geen betaalknop meer — je zou anders betalen wat de bank al heeft afgeschreven.',
-    ar: 'لن يكون لفواتير هذا المورّد زر دفع بعد الآن — وإلا لدفعت ما خصمه البنك بالفعل.',
-    en: 'Invoices from this supplier no longer get a pay button — otherwise you would pay what the bank has already collected.',
+    nl: 'Geen betaalknop meer bij deze leverancier — anders betaal je wat de bank al afschreef.',
+    ar: 'لا زر دفع لدى هذا المورّد بعد الآن — وإلا لدفعت ما خصمه البنك بالفعل.',
+    en: 'No pay button any more for this supplier — otherwise you would pay what the bank already collected.',
   },
   'ink.incassoMeteenBetaald': {
     nl: 'Wat de bank al heeft geïncasseerd zetten we meteen op betaald.',
@@ -6591,9 +6581,9 @@ export const MESSAGES = {
     en: 'What the bank has already collected we set to paid immediately.',
   },
   'ink.incassoMeteenBetaaldOpen': {
-    nl: 'Wat de bank al heeft geïncasseerd zetten we meteen op betaald. Nu staan er {n} facturen van {name} open, samen {amount} — daarvan gaat op betaald wat we in je bankafschrift terugvinden.',
-    ar: 'ما خصمه البنك بالفعل نضعه كمدفوع فوراً. حالياً لدى {name} فواتير مفتوحة عددها {n} ومجموعها {amount} — يوضع منها كمدفوع ما نجده في كشفك البنكي.',
-    en: 'What the bank has already collected we set to paid immediately. Right now {n} invoices from {name} are open, {amount} together — of those, what we find back in your bank statement is set to paid.',
+    nl: '{n} open facturen van {name}, samen {amount}. Wat in je bankafschrift staat, zetten we op betaald.',
+    ar: '{n} فواتير مفتوحة من {name}، مجموعها {amount}. ما يظهر في كشفك البنكي نضعه كمدفوع.',
+    en: '{n} open invoices from {name}, {amount} together. What appears in your bank statement we set to paid.',
   },
   'ink.incassoOverzicht': {
     nl: 'Je krijgt daarna een overzicht van precies welke facturen zijn verwerkt en welke niet.',
@@ -6601,9 +6591,9 @@ export const MESSAGES = {
     en: 'You then get an overview of exactly which invoices were processed and which were not.',
   },
   'ink.incassoResultAan': {
-    nl: 'Je krijgt geen betaalknop meer bij deze leverancier. Nieuwe facturen zetten we na de vervaldatum vanzelf op betaald.',
-    ar: 'لن ترى زر دفع لدى هذا المورّد بعد الآن. الفواتير الجديدة نضعها كمدفوعة تلقائياً بعد تاريخ الاستحقاق.',
-    en: 'You no longer get a pay button for this supplier. New invoices are set to paid by themselves after the due date.',
+    nl: 'Geen betaalknop meer bij deze leverancier. Nieuwe facturen zetten we na de vervaldatum vanzelf op betaald.',
+    ar: 'لا زر دفع لدى هذا المورّد بعد الآن. الفواتير الجديدة نضعها كمدفوعة تلقائياً بعد تاريخ الاستحقاق.',
+    en: 'No pay button any more for this supplier. New invoices we set to paid by ourselves after the due date.',
   },
   'ink.incassoResultUit': {
     nl: 'Facturen van deze leverancier krijgen weer een betaalknop. Wat al op betaald staat, blijft staan.',
@@ -6631,9 +6621,9 @@ export const MESSAGES = {
     en: 'Invoices from {name} get a pay button again.',
   },
   'ink.incassoZetAan': {
-    nl: 'Zet dit aan als het geld bij deze leverancier vanzelf van je rekening gaat — huur, energie, verzekering. Je hoeft ze dan niet meer zelf af te vinken.',
-    ar: 'فعّل هذا إذا كان المال يُخصم من حسابك تلقائياً لدى هذا المورّد — الإيجار، الطاقة، التأمين. لن تحتاج بعدها لتعليمها بنفسك.',
-    en: 'Turn this on if money for this supplier leaves your account by itself — rent, energy, insurance. You then no longer have to tick them off yourself.',
+    nl: 'Zet aan als dit geld vanzelf van je rekening gaat (huur, energie, verzekering). Afvinken hoeft dan niet meer.',
+    ar: 'فعّل هذا إذا كان المال يُخصم من حسابك تلقائياً (إيجار، طاقة، تأمين). لن تحتاج بعدها لتعليمها.',
+    en: 'Turn on if this money leaves your account by itself (rent, energy, insurance). No more ticking off then.',
   },
   'ink.inclBtw': {
     nl: 'Incl. BTW',
@@ -6916,9 +6906,9 @@ export const MESSAGES = {
     en: '🖼️ Pick pages',
   },
   'ink.mp.let': {
-    nl: 'Let op: één PDF = één factuur (alle pagina’s samen). Zitten er meerdere verschillende facturen in één PDF? Splits ze niet — voeg elke factuur los toe.',
-    ar: 'انتبه: ملف PDF واحد = فاتورة واحدة (كل الصفحات معاً). هل في ملف PDF واحد عدة فواتير مختلفة؟ لا تقسّمه — أضف كل فاتورة منفصلة.',
-    en: 'Note: one PDF = one invoice (all pages together). Several different invoices in one PDF? Do not split it — add each invoice separately.',
+    nl: 'Eén PDF = één factuur. Zitten er verschillende facturen in één PDF? Voeg elke factuur los toe.',
+    ar: 'ملف PDF واحد = فاتورة واحدة. عدة فواتير مختلفة في ملف واحد؟ أضف كل فاتورة على حدة.',
+    en: 'One PDF = one invoice. Several different invoices in one PDF? Add each invoice separately.',
   },
   'ink.mp.paginasBewaard': {
     nl: 'De andere pagina\'s blijven bewaard.',
@@ -6926,9 +6916,9 @@ export const MESSAGES = {
     en: 'The other pages stay kept.',
   },
   'ink.mp.uitleg': {
-    nl: 'Fotografeer of kies elke pagina van dezelfde factuur. We voegen ze samen tot één factuur — geen losse facturen. (Voor verschillende facturen: voeg ze los toe.)',
-    ar: 'صوّر أو اختر كل صفحة من الفاتورة نفسها. سندمجها في فاتورة واحدة — لا فواتير منفصلة. (للفواتير المختلفة: أضفها منفصلة.)',
-    en: 'Photograph or pick every page of the same invoice. We combine them into one invoice — not separate invoices. (For different invoices: add them separately.)',
+    nl: 'Kies of fotografeer elke pagina van dezelfde factuur; we voegen ze samen tot één.',
+    ar: 'اختر أو صوّر كل صفحة من الفاتورة نفسها؛ سندمجها في واحدة.',
+    en: 'Pick or photograph every page of the same invoice; we merge them into one.',
   },
   'ink.mp.voegEerstToe': {
     nl: 'Voeg eerst pagina\'s toe',
@@ -7019,9 +7009,9 @@ export const MESSAGES = {
     en: 'No, this is one invoice',
   },
   'ink.multi.uitleg': {
-    nl: 'We konden niet uitsluiten dat er meer facturen in dit bestand zitten. Zeg je dat het er één is, dan vervalt die waarschuwing. Zit er tóch een tweede in, voeg die dan los toe — hij staat nu nergens in je boekhouding.',
-    ar: 'لم نستطع استبعاد وجود أكثر من فاتورة في هذا الملف. إن قلت إنها واحدة، يزول ذلك التحذير. وإن كانت فيه فاتورة ثانية فعلاً، أضفها على حدة — فهي الآن غير موجودة في دفاترك.',
-    en: 'We could not rule out that this file holds more invoices. If you say it is one, that warning goes. If there is a second one after all, add it separately — right now it is nowhere in your books.',
+    nl: 'Dit bestand bevat misschien meer dan één factuur. Bevestig je dat het er één is, dan vervalt de waarschuwing. Een tweede factuur voeg je los toe — die staat nu nergens.',
+    ar: 'قد يحتوي هذا الملف على أكثر من فاتورة. إن أكّدت أنها واحدة يزول التحذير. الفاتورة الثانية تضيفها على حدة — فهي الآن غير موجودة في أي مكان.',
+    en: 'This file may hold more than one invoice. If you confirm it is one, the warning goes. A second invoice you add separately — right now it is nowhere.',
   },
   'ink.multi.vraag': {
     nl: 'Bevat dit bestand één factuur?',
@@ -7304,9 +7294,9 @@ export const MESSAGES = {
     en: 'The QR could not be generated',
   },
   'ink.regels.aanbod': {
-    nl: 'Je negeerde dit als “geen factuur”. Wil je bijlagen van {email} voortaan overslaan? De e-mails blijven in je mailbox, en je kunt de regel bij Genegeerd weer opheffen.',
-    ar: 'تجاهلت هذا كـ«ليست فاتورة». أتريد تخطي مرفقات {email} من الآن؟ تبقى الرسائل في بريدك، ويمكنك إلغاء القاعدة من المتجاهَل.',
-    en: 'You ignored this as “not an invoice”. Skip attachments from {email} from now on? The e-mails stay in your mailbox, and you can remove the rule under Ignored.',
+    nl: 'Bijlagen van {email} voortaan overslaan? De e-mails blijven in je mailbox; de regel hef je bij Genegeerd weer op.',
+    ar: 'تخطّي مرفقات {email} من الآن؟ تبقى الرسائل في بريدك؛ وتلغي القاعدة من المتجاهَل.',
+    en: 'Skip attachments from {email} from now on? The e-mails stay in your mailbox; you lift the rule again under Ignored.',
   },
   'ink.regels.aanbodBevestig': {
     nl: 'Ja, altijd overslaan',
@@ -7359,9 +7349,9 @@ export const MESSAGES = {
     en: 'Removing the rule failed — check your connection',
   },
   'ink.regels.uitleg': {
-    nl: 'Bijlagen van deze adressen worden niet geïmporteerd. De e-mails zelf blijven gewoon in je mailbox staan, en wat overgeslagen is zie je terug bij “Overgeslagen bij import”.',
-    ar: 'مرفقات هذه العناوين لا تُستورد. الرسائل نفسها تبقى في بريدك، وما تُخطّي تجده في «ما تُخطّي أثناء الاستيراد».',
-    en: 'Attachments from these addresses are not imported. The e-mails themselves stay in your mailbox, and what was skipped shows under “Skipped during import”.',
+    nl: 'Bijlagen van deze adressen slaan we over; de e-mails blijven in je mailbox. Zie “Overgeslagen bij import”.',
+    ar: 'مرفقات هذه العناوين نتخطّاها؛ والرسائل تبقى في بريدك. انظر «ما تُخطّي أثناء الاستيراد».',
+    en: 'Attachments from these addresses we skip; the e-mails stay in your mailbox. See “Skipped during import”.',
   },
   'ink.rekenBoekenNa': {
     nl: 'Reken mijn boeken na',
@@ -7399,9 +7389,9 @@ export const MESSAGES = {
     en: 'Read again',
   },
   'ink.reread.uitleg': {
-    nl: 'Wij lezen inmiddels meer bestandstypes dan toen deze binnenkwamen. Laat het opnieuw proberen — er verandert niets aan je boekhouding tot je het in de wachtrij bevestigt.',
-    ar: 'صرنا نقرأ أنواع ملفات أكثر مما كنا نقرأ حين وصلت هذه. جرّب القراءة مجدداً — لا يتغيّر شيء في دفاترك حتى تؤكّده في قائمة الانتظار.',
-    en: 'We now read more file types than when these arrived. Let it try again — nothing in your books changes until you confirm it in the queue.',
+    nl: 'Toen onleesbaar, nu misschien niet meer. Probeer opnieuw — niets verandert tot jij het in de wachtrij bevestigt.',
+    ar: 'كانت غير مقروءة حينها، وربما لم تعد كذلك. جرّب مجدداً — لا يتغيّر شيء حتى تؤكّده في قائمة الانتظار.',
+    en: 'Unreadable then, perhaps not any more. Try again — nothing changes until you confirm it in the queue.',
   },
   'ink.result.auto': {
     nl: 'Automatisch verwerkt',
@@ -7521,14 +7511,14 @@ export const MESSAGES = {
     en: 'Checked: the 1 invoice on this screen — we could not check your older paid invoices just now.',
   },
   'ink.scan.buitenLijst': {
-    nl: '{n} ervan staan niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek ze op factuurnummer of leverancier.',
-    ar: '{n} منها ليست في هذه القائمة (مدفوعة وأقدم من آخر 200) — ابحث عنها برقم الفاتورة أو المورّد.',
-    en: '{n} of them are not in this list (already paid and older than the most recent 200) — look them up by invoice number or supplier.',
+    nl: '{n} ervan vallen buiten deze lijst (betaald, ouder dan de laatste 200) — zoek op factuurnummer of leverancier.',
+    ar: '{n} منها خارج هذه القائمة (مدفوعة، أقدم من آخر 200) — ابحث برقم الفاتورة أو المورّد.',
+    en: '{n} of them fall outside this list (paid, older than the latest 200) — search by invoice number or supplier.',
   },
   'ink.scan.buitenLijstEen': {
-    nl: 'Eén ervan staat niet in deze lijst (al betaald en ouder dan de laatste 200) — zoek hem op factuurnummer of leverancier.',
-    ar: 'واحدة منها ليست في هذه القائمة (مدفوعة وأقدم من آخر 200) — ابحث عنها برقم الفاتورة أو المورّد.',
-    en: 'One of them is not in this list (already paid and older than the most recent 200) — look it up by invoice number or supplier.',
+    nl: 'Eén ervan valt buiten deze lijst (betaald, ouder dan de laatste 200) — zoek op factuurnummer of leverancier.',
+    ar: 'واحدة منها خارج هذه القائمة (مدفوعة، أقدم من آخر 200) — ابحث برقم الفاتورة أو المورّد.',
+    en: 'One of them falls outside this list (paid, older than the latest 200) — search by invoice number or supplier.',
   },
   'ink.scan.heelBoek': {
     nl: 'Gecontroleerd: al je {n} bevestigde inkoopfacturen.',
@@ -7582,9 +7572,9 @@ export const MESSAGES = {
     en: 'Session expired — log in again',
   },
   'ink.skipped.fout': {
-    nl: 'We konden deze lijst nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er iets is overgeslagen.',
-    ar: 'لم نستطع جلب هذه القائمة الآن. حاول بعد قليل — هذا لا يقول شيئاً عمّا إذا كان شيء قد تُخطّي.',
-    en: 'We could not fetch this list right now. Try again in a moment — this says nothing about whether anything was skipped.',
+    nl: 'Lijst niet opgehaald; dat zegt niets over wat is overgeslagen. Probeer zo opnieuw.',
+    ar: 'لم تُجلب القائمة؛ وهذا لا يقول شيئاً عمّا تُخطّي. حاول بعد قليل.',
+    en: 'List not fetched; that says nothing about what was skipped. Try again shortly.',
   },
   'ink.standNietOpgehaald': {
     nl: 'De stand kon niet worden opgehaald — we weten niet of er nog open banktransacties zijn.',
@@ -7627,9 +7617,9 @@ export const MESSAGES = {
     en: 'Sync failed — please try again',
   },
   'ink.sync.nietLezenEen': {
-    nl: '1 bestand konden we niet lezen — het staat in je bestanden, controleer het even.',
-    ar: 'ملف واحد لم نستطع قراءته — إنه في ملفاتك، تحقّق منه.',
-    en: '1 file we could not read — it is in your files, take a quick look.',
+    nl: '1 bestand konden we niet lezen; het staat in je bestanden, controleer het even.',
+    ar: 'ملف واحد لم نستطع قراءته؛ إنه في ملفاتك، تحقّق منه.',
+    en: '1 file we could not read; it is in your files, take a quick look.',
   },
   'ink.sync.nietLezenMeer': {
     nl: '{n} bestanden konden we niet lezen — ze staan in je bestanden, controleer ze even.',
@@ -7859,9 +7849,9 @@ export const MESSAGES = {
     en: '{amount} moved to the chosen invoice',
   },
   'ink.verplaatsUitleg': {
-    nl: 'Van inkoopfactuur {number} naar de factuur waar deze betaling bij hoort. Het bedrag, de betaaldatum en de methode gaan ongewijzigd mee.',
-    ar: 'من فاتورة المشتريات {number} إلى الفاتورة التي تخصها هذه الدفعة. ينتقل المبلغ وتاريخ الدفع والطريقة دون تغيير.',
-    en: 'From purchase invoice {number} to the invoice this payment belongs to. The amount, the payment date and the method travel along unchanged.',
+    nl: 'Van inkoopfactuur {number} naar de juiste factuur. Bedrag, betaaldatum en methode gaan ongewijzigd mee.',
+    ar: 'من فاتورة المشتريات {number} إلى الفاتورة الصحيحة. ينتقل المبلغ وتاريخ الدفع والطريقة دون تغيير.',
+    en: 'From purchase invoice {number} to the right invoice. Amount, payment date and method travel along unchanged.',
   },
   'ink.vervalIncasso': {
     nl: 'Vervaldatum {date} — automatische incasso',
@@ -7924,14 +7914,14 @@ export const MESSAGES = {
     en: 'Replacing failed — refresh the page and try again.',
   },
   'ink.vervang.uitlegMetNr': {
-    nl: 'Factuur {nr} verdwijnt uit je lijst en telt niet meer mee in je kosten en voorbelasting. Hij blijft bewaard (7 jaar bewaarplicht) en je kunt hem terugzetten bij Inkomend › Genegeerd.\n\nDeze factuur blijft gewoon in de wachtrij staan — je controleert hem daarna zoals altijd.',
-    ar: 'ستختفي الفاتورة {nr} من قائمتك ولن تُحتسب في مصاريفك وضريبة المشتريات. تبقى محفوظة (إلزام حفظ 7 سنوات) ويمكنك إرجاعها من الوارد › المتجاهَل.\n\nهذه الفاتورة تبقى في قائمة الانتظار — تتحقق منها بعدها كالمعتاد.',
-    en: 'Invoice {nr} disappears from your list and no longer counts in your costs and input VAT. It stays stored (7-year retention duty) and you can restore it under Incoming › Ignored.\n\nThis invoice simply stays in the queue — you check it afterwards as always.',
+    nl: 'Factuur {nr} gaat uit je lijst en telt niet meer mee in kosten en voorbelasting. Hij blijft bewaard (7 jaar bewaarplicht) onder Inkomend › Genegeerd.\n\nDeze factuur blijft in de wachtrij.',
+    ar: 'الفاتورة {nr} تخرج من قائمتك ولا تُحتسب بعدها في المصاريف وضريبة المشتريات. تبقى محفوظة (إلزام حفظ 7 سنوات) تحت الوارد › المتجاهَل.\n\nهذه الفاتورة تبقى في قائمة الانتظار.',
+    en: 'Invoice {nr} leaves your list and no longer counts in costs and input VAT. It stays stored (7-year retention duty) under Incoming › Ignored.\n\nThis invoice stays in the queue.',
   },
   'ink.vervang.uitlegZonderNr': {
-    nl: 'De andere factuur verdwijnt uit je lijst en telt niet meer mee in je kosten en voorbelasting. Hij blijft bewaard (7 jaar bewaarplicht) en je kunt hem terugzetten bij Inkomend › Genegeerd.\n\nDeze factuur blijft gewoon in de wachtrij staan — je controleert hem daarna zoals altijd.',
-    ar: 'ستختفي الفاتورة الأخرى من قائمتك ولن تُحتسب في مصاريفك وضريبة المشتريات. تبقى محفوظة (إلزام حفظ 7 سنوات) ويمكنك إرجاعها من الوارد › المتجاهَل.\n\nهذه الفاتورة تبقى في قائمة الانتظار — تتحقق منها بعدها كالمعتاد.',
-    en: 'The other invoice disappears from your list and no longer counts in your costs and input VAT. It stays stored (7-year retention duty) and you can restore it under Incoming › Ignored.\n\nThis invoice simply stays in the queue — you check it afterwards as always.',
+    nl: 'De andere factuur gaat uit je lijst en telt niet meer mee in kosten en voorbelasting. Hij blijft bewaard (7 jaar bewaarplicht) onder Inkomend › Genegeerd.\n\nDeze factuur blijft in de wachtrij.',
+    ar: 'الفاتورة الأخرى تخرج من قائمتك ولا تُحتسب بعدها في المصاريف وضريبة المشتريات. تبقى محفوظة (إلزام حفظ 7 سنوات) تحت الوارد › المتجاهَل.\n\nهذه الفاتورة تبقى في قائمة الانتظار.',
+    en: 'The other invoice leaves your list and no longer counts in costs and input VAT. It stays stored (7-year retention duty) under Incoming › Ignored.\n\nThis invoice stays in the queue.',
   },
   'ink.vervang.vraagMetNr': {
     nl: 'Vervangt deze factuur {nr}?',
@@ -7974,9 +7964,9 @@ export const MESSAGES = {
     en: 'Purchase invoice {number} will be marked as paid.',
   },
   'ink.xqUitleg': {
-    nl: 'Voor de btw telt deze factuur mee in {booked} (factuurdatum). De betaling kwam binnen in {paid}.',
-    ar: 'لأغراض الضريبة تُحتسب هذه الفاتورة في {booked} (تاريخ الفاتورة). الدفعة وصلت في {paid}.',
-    en: 'For btw purposes this invoice counts in {booked} (invoice date). The payment arrived in {paid}.',
+    nl: 'Btw: telt mee in {booked} (factuurdatum). Betaald in {paid}.',
+    ar: 'الضريبة: تُحتسب في {booked} (تاريخ الفاتورة). دُفعت في {paid}.',
+    en: 'Btw: counts in {booked} (invoice date). Paid in {paid}.',
   },
   'ink.zoekleeg.confirmed': {
     nl: 'Niets voor “{query}” in bevestigd.',
@@ -9520,9 +9510,9 @@ export const MESSAGES = {
     en: 'Copy link',
   },
   'lijst.kwartaal.uitleg': {
-    nl: 'De factuur telt voor de btw mee in {booked} (factuurdatum). De betaling kwam binnen in {paid}.',
-    ar: 'تُحتسب الفاتورة في الضريبة ضمن {booked} (تاريخ الفاتورة). ووصل الدفع في {paid}.',
-    en: 'For btw the invoice counts in {booked} (invoice date). The payment came in in {paid}.',
+    nl: 'Btw: telt mee in {booked} (factuurdatum). Betaling binnen in {paid}.',
+    ar: 'الضريبة: تُحتسب في {booked} (تاريخ الفاتورة). وصل الدفع في {paid}.',
+    en: 'Btw: counts in {booked} (invoice date). Payment received in {paid}.',
   },
   'lijst.laden': {
     nl: 'Laden...',
@@ -9797,9 +9787,9 @@ export const MESSAGES = {
     en: 'Replaced by {number}',
   },
   'lijst.verwerktUitleg': {
-    nl: 'De boekhouder heeft factuur {number} verwerkt. Vraag eerst om de verwerking ongedaan te maken voordat je de betaalstatus wijzigt.',
-    ar: 'عالج المحاسب الفاتورة {number}. اطلب أولاً التراجع عن المعالجة قبل تغيير حالة الدفع.',
-    en: 'Your accountant has processed invoice {number}. First ask to undo the processing before you change the payment status.',
+    nl: 'De boekhouder heeft factuur {number} al verwerkt. Vraag eerst om dat ongedaan te maken.',
+    ar: 'عالج المحاسب الفاتورة {number} مسبقاً. اطلب أولاً التراجع عن ذلك.',
+    en: 'The accountant already processed invoice {number}. First ask to undo that.',
   },
   'lijst.verwijderdTerug': {
     nl: 'Verwijderd — terug te zetten onderaan de lijst',
@@ -10042,9 +10032,9 @@ export const MESSAGES = {
     en: 'We warn from {pct}% of a limit, and what happens then is stated per line.',
   },
   'start.meldingenFout': {
-    nl: 'We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.',
-    ar: 'لم نستطع جلب إشعاراتك الآن. حاول بعد قليل — هذا لا يقول شيئاً عن وجود إشعارات لك.',
-    en: 'We could not fetch your notifications right now. Try again in a moment — this says nothing about whether you have any.',
+    nl: 'Meldingen niet opgehaald; dat zegt niets over of er meldingen zijn. Probeer zo opnieuw.',
+    ar: 'لم تُجلب الإشعارات؛ وهذا لا يقول شيئاً عن وجود إشعارات. حاول بعد قليل.',
+    en: 'Notifications not fetched; that says nothing about whether there are any. Try again shortly.',
   },
   'team.eerderUitleg': {
     nl: 'Deze mensen kunnen niets meer. Ze blijven in de lijst staan omdat de facturen die ze maakten nog bestaan en op naam moeten blijven.',
@@ -11566,9 +11556,9 @@ export const MESSAGES = {
   // Aparte zinnen per geval en geen zelfstandig naamwoord als parameter: "te bevestigen" en "zonder
   // factuur" zijn twee verschillende handelingen en geen twee waarden van één woord.
   'bank.stand.leeg': {
-    nl: 'Nog geen banktransacties. Koppel je bank of upload een afschrift — daarna koppelen we ze aan je facturen en bevestig jij.',
-    ar: 'لا توجد حركات بنكية بعد. اربط بنكك أو ارفع كشفاً — بعدها نربطها بفواتيرك وتؤكّد أنت.',
-    en: 'No bank transactions yet. Connect your bank or upload a statement — then we link them to your invoices and you confirm.',
+    nl: 'Nog geen banktransacties. Koppel je bank of upload een afschrift.',
+    ar: 'لا حركات بنكية بعد. اربط بنكك أو ارفع كشفاً.',
+    en: 'No bank transactions yet. Connect your bank or upload a statement.',
   },
   'bank.stand.klaar': {
     nl: 'Alles afgehandeld. Er wacht geen bankregel meer op je.',
@@ -14347,16 +14337,16 @@ export const MESSAGES = {
   // herstellen. De app laat die dus aan de eigenaar. Dat is de app die het goed doet, en de
   // eigenaar hoorde het nergens.
   'bank.kas.aangegeven': {
-    nl: '{count} betaling(en) heeft de app met opzet niet zelf geboekt: die horen bij een kwartaal dat je al hebt aangegeven. Onder het kasstelsel bepaalt de betaaldatum de btw, dus die keuze is aan jou.',
-    ar: '{count} دفعة/دفعات لم يقيّدها التطبيق بنفسه عن قصد: فهي تخصّ ربعاً قدّمت إقراره بالفعل. في نظام الأساس النقدي تُحدّد تاريخُ الدفع ضريبةَ btw، فالقرار لك.',
-    en: 'The app deliberately did not book {count} payment(s) itself: they belong to a quarter you have already filed. Under the cash scheme the payment date decides the btw, so that call is yours.',
+    nl: '{count} betaling(en) bewust niet geboekt: dat kwartaal heb je al aangegeven, en onder het kasstelsel telt de betaaldatum. Die keuze is aan jou.',
+    ar: '{count} دفعة/دفعات لم تُقيَّد عن قصد: ذلك الربع قدّمت إقراره بالفعل، وفي نظام الأساس النقدي يُعتدّ بتاريخ الدفع. القرار لك.',
+    en: '{count} payment(s) deliberately not booked: you already filed that quarter, and under the cash scheme the payment date counts. That call is yours.',
   },
   // De gevaarlijke stand: niet "we hebben besloten", maar "we konden het niet nagaan". Zonder deze
   // zin ziet een stilgevallen controle er precies zo uit als een rustige dag.
   'bank.kas.onbekend': {
-    nl: 'Van {count} betaling(en) konden we niet nagaan of dat kwartaal al is aangegeven, dus die zijn niet automatisch geboekt. Dat is géén bevestiging dat er iets mis is — maar de app heeft hier bewust niets besloten.',
-    ar: 'تعذّر علينا التحقّق، بشأن {count} دفعة/دفعات، ممّا إذا كان ذلك الربع قد قُدّم إقراره، لذا لم تُقيَّد تلقائياً. هذا ليس تأكيداً بوجود خطأ — لكن التطبيق لم يقرّر هنا شيئاً عن قصد.',
-    en: 'For {count} payment(s) we could not check whether that quarter has already been filed, so they were not booked automatically. That is not a confirmation that anything is wrong — but the app deliberately decided nothing here.',
+    nl: 'Bij {count} betaling(en) konden we niet nagaan of dat kwartaal al is aangegeven. Die zijn daarom niet vanzelf geboekt — geen fout, alleen niet gecontroleerd.',
+    ar: 'بشأن {count} دفعة/دفعات تعذّر علينا التحقّق ممّا إذا كان ذلك الربع قد قُدّم إقراره. لذلك لم تُقيَّد تلقائياً — ليس خطأً، فقط لم تُفحص.',
+    en: 'For {count} payment(s) we could not check whether that quarter was already filed. So they were not booked by themselves — not an error, just not checked.',
   },
 
   // ── [KAS-ACHTER] De kaslade waarvan de koppeling niet kon bijwerken ───────────────────────

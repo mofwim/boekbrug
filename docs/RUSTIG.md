@@ -19,6 +19,19 @@ Dit document gaat over WOORDEN.
 | ondernemer | 123 | 3.193 | 21.946 | 233 | 10 |
 | boekhouder | 15 | — | 2.794 | 40 | 0 |
 
+Na batch 2 (de drie dagelijkse schermen, dezelfde dag):
+
+| | woorden | > 20 woorden | waarvan in rust |
+|---|---|---|---|
+| betalen | 2.741 → 2.487 | 25 → 10 | 0 |
+| bank | 2.189 → 1.986 | 25 → 8 | 0 |
+| controlewachtrij | 2.023 → 1.877 | 15 → 5 | 0 |
+
+Wat er wegging: uitleg over ons binnenwerk ("ze staan hier zodat ze je werk niet in de weg
+zitten"), een tooltip die het paneel herhaalde dat hij opent, en dezelfde alinea onder een
+bank-sleutel én een betaal-sleutel. Wat er bleef, staat bij een beslissing: het bevestigvenster
+van "vervangen", het betaalblad, de creditvraag.
+
 De 233 zinnen langer dan twintig woorden zijn 7% van de zinnen en dragen ~30% van de woorden.
 De drie dagelijkse schermen — betalen, bank, controlewachtrij — dragen 8.577 woorden: een derde
 van alles.
@@ -58,6 +71,11 @@ Dit zijn geen woorden, dit is geld of recht:
 - de zin die zegt **welke kant** een cijfer op is, of dat we dat niet weten.
 
 Korter maken mag; de FEITEN erin weglaten niet.
+
+De rendertests (`tests/render/`) pinnen zulke feiten als letterlijke zinsdelen in de gerenderde
+HTML — "precies het bedrag van deze betaling", "staat nog niet in je administratie", "Deze hoef je
+niet na te kijken". Batch 2 sneed er zeven door en de rendertests vingen ze alle zeven. Dat is
+de bedoeling: zo'n zinsdeel is het feit, en de zin eromheen wordt korter.
 
 En één die de eerste batch leerde: **wat de app UIT ZICHZELF nog gaat doen** is geen machinerie
 maar een feit voor de eigenaar. "Die bijlage halen wij niet opnieuw op — behalve een .zip, die

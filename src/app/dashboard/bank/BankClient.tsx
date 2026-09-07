@@ -1728,7 +1728,7 @@ export default function BankClient() {
                   </p>
                 ) : pm.targets.length === 0 ? (
                   <p style={{ fontSize: 13, color: '#5F6368', background: '#F8F9FA', borderRadius: R.sm, padding: '10px 12px', margin: 0, lineHeight: 1.5 }}>
-                    {t('bank.verplaats.geenDoel', { amount: eur.format(pm.amount_applied) })}
+                    {t('ink.geenPassendeFactuur', { amount: eur.format(pm.amount_applied) })}
                   </p>
                 ) : (
                   pm.targets.map(tgt => {
@@ -2646,7 +2646,7 @@ export default function BankClient() {
           <div className="sheet-scroll" onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: R.lg, padding: 24, maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.24)' }}>
             <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>{t('lijst.verwerkt')}</h3>
             <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.5, margin: '0 0 20px' }}>
-              {t('bank.verwerktUitleg', { number: verwerktCtx.number })}
+              {t('lijst.verwerktUitleg', { number: verwerktCtx.number })}
             </p>
             <button
               onClick={() => setVerwerktCtx(null)}

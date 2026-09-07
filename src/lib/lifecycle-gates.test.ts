@@ -26992,13 +26992,19 @@ test("[POST-WAARD] the morning mail is built from the invoice's facts, and lands
 // 67-word explanation of what the app cannot show, the same retention footnote twice under two
 // keys, a 63-word tax lesson beside a checkbox. See docs/RUSTIG.md for the standard.
 //
+// Batch 2 took the three daily screens — pay, bank, verify queue — from 6.953 words to 6.350 and
+// from 65 sentences over twenty words to 23, all of those now standing at a decision (a confirm
+// dialog, a pay sheet, a credit question). What went: explanations of our own machinery ("ze
+// staan hier zodat ze je werk niet in de weg zitten"), a tooltip that repeated the sheet it
+// opens, and the same "no fitting invoice" paragraph under a bank key and a pay key.
+//
 // This gate is a RATCHET. It knows today's stand and refuses any step back; each cleaned batch
 // lowers the ceilings here, in the same commit. What it cannot judge — whether a sentence stands
 // at a decision or at rest — the standard judges; what it can count, it counts.
 test("[RUSTIG] the screen does not grow wordier than the day this was measured", () => {
   // Ceilings — lowered batch by batch. Raising one is a decision to argue in the commit message.
-  const LONGEST_WORDS = 47;      // 7 sep: 67 → 47 after batch 1
-  const OVER_TWENTY = 262;       // 7 sep: 263 → 262 after batch 1 (owner screens AND src/modules)
+  const LONGEST_WORDS = 45;      // 7 sep: 67 → 47 after batch 1 → 45 after batch 2
+  const OVER_TWENTY = 217;       // 7 sep: 263 → 262 after batch 1 → 217 after batch 2 (owner screens AND src/modules)
   const OVER_FIFTY = 0;          // 7 sep: 10 → 0 after batch 1
 
   const loop = (dir: string): string[] => {
@@ -27044,7 +27050,7 @@ test("[RUSTIG] the screen does not grow wordier than the day this was measured",
   // (MetNaam/ZonderNaam, MetDatum, ZonderNummer, Anoniem, Kort). Everything else is a copy.
   const stem = (k: string) => k
     .replace(/(Een|Meer|N|Acc|Kort|Anoniem)$/, "")
-    .replace(/(MetNaam|ZonderNaam|MetDatum|ZonderNummer)$/i, "")
+    .replace(/(MetNaam|ZonderNaam|MetDatum|ZonderNummer|MetNr|ZonderNr)$/i, "")
     .replace(/\.(een|meer)$/, "");
   const lang = zinnen.filter((z) => z.w >= 15).map((z) => ({
     key: z.key,
@@ -27061,35 +27067,31 @@ test("[RUSTIG] the screen does not grow wordier than the day this was measured",
     // Orientation-free: the pair is the same pair whichever key the walk met first.
     dubbel.push([lang[i].key, lang[j].key].sort().join(" ≈ "));
   }
-  // Today's copies — 46 pairs on 7 September, measured, not chosen. Each is one thought said twice
-  // (the "je boekhouder heeft dit verwerkt" line stands under FOUR keys). A ratchet: a new pair is
-  // a red gate, and this set shrinks with every batch that folds one away.
-  const BEKENDE_KOPIEEN = 46;
+  // Today's copies — 46 pairs on 7 September, measured, not chosen; 27 after batch 2 folded the
+  // ones on the daily screens (the "je boekhouder heeft dit verwerkt" line stood under FOUR keys
+  // and now stands under two, each below the length this compares). A ratchet: a new pair is a
+  // red gate, and this set shrinks with every batch that folds one away.
+  const BEKENDE_KOPIEEN = 27;
   const bekend = new Set([
-    "bank.fout.verwerkt ≈ bank.verwerktUitleg", "bank.fout.verwerkt ≈ ink.boekhouderVerwerkt",
-    "bank.fout.verwerkt ≈ lijst.verwerktUitleg", "kw.klantenLaadFout ≈ kw.laadFout",
-    "bh.kwt.leesfout ≈ kw.laadFout", "bh.kwt.leesfout ≈ kw.klantenLaadFout",
-    "act.bv.uitleg ≈ lijst.bundel.deel", "act.bv.disclaimer ≈ lijst.bundel.iban",
-    "ber.ophaalFoutEerlijk ≈ ink.skipped.fout", "ber.ophaalFoutEerlijk ≈ start.meldingenFout",
-    "kluis.introArchief ≈ kluis.introBoekhouden", "verd.geenInkoop ≈ verd.geenVerkoop",
-    "bank.verplaats.geenBedrag ≈ ink.geenBedragVastgelegd", "bank.verplaats.geenDoel ≈ ink.geenPassendeFactuur",
-    "bank.verplaats.kies ≈ ink.verplaatsUitleg", "bank.verwerktUitleg ≈ ink.boekhouderVerwerkt",
-    "bank.verwerktUitleg ≈ lijst.verwerktUitleg", "bank.alGeboekt.zelfdeBedrag ≈ bank.somKlopt.telt",
-    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing", "detail.fout.mailNietVerstuurd ≈ detail.fout.pdfNietGemaakt",
-    "detail.fout.pdfNietGemaakt ≈ lijst.pdfNietGemaakt", "bh.home.todo.onleesbaar.uitleg ≈ ink.betekentNietLeeg",
-    "ink.boekhouderVerwerkt ≈ lijst.verwerktUitleg", "ink.creditPositiefUitleg ≈ ink.creditUitlegConflict",
-    "ink.incassoAanUitlegKort ≈ ink.incassoResultAan", "ink.mp.uitleg ≈ int.mpUitleg",
-    "ink.skipped.fout ≈ start.meldingenFout", "ink.sync.nietLezenEen ≈ kas.upload.nietLezen",
-    "ink.vervang.uitlegMetNr ≈ ink.vervang.uitlegZonderNr", "ink.xqUitleg ≈ lijst.kwartaal.uitleg",
+    "act.bv.disclaimer ≈ lijst.bundel.iban", "act.bv.uitleg ≈ lijst.bundel.deel",
+    "beh.lees.onleesbaarUitleg ≈ beh.vast.onleesbaarUitleg",
+    "bewerk.modal.waarschuwing ≈ lijst.send.waarschuwing", "bh.bev.bulk.lezing ≈ bh.bev.uitleg",
+    "bh.fact.mandaat ≈ bh.fact.mandaatBtw",
+    "bh.home.klanten.onleesbaar.uitleg ≈ bh.home.todo.onleesbaar.uitleg",
+    "bh.home.klanten.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
+    "bh.home.todo.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
+    "bh.home.todo.onleesbaar.uitleg ≈ ink.betekentNietLeeg",
+    "bh.home.todo.onleesbaar.uitleg ≈ klr.afl.fout",
+    "bh.home.todo.onleesbaar.uitleg ≈ vr.fout.betekentNiet",
+    "bh.kwt.leesfout ≈ kw.klantenLaadFout", "bh.kwt.leesfout ≈ kw.laadFout",
+    "detail.fout.mailNietVerstuurd ≈ detail.fout.pdfNietGemaakt",
+    "detail.fout.pdfNietGemaakt ≈ lijst.pdfNietGemaakt",
     "inst.gevarenzoneUitleg ≈ inst.verwijderUitleg", "inst.mandaatFacturenUitleg ≈ inst.rijFacturenAan",
+    "kluis.introArchief ≈ kluis.introBoekhouden",
     "kw.geenDatumEen ≈ kw.geenDatumEenAcc", "kw.geenDatumEen ≈ kw.geenDatumMeerAcc",
     "kw.geenDatumEenAcc ≈ kw.geenDatumMeer", "kw.geenDatumEenAcc ≈ kw.geenDatumMeerAcc",
-    "kw.geenDatumMeer ≈ kw.geenDatumMeerAcc", "bh.home.todo.onleesbaar.uitleg ≈ vr.fout.betekentNiet",
-    "wh.voet.berekendFactuur ≈ wh.voet.berekendKas", "bh.home.todo.onleesbaar.uitleg ≈ klr.afl.fout",
-    "bh.home.klanten.onleesbaar.uitleg ≈ bh.home.todo.onleesbaar.uitleg",
-    "bh.home.todo.onleesbaar.uitleg ≈ bh.klant.unreadable.line2",
-    "bh.home.klanten.onleesbaar.uitleg ≈ bh.klant.unreadable.line2", "bh.fact.mandaat ≈ bh.fact.mandaatBtw",
-    "bh.bev.bulk.lezing ≈ bh.bev.uitleg", "beh.lees.onleesbaarUitleg ≈ beh.vast.onleesbaarUitleg",
+    "kw.geenDatumMeer ≈ kw.geenDatumMeerAcc", "kw.klantenLaadFout ≈ kw.laadFout",
+    "verd.geenInkoop ≈ verd.geenVerkoop", "wh.voet.berekendFactuur ≈ wh.voet.berekendKas",
   ]);
   const nieuw = dubbel.filter((d) => !bekend.has(d));
   assert.deepEqual(nieuw, [],
@@ -27232,6 +27234,15 @@ test("[BETAALMOMENT] the pay screen asks about a changed account number, and sho
   // the fraudster. Pinned as a literal because it is the sentence, not a detail of it.
   assert.match(woorden, /een nummer dat je zelf opzoekt/,
     "the sentence lost the only instruction that actually protects the payment");
+  // The bare fallback — shown when the two numbers themselves are not known — is a different
+  // sentence under its own key, and [RUSTIG] shortens keys. It keeps the instruction whole.
+  for (const lang of ["nl", "en", "ar"] as const) {
+    assert.ok(MESSAGES["ink.anderRekeningKaal"][lang].length > 0, `ink.anderRekeningKaal has ${lang}`);
+  }
+  assert.match(MESSAGES["ink.anderRekeningKaal"].nl, /een nummer dat je zelf opzoekt/,
+    "the bare fallback lost the instruction to look the number up yourself");
+  assert.match(MESSAGES["ink.anderRekeningKaal"].nl, /niet het nummer op deze factuur/,
+    "the bare fallback no longer says which number NOT to call");
 });
 
 // ─── [SUBTOTAAL] A warning may not say something the card it sits on disproves ──────────────────
