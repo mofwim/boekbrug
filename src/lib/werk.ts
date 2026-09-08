@@ -111,6 +111,8 @@ const WERKORDER: WorkSkin = {
   },
   fields: [
     { key: "km_stand", type: "number", labelKey: "werk.veld.kmStand", onCard: true },
+    // The price agreed at the counter, ex btw — what "boven begroting" is measured against.
+    { key: "begroot", type: "number", labelKey: "werk.veld.begroot" },
     { key: "klacht", type: "text", labelKey: "werk.veld.klacht" },
     { key: "monteur", type: "text", labelKey: "werk.veld.monteur" },
     // [WERK-3] The customer's phone: "uw auto staat klaar" is one tap, not a lookup.
@@ -173,6 +175,8 @@ const KLUS: WorkSkin = {
   },
   fields: [
     { key: "adres", type: "text", labelKey: "werk.veld.werkadres", onCard: true, required: true },
+    // The offerte amount ex btw — the klus is measured against it while it runs, not after.
+    { key: "begroot", type: "number", labelKey: "werk.veld.begroot" },
   ],
   lineKinds: [
     { kind: "arbeid", labelKey: "werk.regel.arbeid", unit: "uur" },
@@ -505,6 +509,13 @@ export interface WorkMargin {
   margin: number | null;
   /** 0..1, null without revenue or with revenue 0. */
   share: number | null;
+  /**
+   * How far to trust the figure. 'werkelijk': the revenue is an invoice and costs are attached.
+   * 'geschat': revenue is known (lines or invoice) but no cost has been attached — the margin is
+   * the revenue until a bon lands. 'incompleet': no revenue yet. A pretty number that cannot be
+   * trusted is worse than a dash; the label travels with the number.
+   */
+  confidence: "werkelijk" | "geschat" | "incompleet";
 }
 
 /**
@@ -512,12 +523,99 @@ export interface WorkMargin {
  * the hour rate is the revenue, not a cost, and subtracting it would tell a solo mechanic he
  * makes nothing. Hours are shown beside the margin, never inside it.
  */
-export function workMargin(m: WorkMoney): WorkMargin {
+export function workMargin(m: WorkMoney & { invoiced?: boolean; costCount?: number }): WorkMargin {
   const costs = round2(m.costsExBtw);
-  if (m.revenueExBtw === null) return { revenue: null, costs, margin: null, share: null };
+  if (m.revenueExBtw === null) return { revenue: null, costs, margin: null, share: null, confidence: "incompleet" };
   const revenue = round2(m.revenueExBtw);
   const margin = round2(revenue - costs);
-  return { revenue, costs, margin, share: revenue > 0 ? round2(margin / revenue) : null };
+  const confidence = m.invoiced && (m.costCount ?? 0) > 0 ? "werkelijk" : "geschat";
+  return { revenue, costs, margin, share: revenue > 0 ? round2(margin / revenue) : null, confidence };
+}
+
+// ── Financieel gereed ─────────────────────────────────────────────────────────────────────────
+//
+// [WERK-4] A piece of work is not ready for its invoice because the monteur is done. It is ready
+// when the money side is complete: a client to address, something to charge, every attached hour
+// priced, and the state that allows invoicing. This is the Core state the consultant asked for —
+// the same list for a klus, a werkorder, a rit and an opdracht — and the screen shows the list,
+// not just the verdict, so the owner sees WHICH thing is missing.
+
+export type ReadinessKey = "client" | "lines" | "hoursRate" | "status";
+
+export interface Readiness {
+  ok: boolean;
+  items: ReadonlyArray<{ key: ReadinessKey; ok: boolean }>;
+  /** What the invoice would come to, ex btw: lines (× beurten) plus the priced unbilled hours. */
+  amountExBtw: number;
+}
+
+export function financialReadiness(args: {
+  row: { status: string; invoice_id: string | null; repeat_every: string | null; visits: readonly Visit[]; client_name: string | null; lines: readonly WorkLine[] };
+  hours: ReadonlyArray<{ hours: number; hourly_rate: number | null; invoice_id: string | null }>;
+}): Readiness {
+  const { row, hours } = args;
+  const unbilled = hours.filter((h) => !h.invoice_id);
+  const hoursRevenue = round2(unbilled.reduce((s, h) => s + (h.hourly_rate !== null ? h.hours * h.hourly_rate : 0), 0));
+  const own = row.repeat_every ? visitInvoiceLines(row.lines, unbilledVisits(row.visits)) : row.lines;
+  const amountExBtw = round2(linesTotalEx(own) + hoursRevenue);
+  const items = [
+    { key: "client" as const, ok: !!(row.client_name && row.client_name.trim()) },
+    { key: "lines" as const, ok: amountExBtw > 0 },
+    { key: "hoursRate" as const, ok: unbilled.every((h) => h.hourly_rate !== null) },
+    { key: "status" as const, ok: canInvoice(row) },
+  ];
+  return { ok: items.every((i) => i.ok), items, amountExBtw };
+}
+
+/** Begroot against what the work charges so far, when the trade wrote a begroting on it. */
+export function overBudget(row: { fields: FieldValues; lines: readonly WorkLine[] }, hoursRevenue = 0): { begroot: number; actual: number; over: boolean } | null {
+  const b = row.fields.begroot;
+  if (typeof b !== "number" || !Number.isFinite(b) || b <= 0) return null;
+  const actual = round2(linesTotalEx(row.lines) + hoursRevenue);
+  return { begroot: round2(b), actual, over: actual > b };
+}
+
+// ── The signals for Vandaag ───────────────────────────────────────────────────────────────────
+//
+// "BoekBrug ziet wat jij vergeet": money that is sitting between the work and the invoice. Each
+// signal names a number and a place to tap; none of them books anything. Pure — the page fetches
+// the rows and the two counts, this only counts.
+
+export type WorkSignal =
+  | { kind: "meerwerk_open"; n: number; amount: number }
+  | { kind: "hours_without_rate"; n: number }
+  | { kind: "costs_unlinked"; n: number; amount: number }
+  | { kind: "over_budget"; n: number };
+
+const EXTRA_KINDS: ReadonlySet<string> = new Set(["meerwerk", "extra"]);
+
+export function workSignals(input: {
+  rows: ReadonlyArray<{ id: string; status: string; fields: FieldValues; lines: readonly WorkLine[] }>;
+  /** Unbilled hours on open work that carry no rate — they would fall off the invoice. */
+  hoursWithoutRate: number;
+  /** Hours attached per open piece of work, to measure against afgesproken_uren. */
+  hoursByWork: ReadonlyMap<string, number>;
+  /** Purchase invoices of suppliers the owner has attached to work before, now attached to none. */
+  unlinkedCosts: { n: number; amount: number };
+}): WorkSignal[] {
+  const out: WorkSignal[] = [];
+  const open = input.rows.filter((r) => r.status !== "gefactureerd" && r.status !== "geannuleerd");
+  let extraN = 0, extraAmount = 0;
+  let overN = 0;
+  for (const r of open) {
+    const extra = r.lines.filter((l) => EXTRA_KINDS.has(l.kind));
+    if (extra.length > 0) { extraN += 1; extraAmount = round2(extraAmount + linesTotalEx(extra)); }
+    const spent = input.hoursByWork.get(r.id) ?? 0;
+    const agreed = r.fields.afgesproken_uren;
+    const overHours = typeof agreed === "number" && agreed > 0 && spent > agreed;
+    const budget = overBudget(r);
+    if (overHours || budget?.over) overN += 1;
+  }
+  if (extraN > 0) out.push({ kind: "meerwerk_open", n: extraN, amount: extraAmount });
+  if (input.hoursWithoutRate > 0) out.push({ kind: "hours_without_rate", n: input.hoursWithoutRate });
+  if (input.unlinkedCosts.n > 0) out.push({ kind: "costs_unlinked", n: input.unlinkedCosts.n, amount: round2(input.unlinkedCosts.amount) });
+  if (overN > 0) out.push({ kind: "over_budget", n: overN });
+  return out;
 }
 
 // ── Counts for Vandaag ────────────────────────────────────────────────────────────────────────

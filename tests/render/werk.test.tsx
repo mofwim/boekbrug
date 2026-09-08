@@ -5,9 +5,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
 import { VakCardView } from "../../src/components/settings/VakCard";
-import { werkZin } from "../../src/app/dashboard/vandaag/VandaagClient";
+import { werkZin, werkSignaalZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
 import type { WorkRow } from "../../src/lib/werk-rows";
 import { translator } from "../../src/lib/i18n/t";
@@ -64,9 +64,9 @@ test("[WERK] the line editor prints the trade's kinds and the total; the margin 
   );
   for (const word of ["Arbeid", "Materiaal", "Meerwerk"]) assert.ok(html.includes(word), word);
   assert.ok(html.includes("340,80"), "4×55 + 12×3,40 + 80");
-  const margin = renderToStaticMarkup(<MarginLine t={t} hoursTotal={5.5} margin={{ revenue: 480, costs: 148.5, margin: 331.5, share: 0.69 }} />);
+  const margin = renderToStaticMarkup(<MarginLine t={t} hoursTotal={5.5} margin={{ revenue: 480, costs: 148.5, margin: 331.5, share: 0.69, confidence: "werkelijk" }} />);
   assert.ok(margin.includes("480,00") && margin.includes("148,50") && margin.includes("331,50") && margin.includes("69%") && margin.includes("5,5"));
-  const none = renderToStaticMarkup(<MarginLine t={t} hoursTotal={0} margin={{ revenue: null, costs: 95, margin: null, share: null }} />);
+  const none = renderToStaticMarkup(<MarginLine t={t} hoursTotal={0} margin={{ revenue: null, costs: 95, margin: null, share: null, confidence: "incompleet" }} />);
   assert.ok(none.includes("—") && none.includes("95,00"), "no revenue → dashes, costs still shown");
 });
 
@@ -162,7 +162,7 @@ test("[WERK-3] the review's findings stay fixed: decimals render as typed, the s
   // Hours are written on the work; the budget line names the agreement.
   const hours = renderToStaticMarkup(<HoursForm t={t} onSave={() => {}} defaultRate={65} />);
   assert.ok(hours.includes("Uren opschrijven") && hours.includes('value="65"'));
-  const budget = renderToStaticMarkup(<MarginLine t={t} hoursTotal={48} margin={{ revenue: null, costs: 0, margin: null, share: null }} budget={{ agreed: 40, spent: 48, over: true }} />);
+  const budget = renderToStaticMarkup(<MarginLine t={t} hoursTotal={48} margin={{ revenue: null, costs: 0, margin: null, share: null, confidence: "incompleet" }} budget={{ agreed: 40, spent: 48, over: true }} />);
   assert.ok(budget.includes("48 van 40 afgesproken uren"), "over budget is said in numbers");
   // The car's history: a returning Golf shows what was done before.
   const history = renderToStaticMarkup(<HistoryList t={t} history={[{ id: "a", title: "APK", status: "gefactureerd", on: "2026-03-02", invoice_id: "i", total_ex_btw: 120 }]} />);
@@ -178,4 +178,15 @@ test("[RIJSCHOOL] a leerling's lessen are beurten in the trade's own word, and t
   assert.ok(panel.includes("Les gegeven") && !panel.includes("Beurt gedaan"));
   const form = renderToStaticMarkup(<WorkForm skin={skin} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
   assert.ok(form.includes("Kenteken") && form.includes("Instructeur") && form.includes("Lespakket") && form.includes("Examendatum"));
+});
+
+test("[WERK-4] the readiness list names the missing tick, the margin names its trust, Vandaag names the leak", () => {
+  const ready = renderToStaticMarkup(<ReadinessList t={t} readiness={{ ok: true, amountExBtw: 685, items: [{ key: "client", ok: true }, { key: "lines", ok: true }, { key: "hoursRate", ok: true }, { key: "status", ok: true }] }} />);
+  assert.ok(ready.includes("Klaar voor de factuur · € 685,00") && (ready.match(/✓/g) ?? []).length === 4);
+  const notReady = renderToStaticMarkup(<ReadinessList t={t} readiness={{ ok: false, amountExBtw: 0, items: [{ key: "client", ok: true }, { key: "lines", ok: false }, { key: "hoursRate", ok: false }, { key: "status", ok: true }] }} />);
+  assert.ok(notReady.includes("Nog niet klaar voor de factuur") && notReady.includes("⚠ Iets om te factureren") && notReady.includes("⚠ Elk uur heeft een tarief"));
+  const margin = renderToStaticMarkup(<MarginLine t={t} hoursTotal={0} margin={{ revenue: 480, costs: 0, margin: 480, share: 1, confidence: "geschat" }} estimate={{ begroot: 400, actual: 480, over: true }} />);
+  assert.ok(margin.includes("geschat, nog geen kosten") && margin.includes("Begroot € 400,00 · werkelijk € 480,00"));
+  assert.deepEqual(werkSignaalZin({ kind: "costs_unlinked", n: 2, amount: 184.32 }, t), { text: "2 bonnen (€ 184,32) van bekende leveranciers hangen aan geen werk.", href: "/dashboard/incoming/manage" });
+  assert.equal(werkSignaalZin({ kind: "over_budget", n: 1 }, t).text, "1 stuks werk boven de begroting.");
 });

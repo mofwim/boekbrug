@@ -92,6 +92,42 @@ attached purchase invoices already carry a category, and the lines carry a kind.
   margin.** If it does none of the three, it is not built. The minimum that lets a small owner
   finish the day from one app — never the feature list of the incumbents.
 
+## Core versus vertical — the line the consultant drew after the four visions
+
+| | Core (one engine) | Vertical (experience) |
+|---|---|---|
+| Customer | klant, adressen, btw, betaalcondities, historie | voertuigen (garage), locaties (schoonmaak), leerlingen (rijschool) |
+| Work item | create, status, revenue, hours, costs, documents, invoice, payment, margin, financieel gereed | the noun, the fields, the statuses and their words, the workflow |
+| Hours | hour → work item → revenue/cost | how they are written and shown |
+| Costs | supplier, amount, btw, date, document, category, work item, matching | what a cost *means*: materiaal, onderdelen, brandstof |
+| Invoice, bank, payment | one engine, Work item → Invoice, never re-typed | "Maak factuur" in the trade's words |
+| btw | rates, calculation, quarter, corrections, audit | the guard: verlegd, personenvervoer, margeregeling, doorlopende post |
+| Financieel gereed | one checklist, one state (`financialReadiness`) | which lines count |
+| Margin | revenue − attributable costs, with its trust: werkelijk / geschat / incompleet | what "winstgevend" means in this trade |
+| Documents / OCR | bon → structured data | the contextual guess: "waarschijnlijk brandstof voor voertuig 03" |
+| AI | Detect → Explain → Recommend → Act | the signals per trade |
+
+Never in Core, even when a vertical wants it: planning engine, routes, payroll, HR, inventory,
+warehouse, fleet management, full CRM, project management, scheduling, customer portal, driver
+app. Those run the operation; BoekBrug runs the relation between the operation and the money.
+
+**Financial Context.** Some trades do not measure profit on one piece of work: schoonmaak
+measures a contract on a location, a garage a car over its visits, a rijschool a leerling over
+a pakket. The shape to grow into is `Customer → Context (optional) → Work Item → Financial
+Events`. Today the garage has it (history and margin per vehicle); the contract-with-locaties
+for schoonmaak is the next context to build, as a parent of work items, not a contract system.
+
+**Build order.** Core first and proven on bouw (klus → marge: hours, materials, costs, revenue,
+meerwerk, invoice, margin), then garage tests the context entity (voertuig), schoonmaak tests
+the recurring context (contract + locatie), transport tests high-frequency financial events
+(rit + brandstof + tol + self-billing). Rijschool stays #5: it is one skin today and proves the
+primitive, but its margin only means something once the operational data is there.
+
+**What [WERK-4] added to Core the same day:** `financialReadiness` (the checklist before the
+button, the button follows it), the margin's trust label, `begroot` on a klus and a werkorder
+measured while the work runs, and the Vandaag signals: meerwerk not invoiced, hours without a
+rate, a known supplier's bon on no work, work over its begroting.
+
 ## Rijschool: the easy vertical, entered from the money side
 
 The consultant's business case (Rijschooldata 2025: 7.041 active B-praktijk schools, a long tail

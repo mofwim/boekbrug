@@ -19,7 +19,7 @@ import {
   type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
-import type { WorkMargin } from '@/lib/werk'
+import type { WorkMargin, Readiness } from '@/lib/werk'
 
 export type T = (key: string, vars?: Record<string, string | number>) => string
 
@@ -218,15 +218,38 @@ function formatNumberNL(n: number): string {
 }
 
 /** Revenue, attached costs, margin — or the costs alone while there is no revenue yet. */
-export function MarginLine({ margin, hoursTotal, t, budget }: { margin: WorkMargin; hoursTotal: number; t: T; budget?: { agreed: number; spent: number; over: boolean } | null }) {
+export function MarginLine({ margin, hoursTotal, t, budget, estimate }: { margin: WorkMargin; hoursTotal: number; t: T; budget?: { agreed: number; spent: number; over: boolean } | null; estimate?: { begroot: number; actual: number; over: boolean } | null }) {
+  const confidenceKey = margin.confidence === 'werkelijk' ? 'werk.marge.werkelijk' : margin.confidence === 'geschat' ? 'werk.marge.geschat' : 'werk.marge.incompleet'
   return (
     <div style={{ fontFamily: FONT, fontSize: 13.5, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }} data-testid="work-margin">
       <span>{t('werk.totaal')}: <b>{margin.revenue === null ? '—' : formatEuroNL(margin.revenue)}</b></span>
       <span>{t('werk.kosten')}: <b>{formatEuroNL(margin.costs)}</b></span>
-      <span>{t('werk.marge')}: <b>{margin.margin === null ? '—' : `${formatEuroNL(margin.margin)}${margin.share !== null ? ` (${Math.round(margin.share * 100)}%)` : ''}`}</b></span>
+      <span>{t('werk.marge')}: <b>{margin.margin === null ? '—' : `${formatEuroNL(margin.margin)}${margin.share !== null ? ` (${Math.round(margin.share * 100)}%)` : ''}`}</b> <span style={{ color: M3.onSurfaceVariant }}>· {t(confidenceKey)}</span></span>
+      {estimate && (
+        <span style={{ color: estimate.over ? M3.error : M3.onSurface }} data-testid="work-begroot">{t('werk.begroot', { begroot: formatEuroNL(estimate.begroot), actual: formatEuroNL(estimate.actual) })}</span>
+      )}
       {budget
         ? <span style={{ color: budget.over ? M3.error : M3.onSurface }} data-testid="work-budget">{t('werk.budget', { spent: budget.spent.toLocaleString('nl-NL'), agreed: budget.agreed.toLocaleString('nl-NL') })}</span>
         : hoursTotal > 0 && <span>{t('werk.uren')}: <b>{hoursTotal.toLocaleString('nl-NL')}</b></span>}
+    </div>
+  )
+}
+
+/**
+ * [WERK-4] Financieel gereed: the list, not just the verdict. Four ticks a piece of work needs
+ * before its invoice — a client, something to charge, every hour priced, the right state — and
+ * the amount it would come to. The owner reads which one is missing; the button below follows.
+ */
+export function ReadinessList({ readiness, t }: { readiness: Readiness; t: T }) {
+  const label: Record<Readiness['items'][number]['key'], string> = { client: 'werk.gereed.klant', lines: 'werk.gereed.regels', hoursRate: 'werk.gereed.urenTarief', status: 'werk.gereed.status' }
+  return (
+    <div style={{ fontFamily: FONT, fontSize: 13, display: 'flex', flexDirection: 'column', gap: 3 }} data-testid="work-readiness">
+      <p style={{ margin: '0 0 2px', fontWeight: 700, color: readiness.ok ? '#137333' : M3.onSurfaceVariant }}>
+        {readiness.ok ? t('werk.gereed.bedrag', { bedrag: formatEuroNL(readiness.amountExBtw) }) : t('werk.gereed.niet')}
+      </p>
+      {readiness.items.map((i) => (
+        <span key={i.key} style={{ color: i.ok ? M3.onSurfaceVariant : M3.error }}>{i.ok ? '✓' : '⚠'} {t(label[i.key])}</span>
+      ))}
     </div>
   )
 }

@@ -31,12 +31,12 @@ import { useDialog } from '@/components/ui/Dialog'
 import { normalizeKenteken, isKentekenShape, displayKenteken } from '@/lib/vehicle'
 import { amsterdamToday } from '@/lib/format-nl'
 import {
-  workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc,
+  workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget,
   type WorkStatus, type WorkLine, type WorkMargin,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
 import {
-  WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer,
+  WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer, ReadinessList,
   HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T,
 } from './WerkPanels'
 
@@ -508,7 +508,8 @@ export default function WerkClient({ vak }: { vak: string }) {
           )}
 
           <div style={{ margin: '16px 0 0' }}>
-            <MarginLine margin={detail.margin} hoursTotal={detail.hoursTotal} t={t} budget={hoursBudget(detail.row.fields, detail.hoursTotal)} />
+            <MarginLine margin={detail.margin} hoursTotal={detail.hoursTotal} t={t} budget={hoursBudget(detail.row.fields, detail.hoursTotal)}
+              estimate={overBudget(detail.row, detail.hours.filter((h) => !h.invoice_id && h.hourly_rate !== null).reduce((s, h) => s + h.hours * (h.hourly_rate ?? 0), 0))} />
           </div>
 
           {detail.history.length > 0 && (
@@ -519,8 +520,11 @@ export default function WerkClient({ vak }: { vak: string }) {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+            {invoiceButtonState(detail.row, detail.invoice) !== 'view' && (
+              <ReadinessList readiness={financialReadiness({ row: detail.row, hours: detail.hours })} t={t} />
+            )}
             {invoiceButtonState(detail.row, detail.invoice) === 'make' && (
-              <button type="button" onClick={() => void makeInvoice()} disabled={busy || linesDirty} style={primaryButton}>
+              <button type="button" onClick={() => void makeInvoice()} disabled={busy || linesDirty || !financialReadiness({ row: detail.row, hours: detail.hours }).ok} style={primaryButton}>
                 {busy ? t('act.bezig') : detail.row.repeat_every ? t(skin.visitKeys?.invoice ?? 'werk.beurtFactuur', { n: detail.row.visits.filter((v) => !v.invoice_id).length }) : t('werk.factuurMaken')}
               </button>
             )}

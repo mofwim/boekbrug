@@ -6,6 +6,7 @@ import {
   canInvoice, canDelete, statusKey, WORK_STATUSES, HAND_STATUSES,
   storedVisits, readVisit, unbilledVisits, addRepeat, nextVisitOn, visitInvoiceLines, shortDateNL,
   canInvoiceTogether, togetherGroups, workInvoiceLines, REPEATS, REPEAT_KEYS, isRepeat,
+  financialReadiness, overBudget, workSignals,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -186,9 +187,56 @@ test("[WERK] lines: the skin's kinds only, a description always, a Dutch btw rat
   assert.deepEqual(storedLines(null), []);
 });
 
+test("[WERK-4] financieel gereed lists what is missing, and the amount the invoice would come to", () => {
+  const lines = [{ kind: "arbeid", description: "x", quantity: 2, unit: "uur", unit_price: 50, btw_rate: 21 }];
+  const row = { status: "klaar", invoice_id: null, repeat_every: null, visits: [], client_name: "Jansen", lines };
+  const ready = financialReadiness({ row, hours: [{ hours: 1.5, hourly_rate: 60, invoice_id: null }, { hours: 3, hourly_rate: null, invoice_id: "old" }] });
+  assert.equal(ready.ok, true);
+  assert.equal(ready.amountExBtw, 190, "2×50 + 1,5×60; the billed hour does not count");
+  const noClient = financialReadiness({ row: { ...row, client_name: " " }, hours: [] });
+  assert.deepEqual(noClient.items.map((i) => [i.key, i.ok]), [["client", false], ["lines", true], ["hoursRate", true], ["status", true]]);
+  assert.equal(noClient.ok, false);
+  const unpriced = financialReadiness({ row, hours: [{ hours: 2, hourly_rate: null, invoice_id: null }] });
+  assert.equal(unpriced.items.find((i) => i.key === "hoursRate")?.ok, false, "an unbilled hour without a rate is a missing tick");
+  assert.equal(financialReadiness({ row: { ...row, status: "bezig" }, hours: [] }).items.find((i) => i.key === "status")?.ok, false);
+  assert.equal(financialReadiness({ row: { ...row, lines: [] }, hours: [] }).items.find((i) => i.key === "lines")?.ok, false);
+  const rec = financialReadiness({ row: { ...row, status: "bezig", repeat_every: "week", visits: [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: null, invoice_id: null }] }, hours: [] });
+  assert.equal(rec.ok, true);
+  assert.equal(rec.amountExBtw, 200, "the lines once per unbilled beurt");
+});
+
+test("[WERK-4] the margin says how far to trust it; begroot is measured while the work runs", () => {
+  assert.equal(workMargin({ revenueExBtw: 480, costsExBtw: 148.5, invoiced: true, costCount: 2 }).confidence, "werkelijk");
+  assert.equal(workMargin({ revenueExBtw: 480, costsExBtw: 0, invoiced: true, costCount: 0 }).confidence, "geschat", "an invoice without any cost attached is a guess about the margin");
+  assert.equal(workMargin({ revenueExBtw: 480, costsExBtw: 100, invoiced: false, costCount: 1 }).confidence, "geschat", "lines are not revenue yet");
+  assert.equal(workMargin({ revenueExBtw: null, costsExBtw: 95 }).confidence, "incompleet");
+  const lines = [{ kind: "arbeid", description: "x", quantity: 10, unit: "uur", unit_price: 55, btw_rate: 21 }];
+  assert.deepEqual(overBudget({ fields: { begroot: 600 }, lines }, 100), { begroot: 600, actual: 650, over: true });
+  assert.deepEqual(overBudget({ fields: { begroot: 700 }, lines }), { begroot: 700, actual: 550, over: false });
+  assert.equal(overBudget({ fields: {}, lines }), null, "no begroting, no comparison");
+});
+
+test("[WERK-4] the Vandaag signals count money between the work and the invoice, and nothing else", () => {
+  const meer = { kind: "meerwerk", description: "extra kraan", quantity: 1, unit: "post", unit_price: 80, btw_rate: 21 };
+  const arbeid = { kind: "arbeid", description: "x", quantity: 4, unit: "uur", unit_price: 55, btw_rate: 21 };
+  const rows: Array<{ id: string; status: string; fields: Record<string, string | number>; lines: typeof meer[] }> = [
+    { id: "a", status: "bezig", fields: { begroot: 200 }, lines: [arbeid, meer] },
+    { id: "b", status: "open", fields: { afgesproken_uren: 10 }, lines: [meer] },
+    { id: "c", status: "gefactureerd", fields: {}, lines: [meer] },
+  ];
+  const signals = workSignals({ rows, hoursWithoutRate: 3, hoursByWork: new Map([["b", 12]]), unlinkedCosts: { n: 2, amount: 184.32 } });
+  assert.deepEqual(signals, [
+    { kind: "meerwerk_open", n: 2, amount: 160 },
+    { kind: "hours_without_rate", n: 3 },
+    { kind: "costs_unlinked", n: 2, amount: 184.32 },
+    { kind: "over_budget", n: 2 },
+  ], "invoiced work is not counted; a over 200 by lines, b over 10 hours");
+  assert.deepEqual(workSignals({ rows: [], hoursWithoutRate: 0, hoursByWork: new Map(), unlinkedCosts: { n: 0, amount: 0 } }), []);
+});
+
 test("[WERK] margin is revenue minus attached costs; nothing to divide by gives no share", () => {
-  assert.deepEqual(workMargin({ revenueExBtw: 480, costsExBtw: 148.5 }), { revenue: 480, costs: 148.5, margin: 331.5, share: 0.69 });
-  assert.deepEqual(workMargin({ revenueExBtw: null, costsExBtw: 95 }), { revenue: null, costs: 95, margin: null, share: null });
+  assert.deepEqual(workMargin({ revenueExBtw: 480, costsExBtw: 148.5 }), { revenue: 480, costs: 148.5, margin: 331.5, share: 0.69, confidence: "geschat" });
+  assert.deepEqual(workMargin({ revenueExBtw: null, costsExBtw: 95 }), { revenue: null, costs: 95, margin: null, share: null, confidence: "incompleet" });
   assert.equal(workMargin({ revenueExBtw: 0, costsExBtw: 10 }).share, null);
 });
 

@@ -35,7 +35,7 @@ import { quotesNeedingFollowup } from "@/lib/offerte-followup";
 import { amsterdamToday } from "@/lib/format-nl";
 import { SELF_ACTIONS, HAND_ACTIONS } from "@/lib/zelfstandig";
 // [WERK] The trade's own work counts: what is ready to invoice, what waits.
-import { workSkin, workCounts } from "@/lib/werk";
+import { workSkin, workCounts, workSignals, storedLines, type WorkSignal } from "@/lib/werk";
 
 /** [ZIEL] Seven days back, as ISO. A function, so the page component itself calls no clock in render. */
 function weekAgoIso(): string {
@@ -187,16 +187,57 @@ export default async function VandaagPage() {
 
   // [WERK] Read apart and in a try, like the vak read on the home: a missing column or table must
   // cost one sentence, never the screen.
-  let werk: { pluralKey: string; counts: ReturnType<typeof workCounts> } | null = null;
+  let werk: { pluralKey: string; counts: ReturnType<typeof workCounts>; signals: WorkSignal[] } | null = null;
   try {
     const { data: vakRow } = await supabase.from("profiles").select("vak").eq("id", user.id).maybeSingle();
     const skin = workSkin((vakRow as { vak?: string | null } | null)?.vak);
     if (skin) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: rows, error: werkErr } = await (supabase as any)
-        .from("work_items").select("status, repeat_every, visits, lines").eq("user_id", user.id)
+      const db = supabase as any;
+      const { data: rows, error: werkErr } = await db
+        .from("work_items").select("id, status, repeat_every, visits, lines, fields").eq("user_id", user.id)
         .not("status", "in", "(gefactureerd,geannuleerd)").limit(300);
-      if (!werkErr) werk = { pluralKey: skin.pluralKey, counts: workCounts((rows ?? []) as Array<{ status: string; repeat_every: string | null; visits: unknown; lines: unknown }>) };
+      if (!werkErr) {
+        const open = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
+          id: String(r.id), status: String(r.status), repeat_every: (r.repeat_every as string | null) ?? null, visits: r.visits, lines: r.lines,
+          fields: (r.fields && typeof r.fields === "object" ? r.fields : {}) as Record<string, string | number>,
+        }));
+        // [WERK-4] "BoekBrug ziet wat jij vergeet": the hours on open work without a rate, the
+        // hours per piece of work against the agreed ones, and the purchases of suppliers the owner
+        // attached to work before that are attached to nothing now. Each read may fail on its own
+        // and then its signal is simply absent — never a zero dressed up as an answer.
+        const ids = open.map((r) => r.id);
+        const hoursByWork = new Map<string, number>();
+        let hoursWithoutRate = 0;
+        if (ids.length > 0) {
+          const { data: hourRows, error: hoursErr } = await db.from("time_entries").select("work_item_id, hours, hourly_rate")
+            .eq("user_id", user.id).is("invoice_id", null).in("work_item_id", ids.slice(0, 200)).limit(2000);
+          if (!hoursErr) {
+            for (const h of (hourRows ?? []) as Array<{ work_item_id: string; hours: number | null; hourly_rate: number | null }>) {
+              hoursByWork.set(h.work_item_id, (hoursByWork.get(h.work_item_id) ?? 0) + Number(h.hours ?? 0));
+              if (h.hourly_rate === null) hoursWithoutRate += 1;
+            }
+          }
+        }
+        let unlinkedCosts = { n: 0, amount: 0 };
+        const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+        const { data: known, error: knownErr } = await db.from("invoices").select("client_name").eq("receiver_id", user.id).eq("direction", "incoming")
+          .not("work_item_id", "is", null).not("client_name", "is", null).limit(200);
+        const suppliers = [...new Set(((known ?? []) as Array<{ client_name: string }>).map((k) => k.client_name))];
+        if (!knownErr && suppliers.length > 0) {
+          const { data: loose, error: looseErr } = await db.from("invoices").select("total_ex_btw").eq("receiver_id", user.id).eq("direction", "incoming")
+            .is("work_item_id", null).in("client_name", suppliers.slice(0, 100)).gte("invoice_date", sixtyDaysAgo).in("status", ["processing", "received", "paid"]).limit(200);
+          if (!looseErr) {
+            const list = (loose ?? []) as Array<{ total_ex_btw: number | null }>;
+            unlinkedCosts = { n: list.length, amount: list.reduce((s, c) => s + Math.abs(Number(c.total_ex_btw ?? 0)), 0) };
+          }
+        }
+        werk = {
+          pluralKey: skin.pluralKey,
+          counts: workCounts(open),
+          signals: workSignals({ rows: open.map((r) => ({ id: r.id, status: r.status, fields: r.fields, lines: storedLines(r.lines) })), hoursWithoutRate, hoursByWork, unlinkedCosts }),
+        };
+      }
     }
   } catch { /* no work layer on this deployment → no sentence */ }
 

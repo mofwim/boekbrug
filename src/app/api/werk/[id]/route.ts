@@ -117,6 +117,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const margin = workMargin({
     revenueExBtw: invoice?.total_ex_btw ?? (row.lines.length > 0 ? linesTotal : null),
     costsExBtw,
+    invoiced: !!invoice,
+    costCount: costs.length,
   });
 
   let candidates: { hours: AttachedHours[]; costs: AttachedCost[] } | null = null;

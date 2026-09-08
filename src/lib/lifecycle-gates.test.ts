@@ -28407,6 +28407,13 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);
   assert.match(code("src/app/dashboard/layout.tsx"), /workTrade = hasWorkLayer\(/);
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
-  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("status, repeat_every, visits, lines"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("id, status, repeat_every, visits, lines, fields"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
+  // [WERK-4] Financieel gereed is a Core state: the same list for every trade, shown before the
+  // button, and the button follows it. The margin carries its trust; Vandaag names the leaks.
+  assert.match(pure, /export function financialReadiness\(/);
+  assert.match(pure, /confidence: "werkelijk" \| "geschat" \| "incompleet";/);
+  assert.match(code("src/app/dashboard/werk/WerkClient.tsx"), /disabled=\{busy \|\| linesDirty \|\| !financialReadiness\(\{ row: detail\.row, hours: detail\.hours \}\)\.ok\}/, "the invoice button follows the readiness list");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /signals: workSignals\(\{/, "Vandaag computes the signals from the pure module");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /\.not\("work_item_id", "is", null\)[\s\S]*?\.is\("work_item_id", null\)\.in\("client_name", suppliers/, "a loose bon is only a signal for a supplier the owner attached to work before");
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });
