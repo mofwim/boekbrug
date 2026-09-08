@@ -32,6 +32,8 @@ import { failureText } from '@/lib/server-message'
 // decides (supplier-edit.ts) and keeps the old account number.
 import SupplierEditSheet, { type SupplierEditCard } from '@/components/supplier/SupplierEditSheet'
 import { dateShort } from '@/lib/i18n/format-date'
+import { BANK_CATEGORY_KEY } from '@/lib/bank-category-text'
+import type { BankCategory } from '@/lib/bank-categories'
 
 /** One supplier as the registry has it, plus what the screen needs to place and describe it. */
 export interface SupplierListCard extends SupplierEditCard {
@@ -360,6 +362,8 @@ export default function LeveranciersClient({
                 {[
                   s.invoiceCount === 1 ? t('leveranciers.eenFactuur') : t('leveranciers.aantalFacturen', { aantal: s.invoiceCount }),
                   s.autoIncasso ? t('leveranciers.lijst.incasso') : null,
+                  s.defaultBtwRate !== null ? t('leveranciers.lijst.tarief', { tarief: s.defaultBtwRate }) : null,
+                  s.defaultCategory && s.defaultCategory in BANK_CATEGORY_KEY ? t(BANK_CATEGORY_KEY[s.defaultCategory as BankCategory]) : null,
                   s.updatedOn ? t('lev.bewerk.laatstGewijzigd', { datum: dateShort(s.updatedOn, locale) }) : null,
                 ].filter(Boolean).join(' · ')}
               </div>

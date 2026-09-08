@@ -303,7 +303,17 @@ export function suggestIdentity(
   // [LEVERANCIER-BEWIJS] Is this counterpart a supplier this owner already holds invoices from?
   // Optional and defaulting to false, so every existing caller behaves exactly as it did.
   knownSupplier?: boolean,
+  // [LEVERANCIER-STANDAARD] The category the owner set on this supplier's row, if any. Optional
+  // and defaulting to null, so every existing caller behaves exactly as it did.
+  supplierCategory?: string | null,
 ): IdentitySuggestion {
+  // [LEVERANCIER-STANDAARD] The owner said, on the supplier itself, where money to this party
+  // lands. That is a decision about the relationship, made once, and it outranks a category
+  // learned line by line and a pattern read off the description. One-directional like the
+  // proven-cost tier below: money ARRIVING from a supplier is a refund, which nobody decided.
+  if (knownSupplier && supplierCategory && amount < 0) {
+    return { category: supplierCategory as Category, source: 'supplier', confident: true };
+  }
   if (memoryCategory) {
     // [TEKEN-EERST] Het geheugen onthoudt de tegenpartij, niet de RICHTING — en een naam kan
     // beide kanten op bewegen: een leverancier die terugstort, een klant die je terugbetaalt.

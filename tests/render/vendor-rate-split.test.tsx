@@ -130,3 +130,10 @@ test("[TARIEF-GEHEUGEN] een factuur die WEL is gelezen krijgt geen voorstel", as
   assert.ok(!html.includes("keer eerder"),
     "een factuur waarvan de uitsplitsing gewoon op het papier stond, hoort geen voorstel te krijgen");
 });
+
+test("[LEVERANCIER-STANDAARD] a rate the owner SET says so, and claims no history", async () => {
+  const html = await render({ vendorRate: { rate: 9, basedOn: 0, source: "supplier" } });
+  assert.match(html, /Voor deze leverancier heb je 9% ingesteld/, "the sentence names the decision");
+  assert.doesNotMatch(html, /keer eerder/, "…and does not pretend to a count it does not have");
+  assert.ok(html.includes("1.431,58"), "the proposed split is the same arithmetic");
+});

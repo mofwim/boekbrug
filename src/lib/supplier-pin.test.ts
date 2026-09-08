@@ -109,3 +109,41 @@ test('[LEVERANCIER-VASTLEGGEN] only what MOVED is written, and a rename carries 
     {},
   )
 })
+
+test('[LEVERANCIER-STANDAARD] a default not on the form is silence, not a clear', () => {
+  const plan = planSupplierPin({ name: 'OZ&ER FOOD B.V.' })
+  assert.ok(plan.ok)
+  if (!plan.ok) return
+  assert.equal('defaultBtwRate' in plan.values, false, 'the four-field form never mentions the rate')
+  const changes = supplierPinChanges(
+    { name: 'OZ&ER FOOD B.V.', iban: null, kvk_number: null, btw_number: null, default_btw_rate: 9, default_category: 'kosten' },
+    plan.values,
+  )
+  assert.deepEqual(changes, {}, 'a stored default survives a form that did not carry it')
+})
+
+test('[LEVERANCIER-STANDAARD] a default on the form is read, cleared by empty, and refused when it is not a rate', () => {
+  const set = planSupplierPin({ name: 'OZ&ER FOOD B.V.', defaultBtwRate: '9', defaultCategory: 'kosten' })
+  assert.ok(set.ok)
+  if (set.ok) {
+    assert.equal(set.values.defaultBtwRate, 9)
+    assert.equal(set.values.defaultCategory, 'kosten')
+    const changes = supplierPinChanges({ name: 'OZ&ER FOOD B.V.', default_btw_rate: null, default_category: null }, set.values)
+    assert.deepEqual(changes, { default_btw_rate: 9, default_category: 'kosten' })
+  }
+  const cleared = planSupplierPin({ name: 'OZ&ER FOOD B.V.', defaultBtwRate: '', defaultCategory: '' })
+  assert.ok(cleared.ok)
+  if (cleared.ok) {
+    assert.equal(cleared.values.defaultBtwRate, null)
+    assert.equal(cleared.values.defaultCategory, null)
+    const changes = supplierPinChanges({ name: 'OZ&ER FOOD B.V.', default_btw_rate: 9, default_category: 'kosten' }, cleared.values)
+    assert.deepEqual(changes, { default_btw_rate: null, default_category: null }, 'empty means CLEAR — an editor, not a decoration')
+  }
+  // 19 % was the Dutch rate until 2012 and is not one now; a category the P&L does not know is a typo.
+  const badRate = planSupplierPin({ name: 'OZ&ER FOOD B.V.', defaultBtwRate: '19' })
+  assert.equal(badRate.ok, false)
+  if (!badRate.ok) { assert.equal(badRate.field, 'rate'); assert.equal(badRate.code, 'rate_unknown') }
+  const badCat = planSupplierPin({ name: 'OZ&ER FOOD B.V.', defaultCategory: 'brandstof' })
+  assert.equal(badCat.ok, false)
+  if (!badCat.ok) { assert.equal(badCat.field, 'category'); assert.equal(badCat.code, 'category_unknown') }
+})

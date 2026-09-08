@@ -237,7 +237,7 @@ interface Props {
   // [TARIEF-GEHEUGEN] Het tarief dat een leverancier aantoonbaar altijd rekent, met het aantal
   // facturen waarop dat rust. Alleen aanwezig voor leveranciers waarvan ELKE goed gelezen factuur
   // hetzelfde wettelijke tarief draagt — zie vendor-vat-rate.ts.
-  vendorRates?: Record<string, { rate: number; basedOn: number }>;
+  vendorRates?: Record<string, { rate: number; basedOn: number; source?: 'history' | 'supplier' }>;
   // [NO-SILENT-EMPTY] Which of the server's reads did not come back, in the server's own Dutch
   // source names. Empty (or absent, from an older render) means every list below is the whole
   // list. Non-empty qualifies EVERYTHING on this screen — the counts, the tabs, and above all the
@@ -1041,7 +1041,7 @@ export function ConfirmPaidModal({
   vendorRate,
 }: {
   invoice: IncomingInvoice;
-  vendorRate?: { rate: number; basedOn: number };
+  vendorRate?: { rate: number; basedOn: number; source?: 'history' | 'supplier' };
   // [BRIDGE-B] verify → becomes a SHARED Crediteur (unpaid). pay → mark paid (needs method).
   // [BRIDGE-EXTRACT] amounts now also carries reviewed client_name/invoice_number/invoice_date.
   onVerify: (amounts: {
@@ -1424,10 +1424,14 @@ export function ConfirmPaidModal({
                     return (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, color: "#9a5b00", marginBottom: 6, lineHeight: 1.45 }}>
-                          {t('ink.bedrag.tariefGeheugen', {
-                            tarief: String(vendorRate.rate),
-                            aantal: String(vendorRate.basedOn),
-                          })}
+                          {/* [LEVERANCIER-STANDAARD] A rate the owner SET has no count to cite: it is a
+                              decision, and the sentence says so instead of claiming a history. */}
+                          {vendorRate.source === 'supplier'
+                            ? t('ink.bedrag.tariefIngesteld', { tarief: String(vendorRate.rate) })
+                            : t('ink.bedrag.tariefGeheugen', {
+                              tarief: String(vendorRate.rate),
+                              aantal: String(vendorRate.basedOn),
+                            })}
                         </div>
                         <button
                           type="button"
