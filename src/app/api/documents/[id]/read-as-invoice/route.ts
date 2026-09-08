@@ -45,7 +45,7 @@ import { markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
 import { decideFromAi } from "@/lib/intake-router";
 import { sniffReadableMime } from "@/lib/detect-file";
 import { looksLikeInvoiceXmlBytes, E_INVOICE_XML_MIME } from "@/lib/e-invoice";
-import { isSkippedDocType } from "@/lib/skipped-import";
+import { isSkippedDocType, DOC_TYPE_REMINDER } from "@/lib/skipped-import";
 import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, deriveDueDate } from "@/lib/safecore";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { pathBelongsToOwner, toStoragePath } from "@/lib/storage-path";
@@ -96,7 +96,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       error: "Dit bestand staat in je prullenbak. Zet het eerst terug als je het toch wilt laten lezen.",
     }, { status: 409 });
   }
-  if (!isSkippedDocType(doc.ai_doc_type)) {
+  // [HERINNERING-NOOIT] A filed reminder with no invoice behind it is the one other file this
+  // door opens for: the reminder repeats the whole invoice, the original is not in the books, and
+  // this tap is the owner deciding — deliberately, once — to book the cost from it.
+  const isReminderDoc = doc.ai_doc_type === DOC_TYPE_REMINDER;
+  if (!isSkippedDocType(doc.ai_doc_type) && !isReminderDoc) {
     return NextResponse.json({
       error: "Dit bestand is geen mislukte factuurlezing — alleen bestanden die wij niet konden lezen, kunnen opnieuw gelezen worden.",
     }, { status: 409 });
@@ -163,6 +167,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     paid_method: v.paid_method ?? null, paid_date: v.paid_date ?? null,
     paid_evidence: v.paid_evidence ?? null, paid_card_last4: v.paid_card_last4 ?? null,
     confidence: v.confidence,
+    // [HERINNERING-NOOIT] On a filed reminder the owner's tap IS the decision to book it, so the
+    // router's reminder exit is switched off here and nowhere else. The row stays flagged below.
+    is_reminder: isReminderDoc ? false : (v.is_reminder ?? null),
   });
   if (decision.destination !== "invoice" && decision.destination !== "receipt") {
     // Still not an invoice. The reading HAPPENED and is charged — the same rule the re-read button
@@ -215,6 +222,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // second attempt; landing it straight in the books would be the app being surer than the history
   // of this particular document warrants.
   const fieldConfidence = (v.field_confidence ?? {}) as Record<string, unknown>;
+  // [HERINNERING-NOOIT] Booked from a reminder on purpose — the card says so, and auto-advance
+  // never touches it: this is the one invoice in the books whose only paper is a dunning letter.
+  if (isReminderDoc || v.is_reminder === true) {
+    fieldConfidence._safecore = mergeSafecore(fieldConfidence, {
+      reminder: true, reminder_of: v.reminder_of_invoice_number ?? null, booked_from_reminder: true,
+    });
+  }
   fieldConfidence._tweede_kans = { at: new Date().toISOString(), was: doc.ai_doc_type };
 
   // [DEDUP-SOFT] Kon de dubbelcheck niet kijken, dan gaat dat mee de rij in. De factuur landt hoe

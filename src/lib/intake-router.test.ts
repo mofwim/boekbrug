@@ -16,6 +16,15 @@ check("not an invoice → document, no paid suggestion",
 check("document_kind other → document",
   decideFromAi({ is_invoice: true, document_kind: "other" }).destination === "document");
 
+console.log("\n— [HERINNERING-NOOIT] a reminder never takes the invoice road —");
+{
+  const d = decideFromAi({ is_invoice: true, document_kind: "invoice", is_reminder: true });
+  check("reminder read as an invoice → document, reason ai_reminder", d.destination === "document" && d.reason === "ai_reminder" && d.suggestPaid === false);
+  const p = decideFromAi({ is_invoice: true, document_kind: "invoice", is_reminder: true, is_paid: true, paid_method: "kas" });
+  check("even with a paid mark it is filed, not queued as paid", p.destination === "document" && p.suggestPaid === false);
+  check("is_reminder false changes nothing", decideFromAi({ is_invoice: true, document_kind: "invoice", is_reminder: false }).destination === "invoice");
+}
+
 console.log("\n— receipt → verify queue, paid suggestion carries method + date —");
 {
   const d = decideFromAi({ is_invoice: true, document_kind: "receipt", is_paid: true, paid_method: "pin", paid_date: "2026-04-03" });

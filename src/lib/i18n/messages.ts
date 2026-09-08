@@ -7663,6 +7663,16 @@ export const MESSAGES = {
     ar: 'أعد القراءة',
     en: 'Read again',
   },
+  'ink.herinnering.uitleg': {
+    nl: 'Herinneringen voor facturen die niet in je boekhouding staan. Vraag de factuur op, of boek de herinnering als factuur.',
+    ar: 'تذكيرات بفواتير غير موجودة في دفاترك. اطلب الفاتورة، أو قيّد التذكير كفاتورة.',
+    en: 'Reminders for invoices that are not in your books. Ask for the invoice, or book the reminder as the invoice.',
+  },
+  'ink.herinnering.knop': {
+    nl: 'Boek als factuur',
+    ar: 'قيّد كفاتورة',
+    en: 'Book as invoice',
+  },
   'ink.reread.uitleg': {
     nl: 'Toen onleesbaar, nu misschien niet meer. Probeer opnieuw — niets verandert tot jij het in de wachtrij bevestigt.',
     ar: 'كانت غير مقروءة حينها، وربما لم تعد كذلك. جرّب مجدداً — لا يتغيّر شيء حتى تؤكّده في قائمة الانتظار.',
@@ -7769,6 +7779,11 @@ export const MESSAGES = {
     nl: 'Rekeningoverzicht gecontroleerd',
     ar: 'رُوجع كشف الحساب',
     en: 'Account statement checked',
+  },
+  'ink.result.reminder': {
+    nl: 'Herinnering bewaard, niet geboekt',
+    ar: 'حُفظ التذكير ولم يُقيَّد',
+    en: 'Reminder filed, not booked',
   },
   'ink.result.turnover': {
     nl: 'Omzet geboekt',
@@ -8687,6 +8702,16 @@ export const MESSAGES = {
     nl: 'rekeningoverzicht → gecontroleerd',
     ar: 'كشف حساب ← رُوجع',
     en: 'account statement → checked',
+  },
+  'int.landed.herinnering': {
+    nl: 'betalingsherinnering → bewaard, niet geboekt',
+    ar: 'تذكير بالدفع ← حُفظ ولم يُقيَّد',
+    en: 'payment reminder → filed, not booked',
+  },
+  'int.herinneringBewaard': {
+    nl: 'Dit is een betalingsherinnering, geen factuur. Hij staat in je bestanden en is niet als kost geboekt.',
+    ar: 'هذا تذكير بالدفع وليس فاتورة. حُفظ في ملفاتك ولم يُقيَّد كتكلفة.',
+    en: 'This is a payment reminder, not an invoice. It is in your files and was not booked as a cost.',
   },
   'int.maakFotoUpload': {
     nl: 'Maak een foto of upload — AI sorteert het',
@@ -10481,6 +10506,11 @@ export const MESSAGES = {
     ar: 'رُوجع الكشف',
     en: 'Statement checked',
   },
+  'up.dest.herinnering': {
+    nl: 'Herinnering bewaard, niet geboekt',
+    ar: 'حُفظ التذكير ولم يُقيَّد',
+    en: 'Reminder filed, not booked',
+  },
   'up.eenFactuurStrong': {
     nl: 'één factuur',
     ar: 'فاتورة واحدة',
@@ -10640,6 +10670,11 @@ export const MESSAGES = {
     nl: '{n} rekeningoverzicht',
     ar: 'كشوف حساب: {n}',
     en: '{n} account statement',
+  },
+  'up.nHerinnering': {
+    nl: '{n} herinnering',
+    ar: 'تذكيرات: {n}',
+    en: '{n} reminder',
   },
   'up.nTeControleren': {
     nl: '{n} factuur/bon te controleren',
@@ -13020,6 +13055,7 @@ export const MESSAGES = {
   'log.document.deleted': { nl: 'Bestand verwijderd', en: 'File deleted', ar: 'حُذف ملف' },
   'log.document.bulk_deleted': { nl: 'Meerdere bestanden verwijderd', en: 'Several files deleted', ar: 'حُذفت عدة ملفات' },
   'log.document.restored': { nl: 'Bestand teruggezet', en: 'File restored', ar: 'أُعيد ملف' },
+  'log.document.reminder_filed': { nl: 'Betalingsherinnering bewaard, niet geboekt', en: 'Payment reminder filed, not booked', ar: 'حُفظ تذكير بالدفع ولم يُقيَّد' },
   'log.article.bulk_deleted': { nl: 'Meerdere artikelen verwijderd', en: 'Several articles deleted', ar: 'حُذفت عدة أصناف' },
   'log.folder.created': { nl: 'Map aangemaakt', en: 'Folder created', ar: 'أُنشئ مجلد' },
   'log.folder.deleted': { nl: 'Map verwijderd', en: 'Folder deleted', ar: 'حُذف مجلد' },

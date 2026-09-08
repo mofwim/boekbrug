@@ -66,7 +66,7 @@ interface Item {
   id: string
   file: File
   status: Status
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger' | 'statement'
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'turnover' | 'ledger' | 'statement' | 'reminder'
   // [AUTO-ADVANCE-HONESTY] The app verified AND booked this invoice itself
   // ([AUTO-ADVANCE] in /api/intake) — status 'received'. It is therefore NOT in the
   // verify queue this page links to, but on Inkoopfacturen. Kept separate from
@@ -151,6 +151,9 @@ const DEST: Record<string, { label: MessageKey; icon: string; color: string }> =
   // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt (dat zou de losse
   // facturen dubbel tellen) maar gebruikt als volledigheidscontrole: welke factuur mis ik?
   statement: { label: 'up.dest.overzicht', icon: '🔎', color: M3.warn },
+  // [HERINNERING-NOOIT] Een betalingsherinnering wordt bewaard en aan zijn factuur gekoppeld,
+  // nooit geboekt — hij herhaalt een factuur die er al hoort te zijn.
+  reminder: { label: 'up.dest.herinnering', icon: '🔔', color: M3.warn },
 }
 
 let idc = 0
@@ -856,6 +859,7 @@ export default function UploadClient() {
               {countBy('ledger') > 0 && <>{t('up.nControleCheck', { n: countBy('ledger') })} · </>}
               {countBy('document') > 0 && <>{t('up.nBestand', { n: countBy('document') })} · </>}
               {countBy('statement') > 0 && <>{t('up.nRekeningoverzicht', { n: countBy('statement') })} · </>}
+              {countBy('reminder') > 0 && <>{t('up.nHerinnering', { n: countBy('reminder') })} · </>}
               {/* Eigen post, want dit is een getal waar de eigenaar nog iets mee moet en dat
                   vroeger onzichtbaar opging in "X bestand". */}
               {unread.length > 0 && <span style={{ color: M3.warn }}>{t('up.nNietGelezen', { n: unread.length })} · </span>}
@@ -915,7 +919,7 @@ export default function UploadClient() {
               {/* [UNREAD-HONESTY] Ook de niet-gelezen bestanden staan in Bestanden. Nu unread uit
                   countBy('document') is gehaald, zou een batch met alléén onleesbare bestanden
                   anders zónder weg erheen eindigen — precies de batch die er een nodig heeft. */}
-              {(countBy('document') > 0 || unread.length > 0 || countBy('statement') > 0) && (
+              {(countBy('document') > 0 || unread.length > 0 || countBy('statement') > 0 || countBy('reminder') > 0) && (
                 <Link href="/dashboard/bestanden" style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '8px 14px' }}>
                   {t('up.naarBestanden')} →
                 </Link>

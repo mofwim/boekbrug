@@ -3051,9 +3051,11 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
     src, /if \(doc\.invoice_id\) \{[\s\S]{0,200}?status: 409/,
     "a document already behind an invoice may not be read again",
   );
+  // [HERINNERING-NOOIT] …and the one deliberate exception: a filed reminder with no invoice behind
+  // it, which the owner books on purpose. That gate names the rest of the reminder wiring.
   assert.match(
-    src, /if \(!isSkippedDocType\(doc\.ai_doc_type\)\) \{/,
-    "only a file the app filed as unreadable qualifies",
+    src, /if \(!isSkippedDocType\(doc\.ai_doc_type\) && !isReminderDoc\) \{/,
+    "only a file the app filed as unreadable — or a filed reminder — qualifies",
   );
 
   // The type comes from the CONTENT. A file that arrived with a wrong or empty media type is
@@ -28216,4 +28218,84 @@ test("[BEDRIJFSMIDDEL] the auditfile books the same split: 0100 for the purchase
   assert.match(fetch, /asset: assetInvoiceIds\.has\(r\.id\),/, "the fetch layer marks registered purchases");
   assert.match(fetch, /if \(last > end\) break;/, "no memoriaal is dated after the file's own end date");
   assert.match(fetch, /regimeNotes\.push\("Het register van bedrijfsmiddelen kon niet gelezen worden/, "a failed register read is a LET OP in the file");
+});
+
+test("[HERINNERING-NOOIT] a payment reminder is never an invoice, on any door", () => {
+  // MEASURED, on the live administration: thirteen "HERINNERING" letters from one wholesaler,
+  // each read correctly as a reminder, each IMPORTED into the verify queue as an invoice because
+  // the old rule ("skip only when the original is found by number") never found the original —
+  // the reader dropped the last digit of the number on the reminder's narrower column, every
+  // time. Twelve were archived by hand, one at a time. The owner's words: the app must know not to
+  // add such a document, because it is a reminder and not an invoice.
+  //
+  // The rule now: a reminder is FILED (bestanden), matched to its invoice with everything it
+  // repeats, linked when found, and the owner is told the one thing that matters. It never becomes
+  // an invoices row. The only way it books is the owner's own tap on the filed document.
+  const router = code("src/lib/intake-router.ts");
+  const decide = router.slice(router.indexOf("export function decideFromAi"));
+  const reminderExit = decide.indexOf('ai.is_reminder === true');
+  const firstInvoice = decide.indexOf('destination: "invoice"');
+  assert.ok(reminderExit > 0 && reminderExit < firstInvoice,
+    "decideFromAi sends a reminder to bestanden BEFORE any invoice/receipt road");
+  assert.match(decide, /reason: "ai_reminder"/, "…and says why");
+
+  // The route hands the field over (the [BON-BETAALWIJZE] class of bug: typed, tested, not passed).
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /is_reminder: v\.is_reminder \?\? null/, "the intake route passes is_reminder to the router");
+  assert.match(intake, /if \(doc\?\.id && v\.is_reminder === true\)/, "…and files the reminder once the document is stored");
+  assert.match(intake, /await fileReminder\(\{/, "…through the one filing helper");
+  assert.match(intake, /destination: "reminder"/, "…answering the screen with its own destination");
+
+  // The e-mail door: the reminder branch files and CONTINUES before the invoice insert.
+  const email = code("src/lib/email-integration.ts");
+  const branch = email.indexOf("if (classification.isReminder === true) {");
+  assert.ok(branch > 0, "the sync has a reminder branch");
+  const branchEnd = email.indexOf("continue", branch);
+  const branchBody = email.slice(branch, branchEnd);
+  assert.match(branchBody, /saveKeptAttachment\(attachment, 'reminder', DOC_TYPE_REMINDER, \{ aiProcessed: true \}\)/,
+    "the file is kept as a READ reminder document");
+  assert.match(branchBody, /await fileReminder\(\{/, "…and filed through the same helper as the upload door");
+  assert.ok(branchEnd < email.indexOf(".from('invoices')", branch), "…and the loop moves on before any invoices insert");
+  assert.doesNotMatch(email, /decideReminder|import-flagged|knownInvoiceNumbers/, "the old skip-or-import rule is gone");
+
+  // The pure rule: a reminder is filed whatever the books hold; the link is exact or absent.
+  const pure = code("src/lib/reminder-original.ts");
+  assert.match(pure, /if \(facts\.isReminder !== true\) return \{ action: 'import' \}/, "not a reminder → the normal road");
+  assert.doesNotMatch(pure, /'import-flagged'|action: 'skip'/, "a reminder has one outcome: file");
+  assert.match(pure, /if \(fits\.length === 1\) return \{ match: fits\[0\], ambiguous: 0 \}/, "exactly one fit links; two link nothing");
+  assert.match(pure, /if \(!sameCents\(facts\.totalIncBtw, c\.totalIncBtw\)\) continue/, "without the number, the amount is required…");
+  assert.match(pure, /if \(!sameParty\(facts\.vendor, c\.clientName\)\) continue/, "…and the party…");
+  assert.match(pure, /sameDate \|\| numberPrefixRelated\(/, "…and the date or the dropped-digit number");
+
+  // The filing helper links the document to the invoice — or leaves it open on purpose — and
+  // never writes an invoice.
+  const filer = code("src/lib/reminder-file.ts");
+  assert.match(filer, /invoice_id: placed\.original\?\.id \?\? null/, "the link IS the state");
+  assert.doesNotMatch(filer, /from\("invoices"\)\s*\.insert/, "the filer never inserts an invoice");
+  assert.match(filer, /action: "document\.reminder_filed"/, "the trail names what happened");
+  assert.match(filer, /createNotification\(\{ userId, title: notice\.title/, "and the owner hears it once");
+
+  // The one door that books from a reminder: the owner's tap on a filed, UNLINKED reminder.
+  const door = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  assert.match(door, /const isReminderDoc = doc\.ai_doc_type === DOC_TYPE_REMINDER/, "the door knows a filed reminder");
+  assert.match(door, /if \(doc\.invoice_id\) \{/, "…refuses one that is linked to its invoice (the check above the type check)");
+  assert.match(door, /is_reminder: isReminderDoc \? false : \(v\.is_reminder \?\? null\)/, "…and only there switches the router's reminder exit off");
+  assert.match(door, /booked_from_reminder: true/, "…leaving the row flagged as booked from a dunning letter");
+
+  // The panel lists the unlinked reminders with that door as their button.
+  const api = code("src/app/api/email/skipped/route.ts");
+  assert.match(api, /\.eq\('ai_doc_type', DOC_TYPE_REMINDER\)\s*\.is\('invoice_id', null\)/, "the API lists only reminders without an invoice");
+  const panel = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(panel, /t\('ink\.herinnering\.knop'\)/, "the panel offers the tap");
+  assert.match(panel, /setReminderDocs\(Array\.isArray\(data\.reminders\)/, "…on the rows the API returned");
+
+  // 'reminder' is not a read failure and must not be counted as one.
+  const skippedLib = code("src/lib/skipped-import.ts");
+  assert.match(skippedLib, /export const DOC_TYPE_REMINDER = "reminder" as const/);
+  const listStart = skippedLib.indexOf("export const SKIPPED_DOC_TYPES");
+  const listEnd = skippedLib.indexOf("];", listStart);
+  assert.ok(!skippedLib.slice(listStart, listEnd).includes("DOC_TYPE_REMINDER"), "a reminder is not 'could not read'");
+
+  // The filename backstop over the model's read is still wired.
+  assert.match(code("src/lib/ai.ts"), /parsed\.is_reminder = parsed\.is_reminder === true \|\| isReminderFilename\(filename\)/);
 });

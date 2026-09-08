@@ -70,6 +70,10 @@ export function looksLikeBankFile(filename: string, mimeType: string, textHead?:
 
 export interface IntakeClassification {
   is_invoice: boolean
+  // [HERINNERING-NOOIT] A payment reminder (betalingsherinnering / aanmaning / sommatie). It repeats
+  // an invoice the owner already has or should have, so it is never a new cost: it is filed, never
+  // queued. See reminder-original.ts.
+  is_reminder?: boolean | null
   document_kind?: "invoice" | "receipt" | "other"
   is_paid?: boolean
   // [PEN-MARK] Payment hints read from a handwritten note or a shop stamp on a PAPER invoice.
@@ -217,6 +221,13 @@ export function paymentSuggestion(ai: IntakeClassification): PaymentSuggestion {
 // ─── Stage 2: post-AI decision (image/PDF that wasn't a bank file) ────────────
 
 export function decideFromAi(ai: IntakeClassification): IntakeDecision {
+  // [HERINNERING-NOOIT] First, before the invoice question is even asked: a reminder IS an invoice
+  // to the reader (it repeats one in full), and that is exactly why it must not take the invoice
+  // road. It goes to bestanden; the route then looks up the invoice it is about.
+  if (ai.is_reminder === true) {
+    return { destination: "document", suggestPaid: false, reason: "ai_reminder" }
+  }
+
   // Not a financial doc for the pipeline → general document store.
   if (!ai.is_invoice || ai.document_kind === "other") {
     return { destination: "document", suggestPaid: false, reason: "ai_other" }
