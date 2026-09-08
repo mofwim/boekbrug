@@ -104,6 +104,8 @@ import { useDialog } from '@/components/ui/Dialog'
 import { storedIbanChange, ibanChangeReason, type StoredIbanChangeSource } from '@/lib/iban-change-text'
 // [SORT] Shared ordering (also used by Vandaag) — one implementation, no drift.
 import { sortRows, SORTS, type SortKey } from '@/lib/invoice-sort'
+// [BESTE] What you must pay, by when — see payable-buckets.ts.
+import { payableBuckets } from '@/lib/payable-buckets'
 import { statusChip, statusLabel, isInvoiceStatus } from '@/lib/invoice-status'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
@@ -1201,6 +1203,12 @@ export default function IncomingManageClient({
   // betaalde factuur voor niets, en een creditnota van je leverancier gaat eraf — precies zoals
   // hij een regel lager met zijn minteken staat afgedrukt.
   const openSumDisplayed = round2(displayed.reduce((s, i) => s + openAmountSigned(i), 0))
+  // [BESTE] The same open amounts, split on the due date: verlopen / deze week / later. Debts only
+  // — a creditnota is netted in openSumDisplayed and has no "late".
+  const buckets = payableBuckets(
+    displayed.filter(i => i.status !== 'paid').map(i => ({ dueDate: i.due_date, open: openAmountSigned(i) })),
+    todayIso,
+  )
   // Wat er op de getoonde rijen AL is afgerekend — inclusief het deel van een deelbetaling. Niet
   // "de facturen die op betaald staan": dan zou de €200 die je al hebt overgemaakt op een halve
   // factuur in geen van beide kolommen staan, terwijl hij wel in het totaal zit. Zie
@@ -2731,6 +2739,28 @@ export default function IncomingManageClient({
                   </span>
                 )}
               </p>
+            )}
+            {/* [BESTE] By when. Three chips under the open total; tapping one sorts the list on
+                the due date so the rows behind the number come first. Only when something is open,
+                and only the buckets that hold something — an empty chip is noise. */}
+            {showsOpen && buckets.total > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {([
+                  ['verlopen', t('ink.bak.verlopen'), '#FCE8E6', '#8C1D18'],
+                  ['dezeWeek', t('ink.bak.dezeWeek'), '#FEF7E0', '#7C5800'],
+                  ['later', t('ink.bak.later'), M3.surfaceVariant, M3.onSurface],
+                  ['zonderDatum', t('ink.bak.zonderDatum'), M3.surfaceVariant, '#5F6368'],
+                ] as const).map(([key, label, bg, color]) => {
+                  const b = buckets[key]
+                  if (b.count === 0) return null
+                  return (
+                    <button key={key} onClick={() => setSortBy('due_asc')}
+                      style={{ background: bg, color, border: 'none', borderRadius: R.full, padding: '5px 11px', fontSize: 12.5, fontFamily: FONT, cursor: 'pointer', fontWeight: 600 }}>
+                      {label} · {fmtEur(b.sum)} <span style={{ fontWeight: 500, opacity: 0.8 }}>({b.count})</span>
+                    </button>
+                  )
+                })}
+              </div>
             )}
             {/* [PERIODE] Facturen zonder factuurdatum vallen buiten elke periode. Ze staan er dus
                 niet meer bij — en dat mag niet stil gebeuren op een scherm waar een bedrag boven de

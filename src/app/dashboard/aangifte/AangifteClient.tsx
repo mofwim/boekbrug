@@ -108,6 +108,10 @@ export default function AangifteClient({ hasAccountant = null }: {
   // answer to every failure, including an expired session — which the owner cannot fix by
   // refreshing, and which is the most common one of the set.
   const [loadError, setLoadError] = useState<string | null>(null)
+  // [BESTE] What this quarter still misses, from /api/readiness — the list Moneybird and
+  // e-Boekhouden gate their filing on. Here it stands above the figures and blocks nothing.
+  // null = not yet read; 'failed' = the check could not run, which the screen says in words.
+  const [missing, setMissing] = useState<{ title: string; fix?: { label: string; href: string } }[] | 'failed' | null>(null)
   const [loading, setLoading] = useState(true)
   // [TZ] The Amsterdam year, not the device's. This caps the year picker, and a traveller's phone
   // (or one with a wrong clock) must not be able to open — or hide — a quarter the rest of the app
@@ -163,6 +167,17 @@ export default function AangifteClient({ hasAccountant = null }: {
       setLoading(true); setData(null); setArt29(null); setIcp(null)
       setFiled(null); setFiledUnknown(false); setLoadError(null)
       setCorrections([]); setCorrectionsUnknown(false); setCarryNote(null)
+      setMissing(null)
+      // [BESTE] Started beside the aangifte read, awaited after it: the checklist must not delay
+      // the figures, and its failure must not fail them.
+      const readinessReq = fetch(`/api/readiness?year=${year}&quarter=${quarter}`)
+        .then(async (r) => {
+          const j = await r.json().catch(() => null)
+          const items = j?.report?.missing
+          if (!r.ok || !Array.isArray(items)) return 'failed' as const
+          return (items as { title: string; fix?: { label: string; href: string } }[]).map((it) => ({ title: it.title, fix: it.fix }))
+        })
+        .catch(() => 'failed' as const)
       try {
         const res = await fetch(`/api/aangifte?year=${year}&quarter=${quarter}`)
         const json = await res.json().catch(() => ({}))
@@ -190,6 +205,8 @@ export default function AangifteClient({ hasAccountant = null }: {
         setCorrectionsUnknown(json.correctionsUnknown === true)
         setFiled((json.filed as Filed | null) ?? null)
         setFiledUnknown(json.filedUnknown === true)
+        const list = await readinessReq
+        if (!cancelled) setMissing(list)
       } catch {
         if (!cancelled) setLoadError(t('aang.geenVerbinding'))
       } finally { if (!cancelled) setLoading(false) }
@@ -352,6 +369,28 @@ export default function AangifteClient({ hasAccountant = null }: {
             became payable again grows belastingrente in silence, and this is usually the first
             and only place the owner ever hears about it. Both are amounts to DISCUSS, never
             amounts the app booked — the wording says so. */}
+        {/* [BESTE] The pre-filing checklist. On a quarter that is already filed there is nothing
+            to prepare, so it stays away; on an open one it lists what is missing, each item with
+            the screen that fixes it. A check that could not run says so ([NO-SILENT-EMPTY]). */}
+        {!filed && data && missing !== null && (
+          <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '12px 16px', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: M3.neutral, marginBottom: 4 }}>{t('aang.klaar.kop')}</div>
+            {missing === 'failed' ? (
+              <div style={{ fontSize: 13.5, color: M3.warning }}>{t('aang.klaar.mislukt')}</div>
+            ) : missing.length === 0 ? (
+              <div style={{ fontSize: 13.5, color: M3.success }}>✓ {t('aang.klaar.niets')}</div>
+            ) : missing.map((it, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${M3.outlineVariant}` }}>
+                <div style={{ flex: 1, fontSize: 13.5, color: M3.onSurface, lineHeight: 1.5 }}>{it.title}</div>
+                {it.fix && (
+                  <Link href={it.fix.href} style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                    {it.fix.label || t('aang.klaar.open')} ›
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {art29 && art29.vatClawbackCount > 0 && (
           <div style={{ background: M3.errorContainer, color: M3.error, borderRadius: 10, padding: '12px 14px', fontSize: 13.5, margin: '0 0 12px', lineHeight: 1.55 }}>
             <strong style={{ fontWeight: 700 }}>

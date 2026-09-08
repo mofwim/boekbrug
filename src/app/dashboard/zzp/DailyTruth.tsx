@@ -102,6 +102,10 @@ export default function DailyTruth() {
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  // [BESTE] Free after the btw reserve, and the balance in thirty days — from the two engines
+  // Vandaag already runs (btw-reservation, cashflow). Null = unknown, and then the line is absent;
+  // never a zero standing in for "could not read".
+  const [companions, setCompanions] = useState<{ free: number | null; short: boolean; in30: number | null } | null>(null)
 
   // All setState happens inside the async IIFE (never synchronously in the effect body), so a
   // retry re-runs by bumping reloadKey. The retry button itself flips loading back on.
@@ -114,6 +118,20 @@ export default function DailyTruth() {
         if (cancelled) return
         if (res.ok && json?.ok) { setData(json); setFailed(false) }
         else { setFailed(true); setData(null) }
+        // After the truth, never before it: these two are companions, not the answer.
+        const [reserve, cash] = await Promise.allSettled([
+          fetch('/api/btw-reservation').then((r) => (r.ok ? r.json() : null)),
+          fetch('/api/cashflow').then((r) => (r.ok ? r.json() : null)),
+        ])
+        if (cancelled) return
+        const rv = reserve.status === 'fulfilled' ? reserve.value : null
+        const cf = cash.status === 'fulfilled' ? cash.value : null
+        const h30 = Array.isArray(cf?.horizons) ? cf.horizons.find((h: { days: number }) => h.days === 30) : null
+        setCompanions({
+          free: typeof rv?.free === 'number' ? rv.free : null,
+          short: rv?.state === 'short',
+          in30: typeof h30?.end === 'number' ? h30.end : null,
+        })
       } catch {
         if (!cancelled) { setFailed(true); setData(null) }
       } finally {
@@ -270,6 +288,33 @@ export default function DailyTruth() {
           <span style={{ fontFamily: FONT_NUM, fontSize: 18, fontWeight: 700, color: data.bank.balance < 0 ? '#B3261E' : M3.onSurface, flexShrink: 0 }}>
             {eur.format(data.bank.balance)}
           </span>
+        </button>
+      )}
+
+      {/* [BESTE] The two companions to the balance, only when the engines could answer. Taps
+          through to Vandaag, where the reserve and the forecast stand in full. */}
+      {typeof data.bank.balance === 'number' && companions && (companions.free !== null || companions.in30 !== null) && (
+        <button
+          onClick={() => router.push('/dashboard/vandaag?from=home')}
+          style={{
+            width: '100%', textAlign: 'start', cursor: 'pointer', fontFamily: FONT,
+            marginTop: 6, borderRadius: R.lg, padding: '10px 16px',
+            background: M3.surface, border: `1px solid ${M3.outlineVariant}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          }}
+        >
+          {companions.free !== null && (
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11.5, color: '#70757a' }}>{t('waarheid.vrijNaBtw')}</div>
+              <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: companions.short ? '#B3261E' : M3.onSurface }}>{eur.format(companions.free)}</div>
+            </div>
+          )}
+          {companions.in30 !== null && (
+            <div style={{ minWidth: 0, textAlign: 'end' }}>
+              <div style={{ fontSize: 11.5, color: '#70757a' }}>{t('waarheid.over30')}</div>
+              <div style={{ fontFamily: FONT_NUM, fontSize: 15, fontWeight: 700, color: companions.in30 < 0 ? '#B3261E' : M3.onSurface }}>{eur.format(companions.in30)}</div>
+            </div>
+          )}
         </button>
       )}
 

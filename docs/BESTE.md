@@ -35,14 +35,15 @@ Bugs found by the review and fixed in the same batch: the client card linked eve
 the chip trusted a cron-moved status column; four Dutch strings had escaped the catalogue; the CSV
 button said "Facturen".
 
-## Batch 1b — next
+## Batch 1b — shipped
 
 - A pre-filing checklist on the aangifte screen from `/api/readiness` (what is still missing for
   this quarter, each item with the screen that fixes it). Moneybird and e-Boekhouden gate the
   filing on it; BoekBrug shows it above the figures and never blocks — the owner keeps the say.
 - Crediteuren: verlopen / deze week / later with the sums, above the list (Moneybird "Te betalen").
 - "Bekeken door de klant op …" on an invoice and an offerte, written the first time the customer
-  opens the pay or offerte page (Moneybird, FreshBooks, Xero). A new column, `first_viewed_at`.
+  opens the pay or offerte page (Moneybird, FreshBooks, Xero). A new column, `first_viewed_at`,
+  stamped once under `IS NULL`; a failed stamp never fails the customer's page.
 - The home screen's bank line gets two companions: free after the btw reserve, and the balance in
   thirty days — both from engines the app already runs on Vandaag.
 

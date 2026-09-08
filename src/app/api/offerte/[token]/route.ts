@@ -11,6 +11,8 @@
 // ondernemer (Art. 35 Wet OB — zie de kop van offerte-akkoord.ts).
 
 import { NextRequest, NextResponse } from 'next/server'
+// [BESTE] Say on the offerte that the customer opened it — once.
+import { stampFirstView } from '@/lib/first-view'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
 import { checkRateLimitByKey, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { reportHandledFailure } from '@/lib/report-handled'
@@ -85,6 +87,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   if (quoteErr) return offerteOnbeschikbaar('quote lookup failed', { token: tokenTail(token), error: quoteErr.message })
   if (!quote) return onbekend()
   const rij = quote as unknown as AnswerableQuote & { id: string; sender_id: string }
+  // [BESTE] The customer opened the offerte — on the document, once (first-view.ts).
+  await stampFirstView(pipeline, rij.id)
 
   const { data: lines, error: linesErr } = await pipeline
     .from('invoice_lines')

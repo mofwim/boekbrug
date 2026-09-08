@@ -1028,6 +1028,11 @@ export default function InvoiceDetailPage() {
                     // [CROSS-QUARTER] Show the real settlement date when we recorded one, so
                     // "when did this get paid" is answered on the invoice itself.
                     invoice?.payment_date ? t('detail.rij.betaaldOp', { value: NL_DATE.format(new Date(invoice?.payment_date)) }) : '',
+                    // [BESTE] The customer opened the pay or offerte page — stamped once by that page.
+                    // Untyped until the generated types catch up with invoices_first_viewed.sql.
+                    (invoice as { first_viewed_at?: string | null } | null)?.first_viewed_at
+                      ? t('detail.rij.bekekenOp', { value: NL_DATE.format(new Date((invoice as { first_viewed_at?: string | null }).first_viewed_at as string)) })
+                      : '',
                   ]
                 },
               ].map(section => (

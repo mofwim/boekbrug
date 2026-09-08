@@ -19,6 +19,8 @@ import { creditedTotalsFrom, fullyCreditedIdsFrom, creditedOnInvoice } from '@/l
 import { getMollieConnectionMeta } from '@/lib/mollie-connection'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
+// [BESTE] The customer opened the page — say so on the invoice, once.
+import { stampFirstView } from '@/lib/first-view'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,6 +106,9 @@ export async function GET(
   )
   // null = not payable (draft, wrong type, missing IBAN). 404 — no existence leak.
   if (!view) return NextResponse.json({ error: 'Onbekende betaallink' }, { status: 404 })
+
+  // [BESTE] Only a page that renders counts as viewed — after every refusal above.
+  await stampFirstView(pipeline, (invoice as { id: string }).id)
 
   // [MOLLIE] Mag de pagina een iDEAL-knop tonen? Eén boolean, geen geheimen: de knop verschijnt
   // alleen als de eigenaar zijn eigen Mollie-account koppelde, en de link zelf wordt pas

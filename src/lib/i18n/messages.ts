@@ -5444,6 +5444,9 @@ export const MESSAGES = {
     ar: 'دُفعت في: {value}',
     en: 'Paid on: {value}',
   },
+  // [BESTE] The moment the customer first opened the pay or offerte page — written once, by the
+  // public page itself (first-view.ts).
+  'detail.rij.bekekenOp': { nl: 'Bekeken door de klant op: {value}', ar: 'اطّلع عليها العميل في: {value}', en: 'Viewed by the customer on: {value}' },
   'detail.rij.datum': {
     nl: 'Datum: {value}',
     ar: 'التاريخ: {value}',
@@ -6518,6 +6521,11 @@ export const MESSAGES = {
     ar: 'مستحقة الدفع',
     en: 'To pay',
   },
+  // [BESTE] What you must pay, by when — the three buckets Moneybird's "Te betalen" shows.
+  'ink.bak.verlopen': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
+  'ink.bak.dezeWeek': { nl: 'Deze week', ar: 'هذا الأسبوع', en: 'This week' },
+  'ink.bak.later': { nl: 'Later', ar: 'لاحقاً', en: 'Later' },
+  'ink.bak.zonderDatum': { nl: 'Zonder vervaldatum', ar: 'بدون تاريخ استحقاق', en: 'No due date' },
   'ink.filter.zonderOrigineel': {
     nl: 'Zonder origineel',
     ar: 'بدون مستند أصلي',
@@ -10999,6 +11007,9 @@ export const MESSAGES = {
     ar: 'الرصيد بتاريخ {datum}',
     en: 'balance on {datum}',
   },
+  // [BESTE] Two companions to the bank balance, from the engines Vandaag already runs.
+  'waarheid.vrijNaBtw': { nl: 'Vrij na btw-reserve', ar: 'المتاح بعد احتياطي الضريبة', en: 'Free after VAT reserve' },
+  'waarheid.over30': { nl: 'Over 30 dagen', ar: 'بعد 30 يوماً', en: 'In 30 days' },
   'waarheid.waarJeStaat': {
     nl: 'WAAR JE STAAT',
     ar: 'أين تقف',
@@ -12126,6 +12137,12 @@ export const MESSAGES = {
     ar: 'يجب إعادة €{amount} من الضريبة المخصومة',
     en: '€{amount} input VAT to repay',
   },
+  // [BESTE] The pre-filing checklist: what this quarter still misses, each with the screen that
+  // fixes it. Never a gate — the owner keeps the say.
+  'aang.klaar.kop': { nl: 'Nog te doen voor je indient', ar: 'ما تبقّى قبل التقديم', en: 'Still to do before you file' },
+  'aang.klaar.niets': { nl: 'Niets mist voor dit kwartaal.', ar: 'لا شيء ناقص لهذا الربع.', en: 'Nothing is missing for this quarter.' },
+  'aang.klaar.mislukt': { nl: 'We konden niet controleren wat er nog mist.', ar: 'لم نتمكن من التحقق مما ينقص.', en: 'We could not check what is still missing.' },
+  'aang.klaar.open': { nl: 'Openen', ar: 'فتح', en: 'Open' },
   'aang.art29.openEen': {
     nl: '1 inkoopfactuur staat meer dan een jaar na de vervaldatum open.',
     ar: 'فاتورة شراء واحدة ما زالت مفتوحة بعد أكثر من سنة من تاريخ الاستحقاق.',
