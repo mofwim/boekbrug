@@ -76,7 +76,7 @@ import SupplierNameInput, { type SupplierChoice } from "@/components/invoice/Sup
 // screen read — never a fourth copy of 0.7. See confidence.ts.
 import { LOW_CONFIDENCE } from "@/lib/confidence";
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
-import { reimportDecision, reimportPromptText } from "@/lib/reimport-eligibility";
+import { reimportDecision, reimportPromptKey } from "@/lib/reimport-eligibility";
 // [DATE-NL] A date the owner TYPES, in the order they read it. The native control puts the
 // MONTH first under an en-US browser and nothing on the page changes that — see date-field-nl.ts.
 import { DUTCH_DATE_PLACEHOLDER, formatDutchDateInput, dutchDateToIso, isoToDutchDate } from "@/lib/date-field-nl";
@@ -2356,6 +2356,8 @@ export function InvoiceCard({
   // The same predicate the server re-checks, so the button never opens on a refusal.
   const reread = reimportDecision(invoice);
   const rereadOk = reread.allowed;
+  // [TAAL] The sentence above the button, as a key the screen says in the owner's language.
+  const rereadKey = reimportPromptKey(reread);
   // Whether the amber block above is already showing its own copy of this button.
   const hasHealthWarning =
     invoice.health.level === "needs-review" && invoice.health.reasons.length > 0;
@@ -2958,7 +2960,7 @@ export function InvoiceCard({
           {mode === "pending" && !hasHealthWarning && rereadOk && (
             <div style={{ marginBottom: 10 }}>
               <p style={{ fontSize: 12, color: "#5f6368", margin: "0 0 6px", lineHeight: 1.45 }}>
-                {reimportPromptText(reread)}
+                {rereadKey && t(rereadKey)}
               </p>
               <button
                 onClick={handleReimport}
