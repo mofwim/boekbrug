@@ -19,6 +19,8 @@ export interface LijnFactuurPrefill {
   description: string | null;
   suggestedRate: number | null;
   basedOn: number;
+  /** [LEVERANCIER-STANDAARD] Where the suggestion comes from; absent on an older prefill = history. */
+  rateSource?: "history" | "supplier" | null;
 }
 
 export interface LijnFactuurSheetProps {
@@ -82,7 +84,10 @@ export default function LijnFactuurSheet({ prefill, t, busy, onSubmit, onClose }
         <div style={{ marginBottom: 6, fontSize: 12.5, fontWeight: 600, color: "#3c4043" }}>{t("bank.lf.btw")}</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{[21, 9, 0].map((r) => chip(r as 0 | 9 | 21))}</div>
         {btwOff && <p style={{ fontSize: 12.5, color: "#8D6E00", margin: "0 0 12px", lineHeight: 1.45 }}>{t("bank.lf.geenBtwZonderDocument")}</p>}
-        {!btwOff && prefill.suggestedRate !== null && prefill.basedOn > 0 && (
+        {!btwOff && prefill.suggestedRate !== null && prefill.rateSource === "supplier" && (
+          <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 12px" }}>{t("bank.lf.tariefIngesteld", { rate: prefill.suggestedRate })}</p>
+        )}
+        {!btwOff && prefill.suggestedRate !== null && prefill.rateSource !== "supplier" && prefill.basedOn > 0 && (
           <p style={{ fontSize: 12.5, color: "#5F6368", margin: "0 0 12px" }}>{t("bank.lf.tariefUitFacturen", { rate: prefill.suggestedRate, count: prefill.basedOn })}</p>
         )}
         <button type="button" disabled={busy || !name.trim()} onClick={() => onSubmit({ rate: btwOff ? 0 : rate, hasDocumentElsewhere: hasDoc, clientName: name.trim(), description: description.trim() })}

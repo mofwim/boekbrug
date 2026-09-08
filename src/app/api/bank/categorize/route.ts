@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
     // No EXACT memory? Borrow from a similar counterpart the owner categorized before — a
     // review-only pre-select (confident:false), never auto-applied by the bulk sweep.
     const similar = !memoryCategory ? bestSimilarMemory(key, memEntries) : null;
-    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false);
+    const suggestion = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, similar, key ? supplierKeys.has(key) : false, key ? supplierKeys.get(key) ?? null : null);
     const alreadyBooked = guard.hold(suggestion.category, t);
     // A held line is not among the "N zekere" the button offers, because the button will not write
     // it. Counting it there would promise a number the sweep cannot deliver.
@@ -466,7 +466,7 @@ async function bulkApply(
   for (const t of txs) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
+    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false, key ? supplierKeys.get(key) ?? null : null);
     if (!s.confident) { skipped++; continue; }
     // Confident and still not written: a paid invoice already carries this money, or it is a
     // Mollie payout of invoices Mollie already settled. Booking it here books it twice. The line
@@ -548,15 +548,18 @@ async function doubleBookingGuard(
 async function knownSupplierKeys(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   userId: string,
-): Promise<Set<string>> {
-  const keys = new Set<string>();
+): Promise<Map<string, string | null>> {
+  // [LEVERANCIER-STANDAARD] Key → the category the owner set on that supplier (null when none).
+  // Same set as before for `.has()`; the value is what lets a private subscription paid from the
+  // business account stop being proposed as a cost every month.
+  const keys = new Map<string, string | null>();
   try {
-    const rows = await fetchAllRows<{ name: string | null }>((from, to) =>
-      supabase.from("suppliers").select("name").eq("user_id", userId)
+    const rows = await fetchAllRows<{ name: string | null; default_category: string | null }>((from, to) =>
+      supabase.from("suppliers").select("name, default_category").eq("user_id", userId)
         .order("id", { ascending: true }).range(from, to));
     for (const r of rows) {
       const k = counterpartKey(r.name);
-      if (k) keys.add(k);
+      if (k) keys.set(k, r.default_category ?? keys.get(k) ?? null);
     }
   } catch (e) {
     console.error("[LEVERANCIER-BEWIJS] supplier read failed — no proven-cost suggestions this run", e);

@@ -36,13 +36,27 @@ import { isReliableSupplierName, supplierNameKey } from './supplier-registry'
 // editor can never disagree about what a valid number looks like.
 import { checkVendorIban, checkVendorBtw } from './vendor-identity'
 import type { MessageKey } from './i18n/messages'
+// [LEVERANCIER-STANDAARD] The category vocabulary a default may come from — the bank's own.
+import { ALLOWED_CATEGORIES, type BankCategory } from './bank-categories'
 
 export interface SupplierPinInput {
   name?: string | null
   iban?: string | null
   kvk?: string | null
   btw?: string | null
+  /**
+   * [LEVERANCIER-STANDAARD] The two defaults. ABSENT (undefined) means "not on this form" and
+   * leaves the stored value alone — the pin modal on an invoice does not carry them. Null or ''
+   * means the owner cleared it. That distinction is what keeps a four-field form from wiping a
+   * default the owner set on the six-field one.
+   */
+  defaultBtwRate?: string | number | null
+  defaultCategory?: string | null
 }
+
+/** The rates the law has. A default outside them is a typo, never a fourth rate. */
+export const LEGAL_DEFAULT_RATES = [0, 9, 21] as const
+export type LegalRate = (typeof LEGAL_DEFAULT_RATES)[number]
 
 export interface SupplierPinValues {
   name: string
@@ -52,16 +66,20 @@ export interface SupplierPinValues {
   btw: string | null
   /** The normalized key the registry resolves on — derived here so the caller cannot forget it. */
   nameKey: string
+  /** undefined = not on the form; null = cleared. */
+  defaultBtwRate?: LegalRate | null
+  defaultCategory?: BankCategory | null
 }
 
 /** Why a form was refused. Each code has exactly one sentence in the catalogue. */
 export type SupplierPinRefusal =
   | 'name_empty' | 'name_unreliable' | 'name_no_key' | 'iban_checksum' | 'kvk_shape' | 'btw_shape'
+  | 'rate_unknown' | 'category_unknown'
 
 export type SupplierPinPlan =
   | { ok: true; values: SupplierPinValues }
   /** It names the FIELD — a form that says "ongeldig" says nothing — and the reason as a code. */
-  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw'; code: SupplierPinRefusal }
+  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category'; code: SupplierPinRefusal }
 
 /**
  * The sentence behind each refusal, as a catalogue key. Literal keys, not assembled from the code:
@@ -74,6 +92,18 @@ export const SUPPLIER_PIN_REFUSAL_KEY: Record<SupplierPinRefusal, MessageKey> = 
   iban_checksum: 'lev.fout.iban',
   kvk_shape: 'lev.fout.kvk',
   btw_shape: 'lev.fout.btw',
+  rate_unknown: 'lev.fout.tarief',
+  category_unknown: 'lev.fout.categorie',
+}
+
+/** A default rate as typed: '', null → cleared; '9', 9 → 9; anything else → not a rate. */
+function readDefaultRate(raw: string | number | null | undefined): LegalRate | null | 'bad' {
+  if (raw === null || raw === undefined) return null
+  const text = String(raw).trim()
+  if (text === '') return null
+  if (!/^\d{1,2}$/.test(text)) return 'bad'
+  const n = Number(text)
+  return (LEGAL_DEFAULT_RATES as readonly number[]).includes(n) ? (n as LegalRate) : 'bad'
 }
 
 /** Digits only. A Dutch KVK number is exactly eight of them. */
@@ -121,7 +151,23 @@ export function planSupplierPin(input: SupplierPinInput): SupplierPinPlan {
   }
   const btw = btwState === 'ok' ? btwRaw.replace(/[\s.-]/g, '').toUpperCase() : null
 
-  return { ok: true, values: { name, iban, kvk: kvk || null, btw, nameKey } }
+  const values: SupplierPinValues = { name, iban, kvk: kvk || null, btw, nameKey }
+
+  // [LEVERANCIER-STANDAARD] Only when the form carries them. `'defaultBtwRate' in input` is the
+  // test, not truthiness: null is an answer (clear it) and undefined is silence.
+  if ('defaultBtwRate' in input) {
+    const rate = readDefaultRate(input.defaultBtwRate)
+    if (rate === 'bad') return { ok: false, field: 'rate', code: 'rate_unknown' }
+    values.defaultBtwRate = rate
+  }
+  if ('defaultCategory' in input) {
+    const cat = String(input.defaultCategory ?? '').trim()
+    if (cat === '') values.defaultCategory = null
+    else if (ALLOWED_CATEGORIES.has(cat as BankCategory)) values.defaultCategory = cat as BankCategory
+    else return { ok: false, field: 'category', code: 'category_unknown' }
+  }
+
+  return { ok: true, values }
 }
 
 /**
@@ -131,11 +177,24 @@ export function planSupplierPin(input: SupplierPinInput): SupplierPinPlan {
  * A field that did not change is not "confirmed": it is untouched. The distinction matters to the
  * audit trail, which an accountant reads a year later to reconstruct who said what.
  */
+export interface SupplierWritable {
+  name: string
+  name_key: string
+  iban: string | null
+  kvk_number: string | null
+  btw_number: string | null
+  default_btw_rate: number | null
+  default_category: string | null
+}
+
 export function supplierPinChanges(
-  current: { name?: string | null; iban?: string | null; kvk_number?: string | null; btw_number?: string | null },
+  current: {
+    name?: string | null; iban?: string | null; kvk_number?: string | null; btw_number?: string | null
+    default_btw_rate?: number | null; default_category?: string | null
+  },
   next: SupplierPinValues,
-): Partial<{ name: string; name_key: string; iban: string | null; kvk_number: string | null; btw_number: string | null }> {
-  const out: Partial<{ name: string; name_key: string; iban: string | null; kvk_number: string | null; btw_number: string | null }> = {}
+): Partial<SupplierWritable> {
+  const out: Partial<SupplierWritable> = {}
   if ((current.name ?? '') !== next.name) {
     out.name = next.name
     out.name_key = next.nameKey
@@ -143,5 +202,12 @@ export function supplierPinChanges(
   if ((current.iban ?? null) !== next.iban) out.iban = next.iban
   if ((current.kvk_number ?? null) !== next.kvk) out.kvk_number = next.kvk
   if ((current.btw_number ?? null) !== next.btw) out.btw_number = next.btw
+  // A default not on the form (undefined) is untouched; one on the form is compared like the rest.
+  if (next.defaultBtwRate !== undefined && (current.default_btw_rate ?? null) !== next.defaultBtwRate) {
+    out.default_btw_rate = next.defaultBtwRate
+  }
+  if (next.defaultCategory !== undefined && (current.default_category ?? null) !== next.defaultCategory) {
+    out.default_category = next.defaultCategory
+  }
   return out
 }

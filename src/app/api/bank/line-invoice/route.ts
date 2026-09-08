@@ -56,16 +56,24 @@ export async function GET(req: NextRequest) {
   // [TARIEF-GEHEUGEN] The rate this supplier's own invoices show, when there are enough of them.
   let suggestedRate: number | null = null;
   let basedOn = 0;
+  let rateSource: "history" | "supplier" | null = null;
   const name = (line.counterpart_name ?? "").trim();
   if (name && (line.amount ?? 0) < 0) {
     const supplier = await resolveSupplierForImport(pipeline, user.id, { name, iban: line.counterpart_iban }).catch(() => null);
-    if (supplier) {
+    // [LEVERANCIER-STANDAARD] The rate the owner set on the supplier outranks the derived one.
+    const fixed = supplier
+      ? await pipeline.from("suppliers").select("default_btw_rate").eq("id", supplier.id).eq("user_id", user.id).maybeSingle()
+          .then((r) => (r.data as { default_btw_rate: number | null } | null)?.default_btw_rate ?? null, () => null)
+      : null;
+    if (fixed !== null) {
+      suggestedRate = fixed; basedOn = 0; rateSource = "supplier";
+    } else if (supplier) {
       const { data: rows } = await pipeline
         .from("invoices").select("total_ex_btw, btw_amount, total_inc_btw")
         .eq("receiver_id", user.id).eq("direction", "incoming").eq("supplier_id", supplier.id)
         .in("status", ["received", "paid"]).order("invoice_date", { ascending: false }).limit(40);
       const derived = deriveVendorRate((rows ?? []).map((r) => ({ totalExBtw: r.total_ex_btw, btwAmount: r.btw_amount, totalIncBtw: r.total_inc_btw })));
-      if (derived) { suggestedRate = derived.rate; basedOn = derived.basedOn; }
+      if (derived) { suggestedRate = derived.rate; basedOn = derived.basedOn; rateSource = "history"; }
     }
   }
   return NextResponse.json({
@@ -78,6 +86,7 @@ export async function GET(req: NextRequest) {
       description: [line.description, line.reference].filter(Boolean).join(" · ").slice(0, 300) || null,
       suggestedRate,
       basedOn,
+      rateSource,
     },
   });
 }

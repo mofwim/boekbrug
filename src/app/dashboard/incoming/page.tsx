@@ -437,7 +437,7 @@ export default async function IncomingPage() {
   // 9 % en 21 % op één factuur, en vendor-vat-rate.ts weigert dan een tarief. Dat is de duurste
   // groep (13 facturen, € 18.698) en juist daarom moet hij leeg blijven — één tarief op een
   // gemengde factuur is een verkeerd getal in de btw-aangifte.
-  const vendorRates: Record<string, { rate: number; basedOn: number }> = {};
+  const vendorRates: Record<string, { rate: number; basedOn: number; source?: 'history' | 'supplier' }> = {};
   {
     const wachtendeLeveranciers = [...new Set(
       pendingInvoices.map((i) => i.client_name).filter((n): n is string => typeof n === "string" && n.trim() !== ""),
@@ -471,8 +471,26 @@ export default async function IncomingPage() {
       }
       for (const [k, rijen] of perLeverancier) {
         const tarief = deriveVendorRate(rijen);
-        if (tarief) vendorRates[k] = tarief;
+        if (tarief) vendorRates[k] = { ...tarief, source: 'history' };
       }
+    }
+    // [LEVERANCIER-STANDAARD] Wat de eigenaar zelf op de leverancier heeft gezet, wint van wat de
+    // geschiedenis suggereert: een besluit boven een statistiek. Alleen de rijen mét een vast
+    // tarief worden gelezen, en een mislukte lezing laat de afgeleide tarieven gewoon staan.
+    try {
+      const { data: vaste } = await supabase
+        .from("suppliers")
+        .select("name, default_btw_rate")
+        .eq("user_id", user.id)
+        .not("default_btw_rate", "is", null);
+      for (const s of (vaste ?? []) as { name: string | null; default_btw_rate: number | null }[]) {
+        const k = vendorKey(s.name);
+        if (k && s.default_btw_rate !== null && wachtendeLeveranciers.some((n) => vendorKey(n) === k)) {
+          vendorRates[k] = { rate: s.default_btw_rate, basedOn: 0, source: 'supplier' };
+        }
+      }
+    } catch (e) {
+      console.error("[LEVERANCIER-STANDAARD] default rates could not be read — history rates stand", e);
     }
   }
 
