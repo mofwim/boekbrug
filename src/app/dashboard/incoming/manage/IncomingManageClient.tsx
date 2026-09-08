@@ -34,7 +34,7 @@ import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN, sh
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
-import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
+import { reimportDecision, reimportPromptKey } from '@/lib/reimport-eligibility'
 // [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
 // [VERVANG-OVERAL] …en het antwoord erop, dat tot nu toe alleen in de controlewachtrij stond.
 import { supersedeTargetOf } from '@/lib/supersede-target'
@@ -2448,7 +2448,7 @@ export default function IncomingManageClient({
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>swap_vert</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {SORTS.find(s => s.id === sortBy)?.label ?? t('inkoop.sorteren')}
+                    {t(SORTS.find(s => s.id === sortBy)?.label ?? 'inkoop.sorteren')}
                   </span>
                 </span>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>
@@ -2463,7 +2463,7 @@ export default function IncomingManageClient({
                       onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
                       style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
-                      {s.label}
+                      {t(s.label)}
                     </button>
                   ))}
                 </div>
@@ -2809,6 +2809,8 @@ export default function IncomingManageClient({
               // that then says no has been misled by the screen, not by the server.
               const reread = reimportDecision(inv)
               const rereadOk = reread.allowed
+              // [TAAL] The sentence above the button, as a key the screen says in the owner's language.
+              const rereadKey = reimportPromptKey(reread)
               // [DUP-ON-PAY] Is there a second row with this supplier's same invoice number?
               const duplicate = duplicateByRow.get(inv.id) ?? null
               // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
@@ -3715,7 +3717,7 @@ export default function IncomingManageClient({
                           when something IS wrong is what turns that habit from a cost into one tap. */}
                       {rereadOk && (
                         <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '0 0 8px', lineHeight: 1.45 }}>
-                          {reimportPromptText(reread)}
+                          {rereadKey && t(rereadKey)}
                         </p>
                       )}
 

@@ -35,6 +35,8 @@
 // Pure: no I/O, no clock. The route re-checks the same predicate server-side; the screens use it
 // to decide whether to offer the button at all, so a button never opens on a refusal.
 
+import type { MessageKey } from './i18n/messages'
+
 /** The invoice fields the decision reads. A structural subset of the row. */
 export interface ReimportInvoice {
   direction?: string | null
@@ -200,16 +202,16 @@ export function btwRowsReadDecision(
 }
 
 /**
- * What the owner is told BEFORE they tap, on a row that qualifies.
+ * What the owner is told BEFORE they tap, on a row that qualifies — as a message KEY.
  *
  * The confirmed case has to announce the consequence: the invoice leaves the pay list and turns up
  * in the verify queue. Discovering that afterwards reads like the invoice was lost.
  *
- * Dutch: owner-facing.
+ * [TAAL] A key and not a sentence. This returned Dutch, and both screens printed it straight, so an
+ * owner reading the app in Arabic met one Dutch paragraph above a translated button. A pure module
+ * carries no language of its own; the screen's `t` says it, and the catalogue holds all three.
  */
-export function reimportPromptText(d: ReimportDecision): string | null {
+export function reimportPromptKey(d: ReimportDecision): MessageKey | null {
   if (!d.allowed) return null
-  return d.returnsToQueue
-    ? 'Klopt er iets niet aan deze factuur? Laat hem opnieuw inlezen — hij gaat dan terug naar de controlewachtrij zodat je de nieuwe bedragen bevestigt.'
-    : 'Klopt er iets niet aan deze factuur? Laat hem opnieuw inlezen.'
+  return d.returnsToQueue ? 'ink.opnieuwInlezenNaarWachtrij' : 'ink.opnieuwInlezenBlijft'
 }
