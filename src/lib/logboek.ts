@@ -124,6 +124,11 @@ const KIND_BY_DOMAIN: Readonly<Record<string, LogboekKind | undefined>> = {
   kasboek: "money",
   supplier: "money",
   snelstart: "money",
+  // [WERK] The trade's own work: a werkorder, rit, klus or opdracht opened, moved, invoiced,
+  // removed. Filed under money: the row carries no amount, but what it records is the piece of
+  // work an invoice will be made of — the owner looking for "what happened to that job" looks
+  // where the invoice is.
+  work: "money",
   // Paper: what is filed, not what is owed. 'article' is the invoice-line catalogue — templates,
   // so no invoice or total moves when one is deleted; see [ARTIKELEN-WIPE] in audit.ts.
   document: "document",
