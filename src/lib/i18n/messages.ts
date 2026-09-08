@@ -7607,9 +7607,9 @@ export const MESSAGES = {
     en: 'Read again',
   },
   'ink.herinnering.uitleg': {
-    nl: 'Herinneringen voor facturen die niet in je boekhouding staan. Vraag de factuur op bij de leverancier — of boek de herinnering als factuur; hij herhaalt de hele factuur.',
-    ar: 'تذكيرات بفواتير غير موجودة في دفاترك. اطلب الفاتورة من المورّد، أو قيّد التذكير كفاتورة؛ فهو يكرّر الفاتورة كاملة.',
-    en: 'Reminders for invoices that are not in your books. Ask the supplier for the invoice, or book the reminder as the invoice; it repeats the whole invoice.',
+    nl: 'Herinneringen voor facturen die niet in je boekhouding staan. Vraag de factuur op, of boek de herinnering als factuur.',
+    ar: 'تذكيرات بفواتير غير موجودة في دفاترك. اطلب الفاتورة، أو قيّد التذكير كفاتورة.',
+    en: 'Reminders for invoices that are not in your books. Ask for the invoice, or book the reminder as the invoice.',
   },
   'ink.herinnering.knop': {
     nl: 'Boek als factuur',
@@ -7722,6 +7722,11 @@ export const MESSAGES = {
     nl: 'Rekeningoverzicht gecontroleerd',
     ar: 'رُوجع كشف الحساب',
     en: 'Account statement checked',
+  },
+  'ink.result.reminder': {
+    nl: 'Herinnering bewaard, niet geboekt',
+    ar: 'حُفظ التذكير ولم يُقيَّد',
+    en: 'Reminder filed, not booked',
   },
   'ink.result.turnover': {
     nl: 'Omzet geboekt',
@@ -10444,6 +10449,11 @@ export const MESSAGES = {
     ar: 'رُوجع الكشف',
     en: 'Statement checked',
   },
+  'up.dest.herinnering': {
+    nl: 'Herinnering bewaard, niet geboekt',
+    ar: 'حُفظ التذكير ولم يُقيَّد',
+    en: 'Reminder filed, not booked',
+  },
   'up.eenFactuurStrong': {
     nl: 'één factuur',
     ar: 'فاتورة واحدة',
@@ -10603,6 +10613,11 @@ export const MESSAGES = {
     nl: '{n} rekeningoverzicht',
     ar: 'كشوف حساب: {n}',
     en: '{n} account statement',
+  },
+  'up.nHerinnering': {
+    nl: '{n} herinnering',
+    ar: 'تذكيرات: {n}',
+    en: '{n} reminder',
   },
   'up.nTeControleren': {
     nl: '{n} factuur/bon te controleren',

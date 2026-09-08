@@ -3134,7 +3134,7 @@ type IntakeResult = {
   // "invoice" pointed the owner at a card that is not here. "statement" / "turnover" /
   // "ledger" are the destinations the route gained since; without them each fell through to
   // the "invoice" default below and was announced as an invoice awaiting a tap.
-  status: "auto" | "invoice" | "statement" | "turnover" | "ledger" | "document" | "bank" | "duplicate" | "error" | "skipped";
+  status: "auto" | "invoice" | "statement" | "reminder" | "turnover" | "ledger" | "document" | "bank" | "duplicate" | "error" | "skipped";
   message: string;
   // [BATCH-HERKANSING] The file itself, kept on the row.
   //
@@ -3171,6 +3171,8 @@ const RESULT_META = {
   auto:      { icon: "✓",  color: M3.success, labelKey: "ink.result.auto" },
   invoice:   { icon: "✓",  color: M3.success, labelKey: "ink.result.invoice" },
   statement: { icon: "🧾", color: "#9a5b00",  labelKey: "ink.result.statement" },
+  // [HERINNERING-NOOIT] A payment reminder: kept, linked to its invoice, never booked.
+  reminder:  { icon: "🔔", color: "#9a5b00",  labelKey: "ink.result.reminder" },
   turnover:  { icon: "🛒", color: M3.success, labelKey: "ink.result.turnover" },
   ledger:    { icon: "🔗", color: "#7B1FA2",  labelKey: "ink.result.ledger" },
   document:  { icon: "📁", color: "#1a73e8",  labelKey: "ink.result.document" },
@@ -3256,10 +3258,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
         }
         // [STATEMENT-RECONCILE] A supplier statement is a completeness CHECK, not a booking:
         // nothing enters the books, so it must not be announced as an added invoice.
-        if (dest === "statement") {
+        // [HERINNERING-NOOIT] Same shape for a payment reminder: filed, linked to its invoice
+        // when found, never booked — the message says which of the three happened.
+        if (dest === "statement" || dest === "reminder") {
           const docId = (data as { document_id?: string }).document_id;
           return {
-            name: file.name, status: "statement", message,
+            name: file.name, status: dest, message,
             link: docId ? { folderId: (data as { folder_id?: string }).folder_id ?? null, focusId: docId } : undefined,
           };
         }
