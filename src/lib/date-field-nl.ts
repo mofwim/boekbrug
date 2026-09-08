@@ -28,6 +28,7 @@
 // the field the way it should instead of fighting a separator that reappears.
 
 import { normalizeToIso } from '@/lib/safecore'
+import { dateInWords } from '@/lib/i18n/format-date'
 
 /** The mask the owner sees, and the order this whole module is about. */
 export const DUTCH_DATE_PLACEHOLDER = 'dd-mm-jjjj'
@@ -71,31 +72,35 @@ export function isoToDutchDate(iso: string | null | undefined): string {
  *
  * This is the honest half of the field. The digits alone cannot show a month typed into a day; the
  * weekday and the month NAME can, at a glance, before it is saved.
+ *
+ * [TAAL] The Dutch form, kept for the import paths and their tests. The screen calls
+ * `dateInWords(iso, locale)` in i18n/format-date.ts directly, so the line under the field reads
+ * in the owner's language — it used to say "maandag 7 september 2026" under an Arabic interface.
  */
 export function dutchDateInWords(iso: string | null | undefined): string | null {
-  const s = (iso ?? '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
-  const d = new Date(`${s}T00:00:00Z`)
-  if (Number.isNaN(d.getTime())) return null
-  return new Intl.DateTimeFormat('nl-NL', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
-  }).format(d)
+  return dateInWords(iso, 'nl')
 }
+
+/** Which bound a date fell outside, and the bound itself as dd-mm-jjjj for the sentence. */
+export type DateRangeProblem = { side: 'before' | 'after'; bound: string }
 
 /**
  * The bounds the native control used to enforce through its picker.
  *
  * A text field enforces nothing by itself, so dropping these would quietly widen what can be
  * saved — a payment date in 1970 or next year, on the one field that decides a BTW quarter.
- * Returns a Dutch reason, or null when the date is fine or not yet parseable.
+ *
+ * [TAAL] Returns WHICH bound was crossed, not a sentence: this module is pure and holds no
+ * language, and the component turns the answer into a line in the owner's language
+ * (datum.voorMinimum / datum.naMaximum). Null when the date is fine or not yet parseable.
  */
-export function dutchDateOutOfRange(
+export function dateOutOfRange(
   iso: string | null,
   min?: string | null,
   max?: string | null,
-): string | null {
+): DateRangeProblem | null {
   if (!iso) return null
-  if (min && iso < min) return `Die datum ligt vóór ${isoToDutchDate(min)} — controleer het jaartal.`
-  if (max && iso > max) return `Die datum ligt in de toekomst (na ${isoToDutchDate(max)}).`
+  if (min && iso < min) return { side: 'before', bound: isoToDutchDate(min) }
+  if (max && iso > max) return { side: 'after', bound: isoToDutchDate(max) }
   return null
 }

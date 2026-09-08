@@ -32,9 +32,11 @@ import {
   formatDutchDateInput,
   dutchDateToIso,
   isoToDutchDate,
-  dutchDateInWords,
-  dutchDateOutOfRange,
+  dateOutOfRange,
 } from '@/lib/date-field-nl'
+// [TAAL] The line under the field follows the owner's language. It used to be nl-NL whatever the
+// interface said, so an Arabic screen read "maandag 7 september 2026" under its own date field.
+import { dateInWords } from '@/lib/i18n/format-date'
 
 export interface DateFieldNLProps {
   /** ISO "YYYY-MM-DD", or "" when empty — the same value an <input type="date"> carries. */
@@ -60,7 +62,8 @@ export default function DateFieldNL({
   id,
   ...rest
 }: DateFieldNLProps) {
-  const t = translator(useLocale())
+  const locale = useLocale()
+  const t = translator(locale)
   // The typed text is its own state: while someone is halfway through "21-01-20" there is no ISO
   // to hold it in, and pushing an empty value up on every keystroke would clear the parent's date
   // the moment they started editing it.
@@ -81,8 +84,11 @@ export default function DateFieldNL({
   }
 
   const iso = dutchDateToIso(typed)
-  const words = dutchDateInWords(iso)
-  const rangeProblem = dutchDateOutOfRange(iso, min, max)
+  const words = dateInWords(iso, locale)
+  const range = dateOutOfRange(iso, min, max)
+  const rangeProblem = range === null
+    ? null
+    : t(range.side === 'before' ? 'datum.voorMinimum' : 'datum.naMaximum', { datum: range.bound })
   // Only complain about an unparseable date once it is as long as a date. Flashing an error at
   // someone mid-keystroke teaches them to ignore the line that is supposed to catch a real error.
   const shape = touched && typed.length >= DUTCH_DATE_PLACEHOLDER.length && !iso
@@ -96,7 +102,7 @@ export default function DateFieldNL({
     const parsed = dutchDateToIso(formatted)
     // An out-of-range date is reported, never silently clamped: clamping would save a date the
     // owner did not type, on a field that decides which quarter the money lands in.
-    onChange(parsed && !dutchDateOutOfRange(parsed, min, max) ? parsed : '')
+    onChange(parsed && !dateOutOfRange(parsed, min, max) ? parsed : '')
   }
 
   return (

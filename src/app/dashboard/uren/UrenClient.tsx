@@ -31,6 +31,9 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { localeDir } from '@/lib/i18n/locale'
+// [TAAL] A row's date is a date the owner reads, so it follows their language — "3 aug 2026", not
+// the ISO string the database stores.
+import { dateShort } from '@/lib/i18n/format-date'
 import { useToast } from '@/components/ui/Toast'
 import { useDialog } from '@/components/ui/Dialog'
 import { failureText } from '@/lib/server-message'
@@ -404,7 +407,7 @@ export default function UrenClient({
                   <div style={{ flex: '1 1 200px', textAlign: 'start' }}>
                     <div style={{ fontSize: 14 }}>{e.description}</div>
                     <div style={{ fontSize: 12, color: M3.neutral, fontFamily: FONT_NUM }}>
-                      {e.worked_on} · {e.hours} {t('uren.urenKort')}
+                      {dateShort(e.worked_on, locale)} · {e.hours} {t('uren.urenKort')}
                     </div>
                   </div>
                   <div style={{ fontFamily: FONT_NUM, fontSize: 14, textAlign: 'end' }}>
@@ -459,7 +462,7 @@ export default function UrenClient({
                 <div style={{ flex: '1 1 200px', textAlign: 'start' }}>
                   <div style={{ fontSize: 14 }}>{e.description}</div>
                   <div style={{ fontSize: 12, color: M3.neutral, fontFamily: FONT_NUM }}>
-                    {e.worked_on} · {e.hours} {t('uren.urenKort')} · {nameOf(e.client_id)}
+                    {dateShort(e.worked_on, locale)} · {e.hours} {t('uren.urenKort')} · {nameOf(e.client_id)}
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: M3.neutral, textAlign: 'end' }}>{t('uren.staatOpFactuur')}</div>

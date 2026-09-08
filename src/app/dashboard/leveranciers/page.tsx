@@ -43,7 +43,7 @@ import { buildCorroborationPanel, buildSupplierBalancePanel } from '@/lib/suppli
 import { findMergeCandidates, type MergeSupplier } from '@/lib/supplier-merge'
 import { buildSupplierMergePanel } from '@/lib/supplier-merge-copy'
 import { getServerLocale } from '@/lib/i18n/server'
-import LeveranciersClient from './LeveranciersClient'
+import LeveranciersClient, { type SupplierListCard } from './LeveranciersClient'
 
 interface InvoiceRow {
   id: string
@@ -210,17 +210,23 @@ export default async function Page({
   // dat er niet is stelt niets voor, terwijl een paneel op halve gegevens een samenvoeging kan
   // voorstellen waarvan het bewijs juist in het ontbrekende deel stond.
   let mergePanel: ReturnType<typeof buildSupplierMergePanel> = null
+  // [LEVERANCIER-BEWERKEN] The registry itself, as the owner may edit it. Null = the read failed,
+  // which the screen says in so many words — a list that is empty because the database was
+  // unreachable must never read as "you have no suppliers".
+  let supplierCards: SupplierListCard[] | null = null
   if (!readFailed) {
     try {
       const { data: supplierRows, error: supplierErr } = await supabase
         .from('suppliers')
-        .select('id, name, iban, kvk_number, btw_number, created_at')
+        .select('id, name, iban, kvk_number, btw_number, auto_incasso, created_at, updated_at')
         .eq('user_id', user.id)
+        .order('name', { ascending: true })
       if (supplierErr) throw new Error(supplierErr.message)
-      const candidates: MergeSupplier[] = ((supplierRows ?? []) as {
+      const rows = (supplierRows ?? []) as {
         id: string; name: string; iban: string | null; kvk_number: string | null
-        btw_number: string | null; created_at: string
-      }[]).map((row) => {
+        btw_number: string | null; auto_incasso: boolean | null; created_at: string; updated_at: string
+      }[]
+      const candidates: MergeSupplier[] = rows.map((row) => {
         const mine = invoiceRows.filter((i) => i.supplier_id === row.id)
         return {
           id: row.id,
@@ -234,11 +240,26 @@ export default async function Page({
         }
       })
       mergePanel = buildSupplierMergePanel(findMergeCandidates(candidates), locale)
+      supplierCards = rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        iban: row.iban,
+        kvk: row.kvk_number,
+        btw: row.btw_number,
+        autoIncasso: row.auto_incasso === true,
+        invoiceCount: invoiceRows.filter((i) => i.supplier_id === row.id).length,
+        // The balance list groups on the name key (see keyOf above), so this is how a balance line
+        // finds its editable row: same key, same company.
+        balanceKey: keyOf(row.name) ?? '',
+        // Only a date the trigger stamped is a real "last changed"; a row never edited shows nothing.
+        updatedOn: row.updated_at !== row.created_at ? row.updated_at.slice(0, 10) : null,
+      }))
     } catch (e) {
       console.error('[LEVERANCIER-SAMENVOEGEN] the suppliers could not be read — no offers shown', {
         userId: user.id, error: e instanceof Error ? e.message : String(e),
       })
       mergePanel = null
+      supplierCards = null
     }
   }
 
@@ -281,6 +302,7 @@ export default async function Page({
       balance={buildSupplierBalancePanel(balance, locale, today)}
       corroboration={buildCorroborationPanel(corroboration, locale)}
       merge={mergePanel}
+      suppliers={supplierCards}
       asOf={asOf}
       today={today}
     />
