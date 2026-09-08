@@ -252,6 +252,11 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   assert.equal((html.match(/aria-expanded="false" aria-controls="inv-detail-/g) ?? []).length, chevrons,
     "a chevron says it is open on a card that has not been tapped");
   assert.doesNotMatch(html, /id="inv-detail-/, "the folded half rendered without a tap — the fold is gone");
+  // [ALLEEN-DE-PIJL] The header no longer answers a click outside select mode, so it must not
+  // advertise one: a pointer cursor on a row that does nothing is a promise the row breaks.
+  const koppen = [...html.matchAll(/class="inv-row"[^>]*style="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(koppen.length >= 2, `only ${koppen.length} row headers found — the fixture stopped exercising the list`);
+  for (const stijl of koppen) assert.match(stijl, /cursor:default/, "a row header still wears a pointer cursor");
 
   // [FILTERS-EEN-REGEL] Period, filter and sort share ONE flex row: the period is the first third,
   // directly inside the wrapping row, and there are exactly three thirds.

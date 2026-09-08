@@ -14,7 +14,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { reimportDecision, reimportPromptText, btwRowsReadDecision, type ReimportInvoice } from './reimport-eligibility'
+import { reimportDecision, reimportPromptKey, btwRowsReadDecision, type ReimportInvoice } from './reimport-eligibility'
+import { MESSAGES } from './i18n/messages'
 
 const inv = (o: Partial<ReimportInvoice> = {}): ReimportInvoice => ({
   direction: 'incoming',
@@ -31,8 +32,12 @@ test('[REREAD-CONFIRMED] a confirmed, unpaid invoice may be read again — and s
   // whose paper the app is holding.
   const d = reimportDecision(inv({ status: 'received' }))
   assert.deepEqual(d, { allowed: true, returnsToQueue: true })
+  // The module hands back a KEY; the sentence lives in the catalogue. Both halves are asserted:
+  // the right key for this case, and that the Dutch behind it really does announce the queue.
+  const key = reimportPromptKey(d)
+  assert.equal(key, 'ink.opnieuwInlezenNaarWachtrij')
   assert.match(
-    reimportPromptText(d) ?? '', /controlewachtrij/,
+    MESSAGES[key!].nl, /controlewachtrij/,
     'the consequence is announced before the tap — an invoice leaving the pay list unannounced ' +
       'reads like a lost bill',
   )
@@ -41,7 +46,9 @@ test('[REREAD-CONFIRMED] a confirmed, unpaid invoice may be read again — and s
 test('[REREAD-CONFIRMED] a queued invoice still qualifies, and stays where it is', () => {
   const d = reimportDecision(inv({ status: 'processing' }))
   assert.deepEqual(d, { allowed: true, returnsToQueue: false })
-  assert.doesNotMatch(reimportPromptText(d) ?? '', /controlewachtrij/, 'it is already there')
+  const key = reimportPromptKey(d)
+  assert.equal(key, 'ink.opnieuwInlezenBlijft')
+  assert.doesNotMatch(MESSAGES[key!].nl, /controlewachtrij/, 'it is already there')
 })
 
 test('[REREAD-CONFIRMED] money outranks everything', () => {
