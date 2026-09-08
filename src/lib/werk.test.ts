@@ -20,6 +20,11 @@ test("[WERK] the layer exists for the four verticals and their sister trades, an
   assert.equal(workSkin("fietsenmaker")?.skin, "reparatie");
   assert.equal(workSkin("dienstverlening")?.skin, "opdracht");
   assert.equal(workSkin("hovenier")?.skin, "klus");
+  // [RIJSCHOOL] One leerling is the work; the lessen are its beurten; the lesauto is a vehicle.
+  assert.equal(workSkin("rijschool")?.skin, "les");
+  assert.equal(workSkin("rijschool")?.recurring, true);
+  assert.equal(workSkin("rijschool")?.vehicle, true);
+  assert.deepEqual(workSkin("rijschool")?.visitKeys, { list: "werk.les.lessen", done: "werk.les.lesGedaan", invoice: "werk.les.lesFactuur", open: "werk.les.lessenOpen" });
   assert.equal(workSkin("hovenier")?.recurring, true);
   assert.equal(workSkin("bouw-klus")?.recurring, false, "a builder's klus happens once");
   assert.equal(workSkin("schoonmaak")?.recurring, true);
@@ -32,7 +37,7 @@ test("[WERK] the layer exists for the four verticals and their sister trades, an
 });
 
 test("[WERK] every skin's statuses are drawn from the one closed set, in the trade's order", () => {
-  for (const vak of ["automonteur", "transport", "bouw-klus", "schoonmaak", "fietsenmaker", "dienstverlening"]) {
+  for (const vak of ["automonteur", "transport", "bouw-klus", "schoonmaak", "fietsenmaker", "dienstverlening", "rijschool"]) {
     const skin = workSkin(vak)!;
     for (const s of skin.statuses) {
       assert.ok(WORK_STATUSES.includes(s), `${vak}: ${s} is not a work status`);
@@ -189,11 +194,13 @@ test("[WERK] margin is revenue minus attached costs; nothing to divide by gives 
 
 test("[WERK-BEURT] a repeating opdracht with a done beurt counts as ready to invoice, and cannot be deleted once a beurt is billed", () => {
   const v = (invoice_id: string | null) => ({ on: "2026-09-01", note: null, invoice_id });
+  const lines = [{ kind: "vast", description: "Schoonmaak", quantity: 1, unit: "post", unit_price: 85, btw_rate: 21 }];
   assert.deepEqual(workCounts([
-    { status: "bezig", repeat_every: "week", visits: [v(null)] },
-    { status: "bezig", repeat_every: "week", visits: [v("inv")] },
-    { status: "open", repeat_every: null, visits: [] },
-  ]), { open: 1, bezig: 1, wacht: 0, klaar: 1 });
+    { status: "bezig", repeat_every: "week", visits: [v(null), { ...v(null), on: "2026-09-08" }], lines },
+    { status: "bezig", repeat_every: "week", visits: [v("inv")], lines },
+    { status: "open", repeat_every: null, visits: [], lines },
+    { status: "klaar", repeat_every: null, visits: [], lines: [{ kind: "arbeid", description: "x", quantity: 2, unit: "uur", unit_price: 60, btw_rate: 21 }] },
+  ]), { open: 1, bezig: 1, wacht: 0, klaar: 2, klaarExBtw: 290 }, "two beurten × 85 + 2 × 60: what 'klaar voor de factuur' is worth");
   assert.equal(canDelete({ invoice_id: null, attachedCosts: 0, attachedHours: 0, visits: [v("inv")] }), false);
   assert.equal(canDelete({ invoice_id: null, attachedCosts: 0, attachedHours: 0, visits: [v(null)] }), true);
 });
@@ -202,7 +209,7 @@ test("[WERK] counts, and the two guards", () => {
   assert.deepEqual(workCounts([
     { status: "open" }, { status: "bezig" }, { status: "wacht_klant" }, { status: "wacht_onderdeel" },
     { status: "klaar" }, { status: "klaar" }, { status: "gefactureerd" }, { status: "geannuleerd" },
-  ]), { open: 1, bezig: 1, wacht: 2, klaar: 2 });
+  ]), { open: 1, bezig: 1, wacht: 2, klaar: 2, klaarExBtw: 0 });
   assert.equal(canInvoice({ status: "klaar", invoice_id: null }), true);
   assert.equal(canInvoice({ status: "klaar", invoice_id: "x" }), false, "once");
   assert.equal(canInvoice({ status: "bezig", invoice_id: null }), false, "only finished work");

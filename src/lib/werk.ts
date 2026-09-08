@@ -80,7 +80,7 @@ export interface LineKind {
 /** The work skin of one trade: its noun, its statuses, its fields, its line kinds. Keys, not text — [TAAL]. */
 export interface WorkSkin {
   /** The skin id; several trades can share one (every bouw trade is a 'klus'). */
-  skin: "werkorder" | "rit" | "klus" | "opdracht" | "reparatie";
+  skin: "werkorder" | "rit" | "klus" | "opdracht" | "reparatie" | "les";
   nounKey: string;
   pluralKey: string;
   statuses: readonly WorkStatus[];
@@ -95,6 +95,8 @@ export interface WorkSkin {
    * ticked off as they happen and invoiced together? False for work that happens once.
    */
   recurring: boolean;
+  /** The trade's own words for a beurt, when "beurt" is not its word (a rijschool gives lessen). Literal keys. */
+  visitKeys?: { list: string; done: string; invoice: string; open: string };
 }
 
 const WERKORDER: WorkSkin = {
@@ -270,6 +272,36 @@ const DIENST: WorkSkin = {
 };
 
 /**
+ * [RIJSCHOOL] One leerling in training is the work; every les is a beurt on it, the lespakket and
+ * the examen are its lines, and the invoice covers the lessen given since the last one — or the
+ * pakket at once. The lesauto is a vehicle in the register (APK, like a garage's cars).
+ */
+const LES: WorkSkin = {
+  skin: "les",
+  nounKey: "werk.noun.leerling",
+  pluralKey: "werk.noun.leerlingen",
+  statuses: ["open", "bezig", "wacht_klant", "klaar", "gefactureerd", "geannuleerd"],
+  statusLabels: {
+    open: "werk.status.les.open", bezig: "werk.status.les.bezig", wacht_klant: "werk.status.les.wacht_klant",
+    klaar: "werk.status.les.klaar", gefactureerd: "werk.status.les.gefactureerd", geannuleerd: "werk.status.les.geannuleerd",
+  },
+  fields: [
+    { key: "telefoon", type: "text", labelKey: "werk.veld.telefoon" },
+    { key: "instructeur", type: "text", labelKey: "werk.veld.instructeur" },
+    { key: "lespakket", type: "text", labelKey: "werk.veld.lespakket", onCard: true },
+    { key: "examen_datum", type: "date", labelKey: "werk.veld.examenDatum", onCard: true },
+  ],
+  lineKinds: [
+    { kind: "les", labelKey: "werk.regel.les", unit: "uur" },
+    { kind: "pakket", labelKey: "werk.regel.pakket", unit: "post" },
+    { kind: "examen", labelKey: "werk.regel.examen", unit: "post" },
+  ],
+  vehicle: true,
+  recurring: true,
+  visitKeys: { list: "werk.les.lessen", done: "werk.les.lesGedaan", invoice: "werk.les.lesFactuur", open: "werk.les.lessenOpen" },
+};
+
+/**
  * Trade slug (VAKKEN) → skin. Every bouw trade shares the klus skin: a loodgieter, an elektricien
  * and a schilder all do klussen at an address. The one trade without a work layer is the kapper:
  * a haircut is rung up at the Kassa the moment it is done, and a werkorder for it would be a
@@ -286,6 +318,7 @@ const SKIN_BY_VAK: Readonly<Record<string, WorkSkin>> = {
   schoonmaak: OPDRACHT,
   fietsenmaker: REPARATIE,
   dienstverlening: DIENST,
+  rijschool: LES,
 };
 
 /** Does this owner get the work layer? Unknown or unlisted trade → no. */
@@ -494,6 +527,8 @@ export interface WorkCounts {
   bezig: number;
   wacht: number;
   klaar: number;
+  /** What the work that is ready to invoice adds up to, ex btw — "3 klaar voor de factuur · € 2.840". */
+  klaarExBtw: number;
 }
 
 /**
@@ -501,14 +536,17 @@ export interface WorkCounts {
  * [WERK-BEURT] Repeating work with a done beurt that is not on an invoice yet is "ready to
  * invoice" too, whatever its status says — that is the Monday question for a cleaner.
  */
-export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown }>): WorkCounts {
-  const c: WorkCounts = { open: 0, bezig: 0, wacht: 0, klaar: 0 };
+export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown; lines?: unknown }>): WorkCounts {
+  const c: WorkCounts = { open: 0, bezig: 0, wacht: 0, klaar: 0, klaarExBtw: 0 };
   for (const r of rows) {
-    if (r.repeat_every && r.status !== "geannuleerd" && r.status !== "gefactureerd" && unbilledVisits(storedVisits(r.visits)).length > 0) { c.klaar += 1; continue; }
+    if (r.repeat_every && r.status !== "geannuleerd" && r.status !== "gefactureerd") {
+      const open = unbilledVisits(storedVisits(r.visits));
+      if (open.length > 0) { c.klaar += 1; c.klaarExBtw = round2(c.klaarExBtw + linesTotalEx(visitInvoiceLines(storedLines(r.lines), open))); continue; }
+    }
     if (r.status === "open") c.open += 1;
     else if (r.status === "bezig") c.bezig += 1;
     else if (r.status === "wacht_klant" || r.status === "wacht_onderdeel") c.wacht += 1;
-    else if (r.status === "klaar") c.klaar += 1;
+    else if (r.status === "klaar") { c.klaar += 1; c.klaarExBtw = round2(c.klaarExBtw + linesTotalEx(storedLines(r.lines))); }
   }
   return c;
 }

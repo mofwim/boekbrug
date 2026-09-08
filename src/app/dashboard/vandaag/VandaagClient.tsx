@@ -102,6 +102,11 @@ export function werkZin(werk: { pluralKey: string; counts: WorkCounts } | null |
   const c = werk.counts;
   const plural = t(werk.pluralKey);
   if (c.open + c.bezig + c.wacht + c.klaar === 0) return t('vandaag.werk.niets', { plural });
+  // The amount beside the count: "3 klaar voor de factuur · € 2.840" tells the owner what to do
+  // NOW, where a month's turnover only tells him what happened.
+  if (c.klaar > 0 && c.klaarExBtw > 0) {
+    return `${plural}: ${t('vandaag.werk.zinBedrag', { klaar: c.klaar, bedrag: formatEuroNL(c.klaarExBtw), bezig: c.bezig + c.open, wacht: c.wacht })}`;
+  }
   return `${plural}: ${t('vandaag.werk.zin', { klaar: c.klaar, bezig: c.bezig + c.open, wacht: c.wacht })}`;
 }
 

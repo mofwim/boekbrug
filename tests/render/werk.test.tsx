@@ -84,9 +84,11 @@ test("[WERK] attached hours and purchases render, an invoiced hour cannot be det
 });
 
 test("[WERK] Vandaag speaks the trade's word", () => {
-  assert.equal(werkZin({ pluralKey: "werk.noun.werkorders", counts: { open: 2, bezig: 1, wacht: 1, klaar: 3 } }, t),
+  assert.equal(werkZin({ pluralKey: "werk.noun.werkorders", counts: { open: 2, bezig: 1, wacht: 1, klaar: 3, klaarExBtw: 0 } }, t),
     "Werkorders: 3 klaar voor de factuur, 3 in behandeling, 1 wachten.");
-  assert.equal(werkZin({ pluralKey: "werk.noun.ritten", counts: { open: 0, bezig: 0, wacht: 0, klaar: 0 } }, t), "Geen open Ritten.");
+  assert.equal(werkZin({ pluralKey: "werk.noun.werkorders", counts: { open: 2, bezig: 1, wacht: 1, klaar: 3, klaarExBtw: 2840 } }, t),
+    "Werkorders: 3 klaar voor de factuur · € 2.840,00, 3 in behandeling, 1 wachten.", "the amount tells him what to do now");
+  assert.equal(werkZin({ pluralKey: "werk.noun.ritten", counts: { open: 0, bezig: 0, wacht: 0, klaar: 0, klaarExBtw: 0 } }, t), "Geen open Ritten.");
   assert.equal(werkZin(null, t), null);
 });
 
@@ -165,4 +167,15 @@ test("[WERK-3] the review's findings stay fixed: decimals render as typed, the s
   // The car's history: a returning Golf shows what was done before.
   const history = renderToStaticMarkup(<HistoryList t={t} history={[{ id: "a", title: "APK", status: "gefactureerd", on: "2026-03-02", invoice_id: "i", total_ex_btw: 120 }]} />);
   assert.ok(history.includes("APK") && history.includes("120,00"));
+});
+
+test("[RIJSCHOOL] a leerling's lessen are beurten in the trade's own word, and the lesauto is on the form", () => {
+  const skin = workSkin("rijschool")!;
+  const row: WorkRow = werkorder({ id: "l", vak: "rijschool", title: "Pakket 20 lessen", client_name: "S. de Boer", status: "bezig", fields: { lespakket: "20 lessen", examen_datum: "2026-10-01" }, repeat_every: "week", visits: [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: null, invoice_id: null }], lines: [{ kind: "les", description: "Rijles", quantity: 1, unit: "uur", unit_price: 55, btw_rate: 21 }] });
+  const card = renderToStaticMarkup(<WorkCard skin={skin} t={t} row={row} />);
+  assert.ok(card.includes("In opleiding") && card.includes("2 lessen nog te factureren"), "not 'beurten'");
+  const panel = renderToStaticMarkup(<VisitsPanel visits={row.visits} t={t} onVisit={() => {}} keys={skin.visitKeys} />);
+  assert.ok(panel.includes("Les gegeven") && !panel.includes("Beurt gedaan"));
+  const form = renderToStaticMarkup(<WorkForm skin={skin} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
+  assert.ok(form.includes("Kenteken") && form.includes("Instructeur") && form.includes("Lespakket") && form.includes("Examendatum"));
 });

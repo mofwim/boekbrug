@@ -207,6 +207,21 @@ export const VAKKEN: Vak[] = [
     ],
   },
   {
+    // [RIJSCHOOL] One learner in training is the work; the lessons are its beurten (werk.ts LES).
+    slug: "rijschool",
+    label: "Rijschool / rijinstructeur",
+    omschrijving: "Rijlessen, lespakketten en examens",
+    regels: [
+      { description: "Rijles (60 minuten)", eenheid: "uur", btw_rate: 21 },
+      { description: "Lespakket", eenheid: "post", btw_rate: 21 },
+      { description: "Praktijkexamen CBR", eenheid: "post", btw_rate: 21 },
+      { description: "Tussentijdse toets", eenheid: "post", btw_rate: 21 },
+      { description: "Theorieles", eenheid: "uur", btw_rate: 21 },
+    ],
+    let_op:
+      "Rijles is 21%. Examengeld dat je één-op-één voor de leerling aan het CBR betaalt en op zijn naam doorberekent, is een doorlopende post zonder btw; reken je het als eigen dienst, dan 21%.",
+  },
+  {
     slug: "dienstverlening",
     label: "Advies / dienstverlening (algemeen)",
     omschrijving: "Uren, projecten en consultancy",

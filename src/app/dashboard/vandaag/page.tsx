@@ -194,9 +194,9 @@ export default async function VandaagPage() {
     if (skin) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: rows, error: werkErr } = await (supabase as any)
-        .from("work_items").select("status, repeat_every, visits").eq("user_id", user.id)
+        .from("work_items").select("status, repeat_every, visits, lines").eq("user_id", user.id)
         .not("status", "in", "(gefactureerd,geannuleerd)").limit(300);
-      if (!werkErr) werk = { pluralKey: skin.pluralKey, counts: workCounts((rows ?? []) as Array<{ status: string; repeat_every: string | null; visits: unknown }>) };
+      if (!werkErr) werk = { pluralKey: skin.pluralKey, counts: workCounts((rows ?? []) as Array<{ status: string; repeat_every: string | null; visits: unknown; lines: unknown }>) };
     }
   } catch { /* no work layer on this deployment → no sentence */ }
 

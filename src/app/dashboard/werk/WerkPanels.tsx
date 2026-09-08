@@ -79,7 +79,7 @@ export function WorkCard({ row, skin, t, onOpen }: { row: WorkRow; skin: WorkSki
             <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 4 }} data-testid="work-repeat">
               {t(REPEAT_KEYS[row.repeat_every])}
               {next ? ` · ${t('werk.volgende')}: ${formatDateNL(next)}` : ''}
-              {openVisits > 0 ? ` · ${t('werk.beurtenOpen', { n: openVisits })}` : ''}
+              {openVisits > 0 ? ` · ${t(skin.visitKeys?.open ?? 'werk.beurtenOpen', { n: openVisits })}` : ''}
             </div>
           )}
         </div>
@@ -389,7 +389,7 @@ export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> &
  * invoice yet, and the one tap that ticks today's off. A billed beurt links to its invoice and
  * cannot be removed; an unbilled one can, in case of a slip.
  */
-export function VisitsPanel({ visits, t, onVisit, onUnvisit, disabled, invoiceHref }: { visits: Visit[]; t: T; onVisit?: (on: string, note: string) => void; onUnvisit?: (on: string) => void; disabled?: boolean; invoiceHref?: (invoiceId: string) => string }) {
+export function VisitsPanel({ visits, t, onVisit, onUnvisit, disabled, invoiceHref, keys }: { visits: Visit[]; t: T; onVisit?: (on: string, note: string) => void; onUnvisit?: (on: string) => void; disabled?: boolean; invoiceHref?: (invoiceId: string) => string; keys?: WorkSkin['visitKeys'] }) {
   const [on, setOn] = useState('')
   const [note, setNote] = useState('')
   const sorted = [...visits].sort((a, b) => b.on.localeCompare(a.on))
@@ -400,7 +400,7 @@ export function VisitsPanel({ visits, t, onVisit, onUnvisit, disabled, invoiceHr
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <DateFieldNL value={on} onChange={setOn} disabled={disabled} />
           <input value={note} disabled={disabled} placeholder={t('werk.beurtNotitie')} aria-label={t('werk.beurtNotitie')} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
-          <button type="button" disabled={disabled} onClick={() => { onVisit(on, note); setOn(''); setNote('') }} style={{ ...primaryButton, width: 'auto', padding: '10px 14px' }}>{t('werk.beurtGedaan')}</button>
+          <button type="button" disabled={disabled} onClick={() => { onVisit(on, note); setOn(''); setNote('') }} style={{ ...primaryButton, width: 'auto', padding: '10px 14px' }}>{t(keys?.done ?? 'werk.beurtGedaan')}</button>
         </div>
       )}
       {sorted.length === 0 && <p style={{ color: M3.onSurfaceVariant, margin: 0 }}>{t('werk.geenBeurten')}</p>}
@@ -416,7 +416,7 @@ export function VisitsPanel({ visits, t, onVisit, onUnvisit, disabled, invoiceHr
             : onUnvisit && <button type="button" onClick={() => onUnvisit(v.on)} disabled={disabled} aria-label={t('werk.verwijderen')} style={ghostButton}>×</button>}
         </div>
       ))}
-      {open > 0 && <p style={{ margin: '4px 0 0', color: M3.onSurface, fontWeight: 600 }}>{t('werk.beurtenOpen', { n: open })}</p>}
+      {open > 0 && <p style={{ margin: '4px 0 0', color: M3.onSurface, fontWeight: 600 }}>{t(keys?.open ?? 'werk.beurtenOpen', { n: open })}</p>}
     </div>
   )
 }

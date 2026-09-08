@@ -7,6 +7,8 @@ that the code does not yet carry.
 
 ## The positioning, in one paragraph
 
+*(8 September 2026: the thesis has since been sharpened into `docs/WERK-GELD.md` — BoekBrug verbindt Werk en Geld. This document remains the loop test the code is measured against.)*
+
 BoekBrug is not another accounting engine. It is the collaboration and preparation layer between
 the ondernemer and the accountant: it collects (Verzamelen), links (Koppelen), signals what is
 missing or doubtful (Signaleren), lets the two work on the same file (Samenwerken), lets the

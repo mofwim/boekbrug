@@ -161,7 +161,7 @@ export function sellsOverCounter(slug: string | null | undefined): boolean {
  */
 // [SEGMENT-TRANSPORT] transport is IN: a courier lives by the kenteken and the APK date of the
 // bus that earns the money, and a bus that fails its keuring is a day without income.
-const VEHICLE_TRADES: ReadonlySet<string> = new Set(["automonteur", "transport"]);
+const VEHICLE_TRADES: ReadonlySet<string> = new Set(["automonteur", "transport", "rijschool"]);
 
 /** Does this owner work on vehicles? Unknown trade → false. */
 export function worksOnVehicles(slug: string | null | undefined): boolean {

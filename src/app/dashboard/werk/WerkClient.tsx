@@ -451,10 +451,10 @@ export default function WerkClient({ vak }: { vak: string }) {
 
           {detail.row.repeat_every && (
             <>
-              <p style={{ fontFamily: FONT, fontSize: 13, fontWeight: 700, color: M3.onSurfaceVariant, margin: '16px 0 6px' }}>{t('werk.beurten')} · {t(REPEAT_KEYS[detail.row.repeat_every])}</p>
+              <p style={{ fontFamily: FONT, fontSize: 13, fontWeight: 700, color: M3.onSurfaceVariant, margin: '16px 0 6px' }}>{t(skin.visitKeys?.list ?? 'werk.beurten')} · {t(REPEAT_KEYS[detail.row.repeat_every])}</p>
               <VisitsPanel visits={detail.row.visits} t={t} disabled={busy || detail.row.status === 'geannuleerd'}
                 onVisit={(on, n) => void visit('visit', on, n)} onUnvisit={(on) => void visit('unvisit', on)}
-                invoiceHref={(id) => `/dashboard/invoice/${id}/edit`} />
+                invoiceHref={(id) => `/dashboard/invoice/${id}/edit`} keys={skin.visitKeys} />
             </>
           )}
 
@@ -521,7 +521,7 @@ export default function WerkClient({ vak }: { vak: string }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
             {invoiceButtonState(detail.row, detail.invoice) === 'make' && (
               <button type="button" onClick={() => void makeInvoice()} disabled={busy || linesDirty} style={primaryButton}>
-                {busy ? t('act.bezig') : detail.row.repeat_every ? t('werk.beurtFactuur', { n: detail.row.visits.filter((v) => !v.invoice_id).length }) : t('werk.factuurMaken')}
+                {busy ? t('act.bezig') : detail.row.repeat_every ? t(skin.visitKeys?.invoice ?? 'werk.beurtFactuur', { n: detail.row.visits.filter((v) => !v.invoice_id).length }) : t('werk.factuurMaken')}
               </button>
             )}
             {invoiceButtonState(detail.row, detail.invoice) === 'view' && (

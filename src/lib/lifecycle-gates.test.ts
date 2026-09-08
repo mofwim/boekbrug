@@ -28312,6 +28312,11 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   // The four skins, on the measured standard: a werkorder opens on a kenteken and charges arbeid
   // and onderdelen; a rit has a laadadres and losadres; a klus a werkadres; an opdracht a locatie.
   assert.match(pure, /skin: "werkorder"[\s\S]*?vehicle: true/);
+  // [RIJSCHOOL] The consultant's test of the primitive: a new trade is data here, never a second engine.
+  assert.match(pure, /const LES: WorkSkin = \{\s*skin: "les"[\s\S]*?recurring: true,\s*visitKeys: \{ list: "werk\.les\.lessen"/);
+  assert.match(pure, /rijschool: LES,/);
+  assert.match(code("src/lib/vak-sjablonen.ts"), /slug: "rijschool"/);
+  assert.match(code("src/lib/vak-profile.ts"), /VEHICLE_TRADES[^\n]*"rijschool"/, "the lesauto has an APK like a garage's cars");
   assert.match(pure, /\{ key: "van", type: "text", labelKey: "werk\.veld\.laadadres", onCard: true, required: true \}/);
   assert.match(pure, /\{ key: "adres", type: "text", labelKey: "werk\.veld\.werkadres", onCard: true, required: true \}/);
   assert.match(pure, /\{ key: "locatie", type: "text", labelKey: "werk\.veld\.locatie", onCard: true, required: true \}/);
@@ -28402,6 +28407,6 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);
   assert.match(code("src/app/dashboard/layout.tsx"), /workTrade = hasWorkLayer\(/);
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
-  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("status, repeat_every, visits"\)/, "Vandaag counts a done beurt as ready to invoice");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("status, repeat_every, visits, lines"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });
