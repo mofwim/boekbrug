@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 129 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 130 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -412,6 +412,11 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_insert_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_select_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_update_own', 'supplier_aliases', 'public'),
+  ('supplier_edit.sql', 'index', 'supplier_iban_history_supplier_idx', null, 'public'),
+  ('supplier_edit.sql', 'index', 'supplier_iban_history_user_iban_idx', null, 'public'),
+  ('supplier_edit.sql', 'policy', 'supplier_iban_history_insert_own', 'supplier_iban_history', 'public'),
+  ('supplier_edit.sql', 'policy', 'supplier_iban_history_select_own', 'supplier_iban_history', 'public'),
+  ('supplier_edit.sql', 'table', 'supplier_iban_history', null, 'public'),
   ('supplier_kvk_index.sql', 'index', 'suppliers_user_kvk_uidx', null, 'public'),
   ('supplier_registry.sql', 'column', 'supplier_id', 'invoices', 'public'),
   ('supplier_registry.sql', 'index', 'idx_invoices_supplier_id', null, 'public'),
@@ -566,7 +571,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 146
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 147
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

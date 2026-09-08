@@ -28,11 +28,25 @@ import type { CorroborationPanel, SupplierBalancePanel } from '@/lib/supplier-ba
 import type { MergePanel } from '@/lib/supplier-merge-copy'
 import { mergeDoneText, mergeRefusalText } from '@/lib/supplier-merge-copy'
 import { failureText } from '@/lib/server-message'
+// [LEVERANCIER-BEWERKEN] The master record, editable. The sheet shows and warns; the server
+// decides (supplier-edit.ts) and keeps the old account number.
+import SupplierEditSheet, { type SupplierEditCard } from '@/components/supplier/SupplierEditSheet'
+import { dateShort } from '@/lib/i18n/format-date'
+
+/** One supplier as the registry has it, plus what the screen needs to place and describe it. */
+export interface SupplierListCard extends SupplierEditCard {
+  invoiceCount: number
+  /** counterpartKey(name) — how a balance line finds its editable row. */
+  balanceKey: string
+  /** ISO date of the last edit, or null for a row nobody ever changed. */
+  updatedOn: string | null
+}
 
 export default function LeveranciersClient({
   balance,
   corroboration,
   merge = null,
+  suppliers = null,
   asOf,
   today,
 }: {
@@ -47,6 +61,11 @@ export default function LeveranciersClient({
    * een samenvoeging kan voorstellen waarvan het evidence juist in het ontbrekende deel stond.
    */
   merge?: MergePanel | null
+  /**
+   * [LEVERANCIER-BEWERKEN] The registry rows, or null when they could not be read. Null is said
+   * out loud ("storing"), never drawn as an empty list.
+   */
+  suppliers?: SupplierListCard[] | null
   asOf: string
   today: string
 }) {
@@ -54,6 +73,24 @@ export default function LeveranciersClient({
   const t = translator(locale)
   const router = useRouter()
   const [gekozen, setGekozen] = useState(asOf)
+  // Which supplier is open in the edit sheet, and the sentence the last save left behind.
+  const [editing, setEditing] = useState<SupplierListCard | null>(null)
+  const [editAnswer, setEditAnswer] = useState<string | null>(null)
+  const supplierByKey = new Map((suppliers ?? []).map((s) => [s.balanceKey, s]))
+
+  const editButton = (card: SupplierListCard) => (
+    <button
+      type="button"
+      onClick={() => { setEditAnswer(null); setEditing(card) }}
+      style={{
+        padding: '6px 12px', borderRadius: R.full, border: `1px solid ${M3.outline}`,
+        background: '#fff', color: M3.primary, fontSize: 12.5, fontWeight: 600,
+        fontFamily: FONT, cursor: 'pointer', whiteSpace: 'nowrap',
+      }}
+    >
+      {t('lev.bewerk.knop')}
+    </button>
+  )
   // Welke rij bezig is, en wat de server terugzei. Eén regel onder het paneel, want dat antwoord
   // gaat over wat er NU in de boeken staat — geen zin die weg mag glijden in een toast.
   const [busyWith, setBusyWith] = useState<string | null>(null)
@@ -237,9 +274,12 @@ export default function LeveranciersClient({
               <div style={{ fontSize: 12, color: '#7C5800', marginTop: 3, lineHeight: 1.5 }}>{l.onbevestigd}</div>
             )}
           </div>
-          <strong style={{ fontSize: 16, fontFamily: FONT_NUM, color: M3.onSurface, whiteSpace: 'nowrap' }}>
-            {l.bedrag}
-          </strong>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexShrink: 0 }}>
+            {supplierByKey.has(l.key) && editButton(supplierByKey.get(l.key) as SupplierListCard)}
+            <strong style={{ fontSize: 16, fontFamily: FONT_NUM, color: M3.onSurface, whiteSpace: 'nowrap' }}>
+              {l.bedrag}
+            </strong>
+          </div>
         </div>
       ))}
 
@@ -269,6 +309,79 @@ export default function LeveranciersClient({
           {balance.onbevestigd && <p style={{ margin: '0 0 6px' }}>{balance.onbevestigd}</p>}
           {balance.zonderLeverancier && <p style={{ margin: 0 }}>{balance.zonderLeverancier}</p>}
         </section>
+      )}
+
+      {/* ── [LEVERANCIER-BEWERKEN] Het register zelf ─────────────────────────────────────────
+          Onder de stand: eerst wat je moet betalen, dan wie die partijen zijn. Elke rij is de
+          waarheid waarop de volgende factuur wordt herkend, en de knop ernaast is de enige plek
+          waar de eigenaar die waarheid voor de TOEKOMST bijstelt. Wat er al in de boeken staat
+          verandert hier niet. */}
+      <section style={{ marginTop: 28 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: '0 0 4px' }}>
+          {t('leveranciers.lijst.kop')}
+        </h2>
+        <p style={{ fontSize: 12.5, color: M3.neutral, lineHeight: 1.55, margin: '0 0 10px' }}>
+          {t('leveranciers.lijst.uitleg')}
+        </p>
+        {editAnswer && (
+          <p style={{
+            background: '#E6F4EA', border: '1px solid #B7DFC9', borderRadius: R.md,
+            padding: 12, fontSize: 13.5, color: '#0B8043', lineHeight: 1.6, margin: '0 0 10px',
+          }}>
+            {editAnswer}
+          </p>
+        )}
+        {suppliers === null && (
+          // [NO-SILENT-EMPTY] A failed read says so — it is not "you have no suppliers".
+          <p role="alert" style={{
+            background: '#FCE8E6', border: '1px solid #F5C6C2', borderRadius: R.md,
+            padding: 12, fontSize: 13.5, color: '#8C1D18', lineHeight: 1.6, margin: 0,
+          }}>
+            {t('leveranciers.lijst.nietGelezen')}
+          </p>
+        )}
+        {suppliers !== null && suppliers.length === 0 && (
+          <p style={{ fontSize: 14, color: M3.neutral, lineHeight: 1.6, margin: 0 }}>{t('leveranciers.lijst.leeg')}</p>
+        )}
+        {(suppliers ?? []).map((s) => (
+          <div key={s.id} style={{
+            borderTop: `1px solid ${M3.outlineVariant}`, padding: '11px 2px',
+            display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'flex-start',
+          }}>
+            <div style={{ minWidth: 0, textAlign: 'start' }}>
+              <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word' }}>
+                {s.name}
+              </div>
+              {/* Identifiers are Latin strings in every language, so the line keeps its own direction. */}
+              <div dir="ltr" style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2, lineHeight: 1.5, fontFamily: FONT_NUM, textAlign: 'start' }}>
+                {[s.iban ?? t('leveranciers.lijst.zonderIban'), s.kvk && `KVK ${s.kvk}`, s.btw].filter(Boolean).join(' · ')}
+              </div>
+              <div style={{ fontSize: 12, color: M3.neutral, marginTop: 2, lineHeight: 1.5 }}>
+                {[
+                  s.invoiceCount === 1 ? t('leveranciers.eenFactuur') : t('leveranciers.aantalFacturen', { aantal: s.invoiceCount }),
+                  s.autoIncasso ? t('leveranciers.lijst.incasso') : null,
+                  s.updatedOn ? t('lev.bewerk.laatstGewijzigd', { datum: dateShort(s.updatedOn, locale) }) : null,
+                ].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            {editButton(s)}
+          </div>
+        ))}
+      </section>
+
+      {editing && (
+        <SupplierEditSheet
+          supplier={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(result) => {
+            setEditing(null)
+            setEditAnswer(
+              [t('lev.bewerk.opgeslagen', { naam: result.name }), result.ibanReplaced ? t('lev.bewerk.opgeslagenIban') : null]
+                .filter(Boolean).join(' '),
+            )
+            router.refresh()
+          }}
+        />
       )}
 
       {/* ── De controle ──────────────────────────────────────────────────────────────────────

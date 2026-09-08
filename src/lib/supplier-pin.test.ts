@@ -12,7 +12,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { planSupplierPin, supplierPinChanges } from './supplier-pin'
+import { planSupplierPin, supplierPinChanges, SUPPLIER_PIN_REFUSAL_KEY } from './supplier-pin'
+import { MESSAGES } from './i18n/messages'
 
 test('[LEVERANCIER-VASTLEGGEN] the OZ&ER form, normalized the way the registry reads it', () => {
   const plan = planSupplierPin({
@@ -37,8 +38,18 @@ test('[LEVERANCIER-VASTLEGGEN] a mistyped IBAN is refused, and the refusal says 
   assert.equal(plan.ok, false)
   if (plan.ok) return
   assert.equal(plan.field, 'iban', 'the form must know WHICH field to mark')
-  assert.match(plan.error, /controlecijfers/)
-  assert.match(plan.error, /élke echte factuur/, 'it names the consequence, not just the rule')
+  assert.equal(plan.code, 'iban_checksum')
+  // The sentence lives in the catalogue, in Dutch first, and names the consequence, not just the rule.
+  const dutch = MESSAGES[SUPPLIER_PIN_REFUSAL_KEY[plan.code]].nl
+  assert.match(dutch, /controlecijfers/)
+  assert.match(dutch, /élke echte factuur/, 'it names the consequence, not just the rule')
+})
+
+test('[TAAL] every refusal has a sentence, and the module itself holds none', () => {
+  for (const key of Object.values(SUPPLIER_PIN_REFUSAL_KEY)) {
+    assert.ok(key in MESSAGES, `${key} exists in messages.ts`)
+    assert.ok(MESSAGES[key].nl.length > 0, `${key} has its Dutch`)
+  }
 })
 
 test('[LEVERANCIER-VASTLEGGEN] empty means CLEAR — that is what makes it an editor', () => {

@@ -32,15 +32,20 @@ import { createServerSupabaseClient } from '@/lib/supabase-server'
 // into the owner's registry, exactly as their invoice lands in the owner's books.
 import { getActingFor } from '@/lib/acting-for-server'
 import { invoiceOwnerId } from '@/lib/acting-for'
-import { planSupplierPin, supplierPinChanges } from '@/lib/supplier-pin'
+import { planSupplierPin, supplierPinChanges, SUPPLIER_PIN_REFUSAL_KEY } from '@/lib/supplier-pin'
+// [TAAL] Every sentence this route answers with comes from the catalogue, in the language of
+// whoever is typing. The screen shows a server sentence as it is (server-message.ts), so a Dutch
+// literal here was a Dutch toast under an Arabic form.
+import { serverTranslator } from '@/lib/i18n/server'
 import { learnSupplierAlias } from '@/lib/supplier-alias-write'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const t = await serverTranslator()
   const acting = await getActingFor()
-  if (!acting) return NextResponse.json({ error: 'Niet ingelogd' }, { status: 401 })
+  if (!acting) return NextResponse.json({ error: t('lev.fout.nietIngelogd'), code: 'unauthorized' }, { status: 401 })
   const ownerId = invoiceOwnerId(acting)
 
   const { id } = await params
@@ -58,7 +63,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // genuine invoice from this supplier.
   const plan = planSupplierPin(body)
   if (!plan.ok) {
-    return NextResponse.json({ error: plan.error, field: plan.field }, { status: 400 })
+    return NextResponse.json(
+      { error: t(SUPPLIER_PIN_REFUSAL_KEY[plan.code]), field: plan.field, code: plan.code },
+      { status: 400 },
+    )
   }
 
   // The invoice this correction is being made from. Owner-scoped and incoming-only: a supplier is
@@ -71,7 +79,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .eq('direction', 'incoming')
     .maybeSingle()
   if (invErr) return NextResponse.json({ error: 'lookup_failed', detail: invErr.message }, { status: 500 })
-  if (!invoice) return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+  if (!invoice) return NextResponse.json({ error: t('lev.fout.factuurNietGevonden'), code: 'not_found' }, { status: 404 })
 
   // ── 1. The alias, and with it the supplier itself ──
   //
@@ -124,7 +132,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       // not happen is the one outcome that would make them stop checking.
       if (upErr) {
         return NextResponse.json(
-          { error: 'De leverancier kon niet worden bijgewerkt. Probeer het zo meteen opnieuw.', detail: upErr.message },
+          { error: t('lev.fout.bijwerken'), code: 'update_failed', detail: upErr.message },
           { status: 500 },
         )
       }
@@ -146,7 +154,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .eq('receiver_id', ownerId)
   if (selfErr) {
     return NextResponse.json(
-      { error: 'De naam kon niet op deze factuur worden gezet.', detail: selfErr.message },
+      { error: t('lev.fout.naamOpFactuur'), code: 'rename_failed', detail: selfErr.message },
       { status: 500 },
     )
   }

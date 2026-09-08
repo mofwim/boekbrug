@@ -210,6 +210,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   // en dat is precies de vraag die iemand stelt als een crediteurenstand er anders uitziet dan
   // vorige maand.
   "log.supplier.merged",
+  "log.supplier.updated",
   // Level 3 — Files
   "log.document.uploaded", "log.document.duplicate_blocked", "log.document.deleted",
   "log.document.bulk_deleted", "log.document.restored", "log.article.bulk_deleted",
