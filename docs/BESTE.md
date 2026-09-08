@@ -54,7 +54,7 @@ button said "Facturen".
 - The open balance on the customer list, counted server-side through summarise() and shown only
   when there is something; null when the read failed, so nobody wears a zero.
 
-## Batch 2b — next
+## Batch 2b — next, each its own researched batch
 
 Cost kind on a purchase invoice defaulted from the supplier (unblocks the margin breakdown); tips and drawer count on the
 day closing; a period lock with the accountant's quarter verdict; privé/zakelijk split on a bank
@@ -74,4 +74,11 @@ inbound e-mail address for receipts (needs the owner's DNS and Resend configurat
   machine on this product.
 - **Tax computed and "filed" in-app.** The aangifte screen is a concept the owner hands in on Mijn
   Belastingdienst Zakelijk; the app does not pretend to file.
+- **A period lock on a filed quarter.** Every package locks the period; BoekBrug instead records
+  what a later change did to a filed quarter (filed-quarter.ts) and proposes the suppletie. A
+  lock would stop the owner correcting a real mistake; the divergence report is the honest form.
+- **A timer on hours.** The hours screen says it in its header: write them down, turn them into an
+  invoice — no projects, no budgets, no timer. A running clock is a habit, not a fact.
+- **Tips on the day closing.** Fooien are not omzet and carry their own tax rules when they reach
+  staff; a checkbox on the closing would book them wrong more often than right.
 - **Translating the documents.** Never — see AGENTS.md.
