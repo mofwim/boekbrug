@@ -24977,6 +24977,49 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [TAAL] Two pure modules that carried Dutch of their own ────────────────────────────────────
+//
+// invoice-sort.ts held its sort labels as Dutch sentences and reimport-eligibility.ts returned a
+// Dutch paragraph, and three screens on the [TAAL] line printed both straight — so an owner reading
+// the app in Arabic saw "Toegevoegd (nieuwste eerst)" on the sort button and a Dutch hint above
+// "إعادة القراءة". Neither tripped the screen gates: `{s.label}` is an expression, not a JSX text
+// node, which is exactly how a translation stays half finished. So the rule is held at the source:
+// a pure module hands back keys, and the screen's `t` says them.
+test("[TAAL] the sort labels and the reread hint are keys, and every screen says them through t()", () => {
+  const sort = code("src/lib/invoice-sort.ts");
+  const reread = code("src/lib/reimport-eligibility.ts");
+
+  // The table is keys only. One Dutch label left in it would render as Dutch on every screen again.
+  const labels = [...sort.matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
+  assert.ok(labels.length >= 8, `the sort table shrank to ${labels.length} rows — is it still the table?`);
+  for (const l of labels) assert.match(l, /^sort\./, `"${l}" is a sentence in the sort table, not a key`);
+  assert.match(sort, /label: MessageKey/, "the label type must be MessageKey, so a sentence cannot type-check");
+
+  // The hint is a key, and no Dutch is left in the module that used to hold it.
+  assert.match(reread, /export function reimportPromptKey\(d: ReimportDecision\): MessageKey \| null/);
+  assert.doesNotMatch(reread, /Klopt er iets niet/, "the Dutch sentence is back in reimport-eligibility.ts");
+
+  // Every consumer says the key through t(). A screen printing `.label` or the key itself would show
+  // "sort.toegevoegdNieuwste" on a button, which is worse than Dutch.
+  for (const f of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/vandaag/VandaagClient.tsx",
+  ]) {
+    const scherm = code(f);
+    assert.match(scherm, /\{t\(s\.label\)\}/, `${f} prints a sort label without t()`);
+    assert.doesNotMatch(scherm, /\{s\.label\}/, `${f} still prints a raw sort label`);
+    assert.doesNotMatch(scherm, /\?\.label \?\? ["']Sorteren["']/, `${f} falls back to a raw Dutch word`);
+  }
+  for (const f of [
+    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
+    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
+  ]) {
+    const scherm = code(f);
+    assert.match(scherm, /rereadKey && t\(rereadKey\)/, `${f} does not say the reread hint through t()`);
+    assert.doesNotMatch(scherm, /reimportPromptText/, `${f} still calls the function that returned Dutch`);
+  }
+});
+
 // ── [ACTIES-ALTIJD] ───────────────────────────────────────────────────────────────────────────
 //
 // On /dashboard/incoming/manage the four things an owner does with an invoice — Bekijk PDF,
@@ -25007,8 +25050,15 @@ test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens t
   // the two ways in can never disagree about what is open.
   assert.match(scherm, /aria-expanded=\{expanded\}/, "the chevron does not say whether the card is open");
   assert.match(scherm, /aria-controls=\{`inv-detail-\$\{inv\.id\}`\}/, "…nor which block it opens");
-  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 2,
-    "the header and the chevron must both toggle the same state — two openers, one fold");
+  // [ALLEEN-DE-PIJL] ONE opener. The header toggled the fold as well, and the owner asked for
+  // that to stop: with the actions on every card, a row that opens on any tap opens while you
+  // reach for "Heb je betaald?" or drag across the number, and the list jumps under your hand.
+  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 1,
+    "the fold has more than one opener again — the header is toggling it beside the chevron");
+  const kop = scherm.slice(scherm.indexOf('className="inv-row"'), scherm.indexOf('className="inv-row"') + 900);
+  assert.doesNotMatch(kop, /setExpandedId\(/, "the row header opens the fold — only the chevron may");
+  assert.match(kop, /if \(selectMode && selectableInMode\(inv\)\) toggleSelect\(inv\.id\)/,
+    "…but in select mode a tap on the header must still toggle the selection");
 
   // The card is taller when closed now, and the estimate that sizes the scrollbar before paint is
   // shared with two lists that did not change. So this list carries its own, in both breakpoints.

@@ -34,7 +34,7 @@ import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN, sh
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 // [REREAD-CONFIRMED] Who may be read again — the same rule the server re-checks.
-import { reimportDecision, reimportPromptText } from '@/lib/reimport-eligibility'
+import { reimportDecision, reimportPromptKey } from '@/lib/reimport-eligibility'
 // [DUP-ON-PAY] Two rows, one invoice number — the pair the pay screen never mentioned.
 // [VERVANG-OVERAL] …en het antwoord erop, dat tot nu toe alleen in de controlewachtrij stond.
 import { supersedeTargetOf } from '@/lib/supersede-target'
@@ -2448,7 +2448,7 @@ export default function IncomingManageClient({
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>swap_vert</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#49454F', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {SORTS.find(s => s.id === sortBy)?.label ?? t('inkoop.sorteren')}
+                    {t(SORTS.find(s => s.id === sortBy)?.label ?? 'inkoop.sorteren')}
                   </span>
                 </span>
                 <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#49454F', flexShrink: 0 }} aria-hidden>
@@ -2463,7 +2463,7 @@ export default function IncomingManageClient({
                       onClick={() => { setSortBy(s.id); setShowSortMenu(false) }}
                       style={{ display: 'block', width: '100%', padding: '12px 16px', textAlign: 'start', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? M3.primaryContainer : '#fff', color: sortBy === s.id ? M3.onPrimaryContainer : M3.onSurface, borderBottom: '0.5px solid #F1F3F4' }}
                     >
-                      {s.label}
+                      {t(s.label)}
                     </button>
                   ))}
                 </div>
@@ -2809,6 +2809,8 @@ export default function IncomingManageClient({
               // that then says no has been misled by the screen, not by the server.
               const reread = reimportDecision(inv)
               const rereadOk = reread.allowed
+              // [TAAL] The sentence above the button, as a key the screen says in the owner's language.
+              const rereadKey = reimportPromptKey(reread)
               // [DUP-ON-PAY] Is there a second row with this supplier's same invoice number?
               const duplicate = duplicateByRow.get(inv.id) ?? null
               // [PAY-SAFE-CONFIRM] prepared-but-unconfirmed: payment QR generated,
@@ -2928,9 +2930,13 @@ export default function IncomingManageClient({
                       it); otherwise it expands. */}
                   <div
                     className="inv-row"
-                    onClick={onRowTap(() => selectMode
-                      ? (selectableInMode(inv) && toggleSelect(inv.id))
-                      : setExpandedId(expanded ? null : inv.id))}
+                    // [ALLEEN-DE-PIJL] The header no longer opens the fold. It did, and with the
+                    // action row now standing on every card the owner asked for one door: the
+                    // chevron. A row that opens on any tap is a row that opens while you reach
+                    // for "Heb je betaald?" or drag across the number to copy it — and then the
+                    // list jumps. In select mode a tap still toggles the selection, which is the
+                    // one thing the header is FOR in that mode.
+                    onClick={onRowTap(() => { if (selectMode && selectableInMode(inv)) toggleSelect(inv.id) })}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
                     // [BUNDEL-SELECTIE] `isSelected`, not raw selectedIds: selectedRows now drops a
@@ -2938,7 +2944,7 @@ export default function IncomingManageClient({
                     // rows to 'paid' mid-selection). Keying the highlight off the raw id would let
                     // a row keep the selected background while the bar no longer counts it — and it
                     // cannot be tapped off either, since the toggle only fires on 'received'.
-                    style={{ background: (selectedIds[inv.id] && selectableInMode(inv)) ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && !selectableInMode(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !selectableInMode(inv) ? 0.4 : 1 }}
+                    style={{ background: (selectedIds[inv.id] && selectableInMode(inv)) ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && selectableInMode(inv) ? 'pointer' : 'default', transition: 'background 0.4s ease', opacity: selectMode && !selectableInMode(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
                     {selectMode && selectableInMode(inv) && (
@@ -3467,8 +3473,9 @@ export default function IncomingManageClient({
                       purpose lived behind a door with no handle.
 
                       The row is now part of the card, and the chevron at its start opens what stayed
-                      folded: the read figures, the dates, the incasso switch. Two ways in — the row
-                      header still toggles too — and one visible.
+                      folded: the read figures, the dates, the incasso switch. [ALLEEN-DE-PIJL] It is
+                      the ONLY way in: the header used to toggle too, and the owner asked for that to
+                      stop — see the note on the header's onClick.
 
                       The chevron takes the START edge (marginInlineEnd: auto pushes the actions to
                       the end), which is where the owner drew it: on an RTL screen the actions sit at
@@ -3710,7 +3717,7 @@ export default function IncomingManageClient({
                           when something IS wrong is what turns that habit from a cost into one tap. */}
                       {rereadOk && (
                         <p style={{ fontSize: 12, color: M3.onSurfaceVariant, margin: '0 0 8px', lineHeight: 1.45 }}>
-                          {reimportPromptText(reread)}
+                          {rereadKey && t(rereadKey)}
                         </p>
                       )}
 
@@ -4604,19 +4611,12 @@ export default function IncomingManageClient({
               </div>
             )}
 
-            {incassoResult.held.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: '0 0 6px' }}>
-                  {incassoResult.held.length === 1 ? t('ink.nietAangeraaktEen') : t('ink.nietAangeraakt', { n: incassoResult.held.length })}
-                </p>
-                {incassoResult.held.map((h, i) => (
-                  <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
-                    {h.invoiceNumber ?? t('ink.zonderNummer')} — {h.reason}
-                  </p>
-                ))}
-              </div>
-            )}
-
+            {/* [GEEN-LIJST] The "N facturen met opzet niet aangeraakt" list stood here — every
+                invoice the switch deliberately did NOT mark paid, each with its reason. The owner
+                judged it noise, and the reasons arrived in Dutch on an Arabic screen besides. The
+                invoices it named are still on the list above as unpaid, which is the statement that
+                matters; `held` still decides whether "niets open" may be said below, so the dialog
+                does not claim an empty book over rows it chose to leave alone. */}
             {incassoResult.on && incassoResult.booked.length === 0 && incassoResult.held.length === 0 && !incassoResult.warning && (
               <p style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.45 }}>
                 {t('inkoop.fout.nietsOpen')}

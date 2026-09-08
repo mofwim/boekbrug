@@ -7,19 +7,25 @@
 //
 // Pure + client-safe: no React, no Supabase, no Date.now().
 
+import type { MessageKey } from './i18n/messages'
+
 export type SortKey =
   | 'added_desc' | 'invdate_desc' | 'invdate_asc'
   | 'due_asc' | 'paydate_desc' | 'amount_desc' | 'amount_asc' | 'vendor_asc'
 
-export const SORTS: { id: SortKey; label: string }[] = [
-  { id: 'added_desc',   label: 'Toegevoegd (nieuwste eerst)'  },
-  { id: 'invdate_desc', label: 'Factuurdatum (nieuwste eerst)' },
-  { id: 'invdate_asc',  label: 'Factuurdatum (oudste eerst)'   },
-  { id: 'due_asc',      label: 'Vervaldatum (eerst verlopen)'  },
-  { id: 'paydate_desc', label: 'Betaaldatum (nieuwste eerst)'  },
-  { id: 'amount_desc',  label: 'Bedrag (hoog → laag)'          },
-  { id: 'amount_asc',   label: 'Bedrag (laag → hoog)'          },
-  { id: 'vendor_asc',   label: 'Leverancier (A–Z)'             },
+// [TAAL] Keys, not sentences. This table held its labels in Dutch and three screens printed them
+// straight — so an owner reading the app in Arabic saw "Toegevoegd (nieuwste eerst)" on the sort
+// button while every word around it was translated. A pure module carries no language of its own;
+// the screen's `t` says the label in the owner's language, and the catalogue holds all three.
+export const SORTS: { id: SortKey; label: MessageKey }[] = [
+  { id: 'added_desc',   label: 'sort.toegevoegdNieuwste'  },
+  { id: 'invdate_desc', label: 'sort.factuurdatumNieuwste' },
+  { id: 'invdate_asc',  label: 'sort.factuurdatumOudste'   },
+  { id: 'due_asc',      label: 'sort.vervaldatumVerlopen'  },
+  { id: 'paydate_desc', label: 'sort.betaaldatumNieuwste'  },
+  { id: 'amount_desc',  label: 'sort.bedragHoogLaag'       },
+  { id: 'amount_asc',   label: 'sort.bedragLaagHoog'       },
+  { id: 'vendor_asc',   label: 'sort.leverancierAZ'        },
 ]
 
 // Minimal shape a row must have to be sortable. Every field optional: a surface

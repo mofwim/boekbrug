@@ -914,6 +914,18 @@ export const MESSAGES = {
   'inkoop.factuurdatum': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
   'inkoop.vervaldatum': { nl: 'Vervaldatum', ar: 'تاريخ الاستحقاق', en: 'Due date' },
   'inkoop.sorteren': { nl: 'Sorteren', ar: 'ترتيب', en: 'Sort' },
+  // [TAAL] De sorteerkeuzes van invoice-sort.ts. Ze stonden als Nederlandse zinnen in die module en
+  // drie schermen drukten ze zo af — dus op een Arabisch scherm stond "Toegevoegd (nieuwste eerst)"
+  // op de knop terwijl alles eromheen vertaald was. Geen pijlen in het Arabisch: een richting in
+  // een zin is precies wat [TAAL] omdraait, en "van hoog naar laag" heeft er geen nodig.
+  'sort.toegevoegdNieuwste':  { nl: 'Toegevoegd (nieuwste eerst)',   ar: 'تاريخ الإضافة (الأحدث أولاً)',        en: 'Added (newest first)' },
+  'sort.factuurdatumNieuwste': { nl: 'Factuurdatum (nieuwste eerst)', ar: 'تاريخ الفاتورة (الأحدث أولاً)',      en: 'Invoice date (newest first)' },
+  'sort.factuurdatumOudste':   { nl: 'Factuurdatum (oudste eerst)',   ar: 'تاريخ الفاتورة (الأقدم أولاً)',      en: 'Invoice date (oldest first)' },
+  'sort.vervaldatumVerlopen':  { nl: 'Vervaldatum (eerst verlopen)',  ar: 'تاريخ الاستحقاق (المتأخّر أولاً)',   en: 'Due date (overdue first)' },
+  'sort.betaaldatumNieuwste':  { nl: 'Betaaldatum (nieuwste eerst)',  ar: 'تاريخ الدفع (الأحدث أولاً)',         en: 'Payment date (newest first)' },
+  'sort.bedragHoogLaag':       { nl: 'Bedrag (hoog → laag)',          ar: 'المبلغ (من الأعلى إلى الأدنى)',      en: 'Amount (high → low)' },
+  'sort.bedragLaagHoog':       { nl: 'Bedrag (laag → hoog)',          ar: 'المبلغ (من الأدنى إلى الأعلى)',      en: 'Amount (low → high)' },
+  'sort.leverancierAZ':        { nl: 'Leverancier (A–Z)',             ar: 'المورّد (أ–ي)',                     en: 'Supplier (A–Z)' },
   'inkoop.wissen': { nl: 'Wissen', ar: 'مسح', en: 'Clear' },
   'inkoop.sluiten': { nl: 'Sluiten', ar: 'إغلاق', en: 'Close' },
   'inkoop.duidelijk': { nl: 'Duidelijk', ar: 'مفهوم', en: 'Got it' },
@@ -7286,16 +7298,6 @@ export const MESSAGES = {
     ar: 'فاتورة واحدة',
     en: '1 invoice',
   },
-  'ink.nietAangeraakt': {
-    nl: '{n} facturen met opzet niet aangeraakt',
-    ar: '{n} فاتورة تُركت عمداً دون تغيير',
-    en: '{n} invoices deliberately left untouched',
-  },
-  'ink.nietAangeraaktEen': {
-    nl: '1 factuur met opzet niet aangeraakt',
-    ar: 'فاتورة واحدة تُركت عمداً دون تغيير',
-    en: '1 invoice deliberately left untouched',
-  },
   'ink.nietGelukt': {
     nl: 'Niet gelukt',
     ar: 'لم ينجح',
@@ -7435,6 +7437,20 @@ export const MESSAGES = {
     nl: 'Opnieuw inlezen',
     ar: 'إعادة القراءة',
     en: 'Re-read',
+  },
+  // [TAAL] De zin boven de knop, uit reimport-eligibility.ts. Twee sleutels en geen parameter: de
+  // bevestigde factuur verhuist naar de controlewachtrij en dat moet VÓÓR de tik gezegd worden —
+  // een factuur die van de betaallijst verdwijnt zonder aankondiging leest als een kwijtgeraakte
+  // rekening. De wachtrijfactuur blijft waar hij is, en die zin zegt dat niet, want het is niet zo.
+  'ink.opnieuwInlezenNaarWachtrij': {
+    nl: 'Klopt er iets niet aan deze factuur? Laat hem opnieuw inlezen — hij gaat dan terug naar de controlewachtrij zodat je de nieuwe bedragen bevestigt.',
+    ar: 'هل في هذه الفاتورة خطأ؟ أعِد قراءتها — ستعود عندها إلى قائمة المراجعة لتؤكّد المبالغ الجديدة.',
+    en: 'Something wrong on this invoice? Have it read again — it then goes back to the review queue so you can confirm the new amounts.',
+  },
+  'ink.opnieuwInlezenBlijft': {
+    nl: 'Klopt er iets niet aan deze factuur? Laat hem opnieuw inlezen.',
+    ar: 'هل في هذه الفاتورة خطأ؟ أعِد قراءتها.',
+    en: 'Something wrong on this invoice? Have it read again.',
   },
   'ink.opnieuwInlezenMislukt': {
     nl: 'Opnieuw inlezen is niet gelukt — probeer het later opnieuw.',

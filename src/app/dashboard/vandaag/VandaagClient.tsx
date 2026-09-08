@@ -474,7 +474,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
                 <path d="M7 4v13M7 17l-3-3M7 17l3-3" /><path d="M17 20V7M17 7l-3 3M17 7l3 3" />
               </svg>
               <span style={{ fontSize: 13, fontWeight: 600, color: "#49454F", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {VANDAAG_SORTS.find((s) => s.id === sortBy)?.label ?? "Sorteren"}
+                {t(VANDAAG_SORTS.find((s) => s.id === sortBy)?.label ?? 'inkoop.sorteren')}
               </span>
             </span>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#49454F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: showSortMenu ? "rotate(180deg)" : "none" }}>
@@ -489,7 +489,7 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
                   onClick={() => { setSortBy(s.id); setShowSortMenu(false); }}
                   style={{ display: "block", width: "100%", padding: "12px 16px", textAlign: "start", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 14, fontWeight: sortBy === s.id ? 600 : 400, background: sortBy === s.id ? "#D3E3FD" : "#fff", color: sortBy === s.id ? "#041E49" : M3.onSurface, borderBottom: "0.5px solid #F1F3F4" }}
                 >
-                  {s.label}
+                  {t(s.label)}
                 </button>
               ))}
             </div>
