@@ -7170,16 +7170,6 @@ export const MESSAGES = {
     ar: 'فاتورة واحدة',
     en: '1 invoice',
   },
-  'ink.nietAangeraakt': {
-    nl: '{n} facturen met opzet niet aangeraakt',
-    ar: '{n} فاتورة تُركت عمداً دون تغيير',
-    en: '{n} invoices deliberately left untouched',
-  },
-  'ink.nietAangeraaktEen': {
-    nl: '1 factuur met opzet niet aangeraakt',
-    ar: 'فاتورة واحدة تُركت عمداً دون تغيير',
-    en: '1 invoice deliberately left untouched',
-  },
   'ink.nietGelukt': {
     nl: 'Niet gelukt',
     ar: 'لم ينجح',

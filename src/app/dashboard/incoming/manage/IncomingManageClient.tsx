@@ -4611,19 +4611,12 @@ export default function IncomingManageClient({
               </div>
             )}
 
-            {incassoResult.held.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#7C5800', margin: '0 0 6px' }}>
-                  {incassoResult.held.length === 1 ? t('ink.nietAangeraaktEen') : t('ink.nietAangeraakt', { n: incassoResult.held.length })}
-                </p>
-                {incassoResult.held.map((h, i) => (
-                  <p key={i} style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '2px 0', lineHeight: 1.45 }}>
-                    {h.invoiceNumber ?? t('ink.zonderNummer')} — {h.reason}
-                  </p>
-                ))}
-              </div>
-            )}
-
+            {/* [GEEN-LIJST] The "N facturen met opzet niet aangeraakt" list stood here — every
+                invoice the switch deliberately did NOT mark paid, each with its reason. The owner
+                judged it noise, and the reasons arrived in Dutch on an Arabic screen besides. The
+                invoices it named are still on the list above as unpaid, which is the statement that
+                matters; `held` still decides whether "niets open" may be said below, so the dialog
+                does not claim an empty book over rows it chose to leave alone. */}
             {incassoResult.on && incassoResult.booked.length === 0 && incassoResult.held.length === 0 && !incassoResult.warning && (
               <p style={{ fontSize: 12.5, color: M3.onSurfaceVariant, margin: '0 0 14px', lineHeight: 1.45 }}>
                 {t('inkoop.fout.nietsOpen')}
