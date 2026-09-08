@@ -10,7 +10,7 @@ import { ZzpDashboard } from './zzp/ZzpDashboard'
 import type { HeaderProfile } from './_shared'
 
 export default function DashboardClient(
-  { profile, vehicleTrade = false }: { profile: HeaderProfile; vehicleTrade?: boolean },
+  { profile, vehicleTrade = false, workPluralKey = null }: { profile: HeaderProfile; vehicleTrade?: boolean; workPluralKey?: string | null },
 ) {
-  return <ZzpDashboard profile={profile} vehicleTrade={vehicleTrade} />
+  return <ZzpDashboard profile={profile} vehicleTrade={vehicleTrade} workPluralKey={workPluralKey} />
 }

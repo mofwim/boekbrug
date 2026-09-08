@@ -63,13 +63,14 @@ import { M3, R, COLUMN } from '@/lib/design/tokens'
 import DashboardTools from '@/components/tools/DashboardTools'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+import type { MessageKey } from '@/lib/i18n/messages'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export function ZzpDashboard(
-  { profile, vehicleTrade = false }: { profile: HeaderProfile; vehicleTrade?: boolean },
+  { profile, vehicleTrade = false, workPluralKey = null }: { profile: HeaderProfile; vehicleTrade?: boolean; workPluralKey?: string | null },
 ) {
   const router   = useRouter()
   const t        = translator(useLocale())
@@ -318,6 +319,12 @@ export function ZzpDashboard(
               {vehicleTrade && (
                 <AdminTile icon="directions_car" tint="#0B57D0" label={t('vtg.titel')}
                   onClick={() => router.push('/dashboard/voertuigen')} />
+              )}
+              {/* [WERK] The trade's own work, in its own plural: Werkorders, Ritten, Klussen,
+                  Opdrachten. Absent for a trade without a work layer, exactly as before. */}
+              {workPluralKey && (
+                <AdminTile icon="work" tint="#0B57D0" label={t(workPluralKey as MessageKey)}
+                  onClick={() => router.push('/dashboard/werk')} />
               )}
             </div>
           </section>

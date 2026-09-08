@@ -70,6 +70,8 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   // andere drie horen bij de home en krijgen die al via de veilige fallback.
   ["/dashboard/kassa", "kassa.titel"],
   ["/dashboard/voertuigen", "vtg.titel"],
+  // [WERK] The trade's own work screen; its title is the generic word, the trade's noun is inside.
+  ["/dashboard/werk", "werk.titel"],
   ["/dashboard/bedrijfsmiddelen", "bm.titel"],
   ["/dashboard/settings/team", "team.titel"],
   // [UREN-DEUR] Het urenscherm bestond, was vertaald en getest, en had geen enkele link naar zich

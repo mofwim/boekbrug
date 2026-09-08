@@ -34,6 +34,8 @@ import { supplierNameKey } from "@/lib/supplier-registry";
 import { quotesNeedingFollowup } from "@/lib/offerte-followup";
 import { amsterdamToday } from "@/lib/format-nl";
 import { SELF_ACTIONS, HAND_ACTIONS } from "@/lib/zelfstandig";
+// [WERK] The trade's own work counts: what is ready to invoice, what waits.
+import { workSkin, workCounts } from "@/lib/werk";
 
 /** [ZIEL] Seven days back, as ISO. A function, so the page component itself calls no clock in render. */
 function weekAgoIso(): string {
@@ -183,6 +185,21 @@ export default async function VandaagPage() {
   const pendingBankQ = supabase.from("bank_transactions").select("id", { count: "exact", head: true })
     .eq("user_id", user.id).eq("status", "pending");
 
+  // [WERK] Read apart and in a try, like the vak read on the home: a missing column or table must
+  // cost one sentence, never the screen.
+  let werk: { pluralKey: string; counts: ReturnType<typeof workCounts> } | null = null;
+  try {
+    const { data: vakRow } = await supabase.from("profiles").select("vak").eq("id", user.id).maybeSingle();
+    const skin = workSkin((vakRow as { vak?: string | null } | null)?.vak);
+    if (skin) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: rows, error: werkErr } = await (supabase as any)
+        .from("work_items").select("status").eq("user_id", user.id)
+        .not("status", "in", "(gefactureerd,geannuleerd)").limit(300);
+      if (!werkErr) werk = { pluralKey: skin.pluralKey, counts: workCounts((rows ?? []) as Array<{ status: string }>) };
+    }
+  } catch { /* no work layer on this deployment → no sentence */ }
+
   const [
     { data: payableRaw, error: payableErr },
     { data: remindRaw, error: remindErr },
@@ -282,5 +299,5 @@ export default async function VandaagPage() {
     amsterdamToday(),
   ).map((r) => ({ ...r.quote, followupState: r.state, followupDays: r.days }));
 
-  return <VandaagClient payable={payable} remind={remind} offertes={offertes} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} zelf={zelf} />;
+  return <VandaagClient payable={payable} remind={remind} offertes={offertes} loadFailed={loadFailed} toVerifyCount={toVerifyCount ?? 0} datelessPayableCount={datelessPayableCount ?? 0} zelf={zelf} werk={werk} />;
 }

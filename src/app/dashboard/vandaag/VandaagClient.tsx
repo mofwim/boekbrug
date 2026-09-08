@@ -49,6 +49,8 @@ import CashflowPanel from '@/components/cashflow/CashflowPanel'
 // [BEVEILIGING] Zie de kop van dat bestand: hij rendert niets zodra de tweede stap aanstaat.
 import { TweestapsHint } from '@/components/beveiliging/TweestapsHint'
 import { selfShare, type SelfShareCounts } from '@/lib/zelfstandig'
+import type { WorkCounts } from '@/lib/werk'
+import Link from 'next/link'
 
 // ─── Material You tokens (matched 1:1 with IncomingManageClient) ──────────────
 
@@ -90,6 +92,17 @@ interface Props {
   datelessPayableCount?: number; // [DATELESS-TASK] confirmed incoming bills with no due date (else invisible)
   /** [ZIEL] This week's self/hand counts and what waits; null when the read failed (then nothing is said). */
   zelf?: SelfShareCounts | null;
+  /** [WERK] The trade's own counts and plural; null for a trade without a work layer or a failed read. */
+  werk?: { pluralKey: string; counts: WorkCounts } | null;
+}
+
+/** [WERK] One sentence in the trade's own word: what is ready to invoice, what is in hand, what waits. Pure. */
+export function werkZin(werk: { pluralKey: string; counts: WorkCounts } | null | undefined, t: (k: string, v?: Record<string, string | number>) => string): string | null {
+  if (!werk) return null;
+  const c = werk.counts;
+  const plural = t(werk.pluralKey);
+  if (c.open + c.bezig + c.wacht + c.klaar === 0) return t('vandaag.werk.niets', { plural });
+  return `${plural}: ${t('vandaag.werk.zin', { klaar: c.klaar, bezig: c.bezig + c.open, wacht: c.wacht })}`;
 }
 
 /** [ZIEL] One sentence: what the app did by itself this week, and what waits. Pure. */
@@ -170,7 +183,7 @@ const VANDAAG_SORTS = SORTS.filter((s) => VANDAAG_SORT_KEYS.includes(s.id));
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0, zelf = null }: Props) {
+export default function VandaagClient({ payable, remind, offertes = [], loadFailed, toVerifyCount = 0, datelessPayableCount = 0, zelf = null, werk = null }: Props) {
   const t = translator(useLocale())
   const router = useRouter();
   // [HAND-DUBBEL] De app-brede bevestigingsdialoog (DialogProvider staat in de root layout).
@@ -366,6 +379,16 @@ export default function VandaagClient({ payable, remind, offertes = [], loadFail
         {zelfZin(zelf, t as (k: string, v?: Record<string, string | number>) => string) && (
           <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
             {zelfZin(zelf, t as (k: string, v?: Record<string, string | number>) => string)}
+          </p>
+        )}
+        {/* [WERK] The trade's day first, in its own word — a mechanic reads "Werkorders: 2 klaar
+            voor de factuur" before any invoice. One line, one link, absent for other trades. */}
+        {werkZin(werk, t as (k: string, v?: Record<string, string | number>) => string) && werk && (
+          <p style={{ fontSize: 13, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>
+            {werkZin(werk, t as (k: string, v?: Record<string, string | number>) => string)}{' '}
+            <Link href="/dashboard/werk" style={{ color: M3.primary, fontWeight: 600, textDecoration: 'none' }}>
+              {t('vandaag.werk.naar', { plural: t(werk.pluralKey as Parameters<typeof t>[0]) })} →
+            </Link>
           </p>
         )}
       </header>

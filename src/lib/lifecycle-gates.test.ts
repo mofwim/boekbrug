@@ -28299,3 +28299,48 @@ test("[HERINNERING-NOOIT] a payment reminder is never an invoice, on any door", 
   // The filename backstop over the model's read is still wired.
   assert.match(code("src/lib/ai.ts"), /parsed\.is_reminder = parsed\.is_reminder === true \|\| isReminderFilename\(filename\)/);
 });
+
+test("[WERK] the trade's own work is one primitive, built on the app, and never a second money engine", () => {
+  // The owner's decision, 8 September 2026: the accounting is not the product; the trade's own
+  // work is. A mechanic opens the app for his werkplaats, a courier for his ritten — and the
+  // invoice, the btw and the accountant's quarter are what that work produces. Built ON the app
+  // and demolishing nothing: one table, one screen, one API, the trade's noun on it.
+  const pure = code("src/lib/werk.ts");
+  // One closed status set, and the trade only LABELS it — never a second enum per trade.
+  assert.match(pure, /export const WORK_STATUSES: readonly WorkStatus\[\] = \[\s*"open", "bezig", "wacht_klant", "wacht_onderdeel", "klaar", "gefactureerd", "geannuleerd",?\s*\]/);
+  assert.match(pure, /export const HAND_STATUSES[^\n]*\["open", "bezig", "wacht_klant", "wacht_onderdeel", "klaar", "geannuleerd"\]/, "invoicing is a door, not a tap");
+  // The four skins, on the measured standard: a werkorder opens on a kenteken and charges arbeid
+  // and onderdelen; a rit has a laadadres and losadres; a klus a werkadres; an opdracht a locatie.
+  assert.match(pure, /skin: "werkorder"[\s\S]*?vehicle: true/);
+  assert.match(pure, /\{ key: "van", type: "text", labelKey: "werk\.veld\.laadadres", onCard: true, required: true \}/);
+  assert.match(pure, /\{ key: "adres", type: "text", labelKey: "werk\.veld\.werkadres", onCard: true, required: true \}/);
+  assert.match(pure, /\{ key: "locatie", type: "text", labelKey: "werk\.veld\.locatie", onCard: true, required: true \}/);
+  // Money on the work is what it CHARGES; costs live on the purchase invoices, hours on time_entries.
+  assert.doesNotMatch(pure, /total_inc_btw|btw_amount|amount_paid/, "the work row carries no ledger amounts");
+  assert.match(pure, /if \(!isValidRate\(btw\)|ALLOWED_BTW_RATES\.includes\(btw\)/, "a line's btw rate must exist in the Netherlands");
+  // The table: owner RLS, the union CHECK, and the three nullable links back — nothing old reads them.
+  const sql = code("supabase/migrations/work_items.sql");
+  assert.match(sql, /CHECK \(status IN \('open', 'bezig', 'wacht_klant', 'wacht_onderdeel', 'klaar', 'gefactureerd', 'geannuleerd'\)\)/);
+  for (const t of ["invoices", "time_entries", "documents"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE public\\.${t}\\s+ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public\\.work_items\\(id\\) ON DELETE SET NULL`), `${t} links back, nullable`);
+  }
+  assert.match(sql, /CREATE POLICY work_items_select_own[\s\S]*?USING \(user_id = auth\.uid\(\)\)/);
+  // The API: owner-only writes, the status guarded by the skin, the invoice through the draft door.
+  const api = code("src/app/api/werk/route.ts");
+  for (const fn of ["POST", "PATCH", "DELETE"]) assert.match(api, new RegExp(`export async function ${fn}[\\s\\S]*?requireOwner\\(`), `${fn} is owner-only`);
+  assert.match(api, /!isWorkStatus\(next\) \|\| !HAND_STATUSES\.includes\(next\) \|\| !skin\.statuses\.includes\(next\)/, "a status the trade does not use is refused");
+  assert.doesNotMatch(api, /from\("invoices"\)\s*\.insert/, "the work API never writes an invoice");
+  const door = code("src/app/api/werk/[id]/factuur/route.ts");
+  assert.match(door, /import \{ POST as createDraft \} from "@\/app\/api\/invoice\/draft\/route"/, "the invoice is made by the one draft door");
+  assert.doesNotMatch(door, /from\("invoices"\)\s*\.insert/, "…and never inserted here");
+  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null \}\)\)/, "only finished work, once");
+  assert.match(door, /linesFromEntries\(/, "hours go on at their own rate, by the same builder the hours invoice uses");
+  assert.match(door, /for \(const chunk of chunkIds\(built\.billedIds, 100\)\)[\s\S]*?\.update\(\{ invoice_id: invoiceId \}\)[\s\S]*?\.is\("invoice_id", null\)\.in\("id", chunk\)/, "billed hours are stamped, in chunks, so they cannot be billed twice");
+  // The screen: it exists, it is the second tap for the work trade, Vandaag speaks the trade's word.
+  assert.ok(existsSync("src/app/dashboard/werk/page.tsx"));
+  assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);
+  assert.match(code("src/app/dashboard/layout.tsx"), /workTrade = hasWorkLayer\(/);
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("status"\)/);
+  assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
+});

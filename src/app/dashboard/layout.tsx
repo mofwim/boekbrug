@@ -11,6 +11,8 @@ import { BottomNav } from '@/components/nav/BottomNav'
 // [ZIJBALK] The desktop counterpart to BottomNav — same destinations, down the side.
 import { DashboardRail } from '@/components/nav/DashboardRail'
 import { sellsOverCounter } from '@/lib/vak-profile'
+// [WERK] The work trade's bar leads with its own work; read from the same vak row as the counter flag.
+import { hasWorkLayer } from '@/lib/werk'
 import FeedbackButton from '@/components/feedback/FeedbackButton'
 import { getActingFor } from '@/lib/acting-for-server'
 import { getSessionUser } from '@/lib/session-user'
@@ -73,6 +75,7 @@ export default async function DashboardLayout({
   // Unknown trade → false → the invoice-shaped bar everyone has had until now, so nothing changes
   // for anyone who has not told us a trade.
   let counterTrade = false
+  let workTrade = false
   // [TAAL-VOLGT-MEE] The language the owner chose, as their ACCOUNT remembers it. Read here for the
   // same reason and in the same shape as `vak` above: apart from the profile select, in a try, so a
   // deployment where the column is not there yet loses a nicety instead of the whole dashboard.
@@ -82,6 +85,7 @@ export default async function DashboardLayout({
       const { data: vakRow } = await supabase
         .from('profiles').select('vak').eq('id', profile.id).maybeSingle()
       counterTrade = sellsOverCounter((vakRow as { vak?: string | null } | null)?.vak)
+      workTrade = hasWorkLayer((vakRow as { vak?: string | null } | null)?.vak)
     } catch {
       /* no column yet → the bar everyone has always had */
     }
@@ -117,7 +121,7 @@ export default async function DashboardLayout({
           pads for it — a fixed element inside its own padding would sit 240px in from the edge.
           Same visibility rule as the phone bar: hidden for a verkoopmedewerker, whose
           destinations would bounce him back (see the note on DashboardChrome below). */}
-      {profile && !isMedewerker && <DashboardRail role={subnavRole} counter={counterTrade} />}
+      {profile && !isMedewerker && <DashboardRail role={subnavRole} counter={counterTrade} work={workTrade} />}
       <SubPageHeaderProvider>
         {/* [MEDEWERKER] De balk rendert nu WEL voor hem, met zijn eigen thuis.
             Hij werd verborgen om een goede reden — een menu vol links die je terugwerpen is erger
@@ -144,7 +148,7 @@ export default async function DashboardLayout({
       {profile && !isMedewerker && <GlobalSearchLauncher />}
       {/* [MOBILE] Phone-only global navigation — the counterpart to the top-bar
           links that hide below 640px. Role-aware destinations; see the component. */}
-      {profile && !isMedewerker && <BottomNav role={subnavRole} counter={counterTrade} />}
+      {profile && !isMedewerker && <BottomNav role={subnavRole} counter={counterTrade} work={workTrade} />}
       {/* [FEEDBACK] "Er ging iets mis" — op ELKE /dashboard/*-pagina, hier één keer gemonteerd.
           Per pagina toevoegen betekent na een half jaar op de helft van de pagina's, en dan juist
           niet op het scherm waar iets misging: dat is meestal het minst bezochte.

@@ -46,18 +46,18 @@ import { M3, FONT } from '@/lib/design/tokens'
 import type { Role } from '@/lib/navigation'
 import { railSectionsFor, railDestinations, activeHref } from '@/lib/nav-destinations'
 
-export function DashboardRail({ role, counter = false }: { role: Role | null; counter?: boolean }) {
+export function DashboardRail({ role, counter = false, work = false }: { role: Role | null; counter?: boolean; work?: boolean }) {
   const pathname = usePathname()
   // Before the early return: a hook may not sit behind a condition.
   const taal = useLocale()
   if (!pathname) return null
 
   const t = translator(taal)
-  const sections = railSectionsFor(role, counter)
+  const sections = railSectionsFor(role, counter, work)
   // Over EVERY destination the rail shows, not per section: longest-match must be able to see the
   // whole set, or /dashboard/incoming/manage would light Inkomend in its own group and Inkoopfacturen
   // in the next one at the same time.
-  const active = activeHref(pathname, railDestinations(role, counter))
+  const active = activeHref(pathname, railDestinations(role, counter, work))
 
   return (
     <nav

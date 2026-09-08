@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { destinationsFor, railSectionsFor, railDestinations, activeHref, OWNER, OWNER_COUNTER, ACCOUNTANT } from "./nav-destinations";
+import { destinationsFor, railSectionsFor, railDestinations, activeHref, OWNER, OWNER_COUNTER, ACCOUNTANT, OWNER_WERK } from "./nav-destinations";
 
 test("[NAV-BESTEMMINGEN] each role gets its own list, and the trade only moves the second one", () => {
   assert.deepEqual(destinationsFor("zzper"), OWNER);
@@ -13,6 +13,21 @@ test("[NAV-BESTEMMINGEN] each role gets its own list, and the trade only moves t
   // Only the second destination differs between the two owner lists — that one change is the point.
   assert.deepEqual(OWNER.map((d) => d.href).filter((_, i) => i !== 1), OWNER_COUNTER.map((d) => d.href).filter((_, i) => i !== 1));
   assert.notEqual(OWNER[1].href, OWNER_COUNTER[1].href);
+});
+
+test("[WERK] the work trade's bar leads with its work, and only the second slot moves", () => {
+  // The owner's decision: a mechanic opens the app for his werkplaats, a courier for his ritten.
+  // The second tap is that screen; Facturen stays a home tile. Everything else stays where it was,
+  // so nobody's thumb has to relearn the bar.
+  assert.deepEqual(destinationsFor("zzper", false, true), OWNER_WERK);
+  assert.deepEqual(destinationsFor("zzper", true, true), OWNER_WERK, "work wins over the counter: the desk is where a job ends");
+  assert.equal(OWNER_WERK[1].href, "/dashboard/werk");
+  assert.deepEqual(OWNER.map((d) => d.href).filter((_, i) => i !== 1), OWNER_WERK.map((d) => d.href).filter((_, i) => i !== 1));
+  assert.equal(OWNER_WERK.map((d) => d.href).indexOf("/dashboard/vandaag"), 2, "[KORTE-WEG] Vandaag keeps its place");
+  assert.ok(OWNER_WERK.length <= 5);
+  assert.deepEqual(destinationsFor("accountant", false, true), ACCOUNTANT, "a trade never reshapes the accountant's bar");
+  assert.ok(railDestinations("zzper", false, true).map((d) => d.href).includes("/dashboard/werk"), "the rail carries it too");
+  assert.ok(!railDestinations("zzper", false, false).map((d) => d.href).includes("/dashboard/werk"), "…and only for the work trade");
 });
 
 test("[NAV-BESTEMMINGEN] home is exact, or it claims every screen in the app", () => {
