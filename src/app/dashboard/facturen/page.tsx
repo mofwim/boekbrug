@@ -17,6 +17,11 @@ import { fetchAllRows } from '@/lib/supabase-paginate'
 import { summarise, type SalesInvoice } from '@/lib/sales-overview'
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
 
+/** The clock, read once outside the render — `Date.now()` in a component body is impure, also on the server. */
+function readClock(): number {
+  return new Date().getTime()
+}
+
 export default async function Page() {
   const supabase = await createServerSupabaseClient()
   // [WATERVAL] Memoised per request (session-user.ts) — the layout above already asked.
@@ -94,7 +99,7 @@ export default async function Page() {
       .order('id', { ascending: true }).range(from, to))
     .then((rows) => {
       const credited = creditedTotalsFrom(rows.filter((r) => (r.invoice_type ?? 'factuur') === 'creditnota'))
-      const s = summarise(rows, Date.now(), credited)
+      const s = summarise(rows, readClock(), credited)
       return { open: s.open, outstanding: s.outstanding, overdue: s.overdue, overdueAmount: s.overdueAmount }
     })
     .catch((e) => {
