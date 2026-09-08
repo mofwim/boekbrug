@@ -121,6 +121,7 @@ export function werkSignaalZin(s: WorkSignal, t: (k: string, v?: Record<string, 
     case 'hours_without_rate': return { text: t('vandaag.werk.sig.urenZonderTarief', { n: s.n }), href: '/dashboard/werk' };
     case 'costs_unlinked': return { text: t('vandaag.werk.sig.kosten', { n: s.n, bedrag: formatEuroNL(s.amount) }), href: '/dashboard/incoming/manage' };
     case 'over_budget': return { text: t('vandaag.werk.sig.begroting', { n: s.n }), href: '/dashboard/werk' };
+    case 'contract_ending': return { text: t('vandaag.werk.sig.contractEinde', { n: s.n }), href: '/dashboard/werk' };
   }
 }
 

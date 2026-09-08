@@ -123,6 +123,17 @@ the recurring context (contract + locatie), transport tests high-frequency finan
 (rit + brandstof + tol + self-billing). Rijschool stays #5: it is one skin today and proves the
 primitive, but its margin only means something once the operational data is there.
 
+**[CONTRACT] — the first Financial Context, built on the row.** Contract + Locatie for
+schoonmaak (and the hovenier's onderhoudsabonnement) is not a second table: a recurring opdracht
+already carries the locatie, the rhythm, the afgesproken uren and the beurten. What was added: a
+fixed `maandbedrag` that makes the row a contract billed per period (one line, the fee, the month
+named, once, under a lock; the beurten of that month are covered by it), an `einddatum` with a
+sixty-day renewal signal on Vandaag, and the "Contracten" overview: per client its locations, this
+month's revenue, purchases, margin (marked geschat — without a kostprijs per hour it is revenue
+minus purchases, and the owner prices as he wishes), the hours against the agreed ones, and the
+period's invoice offered or marked done. A client with three locations is three rows and one
+name; that is the Customer → Context → Work Item shape without a contract system.
+
 **What [WERK-4] added to Core the same day:** `financialReadiness` (the checklist before the
 button, the button follows it), the margin's trust label, `begroot` on a klus and a werkorder
 measured while the work runs, and the Vandaag signals: meerwerk not invoiced, hours without a

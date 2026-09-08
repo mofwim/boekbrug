@@ -15,7 +15,8 @@ import { round2 } from '@/lib/invoice-totals'
 import { displayKenteken } from '@/lib/vehicle'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import {
-  HAND_STATUSES, REPEATS, REPEAT_KEYS, statusKey, linesTotalEx, canInvoice, nextVisitOn, unbilledVisits, togetherGroups, DEFAULT_LINE_BTW,
+  HAND_STATUSES, REPEATS, REPEAT_KEYS, statusKey, linesTotalEx, canInvoice, canInvoicePeriod, contractFee, periodOf, periodLabelNL, nextVisitOn, unbilledVisits, togetherGroups, DEFAULT_LINE_BTW,
+  type ContractStat,
   type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
@@ -400,11 +401,72 @@ export function WorkSheet({ title, onClose, children, testId, error }: { title: 
   )
 }
 
-export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> & Partial<Pick<WorkRow, 'repeat_every' | 'visits'>>, invoice: WorkInvoiceSummary | null): 'make' | 'view' | 'none' {
+export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> & Partial<Pick<WorkRow, 'repeat_every' | 'visits' | 'fields' | 'billed_periods'>>, invoice: WorkInvoiceSummary | null, today?: string): 'make' | 'view' | 'none' {
   // Repeating work never closes on one invoice: its beurten carry theirs (VisitsPanel links them).
-  if (row.repeat_every) return canInvoice(row) ? 'make' : 'none'
+  // [CONTRACT] A fee contract offers this period's invoice instead, once.
+  if (row.repeat_every) {
+    if (contractFee(row) !== null) return today && canInvoicePeriod(row, periodOf(today), today) ? 'make' : 'none'
+    return canInvoice(row) ? 'make' : 'none'
+  }
   if (invoice || row.invoice_id) return 'view'
   return canInvoice(row) ? 'make' : 'none'
+}
+
+/**
+ * [CONTRACT] The contract portfolio: per client, its locations, and for each what this period
+ * earns, what it cost, the hours against the agreed ones, when it ends, and whether the period
+ * is invoiced. 'aandacht' is hours over the agreed ones or an end within sixty days — never a
+ * margin target, because without a kostprijs per hour the margin here is revenue minus purchases.
+ */
+export function ContractsPanel({ groups, period, t, onOpen, onInvoicePeriod, disabled, readFailed }: { groups: Array<{ client_name: string; contracts: ContractStat[] }>; period: string; t: T; onOpen?: (id: string) => void; onInvoicePeriod?: (id: string) => void; disabled?: boolean; readFailed?: boolean }) {
+  if (groups.length === 0) return <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>{t('werk.contract.geen')}</p>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }} data-testid="work-contracts">
+      {readFailed && <p role="alert" style={{ fontFamily: FONT, fontSize: 13, color: M3.error, margin: 0 }}>{t('werk.contract.leesfout')}</p>}
+      {groups.map((g) => (
+        <section key={g.client_name} aria-label={g.client_name}>
+          <h2 style={{ fontFamily: FONT, fontSize: 13, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: 0.4 }}>{g.client_name || '—'} · {g.contracts.length}</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {g.contracts.map((c) => {
+              const tint = c.health === 'aandacht' ? { bg: '#FFF3E0', fg: '#7A4B00' } : { bg: '#E6F4EA', fg: '#137333' }
+              return (
+                <div key={c.id} data-testid="work-contract" style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: '12px 14px', fontFamily: FONT }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                    <button type="button" onClick={() => onOpen?.(c.id)} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'start', cursor: onOpen ? 'pointer' : 'default', minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: M3.onSurface }}>{c.locatie || c.title}</div>
+                      <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 2 }}>
+                        {c.fee !== null ? `${formatEuroNL(c.fee)} ${t('werk.contract.perMaand')}` : t('werk.contract.perBeurt')}
+                        {c.einddatum ? ` · ${c.daysLeft !== null && c.daysLeft < 0 ? t('werk.contract.afgelopen') : t('werk.contract.loopAf', { n: c.daysLeft ?? 0 })}` : ''}
+                      </div>
+                    </button>
+                    <span style={{ fontSize: 12, fontWeight: 700, borderRadius: 999, padding: '3px 10px', background: tint.bg, color: tint.fg, whiteSpace: 'nowrap' }}>
+                      {c.health === 'aandacht' ? t('werk.contract.aandacht') : t('werk.contract.goed')}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 13, color: M3.onSurface, marginTop: 8 }}>
+                    <span>{t('werk.contract.omzetMaand')}: <b>{formatEuroNL(c.revenueMonth)}</b></span>
+                    <span>{t('werk.kosten')}: <b>{formatEuroNL(c.costsMonth)}</b></span>
+                    <span>{t('werk.marge')}: <b>{formatEuroNL(c.marginMonth)}</b> <span style={{ color: M3.onSurfaceVariant }}>· {t('werk.marge.geschat')}</span></span>
+                    <span style={{ color: c.reasons.includes('uren') ? M3.error : M3.onSurface }}>
+                      {c.agreedHours !== null ? t('werk.contract.urenMaand', { spent: c.hoursMonth.toLocaleString('nl-NL'), agreed: c.agreedHours.toLocaleString('nl-NL') }) : `${t('werk.uren')}: ${c.hoursMonth.toLocaleString('nl-NL')}`}
+                    </span>
+                    {c.fee === null && <span>{t('werk.beurten')}: <b>{c.visitsMonth}</b></span>}
+                  </div>
+                  {c.fee !== null && (
+                    <div style={{ marginTop: 8 }}>
+                      {c.periodBilled
+                        ? <span style={{ fontSize: 12.5, color: '#137333' }}>✓ {t('werk.contract.periodeGefactureerd', { periode: periodLabelNL(period) })}</span>
+                        : <button type="button" disabled={disabled} onClick={() => onInvoicePeriod?.(c.id)} style={{ ...ghostButton, color: M3.primary }}>{t('werk.periodeFactuur', { periode: periodLabelNL(period) })}</button>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
 }
 
 /**

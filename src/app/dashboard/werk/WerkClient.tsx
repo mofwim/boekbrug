@@ -31,12 +31,12 @@ import { useDialog } from '@/components/ui/Dialog'
 import { normalizeKenteken, isKentekenShape, displayKenteken } from '@/lib/vehicle'
 import { amsterdamToday } from '@/lib/format-nl'
 import {
-  workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget,
-  type WorkStatus, type WorkLine, type WorkMargin,
+  workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget, contractFee, periodOf, periodLabelNL,
+  type WorkStatus, type WorkLine, type WorkMargin, type ContractStat,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
 import {
-  WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer, ReadinessList,
+  WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer, ReadinessList, ContractsPanel,
   HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T,
 } from './WerkPanels'
 
@@ -54,7 +54,7 @@ type Detail = {
   candidates: { hours: AttachedHours[]; costs: AttachedCost[] } | null
 }
 
-type Filter = 'open' | 'vandaag' | 'week' | 'all'
+type Filter = 'open' | 'vandaag' | 'week' | 'all' | 'contracten'
 
 /** The form as the row is: what "Gegevens aanpassen" starts from. */
 function formFromRow(row: WorkRow): WorkFormValue {
@@ -83,6 +83,8 @@ export default function WerkClient({ vak }: { vak: string }) {
   const [note, setNote] = useState('')
   const [suggestions, setSuggestions] = useState<LineSuggestion[]>([])
   const [previous, setPrevious] = useState<WorkLine[] | null>(null)
+  // [CONTRACT] The portfolio, loaded when the chip is chosen; per client, this period's figures.
+  const [contracts, setContracts] = useState<{ period: string; groups: Array<{ client_name: string; contracts: ContractStat[] }>; readFailed: boolean } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   // The lines as typed, readable from an async reload without a stale closure.
   const linesRef = useRef<WorkLine[]>([])
@@ -90,6 +92,14 @@ export default function WerkClient({ vak }: { vak: string }) {
 
   const load = useCallback(async () => {
     try {
+      if (filter === 'contracten') {
+        const res = await fetch('/api/werk?contracten=1')
+        const json = await res.json()
+        if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.laden'))); return }
+        setContracts({ period: json.period, groups: json.groups ?? [], readFailed: !!json.readFailed })
+        setError('')
+        return
+      }
       const res = await fetch(`/api/werk?status=${filter === 'all' ? 'all' : 'open'}`)
       const json = await res.json()
       if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.laden'))); return }
@@ -244,11 +254,26 @@ export default function WerkClient({ vak }: { vak: string }) {
     } finally { setBusy(false) }
   }
 
+  // [CONTRACT] The period invoice from the portfolio: this month's fee, once, through the same door.
+  async function invoicePeriod(id: string) {
+    if (busy) return
+    setBusy(true); setError('')
+    try {
+      const res = await fetch(`/api/werk/${id}/factuur`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period: periodOf(amsterdamToday()) }) })
+      const json = await res.json()
+      if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.factuur'))); return }
+      router.push(`/dashboard/invoice/${json.invoiceId}/edit`)
+    } catch {
+      setError(t('werk.fout.factuur'))
+    } finally { setBusy(false) }
+  }
+
   async function makeInvoice() {
     if (!detail || busy) return
     setBusy(true); setError('')
     try {
-      const res = await fetch(`/api/werk/${detail.row.id}/factuur`, { method: 'POST' })
+      const period = contractFee(detail.row) !== null ? periodOf(amsterdamToday()) : null
+      const res = await fetch(`/api/werk/${detail.row.id}/factuur`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(period ? { period } : {}) })
       const json = await res.json()
       if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.factuur'))); return }
       if (json.hoursWithoutRate > 0) {
@@ -386,19 +411,23 @@ export default function WerkClient({ vak }: { vak: string }) {
       </button>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {(['open', 'vandaag', 'week', 'all'] as const).map((f) => (
+        {([...(['open', 'vandaag', 'week', 'all'] as const), ...(skin.recurring ? (['contracten'] as const) : [])] as Filter[]).map((f) => (
           <button key={f} type="button" onClick={() => setFilter(f)}
             style={{ ...ghostButton, background: filter === f ? '#E8F0FE' : M3.surface, borderColor: filter === f ? M3.primary : M3.outlineVariant }}>
-            {f === 'open' ? t('werk.filter.open') : f === 'vandaag' ? t('werk.filter.vandaag') : f === 'week' ? t('werk.filter.week') : t('werk.filter.alles')}
+            {f === 'open' ? t('werk.filter.open') : f === 'vandaag' ? t('werk.filter.vandaag') : f === 'week' ? t('werk.filter.week') : f === 'contracten' ? t('werk.filter.contracten') : t('werk.filter.alles')}
           </button>
         ))}
       </div>
+      {filter === 'contracten' && contracts && (
+        <ContractsPanel groups={contracts.groups} period={contracts.period} t={t} disabled={busy} readFailed={contracts.readFailed}
+          onOpen={(id) => void openDetail(id)} onInvoicePeriod={(id) => void invoicePeriod(id)} />
+      )}
       {rows.length > 5 && (
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('werk.zoeken')} aria-label={t('werk.zoeken')}
           style={{ fontFamily: FONT, fontSize: 15, padding: '10px 12px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface }} />
       )}
 
-      <TogetherOffer rows={shown} t={t} disabled={busy} onTogether={(ids, client) => void together(ids, client)} />
+      {filter !== 'contracten' && <TogetherOffer rows={shown} t={t} disabled={busy} onTogether={(ids, client) => void together(ids, client)} />}
 
       <WorkList rows={shown} skin={skin} t={t} onOpen={(id) => { setError(''); setNote(''); void openDetail(id) }} />
 
@@ -520,15 +549,15 @@ export default function WerkClient({ vak }: { vak: string }) {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-            {invoiceButtonState(detail.row, detail.invoice) !== 'view' && (
-              <ReadinessList readiness={financialReadiness({ row: detail.row, hours: detail.hours })} t={t} />
+            {invoiceButtonState(detail.row, detail.invoice, amsterdamToday()) !== 'view' && (
+              <ReadinessList readiness={financialReadiness({ row: detail.row, hours: detail.hours, today: amsterdamToday() })} t={t} />
             )}
-            {invoiceButtonState(detail.row, detail.invoice) === 'make' && (
-              <button type="button" onClick={() => void makeInvoice()} disabled={busy || linesDirty || !financialReadiness({ row: detail.row, hours: detail.hours }).ok} style={primaryButton}>
-                {busy ? t('act.bezig') : detail.row.repeat_every ? t(skin.visitKeys?.invoice ?? 'werk.beurtFactuur', { n: detail.row.visits.filter((v) => !v.invoice_id).length }) : t('werk.factuurMaken')}
+            {invoiceButtonState(detail.row, detail.invoice, amsterdamToday()) === 'make' && (
+              <button type="button" onClick={() => void makeInvoice()} disabled={busy || linesDirty || !financialReadiness({ row: detail.row, hours: detail.hours, today: amsterdamToday() }).ok} style={primaryButton}>
+                {busy ? t('act.bezig') : contractFee(detail.row) !== null ? t('werk.periodeFactuur', { periode: periodLabelNL(periodOf(amsterdamToday())) }) : detail.row.repeat_every ? t(skin.visitKeys?.invoice ?? 'werk.beurtFactuur', { n: detail.row.visits.filter((v) => !v.invoice_id).length }) : t('werk.factuurMaken')}
               </button>
             )}
-            {invoiceButtonState(detail.row, detail.invoice) === 'view' && (
+            {invoiceButtonState(detail.row, detail.invoice, amsterdamToday()) === 'view' && (
               <button type="button" onClick={() => router.push(`/dashboard/invoice/${detail.invoice?.id ?? detail.row.invoice_id}/edit`)} style={primaryButton}>{t('werk.factuurBekijken')}</button>
             )}
             <div style={{ display: 'flex', gap: 8 }}>

@@ -191,6 +191,8 @@ const KLUS: WorkSkin = {
 /** A hovenier's klus is the builder's klus, except that garden maintenance comes back every fortnight and green waste is a line. */
 const TUIN: WorkSkin = {
   ...KLUS,
+  // The hovenier's onderhoudsabonnement: the same contract fields as a schoonmaak opdracht.
+  fields: [...KLUS.fields, { key: "afgesproken_uren", type: "number", labelKey: "werk.veld.afgesprokenUren" }, { key: "maandbedrag", type: "number", labelKey: "werk.veld.maandbedrag" }, { key: "einddatum", type: "date", labelKey: "werk.veld.einddatum", onCard: true }],
   lineKinds: [...KLUS.lineKinds, { kind: "afvoer", labelKey: "werk.regel.afvoer", unit: "post" }],
   recurring: true,
 };
@@ -208,6 +210,10 @@ const OPDRACHT: WorkSkin = {
     { key: "locatie", type: "text", labelKey: "werk.veld.locatie", onCard: true, required: true },
     { key: "afgesproken_uren", type: "number", labelKey: "werk.veld.afgesprokenUren", onCard: true },
     { key: "medewerker", type: "text", labelKey: "werk.veld.medewerker" },
+    // [CONTRACT] A fixed amount per period makes this row a contract billed per maand instead of
+    // per beurt; the end date is what the renewal signal counts down to.
+    { key: "maandbedrag", type: "number", labelKey: "werk.veld.maandbedrag" },
+    { key: "einddatum", type: "date", labelKey: "werk.veld.einddatum", onCard: true },
   ],
   lineKinds: [
     { kind: "vast", labelKey: "werk.regel.vast", unit: "post" },
@@ -550,10 +556,26 @@ export interface Readiness {
 }
 
 export function financialReadiness(args: {
-  row: { status: string; invoice_id: string | null; repeat_every: string | null; visits: readonly Visit[]; client_name: string | null; lines: readonly WorkLine[] };
+  row: { status: string; invoice_id: string | null; repeat_every: string | null; visits: readonly Visit[]; client_name: string | null; lines: readonly WorkLine[]; fields?: FieldValues; billed_periods?: readonly BilledPeriod[] };
   hours: ReadonlyArray<{ hours: number; hourly_rate: number | null; invoice_id: string | null }>;
+  /** For a contract billed per period: the period the button would invoice. */
+  period?: string;
+  today?: string;
 }): Readiness {
   const { row, hours } = args;
+  // [CONTRACT] A fee contract is ready when its period is: a client, a fee, an open row, the
+  // period not yet billed. Hours and beurten are covered by the fee and do not count.
+  const fee = contractFee(row);
+  if (fee !== null) {
+    const period = args.period ?? (args.today ? periodOf(args.today) : "");
+    const items = [
+      { key: "client" as const, ok: !!(row.client_name && row.client_name.trim()) },
+      { key: "lines" as const, ok: fee > 0 },
+      { key: "hoursRate" as const, ok: true },
+      { key: "status" as const, ok: args.today ? canInvoicePeriod(row, period, args.today) : false },
+    ];
+    return { ok: items.every((i) => i.ok), items, amountExBtw: fee };
+  }
   const unbilled = hours.filter((h) => !h.invoice_id);
   const hoursRevenue = round2(unbilled.reduce((s, h) => s + (h.hourly_rate !== null ? h.hours * h.hourly_rate : 0), 0));
   const own = row.repeat_every ? visitInvoiceLines(row.lines, unbilledVisits(row.visits)) : row.lines;
@@ -585,7 +607,8 @@ export type WorkSignal =
   | { kind: "meerwerk_open"; n: number; amount: number }
   | { kind: "hours_without_rate"; n: number }
   | { kind: "costs_unlinked"; n: number; amount: number }
-  | { kind: "over_budget"; n: number };
+  | { kind: "over_budget"; n: number }
+  | { kind: "contract_ending"; n: number };
 
 const EXTRA_KINDS: ReadonlySet<string> = new Set(["meerwerk", "extra"]);
 
@@ -597,12 +620,17 @@ export function workSignals(input: {
   hoursByWork: ReadonlyMap<string, number>;
   /** Purchase invoices of suppliers the owner has attached to work before, now attached to none. */
   unlinkedCosts: { n: number; amount: number };
+  /** Today, for the contract end countdown; without it no contract signal is raised. */
+  today?: string;
 }): WorkSignal[] {
   const out: WorkSignal[] = [];
   const open = input.rows.filter((r) => r.status !== "gefactureerd" && r.status !== "geannuleerd");
   let extraN = 0, extraAmount = 0;
   let overN = 0;
+  let endingN = 0;
   for (const r of open) {
+    const left = input.today ? daysUntil(r.fields.einddatum, input.today) : null;
+    if (left !== null && left <= CONTRACT_ENDING_DAYS) endingN += 1;
     const extra = r.lines.filter((l) => EXTRA_KINDS.has(l.kind));
     if (extra.length > 0) { extraN += 1; extraAmount = round2(extraAmount + linesTotalEx(extra)); }
     const spent = input.hoursByWork.get(r.id) ?? 0;
@@ -615,6 +643,7 @@ export function workSignals(input: {
   if (input.hoursWithoutRate > 0) out.push({ kind: "hours_without_rate", n: input.hoursWithoutRate });
   if (input.unlinkedCosts.n > 0) out.push({ kind: "costs_unlinked", n: input.unlinkedCosts.n, amount: round2(input.unlinkedCosts.amount) });
   if (overN > 0) out.push({ kind: "over_budget", n: overN });
+  if (endingN > 0) out.push({ kind: "contract_ending", n: endingN });
   return out;
 }
 
@@ -634,10 +663,17 @@ export interface WorkCounts {
  * [WERK-BEURT] Repeating work with a done beurt that is not on an invoice yet is "ready to
  * invoice" too, whatever its status says — that is the Monday question for a cleaner.
  */
-export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown; lines?: unknown }>): WorkCounts {
+export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown; lines?: unknown; fields?: FieldValues; billed_periods?: unknown }>, today?: string): WorkCounts {
   const c: WorkCounts = { open: 0, bezig: 0, wacht: 0, klaar: 0, klaarExBtw: 0 };
   for (const r of rows) {
     if (r.repeat_every && r.status !== "geannuleerd" && r.status !== "gefactureerd") {
+      const fee = contractFee(r);
+      if (fee !== null) {
+        // [CONTRACT] The current period, not yet on an invoice, is what is ready.
+        if (today && canInvoicePeriod({ ...r, billed_periods: storedPeriods(r.billed_periods) }, periodOf(today), today)) { c.klaar += 1; c.klaarExBtw = round2(c.klaarExBtw + fee); continue; }
+        if (r.status === "open") c.open += 1; else if (r.status === "bezig") c.bezig += 1;
+        continue;
+      }
       const open = unbilledVisits(storedVisits(r.visits));
       if (open.length > 0) { c.klaar += 1; c.klaarExBtw = round2(c.klaarExBtw + linesTotalEx(visitInvoiceLines(storedLines(r.lines), open))); continue; }
     }
@@ -654,11 +690,147 @@ export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: 
  * once. Work that repeats: whenever a beurt has been done that is not on an invoice yet — the
  * row itself stays open, the invoice is stamped on the beurten it covers.
  */
-export function canInvoice(row: { status: string; invoice_id: string | null; repeat_every?: string | null; visits?: readonly Visit[] }): boolean {
+export function canInvoice(row: { status: string; invoice_id: string | null; repeat_every?: string | null; visits?: readonly Visit[]; fields?: FieldValues }): boolean {
   if (row.repeat_every) {
+    // [CONTRACT] A contract with a fixed amount per period is billed by period (canInvoicePeriod),
+    // never by its beurten — those are covered by the fee.
+    if (contractFee(row) !== null) return false;
     return row.status !== "geannuleerd" && row.status !== "gefactureerd" && unbilledVisits(row.visits ?? []).length > 0;
   }
   return row.status === "klaar" && !row.invoice_id;
+}
+
+// ── [CONTRACT] A contract on a location, billed per period ────────────────────────────────────
+//
+// The consultant's Financial Context for schoonmaak — "Contract + Locatie" — is not a second
+// table. A recurring opdracht already carries the locatie, the rhythm, the afgesproken uren and
+// the beurten; a fixed maandbedrag makes it a contract billed per period, and billed_periods
+// records which periods went on which invoice, in the same shape as the beurten. One client with
+// three locations is three rows with one client name; the overview groups them.
+
+export interface BilledPeriod { period: string; invoice_id: string }
+
+const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function storedPeriods(raw: unknown): BilledPeriod[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BilledPeriod[] = [];
+  for (const r of raw as Array<Record<string, unknown>>) {
+    if (r && typeof r === "object" && typeof r.period === "string" && PERIOD.test(r.period) && typeof r.invoice_id === "string") out.push({ period: r.period, invoice_id: r.invoice_id });
+  }
+  return out;
+}
+
+export function isPeriod(v: unknown): v is string {
+  return typeof v === "string" && PERIOD.test(v);
+}
+
+/** 2026-09-08 → "2026-09". */
+export function periodOf(iso: string): string {
+  return iso.slice(0, 7);
+}
+
+/** The fixed amount per period on a contract, or null when the row is billed per beurt (or is not repeating). */
+export function contractFee(row: { repeat_every?: string | null; fields?: FieldValues }): number | null {
+  if (!row.repeat_every) return null;
+  const v = row.fields?.maandbedrag;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? round2(v) : null;
+}
+
+/** May this period go on an invoice? Once, never a future month, never on closed work. */
+export function canInvoicePeriod(row: { status: string; repeat_every?: string | null; fields?: FieldValues; billed_periods?: readonly BilledPeriod[] }, period: string, today: string): boolean {
+  if (contractFee(row) === null) return false;
+  if (row.status === "geannuleerd" || row.status === "gefactureerd") return false;
+  if (!isPeriod(period) || period > periodOf(today)) return false;
+  return !(row.billed_periods ?? []).some((p) => p.period === period);
+}
+
+const MONTHS_NL_LONG = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
+
+/** "2026-09" → "september 2026". Dutch: it lands on the invoice. */
+export function periodLabelNL(period: string): string {
+  if (!isPeriod(period)) return period;
+  return `${MONTHS_NL_LONG[Number(period.slice(5, 7)) - 1]} ${period.slice(0, 4)}`;
+}
+
+/**
+ * The one line a period invoice carries: the contract, its location, the month, the fee. The btw
+ * rate is the row's own (its first line), so a contract inside a home stays at 9% when the owner
+ * wrote it so; without a line it is the Dutch default.
+ */
+export function periodInvoiceLines(row: { title: string; fields: FieldValues; lines: readonly WorkLine[]; repeat_every?: string | null }, period: string): InvoiceLineDraft[] {
+  const fee = contractFee(row);
+  if (fee === null) return [];
+  const locatie = typeof row.fields.locatie === "string" ? ` · ${row.fields.locatie}` : "";
+  return [{ description: `${row.title}${locatie} · ${periodLabelNL(period)}`, quantity: 1, unit_price: fee, btw_rate: row.lines[0]?.btw_rate ?? DEFAULT_LINE_BTW }];
+}
+
+/** Days from today to the contract's end; null without an end date. Negative once it has passed. */
+export function daysUntil(iso: string | number | undefined, today: string): number | null {
+  if (typeof iso !== "string" || !isCalendarDay(iso)) return null;
+  const a = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));
+  const b = Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+  return Math.round((b - a) / 86400000);
+}
+
+export const CONTRACT_ENDING_DAYS = 60;
+
+/** One contract as the overview draws it: what it earns this period, what it cost, how it stands. */
+export interface ContractStat {
+  id: string;
+  title: string;
+  client_name: string;
+  locatie: string;
+  /** Fixed fee per period, or null when billed per beurt. */
+  fee: number | null;
+  /** This period's revenue ex btw: the fee, or the beurten done this period × the lines. */
+  revenueMonth: number;
+  hoursMonth: number;
+  agreedHours: number | null;
+  costsMonth: number;
+  marginMonth: number;
+  visitsMonth: number;
+  einddatum: string | null;
+  daysLeft: number | null;
+  periodBilled: boolean;
+  /** 'goed' | 'aandacht': hours over the agreed ones, or the end within CONTRACT_ENDING_DAYS. */
+  health: "goed" | "aandacht";
+  reasons: Array<"uren" | "einde">;
+}
+
+export function contractStat(args: {
+  row: { id: string; title: string; client_name: string | null; status: string; repeat_every: string | null; fields: FieldValues; lines: readonly WorkLine[]; visits: readonly Visit[]; billed_periods: readonly BilledPeriod[] };
+  hoursMonth: number;
+  costsMonth: number;
+  today: string;
+}): ContractStat {
+  const { row, today } = args;
+  const period = periodOf(today);
+  const fee = contractFee(row);
+  const visitsMonth = row.visits.filter((v) => v.on.startsWith(period)).length;
+  const revenueMonth = fee !== null ? fee : round2(linesTotalEx(row.lines) * visitsMonth);
+  const agreed = typeof row.fields.afgesproken_uren === "number" && row.fields.afgesproken_uren > 0 ? row.fields.afgesproken_uren : null;
+  const einddatum = typeof row.fields.einddatum === "string" ? row.fields.einddatum : null;
+  const daysLeft = daysUntil(einddatum ?? undefined, today);
+  const reasons: Array<"uren" | "einde"> = [];
+  if (agreed !== null && args.hoursMonth > agreed) reasons.push("uren");
+  if (daysLeft !== null && daysLeft <= CONTRACT_ENDING_DAYS) reasons.push("einde");
+  return {
+    id: row.id, title: row.title, client_name: row.client_name ?? "", locatie: typeof row.fields.locatie === "string" ? row.fields.locatie : (typeof row.fields.adres === "string" ? row.fields.adres : ""),
+    fee, revenueMonth, hoursMonth: round2(args.hoursMonth), agreedHours: agreed, costsMonth: round2(args.costsMonth),
+    marginMonth: round2(revenueMonth - args.costsMonth), visitsMonth, einddatum, daysLeft,
+    periodBilled: row.billed_periods.some((p) => p.period === period),
+    health: reasons.length > 0 ? "aandacht" : "goed", reasons,
+  };
+}
+
+/** The overview grouped per client, clients with the most attention first, then by name. */
+export function contractGroups(stats: readonly ContractStat[]): Array<{ client_name: string; contracts: ContractStat[] }> {
+  const by = new Map<string, ContractStat[]>();
+  for (const s of stats) by.set(s.client_name, [...(by.get(s.client_name) ?? []), s]);
+  return [...by.entries()]
+    .map(([client_name, contracts]) => ({ client_name, contracts }))
+    .sort((a, b) => (b.contracts.filter((c) => c.health === "aandacht").length - a.contracts.filter((c) => c.health === "aandacht").length) || a.client_name.localeCompare(b.client_name));
 }
 
 // ── Repeating work and its beurten ────────────────────────────────────────────────────────────

@@ -28357,7 +28357,7 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
     assert.match(d, /closed\.closed !== (1|works\.length)\)[\s\S]*?rollbackDraft\(db, user\.id, invoiceId\)/, `${f}: a row that did not close rolls the draft back`);
   }
   const door = code("src/app/api/werk/[id]/factuur/route.ts");
-  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null, repeat_every: row\.repeat_every, visits: row\.visits \}\)\)/, "only finished work once — or repeating work with a done beurt");
+  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null, repeat_every: row\.repeat_every, visits: row\.visits, fields: row\.fields \}\)\)/, "only finished work once — or repeating work with a done beurt, never a fee contract");
   assert.doesNotMatch(door, /from\("invoices"\)\s*\.insert/);
   // [WERK-BEURT] Repeating work: the beurten this invoice covers are fixed BEFORE the draft, re-read
   // at stamping, and the row stays open (no invoice_id, no 'gefactureerd' on the recurring branch).
@@ -28407,13 +28407,21 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);
   assert.match(code("src/app/dashboard/layout.tsx"), /workTrade = hasWorkLayer\(/);
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
-  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("id, status, repeat_every, visits, lines, fields"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("id, status, repeat_every, visits, lines, fields, billed_periods"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
   // [WERK-4] Financieel gereed is a Core state: the same list for every trade, shown before the
   // button, and the button follows it. The margin carries its trust; Vandaag names the leaks.
   assert.match(pure, /export function financialReadiness\(/);
   assert.match(pure, /confidence: "werkelijk" \| "geschat" \| "incompleet";/);
-  assert.match(code("src/app/dashboard/werk/WerkClient.tsx"), /disabled=\{busy \|\| linesDirty \|\| !financialReadiness\(\{ row: detail\.row, hours: detail\.hours \}\)\.ok\}/, "the invoice button follows the readiness list");
+  assert.match(code("src/app/dashboard/werk/WerkClient.tsx"), /disabled=\{busy \|\| linesDirty \|\| !financialReadiness\(\{ row: detail\.row, hours: detail\.hours, today: amsterdamToday\(\) \}\)\.ok\}/, "the invoice button follows the readiness list");
   assert.match(code("src/app/dashboard/vandaag/page.tsx"), /signals: workSignals\(\{/, "Vandaag computes the signals from the pure module");
+  // [CONTRACT] Contract + Locatie is the recurring row itself, billed per period once under a lock;
+  // a fee contract is never billed by its beurten; the column and the module agree on the shape.
+  assert.match(code("supabase/migrations/work_items_periods.sql"), /ADD COLUMN IF NOT EXISTS billed_periods jsonb NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(pure, /if \(contractFee\(row\) !== null\) return false;/, "a fee contract is not billed by its beurten");
+  assert.match(pure, /if \(!isPeriod\(period\) \|\| period > periodOf\(today\)\) return false;/, "never a future month");
+  assert.match(shared, /export async function stampPeriod[\s\S]*?if \(periods\.some\(\(p\) => p\.period === period\)\) return \{ ok: false, reason: "already_billed" \};[\s\S]*?\.eq\("updated_at", fresh\.updated_at\)/, "the period is stamped once, under the optimistic lock");
+  assert.match(door, /if \(contractFee\(row\) !== null\) \{[\s\S]*?if \(!canInvoicePeriod\(row, period, today\)\)[\s\S]*?stampPeriod\(db, user\.id, id, period, opened\.invoiceId\)[\s\S]*?rollbackDraft\(/, "the period door proves itself or rolls back");
+  assert.match(api, /searchParams\.get\("contracten"\) === "1"[\s\S]*?contractStat\(\{ row: r, hoursMonth/, "the portfolio is the pure module's arithmetic on this month's reads");
   assert.match(code("src/app/dashboard/vandaag/page.tsx"), /\.not\("work_item_id", "is", null\)[\s\S]*?\.is\("work_item_id", null\)\.in\("client_name", suppliers/, "a loose bon is only a signal for a supplier the owner attached to work before");
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });

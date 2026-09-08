@@ -195,13 +195,16 @@ export default async function VandaagPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const db = supabase as any;
       const { data: rows, error: werkErr } = await db
-        .from("work_items").select("id, status, repeat_every, visits, lines, fields").eq("user_id", user.id)
+        .from("work_items").select("id, status, repeat_every, visits, lines, fields, billed_periods").eq("user_id", user.id)
         .not("status", "in", "(gefactureerd,geannuleerd)").limit(300);
       if (!werkErr) {
         const open = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
           id: String(r.id), status: String(r.status), repeat_every: (r.repeat_every as string | null) ?? null, visits: r.visits, lines: r.lines,
+          billed_periods: r.billed_periods,
           fields: (r.fields && typeof r.fields === "object" ? r.fields : {}) as Record<string, string | number>,
         }));
+        const today = amsterdamToday();
+        const monthStart = `${today.slice(0, 7)}-01`;
         // [WERK-4] "BoekBrug ziet wat jij vergeet": the hours on open work without a rate, the
         // hours per piece of work against the agreed ones, and the purchases of suppliers the owner
         // attached to work before that are attached to nothing now. Each read may fail on its own
@@ -210,12 +213,16 @@ export default async function VandaagPage() {
         const hoursByWork = new Map<string, number>();
         let hoursWithoutRate = 0;
         if (ids.length > 0) {
-          const { data: hourRows, error: hoursErr } = await db.from("time_entries").select("work_item_id, hours, hourly_rate")
+          const { data: hourRows, error: hoursErr } = await db.from("time_entries").select("work_item_id, hours, hourly_rate, worked_on")
             .eq("user_id", user.id).is("invoice_id", null).in("work_item_id", ids.slice(0, 200)).limit(2000);
           if (!hoursErr) {
-            for (const h of (hourRows ?? []) as Array<{ work_item_id: string; hours: number | null; hourly_rate: number | null }>) {
-              hoursByWork.set(h.work_item_id, (hoursByWork.get(h.work_item_id) ?? 0) + Number(h.hours ?? 0));
+            // [CONTRACT] A contract's agreed hours are per period, so its hours count this month only;
+            // one-off work counts every unbilled hour on it.
+            const recurring = new Set(open.filter((r) => r.repeat_every).map((r) => r.id));
+            for (const h of (hourRows ?? []) as Array<{ work_item_id: string; hours: number | null; hourly_rate: number | null; worked_on: string | null }>) {
               if (h.hourly_rate === null) hoursWithoutRate += 1;
+              if (recurring.has(h.work_item_id) && (h.worked_on ?? "") < monthStart) continue;
+              hoursByWork.set(h.work_item_id, (hoursByWork.get(h.work_item_id) ?? 0) + Number(h.hours ?? 0));
             }
           }
         }
@@ -234,8 +241,8 @@ export default async function VandaagPage() {
         }
         werk = {
           pluralKey: skin.pluralKey,
-          counts: workCounts(open),
-          signals: workSignals({ rows: open.map((r) => ({ id: r.id, status: r.status, fields: r.fields, lines: storedLines(r.lines) })), hoursWithoutRate, hoursByWork, unlinkedCosts }),
+          counts: workCounts(open, today),
+          signals: workSignals({ rows: open.map((r) => ({ id: r.id, status: r.status, fields: r.fields, lines: storedLines(r.lines) })), hoursWithoutRate, hoursByWork, unlinkedCosts, today }),
         };
       }
     }

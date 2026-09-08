@@ -7,6 +7,7 @@ import {
   storedVisits, readVisit, unbilledVisits, addRepeat, nextVisitOn, visitInvoiceLines, shortDateNL,
   canInvoiceTogether, togetherGroups, workInvoiceLines, REPEATS, REPEAT_KEYS, isRepeat,
   financialReadiness, overBudget, workSignals,
+  contractFee, canInvoicePeriod, periodInvoiceLines, periodLabelNL, storedPeriods, daysUntil, contractStat, contractGroups, periodOf,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -232,6 +233,52 @@ test("[WERK-4] the Vandaag signals count money between the work and the invoice,
     { kind: "over_budget", n: 2 },
   ], "invoiced work is not counted; a over 200 by lines, b over 10 hours");
   assert.deepEqual(workSignals({ rows: [], hoursWithoutRate: 0, hoursByWork: new Map(), unlinkedCosts: { n: 0, amount: 0 } }), []);
+});
+
+test("[CONTRACT] a fee contract is billed per period, once, never ahead, and its beurten are covered", () => {
+  const visits = [{ on: "2026-09-01", note: null, invoice_id: null }];
+  const lines = [{ kind: "vast", description: "Schoonmaak", quantity: 1, unit: "post", unit_price: 85, btw_rate: 9 }];
+  const row = { id: "c", title: "Kantoor Janssen", client_name: "Janssen", status: "bezig", invoice_id: null, repeat_every: "week", fields: { locatie: "Tilburg", maandbedrag: 1850, afgesproken_uren: 72, einddatum: "2026-10-20" }, lines, visits, billed_periods: [] as Array<{ period: string; invoice_id: string }> };
+  assert.equal(contractFee(row), 1850);
+  assert.equal(contractFee({ ...row, fields: { locatie: "x" } }), null, "no fee → per beurt");
+  assert.equal(contractFee({ ...row, repeat_every: null }), null, "one-off work has no fee");
+  assert.equal(canInvoice(row), false, "a fee contract is not billed by its beurten");
+  assert.equal(canInvoicePeriod(row, "2026-09", "2026-09-08"), true);
+  assert.equal(canInvoicePeriod(row, "2026-10", "2026-09-08"), false, "never a future month");
+  assert.equal(canInvoicePeriod({ ...row, billed_periods: [{ period: "2026-09", invoice_id: "inv" }] }, "2026-09", "2026-09-08"), false, "once");
+  assert.equal(canInvoicePeriod({ ...row, status: "geannuleerd" }, "2026-09", "2026-09-08"), false);
+  assert.deepEqual(periodInvoiceLines(row, "2026-09"), [{ description: "Kantoor Janssen · Tilburg · september 2026", quantity: 1, unit_price: 1850, btw_rate: 9 }], "the row's own rate, the month in Dutch");
+  assert.equal(periodLabelNL("2026-01"), "januari 2026");
+  assert.deepEqual(storedPeriods([{ period: "2026-09", invoice_id: "a" }, { period: "sept", invoice_id: "b" }, null]), [{ period: "2026-09", invoice_id: "a" }]);
+  assert.equal(daysUntil("2026-10-20", "2026-09-08"), 42);
+  assert.equal(daysUntil("2026-09-01", "2026-09-08"), -7);
+  assert.equal(daysUntil(undefined, "2026-09-08"), null);
+  // Readiness follows the period door for a fee contract.
+  const ready = financialReadiness({ row, hours: [{ hours: 4, hourly_rate: null, invoice_id: null }], today: "2026-09-08" });
+  assert.equal(ready.ok, true, "an unpriced hour does not block a fee invoice — the fee covers it");
+  assert.equal(ready.amountExBtw, 1850);
+  assert.equal(financialReadiness({ row: { ...row, billed_periods: [{ period: "2026-09", invoice_id: "inv" }] }, hours: [], today: "2026-09-08" }).ok, false);
+  // Counts: the unbilled period is what is ready, worth the fee.
+  assert.deepEqual(workCounts([row], "2026-09-08"), { open: 0, bezig: 0, wacht: 0, klaar: 1, klaarExBtw: 1850 });
+  assert.deepEqual(workCounts([{ ...row, billed_periods: [{ period: "2026-09", invoice_id: "inv" }] }], "2026-09-08"), { open: 0, bezig: 1, wacht: 0, klaar: 0, klaarExBtw: 0 });
+  // The overview: hours over the agreed ones and an end within sixty days both ask for attention.
+  const stat = contractStat({ row, hoursMonth: 81, costsMonth: 95, today: "2026-09-08" });
+  assert.equal(stat.revenueMonth, 1850);
+  assert.equal(stat.marginMonth, 1755);
+  assert.deepEqual(stat.reasons, ["uren", "einde"]);
+  assert.equal(stat.health, "aandacht");
+  assert.equal(stat.periodBilled, false);
+  const perBeurt = contractStat({ row: { ...row, fields: { locatie: "Breda", afgesproken_uren: 72 }, visits: [...visits, { on: "2026-09-08", note: null, invoice_id: null }, { on: "2026-08-25", note: null, invoice_id: "old" }] }, hoursMonth: 60, costsMonth: 0, today: "2026-09-08" });
+  assert.equal(perBeurt.fee, null);
+  assert.equal(perBeurt.revenueMonth, 170, "two beurten this month × 85");
+  assert.equal(perBeurt.visitsMonth, 2);
+  assert.equal(perBeurt.health, "goed");
+  const groups = contractGroups([perBeurt, stat, { ...perBeurt, id: "z", client_name: "Aardse" }]);
+  assert.deepEqual(groups.map((g) => [g.client_name, g.contracts.length]), [["Janssen", 2], ["Aardse", 1]], "the client with attention first");
+  assert.equal(periodOf("2026-09-08"), "2026-09");
+  // Vandaag: the contract end is a signal.
+  const sig = workSignals({ rows: [{ id: "c", status: "bezig", fields: row.fields, lines }], hoursWithoutRate: 0, hoursByWork: new Map(), unlinkedCosts: { n: 0, amount: 0 }, today: "2026-09-08" });
+  assert.deepEqual(sig, [{ kind: "contract_ending", n: 1 }]);
 });
 
 test("[WERK] margin is revenue minus attached costs; nothing to divide by gives no share", () => {

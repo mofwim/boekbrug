@@ -21,8 +21,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
-import { canInvoice, unbilledVisits } from "@/lib/werk";
-import { loadWorkForInvoice, openDraftFor, stampHours, stampVisits, closeWork, rollbackDraft, type WorkLoaded } from "@/lib/werk-factuur";
+import { canInvoice, unbilledVisits, contractFee, canInvoicePeriod, periodInvoiceLines, periodOf, isPeriod } from "@/lib/werk";
+import { loadWorkForInvoice, openDraftFor, stampHours, stampVisits, stampPeriod, closeWork, rollbackDraft, type WorkLoaded } from "@/lib/werk-factuur";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +45,35 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (!loaded.ok) return NextResponse.json({ error: loaded.error }, { status: loaded.status });
   const work: WorkLoaded = loaded.works[0];
   const row = work.row;
-  if (!canInvoice({ status: row.status, invoice_id: row.invoice_id ?? null, repeat_every: row.repeat_every, visits: row.visits })) {
+
+  // [CONTRACT] A fee contract is billed per period: one line, the fee, the month named. The
+  // period comes from the body or is this month; a future month and a billed month are refused.
+  if (contractFee(row) !== null) {
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const today = amsterdamToday();
+    const period = isPeriod(body.period) ? body.period : periodOf(today);
+    if (!canInvoicePeriod(row, period, today)) {
+      return NextResponse.json({ error: "Deze periode is al gefactureerd, of ligt nog in de toekomst.", code: "period_not_invoiceable" }, { status: 409 });
+    }
+    const clientName = (row.client_name ?? "").trim();
+    if (!clientName) return NextResponse.json({ error: "Zet eerst een klant op dit werk.", code: "no_client" }, { status: 409 });
+    const lines = periodInvoiceLines(row, period);
+    const opened = await openDraftFor(req, { client_id: row.client_id, client_name: clientName, lines });
+    if (!opened.ok) return NextResponse.json({ error: opened.error, from: "draft" }, { status: opened.status });
+    const stamped = await stampPeriod(db, user.id, id, period, opened.invoiceId);
+    if (!stamped.ok) {
+      await rollbackDraft(db, user.id, opened.invoiceId);
+      return NextResponse.json({ error: stamped.reason === "already_billed" ? "Deze periode is inmiddels gefactureerd." : "De periode kon niet worden vastgezet. Probeer het opnieuw.", code: stamped.reason }, { status: 409 });
+    }
+    await logAuditAction({
+      userId: user.id, action: "work.invoiced", entityType: "work_item", entityId: id,
+      newValue: { invoice_id: opened.invoiceId, title: row.title, period, fee: contractFee(row) },
+      ipAddress: getClientIP(req),
+    }).catch(() => {});
+    return NextResponse.json({ ok: true, invoiceId: opened.invoiceId, lines: lines.length, hoursBilled: 0, hoursWithoutRate: 0, visitsBilled: 0, period });
+  }
+
+  if (!canInvoice({ status: row.status, invoice_id: row.invoice_id ?? null, repeat_every: row.repeat_every, visits: row.visits, fields: row.fields })) {
     return NextResponse.json({ error: "Alleen werk dat klaar is en nog geen factuur heeft, wordt een factuur.", code: "not_invoiceable" }, { status: 409 });
   }
   const clientName = (row.client_name ?? "").trim();

@@ -15,7 +15,7 @@ import { linesFromEntries, verifyStamped, DEFAULT_HOUR_BTW_RATE, type TimeEntry 
 import { displayKenteken } from "@/lib/vehicle";
 import { amsterdamToday } from "@/lib/format-nl";
 import { chunkIds } from "@/lib/supabase-paginate";
-import { storedLines, storedVisits, isRepeat, workSkin, workInvoiceLines, hourBtwFor, type InvoiceLineDraft, type Visit, type WorkLine } from "@/lib/werk";
+import { storedLines, storedVisits, storedPeriods, isRepeat, workSkin, workInvoiceLines, hourBtwFor, type BilledPeriod, type InvoiceLineDraft, type Visit, type WorkLine } from "@/lib/werk";
 
 export interface WorkRowForInvoice {
   id: string;
@@ -29,6 +29,7 @@ export interface WorkRowForInvoice {
   lines: WorkLine[];
   repeat_every: string | null;
   visits: Visit[];
+  billed_periods: BilledPeriod[];
   planned_on: string | null;
   done_on: string | null;
   invoice_id: string | null;
@@ -45,7 +46,7 @@ export interface WorkLoaded {
 
 type Loaded = { ok: true; works: WorkLoaded[] } | { ok: false; error: string; status: number };
 
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, fields, lines, repeat_every, visits, planned_on, done_on, invoice_id";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, fields, lines, repeat_every, visits, billed_periods, planned_on, done_on, invoice_id";
 const HOURS_PAGE = 200;
 const HOURS_MAX = 2000;
 
@@ -79,6 +80,7 @@ export async function loadWorkForInvoice(db: any, userId: string, ids: string[],
       vehicle_id: (r.vehicle_id as string | null) ?? null, status: String(r.status),
       fields: (r.fields && typeof r.fields === "object" ? r.fields : {}) as Record<string, string | number>,
       lines: storedLines(r.lines), repeat_every: isRepeat(r.repeat_every) ? r.repeat_every : null, visits: storedVisits(r.visits),
+      billed_periods: storedPeriods(r.billed_periods),
       planned_on: (r.planned_on as string | null) ?? null, done_on: (r.done_on as string | null) ?? null,
       invoice_id: (r.invoice_id as string | null) ?? null,
     };
@@ -215,6 +217,28 @@ export async function stampVisits(db: any, userId: string, workId: string, cover
     if (writeErr) return { ok: false, reason: "write_failed" };
     if ((written ?? []).length === 1) return { ok: true };
     // Someone wrote in between; read again with their beurt included.
+  }
+  return { ok: false, reason: "write_failed" };
+}
+
+/**
+ * [CONTRACT] Stamp a period on a fee contract, under the same optimistic lock as the beurten:
+ * the row is re-read with updated_at, the write is `WHERE updated_at = <read>`. A period found
+ * billed meanwhile (a second tab) refuses, and the caller rolls the draft back. The beurten of
+ * that period are stamped with the same invoice — the fee covered them — so they never show as
+ * "nog te factureren".
+ */
+export async function stampPeriod(db: any, userId: string, workId: string, period: string, invoiceId: string): Promise<{ ok: true } | { ok: false; reason: "already_billed" | "write_failed" }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: readErr } = await db.from("work_items").select("visits, billed_periods, updated_at").eq("id", workId).eq("user_id", userId).maybeSingle();
+    if (readErr || !fresh) return { ok: false, reason: "write_failed" };
+    const periods = storedPeriods(fresh.billed_periods);
+    if (periods.some((p) => p.period === period)) return { ok: false, reason: "already_billed" };
+    const visits = storedVisits(fresh.visits).map((v) => (!v.invoice_id && v.on.startsWith(period) ? { ...v, invoice_id: invoiceId } : v));
+    const { data: written, error: writeErr } = await db.from("work_items").update({ billed_periods: [...periods, { period, invoice_id: invoiceId }], visits })
+      .eq("id", workId).eq("user_id", userId).eq("updated_at", fresh.updated_at).select("id");
+    if (writeErr) return { ok: false, reason: "write_failed" };
+    if ((written ?? []).length === 1) return { ok: true };
   }
   return { ok: false, reason: "write_failed" };
 }

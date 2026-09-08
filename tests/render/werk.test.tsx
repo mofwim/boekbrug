@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, ContractsPanel, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
 import { VakCardView } from "../../src/components/settings/VakCard";
 import { werkZin, werkSignaalZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
@@ -16,7 +16,7 @@ const t = translator("nl") as unknown as T;
 
 const werkorder = (over: Partial<WorkRow>): WorkRow => ({
   id: "w1", vak: "automonteur", title: "Remmen vervangen", client_id: null, client_name: "J. Jansen", vehicle_id: "v1", kenteken: "12ABC3",
-  status: "open", planned_on: "2026-09-09", done_on: null, fields: { km_stand: 123456 }, lines: [], repeat_every: null, visits: [], notes: null, invoice_id: null, created_at: "2026-09-08T10:00:00Z",
+  status: "open", planned_on: "2026-09-09", done_on: null, fields: { km_stand: 123456 }, lines: [], repeat_every: null, visits: [], billed_periods: [], notes: null, invoice_id: null, created_at: "2026-09-08T10:00:00Z",
   ...over,
 });
 
@@ -189,4 +189,26 @@ test("[WERK-4] the readiness list names the missing tick, the margin names its t
   assert.ok(margin.includes("geschat, nog geen kosten") && margin.includes("Begroot € 400,00 · werkelijk € 480,00"));
   assert.deepEqual(werkSignaalZin({ kind: "costs_unlinked", n: 2, amount: 184.32 }, t), { text: "2 bonnen (€ 184,32) van bekende leveranciers hangen aan geen werk.", href: "/dashboard/incoming/manage" });
   assert.equal(werkSignaalZin({ kind: "over_budget", n: 1 }, t).text, "1 stuks werk boven de begroting.");
+});
+
+test("[CONTRACT] the portfolio groups a client's locations, names the attention, and offers this month's invoice once", () => {
+  const stat = (over: Partial<Parameters<typeof ContractsPanel>[0]["groups"][number]["contracts"][number]>) => ({
+    id: "c1", title: "Schoonmaak", client_name: "Janssen Vastgoed", locatie: "Kantoor Tilburg", fee: 1850, revenueMonth: 1850, hoursMonth: 81, agreedHours: 72, costsMonth: 95, marginMonth: 1755,
+    visitsMonth: 4, einddatum: "2026-10-20", daysLeft: 42, periodBilled: false, health: "aandacht" as const, reasons: ["uren", "einde"] as Array<"uren" | "einde">, ...over,
+  });
+  const html = renderToStaticMarkup(
+    <ContractsPanel period="2026-09" t={t} onInvoicePeriod={() => {}} groups={[
+      { client_name: "Janssen Vastgoed", contracts: [stat({}), stat({ id: "c2", locatie: "Magazijn Waalwijk", fee: null, revenueMonth: 340, hoursMonth: 20, agreedHours: 24, health: "goed", reasons: [], einddatum: null, daysLeft: null })] },
+      { client_name: "Delta BV", contracts: [stat({ id: "c3", locatie: "Winkel Breda", periodBilled: true, health: "goed", reasons: [], einddatum: null, daysLeft: null })] },
+    ]} />,
+  );
+  assert.ok(html.includes("Janssen Vastgoed · 2") && html.includes("Kantoor Tilburg") && html.includes("Magazijn Waalwijk"));
+  assert.ok(html.includes("€ 1.850,00 per maand") && html.includes("loopt af over 42 dagen") && html.includes("Aandacht"));
+  assert.ok(html.includes("81 van 72 uur deze maand"), "hours against the agreed ones");
+  assert.ok(html.includes("Factureer september 2026"), "this month's fee, offered");
+  assert.ok(html.includes("september 2026 gefactureerd"), "…and marked once it is on an invoice");
+  assert.ok(html.includes("Per beurt") && html.includes("geschat"), "a per-beurt contract says so, and the margin says its trust");
+  assert.equal(invoiceButtonState({ status: "bezig", invoice_id: null, repeat_every: "week", visits: [], fields: { maandbedrag: 1850 }, billed_periods: [] }, null, "2026-09-08"), "make");
+  assert.equal(invoiceButtonState({ status: "bezig", invoice_id: null, repeat_every: "week", visits: [], fields: { maandbedrag: 1850 }, billed_periods: [{ period: "2026-09", invoice_id: "x" }] }, null, "2026-09-08"), "none");
+  assert.equal(werkSignaalZin({ kind: "contract_ending", n: 2 }, t).text, "2 contracten lopen binnen 60 dagen af.");
 });

@@ -18,7 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { chunkIds } from "@/lib/supabase-paginate";
-import { workSkin, workMargin, storedLines, storedVisits, isRepeat, readVisit, linesTotalEx, unbilledVisits, type WorkStatus } from "@/lib/werk";
+import { workSkin, workMargin, storedLines, storedVisits, storedPeriods, isRepeat, readVisit, linesTotalEx, unbilledVisits, type WorkStatus } from "@/lib/werk";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
 import type { AttachedCost, AttachedDocument, AttachedHours, WorkHistory, WorkInvoiceSummary, WorkRow } from "@/lib/werk-rows";
@@ -26,7 +26,7 @@ import type { AttachedCost, AttachedDocument, AttachedHours, WorkHistory, WorkIn
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, billed_periods, notes, invoice_id, created_at";
 const HOURS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id";
 const COSTS = "id, client_name, invoice_number, invoice_date, total_ex_btw, btw_amount, total_inc_btw, status";
 const DOCS = "id, file_name, created_at";
@@ -56,6 +56,7 @@ async function loadRow(db: any, userId: string, id: string): Promise<WorkRow | n
     vehicle_id: data.vehicle_id ?? null, kenteken, status: data.status as WorkStatus, planned_on: data.planned_on ?? null,
     done_on: data.done_on ?? null, fields: data.fields && typeof data.fields === "object" ? data.fields : {},
     lines: storedLines(data.lines), repeat_every: isRepeat(data.repeat_every) ? data.repeat_every : null, visits: storedVisits(data.visits),
+    billed_periods: storedPeriods(data.billed_periods),
     notes: data.notes ?? null, invoice_id: data.invoice_id ?? null, created_at: data.created_at,
   };
 }

@@ -13,13 +13,14 @@ import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { normalizeKenteken, isKentekenShape } from "@/lib/vehicle";
 import { amsterdamToday, amsterdamClock } from "@/lib/format-nl";
 import {
-  workSkin, vaksForSkin, readFields, readLines, storedLines, storedVisits, isRepeat, isWorkStatus, isCalendarDay, HAND_STATUSES, canDelete, type WorkStatus,
+  workSkin, vaksForSkin, readFields, readLines, storedLines, storedVisits, storedPeriods, isRepeat, isWorkStatus, isCalendarDay, HAND_STATUSES, canDelete,
+  contractStat, contractGroups, periodOf, type WorkStatus,
 } from "@/lib/werk";
 import type { WorkRow } from "@/lib/werk-rows";
 
 export const dynamic = "force-dynamic";
 
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, billed_periods, notes, invoice_id, created_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIST_MAX = 300;
 
@@ -66,6 +67,7 @@ async function withPlates(supabase: Awaited<ReturnType<typeof createServerSupaba
     lines: storedLines(r.lines),
     repeat_every: isRepeat(r.repeat_every) ? r.repeat_every : null,
     visits: storedVisits(r.visits),
+    billed_periods: storedPeriods(r.billed_periods),
     notes: (r.notes as string | null) ?? null,
     invoice_id: (r.invoice_id as string | null) ?? null,
     created_at: String(r.created_at),
@@ -113,6 +115,34 @@ export async function GET(req: NextRequest) {
       .order("updated_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return NextResponse.json({ error: "Kon het vorige werk niet lezen." }, { status: 500 });
     return NextResponse.json({ ok: true, lines: storedLines(data?.lines), title: data?.title ?? null });
+  }
+
+  // [CONTRACT] The overview: every repeating row of this skin with this period's hours and costs,
+  // grouped per client. Two reads beside the rows; a read that fails leaves its figure at zero
+  // AND says so (readFailed), never a healthy-looking contract on a missing number.
+  if (req.nextUrl.searchParams.get("contracten") === "1") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = supabase as any;
+    const { data: raw, error: rowsErr } = await db.from("work_items").select(COLUMNS).eq("user_id", user.id).in("vak", vaksForSkin(skin.skin))
+      .not("repeat_every", "is", null).not("status", "in", "(gefactureerd,geannuleerd)").order("client_name", { ascending: true }).limit(LIST_MAX);
+    if (rowsErr) return NextResponse.json({ error: "Kon de contracten niet laden." }, { status: 500 });
+    const rows = await withPlates(supabase, user.id, (raw ?? []) as Array<Record<string, unknown>>);
+    const today = amsterdamToday();
+    const monthStart = `${periodOf(today)}-01`;
+    const ids = rows.map((r) => r.id);
+    const hours = new Map<string, number>();
+    const costs = new Map<string, number>();
+    let readFailed = false;
+    if (ids.length > 0) {
+      const { data: h, error: hErr } = await db.from("time_entries").select("work_item_id, hours").eq("user_id", user.id).in("work_item_id", ids.slice(0, 200)).gte("worked_on", monthStart).limit(2000);
+      if (hErr) readFailed = true;
+      for (const e of (h ?? []) as Array<{ work_item_id: string; hours: number | null }>) hours.set(e.work_item_id, (hours.get(e.work_item_id) ?? 0) + Number(e.hours ?? 0));
+      const { data: c, error: cErr } = await db.from("invoices").select("work_item_id, total_ex_btw").eq("receiver_id", user.id).eq("direction", "incoming").in("work_item_id", ids.slice(0, 200)).gte("invoice_date", monthStart).limit(2000);
+      if (cErr) readFailed = true;
+      for (const e of (c ?? []) as Array<{ work_item_id: string; total_ex_btw: number | null }>) costs.set(e.work_item_id, (costs.get(e.work_item_id) ?? 0) + Math.abs(Number(e.total_ex_btw ?? 0)));
+    }
+    const stats = rows.map((r) => contractStat({ row: r, hoursMonth: hours.get(r.id) ?? 0, costsMonth: costs.get(r.id) ?? 0, today }));
+    return NextResponse.json({ ok: true, period: periodOf(today), groups: contractGroups(stats), readFailed });
   }
 
   const status = req.nextUrl.searchParams.get("status");
