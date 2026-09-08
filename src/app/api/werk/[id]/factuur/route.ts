@@ -21,8 +21,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
-import { canInvoice, storedVisits, unbilledVisits } from "@/lib/werk";
-import { loadWorkForInvoice, openDraftFor, stampHours, type WorkLoaded } from "@/lib/werk-factuur";
+import { canInvoice, unbilledVisits } from "@/lib/werk";
+import { loadWorkForInvoice, openDraftFor, stampHours, stampVisits, closeWork, rollbackDraft, type WorkLoaded } from "@/lib/werk-factuur";
 
 export const dynamic = "force-dynamic";
 
@@ -64,25 +64,25 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const invoiceId = opened.invoiceId;
   const today = amsterdamToday();
 
-  await stampHours(db, user.id, [work], invoiceId);
+  // From here every step must PROVE itself, or the draft goes away again: a draft whose lines
+  // name hours or beurten that are still billable elsewhere is the one outcome money cannot have.
+  const stamped = await stampHours(db, user.id, [work], invoiceId);
+  if (!stamped.ok) {
+    await rollbackDraft(db, user.id, invoiceId);
+    return NextResponse.json({ error: "De uren staan inmiddels op een andere factuur. Ververs en probeer opnieuw.", code: "uren_not_linked" }, { status: 409 });
+  }
   if (row.repeat_every) {
-    // Re-read the beurten at the moment of stamping: one added meanwhile must stay unbilled.
-    const { data: fresh } = await db.from("work_items").select("visits").eq("id", id).eq("user_id", user.id).maybeSingle();
-    const current = storedVisits(fresh?.visits);
-    const covered = new Set(billedVisits.map((v) => v.on));
-    let stamped = 0;
-    const next = current.map((v) => {
-      if (!v.invoice_id && covered.has(v.on) && stamped < billedVisits.length) { stamped += 1; return { ...v, invoice_id: invoiceId }; }
-      return v;
-    });
-    const { error: updErr } = await db.from("work_items").update({ visits: next }).eq("id", id).eq("user_id", user.id);
-    if (updErr) console.error("[WERK-BEURT] invoice made but the beurten could not be stamped", { id, invoiceId, error: updErr.message });
+    const v = await stampVisits(db, user.id, id, billedVisits, invoiceId);
+    if (!v.ok) {
+      await rollbackDraft(db, user.id, invoiceId);
+      return NextResponse.json({ error: v.reason === "already_billed" ? "Deze beurten staan inmiddels op een andere factuur." : "De beurten konden niet worden vastgezet. Probeer het opnieuw.", code: v.reason }, { status: 409 });
+    }
   } else {
-    const { error: updErr } = await db
-      .from("work_items")
-      .update({ invoice_id: invoiceId, status: "gefactureerd", done_on: row.done_on ?? today })
-      .eq("id", id).eq("user_id", user.id).is("invoice_id", null);
-    if (updErr) console.error("[WERK] invoice made but the work row could not be closed", { id, invoiceId, error: updErr.message });
+    const closed = await closeWork(db, user.id, [id], invoiceId, today);
+    if (closed.error || closed.closed !== 1) {
+      await rollbackDraft(db, user.id, invoiceId);
+      return NextResponse.json({ error: "Dit werk is inmiddels gefactureerd.", code: "already_invoiced" }, { status: 409 });
+    }
   }
 
   await logAuditAction({

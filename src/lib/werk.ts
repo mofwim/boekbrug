@@ -111,6 +111,8 @@ const WERKORDER: WorkSkin = {
     { key: "km_stand", type: "number", labelKey: "werk.veld.kmStand", onCard: true },
     { key: "klacht", type: "text", labelKey: "werk.veld.klacht" },
     { key: "monteur", type: "text", labelKey: "werk.veld.monteur" },
+    // [WERK-3] The customer's phone: "uw auto staat klaar" is one tap, not a lookup.
+    { key: "telefoon", type: "text", labelKey: "werk.veld.telefoon" },
   ],
   lineKinds: [
     { kind: "arbeid", labelKey: "werk.regel.arbeid", unit: "uur" },
@@ -132,6 +134,9 @@ const RIT: WorkSkin = {
   fields: [
     { key: "van", type: "text", labelKey: "werk.veld.laadadres", onCard: true, required: true },
     { key: "naar", type: "text", labelKey: "werk.veld.losadres", onCard: true, required: true },
+    // [WERK-3] The time window the opdrachtgever gave; the card then reads like a dispatch line.
+    { key: "laadtijd", type: "text", labelKey: "werk.veld.laadtijd", onCard: true },
+    { key: "lostijd", type: "text", labelKey: "werk.veld.lostijd", onCard: true },
     { key: "referentie", type: "text", labelKey: "werk.veld.referentie" },
     { key: "colli", type: "number", labelKey: "werk.veld.colli" },
     { key: "gewicht_kg", type: "number", labelKey: "werk.veld.gewicht" },
@@ -145,10 +150,14 @@ const RIT: WorkSkin = {
     { kind: "km", labelKey: "werk.regel.km", unit: "km" },
     { kind: "uur", labelKey: "werk.regel.uur", unit: "uur" },
     { kind: "wachttijd", labelKey: "werk.regel.wachttijd", unit: "uur" },
+    // Personenvervoer is 9% where goederenvervoer is 21% (vak-sjablonen.ts): the taxi line
+    // starts on its own rate so nobody edits it by hand on every rit.
+    { kind: "personen", labelKey: "werk.regel.personen", unit: "post", btw: 9 },
     { kind: "extra", labelKey: "werk.regel.extra", unit: "post" },
   ],
   vehicle: true,
-  recurring: false,
+  // The same route every week for the same opdrachtgever: EasyTrans calls it a periodic order.
+  recurring: true,
 };
 
 const KLUS: WorkSkin = {
@@ -167,13 +176,18 @@ const KLUS: WorkSkin = {
     { kind: "arbeid", labelKey: "werk.regel.arbeid", unit: "uur" },
     { kind: "materiaal", labelKey: "werk.regel.materiaal", unit: "stuk" },
     { kind: "meerwerk", labelKey: "werk.regel.meerwerk", unit: "post" },
+    { kind: "voorrijkosten", labelKey: "werk.regel.voorrijkosten", unit: "post" },
   ],
   vehicle: false,
   recurring: false,
 };
 
-/** A hovenier's klus is the builder's klus, except that garden maintenance comes back every fortnight. */
-const TUIN: WorkSkin = { ...KLUS, recurring: true };
+/** A hovenier's klus is the builder's klus, except that garden maintenance comes back every fortnight and green waste is a line. */
+const TUIN: WorkSkin = {
+  ...KLUS,
+  lineKinds: [...KLUS.lineKinds, { kind: "afvoer", labelKey: "werk.regel.afvoer", unit: "post" }],
+  recurring: true,
+};
 
 const OPDRACHT: WorkSkin = {
   skin: "opdracht",
@@ -217,6 +231,7 @@ const REPARATIE: WorkSkin = {
     { key: "fiets", type: "text", labelKey: "werk.veld.fiets", onCard: true, required: true },
     { key: "framenummer", type: "text", labelKey: "werk.veld.framenummer" },
     { key: "klacht", type: "text", labelKey: "werk.veld.klacht" },
+    { key: "telefoon", type: "text", labelKey: "werk.veld.telefoon" },
   ],
   lineKinds: [
     { kind: "arbeid", labelKey: "werk.regel.arbeid", unit: "uur", btw: 9 },
@@ -279,6 +294,15 @@ export function hasWorkLayer(vak: string | null | undefined): boolean {
   return slug !== null && slug in SKIN_BY_VAK;
 }
 
+/**
+ * Every trade that shares a skin. The list reads the rows of all of them: a bouw-klus owner who
+ * becomes a loodgieter keeps seeing his klussen; a garage owner who becomes a cleaner does not see
+ * werkorders drawn as opdrachten with statuses the new skin has no words for.
+ */
+export function vaksForSkin(skinId: WorkSkin["skin"]): string[] {
+  return Object.entries(SKIN_BY_VAK).filter(([, s]) => s.skin === skinId).map(([vak]) => vak);
+}
+
 /** The skin for a trade, or null when the trade has no work layer. */
 export function workSkin(vak: string | null | undefined): WorkSkin | null {
   const slug = parseVak(vak);
@@ -312,6 +336,13 @@ export type FieldsVerdict =
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const TEXT_MAX = 300;
 
+/** A day the calendar has: the shape AND the date. 2026-02-30 passes the regex and is nobody's day. */
+export function isCalendarDay(iso: unknown): iso is string {
+  if (typeof iso !== "string" || !ISO.test(iso)) return false;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
+}
+
 /**
  * Read the trade fields out of an untrusted body. Unknown keys are dropped, empty values are
  * dropped, a required field that is empty is refused, and a value that is not what its type says
@@ -336,7 +367,7 @@ export function readFields(skin: WorkSkin, body: unknown): FieldsVerdict {
     }
     if (f.type === "date") {
       const s = String(raw).trim();
-      if (!ISO.test(s)) return { ok: false, key: f.key, reason: "not_a_date" };
+      if (!isCalendarDay(s)) return { ok: false, key: f.key, reason: "not_a_date" };
       out[f.key] = s;
       continue;
     }
@@ -368,6 +399,9 @@ export type LinesVerdict =
 
 export const LINES_MAX = 50;
 export const DEFAULT_LINE_BTW = 21;
+/** A quantity or price beyond these is a typo, and 1e308 × 5 is Infinity, which round2 turns into € 0. */
+export const QUANTITY_MAX = 1_000_000;
+export const PRICE_MAX = 10_000_000;
 
 function readNumber(raw: unknown): number | null {
   if (raw === undefined || raw === null || String(raw).trim() === "") return null;
@@ -388,12 +422,12 @@ export function readLines(skin: WorkSkin, body: unknown): LinesVerdict {
     const description = typeof r.description === "string" ? r.description.trim().slice(0, TEXT_MAX) : "";
     if (!description) return { ok: false, index: i, reason: "no_description" };
     const quantity = readNumber(r.quantity);
-    if (quantity === null || quantity <= 0) return { ok: false, index: i, reason: "bad_quantity" };
+    if (quantity === null || quantity <= 0 || quantity > QUANTITY_MAX) return { ok: false, index: i, reason: "bad_quantity" };
     const price = readNumber(r.unit_price);
-    if (price === null || price < 0) return { ok: false, index: i, reason: "bad_price" };
+    if (price === null || price < 0 || price > PRICE_MAX) return { ok: false, index: i, reason: "bad_price" };
     const btw = r.btw_rate === undefined || r.btw_rate === null || r.btw_rate === "" ? (kind.btw ?? DEFAULT_LINE_BTW) : readNumber(r.btw_rate);
     if (btw === null || !ALLOWED_BTW_RATES.includes(btw)) return { ok: false, index: i, reason: "bad_btw" };
-    out.push({ kind: kind.kind, description, quantity, unit: kind.unit, unit_price: round2(price), btw_rate: btw });
+    out.push({ kind: kind.kind, description, quantity: round2(quantity), unit: kind.unit, unit_price: round2(price), btw_rate: btw });
   }
   return { ok: true, lines: out };
 }
@@ -401,6 +435,11 @@ export function readLines(skin: WorkSkin, body: unknown): LinesVerdict {
 /** What the lines add up to, ex btw. */
 export function linesTotalEx(lines: readonly WorkLine[]): number {
   return round2(lines.reduce((s, l) => s + l.quantity * l.unit_price, 0));
+}
+
+/** What the lines add up to inc btw — the amount the customer is told; the invoice recomputes it. */
+export function linesTotalInc(lines: readonly WorkLine[]): number {
+  return round2(lines.reduce((s, l) => s + round2(l.quantity * l.unit_price) * (1 + l.btw_rate / 100), 0));
 }
 
 /** Read stored lines back (jsonb) without trusting them: anything malformed is dropped. */
@@ -457,10 +496,15 @@ export interface WorkCounts {
   klaar: number;
 }
 
-/** What the trade owner wants to hear first: how many are ready to invoice, how many wait. */
-export function workCounts(rows: ReadonlyArray<{ status: string }>): WorkCounts {
+/**
+ * What the trade owner wants to hear first: how many are ready to invoice, how many wait.
+ * [WERK-BEURT] Repeating work with a done beurt that is not on an invoice yet is "ready to
+ * invoice" too, whatever its status says — that is the Monday question for a cleaner.
+ */
+export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown }>): WorkCounts {
   const c: WorkCounts = { open: 0, bezig: 0, wacht: 0, klaar: 0 };
   for (const r of rows) {
+    if (r.repeat_every && r.status !== "geannuleerd" && r.status !== "gefactureerd" && unbilledVisits(storedVisits(r.visits)).length > 0) { c.klaar += 1; continue; }
     if (r.status === "open") c.open += 1;
     else if (r.status === "bezig") c.bezig += 1;
     else if (r.status === "wacht_klant" || r.status === "wacht_onderdeel") c.wacht += 1;
@@ -483,11 +527,11 @@ export function canInvoice(row: { status: string; invoice_id: string | null; rep
 
 // ── Repeating work and its beurten ────────────────────────────────────────────────────────────
 
-export type Repeat = "week" | "twee_weken" | "vier_weken" | "maand";
-export const REPEATS: readonly Repeat[] = ["week", "twee_weken", "vier_weken", "maand"];
+export type Repeat = "week" | "twee_weken" | "vier_weken" | "maand" | "kwartaal";
+export const REPEATS: readonly Repeat[] = ["week", "twee_weken", "vier_weken", "maand", "kwartaal"];
 /** The words for each rhythm — literal keys, [TAAL] reads them. */
 export const REPEAT_KEYS: Readonly<Record<Repeat, string>> = {
-  week: "werk.herhaal.week", twee_weken: "werk.herhaal.tweeWeken", vier_weken: "werk.herhaal.vierWeken", maand: "werk.herhaal.maand",
+  week: "werk.herhaal.week", twee_weken: "werk.herhaal.tweeWeken", vier_weken: "werk.herhaal.vierWeken", maand: "werk.herhaal.maand", kwartaal: "werk.herhaal.kwartaal",
 };
 
 export function isRepeat(v: unknown): v is Repeat {
@@ -514,14 +558,20 @@ export function storedVisits(raw: unknown): Visit[] {
   return out;
 }
 
-export type VisitVerdict = { ok: true; visit: Visit } | { ok: false; reason: "not_a_date" | "too_many" };
+export type VisitVerdict = { ok: true; visit: Visit } | { ok: false; reason: "not_a_date" | "too_many" | "duplicate_day" };
 
-/** Read one beurt out of an untrusted body: the date must be a real ISO day, the note is optional. */
+/**
+ * Read one beurt out of an untrusted body: the date must be a day the calendar has, the note is
+ * optional, and a second UNBILLED beurt on the same day is refused — a retried tap on a slow
+ * connection must not charge one day's cleaning twice. (A billed one on that day is history; a
+ * second visit after it is real.)
+ */
 export function readVisit(body: unknown, existing: readonly Visit[], today: string): VisitVerdict {
   if (existing.length >= VISITS_MAX) return { ok: false, reason: "too_many" };
   const src = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const on = typeof src.on === "string" && src.on.trim() ? src.on.trim() : today;
-  if (!ISO.test(on)) return { ok: false, reason: "not_a_date" };
+  if (!isCalendarDay(on)) return { ok: false, reason: "not_a_date" };
+  if (existing.some((v) => v.on === on && !v.invoice_id)) return { ok: false, reason: "duplicate_day" };
   const note = typeof src.note === "string" && src.note.trim() ? src.note.trim().slice(0, TEXT_MAX) : null;
   return { ok: true, visit: { on, note, invoice_id: null } };
 }
@@ -534,11 +584,13 @@ export function unbilledVisits(visits: readonly Visit[]): Visit[] {
 export function addRepeat(iso: string, repeat: Repeat): string {
   const [y, m, d] = iso.split("-").map(Number);
   const days = repeat === "week" ? 7 : repeat === "twee_weken" ? 14 : repeat === "vier_weken" ? 28 : 0;
+  const months = repeat === "maand" ? 1 : repeat === "kwartaal" ? 3 : 0;
   let next: Date;
   if (days > 0) next = new Date(Date.UTC(y, m - 1, d + days));
   else {
-    const lastOfNext = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-    next = new Date(Date.UTC(y, m, Math.min(d, lastOfNext)));
+    // Day 0 of the month after the target month is the target month's last day.
+    const lastOfTarget = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate();
+    next = new Date(Date.UTC(y, m - 1 + months, Math.min(d, lastOfTarget)));
   }
   return next.toISOString().slice(0, 10);
 }
@@ -653,15 +705,79 @@ export function workInvoiceLines(args: { skin: WorkSkin | null; row: WorkForInvo
   } else if (heading) {
     const day = row.done_on ?? row.planned_on;
     const route = skin?.skin === "rit" && typeof row.fields.van === "string" && typeof row.fields.naar === "string" ? ` · ${row.fields.van} → ${row.fields.naar}` : "";
-    zero(`${row.title}${day ? ` · ${shortDateNL(day)}` : ""}${route}`);
+    zero(`${row.title}${day ? ` · ${shortDateNL(day)}` : ""}${route}${deliveryText(row.fields)}`);
   }
   for (const l of hourLines) out.push(l);
   const own = row.repeat_every ? visitInvoiceLines(row.lines, args.visits ?? unbilledVisits(row.visits)) : row.lines;
-  for (const l of own) out.push({ description: l.description, quantity: l.quantity, unit: l.unit, unit_price: l.unit_price, btw_rate: l.btw_rate });
+  // "post" is the work layer's word for a lump sum; the invoice has no such unit (units.ts), so
+  // the line goes without one rather than with a word the e-factuur cannot code.
+  for (const l of own) out.push({ description: l.description, quantity: l.quantity, unit: l.unit === "post" ? undefined : l.unit, unit_price: l.unit_price, btw_rate: l.btw_rate });
   return out;
 }
 
-/** May this row be deleted? Never once money hangs off it. */
-export function canDelete(row: { invoice_id: string | null; attachedCosts: number; attachedHours: number }): boolean {
+/**
+ * The courier's proof on the invoice heading: when it was delivered and who took it. Both come
+ * from the rit's fields (the clock is stamped by the API on 'afgeleverd', the name typed at the
+ * door). Dutch: it lands on the invoice.
+ */
+export function deliveryText(fields: FieldValues): string {
+  const at = typeof fields.afgeleverd_om === "string" && fields.afgeleverd_om ? ` · afgeleverd ${fields.afgeleverd_om}` : "";
+  const who = typeof fields.ontvanger === "string" && fields.ontvanger ? ` · ontvanger: ${fields.ontvanger}` : "";
+  return `${at}${who}`;
+}
+
+/** The btw rate attached hours go on the invoice at: the skin's own labour rate (a fietsenmaker's repair is 9%). */
+export function hourBtwFor(skin: WorkSkin | null, fallback: number): number {
+  return skin?.lineKinds.find((k) => k.kind === "arbeid")?.btw ?? fallback;
+}
+
+// ── Small daily helpers for the screen ────────────────────────────────────────────────────────
+
+/** Agreed hours against hours spent, when the work names a budget. */
+export function hoursBudget(fields: FieldValues, hoursSpent: number): { agreed: number; spent: number; over: boolean } | null {
+  const agreed = fields.afgesproken_uren;
+  if (typeof agreed !== "number" || !Number.isFinite(agreed) || agreed <= 0) return null;
+  return { agreed, spent: round2(hoursSpent), over: hoursSpent > agreed };
+}
+
+/** A phone number as a wa.me / tel: target, or null when there is none. Dutch numbers get their country code. */
+export function phoneTarget(raw: unknown): { tel: string; wa: string } | null {
+  if (typeof raw !== "string") return null;
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (digits.replace(/\D/g, "").length < 8) return null;
+  const intl = digits.startsWith("+") ? digits.slice(1) : digits.startsWith("00") ? digits.slice(2) : digits.startsWith("0") ? `31${digits.slice(1)}` : digits;
+  return { tel: `tel:${digits.startsWith("+") ? digits : `+${intl}`}`, wa: `https://wa.me/${intl.replace(/\D/g, "")}` };
+}
+
+/**
+ * The "it is ready" message to the customer, in Dutch — it is read by the customer, not the owner.
+ * One sentence with the thing (kenteken or bike) and the amount when there is one.
+ */
+export function readyMessageNL(args: { skin: WorkSkin | null; kenteken: string | null; fields: FieldValues; totalIncBtw: number | null }): string {
+  const thing = args.skin?.skin === "werkorder" && args.kenteken ? `uw auto (${args.kenteken})`
+    : args.skin?.skin === "reparatie" && typeof args.fields.fiets === "string" ? `uw fiets (${args.fields.fiets})`
+    : "uw opdracht";
+  const amount = args.totalIncBtw !== null && args.totalIncBtw > 0 ? ` Het totaal is € ${args.totalIncBtw.toFixed(2).replace(".", ",")}.` : "";
+  return `Goedendag, ${thing} staat klaar.${amount} Met vriendelijke groet`;
+}
+
+/** Which of the open rows are due today or this week: the trade's first question in the morning. */
+export function dueOn(row: { planned_on: string | null; repeat_every: string | null; visits: readonly Visit[]; status: string }): string | null {
+  if (row.status === "gefactureerd" || row.status === "geannuleerd") return null;
+  if (row.repeat_every) return nextVisitOn({ repeat_every: row.repeat_every, visits: row.visits, planned_on: row.planned_on });
+  return row.planned_on;
+}
+
+export function inWindow(due: string | null, today: string, days: number): boolean {
+  if (!due) return false;
+  if (due <= today) return true;
+  const [y, m, d] = today.split("-").map(Number);
+  const end = new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  return due <= end;
+}
+
+/** May this row be deleted? Never once money hangs off it — an invoice, an attached cost or hour, or a billed beurt. */
+export function canDelete(row: { invoice_id: string | null; attachedCosts: number; attachedHours: number; visits?: readonly Visit[] }): boolean {
+  if ((row.visits ?? []).some((v) => v.invoice_id)) return false;
   return !row.invoice_id && row.attachedCosts === 0 && row.attachedHours === 0;
 }

@@ -11,13 +11,14 @@ import { M3, sheetPaddingBottom } from '@/lib/design/tokens'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock'
 import { formatEuroNL, formatDateNL } from '@/lib/format-nl'
+import { round2 } from '@/lib/invoice-totals'
 import { displayKenteken } from '@/lib/vehicle'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import {
   HAND_STATUSES, REPEATS, REPEAT_KEYS, statusKey, linesTotalEx, canInvoice, nextVisitOn, unbilledVisits, togetherGroups, DEFAULT_LINE_BTW,
   type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
 } from '@/lib/werk'
-import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkInvoiceSummary } from '@/lib/werk-rows'
+import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
 import type { WorkMargin } from '@/lib/werk'
 
 export type T = (key: string, vars?: Record<string, string | number>) => string
@@ -135,16 +136,43 @@ export function StatusChips({ skin, current, t, onPick, disabled }: { skin: Work
   )
 }
 
-/** What the work charges. Editable rows; the total is arithmetic on what is typed. */
-export function LinesEditor({ skin, lines, t, onChange, disabled }: { skin: WorkSkin; lines: WorkLine[]; t: T; onChange: (lines: WorkLine[]) => void; disabled?: boolean }) {
+/** A catalogue line the description box can offer: the owner's own articles and the trade's template lines. */
+export interface LineSuggestion { description: string; unit_price: number | null; btw_rate: number; unit: string | null }
+
+/**
+ * What the work charges. Editable rows; the total is arithmetic on what is typed.
+ *
+ * The number boxes keep the TEXT the owner types. A controlled input that stores Number("47,")
+ * and renders "47" back eats the comma on a phone keyboard, so € 47,50 could never be typed —
+ * only pasted. The text lives here per box; the parsed number goes up on every keystroke that
+ * parses, and the box is cleaned up on blur.
+ */
+export function LinesEditor({ skin, lines, t, onChange, disabled, suggestions = [] }: { skin: WorkSkin; lines: WorkLine[]; t: T; onChange: (lines: WorkLine[]) => void; disabled?: boolean; suggestions?: LineSuggestion[] }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const listId = 'work-line-suggestions'
   const update = (i: number, patch: Partial<WorkLine>) => onChange(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const remove = (i: number) => onChange(lines.filter((_, j) => j !== i))
   const add = () => {
     const kind = skin.lineKinds[0]
     onChange([...lines, { kind: kind.kind, description: '', quantity: 1, unit: kind.unit, unit_price: 0, btw_rate: kind.btw ?? DEFAULT_LINE_BTW }])
   }
+  const typed = (key: string, fallback: number) => drafts[key] ?? formatNumberNL(fallback)
+  const type = (key: string, i: number, field: 'quantity' | 'unit_price', text: string) => {
+    setDrafts((d) => ({ ...d, [key]: text }))
+    const n = Number(text.trim().replace(',', '.'))
+    if (text.trim() !== '' && Number.isFinite(n)) update(i, { [field]: n } as Partial<WorkLine>)
+  }
+  const settle = (key: string) => setDrafts((d) => { const next = { ...d }; delete next[key]; return next })
+  const describe = (i: number, text: string) => {
+    const hit = suggestions.find((a) => a.description === text)
+    if (hit) update(i, { description: text, btw_rate: hit.btw_rate, ...(hit.unit_price !== null ? { unit_price: hit.unit_price } : {}) })
+    else update(i, { description: text })
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {suggestions.length > 0 && (
+        <datalist id={listId}>{suggestions.map((a) => <option key={a.description} value={a.description} />)}</datalist>
+      )}
       {lines.map((l, i) => (
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6, padding: 10, border: `1px solid ${M3.outlineVariant}`, borderRadius: 10 }} data-testid="work-line">
           <div style={{ display: 'flex', gap: 6 }}>
@@ -154,14 +182,15 @@ export function LinesEditor({ skin, lines, t, onChange, disabled }: { skin: Work
               {skin.lineKinds.map((k) => <option key={k.kind} value={k.kind}>{t(k.labelKey)}</option>)}
             </select>
             <input value={l.description} disabled={disabled} placeholder={t('werk.regel.omschrijving')} aria-label={t('werk.regel.omschrijving')}
-              onChange={(e) => update(i, { description: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
+              list={suggestions.length > 0 ? listId : undefined}
+              onChange={(e) => describe(i, e.target.value)} style={{ ...inputStyle, flex: 1 }} />
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input inputMode="decimal" value={String(l.quantity)} disabled={disabled} aria-label={t('werk.regel.aantal')}
-              onChange={(e) => update(i, { quantity: Number(e.target.value.replace(',', '.')) })} style={{ ...inputStyle, width: 72 }} />
+            <input inputMode="decimal" value={typed(`${i}q`, l.quantity)} disabled={disabled} aria-label={t('werk.regel.aantal')}
+              onChange={(e) => type(`${i}q`, i, 'quantity', e.target.value)} onBlur={() => settle(`${i}q`)} style={{ ...inputStyle, width: 72 }} />
             <span style={{ fontFamily: FONT, fontSize: 12.5, color: M3.onSurfaceVariant }}>{l.unit}</span>
-            <input inputMode="decimal" value={String(l.unit_price)} disabled={disabled} aria-label={t('werk.regel.prijs')}
-              onChange={(e) => update(i, { unit_price: Number(e.target.value.replace(',', '.')) })} style={{ ...inputStyle, width: 96 }} />
+            <input inputMode="decimal" value={typed(`${i}p`, l.unit_price)} disabled={disabled} aria-label={t('werk.regel.prijs')}
+              onChange={(e) => type(`${i}p`, i, 'unit_price', e.target.value)} onBlur={() => settle(`${i}p`)} style={{ ...inputStyle, width: 96 }} />
             <select value={l.btw_rate} disabled={disabled} aria-label={t('werk.regel.btw')}
               onChange={(e) => update(i, { btw_rate: Number(e.target.value) })} style={{ ...selectStyle, width: 74 }}>
               {[21, 9, 0].map((r) => <option key={r} value={r}>{r}%</option>)}
@@ -182,14 +211,63 @@ export function LinesEditor({ skin, lines, t, onChange, disabled }: { skin: Work
   )
 }
 
+/** A number the way a Dutch owner types it: comma, no thousands separator, no trailing zeros. */
+function formatNumberNL(n: number): string {
+  if (!Number.isFinite(n)) return ''
+  return String(round2(n)).replace('.', ',')
+}
+
 /** Revenue, attached costs, margin — or the costs alone while there is no revenue yet. */
-export function MarginLine({ margin, hoursTotal, t }: { margin: WorkMargin; hoursTotal: number; t: T }) {
+export function MarginLine({ margin, hoursTotal, t, budget }: { margin: WorkMargin; hoursTotal: number; t: T; budget?: { agreed: number; spent: number; over: boolean } | null }) {
   return (
     <div style={{ fontFamily: FONT, fontSize: 13.5, color: M3.onSurface, display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }} data-testid="work-margin">
       <span>{t('werk.totaal')}: <b>{margin.revenue === null ? '—' : formatEuroNL(margin.revenue)}</b></span>
       <span>{t('werk.kosten')}: <b>{formatEuroNL(margin.costs)}</b></span>
       <span>{t('werk.marge')}: <b>{margin.margin === null ? '—' : `${formatEuroNL(margin.margin)}${margin.share !== null ? ` (${Math.round(margin.share * 100)}%)` : ''}`}</b></span>
-      {hoursTotal > 0 && <span>{t('werk.uren')}: <b>{hoursTotal.toLocaleString('nl-NL')}</b></span>}
+      {budget
+        ? <span style={{ color: budget.over ? M3.error : M3.onSurface }} data-testid="work-budget">{t('werk.budget', { spent: budget.spent.toLocaleString('nl-NL'), agreed: budget.agreed.toLocaleString('nl-NL') })}</span>
+        : hoursTotal > 0 && <span>{t('werk.uren')}: <b>{hoursTotal.toLocaleString('nl-NL')}</b></span>}
+    </div>
+  )
+}
+
+/** [WERK-3] The car's earlier visits: what was done, when, and what it cost — one line each. */
+export function HistoryList({ history, t, onOpen }: { history: WorkHistory[]; t: T; onOpen?: (id: string) => void }) {
+  if (history.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: FONT, fontSize: 13 }} data-testid="work-history">
+      {history.map((h) => (
+        <button key={h.id} type="button" onClick={() => onOpen?.(h.id)} style={{ ...rowStyle, background: M3.surface, cursor: onOpen ? 'pointer' : 'default', textAlign: 'start', width: '100%' }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {h.on ? `${formatDateNL(h.on)} · ` : ''}{h.title}
+          </span>
+          <span style={{ color: M3.onSurfaceVariant, whiteSpace: 'nowrap' }}>{h.total_ex_btw > 0 ? formatEuroNL(h.total_ex_btw) : ''}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * [WERK-3] Hours written ON the work, on site: day, hours, what, rate. One row, one tap; the
+ * entry lands on /dashboard/uren with this work's id, so it is billable from here at once.
+ */
+export function HoursForm({ t, onSave, disabled, defaultRate }: { t: T; onSave: (entry: { worked_on: string; hours: string; description: string; hourly_rate: string }) => void; disabled?: boolean; defaultRate?: number | null }) {
+  const [on, setOn] = useState('')
+  const [hours, setHours] = useState('')
+  const [what, setWhat] = useState('')
+  const [rate, setRate] = useState(defaultRate !== null && defaultRate !== undefined ? formatNumberNL(defaultRate) : '')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} data-testid="work-hours-form">
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <DateFieldNL value={on} onChange={setOn} disabled={disabled} />
+        <input inputMode="decimal" value={hours} disabled={disabled} placeholder={t('werk.uren.aantal')} aria-label={t('werk.uren.aantal')} onChange={(e) => setHours(e.target.value)} style={{ ...inputStyle, width: 72 }} />
+        <input inputMode="decimal" value={rate} disabled={disabled} placeholder={t('werk.uren.tarief')} aria-label={t('werk.uren.tarief')} onChange={(e) => setRate(e.target.value)} style={{ ...inputStyle, width: 96 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input value={what} disabled={disabled} placeholder={t('werk.uren.omschrijving')} aria-label={t('werk.uren.omschrijving')} onChange={(e) => setWhat(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+        <button type="button" disabled={disabled || !hours.trim() || !what.trim()} onClick={() => { onSave({ worked_on: on, hours, description: what, hourly_rate: rate }); setHours(''); setWhat('') }} style={{ ...primaryButton, width: 'auto', padding: '10px 14px' }}>{t('werk.uren.opslaan')}</button>
+      </div>
     </div>
   )
 }
@@ -208,12 +286,12 @@ export interface WorkFormValue {
 export const EMPTY_FORM: WorkFormValue = { title: '', client_name: '', kenteken: '', planned_on: '', fields: {}, repeat_every: '', notes: '' }
 
 /** The trade's form: the shared three, the plate when the trade opens on one, then the skin's fields. */
-export function WorkForm({ skin, value, onChange, t, disabled }: { skin: WorkSkin; value: WorkFormValue; onChange: (v: WorkFormValue) => void; t: T; disabled?: boolean }) {
+export function WorkForm({ skin, value, onChange, t, disabled, editing }: { skin: WorkSkin; value: WorkFormValue; onChange: (v: WorkFormValue) => void; t: T; disabled?: boolean; editing?: boolean }) {
   const set = (patch: Partial<WorkFormValue>) => onChange({ ...value, ...patch })
   const setField = (key: string, v: string) => onChange({ ...value, fields: { ...value.fields, [key]: v } })
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {skin.vehicle && (
+      {skin.vehicle && !editing && (
         <Field label={`${t('werk.kenteken')}${skin.skin === 'werkorder' ? ' *' : ''}`} value={value.kenteken} onChange={(v) => set({ kenteken: v })} placeholder="12-ABC-3" disabled={disabled} />
       )}
       <Field label={`${t('werk.klant')} *`} value={value.client_name} onChange={(v) => set({ client_name: v })} disabled={disabled} />
@@ -281,7 +359,7 @@ export function CandidateList<Item extends { id: string }>({ items, label, t, ch
 }
 
 /** The bottom sheet every work dialog sits in: takes the back button, stills the page behind. */
-export function WorkSheet({ title, onClose, children, testId }: { title: string; onClose: () => void; children: ReactNode; testId?: string }) {
+export function WorkSheet({ title, onClose, children, testId, error }: { title: string; onClose: () => void; children: ReactNode; testId?: string; error?: string }) {
   // [BACK-CLOSES] [BLAD-ACHTERGROND]
   useCloseOnBack(true, onClose)
   useBodyScrollLock(true)
@@ -291,6 +369,8 @@ export function WorkSheet({ title, onClose, children, testId }: { title: string;
       <div onClick={(e) => e.stopPropagation()} data-testid={testId}
         style={{ background: '#fff', borderRadius: '20px 20px 0 0', padding: '20px 18px', paddingBottom: sheetPaddingBottom(20), width: '100%', maxWidth: 520, fontFamily: FONT, maxHeight: '90vh', overflowY: 'auto' }}>
         <p style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: '0 0 12px' }}>{title}</p>
+        {/* A refusal from the server belongs INSIDE the sheet: the page behind it is covered. */}
+        {error && <div role="alert" style={{ fontSize: 14, color: M3.error, background: M3.errorContainer, borderRadius: 12, padding: 12, marginBottom: 12 }}>{error}</div>}
         {children}
       </div>
     </div>
@@ -374,10 +454,6 @@ export function TogetherOffer({ rows, t, onTogether, disabled }: { rows: WorkRow
       ))}
     </div>
   )
-}
-
-export function useLocalLines(initial: WorkLine[]) {
-  return useState<WorkLine[]>(initial)
 }
 
 export function Field({ label, value, onChange, placeholder, inputMode, disabled }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; inputMode?: 'decimal'; disabled?: boolean }) {

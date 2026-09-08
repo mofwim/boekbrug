@@ -59,19 +59,21 @@ export function VakCard() {
 
   async function kies(next: string) {
     const slug = parseVak(next)
+    const before = vak
     setVak(slug ?? '')
     setBusy(true); setNote(null)
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setNote('failed'); return }
+      if (!user) { setVak(before); setNote('failed'); return }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (supabase as any).from('profiles').update({ vak: slug }).eq('id', user.id)
-      if (error) { setNote('failed'); return }
+      // The select shows what the account HAS, so a failed write puts the old trade back.
+      if (error) { setVak(before); setNote('failed'); return }
       setNote('saved')
       router.refresh()
     } catch {
-      setNote('failed')
+      setVak(before); setNote('failed')
     } finally {
       setBusy(false)
     }

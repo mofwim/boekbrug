@@ -114,6 +114,11 @@ export function amsterdamToday(now: Date = new Date()): string {
   }).format(now)
 }
 
+/** The owner's wall clock in Europe/Amsterdam as HH:MM — the courier's "afgeleverd om". */
+export function amsterdamClock(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Amsterdam', hour: '2-digit', minute: '2-digit', hour12: false }).format(now)
+}
+
 /**
  * The owner's calendar YEAR in Europe/Amsterdam.
  *

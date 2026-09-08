@@ -21,13 +21,13 @@ import { chunkIds } from "@/lib/supabase-paginate";
 import { workSkin, workMargin, storedLines, storedVisits, isRepeat, readVisit, linesTotalEx, unbilledVisits, type WorkStatus } from "@/lib/werk";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
-import type { AttachedCost, AttachedDocument, AttachedHours, WorkInvoiceSummary, WorkRow } from "@/lib/werk-rows";
+import type { AttachedCost, AttachedDocument, AttachedHours, WorkHistory, WorkInvoiceSummary, WorkRow } from "@/lib/werk-rows";
 
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
-const HOURS = "id, worked_on, description, hours, hourly_rate, invoice_id";
+const HOURS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id";
 const COSTS = "id, client_name, invoice_number, invoice_date, total_ex_btw, btw_amount, total_inc_btw, status";
 const DOCS = "id, file_name, created_at";
 const ATTACH_MAX = 50;
@@ -72,19 +72,28 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   if (!row) return NextResponse.json({ error: "Dit werk is niet gevonden." }, { status: 404 });
   const skin = workSkin(row.vak);
 
-  const [hoursRes, costsRes, docsRes, invoiceRes] = await Promise.all([
+  const [hoursRes, costsRes, docsRes, invoiceRes, historyRes] = await Promise.all([
     db.from("time_entries").select(HOURS).eq("user_id", user.id).eq("work_item_id", id).order("worked_on", { ascending: true }).limit(200),
     db.from("invoices").select(COSTS).eq("receiver_id", user.id).eq("direction", "incoming").eq("work_item_id", id).order("invoice_date", { ascending: true }).limit(200),
     db.from("documents").select(DOCS).eq("user_id", user.id).eq("work_item_id", id).eq("trashed", false).order("created_at", { ascending: true }).limit(100),
     row.invoice_id
       ? db.from("invoices").select("id, invoice_number, status, total_ex_btw, total_inc_btw").eq("id", row.invoice_id).eq("sender_id", user.id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    // [WERK-3] The car's earlier visits: a returning Golf is the garage's daily case.
+    row.vehicle_id
+      ? db.from("work_items").select("id, title, status, planned_on, done_on, invoice_id, lines").eq("user_id", user.id).eq("vehicle_id", row.vehicle_id).neq("id", id).order("created_at", { ascending: false }).limit(10)
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  const readFailed = !!(hoursRes.error || costsRes.error || docsRes.error || invoiceRes.error);
+  const readFailed = !!(hoursRes.error || costsRes.error || docsRes.error || invoiceRes.error || historyRes.error);
+  const history: WorkHistory[] = ((historyRes.data ?? []) as Array<Record<string, unknown>>).map((h) => ({
+    id: String(h.id), title: String(h.title), status: String(h.status) as WorkStatus,
+    on: (h.done_on as string | null) ?? (h.planned_on as string | null) ?? null, invoice_id: (h.invoice_id as string | null) ?? null,
+    total_ex_btw: linesTotalEx(storedLines(h.lines)),
+  }));
 
   const hours: AttachedHours[] = ((hoursRes.data ?? []) as Array<Record<string, unknown>>).map((h) => ({
     id: String(h.id), worked_on: String(h.worked_on), description: String(h.description ?? ""),
-    hours: num(h.hours) ?? 0, hourly_rate: num(h.hourly_rate), invoice_id: (h.invoice_id as string | null) ?? null,
+    hours: num(h.hours) ?? 0, hourly_rate: num(h.hourly_rate), invoice_id: (h.invoice_id as string | null) ?? null, client_name: null,
   }));
   const costs: AttachedCost[] = ((costsRes.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
     id: String(c.id), client_name: (c.client_name as string | null) ?? null, invoice_number: (c.invoice_number as string | null) ?? null,
@@ -113,17 +122,27 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   let candidates: { hours: AttachedHours[]; costs: AttachedCost[] } | null = null;
   if (req.nextUrl.searchParams.get("candidates") === "1") {
     const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    // Hours of THIS client, or hours written to no client at all; never another client's. When the
+    // work has no client card (a name the owner never invoiced), only clientless hours are offered
+    // — and every candidate names its client, so the owner sees whose hour he is about to bill.
     let hq = db.from("time_entries").select(HOURS).eq("user_id", user.id).is("work_item_id", null).is("invoice_id", null).order("worked_on", { ascending: false }).limit(50);
-    if (row.client_id) hq = hq.eq("client_id", row.client_id);
+    hq = row.client_id ? hq.or(`client_id.is.null,client_id.eq.${row.client_id}`) : hq.is("client_id", null);
     const [ch, cc] = await Promise.all([
       hq,
       db.from("invoices").select(COSTS).eq("receiver_id", user.id).eq("direction", "incoming").is("work_item_id", null)
         .in("status", ["processing", "received", "paid"]).gte("invoice_date", sixtyDaysAgo).order("invoice_date", { ascending: false }).limit(50),
     ]);
+    const clientIds = [...new Set(((ch.data ?? []) as Array<Record<string, unknown>>).map((h) => h.client_id).filter((v): v is string => typeof v === "string"))];
+    const clientNames = new Map<string, string>();
+    if (clientIds.length > 0) {
+      const { data: cs } = await db.from("clients").select("id, name").eq("user_id", user.id).in("id", clientIds.slice(0, 50));
+      for (const c of (cs ?? []) as Array<{ id: string; name: string }>) clientNames.set(c.id, c.name);
+    }
     candidates = {
       hours: ((ch.data ?? []) as Array<Record<string, unknown>>).map((h) => ({
         id: String(h.id), worked_on: String(h.worked_on), description: String(h.description ?? ""),
         hours: num(h.hours) ?? 0, hourly_rate: num(h.hourly_rate), invoice_id: null,
+        client_name: typeof h.client_id === "string" ? clientNames.get(h.client_id) ?? null : null,
       })),
       costs: ((cc.data ?? []) as Array<Record<string, unknown>>).map((c) => ({
         id: String(c.id), client_name: (c.client_name as string | null) ?? null, invoice_number: (c.invoice_number as string | null) ?? null,
@@ -133,7 +152,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     };
   }
 
-  return NextResponse.json({ ok: true, row, skin: skin?.skin ?? null, hours, hoursTotal, linesTotal, costs, documents, invoice, margin, readFailed, candidates });
+  return NextResponse.json({ ok: true, row, skin: skin?.skin ?? null, hours, hoursTotal, linesTotal, costs, documents, invoice, margin, history, readFailed, candidates });
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {
@@ -161,14 +180,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (ids.length === 0 || ids.length > ATTACH_MAX) return NextResponse.json({ error: "Kies iets om te koppelen.", code: "no_ids" }, { status: 400 });
 
   const attach = action.startsWith("attach");
+  // Closed work takes nothing new: an hour attached after the invoice could never be billed from it.
+  if (attach && (row.status === "gefactureerd" || row.status === "geannuleerd")) {
+    return NextResponse.json({ error: "Dit werk is gesloten; er kan niets meer aan gekoppeld worden.", code: "closed" }, { status: 409 });
+  }
   const value = attach ? id : null;
   let touched = 0;
   for (const chunk of chunkIds(ids, 50)) {
     let q;
     if (action.endsWith("_hours")) {
       q = db.from("time_entries").update({ work_item_id: value }).eq("user_id", user.id).in("id", chunk);
-      // An hour already on another piece of work is not silently stolen; an invoiced hour keeps its link.
-      q = attach ? q.is("work_item_id", null) : q.eq("work_item_id", id);
+      // An hour already on another piece of work is not silently stolen; another client's hour is
+      // never this work's; an invoiced hour keeps its link.
+      if (attach) {
+        q = q.is("work_item_id", null);
+        q = row.client_id ? q.or(`client_id.is.null,client_id.eq.${row.client_id}`) : q.is("client_id", null);
+      } else {
+        q = q.eq("work_item_id", id).is("invoice_id", null);
+      }
     } else if (action.endsWith("_cost")) {
       q = db.from("invoices").update({ work_item_id: value }).eq("receiver_id", user.id).eq("direction", "incoming").in("id", chunk);
       q = attach ? q.is("work_item_id", null) : q.eq("work_item_id", id);

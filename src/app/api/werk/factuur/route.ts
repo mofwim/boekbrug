@@ -15,9 +15,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
-import { chunkIds } from "@/lib/supabase-paginate";
 import { canInvoiceTogether } from "@/lib/werk";
-import { loadWorkForInvoice, openDraftFor, stampHours } from "@/lib/werk-factuur";
+import { loadWorkForInvoice, openDraftFor, stampHours, closeWork, rollbackDraft } from "@/lib/werk-factuur";
 
 export const dynamic = "force-dynamic";
 
@@ -66,16 +65,19 @@ export async function POST(req: NextRequest) {
   const invoiceId = opened.invoiceId;
   const today = amsterdamToday();
 
-  await stampHours(db, user.id, works, invoiceId);
-  for (const chunk of chunkIds(works.map((w) => w.row.id), 50)) {
-    const { error: updErr } = await db
-      .from("work_items")
-      .update({ invoice_id: invoiceId, status: "gefactureerd" })
-      .eq("user_id", user.id).in("id", chunk).is("invoice_id", null);
-    if (updErr) console.error("[WERK-VERZAMEL] invoice made but work rows could not be closed", { chunk, invoiceId, error: updErr.message });
+  // Every step proves itself or the draft goes away: see the single door.
+  const stamped = await stampHours(db, user.id, works, invoiceId);
+  if (!stamped.ok) {
+    await rollbackDraft(db, user.id, invoiceId);
+    return NextResponse.json({ error: "De uren staan inmiddels op een andere factuur. Ververs en probeer opnieuw.", code: "uren_not_linked" }, { status: 409 });
   }
-  // done_on only where it was empty — an UPDATE cannot say "keep yours" per row in one statement.
-  await db.from("work_items").update({ done_on: today }).eq("user_id", user.id).eq("invoice_id", invoiceId).is("done_on", null);
+  const closed = await closeWork(db, user.id, works.map((w) => w.row.id), invoiceId, today);
+  if (closed.error || closed.closed !== works.length) {
+    // Free the rows this call did close, then the draft.
+    await db.from("work_items").update({ invoice_id: null, status: "klaar" }).eq("user_id", user.id).eq("invoice_id", invoiceId);
+    await rollbackDraft(db, user.id, invoiceId);
+    return NextResponse.json({ error: "Een deel van dit werk is inmiddels gefactureerd. Ververs de lijst.", code: "already_invoiced" }, { status: 409 });
+  }
 
   const hoursBilled = works.reduce((n, w) => n + w.billedHourIds.length, 0);
   const hoursWithoutRate = works.reduce((n, w) => n + w.hoursWithoutRate, 0);

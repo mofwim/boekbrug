@@ -138,7 +138,8 @@ export function planCatalogLearning(
 
     // A rate the catalog cannot hold would be rejected by normalizeArticleInput anyway; counting it
     // as skipped keeps the numbers addable instead of losing the line between two layers.
-    if (!VALID_RATES.has(line.btw_rate) || !Number.isFinite(line.unit_price) || line.unit_price < 0) {
+    // [WERK] A € 0 line is a heading the work layer prints (kenteken, rit), not a thing sold.
+    if (!VALID_RATES.has(line.btw_rate) || !Number.isFinite(line.unit_price) || line.unit_price <= 0) {
       plan.skipped++;
       continue;
     }

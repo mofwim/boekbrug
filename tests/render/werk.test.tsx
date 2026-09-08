@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
 import { VakCardView } from "../../src/components/settings/VakCard";
 import { werkZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
@@ -73,7 +73,7 @@ test("[WERK] the line editor prints the trade's kinds and the total; the margin 
 test("[WERK] attached hours and purchases render, an invoiced hour cannot be detached, and the invoice button follows the state", () => {
   const html = renderToStaticMarkup(
     <AttachedList t={t} onDetachHours={() => {}} onDetachCost={() => {}}
-      hours={[{ id: "h1", worked_on: "2026-09-08", description: "Remmen", hours: 1.5, hourly_rate: 65, invoice_id: null }, { id: "h2", worked_on: "2026-09-07", description: "Diagnose", hours: 0.5, hourly_rate: 65, invoice_id: "inv" }]}
+      hours={[{ id: "h1", worked_on: "2026-09-08", description: "Remmen", hours: 1.5, hourly_rate: 65, invoice_id: null, client_name: null }, { id: "h2", worked_on: "2026-09-07", description: "Diagnose", hours: 0.5, hourly_rate: 65, invoice_id: "inv", client_name: null }]}
       costs={[{ id: "c1", client_name: "Fource", invoice_number: "F-1", invoice_date: "2026-09-07", total_ex_btw: 74.3, total_inc_btw: 89.9, status: "received" }]} />,
   );
   assert.ok(html.includes("Remmen") && html.includes("Fource") && html.includes("74,30"));
@@ -101,7 +101,9 @@ test("[WERK-2] a fietsenmaker's reparatie opens on the bike and ends 'Klaar voor
   assert.ok(chips.includes("Ingenomen") && chips.includes("In reparatie") && chips.includes("Wacht op onderdelen"));
   const form = renderToStaticMarkup(<WorkForm skin={workSkin("transport")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
   assert.ok(form.includes("Ontvangen door"), "the courier writes who took delivery");
-  assert.ok(!form.includes("Herhaalt"), "a rit never repeats");
+  assert.ok(form.includes("Herhaalt") && form.includes("Laadtijd"), "a fixed route repeats (EasyTrans' periodic order), and the rit carries its time window");
+  const garage = renderToStaticMarkup(<WorkForm skin={workSkin("automonteur")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
+  assert.ok(!garage.includes("Herhaalt") && garage.includes("Telefoon klant"), "a werkorder never repeats; the customer's phone is on it");
   const cleaning = renderToStaticMarkup(<WorkForm skin={workSkin("schoonmaak")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
   assert.ok(cleaning.includes("Herhaalt") && cleaning.includes("Elke week") && cleaning.includes("Eenmalig"), "an opdracht may repeat");
 });
@@ -144,4 +146,23 @@ test("[WERK-BON] the files attached to work render with a detach, and the settin
   assert.ok(card.includes("Opgeslagen."));
   const none = renderToStaticMarkup(<VakCardView vak="kapper" loaded busy={false} note={null} onChoose={() => {}} t={t} />);
   assert.ok(!none.includes("tweede knop"), "a kapper gains no screen and is not told he did");
+});
+
+test("[WERK-3] the review's findings stay fixed: decimals render as typed, the sheet shows the refusal, hours and history have a place", () => {
+  const skin = workSkin("automonteur")!;
+  // A price of 47,50 is drawn with its comma — the box that used to eat it (Number("47,") → 47).
+  const editor = renderToStaticMarkup(<LinesEditor skin={skin} t={t} onChange={() => {}} lines={[{ kind: "arbeid", description: "Remmen", quantity: 1.5, unit: "uur", unit_price: 47.5, btw_rate: 21 }]} suggestions={[{ description: "Kleine beurt", unit_price: 89, btw_rate: 21, unit: "stuk" }]} />);
+  assert.ok(editor.includes('value="47,5"') && editor.includes('value="1,5"'), "numbers are shown the Dutch way, decimals intact");
+  assert.ok(editor.includes("<datalist") && editor.includes("Kleine beurt"), "the owner's articles are offered on the description");
+  // A refusal from the server is INSIDE the sheet, where the owner is looking.
+  const sheet = renderToStaticMarkup(<WorkSheet title="Werkorder" onClose={() => {}} error="Zet een klant op dit werk."><p>x</p></WorkSheet>);
+  assert.ok(sheet.includes('role="alert"') && sheet.includes("Zet een klant op dit werk."));
+  // Hours are written on the work; the budget line names the agreement.
+  const hours = renderToStaticMarkup(<HoursForm t={t} onSave={() => {}} defaultRate={65} />);
+  assert.ok(hours.includes("Uren opschrijven") && hours.includes('value="65"'));
+  const budget = renderToStaticMarkup(<MarginLine t={t} hoursTotal={48} margin={{ revenue: null, costs: 0, margin: null, share: null }} budget={{ agreed: 40, spent: 48, over: true }} />);
+  assert.ok(budget.includes("48 van 40 afgesproken uren"), "over budget is said in numbers");
+  // The car's history: a returning Golf shows what was done before.
+  const history = renderToStaticMarkup(<HistoryList t={t} history={[{ id: "a", title: "APK", status: "gefactureerd", on: "2026-03-02", invoice_id: "i", total_ex_btw: 120 }]} />);
+  assert.ok(history.includes("APK") && history.includes("120,00"));
 });

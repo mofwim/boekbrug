@@ -11,9 +11,9 @@ import { requireOwner } from "@/lib/owner-only";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { normalizeKenteken, isKentekenShape } from "@/lib/vehicle";
-import { amsterdamToday } from "@/lib/format-nl";
+import { amsterdamToday, amsterdamClock } from "@/lib/format-nl";
 import {
-  workSkin, readFields, readLines, storedLines, storedVisits, isRepeat, isWorkStatus, HAND_STATUSES, canDelete, type WorkStatus,
+  workSkin, vaksForSkin, readFields, readLines, storedLines, storedVisits, isRepeat, isWorkStatus, isCalendarDay, HAND_STATUSES, canDelete, type WorkStatus,
 } from "@/lib/werk";
 import type { WorkRow } from "@/lib/werk-rows";
 
@@ -21,7 +21,6 @@ export const dynamic = "force-dynamic";
 
 const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LIST_MAX = 300;
 
 function text(v: unknown, max = 200): string | null {
@@ -74,6 +73,20 @@ async function withPlates(supabase: Awaited<ReturnType<typeof createServerSupaba
 }
 
 /**
+ * [WERK-3] The client row behind a typed name, so the invoice made from this work lands on the
+ * one client card the owner already has instead of a new card per werkorder, and so the hours
+ * picker can be scoped to that client. Exact match on the trimmed name, case-insensitive; a name
+ * the owner has never invoiced simply stays a name — the draft door makes the card then.
+ */
+async function resolveClientId(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, userId: string, name: string | null): Promise<string | null> {
+  if (!name) return null;
+  const { data } = await supabase.from("clients").select("id, name").eq("user_id", userId).ilike("name", name).limit(2);
+  const rows = (data ?? []) as Array<{ id: string; name: string }>;
+  const exact = rows.filter((r) => r.name.trim().toLowerCase() === name.trim().toLowerCase());
+  return exact.length === 1 ? exact[0].id : null;
+}
+
+/**
  * [WERK-BEURT] The rhythm, read from an untrusted body. Only a skin that repeats may carry one;
  * an empty value clears it. Anything else is refused rather than stored as text.
  */
@@ -90,9 +103,23 @@ export async function GET(req: NextRequest) {
   const { vak, skin } = await skinFor(supabase, user.id);
   if (!skin) return NextResponse.json({ ok: true, vak, skin: null, rows: [] });
 
+  // [WERK-3] "Regels van vorige keer": the lines of the newest invoiced (or finished) piece of work
+  // for this client, so a courier's fixed tariff for an opdrachtgever is one tap, not a retype.
+  const vorige = (req.nextUrl.searchParams.get("vorige") ?? "").trim();
+  if (vorige) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any).from("work_items").select("lines, title, client_name").eq("user_id", user.id)
+      .in("vak", vaksForSkin(skin.skin)).ilike("client_name", vorige).in("status", ["gefactureerd", "klaar"])
+      .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    if (error) return NextResponse.json({ error: "Kon het vorige werk niet lezen." }, { status: 500 });
+    return NextResponse.json({ ok: true, lines: storedLines(data?.lines), title: data?.title ?? null });
+  }
+
   const status = req.nextUrl.searchParams.get("status");
+  // Only rows of the skin the owner works in now: a werkorder is never drawn as an opdracht with
+  // statuses the new skin has no words for. Rows of an earlier trade come back with that trade.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let q = (supabase as any).from("work_items").select(COLUMNS).eq("user_id", user.id);
+  let q = (supabase as any).from("work_items").select(COLUMNS).eq("user_id", user.id).in("vak", vaksForSkin(skin.skin));
   if (status && isWorkStatus(status)) q = q.eq("status", status);
   else if (status !== "all") q = q.not("status", "in", "(gefactureerd,geannuleerd)");
   const { data, error } = await q
@@ -128,22 +155,9 @@ export async function POST(req: NextRequest) {
   const lines = readLines(skin, body.lines);
   if (!lines.ok) return NextResponse.json({ error: "Controleer de regels.", code: "bad_line", index: lines.index, reason: lines.reason }, { status: 400 });
   const plannedOn = text(body.planned_on, 10);
-  if (plannedOn && !ISO.test(plannedOn)) return NextResponse.json({ error: "Controleer de datum.", code: "bad_date" }, { status: 400 });
+  if (plannedOn && !isCalendarDay(plannedOn)) return NextResponse.json({ error: "Controleer de datum.", code: "bad_date" }, { status: 400 });
   const repeat = readRepeat(skin, body.repeat_every);
   if (!repeat.ok) return NextResponse.json({ error: "Die herhaling bestaat niet voor dit werk.", code: "bad_repeat" }, { status: 400 });
-
-  // A garage types a plate; the vehicle register is the same one /dashboard/voertuigen keeps.
-  let vehicleId: string | null = typeof body.vehicle_id === "string" && UUID.test(body.vehicle_id) ? body.vehicle_id : null;
-  const plate = skin.vehicle ? normalizeKenteken(typeof body.kenteken === "string" ? body.kenteken : "") : "";
-  if (!vehicleId && plate) {
-    if (!isKentekenShape(plate)) return NextResponse.json({ error: "Dit lijkt geen Nederlands kenteken. Controleer de tekens.", code: "bad_plate" }, { status: 400 });
-    const { data: v, error: vErr } = await supabase
-      .from("vehicles")
-      .upsert({ user_id: user.id, kenteken: plate, customer_name: text(body.client_name), updated_at: new Date().toISOString() }, { onConflict: "user_id,kenteken" })
-      .select("id").single();
-    if (vErr || !v) return NextResponse.json({ error: "Kon het voertuig niet vastleggen." }, { status: 500 });
-    vehicleId = v.id;
-  }
 
   let clientId: string | null = typeof body.client_id === "string" && UUID.test(body.client_id) ? body.client_id : null;
   if (clientId) {
@@ -151,13 +165,43 @@ export async function POST(req: NextRequest) {
     if (!c) clientId = null;
     else if (!text(body.client_name)) body.client_name = c.name;
   }
+  const clientName = text(body.client_name);
+  // Work without a client cannot become an invoice, and the form says so; refuse it here too.
+  if (!clientName) return NextResponse.json({ error: "Zet een klant op dit werk.", code: "no_client" }, { status: 400 });
+  if (!clientId) clientId = await resolveClientId(supabase, user.id, clientName);
+
+  // A garage types a plate; the vehicle register is the same one /dashboard/voertuigen keeps.
+  // Found → reuse, and fill in a customer name or phone the register did not have yet; never
+  // overwrite what another screen wrote. New → insert with what this form knows.
+  let vehicleId: string | null = typeof body.vehicle_id === "string" && UUID.test(body.vehicle_id) ? body.vehicle_id : null;
+  const plate = skin.vehicle ? normalizeKenteken(typeof body.kenteken === "string" ? body.kenteken : "") : "";
+  const phone = typeof fields.fields.telefoon === "string" ? fields.fields.telefoon : null;
+  if (!vehicleId && plate) {
+    if (!isKentekenShape(plate)) return NextResponse.json({ error: "Dit lijkt geen Nederlands kenteken. Controleer de tekens.", code: "bad_plate" }, { status: 400 });
+    const { data: known, error: knownErr } = await supabase.from("vehicles").select("id, customer_name, customer_phone").eq("user_id", user.id).eq("kenteken", plate).maybeSingle();
+    if (knownErr) return NextResponse.json({ error: "Kon het voertuig niet vastleggen." }, { status: 500 });
+    if (known) {
+      vehicleId = known.id;
+      const fill: Record<string, string> = {};
+      if (!known.customer_name) fill.customer_name = clientName;
+      if (!known.customer_phone && phone) fill.customer_phone = phone;
+      if (Object.keys(fill).length > 0) await supabase.from("vehicles").update({ ...fill, updated_at: new Date().toISOString() }).eq("id", known.id).eq("user_id", user.id);
+    } else {
+      const { data: v, error: vErr } = await supabase
+        .from("vehicles")
+        .insert({ user_id: user.id, kenteken: plate, customer_name: clientName, ...(phone ? { customer_phone: phone } : {}) })
+        .select("id").single();
+      if (vErr || !v) return NextResponse.json({ error: "Kon het voertuig niet vastleggen." }, { status: 500 });
+      vehicleId = v.id;
+    }
+  }
 
   const record = {
     user_id: user.id,
     vak,
     title,
     client_id: clientId,
-    client_name: text(body.client_name),
+    client_name: clientName,
     vehicle_id: vehicleId,
     status: "open",
     planned_on: plannedOn,
@@ -201,7 +245,10 @@ export async function PATCH(req: NextRequest) {
   const { data: current, error: curErr } = await (supabase as any).from("work_items").select(COLUMNS).eq("id", id).eq("user_id", user.id).maybeSingle();
   if (curErr) return NextResponse.json({ error: "Kon het werk niet laden." }, { status: 500 });
   if (!current) return NextResponse.json({ error: "Dit werk is niet gevonden." }, { status: 404 });
-  if (current.status === "gefactureerd" && body.status !== undefined) {
+  // Invoiced work keeps its status — unless its draft was deleted (invoice_id is null then, the
+  // FK did that): such a row is stranded, and the owner may move it again.
+  const stranded = current.status === "gefactureerd" && !current.invoice_id;
+  if (current.status === "gefactureerd" && !stranded && body.status !== undefined) {
     return NextResponse.json({ error: "Gefactureerd werk verandert niet meer van status.", code: "invoiced" }, { status: 409 });
   }
 
@@ -217,13 +264,18 @@ export async function PATCH(req: NextRequest) {
     patch.fields = fields.fields;
   }
   if (body.lines !== undefined) {
-    if (current.status === "gefactureerd") return NextResponse.json({ error: "Gefactureerd werk verandert niet meer van regels.", code: "invoiced" }, { status: 409 });
+    if (current.status === "gefactureerd" && !stranded) return NextResponse.json({ error: "Gefactureerd werk verandert niet meer van regels.", code: "invoiced" }, { status: 409 });
     const lines = readLines(skin, body.lines);
     if (!lines.ok) return NextResponse.json({ error: "Controleer de regels.", code: "bad_line", index: lines.index, reason: lines.reason }, { status: 400 });
     patch.lines = lines.lines;
   }
   if (body.notes !== undefined) patch.notes = text(body.notes, 2000);
-  if (body.client_name !== undefined) patch.client_name = text(body.client_name);
+  if (body.client_name !== undefined) {
+    const name = text(body.client_name);
+    if (!name) return NextResponse.json({ error: "Zet een klant op dit werk.", code: "no_client" }, { status: 400 });
+    patch.client_name = name;
+    if (name.trim().toLowerCase() !== String(current.client_name ?? "").trim().toLowerCase()) patch.client_id = await resolveClientId(supabase, user.id, name);
+  }
   if (body.repeat_every !== undefined) {
     // Repeating work with billed beurten cannot become one-off work: the beurten would lose the
     // rows that explain their invoices.
@@ -237,7 +289,7 @@ export async function PATCH(req: NextRequest) {
   for (const k of ["planned_on", "done_on"] as const) {
     if (body[k] === undefined) continue;
     const v = text(body[k], 10);
-    if (v && !ISO.test(v)) return NextResponse.json({ error: "Controleer de datum.", code: "bad_date" }, { status: 400 });
+    if (v && !isCalendarDay(v)) return NextResponse.json({ error: "Controleer de datum.", code: "bad_date" }, { status: 400 });
     patch[k] = v;
   }
   let statusChanged: { from: string; to: WorkStatus } | null = null;
@@ -250,6 +302,12 @@ export async function PATCH(req: NextRequest) {
       patch.status = next;
       statusChanged = { from: current.status, to: next };
       if (next === "klaar" && !current.done_on && patch.done_on === undefined) patch.done_on = amsterdamToday();
+      // [WERK-3] The courier's clock: 'afgeleverd' stamps the Amsterdam time on the rit, once; it
+      // is printed on the invoice heading beside the ontvanger (deliveryText in werk.ts).
+      if (next === "klaar" && skin.skin === "rit") {
+        const f = (patch.fields ?? (current.fields && typeof current.fields === "object" ? current.fields : {})) as Record<string, unknown>;
+        if (typeof f.afgeleverd_om !== "string" || !f.afgeleverd_om) patch.fields = { ...f, afgeleverd_om: amsterdamClock() };
+      }
     }
   }
   if (Object.keys(patch).length === 0) {
@@ -282,7 +340,7 @@ export async function DELETE(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { data: current } = await db.from("work_items").select("id, title, invoice_id").eq("id", id).eq("user_id", user.id).maybeSingle();
+  const { data: current } = await db.from("work_items").select("id, title, invoice_id, visits").eq("id", id).eq("user_id", user.id).maybeSingle();
   if (!current) return NextResponse.json({ error: "Dit werk is niet gevonden." }, { status: 404 });
   const [costsRes, hoursRes] = await Promise.all([
     db.from("invoices").select("id", { count: "exact", head: true }).eq("work_item_id", id),
@@ -293,7 +351,7 @@ export async function DELETE(req: NextRequest) {
   if (costsRes.error || hoursRes.error) return NextResponse.json({ error: "Kon niet nagaan wat er aan dit werk hangt. Probeer het opnieuw." }, { status: 503 });
   const costs: number = costsRes.count ?? 0;
   const hours: number = hoursRes.count ?? 0;
-  if (!canDelete({ invoice_id: current.invoice_id ?? null, attachedCosts: costs, attachedHours: hours })) {
+  if (!canDelete({ invoice_id: current.invoice_id ?? null, attachedCosts: costs, attachedHours: hours, visits: storedVisits(current.visits) })) {
     return NextResponse.json({ error: "Er hangt al geld of tijd aan dit werk; maak het los of annuleer het.", code: "attached" }, { status: 409 });
   }
   const { error } = await db.from("work_items").delete().eq("id", id).eq("user_id", user.id);

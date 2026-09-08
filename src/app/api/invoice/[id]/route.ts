@@ -857,5 +857,22 @@ export async function DELETE(
     )
   }
 
+  // [WERK-3] The work this draft came from goes back to 'klaar', so it can be invoiced again
+  // instead of standing 'gefactureerd' with no invoice behind it. The FK already nulled
+  // invoice_id, which is exactly the shape this UPDATE looks for; the beurten of repeating work
+  // carry the id inside jsonb, where no FK reaches, so they are freed by hand.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const work = supabase as any
+    await work.from('work_items').update({ status: 'klaar' }).eq('user_id', ownerId).eq('status', 'gefactureerd').is('invoice_id', null)
+    const { data: recurring } = await work.from('work_items').select('id, visits').eq('user_id', ownerId).contains('visits', [{ invoice_id: id }])
+    for (const r of (recurring ?? []) as Array<{ id: string; visits: unknown }>) {
+      const visits = Array.isArray(r.visits) ? (r.visits as Array<Record<string, unknown>>).map((v) => (v && v.invoice_id === id ? { ...v, invoice_id: null } : v)) : []
+      await work.from('work_items').update({ visits }).eq('id', r.id).eq('user_id', ownerId)
+    }
+  } catch (e) {
+    console.error('[WERK-3] draft deleted but its work could not be reopened', { id, error: e instanceof Error ? e.message : String(e) })
+  }
+
   return NextResponse.json({ success: true })
 }

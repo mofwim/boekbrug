@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 133 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 134 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -466,7 +466,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('work_items.sql', 'index', 'idx_documents_work_item', null, 'public'),
   ('work_items.sql', 'index', 'idx_invoices_work_item', null, 'public'),
   ('work_items_repeat.sql', 'column', 'repeat_every', 'work_items', 'public'),
-  ('work_items_repeat.sql', 'column', 'visits', 'work_items', 'public')
+  ('work_items_repeat.sql', 'column', 'visits', 'work_items', 'public'),
+  ('work_items_repeat_kwartaal.sql', 'constraint', 'work_items_repeat_every_check', null, 'public')
 ),
 bevonden as (
   select p.*,
@@ -583,7 +584,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 150
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 151
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

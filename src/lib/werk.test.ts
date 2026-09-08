@@ -54,7 +54,13 @@ test("[WERK] the werkorder opens on a kenteken, the rit on two addresses, the kl
   assert.deepEqual(workSkin("bouw-klus")!.fields.filter((f) => f.required).map((f) => f.key), ["adres"]);
   assert.deepEqual(workSkin("schoonmaak")!.fields.filter((f) => f.required).map((f) => f.key), ["locatie"]);
   assert.deepEqual(workSkin("automonteur")!.lineKinds.map((k) => k.kind), ["arbeid", "onderdeel"]);
-  assert.deepEqual(workSkin("bouw-klus")!.lineKinds.map((k) => k.kind), ["arbeid", "materiaal", "meerwerk"]);
+  assert.deepEqual(workSkin("bouw-klus")!.lineKinds.map((k) => k.kind), ["arbeid", "materiaal", "meerwerk", "voorrijkosten"]);
+  assert.deepEqual(workSkin("hovenier")!.lineKinds.map((k) => k.kind), ["arbeid", "materiaal", "meerwerk", "voorrijkosten", "afvoer"]);
+  // [WERK-3] The taxi line starts on 9%; the courier writes the time window and repeats a fixed route.
+  assert.deepEqual(workSkin("transport")!.lineKinds.find((k) => k.kind === "personen")?.btw, 9);
+  assert.ok(workSkin("transport")!.fields.some((f) => f.key === "laadtijd" && f.onCard));
+  assert.equal(workSkin("transport")!.recurring, true);
+  assert.ok(workSkin("automonteur")!.fields.some((f) => f.key === "telefoon"));
   // The reparatiebon opens on the bike; repair labour starts at 9%, a part at 21% (vak-sjablonen.ts).
   assert.deepEqual(workSkin("fietsenmaker")!.fields.filter((f) => f.required).map((f) => f.key), ["fiets"]);
   assert.equal(workSkin("fietsenmaker")!.vehicle, false, "a bike has no kenteken");
@@ -68,7 +74,7 @@ test("[WERK] the werkorder opens on a kenteken, the rit on two addresses, the kl
 });
 
 test("[WERK-BEURT] repeating work: rhythms, beurten read and stored, the next one due, and the lines an invoice gets", () => {
-  assert.deepEqual([...REPEATS], ["week", "twee_weken", "vier_weken", "maand"]);
+  assert.deepEqual([...REPEATS], ["week", "twee_weken", "vier_weken", "maand", "kwartaal"]);
   for (const r of REPEATS) assert.ok(REPEAT_KEYS[r].startsWith("werk.herhaal."));
   assert.equal(isRepeat("week"), true);
   assert.equal(isRepeat("dagelijks"), false);
@@ -84,6 +90,8 @@ test("[WERK-BEURT] repeating work: rhythms, beurten read and stored, the next on
   assert.equal(addRepeat("2026-12-25", "vier_weken"), "2027-01-22");
   assert.equal(addRepeat("2026-01-31", "maand"), "2026-02-28");
   assert.equal(addRepeat("2026-03-31", "maand"), "2026-04-30");
+  assert.equal(addRepeat("2026-11-30", "kwartaal"), "2027-02-28");
+  assert.equal(addRepeat("2026-12-15", "maand"), "2027-01-15");
   // Next beurt: after the last one done; before any, the planned day.
   assert.equal(nextVisitOn({ repeat_every: "week", visits: [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: null, invoice_id: null }], planned_on: "2026-08-01" }), "2026-09-15");
   assert.equal(nextVisitOn({ repeat_every: "week", visits: [], planned_on: "2026-09-10" }), "2026-09-10");
@@ -177,6 +185,17 @@ test("[WERK] margin is revenue minus attached costs; nothing to divide by gives 
   assert.deepEqual(workMargin({ revenueExBtw: 480, costsExBtw: 148.5 }), { revenue: 480, costs: 148.5, margin: 331.5, share: 0.69 });
   assert.deepEqual(workMargin({ revenueExBtw: null, costsExBtw: 95 }), { revenue: null, costs: 95, margin: null, share: null });
   assert.equal(workMargin({ revenueExBtw: 0, costsExBtw: 10 }).share, null);
+});
+
+test("[WERK-BEURT] a repeating opdracht with a done beurt counts as ready to invoice, and cannot be deleted once a beurt is billed", () => {
+  const v = (invoice_id: string | null) => ({ on: "2026-09-01", note: null, invoice_id });
+  assert.deepEqual(workCounts([
+    { status: "bezig", repeat_every: "week", visits: [v(null)] },
+    { status: "bezig", repeat_every: "week", visits: [v("inv")] },
+    { status: "open", repeat_every: null, visits: [] },
+  ]), { open: 1, bezig: 1, wacht: 0, klaar: 1 });
+  assert.equal(canDelete({ invoice_id: null, attachedCosts: 0, attachedHours: 0, visits: [v("inv")] }), false);
+  assert.equal(canDelete({ invoice_id: null, attachedCosts: 0, attachedHours: 0, visits: [v(null)] }), true);
 });
 
 test("[WERK] counts, and the two guards", () => {

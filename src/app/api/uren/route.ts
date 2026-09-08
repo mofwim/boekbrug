@@ -108,9 +108,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: refusalSentence(ctx.t, parsed.code), code: parsed.code }, { status: 400 });
   }
 
-  const { data, error } = await ctx.db
+  // [WERK-3] work_item_id is newer than the generated types; an hour written from the work screen
+  // carries it, and the column is nullable so every other caller is unchanged.
+  const { work_item_id, ...entry } = parsed.entry;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (ctx.db as any)
     .from("time_entries")
-    .insert({ ...parsed.entry, user_id: ctx.ownerId })
+    .insert({ ...entry, user_id: ctx.ownerId, ...(work_item_id ? { work_item_id } : {}) })
     .select(COLUMNS)
     .single();
 
@@ -136,9 +140,11 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: refusalSentence(ctx.t, parsed.code), code: parsed.code }, { status: 400 });
   }
 
+  // The work an hour belongs to is set from the work screen, never changed from here.
+  const { work_item_id: _ignored, ...entry } = parsed.entry; // eslint-disable-line @typescript-eslint/no-unused-vars
   const { data, error } = await ctx.db
     .from("time_entries")
-    .update({ ...parsed.entry, updated_at: new Date().toISOString() })
+    .update({ ...entry, updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("user_id", ctx.ownerId)
     // Zie de kop: een gefactureerd uur is geen invoerveld meer.

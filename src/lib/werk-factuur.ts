@@ -11,11 +11,11 @@
 
 import { NextRequest } from "next/server";
 import { POST as createDraft } from "@/app/api/invoice/draft/route";
-import { linesFromEntries, DEFAULT_HOUR_BTW_RATE, type TimeEntry } from "@/lib/uren";
+import { linesFromEntries, verifyStamped, DEFAULT_HOUR_BTW_RATE, type TimeEntry } from "@/lib/uren";
 import { displayKenteken } from "@/lib/vehicle";
 import { amsterdamToday } from "@/lib/format-nl";
 import { chunkIds } from "@/lib/supabase-paginate";
-import { storedLines, storedVisits, isRepeat, workSkin, workInvoiceLines, type InvoiceLineDraft, type Visit, type WorkLine } from "@/lib/werk";
+import { storedLines, storedVisits, isRepeat, workSkin, workInvoiceLines, hourBtwFor, type InvoiceLineDraft, type Visit, type WorkLine } from "@/lib/werk";
 
 export interface WorkRowForInvoice {
   id: string;
@@ -46,6 +46,8 @@ export interface WorkLoaded {
 type Loaded = { ok: true; works: WorkLoaded[] } | { ok: false; error: string; status: number };
 
 const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, fields, lines, repeat_every, visits, planned_on, done_on, invoice_id";
+const HOURS_PAGE = 200;
+const HOURS_MAX = 2000;
 
 /**
  * Load the owner's work rows by id with their unbilled hours, and build each one's lines. A row
@@ -81,17 +83,26 @@ export async function loadWorkForInvoice(db: any, userId: string, ids: string[],
       invoice_id: (r.invoice_id as string | null) ?? null,
     };
     // The hours attached and not yet billed, at their own rate — the same builder the hours
-    // invoice uses, so an hour is worth the same on every door.
-    const { data: hourRows, error: hoursErr } = await db
-      .from("time_entries")
-      .select("id, client_id, worked_on, description, hours, hourly_rate, invoice_id")
-      .eq("user_id", userId).eq("work_item_id", row.id).is("invoice_id", null)
-      .order("worked_on", { ascending: true }).limit(200);
-    if (hoursErr) return { ok: false, error: "De uren konden niet worden gelezen. Probeer het opnieuw.", status: 503 };
-    const built = linesFromEntries((hourRows ?? []) as TimeEntry[], DEFAULT_HOUR_BTW_RATE);
+    // invoice uses, so an hour is worth the same on every door. Paged: a season of hours on one
+    // klus is not a corner case, and a silent cap would leave the last of them off the invoice.
+    const hourRows: TimeEntry[] = [];
+    for (let from = 0; ; from += HOURS_PAGE) {
+      const { data, error: hoursErr } = await db
+        .from("time_entries")
+        .select("id, client_id, worked_on, description, hours, hourly_rate, invoice_id")
+        .eq("user_id", userId).eq("work_item_id", row.id).is("invoice_id", null)
+        .order("worked_on", { ascending: true }).order("id", { ascending: true }).range(from, from + HOURS_PAGE - 1);
+      if (hoursErr) return { ok: false, error: "De uren konden niet worden gelezen. Probeer het opnieuw.", status: 503 };
+      hourRows.push(...((data ?? []) as TimeEntry[]));
+      if ((data ?? []).length < HOURS_PAGE) break;
+      if (hourRows.length >= HOURS_MAX) return { ok: false, error: "Te veel uren op één stuk werk voor één factuur.", status: 409 };
+    }
+    const skin = workSkin(row.vak);
+    // A fietsenmaker's repair hour is 9%, like the arbeid line the skin starts on.
+    const built = linesFromEntries(hourRows, hourBtwFor(skin, DEFAULT_HOUR_BTW_RATE));
     const plate = row.vehicle_id ? plates.get(row.vehicle_id) ?? null : null;
     const lines = workInvoiceLines({
-      skin: workSkin(row.vak), row, kenteken: plate ? displayKenteken(plate) : null,
+      skin, row, kenteken: plate ? displayKenteken(plate) : null,
       hourLines: built.lines, heading: opts.heading === true,
     });
     works.push({ row, lines, billedHourIds: built.billedIds, hoursWithoutRate: built.skippedWithoutRate.length });
@@ -120,11 +131,90 @@ export async function openDraftFor(req: NextRequest, args: { client_id: string |
   return { ok: true, invoiceId: String(json.invoiceId) };
 }
 
-/** The hours are on the invoice now; stamp them so they can never be billed twice. */
-export async function stampHours(db: any, userId: string, works: readonly WorkLoaded[], invoiceId: string): Promise<void> { // eslint-disable-line @typescript-eslint/no-explicit-any
+/**
+ * The hours are on the invoice now; stamp them so they can never be billed twice — and PROVE it.
+ *
+ * The same invariant the draft door keeps for an hours invoice ([UREN-EENMALIG] there): the stamp
+ * is `UPDATE … WHERE invoice_id IS NULL`, so an hour comes back only if it was still unbilled. One
+ * that does not come back went on another invoice meanwhile (two tabs, or /dashboard/uren), and
+ * the draft now carries a line for work that is still in the billable pool. There is no safe way
+ * to continue from that: the caller rolls the draft back and says so.
+ */
+export async function stampHours(db: any, userId: string, works: readonly WorkLoaded[], invoiceId: string): Promise<{ ok: true } | { ok: false; missing: number }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const wanted: string[] = [];
+  const stamped: string[] = [];
   for (const w of works) {
+    wanted.push(...w.billedHourIds);
     for (const chunk of chunkIds(w.billedHourIds, 100)) {
-      await db.from("time_entries").update({ invoice_id: invoiceId }).eq("user_id", userId).eq("work_item_id", w.row.id).is("invoice_id", null).in("id", chunk);
+      const { data, error } = await db.from("time_entries").update({ invoice_id: invoiceId }).eq("user_id", userId).eq("work_item_id", w.row.id).is("invoice_id", null).in("id", chunk).select("id");
+      if (error) return { ok: false, missing: wanted.length };
+      stamped.push(...((data ?? []) as Array<{ id: string }>).map((r) => r.id));
     }
   }
+  const verdict = verifyStamped(wanted, stamped);
+  return verdict.ok ? { ok: true } : { ok: false, missing: verdict.missing.length };
+}
+
+/**
+ * Undo a draft this door just made: free the hours it stamped, drop its lines, drop the draft.
+ * Only a draft — the delete is guarded on status, and RLS lets an owner delete only drafts.
+ * Used when the stamp or the close did not prove itself; a draft whose lines are not backed by
+ * what they name is worse than no draft.
+ */
+export async function rollbackDraft(db: any, userId: string, invoiceId: string): Promise<void> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  await db.from("time_entries").update({ invoice_id: null }).eq("user_id", userId).eq("invoice_id", invoiceId);
+  await db.from("invoice_lines").delete().eq("invoice_id", invoiceId);
+  const { error } = await db.from("invoices").delete().eq("id", invoiceId).eq("sender_id", userId).eq("status", "draft");
+  if (error) console.error("[WERK] draft rollback failed — a draft without stamped hours remains", { invoiceId, error: error.message });
+}
+
+/**
+ * Close one-off work on its invoice, once. `.is("invoice_id", null)` is the race guard: two tabs
+ * that both passed canInvoice both open a draft, and only the first closes the row. The count is
+ * the answer; the caller rolls its own draft back when it is short.
+ */
+export async function closeWork(db: any, userId: string, ids: readonly string[], invoiceId: string, today: string): Promise<{ closed: number; error: string | null }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  let closed = 0;
+  for (const chunk of chunkIds([...ids], 50)) {
+    const { data, error } = await db
+      .from("work_items")
+      .update({ invoice_id: invoiceId, status: "gefactureerd" })
+      .eq("user_id", userId).in("id", chunk).is("invoice_id", null).select("id");
+    if (error) return { closed, error: error.message };
+    closed += (data ?? []).length;
+  }
+  // done_on only where it was empty — an UPDATE cannot say "keep yours" per row in one statement.
+  await db.from("work_items").update({ done_on: today }).eq("user_id", userId).eq("invoice_id", invoiceId).is("done_on", null);
+  return { closed, error: null };
+}
+
+/**
+ * [WERK-BEURT] Stamp the beurten an invoice covers on repeating work, under an optimistic lock.
+ * The row's visits are re-read with updated_at; the write is `WHERE updated_at = <read>`, so a
+ * beurt ticked off in between is never overwritten — the write misses, and we read again. Every
+ * covered beurt must be found unbilled, or the invoice would name a beurt that is already on
+ * another one; then the caller rolls back.
+ */
+export async function stampVisits(db: any, userId: string, workId: string, covered: readonly Visit[], invoiceId: string): Promise<{ ok: true } | { ok: false; reason: "already_billed" | "write_failed" }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: readErr } = await db.from("work_items").select("visits, updated_at").eq("id", workId).eq("user_id", userId).maybeSingle();
+    if (readErr || !fresh) return { ok: false, reason: "write_failed" };
+    const current = storedVisits(fresh.visits);
+    // Match by day, one per covered beurt, unbilled only.
+    const wanted = new Map<string, number>();
+    for (const v of covered) wanted.set(v.on, (wanted.get(v.on) ?? 0) + 1);
+    let stamped = 0;
+    const next = current.map((v) => {
+      const left = wanted.get(v.on) ?? 0;
+      if (!v.invoice_id && left > 0) { wanted.set(v.on, left - 1); stamped += 1; return { ...v, invoice_id: invoiceId }; }
+      return v;
+    });
+    if (stamped !== covered.length) return { ok: false, reason: "already_billed" };
+    const { data: written, error: writeErr } = await db.from("work_items").update({ visits: next })
+      .eq("id", workId).eq("user_id", userId).eq("updated_at", fresh.updated_at).select("id");
+    if (writeErr) return { ok: false, reason: "write_failed" };
+    if ((written ?? []).length === 1) return { ok: true };
+    // Someone wrote in between; read again with their beurt included.
+  }
+  return { ok: false, reason: "write_failed" };
 }

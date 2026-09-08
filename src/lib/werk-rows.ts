@@ -34,6 +34,18 @@ export interface AttachedHours {
   hours: number;
   hourly_rate: number | null;
   invoice_id: string | null;
+  /** On a candidate: whose hour this is, so the owner sees it before attaching. */
+  client_name: string | null;
+}
+
+/** [WERK-3] An earlier piece of work on the same vehicle — the garage's history per car. */
+export interface WorkHistory {
+  id: string;
+  title: string;
+  status: WorkStatus;
+  on: string | null;
+  invoice_id: string | null;
+  total_ex_btw: number;
 }
 
 export interface AttachedCost {
