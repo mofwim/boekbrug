@@ -95,6 +95,7 @@ export const PUBLIC_PATHS = [
   "/voor-winkel",
   "/voor-bouw",
   "/voor-schoonmaak",
+  "/voor-garage",
   // [BELOFTE-BEWIJS] De beveiligingspagina. Openbaar omdat hij bedoeld is voor wie nog GEEN account
   // heeft — dat is precies de lezer die de vraag stelt. Botst niet met de prefixregel: het scherm
   // in de app heet /dashboard/beveiliging en begint dus niet met deze string.

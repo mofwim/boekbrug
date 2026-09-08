@@ -75,7 +75,8 @@ export interface SegmentPage {
 }
 
 /**
- * The three doors. Order is deliberate — see the header.
+ * The doors. Order is deliberate — see the header; the fourth (garage) follows the owner's
+ * go-to-market ranking.
  *
  * Every `route` here must exist under src/app/dashboard/<route>/page.tsx.
  */
@@ -271,9 +272,80 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
       'Contracten en werkbonnen worden niet beheerd.',
     ],
   },
+  {
+    // [SEGMENT-GARAGE] The fourth door, on the owner's go-to-market ranking (bouw, garage,
+    // schoonmaak). The trade exists in VAKKEN as 'automonteur' — a price list of arbeidsloon,
+    // beurten, APK and onderdelen at 21% — and it is in both sellsOverCounter (the bar leads with
+    // the Kassa) and VEHICLE_TRADES (the vehicles tile shows). Only what exists is promised: there
+    // is no werkorder and no RDW lookup, and the nietDit list says so.
+    slug: 'garage',
+    vak: 'automonteur',
+    naam: 'garages en autobedrijven',
+    title: 'BoekBrug voor de garage — onderdelen, arbeidsloon en de pin, zonder avondwerk',
+    description:
+      'Onderdelen van vijf leveranciers, arbeidsloon per uur, de pin aan de balie. BoekBrug leest je ' +
+      'inkoopfacturen zelf in, zet je prijslijst klaar en houdt kenteken en APK-datum per klant bij.',
+    keywords: [
+      'administratie garage', 'boekhouding autobedrijf', 'factuur automonteur',
+      'onderdelen factuur inlezen', 'apk bijhouden klanten', 'kasboek garage pin',
+    ],
+    probleem:
+      'De onderdelen komen van vijf leveranciers, elk met een eigen factuur. De klant rekent aan de ' +
+      'balie af met de pin, soms contant. En aan het eind van de dag moet arbeidsloon plus onderdelen ' +
+      'één factuur worden — terwijl de volgende auto al op de brug staat.',
+    belofte:
+      'Je fotografeert of mailt de inkoopfactuur één keer. Je factuur kiest uit je eigen prijslijst — ' +
+      'arbeidsloon, kleine beurt, APK, onderdelen — en de pinbetaling wordt in je bankafschrift ' +
+      'teruggevonden.',
+    stappen: [
+      {
+        route: 'incoming',
+        title: 'Onderdelenfacturen die zichzelf inlezen',
+        body:
+          'Laat de leverancier mailen, of maak een foto van de bon. Leverancier, factuurnummer, bedrag ' +
+          'en btw worden gelezen; een betalingsherinnering wordt herkend en nooit als tweede kost ' +
+          'geboekt.',
+      },
+      {
+        route: 'facturen',
+        title: 'Arbeidsloon en onderdelen op één factuur',
+        body:
+          'Je prijslijst staat klaar: arbeidsloon per uur, kleine en grote beurt, APK-keuring, ' +
+          'onderdelen, banden. Kies de regels, vul het bedrag in, en de factuur staat.',
+      },
+      {
+        route: 'voertuigen',
+        title: 'Kenteken, klant en APK-datum bij elkaar',
+        body:
+          'Per auto het kenteken, de eigenaar en de APK-vervaldatum. Het scherm zet vooraan welke ' +
+          'keuring het eerst verloopt, zodat je weet wie je kunt bellen.',
+      },
+      {
+        route: 'kas',
+        title: 'Pin en contant aan de balie, in één kasboek',
+        body:
+          'Een bon die met de pin of contant is betaald, wordt als betaald afgehandeld. Het kasboek ' +
+          'houdt een lopend saldo bij dat je tegen de la kunt leggen.',
+      },
+      {
+        route: 'klaar',
+        title: 'Wat er nog mist, vóór het kwartaal dicht is',
+        body:
+          'Eén scherm dat zegt welke inkoopfacturen nog ontbreken en welke bankregels nog geen ' +
+          'factuur hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+      },
+    ],
+    nietDit: [
+      'Er is geen werkorder of werkplaatsplanning.',
+      'Onderdelenvoorraad wordt niet bijgehouden.',
+      'Het kenteken wordt niet bij de RDW opgezocht; je typt het zelf.',
+      'BoekBrug mailt je klanten niet over een verlopende APK.',
+      'Garantie- en schadeafhandeling met verzekeraars staan er niet in.',
+    ],
+  },
 ] as const;
 
-/** Every dashboard route the three pages promise. Read by the gate — never hand-maintained. */
+/** Every dashboard route the pages promise. Read by the gate — never hand-maintained. */
 export function claimedRoutes(): string[] {
   return [...new Set(SEGMENT_PAGES.flatMap((p) => p.stappen.map((s) => s.route)))].sort();
 }
