@@ -1,14 +1,10 @@
-// [HERINNERING-ORIGINEEL] Pure node test — run: npx tsx src/lib/reminder-original.test.ts
+// [HERINNERING-NOOIT] Pure node test — run: npx tsx src/lib/reminder-original.test.ts
 //
-// Twee fouten, en ze zijn NIET even erg:
-//   · Een herinnering die tóch in de wachtrij landt kost één beoordeling.
-//   · Een herinnering die ONTERECHT wordt overgeslagen kan het enige bewijs van een aftrekbare
-//     kost zijn — want een Nederlandse betalingsherinnering herhaalt de hele factuur, en als de
-//     originele mail in de spam belandde is dit alles wat de eigenaar heeft.
-// Daarom: overslaan mag ALLEEN als we het origineel echt in de boeken zien staan.
-import { decideReminder, reminderSkipReason } from './reminder-original'
+// The rule under test: a reminder is NEVER imported as an invoice. What varies is only whether the
+// app can say which booked invoice it is about — and that answer must be right or absent, never
+// guessed, because it lands "the supplier says this is still unpaid" on one specific invoice.
+import { placeReminder, findReminderOriginal, reminderFiledReason, reminderSkipReason, type OriginalCandidate } from './reminder-original'
 import { isReminderFilename, isStatementFilename } from './ai'
-import { normalizeInvoiceNumber } from './safecore'
 
 let passed = 0, failed = 0
 function check(name: string, cond: boolean) {
@@ -16,86 +12,89 @@ function check(name: string, cond: boolean) {
   else { failed++; console.log(`  ✗ ${name}`) }
 }
 
-// De set wordt door de aanroeper gevuld met normalizeInvoiceNumber over de OPGESLAGEN nummers —
-// hier op precies dezelfde manier opgebouwd, zodat deze test de echte situatie nabootst en niet
-// een verzonnen sleutel.
-const OPGESLAGEN = '2026-0041'
-const HEEFT = new Set([normalizeInvoiceNumber(OPGESLAGEN)])
-const LEEG: Set<string> = new Set()
+// The measured case: an 8-digit number the reader read with its last digit dropped.
+const ORIGINEEL: OriginalCandidate = {
+  id: 'orig', invoiceNumber: '26709711', totalIncBtw: 1764.76, invoiceDate: '2026-06-19',
+  clientName: 'Enka Horeca B.V.', status: 'paid', paymentDate: '2026-08-13',
+}
+const ANDER: OriginalCandidate = {
+  id: 'ander', invoiceNumber: '26708817', totalIncBtw: 1501.82, invoiceDate: '2026-06-05',
+  clientName: 'Enka Horeca B.V.', status: 'paid',
+}
+const BOEKEN = [ORIGINEEL, ANDER]
 
-console.log('\n— geen herinnering → gewoon de normale weg —')
-check('niet-herinnering importeert normaal',
-  decideReminder({ isReminder: false, reminderOfInvoiceNumber: '2026-0041' }, HEEFT).action === 'import')
-check('ontbrekende vlag importeert normaal',
-  decideReminder({}, HEEFT).action === 'import')
+console.log('\n— not a reminder → the normal road —')
+check('a plain invoice imports', placeReminder({ isReminder: false, invoiceNumber: '26709711' }, BOEKEN).action === 'import')
+check('no flag imports', placeReminder({}, BOEKEN).action === 'import')
 
-console.log('\n— herinnering waarvan het origineel AL geboekt is → overslaan —')
-const skip = decideReminder({ isReminder: true, reminderOfInvoiceNumber: OPGESLAGEN }, HEEFT)
-check('overslaan', skip.action === 'skip')
-check('noemt het originele nummer', skip.action === 'skip' && skip.originalNumber === OPGESLAGEN)
-check('reden legt uit waarom hij niet is geïmporteerd',
-  skip.action === 'skip' && /staat al in je boekhouding/.test(skip.reason))
+console.log('\n— a reminder is filed, never imported, whatever the books hold —')
+for (const [naam, boeken] of [['full books', BOEKEN], ['empty books', []]] as const) {
+  const p = placeReminder({ isReminder: true, reminderOfInvoiceNumber: '26709711', vendor: 'Enka Horeca', totalIncBtw: 1764.76 }, boeken)
+  check(`${naam}: action is file`, p.action === 'file')
+}
+check('a reminder without any number is still filed, not imported',
+  placeReminder({ isReminder: true }, BOEKEN).action === 'file')
 
-console.log('\n— herinnering waarvan het origineel NIET in de boeken staat → importeren, gevlagd —')
-// Dit is het geval waarvoor de hele functie bestaat in plaats van "gooi herinneringen weg".
-check('onbekend origineel → import-flagged',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: '2026-9999' }, HEEFT).action === 'import-flagged')
-check('lege boeken → import-flagged',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: OPGESLAGEN }, LEEG).action === 'import-flagged')
+console.log('\n— finding the original: the number as printed —')
+check('exact number', findReminderOriginal({ reminderOfInvoiceNumber: '26709711' }, BOEKEN).match?.id === 'orig')
+check('whitespace inside the number', findReminderOriginal({ reminderOfInvoiceNumber: '2670 9711' }, BOEKEN).match?.id === 'orig')
+check('own number when reminder_of is missing', findReminderOriginal({ invoiceNumber: '26709711' }, BOEKEN).match?.id === 'orig')
 
-console.log('\n— bij twijfel nooit overslaan —')
-check('herinnering zonder nummer → import-flagged',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: null }, HEEFT).action === 'import-flagged')
-check('herinnering met leeg nummer → import-flagged',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: '   ' }, HEEFT).action === 'import-flagged')
+console.log('\n— finding the original: the dropped digit (the measured case) —')
+{
+  const f = findReminderOriginal({ reminderOfInvoiceNumber: '2670971', vendor: 'Enka Horeca B.V.', totalIncBtw: 1764.76, invoiceDate: '2026-06-19' }, BOEKEN)
+  check('prefix + same party + same cents → match', f.match?.id === 'orig')
+}
+{
+  const f = findReminderOriginal({ reminderOfInvoiceNumber: '2670971', vendor: 'Enka', totalIncBtw: 1764.76, invoiceDate: null }, BOEKEN)
+  check('prefix + party + cents, no date → still a match', f.match?.id === 'orig')
+}
+{
+  const f = findReminderOriginal({ reminderOfInvoiceNumber: '99999999', vendor: 'Enka', totalIncBtw: 1764.76, invoiceDate: '2026-06-19' }, BOEKEN)
+  check('wrong number but same party + cents + invoice date → match', f.match?.id === 'orig')
+}
 
-console.log('\n— nummer-opmaak: wat normalizeInvoiceNumber wél en niet gelijkmaakt —')
-// Een herinnering drukt het nummer opnieuw af, soms met andere spatiëring. Dat wordt gelijkgemaakt.
-check('extra witruimte rond het nummer matcht',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: '  2026-0041  ' }, HEEFT).action === 'skip')
-check('witruimte BINNEN het nummer matcht ("2026 - 0041")',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: '2026 - 0041' }, HEEFT).action === 'skip')
-// GRENS, bewust zo: normalizeInvoiceNumber haalt alleen witruimte weg, geen scheidingstekens. Ook
-// streepjes strippen zou "2026-1" en "20261" laten samenvallen, en dat zou in het HOOFD-dedup-pad
-// echte, verschillende facturen kunnen blokkeren. Een herinnering herhaalt in de praktijk hetzelfde
-// gedrukte nummer, dus deze grens kost niets — en de uitkomst is de veilige kant: importeren.
-check('een ANDERE scheidingsvorm matcht niet → import-flagged, niet overslaan',
-  decideReminder({ isReminder: true, reminderOfInvoiceNumber: '20260041' }, HEEFT).action === 'import-flagged')
+console.log('\n— and where it must NOT match —')
+check('prefix alone (different amount) → nothing',
+  findReminderOriginal({ reminderOfInvoiceNumber: '2670971', vendor: 'Enka', totalIncBtw: 1764.77 }, BOEKEN).match === null)
+check('amount + date but another party → nothing',
+  findReminderOriginal({ reminderOfInvoiceNumber: '1', vendor: 'Sligro', totalIncBtw: 1764.76, invoiceDate: '2026-06-19' }, BOEKEN).match === null)
+check('a short prefix does not count ("2026" vs "2026-10")',
+  findReminderOriginal({ reminderOfInvoiceNumber: '2026', vendor: 'Enka', totalIncBtw: 10 },
+    [{ id: 'x', invoiceNumber: '2026-10', totalIncBtw: 10, invoiceDate: null, clientName: 'Enka', status: 'received' }]).match === null)
+check('amount + party + no date + no number → nothing (two signals are not enough)',
+  findReminderOriginal({ vendor: 'Enka', totalIncBtw: 1764.76 }, BOEKEN).match === null)
+{
+  const twee = [ORIGINEEL, { ...ORIGINEEL, id: 'orig2', invoiceNumber: '26709712' }]
+  const f = findReminderOriginal({ reminderOfInvoiceNumber: '2670971', vendor: 'Enka', totalIncBtw: 1764.76, invoiceDate: '2026-06-19' }, twee)
+  check('two fits → no match, reported as ambiguous', f.match === null && f.ambiguous === 2)
+}
 
-console.log('\n— reminderSkipReason —')
-const why = reminderSkipReason('2026-0041')
-check('noemt het nummer', why.includes('2026-0041'))
-check('zegt dat het niet als tweede kost is geïmporteerd', /tweede kost/.test(why))
+console.log('\n— the sentence on the panel says what happened —')
+{
+  const p = placeReminder({ isReminder: true, reminderOfInvoiceNumber: '2670971', vendor: 'Enka', totalIncBtw: 1764.76, invoiceDate: '2026-06-19' }, BOEKEN)
+  check('found: names the booked number', p.action === 'file' && /staat al in je boekhouding/.test(p.reason) && p.reason.includes('26709711'))
+  const q = placeReminder({ isReminder: true, reminderOfInvoiceNumber: '26711997', vendor: 'Enka', totalIncBtw: 1381.28 }, BOEKEN)
+  check('not found: says the invoice is missing and how to book it', q.action === 'file' && /staat niet in je boekhouding/.test(q.reason) && /vanaf het bestand/.test(q.reason))
+  check('ambiguous: names the count', /2 facturen/.test(reminderFiledReason({ reminderOfInvoiceNumber: '1' }, null, 2)))
+  check('legacy skip reason still names the number', reminderSkipReason('2026-0041').includes('2026-0041'))
+}
 
-console.log('\n— [INCASSO-WOORDEN] de volledige Nederlandse escalatieladder —')
-// Nagelopen tegen deurwaarders-/incassobronnen. Alleen de eerste twee treden stonden erin, dus
-// een "sommatie.pdf" gleed langs deze backstop en kon als gewone factuur landen.
+console.log('\n— [INCASSO-WOORDEN] the full Dutch escalation ladder is recognised by filename —')
 for (const naam of [
   'betalingsherinnering.pdf', 'Herinnering.pdf', 'herinneringsnota.pdf',
-  'aanmaning.pdf', 'laatste aanmaning.pdf',
-  'sommatie.pdf', 'Ingebrekestelling.pdf',
-  'WIK-brief.pdf', '14-dagenbrief.pdf', 'aanzegging.pdf', 'incassobrief.pdf',
-  'laatste waarschuwing.pdf',
+  'aanmaning.pdf', 'laatste aanmaning.pdf', 'sommatie.pdf', 'Ingebrekestelling.pdf',
+  'WIK-brief.pdf', '14-dagenbrief.pdf', 'aanzegging.pdf', 'incassobrief.pdf', 'laatste waarschuwing.pdf',
   'reminder.pdf', 'payment-reminder.pdf', 'final-notice.pdf', 'dunning.pdf',
-]) {
-  check(`herkend: ${naam}`, isReminderFilename(naam) === true)
-}
+]) check(`recognised: ${naam}`, isReminderFilename(naam) === true)
+for (const naam of ['factuur-2026-0041.pdf', 'invoice.pdf', 'kassabon.jpg', 'verzamelfactuur.pdf', 'creditnota.pdf'])
+  check(`not flagged: ${naam}`, isReminderFilename(naam) === false)
 
-console.log('\n— en wat GEEN herinnering is, blijft dat —')
-// Een gewone factuur mag deze backstop nooit raken; dan zou élke factuur gevlagd worden.
-for (const naam of ['factuur-2026-0041.pdf', 'invoice.pdf', 'kassabon.jpg', 'verzamelfactuur.pdf', 'creditnota.pdf']) {
-  check(`niet gevlagd: ${naam}`, isReminderFilename(naam) === false)
-}
-
-console.log('\n— statement-lijst: de overzichtsvormen —')
-for (const naam of ['rekeningoverzicht.pdf', 'saldo-overzicht.pdf', 'openstaande posten.pdf',
-  'overzicht openstaande facturen.pdf', 'debiteurenoverzicht.pdf', 'betalingsoverzicht.pdf']) {
-  check(`herkend als overzicht: ${naam}`, isStatementFilename(naam) === true)
-}
-// Een verzamelfactuur is ÉÉN factuur over meerdere regels en IS boekbaar — die mag hier nooit in.
-check('verzamelfactuur is geen overzicht', isStatementFilename('verzamelfactuur.pdf') === false)
-check('maandoverzicht bewust NIET (vaak juist een verzamelfactuur)',
-  isStatementFilename('maandoverzicht.pdf') === false)
+console.log('\n— statement filenames (unchanged) —')
+for (const naam of ['rekeningoverzicht.pdf', 'saldo-overzicht.pdf', 'openstaande posten.pdf', 'overzicht openstaande facturen.pdf', 'debiteurenoverzicht.pdf', 'betalingsoverzicht.pdf'])
+  check(`overview: ${naam}`, isStatementFilename(naam) === true)
+check('verzamelfactuur is not an overview', isStatementFilename('verzamelfactuur.pdf') === false)
+check('maandoverzicht deliberately not', isStatementFilename('maandoverzicht.pdf') === false)
 
 console.log(`\n${passed} passed, ${failed} failed\n`)
 process.exit(failed === 0 ? 0 : 1)

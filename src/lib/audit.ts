@@ -267,6 +267,9 @@ export type AuditAction =
   | 'document.deleted'
   | 'document.bulk_deleted'
   | 'document.restored'
+  // [HERINNERING-NOOIT] A payment reminder kept as a file and never booked; names the invoice it
+  // was matched to, or says none was. The trail behind "waar is die herinnering gebleven".
+  | 'document.reminder_filed'
   // [ARTIKELEN-WIPE] The owner emptying their whole article catalogue in one action. Level 3 and
   // not Level 1 on purpose: articles are TEMPLATES — invoice_lines copied their text, price and
   // btw-rate at the moment a line was made — so no invoice, total or aangifte moves by a cent.

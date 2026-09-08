@@ -7465,6 +7465,16 @@ export const MESSAGES = {
     ar: 'أعد القراءة',
     en: 'Read again',
   },
+  'ink.herinnering.uitleg': {
+    nl: 'Herinneringen voor facturen die niet in je boekhouding staan. Vraag de factuur op bij de leverancier — of boek de herinnering als factuur; hij herhaalt de hele factuur.',
+    ar: 'تذكيرات بفواتير غير موجودة في دفاترك. اطلب الفاتورة من المورّد، أو قيّد التذكير كفاتورة؛ فهو يكرّر الفاتورة كاملة.',
+    en: 'Reminders for invoices that are not in your books. Ask the supplier for the invoice, or book the reminder as the invoice; it repeats the whole invoice.',
+  },
+  'ink.herinnering.knop': {
+    nl: 'Boek als factuur',
+    ar: 'قيّد كفاتورة',
+    en: 'Book as invoice',
+  },
   'ink.reread.uitleg': {
     nl: 'Toen onleesbaar, nu misschien niet meer. Probeer opnieuw — niets verandert tot jij het in de wachtrij bevestigt.',
     ar: 'كانت غير مقروءة حينها، وربما لم تعد كذلك. جرّب مجدداً — لا يتغيّر شيء حتى تؤكّده في قائمة الانتظار.',
@@ -8489,6 +8499,16 @@ export const MESSAGES = {
     nl: 'rekeningoverzicht → gecontroleerd',
     ar: 'كشف حساب ← رُوجع',
     en: 'account statement → checked',
+  },
+  'int.landed.herinnering': {
+    nl: 'betalingsherinnering → bewaard, niet geboekt',
+    ar: 'تذكير بالدفع ← حُفظ ولم يُقيَّد',
+    en: 'payment reminder → filed, not booked',
+  },
+  'int.herinneringBewaard': {
+    nl: 'Dit is een betalingsherinnering, geen factuur. Hij staat in je bestanden en is niet als kost geboekt.',
+    ar: 'هذا تذكير بالدفع وليس فاتورة. حُفظ في ملفاتك ولم يُقيَّد كتكلفة.',
+    en: 'This is a payment reminder, not an invoice. It is in your files and was not booked as a cost.',
   },
   'int.maakFotoUpload': {
     nl: 'Maak een foto of upload — AI sorteert het',
@@ -12808,6 +12828,7 @@ export const MESSAGES = {
   'log.document.deleted': { nl: 'Bestand verwijderd', en: 'File deleted', ar: 'حُذف ملف' },
   'log.document.bulk_deleted': { nl: 'Meerdere bestanden verwijderd', en: 'Several files deleted', ar: 'حُذفت عدة ملفات' },
   'log.document.restored': { nl: 'Bestand teruggezet', en: 'File restored', ar: 'أُعيد ملف' },
+  'log.document.reminder_filed': { nl: 'Betalingsherinnering bewaard, niet geboekt', en: 'Payment reminder filed, not booked', ar: 'حُفظ تذكير بالدفع ولم يُقيَّد' },
   'log.article.bulk_deleted': { nl: 'Meerdere artikelen verwijderd', en: 'Several articles deleted', ar: 'حُذفت عدة أصناف' },
   'log.folder.created': { nl: 'Map aangemaakt', en: 'Folder created', ar: 'أُنشئ مجلد' },
   'log.folder.deleted': { nl: 'Map verwijderd', en: 'Folder deleted', ar: 'حُذف مجلد' },

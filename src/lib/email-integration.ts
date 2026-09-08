@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto'
 import { effectiveTaxKind, type TaxKind } from './tax-letter'
 // [OBSERVABILITY] De waarde die de lezer telt — één plek, zie skipped-import.ts.
-import { DOC_TYPE_COULD_NOT_READ } from '@/lib/skipped-import'
+import { DOC_TYPE_COULD_NOT_READ, DOC_TYPE_REMINDER } from '@/lib/skipped-import'
 // [MAILTEKST] De factuur die nooit een bijlage had: het filter en de tekstconversie.
 import { htmlToReadableText, bodyLooksLikeInvoice, bodyDocumentName } from '@/lib/email-body-invoice'
 import { textToPdf } from '@/lib/text-to-pdf'
@@ -84,7 +84,8 @@ import { ibanChangeSafecore } from '@/lib/intake-supplier'
 // dus vóór de AI-aanroep, en altijd verantwoord in de skip-registry.
 import { normalizeSenderEmail, senderIsBlocked, blockedSenderSkipReason } from '@/lib/sender-rules'
 // [HERINNERING-ORIGINEEL] Een herinnering waarvan het origineel al geboekt is, is geen kost.
-import { decideReminder } from '@/lib/reminder-original'
+// [HERINNERING-NOOIT] A reminder is filed and linked to its invoice, never booked.
+import { fileReminder } from '@/lib/reminder-file'
 import { createNotification } from '@/lib/notifications'
 // [GRENS-ZICHTBAAR] Wat een maandgrens betekent voor de ondernemer, en hoe vaak je het zegt.
 import { fairUseHold, fairUseHoldMonth, fairUseHoldNotice } from '@/lib/fair-use-hold'
@@ -2866,41 +2867,6 @@ export async function syncUserEmails(
     // Geen regels toepasbaar → alles importeert. De veilige kant.
   }
 
-  // [HERINNERING-ORIGINEEL] De factuurnummers die deze gebruiker al heeft, genormaliseerd — de
-  // verzameling waartegen een herinnering wordt nagekeken. LUI geladen: verreweg de meeste syncs
-  // bevatten geen enkele herinnering, en dan hoort er ook geen query te draaien. Eén keer per sync
-  // en daarna gecached; de set groeit tijdens de sync mee, zodat een origineel en zijn herinnering
-  // in dezelfde batch elkaar nog steeds vinden.
-  const knownNumbers = new Set<string>()
-  let knownNumbersLoaded = false
-  const knownInvoiceNumbers = async (): Promise<Set<string>> => {
-    if (knownNumbersLoaded) return knownNumbers
-    const set = knownNumbers
-    try {
-      // Alleen facturen die ECHT tellen. Een genegeerde factuur mag een herinnering niet
-      // wegdrukken: als de eigenaar het origineel heeft weggezet, is de herinnering misschien
-      // juist het stuk dat hij wél wil houden.
-      const { data } = await supabase
-        .from('invoices')
-        .select('invoice_number')
-        .eq('receiver_id', userId)
-        .eq('direction', 'incoming')
-        .in('status', ['processing', 'received', 'paid'])
-        .not('invoice_number', 'is', null)
-        .order('invoice_date', { ascending: false })
-        .limit(5000)
-      for (const r of (data ?? []) as Array<{ invoice_number: string | null }>) {
-        const key = normalizeInvoiceNumber(r.invoice_number)
-        if (key) set.add(key)
-      }
-    } catch {
-      // Kan de lijst niet gelezen worden, dan blijft de set leeg → elke herinnering wordt
-      // geïmporteerd-met-vlag. De veilige kant: liever een extra rij in de wachtrij dan een
-      // weggegooid bewijsstuk.
-    }
-    knownNumbersLoaded = true
-    return set
-  }
 
   const notKnown = attachments.filter((a) => !knownKeys.has(`${a.messageId}:${a.filename}`))
 
@@ -3121,7 +3087,9 @@ export async function syncUserEmails(
     att: GmailAttachment,
     reason: string,
     aiDocType: string = DOC_TYPE_COULD_NOT_READ,
-  ): Promise<void> => {
+    // [HERINNERING-NOOIT] A reminder WAS read; the caller says so. Every other kept file was not.
+    opts: { aiProcessed?: boolean } = {},
+  ): Promise<string | null> => {
     try {
       const buf = Buffer.from(att.data, 'base64')
       const hash = computeContentHash(buf)
@@ -3130,14 +3098,15 @@ export async function syncUserEmails(
         .eq('user_id', userId).eq('content_hash', hash).limit(1).maybeSingle()
       // [DUP-TRASHED] Ook het onleesbare-bijlage-pad: botst het op een weggegooide rij, dan is er
       // niets meer om naar te verwijzen en hoort de bijlage gewoon opnieuw bewaard te worden.
-      if (!dupDoc || (await trashedDuplicateCleared(supabase, userId, dupDoc))) {
+      if (dupDoc && !(await trashedDuplicateCleared(supabase, userId, dupDoc))) return dupDoc.id
+      {
         const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
         const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
         const { error: upErr } = await supabase.storage
           .from('documents').upload(storagePath, buf, { contentType: att.mimeType, upsert: false })
         if (!upErr) {
           const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
-          const { error: docErr } = await supabase.from('documents').insert({
+          const { data: docRow, error: docErr } = await supabase.from('documents').insert({
             user_id: userId,
             file_name: att.filename,
             file_url: storagePath,
@@ -3146,7 +3115,7 @@ export async function syncUserEmails(
             doc_type: 'overig',
             folder_id: folderId,
             source: 'email',
-            ai_processed: false,          // we did NOT read it — never claim we did
+            ai_processed: opts.aiProcessed === true, // false unless the caller READ it — never claim we did
             // [OBSERVABILITY] The shared constant, not the string. skipped-import.ts exists because
             // the WRITER and the READER of this column once used different values, and a kept file
             // then counted as nothing: the panel said "Niets overgeslagen" over an unread invoice.
@@ -3154,8 +3123,9 @@ export async function syncUserEmails(
             // writer was still typing the literal, so the promise held for every door but this one.
             ai_doc_type: aiDocType,
             content_hash: hash,
-          })
+          }).select('id').single()
           if (docErr) await supabase.storage.from('documents').remove([storagePath])
+          else return (docRow as { id: string } | null)?.id ?? null
         }
       }
     } catch (e) {
@@ -3194,6 +3164,7 @@ export async function syncUserEmails(
         context: { userId, filename: att.filename, error: e instanceof Error ? e.message : String(e) },
       })
     }
+    return null
   }
 
   // Record ONE failed processing attempt for an attachment. Returns true when it has now EXHAUSTED
@@ -4263,50 +4234,55 @@ export async function syncUserEmails(
         isCreditNote: classification.isCreditNote === true,
       })
 
-      // [HERINNERING-ORIGINEEL] Gaat deze herinnering over een factuur die AL in de boeken staat?
-      // Dan is het geen tweede kost en heeft de eigenaar er niets aan in zijn wachtrij: overslaan,
-      // mét een rij in de skip-registry zodat "waar is die herinnering gebleven" te beantwoorden
-      // blijft. Staat het origineel er NIET, dan importeren we hem juist wél (gevlagd): een
-      // Nederlandse betalingsherinnering herhaalt de hele factuur, en als de originele mail in de
-      // spam belandde is dit het enige bewijs van een aftrekbare kost.
-      {
-        const reminderDecision = decideReminder(
-          {
-            isReminder: classification.isReminder,
-            reminderOfInvoiceNumber: classification.reminderOfInvoiceNumber,
-          },
-          await knownInvoiceNumbers()
-        )
-        if (reminderDecision.action === 'skip') {
+      // [HERINNERING-NOOIT] A payment reminder is never an invoice. It repeats one the owner has or
+      // should have, so it is kept as a document, linked to that invoice when it can be found (by
+      // number, or by supplier + amount + date/number-prefix — the reader dropped a digit on every
+      // one of the thirteen measured), and the owner gets one notice. It never reaches the queue.
+      if (classification.isReminder === true) {
+        const reminderDocId = await saveKeptAttachment(attachment, 'reminder', DOC_TYPE_REMINDER, { aiProcessed: true })
+        let filedReason = 'herinnering — bewaard in je bestanden, niet als factuur geboekt'
+        if (reminderDocId) {
           try {
-            const skipPipeline = createPipelineClient()
-            await skipPipeline.from('email_skipped_attachments').upsert(
-              {
-                user_id: userId,
-                source_message_id: `${attachment.messageId}:${attachment.filename}`,
-                filename: attachment.filename,
-                reason: reminderDecision.reason,
+            const filed = await fileReminder({
+              pipeline: supabase, userId, documentId: reminderDocId, path: 'email',
+              facts: {
+                isReminder: true,
+                reminderOfInvoiceNumber: classification.reminderOfInvoiceNumber ?? null,
+                invoiceNumber: classification.invoiceNumber ?? null,
+                vendor: classification.vendor ?? null,
+                totalIncBtw: classification.totalIncBtw ?? classification.amount ?? null,
+                invoiceDate: classification.invoiceDate ?? null,
               },
-              { onConflict: 'user_id,source_message_id', ignoreDuplicates: true }
-            )
+            })
+            filedReason = filed.placement.reason
           } catch (e) {
-            console.error('[HERINNERING-ORIGINEEL] kon overgeslagen herinnering niet registreren', e)
+            console.error('[HERINNERING-NOOIT] kon herinnering niet aan zijn factuur koppelen', e)
           }
-          await logAuditAction({
-            userId,
-            action: 'invoice.duplicated',
-            entityType: 'invoice',
-            entityId: reminderDecision.originalNumber,
-            newValue: {
-              reason: 'reminder_original_already_booked',
-              original_invoice_number: reminderDecision.originalNumber,
-              path: 'email',
-            },
+        } else {
+          reportHandledFailure({
+            tag: 'HERINNERING-NOOIT', severity: 'data-integrity',
+            message: 'a payment reminder could not be saved as a document — it now exists nowhere the owner can see',
+            context: { userId, filename: attachment.filename },
           })
-          skipped++
-          completedKeys.add(wmKey)
-          continue
         }
+        // saveKeptAttachment wrote its own registry row with the bare reason; overwrite it with
+        // the sentence that names the invoice, so "waar is die herinnering" is answerable.
+        try {
+          await supabase.from('email_skipped_attachments').upsert(
+            {
+              user_id: userId,
+              source_message_id: `${attachment.messageId}:${attachment.filename}`,
+              filename: attachment.filename,
+              reason: filedReason,
+            },
+            { onConflict: 'user_id,source_message_id' }
+          )
+        } catch (e) {
+          console.error('[HERINNERING-NOOIT] kon overgeslagen herinnering niet registreren', e)
+        }
+        skipped++
+        completedKeys.add(wmKey)
+        continue
       }
 
       // Merge, don't overwrite: keep the AI's fieldConfidence, add _safecore
@@ -4331,13 +4307,12 @@ export async function syncUserEmails(
         paid_card_last4: classification.paidCardLast4 ?? null,
         confidence: classification.confidence,
       })
-      // [REMINDER] A payment reminder is a real single invoice but the original was very
-      // likely already booked — flag it so the verify queue warns "controleer of de factuur
-      // al geboekt is" and it is never bulk-confirmed as a second cost.
-      const isReminder = classification.isReminder === true
-      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) and the reminder
-      // flag so the audit/human-review trail records WHY this invoice needs a human look.
-      if (!verdict.ok || dedupNote || isReminder || possibleDup || ibanChange) {
+      // [HERINNERING-NOOIT] No reminder reaches this point any more — it was filed above and the
+      // loop continued. What is left here is the arithmetic verdict, the dedup note, and the
+      // duplicate/IBAN signals a human must see.
+      // [SAFECORE-GAP] _safecore also carries the dedup note (un-dedupable) so the
+      // audit/human-review trail records WHY this invoice needs a human look.
+      if (!verdict.ok || dedupNote || possibleDup || ibanChange) {
         const safecore: Record<string, unknown> = {}
         if (!verdict.ok) {
           safecore.arithmetic_ok = false
@@ -4348,12 +4323,6 @@ export async function syncUserEmails(
         if (dedupNote) {
           safecore.dedup = dedupNote.dedup
           safecore.dedup_reason = dedupNote.reason
-        }
-        if (isReminder) {
-          safecore.reminder = true
-          if (classification.reminderOfInvoiceNumber) {
-            safecore.reminder_of = classification.reminderOfInvoiceNumber
-          }
         }
         // [DEDUP-SOFT] Carry the possible-duplicate flag → classifyImportHealth turns it into a
         // "mogelijk dubbel met X" needs-review warning that also blocks auto-advance.
@@ -4739,15 +4708,6 @@ export async function syncUserEmails(
       } else {
         saved++
         completedKeys.add(wmKey) // [watermark] saved = complete
-        // [HERINNERING-ORIGINEEL] Dit nummer hoort nu bij "wat we al hebben". Zonder deze regel
-        // zou een origineel en zijn herinnering die in DEZELFDE batch aankomen elkaar missen: de
-        // set is aan het begin van de sync geladen, dus het net-geïmporteerde origineel zat er nog
-        // niet in en de herinnering zou als tweede kost in de wachtrij landen. Alleen bijwerken als
-        // de set al geladen is — anders zou dit de luie query juist uitlokken.
-        if (knownNumbersLoaded) {
-          const savedKey = normalizeInvoiceNumber(classification.invoiceNumber)
-          if (savedKey) knownNumbers.add(savedKey)
-        }
         // [BANK-LINK] Remember that a matchable ('received') invoice landed this run, so we can
         // run the safe bank linker ONCE after the loop (not per-invoice — the engine scans the
         // whole statement each call). Only auto-advanced invoices are eligible: a held/processing

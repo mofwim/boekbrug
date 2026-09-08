@@ -54,7 +54,9 @@ import { decidePreAi, decideFromAi } from "@/lib/intake-router"
 import { normaliseerBetaalwijze } from "@/lib/bon-betaalwijze"
 // [OBSERVABILITY] Eén bron voor "dit bestand is bewaard maar niet gelezen" — gedeeld met het
 // overgeslagen-paneel, dat vroeger op een andere waarde las dan hier werd geschreven.
-import { docTypeForStoredFile, DOC_TYPE_UNSUPPORTED } from "@/lib/skipped-import"
+import { docTypeForStoredFile, DOC_TYPE_UNSUPPORTED, DOC_TYPE_REMINDER } from "@/lib/skipped-import"
+// [HERINNERING-NOOIT] A reminder is filed and linked to its invoice, never booked.
+import { fileReminder } from "@/lib/reminder-file"
 // [SHEET-INTAKE] Route an uploaded kassa Z-report / grootboek export into the EXISTING
 // turnover + ledger pipelines instead of filing it as an opaque document.
 import { sheetBytesToMatrix } from "@/lib/xlsx-adapter"
@@ -527,6 +529,8 @@ async function runIntake(req: NextRequest) {
     paid_evidence: v.paid_evidence ?? null,
     paid_card_last4: v.paid_card_last4 ?? null,
     confidence: v.confidence,
+    // [HERINNERING-NOOIT] The router sends a reminder to bestanden before the invoice question.
+    is_reminder: v.is_reminder ?? null,
   })
 
   // [KAS-UPLOAD] The Kas screen can upload a receipt the owner ALREADY paid in cash. The button
@@ -680,6 +684,9 @@ async function runIntake(req: NextRequest) {
           .select("id, folder_id")
           .eq("user_id", user.id)
           .eq("invoice_id", dup.match.id)
+          // [HERINNERING-NOOIT] A filed reminder also points at this invoice; the link must open
+          // the invoice's own file, not the supplier's letter about it.
+          .or(`ai_doc_type.is.null,ai_doc_type.neq.${DOC_TYPE_REMINDER}`)
           .limit(1)
           .maybeSingle()
         doc = byInvoice ?? null
@@ -1029,6 +1036,44 @@ async function runIntake(req: NextRequest) {
           ...reconcile,
         })
       }
+    }
+
+    // ── [HERINNERING-NOOIT] A payment reminder is never an invoice ───────────────────────────
+    // The reader marked it (or the filename did); the router sent it here instead of the queue.
+    // The file is kept, the invoice it is about is looked up, and the owner hears the one thing
+    // worth hearing — see reminder-original.ts for the rule and the measurement behind it.
+    if (doc?.id && v.is_reminder === true) {
+      let message = "Dit is een betalingsherinnering, geen factuur. Hij staat in je bestanden en is niet als kost geboekt."
+      let originalInvoiceId: string | null = null
+      try {
+        const filed = await fileReminder({
+          pipeline, userId: user.id, documentId: doc.id, path: "intake", ipAddress: getClientIP(req),
+          facts: {
+            isReminder: true,
+            reminderOfInvoiceNumber: v.reminder_of_invoice_number ?? null,
+            invoiceNumber: v.invoice_number ?? null,
+            vendor: v.vendor ?? null,
+            totalIncBtw: v.total_inc_btw ?? v.amount ?? null,
+            invoiceDate: normalizeToIso(v.invoice_date ?? null),
+          },
+        })
+        message = filed.message
+        originalInvoiceId = filed.placement.original?.id ?? null
+      } catch (e) {
+        // The file is in bestanden either way; only the link and the notice are missing, and the
+        // sentence above says exactly that much and no more.
+        console.error("[HERINNERING-NOOIT] filing failed after the document was stored", { documentId: doc.id, error: e instanceof Error ? e.message : String(e) })
+      }
+      return NextResponse.json({
+        ok: true,
+        destination: "reminder",
+        document_id: doc.id,
+        folder_id: folderId,
+        folder_name: folderName,
+        file_name: upload.fileName,
+        original_invoice_id: originalInvoiceId,
+        message,
+      })
     }
 
     return NextResponse.json({

@@ -362,6 +362,8 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
   // [TWEEDE-KANS] The unread files themselves, so the panel can offer a second reading instead of
   // only counting them.
   const [unreadDocs, setUnreadDocs] = useState<Array<{ id: string; fileName: string }>>([]);
+  // [HERINNERING-NOOIT] Reminders whose invoice is not in the books — the owner may book from them.
+  const [reminderDocs, setReminderDocs] = useState<Array<{ id: string; fileName: string }>>([]);
   const [rereadingId, setRereadingId] = useState<string | null>(null);
   const [rereadMessage, setRereadMessage] = useState<string | null>(null);
 
@@ -384,7 +386,10 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
       }
       setRereadMessage(typeof json?.message === "string" ? json.message : t('ink.reread.klaar'));
       // Booked → it left the unread list; drop it here too rather than making the owner reload.
-      if (json?.booked) setUnreadDocs((prev) => prev.filter((d) => d.id !== docId));
+      if (json?.booked) {
+        setUnreadDocs((prev) => prev.filter((d) => d.id !== docId));
+        setReminderDocs((prev) => prev.filter((d) => d.id !== docId));
+      }
     } catch {
       setRereadMessage(t('ink.reread.foutVerbinding'));
     } finally {
@@ -562,6 +567,7 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
         setSkippedTotal(typeof data.skippedTotal === "number" ? data.skippedTotal : (data.skipped ?? []).length);
         setCouldNotReadCount(data.couldNotReadCount ?? 0);
         setUnreadDocs(Array.isArray(data.unread) ? data.unread : []);
+        setReminderDocs(Array.isArray(data.reminders) ? data.reminders : []);
       } else {
         // [SKIPPED-READ-HONEST] A failed read is NOT an empty list. Both branches used to answer
         // setSkippedItems([]), and an empty list renders "Niets overgeslagen — alles wat binnenkwam
@@ -671,7 +677,32 @@ function ConnectEmailCard({ status }: { status: ConnectionStatus }) {
                       )}
                     </div>
                   )}
-                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 ? (
+                  {/* [HERINNERING-NOOIT] A reminder the app filed because its invoice is not in the
+                      books. Same button, same door (read-as-invoice), one deliberate tap. */}
+                  {reminderDocs.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, color: "#5f6368", marginBottom: 6, lineHeight: 1.5 }}>
+                        {t('ink.herinnering.uitleg')}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {reminderDocs.map((d) => (
+                          <div key={d.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12.5 }}>
+                            <span style={{ color: "#202124", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                              {d.fileName}
+                            </span>
+                            <button
+                              onClick={() => void rereadDocument(d.id)}
+                              disabled={rereadingId === d.id}
+                              style={{ flexShrink: 0, fontSize: 12, fontWeight: 500, border: "1px solid #dadce0", background: "#fff", color: "#0B57D0", borderRadius: 999, padding: "5px 12px", cursor: rereadingId === d.id ? "default" : "pointer", minHeight: 32 }}
+                            >
+                              {rereadingId === d.id ? t('act.bezig') : t('ink.herinnering.knop')}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(skippedItems?.length ?? 0) === 0 && couldNotReadCount === 0 && reminderDocs.length === 0 ? (
                     <div style={{ fontSize: 12.5, color: "#5f6368" }}>
                       {t('ink.nietsOvergeslagen')}
                     </div>
