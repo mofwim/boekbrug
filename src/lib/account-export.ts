@@ -121,6 +121,8 @@ export interface ExportRegisters {
   suppliers: unknown[];
   /** supplier_aliases — the other names one supplier writes on its invoices. */
   supplierAliases: unknown[];
+  /** supplier_iban_history — account numbers the owner replaced on a supplier, and when. */
+  supplierIbanHistory: unknown[];
   /** articles — the owner's own price list. */
   articles: unknown[];
   /** time_entries — hours worked, invoiced and not yet invoiced. */
@@ -154,7 +156,7 @@ export interface ExportRegisters {
 
 /** Empty registers — the shape, with nothing in it. Used as the default in assemble. */
 export const EMPTY_REGISTERS: ExportRegisters = {
-  invoiceLines: [], clients: [], suppliers: [], supplierAliases: [], articles: [],
+  invoiceLines: [], clients: [], suppliers: [], supplierAliases: [], supplierIbanHistory: [], articles: [],
   timeEntries: [], vehicles: [], assets: [], assetDismissals: [], invoiceReminders: [], bankInvoiceLinks: [],
   folders: [], counterpartMemory: [], emailSenderRules: [], emailSkipped: [],
   invoiceCounters: [], payBundles: [], payBundleInvoices: [], feedback: [],
@@ -394,6 +396,7 @@ export async function assembleAccountExportZip(
     ["clients", "klanten.json"],
     ["suppliers", "leveranciers.json"],
     ["supplierAliases", "leveranciers-schrijfwijzen.json"],
+    ["supplierIbanHistory", "leveranciers-oude-rekeningnummers.json"],
     ["articles", "artikelen.json"],
     ["timeEntries", "uren.json"],
     ["vehicles", "voertuigen.json"],
@@ -682,7 +685,7 @@ export async function buildAccountExportZip(args: {
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 
   const [
-    invoiceLineRows, clientRows, supplierRows, supplierAliasRows, articleRows,
+    invoiceLineRows, clientRows, supplierRows, supplierAliasRows, supplierIbanHistoryRows, articleRows,
     timeEntryRows, vehicleRows, assetRows, assetDismissalRows, reminderRows, bankLinkRows, folderRows, memoryRows,
     senderRuleRows, skippedMailRows, counterRows, bundleRows, bundleInvoiceRows, feedbackRows,
   ] = await Promise.all([
@@ -703,6 +706,8 @@ export async function buildAccountExportZip(args: {
       supabase.from("suppliers").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("supplier_aliases", (from, to) =>
       supabase.from("supplier_aliases").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
+    readAll("supplier_iban_history", (from, to) =>
+      supabase.from("supplier_iban_history").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("articles", (from, to) =>
       supabase.from("articles").select("*").eq("user_id", userId).order("id", { ascending: true }).range(from, to)),
     readAll("time_entries", (from, to) =>
@@ -812,6 +817,7 @@ export async function buildAccountExportZip(args: {
       clients: clientRows,
       suppliers: supplierRows,
       supplierAliases: supplierAliasRows,
+      supplierIbanHistory: supplierIbanHistoryRows,
       articles: articleRows,
       timeEntries: timeEntryRows,
       vehicles: vehicleRows,

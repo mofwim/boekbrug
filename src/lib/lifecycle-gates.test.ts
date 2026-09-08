@@ -18409,9 +18409,17 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
   // dit scherm daarvóór helemaal niet kreeg. De sleutel wordt dus wél gerenderd, alleen niet meer
   // door dit bestand, en de vraag die deze regel stelt ("ziet iemand deze zin ooit?") blijft
   // precies dezelfde.
+  //
+  // [SERVER-ZIN] De route en uren-refusal.ts tellen óók mee. De zinnen waarmee /api/uren een uur
+  // weigert stonden als Nederlandse literals in de route, en het scherm toont een serverzin zoals
+  // hij is — dus las een Arabische eigenaar Nederlands in een toast. Ze staan nu in de catalogus,
+  // de route vertaalt ze met het taalkoekje, en de toast op dit scherm laat ze zien. "Ziet iemand
+  // deze zin ooit?" is nog steeds de vraag; het antwoord komt alleen via een omweg.
   const overal = ui
     + readFileSync("src/app/dashboard/uren/page.tsx", "utf8")
-    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8");
+    + readFileSync("src/components/nav/DashboardChrome.tsx", "utf8")
+    + readFileSync("src/app/api/uren/route.ts", "utf8")
+    + readFileSync("src/lib/uren-refusal.ts", "utf8");
   for (const key of verklaard) {
     // Beide aanhalingstekens: dit bestand schrijft ze enkel, DashboardChrome dubbel.
     assert.ok(
@@ -18419,6 +18427,11 @@ test("[UREN] het scherm heeft geen taal van zichzelf", () => {
       `${key} wordt ergens gerenderd`,
     );
   }
+
+  // En de route zelf draagt geen Nederlandse zin meer: elke `error:` is een t()-aanroep.
+  const route = readFileSync("src/app/api/uren/route.ts", "utf8");
+  const losseServerZinnen = [...route.matchAll(/error: "([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(losseServerZinnen, [], `de route schrijft zelf zinnen: ${losseServerZinnen.join(" | ")}`);
 
   // De structurele helft: GEEN Nederlandse tekst als los JSX-tekstknooppunt. Eén hard-gecodeerde
   // zin in een onderdeel is precies hoe een vertaling voorgoed half af blijft — het scherm ziet er
@@ -24964,6 +24977,57 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [ACTIES-ALTIJD] ───────────────────────────────────────────────────────────────────────────
+//
+// On /dashboard/incoming/manage the four things an owner does with an invoice — Bekijk PDF,
+// Betalen, Opnieuw inlezen, Bedragen corrigeren — sat inside `expanded`, which only a tap on the
+// row opens. Nothing on the closed card said they existed. The row now lives on the card, above
+// the fold, and a chevron at its start opens the rest. tests/render/money-screens.test.tsx proves
+// the closed render carries the buttons; this holds the wiring, which is one moved `</div>` away
+// from putting them back behind the door.
+test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens the fold", () => {
+  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const css = readFileSync("src/app/globals.css", "utf8");
+
+  // The fold is the block that carries the detail id. Every action must be written BEFORE it.
+  const vouw = scherm.indexOf("id={`inv-detail-${inv.id}`}");
+  assert.ok(vouw > 0, "the fold no longer carries the id the chevron points at");
+  for (const [naam, tekst] of [
+    ["Bekijk PDF", "{t('ink.bekijkPdf')}"],
+    ["Betalen", "{t('inkoop.betalen')}"],
+    ["Bedragen corrigeren", "openCorrection(inv)"],
+    ["Opnieuw inlezen", "void runReread(inv)"],
+  ] as const) {
+    const at = scherm.indexOf(tekst);
+    assert.ok(at > 0, `${naam} is gone from the screen`);
+    assert.ok(at < vouw, `${naam} is back inside the fold — invisible until the owner already knows to tap`);
+  }
+
+  // The chevron: says its state, names its target, and is the SAME toggle the row header uses, so
+  // the two ways in can never disagree about what is open.
+  assert.match(scherm, /aria-expanded=\{expanded\}/, "the chevron does not say whether the card is open");
+  assert.match(scherm, /aria-controls=\{`inv-detail-\$\{inv\.id\}`\}/, "…nor which block it opens");
+  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 2,
+    "the header and the chevron must both toggle the same state — two openers, one fold");
+
+  // The card is taller when closed now, and the estimate that sizes the scrollbar before paint is
+  // shared with two lists that did not change. So this list carries its own, in both breakpoints.
+  assert.match(scherm, /className="inv-card inv-card--acties"/, "the card lost its own height estimate");
+  assert.equal((css.match(/\.inv-card--acties \{ contain-intrinsic-size: auto \d+px; \}/g) ?? []).length, 2,
+    "the estimate must be stated for both the wide and the stacked layout");
+});
+
+// ── [FILTERS-EEN-REGEL] ───────────────────────────────────────────────────────────────────────
+test("[FILTERS-EEN-REGEL] period, filter and sort share one row, and one open menu at a time", () => {
+  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.equal((scherm.match(/flex: '1 1 150px', minWidth: 0/g) ?? []).length, 3,
+    "three selectors, three equal thirds of one row");
+  // Three menus on one line can stand open together unless every opener closes the other two.
+  assert.match(scherm, /setShowPeriodMenu\(p => !p\); setShowFilterMenu\(false\); setShowSortMenu\(false\)/);
+  assert.match(scherm, /setShowFilterMenu\(p => !p\); setShowSortMenu\(false\); setShowPeriodMenu\(false\)/);
+  assert.match(scherm, /setShowSortMenu\(p => !p\); setShowFilterMenu\(false\); setShowPeriodMenu\(false\)/);
+});
+
 // ── [CONTROLES-INKLAPPEN] ─────────────────────────────────────────────────────────────────────
 //
 // Every check the app runs was printed on every invoice — nine identical green lines, with the one
@@ -25378,6 +25442,53 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   // And the rule the button rests on is on the screen, not only in this file.
   assert.match(scherm, /\{merge\.explanation\}/, "the panel says out loud what it will and will not propose");
   assert.match(scherm, /\{offer\.evidence\}/, "…and quotes the identifier, so the owner can check it");
+});
+
+// ── [LEVERANCIER-BEWERKEN] ───────────────────────────────────────────────────────────────────
+//
+// The owner edits a supplier's master record from /dashboard/leveranciers. What the route must
+// hold, in the order it must hold it: the old account number is KEPT before the row is written
+// (an update without the history line is the silent overwrite this exists to prevent), the rename
+// travels to invoices by supplier_id only, the printed IBAN and btw number on those invoices are
+// never touched, and every sentence comes from the catalogue.
+test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by id only, and holds no language", () => {
+  const deur = code("src/app/api/supplier/[id]/route.ts");
+
+  // 1. History BEFORE the update.
+  const historyAt = deur.indexOf("from('supplier_iban_history').insert(");
+  const updateAt = deur.indexOf(".update(plan.changes)");
+  assert.ok(historyAt > 0, "the old IBAN is written to supplier_iban_history");
+  assert.ok(updateAt > historyAt, "…and BEFORE the supplier row is overwritten");
+
+  // 2. Invoices follow by supplier_id, and only their display name moves.
+  assert.match(deur, /\.eq\('supplier_id', current\.id\)/, "siblings are found by id, never by name");
+  const rename = deur.slice(deur.indexOf(".from('invoices')"), deur.indexOf(".select('id')", deur.indexOf(".from('invoices')")));
+  assert.match(rename, /update\(\{ client_name: plan\.changes\.name \}\)/, "only client_name is written on the invoices");
+  assert.doesNotMatch(rename, /vendor_iban|client_btw_number/, "the document's own printed identifiers are never touched");
+
+  // 3. Every user-facing sentence is a t() call; a duplicate is answered as a merge, with a name.
+  const losseZinnen = [...deur.matchAll(/error: ['"]([^'"]+ [^'"]+)['"]/g)].map((m) => m[1]);
+  assert.deepEqual(losseZinnen, [], `the route writes its own sentences: ${losseZinnen.join(" | ")}`);
+  assert.match(deur, /t\(dup === 'iban' \? 'lev\.fout\.dubbelIban' : 'lev\.fout\.dubbelKvk', \{ ander \}\)/,
+    "a unique violation names the other supplier and points at the merge");
+  assert.match(deur, /action: 'supplier\.updated'/, "the edit lands in the audit trail as its own action");
+
+  // 4. The registry reads the history as a tier, read-only, right after the live IBAN.
+  const registry = code("src/lib/supplier-registry.ts");
+  const liveAt = registry.indexOf(".eq('iban', iban)");
+  const histAt = registry.indexOf("from('supplier_iban_history')");
+  const kvkAt = registry.indexOf(".eq('kvk_number', kvk)");
+  assert.ok(liveAt > 0 && histAt > liveAt && histAt < kvkAt, "history sits between the live IBAN and the KVK adoption");
+  const tier = registry.slice(histAt, kvkAt);
+  assert.doesNotMatch(tier, /\.update\(|\.insert\(/, "the history tier writes nothing back");
+
+  // 5. The pure module holds no sentence either: refusals are codes with a catalogue key each.
+  const pin = code("src/lib/supplier-pin.ts");
+  assert.doesNotMatch(pin, /error: '/, "supplier-pin.ts answers with codes, not Dutch");
+  for (const key of ["lev.fout.naamLeeg", "lev.fout.iban", "lev.fout.kvk", "lev.fout.btw"]) {
+    assert.ok(pin.includes(`'${key}'`), `${key} is mapped as a literal`);
+    assert.ok(key in MESSAGES, `${key} exists in messages.ts`);
+  }
 });
 
 // ── [MOVE-CREDITNOTA] ─────────────────────────────────────────────────────────────────────────

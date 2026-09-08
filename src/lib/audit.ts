@@ -254,6 +254,8 @@ export type AuditAction =
   // was the app allowed to assume this, and who said so".
   | 'supplier.auto_incasso_on'
   | 'supplier.auto_incasso_off'
+  // [LEVERANCIER-BEWERKEN] The owner edited the master record; old_value/new_value hold the fields that moved.
+  | 'supplier.updated'
   // [LEVERANCIER-SAMENVOEGEN] Two supplier rows declared one company, and the invoices of one moved
   // under the other's name. At this level because it REWRITES what already-booked invoices say
   // about who sent them — the identity key the IBAN-change check, the incasso mandate and the

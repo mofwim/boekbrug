@@ -21,7 +21,7 @@ import {
   dutchDateToIso,
   isoToDutchDate,
   dutchDateInWords,
-  dutchDateOutOfRange,
+  dateOutOfRange,
 } from './date-field-nl'
 
 test('[DATE-NL] a two-digit day can be typed — the whole complaint', () => {
@@ -88,11 +88,11 @@ test('[DATE-NL] the bounds the native picker used to enforce are not lost', () =
   // saved on the one field that decides a BTW quarter.
   const MIN = '2020-01-01'
   const MAX = '2026-08-05'
-  assert.equal(dutchDateOutOfRange('2026-03-01', MIN, MAX), null, 'an ordinary date passes')
-  assert.match(dutchDateOutOfRange('1970-01-01', MIN, MAX) ?? '', /vóór/, 'a mistyped year is caught')
-  assert.match(dutchDateOutOfRange('2027-01-01', MIN, MAX) ?? '', /toekomst/, 'so is a future payment')
+  assert.equal(dateOutOfRange('2026-03-01', MIN, MAX), null, 'an ordinary date passes')
+  assert.deepEqual(dateOutOfRange('1970-01-01', MIN, MAX), { side: 'before', bound: isoToDutchDate(MIN) }, 'a mistyped year is caught')
+  assert.deepEqual(dateOutOfRange('2027-01-01', MIN, MAX), { side: 'after', bound: isoToDutchDate(MAX) }, 'so is a future payment')
   // Mid-typing there is nothing to judge yet, and an error flashing while someone types is noise.
-  assert.equal(dutchDateOutOfRange(null, MIN, MAX), null)
+  assert.equal(dateOutOfRange(null, MIN, MAX), null)
   // No bounds given → nothing to say.
-  assert.equal(dutchDateOutOfRange('1970-01-01'), null)
+  assert.equal(dateOutOfRange('1970-01-01'), null)
 })

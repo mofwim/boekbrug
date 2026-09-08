@@ -192,6 +192,28 @@ export async function resolveSupplierForImport(
         return { id: byIban.id, name: byIban.name }
       }
 
+      // ── 1b. [LEVERANCIER-BEWERKEN] A number the owner REPLACED on a supplier ──
+      //
+      // The owner edited the account number on /dashboard/leveranciers; the old one is kept in
+      // supplier_iban_history. An invoice that still prints it belongs to that same supplier —
+      // and must resolve to it, because that is what lets the IBAN-change gate say "this number
+      // differs from the one on file". Without this tier the invoice would miss here, miss the
+      // KVK and name adoptions (both require iban IS NULL) and found a second row in silence.
+      // Read-only: nothing is written back, and the live IBAN stays what the owner set.
+      const { data: replaced } = await supabase
+        .from('supplier_iban_history')
+        .select('supplier_id')
+        .eq('user_id', userId)
+        .eq('iban', iban)
+        .order('replaced_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (replaced?.supplier_id) {
+        const { data: bySupplier } = await supabase
+          .from('suppliers').select('id, name').eq('id', replaced.supplier_id).eq('user_id', userId).maybeSingle()
+        if (bySupplier) return { id: bySupplier.id, name: bySupplier.name }
+      }
+
       // Before creating an IBAN-keyed supplier, adopt an existing row that already identifies this
       // same company by a strong key and attach the IBAN — so we never split one company across an
       // IBAN row and a KVK/name row. Strongest first:

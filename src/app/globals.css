@@ -511,6 +511,13 @@ input::placeholder, textarea::placeholder {
    verschil is dat de alinea hierboven "kost niets" noemt — `auto` onthoudt de echte hoogte zodra
    de rij één keer geschilderd is. Hier genoteerd zodat de volgende lezer niet gaat zoeken. */
 .inv-card { content-visibility: auto; contain-intrinsic-size: auto 115px; }
+/* [ACTIES-ALTIJD] /dashboard/incoming/manage draagt sinds kort een strook knoppen ONDER de
+   dichtgeklapte rij (Bekijk PDF, Betalen, Opnieuw inlezen, Bedragen corrigeren, met het pijltje
+   dat de rest opent). Dat is geen 2px zoals de rand hierboven, maar ~56px: één knoprij van 36 plus
+   10 boven en onder. De andere twee lijsten hebben die strook niet, dus het gedeelde getal blijft
+   staan en deze lijst krijgt zijn eigen schatting. `auto` onthoudt de echte hoogte zodra de kaart
+   één keer is geschilderd; dit getal bepaalt alleen hoe lang de schuifbalk is tot dan. */
+.inv-card--acties { contain-intrinsic-size: auto 171px; }
 
 @media (max-width: 520px) {
   .inv-row        { flex-wrap: wrap; row-gap: 10px; }
@@ -518,6 +525,8 @@ input::placeholder, textarea::placeholder {
   .inv-row-side-h { flex: 1 1 100%; justify-content: flex-end; }
   /* [LIST-PAINT] The stacked row is taller — see the block above. */
   .inv-card       { contain-intrinsic-size: auto 159px; }
+  /* [ACTIES-ALTIJD] …en de knoppenstrook wikkelt hier naar twee regels: nog eens ~44px erbij. */
+  .inv-card--acties { contain-intrinsic-size: auto 259px; }
   /* Op de strook eronder gaan bedrag en knop uit elkaar, elk naar een rand. row-      */
   /* reverse draait de leesrichting om zonder de DOM te verbouwen: "Heb je betaald?"   */
   /* links, het bedrag helemaal rechts — waar het bedrag ook op een breed scherm       */

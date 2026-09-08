@@ -595,6 +595,134 @@ export const MESSAGES = {
   'lev.bezig': { nl: 'Bezig met opslaan...', ar: 'جارٍ الحفظ...', en: 'Saving...' },
   'lev.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'lev.opgeslagen': { nl: 'Leverancier vastgelegd', ar: 'تم تثبيت المورّد', en: 'Supplier saved' },
+  // [LEVERANCIER-VASTLEGGEN] Why a supplier form was refused. supplier-pin.ts answers with a CODE
+  // and the route says the sentence in the language of whoever is typing; the sentences used to be
+  // Dutch literals inside the pure module. Each one names the FIELD.
+  'lev.fout.naamLeeg': {
+    nl: 'Vul de naam van de leverancier in.',
+    en: 'Fill in the supplier\'s name.',
+    ar: 'أدخل اسم المورّد.',
+  },
+  'lev.fout.naamOnbetrouwbaar': {
+    nl: 'Dit lijkt geen bedrijfsnaam. Neem de naam over zoals hij op de factuur staat.',
+    en: 'This does not look like a company name. Copy the name as it appears on the invoice.',
+    ar: 'هذا لا يبدو اسم شركة. انقل الاسم كما هو مكتوب على الفاتورة.',
+  },
+  'lev.fout.naamSleutel': {
+    nl: 'Deze naam levert geen bruikbare sleutel op.',
+    en: 'This name does not give a usable key.',
+    ar: 'هذا الاسم لا يعطي مفتاحاً صالحاً للتعرّف.',
+  },
+  'lev.fout.iban': {
+    nl: 'De controlecijfers van dit rekeningnummer kloppen niet. Neem het over zoals het op de factuur staat — met een verkeerd nummer waarschuwt de app straks bij élke echte factuur van deze leverancier.',
+    en: 'The check digits of this account number are wrong. Copy it as it appears on the invoice — with a wrong number the app will warn on every genuine invoice from this supplier.',
+    ar: 'أرقام التحقق في رقم الحساب هذا غير صحيحة. انقله كما هو مكتوب على الفاتورة، فمع رقم خاطئ سيحذّرك التطبيق عند كل فاتورة حقيقية من هذا المورّد.',
+  },
+  'lev.fout.kvk': {
+    nl: 'Een KVK-nummer bestaat uit 8 cijfers.',
+    en: 'A KVK number has 8 digits.',
+    ar: 'رقم KVK يتكوّن من 8 أرقام.',
+  },
+  'lev.fout.btw': {
+    nl: 'Dit heeft niet de vorm van een btw-nummer. Een Nederlands nummer ziet eruit als NL000000000B00.',
+    en: 'This does not have the form of a VAT number. A Dutch number looks like NL000000000B00.',
+    ar: 'هذا ليس بصيغة رقم btw. الرقم الهولندي يبدو هكذا: NL000000000B00.',
+  },
+  'lev.fout.nietIngelogd': {
+    nl: 'Je bent niet ingelogd. Log opnieuw in en probeer het nog eens.',
+    en: 'You are not signed in. Sign in again and try once more.',
+    ar: 'أنت غير مسجّل الدخول. سجّل الدخول مجدداً وأعد المحاولة.',
+  },
+  'lev.fout.factuurNietGevonden': {
+    nl: 'Deze factuur is niet gevonden.',
+    en: 'This invoice was not found.',
+    ar: 'لم يُعثر على هذه الفاتورة.',
+  },
+  'lev.fout.nietGevonden': {
+    nl: 'Deze leverancier is niet gevonden. Ververs de pagina.',
+    en: 'This supplier was not found. Refresh the page.',
+    ar: 'لم يُعثر على هذا المورّد. حدّث الصفحة.',
+  },
+  'lev.fout.bijwerken': {
+    nl: 'De leverancier kon niet worden bijgewerkt. Probeer het zo meteen opnieuw.',
+    en: 'The supplier could not be updated. Try again in a moment.',
+    ar: 'تعذّر تحديث المورّد. أعد المحاولة بعد قليل.',
+  },
+  'lev.fout.naamOpFactuur': {
+    nl: 'De naam kon niet op deze factuur worden gezet.',
+    en: 'The name could not be put on this invoice.',
+    ar: 'تعذّر وضع الاسم على هذه الفاتورة.',
+  },
+  'lev.fout.opzoeken': {
+    nl: 'De leverancier kon niet worden opgezocht. Probeer het opnieuw.',
+    en: 'The supplier could not be looked up. Try again.',
+    ar: 'تعذّر البحث عن المورّد. أعد المحاولة.',
+  },
+  // [LEVERANCIER-BEWERKEN] A number another supplier already carries is a MERGE, not an error.
+  'lev.fout.dubbelIban': {
+    nl: 'Dit rekeningnummer staat al bij {ander}. Voeg de twee leveranciers samen in plaats van het nummer te verplaatsen.',
+    en: 'This account number is already on {ander}. Merge the two suppliers instead of moving the number.',
+    ar: 'رقم الحساب هذا مسجّل بالفعل عند {ander}. ادمج المورّدَين بدل نقل الرقم.',
+  },
+  'lev.fout.dubbelKvk': {
+    nl: 'Dit KVK-nummer staat al bij {ander}. Voeg de twee leveranciers samen in plaats van het nummer te verplaatsen.',
+    en: 'This KVK number is already on {ander}. Merge the two suppliers instead of moving the number.',
+    ar: 'رقم KVK هذا مسجّل بالفعل عند {ander}. ادمج المورّدَين بدل نقل الرقم.',
+  },
+
+  // ── [LEVERANCIER-BEWERKEN] The edit sheet on /dashboard/leveranciers ──
+  'lev.bewerk.knop': { nl: 'Gegevens aanpassen', en: 'Edit details', ar: 'تعديل البيانات' },
+  'lev.bewerk.titel': { nl: 'Leverancier aanpassen', en: 'Edit supplier', ar: 'تعديل المورّد' },
+  'lev.bewerk.uitleg': {
+    nl: 'Dit geldt voor de volgende facturen. Wat al in de boeken staat, houdt wat erop gedrukt stond.',
+    en: 'This applies to the next invoices. What is already in the books keeps what was printed on it.',
+    ar: 'هذا يسري على الفواتير القادمة. ما سُجّل في الدفاتر يحتفظ بما كان مطبوعاً عليه.',
+  },
+  'lev.bewerk.ibanGewijzigd': {
+    nl: 'Je vervangt rekeningnummer {oud}. Controleer dit bij de leverancier via een nummer dat je zelf opzoekt.',
+    en: 'You are replacing account number {oud}. Check this with the supplier via a number you look up yourself.',
+    ar: 'أنت تستبدل رقم الحساب {oud}. تحقّق من ذلك لدى المورّد عبر رقم تبحث عنه بنفسك.',
+  },
+  'lev.bewerk.incasso': { nl: 'Automatische incasso', en: 'Direct debit', ar: 'خصم مباشر تلقائي' },
+  'lev.bewerk.incasso.hint': {
+    nl: 'Deze leverancier schrijft zelf af. Zijn facturen worden als betaald geboekt zodra de afschrijving op het afschrift staat.',
+    en: 'This supplier collects the money itself. Its invoices are booked as paid once the debit appears on the statement.',
+    ar: 'هذا المورّد يخصم المبلغ بنفسه. تُسجَّل فواتيره كمدفوعة حين يظهر الخصم في كشف الحساب.',
+  },
+  'lev.bewerk.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
+  'lev.bewerk.opgeslagen': {
+    nl: 'De gegevens van {naam} zijn opgeslagen.',
+    en: 'The details of {naam} have been saved.',
+    ar: 'تم حفظ بيانات {naam}.',
+  },
+  'lev.bewerk.opgeslagenIban': {
+    nl: 'Het oude rekeningnummer blijft bewaard. Een factuur met dat nummer wordt nog herkend, en krijgt dan een waarschuwing.',
+    en: 'The old account number is kept. An invoice carrying it is still recognised, and then gets a warning.',
+    ar: 'يبقى الرقم القديم محفوظاً. الفاتورة التي تحمله تُعرَف كما كانت، ويظهر عندها تحذير.',
+  },
+  'lev.bewerk.laatstGewijzigd': {
+    nl: 'Laatst aangepast op {datum}',
+    en: 'Last changed on {datum}',
+    ar: 'آخر تعديل في {datum}',
+  },
+  'leveranciers.lijst.kop': { nl: 'Alle leveranciers', en: 'All suppliers', ar: 'كل المورّدين' },
+  'leveranciers.lijst.uitleg': {
+    nl: 'Hierop herkent de app de volgende factuur: naam, rekeningnummer, KVK en btw-nummer. Klopt iets niet, pas het hier aan.',
+    en: 'The app recognises the next invoice on this: name, account number, KVK and VAT number. If something is wrong, change it here.',
+    ar: 'بهذه البيانات يتعرّف التطبيق على الفاتورة القادمة: الاسم ورقم الحساب وKVK ورقم btw. إن كان شيء غير صحيح فعدّله هنا.',
+  },
+  'leveranciers.lijst.leeg': {
+    nl: 'Nog geen leveranciers. Ze verschijnen hier zodra een inkoopfactuur is ingelezen.',
+    en: 'No suppliers yet. They appear here once a purchase invoice has been read.',
+    ar: 'لا مورّدين بعد. سيظهرون هنا بعد قراءة أول فاتورة مشتريات.',
+  },
+  'leveranciers.lijst.zonderIban': { nl: 'geen rekeningnummer bekend', en: 'no account number known', ar: 'لا رقم حساب معروف' },
+  'leveranciers.lijst.incasso': { nl: 'automatische incasso', en: 'direct debit', ar: 'خصم مباشر' },
+  'leveranciers.lijst.nietGelezen': {
+    nl: 'De leverancierslijst kon niet worden gelezen. Dit is een storing, geen lege lijst.',
+    en: 'The supplier list could not be read. This is a failure, not an empty list.',
+    ar: 'تعذّر قراءة قائمة المورّدين. هذا عطل وليس قائمة فارغة.',
+  },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
@@ -5768,6 +5896,19 @@ export const MESSAGES = {
     nl: 'Beheren',
     ar: 'إدارة',
     en: 'Manage',
+  },
+  // [ACTIES-ALTIJD] Het pijltje dat de gevouwen helft van een factuurkaart opent. Een label voor
+  // een pictogram van 20 pixels: een schermlezer heeft er anders niets aan, en de tooltip zegt het
+  // ook aan wie erover heen gaat.
+  'ink.detailsTonen': {
+    nl: 'Details tonen',
+    ar: 'أظهر التفاصيل',
+    en: 'Show details',
+  },
+  'ink.detailsVerbergen': {
+    nl: 'Details verbergen',
+    ar: 'أخفِ التفاصيل',
+    en: 'Hide details',
   },
   'ink.bekijkPdf': {
     nl: 'Bekijk PDF',
@@ -11458,6 +11599,19 @@ export const MESSAGES = {
     ar: 'هذا ليس تاريخًا موجودًا — استخدم dd-mm-jjjj.',
     en: 'That is not an existing date — use dd-mm-jjjj.',
   },
+  // [DATE-NL] The bounds the field enforces, said in the owner's language. {datum} is dd-mm-jjjj.
+  'datum.voorMinimum': {
+    nl: 'Die datum ligt vóór {datum} — controleer het jaartal.',
+    en: 'That date is before {datum} — check the year.',
+    ar: 'هذا التاريخ يسبق {datum} — تحقّق من السنة.',
+    tr: 'Bu tarih {datum} öncesinde — yılı kontrol et.',
+  },
+  'datum.naMaximum': {
+    nl: 'Die datum ligt in de toekomst (na {datum}).',
+    en: 'That date is in the future (after {datum}).',
+    ar: 'هذا التاريخ في المستقبل (بعد {datum}).',
+    tr: 'Bu tarih gelecekte ({datum} sonrası).',
+  },
   'lijst.geenBetaalde': {
     nl: 'Geen betaalde facturen',
     ar: 'لا توجد فواتير مدفوعة',
@@ -12822,6 +12976,7 @@ export const MESSAGES = {
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
   'log.supplier.auto_incasso_off': { nl: 'Automatische incasso bij een leverancier uitgezet', en: 'Direct debit switched off for a supplier', ar: 'أُوقف الاستقطاع التلقائي لمورّد' },
+  'log.supplier.updated': { nl: 'Gegevens van een leverancier aangepast', en: 'Supplier details changed', ar: 'عُدّلت بيانات مورّد' },
   'log.supplier.merged': { nl: 'Twee leveranciers samengevoegd tot één', en: 'Two suppliers merged into one', ar: 'دُمج مورّدان في واحد' },
   'log.document.uploaded': { nl: 'Bestand geüpload', en: 'File uploaded', ar: 'رُفع ملف' },
   'log.document.duplicate_blocked': { nl: 'Dubbel bestand geweigerd', en: 'Duplicate file refused', ar: 'رُفض ملف مكرر' },
@@ -13658,6 +13813,75 @@ export const MESSAGES = {
     nl: 'De factuur is niet gemaakt en je uren staan er nog. Ververs de pagina en probeer het opnieuw.',
     en: 'The invoice was not created and your hours are still there. Refresh the page and try again.',
     ar: 'لم تُنشأ الفاتورة وساعاتك ما زالت موجودة. حدّث الصفحة وأعد المحاولة.',
+  },
+  // [SERVER-ZIN] What /api/uren answers when it refuses. Each sentence names ONE field. They used
+  // to live in the route as Dutch literals, so an Arabic owner who left the hours blank read
+  // "Vul in hoeveel uur je gewerkt hebt." in a toast. The route now translates them with the
+  // language cookie of whoever is typing (uren-refusal.ts maps the code to the key).
+  'uren.fout.nietIngelogd': {
+    nl: 'Je bent niet ingelogd. Log opnieuw in en probeer het nog eens.',
+    en: 'You are not signed in. Sign in again and try once more.',
+    ar: 'أنت غير مسجّل الدخول. سجّل الدخول مجدداً وأعد المحاولة.',
+  },
+  'uren.fout.geenDatum': {
+    nl: 'Vul de datum in waarop je gewerkt hebt.',
+    en: 'Fill in the date you worked on.',
+    ar: 'أدخل التاريخ الذي عملت فيه.',
+  },
+  'uren.fout.geenBestaandeDatum': {
+    nl: 'Die datum bestaat niet. Gebruik de datumkiezer.',
+    en: 'That date does not exist. Use the date picker.',
+    ar: 'هذا التاريخ غير موجود. استخدم منتقي التاريخ.',
+  },
+  'uren.fout.geenOmschrijving': {
+    nl: 'Schrijf op wat je gedaan hebt — dit komt zo op de factuurregel te staan.',
+    en: 'Write down what you did — this will appear on the invoice line.',
+    ar: 'اكتب ما أنجزته — سيظهر هذا في سطر الفاتورة.',
+  },
+  'uren.fout.omschrijvingTeLang': {
+    nl: 'De omschrijving is te lang voor een factuurregel. Houd het bij een zin.',
+    en: 'The description is too long for an invoice line. Keep it to one sentence.',
+    ar: 'الوصف أطول من أن يتّسع في سطر فاتورة. اجعله جملة واحدة.',
+  },
+  'uren.fout.geenUren': {
+    nl: 'Vul in hoeveel uur je gewerkt hebt.',
+    en: 'Fill in how many hours you worked.',
+    ar: 'أدخل عدد الساعات التي عملتها.',
+  },
+  'uren.fout.teVeelUren': {
+    nl: 'Meer dan {max} uur op één dag kan niet. Splits het over twee regels.',
+    en: 'More than {max} hours in one day is not possible. Split it over two lines.',
+    ar: 'لا يمكن تسجيل أكثر من {max} ساعة في يوم واحد. قسّمها على سطرين.',
+  },
+  'uren.fout.tariefGeenBedrag': {
+    nl: 'Het uurtarief is geen bedrag. Laat het leeg als je het nog niet weet.',
+    en: 'The hourly rate is not an amount. Leave it empty if you do not know it yet.',
+    ar: 'أجر الساعة ليس مبلغاً. اتركه فارغاً إن لم تعرفه بعد.',
+  },
+  'uren.fout.welkUur': {
+    nl: 'Welk uur bedoel je?',
+    en: 'Which hours do you mean?',
+    ar: 'أيّ ساعات تقصد؟',
+  },
+  'uren.fout.aanpassen': {
+    nl: 'Dit uur kon niet worden aangepast. Probeer het opnieuw.',
+    en: 'These hours could not be changed. Try again.',
+    ar: 'تعذّر تعديل هذه الساعات. أعد المحاولة.',
+  },
+  'uren.fout.verwijderenMislukt': {
+    nl: 'Dit uur kon niet worden verwijderd. Probeer het opnieuw.',
+    en: 'These hours could not be removed. Try again.',
+    ar: 'تعذّر حذف هذه الساعات. أعد المحاولة.',
+  },
+  'uren.fout.alGefactureerdAanpassen': {
+    nl: 'Dit uur staat al op een factuur en kan niet meer worden aangepast. Gooi het concept weg als je het toch wilt wijzigen — dan komt het uur weer vrij.',
+    en: 'These hours are already on an invoice and can no longer be changed. Discard the draft if you do want to change them — the hours are then released.',
+    ar: 'هذه الساعات موجودة في فاتورة بالفعل ولا يمكن تعديلها. احذف المسودة إن أردت تعديلها — فتعود الساعات متاحة.',
+  },
+  'uren.fout.alGefactureerdVerwijderen': {
+    nl: 'Dit uur staat al op een factuur en kan niet meer worden verwijderd. Gooi het concept weg als je het toch wilt weghalen — dan komt het uur weer vrij.',
+    en: 'These hours are already on an invoice and can no longer be removed. Discard the draft if you do want to take them out — the hours are then released.',
+    ar: 'هذه الساعات موجودة في فاتورة بالفعل ولا يمكن حذفها. احذف المسودة إن أردت إزالتها — فتعود الساعات متاحة.',
   },
   'uren.verwijderen.vraag': {
     nl: 'Dit uur weggooien?',
