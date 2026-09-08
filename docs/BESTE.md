@@ -47,10 +47,16 @@ button said "Facturen".
 - The home screen's bank line gets two companions: free after the btw reserve, and the balance in
   thirty days — both from engines the app already runs on Vandaag.
 
-## Batch 2 — medium
+## Batch 2a — shipped
 
-Cost kind on a purchase invoice defaulted from the supplier (unblocks the margin breakdown); per-
-customer payment term and phone; open balance on the customer list; tips and drawer count on the
+- Per-customer payment term and phone (clients_term_phone.sql). The term pre-fills the due date
+  the moment the customer is picked on a new invoice, or arrives pre-linked from the card.
+- The open balance on the customer list, counted server-side through summarise() and shown only
+  when there is something; null when the read failed, so nobody wears a zero.
+
+## Batch 2b — next
+
+Cost kind on a purchase invoice defaulted from the supplier (unblocks the margin breakdown); tips and drawer count on the
 day closing; a period lock with the accountant's quarter verdict; privé/zakelijk split on a bank
 line; attachments in the new-invoice editor; a payment timeline on the invoice; a deposit invoice
 from an accepted offerte; a timer and week view on hours; asset disposal with a sale price; an

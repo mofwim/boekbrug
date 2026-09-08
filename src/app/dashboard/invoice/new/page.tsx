@@ -134,6 +134,8 @@ type Client = {
   city: string
   btw_number: string
   kvk_number: string
+  // [BESTE] The payment term agreed with this customer (clients_term_phone.sql); absent = default.
+  payment_term_days?: number | null
 }
 
 // [VRIJGESTELD] Sentinel for the BTW-tarief dropdown. "Vrijgesteld" is not a rate, but a
@@ -648,6 +650,16 @@ function NewInvoicePageContent() {
       const { data: cl } = await supabase
         .from('clients').select('*').eq('user_id', user.id).order('name')
       if (cl) setClients(cl)
+      // [BESTE] Arrived from the customer card (?client_id=): that customer's agreed term applies
+      // here too, not only when picked from the dropdown.
+      // Written out rather than calling applyClientTerm: that function is declared below this
+      // effect, and the compiler refuses an effect that reaches forward ([TAAL] note in KlantenClient).
+      const preLinked = aiClientId && cl ? (cl as Client[]).find((c) => c.id === aiClientId) : null
+      const preTerm = preLinked?.payment_term_days
+      if (preTerm != null && invoiceType !== 'offerte') {
+        setBetalingstermijn(preTerm)
+        if (invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, preTerm))
+      }
 
       // [BOEK-029] from_offerte: load original invoice_lines for accurate amounts
       //
@@ -751,6 +763,17 @@ function NewInvoicePageContent() {
     setClientBtw(c.btw_number ?? '')
     setClientSearch(c.name)
     setShowDropdown(false)
+    applyClientTerm(c)
+  }
+
+  // [BESTE] "Jij krijgt 45 dagen" is agreed per customer, and every package pre-fills the due
+  // date from it the moment the customer is picked. Only on a factuur — an offerte has no
+  // payment term — and only when the customer HAS one; otherwise the term already chosen stays.
+  function applyClientTerm(c: Client) {
+    const days = c.payment_term_days
+    if (days == null || invoiceType === 'offerte') return
+    setBetalingstermijn(days)
+    if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
   }
 
   // [ACTING-FOR] saveNewClient() stond hier. Hij schreef de inline ingetikte klant weg met

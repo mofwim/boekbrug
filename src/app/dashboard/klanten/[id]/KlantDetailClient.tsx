@@ -35,6 +35,8 @@ interface Client {
   id: string; name: string; email: string | null; kvk_number: string | null
   btw_number: string | null; iban: string | null; address: string | null
   postal_code: string | null; city: string | null; notes: string | null
+  // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
+  phone?: string | null; payment_term_days?: number | null
 }
 
 // [STATUS] Kopie elf. Deze week af op DRIE van de vier woorden — "Verstuurd" waar de rest
@@ -121,6 +123,9 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
           <Row k="KVK" v={client.kvk_number || '—'} />
           <Row k="BTW" v={client.btw_number || '—'} />
           <Row k="IBAN" v={client.iban || '—'} />
+          {/* [BESTE] Phone and the agreed payment term — the two facts every package keeps. */}
+          {client.phone && <Row k={t('kld.telefoon')} v={client.phone} />}
+          {client.payment_term_days != null && <Row k={t('kld.termijn')} v={t('kl.termijnDagen', { days: client.payment_term_days })} />}
         </Card>
 
         {/* [BETAALGEDRAG] What this customer's own invoices say about how they pay. Deliberately

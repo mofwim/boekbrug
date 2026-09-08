@@ -33,12 +33,20 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const { data: client } = await supabase
+  // [BESTE] phone and payment_term_days are untyped until the generated types catch up with
+  // clients_term_phone.sql — hence the cast, the codebase's pattern for a new column.
+  type ClientCard = {
+    id: string; name: string; email: string | null; kvk_number: string | null; btw_number: string | null
+    iban: string | null; address: string | null; postal_code: string | null; city: string | null; notes: string | null
+    phone?: string | null; payment_term_days?: number | null
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: client } = await (supabase as any)
     .from('clients')
-    .select('id, name, email, kvk_number, btw_number, iban, address, postal_code, city, notes')
+    .select('id, name, email, kvk_number, btw_number, iban, address, postal_code, city, notes, phone, payment_term_days')
     .eq('id', id)
     .eq('user_id', user.id)
-    .maybeSingle()
+    .maybeSingle() as { data: ClientCard | null }
   if (!client) redirect('/dashboard/klanten')
 
   type KlantInvoiceRow = { id: string; invoice_number: string | null; invoice_date: string | null; due_date: string | null; status: string | null; total_inc_btw: number | null; direction: string | null; payment_date: string | null; amount_paid: number | null; invoice_type: string | null; original_invoice_id: string | null }

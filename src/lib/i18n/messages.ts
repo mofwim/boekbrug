@@ -1385,6 +1385,11 @@ export const MESSAGES = {
   'kl.zoek': { nl: 'Zoek op naam, e-mail, KVK, IBAN...', ar: 'ابحث بالاسم أو البريد أو KVK أو IBAN...', en: 'Search by name, e-mail, KVK, IBAN...' },
   'kl.zoek.aria': { nl: 'Klanten zoeken', ar: 'البحث في العملاء', en: 'Search clients' },
   'kl.bekijk': { nl: 'Bekijk', ar: 'عرض', en: 'View' },
+  // [BESTE] Phone and the agreed payment term on the customer; the open balance on the list.
+  'kl.veld.telefoon': { nl: 'Telefoon', ar: 'الهاتف', en: 'Phone' },
+  'kl.veld.termijn': { nl: 'Betaaltermijn (dagen)', ar: 'مهلة الدفع (أيام)', en: 'Payment term (days)' },
+  'kl.termijnDagen': { nl: '{days} dagen', ar: '{days} يوماً', en: '{days} days' },
+  'kl.open': { nl: '{amount} open', ar: '{amount} مستحق', en: '{amount} open' },
   'kl.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },
   'kl.verwijderd': { nl: 'Klant verwijderd', ar: 'حُذف العميل', en: 'Client deleted' },
   'kl.verwijderenMislukt': { nl: 'Verwijderen lukte niet — de klant staat er nog. Probeer het opnieuw.', ar: 'لم ينجح الحذف — العميل ما يزال موجودًا. حاول مرة أخرى.', en: 'Deleting failed — the client is still there. Try again.' },
@@ -2314,6 +2319,8 @@ export const MESSAGES = {
   'kld.facturen': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
   'kld.gegevens': { nl: 'Gegevens', ar: 'البيانات', en: 'Details' },
   'kld.adres': { nl: 'Adres', ar: 'العنوان', en: 'Address' },
+  'kld.telefoon': { nl: 'Telefoon', ar: 'الهاتف', en: 'Phone' },
+  'kld.termijn': { nl: 'Betaaltermijn', ar: 'مهلة الدفع', en: 'Payment term' },
   'kld.notities': { nl: 'Notities', ar: 'ملاحظات', en: 'Notes' },
   'kld.notitiesHint': {
     nl: 'Context over deze klant — afspraken, voorkeuren, afwijkende tarieven…',

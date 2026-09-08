@@ -20,6 +20,8 @@ import { writeWithTrail, isUnknownColumn } from '@/lib/created-by'
 // [BESTE] work_items may not exist on an installation behind on migrations — that is no reason to
 // refuse a delete, and every other error is.
 import { isMissingRelation } from '@/lib/pg-missing'
+// [BESTE] The agreed term is a whole number of days within the typo guard, or nothing.
+import { parsePaymentTerm } from '@/lib/payment-term'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,8 +40,21 @@ function velden(body: Record<string, unknown>) {
     address: tekst(body.address),
     postal_code: tekst(body.postal_code),
     city: tekst(body.city),
+    // [BESTE] Phone and the payment term agreed with this customer (clients_term_phone.sql).
+    phone: tekst(body.phone),
+    payment_term_days: parsePaymentTerm(body.payment_term_days),
   }
 }
+
+/** The two [BESTE] columns, dropped when an installation is behind on clients_term_phone.sql. */
+function withoutTermPhone<T extends { phone?: unknown; payment_term_days?: unknown }>(v: T) {
+  const rest = { ...v }
+  delete rest.phone
+  delete rest.payment_term_days
+  return rest
+}
+const TERM_PHONE_COLUMNS = ['phone', 'payment_term_days']
+const missesTermPhone = (error: unknown) => TERM_PHONE_COLUMNS.some((c) => isUnknownColumn(error, c))
 
 export async function POST(request: NextRequest) {
   try {
@@ -55,14 +70,27 @@ export async function POST(request: NextRequest) {
 
     // service_role: user_id en created_by worden door de SERVER gezet, niet door de browser.
     const pipeline = createPipelineClient()
-    const { data, error } = await writeWithTrail<{ id: string }>(
+    const insertRow = { ...v, name: v.name as string, user_id: invoiceOwnerId(acting) }
+    let { data, error } = await writeWithTrail<{ id: string }>(
       (spoor) => pipeline
         .from('clients')
-        .insert({ ...v, name: v.name as string, user_id: invoiceOwnerId(acting), ...spoor })
+        .insert({ ...insertRow, ...spoor } as never)
         .select('id')
         .single(),
       { created_by: invoiceCreatedBy(acting) },
     )
+    // [BESTE] Behind on clients_term_phone.sql: save the customer without the two new fields
+    // rather than refuse the customer.
+    if (error && missesTermPhone(error)) {
+      ;({ data, error } = await writeWithTrail<{ id: string }>(
+        (spoor) => pipeline
+          .from('clients')
+          .insert({ ...withoutTermPhone(insertRow), ...spoor } as never)
+          .select('id')
+          .single(),
+        { created_by: invoiceCreatedBy(acting) },
+      ))
+    }
 
     if (error || !data) {
       console.error('[ACTING-FOR] klant aanmaken mislukt', { error })
@@ -94,11 +122,17 @@ export async function PATCH(request: NextRequest) {
     // De rij MOET van dit bedrijf zijn — en, is de schrijver een medewerker, ook door hem
     // ingevoerd. Zonder deze twee filters zou een geraden id de klantgegevens van een ander
     // bedrijf laten herschrijven; service_role kent geen RLS die dat nog tegenhoudt.
-    let q = pipeline.from('clients').update(patch).eq('id', id).eq('user_id', invoiceOwnerId(acting))
-    if (acting.role !== 'eigenaar') {
-      q = q.eq('created_by', invoiceCreatedBy(acting))
+    const run = (row: object) => {
+      let q = pipeline.from('clients').update(row as never).eq('id', id).eq('user_id', invoiceOwnerId(acting))
+      if (acting.role !== 'eigenaar') {
+        q = q.eq('created_by', invoiceCreatedBy(acting))
+      }
+      return q
     }
-    const { error } = await q
+    let { error } = await run(patch)
+    // [BESTE] Same fallback as POST: an installation behind on clients_term_phone.sql keeps the
+    // rest of the card editable.
+    if (error && missesTermPhone(error)) ({ error } = await run(withoutTermPhone(patch)))
 
     // Filtert een medewerker op een kolom die nog niet bestaat, dan is dat GEEN reden om het
     // filter te laten vallen: zonder created_by is er geen leesgrens, en dan zou hij de klant van

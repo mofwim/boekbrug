@@ -3606,7 +3606,7 @@ test("[BESTE] the customer card opens each invoice, chips a late one as late, an
   ];
   const html = renderToStaticMarkup(
     React.createElement(KlantDetailClient as never, {
-      client: { id: "k9", name: "Late Betaler", email: null, kvk_number: null, btw_number: null, iban: null, address: null, postal_code: null, city: null, notes: null },
+      client: { id: "k9", name: "Late Betaler", email: null, kvk_number: null, btw_number: null, iban: null, address: null, postal_code: null, city: null, notes: null, phone: "06 12345678", payment_term_days: 45 },
       invoices, totals: { billed: 600, open: 500, count: 2 }, behaviour: clientPaymentBehaviour(invoices, today),
     }),
   );
@@ -3615,6 +3615,8 @@ test("[BESTE] the customer card opens each invoice, chips a late one as late, an
   assert.match(html, /Verlopen/, "the late invoice wears the late chip although its status column says sent");
   assert.equal((html.match(/Verlopen/g) ?? []).length, 1, "and the offerte past its date does not");
   assert.match(html, /href="\/dashboard\/klanten\?bewerk=k9"/, "the card offers its own edit");
+  assert.match(html, /06 12345678/, "the phone is on the card");
+  assert.match(html, /45 dagen/, "and so is the agreed payment term");
 });
 
 test("[BESTE] the sales list shows what is still to come in and how much is late, and hides a row of zeros", async () => {
