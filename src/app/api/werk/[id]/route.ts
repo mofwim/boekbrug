@@ -8,6 +8,8 @@
 //   POST → { action, ids }: attach_hours / detach_hours / attach_cost / detach_cost /
 //          attach_document / detach_document. Every write is scoped to the owner AND to this row,
 //          so an id from another administration is a no-op, never a cross-link.
+//          [WERK-BEURT] { action: "visit", on?, note? } ticks a beurt off on repeating work;
+//          { action: "unvisit", on } removes one that is not on an invoice yet.
 //
 // Nothing here moves money. Attaching a purchase invoice to a werkorder changes which margin it
 // counts in, not what it cost or what btw it carries.
@@ -16,21 +18,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { chunkIds } from "@/lib/supabase-paginate";
-import { workSkin, workMargin, storedLines, linesTotalEx, type WorkStatus } from "@/lib/werk";
+import { workSkin, workMargin, storedLines, storedVisits, isRepeat, readVisit, linesTotalEx, unbilledVisits, type WorkStatus } from "@/lib/werk";
+import { logAuditAction, getClientIP } from "@/lib/audit";
+import { amsterdamToday } from "@/lib/format-nl";
 import type { AttachedCost, AttachedDocument, AttachedHours, WorkInvoiceSummary, WorkRow } from "@/lib/werk-rows";
 
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, notes, invoice_id, created_at";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
 const HOURS = "id, worked_on, description, hours, hourly_rate, invoice_id";
 const COSTS = "id, client_name, invoice_number, invoice_date, total_ex_btw, btw_amount, total_inc_btw, status";
 const DOCS = "id, file_name, created_at";
 const ATTACH_MAX = 50;
 
 type Ctx = { params: Promise<{ id: string }> };
-type Action = "attach_hours" | "detach_hours" | "attach_cost" | "detach_cost" | "attach_document" | "detach_document";
-const ACTIONS: readonly Action[] = ["attach_hours", "detach_hours", "attach_cost", "detach_cost", "attach_document", "detach_document"];
+type Action = "attach_hours" | "detach_hours" | "attach_cost" | "detach_cost" | "attach_document" | "detach_document" | "visit" | "unvisit";
+const ACTIONS: readonly Action[] = ["attach_hours", "detach_hours", "attach_cost", "detach_cost", "attach_document", "detach_document", "visit", "unvisit"];
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 function num(v: unknown): number | null {
   if (v === null || v === undefined) return null;
@@ -50,7 +55,8 @@ async function loadRow(db: any, userId: string, id: string): Promise<WorkRow | n
     id: data.id, vak: data.vak, title: data.title, client_id: data.client_id ?? null, client_name: data.client_name ?? null,
     vehicle_id: data.vehicle_id ?? null, kenteken, status: data.status as WorkStatus, planned_on: data.planned_on ?? null,
     done_on: data.done_on ?? null, fields: data.fields && typeof data.fields === "object" ? data.fields : {},
-    lines: storedLines(data.lines), notes: data.notes ?? null, invoice_id: data.invoice_id ?? null, created_at: data.created_at,
+    lines: storedLines(data.lines), repeat_every: isRepeat(data.repeat_every) ? data.repeat_every : null, visits: storedVisits(data.visits),
+    notes: data.notes ?? null, invoice_id: data.invoice_id ?? null, created_at: data.created_at,
   };
 }
 
@@ -149,6 +155,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (typeof action !== "string" || !(ACTIONS as readonly string[]).includes(action)) {
     return NextResponse.json({ error: "Ongeldige aanvraag." }, { status: 400 });
   }
+  if (action === "visit" || action === "unvisit") return visitAction(req, db, user.id, row, action, body);
+
   const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).filter((v): v is string => typeof v === "string" && UUID.test(v)) : [];
   if (ids.length === 0 || ids.length > ATTACH_MAX) return NextResponse.json({ error: "Kies iets om te koppelen.", code: "no_ids" }, { status: 400 });
 
@@ -173,4 +181,41 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     touched += (data ?? []).length;
   }
   return NextResponse.json({ ok: true, touched });
+}
+
+/**
+ * [WERK-BEURT] Tick a beurt off, or take an unbilled one back. Only on work that repeats: a
+ * werkorder has no beurten. The list is rewritten as a whole under the owner's own row, and a
+ * beurt that is on an invoice is never removed — the invoice still names it.
+ */
+async function visitAction(req: NextRequest, db: any, userId: string, row: WorkRow, action: "visit" | "unvisit", body: Record<string, unknown>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (!row.repeat_every) return NextResponse.json({ error: "Dit werk herhaalt niet; het heeft geen beurten.", code: "not_recurring" }, { status: 409 });
+  if (row.status === "geannuleerd" || row.status === "gefactureerd") return NextResponse.json({ error: "Dit werk is gesloten.", code: "closed" }, { status: 409 });
+  let visits = row.visits;
+  let recorded: string | null = null;
+  if (action === "visit") {
+    const v = readVisit(body, visits, amsterdamToday());
+    if (!v.ok) return NextResponse.json({ error: v.reason === "too_many" ? "Te veel beurten op één werk." : "Controleer de datum.", code: v.reason }, { status: 400 });
+    visits = [...visits, v.visit];
+    recorded = v.visit.on;
+  } else {
+    const on = typeof body.on === "string" && ISO.test(body.on) ? body.on : null;
+    if (!on) return NextResponse.json({ error: "Controleer de datum.", code: "not_a_date" }, { status: 400 });
+    const idx = visits.findIndex((v) => v.on === on && !v.invoice_id);
+    if (idx < 0) return NextResponse.json({ error: "Die beurt staat al op een factuur of bestaat niet.", code: "not_removable" }, { status: 409 });
+    visits = visits.filter((_, i) => i !== idx);
+  }
+  // A first beurt on planned work means the work has started.
+  const patch: Record<string, unknown> = { visits };
+  if (action === "visit" && row.status === "open") patch.status = "bezig";
+  const { error } = await db.from("work_items").update(patch).eq("id", row.id).eq("user_id", userId);
+  if (error) return NextResponse.json({ error: "De beurt kon niet worden opgeslagen." }, { status: 500 });
+  if (recorded) {
+    await logAuditAction({
+      userId, action: "work.visit_recorded", entityType: "work_item", entityId: row.id,
+      newValue: { on: recorded, title: row.title, unbilled: unbilledVisits(visits).length },
+      ipAddress: getClientIP(req),
+    }).catch(() => {});
+  }
+  return NextResponse.json({ ok: true, visits, unbilled: unbilledVisits(visits).length });
 }

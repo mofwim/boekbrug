@@ -14,10 +14,10 @@ import { formatEuroNL, formatDateNL } from '@/lib/format-nl'
 import { displayKenteken } from '@/lib/vehicle'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import {
-  HAND_STATUSES, statusKey, linesTotalEx, canInvoice, DEFAULT_LINE_BTW,
-  type WorkSkin, type WorkStatus, type WorkLine, type FieldValues,
+  HAND_STATUSES, REPEATS, REPEAT_KEYS, statusKey, linesTotalEx, canInvoice, nextVisitOn, unbilledVisits, togetherGroups, DEFAULT_LINE_BTW,
+  type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
 } from '@/lib/werk'
-import type { WorkRow, AttachedHours, AttachedCost, WorkInvoiceSummary } from '@/lib/werk-rows'
+import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkInvoiceSummary } from '@/lib/werk-rows'
 import type { WorkMargin } from '@/lib/werk'
 
 export type T = (key: string, vars?: Record<string, string | number>) => string
@@ -53,6 +53,10 @@ export function StatusPill({ skin, status, t }: { skin: WorkSkin; status: WorkSt
 export function WorkCard({ row, skin, t, onOpen }: { row: WorkRow; skin: WorkSkin; t: T; onOpen?: (id: string) => void }) {
   const onCard = skin.fields.filter((f) => f.onCard && row.fields[f.key] !== undefined)
   const total = row.lines.length > 0 ? linesTotalEx(row.lines) : null
+  // [WERK-BEURT] Repeating work says its rhythm, when the next beurt is due, and how many done
+  // beurten still wait for an invoice — the three things a cleaner checks on a Monday.
+  const next = row.repeat_every ? nextVisitOn(row) : null
+  const openVisits = row.repeat_every ? unbilledVisits(row.visits).length : 0
   return (
     <button type="button" onClick={() => onOpen?.(row.id)} data-testid="work-card"
       style={{ width: '100%', textAlign: 'start', background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: '12px 14px', cursor: onOpen ? 'pointer' : 'default', fontFamily: FONT }}>
@@ -68,6 +72,13 @@ export function WorkCard({ row, skin, t, onOpen }: { row: WorkRow; skin: WorkSki
           {onCard.length > 0 && (
             <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 4 }}>
               {onCard.map((f) => `${t(f.labelKey)}: ${fieldText(row.fields[f.key])}`).join(' · ')}
+            </div>
+          )}
+          {row.repeat_every && (
+            <div style={{ fontSize: 12.5, color: M3.onSurfaceVariant, marginTop: 4 }} data-testid="work-repeat">
+              {t(REPEAT_KEYS[row.repeat_every])}
+              {next ? ` · ${t('werk.volgende')}: ${formatDateNL(next)}` : ''}
+              {openVisits > 0 ? ` · ${t('werk.beurtenOpen', { n: openVisits })}` : ''}
             </div>
           )}
         </div>
@@ -130,7 +141,7 @@ export function LinesEditor({ skin, lines, t, onChange, disabled }: { skin: Work
   const remove = (i: number) => onChange(lines.filter((_, j) => j !== i))
   const add = () => {
     const kind = skin.lineKinds[0]
-    onChange([...lines, { kind: kind.kind, description: '', quantity: 1, unit: kind.unit, unit_price: 0, btw_rate: DEFAULT_LINE_BTW }])
+    onChange([...lines, { kind: kind.kind, description: '', quantity: 1, unit: kind.unit, unit_price: 0, btw_rate: kind.btw ?? DEFAULT_LINE_BTW }])
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -138,7 +149,7 @@ export function LinesEditor({ skin, lines, t, onChange, disabled }: { skin: Work
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6, padding: 10, border: `1px solid ${M3.outlineVariant}`, borderRadius: 10 }} data-testid="work-line">
           <div style={{ display: 'flex', gap: 6 }}>
             <select value={l.kind} disabled={disabled} aria-label={t('werk.regels')}
-              onChange={(e) => { const k = skin.lineKinds.find((x) => x.kind === e.target.value); if (k) update(i, { kind: k.kind, unit: k.unit }) }}
+              onChange={(e) => { const k = skin.lineKinds.find((x) => x.kind === e.target.value); if (k) update(i, { kind: k.kind, unit: k.unit, ...(k.btw !== undefined ? { btw_rate: k.btw } : {}) }) }}
               style={selectStyle}>
               {skin.lineKinds.map((k) => <option key={k.kind} value={k.kind}>{t(k.labelKey)}</option>)}
             </select>
@@ -189,10 +200,12 @@ export interface WorkFormValue {
   kenteken: string
   planned_on: string
   fields: Record<string, string>
+  /** [WERK-BEURT] '' for work that happens once; a Repeat for work that comes back. */
+  repeat_every: string
   notes: string
 }
 
-export const EMPTY_FORM: WorkFormValue = { title: '', client_name: '', kenteken: '', planned_on: '', fields: {}, notes: '' }
+export const EMPTY_FORM: WorkFormValue = { title: '', client_name: '', kenteken: '', planned_on: '', fields: {}, repeat_every: '', notes: '' }
 
 /** The trade's form: the shared three, the plate when the trade opens on one, then the skin's fields. */
 export function WorkForm({ skin, value, onChange, t, disabled }: { skin: WorkSkin; value: WorkFormValue; onChange: (v: WorkFormValue) => void; t: T; disabled?: boolean }) {
@@ -213,6 +226,15 @@ export function WorkForm({ skin, value, onChange, t, disabled }: { skin: WorkSki
         <label style={labelStyle}>{t('werk.gepland')}</label>
         <DateFieldNL value={value.planned_on} onChange={(iso) => set({ planned_on: iso })} />
       </div>
+      {skin.recurring && (
+        <div>
+          <label style={labelStyle}>{t('werk.herhaal')}</label>
+          <select value={value.repeat_every} disabled={disabled} aria-label={t('werk.herhaal')} onChange={(e) => set({ repeat_every: e.target.value })} style={{ ...selectStyle, width: '100%' }}>
+            <option value="">{t('werk.herhaal.geen')}</option>
+            {REPEATS.map((r) => <option key={r} value={r}>{t(REPEAT_KEYS[r])}</option>)}
+          </select>
+        </div>
+      )}
       <Field label={t('werk.notitie')} value={value.notes} onChange={(v) => set({ notes: v })} disabled={disabled} />
     </div>
   )
@@ -275,9 +297,83 @@ export function WorkSheet({ title, onClose, children, testId }: { title: string;
   )
 }
 
-export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'>, invoice: WorkInvoiceSummary | null): 'make' | 'view' | 'none' {
+export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> & Partial<Pick<WorkRow, 'repeat_every' | 'visits'>>, invoice: WorkInvoiceSummary | null): 'make' | 'view' | 'none' {
+  // Repeating work never closes on one invoice: its beurten carry theirs (VisitsPanel links them).
+  if (row.repeat_every) return canInvoice(row) ? 'make' : 'none'
   if (invoice || row.invoice_id) return 'view'
   return canInvoice(row) ? 'make' : 'none'
+}
+
+/**
+ * [WERK-BEURT] The beurten of repeating work: each one done, with its day and whether it is on an
+ * invoice yet, and the one tap that ticks today's off. A billed beurt links to its invoice and
+ * cannot be removed; an unbilled one can, in case of a slip.
+ */
+export function VisitsPanel({ visits, t, onVisit, onUnvisit, disabled, invoiceHref }: { visits: Visit[]; t: T; onVisit?: (on: string, note: string) => void; onUnvisit?: (on: string) => void; disabled?: boolean; invoiceHref?: (invoiceId: string) => string }) {
+  const [on, setOn] = useState('')
+  const [note, setNote] = useState('')
+  const sorted = [...visits].sort((a, b) => b.on.localeCompare(a.on))
+  const open = unbilledVisits(visits).length
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: FONT, fontSize: 13 }} data-testid="work-visits">
+      {onVisit && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <DateFieldNL value={on} onChange={setOn} disabled={disabled} />
+          <input value={note} disabled={disabled} placeholder={t('werk.beurtNotitie')} aria-label={t('werk.beurtNotitie')} onChange={(e) => setNote(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
+          <button type="button" disabled={disabled} onClick={() => { onVisit(on, note); setOn(''); setNote('') }} style={{ ...primaryButton, width: 'auto', padding: '10px 14px' }}>{t('werk.beurtGedaan')}</button>
+        </div>
+      )}
+      {sorted.length === 0 && <p style={{ color: M3.onSurfaceVariant, margin: 0 }}>{t('werk.geenBeurten')}</p>}
+      {sorted.map((v, i) => (
+        <div key={`${v.on}-${i}`} style={rowStyle} data-testid="work-visit">
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {formatDateNL(v.on)}{v.note ? ` · ${v.note}` : ''}
+          </span>
+          {v.invoice_id
+            ? (invoiceHref
+              ? <a href={invoiceHref(v.invoice_id)} style={{ color: M3.primary, fontWeight: 600, textDecoration: 'none' }}>{t('werk.status.gefactureerd')}</a>
+              : <span style={{ color: M3.onSurfaceVariant }}>{t('werk.status.gefactureerd')}</span>)
+            : onUnvisit && <button type="button" onClick={() => onUnvisit(v.on)} disabled={disabled} aria-label={t('werk.verwijderen')} style={ghostButton}>×</button>}
+        </div>
+      ))}
+      {open > 0 && <p style={{ margin: '4px 0 0', color: M3.onSurface, fontWeight: 600 }}>{t('werk.beurtenOpen', { n: open })}</p>}
+    </div>
+  )
+}
+
+/** The files attached to a piece of work: the bon photographed at the parts counter, the delivery photo. */
+export function DocumentsList({ documents, t, onDetach }: { documents: AttachedDocument[]; t: T; onDetach?: (id: string) => void }) {
+  if (documents.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: FONT, fontSize: 13 }}>
+      {documents.map((d) => (
+        <div key={d.id} style={rowStyle} data-testid="work-document">
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.file_name ?? '—'}</span>
+          {onDetach && <button type="button" onClick={() => onDetach(d.id)} style={ghostButton}>{t('werk.los')}</button>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * [WERK-VERZAMEL] The offer, above the list: for every client with two or more finished pieces of
+ * work that have no invoice yet, one button that puts them on one verzamelfactuur. Nothing is
+ * offered for a client with one — that is the ordinary "Maak factuur" on the work itself.
+ */
+export function TogetherOffer({ rows, t, onTogether, disabled }: { rows: WorkRow[]; t: T; onTogether?: (ids: string[], clientName: string) => void; disabled?: boolean }) {
+  const groups = togetherGroups(rows)
+  if (groups.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="work-together">
+      {groups.map((g) => (
+        <button key={g.client_name} type="button" disabled={disabled} onClick={() => onTogether?.(g.rows.map((r) => r.id), g.client_name)}
+          style={{ ...ghostButton, padding: '10px 14px', textAlign: 'start' }}>
+          {t('werk.verzamelKnop', { client: g.client_name, n: g.rows.length })}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export function useLocalLines(initial: WorkLine[]) {

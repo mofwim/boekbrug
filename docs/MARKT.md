@@ -159,3 +159,35 @@ track-pod.com, fleetgo.nl, dashdoc.com, boekhoudeninexcel.nl, jortt.nl (self-bil
 wolterskluwer.com (Basecone), dizzydata.nl, yukisoftware.com, kleisteen.nl, trifact365.com,
 accountancyvanmorgen.nl (Autoboeker 14-7-2026, Lyanthe 6-8-2026, NOAB monitor), accountant.nl
 ("gegijzeld"), higherlevel.nl topics on kasboek autobedrijf, self-billing, boekhoudprogramma advies.
+
+## Addendum 8 September 2026 — what the second work batch was measured against
+
+Three shapes the first batch left out, checked against the small tools these trades use before
+they were built ([WERK-2]):
+
+- **Repeating work (schoonmaak, hovenier).** CleanPlanner, Schoonsoft and Buttons for Cleaners
+  all do the same thing: make the opdracht once, let it repeat, tick a beurt off when it is done,
+  and turn the done beurten into one invoice — a *beurtfactuur* after each visit or a *periodieke
+  factuur* per month/four weeks. BoekBrug: `repeat_every` on the work, a "Beurt gedaan" tap, and
+  "Factureer n beurten" that puts the work's lines on the invoice once per beurt with the days
+  named. The row stays open; the beurten carry their invoice.
+- **The courier's week (transport).** EasyTrans and NextUp bill an opdrachtgever per week, four
+  weeks or month with one verzamelfactuur, one heading per rit. BoekBrug: the list offers
+  "Verzamelfactuur · klant · n stuks" for every client with two or more afgeleverde ritten; one
+  draft, each rit a € 0 heading (day, laadadres → losadres) with its lines under it. Same door for
+  a builder with three klussen for one landlord.
+- **The fietsenmaker's reparatiebon.** CycleSoftware opens a repair on the bike (make, colour,
+  framenummer), carries the klacht, uses standard repair codes, and ends on "klaar voor ophalen".
+  BoekBrug: the *reparatie* skin — no kenteken, `fiets` required, framenummer, klacht; arbeid starts
+  at 9% and an onderdeel at 21% (the trap vak-sjablonen.ts already names).
+
+And two things that were gaps rather than research: an owner could not CHOOSE a trade after
+registration (the only doors were `/register?vak=` and the wizard) — Instellingen now has "Mijn
+vak"; and a bon photographed at the parts counter had no way to land on the werkorder it belongs
+to — it is now taken from inside the work, through the ordinary intake door, and attached as a
+cost or a file.
+
+Sources for the addendum: cleanplanner.be, schoonsoft.nl (facturatiemogelijkheden),
+flex.buttonsforcleaners.com (terugkerende opdrachten), bouwportaal.nl/projectmanagement/schoonmaak,
+klien-it-systems.com, easytrans.be, nextupsoftware.com (koeriers), prodin.nl (verzamelfacturen),
+cyclesoftware.be/werkplaats.

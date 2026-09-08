@@ -10,6 +10,8 @@ import { PushNotificationCard } from '@/components/settings/PushNotificationCard
 // [TAAL] De taal van het SCHERM. Niet van de documenten — die blijven Nederlands, want die leest
 // de klant en de Belastingdienst. Zie src/lib/i18n/locale.ts.
 import { LanguageCard } from '@/components/settings/LanguageCard'
+// [VAK-KIEZEN] The owner's trade: the door that is always open to the work layer.
+import { VakCard } from '@/components/settings/VakCard'
 // [SNELSTART] Live koppeling met SnelStart (B2B-API) — koppelen, rekeningen kiezen, doorsturen
 import { SnelStartCard } from '@/components/settings/SnelStartCard'
 import { MollieCard } from '@/components/settings/MollieCard'
@@ -881,6 +883,8 @@ export default function SettingsPage() {
             {loadingProfile ? t('inst.opslaanBezig') : t('inst.opslaan')}
           </button>
         </div>
+
+        <VakCard />
 
         {/* [PUSH] Meldingen (push notifications) — self-hides when unavailable */}
         <LanguageCard />

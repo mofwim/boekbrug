@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   hasWorkLayer, workSkin, readFields, readLines, linesTotalEx, storedLines, workMargin, workCounts,
   canInvoice, canDelete, statusKey, WORK_STATUSES, HAND_STATUSES,
+  storedVisits, readVisit, unbilledVisits, addRepeat, nextVisitOn, visitInvoiceLines, shortDateNL,
+  canInvoiceTogether, togetherGroups, workInvoiceLines, REPEATS, REPEAT_KEYS, isRepeat,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -14,16 +16,23 @@ test("[WERK] the layer exists for the four verticals and their sister trades, an
   assert.equal(workSkin("elektricien")?.skin, "klus");
   assert.equal(workSkin("schilder")?.skin, "klus");
   assert.equal(workSkin("schoonmaak")?.skin, "opdracht");
-  // A kapper's app stays exactly what it was.
+  // [WERK-2] The fietsenmaker's reparatiebon, the consultant's opdracht, the hovenier's repeating garden.
+  assert.equal(workSkin("fietsenmaker")?.skin, "reparatie");
+  assert.equal(workSkin("dienstverlening")?.skin, "opdracht");
+  assert.equal(workSkin("hovenier")?.skin, "klus");
+  assert.equal(workSkin("hovenier")?.recurring, true);
+  assert.equal(workSkin("bouw-klus")?.recurring, false, "a builder's klus happens once");
+  assert.equal(workSkin("schoonmaak")?.recurring, true);
+  assert.equal(workSkin("automonteur")?.recurring, false);
+  // A kapper's app stays exactly what it was: the haircut is rung up at the Kassa.
   assert.equal(hasWorkLayer("kapper"), false);
-  assert.equal(hasWorkLayer("dienstverlening"), false);
   assert.equal(hasWorkLayer(null), false);
   assert.equal(hasWorkLayer("astronaut"), false);
   assert.equal(workSkin("astronaut"), null);
 });
 
 test("[WERK] every skin's statuses are drawn from the one closed set, in the trade's order", () => {
-  for (const vak of ["automonteur", "transport", "bouw-klus", "schoonmaak"]) {
+  for (const vak of ["automonteur", "transport", "bouw-klus", "schoonmaak", "fietsenmaker", "dienstverlening"]) {
     const skin = workSkin(vak)!;
     for (const s of skin.statuses) {
       assert.ok(WORK_STATUSES.includes(s), `${vak}: ${s} is not a work status`);
@@ -46,6 +55,84 @@ test("[WERK] the werkorder opens on a kenteken, the rit on two addresses, the kl
   assert.deepEqual(workSkin("schoonmaak")!.fields.filter((f) => f.required).map((f) => f.key), ["locatie"]);
   assert.deepEqual(workSkin("automonteur")!.lineKinds.map((k) => k.kind), ["arbeid", "onderdeel"]);
   assert.deepEqual(workSkin("bouw-klus")!.lineKinds.map((k) => k.kind), ["arbeid", "materiaal", "meerwerk"]);
+  // The reparatiebon opens on the bike; repair labour starts at 9%, a part at 21% (vak-sjablonen.ts).
+  assert.deepEqual(workSkin("fietsenmaker")!.fields.filter((f) => f.required).map((f) => f.key), ["fiets"]);
+  assert.equal(workSkin("fietsenmaker")!.vehicle, false, "a bike has no kenteken");
+  assert.deepEqual(workSkin("fietsenmaker")!.lineKinds.map((k) => [k.kind, k.btw]), [["arbeid", 9], ["onderdeel", 21]]);
+  const bike = readLines(workSkin("fietsenmaker")!, [{ kind: "arbeid", description: "Band plakken", quantity: 0.5, unit_price: 40 }, { kind: "onderdeel", description: "Binnenband", quantity: 1, unit_price: 8 }]);
+  assert.deepEqual(bike.ok ? bike.lines.map((l) => l.btw_rate) : null, [9, 21], "the kind's own rate when none is typed");
+  // The courier writes who took delivery.
+  assert.ok(workSkin("transport")!.fields.some((f) => f.key === "ontvanger"));
+  // The consultant's opdracht needs no location; the hours screen feeds it.
+  assert.deepEqual(workSkin("dienstverlening")!.fields.filter((f) => f.required), []);
+});
+
+test("[WERK-BEURT] repeating work: rhythms, beurten read and stored, the next one due, and the lines an invoice gets", () => {
+  assert.deepEqual([...REPEATS], ["week", "twee_weken", "vier_weken", "maand"]);
+  for (const r of REPEATS) assert.ok(REPEAT_KEYS[r].startsWith("werk.herhaal."));
+  assert.equal(isRepeat("week"), true);
+  assert.equal(isRepeat("dagelijks"), false);
+  // Stored beurten: an unreadable day is dropped, never guessed.
+  assert.deepEqual(storedVisits([{ on: "2026-09-01" }, { on: "gisteren" }, { on: "2026-09-08", note: " ramen ", invoice_id: "inv" }, null]),
+    [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: "ramen", invoice_id: "inv" }]);
+  assert.deepEqual(readVisit({}, [], "2026-09-08"), { ok: true, visit: { on: "2026-09-08", note: null, invoice_id: null } });
+  assert.deepEqual(readVisit({ on: "8 september" }, [], "2026-09-08"), { ok: false, reason: "not_a_date" });
+  assert.deepEqual(readVisit({}, new Array(400).fill({ on: "2026-01-01", note: null, invoice_id: null }), "2026-09-08"), { ok: false, reason: "too_many" });
+  // Rhythms: weeks add days; a month clips to the last day.
+  assert.equal(addRepeat("2026-09-01", "week"), "2026-09-08");
+  assert.equal(addRepeat("2026-09-01", "twee_weken"), "2026-09-15");
+  assert.equal(addRepeat("2026-12-25", "vier_weken"), "2027-01-22");
+  assert.equal(addRepeat("2026-01-31", "maand"), "2026-02-28");
+  assert.equal(addRepeat("2026-03-31", "maand"), "2026-04-30");
+  // Next beurt: after the last one done; before any, the planned day.
+  assert.equal(nextVisitOn({ repeat_every: "week", visits: [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: null, invoice_id: null }], planned_on: "2026-08-01" }), "2026-09-15");
+  assert.equal(nextVisitOn({ repeat_every: "week", visits: [], planned_on: "2026-09-10" }), "2026-09-10");
+  assert.equal(nextVisitOn({ repeat_every: null, visits: [], planned_on: "2026-09-10" }), null);
+  // The invoice: the lines once per unbilled beurt, the days named in Dutch on the line.
+  const lines = [{ kind: "vast", description: "Schoonmaak kantoor", quantity: 1, unit: "post", unit_price: 85, btw_rate: 21 }, { kind: "arbeid", description: "Extra uren", quantity: 2, unit: "uur", unit_price: 30, btw_rate: 21 }];
+  const visits = [{ on: "2026-09-08", note: null, invoice_id: null }, { on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-08-25", note: null, invoice_id: "old" }];
+  const billed = visitInvoiceLines(lines, unbilledVisits(visits));
+  assert.deepEqual(billed.map((l) => [l.description, l.quantity]), [["Schoonmaak kantoor · 2 beurten (1 sep, 8 sep)", 2], ["Extra uren · 2 beurten (1 sep, 8 sep)", 4]]);
+  assert.equal(linesTotalEx(billed), 290);
+  assert.deepEqual(visitInvoiceLines(lines, []), [], "no beurt, no line");
+  assert.equal(shortDateNL("2026-12-03"), "3 dec");
+  // The guard: repeating work is invoiceable while a done beurt waits, never when nothing was done.
+  assert.equal(canInvoice({ status: "bezig", invoice_id: null, repeat_every: "week", visits }), true);
+  assert.equal(canInvoice({ status: "bezig", invoice_id: null, repeat_every: "week", visits: [visits[2]] }), false);
+  assert.equal(canInvoice({ status: "geannuleerd", invoice_id: null, repeat_every: "week", visits }), false);
+  assert.equal(canInvoice({ status: "bezig", invoice_id: null, repeat_every: null, visits }), false, "one-off work must be klaar");
+});
+
+test("[WERK-VERZAMEL] several finished pieces of work of one client go on one invoice, and nothing else does", () => {
+  const rit = (over: Partial<{ id: string; status: string; invoice_id: string | null; repeat_every: string | null; client_id: string | null; client_name: string | null }>) =>
+    ({ id: "r", status: "klaar", invoice_id: null, repeat_every: null, client_id: null, client_name: "Bol Logistiek", ...over });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" }), rit({ id: "b", client_name: " bol logistiek " })]), { ok: true });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" })]), { ok: false, reason: "too_few" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" }), rit({ id: "b", status: "bezig" })]), { ok: false, reason: "not_invoiceable" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" }), rit({ id: "b", invoice_id: "inv" })]), { ok: false, reason: "not_invoiceable" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" }), rit({ id: "b", repeat_every: "week" })]), { ok: false, reason: "recurring" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a" }), rit({ id: "b", client_name: "PostNL" })]), { ok: false, reason: "different_clients" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a", client_id: "c1" }), rit({ id: "b", client_id: "c2", client_name: "Bol Logistiek" })]), { ok: false, reason: "different_clients" });
+  assert.deepEqual(canInvoiceTogether([rit({ id: "a", client_name: null }), rit({ id: "b", client_name: null })]), { ok: false, reason: "no_client" });
+  // The offer on the list: only clients with two or more, only finished and unbilled, never repeating.
+  const groups = togetherGroups([rit({ id: "a" }), rit({ id: "b" }), rit({ id: "c", client_name: "PostNL" }), rit({ id: "d", status: "bezig" }), rit({ id: "e", client_name: "PostNL", repeat_every: "week" })]);
+  assert.deepEqual(groups.map((g) => [g.client_name, g.rows.map((r) => r.id)]), [["Bol Logistiek", ["a", "b"]]]);
+});
+
+test("[WERK] the invoice lines: the car first, a heading on a verzamelfactuur, hours at their rate, then the work's own lines", () => {
+  const skin = workSkin("automonteur")!;
+  const row = { title: "Remmen vervangen", fields: { km_stand: 123456.4 }, lines: [{ kind: "onderdeel", description: "Remblokken", quantity: 1, unit: "stuk", unit_price: 89.9, btw_rate: 21 }], planned_on: "2026-09-08", done_on: null, repeat_every: null, visits: [] };
+  const hour = { description: "Arbeid", quantity: 1.5, unit: "uur", unit_price: 65, btw_rate: 21 };
+  const lines = workInvoiceLines({ skin, row, kenteken: "12-ABC-3", hourLines: [hour], heading: false });
+  assert.deepEqual(lines.map((l) => [l.description, l.quantity, l.unit_price]), [["Kenteken 12-ABC-3 · km-stand 123456", 1, 0], ["Arbeid", 1.5, 65], ["Remblokken", 1, 89.9]]);
+  // A rit on a verzamelfactuur gets its heading: day and route, at € 0.
+  const ritSkin = workSkin("transport")!;
+  const rit = { title: "Pallets", fields: { van: "Rotterdam", naar: "Eindhoven" }, lines: [{ kind: "ritprijs", description: "Ritprijs", quantity: 1, unit: "post", unit_price: 120, btw_rate: 21 }], planned_on: "2026-09-02", done_on: "2026-09-03", repeat_every: null, visits: [] };
+  assert.deepEqual(workInvoiceLines({ skin: ritSkin, row: rit, kenteken: null, hourLines: [], heading: true }).map((l) => l.description), ["Pallets · 3 sep · Rotterdam → Eindhoven", "Ritprijs"]);
+  assert.deepEqual(workInvoiceLines({ skin: ritSkin, row: rit, kenteken: null, hourLines: [], heading: false }).map((l) => l.description), ["Ritprijs"], "alone, no heading");
+  // Repeating work bills its unbilled beurten, not its lines once.
+  const opdracht = { ...rit, repeat_every: "week", visits: [{ on: "2026-09-01", note: null, invoice_id: null }, { on: "2026-09-08", note: null, invoice_id: null }] };
+  assert.deepEqual(workInvoiceLines({ skin: workSkin("schoonmaak"), row: opdracht, kenteken: null, hourLines: [], heading: false }).map((l) => [l.description, l.quantity]), [["Ritprijs · 2 beurten (1 sep, 8 sep)", 2]]);
 });
 
 test("[WERK] fields: the trade's own, typed, Dutch decimals accepted, nonsense and missing required refused", () => {

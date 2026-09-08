@@ -5,7 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { VakCardView } from "../../src/components/settings/VakCard";
 import { werkZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
 import type { WorkRow } from "../../src/lib/werk-rows";
@@ -15,7 +16,7 @@ const t = translator("nl") as unknown as T;
 
 const werkorder = (over: Partial<WorkRow>): WorkRow => ({
   id: "w1", vak: "automonteur", title: "Remmen vervangen", client_id: null, client_name: "J. Jansen", vehicle_id: "v1", kenteken: "12ABC3",
-  status: "open", planned_on: "2026-09-09", done_on: null, fields: { km_stand: 123456 }, lines: [], notes: null, invoice_id: null, created_at: "2026-09-08T10:00:00Z",
+  status: "open", planned_on: "2026-09-09", done_on: null, fields: { km_stand: 123456 }, lines: [], repeat_every: null, visits: [], notes: null, invoice_id: null, created_at: "2026-09-08T10:00:00Z",
   ...over,
 });
 
@@ -87,4 +88,60 @@ test("[WERK] Vandaag speaks the trade's word", () => {
     "Werkorders: 3 klaar voor de factuur, 3 in behandeling, 1 wachten.");
   assert.equal(werkZin({ pluralKey: "werk.noun.ritten", counts: { open: 0, bezig: 0, wacht: 0, klaar: 0 } }, t), "Geen open Ritten.");
   assert.equal(werkZin(null, t), null);
+});
+
+test("[WERK-2] a fietsenmaker's reparatie opens on the bike and ends 'Klaar voor ophalen'; a rit prints who received it", () => {
+  const skin = workSkin("fietsenmaker")!;
+  const rep: WorkRow = werkorder({ id: "f", vak: "fietsenmaker", title: "Band plakken", kenteken: null, vehicle_id: null, status: "klaar", fields: { fiets: "Gazelle zwart", framenummer: "GZ123" } });
+  const html = renderToStaticMarkup(<WorkList skin={skin} t={t} rows={[rep]} />);
+  assert.ok(html.includes("Klaar voor ophalen"), "the bike shop's word for done");
+  assert.ok(html.includes("Fiets (merk, kleur): Gazelle zwart"), "the bike is on the card");
+  assert.ok(!html.includes("Kenteken"), "a bike has no plate");
+  const chips = renderToStaticMarkup(<StatusChips skin={skin} current="open" t={t} onPick={() => {}} />);
+  assert.ok(chips.includes("Ingenomen") && chips.includes("In reparatie") && chips.includes("Wacht op onderdelen"));
+  const form = renderToStaticMarkup(<WorkForm skin={workSkin("transport")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
+  assert.ok(form.includes("Ontvangen door"), "the courier writes who took delivery");
+  assert.ok(!form.includes("Herhaalt"), "a rit never repeats");
+  const cleaning = renderToStaticMarkup(<WorkForm skin={workSkin("schoonmaak")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
+  assert.ok(cleaning.includes("Herhaalt") && cleaning.includes("Elke week") && cleaning.includes("Eenmalig"), "an opdracht may repeat");
+});
+
+test("[WERK-BEURT] repeating work shows its rhythm, the next beurt and the unbilled count; the beurten panel links billed ones", () => {
+  const skin = workSkin("schoonmaak")!;
+  const visits = [{ on: "2026-09-01", note: null, invoice_id: "inv-1" }, { on: "2026-09-08", note: "ramen", invoice_id: null }];
+  const row: WorkRow = werkorder({ id: "s", vak: "schoonmaak", title: "Kantoor Westhaven", kenteken: null, vehicle_id: null, status: "bezig", fields: { locatie: "Westhaven 12" }, repeat_every: "week", visits });
+  const card = renderToStaticMarkup(<WorkCard skin={skin} t={t} row={row} />);
+  assert.ok(card.includes("Elke week"), "the rhythm");
+  assert.ok(card.includes("Volgende: 15-09-2026"), "one week after the last beurt");
+  assert.ok(card.includes("1 beurten nog te factureren"), "the unbilled count");
+  const panel = renderToStaticMarkup(<VisitsPanel visits={visits} t={t} onVisit={() => {}} onUnvisit={() => {}} invoiceHref={(id) => `/dashboard/invoice/${id}/edit`} />);
+  assert.ok(panel.includes("Beurt gedaan"), "the one tap");
+  assert.ok(panel.includes("ramen"), "the note");
+  assert.ok(panel.includes('href="/dashboard/invoice/inv-1/edit"'), "a billed beurt links to its invoice");
+  assert.equal((panel.match(/aria-label="Verwijderen"/g) ?? []).length, 1, "only the unbilled beurt can be taken back");
+  assert.equal(invoiceButtonState(row, null), "make", "a done beurt makes the work invoiceable while the row stays open");
+  assert.equal(invoiceButtonState({ ...row, visits: [visits[0]] }, null), "none");
+  const empty = renderToStaticMarkup(<VisitsPanel visits={[]} t={t} />);
+  assert.ok(empty.includes("Nog geen beurten."));
+});
+
+test("[WERK-VERZAMEL] the list offers one invoice per client with two or more finished pieces of work", () => {
+  const rit = (id: string, over: Partial<WorkRow> = {}): WorkRow => werkorder({ id, vak: "transport", kenteken: null, vehicle_id: null, status: "klaar", client_name: "Bol Logistiek", fields: { van: "A", naar: "B" }, ...over });
+  const html = renderToStaticMarkup(<TogetherOffer t={t} onTogether={() => {}} rows={[rit("a"), rit("b"), rit("c", { client_name: "PostNL" }), rit("d", { status: "bezig" })]} />);
+  assert.ok(html.includes("Verzamelfactuur · Bol Logistiek · 2 stuks"), "two finished ritten for one client");
+  assert.ok(!html.includes("PostNL"), "one rit is the ordinary Maak factuur");
+  const none = renderToStaticMarkup(<TogetherOffer t={t} rows={[rit("a")]} />);
+  assert.equal(none, "", "nothing to offer, nothing drawn");
+});
+
+test("[WERK-BON] the files attached to work render with a detach, and the settings card offers every trade", () => {
+  const docs = renderToStaticMarkup(<DocumentsList t={t} onDetach={() => {}} documents={[{ id: "d1", file_name: "bon-fource.pdf", created_at: "2026-09-08T10:00:00Z" }]} />);
+  assert.ok(docs.includes("bon-fource.pdf") && docs.includes("Losmaken"));
+  assert.equal(renderToStaticMarkup(<DocumentsList t={t} documents={[]} />), "");
+  const card = renderToStaticMarkup(<VakCardView vak="automonteur" loaded busy={false} note="saved" onChoose={() => {}} t={t} />);
+  assert.ok(card.includes("Mijn vak") && card.includes("Geen vak gekozen") && card.includes("Automonteur / garage") && card.includes("Transport / koerier / taxi"));
+  assert.ok(card.includes("Werkorders als tweede knop"), "a trade with a work layer says what it just gained");
+  assert.ok(card.includes("Opgeslagen."));
+  const none = renderToStaticMarkup(<VakCardView vak="kapper" loaded busy={false} note={null} onChoose={() => {}} t={t} />);
+  assert.ok(!none.includes("tweede knop"), "a kapper gains no screen and is not told he did");
 });

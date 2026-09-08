@@ -278,6 +278,8 @@ export type AuditAction =
   | 'work.status_changed'
   | 'work.invoiced'
   | 'work.deleted'
+  // [WERK-BEURT] A beurt ticked off on repeating work.
+  | 'work.visit_recorded'
   // [ARTIKELEN-WIPE] The owner emptying their whole article catalogue in one action. Level 3 and
   // not Level 1 on purpose: articles are TEMPLATES — invoice_lines copied their text, price and
   // btw-rate at the moment a line was made — so no invoice, total or aangifte moves by a cent.

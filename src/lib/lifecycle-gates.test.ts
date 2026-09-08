@@ -28330,12 +28330,44 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   for (const fn of ["POST", "PATCH", "DELETE"]) assert.match(api, new RegExp(`export async function ${fn}[\\s\\S]*?requireOwner\\(`), `${fn} is owner-only`);
   assert.match(api, /!isWorkStatus\(next\) \|\| !HAND_STATUSES\.includes\(next\) \|\| !skin\.statuses\.includes\(next\)/, "a status the trade does not use is refused");
   assert.doesNotMatch(api, /from\("invoices"\)\s*\.insert/, "the work API never writes an invoice");
+  // [WERK-2] Two invoice doors (one piece of work, several for one client) share ONE helper, so
+  // the same work puts the same lines on an invoice whichever door it takes.
+  const shared = code("src/lib/werk-factuur.ts");
+  assert.match(shared, /import \{ POST as createDraft \} from "@\/app\/api\/invoice\/draft\/route"/, "the invoice is made by the one draft door");
+  assert.doesNotMatch(shared, /from\("invoices"\)\s*\.insert/, "…and never inserted here");
+  assert.match(shared, /linesFromEntries\(/, "hours go on at their own rate, by the same builder the hours invoice uses");
+  assert.match(shared, /workInvoiceLines\(\{/, "the line order is the pure module's, tested there");
+  assert.match(shared, /for \(const chunk of chunkIds\(w\.billedHourIds, 100\)\)[\s\S]*?\.update\(\{ invoice_id: invoiceId \}\)[\s\S]*?\.is\("invoice_id", null\)\.in\("id", chunk\)/, "billed hours are stamped, in chunks, so they cannot be billed twice");
   const door = code("src/app/api/werk/[id]/factuur/route.ts");
-  assert.match(door, /import \{ POST as createDraft \} from "@\/app\/api\/invoice\/draft\/route"/, "the invoice is made by the one draft door");
-  assert.doesNotMatch(door, /from\("invoices"\)\s*\.insert/, "…and never inserted here");
-  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null \}\)\)/, "only finished work, once");
-  assert.match(door, /linesFromEntries\(/, "hours go on at their own rate, by the same builder the hours invoice uses");
-  assert.match(door, /for \(const chunk of chunkIds\(built\.billedIds, 100\)\)[\s\S]*?\.update\(\{ invoice_id: invoiceId \}\)[\s\S]*?\.is\("invoice_id", null\)\.in\("id", chunk\)/, "billed hours are stamped, in chunks, so they cannot be billed twice");
+  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null, repeat_every: row\.repeat_every, visits: row\.visits \}\)\)/, "only finished work once — or repeating work with a done beurt");
+  assert.doesNotMatch(door, /from\("invoices"\)\s*\.insert/);
+  // [WERK-BEURT] Repeating work: the beurten this invoice covers are fixed BEFORE the draft, re-read
+  // at stamping, and the row stays open (no invoice_id, no 'gefactureerd' on the recurring branch).
+  assert.match(door, /const billedVisits = row\.repeat_every \? unbilledVisits\(row\.visits\) : \[\];[\s\S]*?openDraftFor\(/, "the covered beurten are decided before the draft exists");
+  assert.match(door, /if \(row\.repeat_every\) \{[\s\S]*?storedVisits\(fresh\?\.visits\)[\s\S]*?\} else \{[\s\S]*?status: "gefactureerd"/, "recurring stamps beurten; one-off closes the row");
+  const together = code("src/app/api/werk/factuur/route.ts");
+  assert.match(together, /requireOwner\(/);
+  assert.match(together, /const verdict = canInvoiceTogether\(loaded\.works\.map\(\(w\) => w\.row\)\);\s*if \(!verdict\.ok\)/, "one client, all finished, none repeating — decided by the pure module");
+  assert.doesNotMatch(together, /from\("invoices"\)\s*\.insert/);
+  assert.match(together, /\.update\(\{ invoice_id: invoiceId, status: "gefactureerd" \}\)[\s\S]*?\.in\("id", chunk\)\.is\("invoice_id", null\)/, "every row closes on the one invoice, once");
+  // [WERK-BEURT] The table: the rhythm is a CHECKed column, the beurten a jsonb list.
+  const repeatSql = code("supabase/migrations/work_items_repeat.sql");
+  assert.match(repeatSql, /repeat_every text\s+CHECK \(repeat_every IN \('week', 'twee_weken', 'vier_weken', 'maand'\)\)/);
+  assert.match(repeatSql, /visits jsonb NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(pure, /export const REPEATS: readonly Repeat\[\] = \["week", "twee_weken", "vier_weken", "maand"\]/, "the module's list is the CHECK's list");
+  // [WERK-BEURT] A beurt is only ever written on work that repeats, by the owner, and a billed one is never removed.
+  const detail = code("src/app/api/werk/[id]/route.ts");
+  assert.match(detail, /if \(!row\.repeat_every\) return NextResponse\.json\(\{ error: "Dit werk herhaalt niet; het heeft geen beurten\."/);
+  assert.match(detail, /visits\.findIndex\(\(v\) => v\.on === on && !v\.invoice_id\)/, "only an unbilled beurt can be taken back");
+  // [WERK-BON] A bon from inside the work goes through the ONE intake door and is only LINKED here.
+  const client = code("src/app/dashboard/werk/WerkClient.tsx");
+  assert.match(client, /sendWithFit\(file, \(f\) => \{[\s\S]*?fetch\('\/api\/intake', \{ method: 'POST', body: fd \}\)/, "the bon is read, deduplicated and filed by intake, never by this screen — and fitted first");
+  assert.match(client, /action: 'attach_cost', ids: \[invoiceId\]/);
+  assert.match(client, /action: 'attach_document', ids: \[documentId\]/);
+  // [VAK-KIEZEN] The trade can be chosen after registration, and it is written through parseVak only.
+  const vakCard = code("src/components/settings/VakCard.tsx");
+  assert.match(vakCard, /const slug = parseVak\(next\)[\s\S]*?\.update\(\{ vak: slug \}\)/, "never a guess: an unknown value stores 'no trade'");
+  assert.match(code("src/app/dashboard/settings/page.tsx"), /<VakCard \/>/);
   // The screen: it exists, it is the second tap for the work trade, Vandaag speaks the trade's word.
   assert.ok(existsSync("src/app/dashboard/werk/page.tsx"));
   assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);

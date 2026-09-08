@@ -219,7 +219,7 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   // Level 3 — Files
   "log.document.uploaded", "log.document.duplicate_blocked", "log.document.deleted",
   "log.document.bulk_deleted", "log.document.restored", "log.document.reminder_filed",
-  "log.work.created", "log.work.status_changed", "log.work.invoiced", "log.work.deleted",
+  "log.work.created", "log.work.status_changed", "log.work.invoiced", "log.work.deleted", "log.work.visit_recorded",
   "log.article.bulk_deleted",
   "log.folder.created", "log.folder.deleted", "log.folder.renamed",
   // Level 4 — Security / account

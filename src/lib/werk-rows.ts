@@ -1,7 +1,7 @@
 // src/lib/werk-rows.ts
 // [WERK] The row shapes the work API returns. work_items is newer than the generated database
 // types, so the routes read it through an untyped client and hand out these shapes instead.
-import type { FieldValues, WorkLine, WorkStatus } from "./werk";
+import type { FieldValues, Repeat, Visit, WorkLine, WorkStatus } from "./werk";
 
 export interface WorkRow {
   id: string;
@@ -18,6 +18,10 @@ export interface WorkRow {
   fields: FieldValues;
   /** What the work charges — see readLines in werk.ts. */
   lines: WorkLine[];
+  /** [WERK-BEURT] The rhythm of repeating work; null for work that happens once. */
+  repeat_every: Repeat | null;
+  /** The beurten done on repeating work, each stamped with the invoice it went on. */
+  visits: Visit[];
   notes: string | null;
   invoice_id: string | null;
   created_at: string;

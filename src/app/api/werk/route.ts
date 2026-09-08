@@ -13,13 +13,13 @@ import { fetchAllRowsForIds } from "@/lib/supabase-paginate";
 import { normalizeKenteken, isKentekenShape } from "@/lib/vehicle";
 import { amsterdamToday } from "@/lib/format-nl";
 import {
-  workSkin, readFields, readLines, storedLines, isWorkStatus, HAND_STATUSES, canDelete, type WorkStatus,
+  workSkin, readFields, readLines, storedLines, storedVisits, isRepeat, isWorkStatus, HAND_STATUSES, canDelete, type WorkStatus,
 } from "@/lib/werk";
 import type { WorkRow } from "@/lib/werk-rows";
 
 export const dynamic = "force-dynamic";
 
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, notes, invoice_id, created_at";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, notes, invoice_id, created_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LIST_MAX = 300;
@@ -65,10 +65,22 @@ async function withPlates(supabase: Awaited<ReturnType<typeof createServerSupaba
     done_on: (r.done_on as string | null) ?? null,
     fields: (r.fields && typeof r.fields === "object" ? r.fields : {}) as WorkRow["fields"],
     lines: storedLines(r.lines),
+    repeat_every: isRepeat(r.repeat_every) ? r.repeat_every : null,
+    visits: storedVisits(r.visits),
     notes: (r.notes as string | null) ?? null,
     invoice_id: (r.invoice_id as string | null) ?? null,
     created_at: String(r.created_at),
   }));
+}
+
+/**
+ * [WERK-BEURT] The rhythm, read from an untrusted body. Only a skin that repeats may carry one;
+ * an empty value clears it. Anything else is refused rather than stored as text.
+ */
+function readRepeat(skin: { recurring: boolean }, raw: unknown): { ok: true; repeat: string | null } | { ok: false } {
+  if (raw === undefined || raw === null || raw === "" || raw === "none") return { ok: true, repeat: null };
+  if (!skin.recurring || !isRepeat(raw)) return { ok: false };
+  return { ok: true, repeat: raw };
 }
 
 export async function GET(req: NextRequest) {
@@ -117,6 +129,8 @@ export async function POST(req: NextRequest) {
   if (!lines.ok) return NextResponse.json({ error: "Controleer de regels.", code: "bad_line", index: lines.index, reason: lines.reason }, { status: 400 });
   const plannedOn = text(body.planned_on, 10);
   if (plannedOn && !ISO.test(plannedOn)) return NextResponse.json({ error: "Controleer de datum.", code: "bad_date" }, { status: 400 });
+  const repeat = readRepeat(skin, body.repeat_every);
+  if (!repeat.ok) return NextResponse.json({ error: "Die herhaling bestaat niet voor dit werk.", code: "bad_repeat" }, { status: 400 });
 
   // A garage types a plate; the vehicle register is the same one /dashboard/voertuigen keeps.
   let vehicleId: string | null = typeof body.vehicle_id === "string" && UUID.test(body.vehicle_id) ? body.vehicle_id : null;
@@ -149,6 +163,7 @@ export async function POST(req: NextRequest) {
     planned_on: plannedOn,
     fields: fields.fields,
     lines: lines.lines,
+    repeat_every: repeat.repeat,
     notes: text(body.notes, 2000),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -162,7 +177,7 @@ export async function POST(req: NextRequest) {
   const [row] = await withPlates(supabase, user.id, [data as Record<string, unknown>]);
   await logAuditAction({
     userId: user.id, action: "work.created", entityType: "work_item", entityId: row.id,
-    newValue: { skin: skin.skin, title: row.title, client_name: row.client_name, kenteken: row.kenteken, planned_on: row.planned_on },
+    newValue: { skin: skin.skin, title: row.title, client_name: row.client_name, kenteken: row.kenteken, planned_on: row.planned_on, repeat_every: row.repeat_every },
     ipAddress: getClientIP(req),
   }).catch(() => {});
   return NextResponse.json({ ok: true, row });
@@ -209,6 +224,16 @@ export async function PATCH(req: NextRequest) {
   }
   if (body.notes !== undefined) patch.notes = text(body.notes, 2000);
   if (body.client_name !== undefined) patch.client_name = text(body.client_name);
+  if (body.repeat_every !== undefined) {
+    // Repeating work with billed beurten cannot become one-off work: the beurten would lose the
+    // rows that explain their invoices.
+    const repeat = readRepeat(skin, body.repeat_every);
+    if (!repeat.ok) return NextResponse.json({ error: "Die herhaling bestaat niet voor dit werk.", code: "bad_repeat" }, { status: 400 });
+    if (!repeat.repeat && storedVisits(current.visits).some((v) => v.invoice_id)) {
+      return NextResponse.json({ error: "Er zijn al beurten gefactureerd; dit werk blijft terugkerend.", code: "billed_visits" }, { status: 409 });
+    }
+    patch.repeat_every = repeat.repeat;
+  }
   for (const k of ["planned_on", "done_on"] as const) {
     if (body[k] === undefined) continue;
     const v = text(body[k], 10);
