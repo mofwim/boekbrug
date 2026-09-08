@@ -2352,12 +2352,19 @@ export default function IncomingManageClient({
           </div>
         </div>
 
-          {/* [PERIODE] De periodekiezer staat BOVEN filter en sorteren, op zijn eigen regel: hij
-              bepaalt WELKE facturen er zijn, terwijl die twee bepalen hoe je ze bekijkt — en het
-              bedrag boven de lijst hangt aan deze keuze. Volle breedte, want de gekozen periode is
-              het antwoord op "waar gaat dit bedrag over" en moet leesbaar blijven ("Vorig kwartaal
-              · Q2 2026"). */}
-          <div style={{ position: 'relative', marginBottom: 8 }}>
+          {/* [FILTERS-EEN-REGEL] Period, filter and sort on ONE line.
+              The period used to stand above the other two on a row of its own, with the argument
+              that it decides WHICH invoices exist while the others decide how you look at them —
+              and that the chosen period ("Vorig kwartaal · Q2 2026") needed the width to stay
+              readable. The owner asked for one line, and on the screens this is used on (a phone
+              held sideways, a laptop) three thirds are wide enough for every label.
+
+              Each third has a floor and the row may wrap: on a narrow phone the third item drops
+              to its own line instead of all three shrinking to an ellipsis and a chevron. And each
+              opener closes the other two — three menus on one line can otherwise stand open
+              together. */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', flex: '1 1 150px', minWidth: 0 }}>
             <button
               onClick={() => { setShowPeriodMenu(p => !p); setShowFilterMenu(false); setShowSortMenu(false) }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: period === 'all' ? '#F1F3F4' : M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
@@ -2396,12 +2403,10 @@ export default function IncomingManageClient({
             )}
           </div>
 
-          {/* Filter + Sort dropdowns (side by side) */}
-          <div style={{ display: 'flex', gap: 8 }}>
             {/* Filter */}
-            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <div style={{ position: 'relative', flex: '1 1 150px', minWidth: 0 }}>
               <button
-                onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false) }}
+                onClick={() => { setShowFilterMenu(p => !p); setShowSortMenu(false); setShowPeriodMenu(false) }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: M3.primaryContainer, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
               >
                 {/* [INVOICE-COUNTER] The active filter carries its count, so the number is on
@@ -2434,9 +2439,9 @@ export default function IncomingManageClient({
             </div>
 
             {/* [SORT] Sorteren op — invoice/payment/due date, amount, vendor, or date added */}
-            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <div style={{ position: 'relative', flex: '1 1 150px', minWidth: 0 }}>
               <button
-                onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false) }}
+                onClick={() => { setShowSortMenu(p => !p); setShowFilterMenu(false); setShowPeriodMenu(false) }}
                 title={t('inkoop.sorteren')}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%', padding: '10px 14px', background: '#F1F3F4', borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: FONT }}
               >
@@ -2891,7 +2896,7 @@ export default function IncomingManageClient({
                 // kopregel, ook wanneer de kaart uitklapt en meters hoog wordt.
                 <div
                   key={inv.id}
-                  className="inv-card"
+                  className="inv-card inv-card--acties"
                   ref={el => { rowRefs.current[inv.id] = el }}
                   style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}
                 >
@@ -3425,7 +3430,7 @@ export default function IncomingManageClient({
                       correct copy was the one our reader had got wrong. Removing a row here would
                       be guessing with a bill. */}
                   {duplicate && (
-                    <div style={{ background: M3.warningContainer, borderRadius: `0 0 ${R.md}px ${R.md}px`, padding: '10px 14px' }}>
+                    <div style={{ background: M3.warningContainer, padding: '10px 14px' }}>
                       <p style={{ fontSize: 12.5, color: '#7C5800', margin: 0, lineHeight: 1.45 }}>
                         {duplicateWarningText(duplicate, inv.invoice_number)}
                       </p>
@@ -3454,9 +3459,179 @@ export default function IncomingManageClient({
                     </div>
                   )}
 
+                  {/* ── [ACTIES-ALTIJD] The ways out, on every card ─────────────────────────────
+                      Bekijk PDF, Betalen, Opnieuw inlezen, Bedragen corrigeren — the four things an
+                      owner does with an invoice — sat inside `expanded`, which only a tap on the row
+                      opens. Nothing on the closed card said they existed, and a static render of this
+                      screen could not reach them (see CostAttribution's note): the screen's whole
+                      purpose lived behind a door with no handle.
+
+                      The row is now part of the card, and the chevron at its start opens what stayed
+                      folded: the read figures, the dates, the incasso switch. Two ways in — the row
+                      header still toggles too — and one visible.
+
+                      The chevron takes the START edge (marginInlineEnd: auto pushes the actions to
+                      the end), which is where the owner drew it: on an RTL screen the actions sit at
+                      the left and the empty right edge is the natural place for the opener. */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '10px 16px', borderTop: `1px solid ${M3.surfaceVariant}` }}>
+                    <button
+                      type="button"
+                      // [TEKST-SELECTIE] Through onRowTap like the row header: a drag that starts on
+                      // the chevron then behaves exactly as one that starts on the number, and the
+                      // two openers stay one behaviour instead of two.
+                      onClick={onRowTap(() => setExpandedId(expanded ? null : inv.id))}
+                      aria-expanded={expanded}
+                      aria-controls={`inv-detail-${inv.id}`}
+                      aria-label={expanded ? t('ink.detailsVerbergen') : t('ink.detailsTonen')}
+                      title={expanded ? t('ink.detailsVerbergen') : t('ink.detailsTonen')}
+                      style={{
+                        marginInlineEnd: 'auto', flexShrink: 0, width: 36, height: 36,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
+                        background: expanded ? M3.primaryContainer : '#fff', color: M3.primary,
+                        cursor: 'pointer', fontFamily: FONT, padding: 0,
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>
+                        {expanded ? 'expand_less' : 'expand_more'}
+                      </span>
+                    </button>
+                    {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
+                        invoice whose amounts were misread could only be archived (which hides a
+                        real purchase) or handed to the accountant. Offered only where a
+                        correction is actually allowed: an unpaid invoice with no money booked
+                        against it — the same two conditions the server re-checks. Shown for
+                        every such row, not only the flagged ones: the reader can be wrong
+                        without any gate noticing, and the owner has the paper. */}
+                    {inv.status === 'received' && !(inv.amount_paid && inv.amount_paid > 0.005) && (
+                      <button
+                        onClick={() => openCorrection(inv)}
+                        style={{
+                          padding: '8px 14px', borderRadius: R.full, border: 'none', cursor: 'pointer',
+                          fontSize: 13, fontWeight: 600,
+                          background: mathProblem || signConflict ? M3.warningContainer : M3.surfaceVariant,
+                          color: mathProblem || signConflict ? '#7C5800' : '#3c4043',
+                        }}
+                      >
+                        {t('inkoop.bedragenCorrigeren')}
+                      </button>
+                    )}
+                    {/* [REREAD-CONFIRMED] "Opnieuw inlezen" — the other way out, and on most
+                        invoices the better one: the app is holding the paper, so it can read it
+                        again instead of asking the owner to type what it says. It stands next to
+                        "Bedragen corrigeren" because that button was the only answer here, and
+                        typing is the fallback, not the first move.
+
+                        Same eligibility as the server (reimportDecision), so the button never
+                        opens on something the route will refuse. */}
+                    {rereadOk && (
+                      <button
+                        onClick={e => { e.stopPropagation(); void runReread(inv) }}
+                        disabled={rereadingId === inv.id}
+                        style={{
+                          fontSize: 13, color: M3.primary, background: '#fff',
+                          border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
+                          padding: '8px 16px', cursor: rereadingId === inv.id ? 'default' : 'pointer',
+                          fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                          {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
+                        </span>
+                        {rereadingId === inv.id ? t('ink.opnieuwBezig') : t('ink.opnieuwInlezenKnop')}
+                      </button>
+                    )}
+                    {/* [ORIGINEEL] "Origineel toevoegen" — the answer the client never had.
+                        The readiness board counts invoices with no stored original and says the
+                        accountant cannot check them; the accountant's "opvragen" turns that into
+                        a request by invoice number. And then the client could do nothing:
+                        document_id was written at CREATION and by nothing afterwards, so an
+                        invoice typed in by hand, or one whose upload failed halfway, was
+                        permanently unprovable.
+
+                        It sits with the other two ways out, and it is the one that adds evidence
+                        rather than changing a figure — the route does not read the file at all,
+                        because a re-read here could silently overwrite an amount the owner (or
+                        the accountant) already confirmed. Shown only where the slot is empty. */}
+                    {!inv.document_id && (
+                      <label
+                        style={{
+                          fontSize: 13, color: M3.primary, background: '#fff',
+                          border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
+                          padding: '8px 16px', cursor: attachingId === inv.id ? 'default' : 'pointer',
+                          fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
+                          opacity: attachingId === inv.id ? 0.6 : 1,
+                        }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          disabled={attachingId === inv.id}
+                          style={{ display: 'none' }}
+                          onChange={e => {
+                            const f = e.target.files?.[0] ?? null
+                            e.target.value = ''
+                            if (f) void attachOriginal(inv, f)
+                          }}
+                        />
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                          {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
+                        </span>
+                        {attachingId === inv.id ? t('ink.bezigToevoegen') : t('ink.origineelToevoegen')}
+                      </label>
+                    )}
+                    {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
+                        real but sits on the wrong invoice: a supplier's corrected re-issue, a
+                        matcher picking the wrong one of two equal amounts, a tap on the row
+                        above. It stands HERE, next to Betaaldatum and Methode, because that is
+                        where the owner is looking when they realise it. The alternative was
+                        three steps (undo, find the bank line, re-book) with the money existing
+                        nowhere in between — this is one atomic move. Offered only when there
+                        is money to move. */}
+                    {Math.max(0, inv.amount_paid ?? 0) > 0.005 && (
+                      <button
+                        onClick={e => { e.stopPropagation(); openMovePayment(inv) }}
+                        disabled={moveLoadingId === inv.id}
+                        style={{ fontSize: 13, color: M3.primary, background: '#fff', border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full, padding: '8px 16px', cursor: moveLoadingId === inv.id ? 'default' : 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                          {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
+                        </span>
+                        {moveLoadingId === inv.id ? t('ink.bezig') : t('inkoop.betalingVerplaatsen')}
+                      </button>
+                    )}
+                    {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
+                        the QR + copy sheet. No DB write; pure preparation.
+                        [AUTO-INCASSO] …and never on an invoice the bank collects. This button
+                        pre-fills the supplier's IBAN and amount in the owner's banking app,
+                        which on an already-collected invoice is a second payment with one tap
+                        and no warning anywhere. */}
+                    {inv.status === 'received' && !incasso && payable && (
+                      <button
+                        // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
+                        // pre-fills the supplier's IBAN and the amount in the owner's bank app.
+                        // On CR0301267 it offered € 33,87 to a supplier who owed it back.
+                        onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
+                        style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
+                        {t('inkoop.betalen')}
+                      </button>
+                    )}
+                    {inv.pdf_url && (
+                      <button
+                        onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
+                        style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                          picture_as_pdf
+                        </span>
+                        {t('ink.bekijkPdf')}
+                      </button>
+                    )}
+                  </div>
+
                   {/* Inline expand */}
                   {expanded && (
-                    <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
+                    <div id={`inv-detail-${inv.id}`} style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
                         <InfoLine label={t('inkoop.leverancier')} value={inv.client_name} />
                         {/* [DATE-VISIBLE] The full dates live HERE, where there is room for them —
@@ -3539,139 +3714,6 @@ export default function IncomingManageClient({
                         </p>
                       )}
 
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
-                            invoice whose amounts were misread could only be archived (which hides a
-                            real purchase) or handed to the accountant. Offered only where a
-                            correction is actually allowed: an unpaid invoice with no money booked
-                            against it — the same two conditions the server re-checks. Shown for
-                            every such row, not only the flagged ones: the reader can be wrong
-                            without any gate noticing, and the owner has the paper. */}
-                        {inv.status === 'received' && !(inv.amount_paid && inv.amount_paid > 0.005) && (
-                          <button
-                            onClick={() => openCorrection(inv)}
-                            style={{
-                              padding: '8px 14px', borderRadius: R.full, border: 'none', cursor: 'pointer',
-                              fontSize: 13, fontWeight: 600,
-                              background: mathProblem || signConflict ? M3.warningContainer : M3.surfaceVariant,
-                              color: mathProblem || signConflict ? '#7C5800' : '#3c4043',
-                            }}
-                          >
-                            {t('inkoop.bedragenCorrigeren')}
-                          </button>
-                        )}
-                        {/* [REREAD-CONFIRMED] "Opnieuw inlezen" — the other way out, and on most
-                            invoices the better one: the app is holding the paper, so it can read it
-                            again instead of asking the owner to type what it says. It stands next to
-                            "Bedragen corrigeren" because that button was the only answer here, and
-                            typing is the fallback, not the first move.
-
-                            Same eligibility as the server (reimportDecision), so the button never
-                            opens on something the route will refuse. */}
-                        {rereadOk && (
-                          <button
-                            onClick={e => { e.stopPropagation(); void runReread(inv) }}
-                            disabled={rereadingId === inv.id}
-                            style={{
-                              fontSize: 13, color: M3.primary, background: '#fff',
-                              border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
-                              padding: '8px 16px', cursor: rereadingId === inv.id ? 'default' : 'pointer',
-                              fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
-                              {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
-                            </span>
-                            {rereadingId === inv.id ? t('ink.opnieuwBezig') : t('ink.opnieuwInlezenKnop')}
-                          </button>
-                        )}
-                        {/* [ORIGINEEL] "Origineel toevoegen" — the answer the client never had.
-                            The readiness board counts invoices with no stored original and says the
-                            accountant cannot check them; the accountant's "opvragen" turns that into
-                            a request by invoice number. And then the client could do nothing:
-                            document_id was written at CREATION and by nothing afterwards, so an
-                            invoice typed in by hand, or one whose upload failed halfway, was
-                            permanently unprovable.
-
-                            It sits with the other two ways out, and it is the one that adds evidence
-                            rather than changing a figure — the route does not read the file at all,
-                            because a re-read here could silently overwrite an amount the owner (or
-                            the accountant) already confirmed. Shown only where the slot is empty. */}
-                        {!inv.document_id && (
-                          <label
-                            style={{
-                              fontSize: 13, color: M3.primary, background: '#fff',
-                              border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
-                              padding: '8px 16px', cursor: attachingId === inv.id ? 'default' : 'pointer',
-                              fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
-                              opacity: attachingId === inv.id ? 0.6 : 1,
-                            }}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <input
-                              type="file"
-                              accept=".pdf,image/*"
-                              disabled={attachingId === inv.id}
-                              style={{ display: 'none' }}
-                              onChange={e => {
-                                const f = e.target.files?.[0] ?? null
-                                e.target.value = ''
-                                if (f) void attachOriginal(inv, f)
-                              }}
-                            />
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
-                              {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
-                            </span>
-                            {attachingId === inv.id ? t('ink.bezigToevoegen') : t('ink.origineelToevoegen')}
-                          </label>
-                        )}
-                        {/* [MOVE-PAYMENT] "Betaling verplaatsen" — the answer when the money is
-                            real but sits on the wrong invoice: a supplier's corrected re-issue, a
-                            matcher picking the wrong one of two equal amounts, a tap on the row
-                            above. It stands HERE, next to Betaaldatum and Methode, because that is
-                            where the owner is looking when they realise it. The alternative was
-                            three steps (undo, find the bank line, re-book) with the money existing
-                            nowhere in between — this is one atomic move. Offered only when there
-                            is money to move. */}
-                        {Math.max(0, inv.amount_paid ?? 0) > 0.005 && (
-                          <button
-                            onClick={e => { e.stopPropagation(); openMovePayment(inv) }}
-                            disabled={moveLoadingId === inv.id}
-                            style={{ fontSize: 13, color: M3.primary, background: '#fff', border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full, padding: '8px 16px', cursor: moveLoadingId === inv.id ? 'default' : 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
-                              {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
-                            </span>
-                            {moveLoadingId === inv.id ? t('ink.bezig') : t('inkoop.betalingVerplaatsen')}
-                          </button>
-                        )}
-                        {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
-                            the QR + copy sheet. No DB write; pure preparation.
-                            [AUTO-INCASSO] …and never on an invoice the bank collects. This button
-                            pre-fills the supplier's IBAN and amount in the owner's banking app,
-                            which on an already-collected invoice is a second payment with one tap
-                            and no warning anywhere. */}
-                        {inv.status === 'received' && !incasso && payable && (
-                          <button
-                            // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
-                            // pre-fills the supplier's IBAN and the amount in the owner's bank app.
-                            // On CR0301267 it offered € 33,87 to a supplier who owed it back.
-                            onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
-                            style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
-                            {t('inkoop.betalen')}
-                          </button>
-                        )}
-                        {inv.pdf_url && (
-                          <button
-                            onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
-                            style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
-                              picture_as_pdf
-                            </span>
-                            {t('ink.bekijkPdf')}
-                          </button>
-                        )}
-                      </div>
 
                       {/* ── [AUTO-INCASSO] "Deze leverancier schrijft zelf af" ──────────────────
                           It lives in the OPENED card, not on the row: it is a statement about the

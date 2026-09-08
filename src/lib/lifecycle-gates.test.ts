@@ -24962,6 +24962,57 @@ test("[LEVERANCIER-KIEZEN] both doors that name a supplier offer the suppliers t
     "a failed read must be answered before anything is claimed about the name");
 });
 
+// ── [ACTIES-ALTIJD] ───────────────────────────────────────────────────────────────────────────
+//
+// On /dashboard/incoming/manage the four things an owner does with an invoice — Bekijk PDF,
+// Betalen, Opnieuw inlezen, Bedragen corrigeren — sat inside `expanded`, which only a tap on the
+// row opens. Nothing on the closed card said they existed. The row now lives on the card, above
+// the fold, and a chevron at its start opens the rest. tests/render/money-screens.test.tsx proves
+// the closed render carries the buttons; this holds the wiring, which is one moved `</div>` away
+// from putting them back behind the door.
+test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens the fold", () => {
+  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  const css = readFileSync("src/app/globals.css", "utf8");
+
+  // The fold is the block that carries the detail id. Every action must be written BEFORE it.
+  const vouw = scherm.indexOf("id={`inv-detail-${inv.id}`}");
+  assert.ok(vouw > 0, "the fold no longer carries the id the chevron points at");
+  for (const [naam, tekst] of [
+    ["Bekijk PDF", "{t('ink.bekijkPdf')}"],
+    ["Betalen", "{t('inkoop.betalen')}"],
+    ["Bedragen corrigeren", "openCorrection(inv)"],
+    ["Opnieuw inlezen", "void runReread(inv)"],
+  ] as const) {
+    const at = scherm.indexOf(tekst);
+    assert.ok(at > 0, `${naam} is gone from the screen`);
+    assert.ok(at < vouw, `${naam} is back inside the fold — invisible until the owner already knows to tap`);
+  }
+
+  // The chevron: says its state, names its target, and is the SAME toggle the row header uses, so
+  // the two ways in can never disagree about what is open.
+  assert.match(scherm, /aria-expanded=\{expanded\}/, "the chevron does not say whether the card is open");
+  assert.match(scherm, /aria-controls=\{`inv-detail-\$\{inv\.id\}`\}/, "…nor which block it opens");
+  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 2,
+    "the header and the chevron must both toggle the same state — two openers, one fold");
+
+  // The card is taller when closed now, and the estimate that sizes the scrollbar before paint is
+  // shared with two lists that did not change. So this list carries its own, in both breakpoints.
+  assert.match(scherm, /className="inv-card inv-card--acties"/, "the card lost its own height estimate");
+  assert.equal((css.match(/\.inv-card--acties \{ contain-intrinsic-size: auto \d+px; \}/g) ?? []).length, 2,
+    "the estimate must be stated for both the wide and the stacked layout");
+});
+
+// ── [FILTERS-EEN-REGEL] ───────────────────────────────────────────────────────────────────────
+test("[FILTERS-EEN-REGEL] period, filter and sort share one row, and one open menu at a time", () => {
+  const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.equal((scherm.match(/flex: '1 1 150px', minWidth: 0/g) ?? []).length, 3,
+    "three selectors, three equal thirds of one row");
+  // Three menus on one line can stand open together unless every opener closes the other two.
+  assert.match(scherm, /setShowPeriodMenu\(p => !p\); setShowFilterMenu\(false\); setShowSortMenu\(false\)/);
+  assert.match(scherm, /setShowFilterMenu\(p => !p\); setShowSortMenu\(false\); setShowPeriodMenu\(false\)/);
+  assert.match(scherm, /setShowSortMenu\(p => !p\); setShowFilterMenu\(false\); setShowPeriodMenu\(false\)/);
+});
+
 // ── [CONTROLES-INKLAPPEN] ─────────────────────────────────────────────────────────────────────
 //
 // Every check the app runs was printed on every invoice — nine identical green lines, with the one
