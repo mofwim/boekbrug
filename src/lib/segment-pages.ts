@@ -343,6 +343,78 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
       'Garantie- en schadeafhandeling met verzekeraars staan er niet in.',
     ],
   },
+  {
+    // [SEGMENT-TRANSPORT] The fifth door, fourth on the owner's go-to-market ranking. The trade
+    // exists in VAKKEN as 'transport' — transportkosten per km, rit, wachttijd, laden en lossen,
+    // spoedtoeslag, opslag, all at 21% — with a let_op that names the one trap of this trade:
+    // goederen 21%, personen 9%. It is in VEHICLE_TRADES (the vehicles tile shows; a courier thinks
+    // in kentekens and APK dates) and NOT in COUNTER_TRADES (nobody pays a courier at a desk).
+    // Only what exists is promised: no rittenregistratie, no planning, no tachograaf.
+    slug: 'transport',
+    vak: 'transport',
+    naam: 'transport en koeriers',
+    title: 'BoekBrug voor transport en koeriers — brandstofbonnen, ritten en de wagen, zonder avondwerk',
+    description:
+      'Brandstofbonnen, tol, lease en onderhoud van drie leveranciers, en elke rit een factuur. ' +
+      'BoekBrug leest je bonnen zelf in, zet je ritprijzen klaar en houdt kenteken en APK per wagen bij.',
+    keywords: [
+      'administratie koerier', 'boekhouding transportbedrijf zzp', 'factuur per rit maken',
+      'brandstofbonnen scannen', 'apk bijhouden bestelbus', 'btw goederenvervoer 21 procent',
+    ],
+    probleem:
+      'Je tankt drie keer per week en de bon ligt in het dashboardkastje. De lease, de tol en het ' +
+      'onderhoud komen per mail. Elke rit moet een factuur worden — en die maak je ’s avonds, ' +
+      'als de wagen al stilstaat en jij eigenlijk ook.',
+    belofte:
+      'Je fotografeert de tankbon bij de pomp en hij is afgehandeld. Je factuur kiest uit je eigen ' +
+      'ritprijzen — per kilometer, per rit, wachttijd, laden en lossen — en de betaling wordt in je ' +
+      'bankafschrift teruggevonden.',
+    stappen: [
+      {
+        route: 'incoming',
+        title: 'Tankbonnen en leasefacturen die zichzelf inlezen',
+        body:
+          'Foto van de bon bij de pomp, of laat de leasemaatschappij mailen. Bedrag en btw worden ' +
+          'gelezen, en een bon die met de pas is betaald wordt als betaald afgehandeld in plaats van ' +
+          'als openstaande schuld.',
+      },
+      {
+        route: 'facturen',
+        title: 'Een factuur per rit, uit je eigen prijslijst',
+        body:
+          'Transportkosten per kilometer, rit of opdracht, wachttijd, laden en lossen, spoedtoeslag, ' +
+          'opslag per dag — de regels staan klaar op 21%. Rijd je personen, dan staat er bij je ' +
+          'prijslijst dat die regels op 9% horen.',
+      },
+      {
+        route: 'voertuigen',
+        title: 'Kenteken en APK-datum per wagen',
+        body:
+          'Per wagen het kenteken en de APK-vervaldatum. Het scherm zet vooraan welke keuring het ' +
+          'eerst verloopt, zodat een bus niet stilstaat op de dag dat hij moet rijden.',
+      },
+      {
+        route: 'bank',
+        title: 'Je bankafschrift koppelt zichzelf aan je facturen',
+        body:
+          'Bankregels worden gematcht op factuurnummer, bedrag en rekeningnummer. Een opdrachtgever ' +
+          'die vijf ritten in één keer betaalt, wordt aan alle vijf de facturen gekoppeld.',
+      },
+      {
+        route: 'klaar',
+        title: 'Wat er nog mist, vóór het kwartaal dicht is',
+        body:
+          'Eén scherm dat zegt welke tankbonnen er nog ontbreken en welke bankregels nog geen ' +
+          'factuur hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+      },
+    ],
+    nietDit: [
+      'Er is geen ritten- of kilometerregistratie; kilometers typ je op de factuurregel.',
+      'Er is geen ritplanning en geen tachograaf- of rijtijdenregistratie.',
+      'Een brandstofkaart of tolkastje wordt niet gekoppeld; de factuur daarvan lees je in.',
+      'Personenvervoer staat niet automatisch op 9%; dat tarief zet je zelf op de regels.',
+    ],
+  },
 ] as const;
 
 /** Every dashboard route the pages promise. Read by the gate — never hand-maintained. */

@@ -13,8 +13,9 @@ import { SEGMENT_PAGES } from "../../src/lib/segment-pages";
 
 test("[SEGMENT-VOORDEUR] elke deur rendert zijn eigen belofte, stappen en grenzen", async () => {
   const { default: SegmentVoordeur } = await import("../../src/components/SegmentVoordeur");
-  // [SEGMENT-GARAGE] Four since the go-to-market ranking put garage second: bouw, garage, schoonmaak.
-  assert.equal(SEGMENT_PAGES.length, 4, "vier deuren, zoals besloten");
+  // [SEGMENT-GARAGE] [SEGMENT-TRANSPORT] Five, on the go-to-market ranking: bouw, garage,
+  // schoonmaak, transport — plus the measured winkel/horeca door.
+  assert.equal(SEGMENT_PAGES.length, 5, "vijf deuren, zoals besloten");
 
   for (const pagina of SEGMENT_PAGES) {
     const html = renderToStaticMarkup(React.createElement(SegmentVoordeur, { pagina }));
