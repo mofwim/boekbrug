@@ -199,8 +199,9 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
         route: 'klaar',
         title: 'Wat er nog mist, vóór het kwartaal dicht is',
         body:
-          'Eén scherm dat zegt welke bonnen er nog ontbreken en welke bankregels nog geen factuur ' +
-          'hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen bon of factuur hebben, met ' +
+          'één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan hoeft ' +
+          'te bellen.',
       },
     ],
     nietDit: [
@@ -310,8 +311,9 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
         route: 'facturen',
         title: 'Arbeidsloon en onderdelen op één factuur',
         body:
-          'Je prijslijst staat klaar: arbeidsloon per uur, kleine en grote beurt, APK-keuring, ' +
-          'onderdelen, banden. Kies de regels, vul het bedrag in, en de factuur staat.',
+          'Je prijslijst ligt klaar om in te vullen: arbeidsloon per uur, kleine en grote beurt, ' +
+          'APK-keuring, onderdelen en banden staan er met het juiste btw-tarief bij — jij zet er één ' +
+          'keer je eigen prijzen naast. Daarna kies je die regels op elke factuur, zonder overtypen.',
       },
       {
         route: 'voertuigen',
@@ -322,17 +324,20 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
       },
       {
         route: 'kas',
-        title: 'Pin en contant aan de balie, in één kasboek',
+        title: 'Contant in het kasboek, pin op je afschrift',
         body:
-          'Een bon die met de pin of contant is betaald, wordt als betaald afgehandeld. Het kasboek ' +
-          'houdt een lopend saldo bij dat je tegen de la kunt leggen.',
+          'Staat er Kontant, Wisselgeld, Bankpas of PIN op de bon, dan wordt hij meteen als betaald ' +
+          'geboekt — contant beweegt je kasboek, pin vind je terug op je bankafschrift. Zegt de bon ' +
+          'het niet, dan staat hij klaar met één tik. Het kasboek houdt een lopend kassaldo bij dat ' +
+          'je tegen de la kunt leggen.',
       },
       {
         route: 'klaar',
         title: 'Wat er nog mist, vóór het kwartaal dicht is',
         body:
-          'Eén scherm dat zegt welke inkoopfacturen nog ontbreken en welke bankregels nog geen ' +
-          'factuur hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen inkoopfactuur hebben, met ' +
+          'één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan hoeft ' +
+          'te bellen.',
       },
     ],
     nietDit: [
@@ -374,17 +379,19 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
         route: 'incoming',
         title: 'Tankbonnen en leasefacturen die zichzelf inlezen',
         body:
-          'Foto van de bon bij de pomp, of laat de leasemaatschappij mailen. Bedrag en btw worden ' +
-          'gelezen, en een bon die met de pas is betaald wordt als betaald afgehandeld in plaats van ' +
-          'als openstaande schuld.',
+          'Foto van de bon bij de pomp, of koppel je mailbox en laat de leasemaatschappij mailen. ' +
+          'Bedrag en btw worden ' +
+          'gelezen, en een bon waarop PIN of Bankpas staat afgedrukt wordt als betaald afgehandeld in ' +
+          'plaats van als openstaande schuld. Een tankpasbon is geen betaling en wacht op de factuur.',
       },
       {
         route: 'facturen',
         title: 'Een factuur per rit, uit je eigen prijslijst',
         body:
           'Transportkosten per kilometer, rit of opdracht, wachttijd, laden en lossen, spoedtoeslag, ' +
-          'opslag per dag — de regels staan klaar op 21%. Rijd je personen, dan staat er bij je ' +
-          'prijslijst dat die regels op 9% horen.',
+          'opslag per dag — die regels staan als voorstel klaar op 21%; de prijs vul je zelf in, en ' +
+          'alleen wat je een prijs geeft komt in je prijslijst. Zolang die leeg is, staat erbij dat ' +
+          'personenvervoer op 9% hoort.',
       },
       {
         route: 'voertuigen',
@@ -397,15 +404,18 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
         route: 'bank',
         title: 'Je bankafschrift koppelt zichzelf aan je facturen',
         body:
-          'Bankregels worden gematcht op factuurnummer, bedrag en rekeningnummer. Een opdrachtgever ' +
-          'die vijf ritten in één keer betaalt, wordt aan alle vijf de facturen gekoppeld.',
+          'Bankregels worden gematcht op factuurnummer, bedrag en rekeningnummer. Staan de ' +
+          'factuurnummers in de betaling, dan wordt een opdrachtgever die vijf ritten in één keer ' +
+          'betaalt aan alle vijf gekoppeld; staan ze er niet in, dan zoekt BoekBrug tot vier ' +
+          'openstaande facturen waarvan de som precies klopt en kies jij.',
       },
       {
         route: 'klaar',
         title: 'Wat er nog mist, vóór het kwartaal dicht is',
         body:
-          'Eén scherm dat zegt welke tankbonnen er nog ontbreken en welke bankregels nog geen ' +
-          'factuur hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen tankbon of factuur hebben, ' +
+          'met één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan ' +
+          'hoeft te bellen.',
       },
     ],
     nietDit: [
