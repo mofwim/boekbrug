@@ -266,9 +266,11 @@ export default function LeveranciersClient({
           display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'baseline',
         }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 15.5, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word' }}>
+            {/* [BESTE] The name opens this supplier's invoices — the list used to end at the amount,
+                and the owner went to Crediteuren to type the name into the search box. */}
+            <Link href={`/dashboard/incoming/manage?zoek=${encodeURIComponent(l.name)}`} style={{ fontSize: 15.5, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word', textDecoration: 'none' }}>
               {l.name}
-            </div>
+            </Link>
             <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2, lineHeight: 1.5 }}>
               {[l.aantal, l.vervallen, l.oudste].filter(Boolean).join(' · ')}
             </div>

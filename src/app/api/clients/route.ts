@@ -17,6 +17,9 @@ import { invoiceOwnerId, invoiceCreatedBy } from '@/lib/acting-for'
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder deze terugval kan er op een
 // installatie met een openstaande migratie geen klant meer worden toegevoegd.
 import { writeWithTrail, isUnknownColumn } from '@/lib/created-by'
+// [BESTE] work_items may not exist on an installation behind on migrations — that is no reason to
+// refuse a delete, and every other error is.
+import { isMissingRelation } from '@/lib/pg-missing'
 
 export const dynamic = 'force-dynamic'
 
@@ -113,6 +116,61 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[ACTING-FOR] /api/clients PATCH', e)
+    return NextResponse.json({ error: 'Server fout' }, { status: 500 })
+  }
+}
+
+// [BESTE] Verwijderen — alleen een klant waar niets op staat.
+//
+// De browser verwijderde de rij rechtstreeks. invoices.client_id heeft geen foreign key, dus de
+// facturen van die klant bleven staan met een verwijzing naar een rij die niet meer bestond: de
+// klantkaart vanuit zo'n factuur gaf een 404, en de betaalgedrag-meting had geen klant meer om
+// op te tellen. work_items.client_id heeft wél een sleutel (ON DELETE SET NULL) — dan verliest
+// een werkorder stil zijn klant. Elk pakket weigert dit; nu wij ook, met de reden erbij.
+export async function DELETE(request: NextRequest) {
+  try {
+    const acting = await getActingFor()
+    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Alleen de eigenaar: een medewerker mag klanten invoeren en bijwerken, niet laten verdwijnen.
+    if (acting.role !== 'eigenaar') {
+      return NextResponse.json({ error: 'Alleen de eigenaar kan een klant verwijderen' }, { status: 403 })
+    }
+    const id = request.nextUrl.searchParams.get('id') ?? ''
+    if (!id) return NextResponse.json({ error: 'Welke klant?' }, { status: 400 })
+    const ownerId = invoiceOwnerId(acting)
+    const pipeline = createPipelineClient()
+
+    const [{ count: invoiceCount, error: invErr }, { count: workCount, error: workErr }] = await Promise.all([
+      pipeline.from('invoices').select('id', { count: 'exact', head: true }).eq('sender_id', ownerId).eq('client_id', id),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pipeline as any).from('work_items').select('id', { count: 'exact', head: true }).eq('user_id', ownerId).eq('client_id', id),
+    ])
+    // [NO-SILENT-EMPTY] Een telling die niet lukte is geen nul: dan weigeren we, niet verwijderen.
+    if (invErr || (workErr && !isMissingRelation(String(workErr.message ?? '')))) {
+      console.error('[BESTE] klant verwijderen: telling mislukt', { id, invErr, workErr })
+      return NextResponse.json({ error: 'Kon niet controleren of deze klant facturen heeft — probeer opnieuw' }, { status: 503 })
+    }
+    const invoices = invoiceCount ?? 0
+    const work = workErr ? 0 : (workCount ?? 0)
+    if (invoices > 0 || work > 0) {
+      const parts = [
+        invoices > 0 ? (invoices === 1 ? '1 factuur' : `${invoices} facturen`) : null,
+        work > 0 ? (work === 1 ? '1 werkorder' : `${work} werkorders`) : null,
+      ].filter(Boolean)
+      return NextResponse.json(
+        { error: `Deze klant heeft ${parts.join(' en ')} en kan daarom niet worden verwijderd` },
+        { status: 409 },
+      )
+    }
+
+    const { error } = await pipeline.from('clients').delete().eq('id', id).eq('user_id', ownerId)
+    if (error) {
+      console.error('[BESTE] klant verwijderen mislukt', { error })
+      return NextResponse.json({ error: 'Verwijderen mislukt — probeer opnieuw' }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[BESTE] /api/clients DELETE', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }

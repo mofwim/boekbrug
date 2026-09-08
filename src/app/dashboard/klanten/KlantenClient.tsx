@@ -37,6 +37,20 @@ interface Client {
 
 const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '' }
 
+/** The form as it starts for an existing customer: every null shown as an empty field. */
+function formFor(client: Client): typeof EMPTY {
+  return {
+    name:        client.name,
+    email:       client.email       ?? '',
+    kvk_number:  client.kvk_number  ?? '',
+    btw_number:  client.btw_number  ?? '',
+    iban:        client.iban        ?? '',
+    address:     client.address     ?? '',
+    postal_code: client.postal_code ?? '',
+    city:        client.city        ?? '',
+  }
+}
+
 // Avatar color from name
 function avatarColor(name: string) {
   const colors = ['#1A73E8','#00897B','#7B1FA2','#E37400','#E53935','#039BE5']
@@ -52,6 +66,9 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   // expand and briefly highlight the matching client card.
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
+  // [BESTE] The customer card's own "Gegevens bewerken" lands here with ?bewerk={clientId}: the form
+  // opens pre-filled once the list is loaded, the same form the pencil on the row opens.
+  const bewerkId = searchParams.get('bewerk')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
   // [FOCUS-KOP] The sticky controls bar, measured live rather than assumed.
@@ -174,21 +191,28 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
 
   // [BOEK-029] Open form pre-filled with client data
   function handleEdit(client: Client) {
-    setForm({
-      name:        client.name,
-      email:       client.email       ?? '',
-      kvk_number:  client.kvk_number  ?? '',
-      btw_number:  client.btw_number  ?? '',
-      iban:        client.iban        ?? '',
-      address:     client.address     ?? '',
-      postal_code: client.postal_code ?? '',
-      city:        client.city        ?? '',
-    })
+    setForm(formFor(client))
     setEditingId(client.id)
     setShowForm(true)
     setError(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  // [BESTE] The deep link from the customer card. Same body as handleEdit, written out because a
+  // function declared in the component is not a stable effect dependency.
+  useEffect(() => {
+    if (!bewerkId || loading) return
+    const client = clients.find(c => c.id === bewerkId)
+    if (!client) return
+    // Same wrapper as the ?focus= effect above: one tick, not a synchronous setState in the body.
+    void (async () => {
+      setForm(formFor(client))
+      setEditingId(client.id)
+      setShowForm(true)
+      setError(null)
+    })()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [bewerkId, loading, clients])
 
   async function handleDelete(id: string) {
     // [MOTION] Was window.confirm('Klant verwijderen?') — a browser box that
@@ -203,8 +227,16 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     if (!ok) return
     // [NO-SILENT-EMPTY] Het resultaat werd weggegooid: een geweigerde of offline delete kreeg
     // tóch "Klant verwijderd" en de rij kwam bij het volgende bezoek onverklaard terug.
-    const { error: delErr } = await supabase.from('clients').delete().eq('id', id)
-    if (delErr) {
+    // [BESTE] Through the server door, which refuses when invoices stand on this customer — the
+    // browser delete used to leave those invoices pointing at a row that no longer existed.
+    try {
+      const res = await fetch(`/api/clients?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        showToast(failureText(res.status, json, t('kl.verwijderenMislukt')))
+        return
+      }
+    } catch {
       showToast(t('kl.verwijderenMislukt'))
       return
     }

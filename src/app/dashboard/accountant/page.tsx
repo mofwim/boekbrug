@@ -17,6 +17,10 @@ import {
 // [WERKVOORRAAD] De cijfers achter de vier tegels. Zie work-queues.ts voor waarom een tegel
 // zonder getal een deur is waar niets op staat.
 import { getAccountantWorkQueues } from '@/modules/accountant/work-queues'
+// [TAAL] The one sentence this server page hands down comes from the catalogue, in the
+// accountant's own language — a page holds no language of its own either.
+import { getServerLocale } from '@/lib/i18n/server'
+import { translator } from '@/lib/i18n/t'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,9 +128,7 @@ export default async function AccountantPage() {
         todos={todos}
         notifications={notifications ?? []}
         notificationsError={
-          notifErr
-            ? 'We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt niets over of er meldingen voor je zijn.'
-            : null
+          notifErr ? translator(await getServerLocale())('bh.home.meldingenFout') : null
         }
         // [NO-SILENT-EMPTY] Geen badge op een mislukte telling, in plaats van een badge die 0 zegt.
         unreadMessages={unreadErr ? 0 : unreadMessages ?? 0}

@@ -3591,3 +3591,47 @@ test("[VOORSTEL] the client's proposal card renders old → new per field, the r
   assert.match(weg, /Niet akkoord/);
   assert.doesNotMatch(weg, /focus=/);
 });
+
+// ── [BESTE] The customer card, against what every package does with it ─────────────────────
+test("[BESTE] the customer card opens each invoice, chips a late one as late, and offers its own edit", async () => {
+  const { default: KlantDetailClient } = await import("../../src/app/dashboard/klanten/[id]/KlantDetailClient");
+  const { clientPaymentBehaviour } = await import("../../src/lib/client-payment-behaviour");
+  const { dayNumberFromIso } = await import("../../src/lib/invoice-reminders");
+  const today = dayNumberFromIso("2026-08-29") as number;
+  const invoices = [
+    // sent, due date long past, still 'sent' in the column — the cron has not moved it
+    { id: "late-1", invoice_number: "F-9", invoice_date: "2026-01-01", due_date: "2026-01-31", status: "sent", total_inc_btw: 500, payment_date: null, amount_paid: null, invoice_type: "factuur", original_invoice_id: null },
+    // an offerte past its date is not late: nothing is owed on it
+    { id: "off-1", invoice_number: "O-1", invoice_date: "2026-01-01", due_date: "2026-01-31", status: "sent", total_inc_btw: 100, payment_date: null, amount_paid: null, invoice_type: "pro_forma", original_invoice_id: null },
+  ];
+  const html = renderToStaticMarkup(
+    React.createElement(KlantDetailClient as never, {
+      client: { id: "k9", name: "Late Betaler", email: null, kvk_number: null, btw_number: null, iban: null, address: null, postal_code: null, city: null, notes: null },
+      invoices, totals: { billed: 600, open: 500, count: 2 }, behaviour: clientPaymentBehaviour(invoices, today),
+    }),
+  );
+  assert.match(html, /href="\/dashboard\/invoice\/late-1"/, "the row opens ITS invoice, not the whole list");
+  assert.doesNotMatch(html, /href="\/dashboard\/facturen"/, "no row points at the list any more");
+  assert.match(html, /Verlopen/, "the late invoice wears the late chip although its status column says sent");
+  assert.equal((html.match(/Verlopen/g) ?? []).length, 1, "and the offerte past its date does not");
+  assert.match(html, /href="\/dashboard\/klanten\?bewerk=k9"/, "the card offers its own edit");
+});
+
+test("[BESTE] the sales list shows what is still to come in and how much is late, and hides a row of zeros", async () => {
+  const { default: FacturenClient } = await import("../../src/app/dashboard/facturen/FacturenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const render = (totals: unknown) => renderToStaticMarkup(
+    React.createElement(DialogProvider, null,
+      React.createElement(ToastProvider, null,
+        React.createElement(FacturenClient as never, { profile: { id: "u1" }, totals }))),
+  );
+  const withMoney = render({ open: 3, outstanding: 1250.5, overdue: 1, overdueAmount: 300 });
+  assert.match(withMoney, /Openstaand/);
+  assert.match(withMoney, /1\.250,50/, "the outstanding sum is on the screen");
+  assert.match(withMoney, /Te laat/);
+  assert.match(withMoney, /300,00/, "and so is the late part");
+  assert.match(withMoney, /4 facturen/, "open + late is the count the owner is chasing");
+  const noMoney = render({ open: 0, outstanding: 0, overdue: 0, overdueAmount: 0 });
+  assert.doesNotMatch(noMoney, /Openstaand ·/, "nothing open → no header");
+});

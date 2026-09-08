@@ -1605,6 +1605,14 @@ export const MESSAGES = {
   'aang.rubriek': { nl: 'Rubriek', ar: 'البند', en: 'Section' },
   'aang.omzet': { nl: 'Omzet', ar: 'الإيراد', en: 'Turnover' },
   'aang.5a': { nl: '5a · Verschuldigde omzetbelasting', ar: '5a · ضريبة المبيعات المستحقة', en: '5a · VAT owed' },
+  'aang.5b': { nl: '5b · Voorbelasting', ar: '5b · الضريبة المدفوعة مسبقاً', en: '5b · Input VAT' },
+  'aang.5g.betalen': { nl: '5g · Concept te betalen', ar: '5g · مسودة: للدفع', en: '5g · Draft: to pay' },
+  'aang.5g.terug': { nl: '5g · Concept terug te ontvangen', ar: '5g · مسودة: للاسترداد', en: '5g · Draft: to receive back' },
+  'aang.ingediendOnbekend': {
+    nl: 'We konden niet zien of dit kwartaal al is ingediend. Ververs de pagina voordat je iets wijzigt.',
+    ar: 'لم نتمكن من معرفة ما إذا كان هذا الربع قد قُدِّم. حدّث الصفحة قبل أن تغيّر شيئاً.',
+    en: 'We could not see whether this quarter has already been filed. Refresh the page before you change anything.',
+  },
   'aang.totaal3b': { nl: 'Totaal · gelijk aan 3b', ar: 'الإجمالي · يساوي 3b', en: 'Total · equals 3b' },
   'aang.icp': { nl: 'ICP-opgaaf · aparte aangifte', ar: 'إقرار ICP · تصريح منفصل', en: 'ICP statement · separate filing' },
   'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
@@ -1927,6 +1935,8 @@ export const MESSAGES = {
   },
   'act.bv.qrAlt': { nl: 'QR naar betaalpagina', ar: 'رمز QR لصفحة الدفع', en: 'QR to the payment page' },
   'act.bv.kopieer': { nl: 'Kopieer link', ar: 'انسخ الرابط', en: 'Copy link' },
+  // [BESTE] Share the pay link the way a customer actually receives it: in WhatsApp.
+  'act.bv.whatsapp': { nl: 'Deel via WhatsApp', ar: 'شارك عبر واتساب', en: 'Share via WhatsApp' },
   'act.bv.gekopieerd': { nl: 'Gekopieerd', ar: 'تم النسخ', en: 'Copied' },
   'act.bv.disclaimer': {
     nl: 'BoekBrug verwerkt de betaling niet — het geld gaat direct naar je eigen IBAN ({iban}).',
@@ -2573,6 +2583,9 @@ export const MESSAGES = {
   'kld.concept': { nl: 'Concept', ar: 'مسودة', en: 'Draft' },
 
   // Messages screen.
+  // [BESTE] The customer card: every package opens the invoice from the customer, and offers the
+  // customer's own edit from the same card.
+  'kld.bewerken': { nl: 'Gegevens bewerken', ar: 'تعديل البيانات', en: 'Edit details' },
   'ber.zoek': { nl: 'Zoek op naam of bericht…', ar: 'ابحث بالاسم أو الرسالة…', en: 'Search by name or message…' },
   'ber.zoekAria': { nl: 'Berichten zoeken', ar: 'البحث في الرسائل', en: 'Search messages' },
   'ber.wissen': { nl: 'Wissen', ar: 'مسح', en: 'Clear' },
@@ -9241,6 +9254,7 @@ export const MESSAGES = {
     ar: 'الفواتير فقط (CSV). لأرقام الضريبة الكاملة بما فيها البطاقة والنقد: استخدم حزمة الربع.',
     en: 'Only the invoices (CSV). For the full VAT figures incl. card & cash: use the quarterly package.',
   },
+  'kw.csv': { nl: 'CSV', ar: 'CSV', en: 'CSV' },
   'kw.gedaald': {
     nl: 'gedaald',
     ar: 'انخفاضاً',
@@ -9769,6 +9783,15 @@ export const MESSAGES = {
     ar: 'تكرار',
     en: 'Repeat',
   },
+  // [BESTE] "Nog een keer": the copy that every package puts beside a sent invoice — a new concept
+  // with the same customer and lines, opened for editing.
+  'lijst.nogEenKeer': { nl: 'Nog een keer', ar: 'مرة أخرى', en: 'Once more' },
+  'lijst.nogEenKeer.mislukt': { nl: 'Kopiëren is niet gelukt.', ar: 'لم ينجح النسخ.', en: 'Copying did not work.' },
+  // [BESTE] The money above the list: what is still to come in, and how much of it is late.
+  'lijst.kop.openstaand': { nl: 'Openstaand', ar: 'مستحق', en: 'Outstanding' },
+  'lijst.kop.teLaat': { nl: 'Te laat', ar: 'متأخر', en: 'Late' },
+  'lijst.kop.aantal': { nl: '{n} facturen', ar: '{n} فواتير', en: '{n} invoices' },
+  'lijst.kop.een': { nl: '1 factuur', ar: 'فاتورة واحدة', en: '1 invoice' },
   'lijst.herhalen.pauzeLabel': {
     nl: 'Herhalen gepauzeerd',
     ar: 'التكرار متوقف مؤقتاً',
@@ -14343,6 +14366,11 @@ export const MESSAGES = {
   'bh.home.ai.opnieuw': { nl: 'Opnieuw', en: 'Again', ar: 'من جديد' },
   'bh.home.ai.teVeel': { nl: 'Even te veel aanvragen', en: 'A few too many requests', ar: 'طلبات كثيرة الآن' },
   'bh.home.ai.mislukt': { nl: 'Het lukte niet', en: 'It did not work', ar: 'لم ينجح الأمر' },
+  'bh.home.meldingenFout': {
+    nl: 'We konden je meldingen nu niet ophalen. Probeer het zo meteen opnieuw.',
+    ar: 'لم نتمكن من جلب إشعاراتك الآن. حاول مرة أخرى بعد قليل.',
+    en: 'We could not fetch your notifications right now. Try again in a moment.',
+  },
   'bh.home.ai.probeerStraks': { nl: 'Probeer het zo opnieuw.', en: 'Try again shortly.', ar: 'أعد المحاولة بعد قليل.' },
   'bh.home.ai.geenVerbinding': { nl: 'Geen verbinding', en: 'No connection', ar: 'لا اتصال' },
   'bh.home.ai.checkInternet': { nl: 'Controleer je internet en probeer opnieuw.', en: 'Check your internet and try again.', ar: 'تحقق من اتصالك بالإنترنت وحاول مرة أخرى.' },

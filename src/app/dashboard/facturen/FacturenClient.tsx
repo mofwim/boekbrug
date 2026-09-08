@@ -203,10 +203,14 @@ export default function FacturenClient({
   // chasing, held against every unattached credit in the bank, with the scope of that search.
   // Null when it could not run — and then the panel says that rather than nothing.
   openProof = null,
+  // [BESTE] What is still to come in, counted by the server over EVERY sales invoice — this list is
+  // paged, so a sum over its rows would be the sum of the first page. Null when the read failed.
+  totals = null,
 }: {
   profile: { id: string }
   makers?: Record<string, string>
   openProof?: OpenInvoiceProofResult | null
+  totals?: { open: number; outstanding: number; overdue: number; overdueAmount: number } | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -978,6 +982,20 @@ export default function FacturenClient({
   // The owner taps once; decideRemoval says what that means for THIS invoice, the dialog shows
   // it in full, and only then does anything happen. Nothing here decides policy — that lives in
   // invoice-removal.ts and is re-checked by the server, which never trusts this decision.
+  // [BESTE] "Nog een keer": the duplicate door already existed (BOEK-003) and nothing called it.
+  // A new concept with this customer and these lines, opened for editing — the number falls at
+  // sending, through the owner's own series, so nothing is issued here.
+  async function handleDuplicate(id: string) {
+    try {
+      const res = await fetch(`/api/invoice/${id}/duplicate`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.invoiceId) { showToast(failureText(res.status, json, t('lijst.nogEenKeer.mislukt'))); return }
+      router.push(`/dashboard/invoice/${json.invoiceId}/edit`)
+    } catch {
+      showToast(t('lijst.nogEenKeer.mislukt'))
+    }
+  }
+
   function handleRemoveRequest(inv: RemovalInvoice & { id: string }) {
     setRemoveCtx({ id: inv.id, decision: decideRemoval(inv) })
   }
@@ -1320,6 +1338,24 @@ export default function FacturenClient({
             Never blocking, and never hidden while searching: a proof that could not run says so
             rather than leaving a silence that reads as "everything is fine". */}
         <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal, proofAnswers.answered)} actions={proofAnswers.actions} />
+
+        {/* [BESTE] The two numbers every package puts above its sales list: what is still to come
+            in, and how much of it is late. Tapping the late one opens that filter. Hidden when
+            nothing is open — a row of zeros is noise — and when the server could not count. */}
+        {totals && totals.open + totals.overdue > 0 && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1, background: M3.surface, borderRadius: R.md, border: `1px solid ${M3.outlineVariant}`, padding: '10px 14px' }}>
+              <div style={{ fontSize: 11.5, color: M3.neutral }}>{t('lijst.kop.openstaand')} · {totals.open + totals.overdue === 1 ? t('lijst.kop.een') : t('lijst.kop.aantal', { n: totals.open + totals.overdue })}</div>
+              <div style={{ fontFamily: FONT_NUM, fontSize: 17, fontWeight: 700, color: M3.onSurface }}>{fmtEur(totals.outstanding)}</div>
+            </div>
+            {totals.overdue > 0 && (
+              <button onClick={() => setFilter('overdue')} style={{ flex: 1, textAlign: 'start', cursor: 'pointer', fontFamily: FONT, background: M3.errorContainer, borderRadius: R.md, border: 'none', padding: '10px 14px' }}>
+                <div style={{ fontSize: 11.5, color: '#8C1D18' }}>{t('lijst.kop.teLaat')} · {totals.overdue === 1 ? t('lijst.kop.een') : t('lijst.kop.aantal', { n: totals.overdue })}</div>
+                <div style={{ fontFamily: FONT_NUM, fontSize: 17, fontWeight: 700, color: M3.error }}>{fmtEur(totals.overdueAmount)}</div>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* [NO-SILENT-EMPTY] The credit read did not answer, and this list cannot say what it
             normally says. Every amount below may be too high and the withdrawn-invoice chips are
@@ -1905,6 +1941,14 @@ export default function FacturenClient({
                             </button>
                           )
                         })()}
+                        {!isCredit && !isOfferte && inv.status !== 'draft' && (
+                          <button
+                            onClick={e => { e.stopPropagation(); void handleDuplicate(inv.id) }}
+                            style={{ fontSize: 13, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>content_copy</span>
+                            {t('lijst.nogEenKeer')}
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>

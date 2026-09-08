@@ -12,6 +12,10 @@ import { getSessionUser } from '@/lib/session-user'
 import FacturenClient from './FacturenClient'
 // [OPENSTAAND-BEWIJS] Is anything we are chasing already in the bank? See the block below.
 import { collectOpenInvoiceProof } from '@/lib/open-invoice-proof-collect'
+// [BESTE] The money above the list, from the same engine as every other openstaand figure.
+import { fetchAllRows } from '@/lib/supabase-paginate'
+import { summarise, type SalesInvoice } from '@/lib/sales-overview'
+import { creditedTotalsFrom } from '@/lib/credited-invoices'
 
 export default async function Page() {
   const supabase = await createServerSupabaseClient()
@@ -77,5 +81,26 @@ export default async function Page() {
     return null
   })
 
-  return <FacturenClient profile={profile} makers={makers} openProof={openProof} />
+  // [BESTE] Openstaand and te laat, over EVERY sales invoice — the list below is paged. Only the
+  // rows that can still be open are read (a paid or draft row adds nothing to either figure), plus
+  // the creditnotas that net against them. [VOL-GELEZEN] paged. [NO-SILENT-EMPTY] a failed read
+  // is null, and the header stays away rather than showing a low number.
+  type TotalsRow = SalesInvoice & { original_invoice_id: string | null }
+  const totals = await fetchAllRows<TotalsRow>((from, to) =>
+    supabase.from('invoices')
+      .select('id, invoice_number, client_name, client_email, invoice_date, due_date, total_inc_btw, amount_paid, status, invoice_type, original_invoice_id')
+      .eq('sender_id', user.id).eq('direction', 'outgoing')
+      .or('status.in.(sent,overdue,processing),invoice_type.eq.creditnota')
+      .order('id', { ascending: true }).range(from, to))
+    .then((rows) => {
+      const credited = creditedTotalsFrom(rows.filter((r) => (r.invoice_type ?? 'factuur') === 'creditnota'))
+      const s = summarise(rows, Date.now(), credited)
+      return { open: s.open, outstanding: s.outstanding, overdue: s.overdue, overdueAmount: s.overdueAmount }
+    })
+    .catch((e) => {
+      console.error('[BESTE] sales totals failed — the list renders without its header', { userId: user.id, error: e instanceof Error ? e.message : String(e) })
+      return null
+    })
+
+  return <FacturenClient profile={profile} makers={makers} openProof={openProof} totals={totals} />
 }

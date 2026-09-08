@@ -342,8 +342,7 @@ export default function AangifteClient({ hasAccountant = null }: {
         )}
         {filedUnknown && (
           <div style={{ background: M3.surfaceVariant, color: M3.onSurface, borderRadius: 10, padding: '12px 14px', fontSize: 13, margin: '0 0 12px', lineHeight: 1.55 }}>
-            We konden niet controleren of dit kwartaal al is ingediend. Ga er niet van uit dat het
-            nog openstaat — ververs de pagina voordat je iets wijzigt.
+            {t('aang.ingediendOnbekend')}
           </div>
         )}
 
@@ -420,9 +419,9 @@ export default function AangifteClient({ hasAccountant = null }: {
             {/* 5a / 5b / 5g */}
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '4px 18px', marginBottom: 16 }}>
               <TotRow label={t('aang.5a')} value={eur.format(data.verschuldigd)} />
-              <TotRow label="5b · Voorbelasting" value={`− ${eur.format(data.voorbelasting)}`} />
+              <TotRow label={t('aang.5b')} value={`− ${eur.format(data.voorbelasting)}`} />
               <TotRow
-                label={teBetalen ? '5g · Concept te betalen' : '5g · Concept terug te ontvangen'}
+                label={teBetalen ? t('aang.5g.betalen') : t('aang.5g.terug')}
                 value={eur.format(Math.abs(data.saldo))}
                 strong color={teBetalen ? M3.onSurface : M3.success}
               />

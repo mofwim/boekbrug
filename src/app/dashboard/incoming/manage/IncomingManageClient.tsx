@@ -594,7 +594,9 @@ export default function IncomingManageClient({
   const [filter, setFilter]             = useState<FilterTab>(
     FILTERS.some(f => f.id === filterParam) ? (filterParam as FilterTab) : 'all'
   )
-  const [search, setSearch]             = useState('')  // [SEARCH] in-page live filter
+  // [SEARCH] in-page live filter. [BESTE] ?zoek= pre-fills it, so the supplier list can open
+  // "this supplier's invoices" as a link.
+  const [search, setSearch]             = useState(() => searchParams.get('zoek') ?? '')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [sortBy, setSortBy]             = useState<SortKey>('added_desc')
   const [showSortMenu, setShowSortMenu] = useState(false)
