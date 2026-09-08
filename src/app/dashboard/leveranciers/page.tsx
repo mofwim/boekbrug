@@ -218,13 +218,14 @@ export default async function Page({
     try {
       const { data: supplierRows, error: supplierErr } = await supabase
         .from('suppliers')
-        .select('id, name, iban, kvk_number, btw_number, auto_incasso, created_at, updated_at')
+        .select('id, name, iban, kvk_number, btw_number, auto_incasso, default_btw_rate, default_category, created_at, updated_at')
         .eq('user_id', user.id)
         .order('name', { ascending: true })
       if (supplierErr) throw new Error(supplierErr.message)
       const rows = (supplierRows ?? []) as {
         id: string; name: string; iban: string | null; kvk_number: string | null
         btw_number: string | null; auto_incasso: boolean | null; created_at: string; updated_at: string
+        default_btw_rate: number | null; default_category: string | null
       }[]
       const candidates: MergeSupplier[] = rows.map((row) => {
         const mine = invoiceRows.filter((i) => i.supplier_id === row.id)
@@ -247,6 +248,8 @@ export default async function Page({
         kvk: row.kvk_number,
         btw: row.btw_number,
         autoIncasso: row.auto_incasso === true,
+        defaultBtwRate: row.default_btw_rate ?? null,
+        defaultCategory: row.default_category ?? null,
         invoiceCount: invoiceRows.filter((i) => i.supplier_id === row.id).length,
         // The balance list groups on the name key (see keyOf above), so this is how a balance line
         // finds its editable row: same key, same company.

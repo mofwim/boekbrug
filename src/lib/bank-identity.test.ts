@@ -86,6 +86,17 @@ check("null name → null key", counterpartKey(null) === null);
 check("noise-only name → null key", counterpartKey("CCV*") === null);
 
 console.log("\n— suggestIdentity —");
+// [LEVERANCIER-STANDAARD] The category the owner set on the supplier outranks memory and pattern,
+// for money LEAVING to that supplier only.
+check("an owner-set category on a known supplier wins over a learned one",
+  suggestIdentity("Netflix", "abonnement", -15, "kosten", null, true, "prive").category === "prive");
+check("…and is confident, with its source named",
+  (() => { const s = suggestIdentity("Netflix", "abonnement", -15, "kosten", null, true, "prive"); return s.confident && s.source === "supplier"; })());
+check("money ARRIVING from that supplier is not decided by it",
+  suggestIdentity("Netflix", "refund", 15, null, null, true, "prive").category !== "prive");
+check("without a set category a known supplier is still a proven cost",
+  suggestIdentity("Sligro", "levering", -300, null, null, true, null).category === "kosten");
+
 check("memory always wins",
   suggestIdentity("Shell", "brandstof", -60, "kosten").source === "memory");
 check("memory category is returned",

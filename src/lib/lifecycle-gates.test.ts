@@ -25406,7 +25406,9 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   //    minutes an import can give one row the KVK that makes it a different company.
   const deur = code("src/app/api/supplier/merge/route.ts");
   assert.match(deur, /const plan = planSupplierMerge\(a, b\)/, "the plan is computed server-side");
-  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, created_at'\)/,
+  // [LEVERANCIER-STANDAARD] The two defaults ride along in the same read, so the survivor can
+  // inherit one it lacks; the point of the assertion — the SERVER's own rows — is unchanged.
+  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, default_btw_rate, default_category, created_at'\)/,
     "…on rows it read itself, not on anything the browser sent");
   assert.match(deur, /if \(!plan\.ok\) \{/, "…and a refusal is a refusal");
   // The PAIR is the server's judgement; the DIRECTION is the owner's. Both halves are pinned:

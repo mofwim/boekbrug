@@ -46,7 +46,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const supabase = await createServerSupabaseClient()
 
-  let body: { name?: string | null; iban?: string | null; kvk?: string | null; btw?: string | null }
+  let body: {
+    name?: string | null; iban?: string | null; kvk?: string | null; btw?: string | null
+    defaultBtwRate?: string | number | null; defaultCategory?: string | null
+  }
   try {
     body = await req.json()
   } catch {
@@ -56,7 +59,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // The row as it stands. Owner-scoped: the id in the URL is only a claim.
   const { data: current, error: readErr } = await supabase
     .from('suppliers')
-    .select('id, name, iban, kvk_number, btw_number')
+    .select('id, name, iban, kvk_number, btw_number, default_btw_rate, default_category')
     .eq('id', id)
     .eq('user_id', ownerId)
     .maybeSingle()

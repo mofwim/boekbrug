@@ -34,3 +34,13 @@ test("[TAAL] the sheet holds no language of its own", () => {
   const html = renderToStaticMarkup(<LijnFactuurSheet prefill={purchase} t={ar} onSubmit={noop} onClose={noop} />);
   assert.doesNotMatch(html, /Leverancier|Boek deze regel|Annuleren/);
 });
+
+test("[LEVERANCIER-STANDAARD] a fixed rate seeds the chip and says it was set, not counted", async () => {
+  const html = renderToStaticMarkup(
+    // A sale, so the btw chips are live: on a purchase without a document the btw is off and no
+    // rate sentence is shown at all — that rule stands above this one.
+    <LijnFactuurSheet prefill={{ ...purchase, amount: 242, suggestedRate: 0, basedOn: 0, rateSource: "supplier" }} t={t} onSubmit={noop} onClose={noop} />,
+  );
+  assert.match(html, /het vaste tarief dat je voor deze leverancier hebt ingesteld/);
+  assert.doesNotMatch(html, /eerdere facturen/, "no history is claimed for a set rate");
+});

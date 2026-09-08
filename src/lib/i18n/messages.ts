@@ -723,6 +723,40 @@ export const MESSAGES = {
     en: 'The supplier list could not be read. This is a failure, not an empty list.',
     ar: 'تعذّر قراءة قائمة المورّدين. هذا عطل وليس قائمة فارغة.',
   },
+  // [LEVERANCIER-STANDAARD] The two defaults the owner sets once per supplier.
+  'lev.fout.tarief': {
+    nl: 'Kies een btw-tarief dat bestaat: 0, 9 of 21 procent, of laat het leeg.',
+    en: 'Pick a VAT rate that exists: 0, 9 or 21 percent, or leave it empty.',
+    ar: 'اختر نسبة btw موجودة: 0 أو 9 أو 21 بالمئة، أو اتركها فارغة.',
+  },
+  'lev.fout.categorie': {
+    nl: 'Deze categorie kent de app niet. Kies er een uit de lijst, of laat het leeg.',
+    en: 'The app does not know this category. Pick one from the list, or leave it empty.',
+    ar: 'التطبيق لا يعرف هذا الصنف. اختر واحداً من القائمة، أو اتركه فارغاً.',
+  },
+  'lev.bewerk.tarief': { nl: 'Vast btw-tarief', en: 'Fixed VAT rate', ar: 'نسبة btw ثابتة' },
+  'lev.bewerk.tarief.hint': {
+    nl: 'Staat de btw-uitsplitsing niet op een factuur, dan stelt de app dit tarief voor. Jij bevestigt.',
+    en: 'When an invoice lacks its VAT breakdown, the app proposes this rate. You confirm.',
+    ar: 'إن لم تكن تفاصيل btw على الفاتورة، يقترح التطبيق هذه النسبة. وأنت تؤكّد.',
+  },
+  'lev.bewerk.tarief.geen': { nl: 'Geen vast tarief', en: 'No fixed rate', ar: 'بلا نسبة ثابتة' },
+  'lev.bewerk.categorie': { nl: 'Categorie op het afschrift', en: 'Category on the statement', ar: 'الصنف في كشف الحساب' },
+  'lev.bewerk.categorie.hint': {
+    nl: 'Een bankregel naar deze leverancier krijgt deze categorie voorgesteld. Zonder keuze is het een zakelijke kost.',
+    en: 'A bank line to this supplier is proposed under this category. Without a choice it is a business cost.',
+    ar: 'سطر البنك المدفوع لهذا المورّد يُقترح تحت هذا الصنف. بلا اختيار يُعدّ تكلفة عمل.',
+  },
+  'lev.bewerk.categorie.geen': { nl: 'Geen vaste categorie', en: 'No fixed category', ar: 'بلا صنف ثابت' },
+  'leveranciers.lijst.tarief': { nl: '{tarief}% btw', en: '{tarief}% VAT', ar: 'btw {tarief}%' },
+  // The bank category vocabulary, translated. Same words as the categorise screen in Dutch.
+  'bankcat.omzet': { nl: 'Omzet', en: 'Revenue', ar: 'إيراد' },
+  'bankcat.pos_income': { nl: 'Pinomzet', en: 'Card takings', ar: 'إيراد البطاقات' },
+  'bankcat.kosten': { nl: 'Zakelijke kost', en: 'Business cost', ar: 'تكلفة عمل' },
+  'bankcat.fee': { nl: 'Bankkosten', en: 'Bank charges', ar: 'رسوم بنكية' },
+  'bankcat.prive': { nl: 'Privé', en: 'Private', ar: 'خاص' },
+  'bankcat.transfer': { nl: 'Overboeking', en: 'Transfer', ar: 'تحويل' },
+  'bankcat.tax': { nl: 'Belasting', en: 'Tax', ar: 'ضريبة' },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
@@ -1020,6 +1054,7 @@ export const MESSAGES = {
   'bank.lf.documentElders': { nl: 'Ik heb de factuur of bon ergens anders (papier, mail). Dan mag de btw mee.', ar: 'لدي الفاتورة أو الإيصال في مكان آخر (ورق، بريد). عندها تُحتسب btw.', en: 'I have the invoice or receipt elsewhere (paper, mail). Then the btw counts.' },
   'bank.lf.btw': { nl: 'Btw-tarief', ar: 'نسبة btw', en: 'Btw rate' },
   'bank.lf.geenBtwZonderDocument': { nl: 'Zonder document geen btw terug. De kost telt wel.', ar: 'بلا مستند لا تُسترد btw. التكلفة تُحتسب.', en: 'No document, no btw back. The cost still counts.' },
+  'bank.lf.tariefIngesteld': { nl: '{rate}% — het vaste tarief dat je voor deze leverancier hebt ingesteld.', ar: '{rate}% — النسبة الثابتة التي ضبطتَها لهذا المورّد.', en: '{rate}% — the fixed rate you set for this supplier.' },
   'bank.lf.tariefUitFacturen': { nl: '{rate}% volgens {count} eerdere facturen van deze leverancier.', ar: '{rate}% وفق {count} فواتير سابقة من هذا المورّد.', en: '{rate}% according to {count} earlier invoices from this supplier.' },
   'bank.lf.boek': { nl: 'Boek deze regel', ar: 'سجّل هذا السطر', en: 'Book this line' },
   'bank.lf.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
@@ -5851,6 +5886,12 @@ export const MESSAGES = {
     nl: 'De BTW-uitsplitsing stond niet op deze factuur. Deze leverancier rekende {aantal} keer eerder {tarief}% — allemaal hetzelfde.',
     ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. هذا المورّد احتسب {tarief}% في {aantal} فاتورة سابقة — كلها بالنسبة نفسها.',
     en: 'The BTW breakdown was not on this invoice. This supplier charged {tarief}% on {aantal} earlier invoices — every one of them.',
+  },
+  // [LEVERANCIER-STANDAARD] The owner set the rate on the supplier; no count to cite, a decision.
+  'ink.bedrag.tariefIngesteld': {
+    nl: 'De BTW-uitsplitsing stond niet op deze factuur. Voor deze leverancier heb je {tarief}% ingesteld.',
+    ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. لهذا المورّد ضبطتَ {tarief}%.',
+    en: 'The BTW breakdown was not on this invoice. For this supplier you set {tarief}%.',
   },
   'ink.bedrag.vulSplitsing': {
     nl: 'Vul in: excl. {excl} · BTW {btw}',
