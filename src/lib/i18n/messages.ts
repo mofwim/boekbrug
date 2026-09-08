@@ -595,6 +595,134 @@ export const MESSAGES = {
   'lev.bezig': { nl: 'Bezig met opslaan...', ar: 'جارٍ الحفظ...', en: 'Saving...' },
   'lev.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'lev.opgeslagen': { nl: 'Leverancier vastgelegd', ar: 'تم تثبيت المورّد', en: 'Supplier saved' },
+  // [LEVERANCIER-VASTLEGGEN] Why a supplier form was refused. supplier-pin.ts answers with a CODE
+  // and the route says the sentence in the language of whoever is typing; the sentences used to be
+  // Dutch literals inside the pure module. Each one names the FIELD.
+  'lev.fout.naamLeeg': {
+    nl: 'Vul de naam van de leverancier in.',
+    en: 'Fill in the supplier\'s name.',
+    ar: 'أدخل اسم المورّد.',
+  },
+  'lev.fout.naamOnbetrouwbaar': {
+    nl: 'Dit lijkt geen bedrijfsnaam. Neem de naam over zoals hij op de factuur staat.',
+    en: 'This does not look like a company name. Copy the name as it appears on the invoice.',
+    ar: 'هذا لا يبدو اسم شركة. انقل الاسم كما هو مكتوب على الفاتورة.',
+  },
+  'lev.fout.naamSleutel': {
+    nl: 'Deze naam levert geen bruikbare sleutel op.',
+    en: 'This name does not give a usable key.',
+    ar: 'هذا الاسم لا يعطي مفتاحاً صالحاً للتعرّف.',
+  },
+  'lev.fout.iban': {
+    nl: 'De controlecijfers van dit rekeningnummer kloppen niet. Neem het over zoals het op de factuur staat — met een verkeerd nummer waarschuwt de app straks bij élke echte factuur van deze leverancier.',
+    en: 'The check digits of this account number are wrong. Copy it as it appears on the invoice — with a wrong number the app will warn on every genuine invoice from this supplier.',
+    ar: 'أرقام التحقق في رقم الحساب هذا غير صحيحة. انقله كما هو مكتوب على الفاتورة، فمع رقم خاطئ سيحذّرك التطبيق عند كل فاتورة حقيقية من هذا المورّد.',
+  },
+  'lev.fout.kvk': {
+    nl: 'Een KVK-nummer bestaat uit 8 cijfers.',
+    en: 'A KVK number has 8 digits.',
+    ar: 'رقم KVK يتكوّن من 8 أرقام.',
+  },
+  'lev.fout.btw': {
+    nl: 'Dit heeft niet de vorm van een btw-nummer. Een Nederlands nummer ziet eruit als NL000000000B00.',
+    en: 'This does not have the form of a VAT number. A Dutch number looks like NL000000000B00.',
+    ar: 'هذا ليس بصيغة رقم btw. الرقم الهولندي يبدو هكذا: NL000000000B00.',
+  },
+  'lev.fout.nietIngelogd': {
+    nl: 'Je bent niet ingelogd. Log opnieuw in en probeer het nog eens.',
+    en: 'You are not signed in. Sign in again and try once more.',
+    ar: 'أنت غير مسجّل الدخول. سجّل الدخول مجدداً وأعد المحاولة.',
+  },
+  'lev.fout.factuurNietGevonden': {
+    nl: 'Deze factuur is niet gevonden.',
+    en: 'This invoice was not found.',
+    ar: 'لم يُعثر على هذه الفاتورة.',
+  },
+  'lev.fout.nietGevonden': {
+    nl: 'Deze leverancier is niet gevonden. Ververs de pagina.',
+    en: 'This supplier was not found. Refresh the page.',
+    ar: 'لم يُعثر على هذا المورّد. حدّث الصفحة.',
+  },
+  'lev.fout.bijwerken': {
+    nl: 'De leverancier kon niet worden bijgewerkt. Probeer het zo meteen opnieuw.',
+    en: 'The supplier could not be updated. Try again in a moment.',
+    ar: 'تعذّر تحديث المورّد. أعد المحاولة بعد قليل.',
+  },
+  'lev.fout.naamOpFactuur': {
+    nl: 'De naam kon niet op deze factuur worden gezet.',
+    en: 'The name could not be put on this invoice.',
+    ar: 'تعذّر وضع الاسم على هذه الفاتورة.',
+  },
+  'lev.fout.opzoeken': {
+    nl: 'De leverancier kon niet worden opgezocht. Probeer het opnieuw.',
+    en: 'The supplier could not be looked up. Try again.',
+    ar: 'تعذّر البحث عن المورّد. أعد المحاولة.',
+  },
+  // [LEVERANCIER-BEWERKEN] A number another supplier already carries is a MERGE, not an error.
+  'lev.fout.dubbelIban': {
+    nl: 'Dit rekeningnummer staat al bij {ander}. Voeg de twee leveranciers samen in plaats van het nummer te verplaatsen.',
+    en: 'This account number is already on {ander}. Merge the two suppliers instead of moving the number.',
+    ar: 'رقم الحساب هذا مسجّل بالفعل عند {ander}. ادمج المورّدَين بدل نقل الرقم.',
+  },
+  'lev.fout.dubbelKvk': {
+    nl: 'Dit KVK-nummer staat al bij {ander}. Voeg de twee leveranciers samen in plaats van het nummer te verplaatsen.',
+    en: 'This KVK number is already on {ander}. Merge the two suppliers instead of moving the number.',
+    ar: 'رقم KVK هذا مسجّل بالفعل عند {ander}. ادمج المورّدَين بدل نقل الرقم.',
+  },
+
+  // ── [LEVERANCIER-BEWERKEN] The edit sheet on /dashboard/leveranciers ──
+  'lev.bewerk.knop': { nl: 'Gegevens aanpassen', en: 'Edit details', ar: 'تعديل البيانات' },
+  'lev.bewerk.titel': { nl: 'Leverancier aanpassen', en: 'Edit supplier', ar: 'تعديل المورّد' },
+  'lev.bewerk.uitleg': {
+    nl: 'Dit geldt voor de volgende facturen. Wat al in de boeken staat, houdt wat erop gedrukt stond.',
+    en: 'This applies to the next invoices. What is already in the books keeps what was printed on it.',
+    ar: 'هذا يسري على الفواتير القادمة. ما سُجّل في الدفاتر يحتفظ بما كان مطبوعاً عليه.',
+  },
+  'lev.bewerk.ibanGewijzigd': {
+    nl: 'Je vervangt rekeningnummer {oud}. Controleer dit bij de leverancier via een nummer dat je zelf opzoekt.',
+    en: 'You are replacing account number {oud}. Check this with the supplier via a number you look up yourself.',
+    ar: 'أنت تستبدل رقم الحساب {oud}. تحقّق من ذلك لدى المورّد عبر رقم تبحث عنه بنفسك.',
+  },
+  'lev.bewerk.incasso': { nl: 'Automatische incasso', en: 'Direct debit', ar: 'خصم مباشر تلقائي' },
+  'lev.bewerk.incasso.hint': {
+    nl: 'Deze leverancier schrijft zelf af. Zijn facturen worden als betaald geboekt zodra de afschrijving op het afschrift staat.',
+    en: 'This supplier collects the money itself. Its invoices are booked as paid once the debit appears on the statement.',
+    ar: 'هذا المورّد يخصم المبلغ بنفسه. تُسجَّل فواتيره كمدفوعة حين يظهر الخصم في كشف الحساب.',
+  },
+  'lev.bewerk.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
+  'lev.bewerk.opgeslagen': {
+    nl: 'De gegevens van {naam} zijn opgeslagen.',
+    en: 'The details of {naam} have been saved.',
+    ar: 'تم حفظ بيانات {naam}.',
+  },
+  'lev.bewerk.opgeslagenIban': {
+    nl: 'Het oude rekeningnummer blijft bewaard. Een factuur met dat nummer wordt nog herkend, en krijgt dan een waarschuwing.',
+    en: 'The old account number is kept. An invoice carrying it is still recognised, and then gets a warning.',
+    ar: 'يبقى الرقم القديم محفوظاً. الفاتورة التي تحمله تُعرَف كما كانت، ويظهر عندها تحذير.',
+  },
+  'lev.bewerk.laatstGewijzigd': {
+    nl: 'Laatst aangepast op {datum}',
+    en: 'Last changed on {datum}',
+    ar: 'آخر تعديل في {datum}',
+  },
+  'leveranciers.lijst.kop': { nl: 'Alle leveranciers', en: 'All suppliers', ar: 'كل المورّدين' },
+  'leveranciers.lijst.uitleg': {
+    nl: 'Hierop herkent de app de volgende factuur: naam, rekeningnummer, KVK en btw-nummer. Klopt iets niet, pas het hier aan.',
+    en: 'The app recognises the next invoice on this: name, account number, KVK and VAT number. If something is wrong, change it here.',
+    ar: 'بهذه البيانات يتعرّف التطبيق على الفاتورة القادمة: الاسم ورقم الحساب وKVK ورقم btw. إن كان شيء غير صحيح فعدّله هنا.',
+  },
+  'leveranciers.lijst.leeg': {
+    nl: 'Nog geen leveranciers. Ze verschijnen hier zodra een inkoopfactuur is ingelezen.',
+    en: 'No suppliers yet. They appear here once a purchase invoice has been read.',
+    ar: 'لا مورّدين بعد. سيظهرون هنا بعد قراءة أول فاتورة مشتريات.',
+  },
+  'leveranciers.lijst.zonderIban': { nl: 'geen rekeningnummer bekend', en: 'no account number known', ar: 'لا رقم حساب معروف' },
+  'leveranciers.lijst.incasso': { nl: 'automatische incasso', en: 'direct debit', ar: 'خصم مباشر' },
+  'leveranciers.lijst.nietGelezen': {
+    nl: 'De leverancierslijst kon niet worden gelezen. Dit is een storing, geen lege lijst.',
+    en: 'The supplier list could not be read. This is a failure, not an empty list.',
+    ar: 'تعذّر قراءة قائمة المورّدين. هذا عطل وليس قائمة فارغة.',
+  },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
@@ -12815,6 +12943,7 @@ export const MESSAGES = {
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
   'log.supplier.auto_incasso_off': { nl: 'Automatische incasso bij een leverancier uitgezet', en: 'Direct debit switched off for a supplier', ar: 'أُوقف الاستقطاع التلقائي لمورّد' },
+  'log.supplier.updated': { nl: 'Gegevens van een leverancier aangepast', en: 'Supplier details changed', ar: 'عُدّلت بيانات مورّد' },
   'log.supplier.merged': { nl: 'Twee leveranciers samengevoegd tot één', en: 'Two suppliers merged into one', ar: 'دُمج مورّدان في واحد' },
   'log.document.uploaded': { nl: 'Bestand geüpload', en: 'File uploaded', ar: 'رُفع ملف' },
   'log.document.duplicate_blocked': { nl: 'Dubbel bestand geweigerd', en: 'Duplicate file refused', ar: 'رُفض ملف مكرر' },

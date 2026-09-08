@@ -25391,6 +25391,53 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   assert.match(scherm, /\{offer\.evidence\}/, "…and quotes the identifier, so the owner can check it");
 });
 
+// ── [LEVERANCIER-BEWERKEN] ───────────────────────────────────────────────────────────────────
+//
+// The owner edits a supplier's master record from /dashboard/leveranciers. What the route must
+// hold, in the order it must hold it: the old account number is KEPT before the row is written
+// (an update without the history line is the silent overwrite this exists to prevent), the rename
+// travels to invoices by supplier_id only, the printed IBAN and btw number on those invoices are
+// never touched, and every sentence comes from the catalogue.
+test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by id only, and holds no language", () => {
+  const deur = code("src/app/api/supplier/[id]/route.ts");
+
+  // 1. History BEFORE the update.
+  const historyAt = deur.indexOf("from('supplier_iban_history').insert(");
+  const updateAt = deur.indexOf(".update(plan.changes)");
+  assert.ok(historyAt > 0, "the old IBAN is written to supplier_iban_history");
+  assert.ok(updateAt > historyAt, "…and BEFORE the supplier row is overwritten");
+
+  // 2. Invoices follow by supplier_id, and only their display name moves.
+  assert.match(deur, /\.eq\('supplier_id', current\.id\)/, "siblings are found by id, never by name");
+  const rename = deur.slice(deur.indexOf(".from('invoices')"), deur.indexOf(".select('id')", deur.indexOf(".from('invoices')")));
+  assert.match(rename, /update\(\{ client_name: plan\.changes\.name \}\)/, "only client_name is written on the invoices");
+  assert.doesNotMatch(rename, /vendor_iban|client_btw_number/, "the document's own printed identifiers are never touched");
+
+  // 3. Every user-facing sentence is a t() call; a duplicate is answered as a merge, with a name.
+  const losseZinnen = [...deur.matchAll(/error: ['"]([^'"]+ [^'"]+)['"]/g)].map((m) => m[1]);
+  assert.deepEqual(losseZinnen, [], `the route writes its own sentences: ${losseZinnen.join(" | ")}`);
+  assert.match(deur, /t\(dup === 'iban' \? 'lev\.fout\.dubbelIban' : 'lev\.fout\.dubbelKvk', \{ ander \}\)/,
+    "a unique violation names the other supplier and points at the merge");
+  assert.match(deur, /action: 'supplier\.updated'/, "the edit lands in the audit trail as its own action");
+
+  // 4. The registry reads the history as a tier, read-only, right after the live IBAN.
+  const registry = code("src/lib/supplier-registry.ts");
+  const liveAt = registry.indexOf(".eq('iban', iban)");
+  const histAt = registry.indexOf("from('supplier_iban_history')");
+  const kvkAt = registry.indexOf(".eq('kvk_number', kvk)");
+  assert.ok(liveAt > 0 && histAt > liveAt && histAt < kvkAt, "history sits between the live IBAN and the KVK adoption");
+  const tier = registry.slice(histAt, kvkAt);
+  assert.doesNotMatch(tier, /\.update\(|\.insert\(/, "the history tier writes nothing back");
+
+  // 5. The pure module holds no sentence either: refusals are codes with a catalogue key each.
+  const pin = code("src/lib/supplier-pin.ts");
+  assert.doesNotMatch(pin, /error: '/, "supplier-pin.ts answers with codes, not Dutch");
+  for (const key of ["lev.fout.naamLeeg", "lev.fout.iban", "lev.fout.kvk", "lev.fout.btw"]) {
+    assert.ok(pin.includes(`'${key}'`), `${key} is mapped as a literal`);
+    assert.ok(key in MESSAGES, `${key} exists in messages.ts`);
+  }
+});
+
 // ── [MOVE-CREDITNOTA] ─────────────────────────────────────────────────────────────────────────
 //
 // A creditnota is money the business OWES back. It is settled by paying out or by offsetting, and

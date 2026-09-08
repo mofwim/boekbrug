@@ -26,11 +26,16 @@
 //
 // Empty is a real answer and means CLEAR IT. An owner who sees a wrong btw number must be able to
 // remove it — that is the difference between an editor and a decoration.
+//
+// [TAAL] A refusal is a CODE plus the field, never a sentence: this module is pure and holds no
+// language. The route translates the code with the language of whoever is typing
+// (SUPPLIER_PIN_REFUSAL_KEY below), so an Arabic owner reads the IBAN warning in Arabic.
 
 import { isReliableSupplierName, supplierNameKey } from './supplier-registry'
 // [LEVERANCIER-ID] The same two mechanical checks the invoice checklist runs, so the panel and the
 // editor can never disagree about what a valid number looks like.
 import { checkVendorIban, checkVendorBtw } from './vendor-identity'
+import type { MessageKey } from './i18n/messages'
 
 export interface SupplierPinInput {
   name?: string | null
@@ -49,10 +54,27 @@ export interface SupplierPinValues {
   nameKey: string
 }
 
+/** Why a form was refused. Each code has exactly one sentence in the catalogue. */
+export type SupplierPinRefusal =
+  | 'name_empty' | 'name_unreliable' | 'name_no_key' | 'iban_checksum' | 'kvk_shape' | 'btw_shape'
+
 export type SupplierPinPlan =
   | { ok: true; values: SupplierPinValues }
-  /** Dutch, owner-facing, and it names the FIELD — a form that says "ongeldig" says nothing. */
-  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw'; error: string }
+  /** It names the FIELD — a form that says "ongeldig" says nothing — and the reason as a code. */
+  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw'; code: SupplierPinRefusal }
+
+/**
+ * The sentence behind each refusal, as a catalogue key. Literal keys, not assembled from the code:
+ * the [TAAL] gate looks for each declared key as a literal string to prove it is rendered.
+ */
+export const SUPPLIER_PIN_REFUSAL_KEY: Record<SupplierPinRefusal, MessageKey> = {
+  name_empty: 'lev.fout.naamLeeg',
+  name_unreliable: 'lev.fout.naamOnbetrouwbaar',
+  name_no_key: 'lev.fout.naamSleutel',
+  iban_checksum: 'lev.fout.iban',
+  kvk_shape: 'lev.fout.kvk',
+  btw_shape: 'lev.fout.btw',
+}
 
 /** Digits only. A Dutch KVK number is exactly eight of them. */
 function normalizeKvk(raw: string | null | undefined): string {
@@ -68,49 +90,34 @@ function normalizeKvk(raw: string | null | undefined): string {
 export function planSupplierPin(input: SupplierPinInput): SupplierPinPlan {
   const name = String(input.name ?? '').trim().replace(/\s+/g, ' ')
   if (!name) {
-    return { ok: false, field: 'name', error: 'Vul de naam van de leverancier in.' }
+    return { ok: false, field: 'name', code: 'name_empty' }
   }
   // The same bar the registry uses to refuse manufacturing a junk supplier island. A placeholder
   // ("onbekend", "factuur") as a supplier name would collect every unidentified invoice in the book.
   if (!isReliableSupplierName(name)) {
-    return {
-      ok: false,
-      field: 'name',
-      error: 'Dit lijkt geen bedrijfsnaam. Neem de naam over zoals hij op de factuur staat.',
-    }
+    return { ok: false, field: 'name', code: 'name_unreliable' }
   }
   const nameKey = supplierNameKey(name)
   if (!nameKey) {
-    return { ok: false, field: 'name', error: 'Deze naam levert geen bruikbare sleutel op.' }
+    return { ok: false, field: 'name', code: 'name_no_key' }
   }
 
   const ibanRaw = String(input.iban ?? '').trim()
   const ibanState = checkVendorIban(ibanRaw)
   if (ibanState === 'bad') {
-    return {
-      ok: false,
-      field: 'iban',
-      error:
-        'De controlecijfers van dit rekeningnummer kloppen niet. Neem het over zoals het op de ' +
-        'factuur staat — met een verkeerd nummer waarschuwt de app straks bij élke echte factuur ' +
-        'van deze leverancier.',
-    }
+    return { ok: false, field: 'iban', code: 'iban_checksum' }
   }
   const iban = ibanState === 'ok' ? ibanRaw.replace(/\s+/g, '').toUpperCase() : null
 
   const kvk = normalizeKvk(input.kvk)
   if (kvk && kvk.length !== 8) {
-    return { ok: false, field: 'kvk', error: 'Een KVK-nummer bestaat uit 8 cijfers.' }
+    return { ok: false, field: 'kvk', code: 'kvk_shape' }
   }
 
   const btwRaw = String(input.btw ?? '').trim()
   const btwState = checkVendorBtw(btwRaw)
   if (btwState === 'bad') {
-    return {
-      ok: false,
-      field: 'btw',
-      error: 'Dit heeft niet de vorm van een btw-nummer. Een Nederlands nummer ziet eruit als NL000000000B00.',
-    }
+    return { ok: false, field: 'btw', code: 'btw_shape' }
   }
   const btw = btwState === 'ok' ? btwRaw.replace(/[\s.-]/g, '').toUpperCase() : null
 

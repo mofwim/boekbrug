@@ -2556,6 +2556,51 @@ export type Database = {
           },
         ]
       }
+      supplier_iban_history: {
+        Row: {
+          actor_id: string | null
+          iban: string
+          id: string
+          replaced_at: string
+          replaced_by: string | null
+          supplier_id: string
+          user_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          iban: string
+          id?: string
+          replaced_at?: string
+          replaced_by?: string | null
+          supplier_id: string
+          user_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          iban?: string
+          id?: string
+          replaced_at?: string
+          replaced_by?: string | null
+          supplier_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_iban_history_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_iban_history_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       suppliers: {
         Row: {
           btw_number: string | null

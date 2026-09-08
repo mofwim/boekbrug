@@ -253,3 +253,90 @@ test("[TAAL] the merge panel carries its own direction and none of the Dutch", a
   // The number in it is not copy: it is the identifier, and it reads the same in every language.
   assert.match(html, /17123456/);
 });
+
+// ── [LEVERANCIER-BEWERKEN] The registry list, and the door into the edit sheet ───────────────
+//
+// The rows arrive as props, so this is the one place that can see them drawn: the identifiers on
+// the line, the edit button beside every row AND beside the balance line it maps to, a failed
+// read that says "storing" rather than drawing an empty list, and the sheet itself.
+const CARDS = [
+  { id: "s1", name: "CAN Vleesgroothandel B.V.", iban: "NL20ABNA0458266515", kvk: "63458357", btw: "NL852244872B01",
+    autoIncasso: false, invoiceCount: 3, balanceKey: "can vleesgroothandel", updatedOn: "2026-08-03" },
+  // No IBAN, on incasso, never edited — the other branches of the description line.
+  { id: "s2", name: "Verhuurder Jansen", iban: null, kvk: null, btw: null,
+    autoIncasso: true, invoiceCount: 1, balanceKey: "verhuurder jansen", updatedOn: null },
+];
+
+test("[LEVERANCIER-BEWERKEN] the registry list draws every row with its identifiers and an edit button", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({
+          asOf: TODAY, settlements: [],
+          invoices: [{ id: "a", invoiceNumber: "1", supplierKey: "can vleesgroothandel", supplierName: "CAN Vleesgroothandel B.V.",
+            invoiceDate: "2026-08-15", dueDate: "2026-08-29", status: "received", invoiceType: "factuur",
+            totalIncBtw: 1165.73, amountPaid: 0 }],
+        }), "nl", TODAY),
+      corroboration: null, suppliers: CARDS, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.match(html, /Alle leveranciers/, "the section is there");
+  assert.match(html, /NL20ABNA0458266515/, "the account number is on the line");
+  assert.match(html, /KVK 63458357/);
+  assert.match(html, /geen rekeningnummer bekend/, "a row without an IBAN says so");
+  assert.match(html, /automatische incasso/, "the mandate is visible");
+  assert.match(html, /Laatst aangepast op 3 aug 2026/, "an edited row shows when, in the owner's date form");
+  // One button per registry row, plus one on the balance line that maps to a registry row.
+  const buttons = html.match(/Gegevens aanpassen/g) ?? [];
+  assert.equal(buttons.length, 3, `${buttons.length} edit buttons — expected 2 rows + 1 balance line`);
+});
+
+test("[LEVERANCIER-BEWERKEN] a failed registry read is a failure on the screen, not an empty list", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const paint = (suppliers: typeof CARDS | null) => renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(supplierBalances({ asOf: TODAY, settlements: [], invoices: [] }), "nl", TODAY),
+      corroboration: null, suppliers, asOf: TODAY, today: TODAY,
+    }),
+  );
+  const broken = paint(null);
+  const empty = paint([]);
+  assert.match(broken, /storing, geen lege lijst/, "the failure names itself");
+  assert.doesNotMatch(broken, /Nog geen leveranciers/, "…and does not promise there are none");
+  assert.match(empty, /Nog geen leveranciers/, "a really empty registry says it is empty");
+  assert.doesNotMatch(empty, /Gegevens aanpassen/, "nothing to edit, no button");
+});
+
+test("[LEVERANCIER-BEWERKEN] the sheet is pre-filled from the ROW and warns before a replaced IBAN is saved", async () => {
+  const { default: Sheet } = await import("../../src/components/supplier/SupplierEditSheet");
+  const html = renderToStaticMarkup(
+    React.createElement(Sheet, { supplier: CARDS[0], onClose() {}, onSaved() {} }),
+  );
+  assert.match(html, /Leverancier aanpassen/);
+  // Pre-filled from the stored row, all four — the pin modal starts KVK and btw empty; this must not.
+  assert.match(html, /value="NL20ABNA0458266515"/);
+  assert.match(html, /value="63458357"/);
+  assert.match(html, /value="NL852244872B01"/);
+  assert.match(html, /geldt voor de volgende facturen/, "it says the edit is forward-only");
+  // With the stored number still in the field there is no fraud warning to show.
+  assert.doesNotMatch(html, /Je vervangt het rekeningnummer/, "no warning while the number is unchanged");
+});
+
+test("[TAAL] the sheet reads Arabic with its direction, and the identifiers keep theirs", async () => {
+  const { default: Sheet } = await import("../../src/components/supplier/SupplierEditSheet");
+  const { translate } = await import("../../src/lib/i18n/t");
+  // The component reads the cookie; on the server there is none, so the check is on the copy
+  // module: every sentence the sheet renders has its Arabic.
+  for (const key of ["lev.bewerk.titel", "lev.bewerk.uitleg", "lev.bewerk.ibanGewijzigd", "lev.bewerk.incasso", "lev.bewerk.opslaan"] as const) {
+    const ar = translate("ar", key, { oud: "NL20ABNA0458266515" });
+    assert.ok(/[؀-ۿ]/.test(ar), `${key} has Arabic`);
+    assert.ok(!/[a-z]{4}/.test(ar.replace(/NL20ABNA0458266515|KVK|btw|IBAN/g, "")), `${key} is not the Dutch: ${ar}`);
+  }
+  const html = renderToStaticMarkup(React.createElement(Sheet, { supplier: CARDS[0], onClose() {}, onSaved() {} }));
+  assert.match(html, /dir="ltr"[^>]*value="NL20ABNA0458266515"|value="NL20ABNA0458266515"[^>]*dir="ltr"/, "an IBAN field is left-to-right in every language");
+});
