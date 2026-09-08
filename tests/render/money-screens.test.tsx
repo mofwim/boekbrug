@@ -146,6 +146,9 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
     // below would pass over an empty list.
     manageRow({ id: "dupA", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 134.64, total_inc_btw: 1348.14, invoice_date: "2026-01-30" }),
     manageRow({ id: "dupB", client_name: "Enka Horeca B.V.", invoice_number: "26701681", total_ex_btw: 1213.5, btw_amount: 122.18, total_inc_btw: 1335.68, invoice_date: "2026-01-30" }),
+    // [ACTIES-ALTIJD] One row with a stored PDF: "Bekijk PDF" renders only where there is one to
+    // open, and every other fixture row has pdf_url: null.
+    manageRow({ id: "pdf", client_name: "Met Bijlage B.V.", invoice_number: "P-1", pdf_url: "https://files.invalid/p-1.pdf" }),
   ];
 
   const html = renderToStaticMarkup(
@@ -235,6 +238,26 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // "3 kloppen niet" over 200 visible rows reads as a total; "in deze lijst" is what stops it.
   assert.match(html, /kloppen niet in deze lijst|klopt niet in deze lijst/,
     "the collapsed line carries the scan's own boundary");
+
+  // [ACTIES-ALTIJD] The ways out are on the CLOSED card. They used to live inside `expanded`,
+  // which only a click opens — so this very render could not reach them, and the note on
+  // CostAttribution says so in as many words. A static render is exactly the closed state, which
+  // makes it the one place the claim "visible without a tap" can be held.
+  assert.match(html, /Bekijk PDF/, "the PDF button is folded away again — nothing on the closed card offers it");
+  assert.match(html, /Bedragen corrigeren/, "…and the correction door with it");
+  assert.match(html, /qr_code_2<\/span>Betalen/, "…and the pay button (asserted with its icon, so 'Meerdere betalen' cannot stand in for it)");
+  // Every card carries the chevron, closed, pointing at a detail block that is NOT rendered yet.
+  const chevrons = (html.match(/aria-controls="inv-detail-/g) ?? []).length;
+  assert.ok(chevrons >= 2, `only ${chevrons} chevrons — is the strip on every card?`);
+  assert.equal((html.match(/aria-expanded="false" aria-controls="inv-detail-/g) ?? []).length, chevrons,
+    "a chevron says it is open on a card that has not been tapped");
+  assert.doesNotMatch(html, /id="inv-detail-/, "the folded half rendered without a tap — the fold is gone");
+
+  // [FILTERS-EEN-REGEL] Period, filter and sort share ONE flex row: the period is the first third,
+  // directly inside the wrapping row, and there are exactly three thirds.
+  assert.match(html, /display:flex;gap:8px;flex-wrap:wrap"><div style="position:relative;flex:1 1 150px;min-width:0"><button/,
+    "the period selector is back on a row of its own above the other two");
+  assert.equal((html.match(/flex:1 1 150px/g) ?? []).length, 3, "three filters, three equal thirds");
 });
 
 test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", async () => {

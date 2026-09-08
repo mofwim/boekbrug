@@ -5897,6 +5897,19 @@ export const MESSAGES = {
     ar: 'إدارة',
     en: 'Manage',
   },
+  // [ACTIES-ALTIJD] Het pijltje dat de gevouwen helft van een factuurkaart opent. Een label voor
+  // een pictogram van 20 pixels: een schermlezer heeft er anders niets aan, en de tooltip zegt het
+  // ook aan wie erover heen gaat.
+  'ink.detailsTonen': {
+    nl: 'Details tonen',
+    ar: 'أظهر التفاصيل',
+    en: 'Show details',
+  },
+  'ink.detailsVerbergen': {
+    nl: 'Details verbergen',
+    ar: 'أخفِ التفاصيل',
+    en: 'Hide details',
+  },
   'ink.bekijkPdf': {
     nl: 'Bekijk PDF',
     ar: 'اعرض PDF',

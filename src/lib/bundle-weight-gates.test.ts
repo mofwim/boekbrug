@@ -216,8 +216,12 @@ test("[LIST-PAINT] the long invoice list still tells the browser it may skip off
     "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",
   ];
   for (const f of wearers) {
+    // The class must be there, and first. A list may carry a modifier beside it ([ACTIES-ALTIJD]:
+    // the manage list adds inv-card--acties for its own height estimate), which is not the same as
+    // losing it — the base rule still applies. What this refuses is the class going missing or being
+    // replaced, which is the cleanup this gate exists to catch.
     assert.match(
-      readFileSync(f, "utf8"), /className="inv-card"/,
+      readFileSync(f, "utf8"), /className="inv-card(?: [\w-]+)*"/,
       `${f} lost the class, so the stylesheet rule now applies to nothing there`,
     );
   }
