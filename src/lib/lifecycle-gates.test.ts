@@ -24992,8 +24992,15 @@ test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens t
   // the two ways in can never disagree about what is open.
   assert.match(scherm, /aria-expanded=\{expanded\}/, "the chevron does not say whether the card is open");
   assert.match(scherm, /aria-controls=\{`inv-detail-\$\{inv\.id\}`\}/, "…nor which block it opens");
-  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 2,
-    "the header and the chevron must both toggle the same state — two openers, one fold");
+  // [ALLEEN-DE-PIJL] ONE opener. The header toggled the fold as well, and the owner asked for
+  // that to stop: with the actions on every card, a row that opens on any tap opens while you
+  // reach for "Heb je betaald?" or drag across the number, and the list jumps under your hand.
+  assert.equal((scherm.match(/setExpandedId\(expanded \? null : inv\.id\)/g) ?? []).length, 1,
+    "the fold has more than one opener again — the header is toggling it beside the chevron");
+  const kop = scherm.slice(scherm.indexOf('className="inv-row"'), scherm.indexOf('className="inv-row"') + 900);
+  assert.doesNotMatch(kop, /setExpandedId\(/, "the row header opens the fold — only the chevron may");
+  assert.match(kop, /if \(selectMode && selectableInMode\(inv\)\) toggleSelect\(inv\.id\)/,
+    "…but in select mode a tap on the header must still toggle the selection");
 
   // The card is taller when closed now, and the estimate that sizes the scrollbar before paint is
   // shared with two lists that did not change. So this list carries its own, in both breakpoints.

@@ -2928,9 +2928,13 @@ export default function IncomingManageClient({
                       it); otherwise it expands. */}
                   <div
                     className="inv-row"
-                    onClick={onRowTap(() => selectMode
-                      ? (selectableInMode(inv) && toggleSelect(inv.id))
-                      : setExpandedId(expanded ? null : inv.id))}
+                    // [ALLEEN-DE-PIJL] The header no longer opens the fold. It did, and with the
+                    // action row now standing on every card the owner asked for one door: the
+                    // chevron. A row that opens on any tap is a row that opens while you reach
+                    // for "Heb je betaald?" or drag across the number to copy it — and then the
+                    // list jumps. In select mode a tap still toggles the selection, which is the
+                    // one thing the header is FOR in that mode.
+                    onClick={onRowTap(() => { if (selectMode && selectableInMode(inv)) toggleSelect(inv.id) })}
                     // [ROW-LAYOUT] display/align/gap live in the .inv-row class (globals.css) so
                     // the stack-on-mobile media query can override them; only dynamic styles here.
                     // [BUNDEL-SELECTIE] `isSelected`, not raw selectedIds: selectedRows now drops a
@@ -2938,7 +2942,7 @@ export default function IncomingManageClient({
                     // rows to 'paid' mid-selection). Keying the highlight off the raw id would let
                     // a row keep the selected background while the bar no longer counts it — and it
                     // cannot be tapped off either, since the toggle only fires on 'received'.
-                    style={{ background: (selectedIds[inv.id] && selectableInMode(inv)) ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && !selectableInMode(inv) ? 'default' : 'pointer', transition: 'background 0.4s ease', opacity: selectMode && !selectableInMode(inv) ? 0.4 : 1 }}
+                    style={{ background: (selectedIds[inv.id] && selectableInMode(inv)) ? M3.primaryContainer : highlightId === inv.id ? M3.primaryContainer : '#fff', padding: '14px 16px', cursor: selectMode && selectableInMode(inv) ? 'pointer' : 'default', transition: 'background 0.4s ease', opacity: selectMode && !selectableInMode(inv) ? 0.4 : 1 }}
                   >
                     {/* [BUNDEL-BETALING] selection indicator */}
                     {selectMode && selectableInMode(inv) && (
@@ -3467,8 +3471,9 @@ export default function IncomingManageClient({
                       purpose lived behind a door with no handle.
 
                       The row is now part of the card, and the chevron at its start opens what stayed
-                      folded: the read figures, the dates, the incasso switch. Two ways in — the row
-                      header still toggles too — and one visible.
+                      folded: the read figures, the dates, the incasso switch. [ALLEEN-DE-PIJL] It is
+                      the ONLY way in: the header used to toggle too, and the owner asked for that to
+                      stop — see the note on the header's onClick.
 
                       The chevron takes the START edge (marginInlineEnd: auto pushes the actions to
                       the end), which is where the owner drew it: on an RTL screen the actions sit at
