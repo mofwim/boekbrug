@@ -17,6 +17,7 @@
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { storedVatTreatment } from '@/lib/line-vat-treatment'
 // [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
 import { chunkIds, fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -472,10 +473,11 @@ export async function POST(request: NextRequest) {
           ...(Object.keys(spoor).length
             ? {
                 unit: schoonEenheid(bron[i]?.unit),
-                // [VRIJGESTELD] Alleen de letterlijke waarde 'exempt' telt; al het andere is
-                // NULL = gewoon belast. Zo kan een oude of vreemde client deze kolom niet
-                // gebruiken om omzet uit de aangifte te laten verdwijnen.
-                vat_treatment: bron[i]?.vat_treatment === 'exempt' ? 'exempt' : null,
+                // [VRIJGESTELD] Alleen de letterlijke waarden tellen ('exempt', 'reverse_charge');
+                // al het andere is NULL = gewoon belast. Zo kan een oude of vreemde client deze
+                // kolom niet gebruiken om omzet uit de aangifte te laten verdwijnen. Eén harding
+                // voor elke schrijver: line-vat-treatment.ts.
+                vat_treatment: storedVatTreatment(bron[i]?.vat_treatment),
                 // [REGEL-KORTING] Het AFGESPROKEN getal, al gecontroleerd door validateDraftLines.
                 // Het uitgerekende bedrag staat niet in een kolom — line_total is al netto.
                 discount_type: l.discount_type ?? null,

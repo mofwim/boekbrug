@@ -115,3 +115,29 @@ test("[AANBETALING-KORTING] an exempt and a taxed 0% group split the rate's allo
   // And the deposit reads the SAME split: 50% of (100 − 6,67) and of (50 − 3,34).
   assert.deepEqual(depositLines(src, 50).map((l) => l.unit_price), [46.67, 23.33]);
 });
+
+// ─── [VERLEGD-VERKOOP] A deposit on a verlegde offerte is itself verlegd ──────────────────
+test("[VERLEGD-VERKOOP] the treatment travels with the money: deposit, discount and settlement lines keep the flag", () => {
+  const src = {
+    invoiceNumber: "O-2026-0009",
+    discount: { type: "percent" as const, value: 10 },
+    lines: [
+      { quantity: 40, unit_price: 25, btw_rate: 0, vat_treatment: "reverse_charge" },
+      { quantity: 1, unit_price: 200, btw_rate: 21 },
+    ],
+  };
+  const dep = depositLines(src, 30);
+  assert.deepEqual(dep.map((l) => [l.btw_rate, l.vat_treatment, l.unit_price, l.description]), [
+    [0, "reverse_charge", 270, "Aanbetaling 30% op offerte O-2026-0009 (btw verlegd)"],
+    [21, null, 54, "Aanbetaling 30% op offerte O-2026-0009 (21% btw)"],
+  ]);
+  assert.deepEqual(discountLines(src).map((l) => [l.vat_treatment, l.unit_price]), [["reverse_charge", 100], [null, 20]]);
+  assert.deepEqual(settlementLines([{ invoiceNumber: "F-9", lines: dep }]).map((l) => [l.vat_treatment, l.unit_price]),
+    [["reverse_charge", 270], [null, 54]]);
+  // A verlegd 0% and a plain 0% are two groups, never one.
+  const twee = depositLines({ invoiceNumber: null, discount: null, lines: [
+    { quantity: 1, unit_price: 100, btw_rate: 0, vat_treatment: "reverse_charge" },
+    { quantity: 1, unit_price: 100, btw_rate: 0 },
+  ] }, 50);
+  assert.deepEqual(twee.map((l) => [l.vat_treatment, l.unit_price]), [["reverse_charge", 50], [null, 50]]);
+});

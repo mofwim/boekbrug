@@ -716,3 +716,55 @@ test("[KORTING] een gewone factuur met documentkorting blijft precies zoals hij 
   assert.ok(text.includes("189,00"));
   assert.ok(text.includes("1.089,00"));
 });
+
+// ─── [VERLEGD-VERKOOP] The domestic verlegging on paper ────────────────────────────────────
+//
+// Art. 35a lid 1 Wet OB: the customer's btw-identificatienummer (sub d) and the words "btw verlegd"
+// (sub j). Read back with pdfjs, like everything else in this file.
+test("[VERLEGD-VERKOOP] a verlegde invoice prints the statutory sentence with the customer's number, and its own row", async () => {
+  const kop = { ...INVOICE, invoice_number: "2026-021", client_btw_number: "nl 8123.45.678.b01", total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000 };
+  const text = await pdfText(await renderInvoicePdf(kop,
+    [{ description: "Onderaanneming week 36", quantity: 40, unit_price: 25, btw_rate: 0, line_total: 1000, vat_treatment: "reverse_charge" }],
+    PROFILE));
+  assert.ok(text.includes("Btw verlegd — artikel 12 lid 5 Wet OB 1968. BTW-nummer afnemer: NL812345678B01."),
+    "the sentence, with the number normalised the way the EU sentence normalises it");
+  assert.ok(text.includes("Btw verlegd over € 1.000,00"), "the summary row names the category, not 0,00%");
+  assert.ok(!text.includes("0,00% BTW over"), "…and no zero-rate row pretends it was an ordinary 0% supply");
+});
+
+test("[VERLEGD-VERKOOP] exempt, verlegd and 0% each get their own row on one invoice", async () => {
+  const kop = { ...INVOICE, invoice_number: "2026-022", client_btw_number: "NL812345678B01", total_ex_btw: 1500, btw_amount: 0, total_inc_btw: 1500 };
+  const text = await pdfText(await renderInvoicePdf(kop, [
+    { description: "Cursus voedselveiligheid", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: "exempt" },
+    { description: "Onderaanneming", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: "reverse_charge" },
+    { description: "Export", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500 },
+  ], PROFILE));
+  assert.ok(text.includes("Vrijgesteld van btw over € 500,00"), "the exempt half is named");
+  assert.ok(text.includes("Btw verlegd over € 500,00"), "the verlegde half is named");
+  assert.ok(text.includes("0,00% BTW over € 500,00"), "the real 0% supply keeps its rate row");
+  assert.ok(!text.includes("€ 1.500,00 —") && !text.includes("BTW over € 1.500,00"), "nothing merges the three");
+  assert.ok(text.includes("1.500,00"), "…and the total still adds up");
+});
+
+test("[VERLEGD-VERKOOP] a quote prints no verlegd sentence — it is not an invoice", async () => {
+  const text = await pdfText(await renderInvoicePdf(
+    { ...QUOTE, client_btw_number: "NL812345678B01", total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000 },
+    [{ description: "Onderaanneming", quantity: 1, unit_price: 1000, btw_rate: 0, line_total: 1000, vat_treatment: "reverse_charge" }],
+    PROFILE));
+  assert.ok(!text.includes("artikel 12 lid 5"), "no statutory sentence on an offerte");
+  assert.ok(text.includes("Btw verlegd over € 1.000,00"), "the row still says what the line is");
+});
+
+test("[VERLEGD-VERKOOP] a document discount over two rows at rate 0 is split, not subtracted twice", async () => {
+  // € 500 exempt + € 500 verlegd, 10% off: each row € 450, total € 900 — not € 400 + € 400.
+  const kop = { ...INVOICE, invoice_number: "2026-023", client_btw_number: "NL812345678B01", total_ex_btw: 900, btw_amount: 0, total_inc_btw: 900,
+    discount_type: "percent", discount_value: 10 };
+  const text = await pdfText(await renderInvoicePdf(kop, [
+    { description: "Cursus", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: "exempt" },
+    { description: "Onderaanneming", quantity: 1, unit_price: 500, btw_rate: 0, line_total: 500, vat_treatment: "reverse_charge" },
+  ], PROFILE));
+  assert.ok(text.includes("Vrijgesteld van btw over € 450,00"), "the exempt row carries its half of the discount");
+  assert.ok(text.includes("Btw verlegd over € 450,00"), "…and the verlegde row the other half");
+  assert.ok(!text.includes("over € 400,00"), "the whole rate-0 allowance was subtracted from one row");
+  assert.ok(text.includes("900,00"), "the total is the header's");
+});

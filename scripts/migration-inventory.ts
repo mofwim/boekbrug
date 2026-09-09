@@ -53,7 +53,7 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const DIR = "supabase/migrations";
 
-type Soort = "table" | "column" | "function" | "function_body" | "index" | "constraint" | "policy";
+type Soort = "table" | "column" | "function" | "function_body" | "index" | "constraint" | "constraint_def" | "policy";
 interface Probe {
   soort: Soort;
   /** De naam waarop de catalogus wordt bevraagd. Bij een kolom: de kolomnaam. */
@@ -589,8 +589,37 @@ function supersededNames(alle: { bestand: string; sql: string }[]): Set<string> 
   return weg;
 }
 
+/**
+ * [CONSTRAINT-HERDEFINITIE] A constraint that more than one file writes under the same name.
+ *
+ * The same disease as the functions above, one object kind further: vat_reverse_charge.sql drops
+ * invoice_lines_vat_treatment_check and adds it again with a third admitted value. The object
+ * exists before and after, so an existence probe reported the new migration as applied on every
+ * database where only the old one had run. Measured instead is the DEFINITION: every string
+ * literal the file's own ADD CONSTRAINT clause names must appear in pg_get_constraintdef. The
+ * older file keeps its own literals, which the newer definition still carries — superseded is not
+ * unrun, and OPEN would be the wrong word for it.
+ *
+ * Returns, per constraint name written by ≥ 2 files, each file's literals.
+ */
+function constraintHerdefinities(alle: { bestand: string; sql: string }[]): Map<string, Map<string, string[]>> {
+  const perNaam = new Map<string, Map<string, string[]>>();
+  for (const { bestand, sql } of alle) {
+    for (const m of sql.matchAll(/add\s+constraint\s+"?([a-z0-9_]+)"?([\s\S]*?);/gi)) {
+      const naam = m[1].toLowerCase();
+      // Bare values; the query quotes them (quote_literal), so the generated row stays readable.
+      const literals = [...new Set([...m[2].matchAll(/'([a-z0-9_]+)'/gi)].map((l) => l[1]))].sort();
+      if (!perNaam.has(naam)) perNaam.set(naam, new Map());
+      perNaam.get(naam)!.set(bestand, literals);
+    }
+  }
+  return new Map([...perNaam].filter(([, byFile]) => byFile.size >= 2));
+}
+
 const bestanden = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 const gelezen = bestanden.map((f) => ({ bestand: f, sql: stripSql(readFileSync(`${DIR}/${f}`, "utf8")) }));
+// Constraints that more than one file writes under one name: measured on their definition.
+const constraintMerken = constraintHerdefinities(gelezen);
 const weggegooid = supersededNames(gelezen);
 // Functies die meer dan één bestand schrijft: daar bewijst BESTAAN niets. Zie herdefinitieMerken().
 const { merken: functieMerken, nieuwste: functieNieuwste, onbeslist: onbesliste } = herdefinitieMerken(gelezen);
@@ -610,6 +639,11 @@ for (const { bestand, sql } of gelezen) {
     // bestaan — anders melden acht herdefinities elkaar als bewijs. De merktekens reizen in het
     // tabel-veld mee; de query eronder splitst ze weer.
     .map((p) => {
+      // [CONSTRAINT-HERDEFINITIE] Same name in more than one file: the definition is measured.
+      if (p.soort === "constraint") {
+        const mk = constraintMerken.get(p.object.toLowerCase())?.get(bestand);
+        return mk && mk.length > 0 ? { ...p, soort: "constraint_def" as Soort, tabel: mk.join(",") } : p;
+      }
       if (p.soort !== "function") return p;
       const mk = functieMerken.get(p.object.toLowerCase());
       if (mk) return { ...p, soort: "function_body" as Soort, tabel: mk.join(",") };
@@ -637,8 +671,8 @@ for (const { bestand, sql } of gelezen) {
   const gesorteerd = bruikbaar
     .slice()
     .sort((a, b) => (a.soort + a.object).localeCompare(b.soort + b.object));
-  const body = gesorteerd.filter((p) => p.soort === "function_body");
-  const rest = gesorteerd.filter((p) => p.soort !== "function_body");
+  const body = gesorteerd.filter((p) => p.soort === "function_body" || p.soort === "constraint_def");
+  const rest = gesorteerd.filter((p) => p.soort !== "function_body" && p.soort !== "constraint_def");
   const gekozen = [...body, ...rest.slice(0, Math.max(0, 6 - body.length))];
   for (const p of gekozen) {
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -776,6 +810,13 @@ zeg("                               where position(mk in f.prosrc) = 0))");
 zeg("      when 'index' then exists (select 1 from pg_indexes");
 zeg("             where schemaname = p.schema and indexname = p.object)");
 zeg("      when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)");
+zeg("      -- Een constraint die meer dan één migratie onder dezelfde naam schrijft: haar BESTAAN");
+zeg("      -- bewijst alleen de eerste. Gemeten wordt de definitie — elke waarde die dit bestand");
+zeg("      -- zelf in de CHECK noemt, moet erin staan.");
+zeg("      when 'constraint_def' then exists (");
+zeg("             select 1 from pg_constraint c where c.conname = p.object");
+zeg("               and not exists (select 1 from unnest(string_to_array(p.tabel, ',')) mk");
+zeg("                               where position(quote_literal(mk) in pg_get_constraintdef(c.oid)) = 0))");
 zeg("      -- Een policy staat lang niet altijd in public: de bestandspolicies zitten op");
 zeg("      -- storage.objects. Op het verkeerde schema zoeken gaf een alarm dat nooit uitging.");
 zeg("      when 'policy' then exists (select 1 from pg_policies");
@@ -792,6 +833,8 @@ zeg("  count(*) filter (where aanwezig) || ' / ' || count(*)       as objecten_g
 zeg("  string_agg(case when not aanwezig then");
 zeg("    case when soort = 'function_body'");
 zeg("         then 'function ' || schema || '.' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'");
+zeg("         when soort = 'constraint_def'");
+zeg("         then 'constraint ' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'");
 zeg("         else soort || ' ' || schema || '.' || object end end, ', ')                as ontbreekt");
 zeg("from bevonden");
 zeg("group by bestand");

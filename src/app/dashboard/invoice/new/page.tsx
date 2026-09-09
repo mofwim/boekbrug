@@ -50,6 +50,7 @@ import { translator } from '@/lib/i18n/t'
 import { statusLabel } from '@/lib/invoice-status'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
+import { hasReverseChargeLine, storedVatTreatment } from '@/lib/line-vat-treatment'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -145,6 +146,8 @@ type Client = {
 // in for it, and is translated back into (0%, vat_treatment='exempt') the moment it is chosen.
 // Negative on purpose: no rate can ever collide with it.
 const EXEMPT_OPTION = -1
+// [VERLEGD-VERKOOP] Same trick for the verleggingsregeling: 0% plus the flag 'reverse_charge'.
+const REVERSE_CHARGE_OPTION = -2
 
 // [AANBETALING] Every ISSUED deposit on an offerte, as the credit lines that settle it on the
 // final invoice, plus their numbers for the banner. A deposit still in concept is not money the
@@ -175,7 +178,9 @@ type InvoiceLine = {
   // [VRIJGESTELD] 'exempt' = vrijgestelde prestatie (art. 11 Wet OB): geen BTW, en de omzet gaat
   // in GEEN aangifterubriek. Alleen te kiezen als de ondernemer dat in Instellingen heeft
   // verklaard; afwezig = gewoon belast, precies zoals elke regel van vóór dit veld.
-  vat_treatment?: 'exempt' | null
+  // [VERLEGD-VERKOOP] 'reverse_charge' = btw verlegd naar de klant (art. 12 lid 5 Wet OB): 0% op de
+  // regel, de omzet in rubriek 1e, en het btw-nummer van de klant verplicht op de factuur.
+  vat_treatment?: 'exempt' | 'reverse_charge' | null
   // [UNIT] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
   // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
   // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
@@ -757,7 +762,7 @@ function NewInvoicePageContent() {
             unit_price:  l.unit_price  ?? 0,
             btw_rate:    l.btw_rate    ?? 21,
             unit:        l.unit ?? null,
-            vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null,
+            vat_treatment: storedVatTreatment(l.vat_treatment),
             discount_type: l.discount_type === 'percent' || l.discount_type === 'amount' ? l.discount_type : null,
             // Het regelmodel houdt de korting als RUWE invoerstring (zoals het invoerveld);
             // de databasekolom is numeriek — dus hier terug naar de invoervorm.
@@ -896,6 +901,13 @@ function NewInvoicePageContent() {
   function markLineExempt(i: number) {
     setLines(prev => prev.map((l, idx) => idx === i
       ? { ...l, btw_rate: 0, vat_treatment: 'exempt', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
+      : l))
+  }
+
+  // [VERLEGD-VERKOOP] Verlegd is 0% PLUS the flag, set together for the same reason as exempt.
+  function markLineReverseCharged(i: number) {
+    setLines(prev => prev.map((l, idx) => idx === i
+      ? { ...l, btw_rate: 0, vat_treatment: 'reverse_charge', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
       : l))
   }
 
@@ -1253,6 +1265,12 @@ function NewInvoicePageContent() {
     // opgaaf counts as never filed. Blocking here costs a retype; not blocking costs a quarter.
     if (euVatSuspect) {
       setError(t('nieuw.fout.euBtwLengte', { number: clientBtw.trim() }))
+      return
+    }
+    // [VERLEGD-VERKOOP] A verlegd line without the customer's btw-id is refused at the send door
+    // (art. 35a lid 1 sub d) — asked here first, where the field is one tap away.
+    if (hasReverseChargeLine(lines) && !clientBtw.trim()) {
+      setError(t('nieuw.fout.verlegdZonderBtw'))
       return
     }
 
@@ -2004,7 +2022,7 @@ function NewInvoicePageContent() {
                     <LineInput label={priceMode === 'incl' ? t('nieuw.regel.prijsIncl') : t('nieuw.regel.prijsExcl')} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
-                      <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
+                      <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.vat_treatment === 'reverse_charge' ? REVERSE_CHARGE_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else if (v === REVERSE_CHARGE_OPTION) markLineReverseCharged(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
                         {/* [KOR-FACTUUR] Onder de KOR bestaan 21% en 9% niet als keuze. Weglaten is
                             hier beter dan achteraf afkeuren: een tarief dat je kunt kiezen en dat
                             daarna wordt geweigerd, is een val. Zie kor-invoice.ts voor wat het
@@ -2012,6 +2030,10 @@ function NewInvoicePageContent() {
                         {!korActief && <option value={21}>21%</option>}
                         {!korActief && <option value={9}>9%</option>}
                         <option value={0}>0%</option>
+                        {/* [VERLEGD-VERKOOP] Btw verlegd naar de klant (bouw, onderaanneming,
+                            personeel, schoonmaak): 0% plus de vlag. Niet onder de KOR — daar is
+                            de prestatie vrijgesteld en bestaat er niets te verleggen. */}
+                        {!korActief && <option value={REVERSE_CHARGE_OPTION}>{t('nieuw.regel.verlegd')}</option>}
                         {/* [VRIJGESTELD] Alleen zichtbaar als de ondernemer vrijgestelde omzet
                             heeft verklaard (Instellingen). Voor iedereen anders is deze keuze
                             geen optie maar een valkuil: vrijgesteld ziet eruit als 0%, en een
@@ -2021,6 +2043,11 @@ function NewInvoicePageContent() {
                       </select>
                       {/* De reden staat ernaast, niet in een melding achteraf. Zonder deze zin is
                           een menu met één keuze gewoon een kapot menu. */}
+                      {line.vat_treatment === 'reverse_charge' && (
+                        <p style={{ fontSize: 11, color: '#5F6368', margin: '6px 0 0', lineHeight: 1.45 }}>
+                          {t('nieuw.regel.verlegdHint')}
+                        </p>
+                      )}
                       {korActief && (
                         <p style={{ fontSize: 11, color: '#5F6368', margin: '6px 0 0', lineHeight: 1.45 }}>
                           {KOR_RATE_HINT}

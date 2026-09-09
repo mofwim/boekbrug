@@ -975,3 +975,28 @@ test("[KORTING-EENMAAL] …while a line-carrying invoice still applies it, once"
   assert.match(xml, /AllowanceCharge/);
   assert.match(xml, /<cbc:PayableAmount currencyID="EUR">1089\.00</);
 });
+
+// ─── [VERLEGD-VERKOOP] The domestic verlegging, from the line's own flag ───────────────────
+test("[VERLEGD-VERKOOP] a line flagged reverse_charge exports as AE on art. 12 lid 5, whatever its text says", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000, client_btw_number: "NL812345678B01" }),
+    [line({ description: "Onderaanneming week 36", quantity: 40, unit_price: 25, line_total: 1000, btw_rate: 0, vat_treatment: "reverse_charge" })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>AE<\/cbc:ID>/, "the category must be AE");
+  assert.doesNotMatch(xml, /<cbc:ID>Z<\/cbc:ID>/, "…and nothing on the document may still be zero-rated");
+  assert.match(xml, /<cbc:TaxExemptionReason>Btw verlegd — artikel 12 lid 5 Wet OB 1968<\/cbc:TaxExemptionReason>/,
+    "the domestic ground, not the intracommunautaire one: the buyer is Dutch");
+  assert.match(xml, /<cbc:TaxAmount currencyID="EUR">0\.00</);
+  assert.match(xml, /<cbc:PayableAmount currencyID="EUR">1000\.00</);
+});
+
+test("[VERLEGD-VERKOOP] a plain 0% line without the flag stays Z — the flag is the fact, not the rate", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 1000, btw_amount: 0, total_inc_btw: 1000, client_btw_number: "NL812345678B01" }),
+    [line({ description: "Levering", quantity: 1, unit_price: 1000, line_total: 1000, btw_rate: 0, vat_treatment: null })],
+    supplier,
+  );
+  assert.match(xml, /<cbc:ID>Z<\/cbc:ID>/);
+  assert.doesNotMatch(xml, /<cbc:ID>AE<\/cbc:ID>/);
+});

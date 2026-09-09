@@ -189,9 +189,9 @@ export function detectRegimeFlags(s: RegimeSignals): RegimeFlag[] {
       code: "reverse_charge_sale",
       title: "Verkoop met BTW verlegd",
       detail:
-        "Op een verkoopfactuur staat 'BTW verlegd'. Je hebt de BTW naar je afnemer verlegd; deze omzet is " +
-        "GEEN gewone 0%-omzet maar hoort apart te worden aangegeven. Dit concept berekent de verlegging niet " +
-        "automatisch — je boekhouder plaatst deze omzet in het juiste vak.",
+        "Op een verkoopfactuur staat 'BTW verlegd'. Je hebt de BTW naar je afnemer verlegd: die omzet hoort " +
+        "in rubriek 1e (niet bij jou belast), en dit concept zet 0%-regels daar al. Controleer dat op de " +
+        "factuur 'btw verlegd' én het btw-nummer van de afnemer staan — zonder die twee is de factuur onvolledig.",
       evidence: ev(reverseS),
     });
   }
