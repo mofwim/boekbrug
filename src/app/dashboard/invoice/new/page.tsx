@@ -614,17 +614,13 @@ function NewInvoicePageContent() {
     }
   }, [replacesNumberParam, offerteParam, aiClientName, aiDescription])
 
-  // [COHERENCE-CREDITNOTA] Credit-flow state removed — see the note above handleConvertOfferte.
+  // [COHERENCE-CREDITNOTA] Credit-flow state removed — see the note further down, above the submit.
   // Creditnotas are created from the original invoice's detail dialog, not here.
 
   // ── Replace flow — read-only from URL, never mutated ─────────────────────────
   const replacesId     = replacesParam
   const replacesNumber = replacesNumberParam
 
-  // ── Offerte convert confirm ───────────────────────────────────────────────────
-  const [showConvertDialog, setShowConvertDialog] = useState(false)
-  useCloseOnBack(!!showConvertDialog, () => setShowConvertDialog(false))
-  const [convertingOfferte, setConvertingOfferte] = useState(false)
   // offerte_id if we're converting an existing offerte — read-only from URL
   const offerteId = offerteParam
   // [AANBETALING] Null when this is not a deposit. Decides three things below: which lines are
@@ -647,16 +643,13 @@ function NewInvoicePageContent() {
         invoiceType === 'offerte' ? t('nieuw.titel.offerte') :
         invoiceType === 'creditnota' ? statusLabel('credit', taal) :
         nextNumber ? t('nieuw.titel.factuurMetNummer', { nummer: nextNumber }) : t('nieuw.titel.factuur'),
-      actions: invoiceType === 'offerte' && offerteId ? (
-        <button onClick={() => setShowConvertDialog(true)}
-          style={{ fontSize: 13, fontWeight: 500, padding: '8px 16px', borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', cursor: 'pointer' }}>
-          {t('nieuw.omzetten')} →
-        </button>
-      ) : undefined,
     },
     // nextNumber in de deps: de kop moet bijtrekken zodra de vooruitblik binnenkomt — anders
     // registreert hij één keer zonder nummer en blijft zo staan.
-    [invoiceType, offerteId, nextNumber]
+    // [OFFERTE-GEEN-OMZETTING] The "Omzetten →" action that stood in this header opened a dialog
+    // that built a factuur from the screen's state — a second copy of the from_offerte submit,
+    // with its own drift (#311 had to patch its discount apart). Gone: one path.
+    [invoiceType, nextNumber]
   )
 
   // [KORTING] Percentage of bedrag, op de hele factuur — en op een offerte net zo goed: daar is
@@ -1105,137 +1098,6 @@ function NewInvoicePageContent() {
   // control on this page (dead code), and the ?type=creditnota redirect above now sends
   // the owner to the correct place, so the whole standalone path is retired.
 
-  // ─── Offerte → Factuur convert ─────────────────────────────────────────────
-
-  async function handleConvertOfferte() {
-    setConvertingOfferte(true); setError('')
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return }
-
-    // [ACTING-FOR] Het concept + de regels worden door de SERVER geschreven, niet meer hier.
-    // Waarom: sender_id was `user.id` — de ingelogde mens. Voor een verkoopmedewerker is dat
-    // NIET de eigenaar van de boekhouding, en zou hij onder zijn eigen id boeken dan liepen er
-    // twee nummerreeksen onder één BTW-nummer (Art. 35: doorlopend, zonder gaten, forward-only).
-    // De route lost de eigenaar op en rekent de totalen zelf uit — met exact dezelfde som als
-    // computeTotals() hier, dus voor een eigenaar verandert er geen cent.
-    // [FACTUUR-A] Nog steeds als DRAFT: de send-route slaat daarna het wettelijke nummer.
-    const draftRes = await fetch('/api/invoice/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        invoiceType: 'factuur',
-        invoice_date: invoiceDate,
-        due_date: dueDate,
-        // [FACTUUR-A] offerte conversion gets a Leverdatum too (Art. 35a sub f),
-        // defaulting to the invoice date.
-        delivery_date: invoiceDate,
-        client_id: selectedClientId,
-        // [AANBETALING] Tells the draft door which offerte this is a deposit on; null otherwise.
-        deposit_on_offerte_id: depositPct ? offerteId : null,
-        client_name: clientName,
-        client_email: clientEmail,
-        client_address: clientAddress,
-        client_postal_code: clientPostal,
-        client_city: clientCity,
-        client_btw_number: clientBtw,
-        client_country: normalizeCountry(clientCountry),
-        client_extra_line1: clientExtra1,
-        client_extra_line2: clientExtra2,
-        client_extra_line3: clientExtra3,
-        client_extra_line4: clientExtra4,
-        // [KORTING-KOP mee] De gewone submit stuurt de DOCUMENTkorting mee; dit conversiepad
-        // deed dat niet, terwijl de offertekorting hierboven wél in de state was geladen. De
-        // klant zei ja tegen 1.089 en het bevestigingspaneel toonde dat bedrag — de factuur
-        // werd 1.210. Zelfde velden als de gewone submit, dezelfde server-validatie.
-        discount_type: discountType,
-        discount_value: discountValue,
-        lines: lines.map(l => ({
-          description: l.description,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          btw_rate: l.btw_rate,
-          unit: l.unit ?? null,
-          vat_treatment: l.vat_treatment ?? null,
-          // [REGEL-KORTING] Ruwe invoer; validateDraftLines op de server keurt hem opnieuw en
-          // weigert wat niet kan. Een creditnota draagt er geen — zie het scherm hieronder.
-          discount_type: l.discount_type ?? null,
-          discount_value: l.discount_value ?? null,
-        })),
-      }),
-    })
-    const draftJson = await draftRes.json().catch(() => ({}))
-    if (!draftRes.ok || !draftJson?.invoiceId) {
-      setError(failureText(draftRes.status, draftJson, t('nieuw.fout.omzetten'))); setConvertingOfferte(false); return
-    }
-    // [WAARSCHUWING-GEHOORD] The draft was written without its discount columns, so it stands at
-    // the FULL price. Stopping HERE is the whole point: the next call mints the legal number, and
-    // a full-price invoice that has been issued cannot be taken back — only credited. The route
-    // has always said this ("Gezegd, niet verzwegen"); nothing was listening.
-    if (draftJson?.warning === 'discount_not_stored') {
-      setError(t('nieuw.fout.kortingNietOpgeslagen')); setConvertingOfferte(false); return
-    }
-    const factuur = { id: draftJson.invoiceId as string }
-
-    // Mark offerte as converted. [AANBETALING] Not for a deposit: the offerte stays open for the
-    // final invoice.
-    if (offerteId && !depositPct) {
-      await supabase.from('invoices')
-        .update({ status: 'archived' })
-        .eq('id', offerteId)
-    }
-
-    // [FACTUUR-A] Mint number + render PDF + deliver via the route
-    try {
-      const res = await fetch('/api/invoice/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId: factuur.id }),
-      })
-      const result = await res.json().catch(() => ({}))
-      setShowConvertDialog(false)
-      if (!res.ok) {
-        setError(failureText(res.status, result, t('nieuw.fout.verstuurConcept')))
-        setConvertingOfferte(false)
-        router.replace(`/dashboard/invoice/${factuur.id}`)
-        return
-      }
-      // [VERSTUURD-EERLIJK] This screen had it right before any other did — and still spelled the
-      // rule out itself, in a list of warning names. That is how the other screens ended up with
-      // SUBSETS of the same list. The question is asked once now, in invoice-delivery.ts.
-      const bezorgFout = deliveryFailure(result)
-      if (bezorgFout) {
-        router.replace(`/dashboard/invoice/${factuur.id}?delivery=${bezorgFout}`)
-        return
-      }
-      // [VERSTUURD] Dezelfde gebeurtenis, dus dezelfde bevestiging: ook hier is een genummerde
-      // factuur de deur uit. `converted` staat aan, dus het paneel benoemt de offerte.
-      const notice = invoiceSentNotice({
-        invoiceNumber: result.invoice_number,
-        invoiceType: result.invoice_type,
-        converted: result.converted,
-        clientName,
-        clientEmail,
-        totalInc,
-        replyTo: result.reply_to,
-      }, taal)
-      if (notice) {
-        setSentInvoiceId(factuur.id)
-        setSentNotice(notice)
-        setConvertingOfferte(false)
-        return
-      }
-    } catch {
-      setShowConvertDialog(false)
-      setError(t('nieuw.fout.versturen'))
-      setConvertingOfferte(false)
-      router.replace(`/dashboard/invoice/${factuur.id}`)
-      return
-    }
-
-    // [BOEK-031] replace ipv push — Navigation Strategy — May 2026
-    router.replace(`/dashboard/invoice/${factuur.id}`)
-  }
-
   // ─── Main submit ───────────────────────────────────────────────────────────
 
   async function handleSubmit(mode: 'draft' | 'sent') {
@@ -1451,10 +1313,11 @@ function NewInvoicePageContent() {
     //
     // [FACTUUR-A] OFFERTE NEVER goes through the send route. An offerte is a
     // price quote, not a legal invoice: it gets NO number and does NOT become
-    // a factuur here. It is saved (as pro_forma) and the user converts it
-    // later via the explicit "Omzetten naar factuur" button. Routing it
-    // through /api/invoice/send would mint a factuur number (the bug that
-    // produced 007-2026 from an offerte).
+    // a factuur here. It is saved (as pro_forma), mailed as a quote below, and
+    // invoiced later through "Maak factuur aan" on the sales list — the
+    // from_offerte path ([OFFERTE-GEEN-OMZETTING]). Routing it through
+    // /api/invoice/send would mint a factuur number (the bug that produced
+    // 007-2026 from an offerte); that route now refuses a quote outright.
     if (mode === 'sent' && invoiceType !== 'offerte') {
       try {
         const res = await fetch('/api/invoice/send', {
@@ -1492,7 +1355,8 @@ function NewInvoicePageContent() {
         const notice = invoiceSentNotice({
           invoiceNumber: result.invoice_number,
           invoiceType: result.invoice_type,
-          converted: result.converted,
+          // [OFFERTE-GEEN-OMZETTING] The send route no longer converts anything.
+          converted: false,
           clientName,
           clientEmail,
           totalInc,
@@ -2460,28 +2324,6 @@ function NewInvoicePageContent() {
         </div>
       )}
 
-      {/* [DS] Offerte → Factuur convert dialog */}
-      {showConvertDialog && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px', paddingBottom: sheetPaddingBottom(24), backgroundColor: 'rgba(0,0,0,0.4)' }}>
-          <div className="sheet-scroll" style={{ backgroundColor: 'white', borderRadius: 24, padding: 24, width: '100%', maxWidth: 480, boxShadow: '0 4px 24px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: '#202124', margin: 0 }}>{t('nieuw.omzetten')}</h2>
-            <p style={{ fontSize: 14, color: '#5F6368', lineHeight: 1.6, margin: 0 }}>
-              {t('nieuw.omzetten.uitleg')}
-            </p>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('nieuw.omzetten.zeker')}</p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleConvertOfferte} disabled={convertingOfferte}
-                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#1A73E8', color: 'white', fontSize: 16, fontWeight: 600, cursor: convertingOfferte ? 'not-allowed' : 'pointer' }}>
-                {convertingOfferte ? t('nieuw.actie.bezig') : t('nieuw.omzetten.ja')}
-              </button>
-              <button onClick={() => setShowConvertDialog(false)}
-                style={{ flex: 1, minHeight: 48, borderRadius: 9999, border: 'none', backgroundColor: '#F1F3F4', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
-                {t('nieuw.actie.annuleren')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   )

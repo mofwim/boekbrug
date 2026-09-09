@@ -4002,16 +4002,16 @@ test("[OFFERTE-BEWERKBAAR] one rule decides it, and it never opens a numbered do
   );
 
   // The edit screen has to know WHAT it is editing. It called everything "Factuur bewerken" and
-  // its confirm promised to send "de factuur" — while sending a quote CONVERTS it into a numbered
-  // invoice (send route, isConversion). One tap, irreversible, and the word offerte never appeared.
+  // its confirm promised to send "de factuur". [OFFERTE-GEEN-OMZETTING] Sending a quote used to
+  // CONVERT it into a numbered invoice; now it goes out as a quote, and the confirm says so.
   assert.match(edit, /setInvoiceType\(invoice\.invoice_type/, "the screen must load the type");
   assert.match(edit, /quote \? t\('bewerk\.titel\.offerte'\)/, "…and title itself honestly"); // [TAAL]
   assert.match(
-    edit, /t\('bewerk\.omzetWaarschuwing'\)/, // [TAAL] key, not sentence
-    "…and the confirm must say that sending a quote issues an invoice number, before it happens",
+    edit, /t\('bewerk\.offerteBevestig'\)/, // [TAAL] key, not sentence
+    "…and the confirm must say that the quote goes out as a quote, without a number",
   );
   assert.match(
-    edit, /quote \? `✉ \$\{t\('bewerk\.omzettenVersturen'\)\}`/,
+    edit, /quote \? `✉ \$\{t\('bewerk\.offerteVersturen'\)\}`/,
     "…and the button must be labelled with what it does",
   );
 });
@@ -4345,57 +4345,50 @@ test("[KORTING-BEWERKEN] the edit screen can change a discount, and the CAS matc
   );
 });
 
-// ── [OFFERTE-KNOP-EERLIJK] The button on a quote says what it does ──
+// ── [OFFERTE-GEEN-OMZETTING] A quote is never converted in place ──
 //
-// On /dashboard/facturen a pro_forma row carried a button labelled "Versturen". It reads as "send
-// the quote to the customer". It does not do that: it converts the quote into an OFFICIAL FACTUUR
-// with a number from the owner's gapless series and mails that (send route, isConversion). One
-// tap, and Art. 35 knows no way back — only a creditnota.
+// /dashboard/facturen carried, on a DRAFT quote, a button "Omzetten naar factuur": one tap and the
+// same row became a numbered factuur and was mailed (send route, isConversion). A second door,
+// convertOnly, did the same to a sent quote without mailing, and the create screen had a dialog of
+// its own. None of them ran the new-invoice path (/dashboard/invoice/new?from_offerte=…), which is
+// where the deposit settlement, the discount as lines and the archived quote live — so the invoice
+// made in one tap and the invoice made the proper way from the same quote did not agree. The
+// owner's decision after the money audit: only the new-invoice path remains. A quote is mailed as
+// a quote (send-offerte) and invoiced through "Maak factuur aan".
 //
-// The confirmation already said so honestly. The button did not, and the button is the thing you
-// press. "Offerte versturen" would be worse than either: it would promise to send a quote while an
-// invoice goes out. Mailing an offerte AS an offerte is something this app cannot do at all —
-// every path through /api/invoice/send converts, converts-only, or re-delivers a numbered invoice.
-test("[OFFERTE-KNOP-EERLIJK] a quote's send button is labelled as the conversion it performs", () => {
-  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+// This replaces [OFFERTE-KNOP-EERLIJK], which pinned the label of the button that converted. Its
+// own text said: "If sending a quote ever stops converting it, this label is the thing to revisit."
+test("[OFFERTE-GEEN-OMZETTING] the send route refuses a quote before minting, and every screen uses the new-invoice path", () => {
   const send = code("src/app/api/invoice/send/route.ts");
+  assert.doesNotMatch(send, /isConversion/, "the in-place conversion is back in the send route");
+  assert.match(send, /\(body as \{ convertOnly\?: unknown \}\)\.convertOnly === true\) \{[\s\S]{0,400}?status: 410/,
+    "the retired flag must be refused, never silently treated as a plain send");
+  assert.match(send, /if \(!resend && \(invoice\.invoice_type === 'pro_forma' \|\| invoice\.invoice_type === 'offerte'\)\) \{/,
+    "a quote is no longer refused at the send door");
+  const refuseAt = send.indexOf("code: 'quote_not_sendable_here'");
+  const numberAt = send.indexOf("if (!resend && !finalNumber)");
+  assert.ok(refuseAt > 0 && numberAt > refuseAt, "the refusal must come BEFORE a number is minted (Art. 35: no holes)");
+  assert.match(send, /updateQ = updateQ\.eq\('status', 'draft'\)/, "the committing UPDATE is no longer guarded on 'draft' alone");
+  assert.doesNotMatch(send, /converted: isConversion/, "the response still claims a conversion");
 
-  // The premise. If sending a quote ever stops converting it, this label is the thing to revisit —
-  // so the gate holds the reason, not just the word.
-  assert.match(
-    send,
-    /const isConversion = !resend &&[\s\S]{0,160}?invoice_type === ['"]pro_forma['"]/,
-    "sending a quote still turns it into a factuur — that is why the button may not say 'Versturen'",
-  );
+  const list = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  assert.doesNotMatch(list, /t\('lijst\.omzetten'\)/, "the in-place conversion button is back on the list");
+  assert.match(list, /\{isOfferte && \(inv\.status === 'draft' \|\| inv\.status === 'sent'\) && \(/,
+    "'Maak factuur aan' must be offered on a draft quote too — it is now the only way to an invoice");
+  assert.match(list, /\/dashboard\/invoice\/new\?from_offerte=\$\{inv\.id\}`/, "…and it must take the new-invoice path");
+  assert.doesNotMatch(list, /lijst\.send\.proForma/, "the send modal still carries conversion copy");
 
-  // Both ends on CODE. The end anchor was "[BOEK-RESEND]" — a COMMENT, which code() strips, so
-  // indexOf returned -1, slice(start, -1) ran to the end of the file, and the block picked up the
-  // RESEND button's own "Versturen". The length bound is what said so instead of passing.
-  // The BRACE matters: "!isCredit && !isOfferte && inv.status === 'draft'" is the FACTUUR button
-  // one block up, and it CONTAINS "isOfferte && inv.status === 'draft'" as a substring. Without the
-  // brace the slice started on that button — which correctly says "Versturen" — and the gate
-  // reported a failure about the wrong element entirely.
-  const qStart = list.indexOf("{isOfferte && inv.status === 'draft'");
-  const qEnd = list.indexOf("!isCredit && !isOfferte && (inv.status === 'sent'", qStart);
-  assert.ok(qStart > 0 && qEnd > qStart, "the quote button block sits before the resend button");
-  const quoteButton = list.slice(qStart, qEnd);
-  assert.ok(
-    quoteButton.length > 100 && quoteButton.length < 2400,
-    `the slice must be that ONE button — it is ${quoteButton.length} chars`,
-  );
-  // [TAAL] Pinned on the KEY — third gate that went red on translation, same lesson as
-  // [ARTIKEL-CODE]: a gate written against one language fails the day the app gains a second.
-  assert.match(quoteButton, /t\('lijst\.omzetten'\)/, "the label states the act");
-  assert.doesNotMatch(
-    quoteButton, /> Versturen<|t\('lijst\.versturen'\)/,
-    "…and not the expectation. A bare 'send' on a quote promises to send a quote and issues " +
-      "a numbered invoice instead — in any language",
-  );
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(edit, /const sendRes = quote\s*\? await fetch\(`\/api\/invoice\/\$\{invoiceId\}\/send-offerte`, \{ method: 'POST' \}\)/,
+    "the edit screen no longer sends a quote through the door that cannot mint");
+  assert.doesNotMatch(edit, /bewerk\.omzetWaarschuwing|bewerk\.omzettenVersturen/, "the edit screen still promises a conversion");
 
-  assert.match(
-    list, /t\('lijst\.send\.proForma'/, // [TAAL] key, not sentence
-    "the confirm must still say what happens, in full",
-  );
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.doesNotMatch(nieuw, /handleConvertOfferte|showConvertDialog/, "the create screen's own conversion dialog is back");
+
+  for (const key of ["lijst.omzetten", "lijst.send.proForma", "nieuw.omzetten", "nieuw.fout.omzetten", "bewerk.omzetWaarschuwing", "bewerk.omzettenVersturen"]) {
+    assert.ok(!(key in MESSAGES), `${key} is back in the catalogue — a sentence about a conversion that no longer exists`);
+  }
 });
 
 // ── [OFFERTE-VERSTUREN] A quote can be sent as a quote, through a door that cannot mint ──
@@ -5477,11 +5470,11 @@ test("[LEVERDATUM] the edit path can read, show and write the delivery date", ()
 //
 // Two readers, one answer: the UPDATE writes the row, and the PDF is rendered from the row as it
 // was READ. Fixing only the database would leave the document in the customer's mailbox wrong.
-test("[LEVERDATUM] an offerte converted on send gets one, in the row AND on the PDF", () => {
+test("[LEVERDATUM] a factuur numbered on send gets one, in the row AND on the PDF", () => {
   const send = code("src/app/api/invoice/send/route.ts");
 
   assert.match(
-    send, /const leverdatumBijConversie: string \| null =/,
+    send, /const leverdatumBijVerzending: string \| null =/,
     "resolved once — two call sites reading two expressions is how they drift",
   );
   // Only when the column is really there. This UPDATE is the point of no return: on a deployment
@@ -5496,7 +5489,7 @@ test("[LEVERDATUM] an offerte converted on send gets one, in the row AND on the 
     "never overwrite a leverdatum the owner already chose",
   );
 
-  const uses = send.match(/leverdatumBijConversie \? \{ delivery_date: leverdatumBijConversie \} : \{\}/g) ?? [];
+  const uses = send.match(/leverdatumBijVerzending \? \{ delivery_date: leverdatumBijVerzending \} : \{\}/g) ?? [];
   assert.equal(
     uses.length, 2,
     "both the committing UPDATE and the rendered PDF must carry it — one of the two is not a fix",
@@ -5669,7 +5662,7 @@ test("[KOR-FACTUUR] the screen offers no rate that would be refused, and the doo
   // ORDER is the whole point: the refusal must come BEFORE the number is minted, or the check
   // burns a sequence number it cannot give back (Art. 35 — the series has no holes).
   const checkAt = send.indexOf("const korCheck = checkKorInvoice({");
-  const numberAt = send.indexOf("if (!resend && (isConversion || !finalNumber))");
+  const numberAt = send.indexOf("if (!resend && !finalNumber)");
   assert.ok(checkAt > 0 && numberAt > checkAt, "the KOR check must run before a number is issued");
 
   // And it refuses rather than silently adjusting the amounts of a reviewed document.
@@ -5827,7 +5820,7 @@ test("[FACTUUR-DATUMS] all three write paths refuse it, and the last one before 
   // number that cannot be given back, and Art. 35 wants a series without holes.
   const send = code("src/app/api/invoice/send/route.ts");
   const checkAt = send.indexOf("const datums = checkInvoiceDates({");
-  const numberAt = send.indexOf("if (!resend && (isConversion || !finalNumber))");
+  const numberAt = send.indexOf("if (!resend && !finalNumber)");
   assert.ok(checkAt > 0 && numberAt > checkAt, "the date check must run before a number is issued");
 
   // Dates are compared as strings on purpose. These columns are DATE with no zone, and this repo
@@ -7101,11 +7094,11 @@ test("[VERSTUURD] the most consequential button in the app cannot go back to say
   assert.match(page, /import InvoiceSentModal from '@\/components\/ui\/InvoiceSentModal'/);
   assert.match(page, /<InvoiceSentModal/, "the panel must actually be rendered");
 
-  // BOTH send paths. This screen issues a numbered invoice in two places — the ordinary submit and
-  // the offerte conversion — and the second one is the easy one to forget: same event, same
-  // permanence, and it had the same silent ending.
+  // ONE send path. This screen used to issue a numbered invoice in two places — the ordinary
+  // submit and its own offerte-conversion dialog — and the second was the easy one to forget.
+  // [OFFERTE-GEEN-OMZETTING] retired the dialog; the count below is the count of places that mint.
   const calls = page.match(/invoiceSentNotice\(\{/g) ?? [];
-  assert.equal(calls.length, 2, "the ordinary send AND the offerte conversion must both confirm");
+  assert.equal(calls.length, 1, "the ordinary send must confirm — and nothing else on this screen mints a number");
 
   // The confirmation may only be built from what the ROUTE reported. Reading the number off the
   // page's own state would announce a number the server never minted.
@@ -7113,16 +7106,15 @@ test("[VERSTUURD] the most consequential button in the app cannot go back to say
   assert.match(page, /invoiceType: result\.invoice_type/);
   assert.match(page, /replyTo: result\.reply_to/);
 
-  // And BOTH must STOP there. The `return` after setting the notice is the whole mechanism:
+  // And it must STOP there. The `return` after setting the notice is the whole mechanism:
   // without it the handler falls through to the router.replace below and the panel is never seen.
   //
-  // Counted, not merely matched. A single /setSentNotice[\s\S]*?return/ is satisfied by EITHER
-  // path, so deleting the stop from the ordinary send — the one the owner uses every day — left
-  // this gate green. It did, on the first negative control of this test.
+  // Counted, not merely matched, so the stop cannot be lost without this count moving. (Two paths
+  // once; the offerte-conversion dialog is gone — [OFFERTE-GEEN-OMZETTING].)
   const stops = page.match(/setSentNotice\(notice\)[\s\S]{0,120}?return/g) ?? [];
   assert.equal(
-    stops.length, 2,
-    "both paths must end the handler after setting the notice — otherwise the page navigates out from under it",
+    stops.length, 1,
+    "the send path must end the handler after setting the notice — otherwise the page navigates out from under it",
   );
 
   // The route has to keep reporting the two facts the panel is not allowed to guess.
@@ -9341,11 +9333,14 @@ test("[KORTING-KETEN] the discount chain reaches every surface that bills the cu
     "…and no group reads the undivided rate allowance any more",
   );
 
-  // The offerte conversion carries BOTH discount levels.
+  // The from_offerte submit carries BOTH discount levels. [OFFERTE-GEEN-OMZETTING] It used to be
+  // the conversion dialog's own body that was sliced here; that dialog is gone and the ordinary
+  // submit is the one path a quote becomes an invoice through, so it is the one that must carry
+  // the document discount.
   const page = code("src/app/dashboard/invoice/new/page.tsx");
   assert.match(page, /select\('description, quantity, unit_price, btw_rate, unit, vat_treatment, discount_type, discount_value'\)/, "quote lines load their discounts");
-  const convert = page.slice(page.indexOf("client_extra_line4: clientExtra4,"), page.indexOf("client_extra_line4: clientExtra4,") + 1200);
-  assert.match(convert, /discount_type: discountType/, "the convert path sends the document discount");
+  const submit = page.slice(page.indexOf("client_extra_line4: clientExtra4,"), page.indexOf("client_extra_line4: clientExtra4,") + 1200);
+  assert.match(submit, /discount_type: invoiceType === 'creditnota' \? null : discountType,/, "the submit sends the document discount");
 
   // The partial-credit accumulator counts per bucket, like the ceiling it feeds.
   assert.match(
@@ -18846,7 +18841,8 @@ test("[NUMMER-VOORUITBLIK] het volgende nummer wordt getoond zonder er een te ve
   // toezegging), en de kop trekt bij zodra de vooruitblik binnenkomt.
   assert.match(nieuw, /nextNumber \? t\('nieuw\.titel\.factuurMetNummer', \{ nummer: nextNumber \}\) : t\('nieuw\.titel\.factuur'\)/,
     "de kop draagt het verwachte nummer niet meer");
-  assert.match(nieuw, /\[invoiceType, offerteId, nextNumber\]/,
+  // [OFFERTE-GEEN-OMZETTING] offerteId left the deps with the header action it drove.
+  assert.match(nieuw, /\[invoiceType, nextNumber\]/,
     "nextNumber staat niet in de header-deps — de kop registreert dan één keer zonder nummer en blijft zo staan");
   assert.match(CATALOGUE["nieuw.titel.factuurMetNummer"].nl, /verwacht/,
     "de kopzin zelf zegt dat het een verwachting is");
@@ -29243,8 +29239,9 @@ test("[KLANT-LAND] the field on both customer screens, the snapshot on the invoi
   assert.match(code("src/app/dashboard/klanten/KlantenClient.tsx"), /\{ key: 'country',\s+label: t\('kl\.veld\.land'\),\s+placeholder: 'NL' \}/);
   const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
   assert.match(nieuw, /setClientCountry\(c\.country \?\? ''\)/, "picking a customer must bring their country along");
-  assert.equal((nieuw.match(/client_country: normalizeCountry\(clientCountry\),/g) ?? []).length, 3,
-    "the three bodies that carry the customer's address must carry the country: draft, update, preview");
+  // [OFFERTE-GEEN-OMZETTING] Two bodies since the conversion dialog went: the submit and the preview.
+  assert.equal((nieuw.match(/client_country: normalizeCountry\(clientCountry\),/g) ?? []).length, 2,
+    "the two bodies that carry the customer's address must carry the country: submit and preview");
   assert.match(nieuw, /const euNul = checkEuZeroRatedInvoice\(\{ clientCountry, clientBtwNumber: clientBtw, invoiceType, korActive: korActief, lines \}\)/,
     "the create screen no longer asks for the btw-id before a 0% invoice to an EU business leaves");
 
