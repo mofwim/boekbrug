@@ -2876,6 +2876,17 @@ test("[BTW-ROUND] nothing computes an invoice's totals a second way", () => {
     );
   }
 
+  // [REGEL-AFRONDING] And the accountant's screen hands the shared function ROUNDED lines. Without
+  // line_total the fallback is quantity × unit_price unrounded — 120,99 on screen against the
+  // 121,00 the server stores for 2 × (1,5 uur @ 33,33). The list above could not see that: it only
+  // asked whether the shared function was CALLED, not what it was handed.
+  assert.match(
+    code("src/modules/accountant/pages/AccountantFactuur.tsx"),
+    /line_total: lineNetEx\(\{ quantity, unit_price \}\)/,
+    "AccountantFactuur feeds computeInvoiceTotals unrounded lines again — a cent apart from the " +
+      "document the client's customer receives",
+  );
+
   // ── The class, so a fifth surface does not need to be remembered ─────────────────────────────
   // The list above pins the four that exist. This walks the tree for the SHAPE, in whichever
   // spelling: a per-line ex-amount multiplied by that line's own rate. The Dutch spelling
@@ -23724,8 +23735,12 @@ test("[WIK-VORDERING] the statutory demand is built through the rule, not from t
   // worth asserting without a database.
   assert.match(incasso, /export function claimableForWik/,
     "the rule exists as a pure function");
-  assert.match(incasso, /if \(args\.invoiceType === 'creditnota'\) return false;/,
-    "money going the other way is not a debt");
+  assert.match(incasso, /if \(args\.invoiceType != null && args\.invoiceType !== 'factuur'\) return false;/,
+    "only a factuur is a debt — a creditnota runs the other way, and an expired offerte (status " +
+      "'sent', its 'geldig tot' in due_date) is a document nobody has to pay");
+  // …and the candidate set is narrowed the same way, because the claims loop below SUMS it.
+  assert.match(cron, /\.eq\("invoice_type", "factuur"\)/,
+    "the cron's candidate query lets every outgoing 'sent' row in, offertes included");
   assert.match(incasso, /if \(args\.dueDayNumber >= args\.todayDayNumber\) return false;/,
     "verzuim starts the day AFTER the term expires — the due date itself is not overdue");
   assert.match(incasso, /if \(args\.dueDayNumber == null\) return false;/,
@@ -26779,9 +26794,18 @@ test("[VERLEGD-NAAR-MIJ] 2a is declared and deducted from ONE number", () => {
   // are supposed to cancel leave a few cents of balance on a return where nothing was payable.
   assert.match(a, /const verlegdBtw = verlegd \? euro\(verlegd\.btw\) : 0;/,
     "the 2a amount is no longer rounded once and reused");
-  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdBtw;/,
-    "5b stopped including the verlegde BTW. Then 2a raises what is owed and nothing deducts it — " +
-      "the owner pays BTW on a purchase they were entitled to deduct in the same return");
+  // [VERLEGD-AFTREK] 5b takes the DEDUCTIBLE share: the same rounded number for a full right of
+  // deduction (so the two still cancel), nothing under the KOR (art. 25 Wet OB), the attributed or
+  // pro-rata share under the exempt regime. Before this, 5b took the whole 2a amount for everyone —
+  // a partly exempt owner (pro rata 20%) with EUR 10.000 of subcontracting deducted EUR 2.100 where
+  // EUR 420 was allowed, while the note beside it said "per saldo betaal je er niets over".
+  assert.match(a, /const verlegdAftrek = !verlegd \|\| input\.korActive\s*\?\s*0\s*:\s*euro\(typeof verlegd\.aftrekbaar === "number" \? verlegd\.aftrekbaar : verlegd\.btw\);/,
+    "the deductible share of 2a is no longer derived from the owner's right of deduction");
+  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek;/,
+    "5b stopped including the verlegde BTW's deductible share. Then 2a raises what is owed and " +
+      "nothing deducts it — the owner pays BTW on a purchase they were entitled to deduct in the same return");
+  assert.match(a, /Onder de KOR heb je geen recht op aftrek/,
+    "the note no longer tells a KOR owner that the verlegde BTW is theirs to pay");
 
   // And the rate is never invented: a reverse-charged invoice carries no BTW and therefore no rate.
   const m = code("src/lib/verlegde-btw.ts");
@@ -28825,4 +28849,73 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   }
 
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
+});
+
+// ── [VERLEGD-AFTREK] What of 2a returns in 5b is the owner's right of deduction, on every surface ──
+//
+// aangifte.ts now takes the deductible share (gate above). This pins the two callers that have to
+// COMPUTE that share — they alone know the regime — and the one that used to omit 2a altogether.
+test("[VERLEGD-AFTREK] the route and the package hand 2a the owner's right of deduction, and read the live header", () => {
+  for (const file of ["src/app/api/aangifte/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(file);
+    assert.match(src, /const aftrekDeelVan = \(invoiceId: string \| null \| undefined\): number => \{/,
+      `${file}: the deductible share of a verlegde purchase is no longer computed`);
+    assert.match(src, /if \(korActive\) return 0;/, `${file}: KOR — no right of deduction (art. 25 Wet OB)`);
+    assert.match(src, /if \(!exemption\.active\) return 1;/, `${file}: no regime — a full right of deduction`);
+    assert.match(src, /case "direct_exempt": return 0;/, `${file}: a purchase attributed to exempt work deducts nothing`);
+    assert.match(src, /aftrekDeel: aftrekDeelVan\(i\.id\),/, `${file}: the share does not reach the vondst`);
+    assert.match(src, /verlegdNaarMij: totaalVerlegd\(verlegdeVondsten\), korActive \}/,
+      `${file}: 2a or the KOR flag no longer reaches the engine — the accountant's ZIP and the owner's ` +
+        "screen then disagree about 5a and 5b for the same quarter");
+    // [VERLEGD-GRONDSLAG] The stored header first. The reader froze `grondslag` at intake and the
+    // amounts route never refreshes it, so a corrected misread stayed on the return, on two lines.
+    assert.match(src, /totalExBtw: Number\.isFinite\(kop\) && kop !== 0 \? kop : merk\.grondslag,/,
+      `${file}: 2a reads the grondslag frozen at intake before the header the owner corrected`);
+  }
+  assert.match(code("src/lib/verlegde-btw.ts"), /aftrekbaar \+= v\.bedrag \* v\.aftrekDeel;/,
+    "the 2a total no longer carries its deductible share");
+  // The package can only read the mark if it asks for the column.
+  assert.match(code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,700}receiver_id, field_confidence, discount_type/,
+    "INVOICE_FIELDS dropped field_confidence — every verlegde purchase then silently leaves the ZIP's 2a");
+});
+
+// ── [KORTING-EENMAAL] A header-only document is not discounted a second time ──────────────────
+//
+// Both writers synthesize a summary row from the STORED header total when a row has no lines, and
+// that total is what the owner's screen computed — discount included. Running the header discount
+// over that row again printed a EUR 1.089 invoice (900 ex after 10%) as EUR 980,10 on paper, and
+// exported PayableAmount 980.10 in the e-invoice: EUR 108,90 short on the legal document, with the
+// mismatch reaching nothing but a warning header on the XML and nothing at all on the PDF.
+test("[KORTING-EENMAAL] the PDF and the UBL apply the header discount only over real lines", () => {
+  assert.match(code("src/lib/invoice-pdf.tsx"), /const korting = groups\.length > 0\s*\?\s*parseDiscount\(/,
+    "the PDF runs the header discount over the row it synthesized FROM the header total, which is already net");
+  assert.match(code("src/lib/ubl-export.ts"),
+    /const korting = lines\.length > 0 \? parseDiscount\(header\.discount_type, header\.discount_value\) : null;/,
+    "the UBL export runs the header discount over the summary line it synthesized from the net header total");
+});
+
+// ── [AANBETALING-KORTING] With a deposit to settle, the offerte's discount travels as lines ──────
+//
+// A header discount is a share of the NET subtotal, and the settlement lines sit inside that
+// subtotal — so the deposit, already computed from the discounted amount, was discounted a second
+// time: pct × deposit too much on the final invoice, EUR 47,39 on the offerte in aanbetaling.ts.
+// Nothing caught it: both documents added up internally, the UBL validated, and the aangifte
+// over-declared the BTW consistently with the invoice.
+test("[AANBETALING-KORTING] the create screen turns the offerte's discount into credit lines beside the settlement", () => {
+  const page = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(page, /const korting = deposits\.lines\.length > 0 \? offerteDiscountLines\(offLines, offHead\) : \[\]/,
+    "the offerte's document discount no longer becomes credit lines when there is a deposit to settle");
+  assert.match(page, /function offerteDiscountLines\([\s\S]{0,400}?discountLines\(\{/,
+    "…and the helper no longer reads the module that owns the apportionment");
+  assert.match(page, /if \(!depositPct && !discountTravelledAsLines && \(offHead\?\.discount_type === 'percent'/,
+    "the header discount is set beside the credit lines — the deposit is discounted twice again");
+  assert.match(page, /t\('nieuw\.banner\.kortingAlsRegel'\)/, "the banner no longer says where the discount went");
+  const m = code("src/lib/aanbetaling.ts");
+  assert.match(m, /export function discountLines\(src: OfferteSource\): DepositLine\[\]/);
+  // Both documents read ONE apportionment, so the deposit and its settlement cannot disagree about
+  // a cent of the discount.
+  assert.match(m, /function netByRate\(src: OfferteSource\): RateGroup\[\] \{\s*const groups = groupsOf\(src\);\s*const off = allowanceByGroup\(groups, src\);/,
+    "depositLines no longer reads the shared apportionment");
+  assert.match(m, /export function discountLines[\s\S]*?const off = allowanceByGroup\(groups, src\);/,
+    "discountLines no longer reads the shared apportionment");
 });

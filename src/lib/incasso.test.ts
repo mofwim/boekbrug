@@ -177,6 +177,16 @@ console.log("\n— [WIK-EEN-AANMANING] one aanmaning per debtor, not per invoice
   check("a creditnota is never hoofdsom",
     claimableForWik({ ...basis, invoiceType: "creditnota" }) === false);
 
+  // An offerte is 'sent' too, with its "geldig tot" in due_date — so the day its validity expired
+  // it walked into the hoofdsom of the debtor's statutory demand. A quote is a document nobody
+  // has to pay; the same goes for a pro forma.
+  check("an expired offerte is never hoofdsom",
+    claimableForWik({ ...basis, invoiceType: "offerte" }) === false);
+  check("nor is a pro forma",
+    claimableForWik({ ...basis, invoiceType: "pro_forma" }) === false);
+  check("a legacy row without a type reads as the column default, factuur",
+    claimableForWik({ ...basis, invoiceType: null }) === true);
+
   // The € 2.000 invoice payable next month, demanded today "binnen 14 dagen".
   check("an invoice that is not yet due is not hoofdsom",
     claimableForWik({ ...basis, dueDayNumber: 120 }) === false);

@@ -178,8 +178,9 @@ export function detectRegimeFlags(s: RegimeSignals): RegimeFlag[] {
       title: "Inkoop met BTW verlegd (rubriek 2a)",
       detail:
         "Op een inkoopfactuur staat 'BTW verlegd' (verleggingsregeling). De BTW is naar jou verlegd: " +
-        "die hoort in rubriek 2a én je mag dezelfde BTW als voorbelasting aftrekken. Dit concept telt de " +
-        "regel als 0% en berekent die verlegging NIET automatisch — je boekhouder verwerkt rubriek 2a.",
+        "die hoort in rubriek 2a, en het deel dat je mag aftrekken komt terug in 5b. Is de factuur bij het " +
+        "inlezen als 'BTW verlegd' herkend, dan staat die verlegging in rubriek 2a van dit concept; ontbreekt " +
+        "de 2a-regel, dan verwerkt je boekhouder rubriek 2a.",
       evidence: ev(reverseP),
     });
   }

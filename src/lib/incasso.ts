@@ -134,8 +134,12 @@ export function claimableForWik(args: {
   /** What is still owed after payments and credit notes — the caller's own openstaand. */
   open: number;
 }): boolean {
-  // Money going the other way is not a debt.
-  if (args.invoiceType === 'creditnota') return false;
+  // Only a factuur is a debt. A creditnota is money going the other way; an offerte or pro forma
+  // is a document nobody has to pay — yet it is sent with status 'sent' and its "geldig tot" in
+  // due_date, so without this line it walked into the hoofdsom the day its validity expired and
+  // inflated the staffel of every real invoice of that debtor. Null is a legacy row read as the
+  // column's default, 'factuur' — the reading reminderTierDue applies too.
+  if (args.invoiceType != null && args.invoiceType !== 'factuur') return false;
   // No due date → no verzuim → nothing to demand. Refusing is the safe direction: a demand needs
   // a term that has expired, and this app cannot invent one.
   if (args.dueDayNumber == null) return false;

@@ -710,7 +710,11 @@ export function buildInvoiceUbl(
   // gebruiken. Drie plekken die hetzelfde uitrekenen moeten hetzelfde antwoord geven — en hier is
   // dat geen nettigheid: wijkt LegalMonetaryTotal een cent af van de som van de regels en de
   // toeslagen, dan weigert het ontvangende access point het bestand (BR-CO-10).
-  const korting = parseDiscount(header.discount_type, header.discount_value);
+  // [KORTING-EENMAAL] Only over REAL lines. A synthesized summary line IS the stored header total,
+  // which is already net of the discount; discounting it again exported a 1.089,00 invoice with
+  // PayableAmount 980.10 — a wrong e-invoice, delivered, with the mismatch reaching nothing but a
+  // warning header. The PDF makes the same choice.
+  const korting = lines.length > 0 ? parseDiscount(header.discount_type, header.discount_value) : null;
   const kortingUitkomst = applyDiscount(
     rawGroups.map((g) => ({ line_total: g.taxable, btw_rate: g.rate })),
     korting,
