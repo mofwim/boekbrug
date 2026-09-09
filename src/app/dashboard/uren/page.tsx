@@ -22,6 +22,7 @@ import { fetchAllRows } from '@/lib/supabase-paginate'
 // Amsterdam is het op een UTC-server nog 31 december, en dan telt dit het verkeerde jaar.
 import { amsterdamToday } from '@/lib/format-nl'
 import { assessUrencriterium, type UrencriteriumStatus } from '@/lib/urencriterium'
+import { round2 } from '@/lib/invoice-totals'
 import type { TimeEntry } from '@/lib/uren'
 import UrenClient, { type UrenClientCard } from './UrenClient'
 
@@ -62,22 +63,31 @@ export default async function UrenPage() {
   // niets gewerkt" zijn tegengestelde antwoorden, en op dit ene getal hangt de zelfstandigenaftrek.
   const today = amsterdamToday()
   const year = Number(today.slice(0, 4))
-  const hoursThisYear = await fetchAllRows<{ hours: number | null }>((lo, hi) =>
-    supabase
+  // [DECLARABEL] Eén lezing, twee getallen: ALLE uren tellen voor het urencriterium, en de
+  // declarabele helft staat eronder — want dat is het getal dat de ondernemer verwart met het
+  // eerste. Beide of geen van beide: een mislukte lezing is null, nooit nul.
+  const yearHours = await fetchAllRows<{ hours: number | null; billable: boolean | null }>((lo, hi) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
       .from('time_entries')
-      .select('hours')
+      .select('hours, billable')
       .gte('worked_on', `${year}-01-01`)
       .lte('worked_on', `${year}-12-31`)
       .order('id', { ascending: true })
       .range(lo, hi),
   )
-    .then((rows) => rows.reduce((sum, r) => sum + (Number(r.hours) || 0), 0))
+    .then((rows) => ({
+      all: rows.reduce((sum, r) => sum + (Number(r.hours) || 0), 0),
+      // Afwezig leest als declarabel — zie de kolom in time_entries_declarabel.sql.
+      billable: rows.reduce((sum, r) => sum + (r.billable === false ? 0 : Number(r.hours) || 0), 0),
+    }))
     .catch((e) => {
       console.error('[URENCRITERIUM] jaartotaal uren lezen mislukt', {
         year, error: e instanceof Error ? e.message : String(e),
       })
       return null
     })
+  const hoursThisYear = yearHours ? yearHours.all : null
   // [NIET-BIJGEHOUDEN] Heeft deze ondernemer hier ooit een uur geregistreerd, in welk jaar dan ook?
   //
   // Zonder deze vraag kreeg iedereen met een leeg urenregister het volle oordeel: "je hebt nog
@@ -109,6 +119,7 @@ export default async function UrenPage() {
       clients={clients}
       loadFailed={Boolean(entriesRes.error)}
       urencriterium={urencriterium}
+      declarabelThisYear={yearHours ? round2(yearHours.billable) : null}
     />
   )
 }

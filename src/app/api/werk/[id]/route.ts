@@ -27,7 +27,9 @@ export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, billed_periods, notes, invoice_id, created_at";
-const HOURS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id";
+// [DECLARABEL] billable travels: own time is shown on the work it belongs to and is never a
+// candidate to put on the customer's invoice.
+const HOURS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id, billable";
 const COSTS = "id, client_name, invoice_number, invoice_date, total_ex_btw, btw_amount, total_inc_btw, status";
 const DOCS = "id, file_name, created_at";
 const ATTACH_MAX = 50;
@@ -128,7 +130,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     // Hours of THIS client, or hours written to no client at all; never another client's. When the
     // work has no client card (a name the owner never invoiced), only clientless hours are offered
     // — and every candidate names its client, so the owner sees whose hour he is about to bill.
-    let hq = db.from("time_entries").select(HOURS).eq("user_id", user.id).is("work_item_id", null).is("invoice_id", null).order("worked_on", { ascending: false }).limit(50);
+    let hq = db.from("time_entries").select(HOURS).eq("user_id", user.id).is("work_item_id", null).is("invoice_id", null).not("billable", "is", false).order("worked_on", { ascending: false }).limit(50);
     hq = row.client_id ? hq.or(`client_id.is.null,client_id.eq.${row.client_id}`) : hq.is("client_id", null);
     const [ch, cc] = await Promise.all([
       hq,

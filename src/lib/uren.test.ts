@@ -9,7 +9,9 @@ import assert from "node:assert/strict";
 
 import {
   entryValue,
-  isBillable,
+  isUninvoiced,
+  isDeclarable,
+  isInvoiceable,
   groupBillable,
   linesFromEntries,
   lineDescription,
@@ -39,6 +41,8 @@ function entry(over: Partial<TimeEntry> = {}): TimeEntry {
     hours: over.hours ?? 1,
     hourly_rate: over.hourly_rate !== undefined ? over.hourly_rate : 100,
     invoice_id: over.invoice_id !== undefined ? over.invoice_id : null,
+    // [DECLARABEL] Spread, not a default: a test about the ABSENT column needs it absent.
+    ...(over.billable !== undefined ? { billable: over.billable } : {}),
   };
 }
 
@@ -84,8 +88,8 @@ test("[UREN] a rate of zero is a rate; a missing rate is not", () => {
 });
 
 test("[UREN-EENMALIG] billable is the column, never a guess", () => {
-  assert.equal(isBillable(entry({ invoice_id: null })), true);
-  assert.equal(isBillable(entry({ invoice_id: "inv-1" })), false);
+  assert.equal(isUninvoiced(entry({ invoice_id: null })), true);
+  assert.equal(isUninvoiced(entry({ invoice_id: "inv-1" })), false);
 
   // The rule that carries the feature: an hour already on an invoice cannot be put back in the
   // pool by anything else about it. Old, recent, expensive, cheap — the foreign key decides.
@@ -354,4 +358,42 @@ test("[TARIEF-STRIKT] an hours invoice never falls to 0% because the rate was mi
   assert.equal(linesFromEntries(entries as never, 0 as never).lines[0]?.btw_rate, 0);
   assert.equal(linesFromEntries(entries as never, 9 as never).lines[0]?.btw_rate, 9);
   assert.equal(linesFromEntries(entries as never, "9" as never).lines[0]?.btw_rate, 9);
+});
+
+// ── [DECLARABEL] May this hour ever be invoiced? ──────────────────────────────────────────────
+
+test("[DECLARABEL] absent reads as billable — every hour from before the column keeps its meaning", () => {
+  assert.equal(isDeclarable(entry({})), true, "no field at all");
+  assert.equal(isDeclarable(entry({ billable: null })), true, "an unreadable column is not a refusal");
+  assert.equal(isDeclarable(entry({ billable: true })), true);
+  assert.equal(isDeclarable(entry({ billable: false })), false, "only an explicit false");
+});
+
+test("[DECLARABEL] the invoicing pool asks both questions: not invoiced yet, and allowed on an invoice", () => {
+  assert.equal(isInvoiceable(entry({ invoice_id: null, billable: true })), true);
+  assert.equal(isInvoiceable(entry({ invoice_id: null, billable: false })), false, "own time is never a candidate");
+  assert.equal(isInvoiceable(entry({ invoice_id: "inv-1", billable: true })), false, "already invoiced");
+});
+
+test("[DECLARABEL] own time is not grouped as billable work and never becomes an invoice line", () => {
+  const rows = [
+    entry({ id: "a", client_id: "k1", hours: 2, hourly_rate: 100, billable: true }),
+    entry({ id: "b", client_id: "k1", hours: 3, hourly_rate: null, billable: false, description: "Acquisitie" }),
+  ];
+  const groups = groupBillable(rows);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].hours, 2, "the acquisition hours are not billable work");
+  assert.equal(groups[0].withoutRate, 0, "…and they do not read as an hour whose rate is missing");
+
+  const made = linesFromEntries(rows, 21);
+  assert.equal(made.lines.length, 1);
+  assert.deepEqual(made.billedIds, ["a"], "only the billable hour is stamped");
+  assert.deepEqual(made.skippedNotDeclarable.map((e) => e.id), ["b"], "the other one is named, not dropped");
+});
+
+test("[DECLARABEL] the input reads only an explicit false as own time", () => {
+  const ok = normalizeTimeEntryInput({ worked_on: "2026-09-09", description: "Werk", hours: 2 });
+  assert.equal(ok.ok && ok.entry.billable, true, "a body from before this field writes a billable hour");
+  const own = normalizeTimeEntryInput({ worked_on: "2026-09-09", description: "Acquisitie", hours: 2, billable: false });
+  assert.equal(own.ok && own.entry.billable, false);
 });

@@ -21299,7 +21299,9 @@ test("[URENCRITERIUM] the hours are read from a column that exists, and judged w
   // Anchored on the CALL that wraps the hours read, not on the name: an `import { fetchAllRows }`
   // left at the top of the file satisfies a bare /fetchAllRows/ while nothing pages any more.
   // (This gate's own first draft did exactly that, and the negative control caught it.)
-  assert.match(urenPage, /await fetchAllRows<\{ hours: number \| null \}>\(\(lo, hi\) =>[\s\S]{0,300}?time_entries/,
+  // [DECLARABEL] The same read now also carries `billable`, so the panel can name the billable
+  // half beside the total. The anchor still binds to the paging call, which is what this asserts.
+  assert.match(urenPage, /await fetchAllRows<\{ hours: number \| null;? ?(?:billable: boolean \| null;?)? ?\}>\(\(lo, hi\) =>[\s\S]{0,400}?time_entries/,
     "the year total can be truncated by the 1000-row cap again");
   assert.match(urenPage, /catch\([\s\S]{0,200}?return null/,
     "a failed hours read no longer becomes null — it would read as zero hours worked");

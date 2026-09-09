@@ -115,6 +115,22 @@ interface Clip {
   /** Afwijkend opnameformaat. Standaard VIEW; PHONE voor een echte telefoonbreedte. */
   view?: { width: number; height: number };
   /**
+   * [KAAL] Geen ondertitels en geen stapbalk — alleen het scherm en de muis.
+   *
+   * Voor een clip waar een ECHTE stem onder komt. Twee dragers naast elkaar (gesproken tekst én
+   * geschreven tekst die iets anders zegt) laten de kijker kiezen welke hij volgt, en dat is er
+   * één te veel. De muis blijft: die vertelt geen tweede verhaal, hij laat zien wie er handelt.
+   */
+  bare?: boolean;
+  /**
+   * [STEM-MONTAGE] Een ingesproken bestand waar de beelden op vallen.
+   *
+   * `beats` zijn de tijdstippen waarop elke zin BEGINT, in seconden, gemeten uit het geluid zelf
+   * (silencedetect + een passing op tekstlengte — zie docs/SOCIAL_CLIPS.md). Beeld i staat op het
+   * scherm van beats[i] tot beats[i+1]; de laatste tot het einde van het geluid.
+   */
+  voiceOver?: { file: string; beats: number[]; end: number };
+  /**
    * [UITLEG] Hoe lang deze clip hoogstens mag worden, in seconden. Standaard MAX_LEN_S.
    *
    * Een teaser en een uitleg zijn niet hetzelfde soort film. De teasers hierboven duren tien tot
@@ -127,10 +143,15 @@ interface Clip {
    */
   maxLen?: number;
   /**
-   * Het pad zelf. `say` zet de ondertitel; `step` verzet de balk bovenin; alles ertussen is echte
-   * interactie.
+   * Het pad zelf. `say` zet de ondertitel; `step` verzet de balk bovenin; `at` wacht tot een
+   * tijdstip op de klok van de gesproken tekst; alles ertussen is echte interactie.
    */
-  run: (p: Page, say: (b: Beat) => Promise<void>, step: (t: string) => Promise<void>) => Promise<void>;
+  run: (
+    p: Page,
+    say: (b: Beat) => Promise<void>,
+    step: (t: string) => Promise<void>,
+    at: (second: number) => Promise<void>,
+  ) => Promise<void>;
 }
 
 // ── De ondertitellaag ─────────────────────────────────────────────────────────
@@ -198,9 +219,9 @@ const CAPTION_CSS = `
   color:#fff; background:${BLUE};
 }`;
 
-async function installCaption(p: Page, badge: string) {
+async function installCaption(p: Page, badge: string, bare = false) {
   await p.addStyleTag({ content: CAPTION_CSS });
-  await p.evaluate((b) => {
+  await p.evaluate(({ b, bare }) => {
     const dim = document.createElement("div"); dim.id = "clip-dim";
     // Een echte pijl, geen stip: een stip leest als een aanwijslaser, een pijl als een gebruiker.
     const cur = document.createElement("div"); cur.id = "clip-cursor";
@@ -219,10 +240,12 @@ async function installCaption(p: Page, badge: string) {
       setTimeout(() => r.remove(), 650);
     }, true);
     document.body.appendChild(cur);
+    document.body.appendChild(dim);
+    if (bare) return; // alleen scherm en muis — de stem doet de rest
     const cap = document.createElement("div"); cap.id = "clip-cap";
     const bar = document.createElement("div"); bar.id = "clip-badge"; bar.textContent = b;
-    document.body.append(dim, bar, cap);
-  }, badge);
+    document.body.append(bar, cap);
+  }, { b: badge, bare });
 }
 
 /**
@@ -392,11 +415,11 @@ async function unfocus(p: Page) {
  * Playwright klikt standaard door de muis in één sprong te verplaatsen. Op een opname leest dat als
  * teleporteren; `steps` maakt er een beweging van. De klik zelf tekent zijn eigen rimpel.
  */
-async function moveTo(p: Page, target: ReturnType<Page["locator"]>) {
+async function moveTo(p: Page, target: ReturnType<Page["locator"]>, steps = 28, settle = 300) {
   const box = await target.boundingBox();
   if (!box) return;
-  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 28 });
-  await p.waitForTimeout(300);
+  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps });
+  await p.waitForTimeout(settle);
 }
 
 /** Eén veld aanwijzen binnen het uitgelichte blok, en het daarna weer loslaten. */
@@ -408,12 +431,23 @@ async function pointAt(p: Page, field: ReturnType<Page["locator"]>, ms: number) 
 }
 
 /** Typen in een veld dat al is aangewezen — zonder scrollen, want het blok staat al goed. */
-async function fill(p: Page, field: ReturnType<Page["locator"]>, value: string, perChar = 55) {
-  await moveTo(p, field);
+/**
+ * Typen in een veld, met de muis erheen.
+ *
+ * `settle` en `steps` staan los, want bij een clip die op een STEM is gemonteerd is de rust na een
+ * veld geen smaakkwestie meer maar een budget: past de handeling niet in de zin die erbij hoort,
+ * dan schuift alles erna mee. Drie velden kosten alleen al bijna drie seconden aan muis en rust,
+ * en dat was precies wat het blok "je klant" over zijn zin heen duwde.
+ */
+async function fill(
+  p: Page, field: ReturnType<Page["locator"]>, value: string,
+  perChar = 55, settle = 340, steps = 28,
+) {
+  await moveTo(p, field, steps, Math.min(settle, 300));
   await field.click();
   await field.fill("");
   await field.type(value, { delay: perChar });
-  await p.waitForTimeout(340);
+  await p.waitForTimeout(settle);
 }
 
 /** Typen in het veld onder een opschrift, met hetzelfde menselijke ritme als type(). */
@@ -772,6 +806,121 @@ const CLIPS: Clip[] = [
       });
     },
   },
+  // ── [STEM-MONTAGE] Op een ingesproken tekst gemonteerd. Geen letter in beeld. ──
+  //
+  // Alle clips hiervoor dragen hun uitleg in ondertitels, omdat er niemand sprak. Hier spreekt er
+  // wél iemand, en dan is geschreven tekst ernaast geen extra maar een tweede verhaal: de kijker
+  // kiest er één om te volgen en mist de andere. Dus alleen het scherm en de muis.
+  //
+  // ── HOE DE TIJDEN ZIJN BEPAALD ──
+  //
+  // Niet geschat. Uit het geluid zelf gemeten: silencedetect geeft elke pauze, en welke pauze bij
+  // welke zin hoort volgt uit een passing op tekstlengte (één stem in één taal leest ongeveer even
+  // snel). De eerste gok — "de elf langste pauzes zijn de elf zinsgrenzen" — was fout: er kwamen
+  // zinnen van drie woorden uit die vier seconden zouden duren. De passing haalt 13% gemiddelde
+  // afwijking, en de korte zinnen vallen precies op de korte stukken, wat het bewijs is dat de
+  // toewijzing klopt en niet alleen goedkoop past.
+  //
+  // `at(seconde)` wacht tot dat punt op de klok van de stem. Wat ervóór staat, moet er dus in
+  // passen; loopt een handeling uit, dan zegt het verslag het in plaats van stilletjes te schuiven.
+  {
+    name: "13-factuur-stem",
+    path: "/factuur-maken",
+    view: PHONE,
+    bare: true,
+    maxLen: 75,
+    hook: "", // niet gebruikt: bare
+    voiceOver: {
+      file: path.join("scripts", "voice", "factuur-nl.mp3"),
+      beats: [0, 4.29, 7.63, 9.42, 14.50, 22.78, 27.48, 32.67, 34.53, 43.04, 48.07, 53.84],
+      end: 59.90,
+    },
+    run: async (p, _say, _step, at) => {
+      const mij = section(p, "Jouw gegevens (afzender)");
+      const klant = section(p, "Klant (ontvanger)");
+      const regels = section(p, "Regels");
+      await expectFields(mij, 9, "Jouw gegevens (afzender)");
+      await expectFields(klant, 6, "Klant (ontvanger)");
+      await expectFields(regels, 5, "Regels");
+      const totaal = p.getByText("Totaal incl. BTW").first();
+
+      // 1 · "Nog steeds een half uur bezig met één factuur?" — het lege formulier, stil.
+      await at(0.4);
+      await p.mouse.move(230, 300, { steps: 20 });
+
+      // 2 · "En dan moet je de btw ook nog zelf uitrekenen." — naar de lege btw-regel: € 0,00.
+      await at(4.29);
+      await bringToEyeLine(p, totaal, 0.46);
+
+      // 3 · "Dat kan makkelijker." — één tel rust op die nullen.
+      await at(7.63);
+
+      // 4 · "Met BoekBrug maak je in ongeveer één minuut een professionele factuur."
+      await at(9.42);
+      await focusBlock(p, mij);
+
+      // 5 · "Eerst vul je één keer je eigen gegevens in: je bedrijfsnaam, KVK-nummer en
+      //      btw-nummer." — precies die drie, in die volgorde. Het beeld volgt het woord.
+      await at(14.50);
+      await fill(p, fieldIn(mij, 0), "Van Dijk Ontwerp", 52);
+      await fill(p, fieldIn(mij, 5), "83102947", 60);
+      await fill(p, fieldIn(mij, 6), "NL003829471B72", 46);
+
+      // 6 · "Daarna de gegevens van je klant: naam, adres en plaats."
+      await at(22.78);
+      // Krap venster (4,7 s voor drie velden): kortere muisbogen en minder rust erna.
+      await focusBlock(p, klant);
+      await fill(p, fieldIn(klant, 0), "Bakkerij De Korenbloem", 26, 150, 14);
+      await fill(p, fieldIn(klant, 2), "Kerkstraat 7", 30, 150, 14);
+      await fill(p, fieldIn(klant, 4), "Breda", 46, 200, 14);
+
+      // 7 · "En als laatste vul je in wat je hebt gedaan, hoeveel en waarvoor."
+      await at(27.48);
+      // Ook krap (5,2 s): "wat, hoeveel, waarvoor" is drie velden in één adem.
+      await focusBlock(p, regels);
+      await fill(p, fieldIn(regels, 1), "Ontwerp huisstijl", 36, 170, 14);
+      await fill(p, fieldIn(regels, 2), "3", 160, 200, 14);
+      await fill(p, fieldIn(regels, 3), "450", 120, 220, 14);
+
+      // 8 · "De rest gaat vanzelf." — de bedragen staan er. Stil laten staan.
+      await at(32.67);
+      await moveTo(p, totaal);
+
+      // 9 · "Kies je btw-tarief van 21% of 9%, en de bedragen worden automatisch berekend."
+      //     De stem pauzeert hoorbaar op 38,71 en 42,34 — dáár valt de keuze, niet ervoor.
+      await at(34.53);
+      await moveTo(p, fieldIn(regels, 4));
+      await at(38.71);
+      await fieldIn(regels, 4).selectOption("9");
+      await at(41.0);
+      await moveTo(p, totaal);
+
+      // 10 · "Zo hoef je nooit meer zelf de btw uit te rekenen." — op het bedrag blijven.
+      await at(43.04);
+
+      // 11 · "Geen gedoe. Geen ingewikkelde berekeningen. En je hebt geen account nodig."
+      //      De waas gaat weg: de kijker ziet de hele factuur terug.
+      await at(48.07);
+      await unfocus(p);
+      await bringToEyeLine(p, totaal, 0.40);
+
+      // 12 · "Maak je factuur gratis op boekbrug.nl/factuur-maken." — naar de knop, en blijven.
+      //
+      // Verdraagzaam gezocht: deze knop staat er pas als het formulier compleet genoeg is, en zijn
+      // naam draagt een pijl ("↓ Download PDF"). Een clip mag niet afbreken op één knop die net
+      // anders heet — dan is er geen film in plaats van een film met een saai slot.
+      await at(53.84);
+      // PDFDownloadLink levert een <a>, geen <button> — daarom zocht de vorige versie zich
+      // suf. Op de TEKST zoeken, want dat is wat de kijker ziet staan.
+      const pdf = p.locator("a, button").filter({ hasText: /Download PDF/i }).first();
+      if (await pdf.count() > 0) {
+        await moveTo(p, pdf);
+      } else {
+        console.error("[CLIPS] ! 13-factuur-stem: de Download-PDF-knop is niet gevonden — slot op het totaal.");
+      }
+      await at(59.9);
+    },
+  },
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -1055,7 +1204,7 @@ for (const clip of SELECTED) {
     rmSync(tmp, { recursive: true, force: true });
     continue;
   }
-  await installCaption(page, "boekbrug.nl");
+  await installCaption(page, "boekbrug.nl", clip.bare);
   const say = sayer(page, cues, t0);
   // De hook staat stil vóór er iets beweegt: dat is de anderhalve seconde waarin iemand besluit
   // door te scrollen of niet.
@@ -1069,8 +1218,31 @@ for (const clip of SELECTED) {
   // De pagina bezinkt nu ACHTER de hook: die staat toch stil, dus de tijd is gratis.
   // Een uitleg opent trager dan een teaser: er is geen scroll te stoppen, er is iets te begrijpen.
   const hookMs = clip.maxLen && clip.maxLen > MAX_LEN_S ? 2600 : 1600;
-  await say({ text: clip.hook, ms: hookMs });
-  await clip.run(page, say, stepper(page));
+  if (!clip.voiceOver) await say({ text: clip.hook, ms: hookMs });
+
+  /**
+   * [STEM-MONTAGE] Seconde nul van de gesproken tekst, hier op de klok gezet.
+   *
+   * Alles wat hierboven gebeurde — laden, bezinken, de laag installeren — valt VÓÓR het geluid.
+   * De video wordt straks op dit punt afgeknipt, zodat beeld en stem allebei bij nul beginnen.
+   */
+  const voStart = Date.now();
+  const overruns: string[] = [];
+  const at = async (second: number) => {
+    const wait = voStart + second * 1000 - Date.now();
+    if (wait < -120) {
+      // Niet stil doorlopen: als een handeling langer duurde dan de zin die erbij hoort, schuift
+      // alles erna mee en valt het beeld naast de stem. Dat wil je in het verslag zien staan.
+      overruns.push(`${second.toFixed(2)}s te laat met ${(-wait / 1000).toFixed(2)}s`);
+      return;
+    }
+    if (wait > 0) await page.waitForTimeout(wait);
+  };
+  await clip.run(page, say, stepper(page), at);
+  if (overruns.length > 0) {
+    console.error(`[CLIPS] ! ${clip.name}: beeld loopt achter op de stem — ${overruns.join(" · ")}`);
+  }
+  const voStartElapsed = (voStart - t0) / 1000;
   await page.waitForTimeout(500);
   await ctx.close(); // pas hierna is het bestand geschreven
   // [STEM-SYNC] De opname stopt hier. Dit moment, min de lengte van het bestand, is seconde nul
@@ -1098,13 +1270,32 @@ for (const clip of SELECTED) {
     //
     // Vooraan tot het eerste beeld, en daarna hoogstens MAX_LEN_S — het staart-deel, want daar
     // staat het uitgerekende bedrag en de slotzin.
-    const from = firstPaintSeconds(ff, webm);
     const webmSeconds = mediaSeconds(ff, rawWebmForTiming);
+    // [STEM-MONTAGE] Met een stem eronder wordt niet op het eerste beeld geknipt maar op seconde
+    // nul van die stem: alles daarvoor is aanloop die de kijker niet hoort.
+    const videoZero = closedAt - webmSeconds;
+    const from = clip.voiceOver
+      ? Math.max(0, voStartElapsed - videoZero)
+      : firstPaintSeconds(ff, webm);
     execFileSync(ff, ["-y", "-ss", from.toFixed(2), "-i", webm, "-t", String(clip.maxLen ?? MAX_LEN_S),
       "-vf", `scale=${OUT_SIZE.width}:${OUT_SIZE.height}:flags=lanczos,unsharp=5:5:0.6:5:5:0.0`,
       "-c:v", "libx264", "-preset", "slow", "-crf", "19",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-fps_mode", "passthrough", mp4], { stdio: "pipe" });
     rmSync(webm, { force: true });
+
+    // [STEM-MONTAGE] Het ingesproken bestand eronder. Beeld en geluid beginnen allebei bij nul,
+    // want daar is hierboven op geknipt.
+    if (clip.voiceOver) {
+      if (!existsSync(clip.voiceOver.file)) {
+        console.error(`[CLIPS] ! ${clip.name}: ${clip.voiceOver.file} niet gevonden — clip blijft stil.`);
+      } else {
+        const spoken = path.join(OUT, `${clip.name}-stem.mp4`);
+        execFileSync(ff, ["-y", "-i", mp4, "-i", clip.voiceOver.file,
+          "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", spoken], { stdio: "pipe" });
+        made.push(spoken);
+        console.log(`[CLIPS] ✓ ${clip.name}-stem.mp4`);
+      }
+    }
 
     // [STEM] Optioneel, en als aparte stap: mislukt de stem, dan staat de stille clip er nog.
     if (process.env.CLIP_VOICE) {

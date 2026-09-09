@@ -3602,3 +3602,35 @@ test("[BESTE] the sales list shows what is still to come in and how much is late
   const noMoney = render({ open: 0, outstanding: 0, overdue: 0, overdueAmount: 0 });
   assert.doesNotMatch(noMoney, /Openstaand ·/, "nothing open → no header");
 });
+
+// ── [DECLARABEL] Own time on the hours screen ────────────────────────────────────────────────
+test("[DECLARABEL] own time is listed apart, never as billable work, and the criterion names both halves", async () => {
+  const { default: UrenClient } = await import("../../src/app/dashboard/uren/UrenClient");
+  const { ToastProvider } = await import("../../src/components/ui/Toast");
+  const { DialogProvider } = await import("../../src/components/ui/Dialog");
+  const { assessUrencriterium } = await import("../../src/lib/urencriterium");
+
+  const entries = [
+    { id: "a", client_id: "k1", worked_on: "2026-09-01", description: "Advieswerk", hours: 4, hourly_rate: 110, invoice_id: null, billable: true },
+    { id: "b", client_id: null, worked_on: "2026-09-02", description: "Acquisitie bij nieuwe klant", hours: 3, hourly_rate: null, invoice_id: null, billable: false },
+  ];
+  const html = renderToStaticMarkup(
+    React.createElement(ToastProvider, null,
+      React.createElement(DialogProvider, null,
+        React.createElement(UrenClient as never, {
+          initialEntries: entries as never,
+          clients: [{ id: "k1", name: "Bakkerij Noord" }] as never,
+          urencriterium: assessUrencriterium({ hoursSoFar: 900, today: "2026-09-09", year: 2026, everRegistered: true }) as never,
+          declarabelThisYear: 640,
+        }),
+      ),
+    ),
+  );
+  const text = textOf(html);
+  assert.match(text, /Niet-declarabel/, "own time has its own section");
+  assert.match(text, /Acquisitie bij nieuwe klant/, "and the hour itself is on the screen, not dropped");
+  assert.match(text, /waarvan 640 declarabel/, "the criterion names the billable half beside the total");
+  // The acquisition hour must not read as an hour whose rate is missing — that warning is about
+  // work that WILL be invoiced.
+  assert.doesNotMatch(text, /1 uur zonder tarief|zonder tarief/, "own time never raises the missing-rate warning");
+});

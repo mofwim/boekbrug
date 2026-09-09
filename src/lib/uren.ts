@@ -42,8 +42,20 @@ export interface TimeEntry {
   hours: number;
   /** Ex btw. Null = not agreed yet, which is a different thing from zero. */
   hourly_rate: number | null;
-  /** The invoice this hour is already on. Null = still billable. */
+  /** The invoice this hour is already on. Null = not invoiced yet. */
   invoice_id: string | null;
+  /**
+   * [DECLARABEL] May this hour ever go on an invoice?
+   *
+   * ABSENT READS AS TRUE, and that is the whole compatibility story: every hour written before
+   * time_entries_declarabel.sql was written to be billed, and an installation behind on the
+   * migration keeps behaving exactly as it did.
+   *
+   * False is acquisitie, administratie, reistijd, offertes, leren. Those hours are real and they
+   * count in full for the urencriterium; they simply never become an invoice line, and they never
+   * raise the "uur zonder tarief" warning, because they were never going to carry a rate.
+   */
+  billable?: boolean | null;
 }
 
 /** What one hour is worth, or null when no rate has been set. */
@@ -61,13 +73,34 @@ export function entryValue(entry: Pick<TimeEntry, "hours" | "hourly_rate">): num
 }
 
 /**
- * Is this hour still billable?
+ * Is this hour still waiting for an invoice?
  *
  * The column, never a guess. A row with an invoice_id is on an invoice — that is what the foreign
  * key means — and no amount of date arithmetic may overrule it.
+ *
+ * [DECLARABEL] It used to be called isBillable, and that name answered two different questions at
+ * once: "is it already invoiced" and "may it ever be invoiced". The second question now has a
+ * column of its own (isDeclarable), and a function that answers one of two questions under a name
+ * that suggests both is how a non-billable hour ends up on a customer's invoice.
  */
-export function isBillable(entry: Pick<TimeEntry, "invoice_id">): boolean {
+export function isUninvoiced(entry: Pick<TimeEntry, "invoice_id">): boolean {
   return entry.invoice_id === null || entry.invoice_id === undefined;
+}
+
+/**
+ * [DECLARABEL] May this hour ever go on an invoice?
+ *
+ * Absent reads as TRUE — see the field. Only an explicit `false` takes an hour out of the
+ * invoicing pool, so a row from before the migration, a row from an older client, and a row whose
+ * column could not be read all keep the behaviour they had.
+ */
+export function isDeclarable(entry: Pick<TimeEntry, "billable">): boolean {
+  return entry.billable !== false;
+}
+
+/** Both questions at once: this hour may be invoiced, and has not been. The pool for a factuur. */
+export function isInvoiceable(entry: Pick<TimeEntry, "invoice_id" | "billable">): boolean {
+  return isUninvoiced(entry) && isDeclarable(entry);
 }
 
 /** The unbilled hours of one customer, and what they are worth. */
@@ -98,7 +131,9 @@ export interface BillableGroup {
 export function groupBillable(entries: readonly TimeEntry[]): BillableGroup[] {
   const byClient = new Map<string | null, TimeEntry[]>();
   for (const e of entries) {
-    if (!isBillable(e)) continue;
+    // [DECLARABEL] Not invoiced AND allowed on an invoice. An hour of acquisitie is real work and
+    // stays on the screen; it is not a candidate for a customer's bill.
+    if (!isInvoiceable(e)) continue;
     const hours = Number(e.hours);
     // A row that cannot state how long it took is not a billable quantity. It stays in the
     // database and stays visible on the screen; it just cannot be turned into a line.
@@ -197,6 +232,8 @@ export function linesFromEntries(
   lines: InvoiceLineDraft[];
   /** Entries left out because they carry no rate. Named, never silently dropped. */
   skippedWithoutRate: TimeEntry[];
+  /** [DECLARABEL] Entries left out because they may never be invoiced. Also named. */
+  skippedNotDeclarable: TimeEntry[];
   /** The ids that ARE on these lines — what the caller must stamp with the invoice. */
   billedIds: string[];
 } {
@@ -213,8 +250,10 @@ export function linesFromEntries(
   const billedIds: string[] = [];
   // Oldest first on the invoice: a customer reads the period from the top down, the way a
   // statement is written.
+  // [DECLARABEL] Named, never silently dropped — same rule as the entries without a rate.
+  const notDeclarable = entries.filter((e) => isUninvoiced(e) && !isDeclarable(e));
   const ordered = [...entries]
-    .filter(isBillable)
+    .filter(isInvoiceable)
     .sort((a, b) => (a.worked_on ?? "").localeCompare(b.worked_on ?? ""));
 
   for (const e of ordered) {
@@ -232,7 +271,7 @@ export function linesFromEntries(
     });
     billedIds.push(e.id);
   }
-  return { lines, skippedWithoutRate: skipped, billedIds };
+  return { lines, skippedWithoutRate: skipped, skippedNotDeclarable: notDeclarable, billedIds };
 }
 
 /**
@@ -348,6 +387,8 @@ export interface TimeEntryInput {
   hourly_rate: number | null;
   /** [WERK-3] The piece of work this hour was written on, when it was written from the work screen. */
   work_item_id?: string | null;
+  /** [DECLARABEL] May this hour ever be invoiced? Anything but an explicit false reads as true. */
+  billable: boolean;
 }
 
 /**
@@ -399,5 +440,9 @@ export function normalizeTimeEntryInput(
   // rather than refused — the hour is still an hour, it just belongs to no work.
   const workItemId = typeof row.work_item_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.work_item_id) ? row.work_item_id : null;
 
-  return { ok: true, entry: { client_id: clientId, worked_on: worked, description, hours, hourly_rate: rate, ...(workItemId ? { work_item_id: workItemId } : {}) } };
+  // [DECLARABEL] Only an explicit false makes an hour non-declarable. A body that does not mention
+  // the field at all — every client from before this column — keeps writing billable hours.
+  const billable = row.billable !== false;
+
+  return { ok: true, entry: { client_id: clientId, worked_on: worked, description, hours, hourly_rate: rate, billable, ...(workItemId ? { work_item_id: workItemId } : {}) } };
 }

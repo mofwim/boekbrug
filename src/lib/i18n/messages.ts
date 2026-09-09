@@ -14177,6 +14177,13 @@ export const MESSAGES = {
     en: 'Excl. btw. Leave it empty if you do not know yet — the hours stay recorded.',
     ar: 'دون ضريبة القيمة المضافة. اتركه فارغاً إن لم تعرفه بعد — تبقى الساعات مسجّلة.',
   },
+  // [DECLARABEL] Which hours may ever reach an invoice, and which are the owner's own time.
+  'uren.veld.declarabel': { nl: 'Declarabel', en: 'Billable', ar: 'قابلة للفوترة' },
+  'uren.veld.declarabelHint': { nl: 'Uit voor acquisitie, administratie of leren. Die uren tellen wel mee voor het urencriterium.', en: 'Off for acquisition, admin or learning. Those hours do count towards the 1,225-hour criterion.', ar: 'أطفئها للاستقطاب أو الإدارة أو التعلّم. تلك الساعات تُحتسب لمعيار الساعات.' },
+  'uren.nietDeclarabel.kop': { nl: 'Niet-declarabel', en: 'Not billable', ar: 'غير قابلة للفوترة' },
+  'uren.nietDeclarabel.uitleg': { nl: 'Eigen tijd: acquisitie, administratie, leren. Telt mee voor het urencriterium, nooit voor een factuur.', en: 'Your own time: acquisition, admin, learning. Counts towards the criterion, never towards an invoice.', ar: 'وقتك الخاص: استقطاب وإدارة وتعلّم. يُحتسب للمعيار لا للفاتورة.' },
+  'uren.nietDeclarabel.chip': { nl: 'Eigen tijd', en: 'Own time', ar: 'وقت خاص' },
+  'uren.split': { nl: 'waarvan {declarabel} declarabel', en: 'of which {declarabel} billable', ar: 'منها {declarabel} قابلة للفوترة' },
   'uren.veld.geenKlant': { nl: 'Geen klant', en: 'No customer', ar: 'بدون عميل' },
   'uren.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
   'uren.annuleren': { nl: 'Annuleren', en: 'Cancel', ar: 'إلغاء' },
