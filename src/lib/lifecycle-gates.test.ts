@@ -26,7 +26,7 @@ import { DOCUMENT_REFERRERS } from "./document-references";
 // instead of parsing it out of source — see the test.
 import { isExpectedBookingRefusal } from "./incasso-settle";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
-import { destinationsFor, railDestinations } from "./nav-destinations";
+import { destinationsFor, railDestinations, DOOR_LOOK } from "./nav-destinations";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
 import { HOLD_LABELS } from "./hold-reasons";
 // [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
@@ -8030,6 +8030,9 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
     // back in one entry at a time.
     "src/components/nav/DashboardChrome.tsx",
+    // [ZIJBALK-ACCOUNT] The account block at the top of the rail — on every dashboard screen from
+    // 1024px, in whichever language the owner reads. Its four controls are the header's keys.
+    "src/components/nav/RailAccount.tsx",
     // [LEVERANCIER-KIEZEN] The supplier name field and the form around it. Both render inside the
     // two incoming screens above, and both are new enough that a Dutch sentence typed straight
     // into them would look perfectly finished — in Dutch.
@@ -21569,6 +21572,102 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
   }
   assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
+});
+
+// ── [ZIJBALK-DEUR] One door, one look ─────────────────────────────────────────────────────────
+//
+// The home painted each tile in a colour of its own and the rail drew the same doors in grey, with
+// a different glyph for five of them. The owner asked for one look. The look now lives in
+// DOOR_LOOK (nav-destinations.ts) and BOTH screens read it; what this gate holds is that neither
+// has started carrying a colour of its own again — the way two lists drift, one hex at a time.
+test("[ZIJBALK-DEUR] a door looks the same on the home tile and on the rail, from one table", () => {
+  const nav = code("src/lib/nav-destinations.ts");
+  assert.match(nav, /export const DOOR_LOOK = \{/, "the shared look table is gone");
+  assert.match(nav, /export function doorLook\(href: DoorHref\): DoorLook/, "doorLook is no longer typed on the table's keys");
+
+  // Every rail row carries its tile's glyph and colour — every owner variant and the accountant.
+  for (const [role, counter, work] of [
+    ["zzper", false, false], ["zzper", true, false], ["zzper", false, true], ["accountant", false, false],
+  ] as const) {
+    for (const d of railDestinations(role, counter, work)) {
+      const look = DOOR_LOOK[d.href as keyof typeof DOOR_LOOK];
+      assert.ok(look, `${role}: ${d.href} is on the rail and not in DOOR_LOOK`);
+      assert.equal(d.tint, look.tint, `${role}: ${d.href} is painted a colour that is not its tile's`);
+      assert.equal(d.icon, look.icon, `${role}: ${d.href} shows a glyph that is not its tile's`);
+      assert.match(d.tint ?? "", /^#[0-9A-Fa-f]{6}$/, `${d.href}: the tint is not a hex colour`);
+    }
+  }
+
+  // The rail paints it as the tile does: a white glyph on a square of the door's colour.
+  const rail = code("src/components/nav/DashboardRail.tsx");
+  assert.match(rail, /background: item\.tint \?\? M3\.onSurfaceVariant/, "the rail no longer paints the door's colour");
+  assert.match(rail, /color: '#fff',\s*fontVariationSettings/, "…with the tile's white glyph on it");
+
+  // …and the HOME reads the same table. A tile with a colour typed into it is the drift itself.
+  const home = code("src/app/dashboard/zzp/ZzpDashboard.tsx");
+  assert.match(home, /import \{ doorLook \} from '@\/lib\/nav-destinations'/, "the home no longer reads the shared look");
+  assert.doesNotMatch(home, /<AdminTile icon="/, "an AdminTile carries a glyph of its own again");
+  assert.doesNotMatch(home, /<MiniCard icon="/, "a MiniCard carries a glyph of its own again");
+  assert.doesNotMatch(home, /tint="#/, "a tile carries a colour of its own again");
+  assert.doesNotMatch(home, /iconBg="#/, "a card carries a colour of its own again");
+  assert.doesNotMatch(home, /iconBg=\{M3\./, "a card takes its colour from the palette directly, past the table");
+  assert.ok((home.match(/doorLook\('\/dashboard/g) ?? []).length >= 20,
+    "the home reads fewer doors from the table than it draws — a tile went back to its own colour");
+});
+
+// ── [ZIJBALK-ACCOUNT] The account corner lives in the rail ────────────────────────────────────
+//
+// The owner asked for the home bar's corner — name, e-mail, the bell, Berichten, Instellingen,
+// Uitloggen — in the rail, and the corner gone. Gone at the widths the rail exists; a phone has no
+// rail. So the invariant is not "moved" but "in exactly one place at every width", and the two
+// halves of that are held here: the rail draws it, and the bar hides it at the rail's breakpoint.
+test("[ZIJBALK-ACCOUNT] the account corner is in the rail from 1024px, and nowhere twice", () => {
+  // The layout reads the name it hands over, and hands it over.
+  const layout = code("src/app/dashboard/layout.tsx");
+  assert.match(layout, /select\('id, email, role, full_name, company_name'\)/, "the layout does not read the name the rail shows");
+  assert.match(layout, /account=\{\{ id: profile\.id, name: profile\.full_name \|\| profile\.company_name \|\| '', email: profile\.email \?\? null \}\}/,
+    "the rail is mounted without the account");
+  const rail = code("src/components/nav/DashboardRail.tsx");
+  assert.match(rail, /\{account && <RailAccount account=\{account\} role=\{role\} \/>\}/, "the rail draws no account block");
+  // …above the navigation, where the owner put it.
+  assert.ok(rail.indexOf("<RailAccount") < rail.indexOf("sections.map("), "the account block is not at the top of the rail");
+
+  const acc = code("src/components/nav/RailAccount.tsx");
+  // No client during render: the layout renders this on the server, and so do the render tests.
+  assert.doesNotMatch(acc, /const supabase = createClient\(\)/, "the account block builds a client in the render body");
+  assert.match(acc, /getBrowserClient\(\)/, "…it must build it on first use, inside the effect");
+  // The four things the corner had.
+  assert.match(acc, /<NotificationsBell/, "the bell did not move");
+  assert.match(acc, /href=\{messagesHref\}/, "Berichten did not move");
+  assert.match(acc, /href="\/dashboard\/settings"/, "Instellingen did not move");
+  assert.match(acc, /auth\.signOut\(\)/, "there is no way out of the app from the rail");
+  // [NO-SILENT-EMPTY] A failed read reaches the bell as an error, never as "Geen meldingen".
+  assert.match(acc, /loadError=\{notifError\}/, "a failed read would show as no notifications");
+  assert.match(acc, /t\('start\.meldingenFout'\)/);
+  // The bell's panel cannot open inside a scrolling rail; fixed beside it, clear of its width.
+  assert.match(acc, /panelStyle=\{\{ position: 'fixed'[^}]*insetInlineStart: 'calc\(var\(--rail-w\) \+ 8px\)'/,
+    "the panel opens inside the rail's scroll box, where it is clipped");
+  assert.match(code("src/app/dashboard/_shared/index.tsx"), /\.\.\.panelStyle,/, "the bell no longer takes a panel placement");
+
+  // The corner leaves the home bar at the SAME breakpoint that shows the rail — and all of it.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /@media \(min-width: 1024px\) \{\s*\.dash-header-account \{\s*display: none !important;/,
+    "the corner is still drawn beside the rail");
+  // Raw source, not code(): the end of the corner is a comment marker, and code() strips comments.
+  // Slicing to </header> instead would count a control moved out of the wrapper as still inside.
+  const shared = readFileSync("src/app/dashboard/_shared/index.tsx", "utf8");
+  const cornerAt = shared.indexOf('className="dash-header-account"');
+  assert.ok(cornerAt > 0, "the home bar's corner is not marked");
+  const cornerEnd = shared.indexOf("[ZIJBALK-ACCOUNT] end of the corner", cornerAt);
+  assert.ok(cornerEnd > cornerAt, "the corner has no end marker — nothing says where it stops");
+  const corner = shared.slice(cornerAt, cornerEnd);
+  for (const piece of ["<ZzpNavLinks", "<AccountantNavLinks", "<NotificationsBell", "<ProfileMenu", "forum"]) {
+    assert.ok(corner.includes(piece), `${piece} is outside the corner and stays on screen beside the rail`);
+  }
+  // …and the marker is the last thing before the bar closes.
+  assert.match(shared.slice(cornerEnd, cornerEnd + 300), /\*\/\}\s*<\/header>/, "something sits between the end of the corner and the end of the bar");
+  // The glyph for the way out is in the font subset; a name that is not renders as its text.
+  assert.match(readFileSync("src/app/layout.tsx", "utf8"), /icon_names=[^"]*\blogout\b/, "'logout' is not in the icon subset");
 });
 
 test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {

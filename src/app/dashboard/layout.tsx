@@ -40,7 +40,10 @@ export default async function DashboardLayout({
   // geen gebruiker en geeft meteen null terug, zonder één query.
   const [profileRes, acting] = await Promise.all([
     user
-      ? supabase.from('profiles').select('id, email, role').eq('id', user.id).single()
+      // [ZIJBALK-ACCOUNT] full_name and company_name are the name the rail shows. Day-one columns
+      // (the two homes select('*') and render them), so they belong in this select and not behind
+      // the deploy-safe try below — that guard is for columns a deployment may not have yet.
+      ? supabase.from('profiles').select('id, email, role, full_name, company_name').eq('id', user.id).single()
       : Promise.resolve({ data: null }),
     // [ACTING-FOR] Een verkoopmedewerker krijgt de navigatie van de eigenaar NIET te zien.
     //
@@ -53,7 +56,9 @@ export default async function DashboardLayout({
     // links die nergens heen gaan, geen gegevens van zijn baas.
     getActingFor(),
   ])
-  const profile = profileRes.data as { id: string; email?: string | null; role?: string | null } | null
+  const profile = profileRes.data as {
+    id: string; email?: string | null; role?: string | null; full_name?: string | null; company_name?: string | null
+  } | null
 
   // [SUBNAV] Viewer role for the shared sub-page header (resolves role-aware
   // parent/home via src/lib/navigation.ts).
@@ -121,7 +126,16 @@ export default async function DashboardLayout({
           pads for it — a fixed element inside its own padding would sit 240px in from the edge.
           Same visibility rule as the phone bar: hidden for a verkoopmedewerker, whose
           destinations would bounce him back (see the note on DashboardChrome below). */}
-      {profile && !isMedewerker && <DashboardRail role={subnavRole} counter={counterTrade} work={workTrade} />}
+      {/* [ZIJBALK-ACCOUNT] …and it carries the account corner from 1024px: who is signed in, the
+          bell, Berichten, Instellingen, Uitloggen. See RailAccount.tsx. */}
+      {profile && !isMedewerker && (
+        <DashboardRail
+          role={subnavRole}
+          counter={counterTrade}
+          work={workTrade}
+          account={{ id: profile.id, name: profile.full_name || profile.company_name || '', email: profile.email ?? null }}
+        />
+      )}
       <SubPageHeaderProvider>
         {/* [MEDEWERKER] De balk rendert nu WEL voor hem, met zijn eigen thuis.
             Hij werd verborgen om een goede reden — een menu vol links die je terugwerpen is erger
