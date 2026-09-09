@@ -23,8 +23,9 @@ import { useState, useRef, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import { FEEDBACK_MAX_CHARS, FEEDBACK_MAX_IMAGE_BYTES } from '@/lib/feedback'
 import { useCloseOnBack } from '@/lib/use-close-on-back'
-// [FEEDBACK-SEND] Dezelfde helper als elk ander bodempaneel. Dit bestand rekende
-// zijn onderrand met de hand uit en vergat de balk; de helper kan dat niet vergeten.
+// [FEEDBACK-SEND] The same helper every bottom sheet uses — here on the OVERLAY, not on the
+// panel: it is the overlay that keeps the dialog's centring area clear of the BottomNav. See the
+// note at the dialog itself.
 import { sheetPaddingBottom } from '@/lib/design/tokens'
 // [TAAL] A component holds no language of its own.
 import { useLocale } from '@/lib/i18n/use-locale'
@@ -33,10 +34,12 @@ import { failureText } from '@/lib/server-message'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 
-export default function FeedbackButton() {
+// `defaultOpen` exists for tests/render/feedback-dialog.test.tsx: a server render cannot tap the
+// flag, and the open dialog is the part worth rendering. The layout mounts this without props.
+export default function FeedbackButton({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const t = translator(useLocale())
   const pathname = usePathname()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [message, setMessage] = useState('')
   const [imageName, setImageName] = useState<string | null>(null)
   const [imageData, setImageData] = useState<string | null>(null)
@@ -141,31 +144,38 @@ export default function FeedbackButton() {
       aria-label={t('fb.titel')}
       style={{
         position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(32,33,36,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center', fontFamily: FONT,
+        // [FEEDBACK-MIDDEN] A centred dialog, not a sheet glued to the bottom edge. The owner
+        // asked for that, and the bottom edge was the worse place anyway: on a phone the
+        // BottomNav (z-index 2000, ABOVE this overlay) sits exactly there, and this panel has
+        // already once lost its send button behind that bar — see [FEEDBACK-SEND] below.
+        //
+        // The bar is kept clear HERE, on the overlay: its bottom padding is the same helper every
+        // bottom sheet uses, so the box the panel is centred in ends where the bar begins. The
+        // panel is capped at 100% of that box, so nothing inside it can reach behind the bar
+        // however long the message gets.
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: FONT,
+        padding: 16, paddingBottom: sheetPaddingBottom(16),
       }}
       onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div className="sheet-scroll" style={{
-        background: '#fff', width: '100%', maxWidth: 520, borderRadius: '16px 16px 0 0',
-        padding: 16,
-        // [FEEDBACK-SEND] Reserve the bottom bar, not only the device's safe area.
-        // This panel sticks to the bottom of the screen and on mobile a 64px
-        // BottomNav sits on top of it, so the send button ended 48px BEHIND that
-        // bar. It was drawn; a tap on it reached the bar and opened Bestanden
-        // instead. Measured on this component at 393x830: the button ended at
-        // 814px, the bar started at 766px, and elementFromPoint at the button's
-        // centre returned the bar.
+        background: '#fff', width: '100%', maxWidth: 520, borderRadius: 16, padding: 16,
+        boxShadow: '0 12px 40px rgba(0,0,0,0.22)',
+        // [FEEDBACK-SEND] The measured history of this panel's bottom edge. As a bottom sheet it
+        // ended 48px BEHIND the BottomNav on mobile: the send button was drawn, and a tap on it
+        // reached the bar and opened Bestanden instead (393x830: button ended at 814px, bar
+        // started at 766px, elementFromPoint at the button's centre returned the bar). On this
+        // panel that is the most expensive bug available — whoever opens it has already watched
+        // something break, types it up, and then cannot send it, so we never hear about it.
         //
-        // On this panel in particular that is the most expensive bug available:
-        // whoever opens it has already watched something break, types it up, and
-        // then cannot send it — so we never hear about it. The floating button
-        // further up this same file already counted --bottom-nav-h (line 117), as
-        // does InvoiceCorrectionModal; only this panel did not.
-        paddingBottom: sheetPaddingBottom(16),
-        // dvh rather than vh: with the keyboard open the visible viewport shrinks
-        // and vh does not, so 85vh ran on behind the keyboard — same button, same
-        // problem, second cause.
-        maxHeight: '85dvh', overflowY: 'auto',
+        // The reservation moved to the overlay above; what is left here is the ceiling. 100% of
+        // the overlay's padded box rather than the class's 88dvh: the class does not know the bar
+        // exists, and a flex item taller than the box it is centred in loses its TOP edge — the
+        // title and the close button — off the screen. The overlay is position: fixed, so where
+        // the viewport shrinks for the keyboard the box shrinks with it and the panel scrolls
+        // inside; where it does not (iOS), the keyboard covers the lower part exactly as it
+        // covered the old sheet, and the panel scrolls the same way.
+        maxHeight: '100%', overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <strong style={{ fontSize: 15, color: '#202124' }}>{t('fb.titel')}</strong>
