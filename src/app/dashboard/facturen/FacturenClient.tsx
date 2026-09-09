@@ -58,12 +58,8 @@ import { payToggleAnswer, isVerwerktConflict, isDuplicatePaidConflict } from '@/
 import type { MessageKey } from '@/lib/i18n/messages'
 // [OPENSTAAND-BEWIJS] The panel is built in the pure module and painted by the same component the
 // pay screen uses. Never open-invoice-proof.ts itself — that reaches the whole matching engine.
-import { buildProofPanel } from '@/lib/open-invoice-proof-text'
 // [BEWIJS-BEANTWOORDEN] De vraag die de ondernemer al beantwoord heeft, wordt niet nog eens
 // gesteld — en dat er iets is weggelegd, staat er. Zie open-invoice-proof-ack.ts.
-import { useProofAnswers } from '@/lib/use-proof-answers'
-import OpenInvoiceProofPanel from '@/components/invoice/OpenInvoiceProofPanel'
-import type { OpenInvoiceProofResult } from '@/lib/open-invoice-proof-types'
 // [BETAALBEWIJS] Under every "Betaald", the bank line that says so — the same pure rule and the
 // same component the pay screen uses, reading the owner's OWN rows through RLS (see below).
 import { collectPaymentEvidence } from '@/lib/payment-evidence-collect'
@@ -199,14 +195,9 @@ export default function FacturenClient({
   // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
   // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
   makers = {},
-  // [OPENSTAAND-BEWIJS] What the server checked before this list was drawn: every invoice we are
-  // chasing, held against every unattached credit in the bank, with the scope of that search.
-  // Null when it could not run — and then the panel says that rather than nothing.
-  openProof = null,
 }: {
   profile: { id: string }
   makers?: Record<string, string>
-  openProof?: OpenInvoiceProofResult | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -215,8 +206,6 @@ export default function FacturenClient({
   // [HAND-DUBBEL] Voor de ene vraag die dit scherm moet stellen voordat het geld boekt.
   const dialog = useDialog()
   const taal = useLocale()
-  // [BEWIJS-BEANTWOORDEN] Wat de ondernemer op het bewijspaneel al beantwoord heeft.
-  const proofAnswers = useProofAnswers()
   const t = translator(taal)
   const router   = useRouter()
   const supabase = createClient()
@@ -1208,53 +1197,17 @@ export default function FacturenClient({
             anything in the list. This column matches <main> below exactly, and the
             selection bar at the bottom of the file was already doing it. */}
         <div style={{ maxWidth: columnInner(COLUMN.work), margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 12 }}>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
-                  facturen of één klant and mint one payment link for the sum. */}
-              <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
-                style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>checklist</span>
-                {selectMode ? t('lijst.klaar') : t('lijst.selecteer')}
-              </button>
-              {/* Sort */}
-              <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
-                style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
-                {sort === 'desc' ? t('lijst.nieuwste') : t('lijst.oudste')}
-              </button>
-              {/* Refresh */}
-              <button onClick={refresh} aria-label={t('lijst.vernieuwen')} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }} aria-hidden>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* [SEARCH] Quick text-filter (invoice number / client name)
-              [SMART-FILTER] …and the amount: the server query below also matches
-              total_inc_btw, so the placeholder names "bedrag" too. */}
-          <div style={{ position: 'relative', marginBottom: 10 }}>
-            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }} aria-hidden>search</span>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={t('lijst.zoek')}
-              aria-label={t('lijst.zoek.aria')}
-              style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                aria-label={t('lijst.zoek.wissen')}
-                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>close</span>
-              </button>
-            )}
-          </div>
-
+          {/* [BALK-EEN-REGEL] Filter, search and the three buttons on ONE line. They stood
+              stacked — buttons, then a full-width search, then a full-width filter — three
+              rows of chrome above a list that is the point of the screen. The owner asked for
+              one line. Source order is filter, search, buttons, so in a right-to-left screen
+              the buttons pack to the left and the filter sits at the right, which is where
+              each already was. Floors and wrap: on a narrow phone the search takes its own
+              line instead of all three shrinking to nothing. The filter menu is anchored to
+              its own third, which is wide enough for every label it holds. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {/* [BOEK-029] Filter dropdown — works on all screen sizes */}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative', flex: '1 1 150px', minWidth: 0 }}>
             <button
               onClick={() => setShowFilterMenu(p => !p)}
               style={{
@@ -1299,27 +1252,60 @@ export default function FacturenClient({
               </div>
             )}
           </div>
+
+          {/* [SEARCH] Quick text-filter (invoice number / client name)
+              [SMART-FILTER] …and the amount: the server query below also matches
+              total_inc_btw, so the placeholder names "bedrag" too. */}
+          <div style={{ position: 'relative', flex: '2 1 220px', minWidth: 0 }}>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', insetInlineStart: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: '#5F6368' }} aria-hidden>search</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={t('lijst.zoek')}
+              aria-label={t('lijst.zoek.aria')}
+              style={{ width: '100%', borderRadius: R.full, border: `1px solid ${M3.outline}`, padding: '10px 40px 10px 40px', fontSize: 14, outline: 'none', boxSizing: 'border-box', fontFamily: FONT, background: M3.surface, color: M3.onSurface }}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label={t('lijst.zoek.wissen')}
+                style={{ position: 'absolute', insetInlineEnd: 10, top: '50%', transform: 'translateY(-50%)', background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 22, height: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#5f6368' }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }} aria-hidden>close</span>
+              </button>
+            )}
+          </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {/* [BUNDEL-BETAALVERZOEK] Toggle multi-select — pick several open
+                  facturen of één klant and mint one payment link for the sum. */}
+              <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
+                style={{ background: selectMode ? M3.primaryContainer : M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: selectMode ? M3.onPrimaryContainer : '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>checklist</span>
+                {selectMode ? t('lijst.klaar') : t('lijst.selecteer')}
+              </button>
+              {/* Sort */}
+              <button onClick={() => setSort(s => s === 'desc' ? 'asc' : 'desc')}
+                style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, padding: '6px 12px', cursor: 'pointer', fontSize: 12, color: '#5f6368', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }} aria-hidden>{sort === 'desc' ? 'arrow_downward' : 'arrow_upward'}</span>
+                {sort === 'desc' ? t('lijst.nieuwste') : t('lijst.oudste')}
+              </button>
+              {/* Refresh */}
+              <button onClick={refresh} aria-label={t('lijst.vernieuwen')} style={{ background: M3.surfaceVariant, border: 'none', borderRadius: R.full, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#5f6368' }} aria-hidden>{refreshing ? 'hourglass_empty' : 'refresh'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ── Invoice list ── */}
       <main style={{ maxWidth: COLUMN.work, margin: '0 auto', padding: '12px 16px 100px' }}>
-        {/* ── [OPENSTAAND-BEWIJS] What we checked, and against what ────────────────────────────
-            The mirror of the panel on the pay screen, and on this side it carries more weight. A
-            purchase invoice wrongly called open costs the owner a second payment, which they can
-            claw back. A SALES invoice wrongly called open is chased: a reminder, a firmer one, and
-            on the last tier a statutory aanmaning naming incassokosten — sent to a customer who
-            paid three weeks ago. That is the most expensive thing this product can do, and no
-            arithmetic on this screen can see it coming, because the app's own books say the
-            invoice is open.
-
-            So the list states the SEARCH before it states any conclusion: how many invoices were
-            held against how many bank lines, and up to which day the bank data reaches. Above the
-            filters' results and above the list, because it qualifies both.
-
-            Never blocking, and never hidden while searching: a proof that could not run says so
-            rather than leaving a silence that reads as "everything is fine". */}
-        <OpenInvoiceProofPanel panel={buildProofPanel(openProof, taal, proofAnswers.answered)} actions={proofAnswers.actions} />
+        {/* [GEEN-BEWIJSPANEEL] The open-invoice proof panel stood here — how many sales invoices
+            were held against how many bank lines, and the incoming payments that matched no
+            invoice. The owner asked for it to go from this screen. It still stands on the pay
+            screen for the purchase side; the sales-side sentence it carried (payments in the
+            bank that belong to no invoice) is now said nowhere, which is a known gap and the
+            Bank page is where it belongs if it comes back. */}
 
         {/* [NO-SILENT-EMPTY] The credit read did not answer, and this list cannot say what it
             normally says. Every amount below may be too high and the withdrawn-invoice chips are

@@ -16081,10 +16081,17 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   // A SALES invoice wrongly called open is CHASED: a reminder, a firmer one, and on the last tier
   // a statutory aanmaning naming incassokosten — at a customer who paid three weeks ago. Nothing
   // on that screen can see it coming, because the app's own books say the invoice is open.
+  //
+  // [GEEN-BEWIJSPANEEL] The sales list carried this panel until 9 September 2026, when the owner
+  // asked for it to go: it sat above the list, was dismissed every day and answered nothing the
+  // owner was asking on that screen. So the page no longer collects the proof and the client no
+  // longer paints it. The risk in the paragraph above did not go anywhere — the collector still
+  // answers for direction 'outgoing' (see collectOpenInvoiceProof), and the statement "N incoming
+  // payments belong to no invoice" now has no screen of its own. That is stated, not hidden.
   const salesPage = code("src/app/dashboard/facturen/page.tsx");
-  assert.match(salesPage, /collectOpenInvoiceProof\(\{[\s\S]{0,160}?direction: 'outgoing'/,
-    "the sales list asks the question of its OWN direction — the default is the pay screen's");
-  assert.match(salesPage, /openProof=\{openProof\}/);
+  assert.doesNotMatch(salesPage, /collectOpenInvoiceProof/,
+    "the sales page stopped collecting the proof on the owner's request — bring it back on purpose, not by merge");
+  assert.doesNotMatch(salesPage, /openProof=/);
 
   // A screen's own COPY, with the message keys taken out first.
   //
@@ -16094,11 +16101,12 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
   // are stripped and what is left is what the component actually spells out itself.
   const copyOf = (screen: string) => code(screen).replace(/t\(\s*'[\w.]+'/g, "t(");
 
-  // ONE component paints both. Two copies of a promise about the owner's books drift apart, and
+  // ONE component paints it. Two copies of a promise about the owner's books drift apart, and
   // this repo has the receipts: eleven copies of a status chip disagreed about four statuses.
+  // [GEEN-BEWIJSPANEEL] The sales list left this loop on 9 September 2026 — see the note above.
+  // It is pinned below to hold NO panel, so a merge cannot quietly put it back.
   for (const screen of [
     "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
-    "src/app/dashboard/facturen/FacturenClient.tsx",
   ]) {
     const client = code(screen);
     // [BEWIJS-BEANTWOORDEN] The third argument is the set of questions the owner has already
@@ -16119,6 +16127,20 @@ test("[OPENSTAAND-BEWIJS] the pay screen proves what it claims instead of assert
     const copy = copyOf(screen);
     for (const dutch of ["Niet alles is meegenomen", "In je bank staat", "niet met je bank vergelijken"]) {
       assert.ok(!copy.includes(dutch), `${screen} still holds copy of its own: "${dutch}"`);
+    }
+  }
+  // [GEEN-BEWIJSPANEEL] The sales list: no panel, no builder, no proof prop, and no copy of its
+  // own about it either. The text module is allowed to stay imported (nothing else in it is
+  // wrong); the engine still may not reach the browser from here.
+  {
+    const sales = code("src/app/dashboard/facturen/FacturenClient.tsx");
+    assert.doesNotMatch(sales, /OpenInvoiceProofPanel/, "the owner removed this panel from the sales list");
+    assert.doesNotMatch(sales, /buildProofPanel\(/);
+    assert.doesNotMatch(sales, /openProof/);
+    assert.doesNotMatch(sales, /from '@\/lib\/open-invoice-proof'/);
+    const copy = copyOf("src/app/dashboard/facturen/FacturenClient.tsx");
+    for (const dutch of ["Niet alles is meegenomen", "In je bank staat", "niet met je bank vergelijken"]) {
+      assert.ok(!copy.includes(dutch), `the sales list still holds copy of its own: "${dutch}"`);
     }
   }
   // The component itself holds none either — it paints what the panel object hands it, direction
@@ -18553,10 +18575,11 @@ test("[BEWIJS-BEANTWOORDEN] de vraag is beantwoordbaar, op beide schermen", () =
   assert.ok(filterOp >= 0, "de beantwoorde vragen worden eruit gefilterd");
   assert.ok(leadOp > filterOp, "en dat gebeurt vóór de kop geschreven wordt");
 
-  // Beide schermen die dit paneel tonen geven de acties door. Eén ervan zonder zou de vraag daar
-  // onbeantwoordbaar laten, en dat is het scherm waar hij gemeld werd.
+  // The screen that shows this panel passes the actions through. Without them the question would
+  // be unanswerable exactly where it is asked.
+  // [GEEN-BEWIJSPANEEL] The sales list used to be in this loop; it left on 9 September 2026 when
+  // the owner had the panel removed there — see [OPENSTAAND-BEWIJS], which pins its absence.
   for (const f of [
-    "src/app/dashboard/facturen/FacturenClient.tsx",
     "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",
   ]) {
     const src = code(f);
@@ -25074,6 +25097,32 @@ test("[FILTERS-EEN-REGEL] period, filter and sort share one row, and one open me
   assert.match(scherm, /setShowPeriodMenu\(p => !p\); setShowFilterMenu\(false\); setShowSortMenu\(false\)/);
   assert.match(scherm, /setShowFilterMenu\(p => !p\); setShowSortMenu\(false\); setShowPeriodMenu\(false\)/);
   assert.match(scherm, /setShowSortMenu\(p => !p\); setShowFilterMenu\(false\); setShowPeriodMenu\(false\)/);
+});
+
+// ── [BALK-EEN-REGEL] ──────────────────────────────────────────────────────────────────────────
+//
+// The sales list's toolbar stood in three rows — the three buttons packed to the far edge, then a
+// full-width search, then a full-width filter — above a list that is the point of the screen. The
+// owner asked for one line. tests/render proves the screen still renders; this holds the shape,
+// because "one line" is one `marginBottom` away from three again and no type checker sees it.
+test("[BALK-EEN-REGEL] the sales toolbar is one row: filter, search, then the buttons", () => {
+  const scherm = code("src/app/dashboard/facturen/FacturenClient.tsx");
+  const row = scherm.indexOf("<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>");
+  assert.ok(row > 0, "the toolbar row exists");
+  const filter = scherm.indexOf("flex: '1 1 150px', minWidth: 0", row);
+  const search = scherm.indexOf("flex: '2 1 220px', minWidth: 0", row);
+  const buttons = scherm.indexOf("<div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>", row);
+  assert.ok(filter > row && search > filter && buttons > search,
+    "filter, then search, then the buttons — all three flex items of the SAME row");
+  assert.ok(buttons - row < 6000, "…and close enough to be that row, not three blocks that share a style");
+  // Nothing between them takes a row of its own. `marginBottom` on a wrapper is how the three
+  // stacked before; a full-width wrapper is the other way.
+  const between = scherm.slice(row, buttons);
+  assert.doesNotMatch(between, /marginBottom: 1[02]/, "a toolbar item took a row of its own again");
+  // The filter menu drops from its own third, not from the screen edge: `left: 0, right: 0` inside
+  // a `position: relative` wrapper. Physical sides, but symmetric, so the same in both directions.
+  assert.match(scherm.slice(filter, search), /position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100/,
+    "the filter menu is anchored to the filter, not to the row");
 });
 
 // ── [CONTROLES-INKLAPPEN] ─────────────────────────────────────────────────────────────────────
