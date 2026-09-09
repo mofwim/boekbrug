@@ -14967,6 +14967,29 @@ test("[MIGRATIE-JOURNAAL] a function more than one migration rewrites is measure
   assert.match(sql, /when 'function_body' then exists \(/);
   assert.match(sql, /not exists \(select 1 from unnest\(string_to_array\(p\.tabel, ','\)\) mk/);
   assert.match(sql, /where position\(mk in f\.prosrc\) = 0\)\)/);
+
+  // [CONSTRAINT-HERDEFINITIE] The same rule one object kind further: a constraint that two files
+  // write under one name is measured on its DEFINITION. vat_reverse_charge.sql drops and re-adds
+  // invoice_lines_vat_treatment_check with a third value, and bank_ignore_reason_storno.sql did the
+  // same to bank_transactions_ignore_reason_check — both read as applied on every database where
+  // only the first file had run, which is the alarm that never goes off.
+  const bestaandeConstraints = new Map<string, string[]>();
+  for (const r of rows.filter((r) => r.soort === "constraint")) {
+    if (!bestaandeConstraints.has(r.object)) bestaandeConstraints.set(r.object, []);
+    bestaandeConstraints.get(r.object)!.push(r.bestand);
+  }
+  for (const [naam, files] of bestaandeConstraints) {
+    assert.equal(files.length, 1,
+      `${naam} is probed by EXISTENCE from ${files.join(", ")} — the later file reads as applied wherever the earlier one ran`);
+  }
+  for (const [bestand, waarde] of [["vat_reverse_charge.sql", "reverse_charge"], ["bank_ignore_reason_storno.sql", "storno"]]) {
+    const rij = rows.find((r) => r.bestand === bestand && r.soort === "constraint_def");
+    assert.ok(rij, `${bestand} has no constraint_def probe — its constraint is measured by existence again`);
+    assert.ok((rij!.merken ?? "").split(",").includes(waarde), `${bestand} does not measure the value it adds (${waarde})`);
+  }
+  assert.match(sql, /when 'constraint_def' then exists \(/);
+  assert.match(sql, /where position\(quote_literal\(mk\) in pg_get_constraintdef\(c\.oid\)\) = 0\)\)/,
+    "a 'constraint_def' that quietly falls back to existence is the same alarm that never goes off");
 });
 
 test("[MIGRATIE-JOURNAAL] every ignored object is named, reasoned, and really created", () => {
