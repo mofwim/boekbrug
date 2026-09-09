@@ -1667,6 +1667,20 @@ export const MESSAGES = {
   'aang.totaal3b': { nl: 'Totaal · gelijk aan 3b', ar: 'الإجمالي · يساوي 3b', en: 'Total · equals 3b' },
   'aang.icp': { nl: 'ICP-opgaaf · aparte aangifte', ar: 'إقرار ICP · تصريح منفصل', en: 'ICP statement · separate filing' },
   'aang.waarop': { nl: 'Waar dit op gebaseerd is', ar: 'علامَ يُبنى هذا', en: 'What this is based on' },
+  // [KOR-AANGIFTE-UIT] The panel that stands where the table stood, for an owner in the KOR.
+  'aang.kor.titel': { nl: 'KOR actief — geen btw-aangifte', ar: 'KOR نشط — لا إقرار btw', en: 'KOR active — no VAT return' },
+  'aang.kor.uitleg': {
+    nl: 'Onder de KOR reken je geen btw en trek je geen btw af. De rubrieken staan daarom uit.',
+    ar: 'ضمن KOR لا تحسب btw ولا تخصمها. لذلك البنود مطفأة.',
+    en: 'Under the KOR you charge no VAT and deduct none. The boxes are therefore switched off.',
+  },
+  'aang.kor.toch': { nl: 'Toch aan te geven dit kwartaal', ar: 'يجب الإقرار به رغم ذلك هذا الربع', en: 'Still to be declared this quarter' },
+  'aang.kor.niets': { nl: 'Niets aan te geven dit kwartaal.', ar: 'لا شيء للإقرار به هذا الربع.', en: 'Nothing to declare this quarter.' },
+  'aang.kor.aanvragen': {
+    nl: 'Krijg je geen aangifte voor dit tijdvak, vraag die dan aan bij de Belastingdienst.',
+    ar: 'إن لم يصلك إقرار لهذه الفترة، فاطلبه من Belastingdienst.',
+    en: 'If you receive no return for this period, request one from the Belastingdienst.',
+  },
   'aang.verschil': { nl: 'Bekijk het verschil op Waarheid', ar: 'اعرض الفرق في «حقيقتك»', en: 'View the difference on Truth' },
   // [TAAL] `aang.jeHebt` was een half zinsdeel: het scherm plakte er `'te betalen'` of
   // `'terug te ontvangen'` achter als letterlijke tekst. Dat werkt in het Nederlands en breekt
@@ -8465,10 +8479,11 @@ export const MESSAGES = {
     ar: 'تُحتسب الضريبة بتاريخ الدفع — إلزامي لكثير من المتاجر والمطاعم. يسري من الربع الحالي؛ وتبقى الأرباع السابقة دون تغيير. الفاتورة المدفوعة بلا تاريخ دفع تمنع «klaar» حتى تربط الدفعة.',
     en: 'BTW counts on the payment date — mandatory for many shops and hospitality. Takes effect from the current quarter; earlier quarters stay unchanged. A paid invoice without a payment date blocks “klaar” until you link the payment.',
   },
+  // [KOR-AANGIFTE-UIT] What the switch does now: the return screen goes off, like Moneybird and Exact.
   'inst.korUitleg': {
-    nl: 'Onder de KOR breng je geen BTW in rekening. Je concept-aangifte krijgt dan een duidelijke notitie voor je boekhouder — de omzet blijft kloppen, alleen de BTW-afdracht vervalt.',
-    ar: 'ضمن نظام KOR لا تُضيف btw على فواتيرك. تحصل مسودة الإقرار عندها على ملاحظة واضحة للمحاسب — يبقى الإيراد صحيحاً، ويسقط فقط سداد الضريبة.',
-    en: 'Under the KOR you do not charge BTW. Your draft return then gets a clear note for your accountant — the turnover stays correct, only the BTW remittance is dropped.',
+    nl: 'Onder de KOR reken je geen btw en doe je geen btw-aangifte: het aangiftescherm staat dan uit.',
+    ar: 'ضمن KOR لا تحسب btw ولا تقدّم إقرار btw: شاشة الإقرار تكون حينها مطفأة.',
+    en: 'Under the KOR you charge no VAT and file no VAT return: the return screen is then switched off.',
   },
   'inst.kvkNummer': {
     nl: 'KVK-nummer',

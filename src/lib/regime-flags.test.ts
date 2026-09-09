@@ -110,6 +110,11 @@ console.log("\n— regimeFlagNote —");
   check("note includes the evidence invoice", note.includes("INK-1"));
   const korNote = regimeFlagNote(detectRegimeFlags(sig({ korActive: true }))[0]);
   check("kor note has no evidence clause", !korNote.includes("bijv. factuur"));
+  // [KOR-AANGIFTE-UIT] The concept shows no sales rubrieken and no 5b under the KOR, so the note
+  // may no longer describe figures "in dit concept" that are not there.
+  check("kor note states the rule: no return, except btw shifted to the owner", /geen btw-aangifte — behalve voor btw die naar jou is verlegd/.test(korNote));
+  check("kor note no longer says the concept's 5a should not be paid", !/hoort onder de KOR niet te worden betaald/.test(korNote) && !/in dit concept/.test(korNote));
+  check("kor note keeps the yearly-ceiling warning", /per JAAR/.test(korNote));
 }
 
 console.log("\n— [KOR-5B] + [KOR-JAARGRENS]: wat de KOR-vlag verzweeg —");
@@ -119,14 +124,15 @@ console.log("\n— [KOR-5B] + [KOR-JAARGRENS]: wat de KOR-vlag verzweeg —");
   const kor = detectRegimeFlags({ korActive: true, lines: [] }).find((f) => f.code === "kor");
   const d = kor ? kor.detail : "";
 
-  // 1. The concept computes 5b from the purchase invoices. Under the KOR there is no right to
-  //    deduct at all, so that is a refund the owner is not entitled to. The old text said only
-  //    "the afdracht lapses", which reads as "the deduction survives" — and a wrongly claimed
-  //    refund comes back as a naheffing with interest.
-  check("de KOR-vlag noemt 5a", /5a/.test(d));
-  check("[KOR-5B] de KOR-vlag noemt OOK 5b — de aftrek die vervalt", /5b/.test(d));
-  check("[KOR-5B] en zegt expliciet dat die niet mag worden teruggevraagd",
-    /NIET worden teruggevraagd|niet worden teruggevraagd/.test(d));
+  // 1. Under the KOR there is no right to deduct at all. The old text said only "the afdracht
+  //    lapses", which reads as "the deduction survives" — and a wrongly claimed refund comes back
+  //    as a naheffing with interest. [KOR-AANGIFTE-UIT] The concept no longer shows a 5a or a 5b
+  //    under the KOR (aangifte.ts switches them off), so the flag states the RULE — both halves
+  //    of it — instead of describing figures that are not there.
+  check("de KOR-vlag zegt: geen btw op je facturen", /geen btw op je facturen/.test(d));
+  check("[KOR-5B] de KOR-vlag noemt OOK de aftrek die vervalt", /geen aftrek van voorbelasting/.test(d));
+  check("[KOR-5B] en de aangifte die niet wordt gedaan — behalve voor verlegde btw",
+    /geen btw-aangifte — behalve voor btw die naar jou is verlegd/.test(d));
 
   // 2. The threshold flag is tested against the omzet this computation sees, which is ONE
   //    quarter. €6.000 per quarter never trips €20.000 and still blows the annual ceiling.
