@@ -20,7 +20,9 @@ import {
   type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
-import type { WorkMargin, Readiness } from '@/lib/werk'
+import type { WorkMargin, Readiness, WorkCounts, WorkSignal } from '@/lib/werk'
+// [WERK-STAND] The signal sentences, shared with Vandaag.
+import { werkSignaalZin } from '@/lib/werk-stand-copy'
 
 export type T = (key: string, vars?: Record<string, string | number>) => string
 
@@ -309,21 +311,25 @@ export interface WorkFormValue {
 
 export const EMPTY_FORM: WorkFormValue = { title: '', client_name: '', kenteken: '', planned_on: '', fields: {}, repeat_every: '', notes: '' }
 
-/** The trade's form: the shared three, the plate when the trade opens on one, then the skin's fields. */
+/**
+ * The trade's form. [WERK-STAND] On creation it asks what starts the money: the customer, the
+ * work, what identifies it (the plate, the address, the location) and what was agreed. Everything
+ * else waits behind "Meer velden" — a native <details>, so the fields are there for whoever needs
+ * them and out of the way for whoever does not. An owner at the counter does not fill half an
+ * ERP to start a job; the money questions come while the work runs. Editing shows everything.
+ */
 export function WorkForm({ skin, value, onChange, t, disabled, editing }: { skin: WorkSkin; value: WorkFormValue; onChange: (v: WorkFormValue) => void; t: T; disabled?: boolean; editing?: boolean }) {
   const set = (patch: Partial<WorkFormValue>) => onChange({ ...value, ...patch })
   const setField = (key: string, v: string) => onChange({ ...value, fields: { ...value.fields, [key]: v } })
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {skin.vehicle && !editing && (
-        <Field label={`${t('werk.kenteken')}${skin.skin === 'werkorder' ? ' *' : ''}`} value={value.kenteken} onChange={(v) => set({ kenteken: v })} placeholder="12-ABC-3" disabled={disabled} />
-      )}
-      <Field label={`${t('werk.klant')} *`} value={value.client_name} onChange={(v) => set({ client_name: v })} disabled={disabled} />
-      <Field label={`${t('werk.omschrijving')} *`} value={value.title} onChange={(v) => set({ title: v })} disabled={disabled} />
-      {skin.fields.map((f) => (
-        <Field key={f.key} label={`${t(f.labelKey)}${f.required ? ' *' : ''}`} value={value.fields[f.key] ?? ''} onChange={(v) => setField(f.key, v)}
-          inputMode={f.type === 'number' ? 'decimal' : undefined} disabled={disabled} />
-      ))}
+  const first = editing ? skin.fields : skin.fields.filter((f) => f.required || f.key === 'begroot')
+  const rest = editing ? [] : skin.fields.filter((f) => !first.includes(f))
+  const field = (f: WorkSkin['fields'][number]) => (
+    <Field key={f.key} label={`${t(f.labelKey)}${f.required ? ' *' : ''}`} value={value.fields[f.key] ?? ''} onChange={(v) => setField(f.key, v)}
+      inputMode={f.type === 'number' ? 'decimal' : undefined} disabled={disabled} />
+  )
+  const later = (
+    <>
+      {rest.map(field)}
       <div>
         <label style={labelStyle}>{t('werk.gepland')}</label>
         <DateFieldNL value={value.planned_on} onChange={(iso) => set({ planned_on: iso })} />
@@ -338,7 +344,59 @@ export function WorkForm({ skin, value, onChange, t, disabled, editing }: { skin
         </div>
       )}
       <Field label={t('werk.notitie')} value={value.notes} onChange={(v) => set({ notes: v })} disabled={disabled} />
+    </>
+  )
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <Field label={`${t('werk.klant')} *`} value={value.client_name} onChange={(v) => set({ client_name: v })} disabled={disabled} />
+      <Field label={`${t('werk.omschrijving')} *`} value={value.title} onChange={(v) => set({ title: v })} disabled={disabled} />
+      {skin.vehicle && !editing && (
+        <Field label={`${t('werk.kenteken')}${skin.skin === 'werkorder' ? ' *' : ''}`} value={value.kenteken} onChange={(v) => set({ kenteken: v })} placeholder="12-ABC-3" disabled={disabled} />
+      )}
+      {first.map(field)}
+      {editing ? later : (
+        <details style={{ fontFamily: FONT }}>
+          <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600, color: M3.primary, padding: '4px 0' }}>{t('werk.meer')}</summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>{later}</div>
+        </details>
+      )}
     </div>
+  )
+}
+
+/**
+ * [WERK-STAND] "Wat laat jij liggen?" — the first thing on the Werk screen. What is ready to
+ * invoice and what it adds up to, then every leak the engine found (meerwerk not invoiced, hours
+ * without a rate, a supplier's bon on no work, work over its estimate, a contract ending). One
+ * line each, tappable. Nothing open and nothing leaking → one quiet line. A failed read says so.
+ */
+export function StandPanel({ stand, t, onTap }: { stand: { counts: WorkCounts; signals: WorkSignal[] } | null | 'failed'; t: T; onTap: (href: string) => void }) {
+  const tr = t as unknown as (k: string, v?: Record<string, string | number>) => string
+  const lines: { text: string; href: string; tone: 'ready' | 'leak' }[] = []
+  if (stand && stand !== 'failed') {
+    if (stand.counts.klaar > 0) {
+      lines.push({ text: stand.counts.klaar === 1 ? tr('werk.stand.klaarEen', { bedrag: formatEuroNL(stand.counts.klaarExBtw) }) : tr('werk.stand.klaar', { n: stand.counts.klaar, bedrag: formatEuroNL(stand.counts.klaarExBtw) }), href: '/dashboard/werk', tone: 'ready' })
+    }
+    for (const s of stand.signals) lines.push({ ...werkSignaalZin(s, tr), tone: 'leak' })
+  }
+  return (
+    <section data-testid="work-stand" style={{ fontFamily: FONT, background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 14, padding: '12px 14px' }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: M3.onSurfaceVariant, margin: '0 0 6px' }}>{t('werk.stand.kop')}</p>
+      {stand === 'failed' ? (
+        <p style={{ fontSize: 14, color: M3.error, margin: 0 }}>{t('werk.stand.onbekend')}</p>
+      ) : stand === null ? null : lines.length === 0 ? (
+        <p style={{ fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>{t('werk.stand.niets')}</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {lines.map((l, i) => (
+            <button key={i} type="button" onClick={() => onTap(l.href)}
+              style={{ textAlign: 'start', fontFamily: FONT, fontSize: 14.5, fontWeight: l.tone === 'ready' ? 700 : 500, color: l.tone === 'ready' ? '#B3261E' : '#7C5800', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+              {l.tone === 'ready' ? '🔴' : '🟠'} {l.text}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

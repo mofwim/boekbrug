@@ -13792,6 +13792,13 @@ export const MESSAGES = {
   'werk.filter.vandaag': { nl: 'Vandaag', en: 'Today', ar: 'اليوم' },
   'werk.filter.week': { nl: 'Deze week', en: 'This week', ar: 'هذا الأسبوع' },
   'werk.zoeken': { nl: 'Zoeken op naam, klant of kenteken', en: 'Search by name, customer or plate', ar: 'ابحث بالاسم أو الزبون أو اللوحة' },
+  // [WERK-STAND] The Werk screen opens on the money, not on the list.
+  'werk.stand.kop': { nl: 'Wat laat jij liggen?', en: 'What are you leaving on the table?', ar: 'ما الذي تتركه دون تحصيل؟' },
+  'werk.stand.klaar': { nl: '{n} klaar voor de factuur · {bedrag}', en: '{n} ready to invoice · {bedrag}', ar: '{n} جاهز للفوترة · {bedrag}' },
+  'werk.stand.klaarEen': { nl: '1 klaar voor de factuur · {bedrag}', en: '1 ready to invoice · {bedrag}', ar: 'واحد جاهز للفوترة · {bedrag}' },
+  'werk.stand.niets': { nl: 'Niets blijft liggen.', en: 'Nothing is left on the table.', ar: 'لا شيء متروك.' },
+  'werk.stand.onbekend': { nl: 'De stand kon niet worden gelezen.', en: 'The position could not be read.', ar: 'تعذّرت قراءة الوضع.' },
+  'werk.meer': { nl: 'Meer velden', en: 'More fields', ar: 'حقول أكثر' },
   'werk.budget': { nl: '{spent} van {agreed} afgesproken uren', en: '{spent} of {agreed} agreed hours', ar: '{spent} من {agreed} ساعة متفق عليها' },
   'werk.geschiedenis': { nl: 'Eerder aan deze auto', en: 'Earlier on this car', ar: 'سابقاً على هذه السيارة' },
   'werk.bellen': { nl: 'Bellen', en: 'Call', ar: 'اتصال' },

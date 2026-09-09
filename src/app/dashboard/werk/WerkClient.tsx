@@ -34,11 +34,11 @@ import {
   workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget, contractFee, periodOf, periodLabelNL,
   type WorkStatus, type WorkLine, type WorkMargin, type ContractStat,
 } from '@/lib/werk'
+import type { WorkStand } from '@/lib/werk-stand'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
 import {
   WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer, ReadinessList, ContractsPanel,
-  HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T,
-} from './WerkPanels'
+  HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T, StandPanel } from './WerkPanels'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -85,6 +85,8 @@ export default function WerkClient({ vak }: { vak: string }) {
   const [previous, setPrevious] = useState<WorkLine[] | null>(null)
   // [CONTRACT] The portfolio, loaded when the chip is chosen; per client, this period's figures.
   const [contracts, setContracts] = useState<{ period: string; groups: Array<{ client_name: string; contracts: ContractStat[] }>; readFailed: boolean } | null>(null)
+  // [WERK-STAND] What the screen opens on: the money position. null = not read yet; 'failed' = said so.
+  const [stand, setStand] = useState<WorkStand | 'failed' | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   // The lines as typed, readable from an async reload without a stale closure.
   const linesRef = useRef<WorkLine[]>([])
@@ -100,11 +102,17 @@ export default function WerkClient({ vak }: { vak: string }) {
         setError('')
         return
       }
-      const res = await fetch(`/api/werk?status=${filter === 'all' ? 'all' : 'open'}`)
+      // [WERK-STAND] The position beside the rows; its failure is its own line, never the list's.
+      const [res, standRes] = await Promise.all([
+        fetch(`/api/werk?status=${filter === 'all' ? 'all' : 'open'}`),
+        fetch('/api/werk?stand=1').catch(() => null),
+      ])
       const json = await res.json()
       if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.laden'))); return }
       setRows(json.rows ?? [])
       setError('')
+      const standJson = standRes && standRes.ok ? await standRes.json().catch(() => null) : null
+      setStand(standJson && standJson.counts ? { pluralKey: standJson.pluralKey, counts: standJson.counts, signals: standJson.signals ?? [] } : 'failed')
     } catch {
       setError(t('werk.fout.laden'))
     }
@@ -398,6 +406,9 @@ export default function WerkClient({ vak }: { vak: string }) {
 
   return (
     <div style={{ ...COLUMN, display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 16px 96px' }}>
+      {/* [WERK-STAND] The money first, the list second: this screen is the door from work to
+          money, not a work-order system. A tap on a line lands on the screen that fixes it. */}
+      <StandPanel stand={stand} t={t} onTap={(href) => { if (href === '/dashboard/werk') setFilter('open'); else router.push(href) }} />
       <header>
         <p style={{ fontFamily: FONT, fontSize: 14, color: M3.onSurfaceVariant, margin: 0 }}>{t('werk.uitleg', { plural })}</p>
       </header>
