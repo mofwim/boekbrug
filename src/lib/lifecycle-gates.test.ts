@@ -21792,14 +21792,16 @@ test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained
   // Each line only while a row on screen carries the badge — and labelled from the badge's OWN key.
   assert.match(manage, /displayed\.some\(isAutoVerified\) \? \[\{ id: 'auto', icon: 'auto_awesome', badge: t\('inkoop\.automatisch'\), text: t\('ink\.autoUitleg'\) \}\]/);
   assert.match(manage, /displayed\.some\(\(inv\) => autoPaidBasis\(inv\) !== null\) \? \[\{ id: 'bon', icon: 'receipt_long', badge: t\('inkoop\.bonAfgerekend'\), text: t\('ink\.bonAutoUitleg'\) \}\]/);
-  assert.match(manage, /displayed\.some\(\(inv\) => eInvoiceBadge\(inv\) !== null\) \? \[\{ id: 'efactuur', icon: 'verified', badge: t\('inkoop\.cijfersLeverancier'\), text: t\('ink\.eFactuurLegenda'\) \}\]/);
+  // The e-invoice badge had a line too; the owner struck it. Its tooltip stays, the line may not return.
+  assert.doesNotMatch(manage, /ink\.eFactuurLegenda/, "the struck e-invoice line is back");
+  assert.match(manage, /title=\{t\('inkoop\.eFactuurUitleg'/, "…but the badge's own tooltip stays");
   // The badges' own tooltips stay: a phone never shows a title, a desktop still does.
   assert.match(manage, /title=\{t\('ink\.autoVerifiedUitleg'\)\}/);
   // The Dutch of the first line: what the app did, on what ground, and the two claims that may not
   // soften. Short, because it stands at rest ([RUSTIG]): the checks themselves are on every card.
   const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
   const nl = /'ink\.autoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
-  for (const clause of ["las en boekte deze factuur zelf", "elke controle slaagde", "Niets is betaald", "vóór je betaalt"]) {
+  for (const clause of ["las deze factuur", "automatisch toe", "controles slaagden", "vóór je betaalt"]) {
     assert.ok(nl.includes(clause), `the explanation lost: "${clause}"`);
   }
   assert.ok(nl.trim().split(/\s+/).length <= 20, "the explanation stands at rest and grew past twenty words — say it at the card instead");
@@ -21813,13 +21815,16 @@ test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained
 
   // The cash book's 🔗 marker, the same way: once above the ledger, only while such an entry is on screen.
   const kas = code("src/app/dashboard/kas/KasClient.tsx");
-  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingAutomatisch'\) \}\]/);
+  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingLegenda'\) \}\]/);
+  // The line's own key, not the tooltip's: the component leads with the badge, and the tooltip
+  // text leads with "Automatisch:" — together that would say it twice.
+  assert.doesNotMatch(/'kas\.betalingLegenda': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "", /^Automatisch/);
 
   // …and the crossed-out block is gone: no "Zonder vervaldatum" chip, no total sentence. The total
   // moved into the counter line ("287 van 502"), and only while the read is whole.
   assert.doesNotMatch(manage, /'zonderDatum', t\(/, "the crossed-out chip is back");
   assert.doesNotMatch(manage, /ink\.totaalDisclosure/, "the crossed-out sentence is back");
-  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'/, "an orphan key survived");
+  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'|'ink\.eFactuurLegenda'/, "an orphan key survived");
   assert.match(manage, /hiddenCount > 0 && !loadIncomplete\s*\?\s*t\('ink\.tellingVan'/, "the total left the screen entirely — the counter must still say 'van {total}'");
 });
 

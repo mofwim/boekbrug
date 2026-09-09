@@ -2700,16 +2700,16 @@ export default function IncomingManageClient({
             "geen facturen gevonden voor …" and "0 facturen gevonden" adds nothing. */}
         {invoices.length > 0 && !(rawS && displayed.length === 0) && (
           <div aria-live="polite" style={{ marginBottom: 10, padding: '0 2px' }}>
-            {/* [AUTO-UITLEG] What "Automatisch", "Bon · al afgerekend" and "Cijfers van de
-                leverancier" mean — the three badges on this screen that say the app decided
-                something by itself. Said ONCE at the top, only for a badge a row on screen carries,
-                with the badge's label from the badge's own key. Each had a title attribute, which a
-                phone never shows. The first does not claim the invoice is correct: its last clause
-                asks the owner to check, before paying. */}
+            {/* [AUTO-UITLEG] What "Automatisch" and "Bon · al afgerekend" mean — the two badges on
+                this screen that say the app decided something by itself. Said ONCE at the top, only
+                for a badge a row on screen carries, with the badge's label from the badge's own key.
+                Each had a title attribute, which a phone never shows. The first is the owner's own
+                wording; its last clause asks them to check, before paying. The e-invoice badge
+                ("Cijfers van de leverancier") had a line here too and the owner struck it: that
+                badge keeps its tooltip and nothing else. */}
             <BadgeLegend items={[
               ...(displayed.some(isAutoVerified) ? [{ id: 'auto', icon: 'auto_awesome', badge: t('inkoop.automatisch'), text: t('ink.autoUitleg') }] : []),
               ...(displayed.some((inv) => autoPaidBasis(inv) !== null) ? [{ id: 'bon', icon: 'receipt_long', badge: t('inkoop.bonAfgerekend'), text: t('ink.bonAutoUitleg') }] : []),
-              ...(displayed.some((inv) => eInvoiceBadge(inv) !== null) ? [{ id: 'efactuur', icon: 'verified', badge: t('inkoop.cijfersLeverancier'), text: t('ink.eFactuurLegenda') }] : []),
             ]} />
             <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
               {rawS

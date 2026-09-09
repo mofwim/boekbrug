@@ -8054,20 +8054,16 @@ export const MESSAGES = {
   // standard in docs/RUSTIG.md ([RUSTIG] counts): what the app did, on what ground, and what the
   // owner still does. The checks themselves are on every card ([CONTROLES-INKLAPPEN]); the two
   // claims a retranslation may never soften are "niets is betaald" and "vóór je betaalt".
+  // The Arabic is the owner's own wording, verbatim; Dutch and English say the same thing.
   'ink.autoUitleg': {
-    nl: 'De app las en boekte deze factuur zelf: elke controle slaagde. Niets is betaald — controleer vóór je betaalt.',
-    ar: 'قرأ التطبيق هذه الفاتورة وقيّدها بنفسه: كل فحص نجح. لم يُدفع شيء — تحقّق قبل الدفع.',
-    en: 'The app read and booked this invoice itself: every check passed. Nothing is paid — check before you pay.',
+    nl: 'De app las deze factuur en voegde hem automatisch toe nadat de controles slaagden. Controleer de gegevens vóór je betaalt.',
+    ar: 'قرأ التطبيق هذه الفاتورة وأضافها تلقائيًا بعد اجتياز الفحوصات الآلية. يرجى التحقق من المعلومات قبل الدفع.',
+    en: 'The app read this invoice and added it automatically after its checks passed. Please check the details before paying.',
   },
   'ink.bonAutoUitleg': {
     nl: 'De app boekte deze bon zelf als betaald: de bon noemt de betaalwijze. Klopt het niet? Zet de betaling terug.',
     ar: 'قيّد التطبيق هذا الإيصال كمدفوع بنفسه: الإيصال يذكر طريقة الدفع. أليس صحيحاً؟ تراجع عن الدفعة.',
     en: 'The app booked this receipt as paid itself: the receipt names the payment method. Not right? Undo the payment.',
-  },
-  'ink.eFactuurLegenda': {
-    nl: 'Deze cijfers stuurde de leverancier zelf als e-factuur; er is niets van een pagina gelezen.',
-    ar: 'هذه الأرقام أرسلها المورّد بنفسه فاتورةً إلكترونية؛ لم يُقرأ شيء من صفحة.',
-    en: 'The supplier sent these figures themselves as an e-invoice; nothing was read off a page.',
   },
   'ink.terugdraaien': {
     nl: 'Terugdraaien',
@@ -8883,6 +8879,13 @@ export const MESSAGES = {
     nl: '{n} wordt gelezen — je kunt gewoon doorgaan',
     ar: 'قيد القراءة: {n} — يمكنك المتابعة كالمعتاد',
     en: '{n} being read — you can just keep going',
+  },
+  // [AUTO-UITLEG] The legend line above the ledger — the tooltip above keeps its "Automatisch:"
+  // lead, the line gets the badge's own lead from the component and so must not repeat it.
+  'kas.betalingLegenda': {
+    nl: 'De app zette deze regel zelf in het kasboek, voor een contant betaalde factuur. Weghalen kan alleen via die factuur.',
+    ar: 'وضع التطبيق هذا السطر بنفسه في دفتر الكاس لفاتورة مدفوعة نقداً. لا يُزال إلا عبر تلك الفاتورة.',
+    en: 'The app put this line in the cash book itself, for a cash-paid invoice. It can only be removed via that invoice.',
   },
   'kas.betalingAutomatisch': {
     nl: 'Automatisch: betaling van een contant betaalde factuur. Maak de betaling op de factuur ongedaan om dit te verwijderen.',

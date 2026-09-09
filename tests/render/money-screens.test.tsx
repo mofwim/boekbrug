@@ -171,17 +171,17 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
   // [AUTO-UITLEG] The badges the app awards on its own judgement are explained once above the
-  // list. The fixture carries all three: the bon row (_auto_verified and _auto_paid) and the ubl
-  // row (a non-contradicting _einvoice) — so all three lines must be there, in words and not keys,
-  // each led by the badge's own label.
+  // list. The fixture's bon row carries _auto_verified and _auto_paid — so both lines must be
+  // there, in words and not keys, each led by the badge's own label. The e-invoice badge on the
+  // ubl row gets NO line: the owner struck it.
   for (const [badge, clause] of [
-    ["Automatisch</strong>", "elke controle slaagde"],
+    ["Automatisch</strong>", "controles slaagden"],
     ["Bon · al afgerekend</strong>", "de bon noemt de betaalwijze"],
-    ["Cijfers van de leverancier</strong>", "niets van een pagina gelezen"],
   ]) {
     assert.ok(html.includes(badge), `the legend does not lead with the badge's own label: ${badge}`);
     assert.ok(html.includes(clause), `the legend lost its explanation: ${clause}`);
   }
+  assert.ok(!html.includes("Cijfers van de leverancier</strong>"), "the struck e-invoice line is back above the list");
   assert.ok(!html.includes("ink.autoUitleg"), "the explanation reached the screen as a key");
   assert.ok(!html.includes("Zonder vervaldatum"), "the crossed-out chip is back");
 
@@ -325,7 +325,7 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
   }] } });
   assert.match(bank, /afgeschreven/);
   // [AUTO-UITLEG] No such row on this screen → no legend for a badge nobody sees.
-  for (const clause of ["elke controle slaagde", "de bon noemt de betaalwijze", "niets van een pagina gelezen"]) {
+  for (const clause of ["controles slaagden", "de bon noemt de betaalwijze"]) {
     assert.ok(!bank.includes(clause), `the legend explains a badge that is not on screen: ${clause}`);
   }
   // Curly quotes, as the rest of the catalogue writes them. The QUOTES are the app's punctuation;

@@ -42,7 +42,7 @@ export function BadgeLegend({ items }: { items: LegendItem[] }) {
         <li key={it.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 16, flexShrink: 0, marginTop: 1, color: M3.primary }} aria-hidden>{it.icon}</span>
           <span>
-            <strong>{it.badge}</strong> — {it.text}
+            <strong>{it.badge}</strong>: {it.text}
           </span>
         </li>
       ))}
