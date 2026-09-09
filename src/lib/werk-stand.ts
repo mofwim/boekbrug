@@ -28,11 +28,12 @@ export async function loadWorkStand(
   today: string,
 ): Promise<WorkStand | null> {
   const { data: rows, error: werkErr } = await db
-    .from("work_items").select("id, status, repeat_every, visits, lines, fields, billed_periods").eq("user_id", userId)
+    .from("work_items").select("id, status, invoice_id, repeat_every, visits, lines, fields, billed_periods").eq("user_id", userId)
     .not("status", "in", "(gefactureerd,geannuleerd)").limit(300);
   if (werkErr) return null;
   const open = ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
-    id: String(r.id), status: String(r.status), repeat_every: (r.repeat_every as string | null) ?? null, visits: r.visits, lines: r.lines,
+    id: String(r.id), status: String(r.status), invoice_id: (r.invoice_id as string | null) ?? null,
+    repeat_every: (r.repeat_every as string | null) ?? null, visits: r.visits, lines: r.lines,
     billed_periods: r.billed_periods,
     fields: (r.fields && typeof r.fields === "object" ? r.fields : {}) as Record<string, string | number>,
   }));

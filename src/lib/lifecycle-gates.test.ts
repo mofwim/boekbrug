@@ -28841,7 +28841,7 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
   // [WERK-STAND] The reads moved to werk-stand.ts, where Vandaag AND the Werk screen call them.
   const stand = code("src/lib/werk-stand.ts");
-  assert.match(stand, /from\("work_items"\)\.select\("id, status, repeat_every, visits, lines, fields, billed_periods"\)/, "the stand counts a done beurt as ready to invoice, and says what it is worth");
+  assert.match(stand, /from\("work_items"\)\.select\("id, status, invoice_id, repeat_every, visits, lines, fields, billed_periods"\)/, "the stand counts a done beurt as ready to invoice, and says what it is worth");
   assert.match(code("src/app/dashboard/vandaag/page.tsx"), /werk = await loadWorkStand\(supabase, user\.id, skin, amsterdamToday\(\)\)/, "Vandaag reads the stand from the one module");
   assert.match(api, /searchParams\.get\("stand"\) === "1"[\s\S]*?loadWorkStand\(supabase, user\.id, skin, amsterdamToday\(\)\)/, "and so does the Werk screen's door");
   assert.match(code("src/app/dashboard/werk/WerkClient.tsx"), /<StandPanel stand=\{stand\}/, "the Werk screen opens on the money");
@@ -28869,6 +28869,15 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(shared, /export async function stampBundle[\s\S]*?\.is\("invoice_id", null\)\.select\("id"\)/, "the bundle is stamped once, and the row is not closed");
   assert.doesNotMatch(shared, /export async function stampBundle[\s\S]{0,400}?status: "gefactureerd"/, "a bundle row stays open");
   assert.match(door, /if \(bundleHours\(row\) !== null\) \{[\s\S]*?canInvoiceBundle\(row\)[\s\S]*?stampBundle\(db, user\.id, id, opened\.invoiceId\)[\s\S]*?rollbackDraft\(/, "the bundle door proves itself or rolls back");
+  // Found by auditing this batch: a billed bundle stays OPEN, so the counts would have kept
+  // offering its price as "klaar voor de factuur" — money on the header that no button can act on.
+  assert.match(pure, /if \(bundleHours\(r\) !== null && r\.invoice_id\) \{/, "a billed bundle is not ready to invoice");
+  // Found in the same audit: both doors that build invoice lines from hours must SEE `billable`,
+  // or an absent column reads as "may be invoiced" and own time lands on a customer's invoice.
+  for (const [file, naam] of [["src/lib/werk-factuur.ts", "the work door"], ["src/app/api/invoice/draft/route.ts", "the hours door"]] as const) {
+    assert.match(code(file), /time_entries[\s\S]{0,400}?hourly_rate, invoice_id, billable/, `${naam} bills hours without reading whether they may be billed`);
+  }
+  assert.match(pure, /hours\.filter\(\(h\) => !h\.invoice_id && h\.billable !== false\)/, "own time never holds up the invoice button");
   // Read from the source, like every other assertion here: this file imports no app modules.
   const dienstBlok = pure.slice(pure.indexOf("const DIENST: WorkSkin"), pure.indexOf("const LES: WorkSkin"));
   for (const veld of ["maandbedrag", "einddatum", "bundel_uren"]) {

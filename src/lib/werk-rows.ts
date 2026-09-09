@@ -38,6 +38,8 @@ export interface AttachedHours {
   invoice_id: string | null;
   /** On a candidate: whose hour this is, so the owner sees it before attaching. */
   client_name: string | null;
+  /** [DECLARABEL] False = the owner's own time. Absent reads as billable, like everywhere else. */
+  billable?: boolean | null;
 }
 
 /** [WERK-3] An earlier piece of work on the same vehicle — the garage's history per car. */

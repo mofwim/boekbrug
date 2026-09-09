@@ -564,7 +564,8 @@ export interface Readiness {
 
 export function financialReadiness(args: {
   row: { status: string; invoice_id: string | null; repeat_every: string | null; visits: readonly Visit[]; client_name: string | null; lines: readonly WorkLine[]; fields?: FieldValues; billed_periods?: readonly BilledPeriod[] };
-  hours: ReadonlyArray<{ hours: number; hourly_rate: number | null; invoice_id: string | null }>;
+  /** [DECLARABEL] `billable: false` is the owner's own time: never on an invoice, so never a hold-up. */
+  hours: ReadonlyArray<{ hours: number; hourly_rate: number | null; invoice_id: string | null; billable?: boolean | null }>;
   /** For a contract billed per period: the period the button would invoice. */
   period?: string;
   today?: string;
@@ -594,7 +595,9 @@ export function financialReadiness(args: {
     ];
     return { ok: items.every((i) => i.ok), items, amountExBtw: round2(linesTotalEx(row.lines)) };
   }
-  const unbilled = hours.filter((h) => !h.invoice_id);
+  // [DECLARABEL] Own time is not an unbilled hour waiting for a rate — it is work that is never
+  // invoiced, and treating it as a gap would keep the invoice button disabled for good.
+  const unbilled = hours.filter((h) => !h.invoice_id && h.billable !== false);
   const hoursRevenue = round2(unbilled.reduce((s, h) => s + (h.hourly_rate !== null ? h.hours * h.hourly_rate : 0), 0));
   const own = row.repeat_every ? visitInvoiceLines(row.lines, unbilledVisits(row.visits)) : row.lines;
   const amountExBtw = round2(linesTotalEx(own) + hoursRevenue);
@@ -707,7 +710,7 @@ export interface WorkCounts {
  * [WERK-BEURT] Repeating work with a done beurt that is not on an invoice yet is "ready to
  * invoice" too, whatever its status says — that is the Monday question for a cleaner.
  */
-export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: string | null; visits?: unknown; lines?: unknown; fields?: FieldValues; billed_periods?: unknown }>, today?: string): WorkCounts {
+export function workCounts(rows: ReadonlyArray<{ status: string; invoice_id?: string | null; repeat_every?: string | null; visits?: unknown; lines?: unknown; fields?: FieldValues; billed_periods?: unknown }>, today?: string): WorkCounts {
   const c: WorkCounts = { open: 0, bezig: 0, wacht: 0, klaar: 0, klaarExBtw: 0 };
   for (const r of rows) {
     if (r.repeat_every && r.status !== "geannuleerd" && r.status !== "gefactureerd") {
@@ -720,6 +723,16 @@ export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: 
       }
       const open = unbilledVisits(storedVisits(r.visits));
       if (open.length > 0) { c.klaar += 1; c.klaarExBtw = round2(c.klaarExBtw + linesTotalEx(visitInvoiceLines(storedLines(r.lines), open))); continue; }
+    }
+    // [STRIPPENKAART] A bundle that is already billed is not waiting for an invoice, whatever its
+    // status says: it stays OPEN by design while its hours are used, and counting its price as
+    // "klaar voor de factuur" would put money on the screen that no button can act on — money the
+    // owner has already invoiced once.
+    if (bundleHours(r) !== null && r.invoice_id) {
+      if (r.status === "open") c.open += 1;
+      else if (r.status === "bezig") c.bezig += 1;
+      else if (r.status === "wacht_klant" || r.status === "wacht_onderdeel") c.wacht += 1;
+      continue;
     }
     if (r.status === "open") c.open += 1;
     else if (r.status === "bezig") c.bezig += 1;
