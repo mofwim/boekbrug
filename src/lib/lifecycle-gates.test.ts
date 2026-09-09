@@ -21794,14 +21794,16 @@ test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained
   // Each line only while a row on screen carries the badge — and labelled from the badge's OWN key.
   assert.match(manage, /displayed\.some\(isAutoVerified\) \? \[\{ id: 'auto', icon: 'auto_awesome', badge: t\('inkoop\.automatisch'\), text: t\('ink\.autoUitleg'\) \}\]/);
   assert.match(manage, /displayed\.some\(\(inv\) => autoPaidBasis\(inv\) !== null\) \? \[\{ id: 'bon', icon: 'receipt_long', badge: t\('inkoop\.bonAfgerekend'\), text: t\('ink\.bonAutoUitleg'\) \}\]/);
-  assert.match(manage, /displayed\.some\(\(inv\) => eInvoiceBadge\(inv\) !== null\) \? \[\{ id: 'efactuur', icon: 'verified', badge: t\('inkoop\.cijfersLeverancier'\), text: t\('ink\.eFactuurLegenda'\) \}\]/);
+  // The e-invoice badge had a line too; the owner struck it. Its tooltip stays, the line may not return.
+  assert.doesNotMatch(manage, /ink\.eFactuurLegenda/, "the struck e-invoice line is back");
+  assert.match(manage, /title=\{t\('inkoop\.eFactuurUitleg'/, "…but the badge's own tooltip stays");
   // The badges' own tooltips stay: a phone never shows a title, a desktop still does.
   assert.match(manage, /title=\{t\('ink\.autoVerifiedUitleg'\)\}/);
   // The Dutch of the first line: what the app did, on what ground, and the two claims that may not
   // soften. Short, because it stands at rest ([RUSTIG]): the checks themselves are on every card.
   const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
   const nl = /'ink\.autoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
-  for (const clause of ["las en boekte deze factuur zelf", "elke controle slaagde", "Niets is betaald", "vóór je betaalt"]) {
+  for (const clause of ["las deze factuur", "automatisch toe", "controles slaagden", "vóór je betaalt"]) {
     assert.ok(nl.includes(clause), `the explanation lost: "${clause}"`);
   }
   assert.ok(nl.trim().split(/\s+/).length <= 20, "the explanation stands at rest and grew past twenty words — say it at the card instead");
@@ -21815,13 +21817,16 @@ test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained
 
   // The cash book's 🔗 marker, the same way: once above the ledger, only while such an entry is on screen.
   const kas = code("src/app/dashboard/kas/KasClient.tsx");
-  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingAutomatisch'\) \}\]/);
+  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingLegenda'\) \}\]/);
+  // The line's own key, not the tooltip's: the component leads with the badge, and the tooltip
+  // text leads with "Automatisch:" — together that would say it twice.
+  assert.doesNotMatch(/'kas\.betalingLegenda': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "", /^Automatisch/);
 
   // …and the crossed-out block is gone: no "Zonder vervaldatum" chip, no total sentence. The total
   // moved into the counter line ("287 van 502"), and only while the read is whole.
   assert.doesNotMatch(manage, /'zonderDatum', t\(/, "the crossed-out chip is back");
   assert.doesNotMatch(manage, /ink\.totaalDisclosure/, "the crossed-out sentence is back");
-  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'/, "an orphan key survived");
+  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'|'ink\.eFactuurLegenda'/, "an orphan key survived");
   assert.match(manage, /hiddenCount > 0 && !loadIncomplete\s*\?\s*t\('ink\.tellingVan'/, "the total left the screen entirely — the counter must still say 'van {total}'");
 });
 
@@ -25372,6 +25377,49 @@ test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens t
   assert.match(scherm, /className="inv-card inv-card--acties"/, "the card lost its own height estimate");
   assert.equal((css.match(/\.inv-card--acties \{ contain-intrinsic-size: auto \d+px; \}/g) ?? []).length, 2,
     "the estimate must be stated for both the wide and the stacked layout");
+});
+
+// ── [KNOPPEN-OP-ORDE] ─────────────────────────────────────────────────────────────────────────
+//
+// The owner's screenshot of Inkoopfacturen on a phone: five button styles, three heights, a bulk
+// pair hugging one edge above a pair stretched across the line, and on the card a row whose first
+// line ended at the far edge while every wrapped line started at the near one — with the bin
+// floating beside the card. "Fix the chaos, put the bin among the buttons, order them." One pill
+// geometry, one order, the bin last. This holds the shape; the render test holds the order on a
+// real card.
+test("[KNOPPEN-OP-ORDE] one pill, one order: the toolbar's four and the card's actions, the bin among them", () => {
+  const s = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(s, /^const PILL: CSSProperties = \{/m, "the one pill geometry is gone");
+  assert.match(s, /^const PILL_OUTLINED: CSSProperties = \{ \.\.\.PILL,/m);
+  assert.match(s, /^const PILL_PRIMARY: CSSProperties = \{ \.\.\.PILL,/m);
+
+  // The toolbar: the bulk pair in its own wrapper, outlined at rest and filled while selecting;
+  // Matchen the one filled action; Reken na outlined like its neighbours.
+  assert.match(s, /<div className="inko-bulk">/, "the bulk pair lost its wrapper");
+  assert.match(s, /style=\{selectMode \? PILL_PRIMARY : PILL_OUTLINED\}/, "Meerdere betalen wears a fill of its own again");
+  assert.match(s, /className="inko-match"[\s\S]{0,120}\.\.\.PILL_PRIMARY,/, "Matchen left the shared geometry");
+  assert.match(s, /className="inko-audit"[\s\S]{0,120}\.\.\.PILL_OUTLINED,/, "Reken na left the shared geometry");
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /\.inko-bulk \{\s*display: flex;\s*gap: 8px;\s*flex: 1 1 100%;/, "the bulk wrapper does not claim its line on a phone");
+  assert.match(css, /\.inko-bulk > button \{\s*flex: 1 1 0;/, "…or does not split it evenly");
+
+  // The card: the row flows from the start (no auto margin), in ONE order — Betalen, Bekijk PDF,
+  // Opnieuw inlezen, Bedragen corrigeren, … , the bin — all before the fold.
+  const from = s.indexOf("aria-controls={`inv-detail-${inv.id}`}");
+  const to = s.indexOf("id={`inv-detail-${inv.id}`}");
+  assert.ok(from > 0 && to > from, "the action row or the fold moved");
+  const row = s.slice(from, to);
+  assert.doesNotMatch(row, /marginInlineEnd: 'auto'/, "an auto margin splits the row between two edges again");
+  const order = ["{t('inkoop.betalen')}", "{t('ink.bekijkPdf')}", "void runReread(inv)", "openCorrection(inv)", "handleRemoveRequest(inv)"]
+    .map((m) => row.indexOf(m));
+  assert.ok(order.every((i) => i > 0), "an action left the row: " + order.join(","));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "the actions are out of order — Betalen, Bekijk PDF, Opnieuw inlezen, Bedragen corrigeren, the bin");
+  assert.ok((row.match(/PILL_OUTLINED/g) ?? []).length >= 6, "a secondary action wears a style of its own again");
+  assert.match(row, /style=\{PILL_PRIMARY\}/, "Betalen is not the one filled pill");
+  // The bin: inside the row, the outlined pill with the icon alone, still hidden while selecting.
+  assert.match(row, /\{!selectMode && \(\s*<button\s*onClick=\{e => \{ e\.stopPropagation\(\); handleRemoveRequest\(inv\) \}\}/, "the bin left the row or shows during selection");
+  assert.match(row, /handleRemoveRequest\(inv\)[\s\S]{0,400}\.\.\.PILL_OUTLINED, width: 40, padding: 0/, "the bin is not the shared pill");
+  assert.equal((s.match(/handleRemoveRequest\(inv\)/g) ?? []).length, 1, "the bin stands twice — beside the card and in the row");
 });
 
 // ── [FILTERS-EEN-REGEL] ───────────────────────────────────────────────────────────────────────

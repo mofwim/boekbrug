@@ -171,17 +171,17 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
   // [AUTO-UITLEG] The badges the app awards on its own judgement are explained once above the
-  // list. The fixture carries all three: the bon row (_auto_verified and _auto_paid) and the ubl
-  // row (a non-contradicting _einvoice) — so all three lines must be there, in words and not keys,
-  // each led by the badge's own label.
+  // list. The fixture's bon row carries _auto_verified and _auto_paid — so both lines must be
+  // there, in words and not keys, each led by the badge's own label. The e-invoice badge on the
+  // ubl row gets NO line: the owner struck it.
   for (const [badge, clause] of [
-    ["Automatisch</strong>", "elke controle slaagde"],
+    ["Automatisch</strong>", "controles slaagden"],
     ["Bon · al afgerekend</strong>", "de bon noemt de betaalwijze"],
-    ["Cijfers van de leverancier</strong>", "niets van een pagina gelezen"],
   ]) {
     assert.ok(html.includes(badge), `the legend does not lead with the badge's own label: ${badge}`);
     assert.ok(html.includes(clause), `the legend lost its explanation: ${clause}`);
   }
+  assert.ok(!html.includes("Cijfers van de leverancier</strong>"), "the struck e-invoice line is back above the list");
   assert.ok(!html.includes("ink.autoUitleg"), "the explanation reached the screen as a key");
   assert.ok(!html.includes("Zonder vervaldatum"), "the crossed-out chip is back");
 
@@ -261,6 +261,16 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // makes it the one place the claim "visible without a tap" can be held.
   assert.match(html, /Bekijk PDF/, "the PDF button is folded away again — nothing on the closed card offers it");
   assert.match(html, /Bedragen corrigeren/, "…and the correction door with it");
+  // [KNOPPEN-OP-ORDE] On a card that carries them all, the actions come in ONE order — Betalen,
+  // Bekijk PDF, Opnieuw inlezen, Bedragen corrigeren — and the bin is the last of them, inside
+  // the card's row (after its chevron), not floating beside the card.
+  const cards = html.split('class="inv-card inv-card--acties"').slice(1);
+  const full = cards.find((c) => c.includes("Bekijk PDF") && c.includes("Bedragen corrigeren") && c.includes("Opnieuw inlezen"));
+  assert.ok(full, "no card carries all four actions — the fixture no longer exercises the row");
+  const at = (needle: string) => { const i = full!.indexOf(needle); assert.ok(i > 0, `${needle} is missing from the card`); return i; };
+  const seq = [at(">Betalen<"), at("Bekijk PDF"), at("Opnieuw inlezen"), at("Bedragen corrigeren"), at(' verwijderen"')];
+  assert.deepEqual([...seq].sort((a, b) => a - b), seq, "the actions are out of order on the rendered card");
+  assert.ok(at('aria-controls="inv-detail-') < at(' verwijderen"'), "the bin stands before the chevron — outside the row");
   assert.match(html, /qr_code_2<\/span>Betalen/, "…and the pay button (asserted with its icon, so 'Meerdere betalen' cannot stand in for it)");
   // Every card carries the chevron, closed, pointing at a detail block that is NOT rendered yet.
   const chevrons = (html.match(/aria-controls="inv-detail-/g) ?? []).length;
@@ -315,7 +325,7 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
   }] } });
   assert.match(bank, /afgeschreven/);
   // [AUTO-UITLEG] No such row on this screen → no legend for a badge nobody sees.
-  for (const clause of ["elke controle slaagde", "de bon noemt de betaalwijze", "niets van een pagina gelezen"]) {
+  for (const clause of ["controles slaagden", "de bon noemt de betaalwijze"]) {
     assert.ok(!bank.includes(clause), `the legend explains a badge that is not on screen: ${clause}`);
   }
   // Curly quotes, as the rest of the catalogue writes them. The QUOTES are the app's punctuation;

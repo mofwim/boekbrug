@@ -526,7 +526,8 @@ input::placeholder, textarea::placeholder {
   /* [LIST-PAINT] The stacked row is taller — see the block above. */
   .inv-card       { contain-intrinsic-size: auto 159px; }
   /* [ACTIES-ALTIJD] …en de knoppenstrook wikkelt hier naar twee regels: nog eens ~44px erbij. */
-  .inv-card--acties { contain-intrinsic-size: auto 259px; }
+  /* [KNOPPEN-OP-ORDE] +44: the bin joined the action row, which wraps one line further on a phone. */
+  .inv-card--acties { contain-intrinsic-size: auto 303px; }
   /* Op de strook eronder gaan bedrag en knop uit elkaar, elk naar een rand. row-      */
   /* reverse draait de leesrichting om zonder de DOM te verbouwen: "Heb je betaald?"   */
   /* links, het bedrag helemaal rechts — waar het bedrag ook op een breed scherm       */
@@ -779,6 +780,22 @@ input::placeholder, textarea::placeholder {
   text-align: center;
 }
 
+/* [KNOPPEN-OP-ORDE] The bulk pair, the same way: a wrapper that claims a whole line below the
+   breakpoint and splits it evenly, for exactly the reason measured above — a zero basis on the
+   buttons themselves lets them join any line with a few pixels left. Four pills, two rows of two on
+   a phone, one row of four on a desktop. */
+.inko-bulk {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.inko-bulk > button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 @media (min-width: 641px) {
   /* Above the breakpoint there is room for all four pills, so the pair stops claiming
      a whole line and sits at its natural width. 641px, so this flips where every other
@@ -791,6 +808,14 @@ input::placeholder, textarea::placeholder {
   .inko-run > .inko-audit {
     flex: 0 0 auto;
     justify-content: flex-start;
+  }
+
+  .inko-bulk {
+    flex: 0 0 auto;
+  }
+
+  .inko-bulk > button {
+    flex: 0 0 auto;
   }
 }
 
