@@ -26831,7 +26831,7 @@ test("[VERLEGD-NAAR-MIJ] 2a is declared and deducted from ONE number", () => {
   // EUR 420 was allowed, while the note beside it said "per saldo betaal je er niets over".
   assert.match(a, /const verlegdAftrek = !verlegd \|\| input\.korActive\s*\?\s*0\s*:\s*euro\(typeof verlegd\.aftrekbaar === "number" \? verlegd\.aftrekbaar : verlegd\.btw\);/,
     "the deductible share of 2a is no longer derived from the owner's right of deduction");
-  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
+  assert.match(a, /const voorbelasting = gedocumenteerd \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
     "5b stopped including the verlegde BTW's deductible share. Then 2a raises what is owed and " +
       "nothing deducts it — the owner pays BTW on a purchase they were entitled to deduct in the same return");
   assert.match(a, /Onder de KOR heb je geen recht op aftrek/,
@@ -29002,7 +29002,7 @@ test("[BUITENLANDSE-INKOOP] 4a and 4b are computed from the supplier's country, 
     "the 4b row is no longer pushed");
   assert.match(a, /const aftrek = input\.korActive \? 0 : euro\(typeof v\.aftrekbaar === "number" \? v\.aftrekbaar : v\.btw\);/,
     "5b no longer takes the deductible share only, and nothing under the KOR (art. 25 Wet OB)");
-  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
+  assert.match(a, /const voorbelasting = gedocumenteerd \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
     "5b stopped including the deductible share of 4a/4b — then the btw is owed and nothing deducts it");
   assert.match(a, /rows\.sort\(\(a, b\) => RUBRIEK_ORDER\.indexOf\(a\.code\) - RUBRIEK_ORDER\.indexOf\(b\.code\)\);/,
     "the rows no longer follow the order of the paper form");
@@ -29055,6 +29055,59 @@ test("[BUITENLANDSE-INKOOP] 4a and 4b are computed from the supplier's country, 
   const mig = code("supabase/migrations/supplier_country.sql");
   assert.match(mig, /ALTER TABLE public\.suppliers\s+ADD COLUMN IF NOT EXISTS country text/);
   assert.match(mig, /country ~ '\^\[A-Z\]\{2\}\$'/, "the column no longer refuses anything but a two-letter code");
+});
+
+// ── [KOR-AANGIFTE-UIT] Under the KOR the return is switched off, except what the law keeps owed ──
+//
+// An owner in the kleineondernemersregeling files no btw return: no btw on sales, no right of
+// deduction (art. 25 Wet OB). This concept computed the full table for them anyway — 5a from
+// their turnover, 5b from their purchase invoices — and put a note underneath saying neither
+// figure applied. Moneybird and Exact switch the return off; so does this now. Two things the law
+// keeps owed stay visible: btw that IS stated on a sales invoice (art. 37 Wet OB), and btw shifted
+// to the owner (2a, 4a, 4b), for which the Belastingdienst wants a return for that period.
+test("[KOR-AANGIFTE-UIT] the KOR switches the sales rubrieken and 5b off, on every surface that builds the concept", () => {
+  const a = code("src/lib/aangifte.ts");
+  assert.match(a, /const kor = input\.korActive === true;/, "the engine no longer knows the regime");
+  assert.match(a, /if \(kor \? b !== 0 : always \|\| o !== 0 \|\| b !== 0\) rows\.push/,
+    "under the KOR a sales row must appear only when btw was actually stated on an invoice (art. 37)");
+  assert.match(a, /const e1 = kor \? 0 : euro\(om1e\);/, "under the KOR 0%-turnover is exempt turnover — no 1e, no 3b");
+  assert.match(a, /const gedocumenteerd = kor \? 0 : euro\(input\.btwVoorbelasting\);/,
+    "5b still deducts the purchase btw of an owner without a right of deduction");
+  assert.match(a, /const voorbelasting = gedocumenteerd \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/);
+  assert.match(a, /korActive: kor,/, "the concept no longer says whether it stands under the KOR — the screen then draws a table of nothing");
+  assert.match(a, /KOR actief: je doet geen btw-aangifte\./, "the concept's own note lost the one sentence that explains the empty table");
+  assert.match(a, /ook onder de KOR \(art\. 37 Wet OB\)/, "btw stated on an invoice is owed whatever the regime — the note no longer says so");
+  assert.match(a, /if \(a\.korActive\) \{\s*L\.push\("KOR actief: geen btw-aangifte\./,
+    "the CSV the accountant opens does not say why the rubrieken are empty");
+
+  // The screen: a panel where the table stood, and nothing that speaks of filing when nothing is owed.
+  const ui = code("src/app/dashboard/aangifte/AangifteClient.tsx");
+  assert.match(ui, /const korUit = data\?\.korActive === true/);
+  assert.match(ui, /const korNiets = korUit && \(data\?\.rows\.length \?\? 0\) === 0/);
+  assert.match(ui, /\{korUit && \(/, "the KOR panel is gone");
+  assert.match(ui, /t\('aang\.kor\.titel'\)/);
+  assert.match(ui, /korNiets \? t\('aang\.kor\.niets'\) : t\('aang\.kor\.toch'\)/, "the panel no longer says whether anything is owed anyway");
+  assert.match(ui, /\{!korNiets && \(<>/,
+    "the table and the totals draw under the KOR with nothing owed — a table of zeros on a return that is not filed");
+  assert.match(ui, /\{!filed && deadline && !korNiets && \(/, "a filing deadline is shown for a return that will not be filed");
+  assert.match(ui, /hasAccountant === false && !filed && !korNiets && \(/, "the self-file steps are shown for a return that will not be filed");
+  assert.match(ui, /!filed && data && missing !== null && !korNiets && \(/, "the pre-filing checklist is shown for a return that will not be filed");
+
+  // Every builder of the concept hands it the regime — or its 5a/5b/5g disagree with the screen.
+  assert.match(code("src/app/api/btw-reservation/route.ts"), /buildAangifte\(\s*\{ \.\.\.range\.result, korActive \},/,
+    "the reservation card sets btw apart for an owner who owes none");
+  assert.match(code("src/app/api/readiness/route.ts"), /const aangifte = buildAangifte\(\{ \.\.\.result, korActive \}, completeness, quarterLabel\);/,
+    "the readiness board's 5a/5b/5g ignore the KOR");
+  for (const file of ["src/app/api/aangifte/route.ts", "src/lib/closing-package.ts"]) {
+    assert.match(code(file), /verlegdNaarMij: totaalVerlegd\(verlegdeVondsten\), korActive,/, `${file}: the KOR flag no longer reaches the engine`);
+  }
+
+  // The regime note and the setting no longer describe a table that is not there.
+  const rf = code("src/lib/regime-flags.ts");
+  assert.doesNotMatch(rf, /hoort onder de KOR niet te worden betaald/,
+    "the regime note still says the concept's 5a should not be paid — there is no such 5a any more");
+  assert.match(rf, /geen btw-aangifte — behalve voor btw die naar jou is verlegd/, "…and no longer states the rule");
+  assert.match(MESSAGES["inst.korUitleg"].nl, /het aangiftescherm staat dan uit/, "the setting no longer says what the switch does");
 });
 
 // ── [KORTING-EENMAAL] A header-only document is not discounted a second time ──────────────────
