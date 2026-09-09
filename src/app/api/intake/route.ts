@@ -329,6 +329,9 @@ async function runIntake(req: NextRequest) {
           id: dupDoc.id,
           folder_id: dupDoc.folder_id ?? null,
           folder_name: bc.length ? bc[bc.length - 1] : null,
+          // [MELDING-WEG] [TAAL] The whole breadcrumb, so the screen can say WHERE in the owner's
+          // language instead of printing the Dutch `error` above. Same field the e-mail route sends.
+          folder_path: bc,
         },
       }, { status: 409 })
     }
@@ -364,7 +367,7 @@ async function runIntake(req: NextRequest) {
           duplicate: true, destination: "document",
           error: "Dit bestand staat al in je bestanden.",
           existing: raced
-            ? { id: raced.id, folder_id: raced.folder_id ?? null, folder_name: racedPath.length ? racedPath[racedPath.length - 1] : null }
+            ? { id: raced.id, folder_id: raced.folder_id ?? null, folder_name: racedPath.length ? racedPath[racedPath.length - 1] : null, folder_path: racedPath }
             : undefined,
         }, { status: 409 })
       }

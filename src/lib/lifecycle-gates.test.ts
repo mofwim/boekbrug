@@ -21670,6 +21670,60 @@ test("[ZIJBALK-ACCOUNT] the account corner is in the rail from 1024px, and nowhe
   assert.match(readFileSync("src/app/layout.tsx", "utf8"), /icon_names=[^"]*\blogout\b/, "'logout' is not in the icon subset");
 });
 
+// ── [MELDING-WEG] A finished notice can be taken off the screen, one at a time ─────────────────
+//
+// "Dit bestand staat al in: 2026 / Q3 / juli / Facturen" is a notice whose work is done the moment
+// it is read. The upload hub kept it on screen with one exit — "Lijst opruimen", which takes every
+// row with it — and the owner asked the obvious question: where is the X? The same question stood
+// on the Inkomend results modal (rows, one green close for all) and on the bank upload's report
+// card (no exit at all). One component answers it everywhere; this gate holds that it stays
+// answered, and that the duplicate's place is said in the owner's language while it is at it.
+test("[MELDING-WEG] every finished notice carries its own X, and the duplicate's place is said in the owner's language", () => {
+  const x = code("src/components/ui/DismissX.tsx");
+  assert.match(x, /aria-label=\{label\}/, "the X has no name for a screen reader");
+  assert.match(x, />close<\/span>/, "…or lost its glyph");
+  assert.doesNotMatch(x, /\bt\(/, "a component holds no language of its own — the label is handed in");
+
+  // The hub: a row's X, the same revoke rule as "Lijst opruimen", and the reprocess rows too.
+  const hub = code("src/app/dashboard/upload/UploadClient.tsx");
+  assert.match(hub, /it\.status !== 'queued' && it\.status !== 'busy' && \(\s*<DismissX/,
+    "a finished row on the hub has no X — or a busy one has, and its upload would go on invisibly");
+  const dropAt = hub.indexOf("const dropRows = useCallback");
+  const clearAt = hub.indexOf("const clearFinished = useCallback");
+  assert.ok(dropAt > 0 && clearAt > dropAt, "removing one row and clearing the list must share ONE revoke rule");
+  // The rule revokes exactly once; neither caller revokes on its own. (The unmount cleanup at the
+  // top of the component revokes too, and may: that is the whole list going, not a row.)
+  assert.equal((hub.slice(dropAt, clearAt).match(/URL\.revokeObjectURL\(u\)/g) ?? []).length, 1, "the shared rule revokes exactly once");
+  assert.doesNotMatch(hub.slice(clearAt, hub.indexOf("const removeItem = useCallback") + 200), /revokeObjectURL/, "a caller revokes on its own, beside the rule");
+  assert.match(hub, /const removeItem = useCallback\(\(id: string\) => dropRows\(/, "the X does not go through the shared rule");
+  assert.match(hub, /const clearFinished = useCallback\(\(\) => dropRows\(/, "…nor does Lijst opruimen");
+  assert.match(hub, /reprocHidden\.has\(idx\)/, "a reprocess row cannot be taken off the screen");
+  assert.match(hub, /setReprocHidden\(new Set\(\)\)/, "…or a new run starts with the previous run's rows hidden");
+  assert.ok((hub.match(/<DismissX/g) ?? []).length >= 2, "the hub lost an X");
+
+  // Inkomend's results modal: one X per row, none while a retry is in flight.
+  const ink = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(ink, /\{!r\.retrying && \(\s*<DismissX/, "a result row on Inkomend has no X — or a retrying one has");
+  assert.match(ink, /setResults\(\(prev\) => prev\.filter\(\(_, j\) => j !== i\)\)/, "the X does not remove the row it sits on");
+
+  // The bank upload's report card.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /<DismissX label=\{t\('melding\.weghalen'\)\} onClick=\{\(\) => setUploadInfo\(null\)\}/, "the bank upload's report has no exit");
+
+  // [TAAL] The place comes structured from the server; the sentence is the catalogue's. All three
+  // duplicate answers carry the path, and both upload screens read it through the one module.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.equal((intake.match(/folder_path: (?:bc|racedPath)/g) ?? []).length, 2, "an intake duplicate answer lost its folder_path");
+  assert.match(code("src/app/api/email/upload/route.ts"), /folder_path: folderPath/, "the e-mail route's duplicate answer lost its folder_path");
+  const mod = code("src/lib/duplicate-sentence.ts");
+  assert.match(mod, /if \(d\.archived\) return null/, "an archived duplicate must keep the server's sentence — it names the invoice and the way back");
+  assert.match(mod, /if \(d\.canForce \|\| d\.original_id\) return null/, "a semantic duplicate must keep the server's sentence — THIS file is not in the books, its look-alike is");
+  for (const [name, src] of [["hub", hub], ["Inkomend", ink]] as const) {
+    assert.match(src, /duplicateWhere\(data\)/, `${name} does not read the duplicate's place through the shared module`);
+    assert.match(src, /where \? t\(where\.key, where\.params\)/, `${name} does not say it in the owner's language`);
+  }
+});
+
 test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {
   // A whole persona worked in an app with no navigation at all. The layout hides the chrome, the
   // search and the bottom bar for a verkoopmedewerker — with a good argument, written out in

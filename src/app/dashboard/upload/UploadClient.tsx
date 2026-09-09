@@ -45,6 +45,9 @@ import { usePageTray } from '@/lib/use-page-tray'
 import PageTray from '@/components/intake/PageTray'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { failureText } from '@/lib/server-message'
+// [MELDING-WEG] The X on a finished row, and the duplicate's place in the owner's language.
+import { DismissX } from '@/components/ui/DismissX'
+import { duplicateWhere } from '@/lib/duplicate-sentence'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 // Same accept set as the app's intake button: images + PDF + bank-statement formats + the
@@ -134,7 +137,7 @@ interface IntakeResponse {
   // targetFromIntake, zodat de duplicaat-vorm niet opnieuw vergeten kan worden.
   document_id?: string
   folder_id?: string | null
-  existing?: { id?: string; folder_id?: string | null; folder_name?: string | null }
+  existing?: { id?: string; folder_id?: string | null; folder_name?: string | null; folder_path?: string[] }
 }
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
@@ -199,8 +202,10 @@ export default function UploadClient() {
   // retryAllFailed: React mag een updater meer dan eens aanroepen voor één klik. Twee keer intrekken
   // is op zich onschadelijk, maar de ref eronder muteren niet — en een updater met neveneffecten is
   // hier al een keer duur geweest.
-  const clearFinished = useCallback(() => {
-    const keep = items.filter((i) => i.status === 'queued' || i.status === 'busy')
+  // [MELDING-WEG] ONE rule for taking rows away, whether it is one row (the X) or every finished
+  // one (Lijst opruimen): the rows that go, and the revoke of exactly their previews.
+  const dropRows = useCallback((goes: (i: Item) => boolean) => {
+    const keep = items.filter((i) => !goes(i))
     if (keep.length === items.length) return
     // Alleen de URL's van rijen die ECHT weggaan. Een rij die nog in de wachtrij staat heeft zijn
     // preview straks nog nodig — en na "toch toevoegen" DELEN twee rijen dezelfde URL, dus de vraag
@@ -213,6 +218,11 @@ export default function UploadClient() {
     objectUrls.current = objectUrls.current.filter((u) => !gone.includes(u))
     setItems(keep)
   }, [items])
+  const clearFinished = useCallback(() => dropRows((i) => i.status !== 'queued' && i.status !== 'busy'), [dropRows])
+  // [MELDING-WEG] The X on a row. Only a FINISHED row has one: a queued or busy row is still in the
+  // runner's queue, and taking it off the screen would not take it out of the upload — the file
+  // would go up invisibly and its outcome would land nowhere.
+  const removeItem = useCallback((id: string) => dropRows((i) => i.id === id), [dropRows])
 
   // [MULTI-PAGE] Collect the photos of ONE paper invoice, combine → one PDF → one invoice.
   const [mpMode, setMpMode] = useState(false)
@@ -225,8 +235,12 @@ export default function UploadClient() {
   const mpCameraRef = useRef<HTMLInputElement>(null)
   // [REPROCESS] Book the kassa/grootboek/dagomzet files already sitting in bestanden — no re-upload.
   const [reproc, setReproc] = useState<{ busy: boolean; done: boolean; summary?: ReprocSummary; results?: ReprocResult[]; error?: string }>({ busy: false, done: false })
+  // [MELDING-WEG] The reprocess rows an owner has read and taken away — by their position in the
+  // run's own list, which does not shift when a row above is hidden. Reset with every new run.
+  const [reprocHidden, setReprocHidden] = useState<Set<number>>(new Set())
   const runReprocess = useCallback(async () => {
     setReproc({ busy: true, done: false })
+    setReprocHidden(new Set())
     try {
       const res = await fetch('/api/documents/reprocess', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
@@ -300,8 +314,13 @@ export default function UploadClient() {
               target: targetFromIntake(data) ?? undefined,
             })
           } else if (res.status === 409 && data?.duplicate) {
+            // [MELDING-WEG] [TAAL] "Dit bestand staat al in: …" came from the server, in Dutch, on a
+            // screen the owner may read in Arabic. The PLACE is structured (existing.folder_path);
+            // the sentence around it is the catalogue's. The archived and the semantic case keep the
+            // server's sentence — duplicateWhere says why.
+            const where = duplicateWhere(data)
             patch(item.id, {
-              status: 'duplicate', message: failureText(res.status, data, t('up.alToegevoegd')), canForce: !!data.canForce,
+              status: 'duplicate', message: where ? t(where.key, where.params) : failureText(res.status, data, t('up.alToegevoegd')), canForce: !!data.canForce,
               // [DUP-ARCHIVED] alleen gezet als de bestaande factuur écht in Genegeerd staat
               archived: data.archived ?? undefined,
               // [BESTANDEN-WIJS] Bij een duplicaat wijst de link naar het bestand dat er AL staat —
@@ -663,10 +682,15 @@ export default function UploadClient() {
                 {reproc.summary.review > 0 && <span style={{ color: M3.warn }}> · {t('up.reproc.nakijken', { n: reproc.summary.review })}</span>}
                 {reproc.summary.failed > 0 && <span style={{ color: M3.error }}> · {t('up.nMislukt', { n: reproc.summary.failed })}</span>}
               </p>
-              {(reproc.results ?? []).filter((r) => r.status !== 'skip').slice(0, 40).map((r, i) => (
-                <p key={i} style={{ fontSize: 12, margin: '2px 0', color: r.status === 'booked' ? M3.success : r.status === 'review' ? M3.warn : r.status === 'error' ? M3.error : M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.status === 'booked' ? '✓' : r.status === 'review' ? '⚠️' : '✗'} {r.file} — {r.message}
-                </p>
+              {/* [MELDING-WEG] Each row read can be taken away on its own — the same X as the upload
+                  rows above. Keyed on the run's own index, so hiding one does not renumber the rest. */}
+              {(reproc.results ?? []).map((r, idx) => ({ r, idx })).filter(({ r, idx }) => r.status !== 'skip' && !reprocHidden.has(idx)).slice(0, 40).map(({ r, idx }) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <p style={{ flex: 1, minWidth: 0, fontSize: 12, margin: '2px 0', color: r.status === 'booked' ? M3.success : r.status === 'review' ? M3.warn : r.status === 'error' ? M3.error : M3.neutral, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.status === 'booked' ? '✓' : r.status === 'review' ? '⚠️' : '✗'} {r.file} — {r.message}
+                  </p>
+                  <DismissX label={t('melding.weghalen')} onClick={() => setReprocHidden((prev) => new Set(prev).add(idx))} style={{ width: 32, height: 32 }} />
+                </div>
               ))}
               {reproc.summary.booked > 0 && (
                 <Link href="/dashboard/dagomzet" style={{ display: 'inline-block', marginTop: 8, fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none', background: M3.primaryContainer, borderRadius: 999, padding: '7px 14px' }}>
@@ -784,6 +808,13 @@ export default function UploadClient() {
                         {it.multiInvoice ? t('up.nFacturen', { n: it.multiInvoice }) : it.autoVerified ? t('up.autoGeboekt') : t(d.label)}
                       </span>
                     ) : null}
+                    {/* [MELDING-WEG] Read it, take it away. A duplicate's work is done the moment the
+                        owner knows the file is already there; the same holds for a finished or a
+                        failed row once its retry or its link has been used. Not on a queued or busy
+                        row — see removeItem. */}
+                    {it.status !== 'queued' && it.status !== 'busy' && (
+                      <DismissX label={t('melding.weghalen')} onClick={() => removeItem(it.id)} />
+                    )}
                   </div>
                   {/* Actions row: retry a failure, or override an uncertain duplicate. */}
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
